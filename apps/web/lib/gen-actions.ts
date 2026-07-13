@@ -95,16 +95,15 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
   // conditions on the source keyframe, not entity refs — the chosen variant is already
   // baked into that keyframe — so it's not meaningful for video and the worker ignores
-  // it. Drop it for video so a job never persists/claims (in its snapshot) a variant it
-  // didn't actually condition on. The @mention itself still works (name in the prompt).
-  const effectiveVariantSel = kind === "video" ? undefined : variantSel;
+  // it. The shared material normalizer drops video maps and canonicalizes an empty image
+  // map to absent, matching the worker's `job.variantSel ?? {}` semantics.
   const material = normalizeFactoryMaterial({
     prompt,
     model,
     kind,
     count,
     entityIds,
-    variantSel: effectiveVariantSel,
+    variantSel,
     sourceGenerationId,
     tailGenerationId,
     referenceVideoGenerationId,
@@ -115,6 +114,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     fps,
     audio,
   });
+  const effectiveVariantSel = material.variantSel ?? undefined;
   const factoryAttempt = parseFactoryAttemptKey(idempotencyKey);
 
   // Durable factory replay fast path. Dynamic fresh-only gates (guardian/model switches/pricing)
@@ -233,9 +233,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
           ...(videoOptions ? { videoOptions } : {}),
           // Phase C: persist the @mention→variant bindings so the worker conditions on
-          // the right variant. Image-only (effectiveVariantSel drops it for video).
+          // the right variant. Image-only (the shared material normalizer drops it for video).
           // Omitted when empty → column stays null (old/bare/video gens unchanged).
-          ...(effectiveVariantSel ? { variantSel: effectiveVariantSel } : {}),
+          ...(material.variantSel ? { variantSel: material.variantSel } : {}),
         },
         select: { id: true },
       });

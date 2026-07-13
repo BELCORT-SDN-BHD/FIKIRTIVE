@@ -51,6 +51,37 @@ describe("factory material binding", () => {
       ...expected,
       entityIds: ["e2", "e1"],
     }, expected)).toBe(false);
+
+    expect(factoryMaterialMatches({
+      ...expected,
+      variantSel: { e1: "v1", e2: "changed" },
+    }, expected)).toBe(false);
+    expect(factoryMaterialMatches({
+      ...expected,
+      variantSel: { e1: "v1", e3: "v2" },
+    }, expected)).toBe(false);
+  });
+
+  it("canonicalizes omitted and empty image variant selections to the same material in both directions", () => {
+    const omitted = normalizeFactoryMaterial({
+      prompt: "hero",
+      model: "seedream",
+      kind: "image",
+      count: 1,
+      entityIds: ["e1"],
+    });
+    const empty = normalizeFactoryMaterial({
+      prompt: "hero",
+      model: "seedream",
+      kind: "image",
+      count: 1,
+      entityIds: ["e1"],
+      variantSel: {},
+    });
+
+    expect(empty.variantSel).toBeNull();
+    expect(factoryMaterialMatches({ ...omitted, variantSel: {} }, omitted)).toBe(true);
+    expect(factoryMaterialMatches({ ...empty, variantSel: null }, empty)).toBe(true);
   });
 
   it("does not erase duplicate entity ids — [a,a] is different from [a]", () => {

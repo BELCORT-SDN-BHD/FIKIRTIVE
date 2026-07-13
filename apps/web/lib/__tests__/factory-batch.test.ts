@@ -308,6 +308,27 @@ describe("orchestrateBatch — startGen disposition + read-only material prechec
     expect(calls.map((c) => c.idempotencyKey)).toEqual([factoryAttemptKey("R2", 0, ATTEMPT_B).key]);
   });
 
+  it("treats a stored empty variantSel as omitted for an explicit FAILED retry", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("failed-empty-variant", {
+      id: "failed-empty-variant", ownerId: OWNER, projectId: PROJECT, batchId: "R2V", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("R2V", 0, ATTEMPT_A).key,
+      prompt: "a", model: "seedream", kind: "IMAGE", count: 1,
+      entityIds: ["e1"], variantSel: {},
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "R2V", attemptId: ATTEMPT_B, cells: [genCell("a", { entityIds: ["e1"] })] },
+    );
+
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "queued", credits: INTERNAL_PER_DISPLAY });
+    expect(res.totalCredits).toBe(INTERNAL_PER_DISPLAY);
+    expect(calls).toHaveLength(1);
+  });
+
   it("fails closed when FAILED history has different content (no dispatch)", async () => {
     const { db, jobs } = fakePrisma();
     jobs.set("prior-x", {
@@ -419,6 +440,37 @@ describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a
     expect(changed.cells[0]).toMatchObject({ status: "error", credits: 0 });
     expect(changed.cells[0].error).toMatch(/different content/i);
     expect(calls).toHaveLength(0);
+  });
+
+  it("changed non-empty variantSel values or keys remain conflict/0", async () => {
+    const cases: Array<{ batchId: string; variantSel: Record<string, string> }> = [
+      { batchId: "M4", variantSel: { e1: "changed", e2: "v2" } },
+      { batchId: "M5", variantSel: { e1: "v1", e3: "v2" } },
+    ];
+
+    for (const { batchId, variantSel } of cases) {
+      const { db, jobs } = fakePrisma();
+      jobs.set(`prior-${batchId}`, {
+        id: `prior-${batchId}`, ownerId: OWNER, projectId: PROJECT, batchId, status: "FAILED",
+        idempotencyKey: factoryAttemptKey(batchId, 0, ATTEMPT_A).key,
+        prompt: "a", model: "seedream", kind: "IMAGE", count: 1,
+        entityIds: ["e1", "e2", "e3"], variantSel: { e1: "v1", e2: "v2" },
+      });
+      const { fn, calls } = spyStartGen(jobs, OWNER);
+      const res = await orchestrateBatch(
+        { startGen: fn, prisma: db },
+        {
+          ownerId: OWNER, projectId: PROJECT, batchId, attemptId: ATTEMPT_B,
+          cells: [genCell("a", { entityIds: ["e1", "e2", "e3"], variantSel })],
+        },
+      );
+
+      if ("error" in res) throw new Error(res.error);
+      expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 });
+      expect(res.cells[0].error).toMatch(/different content/i);
+      expect(res.totalCredits).toBe(0);
+      expect(calls).toHaveLength(0);
+    }
   });
 });
 

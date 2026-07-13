@@ -203,6 +203,45 @@ describe("startGen", () => {
     expect(mockBossSend).not.toHaveBeenCalled();
   });
 
+  it("treats empty image variantSel as absent for an explicit FAILED retry and fresh persistence", async () => {
+    const logical = `batch:${"3".repeat(32)}:attempt:`;
+    const key = `${logical}${"4".repeat(32)}`;
+    const prior = {
+      id: "job_failed_without_variant_selection",
+      status: "FAILED",
+      idempotencyKey: `${logical}${"5".repeat(32)}`,
+      prompt: "same material",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: ["entity-1"],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      videoOptions: null,
+    };
+    db.genJobFindMany.mockResolvedValue([prior]);
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "same material",
+      entityIds: ["entity-1"],
+      variantSel: {},
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: key,
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(mockCheckCast).toHaveBeenCalledWith(expect.objectContaining({ variantSel: undefined }));
+    const createData = db.genJobCreate.mock.calls[0]?.[0]?.data;
+    expect(createData).not.toHaveProperty("variantSel");
+    expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+  });
+
   it("reuses an exact factory attempt even after its job FAILED — delayed duplicate is never a retry", async () => {
     const key = `batch:${"a".repeat(32)}:attempt:${"b".repeat(32)}`;
     expect(key).toHaveLength(79);

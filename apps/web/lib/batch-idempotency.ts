@@ -80,6 +80,18 @@ export function parseFactoryAttemptKey(key: string): FactoryAttemptKey | null {
   return { key, logicalPrefix: `batch:${match[1]}:attempt:` };
 }
 
+function canonicalVariantSel(value: Record<string, string> | null | undefined): Record<string, string> | null;
+function canonicalVariantSel(value: unknown): unknown;
+function canonicalVariantSel(value: unknown): unknown {
+  if (value == null) return null;
+  if (
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    Object.keys(value as Record<string, unknown>).length === 0
+  ) return null;
+  return value;
+}
+
 /** The exact shape startGen persists, shared by its lock-time binding and factory's early reject. */
 export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMaterial {
   const videoOptions: FactoryVideoOptions | null = (() => {
@@ -100,7 +112,7 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     kind: input.kind === "video" ? "VIDEO" : "IMAGE",
     count: input.kind === "video" ? 1 : input.count,
     entityIds: input.entityIds ?? [],
-    variantSel: input.kind === "video" ? null : input.variantSel ?? null,
+    variantSel: input.kind === "video" ? null : canonicalVariantSel(input.variantSel),
     sourceGenerationId: input.sourceGenerationId ?? null,
     tailGenerationId: input.tailGenerationId ?? null,
     referenceVideoGenerationId: input.referenceVideoGenerationId ?? null,
@@ -128,7 +140,7 @@ export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: F
     prior.kind === expected.kind &&
     prior.count === expected.count &&
     canonicalJson(prior.entityIds) === canonicalJson(expected.entityIds) &&
-    canonicalJson(prior.variantSel ?? null) === canonicalJson(expected.variantSel) &&
+    canonicalJson(canonicalVariantSel(prior.variantSel)) === canonicalJson(canonicalVariantSel(expected.variantSel)) &&
     prior.sourceGenerationId === expected.sourceGenerationId &&
     prior.tailGenerationId === expected.tailGenerationId &&
     prior.referenceVideoGenerationId === expected.referenceVideoGenerationId &&
