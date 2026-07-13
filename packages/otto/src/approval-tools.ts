@@ -11,7 +11,8 @@
  */
 import { allSkills } from "./registry.js";
 
-/** The ONLY tool names ottoApprove / ottoReject will act on. Today: generate + approveScheduledPost. */
+/** The ONLY tool names ottoApprove / ottoReject will act on. Today: generate, approveScheduledPost,
+ *  generateReferences — i.e. every registry skill with needsApproval=true. */
 export const APPROVAL_TOOL_NAMES: ReadonlySet<string> = new Set(
   allSkills.filter((s) => s.needsApproval).map((s) => s.name),
 );
@@ -35,11 +36,17 @@ export function approvalRefOf(toolName: string, args: Record<string, unknown>): 
   };
   if (toolName === "generate") return pick("cardId");
   if (toolName === "approveScheduledPost") return pick("scheduledPostId");
+  // generateReferences (debt-68, spend): the parked call carries no client-supplied card id, so anchor
+  // the ref on the target element (entityId) — the same per-entity key startRefGen's in-flight guard
+  // uses. The EXACT parked args (prompt/count/mode) are bound separately by the card's content hash
+  // (readApprovalConsent → computeRefgenApprovalContentHash), so a same-entity arg-flip is caught there.
+  if (toolName === "generateReferences") return pick("entityId");
   return null;
 }
 
-/** One approval-gated tool call parked for approval. */
-export type ApprovalInterruption = { toolName: string; ref: string };
+/** One approval-gated tool call parked for approval, plus its parsed arguments — the consent object
+ *  the mint site binds (e.g. generateReferences hashes its exact prompt/count/mode from `args`). */
+export type ApprovalInterruption = { toolName: string; ref: string; args: Record<string, unknown> };
 
 /**
  * PURE: from a run's interruptions, return every approval-gated tool call with its binding ref.
@@ -50,17 +57,17 @@ export function collectApprovalInterruptions(interruptions: unknown[]): Approval
   const out: ApprovalInterruption[] = [];
   for (const value of interruptions ?? []) {
     if (!value || typeof value !== "object") continue;
-    const it = value as { name?: string; rawItem?: { name?: string }; arguments?: string };
+    const it = value as { name?: string; rawItem?: { name?: string; arguments?: string }; arguments?: string };
     const toolName = it.name ?? it.rawItem?.name;
     if (!toolName || !APPROVAL_TOOL_NAMES.has(toolName)) continue;
     let args: Record<string, unknown> = {};
     try {
-      args = JSON.parse(it.arguments ?? "{}") as Record<string, unknown>;
+      args = JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
     } catch {
       args = {};
     }
     const ref = approvalRefOf(toolName, args);
-    if (ref) out.push({ toolName, ref });
+    if (ref) out.push({ toolName, ref, args });
   }
   return out;
 }

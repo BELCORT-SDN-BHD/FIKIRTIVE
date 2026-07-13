@@ -59,7 +59,7 @@ import {
   revokeSharePreview,
 } from "./schedule-actions";
 import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
-import { computeApprovalContentHash, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
+import { computeApprovalContentHash, computeRefgenApprovalContentHash, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -403,7 +403,32 @@ async function readApprovalConsent(
   ownerId: string,
   toolName: string,
   ref: string,
-): Promise<{ summary: ApprovalCardSummary; contentHash: string; updatedAt: string } | null> {
+  args?: Record<string, unknown>,
+): Promise<{ summary: ApprovalCardSummary | null; contentHash: string; updatedAt: string } | null> {
+  // generateReferences (debt-68, spend): the consent object is the EXACT parked tool-call args, not a
+  // mutable DB row — nothing to re-read for drift, no TOCTOU snapshot to thread. Bind the args with a
+  // content hash (anti-flip: a same-entity prompt/count/mode swap ⇒ a different hash ⇒ hard refuse at
+  // approve). No entity read is needed to be approvable — startRefGen owner-gates the entity at execute
+  // time; the generic approval-card view renders this card (named action, no rich summary).
+  if (toolName === "generateReferences") {
+    if (
+      !args ||
+      typeof args.entityId !== "string" || args.entityId.length === 0 ||
+      typeof args.prompt !== "string" || args.prompt.length === 0
+    ) {
+      return null; // no bindable consent ⇒ fail-closed (hashless, unapprovable card)
+    }
+    return {
+      summary: null,
+      contentHash: computeRefgenApprovalContentHash({
+        entityId: args.entityId,
+        prompt: args.prompt,
+        count: typeof args.count === "number" ? args.count : null,
+        mode: typeof args.mode === "string" ? args.mode : null,
+      }),
+      updatedAt: "", // no mutable row ⇒ no TOCTOU snapshot (only approveScheduledPost threads one)
+    };
+  }
   if (toolName !== "approveScheduledPost") return null;
   try {
     const post = await prisma.scheduledPost.findFirst({
@@ -471,7 +496,7 @@ async function persistPendingApprovalCards(args: {
       cardIds.push(existing.id);
       continue;
     }
-    const consent = await readApprovalConsent(args.ownerId, a.toolName, a.ref);
+    const consent = await readApprovalConsent(args.ownerId, a.toolName, a.ref, a.args);
     const payload: ApprovalCardPayload = {
       toolName: a.toolName,
       ref: a.ref,
@@ -940,16 +965,9 @@ export async function ottoApprove(raw: unknown): Promise<
           await consumeApprovalCard(cardMsg.id, ownerId, cardPayload, "expired");
           return { ok: true, alreadyResolved: true, resolution: "expired" };
         }
-        // Content-hash binding (AR1 处方2, spec 5.1·附②): re-read the post's material fields and
-        // recompute; ANY drift since mint (or an unreadable/hashless card) = hard refuse WITHOUT
-        // consuming — the user reviews and asks Otto for a fresh approval request.
-        const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref);
-        if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
-          return { error: "This post changed since Otto asked — review it and ask Otto to request approval again." };
-        }
-        // Snapshot from the SAME read the hash was verified against (AR2 处方1).
-        approvalConsent = { scheduledPostId: cardPayload.ref, expectedUpdatedAt: current.updatedAt };
-        // (toolName, ref) binding against the rehydrated state's parked interruptions.
+        // (toolName, ref) binding FIRST — locate the parked interruption this card refers to. We need
+        // its exact args to bind the consent for tools whose consent object IS the parked call
+        // (generateReferences), and it lets a stale/already-approved card short-circuit before any read.
         const targetItem = interruptions.find((item) => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const it = item as any;
@@ -976,6 +994,37 @@ export async function ottoApprove(raw: unknown): Promise<
             }
           }
           return { error: "That card isn't awaiting approval." };
+        }
+        // The matched interruption's exact args — the consent object for tools that bind the parked
+        // call itself (generateReferences hashes these; approveScheduledPost ignores them and re-reads
+        // its DB row instead).
+        const targetArgs: Record<string, unknown> = (() => {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const it = targetItem as any;
+            return JSON.parse(it.arguments ?? it.rawItem?.arguments ?? "{}") as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })();
+        // Content-hash binding (AR1 处方2, spec 5.1·附②): recompute the consent hash — for
+        // approveScheduledPost by re-reading the post's material fields (drift check), for
+        // generateReferences from the matched interruption's args (anti-flip). ANY drift/mismatch (or
+        // an unreadable/hashless card) = hard refuse WITHOUT consuming — the user asks Otto afresh.
+        const current = await readApprovalConsent(ownerId, cardPayload.toolName, cardPayload.ref, targetArgs);
+        if (!cardPayload.contentHash || !current || current.contentHash !== cardPayload.contentHash) {
+          return {
+            error:
+              cardPayload.toolName === "generateReferences"
+                ? "That reference request changed since Otto asked — ask Otto to request it again."
+                : "This post changed since Otto asked — review it and ask Otto to request approval again.",
+          };
+        }
+        // AR2 处方1 (approveScheduledPost only): snapshot updatedAt from the SAME read the hash was
+        // verified against, so the resumed approve threads it to the server action's CAS (TOCTOU weld).
+        // generateReferences has no mutable row ⇒ no snapshot to thread (approvalConsent stays undefined).
+        if (cardPayload.toolName === "approveScheduledPost") {
+          approvalConsent = { scheduledPostId: cardPayload.ref, expectedUpdatedAt: current.updatedAt };
         }
         // ATOMIC consumption BEFORE the resume (AR1 处方2): exactly one resolver wins; a concurrent
         // double-click loses the CAS and refuses benignly — the resume (and the tool) runs at most

@@ -18,10 +18,15 @@
  * deleteVariant — the guarded $0 path (debt-69). deleteVariant soft-deletes a variant AND its tagged
  * reference images (paid outputs). The human UI deletes a variant from the element page; Otto has no
  * such surface, so the port fronts the delete with a deterministic, fail-closed active-job gate:
- * it refuses to delete a variant that still has a paid RefGenJob in flight (QUEUED/GENERATING within
- * the staleness window) — otherwise the running job would settle onto a tombstoned variant, wasting
- * spend. Fail-closed: if the count read fails, refuse (never "couldn't check, delete anyway"). Aligned
- * with the makeOttoProjectsPort #271 precedent (destructive action touching paid work = Otto
+ * it refuses to delete a variant that still has ANY paid RefGenJob in flight (QUEUED/GENERATING) —
+ * otherwise the running job would settle onto a tombstoned variant, wasting spend. There is NO
+ * staleness/abandonment window here (fail-closed): a 15-minute window would be SHORTER than the
+ * worker's own liveness window (REFGEN_STALE_MS 18min / queue expiry ~20min / reaper 25min), so a
+ * 15-18-minute-old job that is still genuinely alive would be misjudged abandoned and let through —
+ * the job then settles onto the tombstone (spend charged, product unreachable). A truly stuck job is
+ * unblocked naturally by the reaper (flips it to FAILED at 25min), after which this gate lets the
+ * delete proceed. Fail-closed: if the count read fails, refuse (never "couldn't check, delete anyway").
+ * Aligned with the makeOttoProjectsPort #271 precedent (destructive action touching paid work = Otto
  * deterministic hard-refuse, not model self-confirmation). The gate lives HERE, not inside
  * deleteVariant: the human UI's legitimate delete is untouched.
  *
@@ -30,10 +35,6 @@
  */
 import { prisma } from "@fikirtive/db";
 import { startRefGen, deleteVariant as deleteVariantAction } from "./refgen-actions";
-
-// A job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned (worker died mid-run),
-// so it must NOT block deletion forever — mirror refgen-actions' own staleness window (STALE_MS).
-const STALE_MS = 15 * 60 * 1000;
 
 export function makeOttoRefgenPort(ownerId: string) {
   return {
@@ -60,8 +61,9 @@ export function makeOttoRefgenPort(ownerId: string) {
           where: {
             variantId,
             ownerId,
+            // No updatedAt/staleness window: any live job hard-refuses regardless of age (see header).
+            // A truly stuck job is released by the worker's 25min reaper (→ FAILED), never by us.
             status: { in: ["QUEUED", "GENERATING"] },
-            updatedAt: { gte: new Date(Date.now() - STALE_MS) },
           },
         });
       } catch {
