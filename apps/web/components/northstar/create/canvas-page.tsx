@@ -63,7 +63,6 @@ import {
   promotedCampaignsOf,
   recentEvents,
   registerCanvasObject,
-  spendCredits,
   useStore,
 } from "../immersive/_store";
 import { MockNote } from "../_shared";
@@ -93,15 +92,11 @@ import {
   SWEEP_STYLE,
   useCreateKeyframes,
   type FeedbackValue,
-  type GenTier,
 } from "./_create-ui";
 
 type Mode = "image" | "video" | "agent";
 type SideTab = "chat" | "projects" | "history" | "tree";
 
-const VIDEO_COST = 40;
-const IMAGE_COST = 12;
-const STITCH_COST = 20;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3;
 
@@ -174,10 +169,10 @@ const CLARIFY_QUESTIONS: Record<AgentIntent, ClarifyQ[]> = {
   ],
 };
 
-const INTENT_META: Record<AgentIntent, { unit: string; costEach: number; category: "Video" | "Image" }> = {
-  video: { unit: "clip", costEach: VIDEO_COST, category: "Video" },
-  image: { unit: "image", costEach: IMAGE_COST, category: "Image" },
-  edit: { unit: "edit", costEach: IMAGE_COST, category: "Image" },
+const INTENT_META: Record<AgentIntent, { unit: string }> = {
+  video: { unit: "clip" },
+  image: { unit: "image" },
+  edit: { unit: "edit" },
 };
 
 interface GenJob {
@@ -337,7 +332,7 @@ export function CanvasPage() {
     | { kind: "make-fresh-video"; prompt: string }
     // [wave-c-audit R1] 空画布/无源的头一张图也先问后花(安全 > 效率):图直出(余额即闸)
     // 只保留给「就地进化既有图」;冷启动店主的第一次花费必须被问,兑现宪法「花钱前先问」,
-    // 别让刚被告知的店主在没被问的情况下被扣 2×IMAGE_COST。
+    // 别让刚被告知的店主在没被问的情况下先花两次(W-B3-5.8:价路留给批3 -W)。
     | { kind: "make-fresh-image"; prompt: string }
     | { kind: "agent-plan"; intent: AgentIntent; brief: string; count: number }
     | { kind: "stitch"; ids: string[] }
@@ -437,7 +432,6 @@ export function CanvasPage() {
           lineage: o.parentId,
           ref: o.ref,
           duration: o.duration,
-          credits: o.credits,
         }),
       );
       setJobs((prev) => [...prev, ...newObjects.map((o) => ({ objectId: o.id, pct: 0 }))]);
@@ -482,7 +476,6 @@ export function CanvasPage() {
     refCounter.current.image += 1;
     const n = refCounter.current.image;
     const id = `cv-img-${n}-${nextUid()}`;
-    spendCredits(IMAGE_COST, prompt.slice(0, 40) || "New image", "Image"); // 图直出:余额即闸,store 立即入账
     startGeneration(
       [
         {
@@ -498,18 +491,17 @@ export function CanvasPage() {
           h: source.h,
           status: "generating",
           parentId: source.id,
-          credits: IMAGE_COST,
+          credits: 0,
         },
       ],
       "Generating image…",
     );
   };
 
-  const makeVideo = (source: CvObject, prompt: string, credits: number = VIDEO_COST) => {
+  const makeVideo = (source: CvObject, prompt: string) => {
     refCounter.current.video += 1;
     const n = refCounter.current.video;
     const id = `cv-vid-${n}-${nextUid()}`;
-    spendCredits(credits, prompt.slice(0, 40) || "New video", "Video"); // 边界 A:确认后立即入账,余额即时刷新
     startGeneration(
       [
         {
@@ -526,7 +518,7 @@ export function CanvasPage() {
           status: "generating",
           parentId: source.id,
           duration: 6,
-          credits,
+          credits: 0,
         },
       ],
       "Generating video…",
@@ -534,11 +526,10 @@ export function CanvasPage() {
   };
 
   // [wave-c] 空画布无源视频:落在画布左上默认位,无父;定位有别于 evolve(不需要 source)。
-  const makeFreshVideo = (prompt: string, credits: number = VIDEO_COST) => {
+  const makeFreshVideo = (prompt: string) => {
     refCounter.current.video += 1;
     const n = refCounter.current.video;
     const id = `cv-vid-${n}-${nextUid()}`;
-    spendCredits(credits, prompt.slice(0, 40) || "New video", "Video");
     startGeneration(
       [
         {
@@ -554,7 +545,7 @@ export function CanvasPage() {
           h: 300,
           status: "generating",
           duration: 6,
-          credits,
+          credits: 0,
         },
       ],
       "Generating video…",
@@ -567,7 +558,6 @@ export function CanvasPage() {
     const baseY = source ? source.y : 120;
     const w = source ? source.w : 200;
     const h = source ? source.h : 200;
-    spendCredits(2 * IMAGE_COST, `A/B · ${prompt.slice(0, 32) || "New image"}`, "Image"); // 图直出:余额即闸
     const pair: CvObject[] = (["A", "B"] as const).map((fork, i) => {
       refCounter.current.image += 1;
       const n = refCounter.current.image;
@@ -585,7 +575,7 @@ export function CanvasPage() {
         status: "generating" as const,
         parentId: source?.id, // 同父 → comparable(GOAL §6 并排对比闸)
         fork,
-        credits: IMAGE_COST,
+        credits: 0,
       };
     });
     // 无源时让 B 挂到 A 上,两版仍可比(comparable:b.parentId === a.id)
@@ -637,7 +627,6 @@ export function CanvasPage() {
   // 计划:数量/预算随答案变化,不再固定
   const finishClarify = (intent: AgentIntent, brief: string, answers: Record<string, string>) => {
     const count = Math.max(1, Number(answers.count ?? "1") || 1);
-    const total = count * INTENT_META[intent].costEach;
     const detail =
       intent === "video"
         ? `${count} ${count === 1 ? "clip" : "clips"}, ${answers.length ?? "6"}s each`
@@ -646,13 +635,12 @@ export function CanvasPage() {
           : `${count} edit ${count === 1 ? "option" : "options"}${answers.target ? ` · ${answers.target}` : ""}`;
     setTurns((prev) => [
       ...prev,
-      { id: `t-${prev.length + 1}`, from: "otto", text: `Got it — ${detail}. That's ${total} credits. Confirm to start.` },
+      { id: `t-${prev.length + 1}`, from: "otto", text: `Got it — ${detail}. Confirm to start.` },
     ]);
     setSpendAsk({ kind: "agent-plan", intent, brief, count });
   };
 
-  const confirmAgentPlan = (intent: AgentIntent, brief: string, count: number, credits: number) => {
-    spendCredits(credits, `${count} ${INTENT_META[intent].unit}${count > 1 ? "s" : ""} · ${brief.slice(0, 24)}`, INTENT_META[intent].category);
+  const confirmAgentPlan = (intent: AgentIntent, brief: string, count: number) => {
     const isVid = intent === "video";
     const bandY = 540;
     const forks: (("A" | "B") | undefined)[] = count === 2 ? ["A", "B"] : Array(count).fill(undefined);
@@ -675,7 +663,7 @@ export function CanvasPage() {
         status: "generating" as const,
         fork: forks[i],
         duration: isVid ? 6 : undefined,
-        credits: INTENT_META[intent].costEach,
+        credits: 0,
       };
     });
     // A/B(count===2)让两版可比:B 挂到 A → Compare 条即出
@@ -686,7 +674,7 @@ export function CanvasPage() {
         {
           id: `t-${prev.length + 1}`,
           from: "otto",
-          text: `All ${count} ${count > 1 ? "are" : "is"} ready on the canvas. You approved this. It used ${credits} credits.`,
+          text: `All ${count} ${count > 1 ? "are" : "is"} ready on the canvas. You approved this before it started.`,
           objectIds: items.map((c) => c.id),
         },
       ]);
@@ -718,7 +706,7 @@ export function CanvasPage() {
         ]);
       } else {
         // [wave-c-audit R1] 空画布/无源的头一张图:先问后花(安全 > 效率)。冷启动店主刚被
-        // 告知「花钱前先问」,不能在没被问的情况下被扣 2×IMAGE_COST —— 走花费确认再出 A/B。
+        // 告知「花钱前先问」,不能在没被问的情况下先出 A/B —— 走花费确认再出(W-B3-5.8:价路留给批3 -W)。
         setSpendAsk({ kind: "make-fresh-image", prompt: text });
       }
     } else {
@@ -864,7 +852,6 @@ export function CanvasPage() {
         lineage: o.parentId,
         ref: o.ref,
         duration: o.duration,
-        credits: o.credits,
       }),
     );
     setSelected(clones.map((c) => c.id));
@@ -888,7 +875,6 @@ export function CanvasPage() {
     const n = refCounter.current.video;
     const anchor = parts[0];
     const totalDur = parts.reduce((s, p) => s + (p.duration ?? 6), 0);
-    spendCredits(STITCH_COST, `Stitch ${parts.map((p) => p.ref).join(" + ")}`, "Video");
     startGeneration(
       [
         {
@@ -905,7 +891,7 @@ export function CanvasPage() {
           status: "generating",
           parentId: anchor.id,
           duration: totalDur,
-          credits: STITCH_COST,
+          credits: 0,
         },
       ],
       "Stitching clips…",
@@ -1361,7 +1347,7 @@ export function CanvasPage() {
               </div>
               {/* 参数栏随模式重排(A1)· 人话,不用行话(STALL #47) */}
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                {mode === "image" && `Two takes side by side · ${2 * IMAGE_COST} credits on send`}
+                {mode === "image" && "Two takes side by side · shows the price before you send"}
                 {mode === "video" && "6s clip · asks before spending"}
                 {mode === "agent" && "Otto plans it first · asks before spending"}
               </span>
@@ -1876,7 +1862,7 @@ export function CanvasPage() {
         </div>
       </section>
 
-      {/* 花费确认(§FB6 money + §V5;video / agent = Speed/Quality 双档,stitch = 定价再渲染不双档) */}
+      {/* 花费确认(§FB6 money + §V5;W-B3-5.8:Speed/Quality 双档价与伪扣减已外科摘除,统一单档确认) */}
       <SpendConfirmDialog
         open={spendAsk !== null}
         onOpenChange={(v) => !v && setSpendAsk(null)}
@@ -1901,19 +1887,19 @@ export function CanvasPage() {
         impacts={
           spendAsk?.kind === "agent-plan"
             ? [
-                `${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""} × ${INTENT_META[spendAsk.intent].costEach} credits each. No charge until you confirm.`,
+                `${spendAsk.count} ${INTENT_META[spendAsk.intent].unit}${spendAsk.count > 1 ? "s" : ""}. Price confirmed before generation.`,
                 spendAsk.count === 2 ? "A and B land side by side so you can compare." : "Each shows its own progress and can be deleted after.",
                 "Anything that fails isn't charged.",
               ]
             : spendAsk?.kind === "stitch"
               ? [
-                  `Cost: ${STITCH_COST} credits. No charge until you confirm.`,
+                  "Price confirmed before generation. No charge until you confirm.",
                   "The stitched clip lands as a new object below the sources.",
                   "The source clips stay on the canvas.",
                 ]
               : spendAsk?.kind === "make-fresh-image"
                 ? [
-                    `Two takes, A and B: ${IMAGE_COST} credits each, ${2 * IMAGE_COST} total. No charge until you confirm.`,
+                    "Two takes, A and B. Price confirmed before generation.",
                     "They land side by side so you can pick the winner.",
                     "Evolving an image from there generates on send; anything that fails isn't charged.",
                   ]
@@ -1921,46 +1907,36 @@ export function CanvasPage() {
                     spendAsk?.kind === "make-fresh-video"
                       ? "The video lands on your canvas — evolve it from there."
                       : "The video lands next to its source with a lineage line.",
-                    "Speed is a quick draft; Quality is sharper but slower.",
+                    "Price confirmed before generation.",
                     "If it fails, you aren't charged.",
                   ]
         }
         confirmLabel={
           spendAsk?.kind === "stitch"
-            ? `Confirm stitch · ${STITCH_COST} credits`
+            ? "Confirm stitch"
             : spendAsk?.kind === "make-fresh-image"
-              ? `Confirm generate · ${2 * IMAGE_COST} credits`
-              : `Confirm generate`
+              ? "Confirm generate"
+              : "Confirm generate"
         }
         onConfirm={() => {
           const ask = spendAsk;
           setSpendAsk(null);
-          if (ask?.kind === "stitch") stitchVideos(ask.ids);
-          else if (ask?.kind === "make-fresh-image") {
-            // 确认后才出 A/B 并扣费(evolveImageAB 内 spendCredits)——先问后花闭环。
+          if (!ask) return;
+          if (ask.kind === "stitch") stitchVideos(ask.ids);
+          else if (ask.kind === "make-fresh-image") {
+            // 确认后才出 A/B(evolveImageAB 内不再 spendCredits,W-B3-5.8)——先问后出闭环。
             evolveImageAB(null, ask.prompt);
             setTurns((prev) => [
               ...prev,
               { id: `t-${prev.length + 1}`, from: "otto", text: "Making an A and a B take side by side, so you can pick the winner.", steps: ["Generating A and B"] },
             ]);
-          }
-        }}
-        baseCredits={
-          spendAsk?.kind === "agent-plan"
-            ? spendAsk.count * INTENT_META[spendAsk.intent].costEach
-            : spendAsk?.kind === "make-video" || spendAsk?.kind === "evolve-video" || spendAsk?.kind === "make-fresh-video"
-              ? VIDEO_COST
-              : undefined
-        }
-        onConfirmTier={(_tier: GenTier, credits: number) => {
-          const ask = spendAsk;
-          setSpendAsk(null);
-          if (!ask) return;
-          if (ask.kind === "agent-plan") confirmAgentPlan(ask.intent, ask.brief, ask.count, credits);
-          else if (ask.kind === "make-fresh-video") makeFreshVideo(ask.prompt, credits);
-          else if (ask.kind === "make-video" || ask.kind === "evolve-video") {
+          } else if (ask.kind === "agent-plan") {
+            confirmAgentPlan(ask.intent, ask.brief, ask.count);
+          } else if (ask.kind === "make-fresh-video") {
+            makeFreshVideo(ask.prompt);
+          } else if (ask.kind === "make-video" || ask.kind === "evolve-video") {
             const source = objects.find((o) => o.id === ask.sourceId);
-            if (source) makeVideo(source, ask.kind === "evolve-video" ? ask.prompt : `Animate: ${source.prompt}`, credits);
+            if (source) makeVideo(source, ask.kind === "evolve-video" ? ask.prompt : `Animate: ${source.prompt}`);
           }
         }}
       />
@@ -2115,7 +2091,7 @@ function ObjectToolbar({
       <div className="flex items-center gap-0.5 rounded-[14px] border border-border bg-card p-1 shadow-[var(--shadow-md)]" style={LAND_STYLE}>
         {obj.kind === "image" ? (
           <>
-            {tool("Make video · 40 credits", <Video className="size-4" strokeWidth={2} />, onMakeVideo)}
+            {tool("Make video", <Video className="size-4" strokeWidth={2} />, onMakeVideo)}
             {tool("Crop", <Crop className="size-4" strokeWidth={2} />, undefined, `/northstar/create/media-editor?asset=${obj.id}`)}
           </>
         ) : (
@@ -2208,7 +2184,7 @@ function ObjectToolbar({
           className="h-8 w-72 min-w-0 bg-transparent px-2 text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
         />
         <span className="font-mono text-[10px] leading-3 text-muted-foreground tabular-nums">
-          {obj.kind === "image" ? "~12 cr" : "asks first"}
+          {obj.kind === "image" ? "price shown" : "asks first"}
         </span>
         <Button type="submit" size="icon" className="size-8 rounded-[10px]" aria-label="Imagine">
           <ArrowUp className="size-4" strokeWidth={2.2} />

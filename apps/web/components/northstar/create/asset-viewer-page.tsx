@@ -29,7 +29,6 @@ import {
   promoteToCampaign,
   promotedCampaignsOf,
   setBrandPreference,
-  spendCredits,
   useStore,
 } from "../immersive/_store";
 import { Button } from "@/components/ui/button";
@@ -81,7 +80,6 @@ export function AssetViewerPage() {
     prompt: runtime?.prompt ?? linked?.prompt ?? linkedAsset?.prompt ?? NS_VIEWER_ASSET.prompt,
     kind: (runtime?.kind ?? linked?.kind ?? (linkedAsset?.kind === "video" ? "video" : linkedAsset ? "image" : NS_VIEWER_ASSET.kind)) as "image" | "video",
     duration: runtime?.duration ?? linked?.duration ?? NS_VIEWER_ASSET.duration,
-    credits: runtime?.credits ?? linked?.credits ?? linkedAsset?.credits ?? NS_VIEWER_ASSET.credits,
     resolution: NS_VIEWER_ASSET.resolution,
   };
   const [versions, setVersions] = React.useState<NsViewerVersion[]>(NS_VIEWER_VERSIONS);
@@ -128,8 +126,6 @@ export function AssetViewerPage() {
       setActiveVersion(nv.id);
       setSweepId(nv.id);
       window.setTimeout(() => setSweepId(null), 650);
-      // 新版本出炉即入账(共享 store;余额即时刷新 = live reflection)
-      spendCredits(view.credits, `New version · ${view.title}`, view.kind === "video" ? "Video" : "Image");
       setWorking(false);
       setOttoWorking(false);
     }, 4200);
@@ -298,7 +294,7 @@ export function AssetViewerPage() {
                   </Button>
                 </div>
                 <Button type="button" variant="secondary" size="sm" className="h-9" disabled={working} onClick={() => continueWrite("Regenerated take")}>
-                  {working ? "Regenerating…" : `Regenerate · ${view.credits} credits`}
+                  {working ? "Regenerating…" : "Regenerate"}
                 </Button>
               </form>
               <p className="mx-auto mt-1.5 max-w-[840px] text-[11px] text-muted-foreground">
@@ -329,7 +325,7 @@ export function AssetViewerPage() {
                   ["Kind", view.kind === "image" ? "Image" : "Video"],
                   ["Duration", `${view.duration}s`],
                   ["Resolution", view.resolution],
-                  ["Cost", `${view.credits} credits`],
+                  ["Cost", "Price confirmed before generation"],
                   ["Versions", String(versions.length)],
                 ].map(([k, v]) => (
                   <div key={k} className="flex items-baseline justify-between gap-2">
