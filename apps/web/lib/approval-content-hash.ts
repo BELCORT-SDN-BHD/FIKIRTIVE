@@ -81,6 +81,84 @@ export function refgenApprovalHashFromArgs(args: Record<string, unknown> | undef
   });
 }
 
+/** The material consent fields for a runFactoryBatch (factory batch spend) approval — the EXACT
+ *  parked args a human is consenting to. Like generateReferences (and unlike a scheduled post),
+ *  there is no mutable DB row: the consent object IS the parked tool-call arguments (immutable in
+ *  the RunState). EVERY field that changes the number of cells or any cell's content is bound —
+ *  mode / batchId / name / base / variants / cells — so ANY post-mint flip (a variant added, a
+ *  prompt swapped, grid cells replaced, the mode switched) yields a different hash ⇒ hard refuse
+ *  at approve (anti-flip, W-B3-F-P). */
+export type FactoryBatchApprovalMaterial = {
+  mode: string;
+  batchId: string;
+  name: string | null;
+  base: unknown;
+  variants: unknown;
+  cells: unknown;
+};
+
+/** Canonical JSON: recursively key-sorted objects, so two semantically identical nested args
+ *  payloads (base/variants/cells) always serialize — and therefore hash — identically regardless
+ *  of key order. undefined members are dropped (JSON semantics). */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map((x) => canonicalJson(x === undefined ? null : x)).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>)
+      .filter(([, val]) => val !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, val]) => `${JSON.stringify(k)}:${canonicalJson(val)}`);
+    return `{${entries.join(",")}}`;
+  }
+  const s = JSON.stringify(v);
+  return s === undefined ? "null" : s;
+}
+
+/** Deterministic hash of the factory-batch consent object. Domain-tagged so it can never collide
+ *  with a scheduled-post or refgen hash; canonical (key-sorted) serialization for the nested
+ *  base/variants/cells payloads (mirrors computeRefgenApprovalContentHash's shape). */
+export function computeFactoryBatchApprovalContentHash(m: FactoryBatchApprovalMaterial): string {
+  const canonical = canonicalJson([
+    "runFactoryBatch",
+    m.mode,
+    m.batchId,
+    m.name ?? null,
+    m.base ?? null,
+    m.variants ?? null,
+    m.cells ?? null,
+  ]);
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+
+/** Normalize RAW parked runFactoryBatch tool-call args into the factory-batch consent hash, or
+ *  null when the args carry no bindable spend consent (missing/blank batchId, an unknown mode, or
+ *  no batch content for the mode — variant needs base + non-empty variants, grid needs non-empty
+ *  cells; mirrors executeRunFactoryBatch's own refusals) ⇒ fail-closed, hashless, unapprovable.
+ *  The SINGLE normalization used by every site that hashes parked factory-batch args — card mint
+ *  (readApprovalConsent), mint-side dedup, and the approve/reject interruption matchers — so the
+ *  same parked call always produces the same hash (P2 ref-collision discipline, same as refgen). */
+export function factoryBatchApprovalHashFromArgs(args: Record<string, unknown> | undefined | null): string | null {
+  if (
+    !args ||
+    typeof args.batchId !== "string" || args.batchId.length === 0 ||
+    (args.mode !== "variant" && args.mode !== "grid")
+  ) {
+    return null;
+  }
+  const base = args.base !== null && typeof args.base === "object" && !Array.isArray(args.base) ? args.base : null;
+  const variants = Array.isArray(args.variants) && args.variants.length > 0 ? args.variants : null;
+  const cells = Array.isArray(args.cells) && args.cells.length > 0 ? args.cells : null;
+  if (args.mode === "variant" && (!base || !variants)) return null;
+  if (args.mode === "grid" && !cells) return null;
+  return computeFactoryBatchApprovalContentHash({
+    mode: args.mode,
+    batchId: args.batchId,
+    name: typeof args.name === "string" ? args.name : null,
+    base,
+    variants,
+    cells,
+  });
+}
+
 /** How long a minted approval ask stays confirmable. Frozen default: 24h — an ask older than
  *  a day must be re-requested (the POST may be scheduled further out; the ASK must be fresh).
  *  Founder ack 可调 (one-place constant). */
