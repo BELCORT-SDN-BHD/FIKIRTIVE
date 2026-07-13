@@ -65,15 +65,18 @@
 ## Orchestration control plane (conditional)
 
 When a session is asked to orchestrate multi-agent work, resume an interrupted program, or make
-product/architecture/design/audit decisions, it must also read
-the globally installed `orchestration` skill, `.claude/skills/fikirtive-orchestration-overlay/SKILL.md`,
-and `docs/ops/ORCHESTRATOR-STATE.md`. The canonical global skill source is the private repository
-`BELCORT-SDN-BHD/orchestration-skill`; this repository keeps only the FIKIRTIVE-specific overlay.
-The invoking session is the recoverable control plane at the highest verified orchestrator effort
-(currently Codex per the state ledger); Fable 5 Max and independent GPT-5.6 Sol Ultra are judgment
-advisors under the global protocol, and the founder remains the final authority for founder-only
-categories. Neither the global skill nor the overlay relaxes any rule above; in particular, no
-authoring agent may merge its own diff, auto-merge, deploy, spend, or modify `docs/BLUEPRINT.md`.
+product/architecture/design/audit decisions, it must also read the globally installed
+`orchestration` skill and `.claude/skills/fikirtive-orchestration-overlay/SKILL.md`. A global
+control-plane session must additionally read `docs/ops/ORCHESTRATOR-STATE.md`. A bounded scoped
+orchestrator is valid only under the overlay's closed work-order contract; it instead reads its
+hash-locked `BOOTSTRAP.md` and every authority file named there, never claims the global epoch, and
+never treats chat history or the full state ledger as task authority. The canonical global skill
+source is the private repository `BELCORT-SDN-BHD/orchestration-skill`; this repository keeps only
+the FIKIRTIVE-specific overlay. The global session is the recoverable control plane at the
+host-derived orchestrator profile; scoped sessions report to it and cannot declare program-level
+completion. The founder remains the final authority for founder-only categories. Neither the
+global skill nor the overlay relaxes any rule above; in particular, no authoring agent may merge
+its own diff, auto-merge, deploy, spend, or modify `docs/BLUEPRINT.md`.
 
 ## Stale-doc warning
 
