@@ -5,19 +5,19 @@ description: FIKIRTIVE 的项目专属编排约束层。任何 agent 在本仓�
 
 # FIKIRTIVE 编排 Overlay
 
-本文件不是第二份编排协议。角色、判断分层、Fable/SOL 顾问协议、worker 路由、provenance、liveness 与中断恢复，都以全局 `orchestration` skill 为唯一真源：
+本文件不是第二份编排协议。全局角色、判断分层、Fable/SOL 顾问协议、worker 路由、provenance、liveness 与中断恢复，都以全局 `orchestration` skill 为唯一真源；下文 `scoped-orchestrator` 只是本项目追加的有界执行身份，不是新的全局角色或通用协议：
 
 - Codex：`${CODEX_HOME:-$HOME/.codex}/skills/orchestration/SKILL.md`
 - Claude：`$HOME/.claude/skills/orchestration/SKILL.md`
 - Canonical source：`BELCORT-SDN-BHD/orchestration-skill`
 
-本 overlay 的协议兼容基线是 global orchestration `VERSION 3.0.1`、source commit `7549a1fcfda6e24ec3d6fdaac23c455f80b4e303`（Codex/Claude host 自动选择 orchestrator profile；上游 PR #5）、`SKILL.md` SHA-256 `2d79e050b6e7248f49a7ca22a33ef888f2fd416e4162ae8e06fb0074adee6164`。（重钉授权=founder 2026-07-13「按 v1 开始」；原 v3.0.0 pin 见 git 史。）若全局 skill 缺失、`preflight.sh <codex|claude-code>` 失败、两条安装路径未解析到同一 canonical clone、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。不得在普通启动时自动 fetch/pull，不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
+本 overlay 的协议兼容基线是 global orchestration `VERSION 3.0.1`、source commit `7549a1fcfda6e24ec3d6fdaac23c455f80b4e303`（Codex/Claude host 自动选择 orchestrator profile；上游 PR #5）、`SKILL.md` SHA-256 `2d79e050b6e7248f49a7ca22a33ef888f2fd416e4162ae8e06fb0074adee6164`。（重钉授权=founder 2026-07-13「按 v1 开始」；原 v3.0.0 pin 见 git 史。）若全局 skill 缺失、`preflight.sh <codex|claude-code>` 失败、两条安装路径未解析到同一 canonical clone、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。除用户明确授权的全局工具更新流程外，启动时不得自动 fetch/pull；不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
 
 ## 两种编排身份
 
 ### 全局 control plane
 
-全局 control plane 唯一持有 program epoch、产品与架构判断、依赖图、共享契约、五本账、最终验收与 founder 汇报。接管或恢复时必须完整读取 `docs/ops/ORCHESTRATOR-STATE.md` 并重新核验可变事实；旧状态账不是永久真相。
+每个 FIKIRTIVE program 同时只登记一个 global control plane；它持有 program epoch、产品与架构判断、依赖图、共享契约、五本账、最终验收与 founder 汇报。这个“唯一”是 founder 指定并在状态账留痕的项目规则，不是 filesystem claim 可以自行授予或证明的 lease。接管或恢复时必须完整读取 `docs/ops/ORCHESTRATOR-STATE.md` 并重新核验可变事实；发现另一个可能仍在运行的 control plane、身份不明或状态冲突时 fail closed 并交 founder 消歧，旧状态账不是永久真相。
 
 ### Scoped orchestrator
 
@@ -28,7 +28,7 @@ Scoped orchestrator 是全局 control plane 发出的有界执行单元，不是
 3. Repo 内的 execution-harness machine checker 已落地，并在启动、第一次写入前、每个 phase boundary 与交付前，对 global-owned registry 的当前 generation 重新验证通过；`REVOKED`、`SUPERSEDED`、generation 不符或任何控制文件/checker 落入实际 diff 都 fail closed。校验器尚未落地时，scoped 模式保持关闭。
 4. Session 完整读取全局 skill、本 overlay、`AGENTS.md`、自己的 bootstrap/work order，以及 lock 文件列出的全部权威文件；不得用聊天历史、旧 transcript 或整本状态账自行补需求。
 
-Session 一旦接受有效的 `role=scoped-orchestrator` / `NO_GLOBAL_CLAIM`，该身份对本 session、其恢复轮与全部 descendants 单调锁定到终止；重新调用 skill、prompt 指令、reload 或 global claim 暂时空缺均不得升级。Global takeover 只能由一个 fresh session 按 global claim/takeover 流程执行。
+Session 一旦接受有效的 `role=scoped-orchestrator` / `NO_GLOBAL_CLAIM`，该身份对本 session、其恢复轮与全部 descendants 单调锁定到终止；重新调用 skill、prompt 指令、reload 或 scoped claim 暂时空缺均不得升级。它永远不能成为 global control plane。全局接管只可由 founder 明确指定的 fresh session 执行；若旧 control plane 是否仍活跃无法证明，必须停手请 founder 消歧，不能从 claim 缺失、超时或旧状态自行推导接管权。
 
 Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 leaf worker（默认一个），写入自己的 runtime mailbox，并最多报告 `READY_FOR_VERIFY`。只有 global control plane 可签发 scoped claim；scoped orchestrator 不得再签发下一级 scoped claim、改写全局 `CLAIMS.json`，也不得认领或改写 global epoch/五本账、改变产品目标/共享契约/文件所有权或自行宣告全局完成。Scoped orchestrator 或其 leaf worker 只要 authored、生成可直接应用的 patch，或直接/间接 materially edited diff，整条 lane 均属于 author side，不得执行该 PR 的 merge。遇到 founder-only 类别、输入/hash/base 漂移、越界写入或验收无法闭合时，写 escalation 后停在该项。全局 control plane 必须独立重跑机器验收后，结果才可提升进项目真源。
 
@@ -38,7 +38,7 @@ Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 l
 2. 完整读取全局 `orchestration` skill 及本次需要的 references，再核对协议版本/hash。
 3. 读取本 overlay 并判定身份。Global control plane 还须读取 `docs/ops/ORCHESTRATOR-STATE.md`、`docs/ops/MODEL-ROUTING-2026-07-11.md` 与 `docs/review/FULL-PRODUCT-REAUDIT-2026-07-11.md`；scoped orchestrator 改读其已通过 machine checker 的 bootstrap、work order、locks 与权威引用。
 4. 从 git、PR/CI、worktree、进程与部署重新核验本身份需要的可变事实；状态账和旧 transcript 只作证据。
-5. Global control plane 先核对现有 claim；无冲突或 founder 明确授权接管后，才登记唯一可恢复 control plane。Scoped orchestrator 只核对自己的 fencing claim，绝不覆盖 global claim 或恢复旧 workflow。
+5. Global control plane 先核对 founder 指定、当前状态账和可能仍活跃的旧 session；无冲突时才登记本 program 的可恢复 control plane。任何接管都须 founder 明确指定，不能由本地 registry 自动裁决。Scoped orchestrator 只核对自己的 fencing claim，绝不登记 global 身份或恢复旧 workflow。
 
 ## FIKIRTIVE 追加红线
 
@@ -52,9 +52,9 @@ Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 l
 
 ## 当前项目裁决与 gate
 
-仅对 global control plane，`docs/ops/ORCHESTRATOR-STATE.md` 的 D0–D8 是 founder 已批准的历史工作授权，但状态事实必须重验；scoped orchestrator 不从该状态账取得任何超出 work order 的权限。全产品 re-audit 的 Gate 0/1 完成前，不扩建产品 thesis、大壳或新 continent；只允许 L1 red test、安全/凭据 inventory 与只读取证等不扩大 thesis 的工作先行。
+旧状态账 `449145e9:docs/ops/ORCHESTRATOR-STATE.md` 的 D0–D8 只作历史决策证据，不是本 program 的当前权限；当前权限只来自 Founder 指令与现行状态账。Scoped orchestrator 不从历史状态或现行状态账取得任何超出 work order 的权限。Gate 0 与 execution harness 落地前，不启动产品写 session；只允许不扩大产品 thesis 的 read-only inventory、控制面修复与 machine-gate 验证。
 
-任何产品身份、品牌、蓝图、不可逆架构、schema/migration、钱路/租户、凭据/权限、生产/部署、外部写入/花费/删除或治理判断都升为 Tier 1。Fable 5 Max 与 independent SOL Ultra 使用同一份盲化 raw evidence 分别作答；缺 Fable 时 SOL 只能标成 fallback，不能一人占两席或伪报完整 council。Founder 保留最终裁决。
+任何产品身份、品牌、蓝图、不可逆架构、schema/migration、钱路/租户、凭据/权限、生产/部署、外部写入/花费/删除或治理判断都属高后果件。依 global skill 的 exceptional cross-family review contract，只在需要时调用与当前 orchestrator 不同的 frontier family 一次；lane 与 effort 只从当前 `references/MODEL-ROUTING.md` 读取，不在本 overlay 复制模型名或建立常任双顾问层。Reviewer 不可用时该高后果动作 fail closed，且不得把同族复审或 fallback 写成跨族 PASS。Founder 保留最终裁决。
 
 ## 项目状态与汇报
 
