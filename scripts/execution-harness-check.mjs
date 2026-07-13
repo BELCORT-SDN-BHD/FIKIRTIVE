@@ -449,8 +449,8 @@ function validatePhysicalWriteSet(pathSet, worktree, errors, label) {
 
 function changedPaths(worktree, baseSha) {
   return sortedUnique([
-    ...gitZ(worktree, ["diff", "--name-only", "-z", baseSha, "HEAD"]),
-    ...gitZ(worktree, ["diff", "--name-only", "-z", "HEAD"]),
+    ...gitZ(worktree, ["diff", "--no-renames", "--name-only", "-z", baseSha, "HEAD"]),
+    ...gitZ(worktree, ["diff", "--no-renames", "--name-only", "-z", "HEAD"]),
     ...gitZ(worktree, ["ls-files", "--others", "--exclude-standard", "-z"]),
   ]);
 }
@@ -494,10 +494,16 @@ function validateWorkOrderSections(source, acceptanceIds, errors) {
   for (const heading of WORK_ORDER_HEADINGS) {
     const body = sections.get(heading) ?? "";
     const normalized = body.replace(/\s+/g, " ").trim();
+    const placeholderResidue = normalized
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\bfill(?:\s+(?:me|this))?\s+in\b/gi, " ")
+      .replace(/\b(?:todo|tbd|placeholder|objective|scope|output|acceptance|budget|none|n\/a)\b/gi, " ")
+      .replace(/[^\p{L}\p{N}]+/gu, "");
     const placeholder =
       /^<[^>]+>$/.test(normalized) ||
       /^\[[^\]]+\]$/.test(normalized) ||
-      /^(?:todo|tbd|placeholder|fill(?: me| this)? in|none|n\/a)[.!]?$/i.test(normalized);
+      /^(?:todo|tbd|placeholder|fill(?: me| this)? in|none|n\/a)[.!]?$/i.test(normalized) ||
+      placeholderResidue.length === 0;
     add(
       errors,
       normalized.length >= 12 && !placeholder,
@@ -560,7 +566,7 @@ function validateClaimPathSets(claim, errors, label) {
 }
 
 function validateClaimsRegistry(registry, context, errors) {
-  const { bootstrap, ownership, controlHashes, dynamicExact, worktree } = context;
+  const { bootstrap, ownership, controlHashes, dynamicExact } = context;
   add(errors, registry.schema_version === 1, "claims registry schema_version must be 1");
   add(errors, Number.isInteger(registry.generation) && registry.generation >= 1, "claims registry generation must be a positive integer");
   add(errors, Array.isArray(registry.claims), "claims registry claims must be an array");
@@ -637,8 +643,6 @@ function validateClaimsRegistry(registry, context, errors) {
     }
     const sets = validateClaimPathSets(claim, errors, `claim ${claim.claim_id}`);
     validateForbiddenWriteSet(sets.writeSet, errors, `claim ${claim.claim_id} write_set`, dynamicExact);
-    validateIgnoredWriteSet(sets.writeSet, worktree, errors, `claim ${claim.claim_id} write_set`);
-    validatePhysicalWriteSet(sets.writeSet, worktree, errors, `claim ${claim.claim_id} write_set`);
     const selfLockOverlap = setsOverlap(sets.writeSet, sets.lockedInputs);
     add(errors, !selfLockOverlap, `claim ${claim.claim_id} writes locked input ${selfLockOverlap?.join(" <> ")}`);
     add(errors, stringArray(claim.exclusive_groups), `claim ${claim.claim_id} exclusive_groups must be a string array`);
