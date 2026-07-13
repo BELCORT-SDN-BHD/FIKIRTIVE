@@ -403,3 +403,30 @@ describe("W-B3-F-P ledger — video cell quote == reserve == settle (NODE-280 it
     expect((await jobsFor(ownerId, projectId)).length).toBe(2); // no GenJob for the invalid cell
   });
 });
+
+describe("W-B3-F-P ledger — video replay after DONE reuses (full-field compare vs REAL persisted row)", () => {
+  it("a DONE seedance-2-fast cell (non-default 10s) replays as reused — the cell-side videoOptions mapping matches what startGen actually persisted", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const batchId = `bat_${randomUUID()}`;
+    const VID10 = 14 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/10s flat = 14 displayed
+    const cells = [{ type: "gen" as const, prompt: "product spin", kind: "video" as const, model: "seedance-2-fast", durationSeconds: 10 }];
+
+    const first = await runBulkGrid({ batchId, projectId, cells });
+    if ("error" in first) throw new Error(first.error);
+    expect(first.cells[0]).toMatchObject({ status: "queued", credits: VID10 });
+    await workerSettle(ownerId, first.cells[0].jobId!); // DONE
+
+    // Replay the SAME cell: the precheck's full-field compare (incl. videoOptions built via the
+    // shared cellVideoOptions mapping) must MATCH the row the real startGen persisted — reuse,
+    // never a false-positive "different content" refusal, zero new reserve.
+    const second = await runBulkGrid({ batchId, projectId, cells });
+    if ("error" in second) throw new Error(second.error);
+    expect(second.cells[0]).toMatchObject({ status: "reused", jobId: first.cells[0].jobId, credits: 0 });
+    expect(second.totalCredits).toBe(0);
+    const acct = await account(ownerId);
+    expect(acct.reserved).toBe(0);
+    expect(acct.balance).toBe(1000 - VID10); // charged once, never twice
+  });
+});

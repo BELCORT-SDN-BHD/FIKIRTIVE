@@ -9,8 +9,11 @@
  *   collect (real approval-tools) → finalizeOttoRun mints a hash-bound APPROVAL_CARD (ref=batchId,
  *   contentHash over the EXACT parked mode/batchId/name/base/variants/cells) → ottoApprove verifies
  *   the hash, CAS-consumes the card BEFORE the resume, approves the parked item, resumes metered —
- *   and the resume context's runFactoryBatch port reaches the REAL owner-scoped factory action
- *   (runVariantBatch → orchestrateBatch → the mocked startGen port; ZERO real spend).
+ *   and the resume (`run` mock simulating the SDK's resume semantics) invokes the REAL parked
+ *   runFactoryBatch tool (zod parse + the skill's execute) against the resume context, reaching the
+ *   REAL owner-scoped factory action in ONE CONTINUOUS chain: approve → resume → skill execute →
+ *   ctx.runFactoryBatch port → runVariantBatch → orchestrateBatch → per-cell mocked startGen
+ *   (ZERO real spend).
  * Plus the anti-flip negative (cells/variants swapped after mint ⇒ hash mismatch ⇒ hard refuse, no
  * consume, no approve, no run) and the same-batchId re-park dedup semantics (same args ⇒ same hash
  * ⇒ same card; different content ⇒ two cards, each approving exactly ITS OWN parked call).
@@ -151,7 +154,14 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 const { ottoApprove, finalizeOttoRun } = await import("@/lib/otto-actions");
 const { computeFactoryBatchApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
-const { approvalRefOf, APPROVAL_TOOL_NAMES } = await import("@fikirtive/otto");
+const { approvalRefOf, APPROVAL_TOOL_NAMES, allSkills } = await import("@fikirtive/otto");
+const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
+
+// The REAL registered skill — its `.tool` is the @openai/agents FunctionTool whose invoke(runContext,
+// argsJsonString) does the SDK's own zod parse then runs the skill's execute. Invoking it from the
+// `run` mock reproduces exactly what the SDK runner does when resuming an approved parked call.
+const factorySkillTool = (allSkills as { name: string; tool: { invoke(rc: unknown, input: string): Promise<unknown> } }[])
+  .find((s) => s.name === "runFactoryBatch")!.tool;
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 const OWNER_ID = "owner_factory";
@@ -302,7 +312,13 @@ describe("runFactoryBatch approval — collect + mint the hash-bound APPROVAL_CA
 
 // ── Approve + anti-flip (ottoApprove) ───────────────────────────────────────────
 describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, approves, resumes to the factory port", () => {
+  /** What the resume run actually returned per approved parked call (captured by the run mock). */
+  let resumedBatchResults: unknown[] = [];
+  let capturedResumeCtx: { projectId: string; approvalConsent?: unknown } | null = null;
+
   function setupFactoryApprove(interruptionItems?: unknown[], payloadOverrides: Record<string, unknown> = {}) {
+    resumedBatchResults = [];
+    capturedResumeCtx = null;
     mockChatThreadFindFirst.mockResolvedValue({ id: APPROVE_THREAD_ID, projectId: PROJECT_ID, ottoState: '{"paused":"state"}' });
     mockRunStateFromString.mockResolvedValue(new MockRunState());
     mockGetInterruptions.mockReturnValue(interruptionItems ?? [makeFactoryApprovalItem(FACTORY_ARGS)]);
@@ -313,12 +329,29 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
           : { seq: 5 },
       ),
     );
-    mockRun.mockResolvedValue(makeMockResult({ finalOutput: "Queued your batch." }));
+    mockStartGen.mockImplementation(async (req: unknown) => ({
+      id: `job-${(req as { idempotencyKey: string }).idempotencyKey}`,
+    }));
+    // SDK-resume semantics (NODE-280-R2 ⑥ continuous chain): after ottoApprove calls
+    // state.approve(item), the real runner would execute the approved parked tool call — its
+    // ORIGINAL arguments string — against the run context. Reproduce that by invoking the REAL
+    // runFactoryBatch FunctionTool (zod parse + skill execute → ctx.runFactoryBatch port → real
+    // runVariantBatch → orchestrateBatch → mocked startGen), so approve→resume→execute→spend port
+    // is ONE unbroken chain instead of a stitched-together assertion.
+    mockRun.mockImplementation(async (_agent: unknown, _state: unknown, opts: { context: { projectId: string; approvalConsent?: unknown } }) => {
+      capturedResumeCtx = opts.context;
+      for (const call of mockApprove.mock.calls) {
+        const item = call[0] as { name?: string; arguments?: string };
+        if (item?.name === "runFactoryBatch" && item.arguments) {
+          resumedBatchResults.push(await factorySkillTool.invoke({ context: opts.context }, item.arguments));
+        }
+      }
+      return makeMockResult({ finalOutput: "Queued your batch." });
+    });
   }
 
-  it("happy path: hash verifies → CAS-consume BEFORE the resume → approve the parked runFactoryBatch item → resume metered → the resume ctx port reaches the REAL factory action (mocked startGen, zero real spend)", async () => {
+  it("happy path — ONE CONTINUOUS chain: hash verifies → CAS-consume BEFORE the resume → approve the parked item → resume executes the REAL parked skill → ctx port → REAL runVariantBatch → orchestrateBatch → per-cell mocked startGen (zero real spend)", async () => {
     setupFactoryApprove();
-    mockStartGen.mockImplementation(async (req: { idempotencyKey: string }) => ({ id: `job-for-${req.idempotencyKey}` }));
 
     const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: FACTORY_CARD_ID });
 
@@ -337,39 +370,37 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
     );
     // The PARKED runFactoryBatch item was approved (not a generate item).
     expect(mockApprove).toHaveBeenCalledWith(expect.objectContaining({ name: "runFactoryBatch" }), undefined);
-    // Resume ran inside withLlmBudget (metered) exactly once; consume strictly precedes it.
+    // Resume ran inside withLlmBudget (metered) exactly once.
     expect(mockWithLlmBudget).toHaveBeenCalledTimes(1);
-    expect(mockRun).toHaveBeenCalled();
-    expect(mockChatMessageUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mockRun.mock.invocationCallOrder[0]!);
-    // No scheduled-post TOCTOU snapshot for a factory-batch approval (consent = immutable parked args).
-    const resumeCtx = (mockRun.mock.calls[0]![2] as {
-      context: {
-        projectId: string;
-        approvalConsent?: unknown;
-        runFactoryBatch?: { variant(i: Record<string, unknown>): Promise<unknown> };
-      };
-    }).context;
-    expect(resumeCtx.approvalConsent).toBeUndefined();
+    expect(mockRun).toHaveBeenCalledTimes(1);
 
-    // END-TO-END port reach (Mock 层，零真花): the resume context's runFactoryBatch port is the REAL
-    // owner-scoped runVariantBatch → orchestrateBatch → per-cell startGen (mocked). The skill's
-    // execute→port routing itself is proven in packages/otto/src/skills/run-factory-batch.test.ts.
-    expect(resumeCtx.runFactoryBatch).toBeDefined();
-    const batchRes = await resumeCtx.runFactoryBatch!.variant({
+    // THE CONTINUOUS CHAIN LANDED: the resume itself (inside ottoApprove) executed the REAL parked
+    // skill via FunctionTool.invoke → executeRunFactoryBatch → ctx.runFactoryBatch.variant → REAL
+    // runVariantBatch → orchestrateBatch → mocked startGen. No post-hoc manual port drive.
+    expect(resumedBatchResults).toHaveLength(1);
+    expect(resumedBatchResults[0]).toMatchObject({
       batchId: BATCH_ID,
-      projectId: resumeCtx.projectId,
-      name: FACTORY_ARGS.name,
-      base: FACTORY_ARGS.base,
-      variants: FACTORY_ARGS.variants,
+      dispatched: 2,
+      reused: 0,
+      failed: 0,
+      totalCredits: 2 * INTERNAL_PER_DISPLAY, // per-cell quote unchanged: 1 image cell = 1 displayed credit
     });
-    expect(batchRes).toMatchObject({ batchId: BATCH_ID, dispatched: 2, reused: 0, failed: 0 });
-    expect(mockStartGen).toHaveBeenCalledTimes(2); // one startGen per variant cell — the ONLY spend authority
+    const chainCells = (resumedBatchResults[0] as { cells: { status: string; credits: number }[] }).cells;
+    expect(chainCells.map((c) => c.status)).toEqual(["queued", "queued"]);
+    expect(chainCells.every((c) => c.credits === INTERNAL_PER_DISPLAY)).toBe(true);
+    // Per-cell spend went through the ONLY spend authority with the derived batch keys.
+    expect(mockStartGen).toHaveBeenCalledTimes(2);
     expect(mockStartGen).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: `batch:${BATCH_ID}:cell:0` }),
     );
     expect(mockStartGen).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: `batch:${BATCH_ID}:cell:1` }),
     );
+    // Strict order along the chain: CAS consume → resume(run) → startGen (consume-then-act).
+    expect(mockChatMessageUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mockRun.mock.invocationCallOrder[0]!);
+    expect(mockRun.mock.invocationCallOrder[0]!).toBeLessThan(mockStartGen.mock.invocationCallOrder[0]!);
+    // No scheduled-post TOCTOU snapshot for a factory-batch approval (consent = immutable parked args).
+    expect(capturedResumeCtx!.approvalConsent).toBeUndefined();
   });
 
   it("anti-flip: the variants were swapped (same batchId) after mint → the card no longer matches any parked call → hard refuse, no consume, no approve, no run", async () => {
@@ -385,7 +416,8 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
     expect(mockChatMessageUpdateMany).not.toHaveBeenCalled(); // NOT consumed — the ask stays re-requestable
     expect(mockApprove).not.toHaveBeenCalled();
     expect(mockRun).not.toHaveBeenCalled();
-    expect(mockStartGen).not.toHaveBeenCalled(); // zero spend-path reach
+    expect(mockStartGen).not.toHaveBeenCalled(); // the continuous chain never starts
+    expect(resumedBatchResults).toHaveLength(0);
   });
 
   it("a hashless card (no bindable consent at mint) is fail-closed unapprovable", async () => {

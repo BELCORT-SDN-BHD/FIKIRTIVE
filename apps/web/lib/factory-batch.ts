@@ -23,6 +23,13 @@
  *     GENERATING/DONE) is REUSED at zero new charge; a terminal-FAILED job is legitimately
  *     re-dispatched (its refund already happened on the original refId); a reused-batchId
  *     whose stored request no longer matches this cell FAILS CLOSED (no reuse, no spend).
+ *     PRECISE replay semantics: SEQUENTIAL replays are dedup-safe end to end. CONCURRENT
+ *     replays of the SAME batch are NOT fully safe — in a narrow window a FAILED cell can be
+ *     charged twice (replay A re-dispatches it and that fresh job reaches DONE before replay
+ *     B's precheck+insert; the ACTIVE-only unique index does not block the second insert).
+ *     The structural fix is an all-status partial-unique index for `batch:%` keys (cowork
+ *     20260617 precedent) — a migration, pending founder adjudication; until then the
+ *     pre-dispatch re-read below only NARROWS that window (登记于 B3-REPORT §⑫ 待裁).
  *     batchId MUST be caller-stable AND unique per batch — the caller owns that contract,
  *     exactly like `cowork:<cardId>` for the generate skill.
  *   - Quote = sum of per-cell `pricedGenCredits(...)` computed from the SAME inputs
@@ -132,6 +139,26 @@ export interface BatchResult {
   failed: number;
 }
 
+/** The five concrete video controls startGen resolves (videoDefaults + the cell's overrides) and
+ *  persists on GenJob.videoOptions — the SINGLE cell-side copy of that mapping (gen-actions.ts
+ *  startGen), shared by the price quote (subset) and the replay precheck's full-field compare so
+ *  there is never a second, drifting mapping. null for an image cell (startGen persists no
+ *  videoOptions). Callers must have passed genCellError first — the model is guaranteed to be a
+ *  real video model here, so videoDefaults never reads undefined. PURE. */
+function cellVideoOptions(
+  cell: GenCell,
+): { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } | null {
+  if (cell.kind !== "video") return null;
+  const d = videoDefaults((cell.model ?? "seedream") as GenVideoModel);
+  return {
+    seconds: cell.durationSeconds ?? d.seconds,
+    resolution: cell.resolution ?? d.resolution,
+    aspectRatio: cell.aspectRatio ?? d.aspectRatio,
+    fps: cell.fps ?? d.fps,
+    audio: cell.audio ?? d.audio,
+  };
+}
+
 /** Build the GenSpendInput a gen cell will hand startGen — the SAME shape
  *  pricedGenCredits + startGen reserve on, so quote == reserve. PURE. */
 function cellSpendInput(cell: GenCell): GenSpendInput {
@@ -145,23 +172,16 @@ function cellSpendInput(cell: GenCell): GenSpendInput {
       videoOptions: null,
     };
   }
-  // VIDEO: resolve the price-relevant controls via videoDefaults EXACTLY as startGen does
-  // (gen-actions.ts) BEFORE pricing, so the GenSpendInput handed to pricedGenCredits is identical
-  // -> quote == reserve (NODE-280 item 4). The model is guaranteed to be a real video model here
-  // because quoteCell rejects an invalid/absent video model (genCellError) before ever calling
-  // this -> videoDefaults never reads undefined (that was the crash). aspectRatio/fps don't price.
-  const model = (cell.model ?? "seedream") as GenVideoModel;
-  const d = videoDefaults(model);
+  // VIDEO: resolve the price-relevant controls via the shared cellVideoOptions mapping (the same
+  // videoDefaults resolution startGen applies) BEFORE pricing, so the GenSpendInput handed to
+  // pricedGenCredits is identical -> quote == reserve (NODE-280 item 4). aspectRatio/fps don't
+  // price but ride along harmlessly (pricedGenCredits reads only seconds/resolution/audio).
   return {
     kind: "VIDEO",
-    model,
+    model: cell.model ?? "seedream",
     count: 1, // video is always 1 clip per job (mirrors startGen)
     referenceVideoGenerationId: cell.referenceVideoGenerationId ?? null,
-    videoOptions: {
-      seconds: cell.durationSeconds ?? d.seconds,
-      resolution: cell.resolution ?? d.resolution,
-      audio: cell.audio ?? d.audio,
-    },
+    videoOptions: cellVideoOptions(cell),
   };
 }
 
@@ -278,12 +298,28 @@ export async function orchestrateBatch(
     // Any-status replay precheck (owner-scoped READ; the orchestration layer may read, never
     // mutate credits). startGen's own dedup is active-only, so without this a DONE/FAILED cell's
     // freed key would let a same-batchId replay re-insert + re-charge. Decide reuse vs re-dispatch.
-    const key = `batch:${args.batchId}:cell:${i}`;
-    const prior = await deps.prisma.genJob.findFirst({
-      where: { ownerId: args.ownerId, projectId: args.projectId, idempotencyKey: key },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, status: true, prompt: true, model: true, kind: true, count: true },
-    });
+    // The select covers EVERY content field startGen persists so the reuse compare is full-field.
+    const findPriorCellJob = () =>
+      deps.prisma.genJob.findFirst({
+        where: { ownerId: args.ownerId, projectId: args.projectId, idempotencyKey: `batch:${args.batchId}:cell:${i}` },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true, status: true, prompt: true, model: true, kind: true, count: true,
+          entityIds: true, variantSel: true, sourceGenerationId: true, tailGenerationId: true,
+          referenceVideoGenerationId: true, shotId: true, videoOptions: true,
+        },
+      });
+    let prior = await findPriorCellJob();
+    if (!prior || isFailedStatus(prior.status)) {
+      // Defensive NARROWING of the concurrent-replay window — NOT a structural fix (that is the
+      // all-status partial-unique index for `batch:%` keys, cowork 20260617 precedent, which needs
+      // a migration and is pending founder adjudication; B3-REPORT §⑫ 待裁): between the precheck
+      // above and startGen's insert, a CONCURRENT replay of this batch may have re-dispatched this
+      // cell and its fresh job may even reach DONE — startGen's ACTIVE-only dedup would then not
+      // block a second insert (double charge). Re-reading immediately before dispatch shrinks that
+      // window to this read→insert gap; it CANNOT close it.
+      prior = await findPriorCellJob();
+    }
     if (prior && !isFailedStatus(prior.status)) {
       // Fail closed if the batchId was reused for DIFFERENT content: reusing the old job would
       // silently deliver stale content (and misreport this cell's price). No reuse, no spend.
@@ -336,17 +372,79 @@ function isFailedStatus(status: string): boolean {
   return status === "FAILED";
 }
 
-/** Does an existing reuse-candidate job's stored request still match this cell? Compares the
- *  MATERIAL fields startGen persists (prompt/model/kind/count). A mismatch means the caller
- *  reused a batchId for different content — fail closed rather than silently reuse the old job. */
+/** Order-normalized id-array compare (entityIds are persisted verbatim; order isn't material). */
+function sameIdSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((v, i) => v === sb[i]);
+}
+
+/** Canonical compare of a stored variantSel Json against the cell's expected record (key-sorted;
+ *  null when absent). startGen drops variantSel for video and persists it verbatim for image. */
+function sameVariantSel(prior: unknown, expected: Record<string, string> | null): boolean {
+  const p = prior !== null && typeof prior === "object" && !Array.isArray(prior) ? (prior as Record<string, unknown>) : null;
+  if (p === null || expected === null) return p === null && expected === null;
+  const pk = Object.keys(p).sort();
+  const ek = Object.keys(expected).sort();
+  if (pk.length !== ek.length || !pk.every((k, i) => k === ek[i])) return false;
+  return pk.every((k) => p[k] === expected[k]);
+}
+
+/** Compare a stored videoOptions Json against the cell's expected resolved form (the SAME
+ *  videoDefaults+overrides mapping startGen persisted — cellVideoOptions; null for image). */
+function sameVideoOptions(
+  prior: unknown,
+  expected: { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } | null,
+): boolean {
+  const p = prior !== null && typeof prior === "object" && !Array.isArray(prior) ? (prior as Record<string, unknown>) : null;
+  if (p === null || expected === null) return p === null && expected === null;
+  return (
+    p.seconds === expected.seconds &&
+    p.resolution === expected.resolution &&
+    p.aspectRatio === expected.aspectRatio &&
+    p.fps === expected.fps &&
+    p.audio === expected.audio
+  );
+}
+
+/** Does an existing reuse-candidate job's stored request still match this cell? FULL-FIELD
+ *  (NODE-280-R2 ①a): compares EVERY content field startGen persists — prompt/model/kind/count,
+ *  the three generation refs + shotId (persisted `?? null`), entityIds (order-normalized),
+ *  variantSel (canonical; startGen drops it for video), and videoOptions (compared against the
+ *  cell's expected form built by the SAME cellVideoOptions mapping startGen resolves — never a
+ *  second mapping). ANY mismatch means the caller reused a batchId for different content — fail
+ *  closed rather than silently reuse the old job. Callers must have passed genCellError first. */
 function priorMatchesCell(
-  prior: { prompt: string; model: string; kind: string; count: number },
+  prior: {
+    prompt: string;
+    model: string;
+    kind: string;
+    count: number;
+    entityIds: string[];
+    variantSel: unknown;
+    sourceGenerationId: string | null;
+    tailGenerationId: string | null;
+    referenceVideoGenerationId: string | null;
+    shotId: string | null;
+    videoOptions: unknown;
+  },
   cell: GenCell,
 ): boolean {
   const kind = cell.kind === "video" ? "VIDEO" : "IMAGE";
   const model = cell.model ?? "seedream";
   const count = cell.kind === "video" ? 1 : cell.count ?? 1;
-  return prior.prompt === cell.prompt && prior.model === model && prior.kind === kind && prior.count === count;
+  if (prior.prompt !== cell.prompt || prior.model !== model || prior.kind !== kind || prior.count !== count) return false;
+  if ((prior.sourceGenerationId ?? null) !== (cell.sourceGenerationId ?? null)) return false;
+  if ((prior.tailGenerationId ?? null) !== (cell.tailGenerationId ?? null)) return false;
+  if ((prior.referenceVideoGenerationId ?? null) !== (cell.referenceVideoGenerationId ?? null)) return false;
+  if ((prior.shotId ?? null) !== (cell.shotId ?? null)) return false;
+  if (!sameIdSet(prior.entityIds ?? [], cell.entityIds ?? [])) return false;
+  // startGen: effectiveVariantSel = kind === "video" ? undefined : variantSel (persisted or null).
+  const expectedSel = cell.kind === "video" ? null : cell.variantSel ?? null;
+  if (!sameVariantSel(prior.variantSel ?? null, expectedSel)) return false;
+  if (!sameVideoOptions(prior.videoOptions ?? null, cellVideoOptions(cell))) return false;
+  return true;
 }
 
 async function resolveOrCreateBatch(

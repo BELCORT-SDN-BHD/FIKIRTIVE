@@ -12,7 +12,14 @@ import {
   type OrchestrateDeps,
 } from "../factory-batch";
 
-type JobRow = { id: string; ownerId: string; batchId: string | null; status: string; idempotencyKey?: string; prompt?: string; model?: string; kind?: string; count?: number };
+type JobRow = {
+  id: string; ownerId: string; batchId: string | null; status: string; idempotencyKey?: string;
+  prompt?: string; model?: string; kind?: string; count?: number;
+  entityIds?: string[]; variantSel?: Record<string, string> | null;
+  sourceGenerationId?: string | null; tailGenerationId?: string | null;
+  referenceVideoGenerationId?: string | null; shotId?: string | null;
+  videoOptions?: Record<string, unknown> | null;
+};
 
 // A tiny in-memory prisma double for the two tables orchestrateBatch touches. It moves
 // NO money — the whole point is that orchestration only writes grouping metadata.
@@ -40,7 +47,14 @@ function fakePrisma() {
           (j) => j.ownerId === where.ownerId && where.idempotencyKey != null && j.idempotencyKey === where.idempotencyKey,
         );
         return match
-          ? { id: match.id, status: match.status, prompt: match.prompt ?? "", model: match.model ?? "seedream", kind: match.kind ?? "IMAGE", count: match.count ?? 1 }
+          ? {
+              id: match.id, status: match.status, prompt: match.prompt ?? "", model: match.model ?? "seedream",
+              kind: match.kind ?? "IMAGE", count: match.count ?? 1,
+              entityIds: match.entityIds ?? [], variantSel: match.variantSel ?? null,
+              sourceGenerationId: match.sourceGenerationId ?? null, tailGenerationId: match.tailGenerationId ?? null,
+              referenceVideoGenerationId: match.referenceVideoGenerationId ?? null, shotId: match.shotId ?? null,
+              videoOptions: match.videoOptions ?? null,
+            }
           : null;
       }),
       updateMany: vi.fn(async ({ where, data }: { where: { id: string; ownerId: string }; data: { batchId: string } }) => {
@@ -233,6 +247,73 @@ describe("orchestrateBatch — video quote never crashes the batch (NODE-280 ite
     expect(res.dispatched).toBe(2);
     expect(res.failed).toBe(1);
     expect(res.totalCredits).toBe(2 * INTERNAL_PER_DISPLAY); // only the 2 image cells
+  });
+});
+
+describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a)", () => {
+  // seedance-2-fast defaults (videoDefaults): 5s / 720p / 16:9 / fps 0 / audio on — the SAME
+  // resolved form startGen persists on GenJob.videoOptions.
+  const SEEDANCE_DEFAULT_VO = { seconds: 5, resolution: "720p", aspectRatio: "16:9", fps: 0, audio: true };
+
+  it("a changed referenceVideoGenerationId fails closed (no reuse, no dispatch)", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-rv", {
+      id: "prior-rv", ownerId: OWNER, batchId: "M1", status: "QUEUED", idempotencyKey: "batch:M1:cell:0",
+      prompt: "clip", model: "seedance-2-fast", kind: "VIDEO", count: 1,
+      referenceVideoGenerationId: "gen_A", videoOptions: SEEDANCE_DEFAULT_VO,
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M1", cells: [genCell("clip", { kind: "video", model: "seedance-2-fast", referenceVideoGenerationId: "gen_B" })] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect(res.cells[0].error).toMatch(/different content/i);
+    expect(calls).toHaveLength(0); // never dispatched
+  });
+
+  it("a changed durationSeconds fails closed — videoOptions compared via the SAME startGen mapping (videoDefaults+overrides)", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-vo", {
+      id: "prior-vo", ownerId: OWNER, batchId: "M2", status: "DONE", idempotencyKey: "batch:M2:cell:0",
+      prompt: "spin", model: "seedance-2-fast", kind: "VIDEO", count: 1,
+      videoOptions: SEEDANCE_DEFAULT_VO, // stored at the 5s default
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M2", cells: [genCell("spin", { kind: "video", model: "seedance-2-fast", durationSeconds: 10 })] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 }); // 10s ≠ stored 5s
+    expect(res.cells[0].error).toMatch(/different content/i);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("changed entityIds fail closed; REORDERED entityIds still reuse (order-normalized compare)", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-e", {
+      id: "prior-e", ownerId: OWNER, batchId: "M3", status: "QUEUED", idempotencyKey: "batch:M3:cell:0",
+      prompt: "a", model: "seedream", kind: "IMAGE", count: 1, entityIds: ["e1", "e2"],
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    // Reordered ids = the same content → reuse (zero dispatch, zero new charge).
+    const reordered = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M3", cells: [genCell("a", { entityIds: ["e2", "e1"] })] },
+    );
+    if ("error" in reordered) throw new Error(reordered.error);
+    expect(reordered.cells[0]).toMatchObject({ status: "reused", jobId: "prior-e", credits: 0 });
+    // A different id SET = different content → fail closed.
+    const changed = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M3", cells: [genCell("a", { entityIds: ["e1", "e2", "e3"] })] },
+    );
+    if ("error" in changed) throw new Error(changed.error);
+    expect(changed.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect(changed.cells[0].error).toMatch(/different content/i);
+    expect(calls).toHaveLength(0); // neither run dispatched
   });
 });
 
