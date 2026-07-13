@@ -380,6 +380,43 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
+  // ===================================================================================
+  // 微修轮 v5 · NODE-282-R4①(数据流完备清扫的点名实例):ownedIds 不得在锁前派生。
+  // 形态:s0 引用 e0+e1;prepare 启动时 owned 集只有 e0,在等锁期间变为 {e0,e1}(如另一
+  // session 完成实体创建)。锁后派生(v5)→ 铸卡收到 ["e0","e1"](buildProposeCard 第三实参
+  // =写路径入参);锁前派生(v4)→ 铸卡吃到过期的 ["e0"]。
+  // ===================================================================================
+  it("R4① 回归:等锁期间 owned-entity 集变化 → 锁后按新集派生 ownedIds 进铸卡(不吃锁前快照)", async () => {
+    const p = payload3();
+    p.shots[0].entityIds = ["e0", "e1"]; // s0 references two entities
+    p.shots[2].firstFrameGenerationId = "gen2"; // isolate: only s0 mints
+    wireLoads(card(p));
+
+    // The owned-entity set CHANGES while prepare waits for the lock.
+    let ownedRows = [{ id: "e0" }]; // at call time: only e0 owned
+    mockEntityFindMany.mockImplementation(async () => ownedRows);
+
+    // An in-flight card writer holds the lock (manual mutex entry, same map the tx mock uses).
+    let releaseLock!: () => void;
+    cardLocks.set("card:card-1", new Promise<void>((r) => (releaseLock = r)));
+
+    const prepP = prepareStoryboardFirstFrames({ cardId: "card-1" });
+    await new Promise((r) => setTimeout(r, 0)); // let prepare park on the lock
+
+    ownedRows = [{ id: "e0" }, { id: "e1" }]; // e1 becomes owned DURING the lock wait
+    releaseLock();
+
+    const res = await prepP;
+    if (!("children" in res)) throw new Error("expected children");
+
+    // ownedIds was derived AFTER the lock → the mint (buildProposeCard 3rd arg = the
+    // owned-entity write-path input) received the NEW set, not the pre-lock snapshot.
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // s0 minted once
+    const ownedArg = mockBuildProposeCard.mock.calls[0][2];
+    expect(ownedArg).toEqual(["e0", "e1"]);
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     wireLoads(card(payload3()));
     await prepareStoryboardFirstFrames({ cardId: "card-1" });

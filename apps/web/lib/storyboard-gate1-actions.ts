@@ -18,6 +18,12 @@
  * sync)在事务内第一步先取卡级 pg_advisory_xact_lock(cowork-actions.ts:180 与
  * gen-actions.ts:118 的同款家法),同一张父卡的写者严格串行 —— 两个并发 prepare 不可能
  * 都看到空指针而各铸一张可扣费子卡;后到者锁后重读到新指针,走复用分支,零双铸。
+ *
+ * 数据流规则(微修轮 v5, NODE-282-R4①):锁前计算的任何值不得流入写路径 —— 模型配置
+ * (resolveDisabledModels)、owned-entity 集、threadId、OttoContext 一律在取锁之后按锁内
+ * 重读的 fresh payload 重新派生(完备对照表见 PR #282 v5 说明)。锁前读仅剩三类:身份
+ * (session ownerId / 不可变主键 card.id=锁主体,行活性由锁内 fresh guard 复核)、zod 入参、
+ * 只读预检(其拒绝路径零写)。
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
@@ -288,14 +294,6 @@ export async function prepareStoryboardFirstFrames(
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
 
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-
-  // Source disabledModels + owned entities ONCE (same sourcing as buildOttoContext).
-  const disabledModels = Array.from(await resolveDisabledModels());
-  const allEntityIds = [...new Set(cur.shots.flatMap((s) => s.entityIds ?? []))];
-  const ownedIds = await ownedEntityIdsFor(ownerId, allEntityIds);
-  const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
-
   const children: ChildFrameCard[] = [];
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
@@ -304,7 +302,7 @@ export async function prepareStoryboardFirstFrames(
     // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
-      select: { payload: true },
+      select: { payload: true, threadId: true },
     });
     // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
     // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
@@ -314,6 +312,17 @@ export async function prepareStoryboardFirstFrames(
       return;
     }
     const payload = fresh.payload as unknown as StoryboardCardPayload;
+
+    // R4① dataflow rule: NOTHING computed before the lock may flow into a write. Model
+    // config, the owned-entity set (R4 的点名实例), and the thread id are (re)derived HERE —
+    // after the lock, from the FRESH payload — so a set that changed while we waited for
+    // the lock (an entity created/deleted, an admin model toggle) is picked up, never a
+    // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
+    const disabledModels = Array.from(await resolveDisabledModels());
+    const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
+    const ownedIds = await ownedEntityIdsFor(ownerId, allEntityIds);
+    const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
+    const parent = { id: card.id, threadId: fresh.threadId };
 
     // Build the next shots array, mutating ONLY firstFrameCardId on target shots.
     const nextShots: Shot[] = [];
@@ -354,7 +363,7 @@ export async function prepareStoryboardFirstFrames(
 
       // Mint a fresh child for this shot.
       const shotOwnedIds = ownedIds.filter((id) => (shot.entityIds ?? []).includes(id));
-      const child = await mintChild(tx, card, shot, ownerId, ctx, shotOwnedIds);
+      const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwnedIds);
       children.push(child);
       nextShots.push({ ...shot, firstFrameCardId: child.childCardId });
       changed = true;
@@ -397,13 +406,12 @@ export async function regenShotFirstFrameCard(
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
 
+  // Read-only pre-check (rejection path writes nothing); the mint path re-finds and
+  // re-validates the target on the FRESH payload inside the lock.
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
   if (!cur.shots.some((s) => s.shotId === parsed.data.shotId)) {
     return { error: "That shot no longer exists." };
   }
-
-  const disabledModels = Array.from(await resolveDisabledModels());
-  const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
 
   let child: ChildFrameCard | null = null;
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
@@ -412,7 +420,7 @@ export async function regenShotFirstFrameCard(
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
-      select: { payload: true },
+      select: { payload: true, threadId: true },
     });
     // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
     // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
@@ -422,6 +430,13 @@ export async function regenShotFirstFrameCard(
       return;
     }
     const payload = fresh.payload as unknown as StoryboardCardPayload;
+
+    // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
+    // pre-lock flows into a write); the owned-entity read below already runs in-lock on the
+    // fresh target's entityIds.
+    const disabledModels = Array.from(await resolveDisabledModels());
+    const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
+    const parent = { id: card.id, threadId: fresh.threadId };
 
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
     if (!target) return; // vanished mid-flight → no writes; caller returns error below.
@@ -462,7 +477,7 @@ export async function regenShotFirstFrameCard(
     }
 
     const ownedAll = await ownedEntityIdsFor(ownerId, target.entityIds ?? []);
-    child = await mintChild(tx, card, target, ownerId, ctx, ownedAll);
+    child = await mintChild(tx, parent, target, ownerId, ctx, ownedAll);
     const newChildId = child.childCardId;
 
     const nextShots = payload.shots.map((s) => {
@@ -718,10 +733,6 @@ export async function prepareStoryboardVideos(
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
 
-  // Source disabledModels ONCE (same sourcing as buildOttoContext). Video children are
-  // i2v (no entity refs), so no owned-entity lookup is needed.
-  const disabledModels = Array.from(await resolveDisabledModels());
-
   const children: ChildFrameCard[] = [];
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
@@ -730,7 +741,7 @@ export async function prepareStoryboardVideos(
     // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
-      select: { payload: true },
+      select: { payload: true, threadId: true },
     });
     // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
     // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
@@ -740,6 +751,12 @@ export async function prepareStoryboardVideos(
       return;
     }
     const payload = fresh.payload as unknown as StoryboardCardPayload;
+
+    // R4① dataflow rule: model config derived AFTER the lock (nothing computed pre-lock
+    // flows into a write). Video children are i2v (no entity refs) — no owned-entity lookup;
+    // the per-shot ctx below is built from the FRESH thread id + this in-lock config.
+    const disabledModels = Array.from(await resolveDisabledModels());
+    const parent = { id: card.id, threadId: fresh.threadId };
 
     // Build the next shots array, mutating ONLY videoCardId on target shots.
     const nextShots: Shot[] = [];
@@ -753,7 +770,7 @@ export async function prepareStoryboardVideos(
       }
 
       // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
-      const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
+      const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
       ctx.sourceGenerationId = shot.firstFrameGenerationId;
 
       // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
@@ -812,7 +829,7 @@ export async function prepareStoryboardVideos(
       }
 
       // Mint a fresh video child for this shot (no child, or a real mismatch).
-      const child = await mintVideoChild(tx, card, shot, ownerId, ctx);
+      const child = await mintVideoChild(tx, parent, shot, ownerId, ctx);
       children.push(child);
       // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video (if any)
       // stays valid until sync overwrites the genId when the new clip is DONE.
@@ -863,6 +880,8 @@ export async function regenShotVideoCard(
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
 
+  // Read-only pre-checks (rejection paths write nothing); the mint path re-finds and
+  // re-validates the target — incl. its frame — on the FRESH payload inside the lock.
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
   const target0 = cur.shots.find((s) => s.shotId === parsed.data.shotId);
   if (!target0) return { error: "That shot no longer exists." };
@@ -871,8 +890,6 @@ export async function regenShotVideoCard(
     return { error: "This shot needs a first frame before you can make a video." };
   }
 
-  const disabledModels = Array.from(await resolveDisabledModels());
-
   let child: ChildFrameCard | null = null;
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
@@ -880,7 +897,7 @@ export async function regenShotVideoCard(
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
     const fresh = await tx.chatMessage.findFirst({
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
-      select: { payload: true },
+      select: { payload: true, threadId: true },
     });
     // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
     // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
@@ -891,12 +908,17 @@ export async function regenShotVideoCard(
     }
     const payload = fresh.payload as unknown as StoryboardCardPayload;
 
+    // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
+    // pre-lock flows into a write).
+    const disabledModels = Array.from(await resolveDisabledModels());
+    const parent = { id: card.id, threadId: fresh.threadId };
+
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
     // Vanished OR lost its frame mid-flight → no writes; caller returns error below.
     if (!target || !target.firstFrameGenerationId) return;
 
     // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
-    const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
+    const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
     ctx.sourceGenerationId = target.firstFrameGenerationId;
 
     // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
@@ -944,7 +966,7 @@ export async function regenShotVideoCard(
       // missing / mismatch → fall through to mint.
     }
 
-    child = await mintVideoChild(tx, card, target, ownerId, ctx);
+    child = await mintVideoChild(tx, parent, target, ownerId, ctx);
     const newChildId = child.childCardId;
 
     const nextShots = payload.shots.map((s) => {
