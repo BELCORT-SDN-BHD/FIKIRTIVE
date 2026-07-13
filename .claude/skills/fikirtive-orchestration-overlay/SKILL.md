@@ -36,7 +36,7 @@ Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 l
 
 1. 完整读取根目录 `AGENTS.md` 及其规定的法律与产品文件。
 2. 完整读取全局 `orchestration` skill 及本次需要的 references，再核对协议版本/hash。
-3. 读取本 overlay 并判定身份。Global control plane 还须读取 `docs/ops/ORCHESTRATOR-STATE.md`、`docs/ops/MODEL-ROUTING-2026-07-11.md` 与 `docs/review/FULL-PRODUCT-REAUDIT-2026-07-11.md`；scoped orchestrator 改读其已通过 machine checker 的 bootstrap、work order、locks 与权威引用。
+3. 读取本 overlay 并判定身份。Global control plane 还须读取 `docs/ops/ORCHESTRATOR-STATE.md` 与 `docs/review/FULL-PRODUCT-REAUDIT-2026-07-11.md`；模型与 effort 只读取当前 global skill 的 `references/MODEL-ROUTING.md`，不得从旧项目路由快照恢复。Scoped orchestrator 改读其已通过 machine checker 的 bootstrap、work order、locks 与权威引用。
 4. 从 git、PR/CI、worktree、进程与部署重新核验本身份需要的可变事实；状态账和旧 transcript 只作证据。
 5. Global control plane 先核对 founder 指定、当前状态账和可能仍活跃的旧 session；无冲突时才登记本 program 的可恢复 control plane。任何接管都须 founder 明确指定，不能由本地 registry 自动裁决。Scoped orchestrator 只核对自己的 fencing claim，绝不登记 global 身份或恢复旧 workflow。
 
@@ -45,7 +45,7 @@ Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 l
 - `docs/BLUEPRINT.md` 不可由 agent 修改；若现实与蓝图冲突，停下并交 founder 修宪。
 - 钱路必须 exactly-once、fail-closed；owner-scoped 查询必须携带 `ownerId`。
 - 永不直接 push `main`，永不 auto-merge/merge watcher，永不自动部署、花真钱或写真实平台。
-- PR #228 改写治理与 merge law，因此只能由 founder 合并。它落入 `main` 后，普通 PR 的 delegated merge 才按 `AGENTS.md` 生效；作者或实质编辑者不得执行自己的 merge。
+- PR #228 已由 founder 合入 `main`；普通 PR 的 delegated merge 现按 `AGENTS.md` 生效，作者或实质编辑者仍不得执行自己的 merge。
 - Founder-only 类别、CI 不可用处置与分离职责，以 `AGENTS.md` 为准；全局 skill 只能收紧，不能放宽。
 - 顾问证据包必须移除 `.env`、token、private key、凭据值与含密 transcript；默认 tool-less。不得以 hook 锁模型、冒充实际 model provenance 或关闭 provider safeguard。
 - 保护所有未归本工单所有的 dirty worktree；不得 reset、clean、prune、stash-drop、force-remove 或删除。
