@@ -71,6 +71,7 @@ import { validateOwnedGenerationExt } from "./otto-generation-validate";
 import { makeOttoCanvasPort } from "./otto-canvas-port";
 import { makeOttoMediaPort, makeOttoRenderPort, makeOttoMediaImportPort } from "./otto-media-port";
 import { makeOttoProjectsPort } from "./otto-projects-port";
+import { makeOttoRefgenPort } from "./otto-refgen-port";
 import { makeOttoEntitiesPort } from "./otto-entities-port";
 import { makeOttoLibraryPort } from "./otto-library-port";
 import { makeOttoBrandMemoryPort } from "./otto-brand-memory-port";
@@ -360,6 +361,11 @@ export async function buildOttoContext({
     entities: makeOttoEntitiesPort(),
     library: makeOttoLibraryPort(),
     brandMemory: makeOttoBrandMemoryPort(),
+    // Reference-generation port (W-B3-G-P, debt-68/69). generate forwards to the SOLE refgen spend
+    // authority (startRefGen — own requireOwner + refGenRequest gate + server-priced reserve); the
+    // generateReferences skill is cost:"spend" ⇒ needsApproval literal true. deleteVariant is $0 with
+    // an Otto-only fail-closed active-job gate (refuses while a paid job runs). None duplicate spend.
+    refgen: makeOttoRefgenPort(ownerId),
   };
 }
 

@@ -5,10 +5,12 @@
 |---|---|---|---|---|---|
 | approveScheduledPost | free | write | external | ✅ | Approve a DRAFT scheduled post so it can publish to Instagram/Facebook at its sc |
 | cancelScheduledPost | free | write | internal | ❌ | Cancel a scheduled post so it will not publish. $0 and reversible only by re-cre |
+| deleteReferenceVariant | free | write | internal | ❌ | Delete one of an element's reference variants (and its generated reference image |
 | describeRefs | free | write | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
 | editScheduledPost | free | write | internal | ❌ | Edit a DRAFT or queued scheduled post — change its caption, scheduled time (UTC/ |
 | editStoryboard | free | write | internal | ❌ | Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts  |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
+| generateReferences | spend | write | internal | ✅ | Generate reference images for one of the user's saved elements (a character, pro |
 | importMedia | free | write | internal | ❌ | Import an image or video into the project from a public URL ($0 — never generate |
 | ingestProduct | free | read | external | ❌ | Read a product's page from a URL (e.g. a Shopee/Lazada or store link) and get a  |
 | list-meta-pages | free | read | external | ❌ | List the user's connected Facebook Pages so you can pick one when building an ad |

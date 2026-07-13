@@ -423,6 +423,34 @@ export interface OttoContext {
     /** debt-51: soft-delete one brand fact/memory. */
     deleteFact(id: string): Promise<{ ok: true } | { error: string }>;
   };
+  /** Reference-generation port (W-B3-G-P, debt-68/69) — injected by the web caller. Thin closures over
+   *  the SAME owner-gated reference-generation server actions the human element UI uses
+   *  (refgen-actions.startRefGen / deleteVariant). `generate` is the PAID reference-image path: it
+   *  goes THROUGH startRefGen — the sole spend authority — which re-derives the owner (requireOwner),
+   *  re-validates via the typed refGenRequest gate, derives the price server-side (pricedRefgenCredits,
+   *  the model can't set it), guards per-entity double-spend, and reserves atomically with the job
+   *  insert. The generateReferences skill is cost:"spend" ⇒ needsApproval is a machine-derived LITERAL
+   *  true (anti-flip). `deleteVariant` is a $0 soft delete fronted by an Otto-only fail-closed active-job
+   *  gate (see makeOttoRefgenPort — refuses while a paid job for that variant is in flight, #271
+   *  deleteProject precedent). Skills reach it ONLY via ctx.refgen — never importing web actions, the
+   *  provider, or Prisma (CI fence rule). Absent in the minimal worker verdict ctx; the skills degrade
+   *  gracefully when it is not injected. */
+  refgen?: {
+    /** debt-68 (SPEND): generate reference images for an OWNED element through the startRefGen
+     *  authority. count is bounded 1–6 by the typed gate; model/mode/price are server-owned. Returns
+     *  the RefGenJob id or a structured error ("Element not found." fail-closes a cross-tenant/forged id). */
+    generate(input: {
+      entityId: string;
+      prompt: string;
+      count?: number;
+      mode?: "BASE" | "REFSHEET";
+    }): Promise<{ id: string } | { error: string }>;
+    /** debt-69 ($0, guarded): soft-delete an OWNED reference variant (+ its tagged reference images).
+     *  The port hard-refuses (fail-closed) while a paid RefGenJob for that variant is still in flight,
+     *  so a delete can't strand settled/settling paid work. Owner scope + not-found guard live INSIDE
+     *  the deleteVariant action (requireOwner). */
+    deleteVariant(variantId: string): Promise<{ ok: true } | { error: string }>;
+  };
 }
 
 /** A canvas node as skills see it — structural re-declaration; the web DTO
