@@ -537,92 +537,100 @@ export async function syncStoryboardMedia(
 
   const cur = (card.payload ?? {}) as StoryboardCardPayload;
 
-  // Collect finished writes OUTSIDE the txn (all reads). Candidate rules are identical in
-  // shape for the two media classes (≤8 shots, so the extra per-shot lookups are bounded):
-  //  • FRAME: a shot with a firstFrameCardId. Resolve its child's DONE generationId; stage a
-  //    frame write iff that id exists AND DIFFERS from the shot's current firstFrameGenerationId.
-  //    Covers first landing (no genId yet → write) and replace-overwrite (a regen's new frame
-  //    lands → overwrites the old genId).
-  //  • VIDEO: a shot with a videoCardId. Resolve its child's DONE generationId; stage a video
-  //    write iff that id exists AND DIFFERS from the shot's current videoGenerationId.
-  // FAILED/queued/generating/missing children resolve to null → inert (no write). A write only
-  // ever REPLACES the genId value; it never deletes the key.
-  const frameWrites: Record<string, string> = {}; // shotId → new firstFrameGenerationId
-  const videoWrites: Record<string, string> = {}; // shotId → new videoGenerationId
-  // CASCADE set (spec §3c): shots whose staged frame write REPLACES an existing DIFFERENT
-  // firstFrameGenerationId (the shot HAD a genId and the new one differs — NOT a first-ever
-  // write). The source frame changed, so the old video no longer represents the shot → its
-  // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
-  // first-ever frame write (no prior genId) does NOT cascade.
-  const cascadeShots = new Set<string>();
-  for (const shot of cur.shots) {
-    if (shot.firstFrameCardId) {
-      const job = await doneJobFor(shot.firstFrameCardId, ownerId);
-      if (job) {
-        const genId = await firstGenerationIdOf(job.id, ownerId);
-        if (genId && genId !== shot.firstFrameGenerationId) {
-          frameWrites[shot.shotId] = genId;
-          // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
-          if (shot.firstFrameGenerationId) cascadeShots.add(shot.shotId);
-        }
-      }
-    }
-    if (shot.videoCardId) {
-      const job = await doneJobFor(shot.videoCardId, ownerId);
-      if (job) {
-        const genId = await firstGenerationIdOf(job.id, ownerId);
-        if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
-      }
-    }
-  }
+  // 修复轮 v3 (NODE-282-R2①): the ENTIRE read half — candidate sampling + write-set
+  // derivation — runs INSIDE the card lock, derived from the freshly re-read payload.
+  // v2 sampled against the pre-lock `cur` snapshot and only applied the (stale) write-set
+  // after locking, so a racing regen could swap a shot's pointer A→B between sample and
+  // apply — sync would then write A's generation onto (or cascade-drop) a shot that now
+  // points at B. Post-lock derivation makes that impossible: sync only ever acts on the
+  // children the FRESH pointers reference. A no-op sync stages nothing and writes nothing.
+  const payload = await prisma.$transaction(async (tx) => {
+    // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
+    // racing a prepare/regen RMW could clobber a just-written — possibly already
+    // CONFIRMED — child pointer, orphaning a charged card; the next prepare would then
+    // mint (and charge) AGAIN for the same shot. Locking makes race == serial semantics.
+    await lockCardTx(tx, card.id);
+    const fresh = await tx.chatMessage.findFirst({
+      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
+      select: { payload: true },
+    });
+    const p = (fresh?.payload ?? cur) as StoryboardCardPayload;
 
-  // Apply staged writes in ONE transactional RMW (re-read payload, patch only target shots).
-  // Any staged write OR any cascade requires a DB write.
-  let payload = cur;
-  const hasStaged =
-    Object.keys(frameWrites).length > 0 ||
-    Object.keys(videoWrites).length > 0 ||
-    cascadeShots.size > 0;
-  if (hasStaged) {
-    payload = await prisma.$transaction(async (tx) => {
-      // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
-      // racing a prepare/regen RMW could clobber a just-written — possibly already
-      // CONFIRMED — child pointer, orphaning a charged card; the next prepare would then
-      // mint (and charge) AGAIN for the same shot. Locking makes race == serial semantics.
-      await lockCardTx(tx, card.id);
-      const fresh = await tx.chatMessage.findFirst({
-        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
-        select: { payload: true },
-      });
-      const p = (fresh?.payload ?? cur) as StoryboardCardPayload;
-      const nextShots = p.shots.map((s) => {
-        const frameGen = frameWrites[s.shotId];
-        const videoGen = videoWrites[s.shotId];
-        if (!frameGen && !videoGen) return s;
-        // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
-        // and this WINS over any video write staged for the SAME shot in this pass. A video that
-        // just landed for the OLD source frame is dropped too: it was built off the outdated
-        // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
-        // videoGenerationId (key-omission), and do NOT apply the staged video write.
-        if (cascadeShots.has(s.shotId)) {
-          const rest = { ...s };
-          delete rest.videoCardId;
-          delete rest.videoGenerationId;
-          return { ...rest, firstFrameGenerationId: frameGen! };
+    // Collect finished writes from the FRESH (post-lock) payload. Candidate rules are
+    // identical in shape for the two media classes (≤8 shots, so the per-shot lookups are
+    // bounded; child/job/result reads are worker-written rows — a job flipping DONE
+    // mid-sync is simply picked up by the next sync, inert here):
+    //  • FRAME: a shot with a firstFrameCardId. Resolve its child's DONE generationId; stage a
+    //    frame write iff that id exists AND DIFFERS from the shot's current firstFrameGenerationId.
+    //    Covers first landing (no genId yet → write) and replace-overwrite (a regen's new frame
+    //    lands → overwrites the old genId).
+    //  • VIDEO: a shot with a videoCardId. Resolve its child's DONE generationId; stage a video
+    //    write iff that id exists AND DIFFERS from the shot's current videoGenerationId.
+    // FAILED/queued/generating/missing children resolve to null → inert (no write). A write only
+    // ever REPLACES the genId value; it never deletes the key.
+    const frameWrites: Record<string, string> = {}; // shotId → new firstFrameGenerationId
+    const videoWrites: Record<string, string> = {}; // shotId → new videoGenerationId
+    // CASCADE set (spec §3c): shots whose staged frame write REPLACES an existing DIFFERENT
+    // firstFrameGenerationId (the shot HAD a genId and the new one differs — NOT a first-ever
+    // write). The source frame changed, so the old video no longer represents the shot → its
+    // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
+    // first-ever frame write (no prior genId) does NOT cascade.
+    const cascadeShots = new Set<string>();
+    for (const shot of p.shots) {
+      if (shot.firstFrameCardId) {
+        const job = await doneJobFor(shot.firstFrameCardId, ownerId);
+        if (job) {
+          const genId = await firstGenerationIdOf(job.id, ownerId);
+          if (genId && genId !== shot.firstFrameGenerationId) {
+            frameWrites[shot.shotId] = genId;
+            // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
+            if (shot.firstFrameGenerationId) cascadeShots.add(shot.shotId);
+          }
         }
-        const next = { ...s };
-        if (frameGen) next.firstFrameGenerationId = frameGen;
-        if (videoGen) next.videoGenerationId = videoGen;
-        return next;
-      });
-      const next = { ...p, shots: nextShots };
-      await tx.chatMessage.update({
-        where: { id: card.id },
-        data: { payload: next as unknown as Prisma.InputJsonObject },
-      });
+      }
+      if (shot.videoCardId) {
+        const job = await doneJobFor(shot.videoCardId, ownerId);
+        if (job) {
+          const genId = await firstGenerationIdOf(job.id, ownerId);
+          if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
+        }
+      }
+    }
+
+    // Nothing staged → pure read: return the fresh payload, no DB write.
+    const hasStaged =
+      Object.keys(frameWrites).length > 0 ||
+      Object.keys(videoWrites).length > 0 ||
+      cascadeShots.size > 0;
+    if (!hasStaged) return p;
+
+    const nextShots = p.shots.map((s) => {
+      const frameGen = frameWrites[s.shotId];
+      const videoGen = videoWrites[s.shotId];
+      if (!frameGen && !videoGen) return s;
+      // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
+      // and this WINS over any video write staged for the SAME shot in this pass. A video that
+      // just landed for the OLD source frame is dropped too: it was built off the outdated
+      // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
+      // videoGenerationId (key-omission), and do NOT apply the staged video write.
+      if (cascadeShots.has(s.shotId)) {
+        const rest = { ...s };
+        delete rest.videoCardId;
+        delete rest.videoGenerationId;
+        return { ...rest, firstFrameGenerationId: frameGen! };
+      }
+      const next = { ...s };
+      if (frameGen) next.firstFrameGenerationId = frameGen;
+      if (videoGen) next.videoGenerationId = videoGen;
       return next;
     });
-  }
+    const next = { ...p, shots: nextShots };
+    await tx.chatMessage.update({
+      where: { id: card.id },
+      data: { payload: next as unknown as Prisma.InputJsonObject },
+    });
+    return next;
+  });
 
   // Resolve URLs for EVERY shot that now has a genId (old or just written), for both media
   // classes, via the SAME owner-scoped Generation→asset→storage mechanism. Cascade-dropped

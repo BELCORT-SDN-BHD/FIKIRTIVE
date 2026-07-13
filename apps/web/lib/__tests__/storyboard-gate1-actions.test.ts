@@ -1062,6 +1062,81 @@ describe("syncStoryboardMedia — $0 对账(视频 + 级联 + urls)", () => {
     expect("s0" in res.videos).toBe(false); // omitted, no throw
     expect(mockChatUpdate).not.toHaveBeenCalled(); // nothing to reconcile
   });
+
+  // ===================================================================================
+  // 修复轮 v3 · NODE-282-R2① 交错回归:sync 的读半段必须在锁内。形态:s0 指向子卡 A
+  // (job DONE,generation vid-A);一个在飞 regen 正持有卡锁,并在释放前把指针换成 B
+  // (新子卡,无 job)。sync 在锁上等待,得锁后必须按 FRESH 指针(B)derive 写集:B 未
+  // DONE → 零写集 → 零写入。v2 的旧行为(锁前按旧快照采样 A → 得锁后按 shotId 套用旧
+  // 写集)会把 A 的 generation(vid-A)写到已指向 B 的镜头上——本用例在 v2 实现上红
+  // (mockChatUpdate 被调、vid-A 落上),v3 实现上绿。
+  // ===================================================================================
+  it("R2① 交错回归:sync 等锁期间 regen 换指针 A→B → sync 锁后按 B 行事,A 的 generation 不落上、零写入", async () => {
+    // Stateful wiring: parent payload + child cards + GEN_RESULT rows all read live state.
+    const state = {
+      parentPayload: {
+        storyboardTitle: "Ad",
+        shots: [
+          { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "vp0", firstFrameGenerationId: "ffgen0", videoCardId: "A" },
+        ],
+      } as StoryboardCardPayload,
+      children: {
+        A: { payload: { structuredPrompt: "vp0-old" }, genJobId: "job-A" }, // old child: job DONE
+      } as Record<string, { payload: unknown; genJobId: string | null }>,
+    };
+    const results: Record<string, unknown> = { "job-A": { generationIds: ["vid-A"] } };
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") return where.id === "card-1" ? card(state.parentPayload) : null;
+      if (where.kind === "GEN_CARD" && typeof where.id === "string") {
+        const rec = state.children[where.id];
+        return rec ? { id: where.id, ...rec } : null;
+      }
+      if (where.kind === "GEN_RESULT" && typeof where.genJobId === "string") {
+        const payload = where.genJobId in results ? results[where.genJobId] : null;
+        return payload ? { payload } : null;
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+    mockChatUpdate.mockImplementation(async (args: { data: { payload: unknown } }) => {
+      state.parentPayload = args.data.payload as StoryboardCardPayload;
+      return {};
+    });
+    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
+      if (args?.where?.id === "job-A") return { id: "job-A", status: "DONE" };
+      return null; // B has no job (fresh mint, unspent, pending nothing)
+    });
+    mockGenerationFindMany.mockResolvedValue([gen("ffgen0")]);
+
+    // An in-flight regen HOLDS the card lock (manual mutex entry, same map the tx mock uses).
+    let regenCommitsAndReleases!: () => void;
+    cardLocks.set("card:card-1", new Promise<void>((r) => (regenCommitsAndReleases = r)));
+
+    // sync starts now: outer load sees pointer A, then PARKS on the card lock.
+    const syncP = syncStoryboardMedia({ cardId: "card-1" });
+    await new Promise((r) => setTimeout(r, 0)); // let sync run up to the lock
+
+    // While sync waits, the regen COMMITS its pointer swap A → B, then releases the lock.
+    state.parentPayload = {
+      ...state.parentPayload,
+      shots: [{ ...state.parentPayload.shots[0], videoCardId: "B" }],
+    };
+    state.children.B = { payload: { structuredPrompt: "vp0" }, genJobId: null };
+    regenCommitsAndReleases();
+
+    const res = await syncP;
+    if (!("payload" in res)) throw new Error("expected payload");
+
+    // sync derived its write-set INSIDE the lock, from the FRESH pointer (B):
+    // B has no DONE job → nothing staged → ZERO writes. A's vid-A must NOT land.
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // sync did take the lock
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled(); // zero staged writes either
+    expect(res.payload.shots[0].videoCardId).toBe("B"); // fresh pointer honored, NOT dropped
+    expect(res.payload.shots[0].videoGenerationId).toBeUndefined(); // vid-A (stale child A) NOT written
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
 });
 
 // ---------------------------------------------------------------------------
