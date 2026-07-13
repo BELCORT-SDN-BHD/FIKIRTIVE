@@ -164,6 +164,8 @@ export const PARITY_MANIFEST = {
   "gen-actions.getActiveGenModels": { skill: "generate" },
   "gen-actions.getGenJob": { skill: "generate" },
   "gen-actions.getRecentGenResults": { skill: "generate" },
+  "factory-actions.runVariantBatch": { skill: "runFactoryBatch", reason: "W-B3-F-P (B3 §5.2): variant fan-out batch; the runFactoryBatch skill (mode:variant) routes through this SAME owner-scoped action, which loops startGen per cell — zero new spend path." },
+  "factory-actions.runBulkGrid": { skill: "runFactoryBatch", reason: "W-B3-F-P (B3 §5.2): bulk grid batch; the runFactoryBatch skill (mode:grid) routes through this SAME owner-scoped action, which loops startGen per cell — zero new spend path." },
   "library-actions.getGenerationHistory": { skill: "manageLibrary" },
 
   "memory-actions.listMyMemory": { skill: "lookupProducts" },

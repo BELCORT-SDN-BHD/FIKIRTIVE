@@ -1,0 +1,178 @@
+import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import {
+  orchestrateBatch,
+  quoteCell,
+  MAX_BATCH_CELLS,
+  type BatchCell,
+  type GenCell,
+  type StartGenPort,
+  type OrchestrateDeps,
+} from "../factory-batch";
+
+type JobRow = { id: string; ownerId: string; batchId: string | null; status: string };
+
+// A tiny in-memory prisma double for the two tables orchestrateBatch touches. It moves
+// NO money — the whole point is that orchestration only writes grouping metadata.
+function fakePrisma() {
+  const batches = new Map<string, { id: string; ownerId: string }>();
+  const jobs = new Map<string, JobRow>();
+  const db: OrchestrateDeps["prisma"] = {
+    generationBatch: {
+      findFirst: vi.fn(async ({ where }: { where: { id: string; ownerId: string } }) => {
+        const b = batches.get(where.id);
+        return b && b.ownerId === where.ownerId ? { id: b.id } : null;
+      }),
+      create: vi.fn(async ({ data }: { data: { id: string; ownerId: string } }) => {
+        if (batches.has(data.id)) {
+          const e = Object.assign(new Error("dup"), { code: "P2002" });
+          throw e;
+        }
+        batches.set(data.id, { id: data.id, ownerId: data.ownerId });
+        return { id: data.id };
+      }),
+    },
+    genJob: {
+      updateMany: vi.fn(async ({ where, data }: { where: { id: string; ownerId: string }; data: { batchId: string } }) => {
+        const j = jobs.get(where.id);
+        if (j && j.ownerId === where.ownerId) j.batchId = data.batchId;
+        return { count: j ? 1 : 0 };
+      }),
+      findMany: vi.fn(async ({ where }: { where: { ownerId: string; batchId: string } }) =>
+        [...jobs.values()].filter((j) => j.ownerId === where.ownerId && j.batchId === where.batchId).map((j) => ({ status: j.status })),
+      ),
+    },
+  } as unknown as OrchestrateDeps["prisma"];
+  return { db, jobs };
+}
+
+// A startGen spy that records every request and mints a job row in the fake prisma so
+// the batchId tag has something to write to.
+function spyStartGen(jobs: Map<string, JobRow>, ownerId: string, override?: (i: number) => { error: string } | null) {
+  let n = 0;
+  const calls: Record<string, unknown>[] = [];
+  const fn: StartGenPort = vi.fn(async (req: Record<string, unknown>) => {
+    const idx = n++;
+    calls.push(req);
+    const over = override?.(idx) ?? null;
+    if (over) return over;
+    const id = `job-${idx}`;
+    jobs.set(id, { id, ownerId, batchId: null, status: "QUEUED" });
+    return { id };
+  });
+  return { fn, calls };
+}
+
+const OWNER = "org_test";
+const PROJECT = "prj_test";
+
+function genCell(prompt: string, extra: Partial<Omit<GenCell, "type" | "prompt">> = {}): BatchCell {
+  return { type: "gen", prompt, ...extra };
+}
+
+describe("quoteCell — same authority as startGen's reserve (pricedGenCredits)", () => {
+  it("prices an image cell at count × INTERNAL_PER_DISPLAY and a text cell at 0", () => {
+    expect(quoteCell(genCell("a"))).toBe(1 * INTERNAL_PER_DISPLAY);
+    expect(quoteCell(genCell("a", { count: 3 }))).toBe(3 * INTERNAL_PER_DISPLAY);
+    expect(quoteCell({ type: "text", text: "hook" })).toBe(0);
+  });
+});
+
+describe("orchestrateBatch — dispatch behaviour", () => {
+  it("derives per-cell idempotency keys batch:<batchId>:cell:<n> and sums the quote", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "B1", cells: [genCell("a"), genCell("b"), genCell("c")] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.dispatched).toBe(3);
+    expect(res.failed).toBe(0);
+    expect(res.totalCredits).toBe(3 * INTERNAL_PER_DISPLAY);
+    expect(calls.map((c) => c.idempotencyKey)).toEqual(["batch:B1:cell:0", "batch:B1:cell:1", "batch:B1:cell:2"]);
+    expect(calls.every((c) => c.projectId === PROJECT)).toBe(true);
+    expect(res.cells.every((c) => c.status === "queued" && c.credits === INTERNAL_PER_DISPLAY)).toBe(true);
+  });
+
+  it("text cells are $0 and never enter startGen", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const cells: BatchCell[] = [{ type: "text", text: "Big Sale" }, genCell("product on white")];
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "B2", cells });
+    if ("error" in res) throw new Error(res.error);
+    expect(calls).toHaveLength(1);
+    expect(res.cells[0]).toMatchObject({ type: "text", status: "text", credits: 0 });
+    expect(res.cells[1]).toMatchObject({ type: "gen", status: "queued", credits: INTERNAL_PER_DISPLAY });
+    expect(res.totalCredits).toBe(INTERNAL_PER_DISPLAY);
+  });
+
+  it("a replay with the SAME batchId reproduces the SAME per-cell keys (dedup anchor)", async () => {
+    const { db, jobs } = fakePrisma();
+    const a = spyStartGen(jobs, OWNER);
+    await orchestrateBatch({ startGen: a.fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "SAME", cells: [genCell("a"), genCell("b")] });
+    const b = spyStartGen(jobs, OWNER);
+    await orchestrateBatch({ startGen: b.fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "SAME", cells: [genCell("a"), genCell("b")] });
+    expect(a.calls.map((c) => c.idempotencyKey)).toEqual(b.calls.map((c) => c.idempotencyKey));
+    expect(b.calls.map((c) => c.idempotencyKey)).toEqual(["batch:SAME:cell:0", "batch:SAME:cell:1"]);
+  });
+
+  it("partial dispatch failure marks only the failed cells — no batch-level rollback", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn } = spyStartGen(jobs, OWNER, (i) => (i === 1 ? { error: "no" } : null));
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "B3", cells: [genCell("a"), genCell("b"), genCell("c")] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.dispatched).toBe(2);
+    expect(res.failed).toBe(1);
+    expect(res.cells[1]).toMatchObject({ status: "error" });
+    expect(res.cells[0].status).toBe("queued");
+    expect(res.cells[2].status).toBe("queued");
+  });
+
+  it("rejects an empty batch and one over the cell cap", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn } = spyStartGen(jobs, OWNER);
+    const deps: OrchestrateDeps = { startGen: fn, prisma: db };
+    expect(await orchestrateBatch(deps, { ownerId: OWNER, projectId: PROJECT, batchId: "E", cells: [] })).toHaveProperty("error");
+    const tooMany = Array.from({ length: MAX_BATCH_CELLS + 1 }, (_, i) => genCell(`c${i}`));
+    expect(await orchestrateBatch(deps, { ownerId: OWNER, projectId: PROJECT, batchId: "E2", cells: tooMany })).toHaveProperty("error");
+  });
+
+  it("F1 structural: 20 cells all enqueue and it never blocks on generation completion", async () => {
+    const { db, jobs } = fakePrisma();
+    const fn: StartGenPort = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 1));
+      const id = `j${jobs.size}`;
+      jobs.set(id, { id, ownerId: OWNER, batchId: null, status: "QUEUED" });
+      return { id };
+    });
+    const cells = Array.from({ length: 20 }, (_, i) => genCell(`c${i}`));
+    const t0 = Date.now();
+    const res = await orchestrateBatch({ startGen: fn, prisma: db }, { ownerId: OWNER, projectId: PROJECT, batchId: "F1", cells });
+    const elapsed = Date.now() - t0;
+    if ("error" in res) throw new Error(res.error);
+    expect(res.dispatched).toBe(20);
+    expect(res.cells.every((c) => c.status === "queued")).toBe(true);
+    expect(elapsed).toBeLessThan(5000);
+  });
+});
+
+describe("money-safety: the orchestration layer never mutates credits directly", () => {
+  // Strip comments first: the files DOCUMENT (in prose) that they don't touch credits, so a raw
+  // grep would false-match the explanation. The invariant is about executable CODE only.
+  function stripComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  }
+  it("factory-batch.ts and factory-actions.ts have zero credit-mutation symbols in code", () => {
+    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|creditLedger|creditAccount|CreditLedger|CreditAccount/;
+    for (const rel of ["../factory-batch.ts", "../factory-actions.ts"]) {
+      const code = stripComments(readFileSync(path.resolve(__dirname, rel), "utf8"));
+      expect(banned.test(code), `${rel} must not touch credits directly`).toBe(false);
+    }
+  });
+});

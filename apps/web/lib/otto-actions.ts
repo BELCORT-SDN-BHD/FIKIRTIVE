@@ -44,6 +44,7 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
+import { runVariantBatch, runBulkGrid } from "./factory-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract, fetchRawHtml } from "./fetch-extract";
@@ -272,6 +273,12 @@ export async function buildOttoContext({
     referenceVideoGenerationIds: videoRefIds,
     images,
     startGen,
+    // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions
+    // (which loop startGen per cell). Zero new spend path; each cell reserves via startGen.
+    runFactoryBatch: {
+      variant: (input) => runVariantBatch(input),
+      bulk: (input) => runBulkGrid(input),
+    },
     brandContext,
     availableRefs,
     simpleMode: simpleMode ?? false,
