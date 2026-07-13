@@ -14,7 +14,8 @@
     {
       "id": "gate-01",
       "acceptance_ids": [
-        "A-01"
+        "A-01",
+        "A-02"
       ],
       "command": "<exact rerunnable command>",
       "exit_code": 0,

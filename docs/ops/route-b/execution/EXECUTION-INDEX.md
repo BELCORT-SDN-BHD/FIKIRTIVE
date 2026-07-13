@@ -43,6 +43,12 @@ Revision 建立后不可原地修改；任何变更都发新 revision、重算�
 generation。Scoped session 不得发现、猜测或修改 claim registry；每次调用必须显式传入其
 绝对路径。
 
+Checker 先把 worktree、control directory、registry 与 mailbox 全部解析成 canonical path。
+Worktree 必须正好是 Git repository top level；其余三者必须在 worktree 外。Control directory
+和 registry 各自都必须与可写 mailbox 双向不相交。控制文件必须物理留在 canonical control
+directory 内；registry file 也必须留在其 canonical registry directory 内。Registry 的
+canonical 落点决定边界，不能用 symlink alias 躲进 worktree、mailbox 或另一个目录。
+
 ## 四阶段校验
 
 ```bash
@@ -54,11 +60,11 @@ node scripts/execution-harness-check.mjs \
 
 同一命令只替换 phase：
 
-1. `startup`：读取控制面、重算全部 hash 与输入 hash，验证当前 generation/ACTIVE claim，
-   并要求 `HEAD == base_sha` 且 worktree clean；
+1. `startup`：读取控制面、重算全部 hash 与输入 hash，验证 canonical filesystem 边界、当前
+   generation/ACTIVE claim 与实质性 work order，并要求 `HEAD == base_sha` 且 worktree clean；
 2. `prewrite`：第一次 repo 写入前重复全部校验，仍要求 frozen base 与 clean；
 3. `boundary`：每个 phase boundary 重验 generation、claim、hash、ownership conflict，
-   并检查截至当前的 committed/uncommitted/untracked diff；
+   并检查截至当前的 committed/uncommitted/untracked diff 与 `base_sha..HEAD` merge history；
 4. `delivery`：再次执行 boundary 全套，并验证 runtime report/state/evidence 的完整性、
    Git facts、证据 hash、验收映射和 no-out-of-scope 声明。
 
@@ -75,10 +81,22 @@ generation 漂移或 token 漂移均 fail closed。
 不支持 glob、否定式 pattern 或隐式默认目录。Active scoped claims 的 writer overlap、
 write-vs-locked-input overlap、共同 exclusive group 都失败。以下范围即使被恶意写进
 ownership 也失败：四控制文件、checker、claim registry、路线乙五本账、Blueprint、
-schema/migrations、pricing authority、CI/root config、shared registry/parity/catalog 与 secrets。
+schema/migrations、pricing authority、CI/root config、shared registry/parity/catalog、secrets、
+`.git/`、`.claude/`、global orchestrator state、Gate 0 contract、standing delegation 与本 execution
+control directory。
+
+Git 判定为 ignored 的 exact target 不能授权。Directory prefix 本身被 ignore，或当下包含
+ignored path，也不能授权；checker 在每个 phase 重验，因此 prefix 下后来出现的 ignored
+output 会在下一次 boundary 前 fail closed。
+
+Write set 也不是纯 lexical allowlist：checker 对每个 target 解析 canonical target，或在尚未
+创建时解析 nearest existing ancestor，且两者都必须留在 canonical worktree。任何既有 symlink
+path component 都失败；既有 directory prefix 会递归拒绝任一 symlink descendant。Boundary
+所枚举的 actual diff 若自身是 symlink entry（包括 base/HEAD/index 中的 symlink mode）同样失败。
 
 `delivery` 以 `base_sha..HEAD`、`git diff HEAD` 和 untracked files 的并集为事实；报告里的
-`changed_files` 不能替代 Git，也必须与 Git 事实完全相等。
+`changed_files` 不能替代 Git，也必须与 Git 事实完全相等。`base_sha..HEAD` 中任何 merge
+commit 都失败。
 
 ## Scoped 身份单调性
 
@@ -87,6 +105,20 @@ descendant claims 均 forbidden。Registry 中 scoped claim 只能由
 `issuer_role=global-control-plane` 直接签发，`parent_claim_id` 必须为 `null`。Scoped lane
 不得晋升 global、再签 scoped descendant、改 global epoch、宣告 program completion 或执行
 merge。`author_identity == merger_identity` 是硬失败。
+
+本地 checker 只能验证 control/claim/report 中声明的 actor 不冲突、`merge_executed=false`，
+不能证明 GitHub 实际 author、reviewer 或 merger 身份。真实 GitHub separation-of-duties、
+current-head CI 与 merge 权限仍由 global control plane 在远端事实面验证。
+
+## Cooperative contract 边界
+
+这是 deterministic cooperative gate，不是 OS sandbox。它会 canonicalize 每次读取的路径并在
+当次检查拒绝 symlink/path-component escape，但无法阻止另一个进程在检查后替换文件（TOCTOU），
+也不能证明未被 Git 枚举的历史外部写入。尤其是写集之外任意新建的 ignored path 不会进入 Git
+diff；local checker 无法单凭 repository facts 证明它从未发生。Scoped session 仍须在首次 repo
+写入前跑 `prewrite`、
+每个边界跑 `boundary`、交付时跑 `delivery`；若需要抵抗同机恶意并发进程，必须停手并升级到
+OS-level isolation，不能把本 checker 描述成物理 sandbox。
 
 ## 模板
 

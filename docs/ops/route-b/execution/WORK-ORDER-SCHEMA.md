@@ -33,8 +33,12 @@ Markdown 控制文件在 `<!-- execution-harness:json -->` 后放一个 `json` f
 - canonical `required_hashes`：四控制文件再加 checker；
 - 非空 `stop_conditions`、`escalate_conditions`、`founder_intent_snapshot`。
 
-Runtime mailbox 必须在 scoped worktree 外。CLI 的 `--claims` 必须与 `claims_registry` 是同一
-绝对路径；checker 不搜索默认位置。
+`worktree` canonical path 必须正好等于 `git rev-parse --show-toplevel` 的 canonical path。
+Control directory、claim registry 与 runtime mailbox 的 canonical 落点必须在 worktree 外；
+control directory 和 registry 还必须各自与 mailbox 双向不相交。CLI 的 `--claims` 必须与
+`claims_registry` 是同一绝对路径并解析到同一 registry；checker 不搜索默认位置。每个控制
+文件必须解析到 canonical control directory 内；registry file 必须解析到其 canonical parent
+directory 内。Symlink/path component 不能逃出这些边界。
 
 ## `WORK-ORDER.md`
 
@@ -50,6 +54,8 @@ BUDGET
 ```
 
 增加别的二级标题、缺失、重复或换序均失败。细分内容如确有需要只能用三级标题。
+每节正文都必须有实质性、非 placeholder 内容；空白、`TBD`、`<...>` 等占位正文失败。
+机器 block 中每个 `acceptance_id` 都必须以完整 ID 明文出现在 `ACCEPTANCE` 正文。
 
 ## `INPUTS.lock.json`
 
@@ -83,7 +89,8 @@ BUDGET
 ```
 
 两类 input 都至少一项，按 `path` 排序且不可重复。Checker 每 phase 都从 worktree 重新读取
-并计算 SHA-256；一字节漂移即失败。所有 pinned input 也必须被
+其 canonical target 并计算 SHA-256；target 必须物理位于 canonical worktree 内，一字节漂移
+或 symlink/path-component escape 即失败。所有 pinned input 也必须被
 `OWNERSHIP.locked_inputs` 覆盖。
 
 `required_artifacts` 只声明必须由 registry 锚定哪些对象，不携带自 hash。实际五个 hash
@@ -165,8 +172,12 @@ Checker 比较 exact `{parent_epoch, scope_epoch, revision, base_sha, token_dige
 status=ACTIVE}`、generation 与五个 hash。缺失、重复、`REVOKED`、`SUPERSEDED`、`STALE`、
 旧 generation、descendant-minted 或 role promotion 都失败。
 
-所有 ACTIVE scoped claims 还会两两检查：writer overlap、writer 对任一 locked input 的 overlap、
-共同 exclusive group。Global claim 可同 registry 存在，但不能冒充 scoped claim 的 issuer。
+所有 registry status 的 `claim_id` 都必须非空且全局唯一。每个 ACTIVE scoped claim 的
+`program_id / work_order_id / parent_epoch / scope_epoch / revision` 必须非空，`base_sha` 与
+`token_digest` 必须格式有效；ACTIVE scoped claims 的 `scope_epoch`、token digest 与
+`{program_id,parent_epoch,scope_epoch}` identity 必须各自唯一。它们还会两两检查 writer
+overlap、writer 对任一 locked input 的 overlap、共同 exclusive group。Global claim 可同
+registry 存在，但不能冒充 scoped claim 的 issuer。
 
 ## 明确禁止进入 scoped write set
 
@@ -174,6 +185,9 @@ Checker 对 ownership 与实际 Git diff 双重检查以下范围：
 
 - 当前四控制文件、当前 claims registry、checker；
 - 路线乙五本账（`matrix/` + 四个 ledger 文件）；
+- `.git/`、`.claude/`、`docs/ops/ORCHESTRATOR-STATE.md`；
+- `docs/ops/route-b/B0-CONTRACT.md`、`docs/ops/route-b/STANDING-DELEGATION.md`；
+- `docs/ops/route-b/execution/`；
 - `docs/BLUEPRINT.md`；
 - Prisma schema/migrations；
 - `packages/core/src/spend.ts` pricing authority；
@@ -182,6 +196,22 @@ Checker 对 ownership 与实际 Git diff 双重检查以下范围：
 - `.env*`、`.secrets/`、`secrets/`。
 
 宽 directory prefix 若覆盖上述任一对象同样失败。
+此外，Git `check-ignore --no-index` 判为 ignored 的 exact target 或 directory prefix 本身失败；
+prefix 下当下存在的 ignored path 也失败。Checker 每 phase 重验，之后新出现的 ignored output
+会在下一次校验被发现。Actual tracked diff 若被 ignore 规则命中同样失败。
+
+每个 write target 的 canonical target（未创建时为 nearest existing ancestor）必须位于 canonical
+worktree 内。Exact target 的任何 existing path component 不得是 symlink；existing directory
+prefix 会递归拒绝所有 symlink descendants。Actual diff 路径若在 filesystem、base tree、HEAD
+tree 或 index 体现为 Git symlink mode，也会失败，防止写穿 alias 而不产生目标文件 diff。
+
+`base_sha..HEAD` 不得含 merge commit。这个 local history gate 不等于 GitHub 身份证明：本地
+checker 只核对声明的 author/merger 不同与 `merge_executed=false`；真实 GitHub author、review、
+merger、current-head CI 和 merge permission 必须由 global control plane 独立核验。
+
+此检查仍是 cooperative contract，不是 OS sandbox：TOCTOU、hard-link/inode alias，以及 write set
+之外未被 Git 枚举的 arbitrary ignored writes 不能由 repository facts 完整证明不存在。需要抵抗
+同机恶意进程或证明全 filesystem 无外写时必须停手升级隔离层，不能扩大本 checker 的声明。
 
 ## Runtime delivery contract
 
@@ -198,8 +228,11 @@ Checker 对 ownership 与实际 Git diff 双重检查以下范围：
 
 `EVIDENCE/manifest.json` 必须逐 entry 包含 `id`、非空 `acceptance_ids`、`command`、整数
 `exit_code`、`output_path`、`sha256`、`changed_paths`。READY 时所有 exit code 为 0；output
-必须在 mailbox 的 `EVIDENCE/` 下且 hash 重算相等；所有 entry 的 changed-path union 必须与
-Git diff 相等；所有 acceptance id 必须有证据覆盖。
+必须是 canonical mailbox `EVIDENCE/` 内的 direct regular file（不能是 symlink）且 hash 重算
+相等；report/state/manifest 也不能经 symlink/path component 逃出各自 canonical root。所有
+entry 的 changed-path union 必须与 Git diff 相等；所有 acceptance id 必须有证据覆盖。每条
+`acceptance_mapping.acceptance_id -> evidence_id` edge 还必须由该 evidence entry 自己的
+`acceptance_ids` 明确声明，不能只靠全局 aggregate coverage 交叉凑齐。
 
 `STATE.json` 必须含共同 ID、`status: "READY_FOR_VERIFY"`、`phase: "delivery"`、当前
 `last_validated_generation`、base/head SHA。它是 scoped mailbox checkpoint，不是 global
