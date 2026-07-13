@@ -355,6 +355,31 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     expect(res.totalCredits).toBe(0); // spent excluded
   });
 
+  // 微修轮 v4(NODE-282-R3①):锁内重读 fresh 为 null(卡在锁前被删/kind 变更)→ fail-closed
+  // 零写返回 "Card not found.",禁止回落锁前旧快照 cur(旧快照路径复活=可按过期指针铸卡)。
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    const p = payload3(); // s0/s2 缺图 —— 若回落 cur 会错误地铸出 2 张子卡
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     wireLoads(card(payload3()));
     await prepareStoryboardFirstFrames({ cardId: "card-1" });
@@ -509,6 +534,30 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     const res = await regenShotFirstFrameCard({ cardId: "card-1" } as unknown as { cardId: string; shotId: string });
     expect("error" in res).toBe(true);
     expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    const p = payload3();
+    p.shots[1].firstFrameCardId = "old-1"; // 若回落 cur 会走 stale→铸新替换路径
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
   it("$0 铁证:genJob.create 从未被调", async () => {
@@ -790,6 +839,35 @@ describe("syncStoryboardMedia — $0 对账(帧)", () => {
     const res = await syncStoryboardMedia({ cardId: "" } as unknown as { cardId: string });
     expect("error" in res).toBe(true);
     expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零写、无 cur 回落", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0"; // cur 快照下有一个 DONE 子卡待写回
+    delete p.shots[2].firstFrameGenerationId;
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (where.kind === "GEN_CARD" && where.id === "child-0") return { id: "child-0", genJobId: "job-0" };
+      if (where.kind === "GEN_RESULT" && where.genJobId === "job-0") return { payload: { generationIds: ["gen-A"] } };
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+
+    const res = await syncStoryboardMedia({ cardId: "card-1" });
+    // 若回落 cur:会按旧快照采样 child-0 → 把 gen-A 写回已消失的卡。fail-closed 后:
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
   it("fallback:子卡无 genJobId → 用 cowork:<childId> 幂等 job 查状态", async () => {
@@ -1700,6 +1778,30 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
   });
 
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3(); // s0 eligible —— 若回落 cur 会错误地铸出视频子卡
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     mockVideoProposeCard();
     wireLoads(card(videoPayload3()));
@@ -1928,6 +2030,31 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     const res = await regenShotVideoCard({ cardId: "card-1" } as unknown as { cardId: string; shotId: string });
     expect("error" in res).toBe(true);
     expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[2].videoCardId = "old-2"; // 若回落 cur 会走 stale→铸新替换路径
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s2" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
   it("$0 铁证:genJob.create 从未被调", async () => {

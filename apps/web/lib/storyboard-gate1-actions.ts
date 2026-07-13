@@ -297,6 +297,7 @@ export async function prepareStoryboardFirstFrames(
   const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
 
   const children: ChildFrameCard[] = [];
+  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -305,7 +306,14 @@ export async function prepareStoryboardFirstFrames(
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
     });
-    const payload = (fresh?.payload ?? cur) as StoryboardCardPayload;
+    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
+    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
+    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    if (!fresh?.payload) {
+      cardVanished = true;
+      return;
+    }
+    const payload = fresh.payload as unknown as StoryboardCardPayload;
 
     // Build the next shots array, mutating ONLY firstFrameCardId on target shots.
     const nextShots: Shot[] = [];
@@ -360,6 +368,7 @@ export async function prepareStoryboardFirstFrames(
     }
   });
 
+  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
   const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
   return { children, totalCredits };
 }
@@ -397,6 +406,7 @@ export async function regenShotFirstFrameCard(
   const ctx = minimalCtx(ownerId, card.threadId, disabledModels);
 
   let child: ChildFrameCard | null = null;
+  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -404,7 +414,14 @@ export async function regenShotFirstFrameCard(
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
     });
-    const payload = (fresh?.payload ?? cur) as StoryboardCardPayload;
+    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
+    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
+    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    if (!fresh?.payload) {
+      cardVanished = true;
+      return;
+    }
+    const payload = fresh.payload as unknown as StoryboardCardPayload;
 
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
     if (!target) return; // vanished mid-flight → no writes; caller returns error below.
@@ -461,6 +478,7 @@ export async function regenShotFirstFrameCard(
     });
   });
 
+  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
   if (!child) return { error: "That shot no longer exists." };
   return { child };
 }
@@ -535,8 +553,6 @@ export async function syncStoryboardMedia(
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
 
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-
   // 修复轮 v3 (NODE-282-R2①): the ENTIRE read half — candidate sampling + write-set
   // derivation — runs INSIDE the card lock, derived from the freshly re-read payload.
   // v2 sampled against the pre-lock `cur` snapshot and only applied the (stale) write-set
@@ -544,6 +560,7 @@ export async function syncStoryboardMedia(
   // apply — sync would then write A's generation onto (or cascade-drop) a shot that now
   // points at B. Post-lock derivation makes that impossible: sync only ever acts on the
   // children the FRESH pointers reference. A no-op sync stages nothing and writes nothing.
+  // fresh 为 null（卡在锁前被删/变更）即 fail-closed 零写返回 "Card not found."，无 cur 回落（R3①）。
   const payload = await prisma.$transaction(async (tx) => {
     // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
     // racing a prepare/regen RMW could clobber a just-written — possibly already
@@ -554,7 +571,11 @@ export async function syncStoryboardMedia(
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
     });
-    const p = (fresh?.payload ?? cur) as StoryboardCardPayload;
+    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
+    // the outer load and the lock → return the null sentinel (ZERO writes); NO fallback to
+    // the pre-lock `cur` snapshot. The caller surfaces "Card not found.".
+    if (!fresh?.payload) return null;
+    const p = fresh.payload as unknown as StoryboardCardPayload;
 
     // Collect finished writes from the FRESH (post-lock) payload. Candidate rules are
     // identical in shape for the two media classes (≤8 shots, so the per-shot lookups are
@@ -632,6 +653,8 @@ export async function syncStoryboardMedia(
     return next;
   });
 
+  if (payload === null) return { error: "Card not found." }; // R3① fail-closed surface
+
   // Resolve URLs for EVERY shot that now has a genId (old or just written), for both media
   // classes, via the SAME owner-scoped Generation→asset→storage mechanism. Cascade-dropped
   // video keys are already gone from `payload`, so they naturally contribute no video url.
@@ -695,13 +718,12 @@ export async function prepareStoryboardVideos(
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
 
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-
   // Source disabledModels ONCE (same sourcing as buildOttoContext). Video children are
   // i2v (no entity refs), so no owned-entity lookup is needed.
   const disabledModels = Array.from(await resolveDisabledModels());
 
   const children: ChildFrameCard[] = [];
+  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -710,7 +732,14 @@ export async function prepareStoryboardVideos(
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
     });
-    const payload = (fresh?.payload ?? cur) as StoryboardCardPayload;
+    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
+    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
+    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    if (!fresh?.payload) {
+      cardVanished = true;
+      return;
+    }
+    const payload = fresh.payload as unknown as StoryboardCardPayload;
 
     // Build the next shots array, mutating ONLY videoCardId on target shots.
     const nextShots: Shot[] = [];
@@ -799,6 +828,7 @@ export async function prepareStoryboardVideos(
     }
   });
 
+  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
   const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
   return { children, totalCredits };
 }
@@ -844,6 +874,7 @@ export async function regenShotVideoCard(
   const disabledModels = Array.from(await resolveDisabledModels());
 
   let child: ChildFrameCard | null = null;
+  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -851,7 +882,14 @@ export async function regenShotVideoCard(
       where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null },
       select: { payload: true },
     });
-    const payload = (fresh?.payload ?? cur) as StoryboardCardPayload;
+    // R3① fail-closed: the card vanished (deleted / kind changed / payload gone) between
+    // the outer load and the lock → ZERO writes, and NO fallback to the pre-lock `cur`
+    // snapshot — a stale snapshot must never drive writes. Caller surfaces "Card not found.".
+    if (!fresh?.payload) {
+      cardVanished = true;
+      return;
+    }
+    const payload = fresh.payload as unknown as StoryboardCardPayload;
 
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
     // Vanished OR lost its frame mid-flight → no writes; caller returns error below.
@@ -922,6 +960,7 @@ export async function regenShotVideoCard(
     });
   });
 
+  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
   if (!child) return { error: "That shot no longer exists." };
   return { child };
 }
