@@ -31,7 +31,7 @@
 - **#315 r005 current-head 已验**：base `7742eb60…` → head `f9cfb314210acee1139463660c5056638072ebb5` 恰好只改 B9 报告与 fence 顶部 docblock；fence 首个 `import` 至 EOF 逐字节不变，production/tests/root config/CI/schema/钱路零 diff。mailbox `READY_FOR_VERIFY` / delivery / gen 6，terminal checker `changed=2`。
 - **独立同族复核已验**（不冒充 cross-family）：exact head 上 check、71 migrations + drift 0 + 2923 tests、web-build、lint（0 errors / 75 warnings）、fence self-test / 仓扫描、locks/scope/effects/cleanup 全部 exit 0；未发现 r005 范围内新 P0/P1。
 - PR #315 Actions run `29363340148` 四个 jobs 都因 GitHub billing/payment annotation 在零步骤处失败，所以 remote CI **不绿**。证据评论：`https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/315#issuecomment-4973404091`。钱路仍为 Founder-only；本账的“已验”不是 merge 授权。
-- 本 Codex control plane 接管以来：**零 merge、零 deploy、零真实花费、零真实 provider/LLM 请求、零轮询 automation**。获授权的 GitHub 写入仅为 r005 分支 non-force push、#315 evidence comment 与本 #319 v4 governance branch non-force push；无生产或真实平台状态变更。
+- 本 Codex control plane 接管以来：**零 merge、零 deploy、零真实花费、零真实 provider/LLM 请求、零轮询 automation**。本轮获授权的 GitHub 写入集合严格限于 r005 分支 non-force push、#315 evidence comment、#319 v4 governance branch non-force push，以及为同一 #319 exact head 回填 PR metadata / 本地门禁证据评论；每项完成状态仍须从 GitHub 重验。无生产或真实平台状态变更。
 
 ## 在飞（2026-07-15，交接必读）
 
