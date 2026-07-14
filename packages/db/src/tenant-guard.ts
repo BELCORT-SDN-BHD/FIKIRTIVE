@@ -1,9 +1,13 @@
 import { Prisma } from "../generated/prisma/client.js";
 
-/** The owner-scoped models. findMany/findFirst/updateMany/deleteMany on these MUST carry an
- *  ownerId filter (the repository convention). This extension is a BACKSTOP, not the sole
- *  guarantee — documented blind spots (raw SQL, nested writes, findUnique-by-unique-key,
- *  aggregate/groupBy) are owned by the explicit filters + the 2-org isolation test.
+/** The owner-scoped models. findMany/findFirst/findFirstOrThrow/updateMany/deleteMany on these
+ *  MUST carry an ownerId filter (the repository convention). This extension is a BACKSTOP,
+ *  not the sole guarantee.
+ *  Documented blind spots: raw SQL, nested writes, unique-key access (findUnique/update/delete/upsert), aggregate/groupBy/count.
+ *  Unique-key access shares the findUnique exemption rationale, but update/delete/upsert are
+ *  higher-risk writes. The guard does not block them: their write paths must use requireOwner,
+ *  an explicit ownerId filter, and a 2-org isolation test. Whether unique-key writes should join
+ *  the guard is ticketed as a separate audit (~69 existing call sites).
  *  COVERAGE CONTRACT (2026-07-04 审计): every schema model carrying ownerId must be in THIS
  *  set or in TENANT_GUARD_EXEMPT below — enforced by tenant-guard-coverage.test.ts. */
 export const TENANT_MODELS = new Set([
@@ -28,6 +32,8 @@ export const TENANT_MODELS = new Set([
   // for seat-less share links (mint/revoke are owner actions; the anonymous verify路径 looks up by
   // unique tokenDigest AND pins ownerId from the HMAC claims, so it stays owner-filtered).
   "SharePreviewToken",
+  // B8 一期 (2026-07-14): Campaign + CRM objects are owner-scoped by birth (缝 5).
+  "Campaign", "TrendSnapshot", "Contact", "ContactIdentity", "Segment",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
@@ -45,9 +51,12 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
   TemplateBundle: "templates/Discover read official platform-wide bundles",
 };
 
-// Operations we check (those that take a `where`). findUnique is exempt (unique-key access),
+// Operations we check (those that take a `where`). Unique-key access
+// (findUnique/update/delete/upsert) shares one exemption rationale; the guard does not block it.
+// The higher-risk writes require requireOwner + an explicit ownerId filter + a 2-org isolation test
+// in their write paths. Guard coverage for unique-key writes is a separate audit (~69 call sites).
 // aggregate/groupBy/count are exempt (admin platform-wide reads use them intentionally).
-const CHECKED_OPS = new Set(["findMany", "findFirst", "updateMany", "deleteMany"]);
+const CHECKED_OPS = new Set(["findMany", "findFirst", "findFirstOrThrow", "updateMany", "deleteMany"]);
 
 function whereHasOwnerId(where: unknown): boolean {
   if (!where || typeof where !== "object") return false;

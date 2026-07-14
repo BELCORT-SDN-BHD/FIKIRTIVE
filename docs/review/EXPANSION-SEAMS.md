@@ -151,8 +151,8 @@
 
 **Recipe — add a new owner-scoped model:**
 1. Schema: `ownerId String` + `organization Organization @relation(...)` + the back-relation on Organization (prisma generate breaks without it — good, fail-loud) + `@@index([ownerId, …])` for your hot reads.
-2. Add the model name to `TENANT_MODELS` in `tenant-guard.ts` (the backstop warns in prod / THROWS under test when `findMany/findFirst/updateMany/deleteMany` lack a defined `ownerId` filter).
-3. Every server action: open with `requireOwner()`; scope every query with `gate.ownerId` (the guard's documented blind spots — raw SQL, nested writes, findUnique-by-unique-key, aggregate/groupBy — are YOUR responsibility + the 2-org isolation test).
+2. Add the model name to `TENANT_MODELS` in `tenant-guard.ts` (the backstop warns in prod / THROWS under test when `findMany/findFirst/findFirstOrThrow/updateMany/deleteMany` lack a defined `ownerId` filter).
+3. Every server action: open with `requireOwner()`; scope every query with `gate.ownerId`. Documented blind spots: raw SQL, nested writes, unique-key access (findUnique/update/delete/upsert), aggregate/groupBy/count. Unique-key access shares the `findUnique` exemption rationale, but `update`/`delete`/`upsert` are higher-risk writes; the guard does not block them, so their write paths must use `requireOwner()`, an explicit `ownerId` filter, and a 2-org isolation test. Whether unique-key writes should join the guard is ticketed as a separate audit (~69 existing call sites).
 4. Spend or mutation actions: also the `isImpersonating()` block (impersonation is for seeing, not acting — F15).
 5. Any stored blobs: keys via `storageKey(ownerId, sha256, ext)` server-side; serving via `keyOwnerMatches` (404, not 403 — no existence oracle).
 6. Soft-delete convention: `deletedAt DateTime?` if rows are user-visible history; queries carry `deletedAt: null`.
