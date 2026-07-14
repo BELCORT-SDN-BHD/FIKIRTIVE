@@ -12,22 +12,75 @@ import {
   GEN_QUEUE,
   storageKey,
   storageKeyToSrc,
-  videoDefaults,
   isModelDisabled,
   assertSpendableModel,
   pricedGenCredits,
   activeImageModel,
   activeVideoModel,
   type GenJobData,
-  type GenVideoModel,
 } from "@fikirtive/core";
 import { getBoss } from "./queue";
 import { checkCast } from "./cowork-guardian";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
+import {
+  factoryMaterialMatches,
+  normalizeFactoryMaterial,
+  parseFactoryAttemptKey,
+  type FactoryAttemptKey,
+  type FactoryMaterial,
+  type StoredFactoryMaterial,
+} from "./batch-idempotency";
 
-export async function startGen(raw: unknown): Promise<{ id: string } | { error: string }> {
+export type StartGenResult =
+  | { id: string; disposition: "fresh" | "reused" }
+  | { error: string; disposition?: "conflict" };
+
+const FACTORY_HISTORY_SELECT = {
+  id: true,
+  status: true,
+  idempotencyKey: true,
+  prompt: true,
+  model: true,
+  kind: true,
+  count: true,
+  entityIds: true,
+  variantSel: true,
+  sourceGenerationId: true,
+  tailGenerationId: true,
+  referenceVideoGenerationId: true,
+  shotId: true,
+  videoOptions: true,
+} as const;
+
+type FactoryHistoryRow = StoredFactoryMaterial & {
+  id: string;
+  status: string;
+  idempotencyKey: string | null;
+};
+
+/** Read-only history verdict. `null` means this attempt may be fresh, so the caller must run the
+ * fresh-only gates and repeat this verdict under the project lock before create + reserve. */
+function factoryHistoryVerdict(
+  history: FactoryHistoryRow[],
+  attempt: FactoryAttemptKey,
+  material: FactoryMaterial,
+): StartGenResult | null {
+  if (history.some((prior) => !factoryMaterialMatches(prior, material))) {
+    return {
+      error: "That batchId is already in use for different content — start a new batch with a fresh id.",
+      disposition: "conflict",
+    };
+  }
+  const exact = history.find((prior) => prior.idempotencyKey === attempt.key);
+  if (exact) return { id: exact.id, disposition: "reused" };
+  const nonFailed = history.find((prior) => prior.status !== "FAILED");
+  if (nonFailed) return { id: nonFailed.id, disposition: "reused" };
+  return null;
+}
+
+export async function startGen(raw: unknown): Promise<StartGenResult> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
@@ -42,34 +95,62 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
   // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
   // conditions on the source keyframe, not entity refs — the chosen variant is already
   // baked into that keyframe — so it's not meaningful for video and the worker ignores
-  // it. Drop it for video so a job never persists/claims (in its snapshot) a variant it
-  // didn't actually condition on. The @mention itself still works (name in the prompt).
-  const effectiveVariantSel = kind === "video" ? undefined : variantSel;
+  // it. The shared material normalizer drops video maps and canonicalizes an empty image
+  // map to absent, matching the worker's `job.variantSel ?? {}` semantics.
+  const material = normalizeFactoryMaterial({
+    prompt,
+    model,
+    kind,
+    count,
+    entityIds,
+    variantSel,
+    sourceGenerationId,
+    tailGenerationId,
+    referenceVideoGenerationId,
+    shotId,
+    durationSeconds,
+    resolution,
+    aspectRatio,
+    fps,
+    audio,
+  });
+  const effectiveVariantSel = material.variantSel ?? undefined;
+  const factoryAttempt = parseFactoryAttemptKey(idempotencyKey);
+
+  // Durable factory replay fast path. Dynamic fresh-only gates (guardian/model switches/pricing)
+  // may legitimately change after a job was accepted, but they must not make the same attempt's
+  // response stop being idempotent. This owner+project-scoped read can only reuse/refuse — never
+  // create or reserve. A miss still runs every gate, then repeats the verdict under the project
+  // advisory lock before the only create + reserve authority.
+  if (factoryAttempt) {
+    const history = await prisma.genJob.findMany({
+      where: {
+        ownerId,
+        projectId,
+        idempotencyKey: { startsWith: factoryAttempt.logicalPrefix },
+      },
+      orderBy: { createdAt: "desc" },
+      select: FACTORY_HISTORY_SELECT,
+    });
+    const early = factoryHistoryVerdict(history, factoryAttempt, material);
+    if (early) return early;
+  }
 
   // double-submit guard (fast path): a reload re-sends the same stable key, so
   // reuse the in-flight job instead of starting (and paying for) a 2nd one. The
-  // partial-unique index on the create below is the race-proof backstop.
-  if (idempotencyKey) {
+  // partial-unique index on the create below is the race-proof backstop. Factory keys
+  // deliberately skip this shortcut: their full material + attempt decision belongs
+  // under the existing project advisory transaction lock below.
+  if (idempotencyKey && !factoryAttempt) {
     const active = await prisma.genJob.findFirst({
       where: { ownerId, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
       orderBy: { createdAt: "desc" }, select: { id: true },
     });
-    if (active) return { id: active.id };
+    if (active) return { id: active.id, disposition: "reused" };
   }
 
-  // resolve the per-model video controls to concrete values (defaults fill any the
-  // composer didn't override) so the worker has everything it needs to spend once.
-  let videoOptions: { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } | undefined;
-  if (kind === "video") {
-    const d = videoDefaults(model as GenVideoModel);
-    videoOptions = {
-      seconds: durationSeconds ?? d.seconds,
-      resolution: resolution ?? d.resolution,
-      aspectRatio: aspectRatio ?? d.aspectRatio,
-      fps: fps ?? d.fps,
-      audio: audio ?? d.audio,
-    };
-  }
+  // The shared material normalizer resolves the exact five video controls persisted below.
+  const videoOptions = material.videoOptions ?? undefined;
 
   // consistencyGuardian (Phase 2): block obvious money-wasters BEFORE the spend
   // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
@@ -107,13 +188,13 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     videoOptions: videoOptions ?? null,
   });
 
-  let job: { id: string };
+  let decision: StartGenResult;
   try {
     // RESERVE the charge in the SAME transaction as the insert: if the balance can't
     // cover it, reserveCredits throws and the whole tx rolls back (no job, no queue,
     // no spend) → the catch returns a friendly out-of-credits message. A concurrent
     // submit can't drive the balance negative (conditional decrement on the account row).
-    job = await prisma.$transaction(async (tx) => {
+    decision = await prisma.$transaction(async (tx): Promise<StartGenResult> => {
       const projectLockKey = `project:${projectId}`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
       const liveProject = await tx.project.findFirst({
@@ -121,6 +202,25 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
         select: { id: true },
       });
       if (!liveProject) throw new Error("PROJECT_DELETED_DURING_GENERATION_START");
+
+      if (factoryAttempt) {
+        // Factory's exact attempt + logical-cell content binding is decided under the SAME
+        // owner/project advisory lock as create+reserve. No time window and no all-status index:
+        // an exact attempt is reused forever; a new attempt may create only after every prior
+        // logical-cell job FAILED; content never changes across attempts (FAILED included).
+        const history = await tx.genJob.findMany({
+          where: {
+            ownerId,
+            projectId,
+            idempotencyKey: { startsWith: factoryAttempt.logicalPrefix },
+          },
+          orderBy: { createdAt: "desc" },
+          select: FACTORY_HISTORY_SELECT,
+        });
+        const locked = factoryHistoryVerdict(history, factoryAttempt, material);
+        if (locked) return locked;
+      }
+
       const created = await tx.genJob.create({
         data: {
           id: newId(), ownerId, projectId, shotId: shotId ?? null,
@@ -133,14 +233,14 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
           threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
           ...(videoOptions ? { videoOptions } : {}),
           // Phase C: persist the @mention→variant bindings so the worker conditions on
-          // the right variant. Image-only (effectiveVariantSel drops it for video).
+          // the right variant. Image-only (the shared material normalizer drops it for video).
           // Omitted when empty → column stays null (old/bare/video gens unchanged).
-          ...(effectiveVariantSel ? { variantSel: effectiveVariantSel } : {}),
+          ...(material.variantSel ? { variantSel: material.variantSel } : {}),
         },
         select: { id: true },
       });
       await reserveCredits(tx, { orgId: ownerId, refId: created.id, cost });
-      return created;
+      return { id: created.id, disposition: "fresh" };
     });
   } catch (e) {
     // out of credits: the reserve rolled the tx back, so no job was created/queued.
@@ -159,15 +259,39 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     // is all-status), so match ANY status — a re-insert after the first job is DONE/FAILED
     // must also return that job, never spend again, never re-throw P2002 to the caller.
     if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      if (factoryAttempt) {
+        const existing = await prisma.genJob.findFirst({
+          where: { ownerId, projectId, idempotencyKey: factoryAttempt.key },
+          orderBy: { createdAt: "desc" },
+          select: FACTORY_HISTORY_SELECT,
+        });
+        if (existing) {
+          if (!factoryMaterialMatches(existing, material)) {
+            return {
+              error: "That batchId is already in use for different content — start a new batch with a fresh id.",
+              disposition: "conflict",
+            };
+          }
+          return { id: existing.id, disposition: "reused" };
+        }
+        // A factory recovery must never fall through to the generic id-only lookup below: doing
+        // so would reuse a late-visible winner without verifying its full material binding.
+        // PostgreSQL unique conflicts normally make the winner visible before this catch; if an
+        // unrelated P2002 reaches here, refuse safely instead of guessing.
+        return { error: "That batch request could not be safely deduplicated — retry it." };
+      }
       const coworkKey = idempotencyKey.startsWith("cowork:");
       const existing = await prisma.genJob.findFirst({
         where: { ownerId, projectId, idempotencyKey, ...(coworkKey ? {} : { status: { in: ["QUEUED", "GENERATING"] } }) },
         orderBy: { createdAt: "desc" }, select: { id: true },
       });
-      if (existing) return { id: existing.id };
+      if (existing) return { id: existing.id, disposition: "reused" };
     }
     throw e;
   }
+  if ("error" in decision) return decision;
+  if (decision.disposition === "reused") return decision;
+  const job = { id: decision.id };
   // ONLY the enqueue (getBoss/boss.send) is in this try: if the message was never sent, no
   // worker can run the job, so terminal-fail AND release the hold (else the reservation leaks).
   // Status is still QUEUED (nothing claimed it), so there's no running worker to clobber.
@@ -203,7 +327,7 @@ export async function startGen(raw: unknown): Promise<{ id: string } | { error: 
     console.warn(`startGen: gen.start audit write failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
   }
   revalidatePath("/", "layout");
-  return { id: job.id };
+  return { id: job.id, disposition: "fresh" };
 }
 
 /** F18: resolve the active image/video models SERVER-side (where OTTO_DEFAULT_VIDEO_MODEL is

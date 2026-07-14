@@ -44,6 +44,7 @@ import { renderVideoSkill } from "./skills/render-video.js";
 import { importMediaSkill } from "./skills/import-media.js";
 import { generateReferencesSkill } from "./skills/generate-references.js";
 import { deleteReferenceVariantSkill } from "./skills/delete-reference-variant.js";
+import { runFactoryBatchSkill } from "./skills/run-factory-batch.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -91,6 +92,7 @@ export const allSkills: OttoSkill[] = [
   importMediaSkill,
   generateReferencesSkill,
   deleteReferenceVariantSkill,
+  runFactoryBatchSkill,
 ];
 
 export interface SkillMeta {

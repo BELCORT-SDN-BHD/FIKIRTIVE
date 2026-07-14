@@ -48,6 +48,24 @@ export type MetaAdObject = {
 /** Per-run context the caller (web route / worker) supplies to `run(otto, input, { context })`.
  *  It is re-derived FRESH every run from the verified session — it is NOT persisted in RunState,
  *  so identity/config can never go stale. Tools read identity/scope from HERE, never from model args. */
+/** Result of one factory batch run (W-B3-F-P). Structural mirror of factory-batch's
+ *  BatchResult — declared here so packages/otto never imports apps/web across the seam. */
+export interface FactoryBatchResult {
+  batchId: string;
+  cells: {
+    index: number;
+    type: "gen" | "text";
+    status: "queued" | "reused" | "text" | "error";
+    jobId?: string;
+    credits: number;
+    error?: string;
+  }[];
+  totalCredits: number;
+  dispatched: number;
+  reused: number;
+  failed: number;
+}
+
 export interface OttoContext {
   /** = ownerId under org-as-tenant. Ledger key + ownership scope. From the verified session, NEVER the model. */
   orgId: string;
@@ -81,7 +99,21 @@ export interface OttoContext {
   /** App-level spend entrypoint, injected by the web caller (Task 1.8). The generate tool calls this;
    *  $0 tools never touch it. It is `startGen` from apps/web (unchanged) — which does its own
    *  requireOwner() + genRequest validation + reserve + GenJob insert + enqueue. */
-  startGen?: (req: GenRequestInput) => Promise<{ id: string } | { error: string }>;
+  startGen?: (req: GenRequestInput) => Promise<
+    | { id: string; disposition: "fresh" | "reused" }
+    | { error: string; disposition?: "conflict" }
+  >;
+  /** Factory batch port (W-B3-F-P, spec §5.2) — injected by the web caller. Runs a HEADLESS
+   *  batch of generations through the SAME startGen authority, one startGen call per cell, so
+   *  there is zero new spend path: each cell reserves/settles/refunds inside startGen and text
+   *  cells are $0. The server closure injects a caller-stable attemptId (APPROVAL_CARD.id for
+   *  Otto) that is deliberately absent from model args; startGen atomically returns fresh/reused.
+   *  The two methods mirror runVariantBatch / runBulkGrid. Reached ONLY via this port — never
+   *  importing factory-actions / prisma (single-action-layer rule, same as ctx.startGen). */
+  runFactoryBatch?: {
+    variant(input: Record<string, unknown>): Promise<FactoryBatchResult | { error: string }>;
+    bulk(input: Record<string, unknown>): Promise<FactoryBatchResult | { error: string }>;
+  };
   /** Compiled brand memory text for THIS run (injected as a system message at run assembly). */
   brandContext?: string;
   /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools). */

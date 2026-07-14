@@ -44,6 +44,7 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { startGen } from "./gen-actions";
+import { runVariantBatch, runBulkGrid } from "./factory-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
 import { fetchAndExtract, fetchRawHtml } from "./fetch-extract";
@@ -59,7 +60,7 @@ import {
   revokeSharePreview,
 } from "./schedule-actions";
 import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSummary } from "./approval-card-view";
-import { computeApprovalContentHash, refgenApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
+import { computeApprovalContentHash, refgenApprovalHashFromArgs, factoryBatchApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
 import { fetchOwnerAdPerformance } from "./meta-performance";
@@ -218,6 +219,7 @@ export async function buildOttoContext({
   referenceVideoGenerationIds,
   simpleMode,
   approvalConsent,
+  factoryAttemptId,
 }: {
   ownerId: string;
   projectId: string;
@@ -229,6 +231,8 @@ export async function buildOttoContext({
   simpleMode?: boolean;
   /** AR2 处方1: set ONLY by ottoApprove's universal branch — the hash-time updatedAt snapshot. */
   approvalConsent?: { scheduledPostId: string; expectedUpdatedAt: string };
+  /** Server-only factory attempt token: the hash-verified, CAS-consumed APPROVAL_CARD.id. */
+  factoryAttemptId?: string;
 }): Promise<OttoContext> {
   const disabledModels = Array.from(await resolveDisabledModels());
   const imageRefIds = orderedUniqueIds([...(sourceGenerationIds ?? []), sourceGenerationId]);
@@ -272,6 +276,16 @@ export async function buildOttoContext({
     referenceVideoGenerationIds: videoRefIds,
     images,
     startGen,
+    // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions. The model
+    // never receives an attemptId; only ottoApprove can inject the verified + consumed card id.
+    runFactoryBatch: {
+      variant: (input) => factoryAttemptId
+        ? runVariantBatch({ ...input, attemptId: factoryAttemptId })
+        : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
+      bulk: (input) => factoryAttemptId
+        ? runBulkGrid({ ...input, attemptId: factoryAttemptId })
+        : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
+    },
     brandContext,
     availableRefs,
     simpleMode: simpleMode ?? false,
@@ -419,6 +433,19 @@ async function readApprovalConsent(
       updatedAt: "", // no mutable row ⇒ no TOCTOU snapshot (only approveScheduledPost threads one)
     };
   }
+  // runFactoryBatch (W-B3-F-P, spend): same consent shape as generateReferences — the consent object
+  // is the EXACT parked tool-call args (mode/batchId/name/base/variants/cells; immutable in the
+  // RunState, no mutable row, no TOCTOU snapshot). ANY post-mint flip of the batch content ⇒ a
+  // different hash ⇒ hard refuse at approve. The generic approval-card view renders this card.
+  if (toolName === "runFactoryBatch") {
+    const contentHash = factoryBatchApprovalHashFromArgs(args);
+    if (!contentHash) return null; // no bindable consent ⇒ fail-closed (hashless, unapprovable card)
+    return {
+      summary: null,
+      contentHash,
+      updatedAt: "", // no mutable row ⇒ no TOCTOU snapshot (only approveScheduledPost threads one)
+    };
+  }
   if (toolName !== "approveScheduledPost") return null;
   try {
     const post = await prisma.scheduledPost.findFirst({
@@ -463,6 +490,8 @@ async function readApprovalConsent(
  * (entityId) is NOT unique across two same-entity parks with different prompts — without the hash,
  * the second distinct ask would silently reuse the first ask's card and become unapprovable. The
  * re-park-same-call dedup still holds (same args ⇒ same hash ⇒ same card).
+ * runFactoryBatch pins the hash for the same reason: its ref (batchId) can repeat across two parks
+ * with different cells (the orchestration layer only fails-closed on changed content at execute).
  */
 async function persistPendingApprovalCards(args: {
   ownerId: string;
@@ -476,7 +505,10 @@ async function persistPendingApprovalCards(args: {
     // P2 ref collision: refgen's consent object is the parked args themselves, so the pending-card
     // identity must include their hash (null for unbindable args — those dedupe by ref alone and
     // mint a hashless, unapprovable card).
-    const refgenHash = a.toolName === "generateReferences" ? refgenApprovalHashFromArgs(a.args) : null;
+    const consentHash =
+      a.toolName === "generateReferences" ? refgenApprovalHashFromArgs(a.args)
+      : a.toolName === "runFactoryBatch" ? factoryBatchApprovalHashFromArgs(a.args)
+      : null;
     const existing = await prisma.chatMessage.findFirst({
       where: {
         threadId: args.threadId,
@@ -486,7 +518,7 @@ async function persistPendingApprovalCards(args: {
           { payload: { path: ["toolName"], equals: a.toolName } },
           { payload: { path: ["ref"], equals: a.ref } },
           { payload: { path: ["status"], equals: "pending" } },
-          ...(refgenHash !== null ? [{ payload: { path: ["contentHash"], equals: refgenHash } }] : []),
+          ...(consentHash !== null ? [{ payload: { path: ["contentHash"], equals: consentHash } }] : []),
         ],
       },
       select: { id: true },
@@ -946,6 +978,7 @@ export async function ottoApprove(raw: unknown): Promise<
     // AR2 处方1: the hash-time updatedAt snapshot rides the resume context so the server action
     // CAS-pins exactly the content the hash verified (TOCTOU weld).
     let approvalConsent: { scheduledPostId: string; expectedUpdatedAt: string } | undefined;
+    let factoryAttemptId: string | undefined;
 
     if (!matchingInterruption) {
       const cardMsg = await prisma.chatMessage.findFirst({
@@ -980,6 +1013,11 @@ export async function ottoApprove(raw: unknown): Promise<
             if (approvalRefOf(toolName, args) !== cardPayload.ref) return false;
             if (toolName === "generateReferences") {
               return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+            }
+            // Same P2 discipline for runFactoryBatch: the ref (batchId) may repeat across two parks
+            // with different content — each card matches exactly ITS OWN parked call via the hash.
+            if (toolName === "runFactoryBatch") {
+              return factoryBatchApprovalHashFromArgs(args) === cardPayload.contentHash;
             }
             return true;
           } catch {
@@ -1032,7 +1070,9 @@ export async function ottoApprove(raw: unknown): Promise<
             error:
               cardPayload.toolName === "generateReferences"
                 ? "That reference request changed since Otto asked — ask Otto to request it again."
-                : "This post changed since Otto asked — review it and ask Otto to request approval again.",
+                : cardPayload.toolName === "runFactoryBatch"
+                  ? "That batch request changed since Otto asked — ask Otto to request it again."
+                  : "This post changed since Otto asked — review it and ask Otto to request approval again.",
           };
         }
         // AR2 处方1 (approveScheduledPost only): snapshot updatedAt from the SAME read the hash was
@@ -1055,6 +1095,7 @@ export async function ottoApprove(raw: unknown): Promise<
           const resolution = freshPayload && freshPayload.status !== "pending" ? freshPayload.status : "approved";
           return { ok: true, alreadyResolved: true, resolution };
         }
+        if (cardPayload.toolName === "runFactoryBatch") factoryAttemptId = cardMsg.id;
         // Approve — mutates the rehydrated state; resume executes the tool → the SAME owner-scoped
         // server action the human button uses (via ctx.schedule.approve).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1085,6 +1126,7 @@ export async function ottoApprove(raw: unknown): Promise<
       threadId,
       sourceGenerationId: null,
       approvalConsent,
+      factoryAttemptId,
     });
 
     // Resume the run, metered (LLM cost of this resume turn)
@@ -1363,6 +1405,10 @@ export async function ottoReject(raw: unknown): Promise<
               // ITS OWN parked call, never a same-entity sibling's still-pending ask.
               if (toolName === "generateReferences") {
                 return refgenApprovalHashFromArgs(args) === cardPayload.contentHash;
+              }
+              // Same discipline for runFactoryBatch (ref=batchId may repeat across parks).
+              if (toolName === "runFactoryBatch") {
+                return factoryBatchApprovalHashFromArgs(args) === cardPayload.contentHash;
               }
               return true;
             } catch {

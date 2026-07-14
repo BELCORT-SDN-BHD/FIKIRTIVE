@@ -37,6 +37,7 @@
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
 | renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisp |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
+| runFactoryBatch | spend | write | internal | ✅ | Generate a BATCH of ads/images/videos in one go — either a variant fan-out (one  |
 | saveCustomerSegment | free | write | internal | ❌ | Save or update ONE customer group in the user's Brand memory (upsert by name; om |
 | saveOffer | free | write | internal | ❌ | Save or update ONE offer/promotion in the user's Brand memory (upsert by title;  |
 | saveProduct | free | write | internal | ❌ | Save or update ONE product in the user's Brand memory (upsert by name — mentioni |
