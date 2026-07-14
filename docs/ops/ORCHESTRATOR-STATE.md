@@ -31,7 +31,7 @@
 - **#315 r005 current-head 已验**：base `7742eb60…` → head `f9cfb314210acee1139463660c5056638072ebb5` 恰好只改 B9 报告与 fence 顶部 docblock；fence 首个 `import` 至 EOF 逐字节不变，production/tests/root config/CI/schema/钱路零 diff。mailbox `READY_FOR_VERIFY` / delivery / gen 6，terminal checker `changed=2`。
 - **独立同族复核已验**（不冒充 cross-family）：exact head 上 check、71 migrations + drift 0 + 2923 tests、web-build、lint（0 errors / 75 warnings）、fence self-test / 仓扫描、locks/scope/effects/cleanup 全部 exit 0；未发现 r005 范围内新 P0/P1。
 - PR #315 Actions run `29363340148` 四个 jobs 都因 GitHub billing/payment annotation 在零步骤处失败，所以 remote CI **不绿**。证据评论：`https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/315#issuecomment-4973404091`。钱路仍为 Founder-only；本账的“已验”不是 merge 授权。
-- 本 Codex control plane 接管以来：**零 merge、零 deploy、零真实花费、零真实 provider/LLM 请求、零轮询 automation**。获授权的 GitHub 写入仅为 r005 分支 non-force push 与 #315 evidence comment；无生产或真实平台状态变更。
+- 本 Codex control plane 接管以来：**零 merge、零 deploy、零真实花费、零真实 provider/LLM 请求、零轮询 automation**。获授权的 GitHub 写入仅为 r005 分支 non-force push、#315 evidence comment 与本 #319 v4 governance branch non-force push；无生产或真实平台状态变更。
 
 ## 在飞（2026-07-15，交接必读）
 
@@ -48,7 +48,7 @@
 | **PR #314** | `079d4b1e9aae3985109ff480757528019d20d651`；current-head 本地四关、migrate/drift、2,906 tests 与裁决证据齐，`READY_TO_PRESENT`；远端 CI billing 零步骤失败，**不是绿** | schema/migration = Founder-only；只能由 Founder 明确批准 CI-unavailable 程序后亲合 |
 | **PR #315** | `f9cfb314210acee1139463660c5056638072ebb5`；r005 两文件收口、mailbox、主控制面与独立同族全验均闭合；远端 CI billing 零步骤失败，**不是绿** | 既有钱路 diff = Founder-only；当前控制面与作者均不得合并 |
 | **PR #316** | `80bf525d8d61b8da9232dfcdaa0d273cd26147c5`；**BLOCKED**：D-037 把 W-3/CANCELLED 派工 provenance 错链到不含该裁决的 `control/WO-OTTO-PHASE1/…`，且无 current-head fallback 门禁证据 | outcome provenance 应指向明确写有“已裁独立 CANCELLED”的 NH-1 dispatch；B8 plan 只能证明裁决槽位 / 两案 / 随车时点。新 head 重跑门禁并独立复核后，才可随 #314 呈 Founder |
-| **PR #319（本 PR）** | v3 `023d1a3c` 已过时且无 exact-head 本地四关 / 独立 review；本次 v4 正在收账 | governance / merge-policy = Founder-only；本控制面是 material editor，不得自审自合；新 head 仍须本地完整门禁、证据评论与 Founder 明确批准 |
+| **PR #319（本 PR）** | v3 `023d1a3c` 已过时且无 exact-head 本地四关 / 独立 review；本次 v4 已形成并推到本 PR，current head 必须从 GitHub 重验 | governance / merge-policy = Founder-only；本控制面是 material editor，不得自审自合；v4 exact head 仍须本地完整门禁、证据评论与 Founder 明确批准 |
 | **#317 / #318** | 共租户复合 FK 房规；`NOT VALID` + `VALIDATE` 同事务锁收益问题 | 架构 / schema 房规，待 Founder 选择 |
 | **#320 / #321** | 约 69 处 update/upsert tenant-guard 盲区；LLM meter 旧退款测试不核对退款身份 | tenant / money 路径，另立受控工单，不混入 r005 |
 
