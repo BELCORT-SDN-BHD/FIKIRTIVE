@@ -153,7 +153,11 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
   });
 });
 
-describe("W-B3-E-P ledger — EP-A5: same-key replay never double-charges", () => {
+describe("W-B3-E-P ledger — EP-A5(在途面): same-key replay while the first job is ACTIVE never double-charges", () => {
+  // Scope honesty (NODE-307-R1 item 1): these two cases cover the IN-FLIGHT (QUEUED/GENERATING)
+  // replay only — the dedup class the active-only partial index implements. The TERMINAL-state
+  // (post-DONE) same-key replay is a different fact: see the PROBE describe below + the
+  // WO-B3-E-P r001 ESCALATION record. Do not read this title as "all replays are deduped".
   it("a sequential double-submit of the same key reuses the in-flight job — one job, one RESERVE", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
@@ -225,8 +229,65 @@ describe("W-B3-E-P ledger — EP-A5: a retry is a NEW job that settles once; the
   });
 });
 
-describe("W-B3-E-P ledger — EP-A3: count 1-4 partial failure — reserved == settled + refunded, only failed cells refunded", () => {
-  it("across count=1/2/4 image jobs + a video job, 2 failures release exactly their own full holds", async () => {
+describe("W-B3-E-P PROBE — terminal-state plain-key replay (escalation evidence, NOT an endorsement)", () => {
+  // PROBE (修复轮 v2, NODE-307-R1 item 1)。事实坐实:plain idempotency key 是 IN-FLIGHT
+  // double-submit 守卫,不是 exactly-once-ever——fast path 只匹配 QUEUED/GENERATING
+  // (gen-actions.ts:144-150),partial-unique 索引也是 active-only
+  // (migrations/20260612140000_genjob_idempotency:5-12,与 cowork 的 all-status 索引形成
+  // 有意的三键类设计,见 core/gen.ts:197-202 注释)。因此终态(DONE)后同键重放会创建第二个
+  // job + 第二笔预留。这与 spec 不变量「同幂等键重放不重复扣款」(b3-block-spec.md:301 未加
+  // 限定语)冲突 → 依工单红线停手上报:见 mailbox WO-B3-E-P/r001/ESCALATION.md(R-EP-01)。
+  // 本 describe 只锁「现状事实」供裁决引用——若 founder 裁决改权威,这两个测试必须随之翻转;
+  // 绿 ≠ 背书。
+  it("PROBE R-EP-01a: after DONE, the same plain key creates a NEW job and a SECOND reservation (double-reserve fact)", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const key = `term-${randomUUID().slice(0, 8)}`;
+    const req = { projectId, prompt: "same request", entityIds: [], count: 1, kind: "image", model: "seedream", idempotencyKey: key };
+
+    const first = idOf(await startGen(req));
+    await workerSettle(ownerId, first.id); // DONE — the first charge settled
+
+    const replay = idOf(await startGen(req)); // SAME key, after the terminal state
+
+    // observed authority behavior — the replay is NOT deduped:
+    expect(replay.disposition).toBe("fresh");
+    expect(replay.id).not.toBe(first.id);
+    expect(await jobs(ownerId, projectId)).toHaveLength(2);
+    expect((await ledger(ownerId)).filter((r) => r.kind === "RESERVE")).toHaveLength(2); // second reservation
+    const acct = await account(ownerId);
+    expect(acct.balance).toBe(1000 - 2 * IMG); // first charged AND second held
+    expect(acct.reserved).toBe(IMG);
+  });
+
+  it("PROBE R-EP-01b: after FAILED(+refund), the same plain key also creates a new job — net-safe (old hold refunded) but not deduped", async () => {
+    const ownerId = await seedOrg(1000);
+    asOwner(ownerId);
+    const projectId = await seedProject(ownerId);
+    const key = `termf-${randomUUID().slice(0, 8)}`;
+    const req = { projectId, prompt: "same request", entityIds: [], count: 1, kind: "image", model: "seedream", idempotencyKey: key };
+
+    const first = idOf(await startGen(req));
+    await workerRefund(ownerId, first.id); // FAILED — the hold fully refunded
+
+    const replay = idOf(await startGen(req));
+
+    expect(replay.disposition).toBe("fresh");
+    expect(replay.id).not.toBe(first.id);
+    const acct = await account(ownerId);
+    expect(acct.reserved).toBe(IMG); // only the new job's hold
+    expect(acct.balance).toBe(1000 - IMG); // net charge so far = 0 (refund restored the first hold)
+  });
+});
+
+describe("W-B3-E-P ledger — across INDEPENDENT jobs: reserved == settled + refunded, only failed JOBS refunded", () => {
+  // Scope honesty (NODE-307-R1 item 2): this proves the PER-JOB accounting identity across a
+  // set of independent count-1..4 jobs — it is NOT a sub-cell partial-failure proof for a
+  // single count=2-4 GenJob. The authority has no sub-cell settle/refund (one provider call,
+  // one hold, one finalizer per job); the real in-job partial form is probed at the worker
+  // layer (gen.test.ts PROBE) and escalated — see the WO-B3-E-P r001 ESCALATION record.
+  it("across count=1/2/4 image jobs + a video job, 2 failed JOBS release exactly their own full holds", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
@@ -247,7 +308,7 @@ describe("W-B3-E-P ledger — EP-A3: count 1-4 partial failure — reserved == s
     await workerSettle(ownerId, j4.id);
 
     const rows = await ledger(ownerId);
-    // ONLY the failed jobs are refunded, each for its FULL count-hold (a failed 4-variant job
+    // ONLY the failed JOBS are refunded, each for its FULL count-hold (a failed 4-variant job
     // releases all 4 units — nothing is silently retained)
     const refunds = rows.filter((r) => r.kind === "REFUND");
     expect(new Set(refunds.map((r) => r.refId))).toEqual(new Set([j2.id, j3.id]));

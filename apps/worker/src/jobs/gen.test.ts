@@ -306,3 +306,54 @@ describe("handleGen — worker-crash recovery (EP-A4 route ③ / 六态⑥恢复
     expect(m.genJobUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe("W-B3-E-P PROBE — count 2-4 sub-cell partial inside ONE GenJob (escalation evidence, NOT an endorsement)", () => {
+  // PROBE (修复轮 v2, NODE-307-R1 item 2)。事实坐实:gen 权威链没有子格级 settle/refund——
+  // 一个 count=2-4 的 image GenJob 是「一笔 hold、一次 provider 调用、一个 finalizer」;
+  // 真实 BytePlus 的 partial 形态(byteplus.ts:50-60)是任一 shortfall 且 ≥1 已计费 →
+  // 整批抛 chargedError("only X/N usable") → handleGen 整单终态 FAILED + 整笔 hold 全额退款
+  // (用户一格都不付;founder 吸收已计费子图成本)。这与 spec 不变量「count 1-4 部分失败只退
+  // 失败格」(b3-block-spec.md:301,按 NODE-307-R1 读作子格粒度)冲突——权威根本没有子格账
+  // 可退 → 依工单红线停手上报:见 mailbox WO-B3-E-P/r001/ESCALATION.md(R-EP-02)。
+  // 本 describe 只锁「现状事实」;若裁决改权威,测试必须随之翻转;绿 ≠ 背书。
+  const countJob = { ...imageJob, count: 4 };
+
+  it("PROBE R-EP-02a: the real byteplus partial form (2/4 billed → chargedError) fail-closes the WHOLE job with a FULL refund — no sub-cell settle exists", async () => {
+    m.genJobFindUnique.mockResolvedValue(countJob);
+    m.generateImages.mockRejectedValue(Object.assign(new Error("byteplus image: only 2/4 usable"), { charged: true }));
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow(/only 2\/4/);
+
+    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(failedUpdate).toBeTruthy();
+    expect(failedUpdate![0].data.spent).toBe(true); // the billed sub-images stay auditable (paid-but-undelivered)
+    expect(m.refundReservation).toHaveBeenCalledTimes(1); // the FULL count-hold releases — not "only the failed cells"
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
+    expect(m.settleCredits).not.toHaveBeenCalled(); // and no partial settle for the 2 usable sub-images
+  });
+
+  it("PROBE R-EP-02b: a silent short return (3 of 4) commits and settles the FULL count=4 hold — the worker has no outputs.length==count guard", async () => {
+    // No CURRENT adapter produces this shape (byteplus throws chargedError on any shortfall;
+    // MockProvider returns exactly count) — this locks the LATENT adapter-contract dependence:
+    // the exactly-count guarantee lives ONLY in the adapters, not in handleGen or the ledger.
+    m.genJobFindUnique.mockResolvedValue(countJob);
+    m.generateImages.mockResolvedValue([
+      { bytes: new Uint8Array([1]), ext: "png" },
+      { bytes: new Uint8Array([2]), ext: "png" },
+      { bytes: new Uint8Array([3]), ext: "png" },
+    ]); // 3 outputs for a count=4 job
+    const storageModule = await import("../storage.js");
+    (storageModule.storage as unknown as { put: (o: string, b: Uint8Array, e: string) => Promise<{ contentHash: string }> }).put =
+      vi.fn(async (_o, b) => ({ contentHash: `hash-${b[0]}` }));
+    const generationCreate = vi.fn(async () => ({ id: `gen_out${generationCreate.mock.calls.length + 1}` }));
+    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
+    m.prisma.generation.create = generationCreate;
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(generationCreate).toHaveBeenCalledTimes(3); // 3 rows delivered on a 4-priced job
+    expect(m.settleCredits).toHaveBeenCalledTimes(1); // the FULL count=4 hold settles (charged for 4)
+    expect(m.refundReservation).not.toHaveBeenCalled(); // no partial refund for the missing 4th
+    expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeTruthy();
+  });
+});
