@@ -7,9 +7,9 @@
 ## Control plane
 
 - Program：`fikirtive-launch-v1` · Epoch：`fikirtive-launch-v1-20260713-01`
-- **主脑 = Claude Code（Opus 4.8）**。Founder 于 2026-07-15 换届（原话「换你去 OPUS4.8……继续你的工作 with /orchestration……保持 fable 的决定质量，或更高」）。前任 Fable 5 session 交棒即退。
-- **跨族顾问 = GPT-5.6 SOL（codex），effort xhigh**。Founder 同次钉死。
-- **⚠️ 跨族复审法的对称性约束（换主脑时必读）**：本项目自有法要求**主脑与挑战者必须异族**。当前 Opus 主脑 → codex SOL 挑战者 ✓。**若把主脑换成 Codex（gpt-5.x），则 codex 审 codex = 同族 = 违法，挑战者必须同时翻为 Claude。** 2026-07-15 有硬实证：同族（Fable）复审把 #314 的两个真缺陷双双「反驳掉」（2/2 refutes），跨族一上就翻案，成文法与 repo 先例站在跨族一边——**同族复审当天差点让两个 bug 上线**。
+- **主脑 = Claude Code（Opus 4.8）**。Founder 于 2026-07-15 换届。前任 Fable 5 session 交棒即退。
+- 复审配置由 Founder 逐 session 指定；本 session 期间为 codex（GPT-5.6 SOL, xhigh）。跨族复审法本身见 overlay（#308 收编为项目自有法）。
+- **实证记录（2026-07-15）**：#314 的同族（Fable）对抗复审把两个真缺陷**双双「反驳掉」**（2/2 refutes）——一个致回头客永不复活，一个致生产热表锁死；异族（codex）复审翻案，成文法（REVIEWER-PLAYBOOK / closed-beta-saas §3.4）与 repo 逐字节先例均站异族一边。**此为「复审者与被审者同族则可能集体盲」的一次硬证据**，供后续复审配置决策参考。
 - Global control plane 的身份来自 Founder 明确指定并在本账留痕，不来自本地 claim、超时或 lease。身份不明或状态冲突 → 停止派单，请 Founder 消歧；不得自动 takeover。
 
 ## ⚠️ 合并权（2026-07-15 控制面自纠——本次换届最重要的一条）
