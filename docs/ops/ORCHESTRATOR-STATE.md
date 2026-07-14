@@ -1,63 +1,115 @@
 # FIKIRTIVE 编排状态账
 
-> 更新时间：2026-07-14（Asia/Kuala_Lumpur；第二版——grill 收束 + wayfinder 立图）
+> 更新时间：2026-07-15（Asia/Kuala_Lumpur；第四版——Codex 接管同一 epoch + #315 r005 收口验收 + Founder 呈交边界）
 > 性质：可恢复 control plane 的最后核验检查点，不替代 git、GitHub、CI、部署、进程或 Founder 指令。
-> 协议状态：`trial`。旧状态账保留在 git 史（`449145e9` 与 `4a09c52c` 两版），只作历史证据，不得恢复其 claim、模型路由、PR、SHA、部署状态或旧 workflow。
+> 协议状态：`trial`。旧版保留在 git 史（`449145e9`/`4a09c52c`/`ff995eab`），只作历史证据，不得恢复其 claim、模型路由、PR、SHA 或部署状态。
 
 ## Control plane
 
-- Program：`fikirtive-launch-v1`
-- Epoch：`fikirtive-launch-v1-20260713-01`
-- Founder 当前指定的 global control plane：Claude Code（Fable 5）session——Founder 于 2026-07-14 经 handoff 文件（`FIKIRTIVE-HANDOFF-2026-07-14.md`）明示「继续这个总指挥的任务」并下达「先合」指令而指定；前任 Codex task `019f5a53-ada3-75e2-bfcb-8f0a89c16afa` 已完成 handoff 后闲置，未合并未部署未花钱。
-- 目标：以 filesystem-harnessed sessions 完成一个真实可收费的 FIKIRTIVE 纵切，随后对 exact release candidate 执行完整 launch-readiness、E2E、受控 canary 与 Founder Go/No-Go。
-- Global control plane 的身份来自 Founder 明确指定并在本账留痕，不来自本地 claim、超时或 lease。若另一个 control plane 可能仍活跃、身份不明或状态冲突，停止派单并请 Founder 消歧；不得自动 takeover。
-- `按 v1 开始` 授权执行本计划，不等于授权任何 Founder-only merge、deploy、真实花费、凭据变更或真实平台写入；每次 merge 均须该 PR 自己的 exact-head 证据闭合。
+- Program：`fikirtive-launch-v1` · Epoch：`fikirtive-launch-v1-20260713-01`
+- **当前主脑 = 本 fresh Codex session**。Founder 于 2026-07-15 现场逐字指定：「旧 Claude Code global control plane 现在正式退任，Codex 接管同一 program epoch fikirtive-launch-v1-20260713-01，并按上述 r005 路径开始。」前任 Claude Code（Opus 4.8）自该指令起正式退任；program / epoch 不变，未新开 epoch。
+- 复审配置由 Founder 逐 session 指定。Claude/Opus 主脑任内完成的 #315 R3（挑战者为 Codex）保留其历史跨族 provenance；接管后的 Codex worker / verifier 与本主脑同族，**不得**写成 cross-family PASS。未来高后果跨族复审需由 Founder 或现行规则另行指定不同 frontier family。
+- **实证记录（2026-07-15）**：#314 的同族（Fable）对抗复审把两个真缺陷**双双「反驳掉」**（2/2 refutes）——一个致回头客永不复活，一个致生产热表锁死；异族（codex）复审翻案，成文法（REVIEWER-PLAYBOOK / closed-beta-saas §3.4）与 repo 逐字节先例均站异族一边。**此为「复审者与被审者同族则可能集体盲」的一次硬证据**，供后续复审配置决策参考。
+- Global control plane 的身份来自 Founder 明确指定并在本账留痕，不来自本地 claim、超时或 lease。本次身份冲突已由上述 Founder 现场指令消歧；任何旧 session / pid 的晚到输出均须重新核验，不能恢复其 current 权限、旧 pin 或旧 recovery 指令。
 
-## VERIFIED
+## ⚠️ 合并权（2026-07-15 控制面自纠——本次换届最重要的一条）
 
-- `origin/main=0628d580ca0c46ea5b75fa576866b9a5e78b64a2`（重验于 2026-07-14T05:10Z，= #286 squash 落地后；#286 由 Founder 于 05:06Z 亲合）。
-- 换届完成：Founder 经 handoff `FIKIRTIVE-HANDOFF-2026-07-14B.md` + 开场指令指定 fresh Claude（Fable 5）session 为 global control plane；前任 Claude session 交棒即退。
-- 外部 `CLAIMS.json` 已由本 control plane 迁至 checker v1 schema（`schema_version:1`、`generation:1`、`claims:[]`，仍 `CLOSED_BOOTSTRAP_ONLY`；v0 原件备份同目录）。
-- Grill 2026-07-14 判决已入册（判决记录同 PR 追加节）；wayfinder 决策地图 = issue #287（票 #288–#297；三张 research 票已派 AFK 工位）。
-- Global orchestration：**简化版**（Simplify universal orchestration policy）；source `BELCORT-SDN-BHD/orchestration-skill@bd9c092564617518d080b6fa72bd8ff1d9107fd9`；`SKILL.md` SHA-256 `9cab52009c1cc333a8ac256b7a1ee3460576668928150b170c7c10e3d1ec5d1f`。重钉授权=Founder 2026-07-14 晚「完全使用新的 /orchestration update」。双安装路径解析到同一 canonical clone（`~/.local/share/orchestration-skill`）。要点：判断留主脑；Claude Code 重实现/调试/重构派 `codex:codex-rescue`（gpt-5.6-sol xhigh）；preflight/MODEL-ROUTING/STATE-TEMPLATE 已随简化移除；跨族高后果复审收编为本项目自有法（overlay 同批改）。（旧 v3.0.3 pin 见 git 史。）
-- Gate 0：PR #284 已由 Founder 合入 main（`c84ceec0`），author lane 未执行 merge。
-- H1：PR #285 已于 2026-07-14T04:36Z 由本非作者 control plane 按 Founder 2026-07-13 录案授权+2026-07-14「先合」现场指令执行 squash merge（`4a09c52c`）。合并前实时重验 exact base/head `c84ceec0`/`a0dc1823`、CI 4/4 绿、MERGEABLE-clean、零评论；落地树与受审 head 逐字节一致（10 文件，+2785/-0）。证据链（独立 exact-head PASS + Fable 5 xhigh 异族 PASS，无 P0/P1/P2，99/99）冻结在外部 harness 目录 `reviews/h1/`。
-- PR #280：`7da86886`，OPEN、head CI 4/4 绿，钱路 Founder-only；base 已落后 main 三个 commit（#284/#285/#286），须 restack+重出 exact-head 证据后由 Founder 点名。
-- PR #282：`be968f39`，同上（非钱路），须 restack+重验后点名。
-- 216 条 Route-B 能力仍为 145 `listed`、68 `spec-ready`、3 `code-complete`、0 `sandbox-verified`、0 `live-verified`、0 `release-certified`；H1 是治理设施，不晋升任何能力行。
-- 本 control plane 自接管以来：执行了一次 Founder 授权的非作者 merge（#285）；无 deploy、无真实花费、无真实平台写入、无轮询 automation。
+**控制面此前把 Founder 2026-07-14 的口头总授权（「我给你权利 merge」）读成覆盖一切 —— 错。**
+
+`AGENTS.md` §2 的 **Founder-only** 明列：governance/merge-policy、product identity/brand、blueprint、**irreversible architecture**、**schema/migration**、**money/tenant paths**、security credentials、production/deploy、external publish/spend/delete、异常大或有争议的 PR、**tier 不确定的任何东西**。§5 定义 sacred spend path 含 credit ledger reserve/settle/refund。
+
+**Delegated ordinary merge** 另有四条硬前置：未自撰该 diff + 当前 head CI 全绿 + **independent cross-family review 无未决 P0/P1** + 不含任何 founder-only 类别 + 结果对 main 复核。
+
+**现行法：口头总授权不推翻成文 sacred 类别保留（宪法 1：安全 > 效率）。钱路 / schema / 治理 一律呈 Founder 亲点。**
+此错误由 codex SOL 跨族复审在控制面**即将合并 PR #315（钱路 diff）之前**逮到。
+
+## VERIFIED（2026-07-15 重验）
+
+- `origin/main = f2e08a37`（#313 squash）。路线乙创作批2 四工位（F-P/G-P/H-P/E-P）全落 main；#280/#282/#307/#312/#313/#305/#308 均已合并。
+- 外部 `CLAIMS.json`：**generation 6**；`claim-wo-otto-phase1-r005` = 唯一 **ACTIVE**（scoped，base_sha `7742eb6036052d91590d596f39ddf3a6a4f4d657`）；r004 已 `SUPERSEDED`，更早 revision 只作历史证据。ACTIVE 在此是 fencing claim，不表示仍有授权施工在飞。
+- **哈内斯判例（历史仍有效）**：checker 的 `startup` / `prewrite` 硬要求 `HEAD == base_sha` 且 changed=0 → 在已交付 commit 上做修复轮必须签发新 revision；r003/r004/r005 均据此换基座。签发会 bump generation 并令旧 lane fail closed。
+- **#315 r005 current-head 已验**：base `7742eb60…` → head `f9cfb314210acee1139463660c5056638072ebb5` 恰好只改 B9 报告与 fence 顶部 docblock；fence 首个 `import` 至 EOF 逐字节不变，production/tests/root config/CI/schema/钱路零 diff。mailbox `READY_FOR_VERIFY` / delivery / gen 6，terminal checker `changed=2`。
+- **独立同族复核已验**（不冒充 cross-family）：exact head 上 check、71 migrations + drift 0 + 2923 tests、web-build、lint（0 errors / 75 warnings）、fence self-test / 仓扫描、locks/scope/effects/cleanup 全部 exit 0；未发现 r005 范围内新 P0/P1。
+- PR #315 Actions run `29363340148` 四个 jobs 都因 GitHub billing/payment annotation 在零步骤处失败，所以 remote CI **不绿**。证据评论：`https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/315#issuecomment-4973404091`。钱路仍为 Founder-only；本账的“已验”不是 merge 授权。
+- 本 Codex control plane 接管以来：**零 merge、零 deploy、零真实花费、零真实 provider/LLM 请求、零轮询 automation**。本轮获授权的 GitHub 写入集合严格限于 r005 分支 non-force push、#315 evidence comment、#319 v4 governance branch non-force push，以及为同一 #319 exact head 回填 PR metadata / 本地门禁证据评论；每项完成状态仍须从 GitHub 重验。无生产或真实平台状态变更。
+
+## 在飞（2026-07-15，交接必读）
+
+- **当前没有获授权的 scoped 写入在飞。** r005 author lane 已停止写入；mailbox 为 terminal `READY_FOR_VERIFY`，repo / remote / PR head 三方均为 `f9cfb314…`。
+- generation 6 / r005 唯一 ACTIVE 暂时保留为 fencing 边界，直到 Founder 对 #315 明确决定。不得为“先开工”提前 bump generation，也不得把 terminal claim 误写成仍在施工。
+- 旧 Claude / Codex 进程可能仍在主机上存活，但自 Founder 接管指令起没有 control-plane 权限。其任何晚到输出必须由当前控制面从 repo、GitHub、CI、worktree 与哈内斯重新核验后才能提升；不得按旧 pid recovery 指令自动恢复。
+
+`<HARNESS>` = `/Users/winnin/Documents/Codex/FIKIRTIVE-HARNESS/fikirtive-launch-v1`
+
+## 待 Founder / 待收口（控制面不能越权）
+
+| 件 | 当前核验状态 | 边界 |
+|---|---|---|
+| **PR #314** | `079d4b1e9aae3985109ff480757528019d20d651`；current-head 本地四关、migrate/drift、2,906 tests 与裁决证据齐，`READY_TO_PRESENT`；远端 CI billing 零步骤失败，**不是绿** | schema/migration = Founder-only；只能由 Founder 明确批准 CI-unavailable 程序后亲合 |
+| **PR #315** | `f9cfb314210acee1139463660c5056638072ebb5`；r005 两文件收口、mailbox、主控制面与独立同族全验均闭合；远端 CI billing 零步骤失败，**不是绿** | 既有钱路 diff = Founder-only；当前控制面与作者均不得合并 |
+| **PR #316** | `80bf525d8d61b8da9232dfcdaa0d273cd26147c5`；**BLOCKED**：D-037 把 W-3/CANCELLED 派工 provenance 错链到不含该裁决的 `control/WO-OTTO-PHASE1/…`，且无 current-head fallback 门禁证据 | outcome provenance 应指向明确写有“已裁独立 CANCELLED”的 NH-1 dispatch；B8 plan 只能证明裁决槽位 / 两案 / 随车时点。新 head 重跑门禁并独立复核后，才可随 #314 呈 Founder |
+| **PR #319（本 PR）** | v3 `023d1a3c` 已过时且无 exact-head 本地四关 / 独立 review；本次 v4 已形成并推到本 PR，current head 必须从 GitHub 重验 | governance / merge-policy = Founder-only；本控制面是 material editor，不得自审自合；v4 exact head 仍须本地完整门禁、证据评论与 Founder 明确批准 |
+| **#317 / #318** | 共租户复合 FK 房规；`NOT VALID` + `VALIDATE` 同事务锁收益问题 | 架构 / schema 房规，待 Founder 选择 |
+| **#320 / #321** | 约 69 处 update/upsert tenant-guard 盲区；LLM meter 旧退款测试不核对退款身份 | tenant / money 路径，另立受控工单，不混入 r005 |
+
+#322 是 CLI driver 的真正强制路线（依赖清单 / 生产镜像 / 生产环境凭据），目前仅跟踪、**未实施**。另有三件 Founder 亲手文书：#299（Meta 验证，审核中）· #301（Gupshup 开户 + API key）· #309（EasyStore Partner 注册）。
+
+## 跨族复审双 BLOCK（2026-07-15）— 判决与证据
+
+codex SOL 对 **#314 与 #315 双双判 BLOCK**。控制面逐条回一手证据自裁（**两族冲突处一律以成文法 + repo 先例为准，不采信任一族结论**）。裁决书 8 条全文：`<HARNESS>/reviews/ADJUDICATION-2026-07-15-pr314-pr315.md`。
+
+**#314 采纳 3 条**（每条都违反成文法且有 repo 逐字节先例；**其中 2 条曾被同族复审反驳掉**）：
+- ContactIdentity 软删模型用**全量**唯一索引 → 违 REVIEWER-PLAYBOOK；先例 EntityVariant partial index。**产品后果：回头客被 CSV 导入静默当「重复跳过」，永不复活。**
+- `Generation`（法条**点名热表**）上默认验证型 FK → 违 closed-beta-saas §3.4；先例 org_tenant 6× NOT VALID。
+- tenant-guard `CHECKED_OPS` 漏 `findFirstOrThrow`（app 真实调用点 0 → 零爆炸半径）。
+
+→ 修复轮已交付 `b15a4ff7`；控制面独立四关全绿 + **真库实证**（`pg_indexes` 见 partial 索引带 `WHERE deletedAt IS NULL`、`pg_constraint.convalidated=t`）。
+
+**#314 降级 1 条**：codex 判「跨租户 FK」BLOCKER → 降级（全仓共租户复合 FK=0，既有 FK 一律裸 id → 遵循房规非新洞；且日后补是**加性**非单向门）→ 归 #317。
+
+**#315 采纳**：合并权 BLOCKER（见上）+ worker-verdict 测试**假覆盖**（mock 里重新实现被测对象 → 没跑生产实现；与 W-B3-E-P 被 BLOCK 的假覆盖同类）+ 缺 stream 错误路径与**旧持久化 state→新 agent 恢复**（唯一触及线上真实数据的回归面）+ CLI fence 可绕过且未接线 = **假保障** + 报告失真。
+
+**#315 代码本身干净**：跨族明确否证行为漂移与钱路缺陷（reserve 在 run 前、maxSteps≡maxTurns 同源、四类 settle/refund 未改、NaN/负数全拦、MaxTurns instanceof 失败方向 = 整退非多扣）。**被 BLOCK 的是「谁能合」与「测试/文档在说谎」，不是实现。**
+
+## #315 R3 裁决与 r005 收口（2026-07-15）
+
+- 历史跨族 R3 对 `7742eb60…` 判 BLOCK，但其关键结论是**原 PH1G-A4「不得留可绕过的 fence」本身不可达**：在有动态 loader / `eval` 的语言里，静态 import 扫描不能成为安全边界。裁决书：`<HARNESS>/reviews/ADJUDICATION-R3-2026-07-15.md`。
+- R3 已用故障注入确认 M1 钱路身份、M2 drain 次序与 M5 worker 断言有真实咬合力；production 实现相对 r004 base 零 diff。不得再打第四轮 fence 逻辑补丁。
+- r005 只做两项诚实收口：fence 顶部 docblock 明确 best-effort / 非 security boundary / 已知非穷举盲区 / #322 未实施；B9 报告同步这些边界并删除“完整披露”绝对措辞。可执行 body 与 tests 未改。
+- 当前控制面已把 acceptance 限定为修正后的 `PH1G-A4`、`PH1G-A5`、`PH1G-A7`，并在 exact head `f9cfb314…` 独立复核通过。mailbox machine status 保持 `READY_FOR_VERIFY`；control-plane disposition 是 `READY_TO_PRESENT`。两者都不把 billing-blocked remote CI 写成绿色，也不产生 merge 授权。
+
+## 控制面自己欠的
+
+- **CLI fence 接线** root `package.json` + `.github/workflows/ci.yml`。脚本只住在 #315：必须先由 Founder 合并 #315、对 `main` 复核脚本存在，再另开接线 PR；否则 CI 会引用 main 上不存在的文件。接线前任何文档不得把该 fence 写成保障。
+- **#322 真正强制路线**：dependency/lockfile inventory、生产镜像无 CLI binary、生产环境无订阅凭据。当前仅跟踪，未实施；不得用 r005 静态 fence 代替。
+- GitHub Actions 当前因 billing/payment 限制而在零步骤处失败；Founder 2026-07-14 裁定 public 前不处理账单，`protect-main` 的 required status checks 已移除、其余规则仍在。远端结果因此**不是绿**；合并前必须在 exact head 本地完整复现门禁、贴进 PR，并由 Founder 对 CI-unavailable 程序明确批准。重开票 #303（挂 B13）。
 
 ## Product truth
 
-- 当前真实主链是：目标 → Otto 计划/基础价格 → 确认 → 生成 → Canvas/聊天查看结果 → 下载/credit 明细。
-- 目标可收费体验是：目标 → 完整 plan 与绑定报价（**一个 request = 一次批准**的授权信封）→ `Watch Otto work`（live reflection，B9 契约 6）→ **「停」按钮 + 人插手即停**（2026-07-14 grill 裁定：不建暂停/存档/接管/续跑重机器）→ 输出与统一费用/结果凭证。
-- Schedule、publish、analysis 不强制把用户带到沉浸现场；可信状态、关键结果与 deterministic deep link 足够。Canvas/Factory/Storyboard 的创作动作才需要 live work surface。
+- 卖法：**「雇一个会用全套工具的 AI 营销员工」**；第一期钉死三环（做内容 / 发出去 / 唤回老客）；收钱走已 LIVE 的 credits 轨；三环外全城诚实 Coming soon。
+- **城照建钱先收**：建城图管宽度（13 板块并行盖），卖图管深度（三环到齐即对顾客一号收钱，不等全城）。
+- 目标可收费体验：目标 → 完整 plan + 绑定报价（**一个 request = 一次批准**的授权信封）→ `Watch Otto work`（live reflection，B9 契约 6）→ **「停」按钮 + 人插手即停**（不建暂停/存档/接管/续跑重机器）→ 输出与统一费用/结果凭证。
 - 生产代码没有 Canva.com integration；「Canvas」指 FIKIRTIVE 自己的创作面，不得对外误称 Canva。
-- Factory 正式面、active browser E2E、部署 SHA provenance、restore/rollback/alerting 与 public legal/support 仍是 launch blockers。B11/B12/B13 未完成。（原「durable pause/takeover/resume」一项经 2026-07-14 grill 查档裁定移除：founder 亲定的收钱条件从不含 run-control，该措辞系 agent 起草；替代=「停」按钮+人插手即停，详见判决记录 2026-07-14 节。）
-
-## Active phase
-
-1. **Cold-start 验收已 PASS**（2026-07-14，fresh clone @`4a09c52c`：checker 自测 99/99、真实 registry fail-closed、合成 revision 四阶段全通、越界写被拦；证据在外部 harness `runs/COLD-START-4a09c52c/`）。多 session 并行施工的机器前置已闭合。
-2. **Scoped mode：机制就绪、闸仍关**。外部 `CLAIMS.json` 已迁 v1（generation 1、零 claim、`CLOSED_BOOTSTRAP_ONLY`）；签发第一张真实产品工单时才开闸。
-3. **Grill 2026-07-14 已收束**（判决见判决记录同批追加节）：第一期卖法/三环定义/审批粒度/停按钮裁定/建卖两图配对全部拍板。产品规划进入 wayfinder 阶段：决策地图 issue #287，票走 grilling/research/prototype/task 四型；wayfinder 只管决策层，执行归 harness 工单，Route-B 台账仍是唯一能力真源。
-4. **第一批并行调度（进行中）**：AFK 研究票 #289（引擎图纸 rebaseline）/#290（Meta App Review 材料）/#291（BSP 选型）已派工位；#280/#282 仍须 restack+重出 exact-head 证据后交 Founder 点名；创作批2 剩余工位（G-P/E-P）与 B8 设计草案（票 #296）按建城图排队签发 harness 工单。
-5. **不再有待合并的换届件**：#286 已由 Founder 合并；本状态账更新（含判决入册）为下一件 Founder-only docs PR。
+- B11/B12/B13 未完成（Factory 正式面、active browser E2E、部署 SHA provenance、restore/rollback/alerting、public legal/support 仍是 launch blockers）。
 
 ## Persistent evidence
 
-- Current external checkpoint：`/Users/winnin/Documents/Codex/FIKIRTIVE-HARNESS/fikirtive-launch-v1/CONTROL-PLANE.md`
-- Checkpoint updated：`2026-07-14T04:45:00Z`（换届+H1 落地边界）
-- H1 frozen reviews：同目录 `reviews/h1/`（含 Fable exact-head PASS 与 4 条非阻塞 P3 加固候选）
-- H2 launch-risk inventory：同目录 `research/H2-LAUNCH-RISK-INVENTORY.md`
-- H2 product-flow inventory：同目录 `research/H2-PRODUCT-FLOW-INVENTORY.md`
-- Draft launch/E2E contract：同目录 `drafts/H2-LAUNCH-CONTRACT-E2E.md`
-- Automation 时区事故：同目录 `incidents/2026-07-14-AUTOMATION-TIMEZONE.md`（不得重建轮询 watcher）
+- **外部 checkpoint（真源，比本账更细）**：`<HARNESS>/CONTROL-PLANE.md`
+- 跨族复审与裁决：`<HARNESS>/reviews/`（`ADJUDICATION-2026-07-15-*`、`ADJUDICATION-R2-2026-07-15.md`、`ADJUDICATION-R3-2026-07-15.md`、`pr314-codex-*`、`pr315-codex-*`）
+- 现行施工单控制文件：`<HARNESS>/control/WO-OTTO-PHASE1/r005/`；现行 mailbox：`<HARNESS>/mailboxes/WO-OTTO-PHASE1/r005/`。r004 及更早 revision 冻结为历史证据，不得回写。
+- 信箱：`<HARNESS>/mailboxes/`；日志：`<HARNESS>/logs/`；claim registry：`<HARNESS>/CLAIMS.json`
+- #315 current-head evidence comment：`https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/315#issuecomment-4973404091`
+- Automation 时区事故：`<HARNESS>/incidents/2026-07-14-AUTOMATION-TIMEZONE.md`（**不得重建轮询 watcher**）
 
-恢复时先完整读取 global skill、`AGENTS.md`、`docs/BLUEPRINT.md`、`.claude/CLAUDE.md`、review playbook、overlay 与本账，再从 repo/GitHub/CI/worktree/进程/部署重验可变事实。外部 checkpoint 的 hash 若已变化，先审阅变化原因；不得用 transcript 或历史状态自动补权限。
+恢复时先完整读 global skill、`AGENTS.md`、`docs/BLUEPRINT.md`、`.claude/CLAUDE.md`、review playbook、overlay 与本账，再从 repo/GitHub/CI/worktree/**进程**/部署重验可变事实。不得用 transcript 或历史状态自动补权限。
 
 ## Recovery next step
 
-1. 重验 global skill pin（v3.0.3）、`origin/main`、#280/#282 current heads、CLAIMS.json（v1）、wayfinder 地图 #287 现状、所有 dirty worktree 与外部 checkpoint。
-2. 按 wayfinder 地图推进决策票（一次一票）；research 票产物在外部 harness `research/`，核验后回填票与地图。
-3. #280/#282 restack 到 exact current main，重出各自 exact-head 证据，交 Founder 点名；不得 bulk merge。
-4. 按建城图签发互不重叠的产品 work orders（写 session 必走 harness claim，registry 已 v1）；完整 launch-readiness/E2E 在 exact release candidate 上执行，而不是现在提前宣称。
+1. 重验 `origin/main`、四个 open PR current heads、Actions annotations、worktree、`CLAIMS.json`（预期 gen 6 / r005 唯一 ACTIVE）、r005 mailbox 与 external checkpoint；旧 session / pid 只作待核输入。
+2. 本 #319 v4 产生新 head 后，跑完整本地门禁并贴 PR 证据，再呈 Founder；governance Founder-only，且当前控制面是 material editor，不得自审自合。
+3. #316 先修 D-037 provenance 错链，在新 head 跑完整本地门禁、贴 SHA 绑定证据并独立复核；闭合后先呈 Founder 合入 #316，再呈已具 current-head 证据的 #314（`079d4b1e…`）。两者未闭合前不得写“#314/#316 可合”。
+4. #315（`f9cfb314…`）按 current-head 证据呈 Founder；remote CI 不绿，必须由 Founder 明确批准 CI-unavailable 程序后亲合。控制面不得代合。#314 与 #315 的相对先后不影响各自，但第 5 步 batch 前二者必须都已在 main。
+5. 批量派工有**双前置**：先修正并落地 #316 provenance，再由 Founder 合入 #314；随后 #314（NH-1 schema）与 #315（Phase 1）都必须已在 `main` 且复核通过，才一次 generation bump：retire r005 + 批量签发 W1/W2/W3 + #311。W1/W2/W3 的 base 必须取 NH-1 后 main，不能只因 #315 交付就提前签发。
+6. CLI fence 接线是另一条较窄依赖：只在 #315 实际合入并确认脚本存在于 `main` 后另开 PR；不得提前引用未落 main 的脚本。
+7. #317/#318/#320/#321/#322 各守自己的 founder / architecture / money / tenant / security 边界，不混进 r005 或状态账 PR。
+8. 完整 launch-readiness/E2E 只在 exact release candidate 上执行，不提前宣称。
