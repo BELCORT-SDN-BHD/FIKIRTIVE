@@ -16,9 +16,32 @@
  */
 process.env.OPENAI_AGENTS_DISABLE_TRACING = "1";
 
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
+
+const meterMocks = vi.hoisted(() => {
+  const transaction = vi.fn();
+  const reserveCredits = vi.fn();
+  const settleCredits = vi.fn();
+  const refundReservation = vi.fn();
+  return {
+    transaction,
+    reserveCredits,
+    settleCredits,
+    refundReservation,
+    prisma: { $transaction: transaction },
+  };
+});
+
+vi.mock("@fikirtive/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fikirtive/db")>()),
+  prisma: meterMocks.prisma,
+  reserveCredits: meterMocks.reserveCredits,
+  settleCredits: meterMocks.settleCredits,
+  refundReservation: meterMocks.refundReservation,
+}));
+
 import { z } from "zod";
-import { RunState, Usage, MaxTurnsExceededError } from "@openai/agents";
+import { RunState, Usage, MaxTurnsExceededError, run as sdkRun } from "@openai/agents";
 import type { Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/agents";
 import { OTTO_MAX_STEPS, llmPricesFor } from "@fikirtive/core";
 import {
@@ -50,6 +73,14 @@ const baseCtx: OttoContext = {
 
 const fakeUsage = () => new Usage({ inputTokens: 3, outputTokens: 2, totalTokens: 5 });
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  meterMocks.transaction.mockImplementation(async (fn: (tx: Record<string, never>) => Promise<unknown>) => fn({}));
+  meterMocks.reserveCredits.mockResolvedValue(undefined);
+  meterMocks.settleCredits.mockResolvedValue(undefined);
+  meterMocks.refundReservation.mockResolvedValue(undefined);
+});
+
 /** Fixture manifest: declares itself non-billable — the runner derives paid:false from it. */
 function fixtureModelRuntime(binding: Model): OttoModelRuntime {
   return Object.freeze({
@@ -59,6 +90,14 @@ function fixtureModelRuntime(binding: Model): OttoModelRuntime {
     mapUsage: mapOttoUsage,
     cacheCapabilities: Object.freeze({ promptCache: false }),
     pricing: llmPricesFor,
+  });
+}
+
+/** Paid fixture: exercises the real reserve/refund/settle wrapper without a network provider. */
+function paidFixtureModelRuntime(binding: Model): OttoModelRuntime {
+  return Object.freeze({
+    ...fixtureModelRuntime(binding),
+    billableModelId: "claude-sonnet-4-6",
   });
 }
 
@@ -290,7 +329,7 @@ describe("production composition root (PH1-A5)", () => {
     expect(ottoWorkerVerdictRuntime.maxTurns).toBe(1);
   });
 
-  it("composition is env-immune: createOttoRuntime reads NO env; polluted env cannot select fixture/CLI", () => {
+  it("three ambient selector-like env names are not inputs to the explicit composition API", () => {
     const keys = ["OTTO_MODEL_RUNTIME", "OTTO_BILLABLE_MODEL", "OTTO_MODEL"] as const;
     const saved = keys.map((k) => [k, process.env[k]] as const);
     try {
@@ -311,6 +350,92 @@ describe("production composition root (PH1-A5)", () => {
         else process.env[k] = v;
       }
     }
+  });
+});
+
+// ── PH1F-A2: stream failure money path + settlement ordering ────────────────
+
+describe("runOttoTurn — real meter stream failure and completion ordering (PH1F-A2)", () => {
+  it("an onStream throw refunds the full paid reservation and never success-settles", async () => {
+    const runtime = createOttoRuntime(
+      { modelRuntime: paidFixtureModelRuntime(fakeTextModel("partial")), skills: [], traceSink: noopTraceSink },
+      "interactive",
+    );
+
+    await expect(runOttoTurn(
+      {
+        orgId: "org_t",
+        refId: "paid:stream-error",
+        input: "hello",
+        stream: true,
+        onStream: async (stream) => {
+          for await (const _event of stream) throw new Error("client stream failed");
+        },
+      },
+      baseCtx,
+      runtime,
+    )).rejects.toThrow("client stream failed");
+
+    expect(meterMocks.reserveCredits).toHaveBeenCalledOnce();
+    expect(meterMocks.refundReservation).toHaveBeenCalledOnce();
+    expect(meterMocks.settleCredits).not.toHaveBeenCalled();
+    expect(meterMocks.reserveCredits.mock.invocationCallOrder[0]).toBeLessThan(
+      meterMocks.refundReservation.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("drains onStream before awaiting completed and reads usage only afterward", async () => {
+    const order: string[] = [];
+    const modelRuntime = Object.freeze({
+      ...fixtureModelRuntime(fakeTextModel("unused")),
+      mapUsage: (usage: Parameters<typeof mapOttoUsage>[0]) => {
+        order.push("usage");
+        return mapOttoUsage(usage);
+      },
+    });
+    const runtime = createOttoRuntime({ modelRuntime, skills: [], traceSink: noopTraceSink }, "interactive");
+    const streamResult = {
+      async *[Symbol.asyncIterator]() {
+        order.push("drain");
+        yield { type: "raw_model_stream_event" };
+      },
+      completed: {
+        then(resolve: (value: undefined) => void) {
+          order.push("completed");
+          resolve(undefined);
+        },
+      },
+      state: {
+        toString: () => "ordered-state",
+        get usage() {
+          return { inputTokens: 3, outputTokens: 2, totalTokens: 5 };
+        },
+      },
+      interruptions: [],
+      finalOutput: "done",
+    };
+    const execution = {
+      runAgent: vi.fn(async () => streamResult),
+      meter: vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result),
+      maxTurnsExceededError: MaxTurnsExceededError,
+    };
+
+    await runOttoTurn(
+      {
+        orgId: "org_t",
+        refId: "fixture:stream-order",
+        input: "hello",
+        stream: true,
+        onStream: async (stream) => {
+          for await (const _event of stream) { /* drain */ }
+        },
+      },
+      baseCtx,
+      runtime,
+      execution as never,
+    );
+
+    expect(order).toEqual(["drain", "completed", "usage"]);
   });
 });
 
@@ -404,6 +529,65 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     expect(log).toEqual(["org_t:sp_1"]); // executed exactly once
     expect(fin2.interrupted).toBe(false);
     expect(fin2.text).toBe("Approved and scheduled!");
+  });
+
+  it("restores an old-construction SDK state against the new production approval agent and resumes", async () => {
+    // The persisted state is produced by a separately constructed, minimal legacy-shaped
+    // Agent. The restore target is the independently composed production runtime Agent.
+    const legacyRuntime = createOttoRuntime(
+      {
+        modelRuntime: fixtureModelRuntime(
+          fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_legacy" }, "legacy-unused"),
+        ),
+        skills: [makeGatedSkill([])],
+        traceSink: noopTraceSink,
+      },
+      "interactive",
+    );
+    const parkedResult = await runOttoTurn(
+      { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },
+      baseCtx,
+      legacyRuntime,
+    );
+    const serialized = finalizeOttoTurn(parkedResult, legacyRuntime).newOttoState;
+
+    const restored = await RunState.fromString(ottoApprovalResumeRuntime.agent, serialized);
+    expect(restored.currentAgent).toBe(ottoApprovalResumeRuntime.agent);
+    expect(restored.currentAgent).not.toBe(legacyRuntime.agent);
+    const [interruption] = restored.getInterruptions();
+    expect(interruption).toBeDefined();
+    restored.approve(interruption!);
+
+    // Never touch the network: only the provider edge is stubbed. SDK resume, pending-tool
+    // handling, production Agent/tool lookup, shared runner, and finalizer all remain real.
+    const provider = ottoApprovalResumeRuntime.modelRuntime.binding;
+    const providerSpy = vi.spyOn(provider, "getResponse").mockResolvedValue({
+      usage: fakeUsage(),
+      output: [{
+        type: "message" as const,
+        role: "assistant" as const,
+        status: "completed" as const,
+        content: [{ type: "output_text" as const, text: "Production agent resumed." }],
+      }],
+    });
+    try {
+      const resumedResult = await runOttoTurn(
+        { orgId: "org_t", refId: "fixture:legacy-resume", input: restored },
+        baseCtx,
+        ottoApprovalResumeRuntime,
+        {
+          runAgent: sdkRun,
+          meter: async (_args, fn) => (await fn()).result,
+          maxTurnsExceededError: MaxTurnsExceededError,
+        },
+      );
+      const finalized = finalizeOttoTurn(resumedResult, ottoApprovalResumeRuntime);
+      expect(finalized.interrupted).toBe(false);
+      expect(finalized.text).toBe("Production agent resumed.");
+      expect(providerSpy).toHaveBeenCalledOnce();
+    } finally {
+      providerSpy.mockRestore();
+    }
   });
 
   it("worker-verdict: single model step, zero tools, text extracted by the shared finalizer", async () => {

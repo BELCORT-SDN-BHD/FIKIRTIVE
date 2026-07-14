@@ -1,59 +1,55 @@
 # B9 · OTTO Phase 1 composition seam 施工证据
 
-> 工单：`WO-OTTO-PHASE1 r002`。本报告只记录 author lane 的行为不变施工证据；不改写 B9 冻结契约，不代表 global control plane 验收或可合并结论。
+> 工单：`WO-OTTO-PHASE1 r003`（诚实修复轮），base `725773ba11922fda1ffaf014dc1ddd8d935cfb78`。本报告只记录 author lane 的证据边界；不改写 B9 冻结契约，不代表 global control plane 验收或 merge 授权。
 
-## 施工结果
+## r003 施工结果
 
-- 新增 `OttoRunProfile`、`OttoModelRuntime`、`OttoRuntimeDeps` 与 `createOttoRuntime` / `runOttoTurn` / `finalizeOttoTurn`。
-- production composition root 在进程装载时显式绑定既有 Anthropic Sonnet 4.6 + 同阶 4.5 仅 529 fallback；runtime 与 manifest 冻结，request/header/cookie/query/body/env 均没有 runtime 选择入口。
-- model binding、billable model、usage mapper、cache capability、price lookup 与 `withLlmBudget` 的 model/paid/maxSteps/prices/usageOnError 均由同一 manifest/runtime 派生。
-- fresh non-stream、stream、approval-resume、worker-verdict 四入口均经同一 `runOttoTurn`；持久化前均消费同一 `finalizeOttoTurn` 投影。profile 只改变 tools/steps：前三者全 tools + 10 步，worker verdict 零 tools + 1 步。
-- 既有 persistence、approval hash、pending→approved CAS、consume-before-act、RunState、thread CAS、degrade 与 receipt/card 语义保留；`runFactoryBatch` resume 仍把已消费 APPROVAL_CARD id 绑定为 server-only attempt id。
-- `research.ts` 没有加入 profile enum，只把 billable model 常数来源改为 production manifest。
+- 本轮没有改动 `runtime.ts`、`meter.ts`、`model.ts`、`otto.ts` 或任何 production entry；生产运行语义相对 r003 base 为零改动。
+- `apps/worker/src/otto-resume.test.ts` 不再在 `@fikirtive/otto` mock 中重写 runner/finalizer。测试执行 production `runOttoTurn`、`finalizeOttoTurn`、`ottoWorkerVerdictRuntime`、`RunState` restore 与 history sanitizer，只替换 `OttoRuntimeExecution` 的 `run` / `withLlmBudget` 原语及 DB IO。
+- worker 用例的预算断言落在真实 `ottoBudgetArgsFor` 结果：`model`、`paid`、`maxSteps=1`、manifest `prices` identity 与 `usageOnError` 均逐项核对。
+- runtime 用例增加 paid stream 的 `onStream` throw：真实 `withLlmBudget` 先 reserve，随后整笔 refund，且不调用 success settle；另用明确事件序列钉住 `drain → completed → usage`。
+- runtime 用例由独立旧构造 Agent 生成真实 SDK parked state，再用 `RunState.fromString(ottoApprovalResumeRuntime.agent, state)` 恢复、approve 并成功 resume；provider 边界使用本地 stub，未发网络请求。
+- CLI fence 扫描根由三个子树扩到 `apps/**`、`packages/**` 的 production JS/TS，并以去注释、解码字符串字面量的保守规则拒绝具名 driver；自测为五种已点名绕过分别配置红 fixture。
 
-## 四入口 contract matrix
+## 诚实测试口径
 
-Phase 1 专用 matrix 共 **22 个用例**：
-
-| 文件 | 用例数 | 覆盖 |
+| 文件/命令 | 数量 | 本轮实际证明 |
 |---|---:|---|
-| `packages/otto/src/runtime.test.ts` | 16 | profile tools/steps、manifest 原子性/不可变、client/env 不可选 fixture、fresh/stream/approval-resume/worker-verdict 共用 runner/finalizer、fake provider 安全 skill、park→serialize→restore→approve→resume |
-| `apps/web/lib/__tests__/otto-actions.test.ts` | 5 | fresh 计量、generate approval-resume 计量、`runFactoryBatch` consume-before-resume/attempt binding、hash collision fail-closed、fresh 无 attempt fail-closed |
-| `apps/worker/src/otto-resume.test.ts` | 1 | production worker verdict 同 manifest 计费、零 tools、单步、CAS persistence |
+| `packages/otto/src/runtime.test.ts` | 19 | profile/manifest/shared runner；真实 meter stream refund；drain/completed/usage 次序；旧构造 Agent state 到 production approval Agent 的 SDK restore/resume |
+| `apps/worker/src/otto-resume.test.ts` | 14 | worker entry 经真实 runner/finalizer/runtime；完整预算参数；真实 serialized history；claim/CAS/best-effort/capability boundary |
+| `scripts/check-otto-cli-fence.mjs --self-test` | 1 绿 + 5 红 fixture | inline block comment static import、同行 directive 后 static import、template dynamic import、variable dynamic import、Unicode escape 均被拒绝 |
+| `apps/web/lib/__tests__/otto-stream-route.test.ts`（既有，未改） | 3 | 成功 stream、canvas references、余额不足；**没有 MaxTurns 用例** |
 
-另有既有 `otto-stream-route.test.ts` 3 例继续验证 authenticated stream route 的 reserve→stream→usage→finalize、insufficient credits 与 max-turns 行为；不计入上述 22 个 Phase 1 专用 matrix 用例。
+r003 新增 **3 个 Vitest 用例**（runtime 16→19）；worker 14 个既有用例被改为真实 composition seam，数量不变。fence 红 fixture 由 2 增至 5，增加 3 个。
 
-## Money-safety 自查
+## 覆盖边界
 
-- reserve 仍在 SDK run 前发生；reserve 失败时 runner 不执行。
-- run `maxTurns` 与 reserve `maxSteps` 由同一 profile cap 产生，不存在 10 步执行配 1 步预扣。
-- success 仍按 manifest price + mapped actual usage settle；无 usage 仍 settle 全 reserve；普通 throw 仍整笔 refund；带 RunState usage 的 MaxTurns 仍 settle actual。
-- `withLlmBudget` 新增的 `prices` 只替换 price table 来源；reserve/settle/refund 顺序、idempotent refId 与 fail-closed fallback 均未改变。专测证明 manifest prices 同时用于 reserve 与 settle。
-- `fixture-no-charge` 只有独立测试 manifest 可声明；production manifest 不含该值且被冻结。
-- 没有调用真实 LLM/provider，没有外部写，没有真实花费。
+- PH1-A5 的测试证明 factory 只接收显式 deps/profile，并证明三个 selector-like env 名不是 API 输入；它没有构造 HTTP request，因此不把 header/cookie/query/body 各入口宣称为动态回归覆盖。production 静态 composition 事实仍可由源码审查，但不是这组测试独立证明的请求通道矩阵。
+- 跨 Agent state 用例证明 SDK agent/tool identity 映射、approval 记录与 resume 能继续完成；它不证明真实 provider、真实 schedule port 或外部发布副作用。provider edge 被 stub，且没有真实花费。
+- worker entry 用例 mock DB IO 与两个 execution primitives；真实 ledger 数据库行为由既有 meter/db suites 承担。本轮 stream-error 用例执行真实 `withLlmBudget` 控制流，但 reserve/settle/refund 函数本身是 spy。
+- fence 范围是 `apps/**`、`packages/**` 的 production JS/TS；排除 tests、dependencies、build/coverage output。完全由计算拼接、且源码中不出现任何 forbidden literal 的 specifier 不能由这个静态扫描器证明；apps/packages 之外也不在范围内。
+- fence 当前只能手动运行，**尚未接入 root `package.json` 或 `.github/workflows/ci.yml`**。两处属于控制面 write_set，本 author lane 未改；接线前不能把一次 PASS 当作持续门禁。
 
-## CLI import fence
+## Money-safety 证据
 
-- `node scripts/check-otto-cli-fence.mjs --self-test`：退出 0；绿色 fixture 放行，2 个红色 fixture（静态/动态 CLI driver import）均被拒绝。
-- `node scripts/check-otto-cli-fence.mjs`：退出 0；扫描 `apps/web`、`apps/worker`、`packages/otto/src` 的 production source，无 CLI/Flight Simulator driver import。
-- **control-plane 接线升级项**：把该脚本接入 root `package.json` 与 `.github/workflows/ci.yml`。两者不在 r002 write_set，本施工 lane 明确未改。
+- `onStream` throw 的新用例走 production `runOttoTurn` + `withLlmBudget`：reserve 调用先于 refund，settle 未调用。
+- worker verdict 的真实预算派生为 production model、`paid:true`、single-step reserve、manifest pricing，并验证 MaxTurns state usage 才触发 actual-usage 映射。
+- 本轮没有改动 spend/ledger/provider production 实现，没有调用真实 LLM/provider，没有外部写，没有真实花费。
 
-## Author-lane 验证
+## r003 验证
 
 | 命令/范围 | 结果 |
 |---|---:|
-| `pnpm --filter @fikirtive/otto typecheck` | 0 |
-| `pnpm --filter @fikirtive/otto build` | 0 |
-| Otto package tests | 636/636，0 |
-| `pnpm --filter @fikirtive/worker typecheck` | 0 |
-| Worker tests | 157/157，0 |
-| `pnpm --filter @fikirtive/web typecheck` | 0 |
-| web 关键 suites（otto-actions / stream-route / factory-approval / refgen-approval） | 98/98，0 |
-| Phase 1 contract matrix | 22/22（runtime 16 + web 5 + worker-verdict 1），0 |
-| CI `check` job 全量口径 | 0 |
-| CI `test` job 全量口径（71 migrations、schema drift none、2920 tests） | 0 |
-| CI `web-build` job 全量口径 | 0 |
-| CI `lint` job 全量口径（0 errors；75 个既有 warning） | 0 |
-| execution harness boundary（generation 3，changed=17） | 0 |
+| harness startup / prewrite | generation 4，changed=0，0 / 0 |
+| harness boundary（施工后） | generation 4，changed=4，0 |
+| runtime focused suite | 19/19，0 |
+| worker focused suite | 14/14，0 |
+| CLI fence self-test + repository scan | 1 green + 5 named red；apps/packages scan PASS，0 |
+| CI `check` job 原样命令 | 0 |
+| CI `test` job原样命令 | 71 migrations；schema drift none；2923 tests，0 |
+| CI `web-build` job原样命令 | production build 完成，0 |
+| CI `lint` job原样命令 | 0 errors；75 个既有 warning，0 |
 
-锁定输入与 shared-contract 9 个文件的 SHA-256 均与 `INPUTS.lock.json` 一致，锁定路径相对 frozen base 的 `git diff --name-only` 为空；`git diff --check`、CLI fence 自测/扫描与最终 boundary 均通过。施工测试库 `fikirtive_wophase1_test` 在四关完成后删除。本报告不代表 merge 授权；author lane 不合并。
+锁定输入 SHA-256、write_set、forbidden roots 与相对 base 的 production-semantics diff 由 delivery harness 和 r003 mailbox 双份记录。施工测试库 `fikirtive_wophase1_test` 在交付前删除。
+
+本 PR 已裁定 **founder-only**（既有 diff 触及 `meter.ts`）。作者与控制面均不合并。

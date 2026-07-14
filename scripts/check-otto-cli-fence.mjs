@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
 /**
- * Fail when production source imports a Flight Simulator / subscription CLI driver.
+ * Fail when production source names a Flight Simulator / subscription CLI driver.
+ *
+ * Scan boundary (deliberately explicit): every production JS/TS source below
+ * `apps/**` and `packages/**`; tests, build output, coverage, and dependencies are
+ * excluded. The rule is conservative: a decoded forbidden string literal is
+ * rejected even when it is first assigned to a variable and imported later. This
+ * closes comment/formatting, template-literal, variable-dynamic-import, and escaped
+ * Unicode specifier bypasses without pretending to be a complete JS evaluator.
+ * Fully computed specifiers assembled without any forbidden literal, and sources
+ * outside apps/packages, are outside this static fence's proof boundary.
  *
  * Phase 1 intentionally does not wire this into package.json or CI: those files are
  * owned by the global control plane. Run directly with:
@@ -14,17 +23,10 @@ import { dirname, extname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PRODUCTION_ROOTS = ["apps/web", "apps/worker", "packages/otto/src"];
+const PRODUCTION_ROOTS = ["apps", "packages"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
-const SKIP_DIRECTORIES = new Set(["node_modules", ".next", "dist", "coverage", "__tests__"]);
-const TEST_FILE = /(?:^|\.)\b(?:test|spec)\.[cm]?[jt]sx?$/;
-
-const IMPORT_PATTERNS = [
-  /(?:^|\n)\s*import\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g,
-  /(?:^|\n)\s*export\s+(?:type\s+)?[^"'`;]*?\s+from\s+["']([^"']+)["']/g,
-  /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
-  /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
-];
+const SKIP_DIRECTORIES = new Set(["node_modules", ".next", ".turbo", "dist", "coverage", "__tests__"]);
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 /** Names intentionally describe the isolated simulator edge, never production code. */
 const FORBIDDEN_DRIVER = /(?:^|[/@._-])(?:otto[-_]?cli|otto[-_]?flight|flight[-_]?simulator|cli[-_]?driver|subscription[-_]?cli|codex[-_]?cli|claude[-_]?cli|gemini[-_]?cli)(?:$|[/@._-])/i;
@@ -38,20 +40,82 @@ function lineOf(source, index) {
   return source.slice(0, index).split("\n").length;
 }
 
+function decodeJsEscapes(value) {
+  const simple = {
+    "0": "\0",
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    "`": "`",
+  };
+  return value
+    .replace(/\\u\{([0-9a-fA-F]{1,6})\}/g, (_match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\([0bfnrtv\\'"`])/g, (_match, escaped) => simple[escaped] ?? escaped);
+}
+
+/**
+ * Small lexical pass: skip comments, then collect quoted/template literal values.
+ * It is intentionally not an import-regex; import formatting and variable aliases
+ * therefore cannot hide a forbidden literal from the fence.
+ */
+function stringLiterals(source) {
+  const literals = [];
+  let index = 0;
+  while (index < source.length) {
+    if (source[index] === "/" && source[index + 1] === "/") {
+      index += 2;
+      while (index < source.length && source[index] !== "\n") index += 1;
+      continue;
+    }
+    if (source[index] === "/" && source[index + 1] === "*") {
+      index += 2;
+      while (index < source.length && !(source[index] === "*" && source[index + 1] === "/")) index += 1;
+      index = Math.min(source.length, index + 2);
+      continue;
+    }
+
+    const quote = source[index];
+    if (quote !== "'" && quote !== '"' && quote !== "`") {
+      index += 1;
+      continue;
+    }
+
+    const start = index;
+    index += 1;
+    let raw = "";
+    while (index < source.length) {
+      const char = source[index];
+      if (char === "\\") {
+        raw += char;
+        if (index + 1 < source.length) raw += source[index + 1];
+        index += 2;
+        continue;
+      }
+      if (char === quote) {
+        index += 1;
+        break;
+      }
+      raw += char;
+      index += 1;
+    }
+    literals.push({ index: start, value: decodeJsEscapes(raw) });
+  }
+  return literals;
+}
+
 export function findForbiddenCliImports(source, file = "<source>") {
   const findings = [];
-  const seen = new Set();
-  for (const pattern of IMPORT_PATTERNS) {
-    pattern.lastIndex = 0;
-    for (const match of source.matchAll(pattern)) {
-      const specifier = match[1];
-      if (!specifier || !isForbiddenSpecifier(specifier)) continue;
-      const line = lineOf(source, match.index ?? 0);
-      const key = `${line}:${specifier}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      findings.push({ file, line, specifier });
-    }
+  for (const literal of stringLiterals(source)) {
+    if (!isForbiddenSpecifier(literal.value)) continue;
+    findings.push({ file, line: lineOf(source, literal.index), specifier: literal.value });
   }
   return findings;
 }
@@ -84,34 +148,37 @@ async function checkRepository() {
   if (findings.length > 0) {
     console.error("OTTO CLI import fence: FAIL");
     for (const finding of findings) {
-      console.error(`  ${finding.file}:${finding.line} imports ${JSON.stringify(finding.specifier)}`);
+      console.error(`  ${finding.file}:${finding.line} names ${JSON.stringify(finding.specifier)}`);
     }
-    console.error("Production source must never import Flight Simulator or subscription CLI drivers.");
+    console.error("Production source must never name Flight Simulator or subscription CLI drivers.");
     process.exitCode = 1;
     return;
   }
-  console.log(`OTTO CLI import fence: PASS (${PRODUCTION_ROOTS.join(", ")})`);
+  console.log(`OTTO CLI import fence: PASS (${PRODUCTION_ROOTS.join(", ")}; decoded production literals)`);
 }
 
 function selfTest() {
   const green = [
+    '// docs may say "codex-cli" without creating a production import',
     'import { runOttoTurn } from "@fikirtive/otto";',
     'const adapter = await import("./api-model-runtime.js");',
   ].join("\n");
-  const redStatic = 'import { CodexDriver } from "../../../tools/otto-flight/codex-cli-driver.js";';
-  const redDynamic = 'const driver = await import("./cli/model-provider.js");';
+  const redFixtures = [
+    ["inline-comment-static", 'import/* hidden */{ CodexDriver }from"../../../tools/otto-flight/codex-cli-driver.js";'],
+    ["same-line-directive-static", '"use strict"; import { CodexDriver } from "codex-cli";'],
+    ["template-dynamic", "const driver = await import(`codex-cli`);"],
+    ["variable-dynamic", 'const driverName = "codex-cli"; const driver = await import(driverName);'],
+    ["unicode-escaped", String.raw`import { CodexDriver } from "codex-\u0063li";`],
+  ];
 
   const greenFindings = findForbiddenCliImports(green, "apps/web/green.ts");
-  const redFindings = [
-    ...findForbiddenCliImports(redStatic, "apps/web/red-static.ts"),
-    ...findForbiddenCliImports(redDynamic, "apps/worker/red-dynamic.ts"),
-  ];
-  if (greenFindings.length !== 0 || redFindings.length !== 2) {
-    console.error(`OTTO CLI import fence self-test: FAIL (green=${greenFindings.length}, red=${redFindings.length})`);
+  const failedRed = redFixtures.filter(([, source]) => findForbiddenCliImports(source, "apps/web/red.ts").length !== 1);
+  if (greenFindings.length !== 0 || failedRed.length !== 0) {
+    console.error(`OTTO CLI import fence self-test: FAIL (green=${greenFindings.length}, missed=${failedRed.map(([name]) => name).join(",") || "none"})`);
     process.exitCode = 1;
     return;
   }
-  console.log("OTTO CLI import fence self-test: PASS (green fixture accepted; 2 red fixtures rejected)");
+  console.log(`OTTO CLI import fence self-test: PASS (green accepted; ${redFixtures.length} named bypass fixtures rejected)`);
 }
 
 if (process.argv.includes("--self-test")) selfTest();
