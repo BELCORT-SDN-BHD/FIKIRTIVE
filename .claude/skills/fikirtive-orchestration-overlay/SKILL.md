@@ -11,7 +11,7 @@ description: FIKIRTIVE 的项目专属编排约束层。任何 agent 在本仓�
 - Claude：`$HOME/.claude/skills/orchestration/SKILL.md`
 - Canonical source：`BELCORT-SDN-BHD/orchestration-skill`
 
-本 overlay 的协议兼容基线是 global orchestration `VERSION 3.0.3`、source commit `0902f0131c79de14c0e040297b6e0d8d371d85e8`（worker lane 封闭性/只读/预算硬化与 review findings 收尾；上游 PR #6/#7）、`SKILL.md` SHA-256 `2fdccc103b2425e4aab0832dbdbe3ef2d84186f5f98cf8c50d38ed4341473c34`。（重钉授权=founder 2026-07-14「按照最新的版本去」；原 v3.0.1 pin 见 git 史。）若全局 skill 缺失、`preflight.sh <codex|claude-code>` 失败、两条安装路径未解析到同一 canonical clone、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。除用户明确授权的全局工具更新流程外，启动时不得自动 fetch/pull；不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
+本 overlay 的协议兼容基线是 global orchestration **简化版**：source commit `bd9c092564617518d080b6fa72bd8ff1d9107fd9`（Simplify universal orchestration policy，上游 PR #8-#10）、`SKILL.md` SHA-256 `9cab52009c1cc333a8ac256b7a1ee3460576668928150b170c7c10e3d1ec5d1f`。（重钉授权=founder 2026-07-14「完全使用新的 /orchestration update」；原 v3.0.3/v3.0.1 pin 见 git 史。）简化版已移除 VERSION 文件、`preflight.sh` 与 `references/`（含 MODEL-ROUTING/STATE-TEMPLATE）——worker 路由以 skill 正文为准（Claude Code 中重实现/调试/测试修复/重构/多文件编辑一律派 `codex:codex-rescue`，`--model gpt-5.6-sol --effort xhigh`；判断永远留在主脑）。原全局协议的 cross-family 高后果复审契约不再由全局文件承载，自本次重钉起为**本项目自有法**（见「当前项目裁决与 gate」节）。本项目的 execution harness、两种编排身份、状态账机制不受全局简化影响，仍按本 overlay 与 `docs/ops/route-b/execution/` 契约执行。若全局 skill 缺失、两条安装路径未解析到同一 canonical clone、hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。除用户明确授权的全局工具更新流程外，启动时不得自动 fetch/pull；不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
 
 ## 两种编排身份
 
@@ -35,8 +35,8 @@ Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 l
 ## 启动顺序
 
 1. 完整读取根目录 `AGENTS.md` 及其规定的法律与产品文件。
-2. 完整读取全局 `orchestration` skill 及本次需要的 references，再核对协议版本/hash。
-3. 读取本 overlay 并判定身份。Global control plane 还须读取 `docs/ops/ORCHESTRATOR-STATE.md` 与 `docs/review/FULL-PRODUCT-REAUDIT-2026-07-11.md`；模型与 effort 只读取当前 global skill 的 `references/MODEL-ROUTING.md`，不得从旧项目路由快照恢复。Scoped orchestrator 改读其已通过 machine checker 的 bootstrap、work order、locks 与权威引用。
+2. 完整读取全局 `orchestration` skill（简化版全文很短），核对 source commit 与 SKILL.md hash 与本 overlay pin 一致。
+3. 读取本 overlay 并判定身份。Global control plane 还须读取 `docs/ops/ORCHESTRATOR-STATE.md` 与 `docs/review/FULL-PRODUCT-REAUDIT-2026-07-11.md`；worker 路由按全局 skill 正文（重活派 `codex:codex-rescue`，判断留主脑），不得从旧 MODEL-ROUTING 快照恢复。Scoped orchestrator 改读其已通过 machine checker 的 bootstrap、work order、locks 与权威引用。
 4. 从 git、PR/CI、worktree、进程与部署重新核验本身份需要的可变事实；状态账和旧 transcript 只作证据。
 5. Global control plane 先核对 founder 指定、当前状态账和可能仍活跃的旧 session；无冲突时才登记本 program 的可恢复 control plane。任何接管都须 founder 明确指定，不能由本地 registry 自动裁决。Scoped orchestrator 只核对自己的 fencing claim，绝不登记 global 身份或恢复旧 workflow。
 
@@ -54,7 +54,7 @@ Scoped orchestrator 只可作工单内可逆选择，按 `BUDGET` 调度有界 l
 
 旧状态账 `449145e9:docs/ops/ORCHESTRATOR-STATE.md` 的 D0–D8 只作历史决策证据，不是本 program 的当前权限；当前权限只来自 Founder 指令与现行状态账。Scoped orchestrator 不从历史状态或现行状态账取得任何超出 work order 的权限。Gate 0 与 execution harness 落地前，不启动产品写 session；只允许不扩大产品 thesis 的 read-only inventory、控制面修复与 machine-gate 验证。
 
-任何产品身份、品牌、蓝图、不可逆架构、schema/migration、钱路/租户、凭据/权限、生产/部署、外部写入/花费/删除或治理判断都属高后果件。依 global skill 的 exceptional cross-family review contract，只在需要时调用与当前 orchestrator 不同的 frontier family 一次；lane 与 effort 只从当前 `references/MODEL-ROUTING.md` 读取，不在本 overlay 复制模型名或建立常任双顾问层。Reviewer 不可用时该高后果动作 fail closed，且不得把同族复审或 fallback 写成跨族 PASS。Founder 保留最终裁决。
+任何产品身份、品牌、蓝图、不可逆架构、schema/migration、钱路/租户、凭据/权限、生产/部署、外部写入/花费/删除或治理判断都属高后果件。**跨族高后果复审为本项目自有法**（2026-07-14 重钉时从全局协议收编）：只在需要时调用与当前 orchestrator 不同的 frontier family 做一次 read-only challenge（给原始证据不给结论；Claude 主脑 → codex/GPT 家族，反之亦然），不建常任双顾问层。Reviewer 不可用时该高后果动作 fail closed，且不得把同族复审或 fallback 写成跨族 PASS。Founder 保留最终裁决。
 
 ## 项目状态与汇报
 
