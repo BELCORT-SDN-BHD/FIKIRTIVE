@@ -11,7 +11,7 @@ description: FIKIRTIVE 的项目专属编排约束层。任何 agent 在本仓�
 - Claude：`$HOME/.claude/skills/orchestration/SKILL.md`
 - Canonical source：`BELCORT-SDN-BHD/orchestration-skill`
 
-本 overlay 的协议兼容基线是 global orchestration `VERSION 3.0.1`、source commit `7549a1fcfda6e24ec3d6fdaac23c455f80b4e303`（Codex/Claude host 自动选择 orchestrator profile；上游 PR #5）、`SKILL.md` SHA-256 `2d79e050b6e7248f49a7ca22a33ef888f2fd416e4162ae8e06fb0074adee6164`。（重钉授权=founder 2026-07-13「按 v1 开始」；原 v3.0.0 pin 见 git 史。）若全局 skill 缺失、`preflight.sh <codex|claude-code>` 失败、两条安装路径未解析到同一 canonical clone、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。除用户明确授权的全局工具更新流程外，启动时不得自动 fetch/pull；不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
+本 overlay 的协议兼容基线是 global orchestration `VERSION 3.0.3`、source commit `0902f0131c79de14c0e040297b6e0d8d371d85e8`（worker lane 封闭性/只读/预算硬化与 review findings 收尾；上游 PR #6/#7）、`SKILL.md` SHA-256 `2fdccc103b2425e4aab0832dbdbe3ef2d84186f5f98cf8c50d38ed4341473c34`。（重钉授权=founder 2026-07-14「按照最新的版本去」；原 v3.0.1 pin 见 git 史。）若全局 skill 缺失、`preflight.sh <codex|claude-code>` 失败、两条安装路径未解析到同一 canonical clone、版本/hash 不符，或当前 checkout 仍含同名 `.claude/skills/orchestration/`，停止判断级编排并向 founder 报告。除用户明确授权的全局工具更新流程外，启动时不得自动 fetch/pull；不得悄悄复制本文件来重建通用协议，也不得把旧 transcript 当作替代。安装或更新全局工具属于机器状态变更，须有用户授权并使用现有 GitHub 身份。
 
 ## 两种编排身份
 
