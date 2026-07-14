@@ -102,9 +102,9 @@ CREATE INDEX "Contact_ownerId_lifecycleStage_deletedAt_idx" ON "Contact"("ownerI
 CREATE INDEX "ContactIdentity_ownerId_contactId_deletedAt_idx" ON "ContactIdentity"("ownerId", "contactId", "deletedAt");
 CREATE INDEX "Segment_ownerId_kind_deletedAt_idx" ON "Segment"("ownerId", "kind", "deletedAt");
 
--- ContactIdentity is the deterministic find-or-create key across channel arrivals.
-CREATE UNIQUE INDEX "ContactIdentity_ownerId_channel_externalId_key"
-    ON "ContactIdentity"("ownerId", "channel", "externalId");
+-- Identity uniqueness only among LIVE rows (frees the key once soft-deleted).
+CREATE UNIQUE INDEX IF NOT EXISTS "ContactIdentity_owner_channel_external_live"
+    ON "ContactIdentity"("ownerId","channel","externalId") WHERE "deletedAt" IS NULL;
 
 -- Campaign grouping indexes keep owner-scoped content/post lookups on the tenant seam.
 CREATE INDEX "Generation_ownerId_campaignId_deletedAt_idx" ON "Generation"("ownerId", "campaignId", "deletedAt");
@@ -131,6 +131,7 @@ ALTER TABLE "Contact" ADD CONSTRAINT "Contact_firstTouchCampaignId_fkey"
 ALTER TABLE "ContactIdentity" ADD CONSTRAINT "ContactIdentity_contactId_fkey"
     FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "Generation" ADD CONSTRAINT "Generation_campaignId_fkey"
-    FOREIGN KEY ("campaignId") REFERENCES "Campaign"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+    FOREIGN KEY ("campaignId") REFERENCES "Campaign"("id") ON DELETE SET NULL ON UPDATE CASCADE NOT VALID;
+ALTER TABLE "Generation" VALIDATE CONSTRAINT "Generation_campaignId_fkey";
 ALTER TABLE "ScheduledPost" ADD CONSTRAINT "ScheduledPost_campaignId_fkey"
     FOREIGN KEY ("campaignId") REFERENCES "Campaign"("id") ON DELETE SET NULL ON UPDATE CASCADE;

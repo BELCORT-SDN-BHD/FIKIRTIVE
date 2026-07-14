@@ -1,9 +1,10 @@
 import { Prisma } from "../generated/prisma/client.js";
 
-/** The owner-scoped models. findMany/findFirst/updateMany/deleteMany on these MUST carry an
- *  ownerId filter (the repository convention). This extension is a BACKSTOP, not the sole
- *  guarantee — documented blind spots (raw SQL, nested writes, findUnique-by-unique-key,
- *  aggregate/groupBy) are owned by the explicit filters + the 2-org isolation test.
+/** The owner-scoped models. findMany/findFirst/findFirstOrThrow/updateMany/deleteMany on these
+ *  MUST carry an ownerId filter (the repository convention). This extension is a BACKSTOP,
+ *  not the sole guarantee — documented blind spots (raw SQL, nested writes,
+ *  findUnique-by-unique-key, aggregate/groupBy/count) are owned by the explicit filters +
+ *  the 2-org isolation test.
  *  COVERAGE CONTRACT (2026-07-04 审计): every schema model carrying ownerId must be in THIS
  *  set or in TENANT_GUARD_EXEMPT below — enforced by tenant-guard-coverage.test.ts. */
 export const TENANT_MODELS = new Set([
@@ -49,7 +50,7 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
 
 // Operations we check (those that take a `where`). findUnique is exempt (unique-key access),
 // aggregate/groupBy/count are exempt (admin platform-wide reads use them intentionally).
-const CHECKED_OPS = new Set(["findMany", "findFirst", "updateMany", "deleteMany"]);
+const CHECKED_OPS = new Set(["findMany", "findFirst", "findFirstOrThrow", "updateMany", "deleteMany"]);
 
 function whereHasOwnerId(where: unknown): boolean {
   if (!where || typeof where !== "object") return false;

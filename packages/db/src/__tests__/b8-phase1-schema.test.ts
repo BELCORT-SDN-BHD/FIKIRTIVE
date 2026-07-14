@@ -42,7 +42,7 @@ function createContact(id = "contact-a") {
   });
 }
 
-describe("B8 AC-01 — five new models keep the two-org iron curtain", () => {
+describe("B8 AC-01 — tested findMany/updateMany/findFirstOrThrow; findUnique/aggregate/groupBy/count are intentional exemptions", () => {
   it("Campaign rejects unscoped access and Org B cannot read or update Org A", async () => {
     await createCampaign();
 
@@ -151,7 +151,7 @@ describe("B8 AC-01 — five new models keep the two-org iron curtain", () => {
 });
 
 describe("B8 AC-02 — ContactIdentity deterministic convergence", () => {
-  it("concurrent duplicate (ownerId, channel, externalId) inserts land one row and one P2002", async () => {
+  it("concurrent duplicate LIVE (ownerId, channel, externalId) inserts land one row and one P2002", async () => {
     await createContact();
     const data = {
       ownerId: ORG_A,
@@ -173,6 +173,41 @@ describe("B8 AC-02 — ContactIdentity deterministic convergence", () => {
         where: { ownerId: ORG_A, channel: "whatsapp", externalId: "+60112223333" },
       }),
     ).resolves.toBe(1);
+  });
+
+  it("soft-delete frees (ownerId, channel, externalId) for a new LIVE identity", async () => {
+    await createContact();
+    const key = {
+      ownerId: ORG_A,
+      contactId: "contact-a",
+      channel: "whatsapp",
+      externalId: "+60119998888",
+    };
+
+    await prisma.contactIdentity.create({ data: { id: "identity-old", ...key } });
+    await prisma.contactIdentity.updateMany({
+      where: { id: "identity-old", ownerId: ORG_A },
+      data: { deletedAt: NOW },
+    });
+
+    await expect(
+      prisma.contactIdentity.create({ data: { id: "identity-new", ...key } }),
+    ).resolves.toMatchObject({ id: "identity-new", deletedAt: null });
+    await expect(
+      prisma.contactIdentity.findMany({
+        where: {
+          ownerId: ORG_A,
+          channel: "whatsapp",
+          externalId: "+60119998888",
+          deletedAt: null,
+        },
+      }),
+    ).resolves.toMatchObject([{ id: "identity-new" }]);
+    await expect(
+      prisma.contactIdentity.count({
+        where: { ownerId: ORG_A, channel: "whatsapp", externalId: "+60119998888" },
+      }),
+    ).resolves.toBe(2);
   });
 });
 

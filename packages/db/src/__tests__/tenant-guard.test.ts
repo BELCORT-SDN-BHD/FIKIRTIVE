@@ -17,6 +17,10 @@ describe("tenant-guard", () => {
     await expect(prisma.generationBatch.findMany({ where: {} as never })).rejects.toThrow(/tenant-guard/);
   });
 
+  it("tenant guard flags Memory.findFirstOrThrow without ownerId", async () => {
+    await expect(prisma.memory.findFirstOrThrow({ where: {} as never })).rejects.toThrow(/tenant-guard/);
+  });
+
   it("tenant guard allows Memory.findMany with ownerId", async () => {
     // Should not throw — the guard only checks for missing ownerId.
     // The query will fail for other reasons (DB not seeded), but not tenant-guard.

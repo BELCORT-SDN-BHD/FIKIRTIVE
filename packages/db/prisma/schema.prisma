@@ -276,6 +276,7 @@ model Generation {
   project Project @relation(fields: [projectId], references: [id])
   shot    Shot?   @relation(fields: [shotId], references: [id], onDelete: Restrict)
   asset   Asset   @relation(fields: [assetId], references: [id])
+  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
   campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([projectId, shotId, deletedAt])
@@ -1235,6 +1236,7 @@ model TrendSnapshot {
   sources    Json
   capturedAt DateTime
   campaignId String?
+  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
   campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   deletedAt  DateTime?
@@ -1250,6 +1252,7 @@ model Contact {
   lifecycleStage       String   @default("New") // New | Active | Dormant (code-validated)
   source               String
   firstTouchCampaignId String?
+  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
   firstTouchCampaign   Campaign? @relation("ContactFirstTouchCampaign", fields: [firstTouchCampaignId], references: [id], onDelete: SetNull)
   firstTouchAt         DateTime
   lastSeenAt           DateTime
@@ -1271,6 +1274,7 @@ model ContactIdentity {
   ownerId    String
   organization Organization @relation(fields: [ownerId], references: [id])
   contactId  String
+  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
   contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
   channel    String
   externalId String
@@ -1279,7 +1283,8 @@ model ContactIdentity {
   createdAt  DateTime @default(now())
   deletedAt  DateTime?
 
-  @@unique([ownerId, channel, externalId])
+  // Identity uniqueness is a PARTIAL unique index (live rows only) added in
+  // 20260714100000_b8_phase1_campaign_crm/migration.sql (Prisma can't express conditional uniqueness).
   @@index([ownerId, contactId, deletedAt])
 }
 
@@ -1310,6 +1315,7 @@ model ScheduledPost {
   projectId    String
   // B8 一期: nullable Campaign grouping; a Campaign soft-delete never removes posts.
   campaignId   String?
+  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
   campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   channel      String       // 'instagram' | 'facebook' (code-validated, not a PG enum — house style)
   // Connected IG business id / FB page id. NULLABLE: an OTTO DRAFT may have no resolved
