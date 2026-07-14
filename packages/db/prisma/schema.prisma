@@ -265,6 +265,9 @@ model Generation {
   threadId       String?   // set by the worker (= GenJob.threadId) when a cowork gen produced this; filters it out of candidate/asset/editor views
   // v1 additive: nullable soft-ref for GenerationBatch grouping (no FK, no backfill)
   batchId        String?
+  // B8 一期: one generation belongs to zero or one Campaign. Nullable + SetNull keeps
+  // historical output rows when a Campaign is physically removed; normal removal is soft-delete.
+  campaignId     String?
   favorite       Boolean     @default(false)
   attachedAt     DateTime?
   createdAt      DateTime    @default(now())
@@ -273,6 +276,7 @@ model Generation {
   project Project @relation(fields: [projectId], references: [id])
   shot    Shot?   @relation(fields: [shotId], references: [id], onDelete: Restrict)
   asset   Asset   @relation(fields: [assetId], references: [id])
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
 
   @@index([projectId, shotId, deletedAt])
   @@index([ownerId, shotId, deletedAt, createdAt]) // 候选区查询：shotId IS NULL，按时间倒序
@@ -289,6 +293,7 @@ model Generation {
   @@index([ownerId, projectId, deletedAt, createdAt, id], map: "Generation_library_idx")
   // Owner-global Library keyset — newest-first across every project/campaign.
   @@index([ownerId, deletedAt, createdAt, id], map: "Generation_owner_library_idx")
+  @@index([ownerId, campaignId, deletedAt])
 }
 
 // ComfyUI 模板注册表（SOP v1.1 A3.5 文件版 registry.json 的站内镜像；
@@ -391,6 +396,7 @@ enum GenStatus {
   GENERATING
   DONE
   FAILED
+  CANCELLED
 }
 
 // Phase 2 引导式参考图生成（首个收费点）—— 异步任务，镜像 RenderJob 形态。
@@ -634,6 +640,11 @@ model Organization {
   channelConnections      ChannelConnection[]
   // B0-28: share-preview token records (row = authority layer); back-relation required by Prisma.
   sharePreviewTokens      SharePreviewToken[]
+  campaigns              Campaign[]
+  trendSnapshots          TrendSnapshot[]
+  contacts                Contact[]
+  contactIdentities       ContactIdentity[]
+  segments                Segment[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -828,6 +839,7 @@ enum ChatMessageKind {
   RESEARCH_REPORT
   PERFORMANCE_CARD
   APPROVAL_CARD
+  CAMPAIGN_CARD
 }
 
 // G7: per-org autonomy mode for Otto's ad-write operations
@@ -1188,6 +1200,103 @@ model WebPageCache {
   fetchedAt DateTime
 }
 
+// ── B8 一期: Campaign + CRM 最薄数据层 (2026-07-14 frozen spec) ─────────────
+// All five models are owner-scoped by birth (Seam 5): ownerId has no default,
+// Organization owns the back-relation, TENANT_MODELS guards list writes/reads,
+// and each hot index begins with ownerId and includes deletedAt.
+model Campaign {
+  id        String   @id
+  ownerId   String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  name      String
+  status    String   @default("DRAFT") // DRAFT | ACTIVE | DONE | CANCELLED (code-validated)
+  goal      String
+  startAt   DateTime
+  endAt     DateTime
+  utmBase   String?
+  planJson  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  generations       Generation[]
+  scheduledPosts    ScheduledPost[]
+  trendSnapshots    TrendSnapshot[]
+  firstTouchContacts Contact[] @relation("ContactFirstTouchCampaign")
+
+  @@index([ownerId, status, deletedAt])
+}
+
+model TrendSnapshot {
+  id         String   @id
+  ownerId    String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  summary    String
+  sources    Json
+  capturedAt DateTime
+  campaignId String?
+  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  createdAt  DateTime @default(now())
+  deletedAt  DateTime?
+
+  @@index([ownerId, capturedAt, deletedAt])
+}
+
+model Contact {
+  id                   String   @id
+  ownerId              String
+  organization         Organization @relation(fields: [ownerId], references: [id])
+  name                 String
+  lifecycleStage       String   @default("New") // New | Active | Dormant (code-validated)
+  source               String
+  firstTouchCampaignId String?
+  firstTouchCampaign   Campaign? @relation("ContactFirstTouchCampaign", fields: [firstTouchCampaignId], references: [id], onDelete: SetNull)
+  firstTouchAt         DateTime
+  lastSeenAt           DateTime
+  marketingConsent     String   @default("unknown") // opt_in | opt_out | unknown (code-validated)
+  consentSource        String?
+  consentAt            DateTime?
+  doNotDisturb         Boolean  @default(false)
+  totalOrdersMyr       Decimal? @db.Decimal(14, 2)
+  createdAt            DateTime @default(now())
+  deletedAt            DateTime?
+
+  identities ContactIdentity[]
+
+  @@index([ownerId, lifecycleStage, deletedAt])
+}
+
+model ContactIdentity {
+  id         String   @id
+  ownerId    String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  contactId  String
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  channel    String
+  externalId String
+  handle     String?
+  label      String?
+  createdAt  DateTime @default(now())
+  deletedAt  DateTime?
+
+  @@unique([ownerId, channel, externalId])
+  @@index([ownerId, contactId, deletedAt])
+}
+
+model Segment {
+  id        String   @id
+  ownerId   String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  name      String
+  phrase    String
+  rulesJson Json
+  kind      String // builtin_lifecycle | custom (code-validated)
+  createdAt DateTime @default(now())
+  deletedAt DateTime?
+
+  @@index([ownerId, kind, deletedAt])
+}
+
 // ── Schedule (蓝图 P1½「排期 + Routine」) ──────────────────────────────────
 // UI-first slice: owner/OTTO can build, approve, and queue IG/FB posts, but the
 // publish worker is deferred to Meta App Review (see docs/superpowers/specs/
@@ -1199,6 +1308,9 @@ model ScheduledPost {
   ownerId      String
   organization Organization @relation(fields: [ownerId], references: [id])
   projectId    String
+  // B8 一期: nullable Campaign grouping; a Campaign soft-delete never removes posts.
+  campaignId   String?
+  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   channel      String       // 'instagram' | 'facebook' (code-validated, not a PG enum — house style)
   // Connected IG business id / FB page id. NULLABLE: an OTTO DRAFT may have no resolved
   // target until the owner picks a connected channel at approve-time. Must belong to the
@@ -1226,6 +1338,7 @@ model ScheduledPost {
 
   @@index([status, scheduledAt])  // scheduler polling (slice 2)
   @@index([ownerId, scheduledAt]) // list / calendar queries
+  @@index([ownerId, campaignId, deletedAt])
 }
 
 // Join table for a post's media (not a string[] array): carousel ordering + reliable

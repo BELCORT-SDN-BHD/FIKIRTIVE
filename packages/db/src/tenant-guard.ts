@@ -28,6 +28,8 @@ export const TENANT_MODELS = new Set([
   // for seat-less share links (mint/revoke are owner actions; the anonymous verify路径 looks up by
   // unique tokenDigest AND pins ownerId from the HMAC claims, so it stays owner-filtered).
   "SharePreviewToken",
+  // B8 一期 (2026-07-14): Campaign + CRM objects are owner-scoped by birth (缝 5).
+  "Campaign", "TrendSnapshot", "Contact", "ContactIdentity", "Segment",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
