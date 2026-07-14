@@ -1,141 +1,64 @@
 /**
- * otto-resume.test.ts — TDD tests for resumeOttoAfterGen (Task 1.9).
+ * Worker entry coverage for resumeOttoAfterGen.
  *
- * Tests:
- *  1. non-cowork gen (threadId null) → returns immediately, no claim, no run
- *  2. no ottoState → returns, no run
- *  3. at-most-once: genJob.updateMany returns count 0 → no run, no persist
- *  4. happy verdict: claim wins → rehydrates, runs otto inside withLlmBudget, persists verdict + ottoState
- *  5. best-effort: run throws → resumeOttoAfterGen does NOT throw (swallowed), no verdict persisted
- *  6. interrupted verdict: Otto parked a generate → persists paused state, no spend (startGen not injected)
+ * This file deliberately keeps the production Otto composition intact. It mocks
+ * only the documented OttoRuntimeExecution primitives (`run` and
+ * `withLlmBudget`) plus DB IO; `runOttoTurn`, `ottoBudgetArgsFor`,
+ * `finalizeOttoTurn`, the production runtimes, RunState restoration, history
+ * sanitization, and output projection are the real package implementations.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+process.env.OPENAI_AGENTS_DISABLE_TRACING = "1";
 
-// ---------------------------------------------------------------------------
-// vi.hoisted — create mocks before vi.mock hoisting runs
-// ---------------------------------------------------------------------------
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 const mocks = vi.hoisted(() => {
-  // prisma mock
   const chatThreadFindFirst = vi.fn();
   const chatThreadUpdateMany = vi.fn();
   const genJobUpdateMany = vi.fn();
   const chatMessageFindFirst = vi.fn();
   const chatMessageCreate = vi.fn();
-  const chatThreadUpdate = vi.fn();
-  const $transaction = vi.fn();
-
-  const prisma = {
-    chatThread: {
-      findFirst: chatThreadFindFirst,
-      update: chatThreadUpdate,
-      updateMany: chatThreadUpdateMany,
-    },
-    genJob: {
-      updateMany: genJobUpdateMany,
-    },
-    chatMessage: {
-      findFirst: chatMessageFindFirst,
-      create: chatMessageCreate,
-    },
-    $transaction: $transaction,
-  };
-
-  // RunState mock
-  const runStateMock = {
-    history: [{ role: "user", content: "make me a poster" }],
-    toString: vi.fn(() => "serialized-state"),
-    getInterruptions: vi.fn(() => []),
-  };
-  const RunState = {
-    fromString: vi.fn(async (_agent?: unknown, _str?: string) => runStateMock),
-  };
-
-  // run mock
   const run = vi.fn();
-
-  // withLlmBudget mock — by default just calls fn and returns its result.result
-  const withLlmBudget = vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
-    const out = await fn();
-    return out.result;
-  });
-
-  // MaxTurnsExceededError mock
-  class MaxTurnsExceededError extends Error {
-    constructor(msg = "max turns") { super(msg); this.name = "MaxTurnsExceededError"; }
-  }
-
-  // mapOttoUsage mock — returns a trivial TokenUsage
-  const mapOttoUsage = vi.fn(() => ({ inputTokens: 10, outputTokens: 5 }));
-
-  // otto mock (just a sentinel value)
-  const otto = { name: "Otto" };
-  // ottoVerdict mock — the tool-less, single-step verdict profile the run actually uses
-  const ottoVerdict = { name: "Otto", tools: [] };
-
-  // newId mock
-  const newId = vi.fn(() => `msg-${Math.random().toString(36).slice(2)}`);
+  const meter = vi.fn();
 
   return {
-    prisma,
-    RunState,
-    runStateMock,
-    run,
-    withLlmBudget,
-    MaxTurnsExceededError,
-    mapOttoUsage,
-    otto,
-    ottoVerdict,
-    newId,
+    prisma: {
+      chatThread: { findFirst: chatThreadFindFirst, updateMany: chatThreadUpdateMany },
+      genJob: { updateMany: genJobUpdateMany },
+      chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
+    },
     chatThreadFindFirst,
     chatThreadUpdateMany,
     genJobUpdateMany,
     chatMessageFindFirst,
     chatMessageCreate,
-    chatThreadUpdate,
-    $transaction,
+    run,
+    meter,
   };
 });
 
-vi.mock("@fikirtive/db", () => ({
+vi.mock("@fikirtive/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fikirtive/db")>()),
   prisma: mocks.prisma,
-  newId: mocks.newId,
 }));
 
-vi.mock("@fikirtive/core", () => ({
-  newId: mocks.newId,
-  OTTO_MAX_STEPS: 10,
-}));
-
-vi.mock("@fikirtive/otto", () => ({
-  otto: mocks.otto,
-  ottoVerdict: mocks.ottoVerdict,
-  withLlmBudget: mocks.withLlmBudget,
-  OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
+vi.mock("@fikirtive/otto", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fikirtive/otto")>()),
+  // The only Otto substitutions are the legal OttoRuntimeExecution seam.
   run: mocks.run,
-  RunState: mocks.RunState,
-  // F24/F25: the worker resume now restores via tryRestoreRunState (delegate to the mocked
-  // RunState.fromString so existing assertions hold) and sanitizes history (drops system items).
-  tryRestoreRunState: async (agent: unknown, str: string) => {
-    try {
-      return await mocks.RunState.fromString(agent, str);
-    } catch {
-      return null;
-    }
-  },
-  sanitizeHistory: (h: Array<{ role?: string }>) => h.filter((i) => i?.role !== "system"),
-  MaxTurnsExceededError: mocks.MaxTurnsExceededError,
-  mapOttoUsage: mocks.mapOttoUsage,
-  // 7-14b: otto-resume imports the shared extractText from @fikirtive/otto; these tests only
-  // ever set finalOutput (newItems: []), so a finalOutput-faithful stub is sufficient.
-  extractText: (r: { finalOutput?: unknown }) => (r?.finalOutput != null ? String(r.finalOutput) : ""),
+  withLlmBudget: mocks.meter,
 }));
 
-// Import AFTER mocks are registered
+import { llmPricesFor } from "@fikirtive/core";
+import {
+  MaxTurnsExceededError,
+  RunState,
+  finalizeOttoTurn,
+  otto,
+  ottoWorkerVerdictRuntime,
+  runOttoTurn,
+} from "@fikirtive/otto";
 import { resumeOttoAfterGen } from "./otto-resume.js";
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
 const JOB = {
   id: "job-1",
   threadId: "thread-1",
@@ -143,342 +66,271 @@ const JOB = {
   projectId: "project-1",
 };
 
-function makeRunResult(opts: { interruptions?: unknown[]; text?: string } = {}) {
-  const text = opts.text ?? "Looks good! Does this meet your expectation?";
-  const state = {
-    toString: () => "new-serialized-state",
-    usage: { inputTokens: 100, outputTokens: 50 },
+const emptyUsage = {
+  requests: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  totalTokens: 0,
+  inputTokensDetails: [],
+  outputTokensDetails: [],
+};
+
+/** A real SDK RunState serialization, sufficient for the worker's history-only restore. */
+function priorState(history: unknown = [{ role: "user", content: "make me a poster" }]) {
+  const runContext = {
+    usage: emptyUsage,
+    toJSON: () => ({ context: { orgId: JOB.ownerId }, usage: emptyUsage, approvals: {} }),
   };
+  return new RunState(
+    runContext as never,
+    history as never,
+    otto,
+    10,
+  ).toString();
+}
+
+function makeRunResult(opts: { interruptions?: unknown[]; text?: string; state?: string } = {}) {
   return {
-    finalOutput: text,
+    finalOutput: opts.text ?? "Looks good! Does this meet your expectation?",
     newItems: [],
     interruptions: opts.interruptions ?? [],
-    state,
+    state: {
+      toString: () => opts.state ?? "new-serialized-state",
+      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+    },
   };
 }
 
+let serializedPriorState: string;
+
 beforeEach(() => {
   vi.clearAllMocks();
-
-  // Default: claim wins (count=1)
+  serializedPriorState = priorState();
   mocks.genJobUpdateMany.mockResolvedValue({ count: 1 });
-
-  // Default: thread with ottoState
-  mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: "prior-state" });
-
-  // Default: RunState.fromString returns the mock state
-  mocks.RunState.fromString.mockResolvedValue(mocks.runStateMock);
-  mocks.runStateMock.toString.mockReturnValue("new-serialized-state");
-  mocks.runStateMock.history = [{ role: "user", content: "make me a poster" }];
-
-  // Default: run returns a completed result
-  const defaultResult = makeRunResult();
-  mocks.run.mockResolvedValue(defaultResult);
-
-  // Default: withLlmBudget calls fn and returns result
-  mocks.withLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
-    const out = await fn();
-    return out.result;
-  });
-
-  // Default: last message seq=3
+  mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: serializedPriorState });
+  mocks.run.mockResolvedValue(makeRunResult());
+  mocks.meter.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result);
   mocks.chatMessageFindFirst.mockResolvedValue({ seq: 3 });
-
-  // Default: chatMessage.create resolves
   mocks.chatMessageCreate.mockResolvedValue({});
-
-  // Default: chatThread.update resolves
-  mocks.chatThreadUpdate.mockResolvedValue({});
-
-  // Default: chatThread.updateMany (CAS) returns count=1 (CAS wins)
   mocks.chatThreadUpdateMany.mockResolvedValue({ count: 1 });
-
-  // Default: $transaction runs all ops (accept array of promises)
-  mocks.$transaction.mockImplementation(async (ops: unknown) => {
-    if (Array.isArray(ops)) return Promise.all(ops);
-    if (typeof ops === "function") return ops({});
-    return ops;
-  });
 });
 
-// ---------------------------------------------------------------------------
-// Test #1: non-cowork gen (threadId null) → returns immediately
-// ---------------------------------------------------------------------------
-describe("Test #1 — non-cowork gen (threadId null)", () => {
-  it("returns immediately without querying DB or running Otto", async () => {
+describe("worker guards and at-most-once claim", () => {
+  it("returns immediately for a non-cowork job", async () => {
     await resumeOttoAfterGen({ ...JOB, threadId: null });
-
     expect(mocks.chatThreadFindFirst).not.toHaveBeenCalled();
     expect(mocks.genJobUpdateMany).not.toHaveBeenCalled();
     expect(mocks.run).not.toHaveBeenCalled();
-    expect(mocks.withLlmBudget).not.toHaveBeenCalled();
+    expect(mocks.meter).not.toHaveBeenCalled();
   });
-});
 
-// ---------------------------------------------------------------------------
-// Test #2: no ottoState → returns, no run
-// ---------------------------------------------------------------------------
-describe("Test #2 — no ottoState", () => {
-  it("skips when thread has no ottoState (null)", async () => {
+  it("skips a thread with no state", async () => {
     mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: null });
-
     await resumeOttoAfterGen(JOB);
-
     expect(mocks.genJobUpdateMany).not.toHaveBeenCalled();
     expect(mocks.run).not.toHaveBeenCalled();
-    expect(mocks.withLlmBudget).not.toHaveBeenCalled();
   });
 
-  it("skips when thread not found", async () => {
+  it("skips a missing thread", async () => {
     mocks.chatThreadFindFirst.mockResolvedValue(null);
-
     await resumeOttoAfterGen(JOB);
-
     expect(mocks.genJobUpdateMany).not.toHaveBeenCalled();
     expect(mocks.run).not.toHaveBeenCalled();
   });
-});
 
-// ---------------------------------------------------------------------------
-// Test #3: at-most-once — updateMany returns count=0 → no run, no persist
-// ---------------------------------------------------------------------------
-describe("Test #3 — at-most-once claim (count=0 = already claimed / redelivery)", () => {
-  it("returns immediately when claim count=0; run and persist not called", async () => {
+  it("does not run or persist when another delivery already claimed the job", async () => {
     mocks.genJobUpdateMany.mockResolvedValue({ count: 0 });
-
     await resumeOttoAfterGen(JOB);
 
     expect(mocks.genJobUpdateMany).toHaveBeenCalledOnce();
-    // Verify the claim targets ottoVerdictAt: null
-    const [updateArgs] = mocks.genJobUpdateMany.mock.calls[0] as [{ where: { id: string; ottoVerdictAt: null }; data: { ottoVerdictAt: Date } }];
-    expect(updateArgs.where).toMatchObject({ id: JOB.id, ottoVerdictAt: null });
-    expect(updateArgs.data.ottoVerdictAt).toBeInstanceOf(Date);
-
+    const [claim] = mocks.genJobUpdateMany.mock.calls[0] as [{
+      where: { id: string; ownerId: string; ottoVerdictAt: null };
+      data: { ottoVerdictAt: Date };
+    }];
+    expect(claim.where).toMatchObject({ id: JOB.id, ownerId: JOB.ownerId, ottoVerdictAt: null });
+    expect(claim.data.ottoVerdictAt).toBeInstanceOf(Date);
     expect(mocks.run).not.toHaveBeenCalled();
-    expect(mocks.withLlmBudget).not.toHaveBeenCalled();
+    expect(mocks.meter).not.toHaveBeenCalled();
     expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
-    expect(mocks.chatThreadUpdate).not.toHaveBeenCalled();
   });
 });
 
-// ---------------------------------------------------------------------------
-// Test #4: happy verdict — claim wins, rehydrates, runs otto inside withLlmBudget, persists
-// ---------------------------------------------------------------------------
-describe("Test #4 — happy verdict path", () => {
-  it("rehydrates state, calls run inside withLlmBudget, persists verdict message + new ottoState", async () => {
+describe("real worker composition seam (PH1F-A1)", () => {
+  it("uses the real shared runner/finalizer and derives the complete one-step budget contract", async () => {
     const verdictText = "Does this meet your expectation? Any changes?";
-    const runResult = makeRunResult({ text: verdictText });
-    mocks.run.mockResolvedValue(runResult);
-
-    await resumeOttoAfterGen(JOB);
-
-    // Claim must have been made
-    expect(mocks.genJobUpdateMany).toHaveBeenCalledOnce();
-
-    // RunState.fromString called with the agent + prior state string
-    expect(mocks.RunState.fromString).toHaveBeenCalledWith(mocks.otto, "prior-state");
-
-    // withLlmBudget was called (run is INSIDE it)
-    expect(mocks.withLlmBudget).toHaveBeenCalledOnce();
-    const [budgetArgs] = mocks.withLlmBudget.mock.calls[0] as [{ orgId: string; refId: string; model: string; paid: boolean; maxSteps: number }, unknown];
-    expect(budgetArgs.orgId).toBe(JOB.ownerId);
-    expect(budgetArgs.refId).toBe(`otto-verdict:${JOB.id}`);
-    expect(budgetArgs.paid).toBe(true);
-    // R4 O-11: verdict reserves a SINGLE step (was OTTO_MAX_STEPS=10)
-    expect(budgetArgs.maxSteps).toBe(1);
-
-    // run was called (inside withLlmBudget) with the tool-less, single-turn verdict profile
-    expect(mocks.run).toHaveBeenCalledOnce();
-    const [runAgent, , runOpts] = mocks.run.mock.calls[0] as [unknown, unknown, { maxTurns: number }];
-    expect(runAgent).toBe(mocks.ottoVerdict); // NOT the full-toolset `otto`
-    expect(runOpts.maxTurns).toBe(1);
-
-    // CAS: chatThread.updateMany must be called for the state write
-    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
-    const [casArgs] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { id: string; ownerId: string; ottoState: string }; data: { ottoState: string } }];
-    expect(casArgs.data.ottoState).toBe("new-serialized-state");
-    expect(casArgs.where.ottoState).toBe("prior-state"); // CAS: matches the priorOttoState read
-
-    // Verify chatMessage.create was called (verdict message)
-    expect(mocks.chatMessageCreate).toHaveBeenCalledOnce();
-    const [createArgs] = mocks.chatMessageCreate.mock.calls[0] as [{ data: { role: string; kind: string; text: string; seq: number } }];
-    expect(createArgs.data.role).toBe("AGENT");
-    expect(createArgs.data.kind).toBe("TEXT");
-    expect(createArgs.data.text).toBe(verdictText);
-  });
-
-  it("the run input includes the injection message appended to history", async () => {
-    const runResult = makeRunResult();
-    mocks.run.mockResolvedValue(runResult);
-
-    await resumeOttoAfterGen(JOB);
-
-    const [_agent, input] = mocks.run.mock.calls[0] as [unknown, Array<{ role: string; content: string }>];
-    // Last item in input must be the injection message
-    const lastItem = input[input.length - 1]!;
-    expect(lastItem.role).toBe("user");
-    expect(lastItem.content).toContain("generation you queued has finished");
-    // Prior history items come before it
-    expect(input.length).toBeGreaterThan(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Test #5: best-effort — run throws → does NOT throw, no verdict persisted
-// ---------------------------------------------------------------------------
-describe("Test #5 — best-effort (run throws)", () => {
-  it("does NOT throw when withLlmBudget throws; no verdict message persisted", async () => {
-    mocks.withLlmBudget.mockRejectedValue(new Error("LLM exploded"));
-
-    // Must not throw
-    await expect(resumeOttoAfterGen(JOB)).resolves.toBeUndefined();
-
-    // No verdict persisted
-    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
-    expect(mocks.chatThreadUpdate).not.toHaveBeenCalled();
-    expect(mocks.$transaction).not.toHaveBeenCalled();
-  });
-
-  it("does NOT throw when run throws MaxTurnsExceededError", async () => {
-    mocks.withLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
-      // Simulate MaxTurnsExceededError propagating out of fn
-      throw new mocks.MaxTurnsExceededError("max turns exceeded");
-    });
-
-    await expect(resumeOttoAfterGen(JOB)).resolves.toBeUndefined();
-
-    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
-    expect(mocks.$transaction).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Test #6: interrupted verdict — Otto parked a generate → persists paused state, no spend
-// ---------------------------------------------------------------------------
-describe("Test #6 — interrupted verdict (Otto parked a generate)", () => {
-  it("persists paused ottoState + any assistant text; startGen is NOT in context (no spend)", async () => {
-    const assistantText = "Got it! Before I generate, I just wanted to check — does that match what you had in mind?";
-    const interruption = { name: "generate", arguments: JSON.stringify({ cardId: "card-abc" }) };
-    const runResult = {
-      finalOutput: assistantText,
-      newItems: [],
-      interruptions: [interruption],
-      state: {
-        toString: () => "paused-state",
-        usage: { inputTokens: 50, outputTokens: 20 },
-      },
-    };
-    mocks.run.mockResolvedValue(runResult);
-
-    await resumeOttoAfterGen(JOB);
-
-    // Paused state persisted via CAS chatThread.updateMany
-    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
-    const [updateArgs] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { id: string; ottoState: string }; data: { ottoState: string } }];
-    expect(updateArgs.data.ottoState).toBe("paused-state");
-
-    // Assistant text before interruption was persisted
-    expect(mocks.chatMessageCreate).toHaveBeenCalledOnce();
-    const [createArgs] = mocks.chatMessageCreate.mock.calls[0] as [{ data: { text: string; role: string } }];
-    expect(createArgs.data.text).toBe(assistantText);
-    expect(createArgs.data.role).toBe("AGENT");
-
-    // Verify startGen is NOT in the context passed to run
-    const [_agent, _input, runOptions] = mocks.run.mock.calls[0] as [unknown, unknown, { context: { startGen?: unknown } }];
-    expect(runOptions.context.startGen).toBeUndefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Test #7: CAS — compare-and-swap on ottoState write (Fix 4 / P2-b)
-// ---------------------------------------------------------------------------
-describe("Test #7 — CAS verdict write (Fix 4 / P2-b)", () => {
-  it("when chatThread.updateMany returns count=0 (thread moved on), verdict message is NOT created", async () => {
-    // CAS misses — a concurrent turn already updated the state
-    mocks.chatThreadUpdateMany.mockResolvedValue({ count: 0 });
-
-    const runResult = makeRunResult({ text: "Done! How does it look?" });
-    mocks.run.mockResolvedValue(runResult);
-
-    await resumeOttoAfterGen(JOB);
-
-    // CAS attempted
-    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
-
-    // Verdict message must NOT be created
-    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
-  });
-
-  it("when chatThread.updateMany returns count=1 (CAS wins), verdict message IS created", async () => {
-    mocks.chatThreadUpdateMany.mockResolvedValue({ count: 1 });
-
-    const verdictText = "Looks great! Want any changes?";
     mocks.run.mockResolvedValue(makeRunResult({ text: verdictText }));
 
     await resumeOttoAfterGen(JOB);
 
+    // Regression guard against the former fake coverage: neither object under test is a mock.
+    expect(vi.isMockFunction(runOttoTurn)).toBe(false);
+    expect(vi.isMockFunction(finalizeOttoTurn)).toBe(false);
+    expect(mocks.genJobUpdateMany).toHaveBeenCalledOnce();
+
+    expect(mocks.meter).toHaveBeenCalledOnce();
+    const [budget] = mocks.meter.mock.calls[0] as [{
+      orgId: string;
+      refId: string;
+      model: string;
+      paid: boolean;
+      maxSteps: number;
+      prices: unknown;
+      usageOnError: (error: unknown) => unknown;
+    }, unknown];
+    expect(budget).toMatchObject({
+      orgId: JOB.ownerId,
+      refId: `otto-verdict:${JOB.id}`,
+      model: "claude-sonnet-4-6",
+      paid: true,
+      maxSteps: 1,
+    });
+    expect(budget.prices).toBe(llmPricesFor("claude-sonnet-4-6"));
+    const truncated = new MaxTurnsExceededError("max turns");
+    (truncated as unknown as { state: unknown }).state = {
+      usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+    };
+    expect(budget.usageOnError(truncated)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    expect(budget.usageOnError(new Error("boom"))).toBeNull();
+
+    expect(mocks.run).toHaveBeenCalledOnce();
+    const [agent, input, options] = mocks.run.mock.calls[0] as [
+      unknown,
+      Array<{ role: string; content: string }>,
+      { context: Record<string, unknown>; maxTurns: number },
+    ];
+    expect(agent).toBe(ottoWorkerVerdictRuntime.agent);
+    expect(ottoWorkerVerdictRuntime.agent.tools).toEqual([]);
+    expect(options.maxTurns).toBe(1);
+    expect(options.context.startGen).toBeUndefined();
+    expect(input[0]).toMatchObject({ role: "user", content: "make me a poster" });
+    expect(input.at(-1)?.content).toContain("generation you queued has finished");
+
     expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
+    const [cas] = mocks.chatThreadUpdateMany.mock.calls[0] as [{
+      where: { id: string; ownerId: string; ottoState: string };
+      data: { ottoState: string };
+    }];
+    expect(cas.where).toMatchObject({ id: JOB.threadId, ownerId: JOB.ownerId, ottoState: serializedPriorState });
+    expect(cas.data.ottoState).toBe("new-serialized-state");
     expect(mocks.chatMessageCreate).toHaveBeenCalledOnce();
-    const [createArgs] = mocks.chatMessageCreate.mock.calls[0] as [{ data: { text: string } }];
-    expect(createArgs.data.text).toBe(verdictText);
+    const [create] = mocks.chatMessageCreate.mock.calls[0] as [{
+      data: { role: string; kind: string; text: string; seq: number };
+    }];
+    expect(create.data).toMatchObject({ role: "AGENT", kind: "TEXT", text: verdictText, seq: 4 });
   });
 
-  it("CAS uses priorOttoState as the where condition", async () => {
-    mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: "specific-prior-state" });
-    mocks.run.mockResolvedValue(makeRunResult());
+  it("restores and sanitizes real serialized history before appending the verdict instruction", async () => {
+    serializedPriorState = priorState([
+      { role: "system", content: "stale brand context" },
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "remember this history" },
+          { type: "input_image", image: "data:image/png;base64,SHOULD_NOT_BE_RESENT" },
+        ],
+      },
+    ]);
+    mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: serializedPriorState });
 
-    await resumeOttoAfterGen(JOB);
+    const restoreSpy = vi.spyOn(RunState, "fromString");
+    try {
+      await resumeOttoAfterGen(JOB);
 
-    const [casArgs] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { ottoState: string } }];
-    expect(casArgs.where.ottoState).toBe("specific-prior-state");
+      const [restoreAgent, restoredState] = restoreSpy.mock.calls[0]!;
+      expect({
+        agent: restoreAgent,
+        state: restoredState,
+        hasFullToolset: restoreAgent.tools.length === otto.tools.length && restoreAgent.tools.length > 0,
+      }).toEqual({ agent: otto, state: serializedPriorState, hasFullToolset: true });
+      const [, input] = mocks.run.mock.calls[0] as [unknown, Array<{ role: string; content: string }>];
+      expect(input).toEqual([
+        { role: "user", content: "remember this history" },
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("generation you queued has finished"),
+        }),
+      ]);
+    } finally {
+      restoreSpy.mockRestore();
+    }
   });
 });
 
-// ---------------------------------------------------------------------------
-// Test #8 — worker is Meta-WRITE-free (G7 Task 12)
-//
-// The Meta writer (runApprovedPlan / approveMetaActionPlan / maybeAutoRun) lives in
-// apps/web/lib and must NEVER be reachable from the worker — exactly as startGen is
-// withheld from the worker OttoContext. Two guards:
-//   (a) the OttoContext built here exposes no meta-write port (mirrors startGen).
-//   (b) the worker resume source imports nothing from the meta-write path.
-// ---------------------------------------------------------------------------
-describe("Test #8 — worker never has Meta-write capability", () => {
-  it("the OttoContext passed to run carries no meta-write port (no runApprovedPlan/approve/metaWrite)", async () => {
-    mocks.run.mockResolvedValue(makeRunResult());
+describe("best-effort and persistence behavior", () => {
+  it("swallows a metering failure and writes no verdict", async () => {
+    mocks.meter.mockRejectedValue(new Error("LLM exploded"));
+    await expect(resumeOttoAfterGen(JOB)).resolves.toBeUndefined();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+    expect(mocks.chatThreadUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("swallows a real MaxTurnsExceededError from the injected SDK runner", async () => {
+    mocks.run.mockRejectedValue(new MaxTurnsExceededError("max turns exceeded"));
+    await expect(resumeOttoAfterGen(JOB)).resolves.toBeUndefined();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+    expect(mocks.chatThreadUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("persists paused state and assistant text for a defensive interruption", async () => {
+    const text = "Does that match what you had in mind?";
+    mocks.run.mockResolvedValue(makeRunResult({
+      text,
+      state: "paused-state",
+      interruptions: [{ rawItem: { name: "generate", arguments: JSON.stringify({ cardId: "card-abc" }) } }],
+    }));
 
     await resumeOttoAfterGen(JOB);
 
-    const [, , runOptions] = mocks.run.mock.calls[0] as [
-      unknown,
-      unknown,
-      { context: Record<string, unknown> },
-    ];
-    const ctx = runOptions.context;
-    // the same discipline that withholds startGen withholds every spend capability
-    expect(ctx.startGen).toBeUndefined();
-    expect(ctx.metaWrite).toBeUndefined();
-    expect(ctx.approveMetaActionPlan).toBeUndefined();
-    expect(ctx.runApprovedPlan).toBeUndefined();
-    expect(ctx.maybeAutoRun).toBeUndefined();
-    // G7 v2: the Meta-CREATE writer (runAdBuild — the only thing that creates campaign/adset/
-    // creative/ad objects) is likewise withheld from the worker.
-    expect(ctx.runAdBuild).toBeUndefined();
-    expect(ctx.approveAdBuild).toBeUndefined();
-    expect(ctx.maybeAutoBuild).toBeUndefined();
-    expect(ctx.metaBuild).toBeUndefined();
+    const [cas] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ data: { ottoState: string } }];
+    expect(cas.data.ottoState).toBe("paused-state");
+    const [create] = mocks.chatMessageCreate.mock.calls[0] as [{ data: { role: string; text: string } }];
+    expect(create.data).toMatchObject({ role: "AGENT", text });
+    const [, , options] = mocks.run.mock.calls[0] as [unknown, unknown, { context: { startGen?: unknown } }];
+    expect(options.context.startGen).toBeUndefined();
   });
 
-  it("otto-resume.ts source imports nothing from the meta-write or meta-build path", async () => {
+  it("does not write a verdict when the state CAS loses", async () => {
+    mocks.chatThreadUpdateMany.mockResolvedValue({ count: 0 });
+    await resumeOttoAfterGen(JOB);
+    expect(mocks.chatThreadUpdateMany).toHaveBeenCalledOnce();
+    expect(mocks.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("writes a verdict when the state CAS wins", async () => {
+    mocks.chatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    await resumeOttoAfterGen(JOB);
+    expect(mocks.chatMessageCreate).toHaveBeenCalledOnce();
+  });
+
+  it("uses the exact prior state as the CAS precondition", async () => {
+    serializedPriorState = priorState([{ role: "user", content: "specific prior state" }]);
+    mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: serializedPriorState });
+    await resumeOttoAfterGen(JOB);
+    const [cas] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { ottoState: string } }];
+    expect(cas.where.ottoState).toBe(serializedPriorState);
+  });
+});
+
+describe("worker capability boundary", () => {
+  it("injects no generation, Meta-write, or Meta-build port", async () => {
+    await resumeOttoAfterGen(JOB);
+    const [, , options] = mocks.run.mock.calls[0] as [unknown, unknown, { context: Record<string, unknown> }];
+    expect(options.context).not.toHaveProperty("startGen");
+    expect(options.context).not.toHaveProperty("metaWrite");
+    expect(options.context).not.toHaveProperty("approveMetaActionPlan");
+    expect(options.context).not.toHaveProperty("runApprovedPlan");
+    expect(options.context).not.toHaveProperty("maybeAutoRun");
+    expect(options.context).not.toHaveProperty("runAdBuild");
+    expect(options.context).not.toHaveProperty("approveAdBuild");
+    expect(options.context).not.toHaveProperty("maybeAutoBuild");
+    expect(options.context).not.toHaveProperty("metaBuild");
+  });
+
+  it("imports no Meta writer or builder", async () => {
     const { readFileSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
-    const src = readFileSync(fileURLToPath(new URL("./otto-resume.ts", import.meta.url)), "utf8");
-    expect(src).not.toMatch(/meta-write/);
-    expect(src).not.toMatch(/runApprovedPlan/);
-    expect(src).not.toMatch(/approveMetaActionPlan/);
-    // G7 v2: the build executor must never be importable from the worker either.
-    expect(src).not.toMatch(/meta-build/);
-    expect(src).not.toMatch(/runAdBuild/);
-    expect(src).not.toMatch(/approveAdBuild/);
+    const source = readFileSync(fileURLToPath(new URL("./otto-resume.ts", import.meta.url)), "utf8");
+    expect(source).not.toMatch(/meta-write|runApprovedPlan|approveMetaActionPlan/);
+    expect(source).not.toMatch(/meta-build|runAdBuild|approveAdBuild/);
   });
 });

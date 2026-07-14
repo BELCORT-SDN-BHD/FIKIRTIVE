@@ -30,7 +30,6 @@ import type { Prisma } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
-  OTTO_MAX_STEPS,
   GOAL_PRESETS,
   isGoalKey,
   tavilySearch,
@@ -38,7 +37,21 @@ import {
   searchWithFallback,
   extractProductDraft,
 } from "@fikirtive/core";
-import { otto, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, ottoSimpleModeBlock, buildUserTurn, sanitizeHistory, tryRestoreRunState, extractText, collectApprovalInterruptions, approvalRefOf } from "@fikirtive/otto";
+import {
+  otto,
+  ottoInteractiveRuntime,
+  ottoApprovalResumeRuntime,
+  runOttoTurn,
+  finalizeOttoTurn,
+  withLlmBudget,
+  run,
+  MaxTurnsExceededError,
+  ottoSimpleModeBlock,
+  buildUserTurn,
+  sanitizeHistory,
+  tryRestoreRunState,
+  approvalRefOf,
+} from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
@@ -602,7 +615,8 @@ export async function finalizeOttoRun({
   result: any;
   seqAfterUser: number;
 }): Promise<FinalizeOttoRunResult> {
-  const newOttoState = result.state.toString() as string;
+  const finalization = finalizeOttoTurn(result, ottoInteractiveRuntime);
+  const newOttoState = finalization.newOttoState;
   // Tools persist card messages MID-run at max(seq)+1 (proposePack writes one per
   // item), so the pre-run seqAfterUser snapshot can be stale. Writing the reply at
   // seqAfterUser+1 would collide with the first card — a reload (ordered by seq)
@@ -615,11 +629,11 @@ export async function finalizeOttoRun({
   let seq = Math.max(seqAfterUser, lastMsg?.seq ?? 0);
 
   // Handle interruption (an approval-gated tool parked for approval)
-  if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
+  if (finalization.interrupted) {
     // Closed set from the registry (collectApprovalInterruptions): generate keeps its existing
     // contract — pendingCardIds carries its pre-persisted GEN_CARD ids. Other gated tools
     // (approveScheduledPost) get a durable APPROVAL_CARD persisted below (B4 debt-70 5.1·附①).
-    const approvals = collectApprovalInterruptions(result.interruptions as unknown[]);
+    const approvals = finalization.approvals;
     const pendingCardIds: string[] = approvals.filter((a) => a.toolName === "generate").map((a) => a.ref);
     const nonGenerateApprovals = approvals.filter((a) => a.toolName !== "generate");
 
@@ -638,7 +652,7 @@ export async function finalizeOttoRun({
     }
 
     // CAS won (or new thread) — persist any assistant text produced before the interruption
-    const assistantText = extractText(result);
+    const assistantText = finalization.text;
     if (assistantText) {
       await prisma.chatMessage.create({
         data: {
@@ -669,7 +683,7 @@ export async function finalizeOttoRun({
   }
 
   // Completed — persist Otto's final reply + ottoState
-  const replyText = extractText(result);
+  const replyText = finalization.text;
 
   if (!isNew) {
     // CAS: only write if no concurrent turn moved the state on
@@ -845,21 +859,11 @@ export async function ottoTurn(raw: unknown): Promise<
     let agentResult: any;
 
     try {
-      agentResult = await withLlmBudget(
-        {
-          orgId: ownerId,
-          refId,
-          model: OTTO_DEFAULT_MODEL,
-          paid: true,
-          maxSteps: OTTO_MAX_STEPS,
-          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
-            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
-            : null,
-        },
-        async () => {
-          const r = await run(otto, runInput, { context: ctx, maxTurns: OTTO_MAX_STEPS });
-          return { result: r, usage: mapOttoUsage(r.state.usage) };
-        },
+      agentResult = await runOttoTurn(
+        { orgId: ownerId, refId, input: runInput },
+        ctx,
+        ottoInteractiveRuntime,
+        { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
       );
     } catch (e) {
       if (e instanceof MaxTurnsExceededError) {
@@ -952,7 +956,7 @@ export async function ottoApprove(raw: unknown): Promise<
     // Rehydrate the paused RunState. On an unrestorable state (schema bump / corruption, F24)
     // we can't resume the interruption this approval refers to — surface a clean error instead
     // of throwing (which would 500 every approve on a stale thread).
-    const state = await tryRestoreRunState(otto, priorOttoState);
+    const state = await tryRestoreRunState(ottoApprovalResumeRuntime.agent, priorOttoState);
     if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto to propose it again." };
 
     // Find the matching generate interruption (cardId binding)
@@ -1135,22 +1139,11 @@ export async function ottoApprove(raw: unknown): Promise<
     let agentResult: any;
 
     try {
-      agentResult = await withLlmBudget(
-        {
-          orgId: ownerId,
-          refId,
-          model: OTTO_DEFAULT_MODEL,
-          paid: true,
-          maxSteps: OTTO_MAX_STEPS,
-          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
-            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
-            : null,
-        },
-        async () => {
-          // Resuming with the approved state — generate.execute runs → ctx.startGen → spend
-          const r = await run(otto, state, { context: ctx, maxTurns: OTTO_MAX_STEPS });
-          return { result: r, usage: mapOttoUsage(r.state.usage) };
-        },
+      agentResult = await runOttoTurn(
+        { orgId: ownerId, refId, input: state },
+        ctx,
+        ottoApprovalResumeRuntime,
+        { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
       );
     } catch (e) {
       if (e instanceof MaxTurnsExceededError) {
@@ -1190,15 +1183,16 @@ export async function ottoApprove(raw: unknown): Promise<
     const result = agentResult as any;
 
     // Shared extractText (@fikirtive/otto run-output.ts) — this was a local copy until 7-14b.
-    const newOttoState = result.state.toString() as string;
+    const finalization = finalizeOttoTurn(result, ottoApprovalResumeRuntime);
+    const newOttoState = finalization.newOttoState;
 
     // (Universal card already consumed pending→approved BEFORE the resume — AR1 处方2 CAS.)
 
     // Handle another interruption (chained approval needed)
-    if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
+    if (finalization.interrupted) {
       // Same closed-set collection as finalizeOttoRun: generate ids ride pendingCardIds; other
       // gated tools get durable APPROVAL_CARDs persisted after the CAS below.
-      const chainedApprovals = collectApprovalInterruptions(result.interruptions as unknown[]);
+      const chainedApprovals = finalization.approvals;
       const pendingCardIds: string[] = chainedApprovals.filter((a) => a.toolName === "generate").map((a) => a.ref);
       const chainedNonGenerate = chainedApprovals.filter((a) => a.toolName !== "generate");
 
@@ -1210,7 +1204,7 @@ export async function ottoApprove(raw: unknown): Promise<
       if (casInterrupt === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
 
       // CAS won — persist any assistant text produced before the interruption
-      const assistantText = extractText(result);
+      const assistantText = finalization.text;
       if (assistantText) {
         const seq = await prisma.chatMessage.findFirst({
           where: { threadId, ownerId },
@@ -1251,7 +1245,7 @@ export async function ottoApprove(raw: unknown): Promise<
     }
 
     // Completed — persist Otto's reply + updated ottoState (CAS guard)
-    const replyText = extractText(result);
+    const replyText = finalization.text;
 
     // Look up the GenJob created by the resumed generate (best-effort, for UI)
     const genJob = await prisma.genJob.findFirst({

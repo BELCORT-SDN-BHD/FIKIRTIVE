@@ -103,6 +103,7 @@ export function actualCostInternal(
  *
  * @param args.paid  - false = mock/free path: fn runs without ANY reserve/settle.
  * @param args.model - used for price lookup (unknown → sonnet, never free).
+ * @param args.prices - optional manifest-sourced price table (see field doc above).
  * @param args.maxSteps - 1 for single calls (enhance/draft); OTTO_MAX_STEPS for Otto turns.
  * @param fn         - async function that calls the LLM and returns { result, usage? }.
  */
@@ -114,6 +115,10 @@ export async function withLlmBudget<T>(
     paid: boolean;
     margin?: number;
     maxSteps?: number;
+    /** Price table for this call. When supplied it MUST come from the Otto model-runtime
+     *  manifest (runtime.ts ottoBudgetArgsFor — the single billing source, PH1-A1).
+     *  Omitted → llmPricesFor(model), the fail-closed lookup (unknown → sonnet, never free). */
+    prices?: LlmPrices;
     usageOnError?: (e: unknown) => TokenUsage | null;
   },
   fn: () => Promise<{ result: T; usage?: TokenUsage }>,
@@ -123,7 +128,19 @@ export async function withLlmBudget<T>(
     return (await fn()).result;
   }
 
-  const prices = llmPricesFor(args.model);
+  const registeredPrices = llmPricesFor(args.model);
+  const prices = args.prices ?? registeredPrices;
+  // A manifest may price more conservatively than the registered table, never below it.
+  // This keeps the new composition seam fail-closed: a malformed/fixture manifest cannot
+  // turn a production model into a free or under-reserved call by supplying cheaper prices.
+  if (
+    !Number.isFinite(prices.inputPerToken) || prices.inputPerToken < registeredPrices.inputPerToken ||
+    !Number.isFinite(prices.cachedInputPerToken) || prices.cachedInputPerToken < registeredPrices.cachedInputPerToken ||
+    !Number.isFinite(prices.cacheWriteInputPerToken) || prices.cacheWriteInputPerToken < registeredPrices.cacheWriteInputPerToken ||
+    !Number.isFinite(prices.outputPerToken) || prices.outputPerToken < registeredPrices.outputPerToken
+  ) {
+    throw new Error(`Manifest pricing for ${args.model} is below the registered fail-closed floor.`);
+  }
   const margin = args.margin ?? ottoLlmMargin();
   const maxSteps = args.maxSteps ?? 1;
 

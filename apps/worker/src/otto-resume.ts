@@ -18,8 +18,18 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 // `otto` (full toolset) is used ONLY to rehydrate the prior RunState (history extraction);
-// `ottoVerdict` (tool-less, single-step) is the profile the verdict turn actually runs.
-import { otto, ottoVerdict, withLlmBudget, OTTO_DEFAULT_MODEL, run, MaxTurnsExceededError, mapOttoUsage, sanitizeHistory, tryRestoreRunState, extractText } from "@fikirtive/otto";
+// the tool-less, single-step runtime is the profile the verdict turn actually runs.
+import {
+  otto,
+  ottoWorkerVerdictRuntime,
+  runOttoTurn,
+  finalizeOttoTurn,
+  withLlmBudget,
+  run,
+  MaxTurnsExceededError,
+  sanitizeHistory,
+  tryRestoreRunState,
+} from "@fikirtive/otto";
 import type { OttoContext } from "@fikirtive/otto";
 
 export async function resumeOttoAfterGen(job: {
@@ -85,25 +95,11 @@ export async function resumeOttoAfterGen(job: {
     let agentResult: any;
 
     try {
-      agentResult = await withLlmBudget(
-        {
-          orgId: job.ownerId,
-          refId,
-          model: OTTO_DEFAULT_MODEL,
-          paid: true,
-          // Single step: the verdict is one spoken sentence. Reserve exactly one LLM call, not
-          // OTTO_MAX_STEPS — smaller hold, and no false InsufficientCredits from a 10-step reserve.
-          maxSteps: 1,
-          usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
-            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
-            : null,
-        },
-        async () => {
-          // Tool-less ottoVerdict profile, capped at a single turn: the verdict cannot loop across
-          // billed turns and cannot reach any write/spend tool. Restoration still uses `otto`.
-          const r = await run(ottoVerdict, runInput, { context: ctx, maxTurns: 1 });
-          return { result: r, usage: mapOttoUsage(r.state.usage) };
-        },
+      agentResult = await runOttoTurn(
+        { orgId: job.ownerId, refId, input: runInput },
+        ctx,
+        ottoWorkerVerdictRuntime,
+        { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
       );
     } catch (e) {
       if (e instanceof MaxTurnsExceededError) {
@@ -118,9 +114,8 @@ export async function resumeOttoAfterGen(job: {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = agentResult as any;
-    const newOttoState: string = result.state.toString();
-
-    // Text extraction: shared extractText (@fikirtive/otto run-output.ts) — was a local copy until 7-14b.
+    const finalization = finalizeOttoTurn(result, ottoWorkerVerdictRuntime);
+    const newOttoState = finalization.newOttoState;
 
     // Determine next seq
     const lastMsg = await prisma.chatMessage.findFirst({
@@ -132,7 +127,7 @@ export async function resumeOttoAfterGen(job: {
 
     // Handle interruption (Otto parked a generate → no startGen → will park here)
     // Persist paused state + any assistant text produced before the interruption.
-    if (Array.isArray(result.interruptions) && result.interruptions.length > 0) {
+    if (finalization.interrupted) {
       // CAS: only write if no concurrent turn moved the state on
       const { count: casCount } = await prisma.chatThread.updateMany({
         where: { id: job.threadId, ownerId: job.ownerId, ottoState: priorOttoState },
@@ -142,7 +137,7 @@ export async function resumeOttoAfterGen(job: {
         console.log(`[otto-resume] ${job.id}: CAS miss (interruption) — thread moved on, skipping`);
         return;
       }
-      const assistantText = extractText(result);
+      const assistantText = finalization.text;
       if (assistantText) {
         await prisma.chatMessage.create({
           data: {
@@ -161,7 +156,7 @@ export async function resumeOttoAfterGen(job: {
     }
 
     // Completed — CAS the ottoState write; only persist verdict message if we won
-    const verdictText = extractText(result);
+    const verdictText = finalization.text;
     const { count: casCount } = await prisma.chatThread.updateMany({
       where: { id: job.threadId, ownerId: job.ownerId, ottoState: priorOttoState },
       data: { ottoState: newOttoState, updatedAt: new Date() },

@@ -1,5 +1,8 @@
 import { aisdk } from "@openai/agents-extensions/ai-sdk"; // SUBPATH, not the package root
 import { anthropic } from "@ai-sdk/anthropic";
+import { llmPricesFor } from "@fikirtive/core";
+import { mapOttoUsage } from "./meter.js";
+import type { OttoModelRuntime } from "./runtime.js";
 
 /**
  * Otto's model with same-tier overload failover.
@@ -183,3 +186,27 @@ export const ottoModel = aisdk(
     withOverloadFailover(anthropic(OTTO_PRIMARY_MODEL), anthropic(OTTO_FALLBACK_MODEL)),
   ),
 );
+
+// ── The production atomic model-runtime manifest (engine spec §6.2, PH1-A1) ─────────────────
+//
+// Model binding, billable model id, resolved model policy, usage mapper, cache capabilities
+// and pricing travel as ONE frozen value. Every production entry's withLlmBudget parameters
+// derive from THIS manifest (runtime.ts ottoBudgetArgsFor) — no entry holds an independent
+// model or price constant. Frozen: nothing at runtime can flip the billable model or swap
+// the binding (fixture/CLI runtimes are separate TEST compositions, never this object).
+export const ottoModelRuntime: OttoModelRuntime = Object.freeze({
+  binding: ottoModel,
+  billableModelId: OTTO_DEFAULT_MODEL,
+  resolvedModelPolicy: Object.freeze({
+    primaryModelId: OTTO_PRIMARY_MODEL,
+    fallbackModelId: OTTO_FALLBACK_MODEL,
+    failover: "same-tier-529-only" as const,
+  }),
+  mapUsage: mapOttoUsage,
+  cacheCapabilities: Object.freeze({
+    // withPromptCaching marks the constant prefix (tools + system) with ephemeral
+    // cache_control; kill switch OTTO_PROMPT_CACHE (read per-call in model.ts above).
+    promptCache: true,
+  }),
+  pricing: llmPricesFor,
+});

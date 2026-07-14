@@ -157,6 +157,44 @@ describe("Test #5 — no usage → settle full reserve", () => {
     const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { orgId: string; refId: string; actualInternal: number }];
     expect(settleCall[1].actualInternal).toBe(reserve);
   });
+
+  it("uses the manifest-supplied price table for BOTH reserve and settle", async () => {
+    const registered = llmPricesFor(MODEL);
+    const manifestPrices = {
+      inputPerToken: registered.inputPerToken * 2,
+      cachedInputPerToken: registered.cachedInputPerToken * 2,
+      cacheWriteInputPerToken: registered.cacheWriteInputPerToken * 2,
+      outputPerToken: registered.outputPerToken * 2,
+    };
+    const expected = turnBudgetInternal(manifestPrices, MARGIN, 1);
+
+    await withLlmBudget(
+      makeArgs({ prices: manifestPrices }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost: expected }),
+    );
+    expect(mocks.settleCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actualInternal: expected }),
+    );
+  });
+
+  it("rejects manifest pricing below the registered floor before reserve or model execution", async () => {
+    const registered = llmPricesFor(MODEL);
+    const fn = vi.fn();
+
+    await expect(withLlmBudget(
+      makeArgs({ prices: { ...registered, inputPerToken: 0 } }),
+      fn,
+    )).rejects.toThrow(/below the registered fail-closed floor/);
+
+    expect(mocks.reserveCredits).not.toHaveBeenCalled();
+    expect(fn).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

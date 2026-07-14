@@ -75,7 +75,7 @@ vi.mock("@fikirtive/otto", () => ({
   RESEARCH_TIERS: mocks.RESEARCH_TIERS,
   researchAgent: mocks.researchAgent,
   withLlmBudget: mocks.withLlmBudget,
-  OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
+  ottoModelRuntime: { billableModelId: "claude-sonnet-4-6" },
   run: mocks.run,
   MaxTurnsExceededError: mocks.MaxTurnsExceededError,
   mapOttoUsage: mocks.mapOttoUsage,
@@ -161,11 +161,14 @@ describe("handleResearch — happy path", () => {
   it("calls withLlmBudget EXACTLY once with refId=research:<cardId> + maxSteps=tier.maxSteps", async () => {
     await handleResearch({ jobId: "job-1" }, 0);
     expect(mocks.withLlmBudget).toHaveBeenCalledTimes(1);
-    const args = mocks.withLlmBudget.mock.calls[0]![0] as { refId: string; maxSteps: number; orgId: string; paid: boolean };
+    const args = mocks.withLlmBudget.mock.calls[0]![0] as { refId: string; maxSteps: number; orgId: string; paid: boolean; model: string };
     expect(args.refId).toBe("research:card-1");
     expect(args.maxSteps).toBe(mocks.RESEARCH_TIERS.standard.maxSteps);
     expect(args.orgId).toBe("owner-1");
     expect(args.paid).toBe(true);
+    // Contract matrix (WO-OTTO-PHASE1 现状锁定): research meters against the SAME production
+    // billable model id — the constant's source moves to the atomic model-runtime manifest.
+    expect(args.model).toBe("claude-sonnet-4-6");
   });
 
   it("runs the researchAgent with maxTurns=tier.maxSteps", async () => {
