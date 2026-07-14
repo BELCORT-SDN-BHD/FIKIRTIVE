@@ -1,8 +1,9 @@
 # FIKIRTIVE 编排状态账
 
-> 更新时间：2026-07-15（Asia/Kuala_Lumpur；第四版——Codex 接管同一 epoch + #315 r005 收口验收 + Founder 呈交边界）
+> 更新时间：2026-07-15（Asia/Kuala_Lumpur；第五版——Founder 四项合并后的 truth repair + 下一批签发边界）
 > 性质：可恢复 control plane 的最后核验检查点，不替代 git、GitHub、CI、部署、进程或 Founder 指令。
 > 协议状态：`trial`。旧版保留在 git 史（`449145e9`/`4a09c52c`/`ff995eab`），只作历史证据，不得恢复其 claim、模型路由、PR、SHA 或部署状态。
+> 本版真相优先级：`VERIFIED`、`在飞`、`待 Founder / 待收口` 与 `Recovery next step` 是当前口径；下方仍以 #314/#315/#316/#319「待合并」写成的复审叙事仅是 pre-merge 历史，不得据此恢复旧状态。
 
 ## Control plane
 
@@ -23,20 +24,22 @@
 **现行法：口头总授权不推翻成文 sacred 类别保留（宪法 1：安全 > 效率）。钱路 / schema / 治理 一律呈 Founder 亲点。**
 此错误由 codex SOL 跨族复审在控制面**即将合并 PR #315（钱路 diff）之前**逮到。
 
-## VERIFIED（2026-07-15 重验）
+## VERIFIED（2026-07-15 post-merge 重验）
 
-- `origin/main = f2e08a37`（#313 squash）。路线乙创作批2 四工位（F-P/G-P/H-P/E-P）全落 main；#280/#282/#307/#312/#313/#305/#308 均已合并。
-- 外部 `CLAIMS.json`：**generation 6**；`claim-wo-otto-phase1-r005` = 唯一 **ACTIVE**（scoped，base_sha `7742eb6036052d91590d596f39ddf3a6a4f4d657`）；r004 已 `SUPERSEDED`，更早 revision 只作历史证据。ACTIVE 在此是 fencing claim，不表示仍有授权施工在飞。
-- **哈内斯判例（历史仍有效）**：checker 的 `startup` / `prewrite` 硬要求 `HEAD == base_sha` 且 changed=0 → 在已交付 commit 上做修复轮必须签发新 revision；r003/r004/r005 均据此换基座。签发会 bump generation 并令旧 lane fail closed。
-- **#315 r005 current-head 已验**：base `7742eb60…` → head `f9cfb314210acee1139463660c5056638072ebb5` 恰好只改 B9 报告与 fence 顶部 docblock；fence 首个 `import` 至 EOF 逐字节不变，production/tests/root config/CI/schema/钱路零 diff。mailbox `READY_FOR_VERIFY` / delivery / gen 6，terminal checker `changed=2`。
-- **独立同族复核已验**（不冒充 cross-family）：exact head 上 check、71 migrations + drift 0 + 2923 tests、web-build、lint（0 errors / 75 warnings）、fence self-test / 仓扫描、locks/scope/effects/cleanup 全部 exit 0；未发现 r005 范围内新 P0/P1。
-- PR #315 Actions run `29363340148` 四个 jobs 都因 GitHub billing/payment annotation 在零步骤处失败，所以 remote CI **不绿**。证据评论：`https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/315#issuecomment-4973404091`。钱路仍为 Founder-only；本账的“已验”不是 merge 授权。
-- 本 Codex control plane 接管以来：**零 merge、零 deploy、零真实花费、零真实 provider/LLM 请求、零轮询 automation**。本轮获授权的 GitHub 写入集合严格限于 r005 分支 non-force push、#315 evidence comment、#319 v4 governance branch non-force push，以及为同一 #319 exact head 回填 PR metadata / 本地门禁证据评论；每项完成状态仍须从 GitHub 重验。无生产或真实平台状态变更。
+- Founder 已亲自按 **#319 → #316 → #315 → #314** 完成四项合并；当前 `origin/main = 8e07dd9e39d93a5f358c60dc45738dd1a215b6fd`。对应 merge commits：#319 `7dd03329509a5bcc33eb8771f1a9f849240912dc`、#316 `d71c1f1e2dea1935b6af9465a75f61a591e9deb8`、#315 `fa921579c6027879fa048c177e8381237a3e29b9`、#314 `8e07dd9e39d93a5f358c60dc45738dd1a215b6fd`。
+- Merged-main 实物已重验：#315 的 `scripts/check-otto-cli-fence.mjs` 已在 main；#314 的 5 个 B8 模型、`CAMPAIGN_CARD`、独立 `CANCELLED` 与两条加性外键已在 main；#319 v4 状态账与 #316 D-037 也已在 main。
+- #316 合入时遗留一个 **P1 provenance truth drift**：D-037 把最终 W-3 / `CANCELLED` 裁决错链到不含该裁决的 Otto Phase 1 控制目录。PR **#323** 在首提交 `f399eb49b858fb9e50f4f75490102a91ad013a1f` 中把最终 outcome 真源钉到 `<HARNESS>/mailboxes/NH1-B8-SCHEMA/DISPATCH-PROMPT-launch2.md:6`，并把 `<HARNESS>/drafts/WO-PLAN-B8-PHASE1-20260714.md:98,106-108,438` 严格限定为 pre-decision 槽位 / 两案 / 随车时点证据。
+- #319 v4 在四项合并发生后立即状态陈旧；PR #323 的本 v5 只修正 post-merge 当前真相与恢复顺序，不重写既有产品裁决。
+- 外部 `CLAIMS.json` 重验仍是 **generation 6**；`claim-wo-otto-phase1-r005` = 唯一 **ACTIVE**（scoped，base_sha `7742eb6036052d91590d596f39ddf3a6a4f4d657`）。r005 已交付且其代码已随 #315 在 main；ACTIVE 此刻只是尚未结清的 fail-closed fencing 边界，不表示仍有授权施工在飞。
+- **哈内斯判例仍有效**：checker 的 `startup` / `prewrite` 硬要求 `HEAD == base_sha` 且 changed=0；下一批不得复用 r005 token/base。只有 #323 落 main 并复核后，global control plane 才可一次 generation bump，原子 retire r005 并签发下一批。
+- PR #323 是当前唯一 repo truth-repair lane：分支 `codex/post-merge-truth-repair`，base `8e07dd9e39d93a5f358c60dc45738dd1a215b6fd`。其获授权外部动作限于 non-force push、PR metadata、exact-head evidence comment 与 ready-for-review 状态；不得 merge、deploy、花费、调用真实 provider/LLM、修改凭据或生产状态。
 
 ## 在飞（2026-07-15，交接必读）
 
-- **当前没有获授权的 scoped 写入在飞。** r005 author lane 已停止写入；mailbox 为 terminal `READY_FOR_VERIFY`，repo / remote / PR head 三方均为 `f9cfb314…`。
-- generation 6 / r005 唯一 ACTIVE 暂时保留为 fencing 边界，直到 Founder 对 #315 明确决定。不得为“先开工”提前 bump generation，也不得把 terminal claim 误写成仍在施工。
+- **当前没有获授权的 scoped 产品写入在飞。** 唯一 repo 写入是 PR #323 的两文件 truth repair：D-037 provenance 由 bounded author worker 提交；本 global control plane 只负责全局状态账 v5。两者写集不重叠。
+- generation 6 / r005 唯一 ACTIVE 保留到 #323 由 Founder 合入并在 main 复核。不得为了“先开工”提前 bump generation，也不得把 terminal claim 误写成仍在施工。
+- #323 闭合前不签 W1/W2/W3/#311，不启动 CLI wiring 或其他 blockers-first implement lane。#315 已使 CLI fence 脚本依赖满足，但接线仍须另开独立 PR，不能混进 truth repair。
+- 当前 control plane 是 #323 的 material editor，**不得执行其 merge**。完整 exact-head 本地四关、独立复核与 evidence comment 只能形成 Founder 呈交条件，不能自行产生 merge 权。
 - 旧 Claude / Codex 进程可能仍在主机上存活，但自 Founder 接管指令起没有 control-plane 权限。其任何晚到输出必须由当前控制面从 repo、GitHub、CI、worktree 与哈内斯重新核验后才能提升；不得按旧 pid recovery 指令自动恢复。
 
 `<HARNESS>` = `/Users/winnin/Documents/Codex/FIKIRTIVE-HARNESS/fikirtive-launch-v1`
@@ -45,14 +48,17 @@
 
 | 件 | 当前核验状态 | 边界 |
 |---|---|---|
-| **PR #314** | `079d4b1e9aae3985109ff480757528019d20d651`；current-head 本地四关、migrate/drift、2,906 tests 与裁决证据齐，`READY_TO_PRESENT`；远端 CI billing 零步骤失败，**不是绿** | schema/migration = Founder-only；只能由 Founder 明确批准 CI-unavailable 程序后亲合 |
-| **PR #315** | `f9cfb314210acee1139463660c5056638072ebb5`；r005 两文件收口、mailbox、主控制面与独立同族全验均闭合；远端 CI billing 零步骤失败，**不是绿** | 既有钱路 diff = Founder-only；当前控制面与作者均不得合并 |
-| **PR #316** | `80bf525d8d61b8da9232dfcdaa0d273cd26147c5`；**BLOCKED**：D-037 把 W-3/CANCELLED 派工 provenance 错链到不含该裁决的 `control/WO-OTTO-PHASE1/…`，且无 current-head fallback 门禁证据 | outcome provenance 应指向明确写有“已裁独立 CANCELLED”的 NH-1 dispatch；B8 plan 只能证明裁决槽位 / 两案 / 随车时点。新 head 重跑门禁并独立复核后，才可随 #314 呈 Founder |
-| **PR #319（本 PR）** | v3 `023d1a3c` 已过时且无 exact-head 本地四关 / 独立 review；本次 v4 已形成并推到本 PR，current head 必须从 GitHub 重验 | governance / merge-policy = Founder-only；本控制面是 material editor，不得自审自合；v4 exact head 仍须本地完整门禁、证据评论与 Founder 明确批准 |
+| **PR #319** | 已由 Founder 合并；merge `7dd03329509a5bcc33eb8771f1a9f849240912dc` | v4 保留为历史检查点；其 open-PR 口径由 #323 v5 取代 |
+| **PR #316** | 已由 Founder 合并；merge `d71c1f1e2dea1935b6af9465a75f61a591e9deb8` | 合入后的 D-037 provenance 漂移由 #323 修，不回写已合并分支 |
+| **PR #315** | 已由 Founder 合并；merge `fa921579c6027879fa048c177e8381237a3e29b9` | r005 代码已在 main；registry 结清仍等 #323 落地后的原子 generation bump |
+| **PR #314** | 已由 Founder 合并；merge / current main `8e07dd9e39d93a5f358c60dc45738dd1a215b6fd` | NH-1 schema 前置已满足；不因此绕过下一批的 claim 签发纪律 |
+| **PR #323（本 truth repair）** | Draft；D-037 修复 + 状态账 v5。最终 exact head 尚须独立复核、完整本地门禁、GitHub head/Actions 重验与 SHA 绑定 evidence | governance / state-ledger = Founder-only；当前 control plane 是 material editor，不得合并；只能呈 Founder 亲合 |
 | **#317 / #318** | 共租户复合 FK 房规；`NOT VALID` + `VALIDATE` 同事务锁收益问题 | 架构 / schema 房规，待 Founder 选择 |
-| **#320 / #321** | 约 69 处 update/upsert tenant-guard 盲区；LLM meter 旧退款测试不核对退款身份 | tenant / money 路径，另立受控工单，不混入 r005 |
+| **#320 / #321** | 约 69 处 update/upsert tenant-guard 盲区；LLM meter 旧退款测试不核对退款身份 | tenant / money 路径，另立受控工单，不混入 r005 或 #323 |
 
 #322 是 CLI driver 的真正强制路线（依赖清单 / 生产镜像 / 生产环境凭据），目前仅跟踪、**未实施**。另有三件 Founder 亲手文书：#299（Meta 验证，审核中）· #301（Gupshup 开户 + API key）· #309（EasyStore Partner 注册）。
+
+以下“跨族复审双 BLOCK”与“#315 R3 / r005 收口”两节记录的是四项合并前的审计因果链；其中“待合并 / 待呈 Founder”等现在时已由上表取代，但缺陷发现、裁决与测试证据仍是有效历史。
 
 ## 跨族复审双 BLOCK（2026-07-15）— 判决与证据
 
@@ -80,7 +86,7 @@ codex SOL 对 **#314 与 #315 双双判 BLOCK**。控制面逐条回一手证据
 
 ## 控制面自己欠的
 
-- **CLI fence 接线** root `package.json` + `.github/workflows/ci.yml`。脚本只住在 #315：必须先由 Founder 合并 #315、对 `main` 复核脚本存在，再另开接线 PR；否则 CI 会引用 main 上不存在的文件。接线前任何文档不得把该 fence 写成保障。
+- **CLI fence 接线** root `package.json` + `.github/workflows/ci.yml`。#315 已合入且脚本已在 `main` 复核存在，技术前置现已满足；按本版恢复顺序，#323 先闭合，再另开窄 PR 接线。接线前任何文档不得把该 fence 写成保障。
 - **#322 真正强制路线**：dependency/lockfile inventory、生产镜像无 CLI binary、生产环境无订阅凭据。当前仅跟踪，未实施；不得用 r005 静态 fence 代替。
 - GitHub Actions 当前因 billing/payment 限制而在零步骤处失败；Founder 2026-07-14 裁定 public 前不处理账单，`protect-main` 的 required status checks 已移除、其余规则仍在。远端结果因此**不是绿**；合并前必须在 exact head 本地完整复现门禁、贴进 PR，并由 Founder 对 CI-unavailable 程序明确批准。重开票 #303（挂 B13）。
 
@@ -105,11 +111,11 @@ codex SOL 对 **#314 与 #315 双双判 BLOCK**。控制面逐条回一手证据
 
 ## Recovery next step
 
-1. 重验 `origin/main`、四个 open PR current heads、Actions annotations、worktree、`CLAIMS.json`（预期 gen 6 / r005 唯一 ACTIVE）、r005 mailbox 与 external checkpoint；旧 session / pid 只作待核输入。
-2. 本 #319 v4 产生新 head 后，跑完整本地门禁并贴 PR 证据，再呈 Founder；governance Founder-only，且当前控制面是 material editor，不得自审自合。
-3. #316 先修 D-037 provenance 错链，在新 head 跑完整本地门禁、贴 SHA 绑定证据并独立复核；闭合后先呈 Founder 合入 #316，再呈已具 current-head 证据的 #314（`079d4b1e…`）。两者未闭合前不得写“#314/#316 可合”。
-4. #315（`f9cfb314…`）按 current-head 证据呈 Founder；remote CI 不绿，必须由 Founder 明确批准 CI-unavailable 程序后亲合。控制面不得代合。#314 与 #315 的相对先后不影响各自，但第 5 步 batch 前二者必须都已在 main。
-5. 批量派工有**双前置**：先修正并落地 #316 provenance，再由 Founder 合入 #314；随后 #314（NH-1 schema）与 #315（Phase 1）都必须已在 `main` 且复核通过，才一次 generation bump：retire r005 + 批量签发 W1/W2/W3 + #311。W1/W2/W3 的 base 必须取 NH-1 后 main，不能只因 #315 交付就提前签发。
-6. CLI fence 接线是另一条较窄依赖：只在 #315 实际合入并确认脚本存在于 `main` 后另开 PR；不得提前引用未落 main 的脚本。
-7. #317/#318/#320/#321/#322 各守自己的 founder / architecture / money / tenant / security 边界，不混进 r005 或状态账 PR。
+1. 完整读取 global skill、overlay 与本账后，重验 `origin/main`（本版预期 `8e07dd9e…` 或更新）、PR #323 current head / Actions annotation、worktree、external checkpoint 与 `CLAIMS.json`（预期 gen 6 / r005 唯一 ACTIVE）；旧 session / pid 只作待核输入。
+2. 在 PR #323 的最终 exact head 上做独立内容复核并跑本地完整四关 `check` / `test` / `web-build` / `lint`；验证 D-037 两类 provenance 角色、diff 范围与状态账当前真相，清理测试资源，再贴 SHA 绑定 evidence。Remote CI billing 零步骤失败不得记作绿色。
+3. 只由 Founder 亲自合并 #323；当前 control plane 因 material edit 不得代合。合并后复核 `main` 同时含正确 D-037 与 v5，再更新 external checkpoint。
+4. #323 落 main 后，执行**一次** registry generation bump：原子 retire r005，并以新 main 为 base 签发 W1 / W2 / W3 / #311。签 W3 前必须重新完成 R-6 / R-9 pre-issuance 检查；任一输入或裁决漂移即 fail closed，不局部偷签。
+5. CLI fence wiring 作为独立窄 PR 接线 root `package.json` + `.github/workflows/ci.yml`；不得混入 batch 工单或把静态 fence 误称安全边界。#322 的真正强制路线仍独立。
+6. 后续执行遵循 Ask Matt 的 blockers-first `/implement` 路由：已有 B8 spec 与 to-tickets，不重启 grilling / wayfinder；优先解阻依赖边，再按列车与写集并行 W1/W2/W3/#311。
+7. #317/#318/#320/#321/#322 各守自己的 founder / architecture / money / tenant / security 边界，不混进 r005、#323 或普通实现列车。
 8. 完整 launch-readiness/E2E 只在 exact release candidate 上执行，不提前宣称。
