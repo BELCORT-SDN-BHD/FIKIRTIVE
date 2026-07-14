@@ -262,3 +262,16 @@
 | 工作方法 | **拍板** | 板块按雾量分流：图纸已冻结的直接施工；雾大的走 **wayfinder（决策地图）→ to-spec（华语图纸，founder 过目）→ to-tickets → harness 工单并行施工**（mattpocock 套件）。决策票=本 repo GitHub issues（地图 #287）；wayfinder 只管决策层，执行归 harness，Route-B 台账仍是唯一能力真源 |
 
 **同批收编**：07-13《OTTO 运行框架与 Flight Simulator》草案（codex session 产出）升级为员工引擎正式设计输入，founder 指示「一起设计」；动工前按当前 main rebaseline（票 #289），其留白五决定=票 #297。
+
+## 追加判决（2026-07-14 晚批 —— founder 会话内逐票拍板 + 控制面治理批，control plane 对账复核经 PR 入档；founder 合并本 PR = 确认）
+
+> 真源 = 各票 GitHub issue 的 Resolution 评论（原文以票为准，本表为入册摘记）；R-EP 两案出处 = 外部档案库 `mailboxes/WO-B3-E-P/r001/ESCALATION.md`。
+
+| 项 | 判决 | 内容 |
+|---|---|---|
+| BSP 起步 | **拍板** | 唤回环 BSP 正式接入起步选 **Gupshup**（founder 会话内拍板，与 D-032 同批记录）——上表「唤回环定义」判决（直接 BSP 正式接入、不建辅助式过渡态）的落名 |
+| #294 授权信封 | **拍板** | 形态=**A 精确清单式**（批准=恰好这些产出、恰好这个总价，内容+价格指纹锁死，复用既有审批指纹机器；清单外任何事回来再问——追加花钱/对外发布/客户承诺三触发，判决八之五既定）；保鲜=**C 指纹保鲜**（价格/素材/清单任一漂移→指纹失效、信封自动作废、重报价重批）+ **72h 未开工兜底过期** + **开跑后不再过期**（跑一半不中断）；超支由结构吃掉（配置菜单价+报价=预留=结账三数一致；失败只退不加）；Otto 工资按轮计费走另轨（宪法 4 例外①）不进信封。真源=issue #294 Resolution |
+| #295 停按钮 | **拍板** | 基线语义无选项（既有机器）：已完成留下/在跑一颗诚实跑完（供应商不可撤）/排队全部撤销退款；Q1 粒度=**A 单粒度**（停按钮只长在任务卡上；全局红按钮 over 设计——全局停归 routine 四件套 kill switch，随 routine 上线再来；平台级急停已在设置/后台层存在）；Q2 插手=**A 对象级**（用户碰哪件，Otto 把手从那件上拿开——该对象排队动作撤销退款，其余照常；配一句人话提示；先例=判决 7-8 客服对话）。真源=issue #295 Resolution |
+| #296 B8 十二槽 | **拍板（12/12 全清）** | D-1=**A**（Campaign 打包一期开门=卖点）；D-2=**B**（打包总价页💰一期做，随 D-1 顺带锁定+审批粒度判决要求）；D-3=**A**（CSV 导入+查重合并一期带——唤回名单冷启动）；D-4 ✅ UTM 基串口径确认；D-5 竞价/直播/增长实验一期只留缝；D-6 微站活页最小成立（自动换季后置过目）；D-7 三态 New/Active/Dormant + VIP=消费≥RM500 且近 90 天有单（配置可调）+ 勿扰/退订两字段；D-8 口碑四推荐照单；D-9 **暂缓**至回执图纸联审；D-10 趋势最薄六字段；D-11 GBP 与 Meta 同批备料并行递；**D-12=流程漏判定性**（founder 授权 control plane 定性：未留记录的翻案不成立，AEO 恢复至最后有记录的原判，如需改判走正式决策票，不阻塞任何在建工作）。真源=issue #296 Resolution |
+| #292 EasyStore | **拍板** | 载体=**形态 A：免费 Partner 账号 + 私有 app + 产品内 OAuth**（官方明文免审核、零密钥搬运、商家点一下即连、当天可装）；App Store 上架后置换曝光；只读 scope：read_orders + read_customers；webhook 走 order/paid 等 17 主题（HMAC）；券归因用订单 discount_codes 兜底（券 API 官方 Coming soon）；唤回名单尊重 accepts_marketing；founder 亲手件=注册 Partner 账号（免费，任务票另立）。真源=issue #292 Resolution |
+| R-EP-01/R-EP-02 | **控制面裁决（治理批）** | W-B3-E-P 证明层两案（PR #307 探针坐实；出处=`mailboxes/WO-B3-E-P/r001/ESCALATION.md`）：**R-EP-01 选 A 勘误主案**——「同幂等键重放不重复扣款」不变量限定为「在途重放 + cowork/factory durable 键类」，plain 键终态后重放=合法新消费（三键类设计使然）；配套审计票 **#310**（stable 键调用方终态重发敞口逐场景审计）。**R-EP-02 选 A 勘误主案**——「格」钉为 **per-GenJob**（跨 job「只退失败 job」已证；单 job 内 partial=整单 fail-closed 全额退款，比原措辞更利用户）；配套 exactly-count 守卫加固=快道工单候选票 **#311**（原 blocked by #307，#307 已合并 `84108e27` 解锁）。落档=DECISION-LOG D-035 + spec v0.4:301 勘误括注（随本 PR） |
