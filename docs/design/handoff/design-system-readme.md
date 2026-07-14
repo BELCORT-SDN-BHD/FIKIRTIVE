@@ -1,5 +1,10 @@
 # FIKIRTIVE Design System
 
+> ⚠️ **历史导入件(TOMBSTONE 2026-07-14)。** 本目录是外部导入的设计交接包(2026-07-06 import),非现行规范。
+> 现行设计唯一规范 = `docs/design-system/design-rules.md`(REVIEWER-PLAYBOOK 北极星增补节点名)。
+> 本文「movie series」等表述为 pivot 前(Artlio AI 视频)残留,「friendly AI agent」措辞与现行 Otto 措辞纪律
+> (对外锚定营销员工,永不自称通用 AI 助手)不符——**勿引用本文件做任何现行设计或文案依据**。保留仅供考古。
+
 > The friendly face of AI marketing. Build campaigns (and movie series) with OTTO — even if you've never touched AI before.
 
 FIKIRTIVE is a SaaS platform where **OTTO**, a friendly AI agent, does the heavy lifting of marketing. You describe what you want in plain words; OTTO plans the campaign, writes the copy, generates the assets, and ships it. The north-star promise: **"Even a 60-year-old who's never used AI can make a great campaign — or a great movie series — with FIKIRTIVE."** Every design decision serves that promise: warm, calm, oversized-and-legible, never intimidating, never "techy."

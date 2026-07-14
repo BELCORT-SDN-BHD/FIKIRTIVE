@@ -75,6 +75,8 @@
 
 ### 2.5 生成:走现有 generate 闸,批量 = 打包确认
 
+> ⚠️ **2026-07-14 加注**(GRILL-VERDICTS 追加节「审批粒度」判决):**一个 request = 一次批准**(一张授权信封盖整单)为默认粒度;中途只有真正改变风险的事(追加花钱/对外发布/客户承诺)才再问一次;**连环确认按缺陷处理**。施工时下面的「打包批」形态提为默认,「逐条批」不得作为第一期唯一形态;分期按判决重排。
+
 - 第一期:批准 campaign 卡后,Otto 用现有 **proposePack** 铺 GEN_CARD(≤8/批,分批铺),用户**逐条批**,每条走 generate 七步闸(幂等键 `cowork:<cardId>` once-EVER)。
 - 第二期:**打包批** —— 批量确认页显示**总价 + 逐条明细**(判决 7-3 硬性要求,复用 PackCard 模式;判决 7-7 "大单确认页:Otto 花大钱前先复述理解+报价"在此落地)。用户一次确认后,server 侧仍**逐 card 过 generate 闸**(每张卡自己的幂等键;确认页的"一次点头" = 对这批卡的批准,不是绕闸)。
 - 价格永远 server 端从卡重算;卡上的预估价只是展示(铁律①:spend 面只显示 credits)。
@@ -189,6 +191,9 @@ founder 的愿景成立,担心(computer-use 式操作会 lag)也成立 —— �
 > 依赖总览:**第一/二期零外部依赖**(草稿与生成全可用);"真发布"依赖 **B 线 X 发布**(第一个能真发的渠道)或 Meta App Review 到钥匙;第三期依赖 P1½-3 Routine 模型(方向已拍,spec 另过 founder)。
 
 ### 第一期 —— 提案卡 + 手动逐条批(最小可卖)
+
+> ⚠️ **2026-07-14 加注**:本分期形态被 GRILL-VERDICTS 2026-07-14 两项判决改判——①「审批粒度」:一个 request = 一次批准(授权信封)为默认,「手动逐条批」作为唯一形态=出厂即缺陷,原第二期「打包批」提为默认粒度;②「第一期卖法」:第一期卖点钉死三环,Campaign 不在第一期卖点,「最小可卖」表述失效。施工时分期按判决重排;spec 其余(审批经济学/五道缝/最薄容器)仍有效(b8 设计图 O-6 时效核对)。
+
 - 交付:proposeCampaign skill(六处登记)+ CAMPAIGN_CARD(五道缝全穿)+ Campaign 最薄行(缝 5 全套:TENANT_MODELS、requireOwner、2-org 隔离测试)+ ScheduledPost/Generation 补 campaignId 可空外键(加性 migration)+ 专属工作台最小版(表单发起 + 日历批改,§5.1)+ TrendSnapshot 最薄版(§5.2,建议随第一期)。
 - 流程:研究(现有)→ 提案卡 → 用户批 → proposePack 分批铺卡 → **逐条批生成** → schedulePosts 草稿。
 - 验收:①对话"帮我策划下个月的 campaign"→ 流式 UI 出活卡(非死占位,F23 反例);②卡上改/删条目后批准,铺出的 GEN_CARD 与日历一致;③生成后排期区三视图可见 N 条 DRAFT 且带 campaign 归组;④`pnpm lint:parity` 绿 + registry.test 钉 26 名单 + catalog 重生成;⑤全程真实花费为 0 的 e2e(mock provider)。
