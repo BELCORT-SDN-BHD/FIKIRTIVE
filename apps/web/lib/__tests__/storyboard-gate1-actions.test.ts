@@ -5,14 +5,30 @@ import type { StoryboardCardPayload } from "@fikirtive/otto";
 // Mocks — mirror F3 storyboard-actions.test.ts style (vi.hoisted + vi.mock).
 // Adds: @fikirtive/otto buildProposeCard (deterministic payload), @fikirtive/core
 // newId (counter), resolveDisabledModels, and genJob/entity/$transaction on the db mock.
-// The db mock's chatMessage/genJob/entity are the SAME object instances the code sees
-// inside the (passthrough) $transaction — so tx.chatMessage.create === mockChatCreate.
+//
+// 修复轮 v2 (NODE-282②): the $transaction mock is BUFFERED with REAL lock semantics:
+//  • WRITES (chatMessage.create/update) are STAGED into a per-tx buffer and COMMITTED
+//    (replayed onto mockChatCreate/mockChatUpdate) only when the callback resolves; a
+//    throw DISCARDS the buffer — true rollback semantics, so "zero partial commit" is a
+//    real assertion, not an artifact of throwing before the first write.
+//    mockTxChatCreate/mockTxChatUpdate record ATTEMPTED (staged) writes — they survive
+//    for assertion even when the tx rolls back.
+//  • $executeRaw (the card advisory lock, NODE-282①) implements an actual per-key async
+//    mutex held until the tx settles — two interleaved $transaction calls on the same
+//    card key run strictly serially, mirroring pg_advisory_xact_lock. mockTxLock spies
+//    the lock key.
+//  • READS (findFirst) pass through to the shared mockChatFindFirst — stateful tests
+//    (the concurrency regressions) back it with mutable state that the COMMIT step
+//    mutates, so a later tx's post-lock re-read sees what an earlier tx committed.
 // ---------------------------------------------------------------------------
 const {
   mockOwner,
   mockChatFindFirst,
   mockChatCreate,
   mockChatUpdate,
+  mockTxChatCreate,
+  mockTxChatUpdate,
+  mockTxLock,
   mockGenJobFindFirst,
   mockGenJobCreate,
   mockEntityFindMany,
@@ -20,29 +36,79 @@ const {
   mockBuildProposeCard,
   mockResolveDisabled,
   mockSuggestModel,
+  cardLocks,
   db,
 } = vi.hoisted(() => {
   const mockChatFindFirst = vi.fn();
-  const mockChatCreate = vi.fn();
-  const mockChatUpdate = vi.fn();
+  const mockChatCreate = vi.fn(); // COMMITTED creates (replayed only on tx success)
+  const mockChatUpdate = vi.fn(); // COMMITTED updates (replayed only on tx success)
+  const mockTxChatCreate = vi.fn(); // ATTEMPTED (staged) creates inside a tx
+  const mockTxChatUpdate = vi.fn(); // ATTEMPTED (staged) updates inside a tx
+  const mockTxLock = vi.fn(); // advisory-lock spy: called with the card lock key
   const mockGenJobFindFirst = vi.fn();
   const mockGenJobCreate = vi.fn();
   const mockEntityFindMany = vi.fn();
   const mockGenerationFindMany = vi.fn();
-  // $transaction runs its callback with a `tx` that is the SAME db object (passthrough),
-  // so assertions on the shared mock fns capture writes made inside the transaction.
+  const cardLocks = new Map<string, Promise<void>>();
   const db: Record<string, unknown> = {
     chatMessage: { findFirst: mockChatFindFirst, create: mockChatCreate, update: mockChatUpdate },
     genJob: { findFirst: mockGenJobFindFirst, create: mockGenJobCreate },
     entity: { findMany: mockEntityFindMany },
     generation: { findMany: mockGenerationFindMany },
   };
-  db.$transaction = async (fn: (tx: unknown) => unknown) => fn(db);
+  db.$transaction = async (fn: (tx: unknown) => unknown) => {
+    const staged: Array<{ kind: "create" | "update"; args: unknown }> = [];
+    const heldLocks: Array<() => void> = []; // releases pushed by $executeRaw (array form: TS CFA can't see closure assigns)
+    const tx = {
+      // pg_advisory_xact_lock mock: a real per-key mutex, held until this tx settles.
+      $executeRaw: async (_strings: TemplateStringsArray, ...values: unknown[]) => {
+        const key = String(values[0]);
+        mockTxLock(key);
+        const tail = cardLocks.get(key) ?? Promise.resolve();
+        let mine!: () => void;
+        const held = new Promise<void>((r) => (mine = r));
+        cardLocks.set(key, tail.then(() => held));
+        await tail; // block until every earlier holder of this key releases
+        heldLocks.push(mine);
+        return 0;
+      },
+      chatMessage: {
+        findFirst: mockChatFindFirst,
+        create: async (args: unknown) => {
+          mockTxChatCreate(args);
+          staged.push({ kind: "create", args });
+          return {};
+        },
+        update: async (args: unknown) => {
+          mockTxChatUpdate(args);
+          staged.push({ kind: "update", args });
+          return {};
+        },
+      },
+      genJob: db.genJob,
+      entity: db.entity,
+      generation: db.generation,
+    };
+    try {
+      const result = await fn(tx);
+      // COMMIT: replay staged writes onto the committed mocks (stateful impls mutate here).
+      for (const w of staged) {
+        if (w.kind === "create") await mockChatCreate(w.args);
+        else await mockChatUpdate(w.args);
+      }
+      return result;
+    } finally {
+      for (const r of heldLocks) r(); // release AFTER commit replay — the next holder re-reads committed state
+    }
+  };
   return {
     mockOwner: vi.fn(),
     mockChatFindFirst,
     mockChatCreate,
     mockChatUpdate,
+    mockTxChatCreate,
+    mockTxChatUpdate,
+    mockTxLock,
     mockGenJobFindFirst,
     mockGenJobCreate,
     mockEntityFindMany,
@@ -50,6 +116,7 @@ const {
     mockBuildProposeCard: vi.fn(),
     mockResolveDisabled: vi.fn(),
     mockSuggestModel: vi.fn(),
+    cardLocks,
     db,
   };
 });
@@ -107,6 +174,7 @@ function payload3(): StoryboardCardPayload {
 beforeEach(() => {
   vi.clearAllMocks();
   idCounter = 0;
+  cardLocks.clear();
   mockOwner.mockResolvedValue({ ownerId: OWNER });
   mockResolvedDefaults();
 });
@@ -287,6 +355,68 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     expect(res.totalCredits).toBe(0); // spent excluded
   });
 
+  // 微修轮 v4(NODE-282-R3①):锁内重读 fresh 为 null(卡在锁前被删/kind 变更)→ fail-closed
+  // 零写返回 "Card not found.",禁止回落锁前旧快照 cur(旧快照路径复活=可按过期指针铸卡)。
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    const p = payload3(); // s0/s2 缺图 —— 若回落 cur 会错误地铸出 2 张子卡
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  // ===================================================================================
+  // 微修轮 v5 · NODE-282-R4①(数据流完备清扫的点名实例):ownedIds 不得在锁前派生。
+  // 形态:s0 引用 e0+e1;prepare 启动时 owned 集只有 e0,在等锁期间变为 {e0,e1}(如另一
+  // session 完成实体创建)。锁后派生(v5)→ 铸卡收到 ["e0","e1"](buildProposeCard 第三实参
+  // =写路径入参);锁前派生(v4)→ 铸卡吃到过期的 ["e0"]。
+  // ===================================================================================
+  it("R4① 回归:等锁期间 owned-entity 集变化 → 锁后按新集派生 ownedIds 进铸卡(不吃锁前快照)", async () => {
+    const p = payload3();
+    p.shots[0].entityIds = ["e0", "e1"]; // s0 references two entities
+    p.shots[2].firstFrameGenerationId = "gen2"; // isolate: only s0 mints
+    wireLoads(card(p));
+
+    // The owned-entity set CHANGES while prepare waits for the lock.
+    let ownedRows = [{ id: "e0" }]; // at call time: only e0 owned
+    mockEntityFindMany.mockImplementation(async () => ownedRows);
+
+    // An in-flight card writer holds the lock (manual mutex entry, same map the tx mock uses).
+    let releaseLock!: () => void;
+    cardLocks.set("card:card-1", new Promise<void>((r) => (releaseLock = r)));
+
+    const prepP = prepareStoryboardFirstFrames({ cardId: "card-1" });
+    await new Promise((r) => setTimeout(r, 0)); // let prepare park on the lock
+
+    ownedRows = [{ id: "e0" }, { id: "e1" }]; // e1 becomes owned DURING the lock wait
+    releaseLock();
+
+    const res = await prepP;
+    if (!("children" in res)) throw new Error("expected children");
+
+    // ownedIds was derived AFTER the lock → the mint (buildProposeCard 3rd arg = the
+    // owned-entity write-path input) received the NEW set, not the pre-lock snapshot.
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // s0 minted once
+    const ownedArg = mockBuildProposeCard.mock.calls[0][2];
+    expect(ownedArg).toEqual(["e0", "e1"]);
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     wireLoads(card(payload3()));
     await prepareStoryboardFirstFrames({ cardId: "card-1" });
@@ -441,6 +571,30 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     const res = await regenShotFirstFrameCard({ cardId: "card-1" } as unknown as { cardId: string; shotId: string });
     expect("error" in res).toBe(true);
     expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    const p = payload3();
+    p.shots[1].firstFrameCardId = "old-1"; // 若回落 cur 会走 stale→铸新替换路径
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
   it("$0 铁证:genJob.create 从未被调", async () => {
@@ -724,6 +878,35 @@ describe("syncStoryboardMedia — $0 对账(帧)", () => {
     expect(mockChatFindFirst).not.toHaveBeenCalled();
   });
 
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零写、无 cur 回落", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0"; // cur 快照下有一个 DONE 子卡待写回
+    delete p.shots[2].firstFrameGenerationId;
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (where.kind === "GEN_CARD" && where.id === "child-0") return { id: "child-0", genJobId: "job-0" };
+      if (where.kind === "GEN_RESULT" && where.genJobId === "job-0") return { payload: { generationIds: ["gen-A"] } };
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-0", status: "DONE" });
+
+    const res = await syncStoryboardMedia({ cardId: "card-1" });
+    // 若回落 cur:会按旧快照采样 child-0 → 把 gen-A 写回已消失的卡。fail-closed 后:
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
   it("fallback:子卡无 genJobId → 用 cowork:<childId> 幂等 job 查状态", async () => {
     const p = payload3();
     p.shots[0].firstFrameCardId = "child-0";
@@ -994,6 +1177,81 @@ describe("syncStoryboardMedia — $0 对账(视频 + 级联 + urls)", () => {
     expect("s0" in res.videos).toBe(false); // omitted, no throw
     expect(mockChatUpdate).not.toHaveBeenCalled(); // nothing to reconcile
   });
+
+  // ===================================================================================
+  // 修复轮 v3 · NODE-282-R2① 交错回归:sync 的读半段必须在锁内。形态:s0 指向子卡 A
+  // (job DONE,generation vid-A);一个在飞 regen 正持有卡锁,并在释放前把指针换成 B
+  // (新子卡,无 job)。sync 在锁上等待,得锁后必须按 FRESH 指针(B)derive 写集:B 未
+  // DONE → 零写集 → 零写入。v2 的旧行为(锁前按旧快照采样 A → 得锁后按 shotId 套用旧
+  // 写集)会把 A 的 generation(vid-A)写到已指向 B 的镜头上——本用例在 v2 实现上红
+  // (mockChatUpdate 被调、vid-A 落上),v3 实现上绿。
+  // ===================================================================================
+  it("R2① 交错回归:sync 等锁期间 regen 换指针 A→B → sync 锁后按 B 行事,A 的 generation 不落上、零写入", async () => {
+    // Stateful wiring: parent payload + child cards + GEN_RESULT rows all read live state.
+    const state = {
+      parentPayload: {
+        storyboardTitle: "Ad",
+        shots: [
+          { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "vp0", firstFrameGenerationId: "ffgen0", videoCardId: "A" },
+        ],
+      } as StoryboardCardPayload,
+      children: {
+        A: { payload: { structuredPrompt: "vp0-old" }, genJobId: "job-A" }, // old child: job DONE
+      } as Record<string, { payload: unknown; genJobId: string | null }>,
+    };
+    const results: Record<string, unknown> = { "job-A": { generationIds: ["vid-A"] } };
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") return where.id === "card-1" ? card(state.parentPayload) : null;
+      if (where.kind === "GEN_CARD" && typeof where.id === "string") {
+        const rec = state.children[where.id];
+        return rec ? { id: where.id, ...rec } : null;
+      }
+      if (where.kind === "GEN_RESULT" && typeof where.genJobId === "string") {
+        const payload = where.genJobId in results ? results[where.genJobId] : null;
+        return payload ? { payload } : null;
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+    mockChatUpdate.mockImplementation(async (args: { data: { payload: unknown } }) => {
+      state.parentPayload = args.data.payload as StoryboardCardPayload;
+      return {};
+    });
+    mockGenJobFindFirst.mockImplementation(async (args: { where?: { id?: string; idempotencyKey?: string } }) => {
+      if (args?.where?.id === "job-A") return { id: "job-A", status: "DONE" };
+      return null; // B has no job (fresh mint, unspent, pending nothing)
+    });
+    mockGenerationFindMany.mockResolvedValue([gen("ffgen0")]);
+
+    // An in-flight regen HOLDS the card lock (manual mutex entry, same map the tx mock uses).
+    let regenCommitsAndReleases!: () => void;
+    cardLocks.set("card:card-1", new Promise<void>((r) => (regenCommitsAndReleases = r)));
+
+    // sync starts now: outer load sees pointer A, then PARKS on the card lock.
+    const syncP = syncStoryboardMedia({ cardId: "card-1" });
+    await new Promise((r) => setTimeout(r, 0)); // let sync run up to the lock
+
+    // While sync waits, the regen COMMITS its pointer swap A → B, then releases the lock.
+    state.parentPayload = {
+      ...state.parentPayload,
+      shots: [{ ...state.parentPayload.shots[0], videoCardId: "B" }],
+    };
+    state.children.B = { payload: { structuredPrompt: "vp0" }, genJobId: null };
+    regenCommitsAndReleases();
+
+    const res = await syncP;
+    if (!("payload" in res)) throw new Error("expected payload");
+
+    // sync derived its write-set INSIDE the lock, from the FRESH pointer (B):
+    // B has no DONE job → nothing staged → ZERO writes. A's vid-A must NOT land.
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // sync did take the lock
+    expect(mockChatUpdate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled(); // zero staged writes either
+    expect(res.payload.shots[0].videoCardId).toBe("B"); // fresh pointer honored, NOT dropped
+    expect(res.payload.shots[0].videoGenerationId).toBeUndefined(); // vid-A (stale child A) NOT written
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1105,6 +1363,36 @@ function videoPayload3(): StoryboardCardPayload {
       { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "vp2", firstFrameGenerationId: "ffgen2", videoGenerationId: "vidgen2" },
     ],
   };
+}
+
+/** 修复轮 v2:有状态 DB wiring(并发回归测试用)。COMMIT(缓冲事务成功后重放到
+ *  mockChatCreate/mockChatUpdate)真实变更 state,于是后一个事务的**锁后重读**能看到前
+ *  一个事务已提交的指针与子卡 —— 这正是 pg_advisory_xact_lock 串行化语义在 mock 层的
+ *  可观测形态。 */
+function wireStatefulLoads(initial: StoryboardCardPayload) {
+  const state = {
+    parentPayload: initial,
+    children: {} as Record<string, { payload: unknown; genJobId: string | null }>,
+  };
+  mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+    const where = args?.where ?? {};
+    if (where.kind === "STORYBOARD_CARD") return where.id === "card-1" ? card(state.parentPayload) : null;
+    if (where.kind === "GEN_CARD" && typeof where.id === "string") {
+      const rec = state.children[where.id];
+      return rec ? { id: where.id, ...rec } : null;
+    }
+    if (args?.orderBy) return { seq: 10 };
+    return null;
+  });
+  mockChatCreate.mockImplementation(async (args: { data: { id: string; payload: unknown } }) => {
+    state.children[args.data.id] = { payload: args.data.payload, genJobId: null };
+    return {};
+  });
+  mockChatUpdate.mockImplementation(async (args: { data: { payload: unknown } }) => {
+    state.parentPayload = args.data.payload as StoryboardCardPayload;
+    return {};
+  });
+  return state;
 }
 
 describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
@@ -1359,6 +1647,235 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(res.totalCredits).toBe(0);
   });
 
+  // W-B3-H-P 修复轮 v2(NODE-282① 后半「spent+mismatch/orphan 未覆盖」):意图钉住 —— 已
+  // 花钱子卡在参数**真**漂移(prompt 改写)时铸新换指针是**正确**的新报价(参数变了=真新
+  // spend,不是双扣);旧卡不删不动(仍在 thread 里),videoGenerationId 从不触碰。
+  it("spent+mismatch:已花钱子卡 prompt 真漂移 → 铸新+换指针(合法新报价),旧卡与 videoGenerationId 不动", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    wireLoads(card(p), {
+      "vchild-0": {
+        // SPENT (charged, video still pending) but its prompt has genuinely drifted since.
+        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: "gj-spent",
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // mismatch wins over spent → mint fresh (a REAL new spend offer: params changed).
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const upd = mockChatUpdate.mock.calls[0][0];
+    expect(upd.where).toEqual({ id: "card-1" }); // the ONLY write targets the parent — the old child row is untouched
+    const updShots = (upd.data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).not.toBe("vchild-0"); // pointer swapped to the fresh child
+    expect(updShots[0].videoGenerationId).toBeUndefined(); // NEVER touched (I1)
+    expect(res.children[0].childCardId).not.toBe("vchild-0");
+    expect(res.children[0].spent).toBe(false);
+    expect(res.totalCredits).toBe(5); // the changed-params offer is chargeable — by design, not a double-pay
+  });
+
+  it("悬空指针(videoCardId 指向已不存在的子卡)→ 铸新替换,不炸、指针换到新卡", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "ghost-child"; // row is gone (not in the children map)
+    wireLoads(card(p), {});
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // replacement minted
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).not.toBe("ghost-child");
+    expect(updShots[0].videoCardId).toBeTruthy();
+    expect(res.children[0].spent).toBe(false);
+  });
+
+  // W-B3-H-P 证明层补测①(§6.1 通项「部分失败只退失败格」映射到本 $0 铸卡层):批内混三态
+  // (铸新 / matching 已花钱复用 / ineligible 跳过)必须逐镜头独立结算 —— 一镜头的花钱状态
+  // 不得渗漏进另一镜头的铸新判定或计费,镜像批量引擎"只退失败格"的隔离精神(此处零 reserve/
+  // refund,隔离体现为:只有真正待铸的镜头计入 totalCredits,已花钱/不合格镜头零渗漏)。
+  it("批内三态混合(铸新+matching 已花钱复用+ineligible 跳过)→ 逐镜头独立结算,totalCredits 只计未花钱铸新", async () => {
+    mockVideoProposeCard();
+    const p: StoryboardCardPayload = {
+      storyboardTitle: "Ad",
+      shots: [
+        // s0: framed + no existing child → ELIGIBLE, mint fresh.
+        { shotId: "s0", index: 0, firstFramePrompt: "ff0", videoPrompt: "vp0", firstFrameGenerationId: "ffgen0" },
+        // s1: framed + points at a MATCHING but SPENT child → reuse spent:true, excluded.
+        { shotId: "s1", index: 1, firstFramePrompt: "ff1", videoPrompt: "vp1", firstFrameGenerationId: "ffgen1", videoCardId: "vchild-1" },
+        // s2: frameless → INELIGIBLE, silently skipped (no i2v source).
+        { shotId: "s2", index: 2, firstFramePrompt: "ff2", videoPrompt: "vp2" },
+      ],
+    };
+    wireLoads(card(p), {
+      "vchild-1": {
+        payload: { structuredPrompt: "vp1", sourceGenerationId: "ffgen1", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        genJobId: "gj-spent-1", // best-effort link present → spent
+      },
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // Exactly ONE mint (s0); s1 reused (no create), s2 skipped (no create).
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.shotId).toBe("s0");
+
+    // Parent write touches ONLY s0's pointer; s1's pointer (spent reuse) and s2 (skip) untouched.
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1);
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].videoCardId).toBeTruthy();
+    expect(updShots[0].videoCardId).not.toBe("vchild-1");
+    expect(updShots[1].videoCardId).toBe("vchild-1"); // s1: NOT swapped (reuse leaves pointer as-is)
+    expect(updShots[2].videoCardId).toBeUndefined(); // s2: no child ever
+
+    // children: s0 (fresh, unspent) + s1 (reused, spent); s2 absent (ineligible, never quoted).
+    expect(res.children).toHaveLength(2);
+    const byShot = Object.fromEntries(res.children.map((c) => [c.shotId, c]));
+    expect(byShot.s0.spent).toBe(false);
+    expect(byShot.s1.spent).toBe(true);
+    expect(byShot.s2).toBeUndefined();
+
+    // totalCredits: ONLY s0's unspent 5 credits — s1 excluded (spent), s2 never entered the quote.
+    expect(res.totalCredits).toBe(5);
+  });
+
+  // W-B3-H-P 修复轮 v2(NODE-282②):fail-closed 升级为「真回滚」证明。缓冲事务 mock 下,
+  // 首镜头已在事务内完成铸卡(暂存写 mockTxChatCreate 可见),次镜头的子卡读取抛错 → 整个
+  // 事务弃权:整批零提交(已铸的首镜头子卡不落库)、父卡指针零变更、异常原样上抛不吞。
+  // 这钉住的是「前一镜头已铸、后一镜头失败」的真实批中失败形态,而非 v1 那种「抛错发生在
+  // 任何写之前」的弱形态(codex 指出的 gap)。impl 全文件零 try/catch(已核实,零吞错)。
+  it("fail-closed 真回滚:首镜头已铸(暂存)、次镜头读取抛错 → 整批零提交、指针零变更、抛错不吞", async () => {
+    mockVideoProposeCard();
+    const p: StoryboardCardPayload = {
+      storyboardTitle: "Ad",
+      shots: [
+        // sA processes FIRST and mints (framed, videoless, no child pointer).
+        { shotId: "sA", index: 0, firstFramePrompt: "ffA", videoPrompt: "vpA", firstFrameGenerationId: "ffgenA" },
+        // sB processes SECOND; its child lookup throws mid-batch.
+        { shotId: "sB", index: 1, firstFramePrompt: "ffB", videoPrompt: "vpB", firstFrameGenerationId: "ffgenB", videoCardId: "vchild-boom" },
+      ],
+    };
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") return where.id === "card-1" ? card(p) : null;
+      if (where.kind === "GEN_CARD" && where.id === "vchild-boom") {
+        throw new Error("simulated DB failure mid-batch");
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    await expect(prepareStoryboardVideos({ cardId: "card-1" })).rejects.toThrow("simulated DB failure mid-batch");
+
+    // TRUE mid-batch: the FIRST shot's mint DID happen inside the tx (staged write observed)…
+    expect(mockTxChatCreate).toHaveBeenCalledTimes(1);
+    const stagedCreate = mockTxChatCreate.mock.calls[0][0] as { data: { payload: { shotId: string } } };
+    expect(stagedCreate.data.payload.shotId).toBe("sA");
+    // …and yet NOTHING was committed: zero child cards, zero parent-pointer writes.
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockTxChatUpdate).not.toHaveBeenCalled(); // the parent write was never even reached
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 invariant intact on the error path
+  });
+
+  // ===================================================================================
+  // 修复轮 v2 · NODE-282① 并发回归(kill-shot):两个 prepare 交错 —— 都在事务外读到 s0
+  // 的空 videoCardId。修复(卡级 pg_advisory_xact_lock)后事务严格串行:先到者铸卡并提交,
+  // 后到者在锁上等待、锁后重读到新指针 → 走复用分支 → 全局恰好一次铸卡,两个调用返回同
+  // 一张子卡。修复前(无锁 RMW)此形态 = 各铸一张、各自可被下游确认扣费(双扣)。
+  // ===================================================================================
+  it("并发回归:两个交错 prepare(均先见空指针)→ 锁串行化,恰好一次铸卡,第二个复用同一子卡", async () => {
+    mockVideoProposeCard();
+    wireStatefulLoads(videoPayload3());
+
+    const [a, b] = await Promise.all([
+      prepareStoryboardVideos({ cardId: "card-1" }),
+      prepareStoryboardVideos({ cardId: "card-1" }),
+    ]);
+    if (!("children" in a) || !("children" in b)) throw new Error("expected children");
+
+    // BOTH transactions took the card lock (serialization actually engaged, right key)…
+    expect(mockTxLock).toHaveBeenCalledTimes(2);
+    expect(mockTxLock).toHaveBeenNthCalledWith(1, "card:card-1");
+    expect(mockTxLock).toHaveBeenNthCalledWith(2, "card:card-1");
+    // …and EXACTLY ONE child was ever committed — the second call REUSED it.
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1); // only the minting call wrote the pointer
+    expect(a.children).toHaveLength(1);
+    expect(b.children).toHaveLength(1);
+    expect(a.children[0].childCardId).toBe(b.children[0].childCardId); // SAME child — not two
+    expect(a.children[0].spent).toBe(false);
+    expect(b.children[0].spent).toBe(false); // reused unspent (not yet confirmed)
+    // Downstream, both quotes point at ONE card → coworkGenerate's once-EVER cowork:<id>
+    // key can charge it at most once. Zero double-mint, zero double-charge surface.
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
+
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3(); // s0 eligible —— 若回落 cur 会错误地铸出视频子卡
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await prepareStoryboardVideos({ cardId: "card-1" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
+  });
+
+  // 微修轮 v6(NODE-282-R5①):thread 活性并入锁内 fresh 守卫。锁前 loadCard 校验过
+  // thread.deletedAt/ownerId,但等锁期间 thread 可被软删——锁内 fresh 查询带 live-thread
+  // 关系过滤,失活→与卡消失同形 fail-closed("Card not found.",零写)。v5 的锁内查询不带
+  // thread 过滤,会在死 thread 上照常铸卡(红对照)。
+  it("R5① thread 失活:等锁期间 thread 软删 → 锁后 fail-closed 零写(Card not found.)", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3(); // s0 eligible —— 若不守卫会照常铸卡
+    let threadDeletedAt: string | null = null; // simulated thread row state
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        // Emulate the DB: a query CARRYING the live-thread relation filter finds nothing once
+        // the thread is soft-deleted; a query WITHOUT the filter still returns the card row.
+        if (where.thread && threadDeletedAt !== null) return null;
+        return where.id === "card-1" ? card(p) : null;
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    // An in-flight card writer holds the lock; the THREAD dies while we wait.
+    let releaseLock!: () => void;
+    cardLocks.set("card:card-1", new Promise<void>((r) => (releaseLock = r)));
+    const prepP = prepareStoryboardVideos({ cardId: "card-1" });
+    await new Promise((r) => setTimeout(r, 0)); // park on the lock (outer loadCard saw a LIVE thread)
+    threadDeletedAt = "2026-07-13T00:00:00Z"; // thread soft-deleted DURING the lock wait
+    releaseLock();
+
+    const res = await prepP;
+    expect(res).toEqual({ error: "Card not found." }); // same shape as card-vanished fail-closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
+
   it("$0 铁证:genJob.create 从未被调", async () => {
     mockVideoProposeCard();
     wireLoads(card(videoPayload3()));
@@ -1502,6 +2019,51 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     expect(res.child.childCardId).not.toBe("vchild-0");
   });
 
+  // 修复轮 v2:regen 侧 spent+mismatch 意图钉住 —— 已花钱视频子卡在参数真漂移时铸新换
+  // 指针;旧视频(videoGenerationId)原样保留到新视频落地(I1 语义)。
+  it("spent+mismatch:已花钱视频子卡参数真漂移 → 铸新+换指针,videoGenerationId(旧视频)原样保留", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[0].videoCardId = "vchild-0";
+    p.shots[0].videoGenerationId = "vid-OLD"; // an old landed video exists
+    wireLoads(card(p), {
+      "vchild-0": {
+        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 } },
+        genJobId: "gj-spent", // spent AND drifted
+      },
+    });
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s0" });
+    if (!("child" in res)) throw new Error("expected child");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // mismatch → mint fresh
+    const shots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(shots[0].videoCardId).not.toBe("vchild-0"); // pointer swapped
+    expect(shots[0].videoGenerationId).toBe("vid-OLD"); // old video survives until the new one lands
+    expect(res.child.childCardId).not.toBe("vchild-0");
+  });
+
+  // 修复轮 v2 · NODE-282① regen 侧并发回归:两个交错 regen(同 shot,双击 Retry 形态)。
+  // 锁串行化后:先到者铸卡换指针,后到者锁后重读到新子卡(matching+未花钱)→ 复用 —— 全局
+  // 恰好一次铸卡,两次调用返回同一张子卡。
+  it("并发回归:两个交错 regen(同 shot)→ 锁串行化,恰好一次铸卡,第二个复用首个的新子卡", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[2].videoCardId = "old-2"; // stale/missing child → the first regen mints a replacement
+    wireStatefulLoads(p);
+
+    const [a, b] = await Promise.all([
+      regenShotVideoCard({ cardId: "card-1", shotId: "s2" }),
+      regenShotVideoCard({ cardId: "card-1", shotId: "s2" }),
+    ]);
+    if (!("child" in a) || !("child" in b)) throw new Error("expected child");
+
+    expect(mockTxLock).toHaveBeenCalledTimes(2); // both txs locked the card
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // exactly one committed mint
+    expect(mockChatUpdate).toHaveBeenCalledTimes(1); // exactly one pointer swap
+    expect(a.child.childCardId).toBe(b.child.childCardId); // second reused the first's fresh child
+    expect(mockGenJobCreate).not.toHaveBeenCalled(); // $0 throughout
+  });
+
   it("frameless 镜头(无 firstFrameGenerationId)→ {error},不写 DB", async () => {
     mockVideoProposeCard();
     const p = videoPayload3(); // s1 is frameless
@@ -1542,6 +2104,31 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     const res = await regenShotVideoCard({ cardId: "card-1" } as unknown as { cardId: string; shotId: string });
     expect("error" in res).toBe(true);
     expect(mockChatFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("R3① fresh-null fail-closed:锁内重读卡已消失 → {error: Card not found.},零暂存零提交、无 cur 回落", async () => {
+    mockVideoProposeCard();
+    const p = videoPayload3();
+    p.shots[2].videoCardId = "old-2"; // 若回落 cur 会走 stale→铸新替换路径
+    let boardLoads = 0;
+    mockChatFindFirst.mockImplementation(async (args: { where?: Record<string, unknown>; orderBy?: unknown }) => {
+      const where = args?.where ?? {};
+      if (where.kind === "STORYBOARD_CARD") {
+        boardLoads += 1;
+        return boardLoads === 1 ? card(p) : null; // outer load OK; in-lock re-read: card GONE
+      }
+      if (args?.orderBy) return { seq: 10 };
+      return null;
+    });
+
+    const res = await regenShotVideoCard({ cardId: "card-1", shotId: "s2" });
+    expect(res).toEqual({ error: "Card not found." });
+    expect(mockTxLock).toHaveBeenCalledWith("card:card-1"); // locked, then failed closed
+    expect(mockTxChatCreate).not.toHaveBeenCalled(); // zero staged writes
+    expect(mockTxChatUpdate).not.toHaveBeenCalled();
+    expect(mockChatCreate).not.toHaveBeenCalled(); // zero committed writes
+    expect(mockChatUpdate).not.toHaveBeenCalled();
+    expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
   it("$0 铁证:genJob.create 从未被调", async () => {
