@@ -210,6 +210,77 @@ describe("case 9 — concurrent reserves: only one wins, balance never negative"
   });
 });
 
+// ── Case 11: 幂等双 refund —— 失败退款只退一次(W-B3-E-P 查漏 2026-07-14 补) ────
+// worker 的每条 fail-closed 路(provider 拒/超时/崩溃/取消/reaper)都调 refundReservation;
+// 同一 job 可能被多条路先后碰到(取消 + reaper、redelivery + stale 收割)。第二次 refund
+// 必须是无账面效果的 no-op —— 谁要是删了 finalizer 唯一索引或 skipDuplicates,这里立刻红。
+describe("case 11 — idempotent double refund: a second refund never double-credits", () => {
+  it("second refund is a no-op; exactly one REFUND row; balance restored exactly once", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(1000); // restored once, never twice
+    expect(acc.reserved).toBe(0);
+
+    const rows = await ledger(ORG);
+    expect(rows.filter((r) => r.kind === "REFUND")).toHaveLength(1);
+    // invariants still hold: net ledger deltas == net account change from the seed
+    expect(sumBalance(rows)).toBe(acc.balance - 1000); // 0
+    expect(sumReserved(rows)).toBe(acc.reserved); // 0
+  });
+});
+
+// ── Case 12: finalizer 互斥 —— settle 赢时 refund 必须让路(W-B3-E-P 查漏) ─────
+// case 7 证了 refund 赢 → settle 让路;这里证反向:已结算(用户拿到成片、charge 已成永久)
+// 的 job,一条迟到的 fail-closed 路再来 refund 必须 no-op —— 否则用户白拿成片还退款。
+describe("case 12 — finalizer mutual-exclusion: settle wins, late refund no-ops", () => {
+  it("refund after settle is a no-op; the charge is retained; exactly one finalizer row (SETTLE)", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }));
+    await prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF }));
+    await prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF }));
+
+    const acc = await account(ORG);
+    expect(acc.balance).toBe(0); // the settled charge stays charged
+    expect(acc.reserved).toBe(0);
+
+    const rows = await ledger(ORG);
+    const finalizerRows = rows.filter((r) => r.kind === "SETTLE" || r.kind === "REFUND");
+    expect(finalizerRows).toHaveLength(1);
+    expect(finalizerRows.at(0)?.kind).toBe("SETTLE");
+  });
+});
+
+// ── Case 13: 并发 settle ∥ refund —— finalizer 恰一个赢(W-B3-E-P 查漏) ────────
+// worker 结算与 reaper/取消退款可以真并发。CreditLedger_finalizer_once 部分唯一索引 +
+// createMany(skipDuplicates) 必须保证恰一个 finalizer 落账、另一方零账面效果且不抛错
+// (抛错会把调用方整个事务打回滚 —— settleCredits 头注写明的禁忌)。
+describe("case 13 — concurrent settle vs refund: exactly one finalizer wins", () => {
+  it("both calls complete; exactly one finalizer row; the account matches the winner", async () => {
+    await prisma.$transaction((tx) => reserveCredits(tx, { orgId: ORG, refId: REF, cost: 1000 }));
+
+    const results = await Promise.allSettled([
+      prisma.$transaction((tx) => settleCredits(tx, { orgId: ORG, refId: REF })),
+      prisma.$transaction((tx) => refundReservation(tx, { orgId: ORG, refId: REF })),
+    ]);
+    // neither path may throw — a thrown P2002 would abort the caller's whole tx
+    expect(results.every((r) => r.status === "fulfilled")).toBe(true);
+
+    const rows = await ledger(ORG);
+    const finalizerRows = rows.filter((r) => r.kind === "SETTLE" || r.kind === "REFUND");
+    expect(finalizerRows).toHaveLength(1); // exactly one winner, never both
+
+    const acc = await account(ORG);
+    expect(acc.reserved).toBe(0); // the hold is cleared exactly once either way
+    // the account agrees with WHICH finalizer won: SETTLE keeps the charge, REFUND restores it
+    expect(acc.balance).toBe(finalizerRows.at(0)?.kind === "SETTLE" ? 0 : 1000);
+    // invariants: net ledger deltas == net account change from the 1000 seed
+    expect(sumBalance(rows)).toBe(acc.balance - 1000);
+    expect(sumReserved(rows)).toBe(acc.reserved);
+  });
+});
+
 // ── Case 10: grantCredits 幂等 —— 发钱路径的白送钱防线(审计 2026-07-04 补) ────
 // Stripe 对超时/非 2xx 一定会重发 webhook。同一 idempotencyKey 重放/并发,只许
 // 加一次钱。谁要是删了 (orgId, idempotencyKey) 唯一索引或改了"先写账行"的顺序,
