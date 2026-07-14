@@ -41,9 +41,9 @@ vi.mock("@fikirtive/db", async (importOriginal) => ({
 }));
 
 import { z } from "zod";
-import { RunState, Usage, MaxTurnsExceededError, run as sdkRun } from "@openai/agents";
+import { Agent, RunState, Usage, MaxTurnsExceededError, run as sdkRun } from "@openai/agents";
 import type { Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/agents";
-import { OTTO_MAX_STEPS, llmPricesFor } from "@fikirtive/core";
+import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, llmPricesFor } from "@fikirtive/core";
 import {
   createOttoRuntime,
   runOttoTurn,
@@ -58,6 +58,7 @@ import { otto, ottoVerdict, ottoInteractiveRuntime, ottoApprovalResumeRuntime, o
 import { mapOttoUsage } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
 import { allSkills } from "./registry.js";
+import { ottoInstructions } from "./instructions.js";
 import type { OttoContext } from "./context.js";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -532,18 +533,25 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
   });
 
   it("restores an old-construction SDK state against the new production approval agent and resumes", async () => {
-    // The persisted state is produced by a separately constructed, minimal legacy-shaped
-    // Agent. The restore target is the independently composed production runtime Agent.
-    const legacyRuntime = createOttoRuntime(
-      {
-        modelRuntime: fixtureModelRuntime(
-          fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_legacy" }, "legacy-unused"),
-        ),
-        skills: [makeGatedSkill([])],
-        traceSink: noopTraceSink,
-      },
-      "interactive",
+    // Exact pre-seam construction shape: standalone Agent, same name/instructions/settings,
+    // and the full production tool registry. It is intentionally not built by the new factory.
+    const legacyModelRuntime = fixtureModelRuntime(
+      fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_legacy" }, "legacy-unused"),
     );
+    const legacyAgent = new Agent<OttoContext>({
+      name: "Otto",
+      instructions: ottoInstructions,
+      model: legacyModelRuntime.binding,
+      modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
+      tools: allSkills.map((skill) => skill.tool),
+    });
+    const legacyRuntime = Object.freeze({
+      profile: "interactive" as const,
+      modelRuntime: legacyModelRuntime,
+      agent: legacyAgent,
+      maxTurns: OTTO_MAX_STEPS,
+      traceSink: noopTraceSink,
+    });
     const parkedResult = await runOttoTurn(
       { orgId: "org_t", refId: "fixture:legacy-park", input: "approve the legacy post" },
       baseCtx,
