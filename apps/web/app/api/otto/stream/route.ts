@@ -29,17 +29,16 @@ import { prisma, InsufficientCredits } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
-  OTTO_MAX_STEPS,
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
 import {
   otto,
+  ottoInteractiveRuntime,
+  runOttoTurn,
   withLlmBudget,
-  OTTO_DEFAULT_MODEL,
   run,
   MaxTurnsExceededError,
-  mapOttoUsage,
   buildUserTurn,
   sanitizeHistory,
   tryRestoreRunState,
@@ -226,38 +225,32 @@ export async function POST(req: NextRequest): Promise<Response> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let agentResult: any;
       try {
-        agentResult = await withLlmBudget(
+        agentResult = await runOttoTurn(
           {
             orgId: ownerId,
             refId,
-            model: OTTO_DEFAULT_MODEL,
-            paid: true,
-            maxSteps: OTTO_MAX_STEPS,
-            usageOnError: (e) => (e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage)
-              ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
-              : null,
-          },
-          async () => {
-            // stream:true → StreamedRunResult: AsyncIterable over RunStreamEvent.
-            const r = await run(otto, runInput, { context: ctx, maxTurns: OTTO_MAX_STEPS, stream: true });
-            for await (const event of r) {
-              // Live step-trace narration (display-only): emit a data-step for each
-              // labelled tool boundary. Computed BEFORE the bridgeEvent `continue` so
-              // tool events that carry no other part still narrate. No spend impact.
-              const step = stepEventOf(event);
-              if (step) writer.write({ type: "data-step", data: step });
+            input: runInput,
+            stream: true,
+            onStream: async (r) => {
+              // stream:true → StreamedRunResult: AsyncIterable over RunStreamEvent.
+              for await (const event of r) {
+                // Live step-trace narration (display-only): emit a data-step for each
+                // labelled tool boundary. Computed BEFORE the bridgeEvent `continue` so
+                // tool events that carry no other part still narrate. No spend impact.
+                const step = stepEventOf(event);
+                if (step) writer.write({ type: "data-step", data: step });
 
-              const part = bridgeEvent(event);
-              if (!part) continue;
-              if (part.type === "text-delta") openText();
-              else if (part.type === "reasoning-delta") openReasoning();
-              writer.write(part);
-            }
-            // Ensure the run is fully settled before reading usage/state.
-            await r.completed;
-            // Usage is only known AFTER the stream is drained → return it for settlement.
-            return { result: r, usage: mapOttoUsage(r.state.usage) };
+                const part = bridgeEvent(event);
+                if (!part) continue;
+                if (part.type === "text-delta") openText();
+                else if (part.type === "reasoning-delta") openReasoning();
+                writer.write(part);
+              }
+            },
           },
+          ctx,
+          ottoInteractiveRuntime,
+          { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
         );
       } catch (e) {
         // Reserve failed (InsufficientCredits): fn NEVER ran → ZERO spend, persist nothing.

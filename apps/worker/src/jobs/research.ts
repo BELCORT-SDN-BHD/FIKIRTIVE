@@ -27,7 +27,7 @@ import {
   RESEARCH_TIERS,
   researchAgent,
   withLlmBudget,
-  OTTO_DEFAULT_MODEL,
+  ottoModelRuntime,
   run,
   MaxTurnsExceededError,
   mapOttoUsage,
@@ -200,7 +200,7 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
       {
         orgId: job.ownerId,
         refId,
-        model: OTTO_DEFAULT_MODEL,
+        model: ottoModelRuntime.billableModelId,
         paid: true,
         maxSteps: tier.maxSteps,
         usageOnError: (e) =>

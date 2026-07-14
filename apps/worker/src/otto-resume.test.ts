@@ -65,7 +65,7 @@ const mocks = vi.hoisted(() => {
   }
 
   // mapOttoUsage mock — returns a trivial TokenUsage
-  const mapOttoUsage = vi.fn(() => ({ inputTokens: 10, outputTokens: 5 }));
+  const mapOttoUsage = vi.fn((_usage?: unknown) => ({ inputTokens: 10, outputTokens: 5 }));
 
   // otto mock (just a sentinel value)
   const otto = { name: "Otto" };
@@ -106,29 +106,58 @@ vi.mock("@fikirtive/core", () => ({
   OTTO_MAX_STEPS: 10,
 }));
 
-vi.mock("@fikirtive/otto", () => ({
-  otto: mocks.otto,
-  ottoVerdict: mocks.ottoVerdict,
-  withLlmBudget: mocks.withLlmBudget,
-  OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
-  run: mocks.run,
-  RunState: mocks.RunState,
-  // F24/F25: the worker resume now restores via tryRestoreRunState (delegate to the mocked
-  // RunState.fromString so existing assertions hold) and sanitizes history (drops system items).
-  tryRestoreRunState: async (agent: unknown, str: string) => {
-    try {
-      return await mocks.RunState.fromString(agent, str);
-    } catch {
-      return null;
-    }
-  },
-  sanitizeHistory: (h: Array<{ role?: string }>) => h.filter((i) => i?.role !== "system"),
-  MaxTurnsExceededError: mocks.MaxTurnsExceededError,
-  mapOttoUsage: mocks.mapOttoUsage,
-  // 7-14b: otto-resume imports the shared extractText from @fikirtive/otto; these tests only
-  // ever set finalOutput (newItems: []), so a finalOutput-faithful stub is sufficient.
-  extractText: (r: { finalOutput?: unknown }) => (r?.finalOutput != null ? String(r.finalOutput) : ""),
-}));
+vi.mock("@fikirtive/otto", () => {
+  const verdictRuntime = {
+    profile: "worker-verdict",
+    agent: mocks.ottoVerdict,
+    maxTurns: 1,
+    modelRuntime: { billableModelId: "claude-sonnet-4-6" },
+  };
+  return {
+    otto: mocks.otto,
+    ottoVerdict: mocks.ottoVerdict,
+    ottoWorkerVerdictRuntime: verdictRuntime,
+    runOttoTurn: async (
+      request: { orgId: string; refId: string; input: unknown },
+      context: unknown,
+      runtime: typeof verdictRuntime,
+      execution: { meter: typeof mocks.withLlmBudget; runAgent: typeof mocks.run },
+    ) => execution.meter(
+      {
+        orgId: request.orgId,
+        refId: request.refId,
+        model: runtime.modelRuntime.billableModelId,
+        paid: true,
+        maxSteps: runtime.maxTurns,
+      },
+      async () => {
+        const result = await execution.runAgent(runtime.agent, request.input, { context, maxTurns: runtime.maxTurns });
+        return { result, usage: mocks.mapOttoUsage((result as { state: { usage: unknown } }).state.usage) };
+      },
+    ),
+    finalizeOttoTurn: (result: { finalOutput?: unknown; interruptions?: unknown[]; state: { toString(): string } }) => ({
+      newOttoState: result.state.toString(),
+      interrupted: Array.isArray(result.interruptions) && result.interruptions.length > 0,
+      approvals: [],
+      text: result.finalOutput == null ? "" : String(result.finalOutput),
+    }),
+    withLlmBudget: mocks.withLlmBudget,
+    run: mocks.run,
+    RunState: mocks.RunState,
+    // F24/F25: the worker resume now restores via tryRestoreRunState (delegate to the mocked
+    // RunState.fromString so existing assertions hold) and sanitizes history (drops system items).
+    tryRestoreRunState: async (agent: unknown, str: string) => {
+      try {
+        return await mocks.RunState.fromString(agent, str);
+      } catch {
+        return null;
+      }
+    },
+    sanitizeHistory: (h: Array<{ role?: string }>) => h.filter((i) => i?.role !== "system"),
+    MaxTurnsExceededError: mocks.MaxTurnsExceededError,
+    mapOttoUsage: mocks.mapOttoUsage,
+  };
+});
 
 // Import AFTER mocks are registered
 import { resumeOttoAfterGen } from "./otto-resume.js";
@@ -284,6 +313,9 @@ describe("Test #4 — happy verdict path", () => {
     expect(budgetArgs.orgId).toBe(JOB.ownerId);
     expect(budgetArgs.refId).toBe(`otto-verdict:${JOB.id}`);
     expect(budgetArgs.paid).toBe(true);
+    // Contract matrix (WO-OTTO-PHASE1 现状锁定): the verdict bills the SAME production
+    // billable model as every other entry — single manifest source, no per-entry constant.
+    expect(budgetArgs.model).toBe("claude-sonnet-4-6");
     // R4 O-11: verdict reserves a SINGLE step (was OTTO_MAX_STEPS=10)
     expect(budgetArgs.maxSteps).toBe(1);
 

@@ -49,6 +49,8 @@ const {
   mockTavilySearch,
   mockBraveSearch,
   mockSearchWithFallback,
+  mockRunVariantBatch,
+  mockRunBulkGrid,
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
@@ -128,6 +130,8 @@ const {
     mockTavilySearch,
     mockBraveSearch,
     mockSearchWithFallback,
+    mockRunVariantBatch: vi.fn(),
+    mockRunBulkGrid: vi.fn(),
   };
 });
 
@@ -138,6 +142,7 @@ vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: () => Promise.reso
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen }));
+vi.mock("@/lib/factory-actions", () => ({ runVariantBatch: mockRunVariantBatch, runBulkGrid: mockRunBulkGrid }));
 vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
 
 vi.mock("@fikirtive/db", () => ({
@@ -220,7 +225,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
 const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
-const { computeApprovalContentHash } = await import("@/lib/approval-content-hash");
+const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -1924,5 +1929,218 @@ describe("finalizeOttoRun — universal card persistence (test ①) + generate r
     );
     expect(approvalCreates).toHaveLength(1);
     expect((approvalCreates[0]![0] as { data: { payload: { toolName: string } } }).data.payload.toolName).toBe("approveScheduledPost");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WO-OTTO-PHASE1 · 四入口 contract matrix（现状锁定）— web entries.
+// Locks the CURRENT metering/run contract of the fresh non-stream entry and the
+// approval-resume entry (generate branch + the #280 runFactoryBatch branch) so the
+// Phase-1 behavior-preserving composition seam cannot drift billing, step caps, or
+// approval semantics. The stream entry shares this file's finalizeOttoRun coverage;
+// its runner-level stream contract is locked in packages/otto/src/runtime.test.ts.
+// The worker-verdict entry contract is locked in apps/worker/src/otto-resume.test.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("contract matrix — fresh non-stream entry (ottoTurn)", () => {
+  it("meters the production manifest contract: model=claude-sonnet-4-6, paid, maxSteps=10, refId otto-turn:<userMessageId>, run maxTurns=10, truncation usage mapper attached", async () => {
+    setupHappyPath();
+
+    await ottoTurn(BASE_INPUT);
+
+    expect(mockWithLlmBudget).toHaveBeenCalledTimes(1);
+    const args = mockWithLlmBudget.mock.calls[0]![0] as {
+      orgId: string; refId: string; model: string; paid: boolean; maxSteps: number;
+      usageOnError?: (e: unknown) => unknown;
+    };
+    expect(args.orgId).toBe(OWNER_ID);
+    expect(args.model).toBe("claude-sonnet-4-6");
+    expect(args.paid).toBe(true);
+    expect(args.maxSteps).toBe(10); // OTTO_MAX_STEPS
+    expect(args.refId).toMatch(/^otto-turn:/);
+    // Truncation metering: a MaxTurnsExceededError carrying state.usage settles ACTUAL usage;
+    // any other error yields null (whole-reservation refund inside withLlmBudget).
+    expect(typeof args.usageOnError).toBe("function");
+    const truncated = new MockMaxTurnsExceededError();
+    (truncated as unknown as { state: unknown }).state = {
+      usage: { inputTokens: 7, outputTokens: 3, requestUsageEntries: [] },
+    };
+    expect(args.usageOnError!(truncated)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
+    expect(args.usageOnError!(new Error("other"))).toBeNull();
+    // run() is capped at the SAME 10 steps the reserve was priced for.
+    const runOpts = mockRun.mock.calls[0]![2] as { maxTurns: number };
+    expect(runOpts.maxTurns).toBe(10);
+  });
+});
+
+describe("contract matrix — approval-resume entry (ottoApprove, generate branch)", () => {
+  it("meters the resume with the SAME manifest contract: model, paid, maxSteps=10, refId otto-approve:<threadId>:<cardId>, run maxTurns=10", async () => {
+    setupApproveHappyPath();
+
+    await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(mockWithLlmBudget).toHaveBeenCalledTimes(1);
+    const args = mockWithLlmBudget.mock.calls[0]![0] as {
+      orgId: string; refId: string; model: string; paid: boolean; maxSteps: number;
+    };
+    expect(args.orgId).toBe(OWNER_ID);
+    expect(args.model).toBe("claude-sonnet-4-6");
+    expect(args.paid).toBe(true);
+    expect(args.maxSteps).toBe(10); // OTTO_MAX_STEPS
+    expect(args.refId).toBe(`otto-approve:${APPROVE_THREAD_ID}:${CARD_ID}`);
+    const runOpts = mockRun.mock.calls[0]![2] as { maxTurns: number };
+    expect(runOpts.maxTurns).toBe(10);
+  });
+});
+
+// ── contract matrix — approval-resume entry, runFactoryBatch branch (#280) ───
+// The third approval branch (generate / generateReferences / runFactoryBatch): the
+// consent object is the EXACT parked tool-call args (hash-bound), the card is the
+// CAS-consumable, and ONLY the consumed card id may become the server-only factory
+// attempt token (the model can never supply one).
+
+const FACTORY_CARD_MSG_ID = "apcard_factory_1";
+const FACTORY_BATCH_ID = "batch_fp_1";
+const FACTORY_THREAD_ID = "thread_approve_factory";
+const FACTORY_ARGS = {
+  mode: "variant",
+  batchId: FACTORY_BATCH_ID,
+  name: "Raya ad variants",
+  base: { prompt: "hero shot of satay skewers", aspect: "1:1" },
+  variants: [{ prompt: "hook A" }, { prompt: "hook B" }],
+} as const;
+const FACTORY_HASH = factoryBatchApprovalHashFromArgs(FACTORY_ARGS as unknown as Record<string, unknown>)!;
+
+function makeFactoryApprovalItem(args: Record<string, unknown> = FACTORY_ARGS as unknown as Record<string, unknown>) {
+  return {
+    type: "tool_approval_item" as const,
+    name: "runFactoryBatch",
+    arguments: JSON.stringify(args),
+    rawItem: { name: "runFactoryBatch", arguments: JSON.stringify(args) },
+  };
+}
+
+function factoryCardPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    toolName: "runFactoryBatch",
+    ref: FACTORY_BATCH_ID,
+    status: "pending",
+    summary: null,
+    contentHash: FACTORY_HASH,
+    expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    ...overrides,
+  };
+}
+
+function setupFactoryApprove(
+  payloadOverrides: Record<string, unknown> = {},
+  interruptionItems?: unknown[],
+) {
+  mockRequireOwner.mockResolvedValue(GATE);
+  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockChatThreadFindFirst.mockResolvedValue({
+    id: FACTORY_THREAD_ID,
+    projectId: PROJECT_ID,
+    ottoState: '{"paused":"state"}',
+  });
+  const mockState = new MockRunState();
+  mockGetInterruptions.mockReturnValue(interruptionItems ?? [makeFactoryApprovalItem()]);
+  mockRunStateFromString.mockResolvedValue(mockState);
+  mockGenJobFindFirst.mockResolvedValue(null);
+  mockChatMessageFindFirst.mockImplementation((args: { where?: { kind?: string } } | undefined) => {
+    if (args?.where?.kind === "APPROVAL_CARD") {
+      return Promise.resolve({ id: FACTORY_CARD_MSG_ID, payload: factoryCardPayload(payloadOverrides) });
+    }
+    return Promise.resolve({ seq: 5 });
+  });
+  mockChatMessageCreate.mockResolvedValue({});
+  mockChatThreadUpdate.mockResolvedValue({});
+  mockRun.mockResolvedValue(makeMockResult({ finalOutput: "Batch started." }));
+  mockWithLlmBudget.mockImplementation(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
+    const out = await fn();
+    return (out as { result: unknown }).result;
+  });
+  mockTransaction.mockImplementation(runTransaction);
+}
+
+describe("contract matrix — approval-resume entry (ottoApprove, runFactoryBatch branch, #280)", () => {
+  it("hash-verifies the parked call, consumes the card pending→approved BEFORE the resume, approves it, and injects the CONSUMED card id as the server-only factory attempt token", async () => {
+    setupFactoryApprove();
+
+    const res = await ottoApprove({ threadId: FACTORY_THREAD_ID, cardId: FACTORY_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ ok: true, status: "done" });
+    // ATOMIC consumption: CAS pins payload.status="pending" in the WHERE.
+    expect(mockChatMessageUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: FACTORY_CARD_MSG_ID,
+          ownerId: OWNER_ID,
+          kind: "APPROVAL_CARD",
+          AND: [{ payload: { path: ["status"], equals: "pending" } }],
+        }),
+        data: expect.objectContaining({ payload: expect.objectContaining({ status: "approved" }) }),
+      }),
+    );
+    // The PARKED runFactoryBatch item was approved.
+    expect(mockApprove).toHaveBeenCalledWith(expect.objectContaining({ name: "runFactoryBatch" }), undefined);
+    // Consumption strictly precedes the resume (consume-then-act).
+    expect(mockChatMessageUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mockRun.mock.invocationCallOrder[0]!);
+    // Metered exactly once with the approve refId + the manifest contract.
+    expect(mockWithLlmBudget).toHaveBeenCalledTimes(1);
+    const args = mockWithLlmBudget.mock.calls[0]![0] as {
+      orgId: string; refId: string; model: string; paid: boolean; maxSteps: number;
+    };
+    expect(args.orgId).toBe(OWNER_ID);
+    expect(args.model).toBe("claude-sonnet-4-6");
+    expect(args.paid).toBe(true);
+    expect(args.maxSteps).toBe(10);
+    expect(args.refId).toBe(`otto-approve:${FACTORY_THREAD_ID}:${FACTORY_CARD_MSG_ID}`);
+    // The resume context's factory port is bound to the CONSUMED card id: the port forwards
+    // attemptId = APPROVAL_CARD.id to the SAME owner-scoped server action the human uses.
+    const resumeCtx = (mockRun.mock.calls[0]![2] as {
+      context: { runFactoryBatch: { variant: (i: Record<string, unknown>) => Promise<unknown> } };
+    }).context;
+    mockRunVariantBatch.mockResolvedValue({ ok: true });
+    await resumeCtx.runFactoryBatch.variant({
+      batchId: FACTORY_BATCH_ID,
+      projectId: PROJECT_ID,
+      base: FACTORY_ARGS.base,
+      variants: FACTORY_ARGS.variants,
+    });
+    expect(mockRunVariantBatch).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptId: FACTORY_CARD_MSG_ID, batchId: FACTORY_BATCH_ID }),
+    );
+  });
+
+  it("P2 ref-collision discipline: a parked call whose args hash differs from the card's hash NEVER matches — refuse WITHOUT consuming, no approve, no resume", async () => {
+    // Same batchId (same ref), flipped content → different hash → the card must not launder it.
+    setupFactoryApprove({}, [
+      makeFactoryApprovalItem({
+        ...(FACTORY_ARGS as unknown as Record<string, unknown>),
+        variants: [{ prompt: "hook A" }, { prompt: "FLIPPED hook" }],
+      }),
+    ]);
+
+    const res = await ottoApprove({ threadId: FACTORY_THREAD_ID, cardId: FACTORY_CARD_MSG_ID });
+
+    expect(res).toMatchObject({ error: expect.any(String) });
+    expect(mockChatMessageUpdateMany).not.toHaveBeenCalled(); // NOT consumed
+    expect(mockApprove).not.toHaveBeenCalled();
+    expect(mockRun).not.toHaveBeenCalled();
+    expect(mockRunVariantBatch).not.toHaveBeenCalled();
+  });
+
+  it("ottoTurn context (no approval) binds NO attempt token: the factory port fails closed instead of calling the server action", async () => {
+    setupHappyPath();
+
+    await ottoTurn(BASE_INPUT);
+
+    const turnCtx = (mockRun.mock.calls[0]![2] as {
+      context: { runFactoryBatch: { variant: (i: Record<string, unknown>) => Promise<unknown> } };
+    }).context;
+    const out = await turnCtx.runFactoryBatch.variant({ batchId: FACTORY_BATCH_ID, projectId: PROJECT_ID });
+    expect(out).toMatchObject({ error: expect.stringMatching(/approval attempt is missing/i) });
+    expect(mockRunVariantBatch).not.toHaveBeenCalled();
   });
 });

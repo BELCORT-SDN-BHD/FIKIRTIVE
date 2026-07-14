@@ -1,4 +1,30 @@
-export { otto, ottoVerdict, ottoInstructions, OTTO_DEFAULT_MODEL } from "./otto.js";
+export {
+  otto,
+  ottoVerdict,
+  ottoInstructions,
+  OTTO_DEFAULT_MODEL,
+  ottoInteractiveRuntime,
+  ottoApprovalResumeRuntime,
+  ottoWorkerVerdictRuntime,
+} from "./otto.js";
+export { ottoModelRuntime } from "./model.js";
+export {
+  createOttoRuntime,
+  runOttoTurn,
+  finalizeOttoTurn,
+  ottoBudgetArgsFor,
+  noopTraceSink,
+} from "./runtime.js";
+export type {
+  OttoRunProfile,
+  OttoModelRuntime,
+  OttoRuntimeDeps,
+  OttoRuntime,
+  OttoRuntimeExecution,
+  OttoTurnRequest,
+  OttoTurnRunResult,
+  OttoTurnFinalization,
+} from "./runtime.js";
 export { ottoSimpleModeBlock } from "./instructions.js";
 export { propose } from "./skills/propose.js";
 // buildProposeCard — the pure $0 card-payload helper (no DB/SDK). Exposed for the

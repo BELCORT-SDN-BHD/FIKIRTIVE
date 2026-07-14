@@ -48,7 +48,7 @@ vi.mock("@fikirtive/otto", () => ({
   RESEARCH_TIERS: { standard: { maxSearches: 12, maxPages: 20, maxSteps: 12 } },
   researchAgent: { name: "Researcher" },
   withLlmBudget: vi.fn(),
-  OTTO_DEFAULT_MODEL: "claude-sonnet-4-6",
+  ottoModelRuntime: { billableModelId: "claude-sonnet-4-6" },
   run: vi.fn(),
   MaxTurnsExceededError: class extends Error {},
   mapOttoUsage: vi.fn(),
