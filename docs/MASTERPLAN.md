@@ -8,6 +8,11 @@
 > **每个条目五字段**:来源(判决/宪法条/审计发现,必须可查证)· 缝(走 `docs/review/EXPANSION-SEAMS.md` 哪条)· 验收(可执行命令或可点击验证)· 规模(S/M/L)· 状态(**待拍板** = founder 未批,不得动工 / **可开工** = 依据齐全 / **在途** = 已有 PR)。
 > **铁律:凡"待拍板",在 founder 批准前 runner 不得动工、不得默认"应该会批"。** 本文件不制造任何新决定 —— 没有既有依据的项一律进第七章待拍板清单。
 
+> ⚠️ **执行层职能已移交(2026-07-14 加注)。** 本文件「执行模型(runner)的唯一作业队列来源」的职能已移交:
+> 现行执行合同 = `docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md`(founder 五答签认);唯一能力真源 = `docs/ops/route-b/matrix/`;
+> 新决策入闸 = GRILL-VERDICTS 2026-07-14 追加节「工作方法」判决(wayfinder → to-spec → to-tickets → harness;决策地图 = issue #287)。
+> **不要再从本表取活或据此排执行顺序。** 全文保留作来源考据(B0 来源穷举明文引「MASTERPLAN 全章」,各 P 项仍是判决挂靠原件)。
+
 ---
 
 ## 人话对照表(内部代号 → 人话;给 founder 读的文档一律带此对照 —— 工作规矩②)
@@ -66,6 +71,8 @@ P0 与 P0.5/P1 可并行(不同文件面);P0.75 严格在 P0.5 之后;P1½ 以�
 ---
 
 ## 〇点七、点亮章 v2 —— 一条真闭环先通(2026-07-10 生效;本章为现行执行顺序)
+
+> ⚠️ **本章三处条款自 2026-07-12 起被改判,「本章为现行执行顺序」不再成立**(改判表=`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md` §九):五关「founder 15 分钟亲点」→ 每块报告+自查脚本+终验一次[Q2];「过关才点下一环」串行律 → 三道并行+六级状态[乙裁决];收钱条件句 → 先改判「建完才收」[Q1],再经 GRILL-VERDICTS 2026-07-14「建/卖两图配对」定形(纵切三环到齐+生产三闸过即对顾客一号开收,不等全城)。保留作历史记录;内容项未废除,已在 Route-B 各块重新编队。
 
 > **来源栈(全部可查)**:GRILL-VERDICTS「点亮形状」(一条真闭环先通+**每环最强**,founder 2026-07-10 批)· 宪法 v2.11 边界四层表 · `docs/strategy/TWO-BRAIN-MEMO-2026-07.md` R5 裁定+founder D1-D8 批复(含全图先设计律 trial/量测原语第 0 大陆/收钱条件句/concierge-assisted pilot)· `docs/research/PLATFORM-TRUTH-2026-07-10.md`(八平台官方门槛与红线)· `docs/research/CUSTOMER-ONE-SARANGHAEYO-2026-07-10.md`(顾客一号作战图)· `docs/research/LEADER-PLAYBOOK-2026-07-10.md`(三姿态)· founder 2026-07-10 走城判词("除 export/import 类小细节都 OK,直接开始点亮,一板块一验证")。
 > **闭环载体**:顾客一号 Saranghaeyo(concierge-assisted pilot)——**创作 → 排期发布 → WhatsApp 询单成交 → 回执 → 会员唤回**。创作环已是真产品(canvas/工厂 Wave 1),点亮从第 2 环起。

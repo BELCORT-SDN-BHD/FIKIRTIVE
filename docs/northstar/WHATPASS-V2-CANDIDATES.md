@@ -635,6 +635,8 @@ Contact Lifecycle 阶段(New/Cold Lead/Lost Stage 这类销售漏斗阶段追踪
 
 ## 使用规则
 
+> ⚠️ **2026-07-14 加注**:下述第 1-2 条的入闸路径(北极星原型 → founder 走城 keep/cut → 排入 MASTERPLAN 施工)已改——新决策一律走 wayfinder 决策票制(GRILL-VERDICTS 2026-07-14「工作方法」判决;决策地图 = issue #287)。候选池内容照常有效;第 3-4 条(点亮过闸/排除永不复活)不变。
+
 1. 本表是 **Wave B(扩容施工)** 的工单底稿:不是施工顺序本身,是"接下来可以拿去建原型页的候选清单"。
 2. 每条候选建成进北极星原型(`docs/northstar/PROGRAM.md` 流程)之后,由 founder 走城逐页 **keep / cut**;走城判决记入 `docs/northstar/APPROVALS.md`,本表本身不做二次判决。
 3. 候选被 founder keep 之后,**点亮(接后台、通电)时仍需完整过闸**:costing(定价终案毛利地板)、钱路(`money-safety-review`)、`lint:parity`(Otto 对等)—— 原型层"默认全做"不等于点亮层免检。

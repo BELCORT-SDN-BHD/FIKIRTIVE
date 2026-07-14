@@ -37,3 +37,6 @@ _*.md
 
 # Stray Claude worktree dirs must never be committed (see F32 audit)
 .claire/
+
+# codex CLI local config
+.codex/

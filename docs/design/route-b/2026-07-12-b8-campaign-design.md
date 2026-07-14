@@ -274,6 +274,8 @@ A′ `campaign-pack-confirm.tsx` 已把 UI 流走全(review→confirming→runni
 
 **推荐 B 档**:对齐 spec 底第一+二期(零外部依赖,草稿与生成全可用),把「Campaign 一期能收钱」的上市点做实(打包生成 = 真实 spend + 排期草稿),同时把归因/routine/完全体明确留 P3,守住红旗六「干净最重要」。
 
+> ⚠️ **2026-07-14 加注**:上行「把『Campaign 一期能收钱』的上市点做实」的理据已被 GRILL-VERDICTS 2026-07-14 追加节「第一期卖法」判决取代——第一期卖点钉死三环(做内容/发出去/唤回老客),**Campaign 不在第一期卖点**,三环外全城一律诚实 Coming soon。建 Campaign 本身不受影响(建/卖两图配对:建城图管宽度照建);深度档与审批粒度动工前按 07-14 判决(一个 request = 一次批准)重裁。
+
 ### 成本估算(spec 底 §七,零新收费点,全复用既有费率)
 
 用户侧一单概算(显示 credits;劳务 = 研究+对话轮):
@@ -341,7 +343,7 @@ workbench/CAMPAIGN_CARD(策划)
 | **O-2** | **auto-publish 文案出处核实**(mock 风险 6/18) | **已核实,出处为真、文案诚实**。原文在 `apps/web/app/northstar/campaign/calendar/page.tsx:385-397`(**旧 northstar 版**,非 immersive A′ 版):「Standing authority for Otto lives here later: monthly plan refreshes and auto publish, always with a budget cap, a scope statement, a kill switch and run summaries.」代码注释明标 `{/* Routine 管理位(第三期,campaign spec §5.1)*/}`、UI 角标「phase 3 slot」。**出处链**:routine 预授权第三期 = spec 底 §四审批经济学末行 + §六第三期 + 蓝图 L188 routine 授权模型 + 宪法 4 例外② + 四件套(预算上限/范围声明/kill switch/事后摘要)逐字对应。**判定**:非虚假 mock 声明——文案明说「lives here **later**」(不声称当前存在)、标 phase-3、四件套齐全;A′ **immersive 版日历不含此文案**(仅 budget headroom)。**结论:风险 6/18 可降级关闭;一期只做 phase-3 占位不接线**(接线待 P1½-3 Routine 本体另 spec 另批) | 已闭合(留档) |
 | **O-3** | TrendSnapshot 的 `TrendIntel` 富化字段(证据句/置信度/复核期/别追这个/动作桥/method)一期带否 | 建议一期先落最薄六字段(§六 C);富化是展示层,可后续期加。A′ 已把富化做进 trends 页,若 founder 认其是「情报溢价」核心卖点可提前 | founder / 体量过目 |
 | **O-4** | detail 页 ads/results/research tab 一期深度 | 初判 P3 骨架(A2)。A′ 已把广告状态/疲劳/归因做进 detail(764 行),但那越界完全体;守红旗六「干净最重要」建议一期只做容器 + content/posts 只读归组 | founder / 体量过目(B vs C 档) |
-| **O-5** | 打包批(第二期)与逐条批(第一期)的上市点归属 | 「Campaign 一期能收钱」上市点:B 档(推荐)含第二期打包批才是完整「一次点头买一批」体验;A 档逐条批也能收钱但体验碎 | founder(上市点定义) |
+| **O-5** | 打包批(第二期)与逐条批(第一期)的上市点归属 | 「Campaign 一期能收钱」上市点:B 档(推荐)含第二期打包批才是完整「一次点头买一批」体验;A 档逐条批也能收钱但体验碎 **〔2026-07-14 加注:本待裁题已被「第一期卖法」判决釜底抽薪——Campaign 不在第一期卖点,上市点=三环+三闸;批准粒度另按 07-14「审批粒度」判决(一个 request=一次批准)重排〕** | founder(上市点定义) |
 | **O-6** | **spec 底时效核对结论** | spec 底(2026-07-08)逐节与 07-12 矩阵/B0 契约核对**无实质冲突**,唯一对齐处 = UTM(O-1)。spec 底的分期/审批经济学/五道缝/最薄容器口径全部现行有效,可作为一期施工直接依据 | 已闭合(留档) |
 
 ---
