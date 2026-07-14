@@ -43,7 +43,7 @@ vi.mock("@fikirtive/db", async (importOriginal) => ({
 import { z } from "zod";
 import { Agent, RunState, Usage, MaxTurnsExceededError, run as sdkRun } from "@openai/agents";
 import type { Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/agents";
-import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, llmPricesFor } from "@fikirtive/core";
+import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, llmPricesFor, ottoLlmMargin } from "@fikirtive/core";
 import {
   createOttoRuntime,
   runOttoTurn,
@@ -55,7 +55,7 @@ import {
 } from "./runtime.js";
 import { ottoModel, ottoModelRuntime, OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL, OTTO_DEFAULT_MODEL } from "./model.js";
 import { otto, ottoVerdict, ottoInteractiveRuntime, ottoApprovalResumeRuntime, ottoWorkerVerdictRuntime } from "./otto.js";
-import { mapOttoUsage } from "./meter.js";
+import { actualCostInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
 import { allSkills } from "./registry.js";
 import { ottoInstructions } from "./instructions.js";
@@ -379,6 +379,10 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
 
     expect(meterMocks.reserveCredits).toHaveBeenCalledOnce();
     expect(meterMocks.refundReservation).toHaveBeenCalledOnce();
+    expect(meterMocks.refundReservation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: "org_t", refId: "paid:stream-error" }),
+    );
     expect(meterMocks.settleCredits).not.toHaveBeenCalled();
     expect(meterMocks.reserveCredits.mock.invocationCallOrder[0]).toBeLessThan(
       meterMocks.refundReservation.mock.invocationCallOrder[0]!,
@@ -387,8 +391,12 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
 
   it("drains onStream before awaiting completed and reads usage only afterward", async () => {
     const order: string[] = [];
+    let markDrainStarted!: () => void;
+    let releaseDrain!: () => void;
+    const drainStarted = new Promise<void>((resolve) => { markDrainStarted = resolve; });
+    const drainGate = new Promise<void>((resolve) => { releaseDrain = resolve; });
     const modelRuntime = Object.freeze({
-      ...fixtureModelRuntime(fakeTextModel("unused")),
+      ...paidFixtureModelRuntime(fakeTextModel("unused")),
       mapUsage: (usage: Parameters<typeof mapOttoUsage>[0]) => {
         order.push("usage");
         return mapOttoUsage(usage);
@@ -397,8 +405,11 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
     const runtime = createOttoRuntime({ modelRuntime, skills: [], traceSink: noopTraceSink }, "interactive");
     const streamResult = {
       async *[Symbol.asyncIterator]() {
-        order.push("drain");
+        order.push("drain-start");
+        markDrainStarted();
         yield { type: "raw_model_stream_event" };
+        await drainGate;
+        order.push("drain-complete");
       },
       completed: {
         then(resolve: (value: undefined) => void) {
@@ -417,11 +428,11 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
     };
     const execution = {
       runAgent: vi.fn(async () => streamResult),
-      meter: vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown }>) => (await fn()).result),
+      meter: withLlmBudget,
       maxTurnsExceededError: MaxTurnsExceededError,
     };
 
-    await runOttoTurn(
+    const turn = runOttoTurn(
       {
         orgId: "org_t",
         refId: "fixture:stream-order",
@@ -436,7 +447,27 @@ describe("runOttoTurn — real meter stream failure and completion ordering (PH1
       execution as never,
     );
 
-    expect(order).toEqual(["drain", "completed", "usage"]);
+    await drainStarted;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const orderBeforeDrainRelease = [...order];
+    releaseDrain();
+    await turn;
+
+    expect(orderBeforeDrainRelease).toEqual(["drain-start"]);
+    expect(order).toEqual(["drain-start", "drain-complete", "completed", "usage"]);
+    const actualInternal = actualCostInternal(
+      { inputTokens: 3, outputTokens: 2 },
+      llmPricesFor("claude-sonnet-4-6"),
+      ottoLlmMargin(),
+    );
+    expect(meterMocks.settleCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        orgId: "org_t",
+        refId: "fixture:stream-order",
+        actualInternal,
+      }),
+    );
   });
 });
 

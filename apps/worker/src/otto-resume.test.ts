@@ -76,14 +76,14 @@ const emptyUsage = {
 };
 
 /** A real SDK RunState serialization, sufficient for the worker's history-only restore. */
-function priorState(content = "make me a poster") {
+function priorState(history: unknown = [{ role: "user", content: "make me a poster" }]) {
   const runContext = {
     usage: emptyUsage,
     toJSON: () => ({ context: { orgId: JOB.ownerId }, usage: emptyUsage, approvals: {} }),
   };
   return new RunState(
     runContext as never,
-    [{ role: "user", content }] as never,
+    history as never,
     otto,
     10,
   ).toString();
@@ -165,6 +165,7 @@ describe("real worker composition seam (PH1F-A1)", () => {
     // Regression guard against the former fake coverage: neither object under test is a mock.
     expect(vi.isMockFunction(runOttoTurn)).toBe(false);
     expect(vi.isMockFunction(finalizeOttoTurn)).toBe(false);
+    expect(mocks.genJobUpdateMany).toHaveBeenCalledOnce();
 
     expect(mocks.meter).toHaveBeenCalledOnce();
     const [budget] = mocks.meter.mock.calls[0] as [{
@@ -219,15 +220,39 @@ describe("real worker composition seam (PH1F-A1)", () => {
   });
 
   it("restores and sanitizes real serialized history before appending the verdict instruction", async () => {
-    serializedPriorState = priorState("remember this history");
+    serializedPriorState = priorState([
+      { role: "system", content: "stale brand context" },
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "remember this history" },
+          { type: "input_image", image: "data:image/png;base64,SHOULD_NOT_BE_RESENT" },
+        ],
+      },
+    ]);
     mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: serializedPriorState });
 
-    await resumeOttoAfterGen(JOB);
+    const restoreSpy = vi.spyOn(RunState, "fromString");
+    try {
+      await resumeOttoAfterGen(JOB);
 
-    const [, input] = mocks.run.mock.calls[0] as [unknown, Array<{ role: string; content: string }>];
-    expect(input).toHaveLength(2);
-    expect(input[0]).toEqual({ role: "user", content: "remember this history" });
-    expect(input[1]?.content).toContain("generation you queued has finished");
+      const [restoreAgent, restoredState] = restoreSpy.mock.calls[0]!;
+      expect({
+        agent: restoreAgent,
+        state: restoredState,
+        hasFullToolset: restoreAgent.tools.length === otto.tools.length && restoreAgent.tools.length > 0,
+      }).toEqual({ agent: otto, state: serializedPriorState, hasFullToolset: true });
+      const [, input] = mocks.run.mock.calls[0] as [unknown, Array<{ role: string; content: string }>];
+      expect(input).toEqual([
+        { role: "user", content: "remember this history" },
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("generation you queued has finished"),
+        }),
+      ]);
+    } finally {
+      restoreSpy.mockRestore();
+    }
   });
 });
 
@@ -278,7 +303,7 @@ describe("best-effort and persistence behavior", () => {
   });
 
   it("uses the exact prior state as the CAS precondition", async () => {
-    serializedPriorState = priorState("specific prior state");
+    serializedPriorState = priorState([{ role: "user", content: "specific prior state" }]);
     mocks.chatThreadFindFirst.mockResolvedValue({ ottoState: serializedPriorState });
     await resumeOttoAfterGen(JOB);
     const [cas] = mocks.chatThreadUpdateMany.mock.calls[0] as [{ where: { ottoState: string } }];
