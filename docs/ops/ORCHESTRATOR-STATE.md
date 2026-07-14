@@ -106,9 +106,10 @@ codex SOL 对 **#314 与 #315 双双判 BLOCK**。控制面逐条回一手证据
 ## Recovery next step
 
 1. 重验 `origin/main`、四个 open PR current heads、Actions annotations、worktree、`CLAIMS.json`（预期 gen 6 / r005 唯一 ACTIVE）、r005 mailbox 与 external checkpoint；旧 session / pid 只作待核输入。
-2. 把 #314（`079d4b1e…`）与 #315（`f9cfb314…`）按各自 current-head 证据呈 Founder；两者 remote CI 都不绿，必须由 Founder 明确批准 CI-unavailable 程序后亲合。控制面不得代合。
-3. #316 先修 D-037 provenance 错链，再在新 head 跑完整本地门禁、贴 SHA 绑定证据并独立复核；未闭合前不得写“随 #314 可合”。
-4. 本 #319 v4 产生新 head 后，跑完整本地门禁并贴 PR 证据；governance Founder-only，且当前控制面是 material editor，不得自审自合。
-5. **只有 #315 实际合并且对 `main` 复核后**，才一次 generation bump：retire r005 + 批量签发 W1/W2/W3 + #311；随后另开 CLI fence 接线 PR。禁止提前引用未落 main 的脚本。
-6. #317/#318/#320/#321/#322 各守自己的 founder / architecture / money / tenant / security 边界，不混进 r005 或状态账 PR。
-7. 完整 launch-readiness/E2E 只在 exact release candidate 上执行，不提前宣称。
+2. 本 #319 v4 产生新 head 后，跑完整本地门禁并贴 PR 证据，再呈 Founder；governance Founder-only，且当前控制面是 material editor，不得自审自合。
+3. #316 先修 D-037 provenance 错链，在新 head 跑完整本地门禁、贴 SHA 绑定证据并独立复核；闭合后先呈 Founder 合入 #316，再呈已具 current-head 证据的 #314（`079d4b1e…`）。两者未闭合前不得写“#314/#316 可合”。
+4. #315（`f9cfb314…`）按 current-head 证据呈 Founder；remote CI 不绿，必须由 Founder 明确批准 CI-unavailable 程序后亲合。控制面不得代合。#314 与 #315 的相对先后不影响各自，但第 5 步 batch 前二者必须都已在 main。
+5. 批量派工有**双前置**：先修正并落地 #316 provenance，再由 Founder 合入 #314；随后 #314（NH-1 schema）与 #315（Phase 1）都必须已在 `main` 且复核通过，才一次 generation bump：retire r005 + 批量签发 W1/W2/W3 + #311。W1/W2/W3 的 base 必须取 NH-1 后 main，不能只因 #315 交付就提前签发。
+6. CLI fence 接线是另一条较窄依赖：只在 #315 实际合入并确认脚本存在于 `main` 后另开 PR；不得提前引用未落 main 的脚本。
+7. #317/#318/#320/#321/#322 各守自己的 founder / architecture / money / tenant / security 边界，不混进 r005 或状态账 PR。
+8. 完整 launch-readiness/E2E 只在 exact release candidate 上执行，不提前宣称。
