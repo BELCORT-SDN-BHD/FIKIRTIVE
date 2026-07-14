@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -359,5 +359,103 @@ describe("startGen", () => {
     expect(db.genJobFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ ownerId: "org_ref", projectId: "p1" }),
     }));
+  });
+
+  // ── W-B3-E-P 查漏 (2026-07-14): startGen 三数一致直证(报价=预留)与余额不足 fail-closed。
+  // 真 Postgres 全链三数一致(报价=预留=结账)在 gen-ledger.test.ts;这里钉住报价权威本身:
+  // reserve 的 cost 必须逐字节等于 pricedGenCredits 的报价(worker 结算读 RESERVE 行,永不重算)。
+
+  it("reserves exactly count × 1 displayed credit for a plain image batch (quote == reserve, count 1-4)", async () => {
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "product hero on white",
+      entityIds: [],
+      count: 4,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "img-count4-key",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    // quote == reserve: the reserved cost IS the pricedGenCredits quote, and the quote is
+    // pinned to the literal price sheet (1 displayed credit per image) — not just tautology.
+    const quote = pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, referenceVideoGenerationId: null, videoOptions: null });
+    expect(quote).toBe(4 * INTERNAL_PER_DISPLAY);
+    expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, { orgId: "org_ref", refId: "job_ref", cost: quote });
+    expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: "IMAGE", count: 4 }),
+      select: { id: true },
+    }));
+  });
+
+  it("charges a single clip and persists count=1 for a video request with count > 1 (never over-reserves)", async () => {
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "make it move",
+      entityIds: [],
+      count: 2,
+      kind: "video",
+      model: "seedance-2-fast",
+      durationSeconds: 5,
+      resolution: "720p",
+      idempotencyKey: "video-count2-key",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    // flat-priced seedance-2-fast 720p/5s = 8 displayed credits for ONE clip. The client fans a
+    // multi-clip request out as N single-clip jobs, so startGen must reserve for count=1 — pricing
+    // the raw count here would double-charge the first clip of every fan-out.
+    expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
+      orgId: "org_ref",
+      refId: "job_ref",
+      cost: 8 * INTERNAL_PER_DISPLAY,
+    });
+    expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ kind: "VIDEO", count: 1 }),
+      select: { id: true },
+    }));
+  });
+
+  it("reserves the 14-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "longer product spin",
+      entityIds: [],
+      count: 1,
+      kind: "video",
+      model: "seedance-2-fast",
+      durationSeconds: 10,
+      resolution: "720p",
+      idempotencyKey: "video-10s-key",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
+      orgId: "org_ref",
+      refId: "job_ref",
+      cost: 14 * INTERNAL_PER_DISPLAY,
+    });
+  });
+
+  it("fails closed on InsufficientCredits — friendly error, no enqueue, no audit write", async () => {
+    db.reserveCredits.mockRejectedValueOnce(new MockInsufficientCredits());
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "over budget",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "broke-key",
+    });
+
+    // 六态②余额不足: the reserve threw inside the tx (job insert rolled back with it) → a
+    // friendly out-of-credits error, and NOTHING downstream of the spend commit may run.
+    expect(result).toEqual({ error: expect.stringMatching(/credits/i) });
+    expect(mockBossSend).not.toHaveBeenCalled();
+    expect(db.genJobUpdate).not.toHaveBeenCalled();
+    expect(db.actionEventCreate).not.toHaveBeenCalled();
+    expect(db.refundReservation).not.toHaveBeenCalled(); // nothing was reserved → nothing to refund
   });
 });
