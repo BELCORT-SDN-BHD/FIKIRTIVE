@@ -1,16 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * Fail when production source imports a Flight Simulator / subscription CLI driver.
+ * Best-effort static check for accidental production imports of a Flight Simulator /
+ * subscription CLI driver. This is a guard against ordinary mistakes, not a security
+ * boundary, and it does not claim to detect deliberate or arbitrary dynamic loading.
  *
  * Scan boundary: production JS/TS sources below `apps/**` and `packages/**`.
  * Test directories/files, generated output, coverage, and dependencies are excluded.
- * TypeScript parses each source; the fence examines module specifier expressions and
- * resolves only static strings (literal/template, concatenation, or local binding).
- * Runtime-computed specifiers and sources outside apps/packages are not covered.
+ * TypeScript parses each source; the check examines recognized import/export forms,
+ * dynamic `import(...)`, and bare `require(...)`, then resolves only static strings
+ * (literal/template, concatenation, or an unambiguous local binding).
  *
- * Phase 1 intentionally does not wire this into package.json or CI: those files are
- * owned by the global control plane. Run directly with:
+ * Known, non-exhaustive blind spots include inline `createRequire(...)` calls; a
+ * `createRequire(...)` loader stored in a local binding and later invoked; aliased
+ * `require`; `module.require`; conditional, `join(...)`, or `String.raw` specifiers;
+ * `eval`; `Function`; and `Worker(..., { eval: true })`. Even a literal forbidden
+ * specifier is not checked when its loader/callee form is not recognized above.
+ * Exit 0 therefore means only that this recognized static surface is clear; it does
+ * not prove that dynamic loading is absent.
+ *
+ * Stronger enforcement is tracked, but not implemented, in #322: dependency-manifest
+ * controls, a production image without CLI binaries, and production environments
+ * without subscription credentials. Phase 1 also intentionally leaves package.json
+ * and CI wiring to the global control plane. Run directly with:
  *
  *   node scripts/check-otto-cli-fence.mjs
  *   node scripts/check-otto-cli-fence.mjs --self-test
