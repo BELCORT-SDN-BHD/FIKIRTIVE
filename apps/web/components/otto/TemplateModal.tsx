@@ -51,12 +51,12 @@ export function templateRunReducer(state: TemplateRunState, event: TemplateRunEv
     case "explicit-error":
       return { ...state, phase: "form", message: event.message };
     case "failed":
-      return { ...state, phase: "form", message: "Generation failed — you weren't charged. You can try again." };
+      return { ...state, phase: "form", message: "Generation failed. You weren't charged. Try again." };
     case "unknown":
       return {
         ...state,
         phase: "unknown",
-        message: "We couldn't confirm whether this generation finished. Check your Library before starting another paid generation.",
+        message: "This didn't finish. Check your Library in a minute.",
       };
     case "done":
       return { phase: "done", message: null, resultUrl: event.url, resultGenId: event.genId };
@@ -131,7 +131,11 @@ export async function pollTemplateJob(
       const genId = job.generationIds[0];
       return url && genId ? { kind: "done", url, genId } : { kind: "unknown" };
     }
-    if (job.status === "FAILED") return { kind: "failed" };
+    if (job.status === "FAILED") {
+      return job.generationIds.length === 0 && job.urls.length === 0
+        ? { kind: "failed" }
+        : { kind: "unknown" };
+    }
   }
   return { kind: "unknown" };
 }
@@ -268,7 +272,7 @@ export default function TemplateModal({
         Generating…
       </Button>
     ) : phase === "unknown" ? (
-      <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
+      <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
     ) : confirming ? (
       <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="m-0 text-[0.8125rem] text-muted-foreground">
@@ -333,7 +337,14 @@ export default function TemplateModal({
                   <Input value={answer} onChange={(e) => { setAnswer(e.target.value); setConfirming(false); }} placeholder={template.question.placeholder} />
                 </label>
               )}
-              {message && <div style={{ color: "var(--destructive)", fontSize: "0.8125rem" }}>{message}</div>}
+              {message && (
+                <div
+                  role="alert"
+                  className="rounded-[14px] bg-error-soft px-3 py-2 text-[13px] font-medium leading-[18px] text-[var(--error-soft-foreground)]"
+                >
+                  {message}
+                </div>
+              )}
             </div>
           )}
 

@@ -29,8 +29,23 @@ describe("TemplateModal spend safety", () => {
     const unknown = templateRunReducer(generating, { type: "unknown" });
 
     expect(unknown.phase).toBe("unknown");
-    expect(unknown.message).toMatch(/Library/);
+    expect(unknown.message).toBe("This didn't finish. Check your Library in a minute.");
     expect(isTemplatePaidConfirmAvailable(unknown)).toBe(false);
+  });
+
+  it("uses the safe alert treatment and a neutral Close action for an unknown outcome", () => {
+    const src = fs.readFileSync(TEMPLATE_MODAL, "utf8");
+    const unknownBranch = src.match(/phase === "unknown" \? \(([\s\S]*?)\) : confirming/)?.[1] ?? "";
+
+    expect(unknownBranch).toContain('variant="secondary"');
+    expect(unknownBranch).not.toContain('variant="brand"');
+    expect(src).toContain('role="alert"');
+    expect(src).toContain("bg-error-soft");
+    expect(src).toContain("text-[13px]");
+    expect(src).toContain("leading-[18px]");
+    expect(src).toContain("font-medium");
+    expect(src).toContain("text-[var(--error-soft-foreground)]");
+    expect(src).not.toContain('color: "var(--destructive)"');
   });
 
   it("classifies timeout, lookup failure/null, and incomplete DONE delivery as unknown", async () => {
@@ -66,8 +81,37 @@ describe("TemplateModal spend safety", () => {
     const failed = templateRunReducer(generating, { type: "failed" });
 
     expect(failed.phase).toBe("form");
-    expect(failed.message).toMatch(/try again/i);
+    expect(failed.message).toBe("Generation failed. You weren't charged. Try again.");
     expect(isTemplatePaidConfirmAvailable(failed)).toBe(true);
+  });
+
+  it("only treats FAILED as refunded when the job has no committed result references", async () => {
+    const wait = async () => {};
+    const snapshots = [
+      { status: "FAILED", urls: [], generationIds: [] },
+      { status: "FAILED", urls: [], generationIds: ["gen-1"] },
+      { status: "FAILED", urls: ["/result.png"], generationIds: [] },
+      { status: "FAILED", urls: ["/result.png"], generationIds: ["gen-1"] },
+    ];
+
+    const outcomes = await Promise.all(snapshots.map((snapshot, index) => pollTemplateJob(`job-${index}`, {
+      lookup: async () => snapshot,
+      wait,
+      attempts: 1,
+    })));
+
+    expect(outcomes).toEqual([
+      { kind: "failed" },
+      { kind: "unknown" },
+      { kind: "unknown" },
+      { kind: "unknown" },
+    ]);
+    for (const outcome of outcomes.slice(1)) {
+      expect(outcome.kind).toBe("unknown");
+      const state = templateRunReducer(initialTemplateRunState(), { type: "unknown" });
+      expect(state.message).toBe("This didn't finish. Check your Library in a minute.");
+      expect(isTemplatePaidConfirmAvailable(state)).toBe(false);
+    }
   });
 
   it("classifies an explicit FAILED separately from a complete DONE delivery", async () => {
