@@ -86,3 +86,18 @@ Some older docs predate this stack and can mislead: `docs/INDEX.md`, root `TODOS
 Root `README.md` and `.env.example` were rebuilt against reality on 2026-07-07 and are
 current as of that date. When a doc and current code disagree on STATUS (not on LAW),
 trust the code + this file's reading order — not the stale snapshot.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and Wayfinder maps are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+FIKIRTIVE uses one shared domain context at root `CONTEXT.md`, with decisions under
+`docs/adr/`. See `docs/agents/domain.md`.
