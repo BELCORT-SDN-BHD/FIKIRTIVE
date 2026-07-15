@@ -20,11 +20,17 @@ const m = vi.hoisted(() => {
   const generateVideo = vi.fn();
   const generateImages = vi.fn();
   const creditLedgerFindFirst = vi.fn();
+  const storagePresignedGet = vi.fn();
+  const storagePut = vi.fn();
+  const assetUpsert = vi.fn();
+  const generationCreate = vi.fn();
+  const storage = { presignedGet: storagePresignedGet, put: storagePut };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     genJob: { findUnique: genJobFindUnique, update: genJobUpdate, updateMany: genJobUpdateMany },
     project: { findFirst: projectFindFirst },
-    generation: { findFirst: generationFindFirst },
+    generation: { findFirst: generationFindFirst, create: generationCreate },
+    asset: { upsert: assetUpsert },
     entity: { findMany: entityFindMany },
     chatMessage: { findFirst: chatMessageFindFirst, create: chatMessageCreate },
     creditLedger: { findFirst: creditLedgerFindFirst },
@@ -33,12 +39,13 @@ const m = vi.hoisted(() => {
   return {
     prisma, genJobFindUnique, genJobUpdate, genJobUpdateMany, projectFindFirst, generationFindFirst,
     entityFindMany, chatMessageFindFirst, chatMessageCreate, refundReservation, settleCredits, generateVideo,
-    generateImages, creditLedgerFindFirst,
+    generateImages, creditLedgerFindFirst, storagePresignedGet, storagePut, assetUpsert,
+    generationCreate, storage,
   };
 });
 
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
-vi.mock("../storage.js", () => ({ storage: { presignedGet: vi.fn(), put: vi.fn() } }));
+vi.mock("../storage.js", () => ({ storage: m.storage }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
 vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
@@ -69,6 +76,10 @@ const job = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.storage.presignedGet = m.storagePresignedGet;
+  m.storage.put = m.storagePut;
+  m.prisma.asset = { upsert: m.assetUpsert };
+  m.prisma.generation = { findFirst: m.generationFindFirst, create: m.generationCreate };
   m.genJobFindUnique.mockResolvedValue(job);
   m.projectFindFirst.mockResolvedValue({ id: "p1" });
   m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // wins the QUEUED→GENERATING claim
@@ -76,6 +87,8 @@ beforeEach(() => {
   m.chatMessageFindFirst.mockResolvedValue({ seq: 1 });
   m.chatMessageCreate.mockResolvedValue({ id: "msg1" });
   m.creditLedgerFindFirst.mockResolvedValue(null); // no REFUND row by default
+  m.assetUpsert.mockResolvedValue({ id: "asset1" });
+  m.generationCreate.mockResolvedValue({ id: "gen_out1" });
 });
 
 describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
@@ -307,18 +320,13 @@ describe("handleGen — worker-crash recovery (EP-A4 route ③ / 六态⑥恢复
   });
 });
 
-describe("W-B3-E-P PROBE — count 2-4 sub-cell partial inside ONE GenJob (escalation evidence, NOT an endorsement)", () => {
-  // PROBE (修复轮 v2, NODE-307-R1 item 2)。事实坐实:gen 权威链没有子格级 settle/refund——
-  // 一个 count=2-4 的 image GenJob 是「一笔 hold、一次 provider 调用、一个 finalizer」;
-  // 真实 BytePlus 的 partial 形态(byteplus.ts:50-60)是任一 shortfall 且 ≥1 已计费 →
-  // 整批抛 chargedError("only X/N usable") → handleGen 整单终态 FAILED + 整笔 hold 全额退款
-  // (用户一格都不付;founder 吸收已计费子图成本)。这与 spec 不变量「count 1-4 部分失败只退
-  // 失败格」(b3-block-spec.md:301,按 NODE-307-R1 读作子格粒度)冲突——权威根本没有子格账
-  // 可退 → 依工单红线停手上报:见 mailbox WO-B3-E-P/r001/ESCALATION.md(R-EP-02)。
-  // 本 describe 只锁「现状事实」;若裁决改权威,测试必须随之翻转;绿 ≠ 背书。
+describe("handleGen — count 2-4 exactly-count guard (D-035 / issue #311)", () => {
+  // D-035 裁定：一个 image GenJob 是「一笔 hold、一次 provider 调用、一个 finalizer」。
+  // provider 已收费却少返/多返时，worker 必须把整单 terminal fail-closed：全额释放 hold、
+  // 零 settle、零影子资产、零 provider retry，同时保留 spent/spentUsd 成本审计。
   const countJob = { ...imageJob, count: 4 };
 
-  it("PROBE R-EP-02a: the real byteplus partial form (2/4 billed → chargedError) fail-closes the WHOLE job with a FULL refund — no sub-cell settle exists", async () => {
+  it("the real BytePlus charged partial form fail-closes the whole job with a full refund", async () => {
     m.genJobFindUnique.mockResolvedValue(countJob);
     m.generateImages.mockRejectedValue(Object.assign(new Error("byteplus image: only 2/4 usable"), { charged: true }));
 
@@ -332,28 +340,60 @@ describe("W-B3-E-P PROBE — count 2-4 sub-cell partial inside ONE GenJob (escal
     expect(m.settleCredits).not.toHaveBeenCalled(); // and no partial settle for the 2 usable sub-images
   });
 
-  it("PROBE R-EP-02b: a silent short return (3 of 4) commits and settles the FULL count=4 hold — the worker has no outputs.length==count guard", async () => {
-    // No CURRENT adapter produces this shape (byteplus throws chargedError on any shortfall;
-    // MockProvider returns exactly count) — this locks the LATENT adapter-contract dependence:
-    // the exactly-count guarantee lives ONLY in the adapters, not in handleGen or the ledger.
+  it("commits and settles a normal exact count=4 return", async () => {
     m.genJobFindUnique.mockResolvedValue(countJob);
-    m.generateImages.mockResolvedValue([
-      { bytes: new Uint8Array([1]), ext: "png" },
-      { bytes: new Uint8Array([2]), ext: "png" },
-      { bytes: new Uint8Array([3]), ext: "png" },
-    ]); // 3 outputs for a count=4 job
-    const storageModule = await import("../storage.js");
-    (storageModule.storage as unknown as { put: (o: string, b: Uint8Array, e: string) => Promise<{ contentHash: string }> }).put =
-      vi.fn(async (_o, b) => ({ contentHash: `hash-${b[0]}` }));
-    const generationCreate = vi.fn(async () => ({ id: `gen_out${generationCreate.mock.calls.length + 1}` }));
-    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
-    m.prisma.generation.create = generationCreate;
+    m.generateImages.mockResolvedValue([1, 2, 3, 4].map((byte) => ({ bytes: new Uint8Array([byte]), ext: "png" })));
+    m.storagePut.mockImplementation(async (_owner, bytes: Uint8Array) => ({ contentHash: `hash-${bytes[0]}` }));
+    let created = 0;
+    m.generationCreate.mockImplementation(async () => ({ id: `gen_out${++created}` }));
 
     await handleGen({ genJobId: "g1" }, 0);
 
-    expect(generationCreate).toHaveBeenCalledTimes(3); // 3 rows delivered on a 4-priced job
-    expect(m.settleCredits).toHaveBeenCalledTimes(1); // the FULL count=4 hold settles (charged for 4)
-    expect(m.refundReservation).not.toHaveBeenCalled(); // no partial refund for the missing 4th
+    expect(m.generateImages).toHaveBeenCalledTimes(1);
+    expect(m.storagePut).toHaveBeenCalledTimes(4);
+    expect(m.assetUpsert).toHaveBeenCalledTimes(4);
+    expect(m.generationCreate).toHaveBeenCalledTimes(4);
+    expect(m.settleCredits).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.generationIds)).toBeTruthy();
     expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeTruthy();
+  });
+
+  it.each([
+    ["empty", []],
+    ["short", [
+      { bytes: new Uint8Array([1]), ext: "png" },
+      { bytes: new Uint8Array([2]), ext: "png" },
+      { bytes: new Uint8Array([3]), ext: "png" },
+    ]],
+    ["over", [
+      { bytes: new Uint8Array([1]), ext: "png" },
+      { bytes: new Uint8Array([2]), ext: "png" },
+      { bytes: new Uint8Array([3]), ext: "png" },
+      { bytes: new Uint8Array([4]), ext: "png" },
+      { bytes: new Uint8Array([5]), ext: "png" },
+    ]],
+  ])("R-EP-02b regression: a silent %s return terminal-fails before storage or DB output commit", async (_label, outputs) => {
+    m.genJobFindUnique.mockResolvedValue(countJob);
+    m.generateImages.mockResolvedValue(outputs);
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow(/expected 4 outputs/);
+
+    expect(m.generateImages).toHaveBeenCalledTimes(1); // paid provider is never retried
+    expect(m.storagePut).not.toHaveBeenCalled();
+    expect(m.assetUpsert).not.toHaveBeenCalled();
+    expect(m.generationCreate).not.toHaveBeenCalled();
+    expect(m.settleCredits).not.toHaveBeenCalled();
+    expect(m.refundReservation).toHaveBeenCalledTimes(1);
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
+
+    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(failedUpdate).toBeTruthy();
+    expect(failedUpdate![0].data).toMatchObject({ status: "FAILED", spent: true });
+    expect(failedUpdate![0].data.spentUsd).toBeCloseTo(0.16); // frozen count=4 COGS remains auditable
+    expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeFalsy();
+    expect(m.genJobUpdateMany.mock.calls.some((c) => Array.isArray(c[0]?.data?.generationIds))).toBe(false);
+    expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "QUEUED")).toBeFalsy();
+    expect(m.chatMessageCreate.mock.calls.some((c) => c[0]?.data?.kind === "GEN_RESULT")).toBe(false);
   });
 });

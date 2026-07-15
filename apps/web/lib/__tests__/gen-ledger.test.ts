@@ -15,7 +15,8 @@
  *
  * Proves (EP-A2/A3/A5 + EP-A4 route ④ + 六态②):
  *  - quote == reserve == settle for a plain image batch (count 1-4) AND a plain video job;
- *  - the same idempotency key replays (sequential AND concurrent) without a second charge;
+ *  - the same idempotency key replays while ACTIVE (sequential AND concurrent) without a second charge;
+ *  - under D-035, reusing a plain key after DONE/FAILED is an authorized new generation;
  *  - a retry after FAILED is a NEW job that settles once — the failed job's late finalizers no-op;
  *  - across a count 1-4 job set with partial failure: reserved == settled + refunded, and ONLY
  *    the failed jobs are refunded (each failed job releases its FULL count-hold);
@@ -155,9 +156,9 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job
 
 describe("W-B3-E-P ledger — EP-A5(在途面): same-key replay while the first job is ACTIVE never double-charges", () => {
   // Scope honesty (NODE-307-R1 item 1): these two cases cover the IN-FLIGHT (QUEUED/GENERATING)
-  // replay only — the dedup class the active-only partial index implements. The TERMINAL-state
-  // (post-DONE) same-key replay is a different fact: see the PROBE describe below + the
-  // WO-B3-E-P r001 ESCALATION record. Do not read this title as "all replays are deduped".
+  // replay only — the dedup class the active-only partial index implements. Under D-035, a
+  // TERMINAL-state (post-DONE/FAILED) same-key replay is a new authorized generation; see below.
+  // Do not read this title as "all replays are deduped".
   it("a sequential double-submit of the same key reuses the in-flight job — one job, one RESERVE", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
@@ -229,17 +230,12 @@ describe("W-B3-E-P ledger — EP-A5: a retry is a NEW job that settles once; the
   });
 });
 
-describe("W-B3-E-P PROBE — terminal-state plain-key replay (escalation evidence, NOT an endorsement)", () => {
-  // PROBE (修复轮 v2, NODE-307-R1 item 1)。事实坐实:plain idempotency key 是 IN-FLIGHT
-  // double-submit 守卫,不是 exactly-once-ever——fast path 只匹配 QUEUED/GENERATING
-  // (gen-actions.ts:144-150),partial-unique 索引也是 active-only
-  // (migrations/20260612140000_genjob_idempotency:5-12,与 cowork 的 all-status 索引形成
-  // 有意的三键类设计,见 core/gen.ts:197-202 注释)。因此终态(DONE)后同键重放会创建第二个
-  // job + 第二笔预留。这与 spec 不变量「同幂等键重放不重复扣款」(b3-block-spec.md:301 未加
-  // 限定语)冲突 → 依工单红线停手上报:见 mailbox WO-B3-E-P/r001/ESCALATION.md(R-EP-01)。
-  // 本 describe 只锁「现状事实」供裁决引用——若 founder 裁决改权威,这两个测试必须随之翻转;
-  // 绿 ≠ 背书。
-  it("PROBE R-EP-01a: after DONE, the same plain key creates a NEW job and a SECOND reservation (double-reserve fact)", async () => {
+describe("W-B3-E-P ledger — D-035 terminal-state plain-key replay starts a new authorized generation", () => {
+  // D-035 defines plain keys as IN-FLIGHT double-submit guards, not exactly-once-ever keys:
+  // the fast path matches QUEUED/GENERATING and the partial-unique index is active-only.
+  // Reuse after DONE/FAILED therefore represents explicit new consumption, with a new job and
+  // reservation. Cowork and factory keys retain their separate durable replay semantics.
+  it("D-035: after DONE, the same plain key creates a NEW job and a SECOND reservation", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
@@ -251,7 +247,7 @@ describe("W-B3-E-P PROBE — terminal-state plain-key replay (escalation evidenc
 
     const replay = idOf(await startGen(req)); // SAME key, after the terminal state
 
-    // observed authority behavior — the replay is NOT deduped:
+    // D-035 authority behavior — terminal replay is a new authorized generation:
     expect(replay.disposition).toBe("fresh");
     expect(replay.id).not.toBe(first.id);
     expect(await jobs(ownerId, projectId)).toHaveLength(2);
@@ -261,7 +257,7 @@ describe("W-B3-E-P PROBE — terminal-state plain-key replay (escalation evidenc
     expect(acct.reserved).toBe(IMG);
   });
 
-  it("PROBE R-EP-01b: after FAILED(+refund), the same plain key also creates a new job — net-safe (old hold refunded) but not deduped", async () => {
+  it("D-035: after FAILED(+refund), the same plain key creates a new job with only the new hold", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
@@ -285,8 +281,8 @@ describe("W-B3-E-P ledger — across INDEPENDENT jobs: reserved == settled + ref
   // Scope honesty (NODE-307-R1 item 2): this proves the PER-JOB accounting identity across a
   // set of independent count-1..4 jobs — it is NOT a sub-cell partial-failure proof for a
   // single count=2-4 GenJob. The authority has no sub-cell settle/refund (one provider call,
-  // one hold, one finalizer per job); the real in-job partial form is probed at the worker
-  // layer (gen.test.ts PROBE) and escalated — see the WO-B3-E-P r001 ESCALATION record.
+  // one hold, one finalizer per job). The worker layer now pins D-035's exact-count,
+  // all-or-nothing behavior for a single count=2-4 GenJob (gen.test.ts).
   it("across count=1/2/4 image jobs + a video job, 2 failed JOBS release exactly their own full holds", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
