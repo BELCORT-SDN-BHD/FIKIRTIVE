@@ -22,7 +22,7 @@
     "lint": "pnpm -r lint",
     "lint:tenancy": "bash scripts/check-no-raw-prisma.sh",
     "lint:skills": "bash scripts/check-skill-imports.sh",
-    "lint:otto-cli": "node scripts/check-otto-cli-fence.mjs",
+    "lint:otto-cli": "node scripts/check-otto-cli-fence.mjs --self-test && node scripts/check-otto-cli-fence.mjs",
     "lint:parity": "corepack pnpm --filter @fikirtive/otto build && bash scripts/check-parity.sh",
     "lint:margin": "corepack pnpm --filter @fikirtive/core build && node scripts/check-margin-floor.mjs",
     "backup:plan": "corepack pnpm --filter \"./packages/*\" build && corepack pnpm --filter @fikirtive/worker build && node scripts/db-backup-plan.mjs",
