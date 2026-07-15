@@ -643,6 +643,9 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });
     }
     spent = true; // the paid call has returned — past here, a failure must not retry
+    if (outputs.length !== job.count) {
+      throw new Error(`provider returned ${outputs.length} outputs; expected ${job.count} outputs`);
+    }
 
     // store every output's bytes in R2 FIRST (content-addressed → reusable on a
     // retry), THEN create the rows + write the resume marker ATOMICALLY in one

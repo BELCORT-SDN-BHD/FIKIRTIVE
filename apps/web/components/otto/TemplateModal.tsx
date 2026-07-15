@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useReducer, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,123 @@ import type { EntityDTO } from "@/lib/types";
 import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
 
-type Phase = "form" | "generating" | "done";
+type Phase = "form" | "generating" | "done" | "unknown";
+
+export type TemplateRunState = {
+  phase: Phase;
+  message: string | null;
+  resultUrl: string | null;
+  resultGenId: string | null;
+};
+
+type TemplateRunEvent =
+  | { type: "start" }
+  | { type: "explicit-error"; message: string }
+  | { type: "failed" }
+  | { type: "unknown" }
+  | { type: "done"; url: string; genId: string }
+  | { type: "clear-message" }
+  | { type: "reset" };
+
+export function initialTemplateRunState(): TemplateRunState {
+  return { phase: "form", message: null, resultUrl: null, resultGenId: null };
+}
+
+export function isTemplatePaidConfirmAvailable(state: TemplateRunState): boolean {
+  return state.phase === "form";
+}
+
+export function templateRunReducer(state: TemplateRunState, event: TemplateRunEvent): TemplateRunState {
+  switch (event.type) {
+    case "start":
+      return { phase: "generating", message: null, resultUrl: null, resultGenId: null };
+    case "explicit-error":
+      return { ...state, phase: "form", message: event.message };
+    case "failed":
+      return { ...state, phase: "form", message: "Generation failed — you weren't charged. You can try again." };
+    case "unknown":
+      return {
+        ...state,
+        phase: "unknown",
+        message: "We couldn't confirm whether this generation finished. Check your Library before starting another paid generation.",
+      };
+    case "done":
+      return { phase: "done", message: null, resultUrl: event.url, resultGenId: event.genId };
+    case "clear-message":
+      return { ...state, message: null };
+    case "reset":
+      return initialTemplateRunState();
+  }
+}
+
+export type TemplatePollOutcome =
+  | { kind: "done"; url: string; genId: string }
+  | { kind: "failed" }
+  | { kind: "unknown" };
+
+type TemplateStartOutcome =
+  | { kind: "started"; id: string }
+  | { kind: "explicit-error"; message: string }
+  | { kind: "unknown" };
+
+export async function startTemplateJob(
+  request: unknown,
+  starter: (request: unknown) => ReturnType<typeof startGen> = startGen,
+): Promise<TemplateStartOutcome> {
+  try {
+    const started = await starter(request);
+    return "error" in started
+      ? { kind: "explicit-error", message: started.error }
+      : { kind: "started", id: started.id };
+  } catch {
+    return { kind: "unknown" };
+  }
+}
+
+type TemplateJobSnapshot = {
+  status: string;
+  urls: string[];
+  generationIds: string[];
+};
+
+export async function pollTemplateJob(
+  jobId: string,
+  options: {
+    lookup?: (jobId: string) => Promise<TemplateJobSnapshot | null>;
+    wait?: () => Promise<void>;
+    attempts?: number;
+    isCancelled?: () => boolean;
+  } = {},
+): Promise<TemplatePollOutcome> {
+  const lookup = options.lookup ?? getGenJob;
+  const wait = options.wait ?? (() => new Promise((resolve) => setTimeout(resolve, 1500)));
+  const isCancelled = options.isCancelled ?? (() => false);
+
+  for (let i = 0; i < (options.attempts ?? 60); i++) {
+    if (isCancelled()) return { kind: "unknown" };
+    try {
+      await wait();
+    } catch {
+      return { kind: "unknown" };
+    }
+    if (isCancelled()) return { kind: "unknown" };
+    let job: TemplateJobSnapshot | null;
+    try {
+      job = await lookup(jobId);
+    } catch {
+      return { kind: "unknown" };
+    }
+    if (isCancelled()) return { kind: "unknown" };
+    if (!job) return { kind: "unknown" };
+    if (job.status === "DONE") {
+      const url = job.urls[0];
+      const genId = job.generationIds[0];
+      return url && genId ? { kind: "done", url, genId } : { kind: "unknown" };
+    }
+    if (job.status === "FAILED") return { kind: "failed" };
+  }
+  return { kind: "unknown" };
+}
 
 export default function TemplateModal({
   template,
@@ -43,62 +159,37 @@ export default function TemplateModal({
   const [sourceGenId, setSourceGenId] = useState<string | null>(null);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
-  const [phase, setPhase] = useState<Phase>("form");
-  const [resultUrl, setResultUrl] = useState<string | null>(null);
-  const [resultGenId, setResultGenId] = useState<string | null>(null);
+  const [run, dispatchRun] = useReducer(templateRunReducer, initialTemplateRunState());
+  const { phase, message, resultUrl, resultGenId } = run;
   const [detailOpen, setDetailOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
 
   async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setError(null);
+    dispatchRun({ type: "clear-message" });
     setUploading(true);
     try {
       const outcome = await uploadFilesDirect([file], () => {});
       const res = await finalizeCandidateUploads(projectId, "", [], outcome.files);
       if ("error" in res) {
-        setError(res.error);
+        dispatchRun({ type: "explicit-error", message: res.error });
       } else if (res.generationIds.length === 0) {
-        setError("Upload failed — please try another image.");
+        dispatchRun({ type: "explicit-error", message: "Upload failed — please try another image." });
       } else {
         setSourceGenId(res.generationIds[0]);
         setThumbUrl(URL.createObjectURL(file));
         setConfirming(false);
       }
     } catch {
-      setError("Upload failed — please try again.");
+      dispatchRun({ type: "explicit-error", message: "Upload failed — please try again." });
     } finally {
       setUploading(false);
     }
   }
 
-  async function pollJob(jobId: string): Promise<{ url: string; genId: string } | null> {
-    for (let i = 0; i < 60; i++) {
-      if (cancelledRef.current) return null;
-      await new Promise((r) => setTimeout(r, 1500));
-      if (cancelledRef.current) return null;
-      let job;
-      try {
-        job = await getGenJob(jobId);
-      } catch {
-        return null;
-      }
-      if (cancelledRef.current) return null;
-      if (!job) return null;
-      if (job.status === "DONE") {
-        const url = job.urls[0];
-        const genId = job.generationIds[0];
-        return url && genId ? { url, genId } : null;
-      }
-      if (job.status === "FAILED") return null;
-    }
-    return null;
-  }
-
   const canGenerate =
-    !uploading && !!sourceGenId && (!template.question || answer.trim().length > 0) && phase === "form";
+    !uploading && !!sourceGenId && (!template.question || answer.trim().length > 0) && isTemplatePaidConfirmAvailable(run);
 
   useEffect(() => {
     idempotencyKeyRef.current = null;
@@ -114,41 +205,49 @@ export default function TemplateModal({
   }
 
   async function onGenerate() {
-    if (!sourceGenId || phase !== "form" || inFlightRef.current) return;
+    if (!sourceGenId || !isTemplatePaidConfirmAvailable(run) || inFlightRef.current) return;
     inFlightRef.current = true;
-    setError(null);
     setConfirming(false);
-    setPhase("generating");
+    dispatchRun({ type: "start" });
     try {
-      const { image } = await getActiveGenModels();
-      const started = await startGen({
+      let image: string;
+      let prompt: string;
+      try {
+        ({ image } = await getActiveGenModels());
+        prompt = buildTemplatePrompt(template, answer);
+      } catch {
+        if (!cancelledRef.current) {
+          dispatchRun({ type: "explicit-error", message: "Couldn't prepare this generation. Please try again." });
+        }
+        return;
+      }
+
+      const started = await startTemplateJob({
         projectId,
         kind: "image",
         sourceGenerationId: sourceGenId,
-        prompt: buildTemplatePrompt(template, answer),
+        prompt,
         model: image,
         count: 1,
         idempotencyKey: templateRunKey(),
       });
-      if ("error" in started) {
-        setError(started.error);
-        setPhase("form");
-        return;
-      }
-      const out = await pollJob(started.id);
       if (cancelledRef.current) return;
-      if (!out) {
-        setError("Generation failed — please try again.");
-        setPhase("form");
+      if (started.kind === "unknown") {
+        dispatchRun({ type: "unknown" });
         return;
       }
-      setResultUrl(out.url);
-      setResultGenId(out.genId);
-      setPhase("done");
-    } catch {
-      if (!cancelledRef.current) {
-        setError("Generation failed — please try again.");
-        setPhase("form");
+      if (started.kind === "explicit-error") {
+        dispatchRun({ type: "explicit-error", message: started.message });
+        return;
+      }
+      const out = await pollTemplateJob(started.id, { isCancelled: () => cancelledRef.current });
+      if (cancelledRef.current) return;
+      if (out.kind === "failed") {
+        dispatchRun({ type: "failed" });
+      } else if (out.kind === "unknown") {
+        dispatchRun({ type: "unknown" });
+      } else {
+        dispatchRun({ type: "done", url: out.url, genId: out.genId });
       }
     } finally {
       inFlightRef.current = false;
@@ -161,13 +260,15 @@ export default function TemplateModal({
     phase === "done" ? (
       <>
         <Button type="button" variant="ghost" size="sm" onClick={() => setDetailOpen(true)}>Open in detail</Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => { idempotencyKeyRef.current = null; setPhase("form"); setResultUrl(null); setResultGenId(null); }}>Make another</Button>
+        <Button type="button" variant="ghost" size="sm" onClick={() => { idempotencyKeyRef.current = null; dispatchRun({ type: "reset" }); }}>Make another</Button>
         <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
       </>
     ) : phase === "generating" ? (
       <Button type="button" variant="brand" size="sm" disabled>
         Generating…
       </Button>
+    ) : phase === "unknown" ? (
+      <Button type="button" variant="brand" size="sm" onClick={onClose}>Close</Button>
     ) : confirming ? (
       <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="m-0 text-[0.8125rem] text-muted-foreground">
@@ -232,7 +333,7 @@ export default function TemplateModal({
                   <Input value={answer} onChange={(e) => { setAnswer(e.target.value); setConfirming(false); }} placeholder={template.question.placeholder} />
                 </label>
               )}
-              {error && <div style={{ color: "var(--destructive)", fontSize: "0.8125rem" }}>{error}</div>}
+              {message && <div style={{ color: "var(--destructive)", fontSize: "0.8125rem" }}>{message}</div>}
             </div>
           )}
 

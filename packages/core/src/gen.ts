@@ -196,9 +196,9 @@ export const genRequest = z
     model: z.string().min(1).max(40).default("seedream"),
     // REQUIRED double-submit key — every spend request must carry one so it ALWAYS
     // flows through the dedup machinery (startGen pre-check + the partial-unique index);
-    // a keyless request could otherwise bypass dedup and double-charge. Callers:
-    // frame:<shotId>:<slot> / animate:<shotId> (stable, shot-bound), cowork:<cardId>
-    // (exactly-once-ever), or a per-click newId (GenSpace). Never omit it.
+    // a keyless request could otherwise bypass dedup and double-charge. Callers use
+    // tpl:<templateId>:<runId>, per-click keys for direct Studio actions, cowork:<cardId>
+    // (exactly-once-ever), or batch:<logical hash>:attempt:<attempt hash>. Never omit it.
     idempotencyKey: z.string().min(1).max(80),
     // cowork tag: when set, this gen belongs to a Cowork thread — startGen persists it
     // onto GenJob.threadId so the worker can tag the Generation and the studio views can
