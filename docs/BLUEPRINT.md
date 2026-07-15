@@ -152,9 +152,20 @@ pg-boss 五条队列 + 四类回收器(gen/refgen/LLM 预扣/research 滞留,#12
 
 ## 六、还没盖的区(终局路线,方向已定、图纸未画)
 
-**建设节奏(2026-07-03 定调):不走 funding,直接市场变现、利益最大化 —— Content creation 相关楼最先上线赚钱**,其余新区按收入贡献排队。
+**建设节奏(施工轴,2026-07-03 定调;v2.12 释义 2026-07-16):不走 funding,直接市场变现、利益最大化;Content creation 相关楼仍最先施工,其余新区按收入贡献排队。施工先后不等于商业第一期;商业第一期只有下述三支柱同时真实可用才成立。**
 **GTM 王牌(founder 2026-07-03):dev 团队用 FIKIRTIVE 来 market FIKIRTIVE 并大获成功** —— dogfood 即营销,成功案例本身就是最响的广告(也是最狠的 QA)。
-**落地顺序 = 和声图 P1→P4**(见 `docs/design/2026-07-03-harmony-01-data-model.md` §六):P1 创作变现先锋(工厂三件套,**按 harmony-03 三波路线 + 升级票纪律**)→ P1½ 排期+Routine → P2 消息进场(WhatsApp+第二账道)→ P3 CRM+Campaign → P4 深化。**叙事节奏**:首发故事 = "SEA 的创作超级员工"(先赚钱);**投放闭环是第二章**(创作→广告一人跑通);"一个员工 + 100% 覆盖"是贯穿的结构承诺。
+
+**施工波次(不等于商业 Phase-1)= 和声图 P1→P4**(见 `docs/design/2026-07-03-harmony-01-data-model.md` §六):P1 创作变现先锋(工厂三件套,**按 harmony-03 三波路线 + 升级票纪律**)→ P1½ 排期+Routine → P2 消息进场(WhatsApp+第二账道)→ P3 CRM+Campaign → P4 深化。
+
+**商业第一期可售 destination(v2.12,founder 于 #334 逐项重确认)**必须同时交付三个真实支柱:
+
+1. **品类一流的营销内容**:Otto 正确理解商家、目标、品牌、商品、受众、渠道与创作意图,自己承担营销判断和创意手艺;第一期支持的文案、图片、短视频、Pack 与 Storyboard 必须同时通过理解、判断、手艺、采用和证据五关。老板能直接采用或只做偏好级微调;provider 返回成功、文件可打开、单测通过或一张最好样片都不能冒充完成。Factory 第一期仍为 Coming soon。
+2. **真正可用的发布**:`Reminder-assisted` 可独立作为发布支柱的一期放行模式;`Direct publish` 只按实际通过的 channel × post type 单独点亮。逐帖或精确批次批准是唯一正向外发授权;提醒、权限到达或历史 queue 均不得冒充已发布或发布授权。
+3. **完整 Customer Engagement CRM**:类别和体验完整度对标 respond.io,覆盖 Contact/Identity、导入去重与合并、字段/tags、动态 Segments、Lifecycle、Inbox/历史/搜索/分派、Campaign/Broadcast、Workflows、人工/Otto 接手、退订、回执与报告;老客唤回只是一个内建 playbook,不是模块边界。第一期只要求 WhatsApp 一条顾客渠道真实上线;本期不进入 Salesforce 式 Companies/Deals/Forecast/Quotes/发票收款/完整售后工单深度,也不预建假的 Salesforce 骨架。
+
+**一期完成边界**:三支柱必须全部通过 #334 已批准的功能、质量、UIUX、user flow、真实链路与安全门,再通过全产品 production gate;不得因中间一环通过而局部宣布第一期完成。详细数字门由对齐后的既有计划承接,不得静默降低或用 mock、空页面、单测、精选样片、提醒送达冒充产品完成。
+
+**叙事节奏**:首发故事 = "商家雇一个精明能干的 AI 营销员工,做出品类一流内容、真正发出去,并用完整 Customer Engagement CRM 经营顾客";投放等全城其他能力继续作为后续章节;"完整平台 + 一个员工 + 人与 Otto 使用同一套工具"是贯穿的结构承诺。
 **定价落地**:档位数字以定价终案(判决记录·定价终案节)为准,全部落 config 层、永不硬编码;costing 模型输入已全部闭合(harmony-04)。**P1 必做护栏:BytePlus 资源包余量告警**(包烧完静默跳裸价,10s 档毛利 45%→13%)。
 
 按 founder 的城市群构想,以下新区**方向锁定**,动工前必须各自出 spec 走第五章流程。
@@ -176,10 +187,10 @@ pg-boss 五条队列 + 四类回收器(gen/refgen/LLM 预扣/research 滞留,#12
 | Agency 楼层 | **GoHighLevel(结构同类:sub-accounts/Snapshots)**、ManyChat partner 生态 | 行业开店模板 Otto 化(比静态快照多一层个性化) |
 | 定价结构 | **Zoho(founder 点名:seats+credits 概念参照)**、GHL(档位卖规模)、Canva(本地价范本) | MYR-first + 分市场 + 毛利地板 ≥45% + 永禁 unlimited |
 
-- **CRM 区**(**分阶段:respond.io 级 SMB-lite 起步 → 长到 Salesforce 级深度**,架构按终局设计;联系人主要从对话/广告自动进来,WhatsApp-first;帮商家收款 = 以后且起步不碰资金流)
+- **Customer Engagement CRM 区**(第一期即达到 respond.io 类别与体验完整度,不是三行 SMB-lite 或单次老客唤回;联系人可从对话/广告、CSV、手工与统一 connector 进入;WhatsApp-first。Salesforce 式销售运营深度不是第一期承诺,不为它预建空对象或假页面;未来若进入须另走产品决定与扩建缝)
 - **Campaign 管理区**(**独立 Campaign 对象**,不升格 project —— founder:"要 scale 去 Salesforce 那种,干净最重要";预算/编排/归因/UTM/campaign 级报表)
 - **多平台广告区扩建**:TikTok → Lazada → Shopee(渠道缝已铺好,每平台独立 PR + 独立安全测试,顺序按商业价值定)
-- **排期发布区**(spec 已有,等 App Review;**发布基建必须平台可插拔** —— FB/IG 先行,TikTok/Shopee/Lazada 类全要,加新平台 = 加 adapter 不改核心)
+- **排期发布区**(`Reminder-assisted` 不等 App Review 即可独立验收;`Direct Meta` 按实际通过的 channel × post type 分别通电;**发布基建必须平台可插拔** —— FB/IG 先行,TikTok/Shopee/Lazada 类全要,加新平台 = 加 adapter 不改核心)
 - **全量分析区**(spec 已有)
 - **自动回复/客服区**(**WhatsApp BSP = 第一波入场券**;共享收件箱/Comment-to-DM/AI 客服(O-06 护栏前置);对标 respond.io(KL 同城)+ ManyChat;生命周期 WhatsApp-first,**email 以后但必须建**)
 - **团队协作 + 审批流(租户侧)**(O-13/G-11 拍板"要",founder 硬要求**非常丝滑的体验**:多席位协作、"小编做→老板批→才发布"、评论交接;与宪法第 7 条租户 RBAC 同件设计;Agency 依赖它)
@@ -224,4 +235,5 @@ pg-boss 五条队列 + 四类回收器(gen/refgen/LLM 预扣/research 滞留,#12
 | 2026-07-07 | v2.8 解读边界附则入宪(第二章末):六句澄清(豁免只管 Otto 半边/租户之间 vs 平台侧/实时=秒级/开发花费 vs routine 预算/webhook 非操作面/credits-only 限用户面),源自措辞审计 7 条(B1 已由 v2.7 处理)+ 回填 v2.7 批准列(founder:"照你说的做") | 已定稿(#198 合并) |
 | 2026-07-09 | v2.9 零学习曲线定律入宪(第 11 条):用户只需会"说要什么"和"点批准",学习成本按缺陷处理;三查(Otto 一键入口/人工面自解释/一次会话见成果)+ 信任阶梯注(实力是信任引擎,钱路闸是安全带)+ 回填 v2.8 批准列(founder:"入宪") | 已定稿(#204 合并) |
 | 2026-07-10 | **v2.10 补记**(修订实际发生于 #206,表行漏记,按补记规则追加):释宪附则⑦ —— 平台官方协议作为我方消费接口不在"对外 MCP"禁区(founder 口裁并亲合) | 已定稿(#206 合并) |
-| 2026-07-10 | v2.11 R5 双脑修宪包(founder 逐条批复 D1/D2/地雷一二裁,总审查员起草):第一章定位句升级(世界级 ALL-IN-ONE 营销与营收增长 OS,禁裸"营收 OS")+ 边界四层表入宪(售前成交对话归本体/经营事实只读/售后交接/"自动回复(客服)"旧句改义)+ 终局链补"口碑与复购/唤回" + 第 8 条新增"评价×奖励合体流"永久不做 + 回填 v2.9 批准列 + v2.10 补记。档案:docs/strategy/SOL-R5-2026-07-10.md + TWO-BRAIN-MEMO R5 节 | 待 founder 终审 |
+| 2026-07-10 | v2.11 R5 双脑修宪包(founder 逐条批复 D1/D2/地雷一二裁,总审查员起草):第一章定位句升级(世界级 ALL-IN-ONE 营销与营收增长 OS,禁裸"营收 OS")+ 边界四层表入宪(售前成交对话归本体/经营事实只读/售后交接/"自动回复(客服)"旧句改义)+ 终局链补"口碑与复购/唤回" + 第 8 条新增"评价×奖励合体流"永久不做 + 回填 v2.9 批准列 + v2.10 补记。档案:docs/strategy/SOL-R5-2026-07-10.md + TWO-BRAIN-MEMO R5 节 | 已定稿(#212 合并) |
+| 2026-07-16 | v2.12 第一期可售产品纵切修订(founder 于 #334 逐项重确认,经 #336 统一批准起草):澄清和声图 P1→P4 是施工波次而非商业分期;第一期须同时完成品类一流内容、真正可用发布、完整 Customer Engagement CRM 三支柱及各自验收门;CRM 第一期对标 respond.io、不进入 Salesforce 深度;WhatsApp 为一期唯一必须真实上线的顾客渠道;更新首发叙事 + 回填 v2.11 批准列 | 待 founder 终审 |
