@@ -40,6 +40,7 @@ jobs:
       - run: pnpm -r typecheck
       # Hard spend-fence: skills must not import the fal provider / reserveCredits directly.
       - run: bash scripts/check-skill-imports.sh
+      - run: pnpm lint:otto-cli
       # Northstar prototype fence: app/northstar + app/northstar-immersive + components/northstar
       # are DESIGN files (pure client prototypes) — must never import server actions, @fikirtive/db,
       # @fikirtive/generation, or auth/server-only modules.
