@@ -1,12 +1,14 @@
-# B8 一期 · Campaign 8 行 + CRM 3 行 —— spec（已冻结）
+# B8 · Campaign + Contact/Identity/Segment 底座 —— 原 11 行冻结稿（D-038 对齐）
 
-> **性质**：wayfinder 票 **#296** Resolution（founder 12 槽判决，2026-07-14 晚，12/12 全清）喂 to-spec 的产物。**已冻结**（founder 2026-07-14 晚过目授权：「可以，你认为可以就行」+ control plane 对账复核通过）；schema 类实施 PR 仍按 AGENTS.md founder-only 类别处理。日期 2026-07-14。
+> **性质**：wayfinder 票 **#296** Resolution（founder 12 槽判决，2026-07-14 晚，12/12 全清）喂 to-spec 的产物。其 11 行 Campaign/CRM 底座机械合同曾按 D-034 冻结；schema 类实施 PR 仍按 AGENTS.md founder-only 类别处理。日期 2026-07-14。
+> **2026-07-16 D-038 上位对齐（Blueprint v2.12/#334）**：本稿不再代表「商业第一期全部」或「完整 CRM 的唯一 to-tickets 依据」。它只控制 B0-51～61 的 Campaign + Contact/Identity/Segment 底座，兼容的 schema、动作、钱路与安全合同继续有效；任何把「Campaign 8 + CRM 3」等同 Phase‑1 完成、把 CRM 缩成三页/三行、把老客唤回当独立产品支柱、或把 EasyStore/Gupshup 写成核心依赖的旧含义均被取代。完整 Customer Engagement CRM 由 B5～B8 既有行横切承接：Contact/Identity、导入/去重/合并、标准/自定义字段、tags、动态 Segments、Lifecycle、全渠道 Inbox/历史/搜索/分派、Campaign/Broadcast、Workflows、human/Otto takeover、unsubscribe、receipts 与 reports；Phase‑1 真实顾客渠道只有 WhatsApp，Gupshup 只是首个可替换 adapter。完整 release contract 与 UIUX/user-flow 门见总计划「七·甲」。本修订不新增 schema/ID，不迁任何实现状态。
+> **R-010 schema authority 硬停**：「兼容的合同继续有效」只指不存在冲突的机械部分。本稿/#314 的 `(ownerId,channel,externalId)` identity、Contact consent 字段、Campaign `utmBase` 与 B2 v1.2 已冻结的 issuer/version identity、`ConsentEvent` 四轴、结构化 `utmJson` 三处互斥。D-038 不选择真源；本 PR 不改 schema。三处须经独立 Founder-approved schema alignment 后才可进入施工。
 > **判决真源**：①issue #296 Resolution（D-1～D-12 终局）②issue #294 Resolution（授权信封：精确清单式+指纹保鲜+72h）③issue #295 Resolution（停按钮：基线三分流+单粒度+对象级插手）④`docs/research/GRILL-VERDICTS-2026-07-03.md` 2026-07-14 追加节（审批粒度 :259 / 停按钮 :260 / 三环卖法 / 建卖两图）。
-> **设计底稿**：`docs/design/route-b/2026-07-12-b8-campaign-design.md`（Campaign 8 行）+ `docs/design/route-b/2026-07-12-b8-crm-design.md`（CRM 3 行）——本 spec 只取一期 11 行相关部分；总图 = 外档 `drafts/B8-DESIGN-DRAFT-2026-07-14.md`。
+> **设计底稿**：`docs/design/route-b/2026-07-12-b8-campaign-design.md`（Campaign 8 行）+ `docs/design/route-b/2026-07-12-b8-crm-design.md`（CRM 3 行）——本 spec 只取原 11 行底座相关部分；无需依赖仓库外草稿即可恢复本稿依据。
 > **范围锚**：`docs/ops/route-b/matrix/08-B8.md` 的 B0-51～B0-61（文件第 7～17 行，§八逐行对账）。**数据上位**：`docs/design/2026-07-03-harmony-01-data-model.md`。**缝配方**：`docs/review/EXPANSION-SEAMS.md`。
-> **同批同构件**：`drafts/SPEC-ENVELOPE-STOP-20260714.md`（#294/#295 图纸草稿）——本 spec 的打包总价页💰与停按钮两节与之**同构**，机器细节以该稿为准，本文只写 Campaign 化身处。
+> **同批同构件**：[`2026-07-14-envelope-stop-design.md`](2026-07-14-envelope-stop-design.md)（#294/#295 冻结图纸）——本 spec 的打包总价页💰与停按钮两节与之**同构**，机器细节以该稿为准，本文只写 Campaign 化身处。
 > **纪律**：**零发明**——每条设计指回判决原文或两份设计图原文；拿不准的进 §七假设台账或 §九留白。语言华语（宪法 9）；生成 brief 英文；界面文案英文 sentence case（founder 设计罗盘）。💰行变真必过 `money-safety-review`。
-> **去向**：founder 过目 → PR 入 repo `docs/superpowers/specs/` → to-tickets → harness 施工单。
+> **当前去向**：只把不涉及 R-010 的机械部分作为 B0-51～61 后续施工输入；identity/consent/UTM 三处不得派工。冲突闭合后，本稿才可与 B5～B7 及总计划「七·甲」共同进入后续 to-spec/to-tickets；任何时候都不得单独签发为完整商业 Phase‑1。
 
 ---
 
@@ -14,8 +16,8 @@
 
 | 术语 | 人话 |
 |---|---|
-| B0-51～B0-61 | B8 一期 11 条能力行（`08-B8.md` 台账行号，一行=一件商家能用的事） |
-| 一期 = 11 行 | Campaign 8 行（B0-51～58）+ CRM 3 行（B0-59～61）；respond.io 级起步，架构按 Salesforce 级终局设计（红旗三） |
+| B0-51～B0-61 | B8 的 11 条底座能力行（`08-B8.md` 台账行号；不是商业第一期全部） |
+| 原 11 行 slice | Campaign 8 行（B0-51～58）+ Contact/Identity/Segment 底座 3 行（B0-59～61）；完整 Customer Engagement CRM 横切 B5～B8，Salesforce 深度明确不在 Phase‑1 |
 | D-1～D-12 | founder 2026-07-14 对 #296 草案 12 个决定槽的逐槽判决（本 spec 的直接上级判决） |
 | Campaign 独立对象 | "活动"是自己的一张表，不升格 project（红旗六："干净最重要"） |
 | Contact / ContactIdentity | 客户档案 / 同一客户在各渠道的身份（WhatsApp 号、IG 帐号…），多身份指向一人 |
@@ -34,27 +36,27 @@
 
 ---
 
-## 一、一期范围：11 行逐行对号 + 判决引用
+## 一、B8 底座范围：11 行逐行对号 + 判决引用
 
-**卖图地位（D-1 = A）**：Campaign 打包**一期开门 = 卖点**。总图 §2.1 的"停下标注"（三环卖法 vs 旧上市点）由本判决闭合：Campaign 打包 = 环 1（创作）+ 环 2（发布）捆着卖，founder 裁定算第一期卖点，不挂 Coming soon。CRM 三行仍是环 3（唤回）的对象载体（CRM 设计图 §1.1 总纲）。
+**D-038 修订后的地位**：D-1 的 Campaign 打包机械范围保留，但它不再单独定义商业 Phase‑1 或把三条 CRM 底座行当成完整第三支柱。三支柱必须共同通过；完整 Customer Engagement CRM 是 B5～B8 的横切结果。
 
 | 行 | 能力（人话） | 一期做到 | 判决/出处 |
 |---|---|---|---|
 | B0-51 | Campaign 独立对象（最薄容器） | 一张最薄表：名字/状态/目标/起止/UTM 基串/提案快照；GM-03 目标进度条**字段**预留（UI 随 P3） | 红旗六；campaign 设计图 §六A；**D-4 ✅ UTM 基串口径确认**（一个 `utmBase` 字符串字段，完整归因仍 P3——O-1 闭合） |
 | B0-52 | 归组接线（内容认领活动） | `ScheduledPost.campaignId?`、`Generation.campaignId?` 两条**加性 migration**；`Project.campaignId?` 已预留免动；不建关联表 | harmony-01 §四①；campaign 设计图 §六B |
 | B0-53 | Campaign 工作台（表单发起） | 四项表单（目标/周期/预算/平台）即发起策划，不靠聊天 prompt；X pricing 静态文案**不接钱路**（矩阵注 mock 风险 7/18） | 第四批判决「专属工作台要」；§三.1 |
-| B0-54 | Campaign 日历工作台 | 日历/列表双视图批改；auto-publish 文案已核实为真=**第三期 routine 占位，不接线**（campaign 设计图 O-2 已闭合） | campaign 设计图 §三/O-2；§三.3 |
+| B0-54 | Campaign 日历工作台 | 日历/列表双视图批改；D-038 后全局 Auto-publish 正向开关/文案移除或隐藏。Direct 只由精确 post/batch 批准，account switch 只负向暂停，历史 queue 不转换 | Blueprint v2.12/#334；§三.3 |
 | B0-55 | Campaign 列表+详情页 | 列表四态 + 详情最薄（容器+只读归组产物 content/posts）；ads/results/research tab 诚实标 **P3 骨架** | campaign 设计图 §三/A2；§三.4 |
 | B0-56 | Otto Campaign 策划师 | 研究 trend → CAMPAIGN_CARD 提案卡（$0）→ 用户改/批（$0，批的是计划）→ 铺生成清单进信封 | 冲刺 C 线 spec（2026-07-08 已冻结）；campaign 设计图 §五；§三.2 |
 | B0-57 | 打包总价确认页 💰 | **一期做**（D-2 = B）：一次点头买一批 = 一张授权信封盖整单；server 重算总价+逐卡过生成闸+失败自动退该条。**全舰单最高优先💰行，变真必过 money-safety-review** | **D-1 = A、D-2 = B**（随 D-1 顺带锁定+审批粒度判决要求）；#294；判决 7-3/7-7；§三.5 |
 | B0-58 | 趋势存档 TrendSnapshot | **最薄六字段**（D-10：富化后置）+ 两个写入点 + 一个读技能；引擎侧协调 = B9 复核（矩阵注） | **D-10**；campaign 设计图 §六C；§二.6 |
 | B0-59 | 联系人自动进来 | 自动建档写入点在邻块（B5 入信/B2 归因/B7 欢迎流），CRM 消费展示；CRM 自身写四类：手工 Add lead / **CSV 导入（D-3 = A 一期带）** / 合并 / consent | **D-3 = A**（唤回名单冷启动）；CRM 设计图 §6.2；§二.7 |
-| B0-60 | 联系人档案页 | 身份合一 + consent/勿扰**两字段**（D-7）+ 时间线 + 会话链回；做减法：**不含** Deals/Companies/Quotes 卡（OUT-DEAL/OUT-COMPANY/归 B5） | **D-7**；CRM 设计图 §3.2/§1.3；§三.8 |
+| B0-60 | 联系人档案页 | 身份合一 + permission/DND 分轴 + 标准/自定义字段 + tags + Lifecycle + 时间线/会话链回；做减法：不含 Deals/Companies/Salesforce Quote object/发票收款，对话式答价/订金链接仍归 B5 B0-37 | **D-038 + D-7**；CRM 设计图 §3.2/§1.3；§三.8 |
 | B0-61 | 联系人分群 | 一句话→确定性规则编译（宪法 10）+ 内建 Hot/Win-back 分群 + **VIP 内建分群 = 消费 ≥ RM500 且近 90 天有单（配置可调）**（D-7）；起步实时算成员（物化留 B/C 档，契约预留纯函数可重算） | **D-7**；CRM 设计图 §3.3/§6.1C/Q3/Q4；§三.8 |
 
 **判决对账（12/12 去向）**：D-1/D-2/D-3/D-4/D-7/D-10 落本 spec（上表）；D-5（竞价/直播/增长实验只留缝）、D-6（微站活页最小成立）、D-8（口碑四推荐）、D-11（GBP 与 Meta 同批备料并行递）属二期 15 行，**不落本 spec**，随各自分域设计图进各自 spec；D-9（请评时机）**暂缓**至回执图纸联审（§九留白）；D-12（AEO=流程漏判，恢复原判）与 B8 一期无阻断关系，已由 #296 Resolution 记录在案。
 
-**与第一笔钱三环的接缝**（总图 §2.1，判决背书后成立）：环 1——策划批准后的生成卡走既有 generate 七步闸（缝 3），零新生成路；环 2——成片经既有 schedulePosts **只建草稿**（$0 不发布），真发布归 L1；环 3——CRM 三行是唤回的对象载体，consent/勿扰喂 B7 运行时闸，broadcast 本体归 B7 不在 B8。**一期零新收费点**：策划对话走 Otto 轮计费（2.0x）、search 3x、生成走既有费率，全部复用既有 credits 轨。
+**与三支柱的接缝**：内容生成继续走既有 generate 七步闸（缝 3）；成片经 schedulePosts 先建 DRAFT，真实 Reminder/Direct 发布归 B4；B0-59～61 只提供 Contact/Identity/Segment 底座，Inbox、Broadcast、Workflows、退订、回执与报告分别由 B5～B7/B6 共同闭环。此 slice 零新收费点：策划对话、search、生成继续复用既有 credits 轨。
 
 ---
 
@@ -98,7 +100,7 @@
 | `marketingConsent` | string(`opt_in`/`opt_out`/`unknown`) | 默认 `unknown` 不假装同意；consent 是**字段**，抑制名单是 B7 运行时**非字段**（判决 7-9） |
 | `consentSource` / `consentAt` | string / ts | 同意从哪来、何时（PDPA 姿态） |
 | `doNotDisturb` | bool | **D-7 判决：勿扰与退订保持两个字段不合并**（Q6 = A 闭合）——doNotDisturb=店主主观软状态，opt_out=客户法定硬状态；**任一为真→不可群发** |
-| `totalOrdersMyr` | money? | **只读**自回执/EasyStore（B6），CRM 永不自建账本；无回执数据时隐藏/空 |
+| `totalOrdersMyr` | money? | **只读**自 B6 可替换经营事实 connector（EasyStore 可选），CRM 永不自建账本；无回执数据时隐藏/空 |
 | `createdAt` / `deletedAt` | ts | 软删 |
 
 ### 2.4 ContactIdentity（多渠道身份；防重复建档的机器闸）
@@ -124,7 +126,7 @@
 
 - **内建分群（一等公民）**：Hot right now / Win-back（流失唤回）+ **VIP**——**D-7 判决：VIP = 消费 ≥ RM500 且近 90 天有单，配置层可调**（确定性阈值，不是模型打分；口碑域 VIP 识别同源复用不另建——CRM 设计图 Q8 建议）。
 - **成员实时算**（起步 A 档，Q4 = A）：`contactMatchesRules` over 联系人；物化 SegmentMember 表 = B/C 档规模优化；契约预留规则是纯函数可重算。
-- **可群发定义（起步）**：`marketingConsent=opt_in AND NOT doNotDisturb`；最终发送裁决（叠加抑制名单/频控）在 B7 运行时，不在 CRM。
+- **permission/受众分离（D-038）**：联系人来源、商家选择的受众、可验证 grant 与已知 hard block 分开呈现。import 不写 opt-in；已知 STOP/opt-out/DND/provider limit 由 B7 运行时硬拦；unknown 不冒充 consent，也不因缺少平台证据而被自动删出商家名单。
 
 ### 2.6 TrendSnapshot（D-10 判决：一期最薄六字段，TrendIntel 富化后置）
 
@@ -162,14 +164,14 @@
 聊天里和工作台里是**同一张 CAMPAIGN_CARD、同一份数据**（Campaign 薄行 + planJson，不建第二份副本）：战略洞察 + 主题/目标/节奏 + N 条内容日历（受众×角度×明价×KPI×时段）+ 预估总价；逐条改/删/批。**计划层的改/批全程 $0**（批的是计划不是花钱）；rationale 带来源引用，Otto 不捏造 trend。
 
 ### 3.3 房间三 · 日历（calendar，B0-54）
-日历/列表双视图批改（与聊天卡同一份 store）；改一条实时重算预估总价；routine 位 = 第三期占位**不接线**（auto-publish 出处已核实为真，campaign 设计图 O-2 闭合留档）。
+日历/列表双视图批改（与聊天卡同一份 store）；改一条实时重算预估总价。原全局 Auto-publish 正向 preference 语义由 D-038 取代：当前 UI 移除或隐藏该开关；未来 preference 最多预选建议，永不拥有外发权。Direct 只消费精确 post/batch 的有效批准；account switch 只负向暂停，解除不补发过时项目，历史 Reminder/DRAFT queue 不转换。
 
 ### 3.4 房间四 · 列表 + 详情（list/detail，B0-55）
 列表四态（DRAFT/ACTIVE/DONE/CANCELLED）+ 目标进度；详情一期只做容器 + 只读归组产物（content/posts tab 读 campaignId 外键）；ads/results/research tab 诚实标「P3 骨架」。
 
 ### 3.5 房间五 · 打包总价确认页（pack-confirm，B0-57）💰 —— 与 #294 授权信封**同构**
 
-> **同构声明**：本页 = 授权信封卡（`SPEC-ENVELOPE-STOP-20260714.md` 第一章）在 Campaign 区的化身。数据形状、失效谓词、追加流程、UI 状态**逐条沿用该稿 §1.1～§1.5**，此处只写 Campaign 化身处；两稿如有出入以信封稿为准并回报（不各自演化）。
+> **同构声明**：本页 = 授权信封卡（[`2026-07-14-envelope-stop-design.md`](2026-07-14-envelope-stop-design.md) 第一章）在 Campaign 区的化身。数据形状、失效谓词、追加流程、UI 状态**逐条沿用该稿 §1.1～§1.5**，此处只写 Campaign 化身处；两稿如有出入以信封稿为准并回报（不各自演化）。
 
 1. **一次点头 = 一张授权信封盖整单**（GRILL-VERDICTS:259 审批粒度；D-2 = B 一期做）：Otto 先复述理解 + 报价（判决 7-7 原样：「My understanding: N posts for X, period, across platforms, to goal. The total below is the exact quote.」），用户点「Approve all (N · X credits)」；**不做逐卡弹批的钱路**——连环确认按缺陷处理。
 2. **精确清单 + 指纹**（#294 形态 A）：信封 items[] = 本单每张生成卡（toolName/ref/**contentHash**/quotedCredits），totalCredits = Σ 分项，**envelopeHash** = canonical(排序分项指纹 + 总价)——内容或价格变一个字，号码对不上机器硬拒。落在既有 APPROVAL_CARD payload 上，**零新表**（B0-29 ApprovalRequest 落地时同 hash 平移）。
@@ -184,7 +186,7 @@
 
 ### 3.6 房间六 · 停按钮 —— 与 #295 **同构**
 
-> **同构声明**：沿用 `SPEC-ENVELOPE-STOP-20260714.md` 第二章全部语义（基线三分流/单粒度/对象级插手/幂等/文案基调），此处只写 Campaign 区落点。
+> **同构声明**：沿用 [`2026-07-14-envelope-stop-design.md`](2026-07-14-envelope-stop-design.md) 第二章全部语义（基线三分流/单粒度/对象级插手/幂等/文案基调），此处只写 Campaign 区落点。
 
 1. **位置**：批量生成在跑时，信封卡/批次卡 running 态常驻一颗「Stop」（条件 = 既有 `cardState === "working"`）；**不建**全局红按钮/区级停（全局停归 routine 四件套 kill switch，本期不做）。
 2. **基线三分流（无选项）**：DONE 留下（作品即进度）；GENERATING 诚实跑完（供应商不可撤，完成后照常结算）；QUEUED 撤销 + REFUND 行退款；信封剩余未开工分项一并按 QUEUED 撤销退款；停后零新动作开出。停不撤已发生的对外写（停 ≠ undo）。
@@ -195,13 +197,13 @@
 ### 3.7 房间七 · 趋势存档（trends，B0-58）
 TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期最薄六字段（D-10）；A′ 的证据句/置信度/复核期富化 = 展示层后置。
 
-### 3.8 CRM 三页（A′ 4 页做减法；CRM 设计图 §三原样 + D-3/D-7 判决落位）
+### 3.8 CRM 底座三页（不是完整 Customer Engagement CRM；D-3/D-7 机械范围保留）
 
 | 页 | 一期做到 | 判决落位 |
 |---|---|---|
 | `crm/contacts` 名册 | 页头「Add lead」+「**Import**（CSV，**D-3 一期带**）」；四张数据卡（联系人数/累计订单额只读/几个热/在险金额）；Otto 洞察条（CRM 唯一 coral 触点，一句人话）；名册列表 + 搜索 + 热度筛选 chip；**查重合并提示条随 CSV 导入一并进一期**（D-3「导入+查重合并」连体） | D-3 = A |
-| `crm/contact-profile` 档案 | 头部 chips + Identities 身份合一 + 「Okay to message」开关（写 consent）+ Merge duplicate 入口 + Activity 时间线 + 字段变更留痕（复用 ActionEvent，折叠）+ Conversations 只读链回 B5。**剥离**：Deals（OUT-DEAL）/ Quotes & payment（归 B5 B0-37）/ Companies（OUT-COMPANY）；自定义字段/待办任务 = B 档后置（Q2 = A） | D-7 两字段 |
-| `crm/segments` 分群 | 左栏分群列表（内建 Hot/Win-back/**VIP** + 自建）实时命中数；右栏命中人（勿扰者标禁用态）+「Post to this group」→排期；建群对话框：人话描述 → 确定性规则编译 chip 预览 + 「X 命中 · Y 可群发」→ 存；配方库（欢迎/唤回/复购/生日）**只作入口展示，落地归 B7** | D-7 VIP 阈值 |
+| `crm/contact-profile` 档案 | 头部 chips + Identities 身份合一 + 联系来源/permission facts 与 DND 分轴展示（不提供伪造顾客 opt-in 的万能开关）+ Merge duplicate + 标准/自定义字段 + tags + Lifecycle + Activity 时间线/字段变更留痕（ActionEvent）+ Conversations 链回 B5。**剥离**：Deals（OUT-DEAL）/ Companies（OUT-COMPANY）；对话式答价/数量价/订金链接归 B5 B0-37，但 Salesforce 式 Quote object、发票与收款仍 OUT；待办任务仍后置 | D-038 + D-7；完整 Customer Engagement CRM approved features |
+| `crm/segments` 分群 | 左栏分群列表（内建 Hot/Win-back/**VIP** + 自建）实时命中数；右栏分开显示「商家所选 / verified permission / unknown / known hard-blocked」四桶，已知 STOP/opt-out/DND/provider hard limit 禁用且强制剔除，unknown 如实保留、不冒充许可也不自动删名单；「Post to this group」→排期。建群对话框：人话描述 → 确定性规则编译 chip 预览 + 四桶计数 → 存；配方库（欢迎/唤回/复购/生日）**只作入口展示，落地归 B7** | D-7 VIP 阈值 + D-038 受众主权 |
 | `crm/deals` | **删**（OUT-DEAL，起步不建管道） | — |
 
 **结构保证（全城）**：表单入口与聊天入口殊途同归——都落到同一个 server 动作（同一套校验、同一张卡、同一行数据）；每个新按钮出生即登记 Parity Manifest（缝 9，CI 硬拦）；live reflection = 推送/即时刷新 + coral 高亮 + 一行人话叙述（headless 动作层，非像素操作）。
@@ -222,11 +224,11 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 | B0-57 💰 | 打包确认页一次点头 | Otto 复述理解+报价→用户批→server 逐卡过 generate 七步闸（`ottoApprove`→`coworkGenerate` 既有链） | spend | **必批**（一单一封；#294 信封语义） |
 | B0-58 | 趋势存档页翻阅 | *`listTrendSnapshots`（$0 read） | free/read/internal | 免批 |
 | B0-59 | 手工 Add lead；**CSV 导入** | *`addLeadContact`；*`importContacts`（解析/映射/查重预览/确认——CRM 设计图 §五 CSV 行的 skill 化，D-3 提前进一期） | free/write/internal | 免批（查重预览是 UX 闸不是钱闸） |
-| B0-60 | 档案页看/改 consent；合并 | *`listContacts`/*`getContact`/*`searchContacts`（$0 read）；*`setContactConsent`（**永不代客户 opt-in**）；*`mergeContacts`（强标识判据→并排比对卡请人确认） | free/read + free/write/internal | 免批；改 consent/合并留痕（ActionEvent） |
-| B0-61 | 分群页建/改群 | *`buildSegment`（原话→确定性编译→「这会变成这些规则，命中 X、可群发 Y，要存吗？」）；*`previewSegment`（$0 read）；词不中→追问澄清不乱猜 | free/write + free/read/internal | 免批（内部写） |
+| B0-60 | 档案页看/改 consent、字段/tags/Lifecycle；合并 | *`listContacts`/*`getContact`/*`searchContacts`（$0 read）；*`setContactConsent`（**永不代客户 opt-in**）；*`mergeContacts`（强标识判据→并排比对卡请人确认）；标准/自定义字段、tags、Lifecycle 必须有配对 Otto capability 并与人工入口共用动作层，具体 skill 名/数量留后续 Founder-approved implementation spec 冻结 | free/read + free/write/internal | 免批；consent/合并/字段/tags/Lifecycle 改动均留痕（ActionEvent） |
+| B0-61 | 分群页建/改群 | *`buildSegment`（原话→确定性编译→分别预览商家所选、verified permission、unknown、known hard-blocked 四桶后请用户确认保存）；*`previewSegment`（$0 read）；词不中→追问澄清不乱猜 | free/write + free/read/internal | 免批（内部写） |
 | 分群→B7 交接 | 「Post to this group」/唤回条复制草稿 | `draftWinBack`（品牌记忆起草，**只起草不发**；发=外部写归 B7） | turn 计量/write(草稿)/internal | 起草免批；真发归 B7 审批闸 |
 
-**新技能计数**：campaign 3（proposeCampaign / listTrendSnapshots / campaign 读技能 1 枚带清单+详情参数，工程可拆 2）+ CRM 8（listContacts、getContact、searchContacts、addLeadContact、importContacts、setContactConsent、mergeContacts、buildSegment、previewSegment 中 read 类可并，落地以 registry 定案）≈ **11-12 枚**，全部 free/$0（除 draftWinBack 轮计量）；**spend 技能零新增**（B0-57 走既有 generate/coworkGenerate 链）。每枚走缝 1 注册五步（registry+test 名单、migration gate 断言、CATALOG 重生、instructions、parity manifest）。
+**新技能计数**：原 v0.4 Campaign+薄 CRM 底座曾估约 **11-12 枚**；D-038 加入字段/tags/Lifecycle 双执行器后，该数字只保留为历史估算，不再是完整 Phase‑1 的冻结数量。后续 Founder-approved implementation spec 先按真实 action surface 定 skill 名与数量，再逐枚走缝 1 注册五步（registry+test 名单、migration gate 断言、CATALOG 重生、instructions、parity manifest）。全部为 free/$0（除 draftWinBack 轮计量）；**spend 技能零新增**（B0-57 走既有 generate/coworkGenerate 链）。
 
 **对照表纪律**：每个新 server action 出生即登记 Parity Manifest（缝 9），CI `lint:parity` 硬拦漏登记；每个人工可见数据面配对 free/read skill（Otto 不做瞎子操作员）。
 
@@ -241,13 +243,13 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 | B0-51 | listed | spec-ready | 最薄行 schema + 2-org 隔离测试 + GM-03 字段预留 |
 | B0-52 | listed | spec-ready | 2 条加性 migration + 归组测试（零或一个 campaign） |
 | B0-53 | listed | spec-ready | 表单发起 e2e + parity 登记 + X pricing 不接钱路断言 |
-| B0-54 | listed | spec-ready | 日历批改 e2e + routine 位标 phase-3 slot（不接线） |
+| B0-54 | listed | spec-ready | 日历批改 e2e + 无全局正向 Auto-publish 权 + Direct 仅精确 post/batch 批准 + 历史 queue 不转换 |
 | B0-55 | listed | spec-ready | 列表四态 + 详情只读归组 e2e + P3 骨架 tab 标注 |
 | B0-56 | listed | spec-ready | proposeCampaign 六处登记 + CAMPAIGN_CARD 五道缝 + 双模走查 |
 | B0-57 💰 | listed | spec-ready | 信封验收全项（5.3）+ **money-safety-review 通过记录** |
 | B0-58 | listed | spec-ready | TrendSnapshot 表 + 2-org 隔离 + 两写入点 + 读技能 |
 | B0-59 | listed | spec-ready | 唯一索引防重 + CSV 导入幂等 + 邻块写入点边界联审记录 |
-| B0-60 | listed | spec-ready | 档案页减法走查（无 Deals/Quotes/Companies 断链）+ consent 留痕 |
+| B0-60 | listed | spec-ready | 档案页减法走查（无 Deals/Companies/Salesforce Quote object/发票收款断链；对话式答价/订金链接仍归 B0-37）+ 标准/自定义字段、tags、Lifecycle、Identity/会话/活动时间线 CRUD + owner 隔离 + ActionEvent 留痕 |
 | B0-61 | listed | spec-ready | 编译器五类规则单测 + VIP 阈值配置层 + 内建分群 |
 
 **界面六态纪律**：每个表面（七房间 + CRM 三页）必须给全 happy/empty/loading/denied/failure/retry + 移动端，sandbox-verified 双执行器都走。CRM 三页的六态**以 CRM 设计图 §四为准**（原样已冻结：空态即教学 / denied=requireOwner 不泄露存在性 / failure 局部降级显式重试 / 重试幂等）；pack-confirm 页增补信封卡六态（pending/approved 未开工/running/invalidated/expired/rejected-consumed，信封稿 §1.5 原样）与停按钮态（working/stopping/stopped/插手注记，信封稿 §2.7 原样）。
@@ -283,9 +285,11 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 - [ ] CSV 导入幂等：同一份表导两次，第二次全部命中跳过、零新建、零报错。
 - [ ] 导入永不写 opt_in：断言导入后 marketingConsent 全部 `unknown`（除非已有值）。
 - [ ] 合并：Identity 重指 + merge 审计行存在 + 零物理删；归因继承取较早值。
+- [ ] 标准/自定义字段、tags 与 Lifecycle 可由人工/Otto 经同一动作层真实读写；owner 隔离、输入校验、刷新后持久化和每次变更 ActionEvent 全部通过。字段类型/目录的具体 schema 另由后续 Founder-approved spec 定，不在本对齐稿发明。
+- [ ] Identity、Conversations 与 Activity timeline 都读同一 owner-scoped Contact；导入、merge、字段/tag/Lifecycle 更新按时间线可追溯，无影子档案或跨租户字节。
 - [ ] 分群编译确定性：五类规则各有单测（同 phrase 同库存量 → 同 rulesJson 同命中集）；仅同名两联系人零自动合并。
 - [ ] VIP 内建分群读配置层阈值（RM500/90 天为默认值，改配置即生效，零代码硬编码——宪法 5）。
-- [ ] consent/合并/字段变更各落 ActionEvent 留痕。
+- [ ] permission/受众职责分开：import/merchant update 不伪造 customer opt-in；已知 STOP/opt-out/DND/provider hard limit 在 B7 fail-closed；unknown 如实显示且不被平台自动删出商家所选名单。consent/merge/字段/tag/Lifecycle 变更各落 ActionEvent 留痕。
 - [ ] `totalOrdersMyr` 无回执数据时隐藏/空，CRM 侧零写路径。
 
 **对等与目录**
@@ -297,7 +301,7 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 
 | 缝 | 本 spec 走法 |
 |---|---|
-| 缝 1 Otto 技能 | 新 skill 11-12 枚（§四）全走注册五步；受闸集照旧从 registry `needsApproval` 机器推导；宪法 4 公式一字不动（改粒度不改公式） |
+| 缝 1 Otto 技能 | 原底座 skill + D-038 字段/tags/Lifecycle 配对 capability 全走注册五步；确切名称/数量由后续 Founder-approved implementation spec 冻结。受闸集照旧从 registry `needsApproval` 机器推导；宪法 4 公式一字不动（改粒度不改公式） |
 | 缝 2 模型/供应商 | **不触碰**（消费既有生成，零新模型零新供应商） |
 | 缝 3 记账 | **零新钱路零新收费点**：打包批 reserve→settle 走既有链，每卡幂等键，partial 退款走 `refundReservation`；Otto 轮计费/search 照既有费率 |
 | 缝 4 渠道 | **不触碰**（发布渠道既有；ScheduledPost.campaignId 只是归组字段） |
@@ -305,7 +309,7 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 | 缝 6 队列 | 复用深研 #118 worker 与既有 gen 队列；不新建队列（分群物化 worker = B/C 档才涉缝 6） |
 | 缝 7 设计系统 | 全部 .gb + shadcn；coral 只属 Otto（洞察条/落卡 sweep/让位提示）；sentence case；Landed/skeleton/reduced-motion |
 | 缝 8 卡片 | 新卡种 1：`CAMPAIGN_CARD` 五道缝全穿；信封 = 既有 APPROVAL_CARD payload 演化 + PackCard 渲染模板（零新卡种）；卡→钱定律：卡只是 display+parameters，spend 由 server 从持久卡重算重验 |
-| 缝 9 Parity | 全部新 action（workbench Submit、calendar 改/删/批、pack Confirm、停、CRM 四类写、建群）出生即登记；CI 硬拦；「停」是否给 Otto 对等 skill 沿信封稿 W-5 待裁 |
+| 缝 9 Parity | 全部新 action（workbench Submit、calendar 改/删/批、pack Confirm、停、所有 CRM 写动作〔含字段/tags/Lifecycle〕、建群）出生即登记；CI 硬拦；「停」是否给 Otto 对等 skill 沿信封稿 W-5 待裁 |
 
 ---
 
@@ -313,9 +317,9 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 
 | # | 假设 | 依据 | 若不成立 |
 |---|---|---|---|
-| A-1 | 信封稿（SPEC-ENVELOPE-STOP-20260714）与本 spec 同批过目、同批冻结；打包页机器细节以它为准 | #294/#295 Resolution「同批设计」；#296「Campaign 打包总价页必须符合两票」 | 若信封稿被 founder 改动，本 spec §3.5/§3.6 随之机械同步（同构不分叉） |
+| A-1 | 信封稿（`2026-07-14-envelope-stop-design.md`）与本 spec 同批过目、同批冻结；打包页机器细节以它为准 | #294/#295 Resolution「同批设计」；#296「Campaign 打包总价页必须符合两票」 | 若信封稿被 Founder 改动，本 spec §3.5/§3.6 随之机械同步（同构不分叉） |
 | A-2 | B0-59 自动进来的写入点在邻块（B5 入信/B2 归因/B7 欢迎流），一期 CRM 消费展示；邻块未上线期间，**手工 + CSV 导入即一期入口**（D-3 判决使冷启动闭环成立） | CRM 设计图 §6.2/A-02；D-3 | 若邻块联审改判写入点归属，只挪 upsert 共享 action 落点，表形状不变 |
-| A-3 | 身份规范化规则（waPhone E.164 国码/email 小写）由 B2/B5 spec 联审钉死，CRM 复用 | CRM 设计图 Q5/A-04 | 联审前 CSV 导入按本 spec 2.7 的规范化口径先行，联审后对齐 |
+| A-3 | 身份规范化规则（waPhone E.164 国码/email 小写）须在 R-010 的独立 Founder-approved schema alignment 中，与唯一键/issuer/version/consent 一并钉死；CRM 与 CSV import 复用该唯一口径 | CRM 设计图 Q5/A-04；R-010 | **R-010 闭合前 CSV identity/consent 导入不得施工**；闭合后按已批准合同实现，不允许先做一套再对齐 |
 | A-4 | heat（hot/warm/cold）一期派生不落列；lifecycleStage 三态由确定性算子从 lastSeenAt/订单信号推导或人工改 | CRM 设计图 §6.1（heat ⬜派生）；D-7 值域 | 若上量出现性能压力，落列 = B 档缓存优化，additive |
 | A-5 | 三对标锚（respond.io/HubSpot/Klaviyo + SF/HubSpot/GenStudio）版本为设计日近似，**spec 冻结入 repo 当日实机复核版本号并抓真截图入证据台账** | 两设计图 §二/A-07 | 复核发现对手改版 → 只更新锚四件套，不动范围 |
 | A-6 | 一期两拍合一：D-2=B 使打包批（原"第二期"）并入一期；campaign 设计图内"逐条批=第一期"的钱路表述作废，计划层逐条改/批（$0）保留 | D-1/D-2 + GRILL-VERDICTS:259（连环确认=缺陷） | — （判决已终局） |
@@ -331,13 +335,13 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 | B0-51 | :7 | campaign/workbench + list | proposeCampaign / campaign 读技能 | 免批 $0 | §2.1 §3.1 |
 | B0-52 | :8 | （schema，无独立入口） | 生成/排期技能透传 campaignId | 免批 | §2.2 |
 | B0-53 | :9 | campaign/workbench 四项表单 | 同一 proposeCampaign | 免批 $0；X pricing 不接钱路（矩阵注原样） | §3.1 |
-| B0-54 | :10 | campaign/calendar 双视图 | 卡上逐条改（同动作层） | 免批 $0；auto-publish 不接线（矩阵注钉真伪已闭合） | §3.3 |
+| B0-54 | :10 | campaign/calendar 双视图 | 卡上逐条改（同动作层） | 计划编辑免批 $0；无全局正向外发权；Direct 仅精确 post/batch 批准 | §3.3 |
 | B0-55 | :11 | campaign/list + detail | campaign 读技能 | 免批（只读） | §3.4 |
 | B0-56 | :12 | campaign/proposal-card | proposeCampaign + researchWeb/proposeResearch | 提案$0；深研卡批；排产=花钱闸（矩阵注原样） | §3.2 |
 | B0-57 💰 | :13 | campaign/pack-confirm | 既有 ottoApprove→coworkGenerate 链 | **必批**：server 重算+genRequest 闸（缝3）+信封（#294）；变真必过 money-safety-review（矩阵注原样） | §3.5 |
 | B0-58 | :14 | campaign/trends | listTrendSnapshots | 免批；新表走缝5；引擎侧协调=B9 复核（矩阵注原样） | §2.6 §3.7 |
 | B0-59 | :15 | crm/contacts（Add lead + Import） | addLeadContact / importContacts | 免批 $0 | §2.7 §3.8 |
-| B0-60 | :16 | crm/contact-profile | listContacts/getContact/searchContacts/setContactConsent/mergeContacts | 免批；留痕 ActionEvent | §2.3 §2.4 §3.8 |
+| B0-60 | :16 | crm/contact-profile | listContacts/getContact/searchContacts/setContactConsent/mergeContacts + 字段/tags/Lifecycle 配对 capability（名称/数量由后续 Founder-approved implementation spec 冻结） | 免批；所有变更留痕 ActionEvent | §2.3 §2.4 §3.8 |
 | B0-61 | :17 | crm/segments | buildSegment/previewSegment | 免批 $0；NL→规则=宪法10 确定性（矩阵注原样） | §2.5 §3.8 |
 
 （测试/报告两列的冻结值 = §5.2 验收清单与六态证据要求，to-tickets 时回填矩阵。）
@@ -351,7 +355,7 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 | L-1 | **D-9 请评时机默认值**：founder 判「暂缓至回执图纸联审」（EasyStore 研究已回，届时给选项）。属二期口碑域（B0-63），**不阻断一期任何行**；记录在此防漏 | #296 Resolution D-9 |
 | L-2 | 身份规范化规则表（waPhone 国码/空格、email 大小写）——B2/B5 spec 联审产出一份全城标准，CRM/导入复用 | CRM 设计图 Q5 |
 | L-3 | brand memory「客群」与 CRM Segment 互指口径——资产区 owner 联审（客群洞察留 memory、成员归 Segment 是否够） | CRM 设计图 Q7 |
-| L-4 | 信封稿留白 W-1～W-6（「碰」的灰区/整封作废严格版/CANCELLED 枚举/停免二次确认/Otto 对等停 skill/72h 常数可调）**归信封稿裁**，本 spec 不重复开槽，裁定后机械同步 | SPEC-ENVELOPE-STOP §五 |
+| L-4 | 信封稿留白 W-1～W-6（「碰」的灰区/整封作废严格版/CANCELLED 枚举/停免二次确认/Otto 对等停 skill/72h 常数可调）**归信封稿裁**，本 spec 不重复开槽，裁定后机械同步 | `2026-07-14-envelope-stop-design.md` §五 |
 | L-5 | campaign 读技能拆 1 枚还是 2 枚、CRM read 技能是否合并——工程裁量，registry 定案时按缝 1 惯例走，不需 founder | §四计数注 |
 
 ---
@@ -365,4 +369,4 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 - **底稿**：campaign 设计图（§〇 spec 底钉出处/§三 IA/§五 双执行/§六 数据契约/§七 花费闸/O-1 O-2 闭合）；CRM 设计图（§1.3 明示排除/§3 三页/§6 数据契约+身份解析+consent 边界/§7 花费闸/Q1-Q8）；spec 底 `docs/superpowers/specs/2026-07-08-otto-campaign-planner-design.md`（时效核对无实质冲突，campaign 设计图 O-6）。
 - **机器对照（只读）**：`approval-content-hash.ts` / `otto-actions.ts` / `approval-tools.ts` / `PackCard.tsx` + `pack-credit-math.ts` / `schema.prisma:66,389,766` / `tenant-guard.ts` / `credits.ts`。
 
-**结尾**：本 spec 冻结 B8 一期 11 行——新表 5、页面 10（七房间算 7 面 + CRM 3 页）、新 skill 11-12（零新 spend 技能）、新卡种 1（CAMPAIGN_CARD）、💰面 1（B0-57 打包总价页）、新收费点 0。founder 过目后走 PR 入 repo，即为 to-tickets 的唯一依据；与信封稿同批冻结、同批实现于第一笔钱主链 UX。
+**结尾（D-038 修订）**：本 spec 继续冻结 B0-51～61 底座 slice 的兼容机械合同——新表 5、页面 10（七房间 + CRM 底座 3 页）、skill 数量待后续 Founder-approved implementation spec 按完整双执行器面冻结、新卡种 1、💰面 1、新收费点 0；它不是完整 Customer Engagement CRM，也不是商业 Phase‑1 唯一依据。后续工单必须同时引用 B5～B7/B6 对齐行与总计划「七·甲」，且不得借本稿预称任一支柱已完成。

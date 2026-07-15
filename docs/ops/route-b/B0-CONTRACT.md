@@ -1,9 +1,11 @@
 # B0 · 发布契约（founder 签署件）
 
 > 2026-07-12。epoch `claude-20260712-03`。基线 main@`2fb2b935`。
-> **founder 合并本 PR = 签署以下四件事的冻结**：①行集（覆盖矩阵全部行）②功能ID ③归块 ④「不在本程」清单。此后修改只经修宪流程（决策日志留痕 + founder 批）。
+> **Founder 合并原 B0 PR #240 = 签署以下四件事的冻结**：①行集（覆盖矩阵全部行）②功能ID ③归块 ④「不在本程」清单。此后修改只经修宪流程（决策日志留痕 + Founder 批）。这是 2026-07-12 的历史签署记录，不授予当前或后续 PR 任何 merge 权限。
 > **勘误豁免**：不改行义的文字勘误（错别字/断链/格式）= 决策日志留痕即可，不走修宪；改行义（能力范围/归块/出程/状态语义）才是修宪。
 > 这一页是合同正文；矩阵（`matrix/`）是附件。签的是合同，附的是附件。
+> **2026-07-16 Founder plan amendment（D-038，#334 + Blueprint v2.12）**：216 个既有能力 ID、归块与六级状态全部保留；商业第一期不再由某个单块或 B0-51～61 的「11 行」代称，而按 `../ROUTE-B-MASTER-PLAN-2026-07-12.md`「七·甲」把既有行组合为内容、发布、完整 Customer Engagement CRM 三支柱。D-038 修订的能力单元格须在决策入账后用既有 `--freeze` 流程更新语义 hash；冻结锁机制不变，零新增/删除 ID，且不预支任何行的认证级别。
+> **当前 authority 注**：2026-07-12 epoch/总指挥/合并窗口记述只保留历史 provenance。当前执行和 merge 权限取自 `AGENTS.md`、FIKIRTIVE orchestration overlay 与当前 GitHub 票；#331 bounded sanitation coordinator 不是 global control plane。
 
 ## 一、六级状态制 + 第 0 级（「建毕」一词废除）
 
@@ -14,7 +16,7 @@
 | 2 | `code-complete` | 本程 PR 合入 main，该行功能全链在 main 成立 | 控制面（随 PR 合并） | PR# + SHA + 测试名 |
 | 3 | `sandbox-verified` | 沙箱/staging 真浏览器旅程走通，**双执行器都走**（人工路径 + Otto 话术） | 控制面（核证据后） | E2E 证据链接（录像/截图）+ 双模走查记录 |
 | 4 | `review-submitted` | 外部受审材料已递（仅外部位行；内部行标 `n/a-internal` 直接 3→5） | 控制面 | 递交回执 |
-| 5 | `live-verified` | 生产可达可用（前置：发布溯源修复，见 §五-2） | 控制面 + founder 合并窗口 | prod SHA 溯源 + 烟测证据 |
+| 5 | `live-verified` | 生产可达可用（前置：发布溯源修复，见 §五-2） | 当前 GitHub authority + Founder-only 生产权限 | prod SHA 溯源 + 烟测证据 |
 | 6 | `release-certified` | founder 终验通过所属块 | **仅 founder** | 终验记录（15 步剧本） |
 
 - **存量代码不预支任何级**：main 上已 integrated 的代码一律从 `listed` 起证；「main 上确实能跑」的信息保留在独立「存量现状」列（闭集：`integrated / implemented / ui-shell / schema / absent / partial / unknown / na`）。看板读法：「已认证 X / 存量 integrated N」——这个差值就是路线乙的定义。
@@ -44,7 +46,7 @@
 
 1. **65 页对账钉死**：「65 页」= 沉浸城路由树 `apps/web/app/northstar-immersive/*` 实测 65 个 page.tsx（SHA `54c1de0b`）；主城 northstar 树 59 页、注册表 60 行是另两个对象。B1 验收以 65 页清单（`coverage-audit/immersive-65-pages.txt`）为准。
 2. **发布溯源断裂**（MATRIX-V0 §〇.1）：生产部署元数据无 commit SHA → 全矩阵 `live-verified` 不可判。已立具名行（B13），修复先于任何行的 5 级迁移。
-3. **合并窗口纪律**：founder-only 类别照 AGENTS.md；本机安全闸=任何 merge 需 founder 当轮明示；合并窗口节奏照供给清单 C 节。
+3. **合并纪律**：Founder-only 类别须 Founder 合并；普通、可逆 PR 只有在 `AGENTS.md` 的 delegated ordinary merge 条件全部成立时才可由非作者合并，且不设 auto-merge / merge watcher。本 D-038 计划修订是 Founder-only；事实性、可逆步骤不因 Founder 合并窗口停排。
 
 ## 六、计数总账（签署对象）
 
@@ -52,12 +54,12 @@
 
 | 块 | 行数 | 块 | 行数 |
 |---|---|---|---|
-| B1 壳车道 | 8 | B7 唤回+生命周期最小版 | 9 |
-| B2 量测+分析 | 11 | B8 缺失大陆+Campaign+CRM | 26 |
+| B1 壳车道 | 8 | B7 Customer Engagement Lifecycle/Workflows | 9 |
+| B2 量测+分析 | 11 | B8 Campaign+CRM 底座+缺失大陆 | 26 |
 | B3 创作+资产 | 46 | B9 引擎横切 | 21 |
-| B4 发布+Meta 通电族 | 20 | B10 安全带+数据信任 | 30 |
-| B5 WhatsApp 收件箱 | 11 | B12 收钱+钱路 | 22 |
-| B6 回执+EasyStore | 2 | B13 发射台+运营 | 10 |
+| B4 发布（Reminder+Direct）+Meta 通电族 | 20 | B10 安全带+数据信任 | 30 |
+| B5 Customer Engagement Inbox + WhatsApp 首渠道 | 11 | B12 收钱+钱路 | 22 |
+| B6 统一回执+可选经营事实 connectors | 2 | B13 发射台+运营 | 10 |
 
 （修宪包 #1 后实数——D-019）
 
@@ -80,7 +82,7 @@
 
 | 账 | 文件 |
 |---|---|
-| 范围矩阵 | `matrix/`（按块一文件 + 生成式 `INDEX.md`） |
+| 范围矩阵 | `matrix/0x-Bx.md` 块文件（当前行义）+ `coverage-audit/frozen-ids.json` / checker（语义锁）；`matrix/INDEX.md` 仅是 B0 签署时点的历史生成快照 |
 | 依赖状态 | `DEPENDENCY-STATUS.md` |
 | 决策日志 | `DECISION-LOG.md` |
 | 风险待裁 | `RISKS-PENDING.md` |

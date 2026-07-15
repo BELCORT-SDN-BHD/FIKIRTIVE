@@ -2,6 +2,7 @@
 
 > 2026-07-12。已向 founder 完整描述并待其确认;确认后此文件 = 新总指挥 session 的**必达交付合同**。
 > 形态 = 三件套:交付书 + 现场演示 + founder 最终验证剧本。
+> **2026-07-16 对齐（D-038）**：商业第一期的交付书以内容、发布、完整 Customer Engagement CRM 三支柱及 `ROUTE-B-MASTER-PLAN-2026-07-12.md`「七·甲」为 release contract；全城其余区可继续诚实显示后续状态，但不得阻塞或冒充第一期。Reminder-assisted 与 Direct publish 的证据分开，模拟发布不能作为任何已放行模式的完成证据。
 
 ## 一、交付书
 
@@ -15,12 +16,12 @@
   6. 状态与钥匙(🟢/🟡;🟡 = 等哪个审批、批到后多久通电、用户此刻看到什么 Coming soon 面)
   7. 这块怎么赚钱(收费点 / 毛利依 config / 或"留存钩子不收费")
 - **倒数第二章 · 待裁清单**(Q6/Q7 产物):死磕 ≥3 次未达 100% 的项 + 中途跳过的意外 blocker;每项 = 发生了什么 / 试了什么 / 差距 / 2-3 个选项。**此章长度 = 诚实度量,不许藏。**
-- **最后一章 · 上市开关清单**:递审材料包(Meta/WABA/EasyStore/GBP,founder 签发)、生产部署顺序、收费开启步骤、上市日监控看板。
-- 附:收钱三闸章必须含**一笔真实 Stripe 收款测试记录**(非"应该能收")。
+- **最后一章 · 上市开关清单**:递审材料包(Meta/WABA/GBP，EasyStore 仅在选用该 adapter 时列入)、生产部署顺序、收费开启步骤、上市日监控看板。
+- 附:收钱三闸章最终必须含**一笔经 Founder 逐笔批准的真实 Stripe 收款测试记录**(非"应该能收")；本报告标准本身不构成 live spend 授权。
 
 ## 二、现场演示(60-90 分钟,founder 节奏)
 
-以陌生商家身份现场走:注册 → 教 Otto 认店 → 创作 campaign → 排期 →(模拟)发布 → 数据回流 → Otto 周报。founder 随时可抢键盘(双模必须都走得通)。**高潮 = 连贯性**:一句完整商业指令让 Otto 跨区串完整件事。
+以陌生商家身份现场走:注册 → 教 Otto 认店 → 创作 campaign → 排期 → 走已放行的 Reminder-assisted 真流程；Direct publish 只演示已受控真验的 channel × post type → Customer Engagement CRM 的 Inbox/Workflow/Broadcast/退订/回执 → 报告。founder 随时可抢键盘(双模必须都走得通)。**高潮 = 连贯性**:一句完整商业指令让 Otto 跨区串完整件事。
 
 ## 三、Founder 最终验证剧本(30 分钟,founder 独自)
 
