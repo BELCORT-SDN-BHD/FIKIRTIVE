@@ -1,15 +1,12 @@
 #!/bin/sh
-# Fikirtive pre-push gate.
-# Pushing to main = auto-deploy on Railway (web + worker) + auto-migrate — there is
-# NO human gate between this push and production. So block a push that doesn't typecheck.
-# Typecheck-only to stay fast; full tests/build run in CI (PR + all checks green, see
-# .claude/CLAUDE.md "Merge discipline").
-# Genuine emergency bypass:  git push --no-verify
+# FIKIRTIVE fast local defense. It does not authorize a push, replace CI, or prove
+# any deployment state. Direct pushes to main are prohibited by project law.
+# Typecheck-only to stay fast; every current-head CI gate and merge-authority rule
+# in .claude/CLAUDE.md still applies.
 echo "[pre-push] typecheck across workspace (pnpm -r typecheck)…"
 if ! pnpm -r typecheck; then
   echo ""
-  echo "[pre-push] BLOCKED — typecheck failed. A bad push auto-deploys to prod."
-  echo "[pre-push] Fix the type errors, or bypass deliberately with:  git push --no-verify"
+  echo "[pre-push] BLOCKED — typecheck failed. Fix the type errors before pushing."
   exit 1
 fi
-echo "[pre-push] typecheck passed — pushing."
+echo "[pre-push] typecheck passed — CI and project-law gates still apply."

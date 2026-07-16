@@ -1,4 +1,10 @@
-# FIKIRTIVE design rules — v3 (2026-07-07)
+# FIKIRTIVE design rules — v3 (2026-07-07 design evidence)
+
+> **Status(2026-07-16 sanitation):derived, task-linked design evidence.** This document is not
+> project law, a live implementation report, or an independent approval source. Apply a rule only
+> when the current GitHub task/current aligned plan makes it relevant; verify rendered facts in
+> code. A conflict with current Founder direction or the authority chain is a stop-and-report event,
+> not permission for this file to win.
 
 Locked direction: **"Grok bones + Headspace/Phantom heart."** (LOCKED 2026-06-28 — colours must NOT change.)
 v3 = the complete system: v2's core (direction, colour, type, spacing, depth, motion, live reflection —
@@ -10,11 +16,11 @@ palette moves. This is completion, not redesign.
 
 ## 0. How to use this document
 
-**The three-truths rule.**
+**How to use the evidence layers.**
 
-1. **This document is law** — the only place rules are *explained*. Sections are lettered/numbered; link to `design-rules-v3 §X`, never paste values into other docs.
-2. **`apps/web/app/globals.css` (the `.gb` block) is token truth** — every value the product actually renders, light + dark + `@theme inline`. If a value here and there disagree, `globals.css` wins for *values*, this doc wins for *intent*, the founder wins for everything.
-3. **The claude.ai design project (`0abf8563` "FIKIRTIVE — Grok-bright") and the repo mirror (`docs/design-system/`) stay in sync** — any PR that changes this doc, the cards, or `.gb` tokens updates both in the same PR. (The older `docs/design/handoff/` export is frozen pre-pivot history — never a source.)
+1. **Current authority comes first.** Use the current GitHub task, Founder provenance and aligned plan to establish scope and acceptance. This document explains the dated v3 design package; it does not approve work by itself.
+2. **Rendered facts come from code.** `apps/web/app/globals.css` (the `.gb` block) and the components show what the product actually renders. A disagreement with this document is drift to report and adjudicate, not a reason to silently choose either side.
+3. **External design artifacts are provenance, not a second control plane.** The claude.ai design project (`0abf8563`, historical label "FIKIRTIVE — Grok-bright") and `docs/design/handoff/` may be consulted read-only when a task explicitly needs them. Neither is automatically current or a mandatory write target.
 
 **Agent workflow — which chapter for which task.** Always read §1–§2 (direction + colour) first; they gate everything. Then:
 
@@ -30,15 +36,15 @@ palette moves. This is completion, not redesign.
 | Any user-facing string | §V |
 | Anything Otto or coral | §7 · §8 · §O (coral budget) |
 | Dark mode | §K |
-| Review / QA a diff | Checklists at §A7 · §O8 · §FB10 + `docs/design-system/enforcement.md` |
+| Review / QA a diff | Checklists at §A7 · §O8 · §FB10 + the general checks that actually exist on the current head; there is no dedicated `check-design` gate |
 
-**Change protocol** (unchanged from v2 §11): propose in the design project → founder approves → one PR: tokens in `globals.css` first, component adoption second, mirror re-export in the same PR.
+**Change protocol:** start from an authorized GitHub task and its acceptance evidence. When a change affects both implementation and this explanation, keep them coherent in the same bounded PR. Founder approval is still required wherever current project law requires it; this file and the external design project grant no write or merge authority.
 
 ---
 
-# Part I — Core (v2, locked)
+# Part I — Core (v2 snapshot)
 
-## 1. Locked direction (unchanged)
+## 1. Direction recorded in the v3 package
 
 - Near-white ground `#FCFCFC`, near-black ink `#0A0A0A`. Flat surfaces, hairline borders. No glass, no gradients on working surfaces.
 - Coral `#EC5828` belongs to **OTTO only**: the focus ring and agent-initiated moments. Never a human-action CTA.
@@ -236,19 +242,20 @@ Data anti-slop (§D6): no pie/donut, no 3D, no rainbow palettes, no zero-as-miss
 
 ## 11. Doc hygiene
 
-One truth per layer, no duplication:
+Keep evidence roles explicit; do not promote a derived artifact into a competing authority:
 
 | Layer | Lives at | Owns |
 |---|---|---|
-| **Direction + specs** (this doc) | claude.ai design project → `design-rules.md` (v3) + repo mirror `docs/design-system/design-rules.md` | the rules; the only place values are *explained* |
-| **Implementation truth** | `apps/web/app/globals.css` — the `.gb` block only | every token value; light + dark; `@theme inline` registration |
+| **Current scope + acceptance** | Current GitHub task + Founder provenance + aligned Route-B plan | what may change and how it is accepted |
+| **Design explanation** (this doc) | `docs/design-system/design-rules.md` | dated v3 rationale and task-linked constraints |
+| **Implementation evidence** | `apps/web/app/globals.css` — the `.gb` block + components | values and behavior currently present in code |
 | **Component recipes** | `apps/web/components/ui/*` | variants + sizes; comments cite this doc, don't restate it |
-| **Guideline cards** | design project `cards/*.html` + repo mirror `docs/design-system/cards/` | one self-contained looping demo per pattern; first line `<!-- @dsCard group="…" -->` |
+| **Guideline cards** | `docs/design-system/cards/` | historical/task-linked demos; they do not prove live implementation |
 | **Build recipe + review** | `docs/review/EXPANSION-SEAMS.md` Seam 7 · `docs/review/REVIEWER-PLAYBOOK.md` | how new screens stay on-system; what reviewers check |
-| **Machine enforcement** | `docs/design-system/enforcement.md` + `scripts/check-design.sh` | the grep fence, /kitchensink, review deltas |
+| **Machine checks** | Current workflow/package scripts that actually exist | general gates only; there is no dedicated `check-design` gate, so design conformance still requires review |
 | **Mascot art** | `apps/web/components/otto-mark/*.svg` + `OttoAvatar.tsx` | Otto's face (mascot art colours are exempt from theming) |
 
-Change protocol: propose in the design project → founder approves → one PR: tokens in `globals.css` first, component adoption second, mirror in the same PR. If code and this doc disagree, the doc wins for *intent*, the founder wins for *everything*.
+If code and this document disagree, record the drift and resolve it through the current task/authority chain. Do not silently make either artifact win, and do not mutate an external design project without explicit scope.
 
 ---
 
@@ -270,7 +277,7 @@ Change protocol: propose in the design project → founder approves → one PR: 
 Roles, not values (`--coral`, `--gray-200` forbidden). No component names in semantic tokens (`--button-bg` forbidden; a component-local knob prefixes its own name inside its own class). Reserved prefixes: `--color-*` = Tailwind `@theme` plumbing only; `--font-*` = next/font only. Pairs ship together: a surface token without its `-foreground` fails review.
 
 **T4. Consumption ladder** — highest rung that works: ① token utility (`bg-card`, `text-muted-foreground`) — 100% of `components/ui/*`, `button.tsx` is the exemplar; ② arbitrary value bound to a var (`rounded-[var(--radius-card)]`, `shadow-[var(--shadow-brand)]`); ③ `var(--token)` in a `.gb`-scoped recipe class — only for pseudo-elements, keyframes, third-party DOM.
-Forbidden (all grep-lintable, see enforcement.md): raw hex/rgb/oklch in `.tsx` or new CSS (mascot art exempt) · Vapor tokens (`--fg-*`, `--bg-*`, `--glass-*`, `--line-*`) on `.gb` surfaces · reading `--color-*` directly · cross-pair mixing (`bg-card` + `text-secondary-foreground`).
+Forbidden in this dated design package (review-enforced; no dedicated design grep gate currently exists): raw hex/rgb/oklch in `.tsx` or new CSS (mascot art exempt) · Vapor tokens (`--fg-*`, `--bg-*`, `--glass-*`, `--line-*`) on `.gb` surfaces · reading `--color-*` directly · cross-pair mixing (`bg-card` + `text-secondary-foreground`).
 
 **T5. The three-place rule.** A new token is not done until it exists in all three: ① `.gb` light value ② `.gb.dark` real dark value ③ `@theme inline` registration `--color-{name}: var(--{name})` — skipping ③ makes the utility **silently no-op** (Tailwind v4 generates nothing). Live drift today: `text-success`/`bg-success`/`bg-error` are consumed but `--color-success/error/info` are unregistered — backfill. Non-colour tokens skip ③ and are consumed as `var(--…)`.
 
@@ -507,7 +514,7 @@ Otto's answer carries **Apply** where applicable: output lands back into the ori
 **K2. Dark rules.** ① Elevation = lightness, not shadow — the four-step surface ladder `#0B0B0C → #131315 → #18181B → #1C1C1F`; adjacent layers differ by exactly one step; never invent a fifth grey. ② Shadows become borders — dark shadows ground, they can't define edges; every raised dark surface carries 1px `--border`. ③ Coral stays coral — `#EC5828 → #F26A3C`, one lightness step, same hue; never rust, never neon; text ON coral flips to ink; mascot art exempt from theming. ④ Semantic keeps the role, shifts luminance — a badge written with soft-pair tokens is automatically correct in both modes, zero `dark:` classes. ⑤ New solid-fill tokens must re-check their `-foreground` in dark — never assume white survives. ⑥ No pure black/white — ground `#0B0B0C`, ink `#FAFAFA`; `#000` only as media letterbox. ⑦ `color-scheme: light` on `.gb`, `dark` on `.gb.dark` (flips native scrollbars/pickers — absent today). ⑧ Hover on inverted primary goes *down* (`hover:bg-primary/90` is already correct both modes) — never a hardcoded hover hex. ⑨ Bright media on dark cards gets the card's 1px border holding the edge — no glow, no white matte.
 
 **K3. Activation contract — five wires, one PR:** ① mount `next-themes` `<ThemeProvider attribute="class" defaultTheme="system" enableSystem>` so `.dark` lands on `<body>` next to `.gb` ② add `@custom-variant dark (&:where(.dark, .dark *));` to `globals.css` — without it Tailwind's `dark:` fires on the OS media query and disagrees with class-based theming forever (this already bites: OS-dark users get grey washes on selects/textareas in light mode) ③ `color-scheme` per K2.7 ④ `themeColor` metadata `#FCFCFC`/`#0B0B0C` ⑤ the six dark shadow tokens (K1). New-token law: every token lands in `.gb`, `.gb.dark`, AND `@theme inline` — a PR touching one block is incomplete.
-The precise 16-item list of `.gb`-scoped rules that break under dark (hardcoded `#1A1A18` hovers, white node buttons, `#B4321E` danger hexes, raw shadows, Tailwind's compiled default shadow utilities bypassing `--shadow-*`, admin inline hexes) lives in the code-gaps ledger — all fix-on-touch with token recipes.
+The dated v3 review observed `.gb`-scoped dark-mode risks such as hardcoded hovers, white node buttons, raw shadows and Tailwind defaults bypassing `--shadow-*`. Re-query current code before opening a task; this paragraph is not a fix-on-touch queue.
 
 **K4. Enforcement (eye + grep).** Raw hex inside `.gb`-scoped rules → only the two token blocks may hit. Every `box-shadow` in `.gb` scope reads `var(--shadow-…)`; kit shadow utilities use the arbitrary form `shadow-[var(--shadow-…)]` (Tailwind's named `shadow-xs/sm/md` compile to its own black defaults and bypass the tokens — `card.tsx`/`dialog.tsx` already do it right). No new `dark:` utilities until `@custom-variant dark` exists. Eye tests: turn shadows off in devtools — a dark layout must still read perfectly (borders + surface steps carry it); screenshot light and dark side by side — coral must read as the same brand colour, merely re-lit.
 
@@ -560,13 +567,13 @@ Hard rules: **motion is never the only signal** — every animated state change 
 
 ## G. Fluid gesture & spring motion(流体手感)
 
-Adopted 2026-07-09 from the `/apple-design` skill (Emil Kowalski's WWDC distillation, MIT; mirrored at `.claude/skills/apple-design/`) — founder directive "会升华就全面 implement". §6 still governs one-shot, non-grabbable motion (its tokens and 200ms cap unchanged). **§G governs anything the user can grab**: canvas objects/pan/zoom, trim handles, drag-to-reschedule, sheets/drawers, the dock panel, sliders, swipes. On conflict, this document wins over the skill (three resolutions logged in G8).
+Recorded 2026-07-09 from the `/apple-design` skill (Emil Kowalski's WWDC distillation, MIT; mirrored at `.claude/skills/apple-design/`). In this v3 package, §6 covered one-shot, non-grabbable motion and §G covered grabbable interactions: canvas objects/pan/zoom, trim handles, drag-to-reschedule, sheets/drawers, the dock panel, sliders and swipes. The three historical conflict resolutions are logged in G8; current conflicts return to the current task/authority chain.
 
 **G1. Response.** Feedback fires on pointer-**down**, never on release (§6 press scale already complies). During a gesture the surface tracks the pointer **1:1 the whole way** — animating only at gesture-end is a defect. Nothing non-essential sits on the input path (no debounce/timer between pointer and pixels).
 
 **G2. Direct manipulation.** Pointer Events + `setPointerCapture`; respect the **grab offset** (never snap to element center on grab); keep a short position+timestamp history so release velocity exists. ~10px hysteresis before committing a drag direction; plausible gestures are detected in parallel and losers cancelled — never final-state-only recognizers.
 
-**G3. Interruptibility — the law of laws.** Any grabbable surface must be catchable and reversible **mid-flight**: never lock input during a transition; always animate from the *presentation* (live on-screen) value, never the logical target; a closing sheet re-grabbed follows the finger. CSS transitions/`@keyframes` are **banned for gesture-driven motion** (they cannot be grabbed) — springs only. Decompose 2D motion into independent X/Y springs.
+**G3. Interruptibility — primary interaction invariant in this package.** Any grabbable surface must be catchable and reversible **mid-flight**: never lock input during a transition; always animate from the *presentation* (live on-screen) value, never the logical target; a closing sheet re-grabbed follows the finger. CSS transitions/`@keyframes` are **banned for gesture-driven motion** (they cannot be grabbed) — springs only. Decompose 2D motion into independent X/Y springs.
 
 **G4. Springs — house values** (Apple's damping/response, mapped to Motion's `bounce`/`duration`):
 
@@ -602,16 +609,16 @@ Overshoot/bounce is legal **only when the user's gesture carried momentum**. A m
 
 ## Changelog — v2 → v3 conflict resolutions
 
-v3 merges ten domain sections onto the v2 base. Where sections disagreed, these resolutions are final:
+v3 merged ten domain sections onto the v2 base. The list below records the choices made in that dated package; it is not a new source of current approval:
 
-1. **Z-index:** three competing ladders (layout's tokenised map, navigation's observed rungs, feedback's observed rungs) → the **§L8 ten-token map is canonical**. Consequences: Otto dock = `--z-dock` 70 (was "60" in feedback/otto sections); mobile drawer = 80/79 (today's 199/200 is drift); dialogs = 100 (today's z-50 is drift).
-2. **Focus ring:** the single "3px @ 40%" halo (v2 polish-delta #2, §F2) and the 35% mix (§N3) are superseded by the **§A2 two-layer ring** (1px solid keyline + 4px 40% halo) — the 40% halo alone is 1.64:1, invisible to low vision. Bordered fields keep the field variant: ring-coloured 1px border + 3px 40% halo. All alphas unify at 40%.
-3. **Field error text:** forms said `12/16 --error`, feedback said `13/18 --error-soft-foreground` → **13/18, 500, `--error-soft-foreground`** (§A1 semantic-text law forbids base-colour text below 19px; 13px wins for legibility). Base `--error` remains legal for icons and ≥19px.
+1. **Z-index:** three competing ladders (layout's tokenised map, navigation's observed rungs, feedback's observed rungs) → the v3 package selected the **§L8 ten-token map**. Consequences recorded then: Otto dock = `--z-dock` 70 (was "60" in feedback/otto sections); mobile drawer = 80/79; dialogs = 100. Recheck current code before treating any drift note as current.
+2. **Focus ring:** the earlier single "3px @ 40%" halo (§F2) and the 35% mix (§N3) are superseded by the **§A2 two-layer ring** (1px solid keyline + 4px 40% halo) — the 40% halo alone is 1.64:1, invisible to low vision. Bordered fields keep the field variant: ring-coloured 1px border + 3px 40% halo. All alphas unify at 40%.
+3. **Field error text:** forms said `12/16 --error`, feedback said `13/18 --error-soft-foreground` → the v3 package selected **13/18, 500, `--error-soft-foreground`** (§A1 records the semantic-text rationale). Base `--error` remained legal for icons and ≥19px.
 4. **Dock avatar size:** otto-presence wrote 28px inside the 48px collapsed dock, off its own 16·22·26·32… ladder → **26px** (nearest ladder step). The 34px dialog-chip exception stays.
 5. **Shimmer durations:** v2 §6 "progress shimmer 1300ms" vs the 1.4s `otto-shimmer` skeleton → **two distinct animations, both kept**: gen-bar slide 1300ms, skeleton shimmer 1400ms; §6 motion table now names both.
 6. **16px input text:** not on the §3 type scale but required by §F3 (iOS anti-zoom) → documented in §3 as the one **control-only** size; never a reading size.
 7. **Analytics kit off-grid values** (KPI padding 15, panel radius 16): founder-locked pixel-matched kit → **pinned exception**; new data surfaces use 16 / 18; quantise when the founder refreshes the kit.
-8. **`--warning-soft-foreground` light** fails AA by 0.05 → the doc keeps the shipped value `#B45309` (globals.css is token truth); `#92400E` is logged as a **proposed token change** awaiting founder approval (§A1.8, code-gaps ledger).
+8. **`--warning-soft-foreground` light** fails AA by 0.05 → the doc records the shipped value `#B45309` (`globals.css` is implementation truth). No replacement token is approved here; any change requires a current task and Founder review where applicable (§A1.8).
 9. **Ring alpha + disabled opacity locks:** §F2's 40% / 0.4 supersede the stock-shadcn 50% / 0.5 scatter across textarea/select/checkbox/switch.
-10. **Repo mirror location:** token-architecture cited `docs/design/handoff/` (a stale pre-pivot export) as the mirror → the living repo mirror is **`docs/design-system/`** (rules + cards, landed 2026-07-07); `docs/design/handoff/` is frozen history, never a source, never imported.
-11. **Drift ledgers:** the per-section drift tables (layout L9, nav N10, forms F11, dark K4, voice V10, targets A4, token T8) are consolidated into `design-v3/code-gaps.md` (现状→建议→级别, polish-delta style) — the spec text stays clean; the ledger is the work queue. Policy unchanged: quantise on touch, never a standalone sweep, except items marked token-level which batch into single small PRs.
+10. **Tracked evidence location:** token-architecture cited `docs/design/handoff/` (a pre-pivot export); the v3 package was recorded under **`docs/design-system/`** (rules + cards, landed 2026-07-07). Neither location is current authority by itself.
+11. **Historical drift evidence:** prior per-section gap tables have left the active tree and remain in Git history only. They are never an authorized work queue; a current GitHub task must independently verify and adopt any surviving gap.

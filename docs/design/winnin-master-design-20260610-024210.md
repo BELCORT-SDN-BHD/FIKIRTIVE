@@ -15,7 +15,7 @@ Mode: Startup
 - 分镜与脚本在纸上，与生成环节完全断开
 - 生成历史无法回链到 prompt、实体与参考图
 
-原 PRD（docs/PRD.md, Draft v1）把问题框定为"广告公司非技术用户用不来 AI 工具"，但本次诊断证明真实问题是：**已经会生成的重度创作者，缺一个把碎片串起来的结构层。**
+当时的 Draft v1（现仅存于 Git 历史）把问题框定为"广告公司非技术用户用不来 AI 工具"，但本次诊断认为真实问题是：**已经会生成的重度创作者，缺一个把碎片串起来的结构层。**
 
 ## Demand Evidence
 
@@ -198,7 +198,7 @@ V1 的 Copilot 职责清单（白名单制，仅此五项），**按阶段分配
 
 ### 与既有 PRD 及 130 问清单的关系
 
-- docs/PRD.md 保留为**长期地图**；本设计文档定义 V1 实际范围。两者冲突处以本文档为准（尤其目标用户与阶段范围）。
+- 当时的 draft 产品文档曾被视为长期地图；该说法已退役。本文也只是 dated design evidence，current scope 以 Blueprint、Founder Resolution 和 aligned Route-B 为准。
 - `docs/prd-review/Fikirtive-PRD-Open-Questions.md`（130 问清单）的 12 条 Blocker 重新分流：涉及多租户（A3）、credits 并发/幂等（E1/E2）、外部 client reviewer（G1）、share/review 阶段归属（J1）等问题在 V1（云端单用户）中**显式延期**——但 SaaS 形态下 A3 多租户隔离从"延期"升级为"schema 第一天预留 organization_id/owner_id 列"（加列便宜，回填昂贵）；删除语义（A2）已定案（软删除 + 不可变快照）；model_registry（A1）在阶段二随 per-model adapter 落地；Copilot 编排模式（C1/C2）已定案为固定 workflow + 白名单工具；poll vs webhook（D1）随阶段二 Modal 回流架构定案（本次 eng-review 调研中）。建议开工前用该清单对阶段一 schema 过一遍筛。
 
 ## UX 规格（2026-06-10 /plan-design-review D5-D11 逐项批准）

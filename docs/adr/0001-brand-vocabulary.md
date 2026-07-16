@@ -3,6 +3,10 @@
 Date: 2026-06-21
 Status: Accepted
 
+> Historical ADR. It explains the provenance of the vocabulary used in code, but it sits below
+> `docs/BLUEPRINT.md`, current Founder Resolutions and the Founder-aligned Route-B plan. It cannot
+> override newer product direction or prove current implementation status.
+
 ## Context
 
 The word "Brand" was overloaded across the product:

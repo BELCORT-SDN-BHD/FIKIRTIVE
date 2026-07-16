@@ -1,15 +1,18 @@
 # CONTEXT.md — FIKIRTIVE Domain Glossary 词汇表
 
-This is the **shared vocabulary** the agent and the user (founder) use when talking about
-FIKIRTIVE. It exists to **kill naming drift** (one thing, one name) and to let a non-programmer
-read the domain in plain language. When code, chat, or UI disagree on what something is
-called, **this file wins** — rename to match it, or update this file in the same change.
+This is a **derived vocabulary aid** for the agent and the user (founder) when talking about
+FIKIRTIVE. It exists to reduce naming drift (one thing, one name) and to let a non-programmer
+read the domain in plain language. It is not product authority or a current-status source. If
+code, UI, an approved plan, or a current GitHub decision disagrees with this glossary, trace the
+authoritative source and update this file only after the terminology is resolved; do not rename
+anything merely because this file says so.
 
 Glossary only — no implementation detail, no file paths. Each entry:
 **Term** (中文) — one-line meaning. _Avoid:_ confusing synonyms.
 
 Reading the table below:
-- **canonical** = use exactly this word in code, comments, and (where noted) UI.
+- **preferred term** = the vocabulary derived from the cited product/code context; verify it
+  against the current task before changing product or code.
 - _Avoid_ = words that mean the same thing but cause confusion — do not introduce them.
 
 ---
@@ -100,9 +103,11 @@ Reading the table below:
   Generations it contains, it does not re-produce them. _Avoid:_ campaign (broader/external), ad set
   (a paid-platform term), pack (bare), batch (batch is the gen primitive, not the deliverable).
 
-- **genRequest** (生成请求 / the spend gate) — The **single typed gate that authorizes spending real
-  money** on AI generation. Every paid request is validated here; `idempotencyKey` is required.
-  This is THE spend authority — nothing else may spend. _Avoid:_ generate (too vague), genJob, request.
+- **genRequest** (生成请求 / generation spend gate) — The typed request gate for a media-generation
+  operation. It validates generation parameters and requires an `idempotencyKey`; reserve/settle and
+  the credit ledger still enforce the money movement. It is not the only paid capability in the
+  product: LLM turns, reference generation and other approved spend surfaces have their own current
+  execution paths. _Avoid:_ generate (too vague), genJob, request.
 
 - **startGen** (启动生成) — The server action that takes a validated genRequest, writes a GenJob row,
   and dispatches it to the worker. The *orchestrator*, not the gate and not the row. _Avoid:_ generate, runGen, dispatch.
@@ -110,10 +115,11 @@ Reading the table below:
 - **GenJob** (生成任务) — The persisted job row tracking one generation through QUEUED → GENERATING →
   DONE/FAILED. The *unit of work*; the worker consumes it and produces Generation(s). _Avoid:_ job (ambiguous), task, gen, request.
 
-- **The 4 paid spend paths** (四条花钱路径) — The *only* code paths that spend real money:
-  (1) ottoGenerate, (2) direct startGen (GenSpace / Storyboard), (3) startRefGen, (4) the variant
-  paths (createVariant / regenerateVariant). All four funnel through genRequest/its sibling gates.
-  _Avoid:_ calling anything else a "spend path".
+- **Paid execution path** (付费执行路径) — Any current code path that can incur provider/API cost,
+  including metered Otto LLM turns and approved media/reference/batch generation surfaces. There is
+  no permanent fixed-count list in this glossary: discover the current paths from code, the generated
+  Otto catalog, money tests and the credit ledger. Each path must preserve its applicable approval,
+  idempotency and reserve→settle/refund contract. _Avoid:_ treating an old enumerated list as exhaustive.
 
 - **idempotencyKey** (幂等键) — A required per-request key that guarantees a generation is charged at
   most once even on double-clicks, reloads, or retries. Cowork cards use an exactly-once-ever key;
@@ -135,17 +141,21 @@ Reading the table below:
 - **Otto** (AI 营销操盘手) — The AI-marketer **agent persona** and the product's **main entry**: the
   merchant talks to Otto, and Otto **orchestrates the studio surfaces (GenSpace / Storyboard / Editor /
   ad-pack) as its tools**. A *thinking + acting* partner — it proposes and executes within hard spend
-  caps, but the agent loop itself **never spends**; money moves only via the spend paths it triggers.
+  caps. Otto's own LLM turns are metered paid execution; media/provider work remains a separate
+  approved action through the applicable spend gate.
   Renamed from "Cowork". _Avoid:_ Cowork (old name), Planner (the LLM *inside* an Otto turn),
   assistant, copilot, bot, AI.
 
 - **Otto turn** (一轮对话 / ottoTurn) — One round of the agent: it reads the conversation, may
-  call the Planner LLM, and replies — possibly with a proposal card. **A turn NEVER spends real money.**
+  call the Planner LLM, and replies — possibly with a proposal card. A real-model turn can incur API
+  cost and therefore runs through LLM budget reserve→settle; it does not by itself authorize a
+  separate media-generation provider call.
   Renamed from "Cowork turn / coworkTurn". _Avoid:_ generate, run, request.
 
 - **ottoGenerate** (点击生成) — What runs when the user clicks **Generate** on a proposal card. This
-  IS a spend path (path #1) — it re-derives the request and calls startGen. The agent proposing ≠
-  this. Renamed from "coworkGenerate". _Avoid:_ conflating with an Otto turn; a turn proposes, ottoGenerate spends.
+  is a media-generation spend path: it re-derives the request and calls startGen. The agent proposing
+  and the approved media execution are distinct. Renamed from "coworkGenerate". _Avoid:_ conflating
+  the metered LLM turn with the separately approved media-generation action.
 
 - **Generate card** (生成卡片 / GEN_CARD) — The proposal the agent shows in chat: a model + params +
   estimated price the user can edit and then Generate. Display-only until clicked. _Avoid:_ proposal
@@ -160,7 +170,8 @@ Reading the table below:
 
 - **Planner** (规划器) — The LLM call inside an Otto turn that produces the structured plan/proposal
   JSON. Otto is the persona/loop; the Planner is the model call it makes — two layers, never merged.
-  Provider-configurable (mock / fal / Modal). _Avoid:_ model (ambiguous), AI, brain, Otto.
+  Runtime/model selection is implementation state and must be verified from current code/config.
+  _Avoid:_ model (ambiguous), AI, brain, Otto.
 
 - **Guardian** (守门 / checkCast) — The server-side re-validation at spend time that re-checks every
   referenced Entity/Variant/source frame is still live and owned before money is committed. The money

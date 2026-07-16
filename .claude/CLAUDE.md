@@ -1,127 +1,85 @@
-<!-- CODEGRAPH_START -->
-## CodeGraph
+# FIKIRTIVE — project law for every harness
 
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+> This is the sole physical project-law document. Claude loads it from
+> `.claude/CLAUDE.md`; Codex loads the repository-root `AGENTS.md` symlink.
+> Nested instruction files may add narrower local rules only. They may not
+> relax or duplicate this law.
 
-- **MCP tools** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them. `codegraph_node` returns one symbol's source + callers, or reads a whole file with line numbers. If the tools are listed but deferred, load them by name via tool search.
-- **Shell** (always works): `codegraph explore "<symbol names or question>"` and `codegraph node <symbol-or-file>` print the same output.
+## Fresh-session trust order
 
-If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
-<!-- CODEGRAPH_END -->
+1. Obey current runtime constraints and the Founder's current, explicitly bounded task.
+2. Load this project law.
+3. Read `docs/BLUEPRINT.md` for the long-term product constitution.
+4. Read relevant GitHub Founder Resolutions and their explicit supersedes links.
+5. Read the Founder-aligned existing Route-B plan for current-phase scope, sequence, and acceptance.
+6. Identify the active GitHub issue or map and verify its native dependencies are unlocked.
+7. Query live Git, PR/current-head CI, worktree, claim, deployment, and provider facts. Anything not queried is `Unknown`.
+8. Load only the task-linked playbooks, specs, and code needed for the issue.
+9. Treat old plans, verdicts, reports, handoffs, memory, and archives as evidence only.
 
-## GBrain Configuration (configured by /setup-gbrain)
-- Mode: local-stdio
-- Engine: pglite (`~/.gbrain/brain.pglite`)
-- Embedding: openai:text-embedding-3-large (1536d) — key in `~/.zshenv`
-- Config file: `~/.gbrain/config.json` (mode 0600)
-- Setup date: 2026-06-20
-- MCP registered: yes (user scope; restart Claude Code to load `mcp__gbrain__*`)
-- Artifacts sync: off (defer; `/setup-gbrain` to enable later)
-- Current repo policy: read-write
+`docs/BLUEPRINT.md` outranks every lower product artifact. If authority layers conflict,
+stop and align them through the approved process. A session, process, path, branch name,
+handoff, memory entry, claim file, cache, or status snapshot never grants product, merge,
+deployment, spend, or project-wide authority.
 
-## GBrain Search Guidance (configured by /sync-gbrain)
-<!-- gstack-gbrain-search-guidance:start -->
+## Non-negotiable safety
 
-GBrain is set up and synced on this machine (local PGLite, OpenAI embeddings).
-Prefer gbrain over Grep when the question is semantic or you don't yet know the
-exact identifier.
+1. **Never push directly to `main`.** Every change lands through a PR.
+2. **Never edit `docs/BLUEPRINT.md`** outside the Founder's §7 amendment flow. If code and Blueprint disagree, stop and report.
+3. **Ask the Founder before every real development or verification spend.** The ask is the cap; do not create a substitute code cap.
+4. **Money paths stay exactly-once and fail-closed.** Any relevant diff must pass `.claude/skills/money-safety-review/SKILL.md`.
+5. **Tenant isolation is absolute.** Every owner-scoped query uses the authenticated `ownerId`; client-supplied identity is never trusted.
+6. **Production and external effects are Founder-only.** Never deploy, change production, alter credentials or permissions, publish externally, spend, or delete external state without the required explicit authorization.
+7. **Product decisions remain Founder decisions.** Direction, identity, scope, user behaviour, and acceptance changes require a durable GitHub Founder Resolution or the applicable Blueprint process.
 
-**This worktree is pinned to a worktree-scoped code source** via the
-`.gbrain-source` file in the repo root (`gstack-code-artlio-4a8eba04`, gitignored).
-`gbrain code-def`, `code-refs`, `search`, and `query` from anywhere under this
-worktree route to that source by default — no `--source` flag needed.
+## Merge authority
 
-Indexed corpora (via the `gbrain` CLI):
-- This worktree's code (283 pages, auto-pinned via `.gbrain-source`).
-- `default` source: this repo's docs/plans/PRDs + `~/.gstack/` memory (local-only).
+There is no standing controller, reviewer, or session merge authority.
 
-Prefer gbrain when:
-- Semantic intent, no exact string yet:
-    `gbrain query "<question>"`  ·  `gbrain search "<terms>"`
-- Symbol definition / references:
-    `gbrain code-def <symbol>` · `gbrain code-refs <symbol>`
-- Past plans / decisions / research:
-    `gbrain query "<question>"`
+**Founder-only:** governance or merge-policy changes; product identity or brand; Blueprint
+or constitutional amendments; irreversible architecture; schema or migration; money or
+tenant paths; security credentials or permissions; production or deployment; external
+publishing, spend, or deletion; unusually large or disputed PRs; and anything whose tier
+is uncertain.
 
-Caveat — call graph not built yet: `gbrain code-callers`/`code-callees` return
-`count: 0` until `/sync-gbrain --dream` runs, and dream needs `ANTHROPIC_API_KEY`
-(not set). `code-def`/`code-refs` and semantic search work now without it.
+A bounded, reversible ordinary PR may be merged only when the current Founder/task
+instruction explicitly authorizes an independent non-author executor and all of these are true:
 
-Grep stays right for known exact strings, regex, and file globs. Run
-`/sync-gbrain` after meaningful code changes; `/sync-gbrain --full` for a full
-reindex.
+- the executor did not author or materially edit the diff;
+- every current-head CI check is green;
+- an independent cross-family review has no unresolved P0/P1;
+- the PR contains no Founder-only category; and
+- the merge result is verified against live `main`.
 
-<!-- gstack-gbrain-search-guidance:end -->
+No auto-merge or merge watcher. CI unavailability is not green. Reproduce every current
+workflow job and gate locally using the current workflow plus `docs/runbooks/local-ci.md`,
+publish exact-head evidence in the PR, and obtain the Founder's explicit CI-unavailable
+approval before any merge.
 
-## Code intelligence routing: CodeGraph vs GBrain
-Both are active and do NOT conflict (separate storage, separate tools):
-- **CodeGraph** (`.codegraph/`) — precise *structural* code: exact defs, call
-  paths, "who calls X". Reach for it first for structural/symbol questions.
-- **GBrain** (`~/.gbrain`) — *semantic* search ("find code about this concept")
-  plus non-code knowledge (this repo's plans/PRDs/research). Reach for it for
-  fuzzy/conceptual questions and for searching docs/decisions.
+## Task and worktree lifecycle
 
-## Merge discipline
-`main` has the active org ruleset `protect-main`, but the rules below remain mandatory defense in
-depth. `AGENTS.md` is the current authority for founder-only versus delegated ordinary merge;
-every agent session must follow it:
-- **Never push directly to `main`.** All changes land via a PR.
-- **Never merge a PR unless ALL CI checks are green** on the current head commit.
-- **CI 不可用时(账单封锁/Actions 宕机)不得以"CI 本来就红"为由合并;必须在本地完整
-  复现三关(check/test/web-build,配方见 `docs/runbooks/local-ci.md`)并把结果贴进 PR,
-  再经 founder 明确批准才可合并。此规则约束所有 agent(claude/codex/任何工具)。**
-- Production deploys are MANUAL (`railway up -s web|worker -e production`); pushing `main`
-  no longer auto-deploys (verified 2026-07-10: four main pushes on 07-09, zero auto deploys).
-  Merged code still ships verbatim on the next manual deploy — a bad merge is a delayed
-  incident, not a prevented one. When in doubt, don't merge; ask the founder.
-- Spend-path diffs (see `.claude/skills/money-safety-review`) additionally require that
-  skill's checks to pass before merge.
+- Project continuity belongs to the scoped GitHub issue or map, not a permanently living session.
+- On start or resume, re-query issue unlock state, existing branch/worktree/PR, cwd, HEAD, dirty state, remote, and the project task-ownership registry.
+- After an explicit Founder product unfreeze, every repository-mutating task must acquire one task-linked `ACTIVE` claim with `scripts/task-ownership-check.mjs` before its first mutation. Resume must re-check that exact claim; missing, expired, overlapping, wrong-base, wrong-worktree, wrong-scope, or malformed state fails closed.
+- Release or supersede the claim when the task ends or ownership transfers, then prove the expected `ACTIVE` count. Expiry never transfers authority. Read-only factual work may run without a claim, but may not mutate repository or product state.
+- Reuse existing task resources. Never create duplicate branches, worktrees, or PRs for the same task.
+- Write decisions, evidence, completion state, and next dependencies back to GitHub. Memory and handoffs may aid recall but never override durable approvals or live facts.
+- Session, worker, ticket, or PR completion does not imply project completion.
+- Worktree cleanup belongs to a later dedicated maintenance run from a stable checkout. A candidate must be terminal, clean, safely preserved, inactive, and ownership-clear.
+- Removing a worktree does not authorize branch deletion. Preserve uncertain, dirty, or unmerged work; never delete a remote branch without explicit Founder authorization.
 
-## The Blueprint (constitution)
-`docs/BLUEPRINT.md` is the founder-finalized master plan: what this product IS, its
-non-negotiable principles, and the 9 expansion seams every new feature must use.
-**Read it before building anything new. NEVER edit it** — if code and blueprint
-disagree, stop and report; only the founder changes the blueprint.
+## Project conventions
 
-## Reviewing PRs (any agent)
-The chief-reviewer role is an OFFICE defined in the playbook, not a person or session —
-whoever reviews holds it temporarily and is bound by its rules (incl. never self-merging
-your own PRs; the founder is above the office as final authority).
-Before reviewing or merging ANY PR, read `docs/review/REVIEWER-PLAYBOOK.md` and run the
-checklist for every area the diff touches. The full codebase map is
-`docs/review/CODEBASE-MAP-2026-07-02.md`. These files encode invariants that look like
-over-engineering but are load-bearing. Precedence: when a diff contradicts the playbook,
-the playbook wins; when the playbook contradicts `docs/BLUEPRINT.md`, the blueprint wins —
-stop and report to the founder.
+- Specs and skill docs use 华语; generation prompts use English; UI copy uses English sentence case.
+- Pricing lives in configuration and respects the Blueprint margin floor; never scatter price literals through business or UI code.
+- Every new Otto capability uses `defineOttoSkill` and the shared action layer; never create a bypass or second app.
+- Before reviewing a PR, read the task-relevant sections of `docs/review/REVIEWER-PLAYBOOK.md` and verify its dated implementation claims against live `main`.
+- Caches, hooks, MCP, CodeGraph, GBrain, and memory are optional capabilities, never authority. Use them only after a task-relevant freshness or health check.
+- Present material product options to the Founder one at a time in plain language; do not silently decide them.
 
-## Working with the founder (portable rules — survive any machine/account/session)
-Summary of constitution articles (on conflict, `docs/BLUEPRINT.md` wins):
-- **Ask before spending real money**(宪法 2). Every real paid call during development/verification
-  (BytePlus/fal/Anthropic verification runs, Stripe live actions) needs the founder's explicit
-  per-spend confirmation. The ask IS the cap — there is deliberately NO code cap. Delegated
-  phrases like "you decide" do NOT cover a specific spend.
-- **Present options, don't decide.** Product calls belong to the founder: lay out options with
-  tradeoffs, neutrally. Recommend only when asked (he often asks — then commit to a clear one).
-- **Specs/skill docs in 华语**(宪法 9); generation prompts stay English; UI copy sentence case.
-- **Founder can't see inline chat widgets** — render design mockups to PNG on ~/Desktop.
-- **Founder priorities, in order: 安全 > 效率 > 易管理**(宪法 1;file-system style: readable
-  files + simple toggles, nothing buried).
+## Conditional orchestration
 
-## Fresh agent bootstrap (new machine / new session — read in this order)
-1. `AGENTS.md` — cross-harness project law and current merge authority
-2. `docs/BLUEPRINT.md` — the constitution (NEVER edit; conflicts → stop and report)
-3. `docs/review/REVIEWER-PLAYBOOK.md` — review checklists before touching any PR
-4. `docs/research/GRILL-VERDICTS-2026-07-03.md` — the 2026-07-03 WHAT-pass verdicts
-   (earlier decisions: `docs/review/DECISION-INVENTORY-2026-07-02.md`)
-5. `docs/design/2026-07-03-harmony-0*.md` — data model, parity manifest, factory roadmap,
-   costing (inputs + model), channel-fee ledger
-6. `docs/review/EXPANSION-SEAMS.md` — the recipe for whatever you're about to build
-Everything an agent needs to build correctly is in the repo; no chat history required.
-
-When asked to orchestrate, resume an interrupted program, coordinate models, or make product/
-architecture/design/audit decisions, also read the globally installed `orchestration` skill and
-`.claude/skills/fikirtive-orchestration-overlay/SKILL.md`. A global control-plane session must
-also read `docs/ops/ORCHESTRATOR-STATE.md` before dispatching work. A scoped orchestrator may use
-the shorter bootstrap only when the overlay's machine-checked work-order contract is satisfied;
-it must read its hash-locked `BOOTSTRAP.md` and every authority file named there, and it must not
-claim or rewrite the global state ledger.
+When a task requires multi-agent orchestration, interrupted-task recovery, or product,
+architecture, design, or audit judgment, load the runtime-provided global `orchestration`
+skill and `.claude/skills/fikirtive-orchestration-overlay/SKILL.md`. Those skills organize
+work; they do not broaden this law or create project-wide authority.

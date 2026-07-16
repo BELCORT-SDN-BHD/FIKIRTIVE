@@ -1,6 +1,7 @@
 # 《FIKIRTIVE 全城交付报告》标准(研发部门 → CEO)
 
-> 2026-07-12。已向 founder 完整描述并待其确认;确认后此文件 = 新总指挥 session 的**必达交付合同**。
+> 2026-07-12 起草的 task-linked 报告模板，不是常驻 session 的权限或 current-status 来源。
+> 是否适用、由谁交付、何时验收，取自当前 GitHub task 与已对齐 Route-B 计划。
 > 形态 = 三件套:交付书 + 现场演示 + founder 最终验证剧本。
 > **2026-07-16 对齐（D-038）**：商业第一期的交付书以内容、发布、完整 Customer Engagement CRM 三支柱及 `ROUTE-B-MASTER-PLAN-2026-07-12.md`「七·甲」为 release contract；全城其余区可继续诚实显示后续状态，但不得阻塞或冒充第一期。Reminder-assisted 与 Direct publish 的证据分开，模拟发布不能作为任何已放行模式的完成证据。
 

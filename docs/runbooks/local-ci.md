@@ -1,52 +1,41 @@
-# 本地复现 CI 三关(check / test / web-build)
+# 本地复现 CI 四关（check / test / web-build / lint）
 
-CI 不可用时(账单封锁 / Actions 宕机),合并前必须在本地完整跑过这三关并把结果贴进
-PR(见 `AGENTS.md` 与 `.claude/CLAUDE.md` 的合并纪律)。配方与
-`.github/workflows/ci.yml` 一一对应;任何一步非零退出 = 红,不得合并。
+CI 因账单封锁或 Actions 宕机而完全没有启动步骤时，合并前必须在 PR 的精确 head 上复现
+四个 job，并保留完整、非敏感日志与退出码。任何命令非零都算红；billing zero-step 只能记为
+“未运行”，不能记为绿色。
 
-## 前置:Postgres + 测试库
+`.github/workflows/ci.yml` 与本 runbook 都只调用 `scripts/ci/run-job.sh`。各 job 的内部命令
+只维护在该脚本，不在这里复制。
+
+## 前置条件
+
+- Node.js 22。
+- `package.json` 的 `packageManager` 所钉版本（当前为 pnpm 10.0.0）。
+- test job 使用隔离的 PostgreSQL 16 数据库，库名必须以 `_test` 结尾。
+
+本地 Docker 数据库可这样准备；创建命令是幂等的：
 
 ```bash
+node --version
+pnpm --version
 docker compose up -d postgres
-# ⚠️ compose 默认库名是 `fikirtive`,不满足 packages/db 与 apps/web(F35)的 *_test
-# 库名守卫(接受任意 *_test 后缀)—— 测试连它会被拒。所以要单独建一个 fikirtive_test:
-docker compose exec postgres psql -U fikirtive -c 'CREATE DATABASE fikirtive_test;'
-```
-
-> 2026-07-07 名字清剿:本地库/用户/volume 已从旧名 `artlio` 改为 `fikirtive`。老机器上
-> 若容器还是旧卷(`artlio-pg`),`docker compose up -d postgres` 会新建 `fikirtive-pg`
-> 空卷并以新用户初始化;旧卷数据不动。旧库上直接建 `fikirtive_test` 也可以:
-> `docker compose exec postgres psql -U artlio -c 'CREATE DATABASE fikirtive_test;'`(用户名跟旧卷走)。
-
-## 第一关 — check(typecheck + fences)
-
-```bash
-pnpm install --frozen-lockfile
-pnpm --filter "./packages/*" build
-pnpm -r typecheck
-bash scripts/check-skill-imports.sh
-bash scripts/check-no-raw-prisma.sh
-pnpm --filter @fikirtive/otto run catalog:check
-pnpm lint:parity
-bash scripts/check-blueprint-integrity.sh
-bash scripts/check-destructive-migrations.sh
-```
-
-## 第二关 — test(migrate + 漂移门 + 全部测试)
-
-```bash
+docker compose exec postgres sh -lc \
+  "psql -U fikirtive -tAc \"SELECT 1 FROM pg_database WHERE datname='fikirtive_test'\" | grep -qx 1 || createdb -U fikirtive fikirtive_test"
 export DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test'
-pnpm --filter @fikirtive/db exec prisma migrate deploy
-# schema 漂移门:schema.prisma 改了但没配套 migration → 这里红(prod 会炸)。
-pnpm --filter @fikirtive/db exec prisma migrate diff \
-  --from-config-datasource --to-schema prisma/schema.prisma --exit-code
-pnpm -r test
 ```
 
-## 第三关 — web-build(Railway 部署同款命令)
+若机器仍使用旧卷，数据库用户可能是 `artlio`；只替换上面两处数据库用户名，不得改成真实或
+生产数据库。runner 会在 migration 前再次拒绝任何库名不以 `_test` 结尾的 URL，且不会打印
+URL 内容。
+
+## 四个精确 job
 
 ```bash
-pnpm --filter @fikirtive/web build
+bash scripts/ci/run-job.sh check
+bash scripts/ci/run-job.sh test
+bash scripts/ci/run-job.sh web-build
+bash scripts/ci/run-job.sh lint
 ```
 
-三关全绿后,把每关的关键输出(最后几行即可)贴进 PR 描述,等 founder 明确批准再合并。
+四条命令必须分别为零退出。将每条命令的完整非敏感日志、日志 hash、精确 head/base、Node/pnpm
+版本和 disposable test DB 证据写入 PR；之后仍须按项目 merge 纪律取得适用的明确批准。

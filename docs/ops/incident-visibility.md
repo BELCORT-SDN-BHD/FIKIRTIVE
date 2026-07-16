@@ -1,54 +1,54 @@
-# prod 坏了,你怎么知道 —— 事故可见性一页纸(2026-07-04)
+# 事故可见性与诊断(runbook,不是状态表)
 
-> 背景:2026-07-04 盲区扫描确认,此前 prod 出故障**没有任何东西会通知你**
-> (审计原话:一个坏掉的 prod 视频流程 "live and undetected")。本页是修复后的
-> 完整地图:出事时信号从哪来、你去哪看、按什么顺序查。
+> 仓库能证明探针和 instrumentation 代码存在,不能证明 production 已部署哪一版、外部监控/
+> 通知已接线、Sentry DSN 已配置、Stripe webhook 已订阅或告警能送达。每次事故先 live-query;
+> 查不到就写 `Unknown`。本页不授予 deploy、rollback、恢复、变量修改或外部服务写入权限。
 
-## 三层信号(从"自动叫你"到"你主动看")
+## 仓库当前可验证的能力
 
-### 1. /api/health —— 外部监控的探测点(自动叫你,需一次性接线)
-- `GET https://<prod域名>/api/health`(免登录、零敏感数据)返回:
-  - HTTP **200** + `{ ok:true, db:"up", worker:"up|stale|unknown" }`
-  - HTTP **503** = 数据库不可达(web 本身还活着才答得出 503;web 全挂 = 超时/无响应)
-  - `worker:"stale"` = 后台 worker ≥5 分钟没心跳(生成/发布/回收全停摆)
-- **接线(你做一次,五分钟)**:注册 [UptimeRobot](https://uptimerobot.com) 免费档 →
-  加 HTTP(s) 监控指向上面的 URL → 告警条件选 **Keyword**,关键词填 `"worker":"up"`
-  (missing 时报警)→ 通知渠道填你的邮箱/Telegram。这样 web 挂、库挂、worker 挂
-  三种情况都会**主动叫你**。
-- Railway 侧(可选加固):service Settings → Health Check Path 填 `/api/health`,
-  部署起不来会自动回滚到上一个版本。
+- `GET /api/health` 免登录返回非敏感健康摘要:DB 可达时 HTTP 200 +
+  `{ ok:true, db:"up", worker:"up|stale|unknown" }`;DB 不可达且 web 仍能响应时 HTTP 503。
+- worker 心跳超过代码阈值会显示 `stale`;它是诊断信号,不是自动修复或通知保证。
+- web/worker 含 Sentry instrumentation,但只有 live environment 配置生效后才会记录。
+- 管理面代码包含 `/admin/system`、`/admin/cost`、`/admin/audit`;能否访问及数据是否新鲜必须
+  在当前部署和权限下验证。
 
-### 2. Sentry —— 报错聚合(自动记录,配了 DSN 才生效)
-- web + worker 都已接 `@sentry/node`,但**只在 Railway 设了 `SENTRY_DSN` 时生效**,
-  仓库里查不到 prod 是否已设 —— **去 Railway 两个 service 各确认一次**。
-- 设好后在 Sentry 里配 Alert rule(new issue → email),否则只记录不叫人。
-- Stripe 争议/退款(charge.dispute.created / charge.refunded)现在会打 Sentry
-  warning + 写 ActionEvent(type: credits.dispute / credits.refund)—— 有人拒付
-  时你会被叫到;**扣不扣回该用户的 credits 是你的决定**,系统不自动动账。
-  - ⚠️ **代码就绪 ≠ 事件会来**:Stripe 只推送你在 endpoint **订阅**了的事件。
-    去 Stripe Dashboard → Developers → Webhooks → 选中 prod 的 webhook endpoint →
-    "Select events" 里勾上 `charge.dispute.created`、`charge.dispute.closed`、
-    `charge.refunded`(现有的 `checkout.session.completed` /
-    `checkout.session.async_payment_succeeded` 保留)。不勾 = 代码永远收不到、
-    告警永不触发。这一步只有你能做,和 UptimeRobot 接线同级。
+## 事故开始时先固定 live facts
 
-### 3. Admin 面板 —— 你主动看(已有)
-- `/admin/system`:队列积压(QUEUED/GENERATING/FAILED)+ System Health
-  (含 BytePlus 资源包余量告警,需在 Railway 设 `BYTEPLUS_RESOURCE_PACK_USD`)。
-- `/admin/cost`:30 天真实成本聚合。
-- `/admin/audit`:ActionEvent 流水(充值/争议/Meta 数据删除等都有痕)。
+在 incident issue/记录中写下查询时间和证据,不要回写到本页成为新快照:
 
-## 出事了按这个顺序查
-1. **用户报错/监控报警** → 开 `/api/health`:503 = 库;`worker:stale` = worker;
-   200 全 up = 应用层问题,看下一步。
-2. **Railway** → 两个 service 的 Deployments(最近一次部署是不是刚好在出事前?)
-   + Logs(搜 `[worker]`、`error`)。坏部署 → Rollback 按钮回上一版。
-3. **Sentry**(配了 DSN 的话)→ 最新 issue 的堆栈直接贴给 agent 修。
-4. **数据库** → Neon 控制台看连接数/存储;(开了 PITR 的话)可回滚到时间点。
-5. 找 agent:把上面看到的贴进会话,说"诊断这个"。
+1. production 的实际域名、web/worker service 与部署 commit。
+2. `/api/health` 的 HTTP 状态和完整非敏感 body;超时与 503 分开记录。
+3. Railway 最近 deployment、restart 与日志时间线。
+4. 外部 uptime monitor 是否存在、探测哪个域名、最后成功/失败时间、通知渠道是否已验证。
+5. Sentry 是否实际收到同时间窗事件、alert rule 是否存在。
+6. 若涉及 Stripe/Meta/其他 connector,现场确认 webhook/subscription/平台状态;代码 handler 存在
+   不等于事件会送达。
 
-## 已知边界(诚实清单)
-- UptimeRobot/Sentry 告警规则是**外部服务配置**,仓库管不到 —— 本页第 1/2 节的
-  接线动作只有你能做,做完这页才真正闭环。
-- worker 心跳写库失败只降级为 `stale` 信号,不会让 worker 崩(设计如此)。
-- 日志仍是 Railway stdout(无长期留存);要留存需接 Logtail/Axiom 类服务,暂缓。
+任何一项查不到都写 `Unknown`;不从 `.env.example`、旧截图或历史 runbook 推断 live value。
+
+## 诊断顺序
+
+1. **Web 无响应/超时:**先看 Railway web deployment 与 logs;此时 `/api/health` 无法替 web 自证。
+2. **HTTP 503 / `db:"down"`:**核对 DB 平台状态、连接与变更时间线;未经恢复授权不执行迁移或 restore。
+3. **HTTP 200 + `worker:"stale|unknown"`:**查 worker deployment/logs、heartbeat 和 queue;不要把 web 200 报成系统健康。
+4. **HTTP 200 + worker up:**按用户操作时间追 Sentry、应用日志、审计记录和相关外部 provider 回执。
+5. 固定最小复现与影响范围后再提出修复/rollback 选项;执行权限仍由当前 incident task 与项目法决定。
+
+## 通知闭环验收
+
+外部监控、email、聊天或未来 notification channel 只有同时满足以下证据才可报“已接通”:
+
+- live endpoint/事件源已绑定;
+- 一次受控测试确实触发;
+- 目标收件人/渠道实际收到;
+- 去重、升级和恢复通知行为有记录;
+- secret/个人资料未出现在 repo 或公开 issue。
+
+未完成受控端到端测试时只能说“代码/配置位存在,送达未确认”,不能承诺会提醒用户或 Founder。
+
+## 诚实边界
+
+- 日志保留期、告警 provider、收件人、Sentry/Stripe/Meta 配置都是 external state。
+- Admin 页面与 Sentry 是诊断面,不是生产恢复 authority。
+- 事故关闭必须附 live recovery evidence;“已 merge”“已 redeploy”或单次 health 200 都不等于根因解决。

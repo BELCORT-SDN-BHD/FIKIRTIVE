@@ -1,10 +1,10 @@
 # G7 v1 Design — Otto Manages Existing Meta Ads (write)
 
 **Date:** 2026-06-28
-**Status:** ✅ SHIPPED — merged as PR #64 (`f141037`); prod dormant until a user reconnects granting ads_management + App Review.
+**Historical status (2026-06-28):** merged as PR #64 (`f141037`); the then-recorded production/provider/App Review state is not current authority. Live deployment, permission and provider state must be queried in the corresponding GitHub task; unqueried state is `Unknown`.
 **Scope:** v1 = slice (a) **manage existing** Meta ads only. Creating ads = v2.
-**Grounds on:** [codebase grounding map](#references) · [agent-authz research](2026-06-28-g7-agent-authz-research.md) · [session handoff](2026-06-28-SESSION-HANDOFF.md)
-**Builds on:** G6 read-only Meta connector (shipped, prod) + the Otto Skill Framework.
+**Grounds on:** [codebase grounding map](#references) · [agent-authz research](2026-06-28-g7-agent-authz-research.md) · legacy session provenance retained in Git history (not current authority)
+**Builds on (historical design dependency):** G6 read-only Meta connector + the Otto Skill Framework. Current runtime and production availability require live verification.
 
 ---
 
@@ -310,5 +310,5 @@ Per priority ③ (manageability) and YAGNI: v1's policy is ~10 rules (`2 modes �
 ## References
 - Codebase grounding map — workflow `wf_942a51d2` synthesis (this session); covers exact symbols/risks.
 - [Agent-authz deep research](2026-06-28-g7-agent-authz-research.md) — 12 verified findings.
-- [Session handoff](2026-06-28-SESSION-HANDOFF.md) · [Otto Skill Framework design](2026-06-26-otto-skill-framework-design.md) · [G6a](2026-06-28-g6a-meta-connect-design.md) · [G6b](2026-06-28-g6b-meta-insights-design.md).
+- Legacy session provenance is retained in Git history, not as current authority · [Otto Skill Framework design](2026-06-26-otto-skill-framework-design.md) · [G6a](2026-06-28-g6a-meta-connect-design.md) · [G6b](2026-06-28-g6b-meta-insights-design.md).
 - Memory: `otto-build-priorities`, `ask-before-spending-real-money`, `fikirtive-meta-app-config`.

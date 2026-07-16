@@ -1,5 +1,9 @@
 # WHAT-Pass 判决记录(拍板会输出,持续累积)
 
+> **历史产品判决档案，不是自动生效的当前 authority。** 当前方向、范围与验收以
+> `docs/BLUEPRINT.md`、相关 GitHub Founder Resolution 及已对齐 Route-B 计划为准；
+> 本文件只在任务明确引用某条 provenance 时查阅。
+
 > **O 区:已封卷(2026-07-03)。** 14 簇全部有判决。
 
 > founder 逐批拍板的正式记录;harmony 设计与蓝图 v2 的直接输入。
@@ -274,4 +278,4 @@
 | #295 停按钮 | **拍板** | 基线语义无选项（既有机器）：已完成留下/在跑一颗诚实跑完（供应商不可撤）/排队全部撤销退款；Q1 粒度=**A 单粒度**（停按钮只长在任务卡上；全局红按钮 over 设计——全局停归 routine 四件套 kill switch，随 routine 上线再来；平台级急停已在设置/后台层存在）；Q2 插手=**A 对象级**（用户碰哪件，Otto 把手从那件上拿开——该对象排队动作撤销退款，其余照常；配一句人话提示；先例=判决 7-8 客服对话）。真源=issue #295 Resolution |
 | #296 B8 十二槽 | **拍板（12/12 全清）** | D-1=**A**（Campaign 打包一期开门=卖点）；D-2=**B**（打包总价页💰一期做，随 D-1 顺带锁定+审批粒度判决要求）；D-3=**A**（CSV 导入+查重合并一期带——唤回名单冷启动）；D-4 ✅ UTM 基串口径确认；D-5 竞价/直播/增长实验一期只留缝；D-6 微站活页最小成立（自动换季后置过目）；D-7 三态 New/Active/Dormant + VIP=消费≥RM500 且近 90 天有单（配置可调）+ 勿扰/退订两字段；D-8 口碑四推荐照单；D-9 **暂缓**至回执图纸联审；D-10 趋势最薄六字段；D-11 GBP 与 Meta 同批备料并行递；**D-12=流程漏判定性**（founder 授权 control plane 定性：未留记录的翻案不成立，AEO 恢复至最后有记录的原判，如需改判走正式决策票，不阻塞任何在建工作）。真源=issue #296 Resolution |
 | #292 EasyStore | **拍板** | 载体=**形态 A：免费 Partner 账号 + 私有 app + 产品内 OAuth**（官方明文免审核、零密钥搬运、商家点一下即连、当天可装）；App Store 上架后置换曝光；只读 scope：read_orders + read_customers；webhook 走 order/paid 等 17 主题（HMAC）；券归因用订单 discount_codes 兜底（券 API 官方 Coming soon）；唤回名单尊重 accepts_marketing；founder 亲手件=注册 Partner 账号（免费，任务票另立）。真源=issue #292 Resolution |
-| R-EP-01/R-EP-02 | **控制面裁决（治理批）** | W-B3-E-P 证明层两案（PR #307 探针坐实；出处=`mailboxes/WO-B3-E-P/r001/ESCALATION.md`）：**R-EP-01 选 A 勘误主案**——「同幂等键重放不重复扣款」不变量限定为「在途重放 + cowork/factory durable 键类」，plain 键终态后重放=合法新消费（三键类设计使然）；配套审计票 **#310**（stable 键调用方终态重发敞口逐场景审计）。**R-EP-02 选 A 勘误主案**——「格」钉为 **per-GenJob**（跨 job「只退失败 job」已证；单 job 内 partial=整单 fail-closed 全额退款，比原措辞更利用户）；配套 exactly-count 守卫加固=快道工单候选票 **#311**（原 blocked by #307，#307 已合并 `84108e27` 解锁）。落档=DECISION-LOG D-035 + spec v0.4:301 勘误括注（随本 PR） |
+| R-EP-01/R-EP-02 | **控制面裁决（治理批）** | W-B3-E-P 证明层两案（PR #307 探针坐实；出处=`mailboxes/WO-B3-E-P/r001/ESCALATION.md`）：**R-EP-01 选 A 勘误主案**——「同幂等键重放不重复扣款」不变量限定为「在途重放 + cowork/factory durable 键类」，plain 键终态后重放=合法新消费（三键类设计使然）；配套审计票 **#310**（stable 键调用方终态重发敞口逐场景审计）。**R-EP-02 选 A 勘误主案**——「格」钉为 **per-GenJob**（跨 job「只退失败 job」已证；单 job 内 partial=整单 fail-closed 全额退款，比原措辞更利用户）；配套 exactly-count 守卫加固=快道工单候选票 **#311**（原 blocked by #307，#307 已合并 `84108e27` 解锁）。历史落档=D-035 + spec v0.4:301 勘误括注；退役本地决策账只在 Git 历史审计，当前状态取对应 GitHub task/PR。 |

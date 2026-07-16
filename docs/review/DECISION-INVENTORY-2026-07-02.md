@@ -1,5 +1,8 @@
 > **性质**:给 agent 的深度参考(总蓝图 `docs/BLUEPRINT.md` 的原料层)。大变更后由总审查员更新或重生成 —— 这一层**允许**演进。
 
+> **历史 inventory，不是当前状态或独立批准源。** 当前方向、范围与验收以 Blueprint、
+> 相关 GitHub Founder Resolution 及已对齐 Route-B 计划为准；旧状态词只能解释 provenance。
+
 # FIKIRTIVE 产品决策总清单(总蓝图原料)— 完整 harvest
 
 **来源**:`docs/superpowers/specs/` 全部 53 个文件 + `docs/superpowers/plans/` 全部 64 个文件 + `docs/ux-audit-2026-06-26-otto.md` + `docs/audit-2026-07-02-full.md`(头部)。基线 worktree ≈ origin/main `019b552`(#106)。
@@ -15,11 +18,11 @@
 | **一个 app、没有两扇门 (no two doors)** | "Supersedes the earlier 'two doors (/simple + /pro)' framing. **There are no two doors.**" Pro/agency 是后加的层,不是并行路由树 | 锁定 | 同上 |
 | **Otto Operating Contract(五条铁律)** | ① 透明计费、只用 credits(never dollars)② approve before spend ③ status-grounded honesty(失败自动退款、retry 不双扣)④ suggestion-button 引导 ⑤ One Otto everywhere(新能力=新 skill) | 锁定 | `specs/2026-06-26-otto-ideal-experience-design.md` |
 | **创始人三优先级** | 顺序:**安全 > 效率 > 非常容易管理(founder-manageability, file-system style)** — G7 起所有设计的尺子 | 锁定 | `specs/2026-06-28-g7-otto-ad-write-v1-design.md` §2 |
-| **钱路神圣不可动** | money-in = `grantCredits` only;spend path(reserve/settle/genRequest gate/startGen/idempotency/provider call)任何改动必过 money-safety-review;"ask before spending real money — the ask IS the cap" | 锁定、贯穿全部 plans 的 Global Constraints | 几乎每个 plan 头部;`specs/2026-06-28-SESSION-HANDOFF.md` §7 |
+| **钱路神圣不可动** | money-in = `grantCredits` only;spend path(reserve/settle/genRequest gate/startGen/idempotency/provider call)任何改动必过 money-safety-review;"ask before spending real money — the ask IS the cap" | 锁定、贯穿全部 plans 的 Global Constraints | current `.claude/CLAUDE.md` + `.claude/skills/money-safety-review/SKILL.md`;旧 handoff 仅留 Git 历史 |
 | **Canvas 成为家 (canvas-as-home)** | WHAT-pass #45:"canvas becomes the home (one door)",现有工具逐步折进去 | SHIPPED(G1, PR #48/#60 栈) | `specs/2026-06-27-otto-feature-decisions.md`、`specs/2026-06-27-g1-canvas-spine-design.md` |
 | **保留 `@openai/agents` runtime,不换 HERMES** | "Keep the existing runtime; do NOT swap to HERMES… borrow its ideas only" | 锁定 | `specs/2026-06-24-fikirtive-product-concept.md` §3.1 |
 | **语言约定** | skill 文档/spec 用华语方便创始人复审;生成 prompt 一律英文(模型英文调优);UI 文案 sentence case、no em-dashes;卡片 chrome 英文 | 锁定 | `specs/2026-07-01-otto-creation-experience-design.md`、`plans/2026-07-02-otto-storyboard-f2-render.md` |
-| **设计系统 = Grok-bright(.gb + shadcn)** | 近白 #FCFCFC、ink #0A0A0A、**coral #EC5828 = OTTO/agent 专用**、语义色只表状态、Geist 字体;"design is LOCKED — conversion, not redesign" | SHIPPED(#69–#80,main `313eb27` 单一 .gb 系统) | `specs/2026-06-30-full-shadcn-migration-strategy.md`、`specs/2026-06-29-UI-REWORK-ENGINEER-HANDOFF.md` |
+| **设计系统 = Grok-bright(.gb + shadcn)** | 近白 #FCFCFC、ink #0A0A0A、**coral #EC5828 = OTTO/agent 专用**、语义色只表状态、Geist 字体;"design is LOCKED — conversion, not redesign" | SHIPPED(#69–#80,main `313eb27` 单一 .gb 系统) | current code + `docs/design-system/design-rules.md`;旧 handoff 由 Git 历史保存 |
 
 ---
 
@@ -111,7 +114,7 @@
 | 5.6 | **Schedule** / Buffer 式排程(OTTO 驱动) | IG+FB;IG 无原生排程→自建定时 scheduler;25 帖/24h 限速;**auto-publish 需 Meta App Review(`instagram_content_publish`+`pages_manage_posts`,创始人并行提交)**;`ScheduledPost` 状态机 DRAFT→SCHEDULED(须 approvedAt)→PUBLISHING→PUBLISHED/NEEDS_ATTENTION;三视图(OTTO plan 默认/Calendar 月周日/Queue);OTTO `schedulePosts` skill 只建 DRAFT;**公开发布永远要 owner 明确批准**;媒体复用已付费 generations(零 fal 花费);Phase A feed image+carousel,B=Reels/Stories+best-time,C=analytics 回灌 | PLANNED(spec 完;建设排在 Analytics 后;App Review 未交) | `specs/2026-06-30-schedule-design.md` |
 | 5.7 | **Analytics(全量)** | 创始人:"还要能看过往的数据都,过往的 post 那些。全部"——KPI 卡+全历史图表+每条 organic post 表现+OTTO insight;organic 需 `instagram_manage_insights` 等新权限(与 Schedule 一起送审);Phase A=广告侧先上、organic 显示 pending 状态 | PARKED→下一个建(plan 有 **STALE STYLING 警告:须重定向到 .gb+shadcn/recharts 再建**);founder 定序"严格全部迁完 shadcn 再 Analytics"(迁移已完) | `specs/2026-06-30-analytics-design.md`;`plans/2026-06-30-analytics.md` |
 | 5.8 | **发布按钮(WHAT #36)/ TikTok/Lazada/Shopee connectors(WHAT #40)** | 要;平台灵活;逐平台独立 PR+重安全测试、排最后 | PLANNED(Meta 之外未动) | `specs/2026-06-27-otto-feature-decisions.md` |
-| 5.9 | **Meta App 实务** | 活 App `999242359480685`(Marketing API);死 App `1359820566248770` 弃;prod 激活 3 个创始人步骤(存 redirect URI/批 Railway deploy/App Review+商业验证);**prod TOKEN_ENCRYPTION_KEY 永不轮换** | 进行中(创始人侧) | `specs/2026-06-28-SESSION-HANDOFF.md` §2–3 |
+| 5.9 | **Meta App 实务（历史快照）** | 当时记录了 Marketing API app、redirect/deploy/App Review/商业验证与 token-key 约束；任何当前 provider、credential 或 production 事实必须由对应 GitHub task live-query，不从本行恢复 | 历史；当前状态未查询即 `Unknown` | 旧 handoff 仅留 Git 历史；current authority 取 GitHub + live provider facts |
 
 ---
 
@@ -146,7 +149,7 @@
 
 | # | 功能 | 一句话 | 状态 | 文件 · 决策 |
 |---|---|---|---|---|
-| 8.1 | **UI 全面重做(Grok-bright)** | 整 app 重皮到 Grok-bright;strangler 一次一面;**钱路 display-only**;创始人逐屏批 hi-fi;**founder 看不到 inline widget → 一律 PNG 到 ~/Desktop**;design source of truth=claude.ai/design 项目 `0abf8563`;Geist(不是 Figtree,旧记录作废) | SHIPPED(P0–P5 经 shadcn 栈) | `specs/2026-06-29-UI-REWORK-ENGINEER-HANDOFF.md`;`plans/2026-06-29-fikirtive-ui-rework-roadmap.md` |
+| 8.1 | **UI 全面重做(Grok-bright)** | 整 app 重皮到 Grok-bright;strangler 一次一面;**钱路 display-only**;创始人逐屏批 hi-fi;Geist(不是 Figtree,旧记录作废) | SHIPPED(P0–P5 经 shadcn 栈) | current code + `docs/design-system/`;旧 roadmap/mockups 由 Git 历史保存 |
 | 8.2 | **shadcn 全量迁移(S0–S4)** | 创始人:"迁完全部全部的组件去 shadcn… 严格全部迁完再 Analytics";杀双 UI 系统;S4 teardown 删 `components/fk`、`otto-theme.css`、`?skin=fk`、**`components/studio`+`app/studio`(退役创作台)**;ReactFlow 保留只重皮;coral=OTTO only 全 app | SHIPPED(#76 S0/S1a;#80 squash=S1–S4 全量,main `313eb27`) | `specs/2026-06-30-full-shadcn-migration-strategy.md`;`plans/2026-06-30-shadcn-S{0,1a}-*.md` |
 | 8.3 | **Typography 对齐 + OTTO mascot** | Analytics 屏=排版/字距金标准;mascot 机器人→coral 云 | SHIPPED(#86/#87);仍开:33 条跳过项+My Stuff/Brand-memory 重建+回写设计系统 | (memory/git log;基线=design 项目 ui_kits) |
 | 8.4 | **早期 /otto 光主题前端** | Claude Design 交接稿落地 `/otto`(.fk 主题、ad-pack batch、Workshop stub);锁定:build batch 让 chooser 真实;`/otto` 新路由、`/studio` 留手动房 | SHIPPED→大半 SUPERSEDED(.fk 已在 S4 删除;/studio 已退役) | `plans/2026-06-25-fikirtive-otto-frontend.md`;`plans/2026-06-24-fikirtive-v1-backend.md` |

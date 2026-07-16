@@ -358,14 +358,14 @@ Split a model-visible skill when **any** of these changes: user intent, evidence
 
 ## E-03 — Production promotion is source-based, mutable, and coupled to migration
 
-- **What:** repository law and CI still describe main push as auto-deploy + prod migration (`AGENTS.md:10-18`; `.github/workflows/ci.yml:1-7`). The web container runs `prisma migrate deploy` at every boot and runs as root for an obsolete local-volume rationale (`apps/web/Dockerfile:26-35`). The release spec proposes a protected `release` branch after staging (`docs/superpowers/specs/2026-07-08-staging-and-release-process-design.md:52-93`), but Railway would still rebuild from source. Worker build inputs include a mutable Node tag, apt repositories, a git tag, and an unchecksummed downloaded model (`apps/worker/Dockerfile:1-19,21-37`).
+- **What (dated observation):** repository law and CI then described main push as auto-deploy + prod migration. The web container ran `prisma migrate deploy` at boot and as root for an obsolete local-volume rationale. A then-proposed release design, now retained only in Git history, suggested a protected branch after staging while Railway would still rebuild from source. Re-query all implementation and platform facts before use.
 - **Why it matters:** a validated SHA can produce a different binary at promotion; web/worker/migration can roll at different times; application rollback does not roll schema back.
 - **Impact × effort:** **Critical × M — structural.**
 - **Concrete fix:** CI builds signed immutable web/worker images once, produces SBOMs, tests those digests, deploys the same digests to staging, then promotes them to prod. Migration is an explicit release job with expand/contract compatibility checks before app rollout. Canary and rollback point to image digests, not a source rebuild.
 
 ## E-04 — Staging is still production-capable
 
-- **What:** staging and staging-live track `main` with `checkSuites=false` (`docs/runbooks/staging.md:89-91`). Both share the production R2 bucket (`docs/runbooks/staging.md:11-18,45-56,101-103`). Mock staging still has paid-provider keys pending deletion (`docs/runbooks/staging.md:64-69`); real Meta/Resend credentials remain copied/undecided (`docs/runbooks/staging.md:74-80,87-88`). An environment duplication already triggered a staging web deployment against production Neon and ran `migrate deploy`; it was a no-op only by luck (`docs/runbooks/staging.md:119-129`). S2/S3 release work remains target-state rather than verified reality (`docs/superpowers/specs/2026-07-08-staging-and-release-process-design.md:135-152`).
+- **What (dated observation):** staging facts and credential placement were reported as unsafe, and a then-proposed release design remained target-state. Current staging/provider/credential facts require live queries; this historical report is not a credential or deployment source.
 - **Why it matters:** staging compromise/operator error can touch prod assets, spend real money, send real messages, mutate platform accounts, or migrate prod.
 - **Impact × effort:** **Critical × S–M — immediate.**
 - **Concrete fix:** separate bucket + bucket-scoped token; remove all paid keys from mock staging; separate Meta/Resend apps; deployment-time environment allow/deny list; never duplicate production; staging deploys only a CI-cleared candidate digest; production promotes that digest.
@@ -439,7 +439,7 @@ Split a model-visible skill when **any** of these changes: user intent, evidence
 
 ## G-02 — LAW, FACT, PLAN, and STATUS are mixed and contradict one another
 
-- **What:** `AGENTS.md` and CI say there is no branch protection (`AGENTS.md:10-13`; `.github/workflows/ci.yml:1-7`), while the release spec says an org ruleset exists and those statements are stale (`docs/superpowers/specs/2026-07-08-staging-and-release-process-design.md:12-17`). The scoped-loading spec says prompt caching is absent, while current `model.ts` implements it (`docs/superpowers/specs/2026-07-07-otto-engine-caching-scoped-loading-design.md:12-21`; `packages/otto/src/model.ts:82-185`). Seam docs and skill authoring recipes carry stale skill counts/registration steps while code has 25. Root explicitly warns that several docs are tombstoned (`AGENTS.md:54-61`).
+- **What (dated observation):** law, CI, a then-proposed release design, scoped-loading docs and code contradicted one another. Re-query current law/code/GitHub rather than carrying any dated status claim forward.
 - **Why it matters:** precedence solves normative conflict, not stale operational fact. Agents spend time reconciling documents and can still act on the wrong deployment/security state.
 - **Impact × effort:** **High × M — structural.**
 - **Concrete fix:** keep BLUEPRINT as immutable LAW. Add a machine-readable governance index with stable decision ID, class (`LAW|DECISION|SPEC|FACT|RUNBOOK`), status, owner, effective commit, supersedes, implementation link, verification command, and expiry. Generate bootstrap/status pages and verify code-derived facts in CI.
@@ -496,7 +496,7 @@ Split a model-visible skill when **any** of these changes: user intent, evidence
 
 ## P-01 — Walk/UAT is a tour, not a repeatable acceptance system
 
-- **What:** the walk manual tells the founder where to click and asks whether features feel useful (`docs/northstar/WALK-MANUAL-ENDGAME.md:1-13`). The release spec's smoke gate is a prose checklist (`docs/superpowers/specs/2026-07-08-staging-and-release-process-design.md:113-131`). The pre-walk report is valuable manual evidence but exposes broken deep links, console errors, cross-zone state loss, and money-button re-entry gaps (`docs/northstar/QA-REPORT-PREWALK.md:15-60`). There is no versioned test case with seeded fixtures, expected state/receipt, result, screenshot/trace, release SHA, and rerun status.
+- **What (dated observation):** the walk manual and then-proposed release smoke gate were prose checklists, while pre-walk evidence exposed broken journeys. Current acceptance must use the aligned Route-B gates and task-linked evidence, not this historical claim.
 - **Why it matters:** every release re-pays human discovery cost; founder time is spent finding mechanics defects instead of judging product/effectiveness; results cannot be compared across builds.
 - **Impact × effort:** **Critical × M — structural.**
 - **Concrete fix:** executable canonical journeys with deterministic seeded tenants/data and mock providers. Playwright captures console/network/screenshots/traces and expected DB/receipt state. Minimum: login; Otto proposal→approval→job→live reflection; refresh/resume; schedule draft→queue; credit/idempotency; two-tenant denial; cross-zone state; rollback. Founder UAT begins only after mechanics are green and judges usefulness/taste.

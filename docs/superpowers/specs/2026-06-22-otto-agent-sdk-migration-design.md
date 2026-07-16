@@ -2,7 +2,7 @@
 
 Status: **DRAFT v2 for review** · Date: 2026-06-22 · Supersedes the earlier "migrate Otto to Vercel EVE" plan.
 
-> Companion refs: [`docs/ops/config-and-architecture.md`](../../ops/config-and-architecture.md) · [`docs/architecture/codebase-audit-2026-06-22.md`](../../architecture/codebase-audit-2026-06-22.md).
+> Companion evidence: [`docs/architecture/codebase-audit-2026-06-22.md`](../../architecture/codebase-audit-2026-06-22.md). The former config map is retained only in Git history.
 > **v2 integrates three reviews (2026-06-22):** a 3-agent adversarial verification, a Codex review against the real money code (4 P1 findings), and `/plan-eng-review`. The biggest change from v1: **Otto-LLM spend is metered via reserve→settle (like GEN), not a post-paid debit** — this closes a provider-paid-before-debit bypass Codex found.
 
 ---

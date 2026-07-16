@@ -94,7 +94,7 @@ Create under `docs/architecture/` and `docs/ops/`:
 
 | Doc | One-line purpose |
 |---|---|
-| **`docs/ops/config-and-architecture.md`** ★ | Single config/switch reference + system map — the one doc below. |
+| **Retired config map (Git history)** | This audit once proposed a single config/switch reference; it is not current architecture truth. |
 | `docs/architecture/otto-pipeline.md` | conversation → coworkTurn (Planner, $0) → card → user Generate → coworkGenerate → startGen → GenJob → worker → result. State machine + where money spends. |
 | `docs/architecture/money-safety-model.md` | `pricedGenCredits` (charge) vs `spentUsd` (record) vs `estimatedPriceUsd` (display); reserve/settle/refund; 4 spend paths; why the paid-Planner lock exists (LLM spend uncovered by ledger). |
 | `docs/architecture/tenancy-model.md` | Org=tenant root; Org→Brand→Project; `ownerId` on 20 tables; `requireOwner`; R2 key boundaries; `/files` cross-tenant guard; admin=platform-wide. |
@@ -102,7 +102,7 @@ Create under `docs/architecture/` and `docs/ops/`:
 | `docs/architecture/worker-pipeline.md` | Job types (Gen/RefGen/Render/Caption), pg-boss lifecycle, worker-side `spentUsd` commit, ffmpeg/whisper. |
 | `docs/AGENT_QUICKSTART.md` | "Read these in order" + common tasks→code map + money-safety checklist for AI agents. |
 
-### Draft outline — `docs/ops/config-and-architecture.md` (the #1 doc)
+### Historical draft outline — retired config map
 
 ```
 # Fikirtive — Config & Architecture Reference
@@ -154,6 +154,6 @@ Create under `docs/architecture/` and `docs/ops/`:
 ## 6. Deploy & pre-spend checklist (link → deploy-approval-flow.md)
 ```
 
-**Recommended execution order:** (1) demo-remotion Fikirtive strings [user-facing], (2) dto.ts:65 kind fix + mock-planner video test, (3) write `config-and-architecture.md` + `money-safety-model.md`, (4) R1 consolidation (behind money-safety-review), (5) remaining naming/docs cleanup.
+**Historical recommendation:** this dated audit proposed a config map and other work. It is not a current execution order; surviving work requires a current GitHub task.
 
 **Audit corrections worth flagging:** `GENERATION_PROVIDER` is NOT dead code; Organization/Membership tables are NOT dormant (P3 shipped). Both were stale assumptions in the input findings.

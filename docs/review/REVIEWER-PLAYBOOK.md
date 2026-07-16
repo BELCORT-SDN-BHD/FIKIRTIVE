@@ -1,21 +1,21 @@
 # 总审查员手册(Reviewer Playbook)
 
-> 生成于 2026-07-02(6-agent 全库测绘,基线 = main 合并 #99 后)。
-> 用途:任何 PR 进 main 前的人工终审清单。CI 双绿只是底线;按 PR 触及的区域跑对应清单。
-> 全库详细地图见同目录 [CODEBASE-MAP-2026-07-02.md](CODEBASE-MAP-2026-07-02.md)。
+> **性质(2026-07-16 sanitation 加注):派生安全检查表,不是项目法律、merge authority、
+> 产品方向或 current-status 真源。** 主体生成于 2026-07-02(6-agent 全库测绘,基线 =
+> main 合并 #99 后);条目必须结合当前代码与当前任务复核。项目入口/权限/合并纪律以根
+> `AGENTS.md` 指向的现行项目法为准;本手册只能收窄审查,不能自行扩大权限。
+> 历史全库测绘见 [CODEBASE-MAP-2026-07-02.md](CODEBASE-MAP-2026-07-02.md)。
 
-## 总审查员职位(office,非个人 —— 继承法)
+## 审查角色与边界
 
-**总审查员是一个职位,不是某个 session 或某个模型。** 谁在执行审查,谁就临时任职,并自动受本手册全部规矩约束 —— 换 session/电脑/账号/模型,职位随仓库原样存续,新任者读完本手册即合格上任。
-
-- **职位在 founder 之下**:founder = 立法者与终审(宪法合并/产品拍板/真实花费逐笔批)。审查员是其代理,可以:按清单审并合并**他人**的 PR、更新地质报告层、受明确授权时起草宪法修订。
-- **职位永远不可以**:自批自己写的 PR、替 founder 做产品决定、批准任何真实花费、修改宪法正文(起草 ≠ 生效)。
-- **多审查员并存没问题**:规矩绑的是"审查"这个行为,不是某一位任职者;两个 session 同时在审不同 PR,各自守规即可。
-- 首任:Fable 5 session(2026-07-02 founder 任命),本手册与地基文档的起草者。
+审查是一次有边界的任务,不是可继承的控制面或常驻职位。审查者可以在当前任务授权内
+检查事实、运行清单并报告 finding;能否修改、批准或合并,始终由现行项目法、当前 GitHub
+任务和 separation-of-duties 共同决定。本文件不授予 merge、Blueprint、产品拍板、真实花费、
+部署或外部写入权限。作者不得审批或合并自己实质编辑的 diff。
 
 ## 审查协议
-0. **先读宪法**:`docs/BLUEPRINT.md` 在本手册之上 —— diff 与蓝图冲突 → 停手、报告、等 founder 裁决(手册与蓝图冲突时,蓝图赢)。
-1. **一律 PR + 全部 CI checks 绿**才可合并(见 `.claude/CLAUDE.md`「Merge discipline」)。
+0. **先按现行项目入口加载 authority**;`docs/BLUEPRINT.md` 与 diff 冲突时停手、报告,不得让本手册覆盖它。
+1. **一律 PR + 当前 head 的全部 required checks 绿**;Actions 不可用时只按现行项目法与 `docs/runbooks/local-ci.md` 的 fallback 处理。本条不授予 merge 权限。
 2. **钱路 diff**(genRequest/startGen/startRefGen/dispatch/幂等键/partial-unique 索引/provider 调用)必过 `money-safety-review` skill,逐检查项给结论。
 3. **审查者不自批自己写的 PR** —— 自己的改动要么等 founder,要么换一个 session 审。(解读边界:"换一个 session"= 一个**独立**的审查会话从零跑清单;作者自己开个新会话给自己的 PR 盖章仍是自批,同样禁止。)
 4. **UI/客户端 PR**:typecheck+单测不够,合并前需浏览器 runtime QA(谁提出谁验证,PR 里贴证据)。
@@ -103,8 +103,8 @@
 - [ ] Spend skills: the factory's idempotencyKey declaration is DOCUMENTATION ONLY (never invoked). A new/changed spend skill must implement the exactly-once check inside execute (any-status lookup BEFORE spending) AND be backed by a partial-unique DB index (pattern: generate.ts step 3 + GenJob_cowork_idempotency_once). Spend must route through an injected ctx port (startGen), never fal/reserveCredits/GenJob-insert directly.
 - [ ] Identity & scoping: no orgId/ownerId/userId in parameters (factory throws — but also reject synonyms like accountId/tenantId that would let the model steer scope); every Prisma query in execute is scoped by ctx.orgId, and card/thread skills recheck threadId===ctx.threadId and projectId===ctx.projectId (generate.ts step 2 pattern). Model input must never carry model/price/params that override a persisted card (anti-flip: generate input is {cardId} only, overrides:undefined).
 - [ ] Fence: no imports of @fikirtive/generation, reserveCredits, meta-graph/metaGraphPost in skills/ (CI hard-fails via scripts/check-skill-imports.sh). If the PR introduces a NEW spend-capable package or client, the fence blocklist must be EXTENDED in the same PR — it does not auto-cover new names. New direct @fikirtive/db use is warn-only: push back toward a ctx read-port.
-- [ ] New external capability = new port on OttoContext with STRUCTURALLY re-declared types (packages/otto must never import from apps/web), injected in apps/web/lib/otto-actions.ts:buildOttoContext; explicitly decide the worker side — apps/worker/src/otto-resume.ts must NOT gain startGen (verdict turn never spends), and any new port there needs the same no-spend reasoning.
-- [ ] Registration hygiene, all five spots: 1-line entry in registry.ts allSkills (order = tool order), registry.test.ts exact-name-list updated, gate assertion in migration.test.ts (cost/effect/needsApproval), CATALOG.md regenerated (catalog:check IS in CI — ci.yml runs it; a stale CATALOG.md fails the build), and an instructions.ts 'When to call X' section for any model-facing skill.
+- [ ] New external capability = new port on OttoContext with STRUCTURALLY re-declared types (packages/otto must never import from apps/web), injected in apps/web/lib/otto-actions.ts:buildOttoContext; explicitly decide the worker side — apps/worker/src/otto-resume.ts must NOT gain startGen. A verdict turn can incur its metered LLM cost, but it must not initiate a separate media/provider generation without the applicable user approval; any new worker port needs the same unattended-effect reasoning.
+- [ ] Registration hygiene, all six spots: 1-line entry in registry.ts allSkills (order = tool order), registry.test.ts exact-name-list updated, gate assertion in migration.test.ts (cost/effect/needsApproval), CATALOG.md regenerated (catalog:check IS in CI — ci.yml runs it; a stale CATALOG.md fails the build), an instructions.ts 'When to call X' section for any model-facing skill, and the Parity Manifest entry.
 - [ ] requires (资讯门): every requires.field exists in the parameters shape (factory throws otherwise) and is optional in the zod schema (else the SDK rejects the call before the friendly needMoreInfo preflight can fire); note the preflight only catches undefined/null/empty-string — a model passing 'n/a' sails through, so questions must teach the model to fill real answers.
 - [ ] Prompt authority (decision 6): if a PR adds a prompt skill for a new model family, it must add the {skill, family} pair to PROMPT_SKILLS in the same PR, and verify BOTH spend surfaces skip the legacy directive for that family (cowork-actions.ts:578 button path; Otto generate.ts uses the card prompt raw). Never let a directive stack on a skilled family, and never let prompt-skill changes touch spend/safety fields.
 - [ ] Instructions/description discipline: skill descriptions are model-facing — don't hand-append the requires questions (the factory does it; duplication = double prompts); prompt-text rules (English structuredPrompt, desiredDuration/Aspect/Audio on propose not in prompt, no invented ids) live in instructions.ts which is an INLINED TS constant — reject any readFileSync/runtime-file approach (breaks Next/Turbopack).
@@ -203,14 +203,15 @@
 
 ---
 
-# 增补(2026-07-07,随北极星原型判决生效)
+# 历史增补(2026-07-07 北极星原型流程;2026-07-16 降级)
 
-> 依据:founder 2026-07-07 北极星原型全权授权(判决转录于 `docs/northstar/PROGRAM.md` §一);页面清单 = `docs/northstar/PAGE-INVENTORY.md`;批准台账 = `docs/northstar/APPROVALS.md`。
+> `docs/northstar/{PROGRAM,PAGE-INVENTORY,APPROVALS}.md` 现为历史设计证据,不再是作业队列、
+> 双重批准真源或 current-status 台账。`APPROVALS.md` 为空,不能据此推导任何页面已批准。
+> 当前 UIUX 范围与验收以 Blueprint、GitHub #334 的 Founder 决定和已对齐的 Route-B 计划为准。
 
-## 北极星 design contract(已批准原型页 = 有约束力的施工图)
+## 当前审查用法
 
-- [ ] **approved 北极星页面 = design contract**:任何 PR 使已批准页面对应的真实页面 UIUX 偏离原型(布局结构 / 设计 token 用法 / 交互模式)= **挡**,除非 PR 附 founder 重新设计审批记录(`docs/northstar/APPROVALS.md` 新行)。后台/功能施工只能在原型的外观与交互之内做工程 —— "顺手改一下布局/间距/交互"不存在。
-- [ ] **原型目录只经设计流程修改**:改任何原型页(`apps/web/app/northstar/` 与 `docs/northstar/`)= 设计 PR + founder 重新拍板;功能/后台 PR 触碰原型目录 = 挡。
-- [ ] **"哪些页已批准"的判断口径** = `docs/northstar/APPROVALS.md`(台账)+ 页内 `@nsPage` 元数据 `status="approved"` 双口径;两者不一致 = 文档 bug,先修台账再审。
-- [ ] **原型页零后台依赖**:原型页永远零 server action / 零 DB / 零 auth / 零队列(硬编码示例数据)。任何往原型页里接真实数据或动作的 diff = 挡 —— 那是"点亮"施工,走对应板块的 spec 流程(第五章 + 九缝 + parity),不在原型目录里发生。
-- [ ] **原型 PR 的审查两问**(替代后台清单):①是否 100% 落在 `docs/design-system/design-rules.md` 内(逐条对 harmony-06 §一 设计审六条,三态齐全)?②是否只动了原型目录?任一为否 = 挡。
+- [ ] 只有当前任务明确链接的北极星原型证据才进入该任务的设计基准;历史文件不能自行扩大 scope。
+- [ ] UI/客户端改动仍需浏览器 runtime QA、当前 acceptance 对照和设计审;不能以历史原型状态替代当前证据。
+- [ ] 产品代码与历史原型冲突时先按当前 authority 链核实;不得通过编辑空台账制造批准。
+- [ ] 原型目录是否可改、谁可批、谁可合并,全部回到当前 GitHub task 和现行项目法判断。

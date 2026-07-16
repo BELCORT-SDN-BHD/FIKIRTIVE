@@ -22,7 +22,7 @@
 | OUT-LIVE | 社媒直播卖货域（TikTok/Shopee Live 开播工具） | OUT-charter | MISSING-CONTINENTS 第 7 名（原生优势低，平台自有地盘） | 站内挂车行（MKTLIVE）保留最小承接，开播工具不建 |
 | CC-3CHA | 零学习曲线三查（Otto 一键入口/人工面自解释/一次会话见成果） | CROSSCUT | 宪法 11 | 入板块报告标准第④节双执行矩阵的验收维度（每块必验三查） |
 | CC-GATE3 | 收钱三闸（发布控制/失败遏制/可执行 UAT） | CROSSCUT | MASTERPLAN 并行泳道 R4 | =B12 块验收准则清单，收费前必须全绿 |
-| CC-DESIGN | 缺失大陆设计全图先行 | CROSSCUT | MASTERPLAN 泳道+宪章 B8「设计全图完成后体量过目」 | =B8 里程碑（依赖状态板），非能力行 |
+| CC-DESIGN | 缺失大陆设计全图先行 | CROSSCUT | MASTERPLAN 泳道+宪章 B8「设计全图完成后体量过目」 | =B8 里程碑；依赖取 GitHub native dependencies，非能力行 |
 | CC-GM02 | GM-02 里程碑时刻（各楼） | CROSSCUT | GM 卷判决 | 各块 UI 验收维度：里程碑时刻按 GM-02 规范入块 spec |
 | CC-SEAMS | 九条缝+宪法治理条款+解读边界附则 | CROSSCUT | 蓝图 §二/§四 | 入合同「施工规范」节：新能力走缝清单（缝1-9），逐块 PR 审查引用 |
 | CC-O12 | O-12 就地 AI 按钮=Otto 的手（同一大脑/coral 身份/同一动作层，非第二匿名 AI） | CROSSCUT | 蓝图宪法7 O-12 | 设计原则入各块 UI spec 验收维度，非独立能力行（修宪包 D-019 考据） |

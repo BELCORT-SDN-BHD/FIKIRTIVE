@@ -1,6 +1,6 @@
 # Fikirtive PRD —— 开放问题与决策清单
 
-> 本文档汇总 Fikirtive PRD（docs/PRD.md）逐节 review 后的开放问题与待决策点，按主题分类、按严重度排序。标 🔁 的为跨多处影响的高优先级项。
+> 本文档是对一份已退役 draft 产品文档的 dated review。它不承载 current open questions；存活事项必须在 current GitHub task 中重新验证。
 
 ---
 

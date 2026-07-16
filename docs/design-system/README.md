@@ -1,11 +1,10 @@
-# 设计系统 · repo 镜像(强制习惯)
+# 设计系统 · tracked evidence
 
-> **规矩(founder 2026-07-07 立)**:设计系统的真相必须**同时**存在两处 ——
-> claude.ai/design 项目「FIKIRTIVE — MAIN」(0abf8563,可视面板,founder 与设计工具用)
-> 和本目录(repo 镜像,**所有 agent 唯一能读到的版本**)。
-> 任何一处更新,同一 PR/同一动作里必须同步另一处;只改一处 = 违规。
-> 实现侧 token 真相仍在 `apps/web/app/globals.css`(缝 7);三处冲突时以 founder 最新拍板为准。
+> 本目录保存可追溯的设计规则、演示和差距证据,不是独立产品法律、current-status 真源或
+> 自动执行队列。当前 UIUX 范围与验收来自当前 GitHub task、Founder 决定和已对齐计划;
+> 实际渲染值必须从 `apps/web/app/globals.css` 与组件代码核实。历史 claude.ai/design 项目
+> `0abf8563` 只作来源线索;除非当前任务明确授权,不得把它当成必须同步的第二真源或写入目标。
 
-- `design-rules.md` — 设计规则 v2(与 claude design 项目同文件同内容)
-- `cards/` — live reflection 四张演示卡(v2.6 四模式,双击浏览器看动效)
-- `polish-delta.md` — Apple 化打磨差距清单(快赢已排序)
+- `design-rules.md` — 2026-07-07 设计规则证据;按当前任务链接使用。
+- `cards/` — 交互与视觉演示证据,不证明产品当前已实现。
+- 旧 polish/gap ledgers 已退出 active tree，由 Git 历史保留；live-verified residuals 已迁到 parked issue [#340](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/340)。该链接只证明迁移去向，不授予施工顺序或产品修改权。

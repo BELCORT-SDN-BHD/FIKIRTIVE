@@ -35,10 +35,10 @@
 **第三步 · 现行法是什么（哪个是现行法 + 为什么）**
 - **锚一（宪法层）**：蓝图 **L47** 边界表「本体负责」列**明文含「本地发现（搜索&地图）」**。GBP = 本地发现，**宪法正面纳入本体负责域**。这是最高阶依据（宪法 > 判决 > 舱单）。
 - **锚二（总计划层）**：`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md` §三 B8 明文「**GBP 归并行泳道薄试**」——已冻结（founder 五答签认，2026-07-12）。
-- **改判留痕（治理卫生）**：`docs/ops/route-b/coverage-audit/audit-mc.json` L172 已在案记录：Master Plan §三 B8 括注「GBP 归并行泳道薄试」**改判了** WHATPASS-V2-CANDIDATES.md:494『搜索可见度对 ICP 无用』的排除判词。**这不是一次未记录的翻案**（区别于 MISSING-CONTINENTS §3.3 点名的 AEO 未记录翻案）——GBP 的改判有明确治理留痕，链路可复核。
+- **改判留痕（治理卫生）**：GBP 薄试的 current 依据是 Blueprint「本地发现」边界与 aligned Route-B B8；旧逐行 adjudication 由 Git 历史保存，不再作为 active authority。若两层 current authority 冲突，停下交 Founder，不从旧审计包恢复结论。
 
 **结论链（一句话）**：
-> **现行法 = GBP 薄试在本程**（蓝图 L47 本体负责 + Master Plan §三 B8 双锚，audit-mc.json L172 留痕改判）。L494 排除的是「依赖内容型网站的 AEO/SEO add-on」，其排除前提（自有内容网站）**对 GBP 不成立**，故 L494 **不约束 B0-75**。AEO 面（`OUT-AEO`）因排除前提仍成立而**继续 OUT-deferred**，与 GBP 分道——两者同属「搜索可见度」大范畴却前提不同，**不可一体处置**。B0-75 按「薄试」形态设计（深度天花板见 §9），不做需内容网站的 AEO 那套。
+> **现行法 = GBP 薄试在本程**（Blueprint 本体负责边界 + aligned Route-B B8 双锚）。L494 排除的是「依赖客户自有内容型网站的 AEO/SEO add-on」，其排除前提对 GBP 不成立，故不约束 B0-75。AEO 面继续 `OUT-deferred`，与 GBP 分道；B0-75 只按「薄试」形态设计，不做需内容网站的 AEO 套件。
 
 **遗留提请（非本工位裁）**：MISSING-CONTINENTS §3.3 的 AEO 未记录翻案考据（R-003）仍未决，与本 GBP 结论**互不牵连**——GBP 的改判不代表 AEO 也应改判（前提不同）。此点入 §12 开放问题。
 
@@ -84,7 +84,7 @@ GBP 是五行里唯一碰第三方平台 API 的行，必须拆三层，各层�
 ### 1.2 明示排除（不做什么）
 
 - **不写产品代码**（docs-only；本文件是图纸）。
-- **不写 docs/ops/route-b/ 五本账**（账行提案进 PR 描述，见收尾）。
+- **不写已退役的本地 Route-B 台账**（状态与证据写入对应 current GitHub task/PR，见收尾）。
 - **不建 L0 量测原语**（已 live，本文件是其消费方；见 §11）。
 - **不建 Contact/ContactIdentity/Segment 真表**（CRM 起步工位 B0-59/60/61 建；本文件只声明「表单→SourceTag→Contact」接线需求，见 §6）。
 - **不建 Campaign 对象**（Campaign 一期工位 B0-51~58 建；本文件微站/物料的 campaignId 只做软引用消费）。
@@ -94,7 +94,7 @@ GBP 是五行里唯一碰第三方平台 API 的行，必须拆三层，各层�
 
 ### 1.3 页内剥离清单（A′ 原型核对）
 
-- A′ 舱单 65 页 grep「firstmile / microsite / link-in-bio / landing / gbp / bio」→ **零命中**（`find` 全仓 tsx/ts 亦零）。**如实写：五行预期零原型，本文件从设计层新起，无既有页面需剥离。**
+- 当时对 65 页原型与全仓 tsx/ts 搜索「firstmile / microsite / link-in-bio / landing / gbp / bio」为**零命中**。这是历史 code scan，不依赖已退役的静态 supply dossier；施工前须重跑 current-code scan。
 - 承接端例外：分析区 `E5-01/02/03`（analytics 屏）、L0 六表（schema live）已在城里，是本文件的接线对象（§11），非本文件新建。
 
 ---
@@ -248,7 +248,7 @@ GBP 是五行里唯一碰第三方平台 API 的行，必须拆三层，各层�
 | H2 | **扫码进营销私域（关注/入群/留号）是真行为** | **Hypothesis**——§3.1：扫码支付 66.1% 月活、WhatsApp 84% 渗透是硬数据，但那是「扫码支付」和「WhatsApp 渗透」两条，**不是「扫码进营销私域」这个更窄用法的直接证据**，是常识推理叠加 | founder |
 | H3 | **GBP 对 SEA ICP 有真买意流量** | **Hypothesis（全球口径，非本地）**——§3.1：GBP 采纳率 35%/near me 46%/本地搜索到店 80% 都是**全球/欧美口径，非马来西亚专项**；唯一 SEA 口径（约 40% 靠 Google 发现，落后电商 57%/社媒 50%）说明它真实但**非第一入口**。缺「马来西亚 GBP 渗透率」硬数字 | founder + 平台真相研究 |
 | H4 | **活页（自动换季）比静态页有真差异化价值** | **Hypothesis**——第 4 名判「全图最高原生优势」是**能力判断**，不是市场验证；「顾客因活页更新而多转化」无对照数据 | founder（+ B0-76 增长实验事后验证） |
-| H5 | **短链域名不被 Meta/WhatsApp 判 spam** | 承 L0 spec A1（未决）——陌生短链域可能被判 spam，需品牌域+声誉预热；投递率待核 | **founder**（供给单已含「L0 短链域购买」） |
+| H5 | **短链域名不被 Meta/WhatsApp 判 spam** | 承 L0 spec A1（未决）——陌生短链域可能被判 spam，需品牌域+声誉预热；投递率待核 | **Founder**（在对应 current GitHub task 获取并 live-verify；未查询即 `Unknown`） |
 | H6 | **微站/落地页可完整替代官网** | **Hypothesis**——对 85% 无官网的 SME 成立是推断；实际转化替代率无数据 | founder |
 | H7 | **增长实验在本程体量下有意义** | **Hypothesis**——用户数=0（founder 2026-07-11 修正）、Stripe 零成交，**样本量本身撑不起 A/B 统计意义**；这正是 §9 B0-76 推 A 档的核心理由 | founder（体量过目 R-007） |
 
@@ -367,7 +367,7 @@ B0-76 增长实验
 ## §12 开放问题
 
 1. **MicrositePage 的自动换季（活页灵魂）本程做到哪档**（§9 B0-73：B 还是 C）——含假设 H4，且自动换文案须人批，建议 founder 体量过目裁。
-2. **短链域名选型**（承 L0 spec A1/H5）——影响微站/物料/GBP 全部出口的投递率；founder 供给单已含「L0 短链域购买」，spec-ready 前须定。
+2. **短链域名选型**（承 L0 spec A1/H5）——影响微站/物料/GBP 全部出口的投递率；spec-ready 前须在对应 current GitHub task 向 Founder 获取并 live-verify，未查询即 `Unknown`。
 3. **GBP API 递审时点与被退方差**（Q4 细化）——外部尾巴 2-6 周方差，上市日按最慢平台管理（Master Plan §八）；GBP 与 Meta/Cloud API 是否同批递？
 4. **PrintMaterial / GrowthExperiment / GbpProfileSnapshot 三个可选新表本程是否上**（§6.1/§9 B 档）——默认不上（复用/A 档），待体量过目。
 5. **AEO 未记录翻案考据（R-003）与 GBP 结论互不牵连的确认**——§〇 已论证 GBP 前提不同于 AEO；但 R-003（AEO 是否也应改判）仍需 founder 单独拍板，**不可因 GBP 通过就顺带翻 AEO**（前提不同）。
@@ -385,9 +385,9 @@ B0-76 增长实验
 
 ---
 
-## §14 B8 全域缝合注（我是最后一个设计工位 —— 跨域重叠裁定，给控制面缝合用）
+## §14 B8 全域缝合注（历史跨域重叠建议；供后续 task-linked 计划对齐）
 
-> B8 五份设计（Campaign 一期 / CRM 起步 / 口碑经济 / Marketplace 站内 / 本工位「第一米与微站」）并行。我是第三波收尾、最后一个工位，能全见跨域重叠。以下**裁定建议**供控制面（总指挥）缝合定夺——**每条给「谁归谁 + 为什么 + 硬约束」**。
+> B8 五份设计（Campaign 一期 / CRM 起步 / 口碑经济 / Marketplace 站内 / 本工位「第一米与微站」）当时并行。以下是历史**对齐建议**，不授 standing controller；后续须在 task-linked GitHub 计划对齐中逐条复核——**每条给「谁归谁 + 为什么 + 硬约束」**。
 
 ### 缝合裁定表
 
@@ -402,10 +402,10 @@ B0-76 增长实验
 | S7 | **短链 / QR / 归因层** | 本工位（微站/物料/GBP）· Campaign（UTM 归组）· Marketplace（推广链）· 口碑（请评链） | **L0 是唯一短链/归因层**；全域经 **TrackedLink**，`campaignId` 软引用归组；**没有任何工位重造短链** | L0 spec §一「所有环共用的水表」；§6.2 硬约束 2；本文件五行已全部复用 L0 |
 | S8 | **GBP 评价读取归谁用** | 本工位（B0-75 提供 GBP 连接+读）· 口碑（B0-64 多平台评价统一监控） | **GBP 连接/读端口归本工位 B0-75**；**评价「统一监控/差评预警」引擎归口碑工位 B0-64**；本工位只提供 GBP connector + 读，不建监控 | §6.1 B0-75 裁定「评价统一监控是口碑工位 B0-64 的事」；避免双方各连 GBP |
 
-### 缝合总纲（一句话给控制面）
+### 缝合总纲（供 task-linked 计划对齐复核）
 
 > **本 B8 五工位共用两条脊柱、绝不分叉：① L0（短链/QR/归因/来源标）是唯一量测水表——全域消费、无人重造（S1/S2/S7）；② Contact + 品牌记忆是唯一真相——CRM 建档、B3 供品牌，各域只读消费（S5/S6）。** 本工位新增的唯一真对象是 **MicrositePage**（B0-73/74 共用，S4 合并），唯一新 connector 是 **GBP（缝 4）**；其余全是既有城的产出端/消费端。请评×奖励永久分离（S3）是压在全域的宪法硬约束，L0 已 fail-closed 兜底。
 
 ---
 
-*（本文件为 B8 设计三波·第一米与微站的设计全图。docs-only，不含代码，不改五本账。账行提案见 PR 描述。待体量过目 + founder 过目后动工。）*
+*（本文件为 B8 设计三波·第一米与微站的设计全图。docs-only，不含代码，不写已退役的本地 Route-B 台账；状态与证据写入对应 current GitHub task/PR。待体量过目 + Founder 过目后动工。）*

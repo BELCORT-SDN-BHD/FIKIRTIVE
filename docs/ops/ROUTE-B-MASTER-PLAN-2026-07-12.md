@@ -1,7 +1,7 @@
-# 直建全城 · 总计划 v1.1（#334 / Blueprint v2.12 对齐；Founder 合并本 PR 即生效）
+# 直建全城 · 总计划 v1.1（#334 / Blueprint v2.12 对齐；Founder 批准链见 GitHub provenance）
 
 > **冻结记录(founder 原话)**:①范围宪章「照签」(§二提案表即签认版:CRM 最小版真建、Campaign 一期真建、协作/订阅挂壳、TikTok/email/Agency/市政厅v2/手机App 不在本程);②Q1 细化=「A 只收 credits(seats 之后再讨论)」→ 订阅层=壳+Coming soon;③Q4 细化=「材料先办、**受审面就绪就递**」(验证类前置归材料施工期办;递交触发=B4/B5/B6+法务页就绪,不等全城收口);④合并窗口「接受」(每 2-3 周一次法定放行,非产品验收);⑤**email=挂壳 Coming soon**(宪章 email 行由「不在本程」改为「壳」)。
-> 另两条通用规则已入 §〇:Q6(≥3 次未达攒批)、Q7(意外 blocker 跳过攒批)。本文件即新总指挥的执行合同。
+> 另两条通用规则已入 §〇:Q6(≥3 次未达攒批)、Q7(意外 blocker 跳过攒批)。本文件是现有 Route-B 计划载体；执行身份、权限与实时状态另取当前 GitHub task 和项目法。
 
 > 2026-07-12。v0.2 经 Sol(ultra)+ Fable(max)盲审,两脑一致「结构可执行,但五个阻断级问题修复前不得开 loop」。本版全部吸收。
 > Provenance:sol memo SHA 见 planreview-sol-out/provenance.json;fable 同;两脑同 prompt 盲审。
@@ -17,9 +17,9 @@ Q1 建/卖两图配对（2026-07-16 再对齐：卖图 = 内容、发布、完�
 
 ## 一、B0 · 发布契约与覆盖矩阵(Sol 阻断 #1 —— 开 loop 的先决条件)
 
-新总指挥的第一个工单不是施工,是**把「全城」冻结成有限清单**:
-- 逐条建立 `功能ID → 批准来源(蓝图/判决/舱单) → 所属块 → 人工入口 → Otto skill → 权限/花费闸 → 测试 → 报告 → 六级状态`;
-- 来源穷举:蓝图第六章全部区、MASTERPLAN 全章、A′ 舱单 65 页、MISSING-CONTINENTS 前五、宪法 11 条、九缝;每项要么入块、要么进宪章「不在本程」;
+本计划启动时的第一个治理动作不是施工,是**把「全城」冻结成有限清单**:
+- 逐条建立 `功能ID → 批准来源(Blueprint / GitHub Founder Resolution / current plan-or-live evidence) → 所属块 → 人工入口 → Otto skill → 权限/花费闸 → 测试 → GitHub exact evidence → 六级状态`;
+- 原冻结来源曾穷举蓝图第六章全部区、MASTERPLAN 全章、2026-07-12 supply/prototype snapshot（现仅存 Git 历史）、MISSING-CONTINENTS 前五、宪法 11 条与九缝；当前执行不得恢复静态 dossier，须以 current matrix、GitHub task/PR 与 live facts 核验;
 - **六级状态(Sol)**:`spec-ready → code-complete → sandbox-verified → review-submitted → live-verified → release-certified`;「建毕」一词废除;founder 总验收只认最后一级(外部位块的 live-verified 在通电后补)。
 
 ## 二、范围宪章(Fable 1a —— founder 签认件,开 loop 前置)
@@ -57,9 +57,9 @@ Q1 建/卖两图配对（2026-07-16 再对齐：卖图 = 内容、发布、完�
 
 ## 四、顺序 v3(吸收两脑修正)
 
-1. **B0 + 宪章签认 + 供给收齐 + 控制面 fencing**(第一周)
+1. **B0 + 宪章签认 + 所需输入逐项 live-query + task-linked ownership fencing**（原第一周序列；无 standing controller）
 2. B10 关键安全 + B9 引擎接口冻结 + B2 数据契约(事件/身份/同意)
-3. **先闭合 R-010，再重排 B8 设计全图**：#314 已落 schema 与 B2 v1.2 冻结契约在 ContactIdentity 唯一键、consent 存证、Campaign UTM 三处互斥；D-038 不替 Founder 选择 schema。相关施工须先经一张独立 Founder-approved schema alignment 明确逐项真源与迁移策略；在此之前保留已证底座，但不得从旧 11 行拆票计划恢复施工。冲突闭合后再补齐完整 Customer Engagement CRM 的跨块覆盖与验收映射
+3. **先闭合 [R-010](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/339)，再重排 B8 设计全图**：#314 已落 schema 与 B2 v1.2 冻结契约在 ContactIdentity 唯一键、consent 存证、Campaign UTM 三处互斥；D-038 不替 Founder 选择 schema。相关施工须先经一张独立 Founder-approved schema alignment 明确逐项真源与迁移策略；在此之前保留已证底座，但不得从旧 11 行拆票计划恢复施工。冲突闭合后再补齐完整 Customer Engagement CRM 的跨块覆盖与验收映射
 4. 纵向切片施工:每块 = UI+后台+人工入口+Otto skill+测试+报告**一次完成**(双执行器出生即配,Sol 阻断 #4 的根治)
 5. B4 Reminder-assisted 可先独立验收；Direct Meta 按 channel × post type 单独通电。B5/B6/B7 依统一 connector/channel contract 汇成完整 CRM，不以 EasyStore 到位为前提
 6. 三支柱在同一 release SHA 通过「七·甲」→ **冻结第一期 application-ready RC** → founder 递审批次(见 §八)→ 等待期跑 B11 联验/B12 非 live 部分/报告汇编/割接演练
@@ -69,8 +69,8 @@ Q1 建/卖两图配对（2026-07-16 再对齐：卖图 = 内容、发布、完�
 
 - 「最终一次验收」= **一次产品验收**,不是「founder 只出现一次」。founder-only / disputed 合并（schema/钱路/治理/生产等）可集中进预排窗口；普通、可逆 PR 仅在 `AGENTS.md` 当前 delegated-merge 条件全部成立时由非作者执行，不占 Founder 排程，也不设 auto-merge / merge watcher。本 D-038 计划修订本身是 Founder-only。外部递交一坐(Q4);终验一坐。中途绝对零接触的替代方案(integration branch 数月分叉)已评估为高风险次优,不推荐。
 - **待裁清单准入(Sol)**:只收「下游不建立在其上」的隔离项;涉共享契约/钱/tenant/安全/品牌/申请材料/发布范围的问题**不得挂起攒批**，立即停在该决定前并呈 Founder；不由 coordinator 代裁。
-- **总指挥 = 办公室不是会话(Fable)**:epoch+租约+单写者 fencing;五本账(范围矩阵/依赖状态/决策日志/风险待裁/证据清单)全在 repo;**每 N 块换届 + 第 1 块末尾故意换届演练**(冷恢复证明:新 session 仅凭 repo 状态可接任);block owner / 异族 reviewer / integrator / merger 四权分离,总指挥实质编辑过的 diff 不得由其合并。
-- **advisor 降级协议**照状态账范式写死(2026-07-11 incident 先例)。
+- **执行连续性不绑定永久 session**：当前 GitHub task + native dependencies 承载排程/阻断，矩阵与 task-linked spec 承载范围。Founder 解冻产品后，所有 repo mutation 都按项目法的 task-ownership lifecycle 先 claim、resume/pre-commit 复验、terminal close；该 fence 不授产品或 merge 权。Block owner / 异族 reviewer / integrator / merger 保持职责分离，任何实质编辑者不得合并自己的 diff。
+- **advisor 降级与复审**按 runtime global orchestration skill + FIKIRTIVE overlay；不可用、fallback 或同族结果如实标注，不能冒充跨族 PASS。
 
 ## 六、水准判官(Fable TL;DR 5 / Sol #6)
 
@@ -166,11 +166,10 @@ Q1 建/卖两图配对（2026-07-16 再对齐：卖图 = 内容、发布、完�
 | 防呆闸(≥3 需求物证) | → founder 解除(informed) | 乙裁决 |
 | v0.2「外部申请第一周递出」 | → 材料施工期/递交按 §八 Q4 细化 | Q4 |
 
-## 十、《Founder 前置供给清单》终版结构(合并 Sol §四 + Fable §4 + FIK-1 五项)
+## 十、Founder 前置供给
 
-交接包内单独成文(`FOUNDER-SUPPLY-MANIFEST`),每项:所有者/位置/权限范围/有效期/已实测/续期法;密钥值不入文。类目:法人与品牌资料 / 法务文本(隐私/ToS/删除回调——founder 批)/ 完整账号矩阵(GitHub/Railway/Cloudflare/Stripe/Sentry/Meta BM/WABA/Google/BytePlus,含角色与 ID；EasyStore 等 commerce connector 仅在实际采用时加入)/ **WABA 专用新电话号** / WhatsApp 首 adapter 的账号与迁移/替换资料（当前 Gupshup，不写进核心身份）/ 可选 EasyStore adapter 真验载体 / L0 短链域购买 / 2FA 与不可委托动作预案 + **「账号开通半日」预约**(集中处理验证码/KYC,把中途索取压成一坐)/ 测试身份与真实样本包（含自有 Reminder Email 收件与发送 identity）/ 生产权限(env/迁移/回滚/告警接收)/ 每项真实花费的独立估算与逐笔批准（不设 blanket 信封）/ Stripe live 测试规则 / 发布商务输入(价格/credits/退款/上市域名)/ 质量裁量(对标锚+待裁 SLA)/ 外部申请权限表 / Founder-only/disputed 合并窗口。**加一条 founder 快速通道**:仅用于不可预见的平台补件(目标是「无可预见的中途索取」,不是假装外部世界不会出新要求)。
+每个需要 Founder 输入或外部平台状态的 task，必须在其 current GitHub issue/PR 中列明：所需资料或动作、owner、权限范围、有效期、live verification、续期/替换方法，以及是否涉及真实花费。密钥值不得写进 Git/GitHub。适用类目包括法人与品牌资料、法务文本、平台账号/权限、WABA 与首个 WhatsApp adapter、可选 commerce connector 验证载体、测试身份与真实样本、生产/回滚/告警权限、逐笔花费批准、发布商务输入、质量裁量和不可委托动作。静态 supply dossier 不承载 current owner、credential location 或平台状态；外部世界出现新补件时在该 task 内走 Founder 快速通道。
 
 ## 十一、交接包清单(定稿后打包)
 
-本计划 v0.3(founder 签认后)+ 范围宪章(签认版)+ FOUNDER-SUPPLY-MANIFEST + FINAL-REPORT-STANDARD(交付合同)+ MATRIX-V0 + 全部 evidence + 状态账终局(#238)+ A′ 舱单 + CREDENTIAL-INVENTORY + 机器清理余项(第二组)+ 递延池 + 双顾问两份 memo 原文。
-`.orchestration/` 全部入库走 PR(M5 最高优先发现)。
+恢复与交接只读以下当前入口：`docs/BLUEPRINT.md`、本计划、`route-b/B0-CONTRACT.md`、`route-b/matrix/`、任务相关 spec、`FINAL-REPORT-STANDARD`，以及当前 GitHub issue 的 native dependencies / Resolution / PR evidence。历史 report、audit、dossier、旧状态账、handoff、memory 与本地控制文件只留在 Git/GitHub 历史作证，不得恢复为当前权限或待办。
