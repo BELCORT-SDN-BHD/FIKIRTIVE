@@ -13,7 +13,7 @@
 | OUT-APP | 手机 App（routine 移动面） | OUT-charter | 宪章 §二 | 明示不在本程（远期） |
 | OUT-AGENCY | Agency/Pro 楼层（G-09→协作→G-10 顺序已拍） | OUT-charter | 宪章 §二 | 明示不在本程；顺序判决保留 |
 | OUT-CITYHALL | 市政厅 v2（团队阶级制度） | OUT-charter | 宪章 §二 | 明示不在本程；现状 admin 能力行（E3-14~17）照常认证 |
-| OUT-DEAL | Deal/PipelineConfig（销售管道） | OUT-charter | 宪章「CRM 起步」范围（联系人+分群+同意退订抑制） | P3-2 的管道部分超出起步形态，留 P3 远期 |
+| OUT-DEAL | Deal/PipelineConfig（销售管道） | OUT-charter | Blueprint v2.12 Phase‑1 明示边界（不做 Salesforce-depth Companies/Deals/Forecast/Quotes/开票收款/完整 ticketing） | Customer Engagement CRM 本期完整，但不等于 Salesforce 销售管道；Deal/Forecast/Quote 深度留后续，非「CRM 起步」理由 |
 | OUT-COMPANY | Company B2B 档案（P4-2） | OUT-deferred | MASTERPLAN P4-2（远期） | 宪章未纳入；深化期再议 |
 | OUT-MKT2 | 分市场差异定价（超 MYR 多市场体系） | OUT-deferred | 宪法5 结构定调 | 上市域=MY；多币种结构留 config 缝，动工前 costing（R-006） |
 | OUT-TG | Telegram 频道广播 | OUT-deferred | MISSING-CONTINENTS 第5名（诚实栏） | 渠道枚举结构性排除在案；Status 先行，Telegram 待裁（R-005） |

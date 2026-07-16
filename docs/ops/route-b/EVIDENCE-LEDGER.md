@@ -38,3 +38,14 @@
 | codex BR2/BR2-R2/BR2-R3（B3 spec 三轮）判定原文 | PR #258 评论区 | 终判 PASS 钉 `12eeea1f` |
 | codex BR1/BR1-R3/BR1-R4（B4 spec）判定原文 | PR #257 评论区 | BR1-R2 网络停摆两线索经工位核实（D-027⑤） |
 | W-DELTA 差额核证 + W-ANCHOR 锚取证 | scratchpad 存档（b3-spec-inputs/），关键结论已入 B3 spec §二/§三 | L-C 前提失效发现的原始载体 |
+
+## Blueprint v2.12 → Route‑B 对齐（D-038）
+
+| 证据 | 位置 | 说明 |
+|---|---|---|
+| Founder 产品决定完整记录 | [issue #334 final resolution](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/334#issuecomment-4983309357) | 三支柱、内容/商家采用、UIUX/user-flow、Reminder/Direct、merchant autonomy、provider-neutral、完整 CRM 与真实 WhatsApp gate 的逐项决定 |
+| Founder 统一对齐批准 | [issue #336 proposal](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/336#issuecomment-4984031405) + [approval](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/336#issuecomment-4984090798) | 授权按三张 Founder-only PR 顺序执行：Blueprint → Route‑B alignment → sanitation；不授权产品施工/merge/deploy/spend |
+| Blueprint v2.12 生效 | [PR #337](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/337)；merge `1dd479b8bcecbd25f9956eeabb08a50d0600377b` | Founder 已合并；本 D-038 的上位产品合同 |
+| B8 schema 历史里程碑 | [PR #314](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/314)；merge `8e07dd9e39d93a5f358c60dc45738dd1a215b6fd` | 证明 5 新模型/加性外键等原 11 行 slice 已落；不证明完整 Customer Engagement CRM 或 Phase‑1 release |
+| R-010 schema authority 冲突 | `docs/superpowers/specs/2026-07-12-b2-data-contract.md:97-103,108-153,237-238`；`docs/superpowers/specs/2026-07-14-b8-phase1-campaign-crm.md:45,76,100-101`；`packages/db/prisma/schema.prisma:1208-1288` | B2 要求 issuer/version identity、ConsentEvent 四轴、结构化 `utmJson`；B8/#314 实际为较窄 identity、Contact consent 字段、`utmBase`。D-038 未裁，独立 Founder-approved schema alignment 前不得相关施工 |
+| Route‑B 对齐机器证据 | 本 PR 描述与 exact-head 评论 | 必须包含 matrix-check 216+27 PASS、frozen ID/hash 更新、Blueprint integrity/no-diff、diff-check 与完整本地 CI；未贴齐不得呈 Founder 合并 |

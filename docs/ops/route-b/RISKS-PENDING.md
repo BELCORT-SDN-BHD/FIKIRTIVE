@@ -1,6 +1,6 @@
 # 路线乙 · 风险与待裁清单（五本账之四）
 
-> 准入规则（Sol）：只收「下游不建立在其上」的隔离项；涉共享契约/钱/tenant/安全/品牌/申请材料/发布范围的问题不得挂起攒批，按 Q7 例外立即进最近合并窗口报 founder。
+> 准入规则（Sol）：只收「下游不建立在其上」的隔离项；涉共享契约/schema/钱/tenant/安全/品牌/申请材料/发布范围的问题不得挂起攒批。必须停在受影响施工前，用一个清楚的 Founder 决定闭合；不得把「最近合并窗口」误当成默认批准。
 > 每项 = 发生了什么 / 试了什么 / 差距 / 2-3 个选项。攒批 SLA 照供给清单（建议 48h）。
 
 ## 待裁（攒批报 founder）
@@ -23,6 +23,7 @@
 | # | 项 | 性质 | 发生了什么 / 差距 | 选项 | 状态 |
 |---|---|---|---|---|---|
 | R-009 | B2/B9 冻结候选（#253 @ `37590da9`）两项残余安全反例 | 共享契约冻结受阻（Q7 类+Q6 字面触发） | 九轮异族对抗（R1-R9，闭合 40+ 项）后，R9 终局轮仍出两个同根新反例，命中 B2 口碑观测流「陈旧门」比较键：(A) 普通 ULID 同毫秒随机尾无序，equal-time policy 被打穿（`packages/core/src/ids.ts` 实际用普通 ulid()）；(B) 时钟前跳把 observedAt 水位毒化到未来，此后真实观测（含真删除）被门永久丢弃。其余全部契约（B9 六契约、B2 契约〇/1/2/3/UTM、契约 3 重开重闭件）R9 全 CLOSED。按顾问预冻结终止条件：停循环、不自行开 v1.2 | **A.** 授权 v1.2 一轮：修法方向已知且窄（ULID 换单调工厂或门 tie-break 改 arrivalSeq；observedAt 入流钳位 LEAST(observedAt, 服务器到达时刻)），修后 R10 复审——代价：此前四轮「窄修」预测各有落空先例 / **B.** 拆分冻结：R9 全 CLOSED 的契约先冻结合并（解锁 B3/B4 开工——B3 依赖的 B9 上下文桥契约已 CLOSED），§四点六·1 观测流门机制降「设计草案」随 B8 口碑块 spec 再冻（口碑行本就部分 listed——D-021）——代价：#253 需一次拆分改稿+复核 / **C.** 维持 BLOCK 待您裁 | ✅ founder 裁 B（渠道内原话 2026-07-12「R-009 我选 B，拆分冻结继续走」）——已执行：#253 拆分稿 SR1 PASS+SOL 签核放行；#253 误合入栈式父分支（D-026 修订版），冻结文本经 **#260 逐字节补落合并 `f9a7fd9e`=冻结生效**；观测流门机制+两反例移交 B8 |
+| R-010 | B2 v1.2 与 B8/#314 schema authority 三处互斥 | Founder-only 共享 schema 合同冲突 | ①Identity：B2 冻结 `(ownerId,channel,issuerId,externalId)` + `normalizationVersion`，#314 为 live-row `(ownerId,channel,externalId)` 且无 issuer/version；②consent：B2 冻结 `ConsentEvent` 四轴并废除 Contact consent 字段，#314 实际为 `marketingConsent/consentSource/consentAt`；③UTM：B2 冻结结构化 `utmJson` 并废除 `utmBase`，#314 实际为 `Campaign.utmBase`。两边都有冻结/合并 provenance，D-038 明示不改 schema，现状不能反推产品方向 | **A.** B2 为目标：另开 additive migration/兼容退役计划；**B.** #314 为目标：Founder 明示修订 B2 契约；**C.** 先出一份窄的逐字段比较 spec，再由 Founder 对三项逐项选真源（建议；避免把三个不同风险绑成一次猜测） | **HARD STOP**：本对齐 PR 只揭示并隔离，不自裁、不改 schema；受影响 B5～B8/identity/consent/UTM 施工须等独立 Founder-approved schema alignment |
 
 ## 运行事故（影响全程节奏，供给单已含对策项）
 

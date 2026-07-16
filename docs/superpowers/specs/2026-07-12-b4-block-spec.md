@@ -1,8 +1,14 @@
-# B4 · 发布 L1 + Meta 通电族 · 块 spec（v0.4——冻结候选）
+# B4 · 发布 L1（Reminder-assisted + Direct）+ Meta 通电族 · 块 spec（v0.5 对齐）
 
 > 2026-07-12。epoch `claude-20260712-03`。工位=SPEC-B4（worker 作品，署名工位）。
 > 性质：**冻契约不冻实现**——本 spec 冻结的是发布 L1 闭环的**接口形状与语义**（六态/四锁/授权闸/媒体契约/签名代理/单一动作层/reconcile 铁律/X 计费缝），实现行号可继续演进（媒体 id 补链、FB recent-posts reconcile 等在途工程不构成移动靶）。
-> **状态：冻结候选（freeze candidate）——冻结走四权闭环（双顾问签核+异族复审+机器闸+非作者合并），依 #254 §一.2。本 PR 只起草+开 PR，不自称已冻结、不迁行、不碰矩阵/五本账/产品代码。** spec-ready 迁移随**冻结 PR**（04-B4 相关行随冻结迁级）。
+> **v0.4 历史状态**：原冻结 PR 走四权闭环并同步 04-B4；其中「本 PR 不碰矩阵/五本账」只描述当时起草 PR，不是当前 D-038 对齐的限制。
+> **2026-07-16 v0.5 / D-038 对齐（Blueprint v2.12/#334）**：保留下文 v0.4 的发布机械安全合同；以本附录取代「块内 mock 绿即可完成发布」和「只有 Direct 才算发布」的旧执行含义。Reminder-assisted 与 Direct 是两种可独立 release-certified 的真实发布模式，任一模式只对其已验证范围作真陈述；两者都不得凭 mock 或计划状态冒充已发布。
+> **v0.5 当前状态**：本次 Founder-only 对齐 PR 会同步 B4 矩阵与五本账，零产品代码、零 schema、零六级状态迁移；只有 Founder 合并后才成为现行计划合同。
+>
+> - **Reminder-assisted**：排期后生成冻结 posting pack（媒体/copy/账号/时间/模式）；持久 in-app task 默认到点前 15 分钟提醒、到点一次 follow-up、逾期 30 分钟标 `Missed`；用户可从同一任务下载、复制、打开目标 app、重排或跳过，再自行发布。另设**独立 opt-in** 的 email reminder；reminder channel、时间、时区与 quiet-hours 例外随 request 一次呈现。它与 Customer Email marketing 的 purpose、consent 和退订分开，但共用可扩展 notification seam，为未来 FIKIRTIVE→merchant channels 留口；关闭 Marketing Email/某站外通知不删除站内任务事实。Browser Push/SMS/WhatsApp 商家提醒本期仍 Coming soon。状态必须区分 `Merchant confirmed` 与 `Platform verified`，后者只能来自平台可验证回执。
+> - **Direct**：唯一正向授权是当前 mode 下的精确 post 或精确 batch，payload/hash 漂移即失效；account/global switch 只能负向暂停，不能授予未来发布，也不能把历史 Reminder/DRAFT 队列静默转换为 Direct。Otto 与人工入口消费同一 ApprovalRequest/动作层。
+> - **独立放行门**：同一 release SHA 覆盖支持矩阵；自动化/mock 契约层 + 内部 UI/device 层 + 受控真实 email/Meta 层逐层起证；重复/错账号/错内容/错时间窗/越权/错误状态或回执等 hard-zero 缺陷为 0。Reminder-assisted 与每个 Direct channel × post type 分开认证；没有商家考试，但未过真实层的模式只能诚实标未放行。完整商业 Phase‑1 仍须与内容、Customer Engagement CRM 及 UIUX/user-flow 总门共同通过（总计划「七·甲」）。
 > **v0.2 闭合 codex BR1（BLOCK，五项全实）**：①三处失实改正——共享编排指向改 `packages/core/src/meta-publish.ts:126`（`publish.ts` 只是队列契约）；「零 per-channel worker 分叉」降准为闭集分发实况（`publish.ts:356` if/else + `schedule-draft.ts:12` 闭集），E4-14/E4-16 施工合同随之改写；proxy matcher「精确排除」改正为**无边界前缀**（`proxy.ts:73`，`/api/media/pubfoo` 会被放行），边界断言列入 B4 施工验收项。②**debt-70 改判（控制面裁定，采 codex 替代方案）**：撤回 ACCOUNT_SECURITY 豁免提案，改 **gated skill 清偿**（`free/write/external` → `deriveNeedsApproval`〔`skill.ts:66`〕自动 true——人仍逐次亲手确认，Otto 不自批、闸不失义、**零豁免、不触修宪**）；debt-71~74 契约冻全（三元组/port/handler/测试命名/debt-72 退 DRAFT 不变式）。③9 行真硬化（逐行点名 tool 名+cost/effect/reach+归域）。④锚表两修（X 档位映射冻结+GRILL-VERDICTS:215 原文+方向断言；Meta 官方锚改逐关口判定表，A1 显式留 TBD-B4 实测槽）。⑤真实发帖边界统一（块内验收=mock/夹具级零真实外部写；测试账号真发=外部测试阶段单列 §六.2，前置 founder 授权）。
 > **v0.3 处置 codex BR1-R2 中段线索（复审任务因 codex 网络停摆取消；两条未确认线索经工位对代码核实——均属实）**：①**E4-14 触点清单补排期 UI 硬编码**——`OttoSchedule.tsx` 六处渠道字面量分支（ChannelIcon :86/:95、默认渠道 :287、composer 回退 :405、筛选 chips :434-435、类型断言 :1123/:1135、caps 文案二元 ternary :1199）入触点⑦；契约6 闭集触点 4→5 处，UI 收敛=CHANNEL_META 数据驱动。②**通用审批卡链缺口**——`ottoApprove` 匹配器硬过滤 `toolName !== "generate"`（`otto-actions.ts:697`），非 generate 的 needsApproval 中断**卡出不来、批不动=闸有名无实**；**不推翻 gated-skill 方案**（派生律 fail-closed 成立：中断只 pause、不误执行），通用审批卡链（渲染+匹配泛化+恢复+测试）补进 debt-70 施工触点（§五 5.1·附）。
 > **v0.4 闭合 codex BR1-R3（BLOCK(3)，其余四点+线索②全 CLOSED）**：①**E4-10 假挂靠改正**——`propose-meta-action` 动作枚举只有 `pause|resume|set_budget|reschedule`（`propose-meta-action.ts:27-29`），调不到 `setAdsAutonomy`/`setAdsWritesPaused`（`meta-write-actions.ts:8/:21`），parity-manifest:192-193 是字面映射非真对等——E4-10 Otto skill 列改**施工合同**（扩枚举加 `set_autonomy`/`set_writes_paused` 或新建 gated skill，二择归施工工位；验收=Otto 真实触达+审批闸+测试）。②**G4 锚照实码改正**——单图→`/photos`（url+caption）、无媒体→`/feed`（message+link）（`meta-publish.ts:214-228`+测试 `:175-190`，工位复核与 codex 行号相符）；顺检 G1 照实码精化（轮播子图无 caption）、G3 补 2xx-无-id→ambiguous。③**触点计数残留同步**——spec E4-16 行 + B4-REPORT ⑫.4「4 处」→「5 处」，全文 grep 防漏。
@@ -219,16 +225,18 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 
 ## 六、花钱与外部边界
 
-### 6.1 三无纪律 —— 块内验收 = mock/夹具级（零真实外部写）
+### 6.1 施工 PR 内部验证 —— mock/夹具级，零真实外部写
 
 - **organic IG/FB 发布 = $0**（媒体复用已付费成片，发帖不向 Meta 付费）——不走记账缝、不触 money-safety（除 E4-14 X 计费，见 6.4）。
-- **块内一切验收 = mock/夹具级契约测试，零真实外部写**：六态/四锁/授权闸/媒体契约/kill-switch/未授权拒发全部由测试夹具立证（`registry.test.ts` 未授权即拒发、`publish.test.ts` 六态、`publish-doublepost.test.ts` 不双发、`publish-media-contract.test.ts` 媒体双层、`meta-actions.test.ts` canPublish 派生、`media/pub/route.test.ts` 代理 404）。**块 PR 不含任何真实外部写。**
+- **施工 PR 的内部验证 = mock/夹具级契约测试，零真实外部写**：六态/四锁/授权闸/媒体契约/kill-switch/未授权拒发全部由测试夹具立证（`registry.test.ts` 未授权即拒发、`publish.test.ts` 六态、`publish-doublepost.test.ts` 不双发、`publish-media-contract.test.ts` 媒体双层、`meta-actions.test.ts` canPublish 派生、`media/pub/route.test.ts` 代理 404）。**这只能证明代码层可进入下一层验证，不能证明 Reminder 或 Direct 已放行。**
 
-### 6.2 外部边界 —— 测试账号真发 = 外部测试阶段（单列，非块内验收）
+### 6.2 Release certification —— 受控真实链路是必需层
 
-- **定义**：测试账号真发→IG/FB 可见的一切活动（六态活体证据〔尤其②③⑥〕、App Review 屏录素材、G1-G7 关口的 TBD-B4 实测填数〔A1/A5/A6/A7〕）**全部归外部测试阶段**，在 **sandbox-verified 阶段**执行，**不是块内验收的一部分**。
+- **定义**：测试账号真发→IG/FB 可见的一切活动（六态活体证据〔尤其②③⑥〕、App Review 屏录素材、G1-G7 关口的 TBD-B4 实测填数〔A1/A5/A6/A7〕）与受控真实 reminder email 均归 release certification 的真实链路层。它们不进入普通施工 PR，但**是对应模式从 sandbox-verified 走到 release-certified 的必要证据**。
 - **前置 = founder 授权**（与供给清单 App Review 材料项联动）：外部测试阶段开跑前，founder 明示授权测试账号真发范围；此前块内只有 mock/夹具。
 - 真实花费：organic 真发本身 $0；若外部测试涉及任何真实付费（开发者账户/商业验证周边），逐笔问 founder（宪法 2）。
+- **认证单位**：Reminder-assisted 单独一张证据表；Direct 按 channel × post type 单独一格。所有格锁在同一 release SHA；未验证格保持未放行，不借相邻格推定。
+- **hard-zero**：重复发布、错账号、错内容/媒体、错计划时间窗、未经精确授权、历史队列被模式切换、失败却显示成功、`Merchant confirmed` 冒充 `Platform verified`、email 未 opt-in/退订后仍发，任一出现即对应格不通过。
 
 ### 6.3 App Review 二分清单（材料施工期=Q4 细化，本 spec 只输出二分状态）
 
@@ -271,12 +279,13 @@ B4 块（`docs/ops/route-b/matrix/04-B4.md`）**20 行**：14 存量（`integrat
 
 ## 八、冻结条件与状态
 
-- **状态：冻结候选 v0.4（freeze candidate）。** 版本历史：
+- **版本状态**：v0.4 是已合并的历史机械合同；v0.5 是本次 D-038 Founder-only 对齐修订，待 Founder 合并后生效。版本历史：
   - **v0.1 骨架**：§一 差额核证（23 断言对 main@45fb27f7 立证）+ §二 20 行 TBD 硬化 + §三 八契约冻结对象 + §四 对标锚 + §五 债 5 条处置 + §六 三无边界 + §七 假设台账。
   - **v0.2 闭合 codex BR1（BLOCK，五项全部核实属实）**：①**三处失实改正**——A02 共享编排指向改 `packages/core/src/meta-publish.ts:126`（`publish.ts`=队列契约）；A03「零 per-channel worker 分叉」降准为闭集分发实况（`publish.ts:356` if/else、`schedule-draft.ts:12` 闭集、`schedule-posts.ts:24` z.enum、`channel-meta.ts` 镜像），E4-14/E4-16 施工合同随之改写（触点清单如实入批次，契约8/契约6）；契约5「matcher 精确排除」改正为**无边界前缀**（`proxy.ts:73`，`/api/media/pubfoo` 会放行），补边界断言+回归测试列入 B4 施工验收项。②**debt-70 改判（控制面裁定，采 codex 替代方案）**——撤回 ACCOUNT_SECURITY 豁免提案（现有成员全是身份/凭据生命周期，内容级外部写同意闸不同类；宪法「外部写照旧过审批」是正道），改 gated skill 清偿：`free/write/external` → `deriveNeedsApproval`（`skill.ts:66`）自动 needsApproval=true，人点卡=同意本体，Otto 不自批、闸不失义、**零豁免、不触修宪**；debt-71~74 契约冻全（三元组/5 新 port/handler/测试命名；debt-72 冻「实质编辑退 DRAFT 清 approvedAt」不变式，`schedule-actions.ts:236-240` 现状入契）。③**9 行真硬化**——E2-07/E4-10/E4-12 点名 `propose-meta-action`（free/write/internal，ads-analytics）、B0-27 点名 `propose-ad-build`、B0-28 新 `sharePostPreview`、B0-103 新 `suggestPostTimes`（均全三元组+归域）；E4-01/B0-29 随 debt-70 新方案重写；E4-14/E4-16 随①改写。④**锚表两修**——X 锚冻档位映射「不带链接=1cr/带链接=4cr」（GRILL-VERDICTS:215 原文引用）+实现方向断言（映射不可倒置、含糊就高、确定性判档）；Meta 官方锚改 G1-G7 逐关口判定表（预期请求/响应字段/允许结果可判定），A1/A5/A6/A7 显式留 TBD-B4 实测槽。⑤**真实发帖边界统一**——块内验收=mock/夹具级（零真实外部写）；测试账号真发→IG/FB 可见=外部测试阶段（§六.2 单列，前置=founder 授权，归 sandbox-verified 阶段执行）；spec 与 B4-REPORT 三处矛盾全消。
   - **v0.3（codex BR1-R2 中段线索经工位核实处置——复审任务因 codex 网络停摆取消，两条未确认线索逐条对代码核实，均属实）**：①**E4-14 触点⑦补排期 UI 硬编码**——`OttoSchedule.tsx` 六处渠道字面量（ChannelIcon `:86/:95`、默认渠道 `:287`、composer 回退 `:405`、筛选 chips `:434-435`、类型断言 `:1123/:1135`、caps 文案二元 ternary `:1199`），契约6 闭集触点 4→5 处、E4-16 收敛验收加「UI 由 CHANNEL_META 数据驱动」；旁证 northstar 原型 `_kit.tsx:74` 已含 `"x"`。②**通用审批卡链补进 debt-70 施工触点（5.1·附）**——核实 `ottoApprove` 匹配器硬过滤 `toolName !== "generate"`（`otto-actions.ts:697`）、双批兜底 GenJob 专用（`:707-714`）、卡渲染仅 OttoPlanCard spend 路径（`OttoChatStream.tsx:123-125,250`）；不推翻 gated-skill 方案（派生律 fail-closed：中断只 pause 不误执行），但补四硬性施工触点（通用卡渲染/匹配泛化〔approveScheduledPost 用 scheduledPostId+ApprovalRequest hash 幂等锚〕/恢复链 withLlmBudget+全量装载/五项测试清单含 generate 回归）+ **debt-70 债清判定硬化**（skill∧卡链∧测试三者齐才算清）。
   - **v0.4（闭合 codex BR1-R3——BLOCK(3)，其余四点+线索②全 CLOSED；三项均先复核实码再改）**：①**E4-10 假挂靠改正**——核实 `propose-meta-action` 动作枚举仅 `pause|resume|set_budget|reschedule`（`propose-meta-action.ts:27-29`），`setAdsAutonomy`/`setAdsWritesPaused`（`meta-write-actions.ts:8/:21`）不可触达，parity-manifest:192-193=字面映射非真对等；E4-10 Otto skill 列改施工合同（扩枚举加 `set_autonomy`/`set_writes_paused` 沿用其审批/闸形态，或新建 gated skill——二择由施工工位按枚举扩展成本定；验收=Otto 真实触达两动作+审批闸+对等测试），不再宣称既有挂靠已覆盖。②**G4 锚照实码改正**——工位复核 `meta-publish.ts:214-228`（与 codex 行号相符，不停手）：单图（mediaUrls≥1 取第一张）→`POST /{page-id}/photos`（url+caption）；无媒体→`POST /{page-id}/feed`（message+可选 link）；两路 2xx 无 id→ambiguous；测试佐证 `meta-publish.test.ts:175-190`。顺检 G1-G7 防同型错：G1 照实码精化（单图 caption 在容器、轮播子图无 caption、父容器 media_type=CAROUSEL+children，`meta-publish.ts:135-156`）、G3 补「2xx 无 id→ambiguous」（`:183-185`）；G2/G5/G6/G7 复核无误。③**触点计数残留同步**——spec §2.1 E4-16 行与 B4-REPORT §⑫.4 两处「4 处」→「5 处」，全文 grep 确认零残留。
-- **冻结走四权闭环**（#254 §一.2）：双顾问签核 + 异族复审 + 机器闸 + 非作者合并。放行后 04-B4 相关行随**冻结 PR** 迁 `spec-ready`（**本 PR 不迁行**，#254 §一.3/§二.5 founder 终验一次过审计索引）。
+  - **v0.5（D-038）**：新增 Reminder-assisted + Direct 双模式、通知 seam、精确授权与独立真实放行门；同步矩阵/五本账但不改产品、不迁状态。
+- **冻结走四权闭环**（#254 §一.2）：双顾问签核 + 异族复审 + 机器闸 + 非作者合并。v0.4 原冻结 PR 已完成当时的 04-B4 迁级；本 v0.5 对齐 PR 不迁任何六级状态。
 - **冻结时随契约上报 founder 的 founder-only 单列项**：①X 档位判定的**就高操作化细则**（短链/裸域名/跳转文案一律判带链接=4cr——多计费方向，founder ack；档位本身已拍板 GRILL:215，无需再裁）；②接口常量（`MEDIA_TTL_MS`/`PUBLISH_STALE_MS`）founder ack（现值已冻，可调需一处改）；③5 个新 `ctx.schedule` port + 5 新 skill 出生（缝1 登记 + B9 出生纪律，冻结 ack 时明示清单）。
 - **开放问题（v0.2 处置）**：
   1. IG media 补链方案（契约7 B4-01）→ **保守闭合**：坐实前 confirmed-live 也 NEEDS_ATTENTION，不盲 stamp；补链是在途工程不阻塞冻结。
