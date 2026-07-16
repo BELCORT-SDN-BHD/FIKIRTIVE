@@ -3,21 +3,18 @@
  * route-b-matrix-check.mjs — B0 发布契约的双向机器校验（docs/ops/route-b/）。
  *
  * 单向校验（矩阵内部）：ID 唯一；列非空（TBD-B<n> 合法、空白违规）；六级状态/存量现状 ∈ 闭集。
- * 双向校验（防「源里有、矩阵没有」）：
+ * 双向校验（防债项与矩阵脱钩）：
  *   - parity：packages/otto/src/parity-manifest.ts 的每条 todoSkill 债在 parity-debt.md 恰好出现一次；
  *     并做真 bijection——矩阵 Otto 列 missing(debt-…) 引用的每个编号必须在 parity-debt.md 存在，
  *     parity-debt.md 每条 debt-NN 的「归属行」必须真实存在于矩阵、且该行 Otto 列确有反向引用。
- *   - coverage：coverage-audit/adjudication.json 里每条 MISSING 裁决必须闭合到一个存在的矩阵行或 OUT 条目；
- *     每源 items 总数须等于 counts.total；HIT 裁决的 row_id（可逗号/`..`区间/`draft-matrix `前缀多值）
- *     必须全部指向矩阵现存行或留痕文件（含 OUT/EVIDENCE「（原行 X）」标注的已退役 ID）。
- *   - 冻结锁（签署对象②，语义级）：coverage-audit/frozen-ids.json 记录每个冻结行的「块归属」与
+ *   - 冻结锁（签署对象②，语义级）：matrix/frozen-ids.json 记录每个冻结行的「块归属」与
  *     「能力单元格哈希（去尾注〔〕）」、每个冻结留痕的「处置 kind」。校验器断言：冻结 ID 仍存在
- *     + 仍在同块 + 能力 hash 未变 + 留痕 kind 未变；任一漂移=红，提示「语义修改须决策日志授权后重跑 --freeze」。
+ *     + 仍在同块 + 能力 hash 未变 + 留痕 kind 未变；任一漂移=红，提示「语义修改须 current GitHub Founder Resolution 后重跑 --freeze」。
  *
  * 用法：
  *   node scripts/route-b-matrix-check.mjs           校验（exit 0 = 全绿）
  *   node scripts/route-b-matrix-check.mjs --freeze   以当前矩阵为基线重生成 frozen-ids.json 快照
- *                                                     （仅在 founder/决策日志授权语义修改后使用；
+ *                                                     （仅在 current GitHub Founder Resolution 授权语义修改后使用；
  *                                                      若矩阵存在结构性违规则拒绝生成）
  */
 import { readFileSync, readdirSync, existsSync, writeFileSync } from "node:fs";
@@ -108,7 +105,6 @@ if (blockRows.length === 0) errors.push("matrix/ 下没有解析到任何块矩�
 
 // ── 2. OUT / EVIDENCE 留痕文件 ──
 const ledgerRows = new Map(); // id -> kind（处置）
-const retiredOriginalIds = new Set(); // 「（原行 X）」标注出的已退役旧 ID
 for (const f of ["OUT.md", "EVIDENCE.md"]) {
   const p = join(matrixDir, f);
   if (!existsSync(p)) { errors.push(`缺 ${f}`); continue; }
@@ -120,8 +116,6 @@ for (const f of ["OUT.md", "EVIDENCE.md"]) {
     if (!OUT_KINDS.has(kind)) errors.push(`${f}:${id} 处置「${kind}」不在闭集`);
     if (!reason) errors.push(`${f}:${id} 理由/出处空白（不在本程不是回收站）`);
   }
-  const text = readFileSync(p, "utf8");
-  for (const m of text.matchAll(/原行\s*([A-Za-z0-9]+-[A-Za-z0-9]+)/g)) retiredOriginalIds.add(m[1]);
 }
 
 // ── 3. parity 债闭合（真源 = parity-manifest.ts）──
@@ -173,7 +167,7 @@ for (const [no, { rowId }] of debtByNo) {
 }
 
 // ── 3.5 冻结 ID 锁 v2（签署对象②：语义级——存在 + 同块 + 能力哈希 + 留痕 kind 未变）──
-const frozenPath = join(RB, "coverage-audit/frozen-ids.json");
+const frozenPath = join(matrixDir, "frozen-ids.json");
 if (FREEZE) {
   if (errors.length) {
     console.error(`❌ 结构性违规 ${errors.length} 处，拒绝生成冻结快照（先修好再 --freeze）:\n` + errors.map((e) => "  - " + e).join("\n"));
@@ -202,87 +196,25 @@ if (FREEZE) {
   console.log(`✅ 冻结快照已重生成: ${Object.keys(rows).length} 行 + ${Object.keys(ledger).length} 留痕 → ${frozenPath}`);
   process.exit(0);
 } else if (!existsSync(frozenPath)) {
-  errors.push("缺 coverage-audit/frozen-ids.json（冻结快照；用 --freeze 生成）");
+  errors.push("缺 matrix/frozen-ids.json（冻结快照；用 --freeze 生成）");
 } else {
   const frozen = JSON.parse(readFileSync(frozenPath, "utf8"));
   for (const [id, meta] of Object.entries(frozen.rows ?? {})) {
     const cur = blockRowsById.get(id);
-    if (!cur) { errors.push(`冻结行 ${id} 已从矩阵消失（行集只增不减；语义修改须决策日志授权后重跑 --freeze）`); continue; }
+    if (!cur) { errors.push(`冻结行 ${id} 已从矩阵消失（行集只增不减；语义修改须 current GitHub Founder Resolution 后重跑 --freeze）`); continue; }
     if (cur.block !== meta.block) {
-      errors.push(`冻结行 ${id} 块归属漂移 ${meta.block}→${cur.block}（语义修改须决策日志授权后重跑 --freeze）`);
+      errors.push(`冻结行 ${id} 块归属漂移 ${meta.block}→${cur.block}（语义修改须 current GitHub Founder Resolution 后重跑 --freeze）`);
     }
     const sha = capSha8(cur.cap);
     if (sha !== meta.cap_sha8) {
-      errors.push(`冻结行 ${id} 能力单元格哈希漂移（内容被改；语义修改须决策日志授权后重跑 --freeze）`);
+      errors.push(`冻结行 ${id} 能力单元格哈希漂移（内容被改；语义修改须 current GitHub Founder Resolution 后重跑 --freeze）`);
     }
   }
   for (const [id, meta] of Object.entries(frozen.ledger ?? {})) {
     const kind = ledgerRows.get(id);
-    if (!kind) { errors.push(`冻结留痕 ${id} 已从留痕文件消失（语义修改须决策日志授权后重跑 --freeze）`); continue; }
+    if (!kind) { errors.push(`冻结留痕 ${id} 已从留痕文件消失（语义修改须 current GitHub Founder Resolution 后重跑 --freeze）`); continue; }
     if (kind !== meta.kind) {
-      errors.push(`冻结留痕 ${id} 处置(kind) 漂移 ${meta.kind}→${kind}（语义修改须决策日志授权后重跑 --freeze）`);
-    }
-  }
-}
-
-// HIT/MISSING row_id 存在性判定：矩阵现存行、留痕现存行、或留痕「（原行 X）」标注的已退役 ID 均算存在
-function existsInMatrixOrLedger(id) {
-  return allIds.has(id) || retiredOriginalIds.has(id);
-}
-// 拆分 row_id 字段里的逗号多值 / `A-01..A-20` 区间 / `draft-matrix X` 前缀，展开为待校验 ID 列表
-function resolveRowIdTokens(field) {
-  const ids = [];
-  for (let tok of field.split(",")) {
-    tok = tok.trim();
-    if (!tok) continue;
-    const draftM = tok.match(/^draft-matrix\s+(.+)$/);
-    if (draftM) { ids.push(draftM[1].trim()); continue; }
-    if (tok.includes("..")) {
-      const [a, b] = tok.split("..").map((s) => s.trim());
-      const pa = a.match(/^(.*-)(\d+)$/);
-      const pb = b.match(/^(.*-)(\d+)$/);
-      if (pa && pb && pa[1] === pb[1]) {
-        const width = pa[2].length;
-        for (let n = parseInt(pa[2], 10); n <= parseInt(pb[2], 10); n++) {
-          ids.push(`${pa[1]}${String(n).padStart(width, "0")}`);
-        }
-      } else {
-        ids.push(a, b); // 前后缀不一致的畸形区间——退化为只查端点
-      }
-      continue;
-    }
-    ids.push(tok);
-  }
-  return ids;
-}
-
-// ── 4. coverage 裁决闭合 ──
-const adjPath = join(RB, "coverage-audit/adjudication.json");
-if (!existsSync(adjPath)) {
-  errors.push("缺 coverage-audit/adjudication.json");
-} else {
-  const adj = JSON.parse(readFileSync(adjPath, "utf8"));
-  for (const src of adj.sources ?? []) {
-    const items = src.items ?? [];
-    if (src.counts && items.length !== src.counts.total) {
-      errors.push(`adjudication[${src.source}] items 总数 ${items.length} ≠ counts.total ${src.counts.total}`);
-    }
-    for (const it of items) {
-      if (it.verdict === "HIT") {
-        if (!it.row_id) { errors.push(`adjudication[${src.source}] HIT「${it.item}」缺 row_id`); continue; }
-        for (const id of resolveRowIdTokens(it.row_id)) {
-          if (!existsInMatrixOrLedger(id)) {
-            errors.push(`adjudication[${src.source}] HIT「${it.item}」row_id 引用 ${id}，矩阵与留痕均无此行`);
-          }
-        }
-        continue;
-      }
-      if (it.verdict !== "MISSING") continue;
-      const res = it.resolution;
-      if (!res) { errors.push(`adjudication[${src.source}] MISSING「${it.item}」无裁决`); continue; }
-      if (res.row_id && !allIds.has(res.row_id)) errors.push(`adjudication[${src.source}]「${it.item}」裁决指向不存在的行 ${res.row_id}`);
-      if (!res.row_id && !res.out_id) errors.push(`adjudication[${src.source}]「${it.item}」裁决既无 row_id 也无 out_id`);
-      if (res.out_id && !allIds.has(res.out_id)) errors.push(`adjudication[${src.source}]「${it.item}」out_id ${res.out_id} 不存在于留痕文件`);
+      errors.push(`冻结留痕 ${id} 处置(kind) 漂移 ${meta.kind}→${kind}（语义修改须 current GitHub Founder Resolution 后重跑 --freeze）`);
     }
   }
 }

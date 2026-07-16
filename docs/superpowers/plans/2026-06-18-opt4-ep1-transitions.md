@@ -35,7 +35,7 @@ These anchors were read before writing — every task below references them by e
 - **`apps/web/components/Editor.tsx`** — `new Edit(startEdit)` L131, `edit.getEdit()` snapshot+parse L164/L206, `appendAsset` L217–228 (`addClip(0, …)`), the right Inspector (legacy per-clip Transition checkboxes) L515–548, `applyTransition` L241–250.
 - **`apps/web/lib/actions.ts`** — `saveProjectEdit` L576–591 (canonicalizing `fikirtiveEdit.parse`, persists `editJson`), `startRender` L660–703, `getEditorMedia` L750–770 (NOT touched by EP1).
 - **Shotstack SDK 2.11.5** (`node_modules/.pnpm/@shotstack+shotstack-studio@2.11.5/.../dist/index.d.ts`): `Edit.getEdit()` L184, `addClip(trackIdx, clip: Clip)` L211, `updateClip(...)` L261, `undo()/redo()` L255–256. Shotstack's `Transition` is a per-clip in/out concept only (`@shotstack/schemas` `schema.d.ts` L1396: "In and out transitions for a clip"). **There is no track-level between-clip transition in Shotstack's schema** — confirming EP1's track-level array must live outside the Shotstack `Edit`.
-- **`docs/backlog.md` §E** L27: "导出忽略时间线空隙 → 黑帧填补" (export ignores timeline gaps). EP1's gapless enforcement closes this item; this plan marks it done in §E.
+- **Historical queue item:** the then-current backlog said export ignored timeline gaps. EP1's gapless enforcement closed that item; the old queue now exists only in Git history.
 - **Local toolchain:** `ffmpeg`/`ffprobe` on PATH (`/opt/homebrew/bin`); `xfade`, `acrossfade`, `anullsrc`, `aresample` all present; `xfade transition=` enum includes `fade, wipeleft/right/up/down, slideleft/right/up/down, radial, circleopen, circleclose, dissolve, vertopen/vertclose, horzopen/horzclose, pixelize`.
 
 ### Two design decisions this plan locks (the spec asked the plan to pick)
@@ -1068,12 +1068,9 @@ git commit -m "test(editor): EP1 local $0 ffmpeg verify — every transition typ
 
 ## Task 10: Docs + Codex gate (STOP before deploy)
 
-**Files:**
-- Modify: `docs/backlog.md` (§E L27 — mark the gap-ignore bug closed by EP1)
+**Historical documentation step:** the implementation once updated its then-current queue entry from:
 
-- [ ] **Step 1: Close the backlog item** — in `docs/backlog.md` §E, change L27 from:
-
-```
+```text
 - [ ] 导出忽略时间线空隙 → 黑帧填补（render 关键路径，需本地 ffmpeg 测，不盲发）。
 ```
 to:
@@ -1083,10 +1080,7 @@ to:
 
 - [ ] **Step 2: Commit the docs** (leave for user approval)
 
-```bash
-git add docs/backlog.md
-git commit -m "docs: EP1 closes backlog §E timeline-gap bug via gapless enforcement"
-```
+That queue ledger has since retired. No current task or commit instruction is created by this section.
 
 - [ ] **Step 3: Codex render-correctness gate (REQUIRED before any deploy)** — run `/codex` on the EP1 diff. Gate focus (from spec §4):
   1. Render-pipeline correctness: the chained-`xfade` offsets, the audio rendered-time re-mapping, `renderDuration` used everywhere output duration matters.

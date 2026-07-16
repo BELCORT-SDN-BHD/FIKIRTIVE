@@ -1,10 +1,6 @@
-# F36 — the FIRST automated gate for this repo. Pushing to main auto-deploys web + worker to
-# Railway and auto-migrates prod, with no human gate in between, so a bad merge ships instantly.
-# This runs on every PR and on push to main.
-#
-# NOTE: real branch protection is unavailable (private repo, free plan — founder chose not to
-# upgrade). The enforcement is the merge discipline in .claude/CLAUDE.md: PRs only, ALL checks
-# green before merge. This workflow reports status; agents are bound by the discipline.
+# The four CI jobs and the local fallback share scripts/ci/run-job.sh as their only command
+# source. Deployment is Founder-only; external source triggers and the deployed commit must be
+# queried live rather than inferred from this workflow.
 name: CI
 
 on:
@@ -29,53 +25,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # --frozen-lockfile moves the #68 class of failure (a package.json dep added without
-      # regenerating pnpm-lock.yaml) from deploy-time to PR-time.
-      - run: pnpm install --frozen-lockfile
-      # Workspace packages resolve from dist, so build them (tsc-only — cheap) before
-      # typechecking the apps. db's build script runs `prisma generate` itself. The apps are
-      # deliberately NOT built here — apps/web gets its own `web-build` job below, kept
-      # separate so this job stays fast.
-      - run: pnpm --filter "./packages/*" build
-      - run: pnpm -r typecheck
-      # Hard spend-fence: skills must not import the fal provider / reserveCredits directly.
-      - run: bash scripts/check-skill-imports.sh
-      - run: pnpm lint:otto-cli
-      # Northstar prototype fence: app/northstar + app/northstar-immersive + components/northstar
-      # are DESIGN files (pure client prototypes) — must never import server actions, @fikirtive/db,
-      # @fikirtive/generation, or auth/server-only modules.
-      - run: bash scripts/check-northstar-imports.sh
-      # Tenancy tripwire (informational baseline today; never fails the build yet).
-      - run: bash scripts/check-no-raw-prisma.sh
-      # Skill catalog must match the registry (Seam 1 step 5) — a stale CATALOG.md fails here.
-      - run: pnpm --filter @fikirtive/otto run catalog:check
-      # Parity Manifest seam: every server action / API route / registered read surface is registered.
-      # Also a debt ratchet: TODO_SKILL count may only go down (baseline in scripts/parity-debt-baseline.json).
-      # The red-case tests (fixture strings) prove the parity scanner's shape matchers still turn red.
-      - run: node scripts/__tests__/check-parity.test.mjs
-      - run: pnpm lint:parity
-      # 宪法 5 margin floor: every sellable gen SKU must keep (price−cost)/price ≥ 45%,
-      # measured as the LIVE spend.ts charge vs the founder-certified BytePlus bill COGS
-      # (harmony-04 §二). A charge cut or a costing-input drift below the floor fails here.
-      # The red/green self-test proves the alarm still fires. Packages are already built above.
-      - run: node scripts/__tests__/check-margin-floor.test.mjs
-      - run: node scripts/check-margin-floor.mjs
-      # Constitution tamper-evidence: docs/BLUEPRINT.md is immutable — this fails if it changed
-      # without an explicit founder amendment (blueprint.sha256 update). Binds any agent, incl.
-      # ones that never read .claude/ (GPT goal-mode).
-      - run: bash scripts/check-blueprint-integrity.sh
-      # Destructive-migration guard: push-to-main auto-migrates prod. A DROP TABLE/COLUMN,
-      # TRUNCATE, or DELETE FROM must carry an explicit "-- DESTRUCTIVE-OK: <reason>" ack.
-      - run: bash scripts/check-destructive-migrations.sh
-      # Auth-guard fence (P0-2): every exported server action in a "use server" apps/web/lib
-      # file must call requireSession/requireRole/requireAdmin/requireOwner before any
-      # prisma/storage/getBoss access. The red-case tests (fixture strings, no real
-      # violations) prove the scanner itself still turns red before it gates anything.
-      - run: node scripts/__tests__/verify-auth-guards.test.mjs
-      - run: node scripts/verify-auth-guards.mjs
-      # Route-B release contract (B0): coverage matrix invariants — unique IDs, no blank cells,
-      # closed-set statuses, all 84 parity debts mapped exactly once, MISSING adjudications closed.
-      - run: node scripts/route-b-matrix-check.mjs
+      - run: bash scripts/ci/run-job.sh check
 
   # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
   # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing
@@ -95,9 +45,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter "./packages/*" build
-      - run: pnpm --filter @fikirtive/web build
+      - run: bash scripts/ci/run-job.sh web-build
 
   test:
     name: unit + integration tests
@@ -123,37 +71,11 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Same as the check job: tests import @fikirtive/* from dist (see comment above).
-      - run: pnpm --filter "./packages/*" build
-      - run: pnpm --filter @fikirtive/db exec prisma migrate deploy
-      # Schema-drift gate (2026-07-04 审计 high): a schema.prisma edit with NO matching
-      # migration passes typecheck + build green, then explodes on prod with "column does
-      # not exist" (push to main auto-runs `migrate deploy` against prod). After the deploy
-      # above, this DB == the committed migrations; diffing it against schema.prisma turns
-      # that silent prod outage into a red PR. prisma exits 2 on drift (pnpm re-wraps it as
-      # a non-zero exit either way → step fails). SCOPE: datamodel-level drift only — the
-      # hand-written partial-unique indexes in raw migration.sql (finalizer/idempotency)
-      # are invisible to the datamodel diff and stay owned by the credits/idempotency tests.
-      - run: pnpm --filter @fikirtive/db exec prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
-      - run: pnpm -r test
+      - run: bash scripts/ci/run-job.sh test
 
-  # ESLint gate (route 乙 B10 · P0-3): `pnpm lint` was never wired into CI (128 errors accrued
-  # silently, MASTERPLAN.md P0-3). Kept as its own job — NOT appended to `check` — because
-  # `check`'s docstring above frames it as the fast typecheck+fences gate; lint is a separate
-  # concern with its own (slower, output-heavy) failure mode. Only needs the workspace packages
-  # built (apps/web's `no-restricted-imports` rule matches on the import specifier text, not
-  # resolved types, but @typescript-eslint parsing still expects the workspace packages'
-  # published shapes to exist) — no DB, no `next build`.
-  #
-  # STATUS (2026-07-12, P0-3 收尾 · route 乙 B10): a mechanical pass first cut `pnpm lint` from 128
-  # (2026-07-07 baseline) to 71 problems (7 errors, 64 warnings); a follow-up behavior-class pass
-  # then fixed all 7 remaining errors (react-hooks/set-state-in-effect ×5 + react-hooks/purity ×2)
-  # via derived-state / stable-callback refactors — NOT eslint-disable — so `pnpm lint` is now
-  # 0 errors (64 warnings remain, all pre-existing WARN severity: no-restricted-imports prisma
-  # migration + no-img-element + no-unused-vars). This job is now a HARD gate (continue-on-error
-  # removed): any NEW eslint error fails it. Do not silence errors with eslint-disable — that would
-  # hide the exact regression class this gate exists to catch.
+  # ESLint remains a separate hard job because its output-heavy failure mode is distinct from the
+  # typecheck/fence job. The shared runner builds workspace packages first; no DB or web build is
+  # required here. Do not hide regressions with eslint-disable.
   lint:
     name: eslint (apps/web)
     runs-on: ubuntu-latest
@@ -164,6 +86,4 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter "./packages/*" build
-      - run: pnpm lint
+      - run: bash scripts/ci/run-job.sh lint

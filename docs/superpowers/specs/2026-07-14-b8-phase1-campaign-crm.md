@@ -2,7 +2,7 @@
 
 > **性质**：wayfinder 票 **#296** Resolution（founder 12 槽判决，2026-07-14 晚，12/12 全清）喂 to-spec 的产物。其 11 行 Campaign/CRM 底座机械合同曾按 D-034 冻结；schema 类实施 PR 仍按 AGENTS.md founder-only 类别处理。日期 2026-07-14。
 > **2026-07-16 D-038 上位对齐（Blueprint v2.12/#334）**：本稿不再代表「商业第一期全部」或「完整 CRM 的唯一 to-tickets 依据」。它只控制 B0-51～61 的 Campaign + Contact/Identity/Segment 底座，兼容的 schema、动作、钱路与安全合同继续有效；任何把「Campaign 8 + CRM 3」等同 Phase‑1 完成、把 CRM 缩成三页/三行、把老客唤回当独立产品支柱、或把 EasyStore/Gupshup 写成核心依赖的旧含义均被取代。完整 Customer Engagement CRM 由 B5～B8 既有行横切承接：Contact/Identity、导入/去重/合并、标准/自定义字段、tags、动态 Segments、Lifecycle、全渠道 Inbox/历史/搜索/分派、Campaign/Broadcast、Workflows、human/Otto takeover、unsubscribe、receipts 与 reports；Phase‑1 真实顾客渠道只有 WhatsApp，Gupshup 只是首个可替换 adapter。完整 release contract 与 UIUX/user-flow 门见总计划「七·甲」。本修订不新增 schema/ID，不迁任何实现状态。
-> **R-010 schema authority 硬停**：「兼容的合同继续有效」只指不存在冲突的机械部分。本稿/#314 的 `(ownerId,channel,externalId)` identity、Contact consent 字段、Campaign `utmBase` 与 B2 v1.2 已冻结的 issuer/version identity、`ConsentEvent` 四轴、结构化 `utmJson` 三处互斥。D-038 不选择真源；本 PR 不改 schema。三处须经独立 Founder-approved schema alignment 后才可进入施工。
+> **[R-010 schema authority](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/339) 硬停**：「兼容的合同继续有效」只指不存在冲突的机械部分。本稿/#314 的 `(ownerId,channel,externalId)` identity、Contact consent 字段、Campaign `utmBase` 与 B2 v1.2 已冻结的 issuer/version identity、`ConsentEvent` 四轴、结构化 `utmJson` 三处互斥。D-038 不选择真源；本 PR 不改 schema。三处须经独立 Founder-approved schema alignment 后才可进入施工。
 > **判决真源**：①issue #296 Resolution（D-1～D-12 终局）②issue #294 Resolution（授权信封：精确清单式+指纹保鲜+72h）③issue #295 Resolution（停按钮：基线三分流+单粒度+对象级插手）④`docs/research/GRILL-VERDICTS-2026-07-03.md` 2026-07-14 追加节（审批粒度 :259 / 停按钮 :260 / 三环卖法 / 建卖两图）。
 > **设计底稿**：`docs/design/route-b/2026-07-12-b8-campaign-design.md`（Campaign 8 行）+ `docs/design/route-b/2026-07-12-b8-crm-design.md`（CRM 3 行）——本 spec 只取原 11 行底座相关部分；无需依赖仓库外草稿即可恢复本稿依据。
 > **范围锚**：`docs/ops/route-b/matrix/08-B8.md` 的 B0-51～B0-61（文件第 7～17 行，§八逐行对账）。**数据上位**：`docs/design/2026-07-03-harmony-01-data-model.md`。**缝配方**：`docs/review/EXPANSION-SEAMS.md`。
@@ -321,7 +321,7 @@ TrendSnapshot 只读翻阅面；「被哪个 campaign 用过」可见。一期�
 | A-2 | B0-59 自动进来的写入点在邻块（B5 入信/B2 归因/B7 欢迎流），一期 CRM 消费展示；邻块未上线期间，**手工 + CSV 导入即一期入口**（D-3 判决使冷启动闭环成立） | CRM 设计图 §6.2/A-02；D-3 | 若邻块联审改判写入点归属，只挪 upsert 共享 action 落点，表形状不变 |
 | A-3 | 身份规范化规则（waPhone E.164 国码/email 小写）须在 R-010 的独立 Founder-approved schema alignment 中，与唯一键/issuer/version/consent 一并钉死；CRM 与 CSV import 复用该唯一口径 | CRM 设计图 Q5/A-04；R-010 | **R-010 闭合前 CSV identity/consent 导入不得施工**；闭合后按已批准合同实现，不允许先做一套再对齐 |
 | A-4 | heat（hot/warm/cold）一期派生不落列；lifecycleStage 三态由确定性算子从 lastSeenAt/订单信号推导或人工改 | CRM 设计图 §6.1（heat ⬜派生）；D-7 值域 | 若上量出现性能压力，落列 = B 档缓存优化，additive |
-| A-5 | 三对标锚（respond.io/HubSpot/Klaviyo + SF/HubSpot/GenStudio）版本为设计日近似，**spec 冻结入 repo 当日实机复核版本号并抓真截图入证据台账** | 两设计图 §二/A-07 | 复核发现对手改版 → 只更新锚四件套，不动范围 |
+| A-5 | 三对标锚（respond.io/HubSpot/Klaviyo + SF/HubSpot/GenStudio）版本为设计日近似，**spec 冻结入 repo 当日实机复核版本号，并把真截图作为 exact-head 附件/链接写入对应 GitHub task/PR** | 两设计图 §二/A-07 | 复核发现对手改版 → 只更新锚四件套，不动范围 |
 | A-6 | 一期两拍合一：D-2=B 使打包批（原"第二期"）并入一期；campaign 设计图内"逐条批=第一期"的钱路表述作废，计划层逐条改/批（$0）保留 | D-1/D-2 + GRILL-VERDICTS:259（连环确认=缺陷） | — （判决已终局） |
 | A-7 | 零新收费点成立的前提 = 全部产出是配置菜单价（pricedGenCredits 配置层） | #294「超支由结构吃掉」；campaign 设计图 A7 | 若混入非菜单价产出，该项无法入封 → fail-closed 单独问（信封稿 A-2 同款） |
 | A-8 | GM-03 目标进度条一期只落 `goal` 字段，UI 随 P3 | campaign 设计图 §六A | founder 若要一期见进度条，升深度档另裁 |

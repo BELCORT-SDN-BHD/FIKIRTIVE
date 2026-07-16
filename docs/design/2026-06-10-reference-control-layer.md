@@ -38,7 +38,9 @@ Fikirtive 的 12 个月 10x 形态：任何重度创作者的「实体资产银�
 - 阶段二新增：配方记忆（E4）、成本预告牌 + 模型注册表 cost_rules（E5）、第三方模型 API（D5，覆盖清单由 Open Question 5 圈定）
 - 设计文档新增 Strategic Positioning 章节（D2）
 
-## Deferred to TODOS.md
+## Deferred at the time (historical)
+
+The original queue ledger has been retired; these bullets do not create current work.
 - 用户自带 API key vs 平台代付/credits 体系（商业化前置，受 P4 验证门约束）
 - 浏览器插件级捕获（E2 的高级形态）
 - 实体包市场/交易生态（E1 的远期形态，先有格式再谈市场）

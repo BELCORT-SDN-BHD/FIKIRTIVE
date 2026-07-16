@@ -1,9 +1,9 @@
 # B3 创作块 · 块 spec（v0.4——甲案原子勘误·冻结续有效）
 
-> 2026-07-12。epoch `claude-20260712-03`。性质：**装配件不重画**——本 spec 把控制面已裁定的判断内容 + 两份取证报告（W-DELTA 差额核证 / W-ANCHOR 对标锚提案）装配成 B3 创作块的冻结件；判断已全部定案，后续施工逐字执行不改判。**主体施工图 = `docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md`（L-C 创作区点亮施工图）——引用采纳为附件，不复述，本 spec 各节 = 对 L-C 的修正 + 增补。**
+> 2026-07-12。epoch `claude-20260712-03`。性质：**装配件不重画**——本 spec 把当时已获 Founder/task approval 的判断内容 + 两份取证报告（W-DELTA 差额核证 / W-ANCHOR 对标锚提案）装配成 B3 创作块的冻结件；当前执行仍须核验 GitHub approval/supersedes 与 live main。**主体施工图 = `docs/superpowers/specs/2026-07-10-lc-creation-zone-lighting.md`（L-C 创作区点亮施工图）——引用采纳为附件，不复述，本 spec 各节 = 对 L-C 的修正 + 增补。**
 > **2026-07-16 D-038 商业 release 修订（Blueprint v2.12/#334）**：本 spec 与 B3 矩阵只证明创作块如何施工、测试与起证，不再单独定义商业 Phase‑1 的内容完成。商业内容支柱必须额外通过总计划「七·甲」的固定 20 tasks / 32 runs、零重大事实/品牌/身份/权限/状态错误、采用率与格式/语言下限、critical-task 3/3 稳定性、双盲对标、3 家目标商家真实采用与购买/复购，以及 7 条 canonical journeys × desktop/mobile 的 UIUX/user-flow 与无障碍门。Factory 仍为 Coming soon。任何 B3 行达到技术状态都不能跳过这些门，也不能替另外两支柱宣称 Phase‑1 完成；本修订不迁行、不改产品或 money path。
-> **PR 自指说明**：下文「本 PR 不迁行」指 v0.4 原冻结 PR 的历史口径；D-038 当前对齐会同步矩阵/五本账的计划语义，但同样不迁六级状态、不改产品或 money path。
-> **修订纪要**：v0.2 = 闭合 codex BR2 六项（钉②〔模板正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、花钱授权措辞〔逐笔明示批准〕三处 = 控制面改判）；v0.3 = 闭合 codex BR2-R2 三项文字收口（批2 工位计数同步 / 模板目录用语零歧义 / 花钱授权措辞收口——无判断变更）；**v0.4 = 甲案原子勘误（founder 2026-07-13 明示批准，D-031）：四工位拆分 -P（批2 证明层/执行器）与 -W（批3 界面接线）；依据 = 批2 全局排序调查（四壳后台解耦，机器核实）+ SOL 顾问裁定备忘录**。逐项内容见 §八 版本历史。**全部引用行号已逐一对原文复核，零处不符。**
+> **PR 自指说明**：下文「本 PR 不迁行」指 v0.4 原冻结 PR 的历史口径；Founder-merged alignment revision 已同步矩阵/current GitHub evidence，但没有迁六级状态或改产品/money path。执行前仍须 live-query current GitHub/main。
+> **修订纪要**：v0.2 = 闭合 codex BR2 六项（钉②〔模板正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、花钱授权措辞〔逐笔明示批准〕三处 = 当时经批准改判）；v0.3 = 闭合 codex BR2-R2 三项文字收口（批2 工位计数同步 / 模板目录用语零歧义 / 花钱授权措辞收口——无判断变更）；**v0.4 = 甲案原子勘误（Founder 2026-07-13 明示批准，D-031）：四工位拆分 -P（批2 证明层/执行器）与 -W（批3 界面接线）；依据 = 批2 全局排序调查（四壳后台解耦，机器核实）+ SOL 顾问裁定备忘录**。逐项内容见 §八 版本历史。**全部引用行号已逐一对原文复核，零处不符。**
 > **状态：已冻结 v0.4。** B3 块 spec 经 D-027 / #258 合并 `2e5bf486` 生效，主 tranche 38 行已经随冻结批迁为 `spec-ready`；tranche-2 仍按 D-021 保持 `listed`。下文「冻结候选 / 随本 PR 迁级 / 本 spec 不自称已冻结」只保留为原审查轨迹。D-031 原子勘误继续有效；本 D-038 对齐零代码改动、不迁任何行六级状态。华语（宪法 9）。
 > **钱路警告（承 L-C 头部）**：本区是全城**最重的 spend path**。凡触及 `startGen`/`genRequest`/批量编排/幂等键的施工 diff **逐个必过 `money-safety-review` skill**。**每笔真实供应商验证花费 = founder 逐笔明示批准，"问"就是上限**（宪法 2/BLUEPRINT:61）。
 > **人话**：这是「创作车间」的施工总纲——把已经画好的图纸（L-C）、差额核对单（W-DELTA）、对标记分卡（W-ANCHOR）三张纸订成一份能开工的合同。开工前先把一件事说清楚：车间的那七个漂亮门面，其实还没盖在 main 上（在另一根未合入的分支上），所以第一道工序不是"接线"，是"先把门面搬过来"。
@@ -27,7 +27,7 @@ B3 块（`docs/ops/route-b/matrix/03-B3.md`）= **46 行**，拆两 tranche（v0
 本 spec **不复述 L-C**。L-C 施工图（点亮令牌，与 L0/L1 同级）已定：七页判词表、接线图（每页动作 ↔ server action ↔ Otto skill 的 Parity 登记表）、钱路触点表（10 触点+六态+gate4 诚实契约映射）、后台缺口清单（11 本期建/9 诚实 Coming soon）、每环最强对标、R4 Design B 决策、验收/规模/PR 切片、九条假设台账。**以上全部引用采纳。** 以下各节仅做三件事：
 
 1. **基线修正**（§二）——吸收 W-DELTA：L-C 写作时的基线前提（「七页原型已存在只需接线」）已被核证推翻，最高优先级上修。
-2. **对标锚清单**（§三）——吸收 W-ANCHOR + 控制面对 10 待裁项的裁定：L-C §六「每环最强」只给了第一性分解，本 spec 落成法定锚清单（水准判官要件，无锚不开工，MASTERPLAN §六）。
+2. **对标锚清单**（§三）——吸收 W-ANCHOR + 当时 10 个待裁项的 approved outcome：L-C §六「每环最强」只给了第一性分解，本 spec 落成法定锚清单（水准判官要件，无锚不开工，MASTERPLAN §六）。
 3. **钉桩/批次/闸/台账**（§四~§八）——把 L-C 的决策项与本工位入参钉成终案。
 
 冲突处置：当本 spec 与 L-C 冲突，**本 spec（承 W-DELTA 核证）为准**（如 L-C「点亮=只接线」前提 vs §二规模上修）；当本 spec 与上位法（`docs/BLUEPRINT.md`/宪法/MASTERPLAN）冲突，**停在该项报告**，不自裁。
@@ -55,14 +55,14 @@ B3 块（`docs/ops/route-b/matrix/03-B3.md`）= **46 行**，拆两 tranche（v0
 
 - **本 spec 以代码现值 16cr 为现状记录**，**不照抄 7cr**。
 - **定价终案挂 B12 对表，B3 不自行改价**（承 L-C §一非目标「不碰定价数字的最终拍板」；报价一律走真后台 `pricedGenCredits`）。
-- **矩阵行勘误提案**：03-B3.md:12「7cr 固定价」→「16cr（现值，`spend.ts:89`），定价终案挂 B12」，随下次 `ledger-sync` PR 写入（账行提案见本 PR 描述 + §八）。
+- **历史矩阵勘误提案**：03-B3.md:12「7cr 固定价」→「16cr（当时 `spend.ts:89` 的值），定价终案挂 B12」。当前价格与矩阵须由对应 GitHub task/PR live-verify；本段不授权改价。
 - **教训入纪律**：此类硬编码价目每次引用前必须重查代码（W-DELTA §对 B3 影响 2）。
 
 ### 2.3 E1-14 措辞重写
 
 矩阵 03-B3.md:20 称 Library「不在主导航，仅深链」。W-DELTA 核证：`immersive-nav.tsx:115` 的 Assets 组**有** Library 条目，但 `assets/*` 路由**未建**（死链 404）；legacy `/otto` 的 `OttoNav.tsx:100` 有渲染。
 
-- **重写为**：「nav 配置存在（`immersive-nav.tsx:115`）但 `assets/*` 路由未建（死链）；legacy `/otto` 有渲染」。措辞随 ledger-sync 勘误（账行提案）。
+- **历史重写提案**：「nav 配置存在（`immersive-nav.tsx:115`）但 `assets/*` 路由未建（死链）；legacy `/otto` 有渲染」。当前路由与矩阵措辞须由对应 GitHub task/PR live-verify。
 
 ### 2.4 GenerationBatch 行号刷新 + Stitch 技术参照补录
 
@@ -75,11 +75,11 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ---
 
-## 三、对标锚清单（W-ANCHOR 提案 + 控制面 10 裁定）
+## 三、对标锚清单（W-ANCHOR 提案 + 当时 10 个 approved outcomes）
 
-> 锚法定形态（B0-CONTRACT §一 + MASTERPLAN §六）：对标对象 + 版本（一律 2026-07 市场版）+ 关键旅程 + 通过阈值 + 并排截图打分法。**组织原则采工位形态**：按泳道设锚（6 泳道锚 + X1 跨切锚），46 行以「泳道锚 + 行级差异断言」挂靠。W-ANCHOR 锚表全量落入；控制面对 10 待裁项的裁定逐条覆盖其上。
+> 锚法定形态（B0-CONTRACT §一 + MASTERPLAN §六）：对标对象 + 版本（一律 2026-07 市场版）+ 关键旅程 + 通过阈值 + 并排截图打分法。**组织原则采工位形态**：按泳道设锚（6 泳道锚 + X1 跨切锚），46 行以「泳道锚 + 行级差异断言」挂靠。W-ANCHOR 锚表全量落入；当时 10 个 approved outcomes 逐条覆盖其上。
 
-### 3.1 控制面 10 裁定（逐字执行）
+### 3.1 当时 10 个 approved outcomes（执行前复核 supersedes）
 
 | # | 待裁项 | 裁定 |
 |---|---|---|
@@ -90,7 +90,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 | 5 | A2 是否对标 Canva | **A2 = Canva 采纳** |
 | 6 | H1 竞品 | **H1 主锚 = Canva home**；Grok home 作参照截图，**盲评以 Canva 为准** |
 | 7 | Wave2/3 parity 解禁触发条件 | 原裁「显式 TBD-B3 待裁」；**v0.2 BR2②(b) 细化**：B0-17/B0-18 并入 tranche-2 处置，**解禁触发条件随 addendum 钉**（挂 harmony-03 升级票纪律；本波 Coming soon 不解） |
-| 8 | 各 spend 触点 ≤M 分钟的 M 值 | 原裁「TBD-B3 待 costing」；**v0.2 BR2②(a) 硬化为显式临时阈值**：mock 级批量 **20 格 ≤30 分钟全链**；真 provider 接入时按 costing 实测**受控修订**（修订走决策日志留痕）——不留 TBD |
+| 8 | 各 spend 触点 ≤M 分钟的 M 值 | 原裁「TBD-B3 待 costing」；**v0.2 BR2②(a) 硬化为显式临时阈值**：mock 级批量 **20 格 ≤30 分钟全链**；真 provider 接入时按 costing 实测受控修订，并写对应 GitHub Founder Resolution/task/PR——不留 TBD |
 | 9 | Stitch $0 | **已判**（GRILL:245 + render.ts 参照）——**记录性条目**，非新裁 |
 | 10 | E1-02 vs B0-96 同义歧义 | **判不同物**：E1-02 = 同一视角**批量采样**（count 1-4）；B0-96 = 多机位 = **视角/构图控制**（tranche-2 锚时细化）——两行**独立**，歧义闭 |
 
@@ -117,7 +117,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 **锚 F1 · Higgsfield Marketing Studio**（主锚，已点名）
 - 关键旅程：贴商品链接（或选 Product）→选人设（多参考图一致性）→选拍法（3 无口播模式：产品展示/开箱/促销卡点）→brief 预检+总价确认页→确认批量矩阵（brief×平台×尺寸×钩子）→N 格逐格出可投成片→落 Library 按 `GenerationBatch` 归组
-- 通过阈值：贴链到成片全链走通；总价确认页「报价=预留=结账」三数一致；成片「可投不需再拼」；批量全链时长 = **显式临时阈值（v0.2 BR2②(a)）：mock 级批量 20 格 ≤30 分钟全链**（真 provider 接入时按 costing 实测受控修订，修订走决策日志留痕）；并排盲评「卖成品非工具箱」不落下风
+- 通过阈值：贴链到成片全链走通；总价确认页「报价=预留=结账」三数一致；成片「可投不需再拼」；批量全链时长 = **显式临时阈值（v0.2 BR2②(a)）：mock 级批量 20 格 ≤30 分钟全链**（真 provider 接入时按 costing 实测受控修订，并写对应 GitHub Founder Resolution/task/PR）；并排盲评「卖成品非工具箱」不落下风
 - 打分法：截「贴链→选人设→批量矩阵确认页→成片网格」对 Higgsfield Marketing Studio 同旅程；成片网格并排盲评「可投性」5 分制
 - 出处：harmony-03（:8/16/35）；GRILL C-01（:65）
 
@@ -254,7 +254,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 - 判据 = L-C §四.G + `render.ts` 参照（§二.4）：**ffmpeg concat（顺序拼接）→ $0，走 `startRender`**（timeline 剪辑，render.ts 注释「re-rendering is free」）；**AI 生成转场/morph → paid，走 `startGen`**。
 - 施工 plan 定原型意图后落 PR；本波交付 = **$0 顺序 concat 版**（裁定9，founder 2026-07-11 判），AI 转场留下波 costing。
 
-**② E1-15 Templates 正身（v0.2 改判——控制面撤回原裁定）**
+**② E1-15 Templates 正身（v0.2 改判——当时批准撤回原裁定）**
 - 正身 = **模板目录（g5b 静态代码目录）**（`docs/superpowers/specs/2026-06-27-g5b-templates-design.md:14-20,29-35`——founder 已批：模板 = **static built-in catalog in code**，NOT a DB/admin-authored system，v1 四模板；out-of-scope 明列用户自建/DB-backed 模板与 ComfyUI bundle）。
 - **付费套用走真 `startGen`（不变）**：g5b 原判「The "Generate" click is the spend approval（按钮显示成本），reuses `startGen`」——付费路径经 gen 链计费、真落库，A2 锚通过阈值以此为准。
 - **被废表述（唯一说明处）**：「TemplateBundle 注册表」表述作废；`schema.prisma:294-316` 的同名对象 = ComfyUI workflow bundle 另一物，**B3 模板域禁用此词指代模板目录**。矩阵 E1-15 行注〔静态数组≠注册表〕以本钉为解：正身 = 模板目录（g5b 静态代码目录），既非「假付费静态数组」（付费走真 startGen）亦非该 schema 对象。
@@ -264,7 +264,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 - 现状 = `absent`（W-DELTA 核证零分叉/fork 代码，现有 A/B 仅 count=2 平级图）；A/B 分叉 = 净新能力，随 canvas gen 链片建。
 
 **④ E1-06 定价**
-- 见 §二.2：现值 16cr 记录；定价终案挂 B12 对表，B3 不自行改价；矩阵勘误随 ledger-sync。
+- 见 §二.2：历史值 16cr；定价终案挂 B12 对表，B3 不自行改价；当前价格与矩阵只由对应 GitHub task/PR live-verify 和更新。
 
 **⑤ E1-02 / B0-96 不同物**
 - 见 §三裁定10：**E1-02 = 同一视角批量采样**（count 1-4，`MAX_GEN_COUNT=4` 服务端硬顶）；**B0-96 = 多机位 = 视角/构图控制**（tranche-2 锚时细化）。两行**独立**，歧义闭。
@@ -276,7 +276,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ## 五、批次与工位表
 
-> 承 L-C §八 PR 切片（LCa~LCg），按顾问 memo 裁定重排为**五批**（v0.2 BR2①：补全 LCd/LCg，L-C 七片全数编入——LCa→W-B3-A、LCb→W-B3-E、LCc→W-B3-B、LCd→W-B3-H、LCe→W-B3-F、LCf→W-B3-D、LCg→批5 收口前置）。**纵向切片纪律**（MASTERPLAN §四.4）：每片 = 本片迁移的行 + 每行双执行器交付物（人工入口 + Otto skill）+ 证据随写入 `B3-REPORT.md` 对应节，一次完成。**B3 行族债 = 47 条**（v0.2 BR2⑤，`parity-debt.md:81-88` 复核确数），逐条分配至工位（对照表见 B3-REPORT §④）。
+> 承 L-C §八 PR 切片（LCa~LCg），按顾问 memo 裁定重排为**五批**（v0.2 BR2①：补全 LCd/LCg，L-C 七片全数编入——LCa→W-B3-A、LCb→W-B3-E、LCc→W-B3-B、LCd→W-B3-H、LCe→W-B3-F、LCf→W-B3-D、LCg→批5 收口前置）。**纵向切片纪律**（MASTERPLAN §四.4）：每片 = 本片迁移的行 + 每行双执行器交付物（人工入口 + Otto skill）+ exact-head 测试/复审证据写回对应 GitHub task/PR，一次完成。**B3 行族债 = 47 条**（v0.2 BR2⑤，`parity-debt.md:81-88` 复核确数），逐条分配至工位并由 current matrix 双向核验。
 
 ### 5.1 批1b · 五工位（$0 为主 + 壳落地；批1b 首工位 = LC-0）
 
@@ -307,7 +307,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ### 5.3 批3 · 引擎集成（含 v0.4 甲案四件 -W 界面接线）
 
-- 〔v0.3 历史注记，现状见下条〕**开工门 = #253 或其拆分后继合并**。B9 上下文桥契约（B3 第一旅程「把这个改成 9:16」依赖）已 R9 CLOSED，但 #253 合并待 R-009 founder 裁（B2 半两残余反例）；RISKS-PENDING R-009 选项 B = 拆分冻结（R9 全 CLOSED 契约先冻结合并解锁 B3/B4）。B3 引擎集成批待此门开（该门已开，见 v0.4 状态更新）。
+- 〔v0.3 历史注记，现状见下条〕**开工门 = #253 或其拆分后继合并**。B9 上下文桥契约（B3 第一旅程「把这个改成 9:16」依赖）已 R9 CLOSED，但 #253 当时仍待 R-009 Founder 裁（B2 半两残余反例）；R-009 后选 B = 拆分冻结（R9 全 CLOSED 契约先冻结合并解锁 B3/B4）。该本地风险记录文件已退役，现状只认下一条与 live GitHub/main。
 - **v0.4 状态更新（甲案原子勘误，founder 2026-07-13 批，D-031）**：**开工门 #253 已于 2026-07-12 合并**（R-009 founder 裁定 B 执行完毕，B9 上下文桥契约放行——D-026），此门已开。v0.4 甲案把原批2 四工位的**界面接线半件 -W 归入本批**：**同一座「壳↔owner-scoped project/thread/Otto 运行时」桥建成后逐件接线**，四件均不得新增 spend 权威。
 
 | 工位 | 内容（界面接线 -W） | 依赖 |
@@ -324,7 +324,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 ### 5.5 批5 · 收口（v0.2 BR2① 补，LCg = 收口前置）
 
 - **LCg · 灰度迁移 / legacy 收尾**（收口前置）：canvas 达 parity 后按 L-C §七.D3 灰度翻户（3 用户零断供）；Otto 归位常驻 dock（宪法 11 canvas-first）；legacy `/northstar/create/*` 退役评估（L-C §七.D6/A8）。**依赖 LC-0**（壳落地是灰度目标的前提）+ 批2 全数 code-complete。
-- 收口余项：B3-REPORT 十四节填毕、债 47 条清零核验、块级验收（浏览器 runtime QA 全链）。
+- 收口余项：对应 GitHub tasks/PRs 的验收证据闭合、债 47 条清零核验、块级验收（浏览器 runtime QA 全链）。
 
 ### 5.6 冲突磁铁四件（排队文件）
 
@@ -336,7 +336,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 每片工单**强制**三件：
 1. **本片迁移的行**（列出行 ID + 现状六级状态 → 目标状态）；
 2. **每行双执行器交付物**（人工入口 + Otto skill；对等债逐条清偿，`lint:parity` 绿）；
-3. **证据随写入 `B3-REPORT.md` 对应节**（§⑥全旅程/§⑦测试/§⑧schema/§⑨成本/§⑪异族评审）。
+3. **证据写回对应 GitHub task/PR**（全旅程、测试、schema、成本、独立复审和 exact-head provenance）；不得另起 current-state report。
 
 > **v0.4 甲案注记**：批2 四件 -P 工位的「人工入口」半件义务顺延至对应 -W（批3 界面接线）一并交付；Otto skill（非 UI）义务仍随 -P（如 F-P/G-P）。对等债清偿与 `lint:parity` 绿的口径按此拆分执行。
 
@@ -374,7 +374,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 
 ### 6.5 定价纪律
 
-- **Quality ×1.5 倍率 = 本期撤销**（v0.2 BR2④(a)，控制面改判——非「缓上等 B10」）：GRILL-VERDICTS:244 终判（2026-07-11 founder 六答）——真后台只有 seedream（图）/seedance-2-fast（视频）两模型、无独立 quality 模型，原型「Quality=Speed+50%」是无成本依据的凭空加价，撞宪法 5「永不赚在浪费上」；**一律走 `pricedGenCredits` 按真实模型成本×毛利（≥45% 地板）收**；Speed/Quality toggle **仅当映射到真实更贵参数（更高分辨率/更长时长）才可保留差价**，否则本期撤。此终判（2026-07-11）在 L-C §七.D2/§九.A1（2026-07-10「costing 先行再上」）之后，**以 GRILL:244 为准**。
+- **Quality ×1.5 倍率 = 本期撤销**（v0.2 BR2④(a)，当时经批准改判——非「缓上等 B10」）：GRILL-VERDICTS:244 终判（2026-07-11 Founder 六答）——真后台只有 seedream（图）/seedance-2-fast（视频）两模型、无独立 quality 模型，原型「Quality=Speed+50%」是无成本依据的凭空加价，撞宪法 5「永不赚在浪费上」；**一律走 `pricedGenCredits` 按真实模型成本×毛利（≥45% 地板）收**；Speed/Quality toggle **仅当映射到真实更贵参数（更高分辨率/更长时长）才可保留差价**，否则本期撤。此终判（2026-07-11）在 L-C §七.D2/§九.A1（2026-07-10「costing 先行再上」）之后，执行前仍须核验 GitHub supersedes。
 - 报价一律 `pricedGenCredits`（credits-only，宪法 3；不搬原型硬编码 12/40/16）。
 
 ---
@@ -387,7 +387,7 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 |---|---|---|---|
 | B3-A1 | **原型分支七页适配 #236 壳契约的改造量** | LC-0 工位新增；改造量在 L-C「只需接线」前提下被隐藏（§二.1） | LC-0 工位**实 measure 后回填**精确工时；规模上修 L→L+ 已声明 |
 | B3-A2 | **Wave2/3 parity 解禁触发条件** | 裁定7 + v0.2 BR2②(b)：B0-17/18 已改档 tranche-2 处置；本波 Coming soon 不解 | **随 tranche-2 addendum 钉**（挂 harmony-03 升级票纪律） |
-| B3-A3 | **批量全链时长阈值的真值** | v0.2 已落显式临时阈值（mock 级 20 格 ≤30 分钟，§三裁定8/F1 锚）；真 provider 下的实测值未知 | 真 provider 接入时按 costing 实测**受控修订**（修订走决策日志留痕） |
+| B3-A3 | **批量全链时长阈值的真值** | v0.2 已落显式临时阈值（mock 级 20 格 ≤30 分钟，§三裁定8/F1 锚）；真 provider 下的实测值未知 | 真 provider 接入时按 costing 实测受控修订，并写对应 GitHub Founder Resolution/task/PR |
 | B3-A4 | **E1-19 A/B 分叉出处** | **已闭（v0.2 钉死）**：GRILL-VERDICTS:132-138，复核相符（§四.③）；R-002 默认项 A 完结 | 无余项；行现状 absent，能力随 v0.4 拆分建：A/B 分叉的界面能力=批3 W-B3-E-W；其钱路不变量=批2 W-B3-E-P 覆盖 |
 | B3-A5 | **B10 毛利 gate 时序（批2 前置）** | 批量定价的毛利证明（宪法 5 ≥45% 数值 gate）依赖 B10；Quality ×1.5 已撤（§六.5，不再是依赖项） | **假设 B10 毛利 gate 批2 前置；若 B10 未就绪，批2 停等并上报** |
 | B3-A6 | **tranche-2 处置 8 行锚 + 钉桩** | 保持 listed（D-021）；B0-101↔E1-15 关系（§四.⑥）、B0-96 多机位细化（裁定10）、B0-97 肖像授权边界、B0-17/18 解禁触发未钉 | 批4 取证 addendum 落判 |
@@ -399,22 +399,22 @@ W-DELTA 判「仍准」的 16 条存量断言，本 spec **直接引用免重核
 ## 八、冻结条件与状态
 
 - **状态：已冻结 v0.4（D-027 / #258；D-031 甲案原子勘误续有效）。** 版本历史：
-  - **v0.1** 骨架 = 装配 W-DELTA + W-ANCHOR + 控制面 10 裁定 + 六钉 + LC-0 规模上修 + 批次表。
-  - **v0.2 = 闭合 codex BR2 六项**（控制面全部核认；**钉②〔E1-15 正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、信封措辞〔逐笔明示批准〕三处 = 控制面改判**）：①LCd/LCg 编入批次表（W-B3-H 入批2 / LCg 入批5 收口前置，均依赖 LC-0）；②F1 阈值硬化（mock 级 20 格 ≤30 分钟）+ B0-17/18 改档 tranche-2（主 tranche 38 行）+ E1-17/E2-13 撤销 n/a-internal（挂 A2/C1 + 行级断言）；③钉②改判 + 钉③钉死（GRILL:132-138）；④Quality ×1.5 本期撤销（GRILL:244）+ 授权二择表述全文删除；⑤债数改正 47 条、逐条有工位；⑥暗含未逐笔授权花费的表述清零。全部引用行号逐一对原文复核，零处不符。
+  - **v0.1** 骨架 = 装配 W-DELTA + W-ANCHOR + 当时 10 个 approved outcomes + 六钉 + LC-0 规模上修 + 批次表。
+  - **v0.2 = 闭合 codex BR2 六项**（当时全部核认；**钉②〔E1-15 正身=g5b 静态代码目录〕、×1.5〔本期撤销〕、信封措辞〔逐笔明示批准〕三处 = 经批准改判**）：①LCd/LCg 编入批次表（W-B3-H 入批2 / LCg 入批5 收口前置，均依赖 LC-0）；②F1 阈值硬化（mock 级 20 格 ≤30 分钟）+ B0-17/18 改档 tranche-2（主 tranche 38 行）+ E1-17/E2-13 撤销 n/a-internal（挂 A2/C1 + 行级断言）；③钉②改判 + 钉③钉死（GRILL:132-138）；④Quality ×1.5 本期撤销（GRILL:244）+ 授权二择表述全文删除；⑤债数改正 47 条、逐条有工位；⑥暗含未逐笔授权花费的表述清零。全部引用行号逐一对原文复核，零处不符。
   - **v0.3 = 闭合 codex BR2-R2 三项文字收口**（BR2-R2 判 BLOCK(1,3,4)，2/5/6 已 CLOSED；**无判断变更**）：①批2 工位计数同步（残留旧计数改「四工位 W-B3-E/F/G/H」，§六.4）；②模板目录用语零歧义收口（被废表述仅存钉②一处完整说明，其余各处改写为「模板目录（g5b 静态代码目录）」）；③花钱授权措辞收口（§六.3 保留唯一否定性澄清，其余出现删除或改写为「founder 逐笔明示批准」）。
   - **v0.4（本稿）= 甲案原子勘误**（founder 2026-07-13 明示批准，D-031；founder-only 类别）：①四付费工位 W-B3-E/F/G/H 各拆 **-P（批2 证明层/执行器，零界面接线、零新 spend 权威）**与 **-W（批3 界面接线，依赖壳↔真 project/thread/Otto 运行时桥）**（§五.2 / §五.3）；②四 immersive 壳硬编码假价清除（外科式 $0，§五.8）；③原 W-B3-E 记为**停手上报（2026-07-13）**非已完成，由本勘误重排；④批2 内部推荐序 F-P→G-P→E-P/H-P；⑤§5.3 注记开工门 #253 已于 2026-07-12 合并。依据 = 批2 全局排序调查（四壳后台解耦，机器核实：`runVariantBatch`/`runBulkGrid` 全库零匹配、`GenerationBatch` 零 create 写入者、parity-manifest 明载 `startRefGen` Fake parity、studio-factory 零 server-action import）+ SOL 顾问裁定备忘录。**冻结（D-027，#258）继续有效；本勘误零代码改动、零行迁级。**
 - **冻结门已完成**（#254 §一.2）：双顾问签核 + 异族复审（`/codex` 对抗）+ 机器闸（`route-b-matrix-check.mjs`）+ 非作者合并。结果：
   - **03-B3 主 tranche 38 行已经随 #258 迁 `spec-ready`**；本 D-038 PR 不迁任何状态；
   - **tranche-2 处置 8 行（六新行 + 改档 B0-17/18）待 addendum**（保持 listed，D-021）；
   - founder 终验一次过审计索引（#254 §一.3/§二.5）。
-- **账行提案**（随本 PR 描述 + 下次 ledger-sync）：
-  - D-02X · B3 块 spec v0.1→v0.3 交付（当时的冻结候选账行提案；后由 D-027/#258 四权闭环完成；v0.2 = codex BR2 六项闭合〔含控制面三处改判〕；v0.3 = BR2-R2 三项文字收口）；
+- **历史状态迁移记录**（当前证据取对应 GitHub task/PR）：
+  - D-02X · B3 块 spec v0.1→v0.3 交付（当时的冻结候选；后由 D-027/#258 四权闭环完成；v0.2 = codex BR2 六项闭合〔含三处经批准改判〕；v0.3 = BR2-R2 三项文字收口）；
   - E1-06 勘误：03-B3.md:12「7cr 固定价」→「16cr（现值 `spend.ts:89`），定价终案挂 B12」；
   - E1-14 措辞勘误：「不在主导航仅深链」→「nav 配置存在（`immersive-nav.tsx:115`）、`assets/*` 路由未建（死链）」；
   - GenerationBatch 行号引用刷新 `schema.prisma:954→:961`；
   - E1-15 行注解钉（v0.2）：正身 = 模板目录（g5b 静态代码目录，付费走真 startGen）；被废表述与 `schema.prisma:294-316` 同名 ComfyUI 对象的区别详 §四.②；
   - E1-19 出处钉死（v0.2）：GRILL-VERDICTS:132-138（R-002 默认项 A 完结）。
-- **本 spec 已冻结**；冻结实质决策见 `DECISION-LOG.md` D-027，D-031 勘误与本次 D-038 商业 release 口径在终验重现。
+- **本 spec 已冻结**：冻结载体为 [PR #258](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/258)；v0.4 工位拆分经 Founder 2026-07-13 明示批准；商业 release 口径以后续 [#334 Resolution](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/334#issuecomment-4983309357)、Blueprint v2.12 与 [PR #338](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/338) 为准。退役决策账的原文仍可在 Git 历史审计，但不承载当前状态。
 
 ---
 

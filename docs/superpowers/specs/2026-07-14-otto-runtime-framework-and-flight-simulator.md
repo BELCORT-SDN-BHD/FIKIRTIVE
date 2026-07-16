@@ -44,16 +44,16 @@ OTTO 应该是：
 
 优先级始终是：
 
-1. [BLUEPRINT](../BLUEPRINT.md)
+1. [BLUEPRINT](../../BLUEPRINT.md)
 2. 已生效的项目法律与 founder 判决
 3. 已冻结的 B9 / Route B 契约
 4. 本文件
 
 若主任务结束后的最终接口与本文件冲突，先对表，不能让本文件静默覆盖主任务。
 
-### 当前编排限制
+### 编排来源边界
 
-repo overlay 现已 pin **v3.0.3**（SKILL.md SHA-256 **2fdccc10...**，#286 已落 main；T289 对表核实）。依 overlay，本文件不能冒充正式 Tier-1 架构裁决；它是 founder 要求的独立设计 artifact。本文没有联系主 orchestrator、没有修改其状态账、没有 claim 它的工作，也没有授权花费、部署或外部写入。
+本文件形成时曾记录过一个 runtime/overlay pin；该记录只属于 dated provenance，不是现行配置。当前 session 必须实时加载 runtime 提供的 global orchestration skill 与 repository overlay，并按 current project law 核验。本文件不能冒充架构裁决、claim 任务、修改任何控制状态，或授权花费、部署和外部写入。
 
 ---
 
@@ -194,7 +194,7 @@ OTTO 只在答案会改变以下任一项时追问：
 
 ### 5.1 B9 已冻结；输入数据需要重测
 
-[B9 v0.9 文本](../superpowers/specs/2026-07-12-b9-engine-interface-freeze.md) 的标题仍保留其起草时的 “freeze candidate” 字样，但 Route B [B9 状态账](../ops/route-b/matrix/09-B9.md) 与 [D-026](../ops/route-b/DECISION-LOG.md) 已记录：冻结文本经 #260 落 main 后生效，相关行迁入 `spec-ready`。因此其 domains、viewContext、toolsetVersion、零命中全量、恢复轮全量和 live-event 规则都是 **FROZEN CONTRACT**。
+[B9 v0.9 文本](2026-07-12-b9-engine-interface-freeze.md) 的标题仍保留其起草时的 “freeze candidate” 字样，但 [B9 矩阵](../../ops/route-b/matrix/09-B9.md) 与 [PR #260](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/260) 已记录：冻结文本落入 `main` 后生效，相关行迁入 `spec-ready`。因此其 domains、viewContext、toolsetVersion、零命中全量、恢复轮全量和 live-event 规则都是 **FROZEN CONTRACT**。
 
 仍需重测的是其旧输入：成员表与 token 落数以 25 项为基线，而当前 registry 是 44 项。主任务完成后，施工前必须：
 

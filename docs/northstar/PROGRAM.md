@@ -1,12 +1,14 @@
-# 北极星原型计划(North Star Prototype Program)
+# 北极星原型计划(North Star Prototype Program) — 历史记录
 
-> **文件性质 —— 先读这个**
-> 本文件是 founder 2026-07-07 全权授权的**北极星原型计划**总纲(华语,宪法 9;docs-only PR)。
-> 配套文件:`docs/northstar/PAGE-INVENTORY.md`(全城页面清单 = 舰队作业队列)+ `docs/northstar/APPROVALS.md`(founder 逐页拍板记录表)。
-> 效力位置:金字塔"施工图"层(蓝图文件头的配套金字塔)。本计划**不制造任何新产品决定** —— 页面与功能全部引用蓝图/判决记录/已批 spec;发现冲突 → 停手、报告、等 founder 裁决(蓝图赢)。
-> 合并本 PR = founder 确认本计划与其中转录的判决入档。
-
-> ⚠️ **时效加注(2026-07-14)**:本计划的「原型建造 + founder 逐页拍板」流程已被取代——逐页拍板未按此流程发生(`APPROVALS.md` 至今空表,由 founder 2026-07-10 走城判词整体代行),逐页/逐板块验收经 Route-B 执行合同 Q2(每块报告+终验一次)接管,新决策入闸走 GRILL-VERDICTS 2026-07-14「工作方法」(wayfinder → to-spec → to-tickets → harness)。**design contract(设计契约)保护条款效力保留**(REVIEWER-PLAYBOOK 北极星增补节仍现行看守,引用本文件 §一)。全文保留作 founder 授权判决转录原件。
+> **文件性质(2026-07-16 sanitation):历史设计与 Founder 判词转录,不是当前施工计划、
+> 作业队列、批准台账或 status 真源。** 2026-07-07 设想的“原型建造 + 逐页拍板”流程
+> 没有按本文件执行;`APPROVALS.md` 保持空表。有效 UI 证据可由当前任务按需引用,但不能
+> 自行产生 scope 或 approval。
+>
+> 当前 UIUX 范围与验收来自 Blueprint、GitHub #334 的 Founder 决定及已对齐的 Route-B 计划;实时
+> 任务/依赖在 GitHub。以下正文原样保留其历史语境,其中现在时、队列、并行关系和
+> “design contract”措辞都只能按当时记录理解。发生冲突时回到当前 authority 链,不得
+> 更新本文件来制造第二套现行计划。
 
 ## 人话对照表(工作规矩②)
 
@@ -45,8 +47,8 @@
 
 ### 1.2 approved 页 = design contract(有约束力的施工图)
 
-- founder 在拍板记录表(`docs/northstar/APPROVALS.md`)批准一页后,该页的**布局结构、设计 token 用法、交互模式**即为该页真身的施工图。
-- 后台/功能施工把它当图纸照建;任何使真页 UIUX 偏离已批原型的 PR = **挡**,除非附 founder 重新设计审批记录(APPROVALS.md 新行)。看守条款已写入 `docs/review/REVIEWER-PLAYBOOK.md`(2026-07-07 北极星增补节)。
+- 当时方案设想:Founder 逐页批准后,该页的**布局结构、设计 token 用法、交互模式**成为施工图;该逐页流程实际未发生。
+- 当时拟用 `APPROVALS.md` + reviewer 条款看守偏离。该双口径已停用;当前 UIUX acceptance 从 Blueprint、#334 与已对齐计划读取。
 - **原型目录只经设计流程修改**:改一张已批原型 = 设计 PR + founder 重新拍板;功能/后台 PR 触碰原型目录 = 挡。
 
 ---
@@ -60,7 +62,7 @@
 **门禁**(仿 skin-preview 先例,`apps/web/app/skin-preview/page.tsx` 的 production `notFound()`):
 
 - 布局层一行闸:`if (process.env.NODE_ENV === "production" && process.env.NORTHSTAR_PREVIEW !== "1") notFound();`
-- staging 第一级(全 mock 环境)设 `NORTHSTAR_PREVIEW=1` → founder 在 `https://web-staging-7901.up.railway.app/northstar` 逐页点、逐页批;prod 不设该变量 → 404,对客不可见。
+- 当时方案拟在全 mock staging 设 `NORTHSTAR_PREVIEW=1` 供逐页审阅。旧环境 URL/变量状态不得沿用;任何 live 状态须现场查询。
 - 本地 dev 永远可见(设计施工的日常预览)。
 
 **零后台依赖的保证是结构性的,不靠自觉**:
@@ -114,12 +116,12 @@
 ```
 
 - `status`:`draft`(未批)→ `approved`(founder 已批)→ `lit`(已点亮)。
-- founder 批准一页 = 同一个 PR 里:APPROVALS.md 追加一行 + 该页 `status` 翻 `approved` + 填 `approvedAt`/`pr`。
+- 当时计划的逐页流程(未实际执行):同一个 PR 追加表行并更新页内 `status`/`approvedAt`/`pr`。
 - 总目录页 `/northstar` 从元数据渲染全城进度(几页 draft / approved / lit)。
 
 ### 3.4 founder 逐页拍板记录表
 
-`docs/northstar/APPROVALS.md` —— 唯一的批准台账,表列:**页 / 版本(PR/commit)/ 判决(批·改·驳)/ 日期 / 备注**。
+`docs/northstar/APPROVALS.md` 当时被设计为逐页记录表,但始终为空,从未形成批准 authority。
 
 - "批" = 该页即刻成为 design contract;
 - "改" = agent 按批注返工,重新提审;
@@ -132,7 +134,7 @@
 
 ### 4.1 并行不悖
 
-- 主线(`docs/MASTERPLAN.md` P0 → P0.5 → P1…)照跑,北极星舰队照画 —— 两边**零共享文件面**(舰队只写 `app/northstar/` + `docs/northstar/`),符合执行协议①的并行边界(互不踩同一文件面)。
+- 当时方案设想旧主线与北极星舰队并行、文件面隔离;该执行安排已被取代,不能从本段恢复。
 - 北极星是**设计支出,不是工程负债**:原型页不进导航、不进 prod、不加后台面,主线的任何审计/审查清单都不因它加长。
 
 ### 4.2 点亮 = 该页从原型毕业为真页
