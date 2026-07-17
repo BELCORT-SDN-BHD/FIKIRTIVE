@@ -19,23 +19,34 @@ export type CanvasGenCostQuote = {
   videoCredits: number;
 };
 
-export function canvasGenCostQuote(models: { image: string; video: string }): CanvasGenCostQuote {
+export function canvasImageCostCredits(model: string, count = CANVAS_IMAGE_DEFAULT_COUNT): number {
+  return displayCredits(
+    pricedGenCredits({
+      kind: "IMAGE",
+      model,
+      count: clampImageVariantCount(count),
+      videoOptions: null,
+    }),
+  );
+}
+
+export function canvasVideoCostCredits(model: string): number {
+  return displayCredits(
+    pricedGenCredits({
+      kind: "VIDEO",
+      model,
+      count: 1,
+      videoOptions: null,
+    }),
+  );
+}
+
+export function canvasGenCostQuote(
+  models: { image: string; video: string },
+  imageCount = CANVAS_IMAGE_DEFAULT_COUNT,
+): CanvasGenCostQuote {
   return {
-    imageCredits: displayCredits(
-      pricedGenCredits({
-        kind: "IMAGE",
-        model: models.image,
-        count: CANVAS_IMAGE_DEFAULT_COUNT,
-        videoOptions: null,
-      }),
-    ),
-    videoCredits: displayCredits(
-      pricedGenCredits({
-        kind: "VIDEO",
-        model: models.video,
-        count: 1,
-        videoOptions: null,
-      }),
-    ),
+    imageCredits: canvasImageCostCredits(models.image, imageCount),
+    videoCredits: canvasVideoCostCredits(models.video),
   };
 }

@@ -5,7 +5,12 @@ import "@xyflow/react/dist/style.css";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
-import { useCanvasGen, isInFlightPaidGen } from "./useCanvasGen";
+import {
+  useCanvasGen,
+  isInFlightPaidGen,
+  freshCanvasActionId,
+  loadCanvasActionReceipts,
+} from "./useCanvasGen";
 import { toast } from "sonner";
 import { listCanvasNodes, moveCanvasNode, deleteCanvasNode, updateTextNode, createCanvasNode, type CanvasNodeDTO } from "../../lib/canvas-actions";
 import { uploadReference } from "../../lib/actions";
@@ -19,7 +24,7 @@ import { X } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
-import type { CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
+import { CANVAS_IMAGE_DEFAULT_COUNT, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import {
@@ -94,6 +99,8 @@ export default function FlowCanvas({
   const [submitting, setSubmitting] = useState(false);
   const [videoSubmitting, setVideoSubmitting] = useState(false);
   const [costQuote, setCostQuote] = useState<CanvasGenCostQuote | null>(null);
+  const imageActionRef = useRef<{ material: string; actionId: string } | null>(null);
+  const videoActionRef = useRef<{ material: string; actionId: string } | null>(null);
 
   // Per-node data refs so stable onAnimate closures can read current generationId + position
   const nodesRef = useRef<CanvasFlowNode[]>([]);
@@ -205,13 +212,18 @@ export default function FlowCanvas({
   // in the "Make a video?" dialog. Spend path is unchanged: same generationId, same
   // default motion prompt, same animate() call as before — just gated behind the OK.
   // Synchronous double-fire guard for the paid video paths (i2v + t2v). The video
-  // idempotencyKey is per-click (vid-<Date.now()>), so two fast clicks would mint
-  // two keys → two charges; the confirm dialog closing isn't a guaranteed guard.
+  // action identity is minted at this UI boundary and retained while the exact same
+  // material is retried, so an outcome-unknown response never turns the next click into
+  // a second paid job. The dialog closing isn't a guaranteed double-submit guard.
   // True only during the ~1-2s startGen setup (poll isn't awaited), so it blocks a
   // same-tick double-fire without serializing separate generations.
   const videoBusyRef = useRef(false);
   const runAnimate = useCallback(async (id: string, motionPrompt: string): Promise<boolean> => {
     if (directToolsLockedRef.current) return false;
+    if (!costQuote) {
+      toast.error("Wait for the exact video cost before confirming.");
+      return false;
+    }
     const entry = nodeDataRef.current[id];
     if (videoBusyRef.current) {
       return false;
@@ -223,16 +235,41 @@ export default function FlowCanvas({
     videoBusyRef.current = true;
     setVideoSubmitting(true);
     const { x, y } = entry.pos;
+    const material = JSON.stringify({
+      projectId,
+      threadId: activeThreadId ?? null,
+      kind: "animate",
+      sourceNodeId: id,
+      sourceGenerationId: entry.generationId,
+      prompt: motionPrompt,
+    });
+    if (videoActionRef.current?.material !== material) {
+      videoActionRef.current = { material, actionId: freshCanvasActionId() };
+    }
+    const actionId = videoActionRef.current.actionId;
     // genRequest requires a non-empty prompt (.trim().min(1)); the dialog guarantees a
     // non-empty motion prompt (custom falls back to the gentle default), so the paid
     // i2v never no-ops on an empty prompt.
     try {
-      return await animateFnRef.current(entry.generationId, id, motionPrompt, { x: x + 340, y, w: 320, h: 320 });
+      const accepted = await animateFnRef.current(
+        entry.generationId,
+        id,
+        motionPrompt,
+        { x: x + 340, y, w: 320, h: 320 },
+        actionId,
+      );
+      if (
+        accepted
+        || !loadCanvasActionReceipts(projectId).some((receipt) => receipt.actionId === actionId)
+      ) {
+        videoActionRef.current = null;
+      }
+      return accepted;
     } finally {
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, []);
+  }, [activeThreadId, costQuote, projectId]);
 
   // Attached "Type to imagine" bar on a selected image card. Image→image editing
   // (conditioning a new image on THIS generation) isn't in the spend path yet, so the
@@ -333,13 +370,13 @@ export default function FlowCanvas({
   const deleteNode = useCallback((id: string) => {
     if (directToolsLockedRef.current) return;
     setNodes((ns) => ns.filter((n) => n.id !== id));
-    void deleteCanvasNode(id);
-  }, []);
+    void deleteCanvasNode(projectId, id);
+  }, [projectId]);
 
   // stable text-change
   const onTextChange = useCallback((id: string, text: string) => {
-    void updateTextNode(id, text);
-  }, []);
+    void updateTextNode(projectId, id, text);
+  }, [projectId]);
 
   // onResolve: store generationId in nodeDataRef AND in node.data
   const onResolve = useCallback((id: string, url: string | null, status: string, generationId?: string) => {
@@ -410,18 +447,51 @@ export default function FlowCanvas({
   const handleGenerate = useCallback(async () => {
     if (directToolsLocked) return;
     if (!prompt.trim()) return;
+    if (!costQuote) {
+      toast.error("Wait for the exact image cost before generating.");
+      return;
+    }
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
     try {
       const x = 80 + nodeCountRef.current * 340;
-      await generateImage(prompt.trim(), { x, y: 80, w: 320, h: 320 }, promptIds, variantSel);
-      closeComposer(true);
+      const material = JSON.stringify({
+        projectId,
+        threadId: activeThreadId ?? null,
+        kind: "image",
+        prompt: prompt.trim(),
+        entityIds: promptIds,
+        variantSel: Object.fromEntries(
+          Object.entries(variantSel).sort(([left], [right]) => left.localeCompare(right)),
+        ),
+        count: CANVAS_IMAGE_DEFAULT_COUNT,
+      });
+      if (imageActionRef.current?.material !== material) {
+        imageActionRef.current = { material, actionId: freshCanvasActionId() };
+      }
+      const accepted = await generateImage(
+        prompt.trim(),
+        { x, y: 80, w: 320, h: 320 },
+        promptIds,
+        variantSel,
+        CANVAS_IMAGE_DEFAULT_COUNT,
+        { actionId: imageActionRef.current.actionId },
+      );
+      if (accepted) {
+        imageActionRef.current = null;
+        closeComposer(true);
+      } else if (!loadCanvasActionReceipts(projectId).some((receipt) => receipt.actionId === imageActionRef.current?.actionId)) {
+        // A deterministic rejection (including a dispatch failure that was refunded) clears
+        // the receipt. The next explicit retry is therefore a new authorized action. Unknown
+        // outcomes retain the receipt and this same UI action ID.
+        imageActionRef.current = null;
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [prompt, promptIds, variantSel, generateImage, directToolsLocked, closeComposer]);
+  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, projectId, prompt, promptIds, variantSel]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
@@ -505,16 +575,41 @@ export default function FlowCanvas({
   const [t2vPrompt, setT2vPrompt] = useState("");
   const runT2v = useCallback(async (prompt: string): Promise<boolean> => {
     if (directToolsLocked || videoBusyRef.current) return false;
+    if (!costQuote) {
+      toast.error("Wait for the exact video cost before confirming.");
+      return false;
+    }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
     const x = 80 + nodeCountRef.current * 340;
+    const material = JSON.stringify({
+      projectId,
+      threadId: activeThreadId ?? null,
+      kind: "video",
+      prompt,
+    });
+    if (videoActionRef.current?.material !== material) {
+      videoActionRef.current = { material, actionId: freshCanvasActionId() };
+    }
+    const actionId = videoActionRef.current.actionId;
     try {
-      return await generateVideoFromText(prompt, { x, y: 80, w: 320, h: 320 });
+      const accepted = await generateVideoFromText(
+        prompt,
+        { x, y: 80, w: 320, h: 320 },
+        actionId,
+      );
+      if (
+        accepted
+        || !loadCanvasActionReceipts(projectId).some((receipt) => receipt.actionId === actionId)
+      ) {
+        videoActionRef.current = null;
+      }
+      return accepted;
     } finally {
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [generateVideoFromText, directToolsLocked]);
+  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId]);
 
   useEffect(() => {
     directToolsLockedRef.current = directToolsLocked;
@@ -695,9 +790,9 @@ export default function FlowCanvas({
     }
     nodesRef.current = next;
     setNodes(next);
-    for (const move of persistMoves) void moveCanvasNode(move.id, { x: move.x, y: move.y, w: move.w, h: move.h });
-    for (const id of deletes) void deleteCanvasNode(id);
-  }, []);
+    for (const move of persistMoves) void moveCanvasNode(projectId, move.id, { x: move.x, y: move.y, w: move.w, h: move.h });
+    for (const id of deletes) void deleteCanvasNode(projectId, id);
+  }, [projectId]);
 
   // Is the card awaiting delete a PAID generation still in flight? If so the confirm
   // must warn that removing won't refund and re-running charges again — this is what
@@ -803,7 +898,7 @@ export default function FlowCanvas({
                 />
               </div>
               <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{imageCostHint}</span>
-              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
+              <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
               <button
                 className="al-btn al-btn-sm"
                 type="button"
@@ -881,7 +976,7 @@ export default function FlowCanvas({
             />
           </div>
           <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{imageCostHint}</span>
-          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={submitting || !prompt.trim()}>Generate</button>
+          <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
           {activeThreadId && (
             <button
               type="button"

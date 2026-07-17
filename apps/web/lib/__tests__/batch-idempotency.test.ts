@@ -1,10 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
+  canvasActionKey,
   factoryAttemptKey,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
+  parseCanvasActionKey,
   parseFactoryAttemptKey,
 } from "../batch-idempotency";
+
+describe("canvas action keys", () => {
+  it("derives a stable reserved key without exposing the client action id", () => {
+    const first = canvasActionKey("canvas-action-123");
+    const replay = canvasActionKey("canvas-action-123");
+    const other = canvasActionKey("canvas-action-456");
+
+    expect(first).toEqual(replay);
+    expect(first.key).toHaveLength(71);
+    expect(first.key).not.toContain("canvas-action-123");
+    expect(parseCanvasActionKey(first.key)).toEqual(first);
+    expect(first).not.toEqual(other);
+    expect(parseCanvasActionKey("canvas:caller-controlled")).toBeNull();
+  });
+});
 
 describe("factory attempt keys", () => {
   it("are stable, parseable, and exactly 79 chars (inside genRequest's 80-char cap)", () => {
@@ -89,5 +106,15 @@ describe("factory material binding", () => {
       ...expected,
       entityIds: ["e1", "e2", "e2"],
     }, expected)).toBe(false);
+  });
+
+  it("binds the live thread attribution as frozen generation material", () => {
+    expect(factoryMaterialMatches({
+      ...expected,
+      threadId: "thread-other",
+    }, {
+      ...expected,
+      threadId: "thread-expected",
+    })).toBe(false);
   });
 });

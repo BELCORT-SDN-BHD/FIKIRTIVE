@@ -15,6 +15,11 @@ describe("canvasGenCostQuote", () => {
     expect(quote.imageCredits).toBe(1);
     expect(quote.videoCredits).toBe(8);
   });
+
+  it("quotes the selected image variant count after applying the 1-4 clamp", () => {
+    expect(canvasGenCostQuote({ image: "seedream", video: "seedance-2-fast" }, 3).imageCredits).toBe(3);
+    expect(canvasGenCostQuote({ image: "seedream", video: "seedance-2-fast" }, 99).imageCredits).toBe(4);
+  });
 });
 
 describe("clampImageVariantCount", () => {

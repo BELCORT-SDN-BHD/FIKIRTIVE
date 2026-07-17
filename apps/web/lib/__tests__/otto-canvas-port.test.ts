@@ -100,9 +100,9 @@ describe("editText / remove — project binding", () => {
     mockUpdateTextNode.mockResolvedValue({ ok: true });
     mockDeleteCanvasNode.mockResolvedValue({ ok: true });
     expect(await port().editText("n-1", "hello")).toEqual({ ok: true });
-    expect(mockUpdateTextNode).toHaveBeenCalledWith("n-1", "hello");
+    expect(mockUpdateTextNode).toHaveBeenCalledWith("proj-1", "n-1", "hello");
     expect(await port().remove("n-1")).toEqual({ ok: true });
-    expect(mockDeleteCanvasNode).toHaveBeenCalledWith("n-1");
+    expect(mockDeleteCanvasNode).toHaveBeenCalledWith("proj-1", "n-1");
   });
 });
 
@@ -117,6 +117,6 @@ describe("list / sync / resolve — thin closures over the shared actions", () =
     await c.sync();
     expect(mockSync).toHaveBeenCalledWith("proj-1");
     await c.resolve("n-1", { status: "done", generationId: "g-1" });
-    expect(mockResolveCanvasNode).toHaveBeenCalledWith("n-1", { status: "done", generationId: "g-1" });
+    expect(mockResolveCanvasNode).toHaveBeenCalledWith("proj-1", "n-1", { status: "done", generationId: "g-1" });
   });
 });

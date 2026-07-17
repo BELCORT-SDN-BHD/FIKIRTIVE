@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockGetGenerationThumbs, mockNewId } = vi.hoisted(() => ({
+const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -14,10 +14,16 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockGenJobFindMany: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockNewId: vi.fn(),
+  mockPlaceCanvasJobNode: vi.fn(),
+  mockTombstoneCanvasNode: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("../data", () => ({ getGenerationThumbs: mockGetGenerationThumbs }));
+vi.mock("../canvas-node-placement", () => ({
+  placeCanvasJobNode: mockPlaceCanvasJobNode,
+  tombstoneCanvasNode: mockTombstoneCanvasNode,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     canvasNode: { findMany: mockFindMany, create: mockCreate, updateMany: mockUpdateMany, deleteMany: mockDeleteMany, findFirst: mockCanvasNodeFindFirst },
@@ -29,7 +35,7 @@ vi.mock("@fikirtive/db", () => ({
 }));
 vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
 
-import { listCanvasNodes, moveCanvasNode, createCanvasNode, resolveCanvasNode } from "../canvas-actions";
+import { createCanvasNode, deleteCanvasNode, listCanvasNodes, moveCanvasNode, resolveCanvasNode } from "../canvas-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -37,7 +43,21 @@ beforeEach(() => {
   mockGenJobFindMany.mockResolvedValue([]);
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
+  mockPlaceCanvasJobNode.mockImplementation(async (input: {
+    type: string; x: number; y: number; w: number; h: number; prompt?: string | null;
+    generationId?: string | null; genJobId: string; status?: string;
+    sourceNodeId?: string | null; threadId?: string | null;
+  }) => ({
+    inserted: true,
+    node: {
+      id: mockNewId(), type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
+      text: null, prompt: input.prompt ?? null, generationId: input.generationId ?? null,
+      genJobId: input.genJobId, status: input.status ?? "done",
+      sourceNodeId: input.sourceNodeId ?? null, threadId: input.threadId ?? null,
+    },
+  }));
   mockUpdateMany.mockResolvedValue({ count: 1 });
+  mockTombstoneCanvasNode.mockResolvedValue(true);
 });
 
 describe("listCanvasNodes", () => {
@@ -172,26 +192,19 @@ describe("listCanvasNodes", () => {
       where: { id: "node-primary", ownerId: "u1", projectId: "p1", status: "pending", generationId: null },
       data: { status: "done", generationId: "gen-1" },
     });
-    expect(mockCreate).toHaveBeenCalledTimes(3);
-    expect(mockCreate).toHaveBeenNthCalledWith(1, {
-      data: expect.objectContaining({
-        id: "node-sib-1",
+    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
+    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
         ownerId: "u1",
         projectId: "p1",
         generationId: "gen-2",
-        genJobId: null,
+        genJobId: "job-1",
         status: "done",
         threadId: "thread-1",
         x: 440,
         y: 50,
-      }),
-    });
-    expect(mockCreate).toHaveBeenNthCalledWith(2, {
-      data: expect.objectContaining({ id: "node-sib-2", generationId: "gen-3", x: 100, y: 390 }),
-    });
-    expect(mockCreate).toHaveBeenNthCalledWith(3, {
-      data: expect.objectContaining({ id: "node-sib-3", generationId: "gen-4", x: 440, y: 390 }),
-    });
+    }));
+    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(2, expect.objectContaining({ generationId: "gen-3", x: 100, y: 390 }));
+    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(3, expect.objectContaining({ generationId: "gen-4", x: 440, y: 390 }));
   });
 
   it("does not create duplicate siblings when another reload already claimed the primary repair", async () => {
@@ -223,20 +236,46 @@ describe("listCanvasNodes", () => {
       "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
       "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
     });
+    for (const [index, generationId] of ["gen-2", "gen-3", "gen-4"].entries()) {
+      mockPlaceCanvasJobNode.mockResolvedValueOnce({
+        inserted: false,
+        node: {
+          id: `node-existing-${index + 2}`,
+          type: "image",
+          x: index % 2 === 0 ? 440 : 100,
+          y: index < 1 ? 50 : 390,
+          w: 320,
+          h: 320,
+          text: null,
+          prompt: "four variants",
+          generationId,
+          genJobId: "job-1",
+          status: "done",
+          sourceNodeId: "node-primary",
+          threadId: "thread-1",
+        },
+      });
+    }
 
     await expect(listCanvasNodes("p1")).resolves.toEqual([
       expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
+      expect.objectContaining({ id: "node-existing-2", generationId: "gen-2", url: "/files/u1/two.jpeg" }),
+      expect.objectContaining({ id: "node-existing-3", generationId: "gen-3", url: "/files/u1/three.jpeg" }),
+      expect.objectContaining({ id: "node-existing-4", generationId: "gen-4", url: "/files/u1/four.jpeg" }),
     ]);
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
+    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({ generationId: "gen-2" }));
   });
 });
 
 describe("moveCanvasNode", () => {
   it("updates only the owner's node (updateMany with ownerId in where)", async () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
-    await moveCanvasNode("node-1", { x: 1, y: 2, w: 3, h: 4 });
+    await moveCanvasNode("p1", "node-1", { x: 1, y: 2, w: 3, h: 4 });
     expect(mockUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "node-1", ownerId: "u1" } }),
+      expect.objectContaining({
+        where: { id: "node-1", ownerId: "u1", projectId: "p1", status: { not: "deleted" } },
+      }),
     );
   });
 });
@@ -305,6 +344,67 @@ describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId ow
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ generationId: "g-mine" }) }),
     );
+    expect(mockGenerationFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "g-mine", ownerId: "u1", projectId: "p1", deletedAt: null },
+    }));
+  });
+
+  it("keeps sourceNodeId and genJobId only when they belong to the same owner+project", async () => {
+    mockCanvasNodeFindFirst.mockResolvedValue({ id: "source-mine" });
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-mine" });
+    mockCreate.mockResolvedValue({ id: "node-1" });
+
+    await createCanvasNode({
+      projectId: "p1", type: "video", x: 0, y: 0, w: 1, h: 1,
+      sourceNodeId: "source-mine", genJobId: "job-mine",
+    });
+
+    expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "source-mine", ownerId: "u1", projectId: "p1" },
+    }));
+    expect(mockGenJobFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "job-mine", ownerId: "u1", projectId: "p1" },
+    }));
+    expect(mockPlaceCanvasJobNode).toHaveBeenCalledWith(expect.objectContaining({
+      sourceNodeId: "source-mine", genJobId: "job-mine",
+    }));
+  });
+
+  it("reuses a paid job's primary node after a lost create response", async () => {
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-mine" });
+    mockPlaceCanvasJobNode.mockResolvedValue({
+      inserted: false,
+      node: { id: "node-already-saved", x: 42, y: 43, w: 320, h: 320 },
+    });
+
+    await expect(createCanvasNode({
+      projectId: "p1", type: "image", x: 0, y: 0, w: 1, h: 1,
+      genJobId: "job-mine", status: "pending",
+    })).resolves.toEqual({ id: "node-already-saved", x: 42, y: 43, w: 320, h: 320 });
+
+    expect(mockPlaceCanvasJobNode).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: "u1", projectId: "p1", genJobId: "job-mine", generationId: null,
+    }));
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates a settled sibling by job and generation identity", async () => {
+    mockGenJobFindFirst.mockResolvedValue({ id: "job-mine" });
+    mockGenerationFindFirst.mockResolvedValue({ id: "gen-2" });
+    mockPlaceCanvasJobNode.mockResolvedValue({
+      inserted: false,
+      node: { id: "node-variant-2", x: 90, y: 20, w: 1, h: 1 },
+    });
+
+    await expect(createCanvasNode({
+      projectId: "p1", type: "image", x: 20, y: 20, w: 1, h: 1,
+      genJobId: "job-mine", generationId: "gen-2", status: "done",
+    })).resolves.toEqual({ id: "node-variant-2", x: 90, y: 20, w: 1, h: 1 });
+
+    expect(mockPlaceCanvasJobNode).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: "u1", projectId: "p1", genJobId: "job-mine", generationId: "gen-2",
+    }));
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });
 
@@ -314,12 +414,18 @@ describe("resolveCanvasNode", () => {
     mockGenerationFindFirst.mockResolvedValue({ id: "g1" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    await expect(resolveCanvasNode("node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true });
 
     expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "node-1", ownerId: "u1", type: { in: ["image", "video"] } },
-        select: { id: true, projectId: true },
+        where: {
+          id: "node-1",
+          ownerId: "u1",
+          projectId: "p1",
+          type: { in: ["image", "video"] },
+          status: { not: "deleted" },
+        },
+        select: { id: true, projectId: true, genJobId: true },
       }),
     );
     expect(mockGenerationFindFirst).toHaveBeenCalledWith(
@@ -329,15 +435,33 @@ describe("resolveCanvasNode", () => {
       }),
     );
     expect(mockUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "node-1", ownerId: "u1" }, data: { status: "done", generationId: "g1" } }),
+      expect.objectContaining({
+        where: { id: "node-1", ownerId: "u1", projectId: "p1", status: { not: "deleted" } },
+        data: { status: "done", generationId: "g1" },
+      }),
     );
+  });
+
+  it("does not resolve a paid job node to an unrelated same-project generation", async () => {
+    mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1", genJobId: "job-1" });
+    mockGenerationFindFirst.mockResolvedValue({ id: "g-other" });
+    mockGenJobFindFirst.mockResolvedValue({ generationIds: ["g-1", "g-2"] });
+
+    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g-other" }))
+      .resolves.toEqual({ error: "Generation does not belong to this canvas job." });
+
+    expect(mockGenJobFindFirst).toHaveBeenCalledWith({
+      where: { id: "job-1", ownerId: "u1", projectId: "p1" },
+      select: { generationIds: true },
+    });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("does not attach a generation from another project", async () => {
     mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
     mockGenerationFindFirst.mockResolvedValue(null);
 
-    await expect(resolveCanvasNode("node-1", { status: "done", generationId: "g-foreign" })).resolves.toEqual({ error: "Generation not found." });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g-foreign" })).resolves.toEqual({ error: "Generation not found." });
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -345,7 +469,7 @@ describe("resolveCanvasNode", () => {
     mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    await expect(resolveCanvasNode("node-1", { status: "failed" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "failed" })).resolves.toEqual({ ok: true });
 
     expect(mockGenerationFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).toHaveBeenCalledWith(
@@ -354,20 +478,30 @@ describe("resolveCanvasNode", () => {
   });
 
   it("rejects unknown resolve statuses", async () => {
-    await expect(resolveCanvasNode("node-1", { status: "weird" })).resolves.toEqual({ error: "Invalid status." });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "weird" })).resolves.toEqual({ error: "Invalid status." });
     expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("requires a generation when marking a node done", async () => {
-    await expect(resolveCanvasNode("node-1", { status: "done" })).resolves.toEqual({ error: "Generation required." });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "done" })).resolves.toEqual({ error: "Generation required." });
     expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("does not attach a generation to non-done status", async () => {
-    await expect(resolveCanvasNode("node-1", { status: "failed", generationId: "g1" })).resolves.toEqual({ error: "Generation only allowed for done status." });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "failed", generationId: "g1" })).resolves.toEqual({ error: "Generation only allowed for done status." });
     expect(mockCanvasNodeFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteCanvasNode", () => {
+  it("writes a project-scoped tombstone instead of hard-deleting a recoverable result", async () => {
+    await expect(deleteCanvasNode("p1", "node-1")).resolves.toEqual({ ok: true });
+
+    expect(mockTombstoneCanvasNode).toHaveBeenCalledWith("u1", "p1", "node-1");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+    expect(mockDeleteMany).not.toHaveBeenCalled();
   });
 });

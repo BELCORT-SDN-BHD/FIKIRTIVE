@@ -3,14 +3,19 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { canvasJobPlacementLockKey, placeCanvasJobNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
-import { createCanvasNode, type CanvasNodeDTO } from "./canvas-actions";
+import type { CanvasNodeDTO } from "./canvas-actions";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planPendingJobNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
 
 const NODE = { w: 320, h: 320, step: 340, y: 80 } as const;
+
+function canvasNodeOrigin(idempotencyKey: string | null | undefined): "otto" | null {
+  return idempotencyKey?.startsWith("cowork:") ? "otto" : null;
+}
 
 type BridgeMessage = {
   id: string;
@@ -34,7 +39,7 @@ async function createPendingCanvasNodeOnce(input: {
   prompt: string | null;
 }): Promise<boolean> {
   const id = newId();
-  const lockKey = `${input.ownerId}:${input.projectId}:${input.genJobId}:pending-canvas`;
+  const lockKey = canvasJobPlacementLockKey(input.ownerId, input.projectId, input.genJobId);
   const inserted = await prisma.$executeRaw`
     WITH guard AS (
       SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))
@@ -114,7 +119,7 @@ export async function syncOttoCanvasNodes(
   });
   const existing = await prisma.canvasNode.findMany({
     where: { ownerId, projectId },
-    select: { generationId: true, genJobId: true },
+    select: { generationId: true, genJobId: true, status: true },
   });
   let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
@@ -138,15 +143,19 @@ export async function syncOttoCanvasNodes(
   const jobGenIds = new Map(bridgeJobs.map((j) => [j.id, j.generationIds]));
   const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
   const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
+  const suppressedJobs = new Set(existing
+    .filter((n) => n.status === "deleted" && n.generationId === null)
+    .map((n) => n.genJobId)
+    .filter((id): id is string => !!id));
   for (const thread of threads) {
     const resultMessages = thread.messages.filter((m) => m.kind === "GEN_RESULT");
-    const toCreate = planBridgeNodes(resultMessages, jobGenIds, have);
+    const toCreate = planBridgeNodes(resultMessages, jobGenIds, have)
+      .filter((node) => !suppressedJobs.has(node.genJobId));
     for (const node of toCreate) {
-      have.add(node.generationId);
-      haveJobs.add(node.genJobId);
-      // Reuses the validated, fail-closed insert (owner-scopes threadId /
-      // generationId / genJobId). No spend path is touched.
-      await createCanvasNode({
+      // Job-wide placement reuses the pending primary for generationIds[0] and
+      // deduplicates every later generation against client/reload writers.
+      const placement = await placeCanvasJobNode({
+        ownerId,
         projectId,
         type: node.kind,
         x: 80 + placed * NODE.step,
@@ -159,7 +168,10 @@ export async function syncOttoCanvasNodes(
         status: "done",
         prompt: node.prompt ?? undefined,
       });
-      placed += 1;
+      if ("error" in placement || "suppressed" in placement) continue;
+      have.add(node.generationId);
+      haveJobs.add(node.genJobId);
+      if (placement.inserted) placed += 1;
     }
     const cardMessages = (thread.messages as BridgeMessage[])
       .filter((m) => m.kind === "GEN_CARD")
@@ -187,7 +199,7 @@ export async function syncOttoCanvasNodes(
 
   // ── 2. Return all project nodes with media URLs resolved (display-only) ──
   const nodes = await prisma.canvasNode.findMany({
-    where: { ownerId, projectId },
+    where: { ownerId, projectId, status: { not: "deleted" } },
     select: {
       id: true, type: true, x: true, y: true, w: true, h: true, text: true,
       prompt: true, generationId: true, genJobId: true, status: true,
@@ -201,7 +213,10 @@ export async function syncOttoCanvasNodes(
   // after terminal settlement because legacy rows can stay "pending" forever.
   const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
   const jobs = linkedJobIds.length
-    ? await prisma.genJob.findMany({ where: { id: { in: linkedJobIds }, ownerId, projectId }, select: { id: true, generationIds: true, status: true } })
+    ? await prisma.genJob.findMany({
+      where: { id: { in: linkedJobIds }, ownerId, projectId },
+      select: { id: true, generationIds: true, status: true, idempotencyKey: true },
+    })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
@@ -231,55 +246,37 @@ export async function syncOttoCanvasNodes(
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
     const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
     if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
-    return { ...n, generationId: gid, status, url, mediaWidth: thumb?.width ?? null, mediaHeight: thumb?.height ?? null };
+    return {
+      ...n,
+      generationId: gid,
+      status,
+      url,
+      mediaWidth: thumb?.width ?? null,
+      mediaHeight: thumb?.height ?? null,
+      origin: canvasNodeOrigin(job?.idempotencyKey),
+    };
   });
-  const claimedSiblingAnchorIds = new Set<string>();
   if (repairs.length) {
-    const results = await Promise.all(repairs.map(async (r) => {
-      const result = await prisma.canvasNode.updateMany({
+    await Promise.all(repairs.map(async (r) => {
+      await prisma.canvasNode.updateMany({
         where: { id: r.id, ownerId, projectId, status: r.status, generationId: r.generationId },
         data: r.data,
       });
-      return { repair: r, count: result.count };
     }));
-    for (const { repair, count } of results) {
-      if (count === 1 && repair.status !== "done" && repair.generationId === null && repair.data.status === "done" && repair.data.generationId) {
-        claimedSiblingAnchorIds.add(repair.id);
-      }
-    }
   }
 
   const siblingPlans = planSettledCanvasJobSiblingNodes(
-    nodes.filter((n) => claimedSiblingAnchorIds.has(n.id)),
+    nodes,
     jobById,
     thumbs,
-    resolved.map((n) => n.generationId),
+    [...resolved.map((n) => n.generationId), ...have],
   );
   const recoveredSiblings: CanvasNodeWithUrl[] = [];
   for (const plan of siblingPlans) {
-    const id = newId();
     const thumb = thumbs[plan.generationId];
-    await prisma.canvasNode.create({
-      data: {
-        id,
-        ownerId,
-        projectId,
-        type: plan.type,
-        x: plan.x,
-        y: plan.y,
-        w: plan.w,
-        h: plan.h,
-        text: null,
-        prompt: plan.prompt,
-        generationId: plan.generationId,
-        genJobId: null,
-        status: "done",
-        sourceNodeId: plan.sourceNodeId,
-        threadId: plan.threadId,
-      },
-    });
-    recoveredSiblings.push({
-      id,
+    const placement = await placeCanvasJobNode({
+      ownerId,
+      projectId,
       type: plan.type,
       x: plan.x,
       y: plan.y,
@@ -288,13 +285,19 @@ export async function syncOttoCanvasNodes(
       text: null,
       prompt: plan.prompt,
       generationId: plan.generationId,
-      genJobId: null,
+      genJobId: plan.genJobId,
       status: "done",
       sourceNodeId: plan.sourceNodeId,
       threadId: plan.threadId,
+    });
+    if ("error" in placement || "suppressed" in placement) continue;
+    const node = placement.node;
+    recoveredSiblings.push({
+      ...node,
       url: plan.url,
       mediaWidth: thumb?.width ?? null,
       mediaHeight: thumb?.height ?? null,
+      origin: canvasNodeOrigin(jobById.get(plan.genJobId)?.idempotencyKey),
     });
   }
   return [...resolved, ...recoveredSiblings];

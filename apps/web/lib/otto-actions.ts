@@ -56,7 +56,7 @@ import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirti
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
-import { startGen } from "./gen-actions";
+import { startCoworkGen } from "./gen-actions";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
 import { gatherReferenceImages } from "./otto-ref-images";
 import { getBrandContextText } from "./memory-actions";
@@ -288,7 +288,7 @@ export async function buildOttoContext({
     referenceVideoGenerationId: videoRefIds[0] ?? null,
     referenceVideoGenerationIds: videoRefIds,
     images,
-    startGen,
+    startGen: startCoworkGen,
     // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions. The model
     // never receives an attemptId; only ottoApprove can inject the verified + consumed card id.
     runFactoryBatch: {

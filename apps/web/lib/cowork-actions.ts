@@ -19,7 +19,7 @@ import {
 } from "@fikirtive/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
-import { startGen } from "./gen-actions";
+import { startCoworkGen } from "./gen-actions";
 import { requireOwner } from "./auth-guard";
 import { familyHasPromptSkill } from "@fikirtive/otto";
 
@@ -130,7 +130,7 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   if (!built.ok) return { error: built.error };
   const req = built.req;
 
-  const res = await startGen(req); // the ONLY spend path (unmodified logic — safeParse + Guardian)
+  const res = await startCoworkGen(req); // binds the persisted card quote before the shared startGen spend authority
   if ("error" in res) return res;
 
   // Persist the card→job link for the UI (reload shows the card as "Generated", disables

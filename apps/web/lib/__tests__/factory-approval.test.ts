@@ -109,7 +109,7 @@ vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: () => Promise.resolve(false), auth: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
-vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen }));
+vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen, startCoworkGen: mockStartGen }));
 vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
 
 vi.mock("@fikirtive/db", () => ({

@@ -141,7 +141,7 @@ vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: () => Promise.resolve(false), auth: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
-vi.mock("@/lib/gen-actions", () => ({ startGen: mockStartGen }));
+vi.mock("@/lib/gen-actions", () => ({ startCoworkGen: mockStartGen }));
 vi.mock("@/lib/factory-actions", () => ({ runVariantBatch: mockRunVariantBatch, runBulkGrid: mockRunBulkGrid }));
 vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
 
@@ -433,7 +433,7 @@ describe("buildOttoContext", () => {
     expect(ctx.threadId).toBe("thread_xyz");
     expect(ctx.sourceGenerationId).toBe("gen_xyz");
     expect(ctx.disabledModels).toEqual(["bad-model"]);
-    // startGen is the injected port from gen-actions
+    // The injected port binds the persisted GEN_CARD quote before entering startGen.
     expect(ctx.startGen).toBe(mockStartGen);
   });
 
