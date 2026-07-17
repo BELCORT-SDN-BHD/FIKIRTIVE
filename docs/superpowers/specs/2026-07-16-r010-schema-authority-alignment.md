@@ -71,6 +71,9 @@ Phase-1 writer所需的 issuer/normalizer/evidence、consent transition/legacy�
 - B2「所有跨渠道永远只手工」的绝对读法：只有**已批准的可靠证据类**可自动 attach；模糊匹配仍必须人工。
 - B8/current 三段 identity key 作为终局 key 的读法：它只在迁移期保留，不能继续承担多连接 namespace 的长期唯一性。
 - B8 Contact 三个 consent 字段作为长期真源的读法，以及任何把 `unknown` 与 `opt_out` 合成同一个 send hard gate 的读法。
+- B2 旧 fold 中让 `asserted + merchant + backfill` 的 grant/revoke 改变 effective state 的读法：这类 event 只保存 merchant assertion 与 provenance，**state-neutral**；它不能覆盖 verified customer stance，也不能把 `unknown` 升成 grant/revoke。
+- B2「每个 transaction 永远只处理一个 permission tuple」的绝对读法：普通 event 仍只处理一个 tuple；唯一产品例外是 D4 定义的无限定 STOP（含 verified historical unqualified STOP）按 server-owned proactive-purpose 集合做原子 multi-tuple fan-out。STOP-derived purpose expansion 也必须沿用同一 fan-out/tuple 锁序，不能另开并发旁路。
+- B2 对 `ConsentEvent.actorKind` 的旧/open-set读法：Phase 1 closed set 固定为 `customer / merchant / legacy_unknown`；`system` 不得写入 ConsentEvent。未来若确需 system permission fact，须另行冻结 source/action/evidence/fold 与迁移合同；本稿不预留实现者自行启用的枚举值。这里不影响 ProviderRefusalEvent 等其它 typed authority 明列的 system actor。
 - B8 `Campaign.utmBase` 作为长期 authority 的读法。
 - B2 Phase-1 Campaign-level editable structured UTM store 的读法；只保留 link-time effective value 与 event snapshot 原则。
 
@@ -254,11 +257,11 @@ Merge 先解两边 root，再按 `ownerId + stable Contact ID` 全序构造 tena
 #### 4.3.1 【已批准 D4 / 本 PR 物理提案】purpose scope 与 STOP 原子 fan-out
 
 - `marketing`与`review_request`归类为`proactive_non_transactional`；`transactional`只允许既有订单、付款、收据、配送或安全事件所必需的封闭内容；顾客主动服务对话按D5独立归为`reactive_service_reply`。营销、评价邀请、唤回、cross-sell或促销只要混入，就不得标为`transactional`。
-- purpose及purpose class由shared action按server-owned closed registry推导，caller、connector、merchant payload与Otto参数都不可覆盖。未来purpose在明确分类与配套tests获批前不能上线；一旦归为`proactive_non_transactional`，自动加入无限定STOP的fan-out集合。启用前还必须按历史`stop_keyword`与`historical_verified_stop` operationId为该purpose写`stop_purpose_expansion`确定性revoke backfill并完成replay，使用`operationId/idempotencyKey = purpose-expand:<originalStopOperationId>:<newPurpose>`，使所有既有无限定STOP继续生效；在backfill与unresolved historical scope计数归零前该purpose fail-closed、零send。既有purpose改变class属于新的Founder产品决定，不能当registry编辑偷改。
+- purpose及purpose class由shared action按server-owned closed registry推导，caller、connector、merchant payload与Otto参数都不可覆盖。未来purpose在明确分类与配套tests获批前不能上线；一旦归为`proactive_non_transactional`，自动加入无限定STOP的fan-out集合。启用前还必须按历史`stop_keyword`与`historical_verified_stop` operationId为该purpose写`stop_purpose_expansion`确定性revoke backfill并完成replay，使用`operationId/idempotencyKey = purpose-expand:<originalStopOperationId>:<newPurpose>`，使所有既有无限定STOP继续生效；该 writer 必须使用§4.3.4的同一 fan-out/tuple 锁序。在backfill与unresolved historical scope计数归零前该purpose fail-closed、零send。既有purpose改变class属于新的Founder产品决定，不能当registry编辑偷改。
 - purpose-bound unsubscribe link只写token绑定的exact tuple，不fan-out。无限定STOP忽略caller提交的purpose，按本channel registry计算全部active `proactive_non_transactional` purposes；Phase 1恰为`marketing + review_request`。
-- STOP writer取得tenant-qualified `(ownerId, contactId, channel)` fan-out lock，再按purpose稳定排序取得各tuple lock；在**一个DB transaction**内为每个affected purpose各写一条ConsentEvent、更新各projection/cursor。任何insert/projection失败都rollback全部，禁止half-revoked state。
+- STOP writer按§4.3.4取得tenant-qualified fan-out lock与各tuple lock；在**一个DB transaction**内为每个affected purpose各写一条ConsentEvent、更新各projection/cursor。任何lock、insert、projection或cursor步骤失败都rollback全部，禁止half-revoked state。
 - 同一STOP共享server-derived `operationId = stop:<channel>:<issuerId>:<opaqueMessageId>`；每条event使用`idempotencyKey = stop:<channel>:<issuerId>:<opaqueMessageId>:<purpose>`（`UNIQUE(ownerId,idempotencyKey)`），避免不同account/channel的provider message ID碰撞。message retry须返回同一semantic result且零新增event；各component须是validated opaque ID，不能塞raw message或PII。
-- 已验证的历史无限定STOP使用独立`historical_verified_stop`，按同一D4原子fan-out写入，operationId由validated historical evidence稳定导出；已验证的purpose-bound历史撤回才使用`historical_verified_revoke`。无法证明scope的historical negative进入visible quarantine并阻止M5；未来proactive purpose在相关unresolved scope计数归零前保持零send。
+- 已验证的历史无限定STOP使用独立`historical_verified_stop`，按同一D4原子fan-out与§4.3.4锁序写入，operationId由validated historical evidence稳定导出；已验证的purpose-bound历史撤回才使用`historical_verified_revoke`。无法证明scope的historical negative进入visible quarantine并阻止M5；未来proactive purpose在相关unresolved scope计数归零前保持零send。
 - 每个affected tuple仍各自计算单调`receivedAt`；transaction按稳定purpose顺序锁定与赋值，offline replay按每tuple `(receivedAt,id)`得到同一结果。
 
 #### 4.3.2 【已批准 D4 / 本 PR 物理提案】strict transactional eligibility
@@ -290,22 +293,49 @@ Merge 先解两边 root，再按 `ownerId + stable Contact ID` 全序构造 tena
 若获授权merchant仍明确手工加入或启动任一proactive element，该action退出`reactive_service_reply`，保留其真实`marketing/review_request`等purpose，并进入D5 `manual consent override`，而不是伪装成transactional或改写consent：
 
 1. shared action先materialize immutable delivery manifest：固定recipient或稳定排序的audience snapshot，并为每个recipient绑定tenant-qualified `contactId + contactIdentityId + assignmentEpoch + recipientIssuerId + destinationRefHash`，为sender绑定稳定逻辑`senderIssuerId`；connector/connection可替换，但只能解析到同issuer。manifest同时固定最终provider-bound payload bytes、personalization/merge inputs、tracked links、template/content version与attachment object version/content hash。`deliveryManifestHash`覆盖全部身份与payload字段；确认后禁止adapter、worker或renderer再做会改变语义payload或destination的enrichment，变化只能产生新revision/hash；
-2. server重读consent authority，生成覆盖每个recipient规范cursor与risk code的`consentRiskSnapshotHash`；同时生成覆盖operator capability/version、sender/recipient identity assignment、DND cursor、exact provider-refusal scope cursor、frequency-suppression scope/cursor、security/provider-policy version的`executionGateSnapshotHash`。再用versioned、field-ordered、length-delimited canonical encoding计算`actionHash = H(hashVersion, ownerId, actorId, actionId, actionKind, channel, purpose, deliveryManifestHash, consentRiskSnapshotHash, executionGateSnapshotHash, warningContractVersion, schedule, actionRevision)`。任一authority、action、identity、payload、audience、warning contract或consent事实变化都改变hash；
-3. first-confirm endpoint显示risk tag/reasons、channel/purpose、recipient count或frozen audience与action summary。一次独立authenticated request只能把新override以CAS从`DRAFT`推进到`FIRST_CONFIRMED`，在独立DB transaction提交`firstConfirmationId/requestId/confirmedAt/actionHash`后，由server签发one-time `secondChallengeId`（只持久化nonce hash）；同一request/transaction不得同时生成second confirmation；
-4. second-confirm必须是随后另一条authenticated request，由同一owner/operator提交未使用的server challenge；server重新读取action、delivery manifest、consent与全部execution-gate authorities并重算hash，只有first transaction已commit、两个request/confirmation ID不同、challenge匹配且hash未漂移时，才以CAS从`FIRST_CONFIRMED`推进到`FINAL_CONFIRMED`。challenge一次使用；duplicate request只返回原semantic result，不能生成新确认或submission；
-5. submission claim使用所有相关writer共用的canonical gate-lock protocol：固定class顺序`owner/operator capability → sender issuer/scope → Contact/ContactIdentity assignment → consent tuple → Contact DND → provider-refusal scope → frequency-suppression scope → override/outbox`，每类内部按stable key排序；对不适合row lock的policy/version做同transaction CAS。锁内重读全部authority并重算两个snapshot与`actionHash`。只有完全相同、所有non-consent hard gate仍通过且runtime suppression仍未生效，才在**同一DB transaction**内CAS `FINAL_CONFIRMED → SUBMITTING`并为每个recipient插入唯一send outbox；然后释放lock，由worker在commit后使用stable provider idempotency key外呼。任一revoke/role loss/identity reassignment/DND/provider block/frequency suppression先提交则hash漂移或gate失败、零outbox；outbox transaction先提交时才算既有in-flight send，后到变化只影响future action并写适用audit。hash漂移原子转`INVALIDATED`、零submission并要求重新两次确认；
+2. server重读consent authority，生成覆盖每个recipient规范cursor与risk code的`consentRiskSnapshotHash`；同时生成覆盖operator capability/version、sender/recipient identity assignment、DND cursor、exact provider-refusal scope cursor、frequency-suppression scope/cursor、security/provider-policy version的`executionGateSnapshotHash`。再用versioned、field-ordered、length-delimited canonical encoding计算`actionHash = H(hashVersion, ownerId, actorId, actionId, actionKind, channel, purpose, deliveryManifestHash, consentRiskSnapshotHash, executionGateSnapshotHash, warningContractVersion, schedule, actionRevision)`。任一authority、action、identity、payload、audience、warning contract或consent事实变化都改变hash。`actionRevision`只有一个穷尽的canonical predicate：immutable `DeliveryManifest` 的bytes/fields发生变化，当且仅当由authoritative action source铸造新revision；其字段包括content、audience/recipient、destination、purpose/channel、schedule、personalization、attachment与identity binding。同一action lineage中，只要`DeliveryManifest` byte-identical，任何其它`actionHash` input或contract-authority input漂移——包括consent cursor/state、risk reasons、execution-gate snapshot、`warningContractVersion`及hash-contract/canonicalization version——都保持同一`actionRevision`，同时把既有attempt作废并创建全新immutable `confirmationAttempt`。`actionRevision`不是确认轮数；
+3. 每轮确认是一个immutable、server-minted `confirmationAttempt`，由一条新的override attempt承载。first-confirm endpoint显示risk tag/reasons、channel/purpose、recipient count或frozen audience与action summary；一次独立authenticated request只能把该attempt以CAS从`DRAFT`推进到`FIRST_CONFIRMED`，在独立DB transaction提交属于同一attempt的`firstConfirmationId/requestId/confirmedAt/actionHash`后，由server签发该attempt专用的one-time `secondChallengeId`（只持久化nonce hash）。同一request/transaction不得同时生成second confirmation；旧attempt的confirmation/challenge不得被新attempt读取或消费；
+4. second-confirm必须是随后另一条authenticated request，由同一owner/operator提交本attempt尚未使用的server challenge；server重新读取action、delivery manifest、consent与全部execution-gate authorities并重算hash，只有first transaction已commit、两个request/confirmation ID不同、challenge属于本attempt且hash未漂移时，才以attempt-scoped CAS从`FIRST_CONFIRMED`推进到`FINAL_CONFIRMED`。challenge一次使用；duplicate request只返回本attempt原semantic result，不能生成新确认、跨attempt复用或submission；
+5. submission claim使用§4.3.4唯一canonical gate-lock protocol；锁内重读全部authority并重算两个snapshot与`actionHash`。只有完全相同、所有non-consent hard gate仍通过且runtime suppression仍未生效，才在**同一DB transaction**内以本attempt为CAS scope从`FINAL_CONFIRMED → SUBMITTING`并为每个recipient插入唯一send outbox；然后释放lock，由worker在commit后使用stable provider idempotency key外呼。任一revoke/role loss/identity reassignment/DND/provider block/frequency suppression先提交则hash漂移或gate失败、零outbox；outbox transaction先提交时才算既有in-flight send，后到变化只影响future action并写适用audit。hash或contract authority漂移把当前attempt原子转为terminal `INVALIDATED`、零submission；`INVALIDATED`永远不能转回任何live state。重新确认必须新建一个更高、immutable的`confirmationAttempt`，生成全新的override、first/final confirmation与challenge rows；旧attempt全部保留可审计。immutable `DeliveryManifest`任一byte/field变化时且仅此时，先由authoritative action source铸造新`actionRevision`，再为新revision创建attempt；若`DeliveryManifest` byte-identical但任何其它`actionHash`或contract-authority input漂移，则保持原`actionRevision`并为该revision创建fresh attempt；
 6. 两次确认只授权该hash对应的单次send、finite batch、campaign launch或scheduled action。未来recurrence、下一批、重新生成内容或新增recipient必须重新两次确认；不存在account-wide、transferable或standing waiver；
 7. Otto/connector/job不能点击、伪造或继承确认。Otto free-form reactive draft必须由merchant逐条看到并批准exact rendered content hash，不能用routine/autopilot直接发送；若手工加入proactive element，再额外进入本two-confirm state machine。job只可在两次人工确认后幂等执行该exact proactive action；execution retry复用同一action/override/provider idempotency key，不能扩展scope；
-8. ActionReceipt evidence至少投影`overrideId/actionId/actionHash/deliveryManifestHash/ownerId/actorId/warningCode+version/consentRiskSnapshotHash/executionGateSnapshotHash/status/firstConfirmationId+requestId+At/secondConfirmationId+requestId+At/secondChallengeIdHash/submissionId/submissionStatus/providerReceiptRefs`。正文与manifest保存在原action authority；override只存hash/ref，不能复制不必要PII；
+8. ActionReceipt evidence至少要能证明`override attempt/confirmationAttempt + actionId/actionRevision/actionHash + deliveryManifestHash + owner/actor + warning version + 两个snapshot + 两次confirmation/challenge + submission/provider result`属于同一attempt。正文与manifest保存在原action authority；override/receipt只存必要hash/ref，不能复制不必要PII；ActionReceipt的最终物理carrier仍受下方blocking Unknown约束；
 9. 成功override不写ConsentEvent、不改`effective_revoke`、不生成verified grant，也不授权future auto-send。provider结果不明确时进入`may_have_applied/reconciliation`，禁止盲重试造第二个logical send；receipt必须分别报告`submitted / provider_refused / failed / delivery_unknown / delivered`等真实结果，不能把第二次确认说成保证送达；
 10. tenant isolation、operator permission、identity正确性、security gate、merchant DND、provider hard refusal与active frequency suppression仍是独立不可绕过边界；外部法律或provider规则若真实禁止submission，两次确认也不能使其变成可提交。
 
-物理carrier提案不是ConsentEvent：
+以下是D5 carrier的**最低逻辑约束**，不是已批准物理schema，也不是ConsentEvent：
 
-- `ManualSendOverride(id, ownerId, actionId, actionRevision, actorId, actionHash, hashVersion, deliveryManifestHash, consentRiskSnapshotHash, executionGateSnapshotHash, warningContractVersion, status, createdAt, invalidatedAt?, consumedAt?)`；closed status为`DRAFT / FIRST_CONFIRMED / FINAL_CONFIRMED / SUBMITTING / SUBMITTED / INVALIDATED / PAUSED_RECONCILIATION / MAY_HAVE_APPLIED / FAILED`；`UNIQUE(ownerId,actionId,actionRevision)`与`UNIQUE(ownerId,actionHash,actorId)`；所有status transition只能由shared action带expected old state做CAS；
-- append-only `ManualSendConfirmation(id, ownerId, overrideId, actorId, step(first|final), requestId, actionHash, challengeHash?, confirmedAt)`；`UNIQUE(ownerId,overrideId,step)`、`UNIQUE(ownerId,requestId)`与tenant-qualified override relation；first/final IDs必须不同；无ordinary UPDATE/DELETE；
+- 每个`ManualSendOverride` row只代表一个immutable `confirmationAttempt`，逻辑上绑定`ownerId + actionId + actionRevision + confirmationAttempt + actorId + actionHash`；closed status为`DRAFT / FIRST_CONFIRMED / FINAL_CONFIRMED / SUBMITTING / SUBMITTED / INVALIDATED / PAUSED_RECONCILIATION / MAY_HAVE_APPLIED / FAILED`。attempt discriminator在同一`ownerId + actionId + actionRevision`内唯一且不可改；任一时刻至多一个nonterminal/live attempt。所有transition只由shared action以`overrideId + confirmationAttempt + expected old state`做CAS；`INVALIDATED`是不可逆terminal。全局`UNIQUE(ownerId,actionHash,actorId)`不得用来代替attempt约束，因为同一hash未来也只能通过新attempt重新确认，而不能复活旧row；
+- append-only `ManualSendConfirmation`必须tenant-qualified引用exact override attempt；`UNIQUE(ownerId,overrideId,step)`、`UNIQUE(ownerId,requestId)`，first/final IDs必须不同，challenge只属于该attempt；无ordinary UPDATE/DELETE。新attempt必须生成新confirmation/request/challenge rows，不能update、copy或re-parent旧rows；
 - `ManualSendOutbox(id, ownerId, overrideId, actionRevision, recipientId, contactIdentityId, assignmentEpoch, recipientIssuerId, senderIssuerId, destinationRefHash, channel, payloadHash, providerIdempotencyKey, status, createdAt)`；所有identity refs须tenant-qualified；`UNIQUE(ownerId,overrideId,actionRevision,recipientId)`与`UNIQUE(ownerId,providerIdempotencyKey)`；它只引用frozen manifest payload/identity epoch，不能现场重算、换identity/issuer、换附件或因adapter切换漂到另一逻辑scope；
 - confirmation表是两次human action的durable authority，Override/ActionReceipt只是state与projection；删cache、重跑worker或rollback都不能重造confirmation、重置challenge或消费同一override第二次。
+
+**【Unknown / blocks implementation】** 本稿不为下列缺口臆造table/column/index/FK；它们必须在另一次Founder schema review中冻结物理carrier、tenant relation、immutability/idempotency、privacy与rollback后才可施工：
+
+1. `DeliveryManifest` 的authoritative row/object carrier、version/immutability边界、canonical bytes/hash来源，以及payload/attachment/destination如何最小化、加密与retention；
+2. provider-ingested reactive anchor的authoritative carrier、provider-event dedupe key、`firstReceivedAt`铸造者、conversation/Contact/issuer关系与control-message window规则落点；
+3. `ActionReceipt` 的authoritative carrier、append/projection边界、provider result/reconciliation关系、export/erasure与terminal retention；
+4. `actionId`、`actionRevision`与`assignmentEpoch`各自唯一authoritative mint/source：谁创建、何时递增、如何tenant-qualified引用、重放/rollback如何保持同一值。这里只冻结`actionRevision`严格遵循上述穷尽predicate：immutable `DeliveryManifest` bytes/fields变化iff新revision；Manifest byte-identical时，任何其它hash/contract-authority input漂移都保留revision并新建attempt。它不是confirmation round；本稿不替实现者选择物理来源。
+
+上述任一项未冻结时，所有依赖它的`reactive_service_reply`、D5 first/final confirmation、submission/outbox/worker与receipt path保持disabled/fail-closed；不得用临时JSON、cache、connector row、request ID或`actionRevision`代替authoritative carrier。
+
+#### 4.3.4 【已批准 D4/D5 结果 / 本 PR 物理提案】唯一 canonical lock order
+
+STOP、`historical_verified_stop`、`stop_purpose_expansion`与D5 submission不得各自发明锁序。所有writer共用以下**总顺序**，只跳过本动作不需要的class，绝不能取得较后class后再回头取得较前class：
+
+1. owner/operator capability（row lock或同transaction version CAS）；
+2. sender issuer/scope；
+3. Contact / ContactIdentity assignment；
+4. consent fan-out scope：tenant-qualified `(ownerId, contactId, channel)`；
+5. consent tuple：tenant-qualified `(ownerId, contactId, channel, purpose)`；
+6. Contact DND；
+7. provider-refusal exact scope；
+8. frequency-suppression exact scope；
+9. override attempt / outbox。
+
+每个class内部先完整计算所有tenant-qualified key，再按同一canonical byte/lexicographic key稳定排序取得；multi-recipient D5不得逐recipient穿插class。D5即使只发送一个purpose，也必须先取得该Contact/channel的第4类fan-out lock，再取第5类tuple lock，才能与并发无限定STOP串行化。live/historical STOP取得第4类后按purpose稳定排序取得全部第5类；purpose expansion对每个original STOP work unit同样先取得第4类再取新增purpose tuple。policy/version不能row-lock时，在其所属class位置使用同transaction CAS，不能移到transaction外。
+
+任一key无法可靠导出、lock/CAS失败、authority漂移、event/projection/cursor/outbox insert失败，都使**整个该operation transaction** rollback并零partial event/零partial outbox；retry只能复用原semantic idempotency。锁争用只能bounded retry或visible fail-closed，不能通过换序、少锁或先写后补来“成功”。
 
 ### 4.4 【本 PR 提案】deterministic fold
 
@@ -509,8 +539,8 @@ type EffectiveUtm = {
 ### M1 — Expand before behavior change
 
 - 新 migration，不改旧 migration；
-- identity issuer/version 先 nullable；ConsentEvent、ContactDndEvent、ProviderRefusalEvent与候选 projections additive；D5所需immutable inbound anchor key/firstReceivedAt、DeliveryManifest authority、ManualSendOverride、append-only ManualSendConfirmation、ManualSendOutbox及ActionReceipt evidence carrier也必须先additive落地；不新增 Campaign UTM store；
-- D5 expand须先具备tenant-qualified relations、provider-message unique、confirmation step/request unique、override/action revision unique、outbox/provider-idempotency unique、status/CAS check、immutable manifest/payload hash与privacy-approved encryption/access/retention constraints；先通过empty DB、production-like clone、duplicate/replay、cache-loss/restart与rollback migration tests，所有D5 reader/writer/worker仍保持disabled；
+- identity issuer/version 先 nullable；ConsentEvent、ContactDndEvent、ProviderRefusalEvent与候选 projections additive；不新增 Campaign UTM store。D5所需provider-ingested reactive anchor、DeliveryManifest、ManualSendOverride/Confirmation/Outbox与ActionReceipt只有在§4.3.3列明的physical carrier及`actionId/actionRevision/assignmentEpoch` authoritative mint/source另获Founder schema批准后才可additive落地；本稿不得用占位JSON/nullable columns臆造缺失authority；
+- 获批后的D5 expand须先具备tenant-qualified relations、provider-message unique、attempt-scoped confirmation/challenge/CAS、at-most-one-live-attempt约束、outbox/provider-idempotency unique、immutable manifest/payload hash与privacy-approved encryption/access/retention constraints；先通过empty DB、production-like clone、duplicate/replay、attempt re-arm、cache-loss/restart与rollback migration tests，所有D5 reader/writer/worker仍保持disabled；
 - 先建立四段 aligned partial index与diagnostic indexes；在任何issuer-aware writer启用前，用同一受控migration同时落地`issuerId/normalizationVersion` both-null-or-both-non-null DB check，并把旧三段index原子替换为只约束 `issuerId IS NULL AND normalizationVersion IS NULL` 的legacy-only index。Contact consent fields与`utmBase`仍保留；
 - 加 tenant coverage、index/constraint 与 isolated migration/rollback tests；
 - reader/writer 行为尚不切换。
@@ -523,7 +553,7 @@ type EffectiveUtm = {
 - consent先dark-launch/shadow。任何live consent endpoint启用时，必须在同一exact release同时具备：event insert + `whatsapp × marketing` compatibility projection同transaction，以及send consent-state reader从第一条live event起可见并能区分automatic hard stop、visible risk tag与exact D5 override；禁止“只写event、旧send reader看不到”的窗口；
 - STOP endpoint启用前还必须证明§4.3.1的`marketing + review_request`同transaction fan-out、共享operationId、per-purpose idempotency与两tuple consent-state readers全都在同一exact release生效；自动/无人确认send为零，merchant manual action只能进入D5 two-confirm path；
 - D4 transactional exemption启用前，§4.3.2 closed context matrix、same-owner subject validators、immutable template registry与receipt context hash必须覆盖全部transactional path；任何旧generic/free-form/connector path不得自报transactional；
-- D5启用前，§4.3.3的provider-ingested idempotent reactive anchor、risk tag、no-auto-attachment、two-request confirmation state machine、tenant/issuer/identity-epoch-bound immutable manifest、all-gate canonical lock/version CAS + outbox claim、single-use/finite action idempotency、consent不变与receipt evidence必须在同一exact release覆盖UI、Otto、connector、job与retry；缺任一项时暂停该new path，不得退回absolute silent send或把一次确认当standing waiver；
+- D5启用前，§4.3.3的四项blocking physical carrier/mint-source合同必须先获批；随后provider-ingested idempotent reactive anchor、risk tag、no-auto-attachment、two-request/attempt-scoped confirmation与re-arm state machine、tenant/issuer/identity-epoch-bound immutable manifest、§4.3.4 canonical lock/version CAS + outbox claim、single-use/finite action idempotency、consent不变与receipt evidence必须在同一exact release覆盖UI、Otto、connector、job与retry。缺任一项时整个affected path保持disabled/fail-closed，不得退回absolute silent send、临时carrier或把一次确认当standing waiver；
 - 任何live DND/provider refusal endpoint同样要求typed event + compatibility/state projection + send hard-negative reader在同一exact release可见；禁止产生reader看不见的新block；
 - 新可量测link只写五键；
 - production可shadow其它reads，但known STOP/revoke一旦live写入就不能shadow-only。
@@ -661,20 +691,22 @@ R-010只验 future merge carrier 的静态/transaction合同；live merge activa
 | C-29 | D4上线后M2/M4/rollback移除classifier/template/subject gate | transactional path暂停而非caller-labelled放行；marketing/review STOP继续可见；自动旁路send为零，D5 exact override不受误分类 |
 | C-30 | 相同历史资料分别证明unqualified STOP / purpose-bound unsubscribe / scope不明 | 分别atomic fan-out / exact tuple / quarantine+M5 hard stop；零scope猜测 |
 | C-31 | reactive composer遇`unknown`/STOP/unsubscribe | Contact/composer/preview/final显示同一risk tag；Contact不被隐藏；系统/Otto/connector/job零自动Campaign/Segment/Broadcast/Schedule/review/offer/coupon/follow-up attachment |
-| C-32 | authorized merchant手工加入proactive element并完成两次确认 | 两个独立confirmation均绑定同owner/operator与同actionHash；exact frozen action幂等提交；ConsentEvent/projection bytes不变；receipt如实记录provider结果 |
-| C-33 | 只有一次确认、同一request/transaction尝试造两步、相同confirmation ID、未commit first、challenge replay、Otto/connector/job伪造、跨operator或复用旧override | state/CAS/unique约束拒绝；零outbox/submission；visible reason；零consent/action scope mutation |
-| C-34 | 两次确认之间或之后改变recipient/audience/consent cursor/warning contract/final payload/personalization/attachment bytes or version/purpose/channel/schedule/revision | 原两次确认全部失效；新manifest/hash须重新两次确认；旧hash零outbox/send |
+| C-32 | authorized merchant手工加入proactive element并完成两次确认 | 两个独立confirmation均绑定同owner/operator、同confirmation attempt与同actionHash；exact frozen action幂等提交；ConsentEvent/projection bytes不变；receipt如实记录provider结果 |
+| C-33 | 只有一次确认、同一request/transaction尝试造两步、相同confirmation ID、未commit first、challenge replay、Otto/connector/job伪造、跨operator或复用旧attempt/override | attempt-scoped state/CAS/unique约束拒绝；零outbox/submission；visible reason；零consent/action scope mutation |
+| C-34 | 两次确认之间或之后改变immutable DeliveryManifest任一byte/field（含content、audience/recipient、destination、purpose/channel、schedule、personalization、attachment、identity binding），或在manifest byte-identical时改变任何其它actionHash/contract-authority input（含consent cursor/state、risk reasons、execution-gate snapshot、warningContractVersion、hash-contract/canonicalization version） | 当前attempt原子`INVALIDATED`且永不复活；manifest变化iff mint新`actionRevision`再建fresh attempt；manifest byte-identical的任何其它漂移保持原revision但仍建fresh attempt；两者都使用全新confirmations/challenge，旧attempt零outbox/send |
 | C-35 | finite campaign/batch/scheduled action确认后出现next run/new batch/new recipient/新内容 | 只执行原exact action；未来concrete action不得继承确认，须重新两次确认 |
 | C-36 | provider-ingested customer inbound / 同provider message retry或迟到redelivery / API-import-manual fake inbound / pure control keyword | 第一项只建一个anchor；retry返回原anchor/firstReceivedAt且不延窗；后两项不开窗不延窗；ordinary reply不造grant；human无平台自创统一条数上限 |
 | C-37 | D5 override同时遇跨tenant/无operator permission/DND/provider hard refusal或真实channel prohibition | 全部继续拒绝；两次确认不改变这些独立边界，也不把submission说成delivery |
-| C-38 | STOP writer与confirmed scheduled/batch dispatch并发 | 使用同一tuple locks：STOP先commit则override invalid/零outbox；outbox transaction先commit才成为in-flight并写late-revoke audit；零旧cursor事后建outbox |
+| C-38 | STOP writer与confirmed scheduled/batch dispatch并发 | 两者按§4.3.4同一总序取得fan-out再tuple locks：STOP先commit则override invalid/零outbox；outbox transaction先commit才成为in-flight并写late-revoke audit；零旧cursor事后建outbox |
 | C-39 | same attachment ref换bytes、personalization或adapter post-confirm enrichment | deliveryManifestHash漂移并拒绝；只允许原canonical provider-bound payload；零同hash异内容send |
 | C-40 | STOP后Otto生成一条free-form reactive reply或连续追发 | 无逐条human exact-content approval则零send；有proactive element还须D5两次确认；routine/autopilot不能代替human |
-| C-41 | concurrent final-confirm、duplicate job retry与`delivery_unknown` | confirmation/outbox unique + CAS只产生一个logical provider attempt；unknown进入reconciliation，不盲重投 |
-| C-42 | final confirm后、outbox claim前并发撤销operator role、identity reassignment、DND set、provider block、frequency suppression或security-policy change | 共用gate lock/version CAS；变化先commit则override invalid/零outbox；outbox先commit才成为in-flight；未来action读取新state |
+| C-41 | concurrent final-confirm、duplicate job retry与`delivery_unknown` | attempt-scoped confirmation/outbox unique + CAS只产生一个logical provider attempt；unknown进入reconciliation，不盲重投，也不提前re-arm第二个live attempt |
+| C-42 | final confirm后、outbox claim前并发撤销operator role、identity reassignment、DND set、provider block、frequency suppression或security-policy change | 按§4.3.4共用总序与gate version CAS；变化先commit则当前attempt invalid/零outbox；outbox先commit才成为in-flight；未来action读取新state |
 | C-43 | two owners same recipient key、same channel two issuers、confirmed后ContactIdentity epoch/issuer改变或adapter切换 | 跨owner/epoch/issuer一律invalid；adapter只有解析回同sender/recipient issuer才可替换；零错tenant/错账号/错身份send |
-| C-44 | D5 privacy matrix任一carrier retention/access/export/erasure/encryption/backup项Unknown | ManualSend tables、manifest/outbox与send path均零implementation/enablement；不能只停ConsentEvent |
-| C-45 | D5 M1 expand、rollback/restart/cache全失时存在FIRST/FINAL/SUBMITTING/MAY_HAVE_APPLIED/scheduled rows | constraints先于behavior；carrier/count/status不丢；pre-outbox安全执行或visible pause；outbox drain/reconcile到terminal；零重复provider attempt |
+| C-44 | D5 privacy matrix，或DeliveryManifest/reactive anchor/ActionReceipt/`actionId-actionRevision-assignmentEpoch` mint-source任一physical contract Unknown | 全部affected reactive/D5 carrier、confirmation/outbox/worker/send path零implementation/enablement；不能用临时JSON/cache/connector row补洞，也不能只停ConsentEvent |
+| C-45 | D5 M1 expand、rollback/restart/cache全失时存在FIRST/FINAL/SUBMITTING/MAY_HAVE_APPLIED/scheduled/INVALIDATED attempts | constraints先于behavior；attempt/carrier/count/status不丢；INVALIDATED不复活；pre-outbox安全执行或visible pause；outbox drain/reconcile到terminal；零重复provider attempt |
+| C-46 | attempt因hash漂移invalidated后re-arm、两个并发re-arm，或authority后来恢复到旧hash | 旧attempt与confirmations/challenge永久只读可审计；只有一个新live attempt获胜并创建fresh rows；旧hash相等也不复用旧attempt；`actionRevision`不充当round |
+| C-47 | live/historical STOP、purpose expansion与multi-recipient D5交错并注入任一class lock/CAS/insert故障 | 全部严格按§4.3.4总序、class内稳定排序；无deadlock换序旁路；每个operation全commit或全rollback，零half revoke/partial outbox |
 
 ### UTM
 
@@ -704,35 +736,44 @@ R-010只验 future merge carrier 的静态/transaction合同；live merge activa
 | M-02 | exact production 64-migration baseline | 只跑8个pending + alignment；shared checksum不变 |
 | M-03 | production-like snapshot clone | collision/quarantine报告可解释；零silent coercion |
 | M-04 | backfill重跑 | counts、events、projection、links不变 |
-| M-05 | M5 rollback | 新facts与D5 carrier/count/status保留、nonterminal outbox由兼容worker drain/reconcile、legacy不恢复为双真源、known risks/audience/transactional/reactive/D5 override语义不漂移；无silent auto-send、absolute merchant hard block、一次确认standing waiver、duplicate provider attempt或`utmBase` writer/authority reader；既有link继续按原`utmJson`服务，两类snapshot byte-identical |
+| M-05 | M5 rollback | 新facts与D5 attempt/carrier/count/status保留、INVALIDATED永不复活且re-arm只建fresh attempt、nonterminal outbox由兼容worker drain/reconcile、legacy不恢复为双真源、known risks/audience/transactional/reactive/D5 override语义不漂移；无silent auto-send、absolute merchant hard block、一次确认standing waiver、duplicate provider attempt或`utmBase` writer/authority reader；既有link继续按原`utmJson`服务，两类snapshot byte-identical |
 | M-06 | two-org end-to-end | identity/consent/DND/provider refusal/UTM跨租户零读写 |
 
 ## 11. Independent review 与 approval gates
 
-本稿提交 Draft PR 时必须诚实标记：
+### 11.1 【已批准】D1–D5 行为结果；不得重新呈问
 
-- internal bounded lanes已分别核 identity、consent、UTM evidence；它们不是 cross-family PASS；
-- D3 曾有 FABLE5 consultation，但那只评 UTM decision，不等于评完整 alignment spec；
-- [完整 spec FABLE5 review](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/342#issuecomment-4993893418) 已在exact commit `3f8cc8f9`完成：0 P0 / 1 P1 / 4 P2 / FAIL；D4与本revision只响应该review，不把旧head verdict冒充新head PASS；
-- [D5前的bounded FABLE5 reactive-reply consultation](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/339#issuecomment-4998494183) 只比较A/B/minimal-C，建议第三路径与结构gate；它不是exact-head spec review。Founder随后以D5把“proactive element绝对hard block”改为tag + no-auto-attachment + exact action两次人工确认后提交，因此该consultation不得冒充对D5 revision的PASS；
-- revised exact head仍须另获授权的bounded independent follow-up，核D4 fan-out、四项P2 closure与D5 manual override的state/action/audit边界；不得为“重做证据”重复完整review，也不得在无exact-head PASS时请求merge；
-- review 的 P0/P1 全部解决并在 exact PR head复核前，不得请求 Founder merge；
-- Founder merge本 spec PR只批准合同，不授权 Prisma/migration/code/data/production；implementation另开 task/claim/PR并逐项获批。
+以下 Founder Resolutions 已 durable 生效，本 PR、reviewer 与后续实现只能忠实落地，不得把底层 carrier/index/enum/lock 细节重新包装成产品问题要求 Founder 再批：
 
-Founder最终审本PR前需要一题一次确认的待批选择（不能靠“批准整份PR”默许）：
+1. **D1**：可靠证据可维持 Contact continuity；模糊或不确定匹配只建议、由merchant确认，provider/connector不是identity authority。
+2. **D2**：permission/revoke history是长期事实；`unknown`如实显示但不是merchant hard block；STOP、DND、provider refusal与frequency各自独立。
+3. **D3**：Campaign只归组；UTM在link-time定案严格五键，event保存当时snapshot，`utmBase`不再是长期authority。
+4. **D4**：无限定STOP原子撤回该channel全部proactive non-transactional purposes；purpose-bound unsubscribe只撤exact purpose；strict transactional不得夹带营销。
+5. **D5**：risk tag可见且不自动接入；merchant手工坚持时，对exact frozen action完成两个独立human confirms后可提交；不制造consent、不形成standing override，Otto/connector/job不能代确认。
 
-1. Phase-1 WhatsApp、manual/CSV phone/email的issuer scope与verified/quarantine载体；若选择global email issuer，必须在同revision改写并重审owner/unique/tenant不变量；
-2. 四段live key、exact normalization v1、upgrade representation、historical recycle/revive与evidence allowlist；
-3. merge/unmerge future carrier + append-only merge/assignment ledger、并发合同，以及lineage spec批准前Phase-1 live action fail-closed；
-4. `ConsentEvent`完整字段（含`evidenceStatus/operationId`）、closed source/action matrix、historical purpose-bound/unqualified STOP分型与fold/order/cursor；**D4已批准STOP purpose scope与原子fan-out，余项仍待批**；
-5. `whatsapp × marketing` compatibility projection逐字段映射、所有known historical revoke解清、strict transactional context matrix、reactive context、D5 risk tag/two-confirm exact-action override与M2–M5 atomic STOP safety；其中D4 affected-purpose/transactional语义及D5 manual-send产品结果已批准，物理carrier仍待批；
-6. typed DND/provider refusal authority、scope/lifecycle/exactly-once clear、consent privacy/retention boundary；
-7. UTM严格五键shape（null语义、payload外version metadata）、Campaign immutable tracking key，以及non-Campaign measurable link的`campaign` key/无grouping时fail-closed规则；
-8. `source/medium/content/term` derivation、merchant/Otto override、measurable path inventory；
-9. `TrackedLink.utmJson=null`的non-measurable语义、write-once enforcement、SourceTag/AttributionEvent wiring、reserved-query冲突策略与report authority；
-10. `utmBase` stop-write/read、legacy handling及M0–M6 migration/rollback/production gate。
+只有发现与上述Resolution真正冲突、或出现无法从其推导且会改变direction/scope/user behavior/acceptance的新选择时，才另开一题；schema reviewer提出“carrier尚未定义”本身不是重问D1–D5的理由。
 
-这些选择应在 review 后按 Founder 的一题一次规则呈现；Draft PR 本身不把沉默当批准。
+### 11.2 【待批】只剩物理 schema、migration 与 retention 合同
+
+下列Founder-only gate仍合法保留；它们批准的是**如何安全承载既有行为**，不重新裁决行为本身：
+
+1. Identity physical contract：`IdentityIssuer`与verified/quarantine carrier、四段live key/index、Phase-1 exact normalizer/upgrade representation、assignment/recycle evidence ledger及tenant-qualified relations；
+2. future merge physical contract：redirect、append-only merge/assignment ledger、lineage与lock/FK形状；获批前live merge/unmerge继续disabled；
+3. Consent physical contract：`ConsentEvent`字段/index/check、closed source/action/actor matrix、state-neutral backfill、receivedAt cursor/fold/projection与D4 multi-tuple atomic implementation；
+4. D5 physical contract：`ManualSendOverride/Confirmation/Outbox`的attempt-scoped constraints，以及§4.3.3列明仍Unknown的DeliveryManifest、provider-ingested reactive anchor、ActionReceipt、`actionId/actionRevision/assignmentEpoch` authoritative mint/source；
+5. typed DND/provider-refusal physical authority：scope keys、event/projection lifecycle、verified clear/expiry与tenant relations；
+6. UTM physical contract：严格五键validator/storage、materializer derivation、link/snapshot write-once wiring、reserved-query冲突、legacy `utmBase` stop-read/write与report reader；
+7. migration/production/retention contract：M0–M6 expand/backfill/cutover/rollback、known-negative quarantine解清、逐carrier privacy/access/export/erasure/backup/terminal retention与production hard gates。
+
+若其中某个物理选择仍需Founder裁决，只能一题一次呈现该schema/migration/retention取舍，并明确引用它服务的已批准D1–D5结果；不得把“批准整份PR”当沉默授权，也不得再次询问已批准产品原则。
+
+### 11.3 Review evidence 与 merge boundary
+
+- internal bounded lanes分别核过 identity、consent、UTM evidence；它们不是 cross-family PASS；
+- D3 consultation与[D5前的bounded FABLE5 reactive-reply consultation](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/339#issuecomment-4998494183)只覆盖各自范围，不等于完整spec review；
+- [完整 spec FABLE5 review](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/342#issuecomment-4993893418) 在exact commit `3f8cc8f9`为0 P0 / 1 P1 / 4 P2 / FAIL；后续revision不能继承该旧head verdict；
+- [exact `3754e4fc` follow-up evidence](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/339#issuecomment-5005496273) 为0 P0 / 0 P1 / 4 P2 / PASS；本revision只闭合该四项reconciled P2。修改后的新exact head仍须按当前merge gate核对，不能把`3754e4fc`的PASS冒充新bytes的exact-head verdict；
+- 未解决P0/P1或缺少适用的exact-head evidence时不得请求Founder merge。Founder合并本spec PR也只批准物理合同，不授权Prisma/migration/code/data/production；implementation另开task/claim/PR并逐项获批。
 
 ## 12. Ticket terminal 与后续边界
 
@@ -740,7 +781,7 @@ Founder最终审本PR前需要一题一次确认的待批选择（不能靠“�
 
 1. 所有Phase-1 blocking Unknown已被exact字段/规则/path选择取代；未来Unknown都有明确fail-closed边界；
 2. 本spec在exact head完成独立cross-family review且无unresolved P0/P1；
-3. Founder按一题一次批准上述选择并明确合并这张schema-authority alignment PR；
+3. Founder按一题一次批准§11.2仍待的physical schema/migration/retention合同并明确合并这张schema-authority alignment PR；D1–D5行为结果不再重呈；
 4. live `main`验证文件与批准head一致，并把durable evidence写回#339；
 
 才可把 #339 的**合同冲突**判为闭合。是否解锁 #327/#328/#329 由 live GitHub dependency/Founder instruction决定，不能由本文件自动推断。
