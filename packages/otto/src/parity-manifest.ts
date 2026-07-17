@@ -161,6 +161,8 @@ export const PARITY_MANIFEST = {
   "data.getAllCoworkThreadMetas": { todoSkill: true, reason: "Otto home global sidebar threads are page data; thread reads need free/read skill parity." },
 
   "gen-actions.startGen": { skill: "generate" },
+  "gen-actions.startCanvasGen": { skill: "generate", reason: "Canvas supplies a server-derived once-ever action key, then delegates to this same generate/startGen reserve and dispatch authority; it is not a second spend path." },
+  "gen-actions.startCoworkGen": { skill: "generate", reason: "Otto's approved GEN_CARD supplies the server-bound owner/thread/project quote, then delegates to the same generate/startGen reserve and dispatch authority; it is not a second spend path." },
   "gen-actions.getActiveGenModels": { skill: "generate" },
   "gen-actions.getGenJob": { skill: "generate" },
   "gen-actions.getRecentGenResults": { skill: "generate" },

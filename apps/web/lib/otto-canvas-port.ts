@@ -54,13 +54,13 @@ export function makeOttoCanvasPort(ownerId: string, projectId: string) {
     },
     editText: async (id: string, text: string) => {
       if (!(await nodeInProject(id))) return { error: "Node not found." };
-      return updateTextNode(id, text);
+      return updateTextNode(projectId, id, text);
     },
     resolve: (id: string, input: { status: "done" | "failed" | "timeout" | "missing"; generationId?: string }) =>
-      resolveCanvasNode(id, input),
+      resolveCanvasNode(projectId, id, input),
     remove: async (id: string) => {
       if (!(await nodeInProject(id))) return { error: "Node not found." };
-      return deleteCanvasNode(id);
+      return deleteCanvasNode(projectId, id);
     },
   };
 }

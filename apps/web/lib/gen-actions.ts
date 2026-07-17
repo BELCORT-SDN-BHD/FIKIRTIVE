@@ -5,7 +5,9 @@
  * provider, and writes Generation candidates (optionally bound to a shot).
  */
 import { revalidatePath } from "next/cache";
-import { prisma, reserveCredits, refundReservation, InsufficientCredits } from "@fikirtive/db";
+import { randomUUID } from "node:crypto";
+import { fromPrisma } from "pg-boss";
+import { prisma, reserveCredits, InsufficientCredits } from "@fikirtive/db";
 import {
   genRequest,
   newId,
@@ -14,6 +16,7 @@ import {
   storageKeyToSrc,
   isModelDisabled,
   assertSpendableModel,
+  displayCredits,
   pricedGenCredits,
   activeImageModel,
   activeVideoModel,
@@ -25,9 +28,12 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import {
+  canvasActionKey,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
+  parseCanvasActionKey,
   parseFactoryAttemptKey,
+  type CanvasActionKey,
   type FactoryAttemptKey,
   type FactoryMaterial,
   type StoredFactoryMaterial,
@@ -35,7 +41,9 @@ import {
 
 export type StartGenResult =
   | { id: string; disposition: "fresh" | "reused" }
-  | { error: string; disposition?: "conflict" };
+  | { error: string; disposition?: "conflict"; refunded?: true };
+
+class QueuePrepareFailed extends Error {}
 
 const FACTORY_HISTORY_SELECT = {
   id: true,
@@ -51,6 +59,7 @@ const FACTORY_HISTORY_SELECT = {
   tailGenerationId: true,
   referenceVideoGenerationId: true,
   shotId: true,
+  threadId: true,
   videoOptions: true,
 } as const;
 
@@ -80,7 +89,122 @@ function factoryHistoryVerdict(
   return null;
 }
 
+function canvasHistoryVerdict(
+  history: FactoryHistoryRow[],
+  action: CanvasActionKey,
+  material: FactoryMaterial,
+): StartGenResult | null {
+  const prior = history.find((row) => row.idempotencyKey === action.key);
+  if (!prior) return null;
+  if (!factoryMaterialMatches(prior, material)) {
+    return {
+      error: "That canvas action is already in use for different content — start a new action.",
+      disposition: "conflict",
+    };
+  }
+  // A Canvas UI action is once-ever, including DONE/FAILED/CANCELLED. Retrying an action
+  // returns the exact accepted job; an explicit new user action supplies a new actionId.
+  return { id: prior.id, disposition: "reused" };
+}
+
+const CANVAS_ACTION_ID_MAX_LENGTH = 128;
+const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
+type TrustedCoworkRequest = {
+  ownerId: string;
+  cardId: string;
+  projectId: string;
+  threadId: string;
+  expectedCredits: number | null;
+};
+const TRUSTED_COWORK_REQUESTS = new WeakMap<object, TrustedCoworkRequest>();
+
+/** Canvas's paid entrypoint. The browser supplies a stable logical actionId, never an
+ * idempotency key; the reserved durable key is derived here on the server. */
+export async function startCanvasGen(raw: unknown): Promise<StartGenResult> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const record = raw as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(record, "idempotencyKey")) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const { actionId, expectedCredits, ...request } = record;
+  if (
+    typeof actionId !== "string" ||
+    actionId.trim().length === 0 ||
+    actionId.length > CANVAS_ACTION_ID_MAX_LENGTH ||
+    typeof expectedCredits !== "number" ||
+    !Number.isFinite(expectedCredits) ||
+    expectedCredits < 0
+  ) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const trustedRequest = { ...request, idempotencyKey: canvasActionKey(actionId).key };
+  TRUSTED_CANVAS_REQUESTS.set(trustedRequest, { expectedCredits });
+  return startGen(trustedRequest);
+}
+
+/** Otto/GEN_CARD's paid entrypoint. The durable card — not the browser or model — supplies
+ * the approved displayed-credit quote and binds it to this owner, thread, project, and key. */
+export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
+  const parsed = genRequest.safeParse(raw);
+  if (!parsed.success) return { error: "That generation request is out of bounds." };
+  const { idempotencyKey, projectId, threadId } = parsed.data;
+  if (!idempotencyKey?.startsWith("cowork:") || idempotencyKey.length <= "cowork:".length || !threadId) {
+    return { error: "That generation request is out of bounds." };
+  }
+
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const cardId = idempotencyKey.slice("cowork:".length);
+  const card = await prisma.chatMessage.findFirst({
+    where: { id: cardId, ownerId: gate.ownerId, kind: "GEN_CARD", deletedAt: null },
+    select: {
+      threadId: true,
+      payload: true,
+      thread: { select: { projectId: true, ownerId: true, deletedAt: true } },
+    },
+  });
+  if (
+    !card ||
+    card.thread.deletedAt ||
+    card.thread.ownerId !== gate.ownerId ||
+    card.threadId !== threadId ||
+    card.thread.projectId !== projectId
+  ) {
+    return { error: "Generation card not found." };
+  }
+
+  const payload = (card.payload ?? {}) as Record<string, unknown>;
+  const quote = payload.estimatedCredits;
+  const expectedCredits = typeof quote === "number" && Number.isSafeInteger(quote) && quote > 0
+    ? quote
+    : null;
+  const trustedRequest = { ...parsed.data };
+  TRUSTED_COWORK_REQUESTS.set(trustedRequest, {
+    ownerId: gate.ownerId,
+    cardId,
+    projectId,
+    threadId,
+    expectedCredits,
+  });
+  return startGen(trustedRequest);
+}
+
 export async function startGen(raw: unknown): Promise<StartGenResult> {
+  // Server provenance only: a serialized caller object cannot be a member of this module-local
+  // WeakSet. startCanvasGen adds the exact in-process object before delegating here, keeping
+  // startGen as the one genRequest validator/create/reserve/dispatch authority.
+  const trustedCanvasRequest = raw !== null && typeof raw === "object"
+    ? TRUSTED_CANVAS_REQUESTS.get(raw as object)
+    : undefined;
+  const trustedCoworkRequest = raw !== null && typeof raw === "object"
+    ? TRUSTED_COWORK_REQUESTS.get(raw as object)
+    : undefined;
+  if (raw !== null && typeof raw === "object") {
+    TRUSTED_CANVAS_REQUESTS.delete(raw as object);
+    TRUSTED_COWORK_REQUESTS.delete(raw as object);
+  }
+  const trustedCanvasKey = trustedCanvasRequest !== undefined;
   const gate = await requireOwner(); if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
@@ -88,6 +212,32 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const parsed = genRequest.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
+  const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
+  if (parsedCanvasAction && !trustedCanvasKey) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const canvasAction = trustedCanvasKey ? parsedCanvasAction : null;
+  if (trustedCanvasKey && !canvasAction) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const coworkCardId = idempotencyKey?.startsWith("cowork:")
+    ? idempotencyKey.slice("cowork:".length)
+    : null;
+  if (coworkCardId !== null && !trustedCoworkRequest) {
+    return { error: "That generation request is out of bounds." };
+  }
+  if (
+    trustedCoworkRequest &&
+    (
+      !coworkCardId ||
+      coworkCardId !== trustedCoworkRequest.cardId ||
+      ownerId !== trustedCoworkRequest.ownerId ||
+      projectId !== trustedCoworkRequest.projectId ||
+      threadId !== trustedCoworkRequest.threadId
+    )
+  ) {
+    return { error: "That generation request is out of bounds." };
+  }
 
   const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
   if (!project) return { error: "Project not found." };
@@ -108,6 +258,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     tailGenerationId,
     referenceVideoGenerationId,
     shotId,
+    threadId,
     durationSeconds,
     resolution,
     aspectRatio,
@@ -136,12 +287,48 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     if (early) return early;
   }
 
+  if (canvasAction) {
+    const history = await prisma.genJob.findMany({
+      where: { ownerId, projectId, idempotencyKey: canvasAction.key },
+      orderBy: { createdAt: "desc" },
+      select: FACTORY_HISTORY_SELECT,
+    });
+    const early = canvasHistoryVerdict(history, canvasAction, material);
+    if (early) return early;
+  }
+
+  // A GEN_CARD is once-ever. Replay any accepted job (including terminal states) before
+  // fresh-only thread, model, guardian, and pricing gates so later drift cannot break the
+  // idempotent answer. The same lookup is repeated under the project lock below.
+  if (trustedCoworkRequest) {
+    const existing = await prisma.genJob.findFirst({
+      where: { ownerId, projectId, idempotencyKey: `cowork:${trustedCoworkRequest.cardId}` },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (existing) return { id: existing.id, disposition: "reused" };
+    if (trustedCoworkRequest.expectedCredits === null) {
+      return { error: "This generation card needs a current price. Ask Otto to propose it again, then review the new card." };
+    }
+  }
+
+  // Fresh thread-attributed work must name a live thread in the authenticated owner+project.
+  // Durable exact replays above intentionally return their already-accepted job even if that
+  // thread is later archived; they do not create or reserve anything.
+  if (threadId) {
+    const thread = await prisma.chatThread.findFirst({
+      where: { id: threadId, ownerId, projectId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!thread) return { error: "Thread not found." };
+  }
+
   // double-submit guard (fast path): a reload re-sends the same stable key, so
   // reuse the in-flight job instead of starting (and paying for) a 2nd one. The
   // partial-unique index on the create below is the race-proof backstop. Factory keys
   // deliberately skip this shortcut: their full material + attempt decision belongs
   // under the existing project advisory transaction lock below.
-  if (idempotencyKey && !factoryAttempt) {
+  if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
     const active = await prisma.genJob.findFirst({
       where: { ownerId, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
       orderBy: { createdAt: "desc" }, select: { id: true },
@@ -187,13 +374,29 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     referenceVideoGenerationId: referenceVideoGenerationId ?? null,
     videoOptions: videoOptions ?? null,
   });
+  const displayedCost = displayCredits(cost);
+
+  // Prepare pg-boss before opening the money transaction, but do not return early on failure:
+  // a concurrent same-action winner may already exist by the time we acquire the project lock.
+  // The locked replay checks below get first say; only a genuinely fresh attempt is refused.
+  let boss: Awaited<ReturnType<typeof getBoss>> | null = null;
+  try {
+    boss = await getBoss();
+  } catch {
+    // Kept as a known pre-send state. No GenJob or reservation exists yet.
+  }
+
+  // GenJob keeps the project's sortable ULID. pg-boss stores custom job ids in a PostgreSQL UUID
+  // column, so it needs a separate UUID; persisting that UUID on GenJob binds the two rows. Commit
+  // ACK recovery remains anchored to the owner/project-scoped GenJob id.
+  const jobId = newId();
+  const queueJobId = randomUUID();
 
   let decision: StartGenResult;
   try {
-    // RESERVE the charge in the SAME transaction as the insert: if the balance can't
-    // cover it, reserveCredits throws and the whole tx rolls back (no job, no queue,
-    // no spend) → the catch returns a friendly out-of-credits message. A concurrent
-    // submit can't drive the balance negative (conditional decrement on the account row).
+    // CREATE + RESERVE + ENQUEUE are one PostgreSQL transaction. Any failure rolls back all
+    // three, so there is no post-commit dispatch/refund compensation window and no possibility
+    // of a worker running a job whose reservation was separately refunded.
     decision = await prisma.$transaction(async (tx): Promise<StartGenResult> => {
       const projectLockKey = `project:${projectId}`;
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
@@ -221,9 +424,69 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         if (locked) return locked;
       }
 
+      if (trustedCoworkRequest) {
+        const existing = await tx.genJob.findFirst({
+          where: { ownerId, projectId, idempotencyKey: `cowork:${trustedCoworkRequest.cardId}` },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        if (existing) return { id: existing.id, disposition: "reused" };
+        if (trustedCoworkRequest.expectedCredits !== displayedCost) {
+          return {
+            error: `The approved price changed from ${trustedCoworkRequest.expectedCredits} to ${displayedCost} credits. Ask Otto for an updated proposal, then review it again.`,
+          };
+        }
+      }
+
+      if (canvasAction) {
+        const history = await tx.genJob.findMany({
+          where: { ownerId, projectId, idempotencyKey: canvasAction.key },
+          orderBy: { createdAt: "desc" },
+          select: FACTORY_HISTORY_SELECT,
+        });
+        const locked = canvasHistoryVerdict(history, canvasAction, material);
+        if (locked) return locked;
+        // The number the owner saw is part of the authorization. A stale tab may submit
+        // after pricing changes; fail before create/reserve. Exact replays above still reuse
+        // their already-authorized job regardless of later price changes.
+        if (trustedCanvasRequest && trustedCanvasRequest.expectedCredits !== displayedCost) {
+          return {
+            error: `The confirmed price changed from ${trustedCanvasRequest.expectedCredits} to ${displayedCost} credits. Refresh Canvas to load the current price, then review and send again.`,
+          };
+        }
+      }
+
+      // The lock-free active-key lookup above is only a fast path. Re-read ordinary keys under
+      // the same project lock as create + reserve + enqueue so a concurrent winner is reused even
+      // when this request could not prepare pg-boss. Without this, the loser could incorrectly
+      // report "Nothing was charged" after the winner had already committed.
+      if (idempotencyKey && !factoryAttempt && !canvasAction && !trustedCoworkRequest) {
+        const active = await tx.genJob.findFirst({
+          where: { ownerId, projectId, idempotencyKey, status: { in: ["QUEUED", "GENERATING"] } },
+          orderBy: { createdAt: "desc" },
+          select: { id: true },
+        });
+        if (active) return { id: active.id, disposition: "reused" };
+      }
+
+      // The preflight read is not a lock. Repeat attribution under the same project advisory
+      // transaction that owns create+reserve so a concurrently archived thread cannot be
+      // stamped onto newly paid work.
+      if (threadId) {
+        const liveThread = await tx.chatThread.findFirst({
+          where: { id: threadId, ownerId, projectId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!liveThread) throw new Error("THREAD_DELETED_DURING_GENERATION_START");
+      }
+
+      // All locked replay/conflict verdicts have returned above. A prepare failure therefore
+      // rejects only a fresh attempt, before create/reserve, while preserving concurrent reuse.
+      if (!boss) throw new QueuePrepareFailed();
+
       const created = await tx.genJob.create({
         data: {
-          id: newId(), ownerId, projectId, shotId: shotId ?? null,
+          id: jobId, ownerId, projectId, shotId: shotId ?? null,
           sourceGenerationId: sourceGenerationId ?? null,
           tailGenerationId: tailGenerationId ?? null,
           referenceVideoGenerationId: referenceVideoGenerationId ?? null,
@@ -231,6 +494,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           kind: kind === "video" ? "VIDEO" : "IMAGE",
           idempotencyKey: idempotencyKey ?? null,
           threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
+          queueJobId,
           ...(videoOptions ? { videoOptions } : {}),
           // Phase C: persist the @mention→variant bindings so the worker conditions on
           // the right variant. Image-only (the shared material normalizer drops it for video).
@@ -240,6 +504,14 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         select: { id: true },
       });
       await reserveCredits(tx, { orgId: ownerId, refId: created.id, cost });
+      const sentQueueJobId = await boss.send(
+        GEN_QUEUE,
+        { genJobId: created.id } satisfies GenJobData,
+        { id: queueJobId, db: fromPrisma(tx) },
+      );
+      if (sentQueueJobId !== queueJobId) {
+        throw new Error("GEN_QUEUE_INSERT_NOT_CONFIRMED");
+      }
       return { id: created.id, disposition: "fresh" };
     });
   } catch (e) {
@@ -250,6 +522,14 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     if (e instanceof Error && e.message === "PROJECT_DELETED_DURING_GENERATION_START") {
       return { error: "Project not found." };
     }
+    if (e instanceof Error && e.message === "THREAD_DELETED_DURING_GENERATION_START") {
+      return { error: "Thread not found." };
+    }
+    if (e instanceof QueuePrepareFailed) {
+      return {
+        error: "Generation could not start because the queue was unavailable. Nothing was charged — retry when it is available.",
+      };
+    }
     // partial-unique index race: a concurrent same-key submit won the insert → return
     // ITS job instead of creating (and paying for) a duplicate. The tx rolled back, so
     // no reserve happened for this attempt. Scope the lookup to mirror each key's index:
@@ -259,6 +539,18 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // is all-status), so match ANY status — a re-insert after the first job is DONE/FAILED
     // must also return that job, never spend again, never re-throw P2002 to the caller.
     if (idempotencyKey && typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
+      if (canvasAction) {
+        const existing = await prisma.genJob.findFirst({
+          where: { ownerId, projectId, idempotencyKey: canvasAction.key },
+          orderBy: { createdAt: "desc" },
+          select: FACTORY_HISTORY_SELECT,
+        });
+        if (existing) {
+          const recovered = canvasHistoryVerdict([existing], canvasAction, material);
+          if (recovered) return recovered;
+        }
+        return { error: "That canvas action could not be safely deduplicated — retry it." };
+      }
       if (factoryAttempt) {
         const existing = await prisma.genJob.findFirst({
           where: { ownerId, projectId, idempotencyKey: factoryAttempt.key },
@@ -287,34 +579,30 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       });
       if (existing) return { id: existing.id, disposition: "reused" };
     }
-    throw e;
+
+    // The transaction callback completed or failed, but its final outcome may be unknown (for
+    // example, a connection/ACK loss). Query the pre-generated identity in the authenticated
+    // owner+project scope. A visible row proves create + reserve + enqueue committed atomically.
+    // Missing/unqueryable state stays unknown and is thrown so keyed callers retain the same
+    // logical action identity for a safe retry.
+    let committed: { id: string } | null;
+    try {
+      committed = await prisma.genJob.findFirst({
+        where: { id: jobId, ownerId, projectId },
+        select: { id: true },
+      });
+    } catch {
+      throw e;
+    }
+    if (committed) {
+      decision = { id: committed.id, disposition: "fresh" };
+    } else {
+      throw e;
+    }
   }
   if ("error" in decision) return decision;
   if (decision.disposition === "reused") return decision;
   const job = { id: decision.id };
-  // ONLY the enqueue (getBoss/boss.send) is in this try: if the message was never sent, no
-  // worker can run the job, so terminal-fail AND release the hold (else the reservation leaks).
-  // Status is still QUEUED (nothing claimed it), so there's no running worker to clobber.
-  let queueJobId: string | null = null;
-  try {
-    const boss = await getBoss();
-    queueJobId = await boss.send(GEN_QUEUE, { genJobId: job.id } satisfies GenJobData);
-  } catch (e) {
-    const message = e instanceof Error ? e.message.slice(0, 300) : "queue unavailable";
-    await prisma.$transaction(async (tx) => {
-      await tx.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error: `dispatch failed: ${message}` } });
-      await refundReservation(tx, { orgId: ownerId, refId: job.id });
-    });
-    return { error: "Could not reach the generation queue — is the worker up?" };
-  }
-  // BEST-EFFORT: the job is ALREADY enqueued (the payload carries its id), so a failure
-  // persisting queueJobId (tracking only) must NOT terminal-fail/refund a job the worker will
-  // process — that would be a delivered-but-refunded leak. Log + continue.
-  try {
-    await prisma.genJob.update({ where: { id: job.id }, data: { queueJobId: queueJobId ?? "" } });
-  } catch (e) {
-    console.warn(`startGen: queueJobId persist failed for job ${job.id} (non-fatal):`, e instanceof Error ? e.message : e);
-  }
   // BEST-EFFORT: the GenJob is already created + queued (paid path committed) above, so
   // an audit-write failure must NOT throw past here — else the caller returns an error
   // and a retry (esp. a keyless GenSpace direct gen) could enqueue a SECOND paid job.
@@ -340,15 +628,17 @@ export async function getActiveGenModels(): Promise<{ image: string; video: stri
 }
 
 /** Poll a gen job + return its produced generations' image URLs when DONE. */
-export async function getGenJob(jobId: string) {
+export async function getGenJob(jobId: string, projectId?: string) {
   const gate = await requireOwner(); if ("error" in gate) throw new Error(gate.error);
   const { ownerId } = gate;
-  const job = await prisma.genJob.findFirst({ where: { id: jobId, ownerId } });
+  const job = await prisma.genJob.findFirst({
+    where: { id: jobId, ownerId, ...(projectId ? { projectId } : {}) },
+  });
   if (!job) return null;
   let urls: string[] = [];
   if (job.generationIds.length) {
     const gens = await prisma.generation.findMany({
-      where: { id: { in: job.generationIds }, ownerId },
+      where: { id: { in: job.generationIds }, ownerId, ...(projectId ? { projectId } : {}) },
       include: { asset: true },
     });
     // return urls in the order the worker produced them — findMany order is the

@@ -12,6 +12,8 @@ vi.mock("next/cache", () => ({ revalidatePath }));
 
 const db = vi.hoisted(() => {
   const projectFindFirst = vi.fn();
+  const chatMessageFindFirst = vi.fn();
+  const chatThreadFindFirst = vi.fn();
   const genJobFindFirst = vi.fn();
   const genJobFindMany = vi.fn();
   const genJobCreate = vi.fn();
@@ -22,6 +24,8 @@ const db = vi.hoisted(() => {
   const executeRaw = vi.fn();
   const prisma = {
     project: { findFirst: projectFindFirst },
+    chatMessage: { findFirst: chatMessageFindFirst },
+    chatThread: { findFirst: chatThreadFindFirst },
     genJob: { findFirst: genJobFindFirst, findMany: genJobFindMany, create: genJobCreate, update: genJobUpdate },
     actionEvent: { create: actionEventCreate },
     $executeRaw: executeRaw,
@@ -30,6 +34,8 @@ const db = vi.hoisted(() => {
   return {
     prisma,
     projectFindFirst,
+    chatMessageFindFirst,
+    chatThreadFindFirst,
     genJobFindFirst,
     genJobFindMany,
     genJobCreate,
@@ -50,8 +56,13 @@ vi.mock("@fikirtive/db", () => ({
   InsufficientCredits: MockInsufficientCredits,
 }));
 
-const mockBossSend = vi.fn();
-vi.mock("../queue", () => ({ getBoss: vi.fn(async () => ({ send: mockBossSend })) }));
+const queue = vi.hoisted(() => {
+  const send = vi.fn();
+  return { send, getBoss: vi.fn(async () => ({ send })) };
+});
+const mockBossSend = queue.send;
+const mockGetBoss = queue.getBoss;
+vi.mock("../queue", () => ({ getBoss: mockGetBoss }));
 
 const mockCheckCast = vi.fn();
 vi.mock("../cowork-guardian", () => ({ checkCast: mockCheckCast }));
@@ -59,7 +70,8 @@ vi.mock("../cowork-guardian", () => ({ checkCast: mockCheckCast }));
 const mockResolveDisabledModels = vi.fn();
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 
-const { startGen } = await import("../gen-actions");
+const { startCanvasGen, startCoworkGen, startGen } = await import("../gen-actions");
+const { canvasActionKey } = await import("../batch-idempotency");
 
 const prevDefaultVideoModel = process.env.OTTO_DEFAULT_VIDEO_MODEL;
 
@@ -69,6 +81,12 @@ beforeEach(() => {
   mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
   mockIsImpersonating.mockResolvedValue(false);
   db.projectFindFirst.mockResolvedValue({ id: "p1" });
+  db.chatMessageFindFirst.mockResolvedValue({
+    threadId: "thread-1",
+    payload: { estimatedCredits: 1 },
+    thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+  });
+  db.chatThreadFindFirst.mockResolvedValue({ id: "thread-1" });
   db.genJobFindFirst.mockResolvedValue(null);
   db.genJobFindMany.mockResolvedValue([]);
   db.genJobCreate.mockResolvedValue({ id: "job_ref" });
@@ -77,7 +95,13 @@ beforeEach(() => {
   db.reserveCredits.mockResolvedValue({ ok: true });
   db.refundReservation.mockResolvedValue({ ok: true });
   db.executeRaw.mockResolvedValue(undefined);
-  mockBossSend.mockResolvedValue("queue-job-1");
+  mockGetBoss.mockResolvedValue({ send: mockBossSend });
+  // pg-boss returns the caller-supplied deterministic id on a successful insert.
+  mockBossSend.mockImplementation(async (
+    _name: string,
+    _data: unknown,
+    options: { id?: string },
+  ) => options.id ?? null);
   mockCheckCast.mockResolvedValue(null);
   mockResolveDisabledModels.mockResolvedValue(new Set());
 });
@@ -88,6 +112,432 @@ afterEach(() => {
 });
 
 describe("startGen", () => {
+  it("reserves canvas: keys for startCanvasGen and rejects a caller-supplied idempotencyKey", async () => {
+    const rejected = await startCanvasGen({
+      actionId: "action-with-client-key",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "product hero",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "caller-must-not-control-this",
+    });
+    expect(rejected).toEqual({ error: "That generation request is out of bounds." });
+
+    const result = await startCanvasGen({
+      actionId: "action-1",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "product hero",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ idempotencyKey: canvasActionKey("action-1").key }),
+    }));
+  });
+
+  it("does not let direct startGen spoof the reserved canvas key family", async () => {
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "spoofed canvas request",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: canvasActionKey("spoofed").key,
+    });
+
+    expect(result).toEqual({ error: "That generation request is out of bounds." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("does not let direct startGen spoof the reserved cowork card key family", async () => {
+    const result = await startGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "spoofed cowork request",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-1",
+    });
+
+    expect(result).toEqual({ error: "That generation request is out of bounds." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("binds a persisted GEN_CARD's exact displayed quote before create + reserve", async () => {
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "approved card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-1",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.chatMessageFindFirst).toHaveBeenCalledWith({
+      where: { id: "card-1", ownerId: "org_ref", kind: "GEN_CARD", deletedAt: null },
+      select: {
+        threadId: true,
+        payload: true,
+        thread: { select: { projectId: true, ownerId: true, deletedAt: true } },
+      },
+    });
+    expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        projectId: "p1",
+        threadId: "thread-1",
+        idempotencyKey: "cowork:card-1",
+      }),
+    }));
+    expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
+      orgId: "org_ref",
+      refId: "job_ref",
+      cost: INTERNAL_PER_DISPLAY,
+    });
+  });
+
+  it.each([
+    { approved: 2, count: 1, current: 1 },
+    { approved: 1, count: 2, current: 2 },
+  ])("refuses a fresh GEN_CARD when its approved quote changed from $approved to $current", async ({ approved, count, current }) => {
+    db.chatMessageFindFirst.mockResolvedValueOnce({
+      threadId: "thread-1",
+      payload: { estimatedCredits: approved },
+      thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+    });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "stale card",
+      entityIds: [],
+      count,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-stale",
+    });
+
+    expect(result).toEqual({
+      error: `The approved price changed from ${approved} to ${current} credits. Ask Otto for an updated proposal, then review it again.`,
+    });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "1", 1.5, 0])("fails closed on a missing or malformed persisted GEN_CARD quote (%s)", async (estimatedCredits) => {
+    db.chatMessageFindFirst.mockResolvedValueOnce({
+      threadId: "thread-1",
+      payload: { estimatedCredits },
+      thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+    });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "legacy card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:legacy-card",
+    });
+
+    expect(result).toEqual({
+      error: "This generation card needs a current price. Ask Otto to propose it again, then review the new card.",
+    });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("replays an accepted terminal cowork job before missing quote, thread, model, and guardian gates", async () => {
+    db.chatMessageFindFirst.mockResolvedValueOnce({
+      threadId: "thread-1",
+      payload: {},
+      thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+    });
+    db.genJobFindFirst.mockResolvedValueOnce({ id: "job-done" });
+    db.chatThreadFindFirst.mockResolvedValue(null);
+    mockCheckCast.mockResolvedValue({ error: "dynamic gate changed", report: { findings: [] } });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "legacy card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:legacy-card",
+    });
+
+    expect(result).toEqual({ id: "job-done", disposition: "reused" });
+    expect(db.chatThreadFindFirst).not.toHaveBeenCalled();
+    expect(mockCheckCast).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("lets a lock-time cowork winner beat a stale quote without a second reserve", async () => {
+    db.chatMessageFindFirst.mockResolvedValueOnce({
+      threadId: "thread-1",
+      payload: { estimatedCredits: 99 },
+      thread: { projectId: "p1", ownerId: "org_ref", deletedAt: null },
+    });
+    db.genJobFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "job-winner" });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "same accepted card",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-race",
+    });
+
+    expect(result).toEqual({ id: "job-winner", disposition: "reused" });
+    expect(db.executeRaw).toHaveBeenCalledTimes(1);
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cowork request when its persisted card is from another project", async () => {
+    db.chatMessageFindFirst.mockResolvedValueOnce({
+      threadId: "thread-1",
+      payload: { estimatedCredits: 1 },
+      thread: { projectId: "other-project", ownerId: "org_ref", deletedAt: null },
+    });
+
+    const result = await startCoworkGen({
+      projectId: "p1",
+      threadId: "thread-1",
+      prompt: "cross-project",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "cowork:card-other",
+    });
+
+    expect(result).toEqual({ error: "Generation card not found." });
+    expect(db.projectFindFirst).not.toHaveBeenCalled();
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("fails before create or reserve when the displayed Canvas quote is stale", async () => {
+    const result = await startCanvasGen({
+      actionId: "action-stale-quote",
+      expectedCredits: 2,
+      projectId: "p1",
+      prompt: "one image",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+    });
+
+    expect(result).toEqual({
+      error: "The confirmed price changed from 2 to 1 credits. Refresh Canvas to load the current price, then review and send again.",
+    });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("requires Canvas to bind the price the owner approved", async () => {
+    const result = await startCanvasGen({
+      actionId: "action-without-quote",
+      projectId: "p1",
+      prompt: "one image",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+    });
+
+    expect(result).toEqual({ error: "That generation request is out of bounds." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("durably replays the same canvas action at any terminal status before dynamic gates", async () => {
+    const key = canvasActionKey("action-done").key;
+    db.genJobFindMany.mockResolvedValue([{
+      id: "job_done",
+      status: "DONE",
+      idempotencyKey: key,
+      prompt: "accepted material",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: [],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      threadId: "thread-1",
+      videoOptions: null,
+    }]);
+    mockCheckCast.mockResolvedValue({ error: "dynamic gate changed", report: { findings: [] } });
+
+    const result = await startCanvasGen({
+      actionId: "action-done",
+      expectedCredits: 999,
+      projectId: "p1",
+      prompt: "accepted material",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      threadId: "thread-1",
+    });
+
+    expect(result).toEqual({ id: "job_done", disposition: "reused" });
+    expect(mockCheckCast).not.toHaveBeenCalled();
+    expect(db.chatThreadFindFirst).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reused canvas action when any frozen material changes", async () => {
+    const key = canvasActionKey("action-conflict").key;
+    db.genJobFindMany.mockResolvedValue([{
+      id: "job_failed",
+      status: "FAILED",
+      idempotencyKey: key,
+      prompt: "original prompt",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: [],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      threadId: "thread-1",
+      videoOptions: null,
+    }]);
+
+    const result = await startCanvasGen({
+      actionId: "action-conflict",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "changed prompt",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      threadId: "thread-1",
+    });
+
+    expect(result).toMatchObject({ disposition: "conflict", error: expect.stringMatching(/different content/i) });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("repeats the canvas replay decision under the project lock before create + reserve", async () => {
+    const key = canvasActionKey("action-race").key;
+    const winner = {
+      id: "job_race_winner",
+      status: "FAILED",
+      idempotencyKey: key,
+      prompt: "same material",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: [],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      threadId: null,
+      videoOptions: null,
+    };
+    db.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([winner]);
+
+    const result = await startCanvasGen({
+      actionId: "action-race",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "same material",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+    });
+
+    expect(result).toEqual({ id: "job_race_winner", disposition: "reused" });
+    expect(db.executeRaw).toHaveBeenCalledTimes(1);
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("validates a provided thread before fresh gates and again under the project lock", async () => {
+    const result = await startCanvasGen({
+      actionId: "action-thread",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "thread attributed",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      threadId: "thread-1",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.chatThreadFindFirst).toHaveBeenCalledTimes(2);
+    expect(db.chatThreadFindFirst).toHaveBeenNthCalledWith(1, {
+      where: { id: "thread-1", ownerId: "org_ref", projectId: "p1", deletedAt: null },
+      select: { id: true },
+    });
+    expect(db.chatThreadFindFirst).toHaveBeenNthCalledWith(2, {
+      where: { id: "thread-1", ownerId: "org_ref", projectId: "p1", deletedAt: null },
+      select: { id: true },
+    });
+  });
+
+  it("fails closed if a thread disappears between the preflight and locked check", async () => {
+    db.chatThreadFindFirst.mockResolvedValueOnce({ id: "thread-1" }).mockResolvedValueOnce(null);
+
+    const result = await startCanvasGen({
+      actionId: "action-thread-race",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "thread race",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      threadId: "thread-1",
+    });
+
+    expect(result).toEqual({ error: "Thread not found." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
   it("reserves the fixed 16 displayed credits and persists reference video identity", async () => {
     // Regression: launch margin parity — reference-video quote/reserve/settle must agree at 16 displayed credits.
     // Found by /qa on 2026-07-04. Report: docs/review/MARGIN-PARITY-REPORT-2026-07-04.md.
@@ -123,7 +573,16 @@ describe("startGen", () => {
       refId: "job_ref",
       cost: 16 * INTERNAL_PER_DISPLAY,
     });
-    expect(mockBossSend).toHaveBeenCalledWith("gen", { genJobId: "job_ref" });
+    const queueJobId = db.genJobCreate.mock.calls[0]?.[0]?.data?.queueJobId as string;
+    expect(queueJobId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(mockBossSend).toHaveBeenCalledWith(
+      "gen",
+      { genJobId: "job_ref" },
+      {
+        id: queueJobId,
+        db: expect.objectContaining({ executeSql: expect.any(Function) }),
+      },
+    );
   });
 
   it("returns reused on the generic active fast path without creating or reserving", async () => {
@@ -146,6 +605,7 @@ describe("startGen", () => {
 
   it("returns reused from generic P2002 recovery and never reports the rolled-back loser as fresh", async () => {
     db.genJobFindFirst
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: "job_winner" });
     db.genJobCreate.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
@@ -457,5 +917,212 @@ describe("startGen", () => {
     expect(db.genJobUpdate).not.toHaveBeenCalled();
     expect(db.actionEventCreate).not.toHaveBeenCalled();
     expect(db.refundReservation).not.toHaveBeenCalled(); // nothing was reserved → nothing to refund
+  });
+
+  it("fails before create/reserve when queue preparation is unavailable, after locked replay gets first say", async () => {
+    mockGetBoss.mockRejectedValueOnce(new Error("queue offline"));
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "prepare failure",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "prepare-failure-key",
+    });
+
+    expect(result).toEqual({
+      error: "Generation could not start because the queue was unavailable. Nothing was charged — retry when it is available.",
+    });
+    expect(db.prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+    expect(db.genJobUpdate).not.toHaveBeenCalled();
+    expect(db.refundReservation).not.toHaveBeenCalled();
+    expect(db.actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("still reuses the locked concurrent winner when queue preparation failed", async () => {
+    mockGetBoss.mockRejectedValueOnce(new Error("queue offline"));
+    const key = canvasActionKey("prepare-race").key;
+    db.genJobFindMany.mockResolvedValueOnce([]).mockResolvedValueOnce([{
+      id: "job-concurrent-winner",
+      status: "QUEUED",
+      idempotencyKey: key,
+      prompt: "concurrent winner",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: [],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      threadId: null,
+      videoOptions: null,
+    }]);
+
+    const result = await startCanvasGen({
+      actionId: "prepare-race",
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "concurrent winner",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+    });
+
+    expect(result).toEqual({ id: "job-concurrent-winner", disposition: "reused" });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("still reuses an ordinary-key concurrent winner when queue preparation failed", async () => {
+    mockGetBoss.mockRejectedValueOnce(new Error("queue offline"));
+    db.genJobFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "job-ordinary-concurrent-winner" });
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "ordinary concurrent winner",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "ordinary-prepare-race",
+    });
+
+    expect(result).toEqual({ id: "job-ordinary-concurrent-winner", disposition: "reused" });
+    expect(db.genJobFindFirst).toHaveBeenNthCalledWith(2, {
+      where: {
+        ownerId: "org_ref",
+        projectId: "p1",
+        idempotencyKey: "ordinary-prepare-race",
+        status: { in: ["QUEUED", "GENERATING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("keeps a transactional send rejection outcome unknown without refund, status clobber, or audit", async () => {
+    mockBossSend.mockRejectedValueOnce(new Error("queue offline"));
+
+    const promise = startGen({
+      projectId: "p1",
+      prompt: "dispatch failure",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "dispatch-failure-key",
+    });
+
+    await expect(promise).rejects.toThrow("queue offline");
+    const queueJobId = db.genJobCreate.mock.calls[0]?.[0]?.data?.queueJobId as string;
+    expect(mockBossSend).toHaveBeenCalledWith(
+      "gen",
+      { genJobId: "job_ref" },
+      {
+        id: queueJobId,
+        db: expect.objectContaining({ executeSql: expect.any(Function) }),
+      },
+    );
+    expect(db.genJobUpdate).not.toHaveBeenCalled();
+    expect(db.refundReservation).not.toHaveBeenCalled();
+    expect(db.actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("recovers a committed create + reserve + enqueue after the transaction commit ACK is lost", async () => {
+    db.genJobCreate.mockImplementationOnce(async ({ data }: { data: { id: string } }) => ({ id: data.id }));
+    mockBossSend.mockImplementationOnce(async (
+      _name: string,
+      _data: unknown,
+      options: { id: string },
+    ) => options.id);
+    db.genJobFindFirst.mockImplementation(async ({ where }: { where: { id?: string } }) => (
+      where.id ? { id: where.id } : null
+    ));
+    db.prisma.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => {
+      await fn(db.prisma);
+      throw new Error("commit ACK lost");
+    });
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "committed despite lost ACK",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "commit-ack-recovery-key",
+    });
+
+    const createData = db.genJobCreate.mock.calls[0]?.[0]?.data as { id: string; queueJobId: string };
+    const createdId = createData.id;
+    const queueJobId = createData.queueJobId;
+    expect(result).toEqual({ id: createdId, disposition: "fresh" });
+    expect(createdId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+    expect(queueJobId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(queueJobId).not.toBe(createdId);
+    expect(createData).toEqual(expect.objectContaining({
+      id: createdId,
+      queueJobId,
+    }));
+    expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, expect.objectContaining({ refId: createdId }));
+    expect(mockBossSend).toHaveBeenCalledWith(
+      "gen",
+      { genJobId: createdId },
+      {
+        id: queueJobId,
+        db: expect.objectContaining({ executeSql: expect.any(Function) }),
+      },
+    );
+    expect(db.genJobFindFirst).toHaveBeenLastCalledWith({
+      where: { id: createdId, ownerId: "org_ref", projectId: "p1" },
+      select: { id: true },
+    });
+    expect(db.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("keeps a lost commit ACK unknown when the owner/project/job lookup cannot prove a commit", async () => {
+    db.genJobCreate.mockImplementationOnce(async ({ data }: { data: { id: string } }) => ({ id: data.id }));
+    mockBossSend.mockImplementationOnce(async (
+      _name: string,
+      _data: unknown,
+      options: { id: string },
+    ) => options.id);
+    db.prisma.$transaction.mockImplementationOnce(async (fn: (tx: unknown) => Promise<unknown>) => {
+      await fn(db.prisma);
+      throw new Error("commit ACK lost");
+    });
+
+    await expect(startGen({
+      projectId: "p1",
+      prompt: "unknown commit outcome",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "commit-ack-unknown-key",
+    })).rejects.toThrow("commit ACK lost");
+
+    const createdId = db.genJobCreate.mock.calls[0]?.[0]?.data?.id as string;
+    expect(db.genJobFindFirst).toHaveBeenLastCalledWith({
+      where: { id: createdId, ownerId: "org_ref", projectId: "p1" },
+      select: { id: true },
+    });
+    expect(db.genJobUpdate).not.toHaveBeenCalled();
+    expect(db.refundReservation).not.toHaveBeenCalled();
+    expect(db.actionEventCreate).not.toHaveBeenCalled();
   });
 });

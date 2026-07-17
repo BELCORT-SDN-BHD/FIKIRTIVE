@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Fence (northstar PROGRAM.md §二 方案 A): app/northstar + components/northstar are DESIGN
-# files — pure client prototypes with mock data. They must never import the backend:
+# Fence (northstar PROGRAM.md §二 方案 A): gallery + components/northstar stay pure
+# design files. Fenced route/component files must never import the backend directly:
 # no server actions (lib/*-actions), no @fikirtive/db (Prisma), no @fikirtive/generation,
 # no auth/guard modules, no server-only. Structural guarantee, not honour system.
+# The immersive Canvas reaches its authenticated runtime only through the reviewed
+# components/canvas adapter outside this tree; this exception does not weaken the regex.
 # Wired into ci.yml (check job, fences step) since PR #236.
 set -uo pipefail
 
@@ -15,7 +17,7 @@ bad=$(grep -rnE "(from[[:space:]]+|import[[:space:]]*\([[:space:]]*)[\"'][^\"']*
   $DIRS --include='*.ts' --include='*.tsx' 2>/dev/null | grep -vE ':\s*(\*|//)' || true)
 
 if [ -n "$bad" ]; then
-  echo "FAIL: northstar prototype files must not import server actions, @fikirtive/db, auth, or server-only:"
+  echo "FAIL: fenced northstar files must not import server actions, @fikirtive/db, auth, or server-only:"
   echo "$bad"
   exit 1
 fi

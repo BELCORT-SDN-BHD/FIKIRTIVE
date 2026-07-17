@@ -3,6 +3,11 @@ import { videoDefaults, type GenVideoModel } from "@fikirtive/core";
 
 const HASH_HEX_LENGTH = 32;
 const FACTORY_KEY_RE = /^batch:([0-9a-f]{32}):attempt:([0-9a-f]{32})$/;
+const CANVAS_KEY_RE = /^canvas:([0-9a-f]{64})$/;
+
+export interface CanvasActionKey {
+  key: string;
+}
 
 export interface FactoryAttemptKey {
   key: string;
@@ -28,6 +33,7 @@ export interface FactoryMaterial {
   tailGenerationId: string | null;
   referenceVideoGenerationId: string | null;
   shotId: string | null;
+  threadId: string | null;
   videoOptions: FactoryVideoOptions | null;
 }
 
@@ -42,6 +48,7 @@ export interface FactoryMaterialInput {
   tailGenerationId?: string | null;
   referenceVideoGenerationId?: string | null;
   shotId?: string | null;
+  threadId?: string | null;
   durationSeconds?: number | null;
   resolution?: string | null;
   aspectRatio?: string | null;
@@ -49,9 +56,11 @@ export interface FactoryMaterialInput {
   audio?: boolean | null;
 }
 
-export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "variantSel"> & {
+export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "variantSel" | "threadId"> & {
   variantSel: unknown;
   videoOptions: unknown;
+  /** Legacy/non-Canvas readers may omit the column; absence is the same as null. */
+  threadId?: string | null;
 };
 
 function shortHash(scope: string, value: string): string {
@@ -61,6 +70,23 @@ function shortHash(scope: string, value: string): string {
     .update(value)
     .digest("hex")
     .slice(0, HASH_HEX_LENGTH);
+}
+
+/** Reserved, server-derived Canvas action identity. The full SHA-256 digest keeps the key
+ * inside genRequest's 80-character cap while never persisting the caller's action id. */
+export function canvasActionKey(actionId: string): CanvasActionKey {
+  const digest = createHash("sha256")
+    .update("canvas-action-v1")
+    .update("\0")
+    .update(`${actionId.length}:${actionId}`)
+    .digest("hex");
+  return { key: `canvas:${digest}` };
+}
+
+/** Recognises only the reserved v1 Canvas family. startGen refuses caller-supplied members;
+ * startCanvasGen is the only entrypoint allowed to derive one server-side. */
+export function parseCanvasActionKey(key: string): CanvasActionKey | null {
+  return CANVAS_KEY_RE.test(key) ? { key } : null;
 }
 
 /** Stable factory identity: 128-bit logical-cell hash + 128-bit caller attempt hash.
@@ -117,6 +143,7 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     tailGenerationId: input.tailGenerationId ?? null,
     referenceVideoGenerationId: input.referenceVideoGenerationId ?? null,
     shotId: input.shotId ?? null,
+    threadId: input.threadId ?? null,
     videoOptions,
   };
 }
@@ -145,6 +172,7 @@ export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: F
     prior.tailGenerationId === expected.tailGenerationId &&
     prior.referenceVideoGenerationId === expected.referenceVideoGenerationId &&
     prior.shotId === expected.shotId &&
+    (prior.threadId ?? null) === expected.threadId &&
     canonicalJson(prior.videoOptions ?? null) === canonicalJson(expected.videoOptions)
   );
 }

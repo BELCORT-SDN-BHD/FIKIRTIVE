@@ -98,6 +98,7 @@ export type PlannedCanvasJobSiblingNode = {
   h: number;
   prompt: string | null;
   generationId: string;
+  genJobId: string;
   sourceNodeId: string | null;
   threadId: string | null;
   url: string;
@@ -135,16 +136,32 @@ export function planSettledCanvasJobSiblingNodes(
   for (const id of resolvedGenerationIds) if (id) have.add(id);
 
   const planned: PlannedCanvasJobSiblingNode[] = [];
-  const seenJobs = new Set<string>();
-
+  const nodesByJob = new Map<string, CanvasJobRecoveryNode[]>();
   for (const node of nodes) {
-    if (!node.genJobId || seenJobs.has(node.genJobId)) continue;
-    seenJobs.add(node.genJobId);
-    const job = jobById.get(node.genJobId);
-    if (!job || job.status !== "DONE" || job.generationIds.length <= 1) continue;
-    if (node.status === "done" && node.generationId) continue;
+    if (!node.genJobId) continue;
+    const group = nodesByJob.get(node.genJobId) ?? [];
+    group.push(node);
+    nodesByJob.set(node.genJobId, group);
+  }
 
-    const primaryGenerationId = node.generationId ?? firstDisplayableGenerationId(job.generationIds, thumbs);
+  for (const [genJobId, jobNodes] of nodesByJob) {
+    const job = jobById.get(genJobId);
+    if (!job || job.status !== "DONE" || job.generationIds.length <= 1) continue;
+
+    // Recovery is not tied to winning the primary row's pending→done CAS. A browser may have
+    // resolved the primary and exited before placing siblings, or another reload may have won
+    // that repair. Use the durable primary card as the anchor in either state; the caller's
+    // job-wide placement lock makes each planned generation idempotent under concurrency.
+    const expectedPrimaryId = firstDisplayableGenerationId(job.generationIds, thumbs);
+    const node =
+      jobNodes.find((candidate) => candidate.generationId === expectedPrimaryId) ??
+      jobNodes.find((candidate) => candidate.generationId === null) ??
+      [...jobNodes].sort(
+        (left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id),
+      )[0];
+    if (!node) continue;
+
+    const primaryGenerationId = node.generationId ?? expectedPrimaryId;
     if (primaryGenerationId) have.add(primaryGenerationId);
 
     for (let i = 0; i < job.generationIds.length; i++) {
@@ -160,7 +177,8 @@ export function planSettledCanvasJobSiblingNodes(
         h: node.h,
         prompt: node.prompt,
         generationId,
-        sourceNodeId: node.sourceNodeId,
+        genJobId: job.id,
+        sourceNodeId: node.sourceNodeId ?? node.id,
         threadId: node.threadId,
         url,
       });

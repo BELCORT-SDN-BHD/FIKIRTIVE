@@ -9,8 +9,9 @@ import "./immersive-tokens.css";
  *
  * 门禁(照抄 /northstar 先例):prod 默认 404,对客不可见;
  * staging 设 NORTHSTAR_PREVIEW=1 → founder 上手开;本地 dev 永远可见。
- * 本路由组零后台:no server actions / no db / no auth
- * (scripts/check-northstar-imports.sh 看守 app/northstar 与 components/northstar)。
+ * Gallery 与 northstar 组件树仍是纯前端。沉浸式 Canvas 的真实 runtime 例外
+ * 只能通过 fenced tree 外的受控 adapter 进入；路由与 northstar 组件不得
+ * 直接 import server actions / db / auth。scripts/check-northstar-imports.sh 继续看守。
  */
 
 export const metadata = { title: "FIKIRTIVE" };

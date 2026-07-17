@@ -21,7 +21,11 @@ const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: vi.fn(async () => false) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("../queue", () => ({ getBoss: vi.fn(async () => ({ send: vi.fn(async () => "queue-job-1") })) }));
+vi.mock("../queue", () => ({
+  getBoss: vi.fn(async () => ({
+    send: vi.fn(async (_name: string, _data: unknown, options: { id?: string }) => options.id ?? null),
+  })),
+}));
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => new Set()) }));
 

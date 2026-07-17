@@ -20,7 +20,7 @@ export function cvImage(kind: CvKind, seed: number): string {
 
 // ── Canvas 画布对象(GOAL B/C/D:对象 = 有状态一等公民) ────────────────────
 export type CvKind = "image" | "video";
-export type CvStatus = "ready" | "generating";
+export type CvStatus = "ready" | "generating" | "failed" | "timeout" | "missing";
 
 export interface CvObject {
   id: string;
@@ -35,6 +35,19 @@ export interface CvObject {
   w: number;
   h: number;
   status: CvStatus;
+  /** 真实 Canvas runtime 的持久化关联；示例 fixture 不伪造这些字段。 */
+  generationId?: string;
+  genJobId?: string;
+  threadId?: string;
+  /** 同一次用户意图在 uncertain/failed retry 时保持不变。 */
+  actionId?: string;
+  variantIndex?: number;
+  variantCount?: number;
+  /** Server/job 返回的真实进度与失败说明。 */
+  progress?: number;
+  error?: string;
+  /** 明确区分历史示例和真实项目节点，避免把 fixture 冒充 live output。 */
+  example?: boolean;
   /** 谱系(D3):父对象 id → 画连线 */
   parentId?: string;
   /** A/B 分叉标签 */
@@ -176,9 +189,9 @@ const CV_SEED_TURNS_SS3: CvChatTurn[] = [
 
 /** 每 session 的初始画布内容(首次切入时用;之后 canvas 在内存里保留本会话编辑)。 */
 export const CV_SESSION_SEEDS: Record<string, CvSessionSeed> = {
-  "ss-1": { objects: CV_SEED_OBJECTS, turns: CV_SEED_TURNS },
-  "ss-2": { objects: CV_SEED_OBJECTS_SS2, turns: CV_SEED_TURNS_SS2 },
-  "ss-3": { objects: CV_SEED_OBJECTS_SS3, turns: CV_SEED_TURNS_SS3 },
+  "ss-1": { objects: CV_SEED_OBJECTS.map((object) => ({ ...object, example: true })), turns: CV_SEED_TURNS },
+  "ss-2": { objects: CV_SEED_OBJECTS_SS2.map((object) => ({ ...object, example: true })), turns: CV_SEED_TURNS_SS2 },
+  "ss-3": { objects: CV_SEED_OBJECTS_SS3.map((object) => ({ ...object, example: true })), turns: CV_SEED_TURNS_SS3 },
 };
 
 /** 全 session 的种子对象拍平 —— 深链(?asset=id)按 id 查找的单一源。 */
@@ -266,6 +279,7 @@ function seedFromExternal(
     w: isVid ? 168 : 240,
     h: isVid ? 300 : 240,
     status: "ready",
+    example: true,
     credits,
   };
 }
@@ -274,7 +288,7 @@ export function resolveCanvasSeed(fromId: string | null): CvObject | null {
   if (!fromId) return null;
   // 1) 画布种子对象(Library / asset-viewer 深链)—— 原样搬上一张干净画布
   const seed = CV_ALL_SEED_OBJECTS.find((o) => o.id === fromId);
-  if (seed) return { ...seed, x: 96, y: 120, parentId: undefined, fork: undefined, status: "ready" };
+  if (seed) return { ...seed, x: 96, y: 120, parentId: undefined, fork: undefined, status: "ready", example: true };
   // 2) 首页模板
   const tpl = NS_TEMPLATES.find((t) => t.id === fromId);
   if (tpl) return seedFromExternal(tpl.id, tpl.kind, tpl.name, `Start from the “${tpl.name}” template`, tpl.thumb);
