@@ -24,6 +24,13 @@ describe("parity manifest", () => {
     }
   });
 
+  it("registers the complete CRM Segment read and act action layer", () => {
+    expect(PARITY_MANIFEST["segment-actions.listSegments"]).toMatchObject({ skill: "readSegments" });
+    expect(PARITY_MANIFEST["segment-actions.getSegment"]).toMatchObject({ skill: "readSegments" });
+    expect(PARITY_MANIFEST["segment-actions.previewSegment"]).toMatchObject({ skill: "readSegments" });
+    expect(PARITY_MANIFEST["segment-actions.buildSegment"]).toMatchObject({ skill: "buildSegment" });
+  });
+
   it("every exemption uses one of the four closed classes with a non-empty reason", () => {
     const CLASSES = new Set(["ADMIN", "VISUAL", "MONEY_IN", "ACCOUNT_SECURITY"]);
     for (const [action, entry] of entries) {

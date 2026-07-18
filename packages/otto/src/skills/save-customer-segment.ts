@@ -1,4 +1,7 @@
-/** saveCustomerSegment — $0 skill. Upserts ONE customer group card (by name) in Brand memory. */
+/**
+ * saveCustomerSegment — $0 Brand-memory note-card skill, not a CRM Segment action.
+ * Use readSegments/buildSegment for saved CRM rules, live audience counts, and Segment create/update.
+ */
 import { defineOttoSkill } from "../skill.js";
 import { z } from "zod";
 import { upsertBrandRecordFromOtto } from "./_brand-record.js";
@@ -19,9 +22,11 @@ export const saveCustomerSegmentSkill = defineOttoSkill({
   effect: "write",
   reach: "internal",
   description:
-    "Save or update ONE customer group in the user's Brand memory (upsert by name; omitted fields are kept). $0. " +
+    "Save or update ONE customer-group NOTE CARD in the user's Brand memory (upsert by name; omitted fields are kept). " +
+    "This is brand knowledge, NOT a CRM Segment and it has no audience rule or live contact membership. $0. " +
     "Use when the user describes who they sell to — a distinct group with its own pains/wants/channels. " +
-    "Keep groups few and meaningful (a brand rarely needs more than ~6). 'who' is required when creating a new group.",
+    "Keep groups few and meaningful (a brand rarely needs more than ~6). 'who' is required when creating a new group. " +
+    "For CRM Segment rules/counts use readSegments; to create or update a CRM Segment use buildSegment.",
   parameters: params,
   execute: async ({ status, ...fields }, runContext) =>
     upsertBrandRecordFromOtto({ kind: "segment", fields, status }, runContext),

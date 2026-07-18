@@ -1,4 +1,10 @@
-import type { GenRequestInput, ProductDraft, ScheduleChannel, ScheduleDraftInput } from "@fikirtive/core";
+import type {
+  GenRequestInput,
+  ProductDraft,
+  ScheduleChannel,
+  ScheduleDraftInput,
+  SegmentRuleGroup,
+} from "@fikirtive/core";
 
 /** Patch for the editScheduledPost skill (debt-72). Structural re-declaration mirroring the web
  *  UpdateScheduledPostPatch — the web type (apps/web/lib/schedule-actions.ts) must NOT be imported
@@ -29,6 +35,27 @@ export type ScheduledPostSummary = {
 
 /** A connectable publish target for the composer's account picker (debt-74). */
 export type ScheduleTarget = { id: string; name: string; channel: string };
+
+/** CRM Segment read model. The web action remains the authority and maps Prisma rows into this
+ * serializable shape; Otto never imports Prisma or trusts a model-supplied owner identity. */
+export type CrmSegmentSummary = {
+  id: string;
+  name: string;
+  phrase: string;
+  rules: SegmentRuleGroup | null;
+  status: "ready" | "unavailable";
+  matchedCount: number;
+  contactableCount: number;
+  knownOptOutCount: number;
+  createdAt: string;
+};
+
+export type CrmSegmentContact = {
+  id: string;
+  name: string;
+  channels: string[];
+  contactable: boolean;
+};
 
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
@@ -125,6 +152,46 @@ export interface OttoContext {
   /** The latest generation's status for THIS thread (best-effort), so Otto speaks truthfully
    *  about progress instead of guessing. Null/undefined = unknown. */
   activeJob?: { status: string; kind: string; error?: string | null } | null;
+  /** CRM Segments port (B0-61/C3, $0). Every method is injected by the web caller and delegates to
+   * the SAME requireOwner-gated Segment server actions the human page uses. `build` accepts only a
+   * structured rule group; it never compiles free-form language inside the skill. Create IDs and
+   * proofs are issued server-side by the action layer, while update IDs are owner-scoped there. */
+  segments?: {
+    list(): Promise<
+      | { ok: true; evaluatedAt: string; segments: CrmSegmentSummary[] }
+      | { error: string }
+    >;
+    get(segmentId: string): Promise<
+      | { ok: true; evaluatedAt: string; segment: CrmSegmentSummary }
+      | { error: string }
+    >;
+    preview(rules: SegmentRuleGroup): Promise<
+      | {
+          ok: true;
+          evaluatedAt: string;
+          phrase: string;
+          matchedCount: number;
+          contactableCount: number;
+          knownOptOutCount: number;
+          contacts: CrmSegmentContact[];
+        }
+      | { error: string }
+    >;
+    build(input: {
+      operation: "create" | "update";
+      segmentId?: string;
+      name: string;
+      rules: SegmentRuleGroup;
+    }): Promise<
+      | {
+          ok: true;
+          idempotent: boolean;
+          operation: "create" | "update";
+          segment: Omit<CrmSegmentSummary, "status" | "matchedCount" | "contactableCount" | "knownOptOutCount">;
+        }
+      | { error: string }
+    >;
+  };
   /** Meta ad objects port (G7) — injected by the web caller; lists the owner's connected ad objects
    *  (campaigns, ad sets, ads). Skills reach it ONLY via ctx.metaAds, never importing meta-objects.ts. */
   metaAds?: {
