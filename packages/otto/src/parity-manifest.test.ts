@@ -31,6 +31,19 @@ describe("parity manifest", () => {
     expect(PARITY_MANIFEST["segment-actions.buildSegment"]).toMatchObject({ skill: "buildSegment" });
   });
 
+  it("registers the complete zero-cost Campaign read and act action layer without new debt", () => {
+    expect(PARITY_MANIFEST["campaign-view-data.listCampaigns"]).toMatchObject({ skill: "readCampaigns" });
+    expect(PARITY_MANIFEST["campaign-view-data.getCampaign"]).toMatchObject({ skill: "readCampaigns" });
+    expect(PARITY_MANIFEST["trend-actions.listTrendSnapshots"]).toMatchObject({ skill: "readCampaigns" });
+    expect(PARITY_MANIFEST["campaign-actions.proposeCampaign"]).toMatchObject({ skill: "planCampaign" });
+    expect(PARITY_MANIFEST["campaign-actions.proposeCampaignEntry"]).toMatchObject({ skill: "planCampaign" });
+    expect(PARITY_MANIFEST["campaign-actions.updateCampaignEntry"]).toMatchObject({ skill: "planCampaign" });
+    expect(PARITY_MANIFEST["campaign-actions.removeCampaignEntry"]).toMatchObject({ skill: "planCampaign" });
+    expect(PARITY_MANIFEST["campaign-actions.approveCampaignEntry"]).toMatchObject({ skill: "planCampaign" });
+    expect(PARITY_MANIFEST["campaign-actions.setCampaignGrouping"]).toMatchObject({ skill: "planCampaign" });
+    expect(PARITY_MANIFEST["trend-actions.saveTrendSnapshot"]).toMatchObject({ skill: "planCampaign" });
+  });
+
   it("every exemption uses one of the four closed classes with a non-empty reason", () => {
     const CLASSES = new Set(["ADMIN", "VISUAL", "MONEY_IN", "ACCOUNT_SECURITY"]);
     for (const [action, entry] of entries) {
