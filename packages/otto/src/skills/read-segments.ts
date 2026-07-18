@@ -1,0 +1,88 @@
+/**
+ * readSegments — $0 CRM Segment read parity (B0-61/C3).
+ *
+ * Lists saved CRM Segments, reads one owner-scoped Segment with its structured rule/counts, or
+ * previews one structured rule group. It reaches CRM only through the injected Segment action port.
+ * Natural-language compilation is deliberately outside this skill: the model must submit the closed
+ * structured rule object, and the shared action validator checks it again.
+ */
+import type { RunContext } from "@openai/agents";
+import { z } from "zod";
+import { defineOttoSkill } from "../skill.js";
+import type { OttoContext } from "../context.js";
+
+export const crmSegmentRule = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("lifetime_spend"),
+      comparison: z.enum(["at_least", "more_than"]),
+      amountMyr: z.number().finite().nonnegative(),
+    })
+    .strict(),
+  z.object({ kind: z.literal("last_order_recency"), withinDays: z.number().int().positive() }).strict(),
+  z.object({ kind: z.literal("channel"), channel: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/) }).strict(),
+  z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(80) }).strict(),
+  z
+    .object({
+      kind: z.literal("contactability"),
+      value: z.enum(["contactable", "not_contactable"]),
+    })
+    .strict(),
+]);
+
+export const crmSegmentRuleGroup = z
+  .object({
+    match: z.enum(["all", "any"]),
+    rules: z.array(crmSegmentRule).min(1),
+  })
+  .strict();
+
+const params = z.object({
+  operation: z.enum(["list", "get", "preview"]),
+  segmentId: z
+    .string()
+    .optional()
+    .describe("get: exact CRM Segment id returned by list. Never guess an id."),
+  rules: crmSegmentRuleGroup
+    .optional()
+    .describe("preview: one structured, one-level rule group. Never pass natural-language prose."),
+});
+
+type ReadSegmentsInput = z.infer<typeof params>;
+
+export async function executeReadSegments(
+  input: ReadSegmentsInput,
+  runContext: Pick<RunContext<OttoContext>, "context">,
+): Promise<unknown> {
+  const segments = runContext?.context?.segments;
+  if (!segments) return { ok: false, error: "CRM segments aren't available right now." };
+
+  switch (input.operation) {
+    case "list":
+      return segments.list();
+    case "get":
+      if (!input.segmentId) return { ok: false, error: "get needs the exact `segmentId` from list." };
+      return segments.get(input.segmentId);
+    case "preview":
+      if (!input.rules) return { ok: false, error: "preview needs a structured `rules` object." };
+      return segments.preview(input.rules);
+  }
+}
+
+export const readSegmentsSkill = defineOttoSkill({
+  name: "readSegments",
+  cost: "free",
+  effect: "read",
+  reach: "internal",
+  description:
+    "Read the user's CRM Segments through the same owner-scoped action layer as the CRM page. $0 read-only. " +
+    "operation=list returns saved segments with rules and live matched/contactable/known-opt-out counts. " +
+    "operation=get needs an exact segmentId from list and returns that Segment's rule and counts. " +
+    "operation=preview evaluates a STRUCTURED one-level rule object without saving. Never send free-form natural " +
+    "language as rules and never guess an id. Contactable here is an audience estimate: unknown consent stays " +
+    "included, only known opt-out is excluded, and do-not-disturb is enforced later at send time.",
+  parameters: params,
+  execute: executeReadSegments,
+});
+
+export const readSegments = readSegmentsSkill.tool;

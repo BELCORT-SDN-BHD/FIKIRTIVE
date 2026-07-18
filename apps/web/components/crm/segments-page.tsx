@@ -51,8 +51,9 @@ type DraftGroup = { match: "all" | "any"; rules: DraftRule[] };
 type SettledPreview = { key: string; result: PreviewSuccess | null; error: string | null };
 type DraftPreviewRequest = SettledPreview & { status: "loading" | "settled" };
 type RetryFence = {
+  operation: "create" | "update";
   segmentId: string;
-  segmentProof: string;
+  segmentProof?: string;
   name: string;
   rulesKey: string;
 };
@@ -62,7 +63,7 @@ const RULE_LABELS: Record<RuleKind, string> = {
   last_order_recency: "Last order recency",
   channel: "Channel",
   tag: "Tag",
-  contactability: "Contactability",
+  contactability: "Consent selection",
 };
 
 function newDraftRule(kind: RuleKind, id: number): DraftRule {
@@ -82,6 +83,23 @@ function newDraftRule(kind: RuleKind, id: number): DraftRule {
 
 function initialDraft(): DraftGroup {
   return { match: "all", rules: [newDraftRule("contactability", 1)] };
+}
+
+function draftFromRules(group: SegmentRuleGroup): DraftGroup {
+  return {
+    match: group.match,
+    rules: group.rules.map((rule, index): DraftRule => {
+      const id = index + 1;
+      switch (rule.kind) {
+        case "lifetime_spend":
+          return { ...rule, id, amountMyr: String(rule.amountMyr) };
+        case "last_order_recency":
+          return { ...rule, id, withinDays: String(rule.withinDays) };
+        default:
+          return { ...rule, id };
+      }
+    }),
+  };
 }
 
 function normalizeRuleText(value: string): string {
@@ -162,6 +180,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 
   const [name, setName] = useState("");
   const [draft, setDraft] = useState<DraftGroup>(initialDraft);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const nextRuleId = useRef(2);
   const [nextSegmentId, setNextSegmentId] = useState(initialState.nextSegmentId);
   const [nextSegmentProof, setNextSegmentProof] = useState(initialState.nextSegmentProof);
@@ -242,6 +261,31 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
     return () => window.clearTimeout(timer);
   }, [previewRetry, rulesKey]);
 
+  useEffect(() => {
+    let stopped = false;
+    let syncing = false;
+    async function syncSegments() {
+      if (stopped || syncing || document.visibilityState === "hidden") return;
+      syncing = true;
+      try {
+        const result = await listSegments();
+        if (!stopped && isSuccess(result)) setSegments(result.segments);
+      } catch {
+        // Keep the last truthful view; the next bounded poll or window focus retries.
+      } finally {
+        syncing = false;
+      }
+    }
+
+    const timer = window.setInterval(syncSegments, 5_000);
+    window.addEventListener("focus", syncSegments);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", syncSegments);
+    };
+  }, []);
+
   function updateRule(index: number, updated: DraftRule) {
     setDraft((current) => ({
       ...current,
@@ -256,19 +300,48 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
     updateRule(index, newDraftRule(kind, id));
   }
 
+  function resetEditor() {
+    setEditingId(null);
+    setName("");
+    setDraft(initialDraft());
+    nextRuleId.current = 2;
+    setRetryFence(null);
+    setSaveError(null);
+  }
+
+  function editSelectedSegment() {
+    if (!selected?.rules || selected.status !== "ready") return;
+    setEditingId(selected.id);
+    setName(selected.name);
+    setDraft(draftFromRules(selected.rules));
+    nextRuleId.current = selected.rules.rules.length + 1;
+    setRetryFence(null);
+    setSaveError(null);
+    setSavedNotice(null);
+  }
+
   async function saveCurrentSegment() {
     if (!compiledRules || !rulesKey || !preview || previewKey !== rulesKey || !name.trim()) return;
-    const attempt = retryFence ?? {
-      segmentId: nextSegmentId,
-      segmentProof: nextSegmentProof,
-      name: name.trim(),
-      rulesKey,
-    };
+    const attempt: RetryFence = retryFence ?? (editingId
+      ? {
+          operation: "update",
+          segmentId: editingId,
+          name: name.trim(),
+          rulesKey,
+        }
+      : {
+          operation: "create",
+          segmentId: nextSegmentId,
+          segmentProof: nextSegmentProof,
+          name: name.trim(),
+          rulesKey,
+        });
     setSaving(true);
     setSaveError(null);
     setSavedNotice(null);
     try {
       const result = await buildSegment({
+        operation: attempt.operation,
         segmentId: attempt.segmentId,
         segmentProof: attempt.segmentProof,
         name: attempt.name,
@@ -285,16 +358,20 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         status: "ready",
         matchedCount: preview.matchedCount,
         contactableCount: preview.contactableCount,
+        knownOptOutCount: preview.knownOptOutCount,
       };
-      setSegments((current) => [saved, ...current.filter((segment) => segment.id !== saved.id)]);
+      setSegments((current) =>
+        attempt.operation === "update"
+          ? current.map((segment) => (segment.id === saved.id ? saved : segment))
+          : [saved, ...current.filter((segment) => segment.id !== saved.id)],
+      );
       setSelectedId(saved.id);
-      setNextSegmentId(result.nextSegmentId);
-      setNextSegmentProof(result.nextSegmentProof);
-      setRetryFence(null);
-      setSavedNotice(`“${saved.name}” is saved.`);
-      setName("");
-      setDraft(initialDraft());
-      nextRuleId.current = 2;
+      if ("nextSegmentId" in result) {
+        setNextSegmentId(result.nextSegmentId);
+        setNextSegmentProof(result.nextSegmentProof);
+      }
+      resetEditor();
+      setSavedNotice(`“${saved.name}” is ${attempt.operation === "update" ? "updated" : "saved"}.`);
     } catch {
       setRetryFence(attempt);
       setSaveError("The save request could not finish. Please retry.");
@@ -319,11 +396,16 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
       setNextSegmentId(result.nextSegmentId);
       setNextSegmentProof(result.nextSegmentProof);
       setRetryFence(null);
-      if (recovered) {
+      if (retryFence.operation === "update" && recovered?.rules) {
+        setEditingId(recovered.id);
         setSelectedId(recovered.id);
-        setName("");
-        setDraft(initialDraft());
-        nextRuleId.current = 2;
+        setName(recovered.name);
+        setDraft(draftFromRules(recovered.rules));
+        nextRuleId.current = recovered.rules.rules.length + 1;
+        setSavedNotice(`Latest saved version of “${recovered.name}” loaded.`);
+      } else if (recovered) {
+        setSelectedId(recovered.id);
+        resetEditor();
         setSavedNotice(`“${recovered.name}” is saved.`);
       } else {
         setSavedNotice("A fresh draft id is ready. Your name and rules are unchanged.");
@@ -435,10 +517,19 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 
           <Card className="min-w-0">
             <CardHeader>
-              <CardTitle>{selected ? selected.name : "Segment contacts"}</CardTitle>
-              <CardDescription>
-                {selected ? selected.phrase : "Select a saved segment to inspect its current matches."}
-              </CardDescription>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle>{selected ? selected.name : "Segment contacts"}</CardTitle>
+                  <CardDescription className="mt-1">
+                    {selected ? selected.phrase : "Select a saved segment to inspect its current matches."}
+                  </CardDescription>
+                </div>
+                {selected?.status === "ready" ? (
+                  <Button type="button" size="sm" variant="secondary" disabled={draftLocked} onClick={editSelectedSegment}>
+                    Edit segment
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent>
               {!selected ? (
@@ -480,8 +571,10 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
           <CardHeader className="border-b border-border pb-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">New segment</p>
-                <CardTitle className="mt-2">Build a rule group</CardTitle>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">
+                  {editingId ? "Edit segment" : "New segment"}
+                </p>
+                <CardTitle className="mt-2">{editingId ? "Update this rule group" : "Build a rule group"}</CardTitle>
                 <CardDescription className="mt-1">
                   Choose All or Any. Nested groups are intentionally not supported.
                 </CardDescription>
@@ -571,12 +664,27 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <Button type="button" disabled={!saveReady} onClick={saveCurrentSegment}>
                   {saving ? <LoaderCircle className="animate-spin" /> : <Save />}
-                  {saving ? "Saving…" : retryFence ? "Retry exact save" : "Save segment"}
+                  {saving
+                    ? "Saving…"
+                    : retryFence
+                      ? `Retry exact ${retryFence.operation}`
+                      : editingId
+                        ? "Update segment"
+                        : "Save segment"}
                 </Button>
                 {retryFence ? (
                   <Button type="button" variant="secondary" disabled={refreshingDraft} onClick={startFreshDraft}>
                     {refreshingDraft ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                    {refreshingDraft ? "Checking…" : "Use a fresh draft"}
+                    {refreshingDraft
+                      ? "Checking…"
+                      : retryFence.operation === "update"
+                        ? "Refresh latest"
+                        : "Use a fresh draft"}
+                  </Button>
+                ) : null}
+                {editingId && !retryFence ? (
+                  <Button type="button" variant="ghost" disabled={saving} onClick={resetEditor}>
+                    Cancel edit
                   </Button>
                 ) : null}
                 {!preview || previewKey !== rulesKey ? (
@@ -585,8 +693,8 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
               </div>
               {saveError ? (
                 <p className="mt-3 rounded-xl bg-error-soft px-4 py-3 text-sm text-error-soft-foreground" role="alert">
-                  {saveError} Your exact name and rules are locked to this draft id. Retry the exact save,
-                  or use a fresh draft before editing.
+                  {saveError} Your exact name and rules are locked for a safe retry. Retry the exact request,
+                  or {retryFence?.operation === "update" ? "refresh the latest saved version" : "use a fresh draft"} before editing.
                 </p>
               ) : null}
               {savedNotice ? (
@@ -647,16 +755,12 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-2xl font-semibold tabular-nums">{preview.matchedCount}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Matched</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-2xl font-semibold tabular-nums">{preview.contactableCount}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Contactable</p>
-        </div>
-      </div>
+      <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
+        {preview.matchedCount} matched · {preview.contactableCount} contactable · {preview.knownOptOutCount} known opt-out excluded
+      </p>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        Unknown consent stays included. Do not disturb is checked at send time and does not filter this segment.
+      </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}
       </p>
@@ -675,7 +779,7 @@ function ContactPreview({ preview }: { preview: PreviewSuccess }) {
                 </p>
               </div>
               <Badge variant={contact.contactable ? "success" : "warning"}>
-                {contact.contactable ? "Contactable" : "Do not message"}
+                {contact.contactable ? "Included" : "Known opt-out excluded"}
               </Badge>
             </li>
           ))}
@@ -789,12 +893,12 @@ function RuleValueEditor({ rule, onChange }: { rule: DraftRule; onChange: (rule:
           value={rule.value}
           onValueChange={(value) => onChange({ ...rule, value: value as "contactable" | "not_contactable" })}
         >
-          <SelectTrigger className="w-full" aria-label="Contactability value">
+          <SelectTrigger className="w-full" aria-label="Consent selection value">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="contactable">Contactable</SelectItem>
-            <SelectItem value="not_contactable">Not contactable</SelectItem>
+            <SelectItem value="contactable">Not known opt-out</SelectItem>
+            <SelectItem value="not_contactable">Known opt-out</SelectItem>
           </SelectContent>
         </Select>
       );

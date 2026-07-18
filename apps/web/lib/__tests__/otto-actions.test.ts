@@ -51,6 +51,10 @@ const {
   mockSearchWithFallback,
   mockRunVariantBatch,
   mockRunBulkGrid,
+  mockListCrmSegments,
+  mockGetCrmSegment,
+  mockPreviewCrmSegment,
+  mockBuildCrmSegment,
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
@@ -132,6 +136,10 @@ const {
     mockSearchWithFallback,
     mockRunVariantBatch: vi.fn(),
     mockRunBulkGrid: vi.fn(),
+    mockListCrmSegments: vi.fn(),
+    mockGetCrmSegment: vi.fn(),
+    mockPreviewCrmSegment: vi.fn(),
+    mockBuildCrmSegment: vi.fn(),
   };
 });
 
@@ -144,6 +152,12 @@ vi.mock("@/lib/model-registry", () => ({ resolveDisabledModels: mockResolveDisab
 vi.mock("@/lib/gen-actions", () => ({ startCoworkGen: mockStartGen }));
 vi.mock("@/lib/factory-actions", () => ({ runVariantBatch: mockRunVariantBatch, runBulkGrid: mockRunBulkGrid }));
 vi.mock("@/lib/memory-actions", () => ({ getBrandContextText: mockGetBrandContextText }));
+vi.mock("@/lib/segment-actions", () => ({
+  listSegments: mockListCrmSegments,
+  getSegment: mockGetCrmSegment,
+  previewSegment: mockPreviewCrmSegment,
+  buildSegment: mockBuildCrmSegment,
+}));
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
@@ -334,6 +348,14 @@ beforeEach(() => {
   mockScheduledPostFindFirst.mockResolvedValue(null);
   mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
   mockActionEventCreate.mockResolvedValue({});
+  mockListCrmSegments.mockResolvedValue({
+    ok: true,
+    evaluatedAt: "2026-07-18T00:00:00.000Z",
+    nextSegmentId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    nextSegmentProof: "owner-bound-proof",
+    segments: [],
+    unavailableFacts: { lastOrderAt: true, tags: true },
+  });
 });
 
 // ── Test 1: new thread ────────────────────────────────────────────────────────
@@ -452,6 +474,116 @@ describe("buildOttoContext", () => {
     expect(ctx.referenceVideoGenerationId).toBe("gen_vid_1");
     expect(ctx.referenceVideoGenerationIds).toEqual(["gen_vid_1", "gen_vid_2"]);
     expect(ctx.sourceGenerationId).toBeNull();
+  });
+
+  it("injects CRM Segment reads and create/update through the shared authenticated actions", async () => {
+    const rules = {
+      match: "all" as const,
+      rules: [{ kind: "contactability" as const, value: "contactable" as const }],
+    };
+    const segment = {
+      id: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      name: "Reachable audience",
+      phrase: "All of: Contact is not a known opt-out",
+      rules,
+      status: "ready" as const,
+      matchedCount: 4,
+      contactableCount: 3,
+      knownOptOutCount: 1,
+      createdAt: "2026-07-18T00:00:00.000Z",
+    };
+    mockListCrmSegments.mockResolvedValue({
+      ok: true,
+      evaluatedAt: "2026-07-18T00:00:00.000Z",
+      nextSegmentId: segment.id,
+      nextSegmentProof: "owner-bound-proof",
+      segments: [segment],
+      unavailableFacts: { lastOrderAt: true, tags: true },
+    });
+    mockGetCrmSegment.mockResolvedValue({
+      ok: true,
+      evaluatedAt: "2026-07-18T00:00:00.000Z",
+      segment,
+      unavailableFacts: { lastOrderAt: true, tags: true },
+    });
+    mockPreviewCrmSegment.mockResolvedValue({
+      ok: true,
+      evaluatedAt: "2026-07-18T00:00:00.000Z",
+      phrase: segment.phrase,
+      matchedCount: 4,
+      contactableCount: 3,
+      knownOptOutCount: 1,
+      contacts: [],
+      unavailableFacts: { lastOrderAt: true, tags: true },
+    });
+    mockBuildCrmSegment.mockResolvedValue({
+      ok: true,
+      operation: "create",
+      idempotent: false,
+      segment,
+      nextSegmentId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+      nextSegmentProof: "next-proof",
+    });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_xyz",
+      projectId: "proj_xyz",
+      threadId: "thread_xyz",
+    });
+    const segments = (ctx as unknown as {
+      segments: {
+        list(): Promise<unknown>;
+        get(id: string): Promise<unknown>;
+        preview(value: typeof rules): Promise<unknown>;
+        build(value: {
+          operation: "create" | "update";
+          segmentId?: string;
+          name: string;
+          rules: typeof rules;
+        }): Promise<unknown>;
+      };
+    }).segments;
+
+    await expect(segments.list()).resolves.toEqual({
+      ok: true,
+      evaluatedAt: "2026-07-18T00:00:00.000Z",
+      segments: [segment],
+    });
+    await expect(segments.get(segment.id)).resolves.toMatchObject({ ok: true, segment });
+    expect(mockGetCrmSegment).toHaveBeenCalledWith(segment.id);
+    await expect(segments.preview(rules)).resolves.toMatchObject({
+      ok: true,
+      matchedCount: 4,
+      contactableCount: 3,
+      knownOptOutCount: 1,
+    });
+    expect(mockPreviewCrmSegment).toHaveBeenCalledWith(rules);
+
+    await segments.build({ operation: "create", name: segment.name, rules });
+    expect(mockBuildCrmSegment).toHaveBeenLastCalledWith({
+      operation: "create",
+      segmentId: segment.id,
+      segmentProof: "owner-bound-proof",
+      name: segment.name,
+      rules,
+    });
+
+    mockListCrmSegments.mockClear();
+    mockBuildCrmSegment.mockResolvedValue({
+      ok: true,
+      operation: "update",
+      idempotent: false,
+      segment,
+    });
+    await segments.build({ operation: "update", segmentId: segment.id, name: segment.name, rules });
+    expect(mockListCrmSegments).not.toHaveBeenCalled();
+    expect(mockBuildCrmSegment).toHaveBeenLastCalledWith({
+      operation: "update",
+      segmentId: segment.id,
+      name: segment.name,
+      rules,
+    });
+    expect(JSON.stringify(mockBuildCrmSegment.mock.calls)).not.toContain("owner_xyz");
   });
 });
 

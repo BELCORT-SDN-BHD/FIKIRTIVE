@@ -9,6 +9,7 @@ const {
   mockSegmentFindMany,
   mockSegmentFindFirst,
   mockSegmentCreate,
+  mockSegmentUpdateMany,
   mockNewId,
   mockRevalidatePath,
 } = vi.hoisted(() => ({
@@ -18,6 +19,7 @@ const {
   mockSegmentFindMany: vi.fn(),
   mockSegmentFindFirst: vi.fn(),
   mockSegmentCreate: vi.fn(),
+  mockSegmentUpdateMany: vi.fn(),
   mockNewId: vi.fn(),
   mockRevalidatePath: vi.fn(),
 }));
@@ -31,6 +33,7 @@ vi.mock("@fikirtive/db", () => ({
       findMany: mockSegmentFindMany,
       findFirst: mockSegmentFindFirst,
       create: mockSegmentCreate,
+      updateMany: mockSegmentUpdateMany,
     },
   },
 }));
@@ -42,7 +45,7 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
 
 import * as segmentActions from "../segment-actions";
 
-const { buildSegment, listSegments, previewSegment } = segmentActions;
+const { buildSegment, getSegment, listSegments, previewSegment } = segmentActions;
 
 const SEGMENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const NEXT_SEGMENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -97,18 +100,20 @@ beforeEach(() => {
   mockSegmentCreate.mockResolvedValue({
     id: SEGMENT_ID,
     name: "VIP buyers",
-    phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+    phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
     rulesJson: spendRules,
     kind: "custom",
     createdAt: new Date("2026-07-15T03:04:05.000Z"),
   });
   mockNewId.mockReturnValue(NEXT_SEGMENT_ID);
+  mockSegmentUpdateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("segment action boundary", () => {
-  it("exports exactly the three signed server actions", () => {
+  it("exports exactly the four signed server actions", () => {
     expect(Object.keys(segmentActions).sort()).toEqual([
       "buildSegment",
+      "getSegment",
       "listSegments",
       "previewSegment",
     ]);
@@ -118,12 +123,13 @@ describe("segment action boundary", () => {
     mockRequireOwner.mockResolvedValue({ error: "Sign in required." });
 
     await expect(listSegments()).resolves.toEqual({ error: "Sign in required." });
+    await expect(getSegment(SEGMENT_ID)).resolves.toEqual({ error: "Sign in required." });
     await expect(previewSegment(spendRules)).resolves.toEqual({ error: "Sign in required." });
     await expect(
       buildSegment({ segmentId: SEGMENT_ID, name: "VIP buyers", rules: spendRules }),
     ).resolves.toEqual({ error: "Sign in required." });
 
-    expect(mockRequireOwner).toHaveBeenCalledTimes(3);
+    expect(mockRequireOwner).toHaveBeenCalledTimes(4);
     expect(mockContactFindMany).not.toHaveBeenCalled();
     expect(mockSegmentFindMany).not.toHaveBeenCalled();
     expect(mockSegmentFindFirst).not.toHaveBeenCalled();
@@ -154,9 +160,10 @@ describe("previewSegment", () => {
     expect(result).toEqual({
       ok: true,
       evaluatedAt: "2026-07-15T03:04:05.000Z",
-      phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+      phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
       matchedCount: 1,
       contactableCount: 1,
+      knownOptOutCount: 0,
       contacts: [
         {
           id: "contact-1",
@@ -195,7 +202,7 @@ describe("previewSegment", () => {
     expect(any).toMatchObject({ ok: true, matchedCount: 2 });
   });
 
-  it("counts contactable as opt-in and not do-not-disturb", async () => {
+  it("keeps unknown and DND contacts selected while visibly excluding only known opt-out", async () => {
     mockContactFindMany.mockResolvedValue([
       contacts[0],
       contacts[1],
@@ -203,6 +210,14 @@ describe("previewSegment", () => {
         id: "contact-3",
         name: "Chen",
         totalOrdersMyr: "900",
+        marketingConsent: "unknown",
+        doNotDisturb: false,
+        identities: [{ channel: "whatsapp" }],
+      },
+      {
+        id: "contact-4",
+        name: "Dina",
+        totalOrdersMyr: "700",
         marketingConsent: "opt_in",
         doNotDisturb: true,
         identities: [{ channel: "whatsapp" }],
@@ -216,12 +231,28 @@ describe("previewSegment", () => {
 
     expect(result).toMatchObject({
       ok: true,
-      matchedCount: 3,
-      contactableCount: 1,
+      matchedCount: 4,
+      contactableCount: 3,
+      knownOptOutCount: 1,
       contacts: expect.arrayContaining([
-        expect.objectContaining({ id: "contact-3", contactable: false }),
+        expect.objectContaining({ id: "contact-2", contactable: false }),
+        expect.objectContaining({ id: "contact-3", contactable: true }),
+        expect.objectContaining({ id: "contact-4", contactable: true }),
       ]),
     });
+
+    await expect(
+      previewSegment({
+        match: "all",
+        rules: [{ kind: "contactability", value: "contactable" }],
+      }),
+    ).resolves.toMatchObject({ matchedCount: 3, contactableCount: 3, knownOptOutCount: 0 });
+    await expect(
+      previewSegment({
+        match: "all",
+        rules: [{ kind: "contactability", value: "not_contactable" }],
+      }),
+    ).resolves.toMatchObject({ matchedCount: 1, contactableCount: 0, knownOptOutCount: 1 });
   });
 
   it("rejects a spend threshold the Decimal(14,2) facts cannot represent exactly", async () => {
@@ -247,6 +278,7 @@ describe("previewSegment", () => {
       ok: true,
       matchedCount: 0,
       contactableCount: 0,
+      knownOptOutCount: 0,
       contacts: [],
       unavailableFacts: { lastOrderAt: true, tags: true },
     });
@@ -281,11 +313,12 @@ describe("listSegments", () => {
         {
           id: SEGMENT_ID,
           name: "VIP buyers",
-          phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+          phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
           rules: spendRules,
           status: "ready",
           matchedCount: 1,
           contactableCount: 1,
+          knownOptOutCount: 0,
           createdAt: "2026-07-14T00:00:00.000Z",
         },
       ],
@@ -316,6 +349,7 @@ describe("listSegments", () => {
           status: "unavailable",
           matchedCount: 0,
           contactableCount: 0,
+          knownOptOutCount: 0,
         },
       ],
     });
@@ -340,6 +374,49 @@ describe("listSegments", () => {
       ok: true,
       segments: [{ status: "unavailable", phrase: "Rules unavailable", matchedCount: 0 }],
     });
+  });
+});
+
+describe("getSegment", () => {
+  it("reads one exact owner-scoped custom segment with deterministic live counts", async () => {
+    mockSegmentFindFirst.mockResolvedValue({
+      id: SEGMENT_ID,
+      name: "VIP buyers",
+      phrase: "untrusted stored phrase",
+      rulesJson: spendRules,
+      createdAt: new Date("2026-07-14T00:00:00.000Z"),
+    });
+
+    const result = await getSegment(SEGMENT_ID);
+
+    expect(mockSegmentFindFirst).toHaveBeenCalledWith({
+      where: { id: SEGMENT_ID, ownerId: "owner-1", kind: "custom", deletedAt: null },
+      select: { id: true, name: true, phrase: true, rulesJson: true, createdAt: true },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      evaluatedAt: "2026-07-15T03:04:05.000Z",
+      segment: {
+        id: SEGMENT_ID,
+        phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
+        matchedCount: 1,
+        contactableCount: 1,
+        knownOptOutCount: 0,
+      },
+    });
+  });
+
+  it("does not reveal a cross-tenant segment", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "owner-2" });
+    mockSegmentFindFirst.mockResolvedValue(null);
+
+    await expect(getSegment(SEGMENT_ID)).resolves.toEqual({ error: "Segment not found." });
+    expect(mockSegmentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: SEGMENT_ID, ownerId: "owner-2", kind: "custom", deletedAt: null },
+      }),
+    );
+    expect(mockContactFindMany).not.toHaveBeenCalled();
   });
 });
 
@@ -378,7 +455,7 @@ describe("buildSegment", () => {
         id: SEGMENT_ID,
         ownerId: "owner-1",
         name: "VIP buyers",
-        phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+        phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
         rulesJson: spendRules,
         kind: "custom",
       },
@@ -392,7 +469,7 @@ describe("buildSegment", () => {
       segment: {
         id: SEGMENT_ID,
         name: "VIP buyers",
-        phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+        phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
         rules: spendRules,
       },
     });
@@ -450,7 +527,7 @@ describe("buildSegment", () => {
     mockSegmentFindFirst.mockResolvedValue({
       id: SEGMENT_ID,
       name: "VIP buyers",
-      phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+      phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
       rulesJson: spendRules,
       kind: "custom",
       createdAt: new Date("2026-07-14T00:00:00.000Z"),
@@ -508,7 +585,7 @@ describe("buildSegment", () => {
       .mockResolvedValueOnce({
         id: SEGMENT_ID,
         name: "VIP buyers",
-        phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+        phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
         rulesJson: spendRules,
         kind: "custom",
         createdAt: new Date("2026-07-14T00:00:00.000Z"),
@@ -550,11 +627,135 @@ describe("buildSegment", () => {
         {
           id: SEGMENT_ID,
           name: "VIP buyers",
-          phrase: "All of: Lifetime spend is at least RM500 and contact is contactable",
+          phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
           matchedCount: 1,
         },
       ],
     });
+  });
+
+  it("updates an existing owner-scoped custom segment through the shared validated path", async () => {
+    const updatedRules = {
+      match: "all" as const,
+      rules: [{ kind: "lifetime_spend" as const, comparison: "more_than" as const, amountMyr: 750 }],
+    };
+    mockSegmentFindFirst.mockResolvedValue({
+      id: SEGMENT_ID,
+      name: "VIP buyers",
+      phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
+      rulesJson: spendRules,
+      kind: "custom",
+      createdAt: new Date("2026-07-14T00:00:00.000Z"),
+    });
+
+    const result = await buildSegment({
+      operation: "update",
+      segmentId: SEGMENT_ID,
+      name: "High-value buyers",
+      rules: updatedRules,
+    });
+
+    expect(mockSegmentFindFirst).toHaveBeenCalledWith({
+      where: { id: SEGMENT_ID, ownerId: "owner-1", deletedAt: null, kind: "custom" },
+      select: { id: true, name: true, phrase: true, rulesJson: true, kind: true, createdAt: true },
+    });
+    expect(mockSegmentUpdateMany).toHaveBeenCalledWith({
+      where: { id: SEGMENT_ID, ownerId: "owner-1", kind: "custom", deletedAt: null },
+      data: {
+        name: "High-value buyers",
+        phrase: "All of: Lifetime spend is more than RM750",
+        rulesJson: updatedRules,
+      },
+    });
+    expect(mockSegmentCreate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      operation: "update",
+      idempotent: false,
+      segment: { id: SEGMENT_ID, name: "High-value buyers", rules: updatedRules },
+    });
+    expect(result).not.toHaveProperty("nextSegmentId");
+  });
+
+  it("makes an exact update retry idempotent without writing again", async () => {
+    mockSegmentFindFirst.mockResolvedValue({
+      id: SEGMENT_ID,
+      name: "VIP buyers",
+      phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
+      rulesJson: spendRules,
+      kind: "custom",
+      createdAt: new Date("2026-07-14T00:00:00.000Z"),
+    });
+
+    await expect(
+      buildSegment({
+        operation: "update",
+        segmentId: SEGMENT_ID,
+        name: "VIP buyers",
+        rules: spendRules,
+      }),
+    ).resolves.toMatchObject({ ok: true, operation: "update", idempotent: true });
+    expect(mockSegmentUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("recovers an ambiguous update only when the owner-scoped saved payload is exact", async () => {
+    const existing = {
+      id: SEGMENT_ID,
+      name: "VIP buyers",
+      phrase: "All of: Lifetime spend is at least RM500 and contact is not a known opt-out",
+      rulesJson: spendRules,
+      kind: "custom",
+      createdAt: new Date("2026-07-14T00:00:00.000Z"),
+    };
+    const updatedRules = {
+      match: "all" as const,
+      rules: [
+        { kind: "lifetime_spend" as const, comparison: "more_than" as const, amountMyr: 750 },
+      ],
+    };
+    mockSegmentFindFirst
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce({
+        ...existing,
+        name: "High-value buyers",
+        phrase: "All of: Lifetime spend is more than RM750",
+        rulesJson: updatedRules,
+      });
+    mockSegmentUpdateMany.mockRejectedValueOnce(new Error("ambiguous write result"));
+
+    await expect(
+      buildSegment({
+        operation: "update",
+        segmentId: SEGMENT_ID,
+        name: "High-value buyers",
+        rules: updatedRules,
+      }),
+    ).resolves.toMatchObject({ ok: true, operation: "update", idempotent: true });
+    expect(mockSegmentFindFirst).toHaveBeenLastCalledWith({
+      where: { id: SEGMENT_ID, ownerId: "owner-1", kind: "custom", deletedAt: null },
+      select: { id: true, name: true, phrase: true, rulesJson: true, kind: true, createdAt: true },
+    });
+  });
+
+  it("fails closed when an update id is not owned by the authenticated tenant", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "owner-2" });
+    mockSegmentFindFirst.mockResolvedValue(null);
+
+    await expect(
+      buildSegment({
+        operation: "update",
+        segmentId: SEGMENT_ID,
+        name: "Foreign segment",
+        rules: spendRules,
+      }),
+    ).resolves.toEqual({ error: "Segment not found." });
+    expect(mockSegmentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: SEGMENT_ID, ownerId: "owner-2", deletedAt: null, kind: "custom" },
+      }),
+    );
+    expect(mockSegmentUpdateMany).not.toHaveBeenCalled();
+    expect(mockSegmentCreate).not.toHaveBeenCalled();
   });
 });
 
@@ -565,7 +766,7 @@ describe("segment page ambiguous-save retry fence", () => {
       "utf8",
     );
 
-    expect(source).toContain("const attempt = retryFence ??");
+    expect(source).toContain("const attempt: RetryFence = retryFence ??");
     expect(source).toContain("name: attempt.name");
     expect(source).toContain("rules: JSON.parse(attempt.rulesKey) as SegmentRuleGroup");
     expect(source.match(/setRetryFence\(attempt\)/g)).toHaveLength(2);
@@ -573,7 +774,10 @@ describe("segment page ambiguous-save retry fence", () => {
     expect(source).toContain("<fieldset disabled={draftLocked}");
     expect(source).toContain("const result = await listSegments()");
     expect(source).toContain("setNextSegmentProof(result.nextSegmentProof)");
-    expect(source).toContain("Retry exact save");
+    expect(source).toContain("Retry exact ${retryFence.operation}");
     expect(source).toContain("Use a fresh draft");
+    expect(source).toContain("Refresh latest");
+    expect(source).toContain("known opt-out excluded");
+    expect(source).toContain("Do not disturb is checked at send time and does not filter this segment.");
   });
 });

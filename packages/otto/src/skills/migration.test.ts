@@ -9,6 +9,8 @@ import { seedancePromptSkill } from "./seedance-prompt.js";
 import { proposeStoryboardSkill } from "./propose-storyboard.js";
 import { ingestProductSkill } from "./ingest-product.js";
 import { researchWebSkill } from "./research-web.js";
+import { readSegmentsSkill } from "./read-segments.js";
+import { buildSegmentSkill } from "./build-segment.js";
 
 describe("migrated trivial skills carry the right gate", () => {
   it("setTitle: free/write/internal → not gated", () => {
@@ -72,5 +74,21 @@ describe("external-read skills gate (P1-01)", () => {
   it("researchWeb: same shape — the sibling external read stays ungated too", () => {
     expect(researchWebSkill.reach).toBe("external");
     expect(researchWebSkill.needsApproval).toBe(false);
+  });
+});
+
+describe("CRM Segment skills gate (B0-61/C3)", () => {
+  it("readSegments: free/read/internal → not gated", () => {
+    expect(readSegmentsSkill.cost).toBe("free");
+    expect(readSegmentsSkill.effect).toBe("read");
+    expect(readSegmentsSkill.reach).toBe("internal");
+    expect(readSegmentsSkill.needsApproval).toBe(false);
+  });
+
+  it("buildSegment: free/write/internal → not gated", () => {
+    expect(buildSegmentSkill.cost).toBe("free");
+    expect(buildSegmentSkill.effect).toBe("write");
+    expect(buildSegmentSkill.reach).toBe("internal");
+    expect(buildSegmentSkill.needsApproval).toBe(false);
   });
 });

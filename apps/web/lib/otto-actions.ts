@@ -36,6 +36,7 @@ import {
   braveSearch,
   searchWithFallback,
   extractProductDraft,
+  type SegmentRuleGroup,
 } from "@fikirtive/core";
 import {
   otto,
@@ -89,6 +90,12 @@ import { makeOttoRefgenPort } from "./otto-refgen-port";
 import { makeOttoEntitiesPort } from "./otto-entities-port";
 import { makeOttoLibraryPort } from "./otto-library-port";
 import { makeOttoBrandMemoryPort } from "./otto-brand-memory-port";
+import {
+  buildSegment as buildCrmSegment,
+  getSegment as getCrmSegment,
+  listSegments as listCrmSegments,
+  previewSegment as previewCrmSegment,
+} from "./segment-actions";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -96,6 +103,58 @@ export { mapOttoUsage } from "@fikirtive/otto";
 
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "webp"];
 const VIDEO_EXTS = ["mp4", "mov", "webm"];
+
+function makeOttoSegmentsPort() {
+  const context = {
+    list: async () => {
+      const result = await listCrmSegments();
+      if (!("ok" in result)) return result;
+      return { ok: true as const, evaluatedAt: result.evaluatedAt, segments: result.segments };
+    },
+    get: async (segmentId: string) => {
+      const result = await getCrmSegment(segmentId);
+      if (!("ok" in result)) return result;
+      return { ok: true as const, evaluatedAt: result.evaluatedAt, segment: result.segment };
+    },
+    preview: async (rules: SegmentRuleGroup) => {
+      const result = await previewCrmSegment(rules);
+      if (!("ok" in result)) return result;
+      return {
+        ok: true as const,
+        evaluatedAt: result.evaluatedAt,
+        phrase: result.phrase,
+        matchedCount: result.matchedCount,
+        contactableCount: result.contactableCount,
+        knownOptOutCount: result.knownOptOutCount,
+        contacts: result.contacts,
+      };
+    },
+    build: async ({ operation, segmentId, name, rules }: {
+      operation: "create" | "update";
+      segmentId?: string;
+      name: string;
+      rules: SegmentRuleGroup;
+    }) => {
+      if (operation === "update") {
+        if (!segmentId) return { error: "Update needs the exact segment id." };
+        return buildCrmSegment({ operation, segmentId, name, rules });
+      }
+
+      // The model never mints a Segment id. Reuse the action layer's owner-bound signed draft,
+      // then enter the exact same validated create/replay path as the human page.
+      const draft = await listCrmSegments();
+      if (!("ok" in draft)) return draft;
+      return buildCrmSegment({
+        operation,
+        segmentId: draft.nextSegmentId,
+        segmentProof: draft.nextSegmentProof,
+        name,
+        rules,
+      });
+    },
+  };
+  return context;
+}
 
 function orderedUniqueIds(ids: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
@@ -273,7 +332,7 @@ export async function buildOttoContext({
     }).catch(() => null),
     gatherReferenceImages(ownerId, projectId, imageRefIds),
   ]);
-  return {
+  const context: OttoContext & { segments: ReturnType<typeof makeOttoSegmentsPort> } = {
     orgId: ownerId,
     // userId is the owner/tenant scope (= orgId), not a distinct verified per-user id — no per-user
     // token is threaded here. See OttoContext.userId doc. Do not treat as an individual-member id.
@@ -303,6 +362,9 @@ export async function buildOttoContext({
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,
+    // B0-61/C3: list/get/preview/build all enter the authenticated Segment action layer.
+    // The port never accepts ownerId and never compiles free-form language into rules.
+    segments: makeOttoSegmentsPort(),
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
@@ -394,6 +456,7 @@ export async function buildOttoContext({
     // an Otto-only fail-closed active-job gate (refuses while a paid job runs). None duplicate spend.
     refgen: makeOttoRefgenPort(ownerId),
   };
+  return context;
 }
 
 // ---------------------------------------------------------------------------

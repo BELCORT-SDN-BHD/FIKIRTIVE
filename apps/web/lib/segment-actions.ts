@@ -40,6 +40,7 @@ const CONTACT_SELECT = {
 } as const;
 
 const GENERIC_SAVE_ERROR = "Couldn't save this segment. Start a new draft and try again.";
+const GENERIC_UPDATE_ERROR = "Couldn't update this segment. Refresh and try again.";
 const UNAVAILABLE_FACTS = { lastOrderAt: true, tags: true } as const;
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const DRAFT_PROOF_CONTEXT = "fikirtive:crm-segment-draft:v1";
@@ -88,7 +89,9 @@ function leafPhrase(rule: SegmentLeafRule): string {
     case "tag":
       return `tag is ${JSON.stringify(rule.tag)}`;
     case "contactability":
-      return rule.value === "contactable" ? "contact is contactable" : "contact is not contactable";
+      return rule.value === "contactable"
+        ? "contact is not a known opt-out"
+        : "contact is a known opt-out";
   }
 }
 
@@ -148,8 +151,11 @@ function evaluateContact(row: ContactRow): EvaluatedContact {
         .filter((channel): channel is string => channel !== null),
     ),
   ].sort();
-  const marketingConsent = asConsent(row.marketingConsent);
-  const contactable = marketingConsent === "opt_in" && row.doNotDisturb === false;
+  const marketingConsent = asConsent(row.marketingConsent) ?? "unknown";
+  // Segment selection is not a send gate. R-010 keeps unknown consent in the merchant's
+  // selected audience, and DND is enforced later by B7. Only a known opt-out is excluded
+  // from this estimate.
+  const contactable = marketingConsent !== "opt_out";
 
   return {
     id: row.id,
@@ -185,7 +191,20 @@ function matches(
   rules: SegmentRuleGroup,
   evaluatedAt: string,
 ): EvaluatedContact[] {
-  return contacts.filter((contact) => contactMatchesRules(contact.facts, rules, { evaluatedAt }));
+  return contacts.filter((contact) =>
+    contactMatchesRules(
+      {
+        ...contact.facts,
+        // The shared core matcher predates R-010 and models send-time contactability.
+        // At the Segment boundary, normalize that leaf to audience-selection semantics:
+        // unknown stays included, known opt-out is excluded, and DND never filters.
+        marketingConsent: contact.contactable ? "opt_in" : "opt_out",
+        doNotDisturb: false,
+      },
+      rules,
+      { evaluatedAt },
+    ),
+  );
 }
 
 function publicContacts(contacts: EvaluatedContact[]) {
@@ -227,6 +246,32 @@ function publicSegment(row: SegmentRow, rules: SegmentRuleGroup) {
   };
 }
 
+function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluatedAt: string) {
+  const validated = validateSegmentRuleGroup(row.rulesJson);
+  if (!validated.ok || !hasExactSpendPrecision(validated.value)) {
+    return {
+      id: row.id,
+      name: row.name,
+      phrase: "Rules unavailable",
+      rules: null,
+      status: "unavailable" as const,
+      matchedCount: 0,
+      contactableCount: 0,
+      knownOptOutCount: 0,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+  const matched = matches(contacts, validated.value, evaluatedAt);
+  const contactableCount = matched.filter((contact) => contact.contactable).length;
+  return {
+    ...publicSegment(row, validated.value),
+    status: "ready" as const,
+    matchedCount: matched.length,
+    contactableCount,
+    knownOptOutCount: matched.length - contactableCount,
+  };
+}
+
 export async function listSegments() {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -245,30 +290,27 @@ export async function listSegments() {
     ok: true as const,
     evaluatedAt,
     ...issueNextDraft(gate.ownerId),
-    segments: (rows as SegmentRow[]).map((row) => {
-      const validated = validateSegmentRuleGroup(row.rulesJson);
-      if (!validated.ok || !hasExactSpendPrecision(validated.value)) {
-        return {
-          id: row.id,
-          name: row.name,
-          phrase: "Rules unavailable",
-          rules: null,
-          status: "unavailable" as const,
-          matchedCount: 0,
-          contactableCount: 0,
-          createdAt: row.createdAt.toISOString(),
-        };
-      }
-      const matched = matches(contacts, validated.value, evaluatedAt);
-      return {
-        ...publicSegment(row, validated.value),
-        status: "ready" as const,
-        matchedCount: matched.length,
-        contactableCount: matched.filter((contact) => contact.contactable).length,
-      };
-    }),
+    segments: (rows as SegmentRow[]).map((row) => evaluatedSegment(row, contacts, evaluatedAt)),
     unavailableFacts: UNAVAILABLE_FACTS,
   };
+}
+
+export async function getSegment(rawSegmentId: unknown) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (typeof rawSegmentId !== "string" || !ULID_PATTERN.test(rawSegmentId)) {
+    return { error: "Segment not found." };
+  }
+
+  const row = (await prisma.segment.findFirst({
+    where: { id: rawSegmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
+    select: SEGMENT_LIST_SELECT,
+  })) as SegmentRow | null;
+  if (!row) return { error: "Segment not found." };
+
+  const evaluatedAt = new Date().toISOString();
+  const segment = evaluatedSegment(row, await readContacts(gate.ownerId), evaluatedAt);
+  return { ok: true as const, evaluatedAt, segment, unavailableFacts: UNAVAILABLE_FACTS };
 }
 
 export async function previewSegment(rawRules: unknown) {
@@ -283,12 +325,14 @@ export async function previewSegment(rawRules: unknown) {
 
   const evaluatedAt = new Date().toISOString();
   const matched = matches(await readContacts(gate.ownerId), validated.value, evaluatedAt);
+  const contactableCount = matched.filter((contact) => contact.contactable).length;
   return {
     ok: true as const,
     evaluatedAt,
     phrase: canonicalPhrase(validated.value),
     matchedCount: matched.length,
-    contactableCount: matched.filter((contact) => contact.contactable).length,
+    contactableCount,
+    knownOptOutCount: matched.length - contactableCount,
     contacts: publicContacts(matched),
     unavailableFacts: UNAVAILABLE_FACTS,
   };
@@ -301,12 +345,21 @@ export async function buildSegment(raw: unknown) {
     return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   }
 
-  const input = raw as { segmentId?: unknown; segmentProof?: unknown; name?: unknown; rules?: unknown };
-  if (
-    typeof input?.segmentId !== "string" ||
-    !ULID_PATTERN.test(input.segmentId) ||
-    !validDraftProof(gate.ownerId, input.segmentId, input.segmentProof)
-  ) {
+  const input = raw as {
+    operation?: unknown;
+    segmentId?: unknown;
+    segmentProof?: unknown;
+    name?: unknown;
+    rules?: unknown;
+  };
+  const operation = input?.operation === undefined ? "create" : input.operation;
+  if (operation !== "create" && operation !== "update") {
+    return { error: "Choose create or update for this segment." };
+  }
+  if (typeof input.segmentId !== "string" || !ULID_PATTERN.test(input.segmentId)) {
+    return { error: operation === "create" ? "Start a new segment draft and try again." : "Segment not found." };
+  }
+  if (operation === "create" && !validDraftProof(gate.ownerId, input.segmentId, input.segmentProof)) {
     return { error: "Start a new segment draft and try again." };
   }
   const name = typeof input.name === "string" ? input.name.trim() : "";
@@ -319,13 +372,68 @@ export async function buildSegment(raw: unknown) {
 
   const phrase = canonicalPhrase(validated.value);
   const where = { id: input.segmentId, ownerId: gate.ownerId, deletedAt: null };
-  const existing = (await prisma.segment.findFirst({ where, select: SEGMENT_SELECT })) as SegmentRow | null;
+  const existing = (await prisma.segment.findFirst({
+    where: operation === "update" ? { ...where, kind: "custom" } : where,
+    select: SEGMENT_SELECT,
+  })) as SegmentRow | null;
+
+  if (operation === "update") {
+    if (!existing) return { error: "Segment not found." };
+    if (samePayload(existing, name, phrase, validated.value)) {
+      revalidatePath("/crm/segments");
+      return {
+        ok: true as const,
+        idempotent: true as const,
+        operation: "update" as const,
+        segment: publicSegment(existing, validated.value),
+      };
+    }
+
+    try {
+      const updated = await prisma.segment.updateMany({
+        where: { id: input.segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
+        data: {
+          name,
+          phrase,
+          rulesJson: validated.value as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (updated.count !== 1) return { error: GENERIC_UPDATE_ERROR };
+      revalidatePath("/crm/segments");
+      return {
+        ok: true as const,
+        idempotent: false as const,
+        operation: "update" as const,
+        segment: publicSegment(
+          { ...existing, name, phrase, rulesJson: validated.value },
+          validated.value,
+        ),
+      };
+    } catch {
+      const retried = (await prisma.segment.findFirst({
+        where: { id: input.segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
+        select: SEGMENT_SELECT,
+      })) as SegmentRow | null;
+      if (!retried || !samePayload(retried, name, phrase, validated.value)) {
+        return { error: GENERIC_UPDATE_ERROR };
+      }
+      revalidatePath("/crm/segments");
+      return {
+        ok: true as const,
+        idempotent: true as const,
+        operation: "update" as const,
+        segment: publicSegment(retried, validated.value),
+      };
+    }
+  }
+
   if (existing) {
     if (!samePayload(existing, name, phrase, validated.value)) return { error: GENERIC_SAVE_ERROR };
     revalidatePath("/crm/segments");
     return {
       ok: true as const,
       idempotent: true as const,
+      operation: "create" as const,
       segment: publicSegment(existing, validated.value),
       ...issueNextDraft(gate.ownerId),
     };
@@ -347,6 +455,7 @@ export async function buildSegment(raw: unknown) {
     return {
       ok: true as const,
       idempotent: false as const,
+      operation: "create" as const,
       segment: publicSegment(created, validated.value),
       ...issueNextDraft(gate.ownerId),
     };
@@ -359,6 +468,7 @@ export async function buildSegment(raw: unknown) {
     return {
       ok: true as const,
       idempotent: true as const,
+      operation: "create" as const,
       segment: publicSegment(raced, validated.value),
       ...issueNextDraft(gate.ownerId),
     };
