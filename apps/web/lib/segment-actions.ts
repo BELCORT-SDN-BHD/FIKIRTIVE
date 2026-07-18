@@ -1,0 +1,366 @@
+"use server";
+
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { revalidatePath } from "next/cache";
+import {
+  contactMatchesRules,
+  newId,
+  validateSegmentRuleGroup,
+  type SegmentContactFacts,
+  type SegmentLeafRule,
+  type SegmentRuleGroup,
+} from "@fikirtive/core";
+import { prisma, type Prisma } from "@fikirtive/db";
+import { requireOwner } from "./auth-guard";
+import { isImpersonating } from "./better-auth/compat";
+
+const SEGMENT_SELECT = {
+  id: true,
+  name: true,
+  phrase: true,
+  rulesJson: true,
+  kind: true,
+  createdAt: true,
+} as const;
+
+const SEGMENT_LIST_SELECT = {
+  id: true,
+  name: true,
+  phrase: true,
+  rulesJson: true,
+  createdAt: true,
+} as const;
+
+const CONTACT_SELECT = {
+  id: true,
+  name: true,
+  totalOrdersMyr: true,
+  marketingConsent: true,
+  doNotDisturb: true,
+} as const;
+
+const GENERIC_SAVE_ERROR = "Couldn't save this segment. Start a new draft and try again.";
+const UNAVAILABLE_FACTS = { lastOrderAt: true, tags: true } as const;
+const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+const DRAFT_PROOF_CONTEXT = "fikirtive:crm-segment-draft:v1";
+
+type ContactRow = {
+  id: string;
+  name: string;
+  totalOrdersMyr: unknown;
+  marketingConsent: string;
+  doNotDisturb: boolean;
+  identities: Array<{ channel: string }>;
+};
+
+type SegmentRow = {
+  id: string;
+  name: string;
+  phrase: string;
+  rulesJson: unknown;
+  kind?: string;
+  createdAt: Date;
+};
+
+type EvaluatedContact = {
+  id: string;
+  name: string;
+  channels: string[];
+  contactable: boolean;
+  facts: SegmentContactFacts;
+};
+
+function formatAmount(amountMyr: number): string {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amountMyr);
+}
+
+function leafPhrase(rule: SegmentLeafRule): string {
+  switch (rule.kind) {
+    case "lifetime_spend":
+      return `lifetime spend is ${rule.comparison === "at_least" ? "at least" : "more than"} RM${formatAmount(rule.amountMyr)}`;
+    case "last_order_recency":
+      return `last order was within ${rule.withinDays} ${rule.withinDays === 1 ? "day" : "days"}`;
+    case "channel":
+      return `channel is ${rule.channel}`;
+    case "tag":
+      return `tag is ${JSON.stringify(rule.tag)}`;
+    case "contactability":
+      return rule.value === "contactable" ? "contact is contactable" : "contact is not contactable";
+  }
+}
+
+function canonicalPhrase(rules: SegmentRuleGroup): string {
+  const joined = rules.rules.map(leafPhrase).join(rules.match === "all" ? " and " : " or ");
+  const sentence = joined.charAt(0).toUpperCase() + joined.slice(1);
+  return `${rules.match === "all" ? "All" : "Any"} of: ${sentence}`;
+}
+
+function hasExactSpendPrecision(rules: SegmentRuleGroup): boolean {
+  return rules.rules.every(
+    (rule) => rule.kind !== "lifetime_spend" || Number(rule.amountMyr.toFixed(2)) === rule.amountMyr,
+  );
+}
+
+function signDraft(ownerId: string, segmentId: string, secret: string): string {
+  return createHmac("sha256", secret)
+    .update(JSON.stringify([DRAFT_PROOF_CONTEXT, ownerId, segmentId]))
+    .digest("base64url");
+}
+
+function issueNextDraft(ownerId: string) {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) throw new Error("BETTER_AUTH_SECRET is required to issue a segment draft.");
+  const nextSegmentId = newId();
+  return { nextSegmentId, nextSegmentProof: signDraft(ownerId, nextSegmentId, secret) };
+}
+
+function validDraftProof(ownerId: string, segmentId: string, proof: unknown): boolean {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret || typeof proof !== "string") return false;
+  const expected = Buffer.from(signDraft(ownerId, segmentId, secret));
+  const supplied = Buffer.from(proof);
+  return expected.length === supplied.length && timingSafeEqual(expected, supplied);
+}
+
+function asConsent(value: string): SegmentContactFacts["marketingConsent"] {
+  return value === "opt_in" || value === "opt_out" || value === "unknown" ? value : undefined;
+}
+
+function asLifetimeSpend(value: unknown): number | undefined {
+  if (value === null || value === undefined) return undefined;
+  const amount = Number(String(value));
+  return Number.isFinite(amount) && amount >= 0 ? amount : undefined;
+}
+
+function asChannel(value: string): string | null {
+  const channel = value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(channel) ? channel : null;
+}
+
+function evaluateContact(row: ContactRow): EvaluatedContact {
+  const channels = [
+    ...new Set(
+      row.identities
+        .map((identity) => asChannel(identity.channel))
+        .filter((channel): channel is string => channel !== null),
+    ),
+  ].sort();
+  const marketingConsent = asConsent(row.marketingConsent);
+  const contactable = marketingConsent === "opt_in" && row.doNotDisturb === false;
+
+  return {
+    id: row.id,
+    name: row.name,
+    channels,
+    contactable,
+    facts: {
+      lifetimeSpendMyr: asLifetimeSpend(row.totalOrdersMyr),
+      channels,
+      marketingConsent,
+      doNotDisturb: row.doNotDisturb,
+    },
+  };
+}
+
+async function readContacts(ownerId: string): Promise<EvaluatedContact[]> {
+  const rows = await prisma.contact.findMany({
+    where: { ownerId, deletedAt: null },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    select: {
+      ...CONTACT_SELECT,
+      identities: {
+        where: { ownerId, deletedAt: null },
+        select: { channel: true },
+      },
+    },
+  });
+  return (rows as ContactRow[]).map(evaluateContact);
+}
+
+function matches(
+  contacts: EvaluatedContact[],
+  rules: SegmentRuleGroup,
+  evaluatedAt: string,
+): EvaluatedContact[] {
+  return contacts.filter((contact) => contactMatchesRules(contact.facts, rules, { evaluatedAt }));
+}
+
+function publicContacts(contacts: EvaluatedContact[]) {
+  return contacts.slice(0, 10).map(({ id, name, channels, contactable }) => ({
+    id,
+    name,
+    channels,
+    contactable,
+  }));
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function samePayload(row: SegmentRow, name: string, phrase: string, rules: SegmentRuleGroup): boolean {
+  return (
+    row.kind === "custom" &&
+    row.name === name &&
+    row.phrase === phrase &&
+    stableJson(row.rulesJson) === stableJson(rules)
+  );
+}
+
+function publicSegment(row: SegmentRow, rules: SegmentRuleGroup) {
+  return {
+    id: row.id,
+    name: row.name,
+    phrase: canonicalPhrase(rules),
+    rules,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+export async function listSegments() {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+
+  const evaluatedAt = new Date().toISOString();
+  const [rows, contacts] = await Promise.all([
+    prisma.segment.findMany({
+      where: { ownerId: gate.ownerId, kind: "custom", deletedAt: null },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+      select: SEGMENT_LIST_SELECT,
+    }),
+    readContacts(gate.ownerId),
+  ]);
+
+  return {
+    ok: true as const,
+    evaluatedAt,
+    ...issueNextDraft(gate.ownerId),
+    segments: (rows as SegmentRow[]).map((row) => {
+      const validated = validateSegmentRuleGroup(row.rulesJson);
+      if (!validated.ok || !hasExactSpendPrecision(validated.value)) {
+        return {
+          id: row.id,
+          name: row.name,
+          phrase: "Rules unavailable",
+          rules: null,
+          status: "unavailable" as const,
+          matchedCount: 0,
+          contactableCount: 0,
+          createdAt: row.createdAt.toISOString(),
+        };
+      }
+      const matched = matches(contacts, validated.value, evaluatedAt);
+      return {
+        ...publicSegment(row, validated.value),
+        status: "ready" as const,
+        matchedCount: matched.length,
+        contactableCount: matched.filter((contact) => contact.contactable).length,
+      };
+    }),
+    unavailableFacts: UNAVAILABLE_FACTS,
+  };
+}
+
+export async function previewSegment(rawRules: unknown) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+
+  const validated = validateSegmentRuleGroup(rawRules);
+  if (!validated.ok) return { error: "Choose valid segment rules." };
+  if (!hasExactSpendPrecision(validated.value)) {
+    return { error: "Use no more than two decimal places for lifetime spend." };
+  }
+
+  const evaluatedAt = new Date().toISOString();
+  const matched = matches(await readContacts(gate.ownerId), validated.value, evaluatedAt);
+  return {
+    ok: true as const,
+    evaluatedAt,
+    phrase: canonicalPhrase(validated.value),
+    matchedCount: matched.length,
+    contactableCount: matched.filter((contact) => contact.contactable).length,
+    contacts: publicContacts(matched),
+    unavailableFacts: UNAVAILABLE_FACTS,
+  };
+}
+
+export async function buildSegment(raw: unknown) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) {
+    return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+  }
+
+  const input = raw as { segmentId?: unknown; segmentProof?: unknown; name?: unknown; rules?: unknown };
+  if (
+    typeof input?.segmentId !== "string" ||
+    !ULID_PATTERN.test(input.segmentId) ||
+    !validDraftProof(gate.ownerId, input.segmentId, input.segmentProof)
+  ) {
+    return { error: "Start a new segment draft and try again." };
+  }
+  const name = typeof input.name === "string" ? input.name.trim() : "";
+  if (!name) return { error: "Give this segment a name." };
+  const validated = validateSegmentRuleGroup(input.rules);
+  if (!validated.ok) return { error: "Choose valid segment rules." };
+  if (!hasExactSpendPrecision(validated.value)) {
+    return { error: "Use no more than two decimal places for lifetime spend." };
+  }
+
+  const phrase = canonicalPhrase(validated.value);
+  const where = { id: input.segmentId, ownerId: gate.ownerId, deletedAt: null };
+  const existing = (await prisma.segment.findFirst({ where, select: SEGMENT_SELECT })) as SegmentRow | null;
+  if (existing) {
+    if (!samePayload(existing, name, phrase, validated.value)) return { error: GENERIC_SAVE_ERROR };
+    revalidatePath("/crm/segments");
+    return {
+      ok: true as const,
+      idempotent: true as const,
+      segment: publicSegment(existing, validated.value),
+      ...issueNextDraft(gate.ownerId),
+    };
+  }
+
+  try {
+    const created = (await prisma.segment.create({
+      data: {
+        id: input.segmentId,
+        ownerId: gate.ownerId,
+        name,
+        phrase,
+        rulesJson: validated.value as unknown as Prisma.InputJsonValue,
+        kind: "custom",
+      },
+      select: SEGMENT_SELECT,
+    })) as SegmentRow;
+    revalidatePath("/crm/segments");
+    return {
+      ok: true as const,
+      idempotent: false as const,
+      segment: publicSegment(created, validated.value),
+      ...issueNextDraft(gate.ownerId),
+    };
+  } catch {
+    const raced = (await prisma.segment.findFirst({ where, select: SEGMENT_SELECT })) as SegmentRow | null;
+    if (!raced || !samePayload(raced, name, phrase, validated.value)) {
+      return { error: GENERIC_SAVE_ERROR };
+    }
+    revalidatePath("/crm/segments");
+    return {
+      ok: true as const,
+      idempotent: true as const,
+      segment: publicSegment(raced, validated.value),
+      ...issueNextDraft(gate.ownerId),
+    };
+  }
+}
