@@ -177,9 +177,9 @@ Phase-1 完整 CRM 原子集 = Route-B §七·甲 A 表第 95 行（`ROUTE-B-MAS
 | 七·甲条目 | 承接方式 |
 |---|---|
 | D.1（功能全，`ROUTE-B-MASTER-PLAN-2026-07-12.md:137`） | §4.3 十二词反向表（主表见 §4.2） |
-| D.2（流程通，端到端可恢复，`:138`） | 端到端流程：导入（B0-59）→ 分群（B0-61）/Lifecycle（B0-60/48/49）/Inbox（B0-31/38）→ Campaign（B0-51～58）/Workflow（B0-40/47/48/49） → 精确批准/发送（B0-43，挂 B0-44/45/46）→ 回复/STOP/退订（B0-44/45）→ 回执/报告（B0-41、E5-06/07），每步承接 ID 见 §4.2 |
+| D.2（流程通，端到端可恢复，`:138`） | 端到端流程：导入（B0-59）→ 分群（B0-61）/Lifecycle（B0-60/48/49）/Inbox（B0-31/38）→ Campaign（B0-51～58）/Workflow（B0-40/47/48/49） → 精确批准/发送（B0-43，挂 B0-44/45/46）→ 顾客回复/会话（B0-31/38）与 STOP/退订（B0-44/45）→ 回执/报告（B0-41、E5-06/07），每步承接 ID 见 §4.2 |
 | D.3（体验好，respond.io 走查，`:139`） | §4.2 UIUX 列 + respond.io 走查（D7 基线） |
-| D.4（真实且安全，五个0，`:140`） | §4.2 test/acceptance 列；WhatsApp 唯一必真渠道——出站 B0-31/32/33/38 + B0-43；入站 permission ingress（B0-44/45 → `ConsentEvent`/`ProviderRefusalEvent`）、顾客会话（B0-31/38）、回执 ingestion（B0-41） |
+| D.4（真实且安全，五个0，`:140`） | §4.2 test/acceptance 列；WhatsApp 唯一必真渠道——出站 B0-31/32/33/38 + B0-43；入站 permission ingress（B0-44/45 → `ConsentEvent`）、provider 拒发 ingress（B0-45 → `ProviderRefusalEvent`，独立非 consent 轴）、顾客会话（B0-31/38）、回执 ingestion（B0-41） |
 | E-1（商家自主+consent+已知限制 fail-closed，`ROUTE-B-MASTER-PLAN-2026-07-12.md:144`） | B0-44/45 + D2/D5（R-010 §4） |
 | E-2（统一模型，`:145`） | 统一模型 + B0-41/42 connector seam |
 | E-3（Gupshup adapter 合同，`:146`） | adapter 合同验收条款（§4.2 WhatsApp 路径列：contract tests/健康状态/幂等去重/对账/统一 receipt/回滚） |
@@ -197,12 +197,12 @@ Phase-1 完整 CRM 原子集 = Route-B §七·甲 A 表第 95 行（`ROUTE-B-MAS
 
 | 候选归组 | 范围（承接原子） | 权威约束（既有批准的转述，非本文档排序） | Founder-only 项预告 |
 |---|---|---|---|
-| **C1 身份+同意底座** | B0-59/60（ChannelScope/ConsentEvent 投影读写 + Contact 档案）+ 承接 #327 rework | R-010 §7 的 M0-M6 是**冻结的建议顺序**，每步执行仍须另行 Founder schema/migration/production 授权（R-010 `:432`）；未批准/验证前 legacy rows 保持 disabled/quarantined（`:445-447`） | 涉 Prisma/schema/migration → Founder schema 授权（R-010 §11.2 gate 1）；`ConsentEvent` 及其 projection 须物理合同获批**且** §4.7/B13 逐 carrier privacy gate 通过后才可 additive（`:448`、`:655`） |
+| **C1 身份+同意底座** | B0-59/60（ChannelScope/ConsentEvent 投影读写 + Contact 档案）+ 承接 #327 rework | R-010 §7 的 M0-M6 是**冻结的建议顺序**，每步执行仍须另行 Founder schema/migration/production 授权（R-010 `:432`）；未批准/验证前 legacy rows 保持 disabled/quarantined（`:445-447`） | 涉 Prisma/schema/migration → Founder schema 授权（R-010 §11.2 gate 1）；`ConsentEvent` 及其 projection 须物理合同获批**且** §4.7/B13 逐 carrier privacy gate 通过后才可 additive（`:448`、`:656`） |
 | **C2 Campaign 底座** | B0-51/52/53/54/55/56/57/58 + 承接 #328 rework | D3：Campaign 一期只归组、不存可编辑 UTM | B0-57💰 走 money-safety-review 硬门 + Founder 逐笔批真实花费验证（`docs/BLUEPRINT.md:147`） |
 | **C3 Segments** | B0-61 + 承接 #329 rework + `save-customer-segment` 术语消歧 | 宪法 10：NL→规则编译=确定性代码 | 若涉 schema，另取 Founder 授权 |
-| **C4 Inbox + WhatsApp 首渠道** | B0-31/32/33/38 | 七·甲 E-3 adapter 合同（contract tests/健康/幂等/对账/receipt/回滚）；D8 fail-closed：相关载体获批实现并验证前，依赖发送路径全停（R-010 `:651`）——该 gate 落到哪张票与先后由 Founder 决定，候选之间无本文档裁定的依赖 | 真实 provider（Gupshup/WABA）接入涉 credentials/spend/Meta 送审 → Founder 前置授权 |
-| **C5 Broadcast/permission/抑制/频控** | B0-43/44/45/46（含 WhatsApp 入站 opt-in/STOP 路径） | D4/D5 语义；E-3 合同同样覆盖入站路径；D8 fail-closed 约束适用 | D5/D8 物理载体（`DeliveryManifest`/`ActionReceipt`/confirmation runtime 合同等）须 Founder 批准后才可实现（R-010 §4.3.3/§11.2 gate 4）；typed DND/provider-refusal 物理合同（`ContactDndEvent`/`ProviderRefusalEvent`）同须 Founder 批准（gate 3，`:650`）；D8 延后必须在任何 live send 与 Phase-1 CRM completion 之前到期完成 |
-| **C6 回执/报告** | B0-41/42 + E5-06/07 | B2 契约〇/契约1 冻结写入规范；只读铁律（`docs/BLUEPRINT.md:48`）；D10 下游逐 path bounded contract（redirect domain/bot/dedupe/report UI/privacy retention）未冻结前 tracked-generation branch 停用 fail-closed（R-010 §11.2 gate 5，`:653`） | 回执脊柱涉 `ActionReceipt` 等 D8 载体与可能的新表 → Founder schema/runtime 批准；D10 逐 path bounded contract = Founder 批准 |
+| **C4 Inbox + WhatsApp 首渠道** | B0-31/32/33/38 | 七·甲 E-3 adapter 合同（contract tests/健康/幂等/对账/receipt/回滚）；D8 fail-closed：相关载体获批实现并验证前，依赖发送路径全停（R-010 §11.2 gate 4，`:654`）——该 gate 落到哪张票与先后由 Founder 决定，候选之间无本文档裁定的依赖 | 真实 provider（Gupshup/WABA）接入涉 credentials/spend/Meta 送审 → Founder 前置授权 |
+| **C5 Broadcast/permission/抑制/频控** | B0-43/44/45/46（含 WhatsApp 入站 opt-in/STOP 路径） | D4/D5 语义；E-3 合同同样覆盖入站路径；D8 fail-closed 约束适用 | D5/D8 物理载体（`DeliveryManifest`/`ActionReceipt`/confirmation runtime 合同等）须 Founder 批准后才可实现（R-010 §4.3.3/§11.2 gate 4）；typed DND/provider-refusal 物理合同（`ContactDndEvent`/`ProviderRefusalEvent`）同须 Founder 批准（gate 3，`:653`）；D8 延后必须在任何 live send 与 Phase-1 CRM completion 之前到期完成 |
+| **C6 回执/报告** | B0-41/42 + E5-06/07 | B2 契约〇/契约1 冻结写入规范；只读铁律（`docs/BLUEPRINT.md:48`）；D10 下游逐 path bounded contract（redirect domain/bot/dedupe/report UI/privacy retention）未冻结前 tracked-generation branch 停用 fail-closed（R-010 §11.2 gate 5，`:655`） | 回执脊柱涉 `ActionReceipt` 等 D8 载体与可能的新表 → Founder schema/runtime 批准；D10 逐 path bounded contract = Founder 批准 |
 | **C7 Workflows/Lifecycle** | B0-40/47/48/49/98 | O-09 规则文件编辑器（非节点画布）；对客动作统一过 permission/抑制/频控轴 | Routine 授权模型（宪法 4 例外②，`07-B7.md:11`）细化动工前须 Founder 过目；若涉新表同上 |
 
 **明示**：是否合并/拆分候选、建票先后、每票验收 = Founder 审批点；本文档不代为决定，归组本身不产生任何执行顺序或依赖裁决——上表约束列引用的先后关系（如 D8）均来自既有 Founder-approved 语义，其如何落到票序仍由 Founder 决定。
