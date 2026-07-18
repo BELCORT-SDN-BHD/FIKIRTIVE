@@ -35,7 +35,12 @@ B13/privacy implementation gate」（`:34`）。
 - 不重新呈问 D1–D10 已批准的产品/authority 结果（`:632`）；
 - 不构成 Prisma schema、migration 或 production 授权——那是 R-010 §11.2 gate 1/gate 3（`:651`、`:653`）分别
   管的「D9 `ChannelScope` 最小语义方案批准」与「ConsentEvent/closed writer/fold/projection 与 typed
-  DND/provider-refusal authority 的 bounded physical proposal 批准」，均为独立、另行的批准点；
+  DND/provider-refusal authority 的 bounded physical proposal 批准」，均为独立、另行的批准点。现状：Founder
+  已合并 C1 方案 PR #353（`a0429451`），据 C1 §6「Founder 批准本文档意味着……满足 R-010 §11.2 gate 1……与
+  gate 3……」（`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md:474-479`），gate
+  1/gate 3 已在 **bounded-proposal 层面**满足；但同一节明示这不构成 Prisma schema 变更、migration、
+  production 或任一 M-step 执行的授权，也不构成本 gate（gate 6）的通过（`:481-487`）——schema/migration/
+  implementation/production 授权仍须另取，且本 gate 6 仍独立未通过；
 - 不处理 D8 延后的 reactive/D5 物理载体（`DeliveryManifest`、`ActionReceipt`、confirmation/outbox/receipt
   runtime）本身的批准——那归 gate 4，各自 native implementation/schema task（`:654`）。本 gate 只在这些载体
   的物理形状被冻结之后，才需要把它们的隐私维度补进矩阵（见 §2 「未来扩展」行组）。
@@ -55,16 +60,19 @@ carrier 是 `ConsentEvent`、D8 延后的 D5 source action/manifest/anchor/confi
 
 范围内五个 carrier（依 #356 scope）：`ConsentEvent`、`ContactDndEvent`、`ProviderRefusalEvent`、
 `ConsentStateProjection`、`ProviderRefusalState`。全部仍是【本 PR 提案】物理形状（R-010 原文标记，proposal
-`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md` 原样保留），尚未获 schema/migration
-授权（R-010 §11.2 gate 1/gate 3）。
+`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md` 原样保留）。R-010 §11.2 gate
+1/gate 3（`docs/superpowers/specs/2026-07-16-r010-schema-authority-alignment.md:651`、`:653`）已因 Founder
+合并 C1 方案 PR #353（`a0429451`）在 bounded-proposal 层面满足（C1 §6，`:474-479`）；但 Prisma schema
+编写/执行、migration 与 production 授权仍须另取（C1 §6，`:481-486`），本 gate（gate 6）也仍独立未通过（本
+文档 §5）。
 
-| carrier | 数据类别与 PII 含量 | 保留期 | 删除与导出（PDPA） | 访问控制与审计 | raw payload 排除 | 跨租户隔离 | 法律依据 |
-|---|---|---|---|---|---|---|---|
-| **ConsentEvent** | append-only permission-fact 事件；字段 `id/ownerId/contactId/channel/purpose/action/actorKind/entryMode/sourceKind/evidenceStatus/evidenceRef/operationId/idempotencyKey/occurredAt/receivedAt/createdAt`（R-010 `:162-181`）。`contactId` 关联 Contact（PII-adjacent，非本表自身存 PII 正文）；`evidenceRef` 为 opaque 引用（`:176`） | 【待 Founder 裁决 →Q-1】——R-010 明示「retention 归 B13/privacy implementation gate」（`:34`、`:250`、`:366`），本 gate 前无冻结值 | 【待 Founder 裁决 →Q-2】（擦除载体：匿名化/去标识 vs 物理删行）+【待 Founder 裁决 →Q-3】（导出/DSAR 覆盖范围）。已冻结原则：受控 privacy operation 必须独立授权、审计、幂等、可验证，保留依法可保留且不改变 permission fold 的最小事实，并覆盖 primary/backup/replica/export/receipt/support tooling（`:365`）；普通 event 不得 UPDATE/DELETE 假装完成擦除（`:365`、`:185`） | 已冻结：`ownerId` 只来自 authenticated session（宪法 6，R-010 `:415`）；UI/Otto 只能经 shared action，不建 connector-specific 分叉（`:418`）；append-only 本身即审计轨迹，无 ordinary UPDATE/DELETE（`:185`）。未冻结：租户内部谁可查看某 Contact 的同意历史（RBAC 细粒度）——【待 Founder 裁决 →Q-4】 | 已冻结：`evidenceRef` 只保存 opaque ID/哈希引用，不得默认保存 raw message、email、phone、token 正文或 provider payload（`:176`、`:363`） | 已冻结：`ownerId + contactId` 同租户由 writer fail-closed（`:188`）；共用 tenant 不变量 §6（`:410-419`）；two-org negative tests 要求（`:417`）；验收 ID-11/C-12 | 【待 Founder 裁决 →Q-5】——R-010/proposal 均未涉及；归入独立的 PDPA 姿态文件（`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md:55`；矩阵行 B0-93，现状 `absent`，`docs/ops/route-b/matrix/13-B13.md:16`） |
-| **ContactDndEvent** | append-only DND set/clear 事实；字段 `id, ownerId, contactId, action(set\|clear), actorKind(merchant\|otto\|legacy_migration), actorId?, sourceKind, evidenceRef?, idempotencyKey, receivedAt, createdAt`（`:335`）；Contact-wide compatibility projection `Contact.doNotDisturb`（`:359`） | 【待 Founder 裁决 →Q-1】（与 ConsentEvent 同题，R-010 未就本表单独给出不同值） | 【待 Founder 裁决 →Q-2】+【待 Founder 裁决 →Q-3】（与 ConsentEvent 同题；DND 是 Contact 属性之一，受同一 Contact erasure 原则约束，`:365`） | 已冻结：append-only、无 ordinary UPDATE/DELETE（`:335`）；Otto 只能经「既有可见审批/动作层」调用同一 shared action（`:335`）。未冻结：谁可在 UI 查看/清除某 Contact 的 DND 历史——【待 Founder 裁决 →Q-4】 | 结构性排除：字段清单不含 raw 内容字段，仅 `evidenceRef?` opaque 引用（`:335`）；未见 R-010 对 `ContactDndEvent.evidenceRef` 逐字重申「不得默认保存 raw」，按 `:363` 的通用 evidenceRef 原则类推适用 | 已冻结：tenant-qualified Contact relation（`:335`）；共用 tenant 不变量 §6 | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） |
-| **ProviderRefusalEvent** | append-only provider 拒收事实；字段 `id, ownerId, scopeKey, providerConnectionId, channel?, contactIdentityId?, kind(permanent_recipient\|transient\|account_level), action(block\|observe\|clear\|expire), actorKind(provider\|system), actorId?, providerCode, receiptRef, reversesEventId?, idempotencyKey, receivedAt, expiresAt?, createdAt`（`:337`） | 【待 Founder 裁决 →Q-1】（同题） | 【待 Founder 裁决 →Q-2】+【待 Founder 裁决 →Q-3】（本表经 `contactIdentityId` 关联 Contact 时同受 Contact erasure 原则约束，`:365`） | 已冻结：tenant-qualified scoped lock、`UNIQUE(ownerId,idempotencyKey)` exactly-once（`:346`）；system-actor 的 account-level `expire` 仅限受控调度证据触发（`:340-343`）。未冻结：谁可查看 provider refusal 历史——【待 Founder 裁决 →Q-4】 | 部分冻结：`ProviderRefusalState`（读模型）明示「raw payload/PII 不进该表」（`:344`），但这句话字面只覆盖 State 读模型，**未覆盖** `ProviderRefusalEvent.receiptRef` 本身是否比照 `evidenceRef` 适用同一 opaque-only 规则——【待 Founder 裁决 →Q-6】 | 已冻结：`scopeKey` 由字段服务端重算验证，caller 不可传或覆盖（`:337-338`）；tenant-qualified scoped lock（`:346`） | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） |
-| **ConsentStateProjection** | 可重建读模型；字段 `ownerId/contactId/channel/purpose, state, lastEventId/lastReceivedAt, stateActorKind/stateSourceKind/evidenceStatus, updatedAt`（`:280-285`）；无独立 mutation API，清空后全量 replay 得到同一 semantic state（`:287`） | 【待 Founder 裁决 →Q-1】——作为 `ConsentEvent` 的可重建投影，其自身留存策略预期跟随底层 event 的裁决结果，但 R-010 未明文规定投影本身是否需要独立于底层 event 的保留/压缩规则 | 无独立机制——投影本身可由 event 全量 replay 重建，不持有独立于 event 的擦除义务（`:287`）；实际删除效果取决于 §Q-2/Q-3 对 `ConsentEvent` 的裁决 | 已冻结：无独立 mutation API，只能由 event 写入同 transaction 维护（`:287`）。未冻结：查看权限——【待 Founder 裁决 →Q-4】（同 ConsentEvent） | 结构性排除：字段清单不含 `evidenceRef` 或任何 raw 内容字段（`:280-285`）；这是从字段清单推导的观察，R-010 未就投影表单独重申排除措辞 | 已冻结：`ownerId` 是唯一 permission tuple 的组成部分（`:281`）；共用 tenant 不变量 §6 | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） |
-| **ProviderRefusalState** | 可重建读模型；`UNIQUE(ownerId,scopeKey)` 只保存 exact scope、`blocked`、`lastEventId/lastReceivedAt`，无独立 mutation API（`:344`） | 【待 Founder 裁决 →Q-1】（同 ConsentStateProjection 的推导逻辑，跟随底层 `ProviderRefusalEvent` 裁决） | 无独立机制——由 event 全量 replay 重建（`:346`）；实际删除效果取决于 §Q-2/Q-3 对 `ProviderRefusalEvent` 的裁决 | 已冻结：send reader 按本次实际 connection/identity 读取，无独立 mutation API（`:344`）。未冻结：查看权限——【待 Founder 裁决 →Q-4】 | **已冻结**：「raw payload/PII 不进该表」（`:344`，逐字原文），本项无待裁决 | 已冻结：`UNIQUE(ownerId,scopeKey)`（`:344`）；共用 tenant 不变量 §6 | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） |
+| carrier | 数据类别与 PII 含量 | 保留期 | 删除与导出（PDPA） | 访问控制与审计 | raw payload 排除 | 跨租户隔离 | 法律依据 | 加密/key scope |
+|---|---|---|---|---|---|---|---|---|
+| **ConsentEvent** | append-only permission-fact 事件；字段 `id/ownerId/contactId/channel/purpose/action/actorKind/entryMode/sourceKind/evidenceStatus/evidenceRef/operationId/idempotencyKey/occurredAt/receivedAt/createdAt`（R-010 `:162-181`）。`contactId` 关联 Contact（PII-adjacent，非本表自身存 PII 正文）；`evidenceRef` 为 opaque 引用（`:176`） | 【待 Founder 裁决 →Q-1】——R-010 明示「retention 归 B13/privacy implementation gate」（`:34`、`:250`、`:366`），本 gate 前无冻结值 | 【待 Founder 裁决 →Q-2】（擦除载体：匿名化/去标识 vs 物理删行）+【待 Founder 裁决 →Q-3】（导出/DSAR 覆盖范围）。已冻结原则：受控 privacy operation 必须独立授权、审计、幂等、可验证，保留依法可保留且不改变 permission fold 的最小事实，并覆盖 primary/backup/replica/export/receipt/support tooling（`:365`）；普通 event 不得 UPDATE/DELETE 假装完成擦除（`:365`、`:185`） | 已冻结：`ownerId` 只来自 authenticated session（宪法 6，R-010 `:415`）；UI/Otto 只能经 shared action，不建 connector-specific 分叉（`:418`）；append-only、无 ordinary UPDATE/DELETE（`:185`；R-010 未称此为「审计轨迹」，本文档不代为定性）；writer 组合仅限 closed source/action matrix 列明的 `sourceKind×action×actorKind×entryMode×evidenceStatus` 组合，未列组合一律拒写（`:191-208`）。未冻结：租户内部谁可查看某 Contact 的同意历史、平台侧 support/admin 访问范围、privacy operation 执行者与审计读者——【待 Founder 裁决 →Q-4】（已扩展，见 §3） | 已冻结：`evidenceRef` 只保存 opaque ID/哈希引用，不得默认保存 raw message、email、phone、token 正文或 provider payload（`:176`、`:363`） | 已冻结：`ownerId + contactId` 同租户由 writer fail-closed（`:188`）；共用 tenant 不变量 §6（`:410-419`）；two-org negative tests 要求（`:417`）；验收 ID-11/C-12 | 【待 Founder 裁决 →Q-5】——R-010/proposal 均未涉及；归入独立的 PDPA 姿态文件（`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md:55`；矩阵行 B0-93，现状 `absent`，`docs/ops/route-b/matrix/13-B13.md:16`） | 【待 Founder 裁决 →Q-7】——R-010 `:364` 只列出「加密/key scope」这一维度的名称，未给出具体加密要求或密钥管理方案 |
+| **ContactDndEvent** | append-only DND set/clear 事实；字段 `id, ownerId, contactId, action(set\|clear), actorKind(merchant\|otto\|legacy_migration), actorId?, sourceKind, evidenceRef?, idempotencyKey, receivedAt, createdAt`（`:335`）；Contact-wide compatibility projection `Contact.doNotDisturb`（`:359`） | 【待 Founder 裁决 →Q-1】（与 ConsentEvent 同题，R-010 未就本表单独给出不同值） | 【待 Founder 裁决 →Q-2】+【待 Founder 裁决 →Q-3】（与 ConsentEvent 同题；DND 是 Contact 属性之一，受同一 Contact erasure 原则约束，`:365`） | 已冻结：append-only、无 ordinary UPDATE/DELETE（`:335`）；writer 组合仅限 closed matrix `crm_ui×merchant`/`otto_approved_action×otto`/`legacy_contact_snapshot×legacy_migration`，未列组合拒写（`:335`）；Otto 只能经「既有可见审批/动作层」调用同一 shared action（`:335`）。未冻结：谁可在 UI 查看/清除某 Contact 的 DND 历史、平台侧 support/admin 访问范围、privacy operation 执行者与审计读者——【待 Founder 裁决 →Q-4】（已扩展，见 §3） | 结构性排除：字段清单不含 raw 内容字段，仅 `evidenceRef?` opaque 引用（`:335`）；未见 R-010 对 `ContactDndEvent.evidenceRef` 逐字重申「不得默认保存 raw」，按 `:363` 的通用 evidenceRef 原则类推适用 | 已冻结：tenant-qualified Contact relation（`:335`）；共用 tenant 不变量 §6 | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） | 【待 Founder 裁决 →Q-7】 |
+| **ProviderRefusalEvent** | append-only provider 拒收事实；字段 `id, ownerId, scopeKey, providerConnectionId, channel?, contactIdentityId?, kind(permanent_recipient\|transient\|account_level), action(block\|observe\|clear\|expire), actorKind(provider\|system), actorId?, providerCode, receiptRef, reversesEventId?, idempotencyKey, receivedAt, expiresAt?, createdAt`（`:337`） | 【待 Founder 裁决 →Q-1】（同题） | 【待 Founder 裁决 →Q-2】+【待 Founder 裁决 →Q-3】（本表经 `contactIdentityId` 关联 Contact 时同受 Contact erasure 原则约束，`:365`） | 已冻结：closed validator 按 `kind`（`permanent_recipient`/`account_level`/`transient`）固定允许的 `action` 集合，未列组合拒写（`:337-344`）；tenant-qualified scoped lock、`UNIQUE(ownerId,idempotencyKey)` exactly-once（`:346`）；system-actor 的 account-level `expire` 仅限受控调度证据触发（`:340-343`）。未冻结：谁可查看 provider refusal 历史、平台侧 support/admin 访问范围、privacy operation 执行者与审计读者——【待 Founder 裁决 →Q-4】（已扩展，见 §3） | 部分冻结：`ProviderRefusalState`（读模型）明示「raw payload/PII 不进该表」（`:344`），但这句话字面只覆盖 State 读模型，**未覆盖** `ProviderRefusalEvent.receiptRef` 本身是否比照 `evidenceRef` 适用同一 opaque-only 规则——【待 Founder 裁决 →Q-6】 | 已冻结：`scopeKey` 由字段服务端重算验证，caller 不可传或覆盖（`:337-338`）；tenant-qualified scoped lock（`:346`） | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） | 【待 Founder 裁决 →Q-7】 |
+| **ConsentStateProjection** | 可重建读模型；字段 `ownerId/contactId/channel/purpose, state, lastEventId/lastReceivedAt, stateActorKind/stateSourceKind/evidenceStatus, updatedAt`（`:280-285`）；无独立 mutation API，清空后全量 replay 得到同一 semantic state（`:287`） | 【待 Founder 裁决 →Q-1】——作为 `ConsentEvent` 的可重建投影，其自身留存策略预期跟随底层 event 的裁决结果，但 R-010 未明文规定投影本身是否需要独立于底层 event 的保留/压缩规则 | 已冻结：无独立 mutation API；清空后全量 replay 得到同一 semantic state（`:287`）。R-010 未就投影本身是否负有独立于 event 的擦除/导出义务定性——【待 Founder 裁决 →Q-2】+【待 Founder 裁决 →Q-3】（随底层 `ConsentEvent` 裁决） | 已冻结：无独立 mutation API，只能由 event 写入同 transaction 维护（`:287`）。未冻结：查看权限——【待 Founder 裁决 →Q-4】（已扩展，见 §3；同 ConsentEvent） | 结构性排除：字段清单不含 `evidenceRef` 或任何 raw 内容字段（`:280-285`）；这是从字段清单推导的观察，R-010 未就投影表单独重申排除措辞 | 已冻结：`ownerId` 是唯一 permission tuple 的组成部分（`:281`）；共用 tenant 不变量 §6 | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） | 【待 Founder 裁决 →Q-7】 |
+| **ProviderRefusalState** | 可重建读模型；`UNIQUE(ownerId,scopeKey)` 只保存 exact scope、`blocked`、`lastEventId/lastReceivedAt`，无独立 mutation API（`:344`） | 【待 Founder 裁决 →Q-1】（同 ConsentStateProjection 的推导逻辑，跟随底层 `ProviderRefusalEvent` 裁决） | 已冻结：无独立 mutation API；由 event 全量 replay 重建（`:344`、`:346`）。R-010 未就投影本身是否负有独立于 event 的擦除/导出义务定性——【待 Founder 裁决 →Q-2】+【待 Founder 裁决 →Q-3】（随底层 `ProviderRefusalEvent` 裁决） | 已冻结：send reader 按本次实际 connection/identity 读取，无独立 mutation API（`:344`）。未冻结：查看权限——【待 Founder 裁决 →Q-4】（已扩展，见 §3） | **已冻结**：「raw payload/PII 不进该表」（`:344`，逐字原文），本项无待裁决 | 已冻结：`UNIQUE(ownerId,scopeKey)`（`:344`）；共用 tenant 不变量 §6 | 【待 Founder 裁决 →Q-5】（同 ConsentEvent） | 【待 Founder 裁决 →Q-7】 |
 
 ### 未来扩展行组（D8 延后载体，本 gate 现在不判定，仅为完整性列出）
 
@@ -78,6 +86,33 @@ path 保持 disabled/fail-closed 且不得作任何 user-facing availability cla
 本文档无法为它们填写任何一列（数据类别/保留期/删除/访问控制/raw payload/跨租户/法律依据），因为填写即等于
 替 native task 发明尚不存在的 schema。这也是这三个载体（含未来可能出现的 inbox/outbox 消息 raw 内容存储
 姿态）目前明确排除在本 gate 判定范围之外的原因——不是遗漏，是依据 `:248` 的 deferral 边界。
+
+### 未决 carrier 行组（quarantine/evidence 与 evidenceRef source system，本 gate 现在同样无法判定）
+
+除上面 D8 延后载体外，R-010 还提到两类目前**没有冻结物理形状**、但同样落在 R-010 `:364` 逐 carrier privacy
+要求范围内的载体。它们不属于 D8 deferral（不是「产品已批准、只差物理合同」），而是 R-010 全文本身从未给出
+字段清单——本文档同样不能替它们发明 schema，只能列出功能性要求并标注 Unknown：
+
+1. **quarantine/evidence（未解决历史事实的隔离区）**：R-010 §4.4 fold 表把
+   `unresolved + legacy_unknown + backfill + grant|revoke` 归为「effective state 不变；只进
+   quarantine/evidence」（`:270`；proposal 同一表格 `:206`）；§4.6 进一步要求「`legacy_unresolved` 只在
+   quarantine/report 存在，不写成 projection state；production 中任何不能安全表示的 known historical
+   revoke……若非零，M5 前必须逐项解决，或另获 Founder 批准一条显式、可见、临时 legacy-block 规则」
+   （`:356`；proposal `:250`）；§7 M3 表把「无法证明、unmapped、ambiguous、conflicting scope 或跨 owner
+   异常」列为「必须 quarantine / 不得猜」的对象（`:469-473`）。R-010 全文只描述这个隔离区的**功能要求**
+   （须可见、须阻止 M5、可另获临时规则），**没有冻结它的物理形状**——没有字段清单、没有表名、没有
+   schema。因此本文档无法为它填写 §2 矩阵任何一列（数据类别/保留期/删除/访问控制/加密/跨租户/法律依据），
+   填写即等于替 native task 发明尚不存在的 schema；quarantine/evidence 恰恰承载最敏感的「无法验证归属」的
+   历史个人数据片段，一旦它获得物理形状，同样会落入 Q-1/Q-2/Q-3/Q-4/Q-7 的范围，但在此之前只能标注为
+   Unknown（另见 §6）。
+2. **`evidenceRef`/`receiptRef` 指向的 source system（原始证据的实际存放处）**：R-010 明确 `evidenceRef` 只
+   保存 opaque ID/哈希引用本身，「source system 另按其 retention 控制」（`:363`）——也就是说，真正保存 raw
+   message/邮件/电话/token 正文的系统，是 `evidenceRef` 之外的另一个 source system；R-010 全文没有点名这个
+   source system 是什么（inbox provider？webhook 日志？第三方 BSP？），也没有定义它自己的 retention、加密、
+   访问控制或跨租户隔离规则——这些完全交给「该 source system 自己的 retention 控制」，不在本文档矩阵物理
+   范围内，但它是 Q-2/Q-3（擦除、导出）事实上绕不开的上游依赖：即使 `ConsentEvent.evidenceRef` 本身被裁定
+   如何擦除/导出，只要上游 source system 仍保留 raw 内容，顾客数据就并未真正从「FIKIRTIVE 生态」消失。本
+   文档不代为定义这个 source system 是什么，只如实标注这一依赖链缺口（另见 §6）。
 
 ## §3 Founder 决定题清单
 
@@ -94,9 +129,11 @@ implementation gate 冻结，不是 D5 consent 行为或本 Draft Ready 的产�
 （`docs/superpowers/specs/2026-07-16-r010-schema-authority-alignment.md:366`）；D8 决议同样写「retention 归
 B13/privacy implementation gate」（`:34`）。也就是说 R-010 把这题指向本文档，本文档同样不能替 Founder 定案。
 
-**【现实情况】** 这些表是 append-only 的长期 permission-fact truth（同意历史的法定证据），越久越有利于商家
-举证「这条同意/撤回是什么时候发生的」；但同时它们也承载个人数据（`contactId` 关联的顾客身份），PDPA 一般
-要求个人数据不能无限期保存超出处理目的所需的时间。目前代码库和 Blueprint 都没有给出具体年限或压缩规则。
+**【现实情况】** 这些表是 append-only 的长期 permission-fact truth（R-010 `:151`「event history 是长期
+permission-fact authority」）；同时承载与顾客身份关联的个人数据（`contactId`）。R-010、proposal 与
+Blueprint 均未给出具体保留年限、压缩规则，也未对是否存在保留期上限作出任何定性——本文档不代为补入法律
+要求或论证方向；这些表的保留期该受什么法律约束、约束到什么程度，属于 Q-5 与独立 PDPA 姿态文件的范畴，本
+题只问「保留多久」这一物理问题，不预判「为什么」。
 
 **【可选方向（如显然存在，≤3 个）】**
 1. 固定年限（例如「商家与该顾客关系结束后 N 年」）后触发匿名化/终态压缩；
@@ -151,25 +188,33 @@ B13/privacy implementation gate」（`:34`）。也就是说 R-010 把这题指�
 3. 按数据敏感度分级——只对能直接识别顾客身份的字段要求 backup 层面强制清除，其余匿名化后的历史事实不作
    backup 层强制清除要求。
 
-### Q-4：租户内部谁能查看同意/DND/拒收历史（RBAC）
+### Q-4：谁能访问同意/DND/拒收历史与相关审计——租户内部 RBAC + 平台侧 support/privacy-operation 访问
 
-**【这是什么】** 一个商家账号（tenant）里，除了系统本身，谁——商家老板、商家的其它员工席位、客服席位、
-Otto——能看到某个顾客的同意历史、DND 状态、供应商拒收记录。
+**【这是什么】** 两部分合一的问题：(a) 一个商家账号（tenant）里，除了系统本身，谁——商家老板、商家的其它
+员工席位、客服席位、Otto——能看到某个顾客的同意历史、DND 状态、供应商拒收记录；(b) 平台（FIKIRTIVE）自己
+一侧，谁能以「support/admin」身份跨租户访问这些数据、谁被授权执行 R-010 `:365` 所说的受控 privacy
+operation（擦除/去标识/导出的实际执行者）、谁能读取这些操作产生的审计记录，以及支持/客服工具（support
+tooling）本身对这些数据的访问范围。
 
 **【现有说法】** Blueprint 宪法第 7 条提到「租户 org 内部同样要阶级制度（用户侧 RBAC:创作席/审批席 + org
-内角色，与团队协作/审批流同件设计）」（`docs/BLUEPRINT.md:66`），这是通用 RBAC 原则性表述，没有专门就
-「谁能看 consent/DND/provider refusal 历史」表态；R-010 与 proposal 全文都没有涉及这道具体问题。
+内角色，与团队协作/审批流同件设计）」（`docs/BLUEPRINT.md:66`），覆盖 (a) 的一般框架，没有专门就「谁能看
+consent/DND/provider refusal 历史」表态。R-010 `:364` 把「access/export/DSAR」与「support access」列为
+B13/privacy 矩阵必须覆盖的维度之一，`:365` 要求受控 privacy operation「必须独立授权、审计」且须覆盖
+「primary、backup、replica、export、receipt 与 support tooling」，但没有给出谁被授权执行这类 operation、
+谁能读取产生的审计记录的具体人选或角色——(b) 部分 R-010/proposal 全文都没有涉及。
 
-**【现实情况】** 本文档未做代码级 RBAC 排查（超出 docs-only 任务边界），只核对了 R-010/proposal/Blueprint
-的文本；就现有证据看，这是一个尚未被任何冻结文档触碰过的空白。
+**【现实情况】** 本文档未做代码级 RBAC 或平台 support 工具排查（超出 docs-only 任务边界），只核对了
+R-010/proposal/Blueprint 的文本；(a)(b) 两部分目前都是尚未被任何冻结文档触碰过的空白。
 
-**【可选方向（≤3 个）】**
-1. 复用既有的创作席/审批席通用 RBAC，把 consent/DND/provider refusal 历史归入「审批席」可见范围（因为这些
-   数据直接影响能不能发送）；
-2. 单列一个专属的最小可见范围（例如：任何本来就有权访问该 Contact 档案的席位都能看到这些历史，不额外收紧
-   也不额外放宽）；
-3. 留给 CRM UI/RBAC 实现阶段一并设计，本 gate 不为此单独定案（即：本题的答案可以是「暂缓，随 CRM RBAC
-   一起裁」，而不必是具体的权限矩阵）。
+**【可选方向（≤3 个，覆盖 (a)(b) 两部分）】**
+1. (a) 复用既有的创作席/审批席通用 RBAC，把 consent/DND/provider refusal 历史归入「审批席」可见范围；
+   (b) 平台侧 support/admin 访问走已有的内部运维审批流程（如存在），privacy operation 执行者限定为该流程
+   内的授权角色，审计读者与执行者同一批人；
+2. (a) 单列一个专属的最小可见范围（任何本来就有权访问该 Contact 档案的席位都能看到这些历史，不额外收紧
+   也不额外放宽）；(b) privacy operation 执行者与审计读者是另一批经 Founder 单独批准的最小角色集合，与
+   租户内部 RBAC 完全分离；
+3. 留给 CRM RBAC 与 B13/privacy implementation gate 实现阶段一并设计，本 gate（Founder 决定题清单本身）不
+   为 (a)(b) 任一部分单独定案。
 
 ### Q-5：各表处理个人数据的法律依据（legal basis）
 
@@ -182,10 +227,12 @@ Otto——能看到某个顾客的同意历史、DND 状态、供应商拒收记
 文本、founder 批) + PDPA 姿态」（`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md:55`）；对应矩阵行 B0-93「PDPA
 姿态文件」当前状态为 `absent`（`docs/ops/route-b/matrix/13-B13.md:16`）。
 
-**【现实情况】** 这几张表在功能上并不同质：`ConsentEvent` 的核心目的就是记录同意/撤回这个事实本身（法律依据
-天然接近「当事人同意」或「记录同意的合法义务」）；`ContactDndEvent`/`ProviderRefusalEvent` 更接近「防止误
-发送的安全护栏」（法律依据可能更接近「商家的合法利益」或「履行既有关系的必要措施」）。这两类的法律依据
-分类很可能不同，但 R-010/proposal 都没有触碰这个分类判断。
+**【现实情况】** 这几张表在功能上并不同质：`ConsentEvent` 的核心目的是记录同意/撤回这个事实本身（R-010
+`:151-152`「permission/grant 与 customer revoke……保留历史」「event history 是长期 permission-fact
+authority」）；`ContactDndEvent`/`ProviderRefusalEvent` 的核心目的是发送安全护栏（R-010 `:333` 称 DND 与
+provider refusal 为「这两条发送安全轴」）。这两类载体的**功能目的**不同，但 R-010/proposal 都没有触碰任何
+法律依据分类判断；本文档也不推断哪一类更接近「同意」「合法利益」或其它 PDPA 分类——这类分类判断本身连同
+其结论一并保持完全开放，留给下面的独立 PDPA 姿态文件处理，本文档不代为定性或倾向任何一种分类。
 
 **【可选方向】** 不列选项——这道题的答案实质上就是「PDPA 姿态文件」（B0-93）本该覆盖的内容，是一整份独立
 的法务姿态文本，不是三个互斥的技术选项。本题在这里的作用是标记「这是 gate 6 依赖但尚未存在的上游交付物」，
@@ -213,6 +260,27 @@ ID/哈希引用，不得默认保存 raw message、email、phone、token 正文�
    需要更强可验证性），但需专门定义哪些字段允许、哪些明确排除（尤其是收件人 PII）；
 3. 只允许 provider 侧的非 PII 状态信息（状态码、时间戳、policy 引用 ID），明确排除任何收件人可识别信息，
    介于前两者之间。
+
+### Q-7：各表的加密/key scope（field-level 加密、密钥归属与轮换）
+
+**【这是什么】** R-010 明确要求逐 carrier 隐私矩阵必须覆盖「加密/key scope」这一维度（`:364`）——即
+`ConsentEvent`、`ContactDndEvent`、`ProviderRefusalEvent` 这几张表（及其读模型投影）里，哪些字段需要额外
+的字段级加密（不只是数据库层默认的静态加密）、加密密钥归谁管理、密钥多久轮换一次。
+
+**【现有说法】** R-010 `:364` 只列出这一维度的名字，没有给出具体加密要求、密钥管理方案或哪些字段需要加密；
+proposal（C1）同样只是转述该维度名称（`:432-434`），没有做实。
+
+**【现实情况】** 本文档没有查询代码库现有的数据库层加密配置（是否已有 encryption-at-rest、字段级加密库），
+也没有做基础设施层核验——这类核验超出本票 docs-only scope。目前没有任何冻结文档说明这几张表是否需要超出
+数据库默认的额外加密层。
+
+**【可选方向（≤3 个）】**
+1. 依赖数据库层默认 encryption-at-rest，不为这几张表额外做字段级加密（加密由基础设施层统一保证，不在
+   应用层重复实现）；
+2. 对特定高敏字段（如 Q-6 若裁定 `receiptRef` 可存放更完整 provider 回执内容）额外做应用层字段级加密，
+   密钥归属与轮换另立基础设施合同；
+3. 留给基础设施/安全团队在 B13/privacy implementation gate 阶段，与 retention（Q-1）、擦除（Q-2）一并统一
+   设计，本题此处不单独定案。
 
 ## §4 与 Meta App Review / PDPA 的衔接
 
@@ -252,14 +320,18 @@ B10/B13 验收，不另立块：
 
 本 gate（R-010 §11.2 gate 6）判定为 **PASS**，需要同时满足：
 
-1. 本文档 §3 列出的 Q-1 至 Q-6，每一题都在 GitHub（issue 或对应 PR 的 Founder 评论）上取得 durable Founder
+1. 本文档 §3 列出的 Q-1 至 Q-7，每一题都在 GitHub（issue 或对应 PR 的 Founder 评论）上取得 durable Founder
    Resolution——不是聊天记录、不是 session memory、不是本文档自己的推断；
 2. §2 矩阵中原先标记【待 Founder 裁决 →Q-n】的每一个格子，都已依据对应 Q 项的裁决结果更新为具体、可执行
    的规则（不再是问题占位符）；
-3. 若 Founder 裁决产生了新的物理合同（例如具体保留期数值、具体擦除机制选择），该合同本身仍须按 R-010
+3. R-010 `:364` 逐字列举的全部 carrier（`ConsentEvent`、D5 source action/manifest/reactive
+   anchor/confirmation/outbox/receipt、provider refs）都必须在本矩阵中有对应完成行；D5 各载体在其各自
+   native implementation/schema task 中冻结物理形状之前，本 gate 就这部分 carrier 的判定范围保持
+   **UNPASSED**（不是豁免或跳过），即使 §2 现有 carrier 的全部问题已裁决完毕（`:364`、`:656`）；
+4. 若 Founder 裁决产生了新的物理合同（例如具体保留期数值、具体擦除机制选择），该合同本身仍须按 R-010
    §11.2 gate 1/gate 3 的既有路径另取 schema/migration 适用授权——gate 6 通过只解锁「可以开始」，不代替
    那些授权步骤（`:651`、`:653`）；
-4. 若上述过程中发现某道 Q 项的裁决与 D1–D10 已批准的产品/authority 结果冲突，须按 R-010 §11.1 的既定纪律
+5. 若上述过程中发现某道 Q 项的裁决与 D1–D10 已批准的产品/authority 结果冲突，须按 R-010 §11.1 的既定纪律
    处理（不得把已决 authority 重新包装成新问题，`:632`），并在本文档或其后继版本中标注冲突而非静默调和。
 
 **谁更新**：本文档不由自身自动判定 PASS。裁决落地后，由承接本票后续工作的 session（很可能是一次独立的
@@ -289,6 +361,12 @@ follow-up commit/PR）把 Founder 的 GitHub 裁决原文引用写回 §2 矩阵
   是否已有 `ProviderRefusalEvent` 相关实现（若有）做逐行核查，因为 R-010/proposal 明示该表仍是【本 PR
   提案】、尚未获 schema 批准（`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md:305`）
   ——按零发明纪律，本文档假定其尚不存在实现，若实际已有相关代码，需要在后续 session 核实并回填本文档。
+- **quarantine/evidence 与 evidenceRef source system 物理形状未定**：见 §2「未决 carrier 行组」——R-010 只对
+  这两个载体给出功能性要求（`:270`、`:356`、`:363`、`:469-473`），没有冻结表名、字段清单或 schema；本文档
+  因此无法为它们填写 §2 矩阵任何一列，按零发明纪律原样标注为 Unknown，不臆测其物理形状，也不预判它们
+  最终会不会与现有五个 carrier 合并或独立建表。
+- **加密/key scope（Q-7）完全未查**：R-010 `:364` 只列出该维度名称；本文档未核查代码库现有数据库层加密
+  配置或基础设施加密姿态（超出 docs-only scope）——**Unknown**，原样标注。
 - **B2 契约中同类先例（AttributionEvent.anonymousKey）**：`docs/superpowers/specs/2026-07-12-b2-data-contract.md:444`
   记录了另一个字段（`AttributionEvent.anonymousKey`，不在本文档矩阵范围内）「隐私保留期（PDPA 姿态）→
   留 B13 对表」的同类先例，说明「retention 问题指向 B13 gate」是本仓库既有的重复模式，本文档的 Q-1 与
