@@ -36,6 +36,9 @@ export const TENANT_MODELS = new Set([
   "Campaign", "TrendSnapshot", "Contact", "ContactIdentity", "Segment",
   // R-010 D9 M1 (2026-07-19): provider-neutral channel scopes are tenant identity authority.
   "ChannelScope",
+  // R-010 consent batch M1 (2026-07-19): event authorities and rebuildable projections.
+  "ConsentEvent", "ConsentStateProjection", "ContactDndEvent",
+  "ProviderRefusalEvent", "ProviderRefusalState",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
