@@ -639,6 +639,7 @@ model Organization {
   attributionEvents       AttributionEvent[]
   // B0-30: generic multi-channel connection layer (seam 4/5); back-relation required by Prisma.
   channelConnections      ChannelConnection[]
+  channelScopes           ChannelScope[]
   // B0-28: share-preview token records (row = authority layer); back-relation required by Prisma.
   sharePreviewTokens      SharePreviewToken[]
   campaigns              Campaign[]
@@ -1100,6 +1101,24 @@ model MetaConnection {
   updatedAt      DateTime     @updatedAt
 }
 
+// R-010 D9 M1: provider-neutral stable channel-instance identity authority. Phase 1 is deliberately
+// lifecycle-free: no status, TTL, issuer epoch, recycle, quarantine, revive, or auto-merge fields.
+model ChannelScope {
+  id           String   @id
+  ownerId      String
+  organization Organization @relation(fields: [ownerId], references: [id])
+  channel      String
+  scopeKey     String
+  createdAt    DateTime @default(now())
+
+  channelConnections ChannelConnection[]
+  contactIdentities  ContactIdentity[]
+
+  @@unique([ownerId, channel, scopeKey])
+  // Required by the composite references below so they cannot cross owner or channel boundaries.
+  @@unique([id, ownerId, channel])
+}
+
 // B0-30: generic channel-connection schema (harmony-01 §三 #5; MASTERPLAN P1½-2). The future home
 // for ANY publish channel — Meta migrates in when convenient; a new channel = a new adapter, no core
 // change. `kind` is an OPEN string (house style, NOT a closed enum) so adding "x"/"tiktok"/"linkedin"
@@ -1111,6 +1130,8 @@ model ChannelConnection {
   ownerId        String
   organization   Organization @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   kind           String       // OPEN string: "instagram" | "facebook" | "x" | … (new channel ⇒ no migration)
+  channelScopeId String?
+  channelScope   ChannelScope? @relation(fields: [channelScopeId, ownerId, kind], references: [id, ownerId, channel], onDelete: Restrict)
   externalId     String?      // channel-side account/page id (e.g. IG business id, X user id)
   displayName    String?      // human label for the connected account
   accessTokenEnc String       // AES-256-GCM ciphertext; never plaintext, never sent to the client
@@ -1270,21 +1291,28 @@ model Contact {
 }
 
 model ContactIdentity {
-  id         String   @id
-  ownerId    String
+  id           String   @id
+  ownerId      String
   organization Organization @relation(fields: [ownerId], references: [id])
-  contactId  String
+  contactId    String
   // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
-  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
-  channel    String
-  externalId String
-  handle     String?
-  label      String?
-  createdAt  DateTime @default(now())
-  deletedAt  DateTime?
+  contact       Contact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  channelScopeId String?
+  channelScope   ChannelScope? @relation(fields: [channelScopeId, ownerId, channel], references: [id, ownerId, channel], onDelete: Restrict)
+  channel        String
+  externalId     String
+  handle         String?
+  label          String?
+  createdAt      DateTime @default(now())
+  deletedAt      DateTime?
 
   // Identity uniqueness is a PARTIAL unique index (live rows only) added in
   // 20260714100000_b8_phase1_campaign_crm/migration.sql (Prisma can't express conditional uniqueness).
+  // R-010 §7 M1 expand-only nuance: channelScopeId is nullable so legacy rows remain untouched.
+  // Although M1 names the eventual active four-fact unique, the next sentence forbids enabling its
+  // writer/index before verified backfill and atomic cutover. PostgreSQL cannot create a dormant
+  // enforcing unique index, so this base migration deliberately leaves that later index absent and
+  // preserves the existing legacy three-fact partial unique unchanged; reader/writer behavior stays put.
   @@index([ownerId, contactId, deletedAt])
 }
 

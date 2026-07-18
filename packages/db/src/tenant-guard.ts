@@ -34,6 +34,8 @@ export const TENANT_MODELS = new Set([
   "SharePreviewToken",
   // B8 一期 (2026-07-14): Campaign + CRM objects are owner-scoped by birth (缝 5).
   "Campaign", "TrendSnapshot", "Contact", "ContactIdentity", "Segment",
+  // R-010 D9 M1 (2026-07-19): provider-neutral channel scopes are tenant identity authority.
+  "ChannelScope",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
