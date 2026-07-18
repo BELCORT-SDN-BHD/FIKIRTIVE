@@ -57,6 +57,69 @@ export type CrmSegmentContact = {
   contactable: boolean;
 };
 
+/** Zero-cost Campaign planner shapes (B0-51..58/C2a). These are structural mirrors only:
+ * the authenticated web actions remain the validator and owner-scoped authority. */
+export type CampaignPlanEntrySummary = {
+  id: string;
+  date: string;
+  platform: string;
+  format: string;
+  hook: string;
+  brief: string;
+  estCredits: number;
+  status: "proposed" | "approved";
+};
+
+export type ProposedCampaignPlanEntry = Omit<CampaignPlanEntrySummary, "id" | "status">;
+
+export type CampaignPlanSummary = {
+  theme: string;
+  rationale: {
+    summary: string;
+    sources: { title: string; domain: string }[];
+    capturedAt?: string;
+  } | null;
+  entries: CampaignPlanEntrySummary[];
+  ideas: string[];
+};
+
+export type CampaignSummary = {
+  id: string;
+  name: string;
+  status: string;
+  goal: string;
+  startAt: string;
+  endAt: string;
+  plan: CampaignPlanSummary | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CampaignDetailSummary = CampaignSummary & {
+  grouped: {
+    projects: { id: string; name: string; createdAt: string }[];
+    scheduledPosts: {
+      id: string;
+      channel: string;
+      caption: string;
+      scheduledAt: string;
+      status: string;
+      createdAt: string;
+    }[];
+    generations: { id: string; assetId: string; modelRef: string; createdAt: string }[];
+  };
+  trendSnapshots: Omit<TrendSnapshotSummary, "campaignId">[];
+};
+
+export type TrendSnapshotSummary = {
+  id: string;
+  summary: string;
+  sources: unknown;
+  capturedAt: string;
+  campaignId: string | null;
+  createdAt: string;
+};
+
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
 export type MetaAdObject = {
@@ -191,6 +254,44 @@ export interface OttoContext {
         }
       | { error: string }
     >;
+  };
+  /** Campaign planner port (B0-51..58/C2a, $0). Every method delegates to the SAME authenticated
+   * Campaign/Trend action used by the manual surface. The model cannot supply identity, mint ids,
+   * write legacy UTM, dispatch generation, touch credits, or authorize publishing. */
+  campaigns?: {
+    list(): Promise<{ ok: true; campaigns: CampaignSummary[] } | { error: string }>;
+    get(campaignId: string): Promise<{ ok: true; campaign: CampaignDetailSummary } | { error: string }>;
+    listTrends(input: { campaignId?: string; limit?: number }): Promise<
+      { ok: true; snapshots: TrendSnapshotSummary[] } | { error: string }
+    >;
+    create(input: {
+      name: string;
+      goal: string;
+      status: "DRAFT" | "ACTIVE" | "DONE" | "CANCELLED";
+      period: { start: string; end: string; tz: "Asia/Kuala_Lumpur" };
+      theme?: string;
+    }): Promise<unknown>;
+    proposeEntry(input: { campaignId: string; entry: ProposedCampaignPlanEntry }): Promise<unknown>;
+    updateEntry(input: {
+      campaignId: string;
+      entryId: string;
+      patch: Partial<ProposedCampaignPlanEntry>;
+    }): Promise<unknown>;
+    removeEntry(input: { campaignId: string; entryId: string }): Promise<unknown>;
+    approveEntry(input: { campaignId: string; entryId: string }): Promise<unknown>;
+    group(input: {
+      campaignId: string | null;
+      targetType: "project" | "scheduled_post" | "generation";
+      targetId: string;
+    }): Promise<unknown>;
+    saveTrend(input: {
+      campaignId: string | null;
+      evidence: {
+        summary: string;
+        sources: { title: string; domain: string }[];
+        capturedAt?: string;
+      };
+    }): Promise<unknown>;
   };
   /** Meta ad objects port (G7) — injected by the web caller; lists the owner's connected ad objects
    *  (campaigns, ad sets, ads). Skills reach it ONLY via ctx.metaAds, never importing meta-objects.ts. */

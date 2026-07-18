@@ -55,6 +55,16 @@ const {
   mockGetCrmSegment,
   mockPreviewCrmSegment,
   mockBuildCrmSegment,
+  mockListCampaigns,
+  mockGetCampaign,
+  mockProposeCampaign,
+  mockProposeCampaignEntry,
+  mockUpdateCampaignEntry,
+  mockRemoveCampaignEntry,
+  mockApproveCampaignEntry,
+  mockSetCampaignGrouping,
+  mockListTrendSnapshots,
+  mockSaveTrendSnapshot,
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
@@ -140,6 +150,16 @@ const {
     mockGetCrmSegment: vi.fn(),
     mockPreviewCrmSegment: vi.fn(),
     mockBuildCrmSegment: vi.fn(),
+    mockListCampaigns: vi.fn(),
+    mockGetCampaign: vi.fn(),
+    mockProposeCampaign: vi.fn(),
+    mockProposeCampaignEntry: vi.fn(),
+    mockUpdateCampaignEntry: vi.fn(),
+    mockRemoveCampaignEntry: vi.fn(),
+    mockApproveCampaignEntry: vi.fn(),
+    mockSetCampaignGrouping: vi.fn(),
+    mockListTrendSnapshots: vi.fn(),
+    mockSaveTrendSnapshot: vi.fn(),
   };
 });
 
@@ -157,6 +177,22 @@ vi.mock("@/lib/segment-actions", () => ({
   getSegment: mockGetCrmSegment,
   previewSegment: mockPreviewCrmSegment,
   buildSegment: mockBuildCrmSegment,
+}));
+vi.mock("@/lib/campaign-view-data", () => ({
+  listCampaigns: mockListCampaigns,
+  getCampaign: mockGetCampaign,
+}));
+vi.mock("@/lib/campaign-actions", () => ({
+  proposeCampaign: mockProposeCampaign,
+  proposeCampaignEntry: mockProposeCampaignEntry,
+  updateCampaignEntry: mockUpdateCampaignEntry,
+  removeCampaignEntry: mockRemoveCampaignEntry,
+  approveCampaignEntry: mockApproveCampaignEntry,
+  setCampaignGrouping: mockSetCampaignGrouping,
+}));
+vi.mock("@/lib/trend-actions", () => ({
+  listTrendSnapshots: mockListTrendSnapshots,
+  saveTrendSnapshot: mockSaveTrendSnapshot,
 }));
 
 vi.mock("@fikirtive/db", () => ({
@@ -584,6 +620,120 @@ describe("buildOttoContext", () => {
       rules,
     });
     expect(JSON.stringify(mockBuildCrmSegment.mock.calls)).not.toContain("owner_xyz");
+  });
+
+  it("injects Campaign reads and zero-cost proposal writes through the shared authenticated actions", async () => {
+    const campaignId = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const entryId = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    const targetId = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
+    const campaign = {
+      id: campaignId,
+      name: "Merdeka launch",
+      status: "DRAFT",
+      goal: "Drive pre-orders",
+      startAt: "2026-08-23T16:00:00.000Z",
+      endAt: "2026-08-31T15:59:59.999Z",
+      plan: { theme: "Local pride", rationale: null, entries: [], ideas: [] },
+      createdAt: "2026-07-18T00:00:00.000Z",
+      updatedAt: "2026-07-18T00:00:00.000Z",
+    };
+    const detail = {
+      ...campaign,
+      grouped: { projects: [], scheduledPosts: [], generations: [] },
+      available: { projects: [], scheduledPosts: [], generations: [] },
+      trendSnapshots: [],
+    };
+    const entry = {
+      date: "2026-08-24",
+      platform: "instagram",
+      format: "image",
+      hook: "Merdeka box",
+      brief: "Show the gift box opening in warm morning light.",
+      estCredits: 12,
+    };
+    mockListCampaigns.mockResolvedValue({
+      ok: true,
+      campaigns: [campaign],
+      nextCampaignId: campaignId,
+      nextCampaignProof: "campaign-proof",
+    });
+    mockGetCampaign.mockResolvedValue({
+      ok: true,
+      campaign: detail,
+      nextEntryId: entryId,
+      nextEntryProof: "entry-proof",
+    });
+    mockListTrendSnapshots.mockResolvedValue({
+      ok: true,
+      snapshots: [],
+      nextSnapshotId: targetId,
+      nextSnapshotProof: "trend-proof",
+    });
+    mockProposeCampaign.mockResolvedValue({ ok: true, campaignId, payload: campaign.plan });
+    mockProposeCampaignEntry.mockResolvedValue({ ok: true, payload: campaign.plan });
+    mockApproveCampaignEntry.mockResolvedValue({ ok: true, payload: campaign.plan });
+    mockSetCampaignGrouping.mockResolvedValue({ ok: true });
+    mockSaveTrendSnapshot.mockResolvedValue({ ok: true });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_xyz",
+      projectId: "proj_xyz",
+      threadId: "thread_xyz",
+    });
+    const campaigns = ctx.campaigns!;
+
+    await expect(campaigns.list()).resolves.toEqual({ ok: true, campaigns: [campaign] });
+    await expect(campaigns.get(campaignId)).resolves.toMatchObject({ ok: true, campaign: detail });
+    await campaigns.create({
+      name: campaign.name,
+      goal: campaign.goal,
+      status: "DRAFT",
+      period: { start: "2026-08-24", end: "2026-08-31", tz: "Asia/Kuala_Lumpur" },
+    });
+    expect(mockProposeCampaign).toHaveBeenCalledWith({
+      campaignId,
+      campaignProof: "campaign-proof",
+      title: campaign.name,
+      goal: campaign.goal,
+      status: "DRAFT",
+      period: { start: "2026-08-24", end: "2026-08-31", tz: "Asia/Kuala_Lumpur" },
+      theme: campaign.name,
+      items: [],
+      ideas: [],
+    });
+
+    await campaigns.proposeEntry({ campaignId, entry });
+    expect(mockProposeCampaignEntry).toHaveBeenCalledWith({
+      campaignId,
+      entryId,
+      entryProof: "entry-proof",
+      entry,
+    });
+    await campaigns.approveEntry({ campaignId, entryId });
+    expect(mockApproveCampaignEntry).toHaveBeenCalledWith({ campaignId, entryId });
+    await campaigns.group({ campaignId, targetType: "project", targetId });
+    expect(mockSetCampaignGrouping).toHaveBeenCalledWith({ campaignId, targetType: "project", targetId });
+    await campaigns.saveTrend({
+      campaignId,
+      evidence: {
+        summary: "Gift bundles are rising.",
+        sources: [{ title: "Brief", domain: "example.com" }],
+      },
+    });
+    expect(mockSaveTrendSnapshot).toHaveBeenCalledWith({
+      snapshotId: targetId,
+      snapshotProof: "trend-proof",
+      campaignId,
+      evidence: {
+        summary: "Gift bundles are rising.",
+        sources: [{ title: "Brief", domain: "example.com" }],
+      },
+    });
+    expect(JSON.stringify([
+      mockProposeCampaign.mock.calls,
+      mockProposeCampaignEntry.mock.calls,
+      mockApproveCampaignEntry.mock.calls,
+    ])).not.toContain("owner_xyz");
   });
 });
 

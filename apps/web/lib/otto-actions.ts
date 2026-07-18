@@ -96,6 +96,16 @@ import {
   listSegments as listCrmSegments,
   previewSegment as previewCrmSegment,
 } from "./segment-actions";
+import {
+  approveCampaignEntry,
+  proposeCampaign,
+  proposeCampaignEntry,
+  removeCampaignEntry,
+  setCampaignGrouping,
+  updateCampaignEntry,
+} from "./campaign-actions";
+import { getCampaign, listCampaigns } from "./campaign-view-data";
+import { listTrendSnapshots, saveTrendSnapshot } from "./trend-actions";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -154,6 +164,68 @@ function makeOttoSegmentsPort() {
     },
   };
   return context;
+}
+
+function makeOttoCampaignsPort(): NonNullable<OttoContext["campaigns"]> {
+  return {
+    list: async () => {
+      const result = await listCampaigns();
+      if (!("ok" in result)) return result;
+      return { ok: true as const, campaigns: result.campaigns };
+    },
+    get: async (campaignId) => {
+      const result = await getCampaign(campaignId);
+      if (!("ok" in result)) return result;
+      return { ok: true as const, campaign: result.campaign };
+    },
+    listTrends: async (input) => {
+      const result = await listTrendSnapshots(input);
+      if (!("ok" in result)) return result;
+      return { ok: true as const, snapshots: result.snapshots };
+    },
+    create: async (input) => {
+      // The model never mints a Campaign id. The authenticated list action issues an owner-bound
+      // signed draft, then creation enters the same retry-safe action as the human workbench.
+      const draft = await listCampaigns();
+      if (!("ok" in draft)) return draft;
+      return proposeCampaign({
+        campaignId: draft.nextCampaignId,
+        campaignProof: draft.nextCampaignProof,
+        title: input.name,
+        goal: input.goal,
+        status: input.status,
+        period: input.period,
+        theme: input.theme ?? input.name,
+        items: [],
+        ideas: [],
+      });
+    },
+    proposeEntry: async ({ campaignId, entry }) => {
+      // Entry ids are also server-issued and owner-bound. A lost response can replay the same id.
+      const draft = await getCampaign(campaignId);
+      if (!("ok" in draft)) return draft;
+      return proposeCampaignEntry({
+        campaignId,
+        entryId: draft.nextEntryId,
+        entryProof: draft.nextEntryProof,
+        entry,
+      });
+    },
+    updateEntry: (input) => updateCampaignEntry(input),
+    removeEntry: (input) => removeCampaignEntry(input),
+    approveEntry: (input) => approveCampaignEntry(input),
+    group: (input) => setCampaignGrouping(input),
+    saveTrend: async ({ campaignId, evidence }) => {
+      const draft = await listTrendSnapshots();
+      if (!("ok" in draft)) return draft;
+      return saveTrendSnapshot({
+        snapshotId: draft.nextSnapshotId,
+        snapshotProof: draft.nextSnapshotProof,
+        campaignId,
+        evidence,
+      });
+    },
+  };
 }
 
 function orderedUniqueIds(ids: Array<string | null | undefined>): string[] {
@@ -332,7 +404,10 @@ export async function buildOttoContext({
     }).catch(() => null),
     gatherReferenceImages(ownerId, projectId, imageRefIds),
   ]);
-  const context: OttoContext & { segments: ReturnType<typeof makeOttoSegmentsPort> } = {
+  const context: OttoContext & {
+    segments: ReturnType<typeof makeOttoSegmentsPort>;
+    campaigns: ReturnType<typeof makeOttoCampaignsPort>;
+  } = {
     orgId: ownerId,
     // userId is the owner/tenant scope (= orgId), not a distinct verified per-user id — no per-user
     // token is threaded here. See OttoContext.userId doc. Do not treat as an individual-member id.
@@ -365,6 +440,9 @@ export async function buildOttoContext({
     // B0-61/C3: list/get/preview/build all enter the authenticated Segment action layer.
     // The port never accepts ownerId and never compiles free-form language into rules.
     segments: makeOttoSegmentsPort(),
+    // B0-51..58/C2a: zero-cost Campaign planning only. Reads/writes re-enter the authenticated
+    // action layer; no UTM, generation, credits, schedule approval, send, publish, or provider port.
+    campaigns: makeOttoCampaignsPort(),
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
