@@ -39,9 +39,11 @@
 - 不改变 D1–D10 已批准的产品/authority 结果（R-010 §11.1 明示不得重新呈问，
   `2026-07-16-r010-schema-authority-alignment.md:632`）。
 
-Founder 批准本文档后，下一步仍是：（a）针对本文档列出的表逐条另取 Founder migration 授权（R-010 M1，
-`:443-450`）；（b）B13/privacy 逐 carrier gate 通过（gate 6）之后 `ConsentEvent` 及其 projection 才可
-additive（`:448`）；（c）C1 build ticket 依 §345 map 候选另行开票。
+Founder 批准本文档后，下一步仍是：（a）针对本文档列出的表另取 Founder 适用的 schema/migration 授权以启动
+R-010 M1（`:432`、`:443-450`）——M0 中涉及 production 的动作（如 backup/PITR 建立、production snapshot
+clone rehearsal，`:440-441`）须另取 Founder production 授权；（b）B13/privacy 逐 carrier gate 通过
+（gate 6）之后 `ConsentEvent` 及其 projection 才可 additive（`:448`）；（c）C1 build ticket 依 §345 map 候选
+另行开票。
 
 ## §2 表清单
 
@@ -89,8 +91,8 @@ M1 冻结顺序（§3 M1，`:446`）：Phase 1 identity 只 additive 建立本�
 
 ### §2.2 ConsentEvent + ConsentStateProjection（append-only 四轴，§4.2/§4.4/§4.6）
 
-用途一句话：`ConsentEvent` 是唯一长期 permission-fact truth 的append-only事件表；`ConsentStateProjection` 是
-从事件全量 replay 可重建的读模型，不是第二真源。
+用途一句话：R-010 建议以 `ConsentEvent` 作为唯一长期 permission-fact truth 的 append-only 事件表
+（`:162`）；建议 `ConsentStateProjection` 作为从事件全量 replay 可重建的读模型，不是第二真源（`:277`）。
 
 标记：【本 PR 提案】（R-010 原文标记；本文档原样保留，不做实为已批准）。
 
@@ -115,7 +117,7 @@ M1 冻结顺序（§3 M1，`:446`）：Phase 1 identity 只 additive 建立本�
 | `receivedAt` | server 赋予的规范 replay 顺序；冻结为 `Timestamptz(6)`，tick = 1μs（§4.4，`:275`） |
 | `createdAt` | DB 写入时间，不参与 fold |
 
-约束（`:183-189`）：
+约束提案（`:183-189`）：
 
 - 无 ordinary `updatedAt/deletedAt`；普通产品路径不得 UPDATE/DELETE；
 - `UNIQUE(ownerId, idempotencyKey)`；
@@ -148,7 +150,13 @@ purpose scope 与 STOP 原子 fan-out（§4.3.1，`:210-218`，出处同段落�
 - `marketing` 与 `review_request` 归类为 `proactive_non_transactional`；`transactional` 只允许既有订单、付款、
   收据、配送或安全事件所必需的封闭内容；顾客主动服务对话按 D5 独立归为 `reactive_service_reply`。
 - purpose 及 purpose class 由 shared action 按 server-owned closed registry 推导，caller、connector、merchant
-  payload 与 Otto 参数都不可覆盖。
+  payload 与 Otto 参数都不可覆盖。未来 purpose 在明确分类与配套 tests 获批前不能上线；一旦归为
+  `proactive_non_transactional`，自动加入无限定 STOP 的 fan-out 集合。启用前还必须按历史 `stop_keyword` 与
+  `historical_verified_stop` operationId 为该 purpose 写 `stop_purpose_expansion` 确定性 revoke backfill 并
+  完成 replay，使用 `operationId/idempotencyKey = purpose-expand:<originalStopOperationId>:<newPurpose>`，使
+  所有既有无限定 STOP 继续生效；该 writer 必须使用 §4.3.4（`:252-256`）的同一 fan-out/tuple 锁序。在
+  backfill 与 unresolved historical scope 计数归零前该 purpose fail-closed、零 send。既有 purpose 改变 class
+  属于新的 Founder 产品决定，不能当 registry 编辑偷改（`:213`）。
 - purpose-bound unsubscribe link 只写 token 绑定的 exact tuple，不 fan-out；无限定 STOP 忽略 caller 提交的
   purpose，按本 channel registry 计算全部 active `proactive_non_transactional` purposes；Phase 1 恰为
   `marketing + review_request`。
@@ -158,12 +166,30 @@ purpose scope 与 STOP 原子 fan-out（§4.3.1，`:210-218`，出处同段落�
 - 共享 `operationId = stop:<channel>:<channelEventRef>:<opaqueMessageId>`；每条 event 使用
   `idempotencyKey = stop:<channel>:<channelEventRef>:<opaqueMessageId>:<purpose>`（`UNIQUE(ownerId,idempotencyKey)`）。
 
-strict transactional eligibility（§4.3.2，`:220-233`）：`transactional` 不是 caller 可选标签。shared send
-action 须构造 server-owned `TransactionalSendContext = { kind, subjectRef, triggerEventRef, templateVersionId,
-contextHash }`，closed matrix 限定四类 `kind`：`order_confirmation`、`payment_receipt`、`delivery_update`、
-`security_notice`，各自要求已存在的同 tenant 事实 + confirmed trigger event，且只允许 immutable registered
-template 与 closed 变量形状；每类使用 `tx:<kind>:<triggerEventRef>:<contactId>:<channel>:<templateVersion>`
-稳定 send idempotency key。
+strict transactional eligibility（§4.3.2，`:220-233`）：`transactional` 不是 caller 可选标签，也不容纳一般
+客服对话。shared send action 必须构造 server-owned `TransactionalSendContext = { kind, subjectRef,
+triggerEventRef, templateVersionId, contextHash }`，并按以下 closed matrix 验证同 owner、同 Contact、同
+channel（`:222`）：
+
+| `kind` | 必需的 server-bound 事实 | 允许的内容形状 |
+|---|---|---|
+| `order_confirmation` | 已存在的同 tenant 订单 + confirmed trigger event | immutable registered transactional template；只允许 schema 列明的订单变量 |
+| `payment_receipt` | 已存在的同 tenant 付款/收据 + captured/issued event | immutable registered receipt template；只允许金额、币种、reference、时间等 closed 变量 |
+| `delivery_update` | 已存在的同 tenant fulfillment/delivery + status event | immutable registered delivery template；只允许状态、时间、tracking 等 closed 变量 |
+| `security_notice` | 已存在的同 tenant security event | immutable registered security template；只允许事件与安全动作所需 closed 变量 |
+
+（`:224-229`）
+
+这四类 template version 须有 immutable content hash、`purposeClass=transactional` 与 closed variable
+schema；任意 free-form body、merchant/Otto/connector 自报 `transactional`、缺/跨 owner/跨 Contact
+subject、generic send、broadcast、scheduled content、营销、评价邀请、唤回、cross-sell 或 promotion 一律不能
+进入 transactional path。classifier、subject validator 与 template registry 是 send hard gate：失败时拒绝
+本次 send 并给出可见 reason，不能静默降级、绕到 connector 或靠 caller 改 purpose（`:231`）。
+
+每类使用 `tx:<kind>:<triggerEventRef>:<contactId>:<channel>:<templateVersion>` 稳定 send idempotency
+key；provider retry 不得新造 logical send。每个 send receipt 保存 `kind + subjectRefHash +
+triggerEventRefHash + templateVersion/contentHash + contextHash`，用于证明当时为何获 transactional
+eligibility，不保存不必要 PII（`:233`）。
 
 #### deterministic fold（§4.4，`2026-07-16-r010-schema-authority-alignment.md:258-275`）
 
@@ -185,9 +211,10 @@ template 与 closed 变量形状；每类使用 `tx:<kind>:<triggerEventRef>:<co
 visible quarantine 并阻止 M5。`legacy_unresolved` 不是 permission state，也不能成为隐藏 global block。DND、
 provider refusal、frequency suppression 不进入 fold。
 
-receivedAt 赋值规则：每个 tuple 都取 tenant-qualified lock，读取自身前一最大值，再赋
-`max(clock_timestamp() at storage precision, previous + 1 tick)`；insert、projection fold 与 cursor 更新同
-transaction。
+普通 event transaction 恰处理一个 tuple；唯一例外是 §4.3.1 获批的 STOP fan-out，它在同一 transaction 按稳定
+顺序处理闭合集合（`:275`）。receivedAt 赋值规则：每个 tuple 都取 tenant-qualified lock，读取自身前一最大
+值，再赋 `max(clock_timestamp() at storage precision, previous + 1 tick)`；insert、projection fold 与
+cursor 更新同 transaction。
 
 #### ConsentStateProjection（`:277-287`）
 
@@ -323,47 +350,66 @@ R-010 §7 冻结的是**建议顺序**，不是本方案自带的执行授权；
 
 - **M0 — Reconcile before mutation**（`:434-441`）：pin exact deployed SHA/image digest；SELECT-only 核
   production migration ledger、shared checksums、rollback chronology、物理 catalog/index/constraint、row
-  counts/value distributions；inventory 全部 identity/consent/UTM readers/writers/raw SQL/imports/workers；
-  产出无 PII dry-run mapping/collision report；建立并 restore-test 可识别 backup/PITR point；在 production
-  snapshot clone rehearsal。
+  counts/value distributions；inventory 全部 identity/consent/UTM readers/writers/raw SQL/imports/workers、
+  每条 outbound path、redirect/report 与 external analytics ingestion（Reminder 只有证明存在实际 link path
+  后才进入 tracking inventory，证明前 no claim）；产出无 PII dry-run mapping/collision report；建立并
+  restore-test 可识别 backup/PITR point；在 production snapshot clone rehearsal。
 - **M1 — Expand before behavior change**（`:443-450`）：新 migration，不改旧 migration。Phase 1 identity 只
   additive 建立 D9 最小 `ChannelScope` 五字段、`UNIQUE(ownerId,channel,scopeKey)`、同 tenant/channel 的
   `ChannelConnection`/`ContactIdentity` references 与 active 四事实 unique；不得新增 lifecycle
   machinery；任何 migration/schema 仍须另获 Founder 批准。现有三事实 rows/index 只按 legacy 事实保留，先做
-  tenant-qualified verified scope backfill；无法证明 scope 的 row 保持 disabled/quarantined。四事实
-  writer/index 在 backfill 验证与原子切换前不得启用。`ConsentEvent` 及其 projection 只有在本 PR 物理合同
-  获批**且** §4.7/B13 逐 carrier privacy gate 通过后才可 additive；缺任一项不得启动 migration 或
-  implementation。`ContactDndEvent`、`ProviderRefusalEvent` 与其 projections 仍须本 PR 对应物理合同批准；不
-  新增 Campaign UTM store。D8 延后的 reactive/D5 manifest/anchor/confirmation/outbox/receipt/runtime 不得在
-  R-010 占位落地，native contract 未获批前全部 dependent implementation/path disabled。
+  tenant-qualified verified scope backfill；无法证明 scope 的 row 保持 disabled/quarantined，也不得用
+  connection/provider surrogate 补洞。四事实 writer/index 在 backfill 验证与原子切换前不得启用。
+  `ConsentEvent` 及其 projection 只有在本 PR 物理合同获批**且** §4.7/B13 逐 carrier privacy gate 通过后才可
+  additive；缺任一项不得启动 migration 或 implementation。`ContactDndEvent`、`ProviderRefusalEvent` 与其
+  projections 仍须本 PR 对应物理合同批准；不新增 Campaign UTM store。D8 延后的
+  reactive/D5 manifest/anchor/confirmation/outbox/receipt/runtime 不得在 R-010 占位落地，native contract
+  未获批前全部 dependent implementation/path disabled。本步骤还须加 tenant coverage、index/constraint 与
+  isolated migration/rollback tests；**reader/writer 行为尚不切换**（`:449-450`）。
 - **M2 — Single writer seams**（`:452-463`）：identity、consent、DND、provider refusal、UTM 各建立唯一
   shared action/materializer；scope/external canonicalization 只有一个 server chokepoint；static/runtime
   tests 阻止 direct legacy writes。新 identity 只经 shared resolver 在获批 D9 carrier 上写 active 四事实
   Channel identity；unmapped/ambiguous/conflicting scope 零 exact attach/create。consent 先
   dark-launch/shadow；任何 live consent endpoint 启用时，须在同一 exact release 同时具备 event insert +
   `whatsapp × marketing` compatibility projection 同 transaction，以及 send consent-state reader 从第一条
-  live event 起可见。STOP endpoint 启用前须证明 §4.3.1 的同 transaction fan-out、共享 operationId、
-  per-purpose idempotency 与两 tuple consent-state readers 全在同一 exact release 生效。任何 live
-  DND/provider refusal endpoint 同样要求 typed event + compatibility/state projection + send hard-negative
-  reader 在同一 exact release 可见；禁止产生 reader 看不见的新 block。
+  live event 起可见并能区分 automatic hard stop、visible risk tag 与 exact D5 override；禁止「只写 event、
+  旧 send reader 看不到」的窗口。STOP endpoint 启用前须证明 §4.3.1 的同 transaction fan-out、共享
+  operationId、per-purpose idempotency 与两 tuple consent-state readers 全在同一 exact release 生效；
+  **自动/无人确认 send 为零，merchant manual action 只能进入 D5 two-confirm path**。**D4 transactional
+  exemption 启用前，§4.3.2 closed context matrix、same-owner subject validators、immutable template
+  registry 与 receipt context hash 必须覆盖全部 transactional path；任何旧 generic/free-form/connector
+  path 不得自报 transactional。** 任何 live DND/provider refusal endpoint 同样要求 typed event +
+  compatibility/state projection + send hard-negative reader 在同一 exact release 可见；禁止产生 reader
+  看不见的新 block。**production 可 shadow 其它 reads，但 known STOP/revoke 一旦 live 写入就不能
+  shadow-only**（`:463`）。
 - **M3 — Honest backfill**（`:465-474`）：Identity 轴——现有三事实 row 只有在同 tenant/channel 的 stable
   `scopeKey` 可验证时才 backfill 到 D9 `ChannelScope`，无法证明、unmapped、ambiguous、conflicting scope 或
   跨 owner 异常保持 disabled/quarantined。Consent 轴——`unknown` 不生成 event；verified purpose-bound
   historical revoke 写 `historical_verified_revoke`；verified unqualified historical STOP 按 D4 写
-  `historical_verified_stop` 原子 fan-out；无法证明 scope 的 known negative 进 visible quarantine 并阻止
-  M5。DND/provider refusal 轴——legacy DND `true` 写确定性 set event；可验证 provider block/clear 按 exact
-  scope 迁移；actor/scope 不明不得猜。backfill 重跑必须 byte/semantic idempotent。
+  `historical_verified_stop` 原子 fan-out；**模糊 opt-in 不升级 verified**；无法证明 purpose-bound vs
+  无限定 STOP 的 **scope、tuple 或顺序**的 known negative 进 visible quarantine，**M5 前必须归零或另获显式
+  temporary-block 批准**。DND/provider refusal 轴——legacy DND `true` 写确定性 set event；可验证 provider
+  block/clear 按 exact scope 迁移；actor/scope 不明不得猜。backfill 重跑必须 byte/semantic idempotent。
 - **M4 — Shadow read and compare**（`:476-480`）：new projection 与 legacy behavior 同时计算，但只标一个
-  authority；identity 比较 D9 scope/root/collision/backfill quarantine 与零 auto-attach；consent 比较 tuple
-  state，特别验证 unknown 不被移出名单、known revoke 不被自动放行；所有差异分类、可解释；零 unexplained
-  drift 才请求 cutover。
+  authority；**live STOP/revoke 的 consent-state reader 已按 M2 双读/直读 event，不能等 M5**。identity 比较
+  D9 scope/root/collision/backfill quarantine 与零 auto-attach；consent 比较 tuple state，特别验证 unknown
+  不被移出名单、known revoke 不被自动放行；**D5 尚未通过 native gate 时只验证 dependent path 全停**。所有
+  差异分类、可解释；零 unexplained drift 才请求 cutover。
 - **M5 — Authority cutover**（`:482-491`）：identity writer/read 只使用 D9 `ChannelScope` 与 active 四事实
-  key；三事实 row 须完成 verified tenant-qualified backfill，否则保持 disabled/quarantined。ConsentEvent 成为
-  唯一 permission-fact truth；writer、consent-state reader、projection 与 receipt cursor 按一个 controlled
-  cutover 切换；Contact 三字段退出 business reads，只作待删 legacy；所有不能安全表示/排序的 known historical
-  revoke 必须为零或已有单独 Founder 规则。`ContactDndEvent` 与 `ProviderRefusalEvent` 分别成为 DND/refusal
-  authority；`doNotDisturb` 只作 compatibility projection，generic `ActionEvent` 只作镜像。不在 cutover 同时
-  drop 旧列/index/table。
+  key；三事实 row 须完成 verified tenant-qualified backfill，否则保持 disabled/quarantined。**首次互动只在
+  scope 唯一映射后创建 Contact，同 scope exact reuse；continuity-proof/full merge runtime 未获批时 writer
+  disabled；不得恢复 issuer/status/TTL/recycle/revive/reassignment/quarantine 或 automatic person
+  inference/merge。** ConsentEvent 成为唯一 permission-fact truth；writer、consent-state reader、projection
+  与 receipt cursor 按一个 controlled cutover 切换；Contact 三字段退出 business reads，只作待删 legacy；所有
+  不能安全表示/排序的 known historical revoke 必须为零或已有单独 Founder 规则。**transactional eligibility
+  只由 §4.3.2 shared classifier 与 validated context 决定；generic/caller-labelled path 为零，receipt
+  context 证据可重放。reactive eligibility 与 manual consent override 只有在 D8 native carrier/runtime/
+  privacy gates 全部通过后才可由 §4.3.3 shared actions 启用；否则全部 dependent path 保持
+  disabled/fail-closed/no claim。启用后 receipt 可重放且不改变 permission fold，legacy 一次确认/connector
+  bypass/standing waiver 路径为零。** `ContactDndEvent` 与 `ProviderRefusalEvent` 分别成为 DND/refusal
+  authority；`doNotDisturb` 只作 compatibility projection，generic `ActionEvent` 只作镜像。**receipts 保存
+  必要 identity/consent/transactional/reactive/manual-override cursor 与 evidence，使「当时知道什么、为何
+  可发、由谁确认、提交了什么、provider 实际返回什么」可重放。** 不在 cutover 同时 drop 旧列/index/table。
 - **M6 — Contract / destructive cleanup**（`:493-498`）：所有 readers、exports、Otto、reports、workers 与
   tests 已脱离 legacy authority；production verification、backup restore、rollback/forward-fix rehearsal 与
   independent review 全通过；另取 Founder destructive approval 后才 drop 旧 identity index、Contact consent
@@ -445,7 +491,9 @@ Founder 批准本文档**不**意味着：
 
 下一步（按依赖顺序，非本文档裁定的排他顺序）：
 
-1. 针对 §2 表清单逐条另取 Founder migration 授权，启动 R-010 M0–M1（`:432`、`:443-450`）。
+1. 针对 §2 表清单另取 Founder 适用的 schema/migration 授权，启动 R-010 M1（`:432`、`:443-450`）；M0 中涉及
+   production 的动作（backup/PITR 建立、production snapshot clone rehearsal，`:440-441`）须另取 Founder
+   production 授权（`:432`）。
 2. B13/privacy 逐 carrier 隐私矩阵完成并通过 gate 6（`:656`），之后 `ConsentEvent` 及其 projection 才可
    additive（`:448`）。
 3. 依 §345 map C1 候选归组（`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:200`）另行开
