@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -107,6 +107,10 @@ beforeEach(() => {
   });
   mockNewId.mockReturnValue(NEXT_SEGMENT_ID);
   mockSegmentUpdateMany.mockResolvedValue({ count: 1 });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("segment action boundary", () => {
