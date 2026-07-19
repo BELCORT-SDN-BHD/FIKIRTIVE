@@ -10,6 +10,7 @@ import {
   recordConsentEvent,
   recordContactDndEvent,
   recordProviderRefusalEvent,
+  recordStopPurposeExpansion,
   recordUnqualifiedStop,
   validateConsentWriterCombination,
   validateDndWriterCombination,
@@ -528,6 +529,29 @@ describe("closed transactional writers", () => {
     await expect(
       prisma.contact.findFirstOrThrow({ where: { ownerId: ORG_A, id: CONTACT_A } }),
     ).resolves.toMatchObject({ marketingConsent: "opt_in" });
+  });
+
+  it("rejects stop_purpose_expansion into a purpose tuple that already has events (R-010 :206/:268)", async () => {
+    await recordUnqualifiedStop({
+      ownerId: ORG_A,
+      contactId: CONTACT_A,
+      channel: "whatsapp",
+      sourceKind: "stop_keyword",
+      channelEventRef: "gupshup:inbound",
+      opaqueMessageId: "message:stop-expand-1",
+    });
+    const before = await prisma.consentEvent.count({ where: { ownerId: ORG_A } });
+    await expect(
+      recordStopPurposeExpansion({
+        ownerId: ORG_A,
+        contactId: CONTACT_A,
+        channel: "whatsapp",
+        purpose: "marketing",
+        originalStopOperationId: "stop:whatsapp:gupshup:inbound:message:stop-expand-1",
+        evidenceRef: "evidence:stop-expand-1",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_WRITER_COMBINATION" });
+    await expect(prisma.consentEvent.count({ where: { ownerId: ORG_A } })).resolves.toBe(before);
   });
 
   it("keeps provider blocks scoped, requires verified active-block reversal, and never expires by wall clock", async () => {

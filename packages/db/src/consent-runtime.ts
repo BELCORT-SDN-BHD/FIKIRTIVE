@@ -656,6 +656,20 @@ export async function recordStopPurposeExpansion(
     }
     const replay = await existingConsentReplay(tx, draft);
     if (replay) return { duplicate: true, eventIds: [replay.id], receivedAt: [replay.receivedAt] };
+    // R-010 :206/:268 — stop_purpose_expansion may only write into a purpose tuple that
+    // previously did not exist (no prior events, hence no interactive stance). With
+    // Phase-1's proactive purpose set fully covered by STOP fan-out, this writer is
+    // effectively dormant until a genuinely new purpose is approved.
+    const priorTupleEvent = await tx.consentEvent.findFirst({
+      where: { ownerId, contactId, channel, purpose },
+      select: { id: true },
+    });
+    if (priorTupleEvent) {
+      throw new ConsentRuntimeError(
+        "INVALID_WRITER_COMBINATION",
+        "stop_purpose_expansion may only target a purpose with no prior consent events for this contact/channel.",
+      );
+    }
     const event = await writeOneConsentEvent(tx, draft);
     return { duplicate: false, eventIds: [event.id], receivedAt: [event.receivedAt] };
   });
