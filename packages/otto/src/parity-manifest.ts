@@ -143,6 +143,16 @@ export const PARITY_MANIFEST = {
   "campaign-view-data.listCampaigns": { skill: "readCampaigns", reason: "B0-55/C2a read parity: owner-scoped Campaign list and structured plan summaries." },
   "campaign-view-data.getCampaign": { skill: "readCampaigns", reason: "B0-52/55/C2a read parity: exact owner-scoped Campaign detail with independently owner-scoped grouped summaries." },
 
+  "crm-actions.createContact": { skill: "manageContacts", reason: "B0-59/C1 act parity: creates only an owner-scoped Contact and returns deterministic duplicate suggestions; identity and consent are never inferred." },
+  "crm-actions.setContactConsent": { skill: "manageContacts", reason: "B0-60/C1 act parity: manual consent capture enters the shared ConsentEvent runtime as crm_manual merchant/backfill/asserted." },
+  "crm-actions.updateContact": { skill: "manageContacts", reason: "B0-60/C1 act parity: standard name/lifecycle edits use the same bounded owner-scoped action; receipt, identity, consent, and DND fields are excluded." },
+  "crm-actions.setContactDnd": { skill: "manageContacts", reason: "B0-60/C1 act parity: the human toggle enters ContactDndEvent through the shared crm_ui writer." },
+  "crm-actions.setContactDndFromOtto": { skill: "manageContacts", reason: "B0-60/C1 act parity: Otto DND changes use the same action boundary and engine with otto_approved_action provenance." },
+  "crm-actions.importContacts": { skill: "manageContacts", reason: "B0-59/C1 act parity: bounded CSV import creates owner-scoped Contact rows, returns suggestions only, and routes optional consent through sourceKind import." },
+  "crm-view-data.listContacts": { skill: "readContacts", reason: "B0-59/60/C1 read parity: owner-scoped Contact list reads WhatsApp × marketing ConsentStateProjection and DND." },
+  "crm-view-data.getContact": { skill: "readContacts", reason: "B0-60/C1 read parity: exact owner-scoped profile includes read-only identities and newest-first ConsentEvent history." },
+  "crm-view-data.searchContacts": { skill: "readContacts", reason: "B0-59/C1 read parity: owner-scoped name/identity search with optional lifecycle filter." },
+
   "canvas-actions.listCanvasNodes": { skill: "manageCanvas" },
   "canvas-actions.createCanvasNode": { skill: "manageCanvas" },
   "canvas-actions.moveCanvasNode": { exempt: "VISUAL", reason: "Pure canvas positioning is a visual micro-operation." },

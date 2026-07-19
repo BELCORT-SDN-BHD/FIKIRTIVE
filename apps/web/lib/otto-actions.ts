@@ -106,6 +106,14 @@ import {
 } from "./campaign-actions";
 import { getCampaign, listCampaigns } from "./campaign-view-data";
 import { listTrendSnapshots, saveTrendSnapshot } from "./trend-actions";
+import {
+  createContact,
+  importContacts,
+  setContactConsent,
+  setContactDndFromOtto,
+  updateContact,
+} from "./crm-actions";
+import { getContact, listContacts, searchContacts, type CrmContactRow } from "./crm-view-data";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -225,6 +233,54 @@ function makeOttoCampaignsPort(): NonNullable<OttoContext["campaigns"]> {
         evidence,
       });
     },
+  };
+}
+
+function contactForOtto(contact: CrmContactRow) {
+  return {
+    ...contact,
+    firstTouchAt: contact.firstTouchAt.toISOString(),
+    lastSeenAt: contact.lastSeenAt.toISOString(),
+    createdAt: contact.createdAt.toISOString(),
+    consentState: {
+      ...contact.consentState,
+      lastReceivedAt: contact.consentState.lastReceivedAt?.toISOString() ?? null,
+    },
+  };
+}
+
+function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
+  return {
+    list: async (input) => {
+      const result = await listContacts(input);
+      if (!("ok" in result)) return result;
+      return { ok: true as const, contacts: result.contacts.map(contactForOtto) };
+    },
+    get: async (contactId) => {
+      const result = await getContact(contactId);
+      if (!("ok" in result)) return result;
+      return {
+        ok: true as const,
+        contact: {
+          ...contactForOtto(result.contact),
+          consentEvents: result.contact.consentEvents.map((event) => ({
+            ...event,
+            occurredAt: event.occurredAt?.toISOString() ?? null,
+            receivedAt: event.receivedAt.toISOString(),
+          })),
+        },
+      };
+    },
+    search: async (input) => {
+      const result = await searchContacts(input);
+      if (!("ok" in result)) return result;
+      return { ok: true as const, contacts: result.contacts.map(contactForOtto) };
+    },
+    create: (input) => createContact({ ...input, source: "otto" }),
+    update: (input) => updateContact(input),
+    importCsv: (input) => importContacts(input),
+    recordConsent: (input) => setContactConsent(input),
+    setDnd: (input) => setContactDndFromOtto(input),
   };
 }
 
@@ -407,6 +463,7 @@ export async function buildOttoContext({
   const context: OttoContext & {
     segments: ReturnType<typeof makeOttoSegmentsPort>;
     campaigns: ReturnType<typeof makeOttoCampaignsPort>;
+    contacts: ReturnType<typeof makeOttoContactsPort>;
   } = {
     orgId: ownerId,
     // userId is the owner/tenant scope (= orgId), not a distinct verified per-user id — no per-user
@@ -443,6 +500,9 @@ export async function buildOttoContext({
     // B0-51..58/C2a: zero-cost Campaign planning only. Reads/writes re-enter the authenticated
     // action layer; no UTM, generation, credits, schedule approval, send, publish, or provider port.
     campaigns: makeOttoCampaignsPort(),
+    // B0-59/60/C1: owner-scoped Contact reads/writes re-enter the same authenticated actions.
+    // Identity stays read-only; consent and DND mutations route through the closed runtime writers.
+    contacts: makeOttoContactsPort(),
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },

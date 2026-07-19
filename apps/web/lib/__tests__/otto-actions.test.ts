@@ -65,6 +65,14 @@ const {
   mockSetCampaignGrouping,
   mockListTrendSnapshots,
   mockSaveTrendSnapshot,
+  mockListContacts,
+  mockGetContact,
+  mockSearchContacts,
+  mockCreateContact,
+  mockUpdateContact,
+  mockImportContacts,
+  mockSetContactConsent,
+  mockSetContactDndFromOtto,
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
@@ -160,6 +168,14 @@ const {
     mockSetCampaignGrouping: vi.fn(),
     mockListTrendSnapshots: vi.fn(),
     mockSaveTrendSnapshot: vi.fn(),
+    mockListContacts: vi.fn(),
+    mockGetContact: vi.fn(),
+    mockSearchContacts: vi.fn(),
+    mockCreateContact: vi.fn(),
+    mockUpdateContact: vi.fn(),
+    mockImportContacts: vi.fn(),
+    mockSetContactConsent: vi.fn(),
+    mockSetContactDndFromOtto: vi.fn(),
   };
 });
 
@@ -193,6 +209,18 @@ vi.mock("@/lib/campaign-actions", () => ({
 vi.mock("@/lib/trend-actions", () => ({
   listTrendSnapshots: mockListTrendSnapshots,
   saveTrendSnapshot: mockSaveTrendSnapshot,
+}));
+vi.mock("@/lib/crm-view-data", () => ({
+  listContacts: mockListContacts,
+  getContact: mockGetContact,
+  searchContacts: mockSearchContacts,
+}));
+vi.mock("@/lib/crm-actions", () => ({
+  createContact: mockCreateContact,
+  updateContact: mockUpdateContact,
+  importContacts: mockImportContacts,
+  setContactConsent: mockSetContactConsent,
+  setContactDndFromOtto: mockSetContactDndFromOtto,
 }));
 
 vi.mock("@fikirtive/db", () => ({
@@ -620,6 +648,88 @@ describe("buildOttoContext", () => {
       rules,
     });
     expect(JSON.stringify(mockBuildCrmSegment.mock.calls)).not.toContain("owner_xyz");
+  });
+
+  it("injects CRM Contact reads and engine-routed writes without threading owner identity", async () => {
+    const contact = {
+      id: "contact-1",
+      name: "Aisha",
+      lifecycleStage: "Active",
+      source: "manual",
+      firstTouchCampaignId: null,
+      firstTouchAt: new Date("2026-07-17T00:00:00.000Z"),
+      lastSeenAt: new Date("2026-07-18T00:00:00.000Z"),
+      consentState: {
+        state: "unknown" as const,
+        stateSourceKind: "crm_manual",
+        evidenceStatus: "asserted",
+        lastReceivedAt: new Date("2026-07-18T01:00:00.000Z"),
+      },
+      doNotDisturb: false,
+      totalOrdersMyr: null,
+      createdAt: new Date("2026-07-17T00:00:00.000Z"),
+      identities: [],
+    };
+    const detail = {
+      ...contact,
+      consentEvents: [{
+        id: "event-1",
+        channel: "whatsapp",
+        purpose: "marketing",
+        action: "grant",
+        actorKind: "merchant",
+        entryMode: "backfill",
+        sourceKind: "crm_manual",
+        evidenceStatus: "asserted",
+        occurredAt: null,
+        receivedAt: new Date("2026-07-18T01:00:00.000Z"),
+      }],
+    };
+    mockListContacts.mockResolvedValue({ ok: true, contacts: [contact] });
+    mockGetContact.mockResolvedValue({ ok: true, contact: detail });
+    mockSearchContacts.mockResolvedValue({ ok: true, contacts: [contact] });
+    mockCreateContact.mockResolvedValue({ ok: true, contactId: contact.id, created: true, possibleDuplicates: [] });
+    mockUpdateContact.mockResolvedValue({ ok: true });
+    mockImportContacts.mockResolvedValue({ ok: true, importedCount: 1, failedCount: 0, rows: [] });
+    mockSetContactConsent.mockResolvedValue({ ok: true });
+    mockSetContactDndFromOtto.mockResolvedValue({ ok: true });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_xyz",
+      projectId: "proj_xyz",
+      threadId: "thread_xyz",
+    });
+    const contacts = ctx.contacts!;
+
+    await expect(contacts.list({ lifecycleStage: "Active" })).resolves.toMatchObject({
+      ok: true,
+      contacts: [{
+        id: contact.id,
+        firstTouchAt: "2026-07-17T00:00:00.000Z",
+        consentState: { state: "unknown", lastReceivedAt: "2026-07-18T01:00:00.000Z" },
+      }],
+    });
+    await expect(contacts.get(contact.id)).resolves.toMatchObject({
+      ok: true,
+      contact: { consentEvents: [{ receivedAt: "2026-07-18T01:00:00.000Z" }] },
+    });
+    await contacts.search({ query: "Aisha" });
+    await contacts.create({ name: "Aisha", lifecycleStage: "Active" });
+    await contacts.update({ contactId: contact.id, patch: { lifecycleStage: "Dormant" } });
+    await contacts.importCsv({ csv: "name\nBo", importId: "import-1" });
+    await contacts.recordConsent({ contactId: contact.id, action: "grant", requestId: "consent-1" });
+    await contacts.setDnd({ contactId: contact.id, enabled: true, requestId: "dnd-1" });
+
+    expect(mockCreateContact).toHaveBeenCalledWith({ name: "Aisha", lifecycleStage: "Active", source: "otto" });
+    expect(mockSetContactConsent).toHaveBeenCalledWith({ contactId: contact.id, action: "grant", requestId: "consent-1" });
+    expect(mockSetContactDndFromOtto).toHaveBeenCalledWith({ contactId: contact.id, enabled: true, requestId: "dnd-1" });
+    expect(JSON.stringify([
+      mockCreateContact.mock.calls,
+      mockUpdateContact.mock.calls,
+      mockImportContacts.mock.calls,
+      mockSetContactConsent.mock.calls,
+      mockSetContactDndFromOtto.mock.calls,
+    ])).not.toContain("owner_xyz");
   });
 
   it("injects Campaign reads and zero-cost proposal writes through the shared authenticated actions", async () => {

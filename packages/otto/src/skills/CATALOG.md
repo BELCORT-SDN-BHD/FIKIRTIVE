@@ -20,6 +20,7 @@
 | lookupProducts | free | read | internal | ❌ | Look up the user's saved products by name, category, tag or description (returns |
 | manageBrandMemory | free | write | internal | ❌ | Remove or restore brand memory — $0, never generates or spends. delete_record: r |
 | manageCanvas | free | write | internal | ❌ | See and arrange the project's creative canvas ($0 — never generates media or spe |
+| manageContacts | free | write | internal | ❌ | Create or update standard CRM Contact fields, import a bounded CSV, record a mer |
 | manageEntities | free | write | internal | ❌ | Manage the user's reusable elements — the @-referenceable characters, locations, |
 | manageLibrary | free | write | internal | ❌ | Browse the user's Library — every image/video they've made — $0, never generates |
 | manageMedia | free | write | internal | ❌ | See and organize the project's generated media ($0 — never generates media or sp |
@@ -28,6 +29,7 @@
 | meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
 | meta-list-objects | free | read | external | ❌ | List the user's connected Meta (Facebook/Instagram) ad objects (campaigns, ad se |
+| planCampaign | free | write | internal | ❌ | Create a Campaign container; propose, update, remove, or mark approved a structu |
 | propose | free | write | internal | ❌ | Build a generation proposal (GEN_CARD) the user can approve and generate later.  |
 | propose-ad-build | free | write | internal | ❌ | Build a Meta ad creation proposal (BUILD_CARD) the user can review and confirm.  |
 | propose-meta-action | free | write | internal | ❌ | Build a Meta ad action plan (ACTION_CARD) the user can review and confirm. Use t |
@@ -35,6 +37,8 @@
 | proposePack | free | write | internal | ❌ | Lay out a coherent set of generation proposals (a campaign pack) in one turn. Us |
 | proposeResearch | free | write | internal | ❌ | Draft a RESEARCH plan (RESEARCH_CARD) the user can review and approve before any |
 | proposeStoryboard | free | write | internal | ❌ | Lay out an ordered STORYBOARD for a video/ad the user can review and edit before |
+| readCampaigns | free | read | internal | ❌ | Read the user's Campaign list, one exact Campaign with structured plan entries a |
+| readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the same owner-scoped action |
 | readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer as the C |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
 | renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisp |

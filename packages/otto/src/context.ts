@@ -57,6 +57,48 @@ export type CrmSegmentContact = {
   contactable: boolean;
 };
 
+/** CRM Contact read model (B0-59/60/C1). Dates are ISO strings across the package seam. */
+export type CrmContactSummary = {
+  id: string;
+  name: string;
+  lifecycleStage: string;
+  source: string;
+  firstTouchCampaignId: string | null;
+  firstTouchAt: string;
+  lastSeenAt: string;
+  consentState: {
+    state: "unknown" | "verified_grant" | "effective_revoke";
+    stateSourceKind: string | null;
+    evidenceStatus: string | null;
+    lastReceivedAt: string | null;
+  };
+  doNotDisturb: boolean;
+  totalOrdersMyr: string | null;
+  createdAt: string;
+  identities: {
+    id: string;
+    channel: string;
+    externalId: string;
+    handle: string | null;
+    label: string | null;
+  }[];
+};
+
+export type CrmContactDetailSummary = CrmContactSummary & {
+  consentEvents: {
+    id: string;
+    channel: string;
+    purpose: string;
+    action: string;
+    actorKind: string;
+    entryMode: string;
+    sourceKind: string;
+    evidenceStatus: string;
+    occurredAt: string | null;
+    receivedAt: string;
+  }[];
+};
+
 /** Zero-cost Campaign planner shapes (B0-51..58/C2a). These are structural mirrors only:
  * the authenticated web actions remain the validator and owner-scoped authority. */
 export type CampaignPlanEntrySummary = {
@@ -254,6 +296,32 @@ export interface OttoContext {
         }
       | { error: string }
     >;
+  };
+  /** CRM Contact port (B0-59/60/C1, $0). Reads and writes delegate to the same authenticated
+   * web actions as the human surface. The port never accepts owner identity; identity records are
+   * read-only, duplicate matches are suggestions, and consent/DND writes enter the shared runtime. */
+  contacts?: {
+    list(input?: { lifecycleStage?: "New" | "Active" | "Dormant"; limit?: number }): Promise<
+      { ok: true; contacts: CrmContactSummary[] } | { error: string }
+    >;
+    get(contactId: string): Promise<
+      { ok: true; contact: CrmContactDetailSummary } | { error: string }
+    >;
+    search(input: { query: string; lifecycleStage?: "New" | "Active" | "Dormant"; limit?: number }): Promise<
+      { ok: true; contacts: CrmContactSummary[] } | { error: string }
+    >;
+    create(input: { name: string; lifecycleStage?: "New" | "Active" | "Dormant" }): Promise<unknown>;
+    update(input: {
+      contactId: string;
+      patch: { name?: string; lifecycleStage?: "New" | "Active" | "Dormant" };
+    }): Promise<unknown>;
+    importCsv(input: { csv: string; importId: string }): Promise<unknown>;
+    recordConsent(input: {
+      contactId: string;
+      action: "grant" | "revoke";
+      requestId: string;
+    }): Promise<unknown>;
+    setDnd(input: { contactId: string; enabled: boolean; requestId: string }): Promise<unknown>;
   };
   /** Campaign planner port (B0-51..58/C2a, $0). Every method delegates to the SAME authenticated
    * Campaign/Trend action used by the manual surface. The model cannot supply identity, mint ids,
