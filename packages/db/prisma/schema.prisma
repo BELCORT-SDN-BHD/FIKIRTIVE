@@ -646,6 +646,11 @@ model Organization {
   trendSnapshots          TrendSnapshot[]
   contacts                Contact[]
   contactIdentities       ContactIdentity[]
+  consentEvents           ConsentEvent[]
+  consentStateProjections ConsentStateProjection[]
+  contactDndEvents        ContactDndEvent[]
+  providerRefusalEvents   ProviderRefusalEvent[]
+  providerRefusalStates   ProviderRefusalState[]
   segments                Segment[]
 }
 
@@ -1151,7 +1156,11 @@ model ChannelConnection {
   // a raw partial UNIQUE INDEX ChannelConnection_one_default_per_owner_kind on (ownerId, kind)
   // WHERE externalId IS NULL lives in the accompanying migration (repo idiom, same as
   // PublishAttempt_one_applying_per_post: Prisma can't model a partial index, so not declared here).
+  providerRefusalEvents ProviderRefusalEvent[]
+
   @@unique([ownerId, kind, externalId])
+  // Required by tenant-qualified ProviderRefusalEvent references.
+  @@unique([id, ownerId])
   @@index([ownerId])
 }
 
@@ -1285,8 +1294,13 @@ model Contact {
   createdAt            DateTime @default(now())
   deletedAt            DateTime?
 
-  identities ContactIdentity[]
+  identities              ContactIdentity[]
+  consentEvents            ConsentEvent[]
+  consentStateProjections  ConsentStateProjection[]
+  dndEvents                ContactDndEvent[]
 
+  // Required by tenant-qualified consent and DND references.
+  @@unique([id, ownerId])
   @@index([ownerId, lifecycleStage, deletedAt])
 }
 
@@ -1313,7 +1327,117 @@ model ContactIdentity {
   // writer/index before verified backfill and atomic cutover. PostgreSQL cannot create a dormant
   // enforcing unique index, so this base migration deliberately leaves that later index absent and
   // preserves the existing legacy three-fact partial unique unchanged; reader/writer behavior stays put.
+  providerRefusalEvents ProviderRefusalEvent[]
+
+  // Required by tenant-qualified ProviderRefusalEvent references.
+  @@unique([id, ownerId])
   @@index([ownerId, contactId, deletedAt])
+}
+
+// R-010 M1 consent batch: append-only permission facts. Closed taxonomies stay code-validated
+// Strings (the current CRM house style); this migration adds storage only and switches no behavior.
+model ConsentEvent {
+  id             String       @id
+  ownerId        String
+  organization   Organization @relation(fields: [ownerId], references: [id])
+  contactId      String
+  contact        Contact      @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  channel        String // provider-neutral closed taxonomy (code-validated)
+  purpose        String // marketing | transactional | review_request (code-validated)
+  action         String // grant | revoke (code-validated)
+  actorKind      String // customer | merchant | legacy_unknown; system is forbidden (code-validated)
+  entryMode      String // interactive | backfill (code-validated)
+  sourceKind     String // R-010 §4.3 endpoint-bound closed set (code-validated)
+  evidenceStatus String // verified | asserted | unresolved (code-validated)
+  evidenceRef    String? // opaque reference only; never raw message/provider payload
+  operationId    String
+  idempotencyKey String
+  occurredAt     DateTime?    @db.Timestamptz(6)
+  receivedAt     DateTime     @db.Timestamptz(6)
+  createdAt      DateTime     @default(now())
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, contactId, channel, purpose, receivedAt, id])
+}
+
+// Rebuildable cache derived from ConsentEvent; it is not an independent authority or mutation API.
+model ConsentStateProjection {
+  ownerId         String
+  organization    Organization @relation(fields: [ownerId], references: [id])
+  contactId       String
+  contact         Contact      @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  channel         String
+  purpose         String
+  state           String // unknown | verified_grant | effective_revoke (code-validated)
+  lastEventId     String
+  lastReceivedAt  DateTime     @db.Timestamptz(6)
+  stateActorKind  String
+  stateSourceKind String
+  evidenceStatus  String
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([ownerId, contactId, channel, purpose])
+}
+
+// Append-only Contact-wide DND facts. The shared writer/fold and doNotDisturb projection switch
+// are deliberately deferred; this migration only creates their future authority carrier.
+model ContactDndEvent {
+  id             String       @id
+  ownerId        String
+  organization   Organization @relation(fields: [ownerId], references: [id])
+  contactId      String
+  contact        Contact      @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  action         String // set | clear (code-validated)
+  actorKind      String // merchant | otto | legacy_migration (code-validated)
+  actorId        String?
+  sourceKind     String // crm_ui | otto_approved_action | legacy_contact_snapshot (code-validated)
+  evidenceRef    String? // opaque reference only
+  idempotencyKey String
+  receivedAt     DateTime     @db.Timestamptz(6)
+  createdAt      DateTime     @default(now())
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, contactId, receivedAt, id])
+}
+
+// Append-only, provider-neutral refusal facts. scopeKey and every closed combination remain
+// server-derived/runtime-validated; receiptRef is an opaque reference, never a copied payload.
+model ProviderRefusalEvent {
+  id                   String            @id
+  ownerId              String
+  organization         Organization      @relation(fields: [ownerId], references: [id])
+  scopeKey             String
+  providerConnectionId String
+  providerConnection   ChannelConnection @relation(fields: [providerConnectionId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  channel              String?
+  contactIdentityId    String?
+  contactIdentity      ContactIdentity?  @relation(fields: [contactIdentityId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  kind                 String // permanent_recipient | transient | account_level (code-validated)
+  action               String // block | observe | clear | expire (code-validated)
+  actorKind            String // provider | system (code-validated)
+  actorId              String?
+  providerCode         String
+  receiptRef           String // opaque reference only
+  reversesEventId      String?
+  idempotencyKey       String
+  receivedAt           DateTime          @db.Timestamptz(6)
+  expiresAt            DateTime?         @db.Timestamptz(6)
+  createdAt            DateTime          @default(now())
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, scopeKey, receivedAt, id])
+}
+
+// Rebuildable current refusal state for one exact server-derived scope; no independent mutation API.
+model ProviderRefusalState {
+  ownerId        String
+  organization   Organization @relation(fields: [ownerId], references: [id])
+  scopeKey       String
+  blocked        Boolean
+  lastEventId    String
+  lastReceivedAt DateTime     @db.Timestamptz(6)
+
+  @@unique([ownerId, scopeKey])
 }
 
 model Segment {
