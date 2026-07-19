@@ -1,38 +1,67 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@fikirtive/db";
+import { prisma, recordConsentEvent, recordContactDndEvent } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { requireOwner } from "@/lib/auth-guard";
 import {
-  findOrCreateContactByIdentity,
+  findContactDuplicateSuggestions,
   isCrmLifecycleStage,
-  type ContactIdentityInput,
+  normalizeContactIdentity,
+  type ContactDuplicateSuggestion,
   type CrmLifecycleStage,
+  type NormalizedContactIdentity,
 } from "./crm-identity";
 
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
-const CONSENT_VALUES = ["opt_in", "opt_out", "unknown"] as const;
-type MarketingConsent = (typeof CONSENT_VALUES)[number];
+const MAX_CSV_BYTES = 256_000;
+const MAX_IMPORT_ROWS = 200;
 
-export type AddLeadContactInput = {
+export type CreateContactInput = {
   name: string;
   source?: string;
   lifecycleStage?: CrmLifecycleStage;
-  identity?: ContactIdentityInput;
 };
 
 export type ContactMutationResult = { ok: true } | { error: string };
-export type AddLeadContactResult =
-  | { ok: true; contactId: string; created: boolean; possibleDuplicateIds: string[] }
+export type CreateContactResult =
+  | {
+      ok: true;
+      contactId: string;
+      created: true;
+      possibleDuplicates: ContactDuplicateSuggestion[];
+    }
   | { error: string };
 
-class MergeRollbackError extends Error {
-  constructor(readonly userMessage: string) {
-    super(userMessage);
-  }
-}
+export type ImportContactRowResult = {
+  rowNumber: number;
+  name: string;
+  status: "imported" | "imported_with_warning" | "failed";
+  contactId: string | null;
+  possibleDuplicates: ContactDuplicateSuggestion[];
+  consentAssertion: "grant" | "revoke" | null;
+  consentError?: string;
+  warnings: string[];
+};
+
+export type ImportContactsResult =
+  | {
+      ok: true;
+      importedCount: number;
+      failedCount: number;
+      rows: ImportContactRowResult[];
+    }
+  | { error: string };
+
+type ParsedImportRow = {
+  rowNumber: number;
+  name: string;
+  lifecycleStage: CrmLifecycleStage;
+  identities: NormalizedContactIdentity[];
+  identityFields: string[];
+  consentAction: "grant" | "revoke" | null;
+};
 
 function text(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -40,43 +69,67 @@ function text(value: unknown, max: number): string | null {
   return normalized ? normalized.slice(0, max) : null;
 }
 
-function isMarketingConsent(value: unknown): value is MarketingConsent {
-  return CONSENT_VALUES.includes(value as MarketingConsent);
+function opaqueRequestId(value: unknown): string | null {
+  const id = text(value, 128);
+  return id && !/\s|[\u0000-\u001f\u007f]/.test(id) ? id : null;
 }
 
-/** Manual Add lead. A supplied strong identity goes through the shared convergence
- * authority; a name-only lead remains distinct and merely reports exact-name candidates. */
-export async function addLeadContact(raw: unknown): Promise<AddLeadContactResult> {
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+function engineCode(error: unknown): string | null {
+  return typeof error === "object" && error !== null && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : null;
+}
 
-  const input = (raw ?? {}) as Record<string, unknown>;
-  const name = text(input.name, 200);
-  if (!name) return { error: "A contact needs a name." };
-  const source = text(input.source, 120) ?? "manual";
-  const lifecycleStage = input.lifecycleStage ?? "New";
-  if (!isCrmLifecycleStage(lifecycleStage)) return { error: "Pick a valid lifecycle stage." };
-
-  if (input.identity !== undefined) {
-    if (!input.identity || typeof input.identity !== "object" || Array.isArray(input.identity)) {
-      return { error: "Add a valid contact identity." };
-    }
-    const result = await findOrCreateContactByIdentity({
-      ownerId: gate.ownerId,
-      name,
-      source,
-      lifecycleStage,
-      identity: input.identity as ContactIdentityInput,
-    });
-    if ("ok" in result) revalidatePath("/", "layout");
-    return result;
+function consentEngineMessage(error: unknown): string {
+  switch (engineCode(error)) {
+    case "IDEMPOTENCY_CONFLICT":
+      return "This request was already used for a different consent record. Start a new attempt.";
+    case "INVALID_WRITER_COMBINATION":
+      return "This consent record does not match the approved evidence rules.";
+    case "INVALID_ARGUMENT":
+      return "The consent record contains invalid evidence details.";
+    case "TENANT_RESOURCE_NOT_FOUND":
+      return "Contact not found.";
+    case "REPLAY_INTEGRITY":
+      return "Consent history could not be safely updated. Please retry.";
+    default:
+      return "Couldn't record consent — please try again.";
   }
+}
 
-  const possibleDuplicates = await prisma.contact.findMany({
-    where: { ownerId: gate.ownerId, deletedAt: null, name: { equals: name, mode: "insensitive" } },
-    select: { id: true },
-    take: 10,
+function dndEngineMessage(error: unknown): string {
+  switch (engineCode(error)) {
+    case "IDEMPOTENCY_CONFLICT":
+      return "This request was already used for a different do-not-disturb change. Start a new attempt.";
+    case "INVALID_WRITER_COMBINATION":
+      return "This do-not-disturb change does not match the approved action rules.";
+    case "INVALID_ARGUMENT":
+      return "The do-not-disturb change contains invalid details.";
+    case "TENANT_RESOURCE_NOT_FOUND":
+      return "Contact not found.";
+    case "REPLAY_INTEGRITY":
+      return "Do-not-disturb history could not be safely updated. Please retry.";
+    default:
+      return "Couldn't update do not disturb — please try again.";
+  }
+}
+
+function refreshContactPaths(contactId?: string): void {
+  revalidatePath("/crm/contacts");
+  if (contactId) revalidatePath(`/crm/contacts/${contactId}`);
+}
+
+async function createContactRecord(input: {
+  ownerId: string;
+  name: string;
+  source: string;
+  lifecycleStage: CrmLifecycleStage;
+  identities?: NormalizedContactIdentity[];
+}): Promise<CreateContactResult> {
+  const possibleDuplicates = await findContactDuplicateSuggestions({
+    ownerId: input.ownerId,
+    name: input.name,
+    identities: input.identities,
   });
   const contactId = newId();
   const now = new Date();
@@ -85,40 +138,56 @@ export async function addLeadContact(raw: unknown): Promise<AddLeadContactResult
       await tx.contact.create({
         data: {
           id: contactId,
-          ownerId: gate.ownerId,
-          name,
-          source,
-          lifecycleStage,
+          ownerId: input.ownerId,
+          name: input.name,
+          source: input.source,
+          lifecycleStage: input.lifecycleStage,
           firstTouchAt: now,
           lastSeenAt: now,
-          marketingConsent: "unknown",
-          consentSource: null,
-          consentAt: null,
         },
       });
       await tx.actionEvent.create({
         data: {
           id: newId(),
-          ownerId: gate.ownerId,
+          ownerId: input.ownerId,
           type: "crm.contact.create",
-          payload: { contactId, source, channel: null },
+          payload: { contactId, source: input.source, identityWrite: false },
         },
       });
     });
   } catch {
     return { error: "Couldn't save that contact — please try again." };
   }
-  revalidatePath("/", "layout");
-  return {
-    ok: true,
-    contactId,
-    created: true,
-    possibleDuplicateIds: possibleDuplicates.map((contact) => contact.id),
-  };
+  return { ok: true, contactId, created: true, possibleDuplicates };
 }
 
-/** The only CRM consent mutation. opt_in requires an explicit assertion that the
- * customer confirmed it; imports and ordinary contact creation never call this path. */
+/** Creates a Contact only. Identity signals are deliberately not accepted by this write path. */
+export async function createContact(raw: unknown): Promise<CreateContactResult> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+
+  const input = (raw ?? {}) as Record<string, unknown>;
+  if ("identity" in input || "identities" in input) {
+    return { error: "Identity editing is not available. Add the contact without attaching an identity." };
+  }
+  const name = text(input.name, 200);
+  if (!name) return { error: "A contact needs a name." };
+  const source = text(input.source, 120) ?? "manual";
+  const lifecycleStage = input.lifecycleStage ?? "New";
+  if (!isCrmLifecycleStage(lifecycleStage)) return { error: "Pick a valid lifecycle stage." };
+
+  const result = await createContactRecord({
+    ownerId: gate.ownerId,
+    name,
+    source,
+    lifecycleStage,
+  });
+  if ("ok" in result) refreshContactPaths(result.contactId);
+  return result;
+}
+
+/** Records a merchant assertion in ConsentEvent; it does not create verified customer consent. */
 export async function setContactConsent(raw: unknown): Promise<ContactMutationResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -126,48 +195,35 @@ export async function setContactConsent(raw: unknown): Promise<ContactMutationRe
 
   const input = (raw ?? {}) as Record<string, unknown>;
   const contactId = text(input.contactId, 64);
-  const consentSource = text(input.consentSource, 120);
-  if (!contactId || !isMarketingConsent(input.marketingConsent) || !consentSource) {
-    return { error: "Add the consent status and its source." };
+  const requestId = opaqueRequestId(input.requestId);
+  const action = input.action;
+  if (!contactId || !requestId || (action !== "grant" && action !== "revoke")) {
+    return { error: "Add the contact, consent assertion, and request id." };
   }
-  const marketingConsent = input.marketingConsent;
-  if (marketingConsent === "opt_in" && input.customerConfirmed !== true) {
-    return { error: "Confirm that the customer explicitly opted in." };
-  }
-  const consentAt = new Date();
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, ownerId: gate.ownerId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!contact) return { error: "Contact not found." };
 
-  const result = await prisma.$transaction(async (tx): Promise<ContactMutationResult> => {
-    const current = await tx.contact.findFirst({
-      where: { id: contactId, ownerId: gate.ownerId, deletedAt: null },
-      select: { marketingConsent: true, consentSource: true, consentAt: true },
+  try {
+    await recordConsentEvent({
+      ownerId: gate.ownerId,
+      contactId,
+      channel: "whatsapp",
+      purpose: "marketing",
+      sourceKind: "crm_manual",
+      action,
+      idempotencyKey: `crm-manual:${contactId}:${requestId}`,
     });
-    if (!current) return { error: "Contact not found." };
-    const { count } = await tx.contact.updateMany({
-      where: { id: contactId, ownerId: gate.ownerId, deletedAt: null },
-      data: { marketingConsent, consentSource, consentAt },
-    });
-    if (!count) return { error: "Contact not found." };
-    await tx.actionEvent.create({
-      data: {
-        id: newId(),
-        ownerId: gate.ownerId,
-        type: "crm.contact.consent",
-        payload: {
-          contactId,
-          from: current.marketingConsent,
-          to: marketingConsent,
-          consentSource,
-        },
-      },
-    });
+    refreshContactPaths(contactId);
     return { ok: true };
-  }).catch(() => ({ error: "Couldn't update consent — please try again." }) as const);
-  if ("ok" in result) revalidatePath("/", "layout");
-  return result;
+  } catch (error) {
+    return { error: consentEngineMessage(error) };
+  }
 }
 
-/** Bounded manual profile edits. Order truth and consent are intentionally absent:
- * totalOrdersMyr is read-only, and consent has the dedicated audited action above. */
+/** Bounded profile edits. Order truth, identity, consent, and DND each stay outside this patch. */
 export async function updateContact(raw: unknown): Promise<ContactMutationResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -180,11 +236,14 @@ export async function updateContact(raw: unknown): Promise<ContactMutationResult
   }
   const patch = input.patch as Record<string, unknown>;
   if ("totalOrdersMyr" in patch) return { error: "That field is read-only." };
-  const allowed = new Set(["name", "lifecycleStage", "doNotDisturb"]);
-  if (Object.keys(patch).some((key) => !allowed.has(key))) return { error: "That field can't be edited here." };
+  if ("doNotDisturb" in patch) return { error: "Use the do-not-disturb control for that setting." };
+  const allowed = new Set(["name", "lifecycleStage"]);
+  if (Object.keys(patch).some((key) => !allowed.has(key))) {
+    return { error: "That field can't be edited here." };
+  }
   if (!Object.keys(patch).length) return { error: "Nothing to update." };
 
-  const requested: { name?: string; lifecycleStage?: CrmLifecycleStage; doNotDisturb?: boolean } = {};
+  const requested: { name?: string; lifecycleStage?: CrmLifecycleStage } = {};
   if ("name" in patch) {
     const name = text(patch.name, 200);
     if (!name) return { error: "A contact needs a name." };
@@ -194,26 +253,26 @@ export async function updateContact(raw: unknown): Promise<ContactMutationResult
     if (!isCrmLifecycleStage(patch.lifecycleStage)) return { error: "Pick a valid lifecycle stage." };
     requested.lifecycleStage = patch.lifecycleStage;
   }
-  if ("doNotDisturb" in patch) {
-    if (typeof patch.doNotDisturb !== "boolean") return { error: "Pick a valid do-not-disturb setting." };
-    requested.doNotDisturb = patch.doNotDisturb;
-  }
 
   const result = await prisma.$transaction(async (tx): Promise<ContactMutationResult> => {
     const current = await tx.contact.findFirst({
       where: { id: contactId, ownerId: gate.ownerId, deletedAt: null },
-      select: { name: true, lifecycleStage: true, doNotDisturb: true },
+      select: { name: true, lifecycleStage: true },
     });
     if (!current) return { error: "Contact not found." };
 
-    const data: Record<string, string | boolean> = {};
-    const changes: Record<string, { from: string | boolean; to: string | boolean }> = {};
-    for (const key of ["name", "lifecycleStage", "doNotDisturb"] as const) {
-      const next = requested[key];
-      if (next !== undefined && next !== current[key]) {
-        data[key] = next;
-        changes[key] = { from: current[key], to: next };
-      }
+    const data: { name?: string; lifecycleStage?: CrmLifecycleStage } = {};
+    const changes: Record<string, { from: string; to: string }> = {};
+    if (requested.name !== undefined && requested.name !== current.name) {
+      data.name = requested.name;
+      changes.name = { from: current.name, to: requested.name };
+    }
+    if (
+      requested.lifecycleStage !== undefined
+      && requested.lifecycleStage !== current.lifecycleStage
+    ) {
+      data.lifecycleStage = requested.lifecycleStage;
+      changes.lifecycleStage = { from: current.lifecycleStage, to: requested.lifecycleStage };
     }
     if (!Object.keys(data).length) return { ok: true };
 
@@ -232,85 +291,259 @@ export async function updateContact(raw: unknown): Promise<ContactMutationResult
     });
     return { ok: true };
   }).catch(() => ({ error: "Couldn't update that contact — please try again." }) as const);
-  if ("ok" in result) revalidatePath("/", "layout");
+  if ("ok" in result) refreshContactPaths(contactId);
   return result;
 }
 
-/** Manual-confirmation-only merge. Identities move to the target, the duplicate is
- * soft-deleted, and the earlier first-touch pair wins. Order totals are never written. */
-export async function mergeContacts(raw: unknown): Promise<ContactMutationResult> {
+async function writeDnd(
+  raw: unknown,
+  sourceKind: "crm_ui" | "otto_approved_action",
+): Promise<ContactMutationResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const input = (raw ?? {}) as Record<string, unknown>;
-  const sourceContactId = text(input.sourceContactId, 64);
-  const targetContactId = text(input.targetContactId, 64);
-  if (!sourceContactId || !targetContactId || sourceContactId === targetContactId) {
-    return { error: "Pick two different contacts." };
+  const contactId = text(input.contactId, 64);
+  const requestId = opaqueRequestId(input.requestId);
+  if (!contactId || !requestId || typeof input.enabled !== "boolean") {
+    return { error: "Add the contact, do-not-disturb setting, and request id." };
   }
-  if (input.confirmed !== true) return { error: "Confirm this merge before continuing." };
+  const contact = await prisma.contact.findFirst({
+    where: { id: contactId, ownerId: gate.ownerId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!contact) return { error: "Contact not found." };
 
-  const result = await prisma.$transaction(async (tx): Promise<ContactMutationResult> => {
-    const select = { id: true, firstTouchAt: true, firstTouchCampaignId: true } as const;
-    const source = await tx.contact.findFirst({
-      where: { id: sourceContactId, ownerId: gate.ownerId, deletedAt: null },
-      select,
+  try {
+    await recordContactDndEvent({
+      ownerId: gate.ownerId,
+      contactId,
+      sourceKind,
+      action: input.enabled ? "set" : "clear",
+      idempotencyKey: `crm-dnd:${contactId}:${requestId}`,
     });
-    const target = await tx.contact.findFirst({
-      where: { id: targetContactId, ownerId: gate.ownerId, deletedAt: null },
-      select,
-    });
-    if (!source || !target) return { error: "Contact not found." };
-
-    const sourceIsEarlier = source.firstTouchAt.getTime() < target.firstTouchAt.getTime();
-    // firstTouchCampaignId is a soft FK. Re-assert its tenant before propagating it;
-    // a corrupt/legacy cross-tenant pointer must fail closed, not cross the iron curtain.
-    if (sourceIsEarlier && source.firstTouchCampaignId) {
-      const campaign = await tx.campaign.findFirst({
-        where: { id: source.firstTouchCampaignId, ownerId: gate.ownerId },
-        select: { id: true },
-      });
-      if (!campaign) return { error: "Contact attribution is invalid." };
-    }
-    const moved = await tx.contactIdentity.updateMany({
-      where: { ownerId: gate.ownerId, contactId: sourceContactId, deletedAt: null },
-      data: { contactId: targetContactId },
-    });
-    if (sourceIsEarlier) {
-      const inherited = await tx.contact.updateMany({
-        where: { id: targetContactId, ownerId: gate.ownerId, deletedAt: null },
-        data: {
-          firstTouchAt: source.firstTouchAt,
-          firstTouchCampaignId: source.firstTouchCampaignId,
-        },
-      });
-      if (!inherited.count) throw new MergeRollbackError("Contact not found.");
-    }
-    const archived = await tx.contact.updateMany({
-      where: { id: sourceContactId, ownerId: gate.ownerId, deletedAt: null },
-      data: { deletedAt: new Date() },
-    });
-    if (!archived.count) throw new MergeRollbackError("Contact not found.");
-    await tx.actionEvent.create({
-      data: {
-        id: newId(),
-        ownerId: gate.ownerId,
-        type: "crm.contact.merge",
-        payload: {
-          sourceContactId,
-          targetContactId,
-          movedIdentityCount: moved.count,
-          attributionInheritedFrom: sourceIsEarlier ? sourceContactId : targetContactId,
-        },
-      },
-    });
+    refreshContactPaths(contactId);
     return { ok: true };
-  }).catch((error): ContactMutationResult =>
-    error instanceof MergeRollbackError
-      ? { error: error.userMessage }
-      : { error: "Couldn't merge those contacts — please try again." },
-  );
-  if ("ok" in result) revalidatePath("/", "layout");
+  } catch (error) {
+    return { error: dndEngineMessage(error) };
+  }
+}
+
+/** Human CRM toggle: the runtime derives merchant × crm_ui provenance. */
+export async function setContactDnd(raw: unknown): Promise<ContactMutationResult> {
+  return writeDnd(raw, "crm_ui");
+}
+
+/** Otto parity wrapper: the runtime derives otto × otto_approved_action provenance. */
+export async function setContactDndFromOtto(raw: unknown): Promise<ContactMutationResult> {
+  return writeDnd(raw, "otto_approved_action");
+}
+
+function parseCsv(csv: string): string[][] | { error: string } {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < csv.length; index += 1) {
+    const character = csv[index];
+    if (quoted) {
+      if (character === '"') {
+        if (csv[index + 1] === '"') {
+          field += '"';
+          index += 1;
+        } else {
+          quoted = false;
+        }
+      } else {
+        field += character;
+      }
+      continue;
+    }
+    if (character === '"') {
+      if (field.length > 0) return { error: "The CSV contains an invalid quote." };
+      quoted = true;
+    } else if (character === ",") {
+      row.push(field);
+      field = "";
+    } else if (character === "\n" || character === "\r") {
+      if (character === "\r" && csv[index + 1] === "\n") index += 1;
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else {
+      field += character;
+    }
+  }
+  if (quoted) return { error: "The CSV contains an unclosed quote." };
+  row.push(field);
+  rows.push(row);
+  return rows.filter((candidate) => candidate.some((value) => value.trim().length > 0));
+}
+
+function importLifecycle(value: string): CrmLifecycleStage | null {
+  const normalized = value.trim().toLocaleLowerCase("en-US");
+  if (!normalized) return "New";
+  if (normalized === "new") return "New";
+  if (normalized === "active") return "Active";
+  if (normalized === "dormant") return "Dormant";
+  return null;
+}
+
+function importConsent(value: string): "grant" | "revoke" | null | "invalid" {
+  const normalized = value.trim().toLocaleLowerCase("en-US");
+  if (!normalized || normalized === "unknown") return null;
+  if (normalized === "opt_in") return "grant";
+  if (normalized === "opt_out") return "revoke";
+  return "invalid";
+}
+
+function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
+  const parsed = parseCsv(csv);
+  if ("error" in parsed) return parsed;
+  const header = parsed[0]?.map((value) => value.replace(/^\uFEFF/, "").trim().toLocaleLowerCase("en-US"));
+  if (!header?.length) return { error: "Add a CSV header row." };
+  if (!header.includes("name")) return { error: "The CSV needs a name column." };
+  const allowed = new Set(["name", "lifecycle_stage", "consent", "phone", "whatsapp", "email"]);
+  const unsupported = header.filter((value) => !allowed.has(value));
+  if (unsupported.some((value) => value === "tags" || value.includes("custom"))) {
+    return { error: "Tags and custom fields are not available in this contacts slice." };
+  }
+  if (unsupported.length) return { error: `Unsupported CSV column: ${unsupported[0]}.` };
+  if (new Set(header).size !== header.length) return { error: "The CSV contains a duplicate column." };
+
+  const valueAt = (values: string[], name: string) => {
+    const index = header.indexOf(name);
+    return index === -1 ? "" : values[index] ?? "";
+  };
+  const dataRows = parsed.slice(1);
+  if (dataRows.length > MAX_IMPORT_ROWS) {
+    return { error: `Import up to ${MAX_IMPORT_ROWS} contacts at a time.` };
+  }
+
+  const result: ParsedImportRow[] = [];
+  for (let index = 0; index < dataRows.length; index += 1) {
+    const values = dataRows[index] ?? [];
+    const rowNumber = index + 2;
+    const name = text(valueAt(values, "name"), 200);
+    if (!name) return { error: `Row ${rowNumber} needs a name.` };
+    const lifecycleStage = importLifecycle(valueAt(values, "lifecycle_stage"));
+    if (!lifecycleStage) return { error: `Row ${rowNumber} has an invalid lifecycle stage.` };
+    const consentAction = importConsent(valueAt(values, "consent"));
+    if (consentAction === "invalid") {
+      return { error: `Row ${rowNumber} consent must be opt_in, opt_out, unknown, or blank.` };
+    }
+
+    const identityInputs = [
+      { field: "whatsapp", channel: "whatsapp", value: valueAt(values, "whatsapp") },
+      { field: "phone", channel: "whatsapp", value: valueAt(values, "phone") },
+      { field: "email", channel: "email", value: valueAt(values, "email") },
+    ].filter((identity) => identity.value.trim().length > 0);
+    const identities: NormalizedContactIdentity[] = [];
+    for (const identityInput of identityInputs) {
+      const normalized = normalizeContactIdentity({
+        channel: identityInput.channel,
+        externalId: identityInput.value,
+      });
+      if ("error" in normalized) return { error: `Row ${rowNumber}: ${normalized.error}` };
+      if (!identities.some((identity) =>
+        identity.channel === normalized.channel && identity.externalId === normalized.externalId
+      )) {
+        identities.push(normalized);
+      }
+    }
+    result.push({
+      rowNumber,
+      name,
+      lifecycleStage,
+      identities,
+      identityFields: identityInputs.map((identity) => identity.field),
+      consentAction,
+    });
+  }
+  if (!result.length) return { error: "The CSV has no contact rows." };
   return result;
+}
+
+/** CSV import creates Contact rows only; identity fields remain read-only suggestion signals. */
+export async function importContacts(raw: unknown): Promise<ImportContactsResult> {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+
+  const input = (raw ?? {}) as Record<string, unknown>;
+  const csv = typeof input.csv === "string" ? input.csv : "";
+  const importId = opaqueRequestId(input.importId);
+  if (!csv || !importId) return { error: "Choose a CSV file and start a new import." };
+  if (Buffer.byteLength(csv, "utf8") > MAX_CSV_BYTES) {
+    return { error: "The CSV is too large. Import a file smaller than 256 KB." };
+  }
+  const rows = parsedImportRows(csv);
+  if ("error" in rows) return rows;
+
+  const results: ImportContactRowResult[] = [];
+  for (const row of rows) {
+    const created = await createContactRecord({
+      ownerId: gate.ownerId,
+      name: row.name,
+      source: "import",
+      lifecycleStage: row.lifecycleStage,
+      identities: row.identities,
+    });
+    if (!("ok" in created)) {
+      results.push({
+        rowNumber: row.rowNumber,
+        name: row.name,
+        status: "failed",
+        contactId: null,
+        possibleDuplicates: [],
+        consentAssertion: null,
+        warnings: [created.error],
+      });
+      continue;
+    }
+
+    const warnings = row.identityFields.length
+      ? ["Phone and email were checked for duplicates but not stored because identity editing is read-only."]
+      : [];
+    let consentError: string | undefined;
+    if (row.consentAction) {
+      try {
+        await recordConsentEvent({
+          ownerId: gate.ownerId,
+          contactId: created.contactId,
+          channel: "whatsapp",
+          purpose: "marketing",
+          sourceKind: "import",
+          action: row.consentAction,
+          evidenceRef: `csv:${importId}:${row.rowNumber}`,
+          idempotencyKey: `crm-import:${importId}:${row.rowNumber}`,
+        });
+      } catch (error) {
+        consentError = consentEngineMessage(error);
+        warnings.push(consentError);
+      }
+    }
+    results.push({
+      rowNumber: row.rowNumber,
+      name: row.name,
+      status: warnings.length ? "imported_with_warning" : "imported",
+      contactId: created.contactId,
+      possibleDuplicates: created.possibleDuplicates,
+      consentAssertion: consentError ? null : row.consentAction,
+      ...(consentError ? { consentError } : {}),
+      warnings,
+    });
+  }
+
+  const importedCount = results.filter((row) => row.contactId !== null).length;
+  if (importedCount) refreshContactPaths();
+  return {
+    ok: true,
+    importedCount,
+    failedCount: results.length - importedCount,
+    rows: results,
+  };
 }

@@ -1,192 +1,85 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
-const {
-  mockTransaction,
-  mockIdentityFindFirst,
-  mockContactFindMany,
-  mockContactCreate,
-  mockContactUpdateMany,
-  mockIdentityCreate,
-  mockAuditCreate,
-} = vi.hoisted(() => ({
-  mockTransaction: vi.fn(),
-  mockIdentityFindFirst: vi.fn(),
-  mockContactFindMany: vi.fn(),
-  mockContactCreate: vi.fn(),
-  mockContactUpdateMany: vi.fn(),
-  mockIdentityCreate: vi.fn(),
-  mockAuditCreate: vi.fn(),
-}));
+const { mockContactFindMany } = vi.hoisted(() => ({ mockContactFindMany: vi.fn() }));
 
 vi.mock("server-only", () => ({}));
-vi.mock("@fikirtive/db", () => ({
-  prisma: {
-    $transaction: mockTransaction,
-    contactIdentity: { findFirst: mockIdentityFindFirst },
-    contact: { findMany: mockContactFindMany, updateMany: mockContactUpdateMany },
-  },
-}));
-
-let id = 0;
-vi.mock("@fikirtive/core", () => ({ newId: () => `crm-${++id}` }));
+vi.mock("@fikirtive/db", () => ({ prisma: { contact: { findMany: mockContactFindMany } } }));
 
 import {
-  findOrCreateContactByIdentity,
+  findContactDuplicateSuggestions,
   normalizeContactIdentity,
 } from "../crm-identity";
 
-const OWNER = "org-a";
-const SEEN_AT = new Date("2026-07-15T01:02:03.000Z");
-
 beforeEach(() => {
   vi.clearAllMocks();
-  id = 0;
   mockContactFindMany.mockResolvedValue([]);
-  mockContactUpdateMany.mockResolvedValue({ count: 1 });
-  mockContactCreate.mockResolvedValue({});
-  mockIdentityCreate.mockResolvedValue({});
-  mockAuditCreate.mockResolvedValue({});
-  mockTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
-    fn({
-      contact: { create: mockContactCreate },
-      contactIdentity: { create: mockIdentityCreate },
-      actionEvent: { create: mockAuditCreate },
-    }),
-  );
 });
 
 describe("normalizeContactIdentity", () => {
-  it("normalizes formatted WhatsApp numbers to E.164", () => {
-    expect(normalizeContactIdentity({ channel: " WhatsApp ", externalId: "+60 (12) 345-6789" }))
-      .toEqual({ channel: "whatsapp", externalId: "+60123456789", handle: null, label: null });
-  });
-
-  it("lowercases email identities", () => {
-    expect(normalizeContactIdentity({ channel: "EMAIL", externalId: " Owner@Example.COM " }))
-      .toEqual({ channel: "email", externalId: "owner@example.com", handle: null, label: null });
-  });
-
-  it("fails closed when a WhatsApp number has no country code", () => {
-    expect(normalizeContactIdentity({ channel: "whatsapp", externalId: "012-345 6789" }))
+  it("normalizes only deterministic phone/email forms and never guesses a country code", () => {
+    expect(normalizeContactIdentity({ channel: " WhatsApp ", externalId: "+60 12-345 6789" }))
+      .toMatchObject({ channel: "whatsapp", externalId: "+60123456789" });
+    expect(normalizeContactIdentity({ channel: "email", externalId: " AISHA@Example.COM " }))
+      .toMatchObject({ channel: "email", externalId: "aisha@example.com" });
+    expect(normalizeContactIdentity({ channel: "whatsapp", externalId: "0123456789" }))
       .toEqual({ error: "Use a WhatsApp number in E.164 format, including the country code." });
   });
 });
 
-describe("findOrCreateContactByIdentity", () => {
-  it("on a live identity hit, only refreshes lastSeenAt on the owner-scoped contact", async () => {
-    mockIdentityFindFirst.mockResolvedValue({ contactId: "contact-existing" });
-
-    const result = await findOrCreateContactByIdentity({
-      ownerId: OWNER,
-      name: "Aisha",
-      source: "manual",
-      lifecycleStage: "New",
-      identity: { channel: "email", externalId: "AISHA@EXAMPLE.COM" },
-      seenAt: SEEN_AT,
-    });
-
-    expect(result).toEqual({ ok: true, contactId: "contact-existing", created: false, possibleDuplicateIds: [] });
-    expect(mockIdentityFindFirst).toHaveBeenCalledWith({
-      where: {
-        ownerId: OWNER,
-        channel: "email",
-        externalId: "aisha@example.com",
-        deletedAt: null,
-        contact: { ownerId: OWNER, deletedAt: null },
-      },
-      select: { contactId: true },
-    });
-    expect(mockContactUpdateMany).toHaveBeenCalledWith({
-      where: { id: "contact-existing", ownerId: OWNER, deletedAt: null },
-      data: { lastSeenAt: SEEN_AT },
-    });
-    expect(mockTransaction).not.toHaveBeenCalled();
-    expect(mockContactCreate).not.toHaveBeenCalled();
-    expect(mockIdentityCreate).not.toHaveBeenCalled();
-    expect(mockAuditCreate).not.toHaveBeenCalled();
-  });
-
-  it("creates one Contact + Identity with unknown consent and reports same-name duplicates without merging", async () => {
-    mockIdentityFindFirst.mockResolvedValue(null);
-    mockContactFindMany.mockResolvedValue([{ id: "same-name-other" }]);
-
-    const result = await findOrCreateContactByIdentity({
-      ownerId: OWNER,
-      name: "Aisha",
-      source: "manual",
-      lifecycleStage: "Active",
-      identity: { channel: "whatsapp", externalId: "+60 12-345 6789", label: "Mobile" },
-      seenAt: SEEN_AT,
-    });
-
-    expect(result).toEqual({ ok: true, contactId: "crm-1", created: true, possibleDuplicateIds: ["same-name-other"] });
-    expect(mockContactFindMany).toHaveBeenCalledWith({
-      where: { ownerId: OWNER, deletedAt: null, name: { equals: "Aisha", mode: "insensitive" } },
-      select: { id: true },
-      take: 10,
-    });
-    expect(mockContactCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        id: "crm-1",
-        ownerId: OWNER,
+describe("findContactDuplicateSuggestions", () => {
+  it("is owner-scoped, deterministic, and returns reasons without mutating or merging", async () => {
+    mockContactFindMany.mockResolvedValue([
+      {
+        id: "contact-1",
         name: "Aisha",
-        source: "manual",
-        lifecycleStage: "Active",
-        marketingConsent: "unknown",
-        consentSource: null,
-        consentAt: null,
-        firstTouchAt: SEEN_AT,
-        lastSeenAt: SEEN_AT,
-      }),
-    });
-    expect(mockIdentityCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        ownerId: OWNER,
-        contactId: "crm-1",
-        channel: "whatsapp",
-        externalId: "+60123456789",
-        label: "Mobile",
-      }),
-    });
-    expect(mockAuditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ ownerId: OWNER, type: "crm.contact.create" }),
-    });
-  });
+        identities: [
+          { channel: "whatsapp", externalId: "+60123456789" },
+          { channel: "email", externalId: "aisha@example.com" },
+        ],
+      },
+    ]);
+    const identities = [
+      normalizeContactIdentity({ channel: "email", externalId: "aisha@example.com" }),
+      normalizeContactIdentity({ channel: "whatsapp", externalId: "+60123456789" }),
+    ].filter((value): value is Exclude<typeof value, { error: string }> => !("error" in value));
 
-  it("recovers a concurrent identity P2002 by re-reading the winner and refreshing only lastSeenAt", async () => {
-    mockIdentityFindFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ contactId: "contact-winner" });
-    mockTransaction.mockRejectedValueOnce(Object.assign(new Error("duplicate"), { code: "P2002" }));
+    const first = await findContactDuplicateSuggestions({ ownerId: "org-a", name: " aisha ", identities });
+    const second = await findContactDuplicateSuggestions({ ownerId: "org-a", name: " aisha ", identities });
 
-    const result = await findOrCreateContactByIdentity({
-      ownerId: OWNER,
+    expect(first).toEqual(second);
+    expect(first).toEqual([{
+      contactId: "contact-1",
       name: "Aisha",
-      source: "manual",
-      lifecycleStage: "New",
-      identity: { channel: "email", externalId: "aisha@example.com" },
-      seenAt: SEEN_AT,
-    });
-
-    expect(result).toEqual({ ok: true, contactId: "contact-winner", created: false, possibleDuplicateIds: [] });
-    expect(mockContactUpdateMany).toHaveBeenLastCalledWith({
-      where: { id: "contact-winner", ownerId: OWNER, deletedAt: null },
-      data: { lastSeenAt: SEEN_AT },
-    });
+      reasons: ["Same WhatsApp number", "Same email address", "Same name"],
+    }]);
+    const query = mockContactFindMany.mock.calls[0][0];
+    expect(query.where.ownerId).toBe("org-a");
+    expect(query.select.identities.where).toEqual({ ownerId: "org-a", deletedAt: null });
+    expect(query.orderBy).toEqual([{ name: "asc" }, { id: "asc" }]);
+    expect(JSON.stringify(query.where.OR)).toContain('"ownerId":"org-a"');
   });
 
-  it("never crosses owner scope while checking identity or possible duplicates", async () => {
-    mockIdentityFindFirst.mockResolvedValue(null);
-    await findOrCreateContactByIdentity({
+  it("excludes the current Contact inside the same owner fence", async () => {
+    await findContactDuplicateSuggestions({
       ownerId: "org-b",
-      name: "Aisha",
-      source: "manual",
-      lifecycleStage: "New",
-      identity: { channel: "email", externalId: "aisha@example.com" },
-      seenAt: SEEN_AT,
+      name: "Bo",
+      excludeContactId: "contact-current",
     });
+    expect(mockContactFindMany.mock.calls[0][0].where).toMatchObject({
+      ownerId: "org-b",
+      id: { not: "contact-current" },
+      deletedAt: null,
+    });
+  });
+});
 
-    expect(mockIdentityFindFirst.mock.calls[0][0].where.ownerId).toBe("org-b");
-    expect(mockContactFindMany.mock.calls[0][0].where.ownerId).toBe("org-b");
+describe("identity write fence", () => {
+  it("contains normalization and read suggestions only", () => {
+    const source = readFileSync(new URL("../crm-identity.ts", import.meta.url), "utf8");
+    expect(source).not.toContain("contactIdentity.create");
+    expect(source).not.toContain("contactIdentity.update");
+    expect(source).not.toContain("findOrCreateContactByIdentity");
+    expect(source).not.toContain("$transaction");
   });
 });

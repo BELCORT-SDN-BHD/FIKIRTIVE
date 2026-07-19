@@ -1,0 +1,291 @@
+"use client";
+
+import Link from "next/link";
+import { useState, type FormEvent } from "react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  ArrowRight,
+  FileUp,
+  LoaderCircle,
+  Plus,
+  Search,
+  ShieldAlert,
+  Users,
+} from "lucide-react";
+import { createContact, importContacts, type ImportContactsResult } from "@/lib/crm-actions";
+import { listContacts, type CrmContactRow } from "@/lib/crm-view-data";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+type ListResult = Awaited<ReturnType<typeof listContacts>>;
+type ListSuccess = Extract<ListResult, { ok: true }>;
+type ImportSuccess = Extract<ImportContactsResult, { ok: true }>;
+type CreateSuccess = Extract<Awaited<ReturnType<typeof createContact>>, { ok: true }>;
+type StageFilter = "all" | "New" | "Active" | "Dormant";
+
+function consentPresentation(state: CrmContactRow["consentState"]["state"]): {
+  label: string;
+  variant: "success" | "destructive" | "warning";
+} {
+  if (state === "verified_grant") return { label: "Verified opt-in", variant: "success" };
+  if (state === "effective_revoke") return { label: "Opted out", variant: "destructive" };
+  return { label: "Unknown", variant: "warning" };
+}
+
+function dateLabel(value: Date | string): string {
+  return new Intl.DateTimeFormat("en-MY", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kuala_Lumpur",
+  }).format(new Date(value));
+}
+
+function DeniedState({ message }: { message: string }) {
+  return (
+    <main className="min-h-dvh bg-background px-4 py-10 text-foreground sm:px-6">
+      <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-6 shadow-[var(--shadow-sm)] sm:p-8">
+        <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground">
+          <AlertCircle className="size-5" />
+        </span>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM contacts</p>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">This workspace is not available</h1>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">{message}</p>
+        <Button asChild className="mt-6" variant="secondary"><Link href="/otto"><ArrowLeft />Return to Otto</Link></Button>
+      </section>
+    </main>
+  );
+}
+
+export default function ContactsPage({ initialState }: { initialState: ListResult }) {
+  if (!("ok" in initialState)) return <DeniedState message={initialState.error} />;
+  return <ContactsWorkspace initialState={initialState} />;
+}
+
+function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
+  const [contacts, setContacts] = useState(initialState.contacts);
+  const [query, setQuery] = useState("");
+  const [stage, setStage] = useState<StageFilter>("all");
+  const [loading, setLoading] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+
+  const [name, setName] = useState("");
+  const [newStage, setNewStage] = useState<"New" | "Active" | "Dormant">("New");
+  const [creating, setCreating] = useState(false);
+  const [createNotice, setCreateNotice] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState<CreateSuccess["possibleDuplicates"]>([]);
+
+  const [csvName, setCsvName] = useState<string | null>(null);
+  const [csvText, setCsvText] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportSuccess | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  async function refreshContacts(nextQuery = query, nextStage = stage) {
+    setLoading(true);
+    setReadError(null);
+    try {
+      const result = await listContacts({
+        query: nextQuery,
+        ...(nextStage === "all" ? {} : { lifecycleStage: nextStage }),
+      });
+      if (!("ok" in result)) return setReadError(result.error);
+      setContacts(result.contacts);
+    } catch {
+      setReadError("The contacts request could not finish. Please retry.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitSearch(event: FormEvent) {
+    event.preventDefault();
+    await refreshContacts();
+  }
+
+  async function submitContact(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim()) return;
+    setCreating(true);
+    setCreateError(null);
+    setCreateNotice(null);
+    setDuplicates([]);
+    try {
+      const result = await createContact({ name, lifecycleStage: newStage, source: "manual" });
+      if (!("ok" in result)) return setCreateError(result.error);
+      setName("");
+      setCreateNotice("Contact saved. No identity or consent was inferred.");
+      setDuplicates(result.possibleDuplicates);
+      await refreshContacts();
+    } catch {
+      setCreateError("The contact request could not finish. Please retry.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function chooseCsv(file: File | undefined) {
+    setImportResult(null);
+    setImportError(null);
+    if (!file) {
+      setCsvName(null);
+      setCsvText(null);
+      return;
+    }
+    try {
+      setCsvName(file.name);
+      setCsvText(await file.text());
+    } catch {
+      setCsvName(null);
+      setCsvText(null);
+      setImportError("The CSV could not be read.");
+    }
+  }
+
+  async function startImport() {
+    if (!csvText) return;
+    setImporting(true);
+    setImportError(null);
+    setImportResult(null);
+    try {
+      const result = await importContacts({ csv: csvText, importId: crypto.randomUUID() });
+      if (!("ok" in result)) return setImportError(result.error);
+      setImportResult(result);
+      await refreshContacts();
+    } catch {
+      setImportError("The import request could not finish. Please retry.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
+      <div className="mx-auto max-w-7xl">
+        <header className="flex flex-col gap-5 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
+              <ArrowLeft className="size-4" />Return to Otto
+            </Link>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Contacts</h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+              Records are the merchant&apos;s asset. Fikirtive records facts and reminders; it never merges, deletes, or decides for the merchant.
+            </p>
+          </div>
+          <Button asChild variant="secondary"><Link href="/crm/segments"><Users />Customer segments</Link></Button>
+        </header>
+
+        <div className="mt-6 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+          Unknown consent stays included in the merchant&apos;s records and audience selection. It is not verified opt-in or permission to send, and it is never fabricated from an import or an existing contact.
+        </div>
+
+        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+          <Card>
+            <CardHeader><CardTitle>Add contact</CardTitle><CardDescription>Create a standard profile. Existing identities remain read-only.</CardDescription></CardHeader>
+            <CardContent>
+              <form className="grid gap-3 sm:grid-cols-[1fr_170px_auto]" onSubmit={submitContact}>
+                <Input value={name} onChange={(event) => setName(event.target.value)} maxLength={200} placeholder="Contact name" aria-label="Contact name" />
+                <Select value={newStage} onValueChange={(value) => setNewStage(value as typeof newStage)}>
+                  <SelectTrigger aria-label="Lifecycle stage"><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="New">New</SelectItem><SelectItem value="Active">Active</SelectItem><SelectItem value="Dormant">Dormant</SelectItem></SelectContent>
+                </Select>
+                <Button type="submit" disabled={!name.trim() || creating}>{creating ? <LoaderCircle className="animate-spin" /> : <Plus />}Save</Button>
+              </form>
+              {createError ? <p className="mt-3 text-sm text-destructive">{createError}</p> : null}
+              {createNotice ? <p className="mt-3 text-sm text-success">{createNotice}</p> : null}
+              {duplicates.length ? (
+                <p className="mt-3 text-sm text-warning-soft-foreground">
+                  Possible duplicates: {duplicates.map((suggestion, index) => <span key={suggestion.contactId}>{index ? ", " : ""}<Link className="font-semibold underline" href={`/crm/contacts/${suggestion.contactId}`}>{suggestion.name}</Link> ({suggestion.reasons.join(", ")})</span>)}. Review only; nothing was merged.
+                </p>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Import CSV</CardTitle><CardDescription>Columns: name, lifecycle_stage, consent, phone or whatsapp, email. Consent accepts opt_in, opt_out, unknown, or blank.</CardDescription></CardHeader>
+            <CardContent>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Input type="file" accept=".csv,text/csv" onChange={(event) => void chooseCsv(event.currentTarget.files?.[0])} aria-label="Choose contacts CSV" />
+                <Button type="button" variant="secondary" disabled={!csvText || importing} onClick={startImport}>{importing ? <LoaderCircle className="animate-spin" /> : <FileUp />}Import</Button>
+              </div>
+              {csvName ? <p className="mt-2 text-xs text-muted-foreground">Ready: {csvName}</p> : null}
+              {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
+              {importResult ? (
+                <div className="mt-3 rounded-xl border border-border bg-muted/45 p-3 text-sm">
+                  <p className="font-semibold">{importResult.importedCount} imported · {importResult.failedCount} failed</p>
+                  {importResult.rows.some((row) => row.status === "imported_with_warning") ? <p className="mt-1 text-muted-foreground">Review warnings below. No phone or email identity was stored.</p> : null}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+
+        {importResult ? (
+          <Card className="mt-5">
+            <CardHeader><CardTitle>Import results</CardTitle><CardDescription>Duplicate matches are suggestions only. Consent entries are merchant assertions, not verified customer actions.</CardDescription></CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2">
+              {importResult.rows.map((row) => (
+                <div key={row.rowNumber} className="rounded-xl border border-border p-4">
+                  <div className="flex items-start justify-between gap-3"><p className="font-semibold">Row {row.rowNumber}: {row.name}</p><Badge variant={row.status === "failed" ? "destructive" : row.status === "imported" ? "success" : "warning"}>{row.status.replaceAll("_", " ")}</Badge></div>
+                  {row.contactId ? <Link className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand" href={`/crm/contacts/${row.contactId}`}>Open profile<ArrowRight className="size-4" /></Link> : null}
+                  {row.possibleDuplicates.length ? <p className="mt-2 text-xs text-muted-foreground">Suggestions: {row.possibleDuplicates.map((item) => item.name).join(", ")}. Nothing was merged.</p> : null}
+                  {row.warnings.map((warning) => <p key={warning} className="mt-2 text-xs leading-5 text-warning-soft-foreground">{warning}</p>)}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ) : null}
+
+        <Card className="mt-5">
+          <CardHeader><CardTitle>Contact records</CardTitle><CardDescription>Search by name or a read-only identity, then filter by lifecycle stage.</CardDescription></CardHeader>
+          <CardContent>
+            <form className="grid gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={submitSearch}>
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={200} placeholder="Search contacts" aria-label="Search contacts" />
+              <Select value={stage} onValueChange={(value) => setStage(value as StageFilter)}>
+                <SelectTrigger aria-label="Filter lifecycle"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All lifecycle stages</SelectItem><SelectItem value="New">New</SelectItem><SelectItem value="Active">Active</SelectItem><SelectItem value="Dormant">Dormant</SelectItem></SelectContent>
+              </Select>
+              <Button type="submit" variant="secondary" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : <Search />}Search</Button>
+            </form>
+            {readError ? <p className="mt-3 text-sm text-destructive">{readError}</p> : null}
+          </CardContent>
+        </Card>
+
+        {contacts.length === 0 ? (
+          <section className="mt-5 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-6 py-14 text-center shadow-sm">
+            <Users className="mx-auto size-8 text-muted-foreground" />
+            <h2 className="mt-4 text-lg font-semibold">No contacts found</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Add a contact, import a CSV, or change the current search and lifecycle filter.</p>
+          </section>
+        ) : (
+          <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {contacts.map((contact) => {
+              const consent = consentPresentation(contact.consentState.state);
+              return (
+                <Card key={contact.id} className="min-w-0">
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate">{contact.name}</CardTitle><CardDescription className="mt-1">{contact.lifecycleStage} · {contact.source}</CardDescription></div><Badge variant={consent.variant}>{consent.label}</Badge></div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-2 rounded-xl bg-muted/45 p-3 text-sm">
+                      <p className="truncate">{contact.identities[0]?.externalId ?? "No stored identity"}</p>
+                      <p className="text-xs text-muted-foreground">Last seen {dateLabel(contact.lastSeenAt)}</p>
+                      {contact.doNotDisturb ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive"><ShieldAlert className="size-3.5" />Do not disturb</span> : null}
+                    </div>
+                    <Button asChild className="mt-4 w-full" variant="secondary"><Link href={`/crm/contacts/${contact.id}`}>Open profile<ArrowRight /></Link></Button>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}

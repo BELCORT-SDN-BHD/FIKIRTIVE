@@ -1,63 +1,64 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 const {
   mockRequireOwner,
   mockIsImpersonating,
-  mockFindOrCreate,
   mockTransaction,
-  mockContactFindMany,
   mockContactFindFirst,
   mockContactCreate,
   mockContactUpdateMany,
-  mockIdentityUpdateMany,
-  mockCampaignFindFirst,
   mockAuditCreate,
+  mockFindSuggestions,
+  mockRecordConsentEvent,
+  mockRecordContactDndEvent,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
-  mockFindOrCreate: vi.fn(),
   mockTransaction: vi.fn(),
-  mockContactFindMany: vi.fn(),
   mockContactFindFirst: vi.fn(),
   mockContactCreate: vi.fn(),
   mockContactUpdateMany: vi.fn(),
-  mockIdentityUpdateMany: vi.fn(),
-  mockCampaignFindFirst: vi.fn(),
   mockAuditCreate: vi.fn(),
+  mockFindSuggestions: vi.fn(),
+  mockRecordConsentEvent: vi.fn(),
+  mockRecordContactDndEvent: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
-vi.mock("../crm-identity", () => ({
-  findOrCreateContactByIdentity: mockFindOrCreate,
-  isCrmLifecycleStage: (value: unknown) => ["New", "Active", "Dormant"].includes(String(value)),
-}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("../crm-identity", () => ({
+  isCrmLifecycleStage: (value: unknown) => ["New", "Active", "Dormant"].includes(String(value)),
+  normalizeContactIdentity: ({ channel, externalId }: { channel: string; externalId: string }) => ({
+    channel,
+    externalId: channel === "email" ? externalId.trim().toLowerCase() : externalId.replace(/[\s().-]/g, ""),
+    handle: null,
+    label: null,
+  }),
+  findContactDuplicateSuggestions: mockFindSuggestions,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     $transaction: mockTransaction,
     contact: {
-      findMany: mockContactFindMany,
       findFirst: mockContactFindFirst,
       create: mockContactCreate,
       updateMany: mockContactUpdateMany,
     },
-    contactIdentity: { updateMany: mockIdentityUpdateMany },
-    campaign: { findFirst: mockCampaignFindFirst },
     actionEvent: { create: mockAuditCreate },
   },
+  recordConsentEvent: mockRecordConsentEvent,
+  recordContactDndEvent: mockRecordContactDndEvent,
 }));
 
 let id = 0;
 vi.mock("@fikirtive/core", () => ({ newId: () => `crm-${++id}` }));
 
-import { addLeadContact, mergeContacts, setContactConsent, updateContact } from "../crm-actions";
-import { getContact, listContacts, searchContacts } from "../crm-view-data";
+import * as crmActions from "../crm-actions";
 
 const OWNER = "org-a";
-const FIRST_EARLY = new Date("2026-01-01T00:00:00.000Z");
-const FIRST_LATE = new Date("2026-02-01T00:00:00.000Z");
 
 function transactionClient() {
   return {
@@ -66,316 +67,242 @@ function transactionClient() {
       create: mockContactCreate,
       updateMany: mockContactUpdateMany,
     },
-    contactIdentity: { updateMany: mockIdentityUpdateMany },
-    campaign: { findFirst: mockCampaignFindFirst },
     actionEvent: { create: mockAuditCreate },
   };
-}
-
-function recordTransactionRollback() {
-  const state = { rolledBack: false };
-  mockTransaction.mockImplementationOnce(async (fn: (tx: unknown) => unknown) => {
-    try {
-      return await fn(transactionClient());
-    } catch (error) {
-      state.rolledBack = true;
-      throw error;
-    }
-  });
-  return state;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   id = 0;
-  mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "owner@example.com" });
+  mockRequireOwner.mockResolvedValue({ ownerId: OWNER });
   mockIsImpersonating.mockResolvedValue(false);
-  mockContactFindMany.mockResolvedValue([]);
-  mockContactFindFirst.mockResolvedValue(null);
+  mockFindSuggestions.mockResolvedValue([]);
+  mockContactFindFirst.mockResolvedValue({ id: "contact-1", name: "Aisha", lifecycleStage: "New" });
   mockContactCreate.mockResolvedValue({});
   mockContactUpdateMany.mockResolvedValue({ count: 1 });
-  mockIdentityUpdateMany.mockResolvedValue({ count: 1 });
-  mockCampaignFindFirst.mockResolvedValue({ id: "campaign-early" });
   mockAuditCreate.mockResolvedValue({});
-  mockTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) => fn(transactionClient()));
+  mockRecordConsentEvent.mockResolvedValue({ duplicate: false, eventIds: ["event-1"], receivedAt: [] });
+  mockRecordContactDndEvent.mockResolvedValue({ duplicate: false, eventIds: ["dnd-1"], receivedAt: [] });
+  mockTransaction.mockImplementation(async (callback: (tx: ReturnType<typeof transactionClient>) => unknown) =>
+    callback(transactionClient()),
+  );
 });
 
-describe("addLeadContact", () => {
-  it("derives ownerId from the session and delegates strong-identity convergence", async () => {
-    mockFindOrCreate.mockResolvedValue({ ok: true, contactId: "contact-1", created: true, possibleDuplicateIds: [] });
-    const result = await addLeadContact({
-      ownerId: "attacker-org",
-      name: "Aisha",
-      identity: { channel: "email", externalId: "aisha@example.com" },
+describe("CRM action boundary", () => {
+  it("exports the bounded action set with no merge action", () => {
+    expect(Object.keys(crmActions).sort()).toEqual([
+      "createContact",
+      "importContacts",
+      "setContactConsent",
+      "setContactDnd",
+      "setContactDndFromOtto",
+      "updateContact",
+    ]);
+  });
+
+  it("blocks every mutation while impersonating", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+    await expect(crmActions.createContact({ name: "Aisha" })).resolves.toHaveProperty("error");
+    await expect(crmActions.updateContact({ contactId: "contact-1", patch: { name: "A" } })).resolves.toHaveProperty("error");
+    await expect(crmActions.setContactConsent({ contactId: "contact-1", action: "grant", requestId: "r1" })).resolves.toHaveProperty("error");
+    await expect(crmActions.setContactDnd({ contactId: "contact-1", enabled: true, requestId: "r2" })).resolves.toHaveProperty("error");
+    await expect(crmActions.importContacts({ csv: "name\nBo", importId: "i1" })).resolves.toHaveProperty("error");
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockRecordConsentEvent).not.toHaveBeenCalled();
+    expect(mockRecordContactDndEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("createContact and updateContact", () => {
+  it("derives owner scope, creates no identity/consent/DND fields, and returns suggestions only", async () => {
+    mockFindSuggestions.mockResolvedValue([{ contactId: "possible-1", name: "Aisha", reasons: ["Same name"] }]);
+    const result = await crmActions.createContact({
+      ownerId: "attacker",
+      name: " Aisha ",
+      lifecycleStage: "New",
     } as never);
 
-    expect(result).toEqual({ ok: true, contactId: "contact-1", created: true, possibleDuplicateIds: [] });
-    expect(mockFindOrCreate).toHaveBeenCalledWith(expect.objectContaining({
-      ownerId: OWNER,
+    expect(result).toEqual({
+      ok: true,
+      contactId: "crm-1",
+      created: true,
+      possibleDuplicates: [{ contactId: "possible-1", name: "Aisha", reasons: ["Same name"] }],
+    });
+    expect(mockFindSuggestions).toHaveBeenCalledWith({ ownerId: OWNER, name: "Aisha", identities: undefined });
+    const data = mockContactCreate.mock.calls[0][0].data;
+    expect(data).toMatchObject({ id: "crm-1", ownerId: OWNER, name: "Aisha", source: "manual" });
+    expect(data).not.toHaveProperty("marketingConsent");
+    expect(data).not.toHaveProperty("consentSource");
+    expect(data).not.toHaveProperty("consentAt");
+    expect(data).not.toHaveProperty("doNotDisturb");
+  });
+
+  it("refuses the deferred identity write path", async () => {
+    await expect(crmActions.createContact({
       name: "Aisha",
-      source: "manual",
-      lifecycleStage: "New",
-    }));
-    expect(mockFindOrCreate.mock.calls[0][0]).not.toHaveProperty("marketingConsent", "opt_in");
-  });
-
-  it("allows a name-only lead, defaults consent to unknown, and reports duplicate names without auto-merging", async () => {
-    mockContactFindMany.mockResolvedValue([{ id: "same-name" }]);
-    const result = await addLeadContact({ name: "Aisha" });
-
-    expect(result).toEqual({ ok: true, contactId: "crm-1", created: true, possibleDuplicateIds: ["same-name"] });
-    expect(mockContactCreate).toHaveBeenCalledWith({ data: expect.objectContaining({
-      id: "crm-1",
-      ownerId: OWNER,
-      name: "Aisha",
-      lifecycleStage: "New",
-      source: "manual",
-      marketingConsent: "unknown",
-      consentSource: null,
-      consentAt: null,
-    }) });
-    expect(mockIdentityUpdateMany).not.toHaveBeenCalled();
-  });
-
-  it("blocks all mutation while impersonating a customer", async () => {
-    mockIsImpersonating.mockResolvedValue(true);
-    const result = await addLeadContact({ name: "Aisha" });
-    expect(result).toHaveProperty("error");
-    expect(mockFindOrCreate).not.toHaveBeenCalled();
-    expect(mockTransaction).not.toHaveBeenCalled();
-  });
-});
-
-describe("setContactConsent", () => {
-  it("requires explicit customer confirmation before opt-in", async () => {
-    const result = await setContactConsent({
-      contactId: "contact-1",
-      marketingConsent: "opt_in",
-      consentSource: "WhatsApp reply",
+      identity: { channel: "email", externalId: "aisha@example.com" },
+    } as never)).resolves.toEqual({
+      error: "Identity editing is not available. Add the contact without attaching an identity.",
     });
-    expect(result).toHaveProperty("error");
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
-  it("writes consent/source/time together and appends an owner-scoped audit event", async () => {
-    mockContactFindFirst.mockResolvedValue({ marketingConsent: "unknown", consentSource: null, consentAt: null });
-    const before = Date.now();
-    const result = await setContactConsent({
-      contactId: "contact-1",
-      marketingConsent: "opt_in",
-      consentSource: "WhatsApp reply",
-      customerConfirmed: true,
-    });
-    const after = Date.now();
-
-    expect(result).toEqual({ ok: true });
-    const update = mockContactUpdateMany.mock.calls[0][0];
-    expect(update.where).toEqual({ id: "contact-1", ownerId: OWNER, deletedAt: null });
-    expect(update.data).toMatchObject({ marketingConsent: "opt_in", consentSource: "WhatsApp reply" });
-    expect(update.data.consentAt).toBeInstanceOf(Date);
-    expect(update.data.consentAt.getTime()).toBeGreaterThanOrEqual(before);
-    expect(update.data.consentAt.getTime()).toBeLessThanOrEqual(after);
-    expect(mockAuditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ ownerId: OWNER, type: "crm.contact.consent" }),
-    });
-  });
-});
-
-describe("updateContact", () => {
-  it("rejects values outside the three lifecycle stages", async () => {
-    expect(await updateContact({ contactId: "contact-1", patch: { lifecycleStage: "Lead" } }))
-      .toHaveProperty("error");
-    expect(mockTransaction).not.toHaveBeenCalled();
-  });
-
-  it("does not expose a write path for totalOrdersMyr", async () => {
-    expect(await updateContact({ contactId: "contact-1", patch: { totalOrdersMyr: "999" } } as never))
-      .toEqual({ error: "That field is read-only." });
-    expect(mockTransaction).not.toHaveBeenCalled();
-  });
-
-  it("updates only allowed owner-scoped fields and audits the actual field change", async () => {
-    mockContactFindFirst.mockResolvedValue({ name: "Aisha", lifecycleStage: "New", doNotDisturb: false });
-    expect(await updateContact({ contactId: "contact-1", patch: { lifecycleStage: "Dormant" } }))
-      .toEqual({ ok: true });
-
+  it("updates only name/lifecycle and keeps order/DND outside the generic patch", async () => {
+    await expect(crmActions.updateContact({ contactId: "contact-1", patch: { lifecycleStage: "Dormant" } }))
+      .resolves.toEqual({ ok: true });
     expect(mockContactUpdateMany).toHaveBeenCalledWith({
       where: { id: "contact-1", ownerId: OWNER, deletedAt: null },
       data: { lifecycleStage: "Dormant" },
     });
-    expect(mockAuditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        ownerId: OWNER,
-        type: "crm.contact.update",
-        payload: { contactId: "contact-1", changes: { lifecycleStage: { from: "New", to: "Dormant" } } },
-      }),
-    });
+    await expect(crmActions.updateContact({ contactId: "contact-1", patch: { totalOrdersMyr: "999" } } as never))
+      .resolves.toEqual({ error: "That field is read-only." });
+    await expect(crmActions.updateContact({ contactId: "contact-1", patch: { doNotDisturb: true } } as never))
+      .resolves.toEqual({ error: "Use the do-not-disturb control for that setting." });
   });
 });
 
-describe("mergeContacts", () => {
-  it("requires an explicit manual confirmation", async () => {
-    expect(await mergeContacts({ sourceContactId: "source", targetContactId: "target", confirmed: false }))
-      .toHaveProperty("error");
-    expect(mockTransaction).not.toHaveBeenCalled();
+describe("consent and DND runtime writers", () => {
+  it("records manual consent through crm_manual without a direct Contact update", async () => {
+    await expect(crmActions.setContactConsent({
+      contactId: "contact-1",
+      action: "grant",
+      requestId: "consent-1",
+    })).resolves.toEqual({ ok: true });
+
+    expect(mockContactFindFirst).toHaveBeenCalledWith({
+      where: { id: "contact-1", ownerId: OWNER, deletedAt: null },
+      select: { id: true },
+    });
+    expect(mockRecordConsentEvent).toHaveBeenCalledWith({
+      ownerId: OWNER,
+      contactId: "contact-1",
+      channel: "whatsapp",
+      purpose: "marketing",
+      sourceKind: "crm_manual",
+      action: "grant",
+      idempotencyKey: "crm-manual:contact-1:consent-1",
+    });
+    expect(mockContactUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("repoints identities, inherits the earlier attribution pair, soft-deletes the source, and audits", async () => {
-    mockContactFindFirst
-      .mockResolvedValueOnce({ id: "source", firstTouchAt: FIRST_EARLY, firstTouchCampaignId: "campaign-early" })
-      .mockResolvedValueOnce({ id: "target", firstTouchAt: FIRST_LATE, firstTouchCampaignId: "campaign-late" });
+  it("surfaces closed-matrix and idempotency rejections as clear messages", async () => {
+    mockRecordConsentEvent.mockRejectedValueOnce({ code: "INVALID_WRITER_COMBINATION" });
+    await expect(crmActions.setContactConsent({ contactId: "contact-1", action: "revoke", requestId: "r1" }))
+      .resolves.toEqual({ error: "This consent record does not match the approved evidence rules." });
 
-    expect(await mergeContacts({ sourceContactId: "source", targetContactId: "target", confirmed: true }))
-      .toEqual({ ok: true });
+    mockRecordConsentEvent.mockRejectedValueOnce({ code: "IDEMPOTENCY_CONFLICT" });
+    await expect(crmActions.setContactConsent({ contactId: "contact-1", action: "grant", requestId: "r2" }))
+      .resolves.toEqual({ error: "This request was already used for a different consent record. Start a new attempt." });
+  });
 
-    expect(mockIdentityUpdateMany).toHaveBeenCalledWith({
-      where: { ownerId: OWNER, contactId: "source", deletedAt: null },
-      data: { contactId: "target" },
+  it("uses distinct closed DND sources for the human and Otto entrypoints", async () => {
+    await crmActions.setContactDnd({ contactId: "contact-1", enabled: true, requestId: "dnd-ui" });
+    await crmActions.setContactDndFromOtto({ contactId: "contact-1", enabled: false, requestId: "dnd-otto" });
+
+    expect(mockRecordContactDndEvent).toHaveBeenNthCalledWith(1, {
+      ownerId: OWNER,
+      contactId: "contact-1",
+      sourceKind: "crm_ui",
+      action: "set",
+      idempotencyKey: "crm-dnd:contact-1:dnd-ui",
     });
-    expect(mockContactUpdateMany).toHaveBeenCalledWith({
-      where: { id: "target", ownerId: OWNER, deletedAt: null },
-      data: { firstTouchAt: FIRST_EARLY, firstTouchCampaignId: "campaign-early" },
+    expect(mockRecordContactDndEvent).toHaveBeenNthCalledWith(2, {
+      ownerId: OWNER,
+      contactId: "contact-1",
+      sourceKind: "otto_approved_action",
+      action: "clear",
+      idempotencyKey: "crm-dnd:contact-1:dnd-otto",
     });
-    expect(mockContactUpdateMany).toHaveBeenCalledWith({
-      where: { id: "source", ownerId: OWNER, deletedAt: null },
-      data: { deletedAt: expect.any(Date) },
+  });
+
+  it("fails cross-tenant ids as not found before either engine sees them", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "org-b" });
+    mockContactFindFirst.mockResolvedValue(null);
+    await expect(crmActions.setContactConsent({ contactId: "org-a-contact", action: "grant", requestId: "r1" }))
+      .resolves.toEqual({ error: "Contact not found." });
+    await expect(crmActions.setContactDnd({ contactId: "org-a-contact", enabled: true, requestId: "r2" }))
+      .resolves.toEqual({ error: "Contact not found." });
+    expect(mockContactFindFirst.mock.calls.every((call) => call[0].where.ownerId === "org-b")).toBe(true);
+    expect(mockRecordConsentEvent).not.toHaveBeenCalled();
+    expect(mockRecordContactDndEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe("importContacts", () => {
+  it("never fabricates consent when the column is absent or unknown", async () => {
+    const result = await crmActions.importContacts({
+      csv: "name,lifecycle_stage,consent\nAisha,Active,\nBo,New,unknown",
+      importId: "import-1",
     });
-    for (const call of mockContactUpdateMany.mock.calls) {
-      expect(call[0].data).not.toHaveProperty("totalOrdersMyr");
+    expect(result).toMatchObject({ ok: true, importedCount: 2, failedCount: 0 });
+    expect(mockRecordConsentEvent).not.toHaveBeenCalled();
+    expect(mockContactCreate).toHaveBeenCalledTimes(2);
+    for (const call of mockContactCreate.mock.calls) {
+      expect(call[0].data.source).toBe("import");
+      expect(call[0].data).not.toHaveProperty("marketingConsent");
     }
-    expect(mockAuditCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({ ownerId: OWNER, type: "crm.contact.merge" }),
+  });
+
+  it("uses phone/email only for suggestions and records an optional import assertion through the engine", async () => {
+    mockFindSuggestions.mockResolvedValue([{ contactId: "possible-1", name: "Aisha", reasons: ["Same WhatsApp number"] }]);
+    const result = await crmActions.importContacts({
+      csv: "name,phone,email,consent\nAisha,+60123456789,AISHA@example.com,opt_in",
+      importId: "import-2",
     });
-    expect(mockCampaignFindFirst).toHaveBeenCalledWith({
-      where: { id: "campaign-early", ownerId: OWNER },
-      select: { id: true },
+
+    expect(mockFindSuggestions).toHaveBeenCalledWith(expect.objectContaining({
+      ownerId: OWNER,
+      name: "Aisha",
+      identities: expect.arrayContaining([
+        expect.objectContaining({ channel: "whatsapp", externalId: "+60123456789" }),
+        expect.objectContaining({ channel: "email", externalId: "aisha@example.com" }),
+      ]),
+    }));
+    expect(mockRecordConsentEvent).toHaveBeenCalledWith({
+      ownerId: OWNER,
+      contactId: "crm-1",
+      channel: "whatsapp",
+      purpose: "marketing",
+      sourceKind: "import",
+      action: "grant",
+      evidenceRef: "csv:import-2:2",
+      idempotencyKey: "crm-import:import-2:2",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      rows: [{
+        status: "imported_with_warning",
+        consentAssertion: "grant",
+        possibleDuplicates: [{ contactId: "possible-1" }],
+      }],
     });
   });
 
-  it("inherits an earlier same-owner campaign even when that historical campaign is soft-deleted", async () => {
-    mockContactFindFirst
-      .mockResolvedValueOnce({ id: "source", firstTouchAt: FIRST_EARLY, firstTouchCampaignId: "campaign-archived" })
-      .mockResolvedValueOnce({ id: "target", firstTouchAt: FIRST_LATE, firstTouchCampaignId: null });
-    mockCampaignFindFirst.mockResolvedValue({ id: "campaign-archived", deletedAt: FIRST_LATE });
-
-    expect(await mergeContacts({ sourceContactId: "source", targetContactId: "target", confirmed: true }))
-      .toEqual({ ok: true });
-    expect(mockCampaignFindFirst).toHaveBeenCalledWith({
-      where: { id: "campaign-archived", ownerId: OWNER },
-      select: { id: true },
+  it("keeps the created contact and clearly surfaces an engine rejection on that row", async () => {
+    mockRecordConsentEvent.mockRejectedValue({ code: "IDEMPOTENCY_CONFLICT" });
+    const result = await crmActions.importContacts({
+      csv: "name,consent\nAisha,opt_out",
+      importId: "import-conflict",
     });
-    expect(mockContactUpdateMany).toHaveBeenCalledWith({
-      where: { id: "target", ownerId: OWNER, deletedAt: null },
-      data: { firstTouchAt: FIRST_EARLY, firstTouchCampaignId: "campaign-archived" },
+    expect(result).toMatchObject({
+      ok: true,
+      importedCount: 1,
+      rows: [{
+        status: "imported_with_warning",
+        consentAssertion: null,
+        consentError: "This request was already used for a different consent record. Start a new attempt.",
+      }],
     });
-  });
-
-  it("fails closed before moving identities when the inherited campaign is not owned by the session tenant", async () => {
-    mockContactFindFirst
-      .mockResolvedValueOnce({ id: "source", firstTouchAt: FIRST_EARLY, firstTouchCampaignId: "foreign-campaign" })
-      .mockResolvedValueOnce({ id: "target", firstTouchAt: FIRST_LATE, firstTouchCampaignId: null });
-    mockCampaignFindFirst.mockResolvedValue(null);
-
-    expect(await mergeContacts({ sourceContactId: "source", targetContactId: "target", confirmed: true }))
-      .toEqual({ error: "Contact attribution is invalid." });
-    expect(mockCampaignFindFirst.mock.calls[0][0].where.ownerId).toBe(OWNER);
-    expect(mockIdentityUpdateMany).not.toHaveBeenCalled();
-    expect(mockContactUpdateMany).not.toHaveBeenCalled();
-    expect(mockAuditCreate).not.toHaveBeenCalled();
-  });
-
-  it("throws after identities move when the attribution target changed, so the transaction rolls back", async () => {
-    mockContactFindFirst
-      .mockResolvedValueOnce({ id: "source", firstTouchAt: FIRST_EARLY, firstTouchCampaignId: "campaign-early" })
-      .mockResolvedValueOnce({ id: "target", firstTouchAt: FIRST_LATE, firstTouchCampaignId: null });
-    mockContactUpdateMany.mockResolvedValueOnce({ count: 0 });
-    const transaction = recordTransactionRollback();
-
-    expect(await mergeContacts({ sourceContactId: "source", targetContactId: "target", confirmed: true }))
-      .toEqual({ error: "Contact not found." });
-    expect(mockIdentityUpdateMany).toHaveBeenCalled();
-    expect(transaction.rolledBack).toBe(true);
-    expect(mockAuditCreate).not.toHaveBeenCalled();
-  });
-
-  it("throws after identities move when the source archive loses a race, so the transaction rolls back", async () => {
-    mockContactFindFirst
-      .mockResolvedValueOnce({ id: "source", firstTouchAt: FIRST_LATE, firstTouchCampaignId: null })
-      .mockResolvedValueOnce({ id: "target", firstTouchAt: FIRST_EARLY, firstTouchCampaignId: null });
-    mockContactUpdateMany.mockResolvedValueOnce({ count: 0 });
-    const transaction = recordTransactionRollback();
-
-    expect(await mergeContacts({ sourceContactId: "source", targetContactId: "target", confirmed: true }))
-      .toEqual({ error: "Contact not found." });
-    expect(mockIdentityUpdateMany).toHaveBeenCalled();
-    expect(transaction.rolledBack).toBe(true);
-    expect(mockAuditCreate).not.toHaveBeenCalled();
-  });
-
-  it("treats a forged cross-tenant id as not found and writes nothing", async () => {
-    mockContactFindFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
-      id: "target", firstTouchAt: FIRST_LATE, firstTouchCampaignId: null,
-    });
-    expect(await mergeContacts({ sourceContactId: "foreign", targetContactId: "target", confirmed: true }))
-      .toHaveProperty("error");
-    expect(mockIdentityUpdateMany).not.toHaveBeenCalled();
-    expect(mockContactUpdateMany).not.toHaveBeenCalled();
-    expect(mockAuditCreate).not.toHaveBeenCalled();
-    expect(mockContactFindFirst.mock.calls[0][0].where.ownerId).toBe(OWNER);
   });
 });
 
-describe("CRM read surfaces", () => {
-  const row = {
-    id: "contact-1",
-    name: "Aisha",
-    lifecycleStage: "Active",
-    source: "manual",
-    firstTouchCampaignId: null,
-    firstTouchAt: FIRST_EARLY,
-    lastSeenAt: FIRST_LATE,
-    marketingConsent: "unknown",
-    consentSource: null,
-    consentAt: null,
-    doNotDisturb: false,
-    totalOrdersMyr: null,
-    createdAt: FIRST_EARLY,
-    identities: [],
-  };
-
-  it("lists live contacts owner-scoped and keeps absent order truth as null", async () => {
-    mockContactFindMany.mockResolvedValue([row]);
-    const result = await listContacts();
-    expect(result).toEqual({ ok: true, contacts: [row] });
-    expect(mockContactFindMany.mock.calls[0][0].where).toMatchObject({ ownerId: OWNER, deletedAt: null });
-    expect(mockContactFindMany.mock.calls[0][0].select.identities.where).toEqual({ ownerId: OWNER, deletedAt: null });
-    if (!("ok" in result)) throw new Error("expected contacts");
-    expect(result.contacts[0].totalOrdersMyr).toBeNull();
-  });
-
-  it("gets a profile by an owner-scoped findFirst, never a bare unique id", async () => {
-    mockContactFindFirst.mockResolvedValue({ ...row, totalOrdersMyr: { toString: () => "500.00" } });
-    const result = await getContact("contact-1");
-    expect(result).toMatchObject({ ok: true, contact: { id: "contact-1", totalOrdersMyr: "500.00" } });
-    expect(mockContactFindFirst.mock.calls[0][0].where).toEqual({ id: "contact-1", ownerId: OWNER, deletedAt: null });
-    expect(mockContactFindFirst.mock.calls[0][0].select.identities.where).toEqual({ ownerId: OWNER, deletedAt: null });
-  });
-
-  it("searches name and identity inside the same owner fence", async () => {
-    mockContactFindMany.mockResolvedValue([row]);
-    await searchContacts("aisha@example.com");
-    const where = mockContactFindMany.mock.calls[0][0].where;
-    expect(where.ownerId).toBe(OWNER);
-    expect(where.deletedAt).toBeNull();
-    expect(where.OR).toEqual(expect.arrayContaining([
-      { name: { contains: "aisha@example.com", mode: "insensitive" } },
-      { identities: { some: { ownerId: OWNER, deletedAt: null, externalId: { contains: "aisha@example.com", mode: "insensitive" } } } },
-    ]));
-  });
-
-  it("returns the auth error before any read", async () => {
-    mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
-    expect(await listContacts()).toEqual({ error: "Not authorized." });
-    expect(mockContactFindMany).not.toHaveBeenCalled();
+describe("sole-writer compliance", () => {
+  it("contains no direct app write for consent/DND compatibility fields or identity/merge path", () => {
+    const source = readFileSync(new URL("../crm-actions.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/\b(marketingConsent|consentSource|consentAt|doNotDisturb)\s*:/);
+    expect(source).not.toContain("prisma.contactIdentity");
+    expect(source).not.toContain("mergeContacts");
+    expect(source).toContain("recordConsentEvent");
+    expect(source).toContain("recordContactDndEvent");
   });
 });
