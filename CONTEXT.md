@@ -52,6 +52,32 @@ Reading the table below:
   Chats and one shared Canvas. _Avoid:_ workspace, folder, brand, Campaign (the future marketing
   Campaign object is separate).
 
+## Customer engagement 顾客互动
+
+- **Inbox** (共享收件箱) — The merchant team's owner-scoped work queue for customer conversations,
+  assignment, history, and search. It is not an Otto conversation surface. _Avoid:_ Chat, mailbox,
+  customer service bot.
+
+- **Customer conversation** (顾客会话) — The stable thread between one merchant and one exact
+  channel identity of a Customer. _Avoid:_ Chat (that means an internal Otto conversation), ticket,
+  campaign.
+
+- **Customer message** (顾客消息) — One normalized inbound or outbound item in a Customer
+  conversation; a local row is not proof that a provider sent, delivered, or displayed it. _Avoid:_
+  ChatMessage, receipt, send result.
+
+- **Conversation assignment** (会话分派) — The current merchant member responsible for a Customer
+  conversation. Assignment organizes work but never grants permission or authority to send.
+  _Avoid:_ owner (the Org is the data owner), approver, sender.
+
+- **Takeover / handoff** (接管 / 交接) — A visible transfer of conversation control between a human
+  and Otto; human intervention pauses Otto until a new explicit resume action. _Avoid:_ silent
+  reassignment, automatic resume, background takeover.
+
+- **Message template** (消息模板) — A reusable, versioned customer-message definition scoped to one
+  logical channel account; draft or review state is not send approval. _Avoid:_ snippet, receipt,
+  campaign content.
+
 ## References & identity 参考与身份
 
 - **Entity** (实体) — A reusable cast member that recurs across shots: a Character, Location,
