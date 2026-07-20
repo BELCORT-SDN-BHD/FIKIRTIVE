@@ -1,23 +1,28 @@
 # B13/Privacy 逐 Carrier Gate 清单（R-010 §11.2 Gate 6 前置）
 
-> **状态：矩阵已回填、gate 判定已给出（见 §5）——待 Founder 合并本次更新生效。** 清单本身已批
-> （PR #357 已合并，`ed85a430`）；#356 保持 OPEN 作为 Q-1～Q-7 逐题裁决的 durable 载体，**Q-1～Q-7 已全部
-> 裁决**（#356 评论 D-Q1～D-Q7，2026-07-19）。本次更新 = 依据 D-Q1～D-Q7 把 §2 矩阵中原【待 Founder 裁决】
-> 格子回填为具体规则 + 给出 §5 gate 判定；本文档不含代码、不动 Prisma schema、不动 migration、不写对外
-> 隐私政策/ToS 文本、不代做任何隐私政策决定——那些仍是回填结果指向的下游、独立的施工/授权步骤。
+> **状态：原五 carrier 的 scoped PASS 已在 PR #360 合并后生效；C4b-M0 六 carrier 扩展已获 Founder 产品批准，
+> 待本次 PR 合并后生效（见 §5.2）。** 清单（PR #357）与原五行回填（PR #360）均已合并，#356 已关闭；
+> Q-1～Q-7 已全部裁决（#356 评论 D-Q1～D-Q7，2026-07-19）。本次更新只依 #372 把相同已批原则扩展到
+> C4a §5.1 已批准的六个物理 carrier，并给出独立判定；本文档不含代码、不动 Prisma schema/migration、不写
+> 对外隐私政策/ToS 文本，也不代替任何下游施工或授权步骤。
 >
-> 证据基线：live `main` `ed85a430`（2026-07-19，PR #357 已合并头，本次回填在此基线上进行）。
+> 证据基线：live `main` `660efe0e3b12f0ae469bf3c132fdd7c3f9760237`（2026-07-20，C4a PR #369
+> 已合并；本次 C4b-M0 回填在此基线上进行）。
 >
 > 关联：[#356](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/356)（本票 mandate 与 Q-1～Q-7 裁决记录）；
+> [#368](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/368)（C4a 合同 mandate）；
+> [#372](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/372)（C4b-M0 Founder 批准、精确 scope 与
+> [六个物理 carrier 名称勘误](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/372#issuecomment-5020434345)）；
 > [#359](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/359)（延后事项总台账，D-Qn 各裁决产生的延后
 > 项均已登记于此，本文档回填时逐条引用）；R-010
 > `docs/superpowers/specs/2026-07-16-r010-schema-authority-alignment.md` §4.7 / §11.2 gate 6（`:656`）；
-> `docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md` §4（PR #353 已批）。
+> `docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md` §4（PR #353 已批）；
+> `docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md` §5/§9/§10/§14（PR #369 已批）。
 >
 > 零发明声明：本文档不选择、不新增、不细化任何来源文档未冻结的隐私规则、保留期、删除机制或访问权限。凡来源
 > 标记为「建议」的物理形状，本文档原样转述；凡来源未给出答案的问题，本文档只呈递为【待 Founder 裁决】问题，
-> 不代答、不给唯一推荐、不暗示默认值。本次回填同理：每个回填的格子只照录对应 #356 D-Qn 评论原文口径与
-> #359 台账登记的延后触发条件，不外推、不新增、不代 Founder 补充评论原文未写的细节。
+> 不代答、不给唯一推荐、不暗示默认值。本次 C4b-M0 回填只照录 #356 D-Qn、#372 已批规则与 C4a 已批物理合同；
+> 不新增表、字段、runtime/provider 行为，也不代 Founder 补充来源未写的细节。
 
 ## §1 门的语义
 
@@ -43,8 +48,11 @@ B13/privacy implementation gate」（`:34`）。
   已合并 C1 方案 PR #353（`a0429451`），据 C1 §6「Founder 批准本文档意味着……满足 R-010 §11.2 gate 1……与
   gate 3……」（`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md:474-479`），gate
   1/gate 3 已在 **bounded-proposal 层面**满足；但同一节明示这不构成 Prisma schema 变更、migration、
-  production 或任一 M-step 执行的授权，也不构成本 gate（gate 6）的通过（`:481-487`）——schema/migration/
-  implementation/production 授权仍须另取，且本 gate 6 仍独立未通过；
+  production 或任一 M-step 执行的授权，也不构成本 gate（gate 6）的通过（`:481-487`）——这些授权当时仍须
+  另取；原五 carrier 后续由 PR #362（`49aca8f8`，五模型/additive migration/tenant guard/schema tests）、
+  PR #364（`83946443`，closed writers/fold/replay/projections runtime）与 PR #366（`1f8d8f26`，Contacts
+  UI/actions/Otto vertical；未新增 schema/migration）分步落地，scoped PASS 已生效。C4b-M0 六 carrier 是
+  §2/§5.2 另列、仅在本次 PR 合并后生效的扩展，不重授或改变任何 schema/migration/production 权限；
 - 不处理 D8 延后的 reactive/D5 物理载体（`DeliveryManifest`、`ActionReceipt`、confirmation/outbox/receipt
   runtime）本身的批准——那归 gate 4，各自 native implementation/schema task（`:654`）。本 gate 只在这些载体
   的物理形状被冻结之后，才需要把它们的隐私维度补进矩阵（见 §2 「未来扩展」行组）。
@@ -58,17 +66,20 @@ carrier 是 `ConsentEvent`、D8 延后的 D5 source action/manifest/anchor/confi
 落里共同定义，`:333`，结构上属同一隐私考量），但如实标注：把 `ContactDndEvent` 纳入 gate 6 矩阵这件事本身，
 在 R-010 原文里没有逐字依据，只有 #356 的当前 mandate 依据。
 
-**passing 的含义**：见 §5。本文档创建、commit 或提交审阅都不代表 gate 6 已通过。
+**passing 的含义**：见 §5。原五 carrier 状态与 C4b-M0 扩展分别判定；C4b-M0 的文档创建、commit 或提交审阅
+都不代表该扩展已生效。
 
 ## §2 逐 carrier 隐私矩阵
 
 范围内五个 carrier（依 #356 scope）：`ConsentEvent`、`ContactDndEvent`、`ProviderRefusalEvent`、
-`ConsentStateProjection`、`ProviderRefusalState`。全部仍是【本 PR 提案】物理形状（R-010 原文标记，proposal
-`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md` 原样保留）。R-010 §11.2 gate
-1/gate 3（`docs/superpowers/specs/2026-07-16-r010-schema-authority-alignment.md:651`、`:653`）已因 Founder
-合并 C1 方案 PR #353（`a0429451`）在 bounded-proposal 层面满足（C1 §6，`:474-479`）；但 Prisma schema
-编写/执行、migration 与 production 授权仍须另取（C1 §6，`:481-486`），本 gate（gate 6）也仍独立未通过（本
-文档 §5）。
+`ConsentStateProjection`、`ProviderRefusalState`。本节保留其 R-010/C1 proposal 来源与当时的物理合同措辞；
+五个模型/additive migration/tenant guard/schema tests 由 PR #362（`49aca8f8`）合并；closed
+writers/fold/replay/projections runtime 由 PR #364（`83946443`）合并；PR #366（`1f8d8f26`）只新增 Contacts
+UI/actions/Otto vertical，未新增 schema/migration。本票不修改或重审该 implementation。R-010 §11.2 gate
+1/gate 3（`:651`、`:653`）曾因 Founder 合并
+C1 方案 PR #353（`a0429451`）在 bounded-proposal 层面满足（C1 §6，`:474-479`）；五行 privacy scoped PASS
+已在 PR #360 合并后生效。C4b-M0 六行扩展另见下表与 §5.2，且仍不授予任何 C4 schema/migration/production
+动作。
 
 | carrier | 数据类别与 PII 含量 | 保留期 | 删除与导出（PDPA） | 访问控制与审计 | raw payload 排除 | 跨租户隔离 | 法律依据 | 加密/key scope |
 |---|---|---|---|---|---|---|---|---|
@@ -83,6 +94,35 @@ carrier 是 `ConsentEvent`、D8 延后的 D5 source action/manifest/anchor/confi
 「历史/归档深度」付费分层为停放创意（#358，台账 #359-5）。实际轮换配置/cadence 属基础设施实施事实，现状
 = Unknown（见 §6），实施校验随 ConsentEvent 批次施工时核对；本维度的**政策**已由 D-Q3 裁决完毕。
 
+### C4b-M0 六 carrier 扩展（#372；本次 PR 合并后生效）
+
+以下名称逐字沿用 C4a §5.1 的六个**物理 carrier**（`:185-200`），不是逻辑 alias，也不新增表。每行引用的
+`C4-S1`～`C4-S8` 都是该行的规范内容，避免把同一已批规则复制六次：
+
+| 共享规则 | 六行统一冻结内容 | 依据 |
+|---|---|---|
+| **C4-S1 ownership / legal-product basis** | 顾客对话、消息、事件、草稿与模板均属商家；平台只作保管人和工具，按商家指令处理。正式法律依据分类、隐私政策/ToS/数据删除回调仍留 B13 法务面逐字呈批。 | #356 D-Q1/D-Q3/D-Q5 与 Founder 原则「商家的 data，商家的权利，我们只是提醒」；#372；C4a §9.1–§9.2（`:524-546`） |
+| **C4-S2 retention / delete / export** | 不设平台强制保留期，不做平台自动删除、清理、压缩或级联抹除；Contact/Identity/Member archive 不级联删历史。Phase 1 只给 tag/提醒，不建物理 erasure 工具；匿名化/硬删延后另批。标准导出随 CRM 正常排期。 | #356 D-Q1～D-Q3；C4a §5.1（`:209-211`）、§9.2（`:540-544`）；#372 |
+| **C4-S3 access / audit / mutation** | Phase 1 同租户工作区成员可读；平台 impersonation 只读且必须审计。细分 RBAC 未获另批前，六 carrier 的所有 mutation 一律 default-deny；读权不推导 takeover、template submission 或 reply 权。 | #356 D-Q4；C4a M2（`:568-573`）、§11.2（`:637-638`）、§14.1–§14.2（`:746`、`:761`）；#372 |
+| **C4-S4 tenant isolation** | `ownerId` 只来自 authenticated/trusted server context；所有 owner relation tenant-qualified。跨 owner、未知角色或 relation mismatch 均零读、零写、零 provider call。 | Blueprint 宪法 6；C4a §3.2（`:73-81`）、§11.2（`:628-638`）；#372 |
+| **C4-S5 normalized product data / payload and log redaction** | 产品表可存各行已批的必要 normalized text 与结构化事实；不得存 raw webhook、provider DTO/payload、token、secret 或签名材料。电话、消息正文及 template/draft/handoff 正文不得进入 log/error/telemetry；可搜索 product text 不等于可记录 telemetry。 | C4a §3.2（`:82-87`）、§5.3–§5.6（`:245-375`）、§9.1（`:528-533`）、§11.2（`:636`）；#372 |
+| **C4-S6 media** | Phase 1 只持久化 text 与安全的 `unsupported` placeholder；不保存顾客媒体 blob、remote signed URL 或隐藏 raw payload。新增 media kind/storage 必须另过 privacy/storage gate。 | C4a §5.3（`:254-283`）、§5.7（`:384-385`）、§9.2（`:543`）；#372 |
+| **C4-S7 encryption / key scope** | Phase 1 使用平台托管 at-rest encryption 与 TLS；不加临时字段级加密。企业级字段级/自管密钥仍是未来必须项，触发时另行呈批。 | #356 D-Q7、台账 #359-18；C4a §9.1–§9.2（`:531-544`）；#372 |
+| **C4-S8 backup / PITR** | 灾备备份仅用于恢复并按平台策略轮换，不构成独立数据用途；production backup/PITR 的实际状态、cadence 与数值仍为 **Unknown**。本矩阵不授权 production 查询、apply 或 deploy。 | #356 D-Q3；C4a §9.2（`:544`）、M0（`:552-558`）、§14.2（`:757`）；#372 |
+
+| carrier | source / data class / PII | carrier-specific boundary and tenant relation | 统一维度与产品依据 |
+|---|---|---|---|
+| **CustomerConversation** | exact `ContactIdentity` 的稳定 Inbox thread/current projection；保存 status、assignee、automation/revision 与 activity 时间等结构化事实，identity/assignee 为 PII-adjacent。来源只可为同租户 identity resolver、accepted message writer 与 shared conversation actions（C4a §3.1 `:60-65`、§5.2 `:213-243`）。 | tenant-qualified `ContactIdentity`/`Membership` relation；identity-owner mismatch 零读写。conversation 不保存消息正文、raw provider 数据或媒体。 | **C4-S1～C4-S8 全部适用**；B0-31/38（C4a §2.1 `:29`、`:32`）。 |
+| **CustomerMessage** | 规范化 inbound/outbound history；可含顾客/商家消息正文、`searchText`、actor 与时间（PII/商业内容），以及 canonical hash、stable key、opaque external ref。当前 outbound writer 在 D8/C6 gate 前 disabled（C4a §5.3 `:245-283`）。 | tenant-qualified Conversation relation；仅 bounded text 或 safe `unsupported` envelope，source payload hash 不携 raw payload；不得为了搜索保存第二份 raw 内容。 | **C4-S1～C4-S8 全部适用**；B0-31/33（C4a §2.1 `:29`、`:31`）。 |
+| **CustomerConversationEvent** | assignment/control/open-close 的 append-only visible history；含 tenant-qualified actor/assignee、automation transition 与可能含 PII/商业内容的 bounded handoff note（C4a §5.4 `:285-300`）。 | tenant-qualified Conversation/Membership relation；note 只存 merchant-visible normalized text，不存 secret/raw provider payload；event 与 conversation projection 同 transaction。 | **C4-S1～C4-S8 全部适用**；B0-31/33/38（C4a §2.1 `:29-32`）。 |
+| **CustomerConversationDraft** | 一个会话的共享可恢复草稿；normalized text、author 与 exact conversation/draft revisions，正文可能含 PII/商业内容（C4a §5.5 `:302-316`）。 | tenant-qualified Conversation/author relation；只允许 bounded text envelope，不含 provider request/receipt；永不充当 manifest/outbox 或直交 adapter。 | **C4-S1～C4-S8 全部适用**；B0-33/38（C4a §2.1 `:31-32`）。 |
+| **CustomerMessageTemplate** | logical channel-scope template root；保存 tenant/channel scope、name/locale 与 local archive lifecycle，属于商家业务资料（C4a §5.6 `:318-330`）。 | tenant-qualified `ChannelScope` root；provider replacement 不换 root；archive 不删除 provider truth，也不推导 review/send authority。 | **C4-S1～C4-S8 全部适用**；B0-32/33（C4a §2.1 `:30-31`）。 |
+| **CustomerMessageTemplateVersion** | 不可变 normalized template body、variables/sample、purpose/category、content hash 与 current review projection；正文/sample 可能含 PII/商业内容，external ref 仅 opaque（C4a §5.6 `:332-375`）。 | tenant-qualified Template/author relation；不存 provider DTO；仅 provider-neutral text definition，header/media/buttons 另走 bounded contract；review state 不等于 send approval。 | **C4-S1～C4-S8 全部适用**；B0-32/33（C4a §2.1 `:30-31`）。 |
+
+本扩展只冻结上述 privacy 规则。Prisma/schema、migration/DB apply、provider/credentials/WABA/Meta、真实花费或
+消息、D8 carrier 与 send/confirmation/outbox/receipt、production/deploy、CI-unavailable merge 均继续受 C4a
+§14.1（`:740-753`）及 #372 hard exclusions 的独立 Founder gate；本表不授予其中任何一步。
+
 ### 未来扩展行组（D8 延后载体，本 gate 现在不判定，仅为完整性列出）
 
 `DeliveryManifest`、provider-ingested reactive anchor、`ActionReceipt`、`actionId/actionRevision` minting、
@@ -93,8 +133,9 @@ path 保持 disabled/fail-closed 且不得作任何 user-facing availability cla
 载体的「详细 retention 归 B13/privacy implementation gate」（`:250`）——也就是说，**一旦**这些载体的物理形状
 在各自 native task 中被冻结，它们必须重新纳入本矩阵（或其后继版本）才能通过 gate 6；在物理形状冻结之前，
 本文档无法为它们填写任何一列（数据类别/保留期/删除/访问控制/raw payload/跨租户/法律依据），因为填写即等于
-替 native task 发明尚不存在的 schema。这也是这三个载体（含未来可能出现的 inbox/outbox 消息 raw 内容存储
-姿态）目前明确排除在本 gate 判定范围之外的原因——不是遗漏，是依据 `:248` 的 deferral 边界。
+替 native task 发明尚不存在的 schema。这也是这些载体（含未来可能出现的 outbox 或 raw-evidence 内容存储
+姿态，但不含上表已冻结的 C4 normalized product carriers）目前明确排除在本 gate 判定范围之外的原因——不是
+遗漏，是依据 `:248` 的 deferral 边界。
 
 ### 未决 carrier 行组（quarantine/evidence 与 evidenceRef source system，本 gate 现在同样无法判定）
 
@@ -408,16 +449,35 @@ ConsentStateProjection、ProviderRefusalState 五行——全部维度已冻结�
 隔离区/证据载体范围**保持 UNPASSED**，直至其物理形状冻结并补行（per §5 criterion 3 / R-010 `:364`、
 `:656`）。
 
-**本次判定解锁的下一步**：ConsentEvent/ContactDndEvent/ProviderRefusalEvent 批次（含 `ConsentStateProjection`/
-`ProviderRefusalState` 两投影）的 migration authoring 可以启动；每一步实施仍受既有 M-step/Founder 授权约束
-——R-010 §11.2 gate 1/gate 3 的 schema/migration/production 授权路径不因本次 gate 6 判定而被替代或免除
-（见 §5 标准 4、`:651`、`:653`）。D5 延后载体、quarantine/evidence 与 evidenceRef source system 相关的
-implementation 仍保持 disabled/fail-closed，直至各自物理形状冻结并补入本矩阵（§2「未来扩展行组」/「未决
-carrier 行组」）。
+**本次判定当时解锁的下一步**：ConsentEvent/ContactDndEvent/ProviderRefusalEvent 批次（含
+`ConsentStateProjection`/`ProviderRefusalState` 两投影）的 migration authoring 可以启动；模型/additive
+migration/tenant guard/schema tests 后来由 PR #362（`49aca8f8`）合并，closed writers/fold/replay/projections
+runtime 再由 PR #364（`83946443`）合并；PR #366（`1f8d8f26`）只完成 Contacts UI/actions/Otto vertical，未新增
+schema/migration。这个历史结果不替代 C4 或任何其它任务的 schema/migration/production 授权。D5 延后载体、
+quarantine/evidence 与 evidenceRef source system 相关的 implementation 仍保持 disabled/fail-closed，直至各自
+物理形状冻结并补入本矩阵（§2「未来扩展行组」/「未决 carrier 行组」）。
 
-**谁更新**：本文档不由自身自动判定 PASS。本次更新即为上述 follow-up：把 #356 D-Q1～D-Q7 的 GitHub 裁决原文
-引用写回 §2 矩阵与 §5.1，并更新了本文档头部状态行；本次更新本身仍待 Founder 审阅并合并方才生效——在 PR
-合并前，§5.1 的 scoped PASS 判定属于本文档提出的判定结论，不是已生效的 gate 状态。
+**谁更新**：本文档不由自身自动判定 PASS。#356 D-Q1～D-Q7 的回填与 §5.1 判定已由 PR #360 合并生效；当前
+#372 更新只新增下方 §5.2 的 C4b-M0 判定，且该扩展仍须本次 PR 合并后才生效。
+
+### §5.2 C4b-M0 六 carrier 扩展判定（2026-07-20）
+
+- **Authority**：满足——Founder 已批准 #372 的 C4b-M0 privacy package；#372 的 durable 勘误把 scope 对齐为
+  C4a §5.1 已批的六个物理 carrier，且明确不是新产品决定。
+- **逐行完整性**：满足——§2 的六行逐一覆盖 source/data class/PII 与 carrier-specific tenant/content boundary，
+  并逐行纳入 `C4-S1`～`C4-S8`，从而覆盖 ownership/custodian、retention、delete/export、access/audit、tenant
+  isolation、raw payload 排除、log/error/telemetry redaction、media、encryption/key scope、backup/PITR 与
+  legal/product basis。
+- **零发明与边界**：满足——六行逐字对应 C4a §5.1 物理 carrier；没有新增表、字段、runtime/provider behavior，
+  production backup/PITR actual state/cadence 保持 Unknown。D5/D8 与 quarantine/evidence 的 UNPASSED 范围不变。
+
+**判定结论**：C4b-M0 六 carrier 扩展为 **scoped PASS（proposed；仅在本次 PR 合并后生效）**。它只满足 C4a
+M0 所要求的六行 privacy 前置，不改变 §5.1 已生效的原五 carrier scoped PASS，也不把 D5/D8 或未决
+quarantine/evidence 范围判为通过。
+
+**解锁边界**：本扩展生效后，下一张 bounded C4 schema/migration task 仍须在动作前取得 Founder 对
+schema/migration 的单独授权；provider/credentials/Meta/真实花费或消息、D8、production/deploy 与
+CI-unavailable merge 也都必须分别再获授权。本判定自身不授权任何这些动作。
 
 ## §6 Unknown/风险
 
@@ -435,19 +495,17 @@ carrier 行组」）。
   （`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md:508-510`）。**本次更新后该
   Unknown 已变为 Known**：本文档即该矩阵，Q-1～Q-7 已全部裁决（#356 D-Q1～D-Q7），§2 矩阵已回填，§5.1 已
   给出 scoped PASS 判定（scope 见 §5.1；D5 延后载体与未决 carrier 行组仍 UNPASSED，不是本条 Unknown 的
-  一部分，见下两条）——本条 Unknown 不再适用于本文档已裁定范围内的五个 carrier；待本次更新经 Founder 合并
-  后，gate 6 在该 scope 内即生效通过。
-- **backup/replica 运维事实——政策已裁决，操作细节仍未查询**：#356 D-Q3（2026-07-19）已裁决政策层面——平台
+  一部分，见下两条）——本条 Unknown 不再适用于本文档已裁定范围内的五个 carrier；§5.2 另对 C4 六 carrier
+  给出 proposed scoped PASS，只有本次 PR 合并后才生效。
+- **backup/replica 运维事实——政策已裁决，操作细节仍未查询**：#356 D-Q3（2026-07-19）已裁决政策层面，#372
+  已把同一政策扩展到 C4 六 carrier——平台
   灾备备份免费、仅用于灾难恢复、自动轮换过期，不构成独立数据用途。但 Q-3 涉及的 backup/replica **实际**
   保留周期数值、轮换频率等运维细节，本文档仍未做 SELECT-only 现场核验（这类核验按 R-010 §9 生产硬闸的
   既定纪律，`:518-528`，需要另行 production 访问与授权，超出本票 docs-only scope）——**Unknown 范围已收窄
   为纯运维数值**，原样标注，不臆测。
-- **`receiptRef` 内容边界——规则已裁决，既有实现现状未核查**：#356 D-Q6（2026-07-19）已裁决规则本身
-  （`receiptRef` 比照 `evidenceRef` 统一 raw-payload 排除）。本文档仍未对代码库中是否已有
-  `ProviderRefusalEvent` 相关实现（若有）做逐行核查，因为 R-010/proposal 明示该表仍是【本 PR 提案】、尚未
-  获 schema 批准（`docs/superpowers/specs/2026-07-19-c1-identity-consent-schema-proposal.md:305`）——按零
-  发明纪律，本文档假定其尚不存在实现，若实际已有相关代码，需要在后续 session 核实是否已合乎 D-Q6 规则并
-  回填本文档。
+- **`receiptRef` 内容边界——规则已裁决，本票不重审实现**：#356 D-Q6（2026-07-19）已裁决 `receiptRef` 比照
+  `evidenceRef` 统一 raw-payload 排除；`ProviderRefusalEvent` 模型已随 PR #362（`49aca8f8`）合并。#372 只回填 C4 privacy
+  matrix，不修改也不重新审计该五 carrier implementation；D-Q6 规则保持不变。
 - **quarantine/evidence 与 evidenceRef source system 物理形状未定**：见 §2「未决 carrier 行组」——R-010 只对
   这两个载体给出功能性要求（`:270`、`:356`、`:363`、`:469-473`），没有冻结表名、字段清单或 schema；本文档
   因此无法为它们填写 §2 矩阵任何一列，按零发明纪律原样标注为 Unknown，不臆测其物理形状，也不预判它们
