@@ -651,6 +651,12 @@ model Organization {
   contactDndEvents        ContactDndEvent[]
   providerRefusalEvents   ProviderRefusalEvent[]
   providerRefusalStates   ProviderRefusalState[]
+  customerConversations           CustomerConversation[]
+  customerMessages                CustomerMessage[]
+  customerConversationEvents      CustomerConversationEvent[]
+  customerConversationDrafts      CustomerConversationDraft[]
+  customerMessageTemplates        CustomerMessageTemplate[]
+  customerMessageTemplateVersions CustomerMessageTemplateVersion[]
   segments                Segment[]
 }
 
@@ -670,7 +676,17 @@ model Membership {
   user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
+  assignedCustomerConversations   CustomerConversation[]           @relation("CustomerConversationAssignee")
+  customerMessages                CustomerMessage[]                @relation("CustomerMessageActor")
+  customerConversationEvents      CustomerConversationEvent[]      @relation("CustomerConversationEventActor")
+  customerConversationEventsFrom  CustomerConversationEvent[]      @relation("CustomerConversationEventFromAssignee")
+  customerConversationEventsTo    CustomerConversationEvent[]      @relation("CustomerConversationEventToAssignee")
+  customerConversationDrafts      CustomerConversationDraft[]      @relation("CustomerConversationDraftAuthor")
+  customerMessageTemplateVersions CustomerMessageTemplateVersion[] @relation("CustomerMessageTemplateVersionAuthor")
+
   @@unique([userId, orgId])
+  // Required by every tenant-qualified Inbox actor/assignee relation.
+  @@unique([id, orgId])
   @@index([orgId, role])
   @@index([userId])
 }
@@ -1118,6 +1134,7 @@ model ChannelScope {
 
   channelConnections ChannelConnection[]
   contactIdentities  ContactIdentity[]
+  customerMessageTemplates CustomerMessageTemplate[]
 
   @@unique([ownerId, channel, scopeKey])
   // Required by the composite references below so they cannot cross owner or channel boundaries.
@@ -1309,8 +1326,7 @@ model ContactIdentity {
   ownerId      String
   organization Organization @relation(fields: [ownerId], references: [id])
   contactId    String
-  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
-  contact       Contact  @relation(fields: [contactId], references: [id], onDelete: Restrict)
+  contact        Contact       @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
   channelScopeId String?
   channelScope   ChannelScope? @relation(fields: [channelScopeId, ownerId, channel], references: [id, ownerId, channel], onDelete: Restrict)
   channel        String
@@ -1328,10 +1344,160 @@ model ContactIdentity {
   // enforcing unique index, so this base migration deliberately leaves that later index absent and
   // preserves the existing legacy three-fact partial unique unchanged; reader/writer behavior stays put.
   providerRefusalEvents ProviderRefusalEvent[]
+  customerConversations CustomerConversation[]
 
   // Required by tenant-qualified ProviderRefusalEvent references.
   @@unique([id, ownerId])
   @@index([ownerId, contactId, deletedAt])
+}
+
+// C4b-M1: provider-neutral Customer Inbox storage only. All closed taxonomies remain
+// code-validated Strings; no writer, provider adapter, send path, or delivery authority exists here.
+model CustomerConversation {
+  id                   String          @id
+  ownerId              String
+  organization         Organization    @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  contactIdentityId    String
+  contactIdentity      ContactIdentity @relation(fields: [contactIdentityId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  status               String
+  assigneeMembershipId String?
+  assigneeMembership   Membership?     @relation("CustomerConversationAssignee", fields: [assigneeMembershipId, ownerId], references: [id, orgId], onDelete: Restrict)
+  automationState      String          @default("disabled")
+  revision             Int             @default(0)
+  lastMessageAt        DateTime?
+  lastActivityAt       DateTime
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  messages CustomerMessage[]
+  events   CustomerConversationEvent[]
+  draft    CustomerConversationDraft?
+
+  @@unique([id, ownerId])
+  @@unique([ownerId, contactIdentityId])
+  @@index([ownerId, status, lastActivityAt, id], map: "CustomerConversation_owner_status_activity_idx")
+  @@index([ownerId, assigneeMembershipId, status, lastActivityAt, id], map: "CustomerConversation_owner_assignee_status_activity_idx")
+}
+
+model CustomerMessage {
+  id                      String               @id
+  ownerId                 String
+  organization            Organization         @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  conversationId          String
+  conversation            CustomerConversation @relation(fields: [conversationId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  direction               String
+  actorKind               String
+  actorMembershipId       String?
+  actorMembership         Membership?          @relation("CustomerMessageActor", fields: [actorMembershipId, ownerId], references: [id, orgId], onDelete: Restrict)
+  kind                    String
+  contentJson             Json
+  searchText              String
+  contentHash             String
+  // Raw unique index CustomerMessage_owner_source_event_live lives in migration
+  // 20260720160000_c4b_m1_inbox_storage because Prisma cannot model its partial predicate.
+  sourceEventKey          String?
+  sourcePayloadHash       String?
+  canonicalizationVersion String
+  externalMessageRef      String?
+  occurredAt              DateTime?            @db.Timestamptz(6)
+  receivedAt              DateTime             @db.Timestamptz(6)
+  createdAt               DateTime             @default(now())
+
+  @@index([ownerId, conversationId, receivedAt, id], map: "CustomerMessage_owner_conversation_received_idx")
+}
+
+model CustomerConversationEvent {
+  id                       String               @id
+  ownerId                  String
+  organization             Organization         @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  conversationId           String
+  conversation             CustomerConversation @relation(fields: [conversationId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  revision                 Int
+  kind                     String
+  actorKind                String
+  actorMembershipId        String?
+  actorMembership          Membership?          @relation("CustomerConversationEventActor", fields: [actorMembershipId, ownerId], references: [id, orgId], onDelete: Restrict)
+  fromAssigneeMembershipId String?
+  fromAssigneeMembership   Membership?          @relation("CustomerConversationEventFromAssignee", fields: [fromAssigneeMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "CustomerConversationEvent_fromAssignee_ownerId_fkey")
+  toAssigneeMembershipId   String?
+  toAssigneeMembership     Membership?          @relation("CustomerConversationEventToAssignee", fields: [toAssigneeMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "CustomerConversationEvent_toAssignee_ownerId_fkey")
+  fromAutomationState      String?
+  toAutomationState        String?
+  note                     String?
+  idempotencyKey           String
+  createdAt                DateTime             @default(now())
+
+  @@unique([ownerId, idempotencyKey])
+  @@unique([ownerId, conversationId, revision], map: "CustomerConversationEvent_owner_conversation_revision_key")
+  @@index([ownerId, conversationId, createdAt, id], map: "CustomerConversationEvent_owner_conversation_created_idx")
+}
+
+model CustomerConversationDraft {
+  ownerId              String
+  organization         Organization         @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  conversationId       String
+  conversation         CustomerConversation @relation(fields: [conversationId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  revision             Int                  @default(0)
+  conversationRevision Int
+  authorKind           String
+  authorMembershipId   String?
+  authorMembership     Membership?          @relation("CustomerConversationDraftAuthor", fields: [authorMembershipId, ownerId], references: [id, orgId], onDelete: Restrict)
+  contentJson          Json
+  contentHash          String
+  updatedAt            DateTime             @updatedAt
+
+  @@id([ownerId, conversationId])
+  // Same one-current-draft identity in relation-field order, required by Prisma's 1:1 relation.
+  @@unique([conversationId, ownerId])
+}
+
+model CustomerMessageTemplate {
+  id             String       @id
+  ownerId        String
+  organization   Organization @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  channelScopeId String
+  channel        String
+  channelScope   ChannelScope @relation(fields: [channelScopeId, ownerId, channel], references: [id, ownerId, channel], onDelete: Restrict)
+  name           String
+  locale         String
+  createdAt      DateTime     @default(now())
+  // Raw unique index CustomerMessageTemplate_owner_scope_name_locale_live lives in migration
+  // 20260720160000_c4b_m1_inbox_storage because Prisma cannot model its partial predicate.
+  archivedAt     DateTime?
+
+  versions CustomerMessageTemplateVersion[]
+
+  @@unique([id, ownerId])
+  @@index([ownerId, channelScopeId, archivedAt, name], map: "CustomerMessageTemplate_owner_scope_archived_name_idx")
+}
+
+model CustomerMessageTemplateVersion {
+  id                    String                  @id
+  ownerId               String
+  organization          Organization            @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  templateId            String
+  template              CustomerMessageTemplate @relation(fields: [templateId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  revision              Int
+  purposeClass          String
+  category               String
+  definitionJson        Json
+  contentHash           String
+  submissionState       String                  @default("draft")
+  reviewState           String                  @default("not_submitted")
+  availabilityState     String                  @default("unavailable")
+  reviewRevision        Int                     @default(0)
+  externalTemplateRef   String?
+  frozenAt              DateTime?
+  submittedAt           DateTime?
+  reviewedAt            DateTime?
+  createdByMembershipId String
+  createdByMembership   Membership              @relation("CustomerMessageTemplateVersionAuthor", fields: [createdByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "CustomerMessageTemplateVersion_createdByMember_ownerId_fkey")
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@unique([id, ownerId])
+  @@unique([ownerId, templateId, revision], map: "CustomerMessageTemplateVersion_owner_template_revision_key")
+  @@index([ownerId, templateId, revision], map: "CustomerMessageTemplateVersion_owner_template_revision_idx")
 }
 
 // R-010 M1 consent batch: append-only permission facts. Closed taxonomies stay code-validated

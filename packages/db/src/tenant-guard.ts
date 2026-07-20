@@ -39,6 +39,9 @@ export const TENANT_MODELS = new Set([
   // R-010 consent batch M1 (2026-07-19): event authorities and rebuildable projections.
   "ConsentEvent", "ConsentStateProjection", "ContactDndEvent",
   "ProviderRefusalEvent", "ProviderRefusalState",
+  // C4b-M1 (2026-07-20): provider-neutral Customer Inbox storage carriers.
+  "CustomerConversation", "CustomerMessage", "CustomerConversationEvent",
+  "CustomerConversationDraft", "CustomerMessageTemplate", "CustomerMessageTemplateVersion",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
