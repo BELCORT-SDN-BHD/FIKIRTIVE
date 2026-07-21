@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@fikirtive/db";
 import * as customerInboxGateway from "../customer-inbox-gateway";
 import { createCustomerInboxService } from "../customer-inbox-service";
+import { requireOwner } from "../auth-guard";
 
 vi.mock("../auth-guard", () => ({
   requireOwner: vi.fn(async () => ({
@@ -71,6 +72,7 @@ let inbox = createCustomerInboxService({
 const owner = { ownerId: ORG_A, membershipId: OWNER, impersonating: false };
 const admin = { ownerId: ORG_A, membershipId: ADMIN, impersonating: false };
 const member = { ownerId: ORG_A, membershipId: MEMBER, impersonating: false };
+const member2 = { ownerId: ORG_A, membershipId: MEMBER_2, impersonating: false };
 
 function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error
@@ -633,5 +635,332 @@ describe("C4b-M2 hard-disabled external ports", () => {
     expect(recordingAdapter.submitReply).not.toHaveBeenCalled();
     expect(recordingAdapter.submitTemplateReview).not.toHaveBeenCalled();
     expect(await ownerCounts()).toEqual(before);
+  });
+});
+
+describe("C4b-M2 gateway principal resolution", () => {
+  it("routes every gateway export through resolvePrincipal, denying NOT_AUTHORIZED when requireOwner fails", async () => {
+    const mockedRequireOwner = vi.mocked(requireOwner);
+    // Enumerate the module's OWN exports at runtime rather than a hard-coded list, so a
+    // future export that bypasses resolvePrincipal (e.g. hits Prisma directly) fails this
+    // test instead of silently shipping unauthenticated.
+    const exportNames = Object.keys(customerInboxGateway).filter(
+      (name) => typeof (customerInboxGateway as Record<string, unknown>)[name] === "function",
+    );
+    expect(exportNames.length).toBeGreaterThan(0);
+    for (const name of exportNames) {
+      mockedRequireOwner.mockResolvedValueOnce({ error: "Not authorized." });
+      const fn = (
+        customerInboxGateway as Record<string, (input?: unknown) => Promise<unknown>>
+      )[name];
+      await expect(fn(undefined)).resolves.toEqual({ ok: false, error: "NOT_AUTHORIZED" });
+    }
+  });
+
+  it("denies ACTION_DENIED when the session resolves but no active membership matches", async () => {
+    const mockedRequireOwner = vi.mocked(requireOwner);
+    // c4b-m2-b@example.test only has a membership in ORG_B; claiming ORG_A leaves the
+    // membership lookup at customer-inbox-gateway.ts:34-42 with no active, non-deleted row.
+    mockedRequireOwner.mockResolvedValueOnce({ email: "c4b-m2-b@example.test", ownerId: ORG_A });
+    await expect(
+      customerInboxGateway.getConversation({ conversationId: CONVERSATION_ASSIGNED }),
+    ).resolves.toEqual({ ok: false, error: "ACTION_DENIED" });
+  });
+});
+
+describe("C4b-M2 gateway mutation routing", () => {
+  it("saveConversationDraft succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.saveConversationDraft({
+      conversationId: CONVERSATION_ASSIGNED,
+      conversationBaseRevision: 1,
+      draftBaseRevision: null,
+      text: "Gateway draft",
+    });
+    expect(result).toMatchObject({ ok: true, change: { kind: "draft_saved" } });
+  });
+
+  it("assignConversation succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.assignConversation({
+      conversationId: CONVERSATION_UNASSIGNED,
+      expectedRevision: 0,
+      targetMembershipId: MEMBER,
+    });
+    expect(result).toMatchObject({ ok: true, change: { kind: "assigned" } });
+  });
+
+  it("maps a CustomerInboxError to a structured {ok:false,error} instead of a raw rejection", async () => {
+    await expect(
+      customerInboxGateway.assignConversation({
+        conversationId: CONVERSATION_UNASSIGNED,
+        expectedRevision: 999,
+        targetMembershipId: MEMBER,
+      }),
+    ).resolves.toEqual({ ok: false, error: "CAS_CONFLICT" });
+  });
+
+  it("takeOverConversation succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.takeOverConversation({
+      conversationId: CONVERSATION_OTTO,
+      expectedRevision: 0,
+    });
+    expect(result).toMatchObject({ ok: true, change: { kind: "takeover" } });
+  });
+
+  it("handOffConversation succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.handOffConversation({
+      conversationId: CONVERSATION_ASSIGNED,
+      expectedRevision: 1,
+      targetMembershipId: MEMBER_2,
+      note: "Gateway handoff",
+    });
+    expect(result).toMatchObject({ ok: true, change: { kind: "handoff" } });
+  });
+
+  it("setConversationStatus succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.setConversationStatus({
+      conversationId: CONVERSATION_ASSIGNED,
+      expectedRevision: 1,
+      status: "closed",
+    });
+    expect(result).toMatchObject({ ok: true, change: { kind: "closed" } });
+  });
+
+  it("requestAutomationResume succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.requestAutomationResume({
+      conversationId: CONVERSATION_OWNER,
+      expectedRevision: 0,
+      note: "Gateway resume",
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      change: { kind: "automation_resume_requested" },
+    });
+  });
+
+  it("createMessageTemplate succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.createMessageTemplate({
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      name: "gateway_template",
+      locale: "en_MY",
+    });
+    expect(result).toMatchObject({ ok: true, change: { kind: "template_created" } });
+  });
+
+  it("createMessageTemplateVersion succeeds through the gateway", async () => {
+    const result = await customerInboxGateway.createMessageTemplateVersion({
+      templateId: TEMPLATE_A,
+      body: "Gateway body {{name}}",
+      variables: [{ key: "name", sample: "Aisyah" }],
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      change: { kind: "template_version_created" },
+    });
+  });
+
+  it("submitConversationReply stays hard-disabled through the gateway", async () => {
+    await expect(
+      customerInboxGateway.submitConversationReply({
+        conversationId: CONVERSATION_ASSIGNED,
+        conversationRevision: 1,
+        draftRevision: 0,
+      }),
+    ).resolves.toEqual({ ok: false, error: "SEND_PATH_UNAVAILABLE" });
+  });
+
+  it("submitTemplateReview stays hard-disabled through the gateway", async () => {
+    await expect(
+      customerInboxGateway.submitTemplateReview({
+        templateVersionId: TEMPLATE_VERSION_A,
+        reviewRevision: 0,
+      }),
+    ).resolves.toEqual({ ok: false, error: "TEMPLATE_SUBMISSION_UNAVAILABLE" });
+  });
+});
+
+describe("C4b-M2 role-denial branches", () => {
+  it("denies saveConversationDraft to a non-assignee member", async () => {
+    await expectCode(
+      inbox.saveConversationDraft(member2, {
+        conversationId: CONVERSATION_ASSIGNED,
+        conversationBaseRevision: 1,
+        draftBaseRevision: null,
+        text: "Not my conversation",
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies takeOverConversation to a non-assignee member", async () => {
+    await expectCode(
+      inbox.takeOverConversation(member2, {
+        conversationId: CONVERSATION_OTTO,
+        expectedRevision: 0,
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies handOffConversation to a non-assignee member", async () => {
+    await expectCode(
+      inbox.handOffConversation(member2, {
+        conversationId: CONVERSATION_ASSIGNED,
+        expectedRevision: 1,
+        targetMembershipId: MEMBER_2,
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies setConversationStatus to a non-assignee member", async () => {
+    await expectCode(
+      inbox.setConversationStatus(member2, {
+        conversationId: CONVERSATION_ASSIGNED,
+        expectedRevision: 1,
+        status: "closed",
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies requestAutomationResume to a member", async () => {
+    await expectCode(
+      inbox.requestAutomationResume(member, {
+        conversationId: CONVERSATION_OWNER,
+        expectedRevision: 0,
+        note: "Please resume",
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies createMessageTemplate to a member", async () => {
+    await expectCode(
+      inbox.createMessageTemplate(member, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        name: "member_template",
+        locale: "en_MY",
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies createMessageTemplateVersion to a member", async () => {
+    await expectCode(
+      inbox.createMessageTemplateVersion(member, {
+        templateId: TEMPLATE_A,
+        body: "Member body",
+        variables: [],
+      }),
+      "ACTION_DENIED",
+    );
+  });
+
+  it("denies submitTemplateReview to a member", async () => {
+    await expectCode(
+      inbox.submitTemplateReview(member, {
+        templateVersionId: TEMPLATE_VERSION_A,
+        reviewRevision: 0,
+      }),
+      "ACTION_DENIED",
+    );
+  });
+});
+
+describe("C4b-M2 preflight capability gate", () => {
+  it("blocks internalCapability for a non-assignee member", async () => {
+    const preflight = await inbox.getConversationPreflight(member2, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    expect(preflight.internalCapability.status).toBe("block");
+  });
+});
+
+describe("C4b-M2 principal identity cross-tenant check", () => {
+  it("denies a membershipId whose real orgId doesn't match the claimed ownerId", async () => {
+    // MEMBER_B genuinely exists, but under ORG_B — pairing it with a claimed ORG_A
+    // ownerId must be denied by activeMembership's orgId predicate, not silently matched.
+    const crossTenant = { ownerId: ORG_A, membershipId: MEMBER_B, impersonating: false };
+    await expectCode(inbox.listConversations(crossTenant, { view: "all" }), "ACTION_DENIED");
+  });
+});
+
+describe("C4b-M2 needs_reply view integrity", () => {
+  it("does not drop a genuine needs_reply conversation behind a burst of waiting_on_customer activity", async () => {
+    const floodCount = 60; // overflow the old fixed top-50-by-recency window
+    const flood = Array.from({ length: floodCount }, (_, i) => ({
+      identityId: `c4b-m2-test-identity-flood-${i}`,
+      conversationId: `c4b-m2-test-conversation-flood-${i}`,
+      messageId: `c4b-m2-test-message-flood-${i}`,
+      externalId: `+601999${String(i).padStart(6, "0")}`,
+      // Each flood row is more recently active than CONVERSATION_ASSIGNED (NOW).
+      activity: new Date(NOW.getTime() + (i + 1) * 1000),
+    }));
+    await prisma.contactIdentity.createMany({
+      data: flood.map((f) => ({
+        id: f.identityId,
+        ownerId: ORG_A,
+        contactId: CONTACT_A,
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        externalId: f.externalId,
+      })),
+    });
+    await prisma.customerConversation.createMany({
+      data: flood.map((f) => ({
+        id: f.conversationId,
+        ownerId: ORG_A,
+        contactIdentityId: f.identityId,
+        status: "open",
+        revision: 0,
+        lastMessageAt: f.activity,
+        lastActivityAt: f.activity,
+      })),
+    });
+    await prisma.customerMessage.createMany({
+      data: flood.map((f) => ({
+        id: f.messageId,
+        ownerId: ORG_A,
+        conversationId: f.conversationId,
+        direction: "outbound",
+        actorKind: "merchant_member",
+        kind: "text",
+        contentJson: { schemaVersion: 1, type: "text", text: "We'll follow up shortly" },
+        searchText: "We'll follow up shortly",
+        contentHash: `flood-content-${f.messageId}`,
+        canonicalizationVersion: "v1",
+        receivedAt: f.activity,
+      })),
+    });
+
+    const results = await inbox.listConversations(owner, { view: "needs_reply" });
+    expect(results.some((row) => (row as { id: string }).id === CONVERSATION_ASSIGNED)).toBe(
+      true,
+    );
+  });
+});
+
+describe("C4b-M2 control-character validation", () => {
+  it("rejects a control character but allows tabs and newlines in bounded text", async () => {
+    await expectCode(
+      inbox.createMessageTemplate(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        name: "bad\x07name",
+        locale: "en_MY",
+      }),
+      "INVALID_ARGUMENT",
+    );
+    const saved = await inbox.saveConversationDraft(member, {
+      conversationId: CONVERSATION_ASSIGNED,
+      conversationBaseRevision: 1,
+      draftBaseRevision: null,
+      text: "Line one\nLine two\twith a tab",
+    });
+    expect(saved.resource.contentJson).toMatchObject({
+      text: "Line one\nLine two\twith a tab",
+    });
   });
 });

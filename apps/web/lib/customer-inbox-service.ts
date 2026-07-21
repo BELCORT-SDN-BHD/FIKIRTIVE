@@ -163,6 +163,10 @@ const MAX_SEARCH = 200;
 const MAX_TEMPLATE_NAME = 128;
 const MAX_LOCALE = 32;
 const MAX_VARIABLES = 20;
+// Control-character class per docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md
+// §5.3. Tab/newline/CR are deliberately excluded — message and draft bodies legitimately
+// contain them.
+const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
 
 function fail(code: CustomerInboxErrorCode): never {
   throw new CustomerInboxError(code);
@@ -173,7 +177,7 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function requiredString(value: unknown, max: number): string {
-  if (!isNonEmptyString(value) || value.length > max || value.includes("\0")) {
+  if (!isNonEmptyString(value) || value.length > max || CONTROL_CHARS.test(value)) {
     fail("INVALID_ARGUMENT");
   }
   return value.trim();
@@ -185,7 +189,7 @@ function boundedOptionalString(value: unknown, max: number): string | null {
 }
 
 function boundedDraftText(value: unknown): string {
-  if (typeof value !== "string" || value.length > MAX_TEXT || value.includes("\0")) {
+  if (typeof value !== "string" || value.length > MAX_TEXT || CONTROL_CHARS.test(value)) {
     fail("INVALID_ARGUMENT");
   }
   return value;
@@ -262,7 +266,6 @@ export function createCustomerInboxService(
     principal: CustomerInboxPrincipal,
     operation: string,
     outcome: "read" | "write_denied",
-    required: boolean,
   ): Promise<void> {
     const write = db.actionEvent.create({
       data: {
@@ -273,14 +276,10 @@ export function createCustomerInboxService(
         createdAt: now(),
       },
     });
-    if (required) {
-      try {
-        await write;
-      } catch {
-        fail("ACTION_DENIED");
-      }
-    } else {
-      await write.catch(() => undefined);
+    try {
+      await write;
+    } catch {
+      fail("ACTION_DENIED");
     }
   }
 
@@ -291,7 +290,7 @@ export function createCustomerInboxService(
     const membership = await activeMembership(db, principal);
     if (!membership) fail("ACTION_DENIED");
     if (principal.impersonating) {
-      await auditImpersonation(principal, operation, "read", true);
+      await auditImpersonation(principal, operation, "read");
     }
     return membership;
   }
@@ -303,7 +302,7 @@ export function createCustomerInboxService(
     const membership = await activeMembership(db, principal);
     if (!membership) fail("ACTION_DENIED");
     if (principal.impersonating) {
-      await auditImpersonation(principal, operation, "write_denied", true);
+      await auditImpersonation(principal, operation, "write_denied");
       fail("IMPERSONATION_READ_ONLY");
     }
     return membership;
@@ -434,11 +433,18 @@ export function createCustomerInboxService(
     const where: Prisma.CustomerConversationWhereInput = { ownerId: principal.ownerId };
     if (view === "mine") where.assigneeMembershipId = membership.id;
     if (view === "unassigned") where.assigneeMembershipId = null;
+    // needs_reply is necessarily status:"open"; pushing that down means a burst of
+    // closed-thread activity can no longer crowd a genuine match out of the query
+    // window. The last-message direction can't also be pushed down — Prisma has no
+    // "latest related row" predicate without raw SQL — so it's still derived below,
+    // but querying every open conversation (instead of a fixed top-N slice) means the
+    // in-memory attention filter can no longer silently drop a genuine match either.
+    if (view === "needs_reply") where.status = "open";
 
     const rows = await db.customerConversation.findMany({
       where,
       orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
-      take: view === "needs_reply" ? 50 : take,
+      take: view === "needs_reply" ? undefined : take,
       include: {
         contactIdentity: {
           select: {
