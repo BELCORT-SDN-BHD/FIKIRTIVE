@@ -15,27 +15,26 @@
  *     per-cell reserve/settle/refund (inside orchestrateBatch → startGen → the worker). This
  *     layer only reads the PERSISTED owner-scoped plan, assembles the gen cells the approved
  *     entries describe, and hands them to the existing batch orchestrator.
- *   - Server recompute / anti-flip (§7.2.1): the cells (prompt, kind, model) and the price
- *     are derived SERVER-side from the persisted planJson, never from client input. The
- *     client supplies only ids — which campaign, which destination project, and the stable
- *     batch/attempt idempotency ids; it can never inject a prompt, model, or price.
+ *   - Server recompute / anti-flip (§7.2.1): the cells (prompt, kind, model), per-cell prices,
+ *     total, and content fingerprint are derived SERVER-side from the persisted planJson,
+ *     never from client content. The client returns only the fingerprint that the server
+ *     rendered with the quote; confirm re-derives it before any dispatch.
  *   - Quote authority (§6.5 credits-only): the displayed total is `pricedGenCredits(...)`
  *     (via factory-batch `quoteCell`) summed per cell — the SAME value startGen reserves per
  *     cell — so quote == reserve == settle. No batch-level price constant, no credit literal
  *     anywhere in this file (a static test enforces it).
- *   - Idempotency (§7.2.2, exactly-once, fail-closed): one confirmation = one stable
- *     `batchId` + `attemptId`; each cell's key is `factoryAttemptKey(batchId, index,
- *     attemptId)`. A double-click / network replay of the SAME confirmation reuses the same
- *     keys → startGen's lock-time factory verdict + the partial-unique index dedup it to
- *     exactly once (zero double charge). An explicit Retry uses the SAME batchId + a NEW
- *     attemptId: succeeded cells reuse (0 charge), only cells whose prior jobs ALL FAILED
- *     re-dispatch — "you only pay when a generation finishes, never on errors".
+ *   - Idempotency (§7.2.2, exactly-once, fail-closed): one confirmation = one stable batch id;
+ *     each campaign cell additionally carries its persisted entry id, so factory-batch derives
+ *     an order-independent logical key. A replay/reorder reuses the same keys → startGen's
+ *     lock-time factory verdict dedups it to exactly once. A fresh attempt id still lets only
+ *     an all-FAILED logical cell retry. factory-batch also replays compatible pre-migration
+ *     positional keys through startGen, so deployment itself cannot re-charge old cells.
  *   - RBAC (owner-only): requireOwner + impersonation block on both actions; every query is
  *     owner-scoped; startGen re-resolves the owner and re-validates the project under its own
  *     advisory transaction lock per cell (the in-transaction recheck — broadcast/inbox
  *     precedent), so a stale/cross-tenant target cannot be stamped onto newly paid work.
- *   - Partial failure is honest and $0 for the failed cells — orchestrateBatch / startGen's
- *     own per-cell behaviour; there is NO batch-level rollback / all-refund here.
+ *   - Partial failure is honest: factory-batch returns its server-confirmed dispatched/reused/
+ *     failed counts plus any unconfirmed remainder. There is NO batch-level rollback/refund.
  */
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -49,11 +48,13 @@ import {
   orchestrateBatch,
   quoteCell,
   MAX_BATCH_CELLS,
+  type BatchInterruption,
   type BatchResult,
   type GenCell,
 } from "./factory-batch";
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
 
 /** Formats that generate a video clip rather than a still image. Everything else (image,
@@ -76,7 +77,8 @@ interface ApprovedCampaignEntry {
 
 /** Build the gen cells an approved-entry set describes. PURE (no DB, no spend): prompt is the
  *  persisted English brief, kind derives from the format, the model is the active
- *  server-configured model for that kind, count is 1. genRequest (inside startGen) stays the
+ *  server-configured model for that kind, count is 1. The persisted entry id becomes the
+ *  order-independent factory logical identity. genRequest (inside startGen) stays the
  *  authoritative (model,params) spend gate — this only shapes the batch envelope. */
 function buildCampaignGenCells(
   entries: ApprovedCampaignEntry[],
@@ -90,6 +92,7 @@ function buildCampaignGenCells(
       kind,
       model: kind === "video" ? models.video : models.image,
       count: 1,
+      idempotencyId: entry.id,
     };
   });
 }
@@ -107,7 +110,7 @@ const planEntrySchema = z
 
 const planSchema = z.object({ entries: z.array(planEntrySchema).max(40).default([]) }).passthrough();
 
-/** Approved entries only, in persisted plan order (stable index within one confirmation). */
+/** Approved entries only. Their persisted ids, not this array order, identify paid cells. */
 function approvedEntriesFromPlan(planJson: unknown): ApprovedCampaignEntry[] {
   const parsed = planSchema.safeParse(planJson);
   if (!parsed.success) return [];
@@ -119,6 +122,8 @@ function approvedEntriesFromPlan(planJson: unknown): ApprovedCampaignEntry[] {
 /** One line of the server-recomputed quote — display credits for the UI. */
 export interface CampaignGenQuoteLine {
   entryId: string;
+  /** Exact persisted generation content rendered with this server quote. */
+  brief: string;
   kind: CampaignGenKind;
   model: string;
   /** displayed credits for this entry (the per-cell reserve, displayed). */
@@ -130,21 +135,49 @@ export interface CampaignGenQuote {
   /** sum in displayed credits — the "N credits" on the Confirm button. */
   totalDisplayCredits: number;
   count: number;
+  /** Server-derived, order-independent hash of approved ids + briefs + models + unit prices. */
+  contentFingerprint: string;
 }
 
-/** Server-side price recompute (§7.2.1). Every number is `quoteCell` = `pricedGenCredits(...)`
- *  — the SAME authority startGen reserves on — never a literal. PURE. */
+/** Server-side quote + approval-content binding (§7.2.1). Every number is `quoteCell` =
+ *  `pricedGenCredits(...)` — the SAME authority startGen reserves on — never a literal. The
+ *  fingerprint is sorted by stable entry id, so harmless array reordering does not invalidate
+ *  approval while any id/brief/model/unit-price drift does. PURE. */
 function quoteCampaignGenCells(entries: ApprovedCampaignEntry[], cells: GenCell[]): CampaignGenQuote {
-  const lines = cells.map((cell, index) => ({
-    entryId: entries[index].id,
-    kind: (cell.kind ?? "image") as CampaignGenKind,
-    model: cell.model ?? "seedream",
-    displayCredits: displayCredits(quoteCell(cell)),
-  }));
+  const priced = cells.map((cell, index) => {
+    const internalCredits = quoteCell(cell);
+    return {
+      entry: entries[index],
+      cell,
+      internalCredits,
+      line: {
+        entryId: entries[index].id,
+        brief: entries[index].brief,
+        kind: (cell.kind ?? "image") as CampaignGenKind,
+        model: cell.model ?? "seedream",
+        displayCredits: displayCredits(internalCredits),
+      },
+    };
+  });
+  const lines = priced.map(({ line }) => line);
+  const fingerprintPayload = priced
+    .map(({ entry, cell, internalCredits }) => [
+      entry.id,
+      entry.brief,
+      cell.model ?? "seedream",
+      internalCredits,
+    ] as const)
+    .sort(([leftId], [rightId]) => (leftId < rightId ? -1 : leftId > rightId ? 1 : 0));
+  const contentFingerprint = createHash("sha256")
+    .update("campaign-generation-content-v1")
+    .update("\0")
+    .update(JSON.stringify(fingerprintPayload))
+    .digest("hex");
   return {
     lines,
     totalDisplayCredits: lines.reduce((sum, line) => sum + line.displayCredits, 0),
     count: cells.length,
+    contentFingerprint,
   };
 }
 
@@ -153,10 +186,8 @@ const campaignIdSchema = z.string().regex(ULID_PATTERN);
 export type CampaignGenQuoteResult = { ok: true; quote: CampaignGenQuote } | { error: string };
 
 /**
- * Server-recompute the per-entry + total price for a campaign's APPROVED plan entries.
- * READ-only and $0 — it never dispatches, reserves, or writes. Owner-scoped. Returns an empty
- * quote (not an error) when nothing is approved yet, so the confirm page can show its empty
- * state distinctly from a not-found / denied campaign.
+ * Server-recompute the per-entry + total price and content fingerprint for a campaign's
+ * APPROVED plan entries. READ-only and $0 — it never dispatches, reserves, or writes.
  */
 export async function quoteCampaignGeneration(rawCampaignId: unknown): Promise<CampaignGenQuoteResult> {
   "use server";
@@ -180,10 +211,8 @@ export async function quoteCampaignGeneration(rawCampaignId: unknown): Promise<C
 /**
  * The batch id is DERIVED on the server from (campaignId, projectId), never supplied by the
  * client. This is a money-safety choice: every confirmation of the same campaign into the same
- * project shares one batch id, so two concurrent tabs / a replay / a later re-visit all resolve
- * to the SAME per-cell logical keys — startGen's lock-time factory verdict then dedups them to
- * exactly-once (zero double charge) without trusting the client to reuse an id. A different
- * destination project is a different, intentional generation and gets its own batch.
+ * project shares one batch id. Each cell then adds its persisted entry id to its logical-key
+ * derivation, making reorder/re-filter drift harmless without trusting the client.
  */
 function deriveCampaignBatchId(campaignId: string, projectId: string): string {
   return createHash("sha256")
@@ -201,14 +230,10 @@ const confirmInputSchema = z
     campaignId: campaignIdSchema,
     /** Destination project — must be owned AND grouped under this campaign. */
     projectId: z.string().min(1).max(64),
-    /**
-     * The displayed total the owner reviewed on the confirm page. The server re-derives the
-     * total from the persisted plan and refuses if it no longer matches (price-consent binding,
-     * canvas/cowork `expectedCredits` precedent — gen-actions.ts). This fails closed BEFORE any
-     * dispatch, so a plan/price change between review and confirm can never silently charge a
-     * different amount than the owner agreed to.
-     */
+    /** The displayed total the owner reviewed. Server re-derives it before dispatch. */
     expectedTotalCredits: z.number().int().min(0),
+    /** Opaque server-rendered approval-content binding; client content is never accepted. */
+    expectedContentFingerprint: z.string().regex(FINGERPRINT_PATTERN),
   })
   .strict();
 
@@ -216,7 +241,7 @@ export type ConfirmCampaignGenerationInput = z.infer<typeof confirmInputSchema>;
 
 export type ConfirmCampaignGenerationResult =
   | { ok: true; result: BatchResult; quote: CampaignGenQuote }
-  | { error: string };
+  | { error: string; partial?: BatchInterruption; quote?: CampaignGenQuote };
 
 /**
  * Confirm and dispatch generation for a campaign's APPROVED plan entries.
@@ -235,7 +260,7 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
 
   const parsed = confirmInputSchema.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { campaignId, projectId, expectedTotalCredits } = parsed.data;
+  const { campaignId, projectId, expectedTotalCredits, expectedContentFingerprint } = parsed.data;
 
   // Owner-scoped campaign load — the persisted plan is the ONLY source of what will generate.
   const campaign = await prisma.campaign.findFirst({
@@ -263,33 +288,41 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   const cells = buildCampaignGenCells(approved, models);
   const quote = quoteCampaignGenCells(approved, cells);
 
-  // Price-consent binding (fail-closed, BEFORE any dispatch): the owner authorised a specific
-  // total on the confirm page. If the plan or the config moved that total, refuse — nothing is
-  // charged and the owner re-reviews the new number (canvas/cowork expectedCredits precedent).
+  // Price consent and content consent both fail closed BEFORE any dispatch. The content hash is
+  // re-derived from persisted entries + current server model/price config; no client brief,
+  // model, entry id, or unit price participates in the decision.
   if (quote.totalDisplayCredits !== expectedTotalCredits) {
     return {
       error: `This plan or its price changed since you reviewed it (was ${expectedTotalCredits}, now ${quote.totalDisplayCredits} credits). Refresh and confirm again.`,
     };
   }
+  if (quote.contentFingerprint !== expectedContentFingerprint) {
+    return {
+      error: "This plan changed since you reviewed it. Review the updated plan before confirming.",
+    };
+  }
 
-  // Stable batch id (per campaign+project) + a fresh attempt id per call. The stable batch id
-  // makes a replay / concurrent confirm reuse the same logical cells (startGen dedups a
-  // non-FAILED prior → 0 charge); the fresh attempt id is what lets an explicit retry
-  // re-dispatch a cell whose prior jobs ALL FAILED (exact-attempt miss + all-FAILED history →
-  // fresh), i.e. "you only pay when a generation finishes, never on errors".
+  // Stable batch id (per campaign+project) + stable entry ids + a fresh attempt id per call.
+  // startGen's existing factory history verdict remains the only reserve/reuse authority.
   const batchId = deriveCampaignBatchId(campaignId, projectId);
   const attemptId = newId();
 
-  // Dispatch through the SAME existing spend authority. orchestrateBatch loops startGen per
-  // cell (reserve inside startGen's transaction), dedups on the factory keys, and returns the
-  // honest per-cell outcome. It touches no credits itself.
   const result = await orchestrateBatch(
     { startGen, prisma },
     { ownerId, projectId, batchId, attemptId, name: `${campaign.name} — campaign generation`, cells },
   );
-  if ("error" in result) return result;
+  if ("error" in result) return { ...result, quote };
 
-  revalidatePath(`/campaign/${campaignId}`);
-  revalidatePath(`/campaign/${campaignId}/confirm`);
+  // Revalidation is post-spend presentation metadata. Never throw away an honest dispatch
+  // result after startGen has committed reservations; the destination pages can refresh later.
+  try {
+    revalidatePath(`/campaign/${campaignId}`);
+    revalidatePath(`/campaign/${campaignId}/confirm`);
+  } catch (error) {
+    console.warn(
+      "campaign-generation-confirm: post-dispatch revalidation failed (non-fatal):",
+      error instanceof Error ? error.message : error,
+    );
+  }
   return { ok: true, result, quote };
 }

@@ -1,21 +1,19 @@
 /**
- * campaign-generation-confirm — C2b (issue #395) money-safety proofs.
+ * campaign-generation-confirm — C2b (issues #395/#403) money-safety proofs.
  *
- * Zero real spend: startGen and prisma are fakes (the existing test-infra pattern — a spy
- * that models startGen's factory once-ever verdict against an in-memory job store). Proves the
- * confirm action builds cells from the PERSISTED plan (anti-flip), prices from the live config,
- * dedups a replay / re-confirm to exactly-once (zero double charge), is owner-only + cross-tenant
- * fail-closed, reports partial failure honestly with $0 for failed cells, and — statically —
- * opens NO second spend path (no credit-ledger write, no GenJob create, no queue send).
+ * Zero real spend: startGen and prisma are fakes. Proves persisted-plan anti-flip,
+ * price+content consent binding, stable-entry exactly-once identity (including legacy
+ * positional compatibility), honest partial interruption counts, owner isolation, and
+ * that this action opens no second spend path.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const OWNER = "org_c2b_owner";
 const OTHER_OWNER = "org_c2b_other";
 
-// Shared in-memory store + mock fns. Built in vi.hoisted so the vi.mock factories can see them.
 const h = vi.hoisted(() => {
   const store = {
     campaigns: new Map<string, { id: string; ownerId: string; name: string; planJson: unknown; deletedAt: Date | null }>(),
@@ -24,6 +22,7 @@ const h = vi.hoisted(() => {
     jobs: new Map<string, Record<string, unknown>>(),
   };
 
+  type PrefixClause = { idempotencyKey: { startsWith: string } };
   const prisma = {
     campaign: {
       findFirst: async ({ where }: { where: { id: string; ownerId: string; deletedAt: null } }) => {
@@ -41,8 +40,8 @@ const h = vi.hoisted(() => {
     },
     generationBatch: {
       findFirst: async ({ where }: { where: { id: string; ownerId: string } }) => {
-        const b = store.batches.get(where.id);
-        return b && b.ownerId === where.ownerId ? { id: b.id } : null;
+        const batch = store.batches.get(where.id);
+        return batch && batch.ownerId === where.ownerId ? { id: batch.id } : null;
       },
       create: async ({ data }: { data: { id: string; ownerId: string } }) => {
         if (store.batches.has(data.id)) throw Object.assign(new Error("dup"), { code: "P2002" });
@@ -51,18 +50,30 @@ const h = vi.hoisted(() => {
       },
     },
     genJob: {
-      findMany: async ({ where }: { where: { ownerId: string; projectId?: string; idempotencyKey?: { startsWith: string } } }) => {
+      findMany: async ({ where }: {
+        where: {
+          ownerId: string;
+          projectId?: string;
+          idempotencyKey?: { startsWith: string };
+          OR?: PrefixClause[];
+        };
+      }) => {
         return [...store.jobs.values()]
-          .filter((j) =>
-            j.ownerId === where.ownerId &&
-            (where.projectId == null || j.projectId === where.projectId) &&
-            (where.idempotencyKey == null || String(j.idempotencyKey ?? "").startsWith(where.idempotencyKey.startsWith)))
-          .map((j) => ({ ...j }));
+          .filter((job) => {
+            const key = String(job.idempotencyKey ?? "");
+            return (
+              job.ownerId === where.ownerId &&
+              (where.projectId == null || job.projectId === where.projectId) &&
+              (where.idempotencyKey == null || key.startsWith(where.idempotencyKey.startsWith)) &&
+              (where.OR == null || where.OR.some((clause) => key.startsWith(clause.idempotencyKey.startsWith)))
+            );
+          })
+          .map((job) => ({ ...job }));
       },
       updateMany: async ({ where, data }: { where: { id: string; ownerId: string }; data: { batchId: string } }) => {
-        const j = store.jobs.get(where.id);
-        if (j && j.ownerId === where.ownerId) j.batchId = data.batchId;
-        return { count: j ? 1 : 0 };
+        const job = store.jobs.get(where.id);
+        if (job && job.ownerId === where.ownerId) job.batchId = data.batchId;
+        return { count: job ? 1 : 0 };
       },
     },
   };
@@ -83,15 +94,20 @@ vi.mock("../gen-actions", () => ({ startGen: h.startGen }));
 vi.mock("@fikirtive/db", () => ({ prisma: h.prisma }));
 
 const { confirmCampaignGeneration, quoteCampaignGeneration } = await import("../campaign-generation-confirm");
-const { normalizeFactoryMaterial, factoryMaterialMatches, parseFactoryAttemptKey } = await import("../batch-idempotency");
+const {
+  factoryAttemptKey,
+  normalizeFactoryMaterial,
+  factoryMaterialMatches,
+  parseFactoryAttemptKey,
+} = await import("../batch-idempotency");
 const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
 
-const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"; // 26-char ULID alphabet
+const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
-const IMG = 1; // seedream image = 1 displayed credit
-const VID = 8; // seedance-2-fast 720p/5s = 8 displayed credits (flat-priced video)
+const IMG = 1;
+const VID = 8;
+const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);
 
-/** Prompts the fake startGen should refuse (partial-failure simulation). */
 let failPrompts = new Set<string>();
 
 function entry(id: string, over: Partial<{ format: string; brief: string; hook: string; status: string; platform: string }> = {}) {
@@ -102,7 +118,7 @@ function entry(id: string, over: Partial<{ format: string; brief: string; hook: 
     format: over.format ?? "image",
     hook: over.hook ?? `hook ${id}`,
     brief: over.brief ?? `brief for ${id} with letters`,
-    estCredits: 999, // display-only junk — must never influence the real charge
+    estCredits: 999,
     status: over.status ?? "approved",
   };
 }
@@ -121,6 +137,39 @@ function seedProject(campaignId: string | null = CAMPAIGN_ID, ownerId = OWNER, i
   h.store.projects.set(id, { id, ownerId, campaignId, deletedAt: null });
 }
 
+function rawRequest(expectedTotalCredits: number, expectedContentFingerprint = VALID_UNKNOWN_FINGERPRINT) {
+  return { campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits, expectedContentFingerprint };
+}
+
+async function currentQuote() {
+  const quoted = await quoteCampaignGeneration(CAMPAIGN_ID);
+  if (!("ok" in quoted)) throw new Error(quoted.error);
+  return quoted.quote;
+}
+
+async function reviewedRequest(over: Partial<ReturnType<typeof rawRequest>> = {}) {
+  const quote = await currentQuote();
+  return {
+    ...rawRequest(quote.totalDisplayCredits, quote.contentFingerprint),
+    ...over,
+  };
+}
+
+function campaignBatchId() {
+  return createHash("sha256")
+    .update("campaign-gen-batch-v1")
+    .update("\0")
+    .update(CAMPAIGN_ID)
+    .update("\0")
+    .update(PROJECT_ID)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function storedMaterial(prompt: string) {
+  return normalizeFactoryMaterial({ prompt, model: "seedream", kind: "image", count: 1, entityIds: [] });
+}
+
 beforeEach(() => {
   h.store.campaigns.clear();
   h.store.projects.clear();
@@ -131,8 +180,7 @@ beforeEach(() => {
   h.requireOwner.mockResolvedValue({ email: "o@example.test", ownerId: OWNER });
   h.isImpersonating.mockResolvedValue(false);
 
-  // Faithful model of startGen's factory verdict (per logical cell, across attempts):
-  // material mismatch → conflict; exact/any-non-FAILED prior → reused; else create+reserve.
+  // Faithful model of startGen's owner+project-scoped, lock-time factory verdict.
   h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
     if (failPrompts.has(req.prompt as string)) return { error: "You've used up your beta credits." };
     const key = req.idempotencyKey as string;
@@ -146,173 +194,295 @@ beforeEach(() => {
       entityIds: req.entityIds as string[] | undefined,
     });
     const priors = [...h.store.jobs.values()].filter(
-      (j) => j.projectId === req.projectId && String(j.idempotencyKey ?? "").startsWith(parsed.logicalPrefix),
+      (job) =>
+        job.ownerId === OWNER &&
+        job.projectId === req.projectId &&
+        String(job.idempotencyKey ?? "").startsWith(parsed.logicalPrefix),
     );
-    if (priors.some((p) => !factoryMaterialMatches(p as never, material))) {
+    if (priors.some((prior) => !factoryMaterialMatches(prior as never, material))) {
       return { error: "That batchId is already in use for different content.", disposition: "conflict" as const };
     }
-    const exact = priors.find((p) => p.idempotencyKey === key);
+    const exact = priors.find((prior) => prior.idempotencyKey === key);
     if (exact) return { id: exact.id as string, disposition: "reused" as const };
-    const nonFailed = priors.find((p) => p.status !== "FAILED");
+    const nonFailed = priors.find((prior) => prior.status !== "FAILED");
     if (nonFailed) return { id: nonFailed.id as string, disposition: "reused" as const };
     const id = `job-${h.store.jobs.size}`;
-    h.store.jobs.set(id, { id, ownerId: OWNER, projectId: req.projectId, batchId: null, status: "QUEUED", idempotencyKey: key, ...material });
+    h.store.jobs.set(id, {
+      id,
+      ownerId: OWNER,
+      projectId: req.projectId,
+      batchId: null,
+      status: "QUEUED",
+      idempotencyKey: key,
+      ...material,
+    });
     return { id, disposition: "fresh" as const };
   });
 });
 
-describe("quoteCampaignGeneration — server-recomputed price from the live config (§7.2.1)", () => {
-  it("prices only APPROVED entries, image vs video from the config table (never estCredits)", async () => {
+describe("quoteCampaignGeneration — server-recomputed price + content binding", () => {
+  it("prices only approved entries from config and returns a deterministic fingerprint", async () => {
     seedCampaign([
       entry("E1"),
       entry("E2"),
       entry("E3", { format: "video" }),
-      entry("E4", { status: "proposed" }), // excluded
+      entry("E4", { status: "proposed" }),
     ]);
-    const res = await quoteCampaignGeneration(CAMPAIGN_ID);
-    if (!("ok" in res)) throw new Error(res.error);
-    expect(res.quote.count).toBe(3);
-    expect(res.quote.lines.map((l) => l.kind)).toEqual(["image", "image", "video"]);
-    expect(res.quote.lines.map((l) => l.displayCredits)).toEqual([IMG, IMG, VID]);
-    // total is DERIVED (sum of the per-cell config price), not a literal and not estCredits (999).
-    expect(res.quote.totalDisplayCredits).toBe(IMG + IMG + VID);
+    const quote = await currentQuote();
+    expect(quote.count).toBe(3);
+    expect(quote.lines.map((line) => line.kind)).toEqual(["image", "image", "video"]);
+    expect(quote.lines.map((line) => line.displayCredits)).toEqual([IMG, IMG, VID]);
+    expect(quote.totalDisplayCredits).toBe(IMG + IMG + VID);
+    expect(quote.contentFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect((await currentQuote()).contentFingerprint).toBe(quote.contentFingerprint);
   });
 
-  it("changing an entry's format flips its price via the config table (改配置→总价变)", async () => {
+  it("changing format changes the live-config price", async () => {
     seedCampaign([entry("E1", { format: "image" })]);
-    const asImage = await quoteCampaignGeneration(CAMPAIGN_ID);
+    const asImage = await currentQuote();
     seedCampaign([entry("E1", { format: "video" })]);
-    const asVideo = await quoteCampaignGeneration(CAMPAIGN_ID);
-    if (!("ok" in asImage) || !("ok" in asVideo)) throw new Error("quote failed");
-    expect(asImage.quote.totalDisplayCredits).toBe(IMG);
-    expect(asVideo.quote.totalDisplayCredits).toBe(VID);
-    expect(asVideo.quote.totalDisplayCredits).not.toBe(asImage.quote.totalDisplayCredits);
+    const asVideo = await currentQuote();
+    expect(asImage.totalDisplayCredits).toBe(IMG);
+    expect(asVideo.totalDisplayCredits).toBe(VID);
+    expect(asVideo.contentFingerprint).not.toBe(asImage.contentFingerprint);
   });
 
-  it("returns an empty quote (not an error) when nothing is approved yet", async () => {
+  it("returns an empty quote when nothing is approved", async () => {
     seedCampaign([entry("E1", { status: "proposed" })]);
-    const res = await quoteCampaignGeneration(CAMPAIGN_ID);
-    if (!("ok" in res)) throw new Error(res.error);
-    expect(res.quote.count).toBe(0);
-    expect(res.quote.totalDisplayCredits).toBe(0);
+    const quote = await currentQuote();
+    expect(quote.count).toBe(0);
+    expect(quote.totalDisplayCredits).toBe(0);
+    expect(quote.contentFingerprint).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("cross-tenant campaign is not found", async () => {
+  it("is owner-scoped and denies no-session reads", async () => {
     seedCampaign([entry("E1")], OTHER_OWNER);
     expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toEqual({ error: "Campaign not found." });
-  });
-
-  it("denies with no session", async () => {
     h.requireOwner.mockResolvedValue({ error: "Not authorized." });
     expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toEqual({ error: "Not authorized." });
   });
 });
 
-describe("confirmCampaignGeneration — builds cells from the PERSISTED plan (anti-flip)", () => {
-  it("dispatches ONLY approved entries, with the persisted brief as the prompt (never client input)", async () => {
+describe("confirmCampaignGeneration — persisted plan and strict approval binding", () => {
+  it("dispatches only approved persisted briefs through parseable 79-char factory keys", async () => {
     seedCampaign([
       entry("E1", { brief: "sunset product shot" }),
       entry("E2", { status: "proposed", brief: "should never generate" }),
       entry("E3", { brief: "flat lay on marble" }),
     ]);
     seedProject();
-    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
+    const res = await confirmCampaignGeneration(await reviewedRequest());
     if (!("ok" in res)) throw new Error(res.error);
     expect(res.result.cells).toHaveLength(2);
     expect(res.result.dispatched).toBe(2);
-    const prompts = h.startGen.mock.calls.map((c) => (c[0] as Record<string, unknown>).prompt);
-    expect(prompts).toEqual(["sunset product shot", "flat lay on marble"]);
-    // every cell carries a REQUIRED 79-char factory idempotency key (goes through the dedup gate).
+    expect(h.startGen.mock.calls.map((call) => (call[0] as Record<string, unknown>).prompt))
+      .toEqual(["sunset product shot", "flat lay on marble"]);
     for (const call of h.startGen.mock.calls) {
       const key = (call[0] as Record<string, unknown>).idempotencyKey as string;
       expect(key).toHaveLength(79);
       expect(parseFactoryAttemptKey(key)).not.toBeNull();
     }
-    expect(res.quote.totalDisplayCredits).toBe(IMG + IMG);
   });
 
-  it("empty when nothing is approved; blocked while impersonating", async () => {
+  it("rejects missing/forged fingerprints before batch creation or dispatch", async () => {
+    seedCampaign([entry("E1")]);
+    seedProject();
+    const quote = await currentQuote();
+    expect(await confirmCampaignGeneration({
+      campaignId: CAMPAIGN_ID,
+      projectId: PROJECT_ID,
+      expectedTotalCredits: quote.totalDisplayCredits,
+    })).toEqual({ error: "That generation request is out of bounds." });
+    const forged = await confirmCampaignGeneration(rawRequest(quote.totalDisplayCredits, "f".repeat(64)));
+    expect("error" in forged && forged.error).toMatch(/plan changed/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(0);
+    expect(h.store.batches.size).toBe(0);
+  });
+
+  it("rejects equal-total brief drift and requires re-review — zero dispatch", async () => {
+    seedCampaign([entry("E1", { brief: "red product on marble" })]);
+    seedProject();
+    const reviewed = await currentQuote();
+    seedCampaign([entry("E1", { brief: "blue product on marble" })]);
+    const changed = await currentQuote();
+    expect(changed.totalDisplayCredits).toBe(reviewed.totalDisplayCredits);
+    expect(changed.contentFingerprint).not.toBe(reviewed.contentFingerprint);
+
+    const res = await confirmCampaignGeneration(
+      rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
+    );
+    expect("error" in res && res.error).toMatch(/plan changed since you reviewed/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(0);
+    expect(h.store.batches.size).toBe(0);
+  });
+
+  it("rejects duplicate approved entry ids before dispatch", async () => {
+    seedCampaign([
+      entry("DUP", { brief: "first material" }),
+      entry("DUP", { brief: "second material" }),
+    ]);
+    seedProject();
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    expect("error" in res && res.error).toMatch(/stable cell ids must be unique/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.batches.size).toBe(0);
+  });
+
+  it("returns empty-plan and impersonation blocks before spend", async () => {
     seedCampaign([entry("E1", { status: "proposed" })]);
     seedProject();
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
+    expect(await confirmCampaignGeneration(await reviewedRequest()))
       .toEqual({ error: "Approve at least one plan entry before generating." });
-    expect(h.startGen).not.toHaveBeenCalled();
-
     seedCampaign([entry("E1")]);
     h.isImpersonating.mockResolvedValue(true);
-    const blocked = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG });
+    const blocked = await confirmCampaignGeneration(await reviewedRequest());
     expect("error" in blocked && blocked.error).toMatch(/impersonating/i);
     expect(h.startGen).not.toHaveBeenCalled();
   });
 });
 
-describe("confirmCampaignGeneration — exactly-once / zero double charge", () => {
-  it("a replay / re-confirm reuses the same logical cells — zero new charge", async () => {
-    seedCampaign([entry("E1"), entry("E2")]);
+describe("confirmCampaignGeneration — order-independent exactly-once + migration", () => {
+  it("late approval shifts the filtered order but charges only the newly approved entry", async () => {
+    seedCampaign([
+      entry("E1", { status: "proposed", brief: "newly approved later" }),
+      entry("E2", { brief: "already generated" }),
+    ]);
     seedProject();
-    const first = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
+    const first = await confirmCampaignGeneration(await reviewedRequest());
     if (!("ok" in first)) throw new Error(first.error);
-    expect(first.result.dispatched).toBe(2);
-    expect(h.store.jobs.size).toBe(2);
-    const firstKeys = h.startGen.mock.calls.map((c) => (c[0] as Record<string, unknown>).idempotencyKey as string);
+    expect(first.result).toMatchObject({ dispatched: 1, reused: 0 });
+    const originalE2Job = first.result.cells[0].jobId;
 
-    const second = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
+    seedCampaign([
+      entry("E1", { brief: "newly approved later" }),
+      entry("E2", { brief: "already generated" }),
+    ]);
+    const second = await confirmCampaignGeneration(await reviewedRequest());
     if (!("ok" in second)) throw new Error(second.error);
-    expect(second.result.dispatched).toBe(0);
-    expect(second.result.reused).toBe(2);
-    expect(second.result.totalCredits).toBe(0); // nothing new reserved
-    expect(h.store.jobs.size).toBe(2); // NO second job minted — exactly once
-
-    // The dedup anchor: both confirmations derive the SAME per-cell logical prefix (stable
-    // batchId from campaign+project) even though the fresh attempt hash differs.
-    const secondKeys = h.startGen.mock.calls.slice(2).map((c) => (c[0] as Record<string, unknown>).idempotencyKey as string);
-    expect(secondKeys.map((k) => parseFactoryAttemptKey(k)!.logicalPrefix))
-      .toEqual(firstKeys.map((k) => parseFactoryAttemptKey(k)!.logicalPrefix));
+    expect(second.result).toMatchObject({
+      dispatched: 1,
+      reused: 1,
+      failed: 0,
+      totalCredits: INTERNAL_PER_DISPLAY,
+    });
+    expect(second.result.cells[1].jobId).toBe(originalE2Job);
+    expect(h.store.jobs.size).toBe(2);
   });
 
-  it("concurrent double-confirm resolves to exactly one job set", async () => {
+  it("reordering approved entries reuses entry-bound jobs with zero new charge", async () => {
+    seedCampaign([
+      entry("E1", { brief: "material A" }),
+      entry("E2", { brief: "material B" }),
+    ]);
+    seedProject();
+    const firstQuote = await currentQuote();
+    const first = await confirmCampaignGeneration(rawRequest(firstQuote.totalDisplayCredits, firstQuote.contentFingerprint));
+    if (!("ok" in first)) throw new Error(first.error);
+    expect(first.result.dispatched).toBe(2);
+    const jobsByPrompt = new Map([...h.store.jobs.values()].map((job) => [job.prompt, job.id]));
+
+    seedCampaign([
+      entry("E2", { brief: "material B" }),
+      entry("E1", { brief: "material A" }),
+    ]);
+    const reorderedQuote = await currentQuote();
+    expect(reorderedQuote.contentFingerprint).toBe(firstQuote.contentFingerprint);
+    const second = await confirmCampaignGeneration(
+      rawRequest(reorderedQuote.totalDisplayCredits, reorderedQuote.contentFingerprint),
+    );
+    if (!("ok" in second)) throw new Error(second.error);
+    expect(second.result).toMatchObject({ dispatched: 0, reused: 2, failed: 0, totalCredits: 0 });
+    expect(second.result.cells.map((cell) => cell.jobId))
+      .toEqual([jobsByPrompt.get("material B"), jobsByPrompt.get("material A")]);
+    expect(h.store.jobs.size).toBe(2);
+  });
+
+  it("replays pre-deployment positional DONE jobs after order drift — zero recharge", async () => {
+    seedCampaign([
+      entry("E2", { brief: "legacy B" }),
+      entry("E1", { brief: "legacy A" }),
+    ]);
+    seedProject();
+    const batchId = campaignBatchId();
+    h.store.batches.set(batchId, { id: batchId, ownerId: OWNER });
+    h.store.jobs.set("legacy-a", {
+      id: "legacy-a", ownerId: OWNER, projectId: PROJECT_ID, batchId, status: "DONE",
+      idempotencyKey: factoryAttemptKey(batchId, 0, "old-attempt").key,
+      ...storedMaterial("legacy A"),
+    });
+    h.store.jobs.set("legacy-b", {
+      id: "legacy-b", ownerId: OWNER, projectId: PROJECT_ID, batchId, status: "DONE",
+      idempotencyKey: factoryAttemptKey(batchId, 1, "old-attempt").key,
+      ...storedMaterial("legacy B"),
+    });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 0, reused: 2, failed: 0, totalCredits: 0 });
+    expect(res.result.cells.map((cell) => cell.jobId)).toEqual(["legacy-b", "legacy-a"]);
+    expect(h.store.jobs.size).toBe(2);
+  });
+
+  it("fails closed when legacy rows cannot be mapped to a current stable entry", async () => {
+    seedCampaign([entry("E1", { brief: "edited legacy material" })]);
+    seedProject();
+    const batchId = campaignBatchId();
+    h.store.jobs.set("legacy-original", {
+      id: "legacy-original", ownerId: OWNER, projectId: PROJECT_ID, batchId, status: "DONE",
+      idempotencyKey: factoryAttemptKey(batchId, 0, "old-attempt").key,
+      ...storedMaterial("original legacy material"),
+    });
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    expect("error" in res && res.error).toMatch(/cannot safely match/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(1);
+    expect(h.store.batches.size).toBe(0);
+  });
+
+  it("concurrent opposite-order confirms create one job per stable entry", async () => {
     seedCampaign([entry("E1"), entry("E2")]);
     seedProject();
-    const [a, b] = await Promise.all([
-      confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG }),
-      confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG }),
+    const reviewed = await reviewedRequest();
+    const [first, second] = await Promise.all([
+      confirmCampaignGeneration(reviewed),
+      confirmCampaignGeneration(reviewed),
     ]);
-    if (!("ok" in a) || !("ok" in b)) throw new Error("confirm failed");
-    // Across both runs, each of the two logical cells minted exactly one job (no duplicate).
+    if (!("ok" in first) || !("ok" in second)) throw new Error("confirm failed");
     expect(h.store.jobs.size).toBe(2);
-    expect(a.result.dispatched + b.result.dispatched).toBe(2);
+    expect(first.result.dispatched + second.result.dispatched).toBe(2);
   });
 });
 
-describe("confirmCampaignGeneration — price-consent binding (fail-closed)", () => {
-  it("refuses when the reviewed total no longer matches the recomputed total — zero dispatch", async () => {
-    seedCampaign([entry("E1"), entry("E2")]); // real total = IMG + IMG = 2
+describe("confirmCampaignGeneration — price consent", () => {
+  it("refuses a stale reviewed total before dispatch", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
     seedProject();
-    const stale = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 5 });
+    const quote = await currentQuote();
+    const stale = await confirmCampaignGeneration(rawRequest(5, quote.contentFingerprint));
     expect("error" in stale && stale.error).toMatch(/changed since you reviewed it/i);
     expect(h.startGen).not.toHaveBeenCalled();
-    expect(h.store.jobs.size).toBe(0);
-
-    // the correct reviewed total is accepted and dispatches normally
-    const ok = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
+    const ok = await confirmCampaignGeneration(rawRequest(quote.totalDisplayCredits, quote.contentFingerprint));
     if (!("ok" in ok)) throw new Error(ok.error);
     expect(ok.result.dispatched).toBe(2);
   });
 
-  it("catches a plan change made AFTER the quote was rendered (format flip 1cr → 8cr)", async () => {
-    seedCampaign([entry("E1", { format: "image" })]); // rendered total the owner saw = 1
+  it("catches a post-review format flip", async () => {
+    seedCampaign([entry("E1", { format: "image" })]);
     seedProject();
-    // the plan is edited to a video format between review and confirm → recomputed total = 8
+    const reviewed = await currentQuote();
     seedCampaign([entry("E1", { format: "video" })]);
-    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG });
+    const res = await confirmCampaignGeneration(
+      rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
+    );
     expect("error" in res && res.error).toMatch(/was 1, now 8 credits/i);
     expect(h.startGen).not.toHaveBeenCalled();
-    expect(h.store.jobs.size).toBe(0);
   });
 });
 
-describe("confirmCampaignGeneration — honest partial failure, $0 for failed cells", () => {
-  it("reports the failed cell as error/0 and dispatches the rest; no job minted for the failure", async () => {
+describe("confirmCampaignGeneration — honest partial failure", () => {
+  it("reports returned cell failures as zero-charge and sums only dispatched cells", async () => {
     seedCampaign([
       entry("E1", { brief: "ok one" }),
       entry("E2", { brief: "fails here" }),
@@ -320,66 +490,100 @@ describe("confirmCampaignGeneration — honest partial failure, $0 for failed ce
     ]);
     seedProject();
     failPrompts = new Set(["fails here"]);
-    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG + IMG });
+    const res = await confirmCampaignGeneration(await reviewedRequest());
     if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result.cells.map((cell) => cell.status)).toEqual(["queued", "error", "queued"]);
+    expect(res.result.dispatched).toBe(res.result.cells.filter((cell) => cell.status === "queued").length);
     expect(res.result.dispatched).toBe(2);
     expect(res.result.failed).toBe(1);
     expect(res.result.cells[1]).toMatchObject({ status: "error", credits: 0 });
-    expect(res.result.totalCredits).toBe(2 * INTERNAL_PER_DISPLAY); // only the 2 that dispatched
-    expect(h.store.jobs.size).toBe(2); // the failed cell reserved nothing
+    expect(res.result.totalCredits).toBe(res.result.cells.reduce((sum, cell) => sum + cell.credits, 0));
+    expect(res.result.totalCredits).toBe(2 * INTERNAL_PER_DISPLAY);
+    expect(h.startGen).toHaveBeenCalledTimes(3);
+    expect(h.store.jobs.size).toBe(2);
+  });
+
+  it("returns confirmed dispatch/credit counts when a later startGen outcome is unknown", async () => {
+    seedCampaign([
+      entry("E1", { brief: "commits first" }),
+      entry("E2", { brief: "throws second" }),
+      entry("E3", { brief: "never reached" }),
+    ]);
+    seedProject();
+    const normal = h.startGen.getMockImplementation();
+    if (!normal) throw new Error("missing startGen implementation");
+    let call = 0;
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
+      if (call++ === 1) throw new Error("connection outcome unknown");
+      return normal(req);
+    });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("error" in res) || !res.partial) throw new Error("expected structured partial failure");
+    expect(res.partial.current).toBe("unknown");
+    expect(res.partial.atIndex).toBe(1);
+    expect(res.partial.notStarted).toBe(1);
+    expect(res.partial.partial.dispatched).toBe(1);
+    expect(res.partial.partial.totalCredits).toBe(INTERNAL_PER_DISPLAY);
+    expect(res.partial.partial.cells).toHaveLength(1);
+    expect(h.store.jobs.size).toBe(1);
   });
 });
 
 describe("confirmCampaignGeneration — RBAC owner-only + fail-closed", () => {
-  it("denies a non-owner and dispatches nothing", async () => {
+  it("denies no-session and cross-tenant campaigns", async () => {
     h.requireOwner.mockResolvedValue({ error: "Not authorized." });
     seedCampaign([entry("E1")]);
     seedProject();
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
-      .toEqual({ error: "Not authorized." });
+    expect(await confirmCampaignGeneration(rawRequest(0))).toEqual({ error: "Not authorized." });
     expect(h.startGen).not.toHaveBeenCalled();
-  });
 
-  it("a cross-tenant campaign is not found (owner-scoped query)", async () => {
+    h.requireOwner.mockResolvedValue({ email: "o@example.test", ownerId: OWNER });
     seedCampaign([entry("E1")], OTHER_OWNER);
-    seedProject(CAMPAIGN_ID, OTHER_OWNER);
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
-      .toEqual({ error: "Campaign not found." });
+    expect(await confirmCampaignGeneration(rawRequest(0))).toEqual({ error: "Campaign not found." });
     expect(h.startGen).not.toHaveBeenCalled();
   });
 
-  it("a project not grouped under this campaign is refused before any dispatch", async () => {
+  it("rejects ungrouped and cross-tenant projects", async () => {
     seedCampaign([entry("E1")]);
-    seedProject(null); // owned, but campaignId null
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
+    const quote = await currentQuote();
+    seedProject(null);
+    expect(await confirmCampaignGeneration(rawRequest(quote.totalDisplayCredits, quote.contentFingerprint)))
       .toEqual({ error: "Choose a project that belongs to this campaign." });
-    expect(h.startGen).not.toHaveBeenCalled();
-  });
-
-  it("a project owned by another tenant is not found", async () => {
-    seedCampaign([entry("E1")]);
-    h.store.projects.set(PROJECT_ID, { id: PROJECT_ID, ownerId: OTHER_OWNER, campaignId: CAMPAIGN_ID, deletedAt: null });
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
+    h.store.projects.set(PROJECT_ID, {
+      id: PROJECT_ID, ownerId: OTHER_OWNER, campaignId: CAMPAIGN_ID, deletedAt: null,
+    });
+    expect(await confirmCampaignGeneration(rawRequest(quote.totalDisplayCredits, quote.contentFingerprint)))
       .toEqual({ error: "Project not found." });
     expect(h.startGen).not.toHaveBeenCalled();
   });
 });
 
-describe("money-safety: this file opens NO second spend path (mutation guard)", () => {
-  // Strip comments first — the file DOCUMENTS (in prose) that it moves no money; the invariant
-  // is about executable CODE only (no-second-send-path style).
+describe("money-safety static guards", () => {
   function stripComments(src: string): string {
     return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
   }
-  const code = stripComments(readFileSync(path.resolve(__dirname, "../campaign-generation-confirm.ts"), "utf8"));
+  const confirmCode = stripComments(
+    readFileSync(path.resolve(__dirname, "../campaign-generation-confirm.ts"), "utf8"),
+  );
+  const batchCode = stripComments(readFileSync(path.resolve(__dirname, "../factory-batch.ts"), "utf8"));
+  const clientCode = readFileSync(
+    path.resolve(__dirname, "../../components/campaign/campaign-confirm-page.tsx"),
+    "utf8",
+  );
 
-  it("has zero credit-ledger / GenJob-create / queue-send symbols", () => {
-    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|CreditAccount|creditAccount|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|\.\s*\$transaction/;
-    expect(banned.test(code), "confirm file must not open a spend/ledger path directly").toBe(false);
+  it("opens no ledger/job-create/queue/provider path outside startGen", () => {
+    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|CreditAccount|creditAccount|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|\.\s*\$transaction|provider\s*\./;
+    expect(banned.test(confirmCode)).toBe(false);
+    expect(banned.test(batchCode)).toBe(false);
+    expect(/from\s+["']\.\/gen-actions["']/.test(confirmCode)).toBe(true);
+    expect(/orchestrateBatch\s*\(\s*\{\s*startGen\s*,\s*prisma\s*\}/.test(confirmCode)).toBe(true);
   });
 
-  it("dispatches ONLY through the existing startGen authority (via orchestrateBatch)", () => {
-    expect(/from\s+["']\.\/gen-actions["']/.test(code)).toBe(true);
-    expect(/orchestrateBatch\s*\(\s*\{\s*startGen\s*,\s*prisma\s*\}/.test(code)).toBe(true);
+  it("never claims zero charge from an unconfirmed client transport failure", () => {
+    const catchBlock = clientCode.match(/catch\s*\{([\s\S]*?)\}\s*finally/)?.[1] ?? "";
+    expect(catchBlock).toMatch(/couldn't confirm the result/i);
+    expect(catchBlock).not.toMatch(/nothing was charged/i);
+    expect(clientCode).toMatch(/zeroDispatchConfirmed/);
   });
 });

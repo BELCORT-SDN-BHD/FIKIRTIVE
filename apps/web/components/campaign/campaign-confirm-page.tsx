@@ -21,6 +21,7 @@ import {
   type CampaignGenQuote,
   type ConfirmCampaignGenerationResult,
 } from "@/lib/campaign-generation-confirm";
+import type { BatchInterruption } from "@/lib/factory-batch";
 import { getCampaign } from "@/lib/campaign-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,19 +74,25 @@ function ConfirmWorkspace({
     () => Object.fromEntries((campaign.plan?.entries ?? []).map((entry) => [entry.id, entry])),
     [campaign.plan],
   );
+  const [quoteSnapshot, setQuoteSnapshot] = useState<QuoteResult>(initialQuote);
 
-  const quoteLines = "ok" in initialQuote ? initialQuote.quote.lines : [];
-  const approvedLines = quoteLines.filter((line) => entriesById[line.entryId]);
-  const totalDisplayCredits = "ok" in initialQuote ? initialQuote.quote.totalDisplayCredits : 0;
+  // Quote lines are the server-authoritative review snapshot. Do not filter them through the
+  // separately loaded detail snapshot: those reads happen in parallel and could observe
+  // different plan versions. Optional hook/platform labels may come from detail; paid content
+  // always renders from line.brief and is bound by the quote fingerprint.
+  const approvedLines = "ok" in quoteSnapshot ? quoteSnapshot.quote.lines : [];
+  const totalDisplayCredits = "ok" in quoteSnapshot ? quoteSnapshot.quote.totalDisplayCredits : 0;
+  const contentFingerprint = "ok" in quoteSnapshot ? quoteSnapshot.quote.contentFingerprint : "";
 
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(initialQuote && "error" in initialQuote ? initialQuote.error : null);
+  const [error, setError] = useState<string | null>("error" in initialQuote ? initialQuote.error : null);
   const [result, setResult] = useState<BatchResult | null>(null);
+  const [interruption, setInterruption] = useState<BatchInterruption | null>(null);
 
-  // The server derives the stable batch id (per campaign+project) and a fresh attempt id, so a
-  // double-submit / retry cannot double-charge — succeeded cells reuse (0 charge) and only
-  // all-FAILED cells re-dispatch. The client passes no idempotency material.
+  // The server derives the stable batch id, stable per-entry identities, and a fresh attempt id.
+  // The browser returns only the server-rendered total + opaque content fingerprint; it never
+  // supplies generation content, model, price, or an idempotency key.
   async function confirm() {
     if (!projectId) {
       setError("Choose a destination project first.");
@@ -94,16 +101,28 @@ function ConfirmWorkspace({
     setBusy(true);
     setError(null);
     try {
-      // Bind the price the owner reviewed (this page's rendered total). The server refuses if
-      // the plan/config moved it — fail-closed, nothing charged.
-      const response = await confirmCampaignGeneration({ campaignId, projectId, expectedTotalCredits: totalDisplayCredits });
+      const response = await confirmCampaignGeneration({
+        campaignId,
+        projectId,
+        expectedTotalCredits: totalDisplayCredits,
+        expectedContentFingerprint: contentFingerprint,
+      });
       if (!("ok" in response)) {
+        if (response.quote) setQuoteSnapshot({ ok: true, quote: response.quote });
+        if (response.partial) {
+          setResult(response.partial.partial);
+          setInterruption(response.partial);
+        }
         setError(response.error);
         return;
       }
+      setQuoteSnapshot({ ok: true, quote: response.quote });
       setResult(response.result);
+      setInterruption(null);
     } catch {
-      setError("The generation request could not finish. Nothing was charged — retry.");
+      // A transport failure cannot prove zero dispatch. The stable server-derived keys make a
+      // retry safe, but the UI must say the outcome is unknown rather than inventing $0.
+      setError("We couldn't confirm the result. Some items may have started; retry to reconcile them safely.");
     } finally {
       setBusy(false);
     }
@@ -138,28 +157,46 @@ function ConfirmWorkspace({
     );
   }
 
-  // ── results view (honest per-cell outcome) ─────────────────────────────────
+  // ── results view (honest server-confirmed outcomes) ───────────────────────
   if (result) {
-    // Authoritative: the run total + per-cell charge come from the SERVER dispatch result
-    // (result.totalCredits / result.cells[].credits, in internal credits), not the load-time
-    // quote snapshot.
     const reservedThisRun = displayCredits(result.totalCredits);
+    const currentUnknown = interruption?.current === "unknown";
+    const zeroDispatchConfirmed = result.dispatched === 0 && !currentUnknown;
+    const resultTitle = interruption
+      ? result.dispatched > 0 || currentUnknown
+        ? "Generation partly started"
+        : "Generation did not start"
+      : "Generation started";
+
     return (
       <Shell>
         <ConfirmHeader campaign={campaign} />
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle>Generation started</CardTitle>
+            <CardTitle>{resultTitle}</CardTitle>
             <CardDescription>
-              {result.dispatched} generating · {result.reused} already done · {result.failed} could not start.
-              You only pay when a generation finishes, never on errors.
+              {result.dispatched} dispatched · {result.reused} reused · {result.failed} could not start
+              {interruption ? ` · ${interruption.notStarted} not started` : ""}.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
-            <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-              Reserved this run: <strong>{reservedThisRun} credits</strong>. Reused and failed items charged nothing.
-              Any item that fails is refunded automatically.
-            </div>
+            {zeroDispatchConfirmed ? (
+              <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
+                <strong>Nothing was charged.</strong> The server confirmed that no new generation job was dispatched.
+              </div>
+            ) : interruption ? (
+              <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
+                Confirmed reserved before the interruption: <strong>{reservedThisRun} credits</strong>.
+                {currentUnknown
+                  ? " One item's start status could not be confirmed and may also have reserved credits. A retry will reuse it if it exists."
+                  : " The remaining items did not start."}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
+                Reserved this run: <strong>{reservedThisRun} credits</strong>. Reused and failed items charged nothing.
+                Any item that fails is refunded automatically.
+              </div>
+            )}
             {result.cells.map((cell) => {
               const line = approvedLines[cell.index];
               const entry = line ? entriesById[line.entryId] : undefined;
@@ -167,7 +204,7 @@ function ConfirmWorkspace({
                 <div key={cell.index} className="flex items-start justify-between gap-3 rounded-xl border border-border p-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{entry?.hook || `Entry ${cell.index + 1}`}</p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">{entry?.brief}</p>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">{line?.brief}</p>
                     {cell.error ? <p className="mt-1 text-xs text-destructive">{friendlyCellError(cell.error)}</p> : null}
                   </div>
                   <CellStatus status={cell.status} credits={displayCredits(cell.credits)} />
@@ -175,10 +212,10 @@ function ConfirmWorkspace({
               );
             })}
             <div className="flex flex-wrap gap-3">
-              {result.failed > 0 ? (
+              {result.failed > 0 || interruption ? (
                 <Button type="button" onClick={() => confirm()} disabled={busy}>
                   {busy ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
-                  Retry failed items
+                  {interruption ? "Retry remaining items" : "Retry failed items"}
                 </Button>
               ) : null}
               <Button asChild variant="secondary">
@@ -198,9 +235,9 @@ function ConfirmWorkspace({
       <ConfirmHeader campaign={campaign} />
 
       <div className="mt-6 rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm leading-6 text-info-soft-foreground">
-        <ShieldCheck className="mb-1 inline size-4" /> The server recalculates this total from your saved plan when you
-        confirm — card estimates are display only. You only pay when a generation finishes, never on errors, and each
-        item generates at most once.
+        <ShieldCheck className="mb-1 inline size-4" /> The server checks the approved content, models, and prices again
+        when you confirm. If anything changed, nothing starts until you review the updated plan. You only pay when a
+        generation finishes, never on errors, and each item generates at most once.
       </div>
       {error ? <div className="mt-4 rounded-xl border border-error-soft bg-error-soft p-4 text-sm text-destructive">{error}</div> : null}
 
@@ -223,7 +260,7 @@ function ConfirmWorkspace({
                     <span className="text-sm font-semibold">{line.displayCredits} credits</span>
                   </div>
                   <p className="mt-3 text-sm font-semibold">{entry?.hook || "Untitled entry"}</p>
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{entry?.brief}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{line.brief}</p>
                   <p className="mt-2 text-xs text-muted-foreground">Model: {line.model}</p>
                 </div>
               );
@@ -304,9 +341,7 @@ function EmptyState({ icon, title, body, campaignId }: { icon: React.ReactNode; 
   );
 }
 
-/** Map the shared spend-gate errors to copy that is accurate for THIS flow. The "different
- *  content" conflict means an already-generated entry's plan changed under the stable batch —
- *  we never re-word gen-actions' shared message at the source, only at this presentation seam. */
+/** Map the shared spend-gate errors to copy that is accurate for THIS flow. */
 function friendlyCellError(raw: string): string {
   if (/different content/i.test(raw)) {
     return "This entry's plan changed since it was last generated. Undo the edit, or generate it into a different project.";
