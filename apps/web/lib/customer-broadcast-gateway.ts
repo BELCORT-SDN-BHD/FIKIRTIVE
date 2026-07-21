@@ -7,16 +7,19 @@ import {
   CustomerBroadcastError,
   customerBroadcastService,
   type BroadcastRunIdInput,
+  type BroadcastRunLivePreflightInput,
   type CancelBroadcastRunInput,
   type ConfirmBroadcastRunInput,
   type CreateBroadcastRunInput,
   type CustomerBroadcastErrorCode,
   type CustomerBroadcastPrincipal,
+  type ExecuteBroadcastRunInput,
   type FreezeAudienceInput,
   type ListBroadcastRunsInput,
   type PreviewAudienceEligibilityInput,
   type SubmitBroadcastRunInput,
 } from "./customer-broadcast-service";
+import { MemberDirectoryError, memberDirectoryService } from "./member-directory-service";
 
 type GatewayFailure = { ok: false; error: CustomerBroadcastErrorCode };
 
@@ -49,6 +52,8 @@ async function runRead<T>(
     return { ok: true, resource: await operation(await resolvePrincipal()) };
   } catch (error) {
     if (error instanceof CustomerBroadcastError) return { ok: false, error: error.code };
+    // MemberDirectoryError shares the NOT_AUTHORIZED/ACTION_DENIED codes; surface them the same way.
+    if (error instanceof MemberDirectoryError) return { ok: false, error: error.code };
     throw error;
   }
 }
@@ -70,6 +75,24 @@ export async function listBroadcastRuns(input: ListBroadcastRunsInput = {}) {
 
 export async function getBroadcastRun(input: BroadcastRunIdInput) {
   return runRead((principal) => customerBroadcastService.getBroadcastRun(principal, input));
+}
+
+export async function getBroadcastRunLivePreflight(input: BroadcastRunLivePreflightInput) {
+  return runRead((principal) => customerBroadcastService.getBroadcastRunLivePreflight(principal, input));
+}
+
+export async function getBroadcastComposerOptions() {
+  return runRead((principal) => customerBroadcastService.getBroadcastComposerOptions(principal));
+}
+
+/**
+ * #27 member directory + server-derived self read. The principal (owner + self membership) is
+ * resolved from the authenticated session — never from client input.
+ */
+export async function getMemberDirectory() {
+  return runRead((principal) =>
+    memberDirectoryService.listMemberDirectory({ ownerId: principal.ownerId, membershipId: principal.membershipId }),
+  );
 }
 
 export async function previewAudienceEligibility(input: PreviewAudienceEligibilityInput) {
@@ -94,4 +117,8 @@ export async function cancelBroadcastRun(input: CancelBroadcastRunInput) {
 
 export async function submitBroadcastRun(input: SubmitBroadcastRunInput) {
   return runMutation((principal) => customerBroadcastService.submitBroadcastRun(principal, input));
+}
+
+export async function executeBroadcastRun(input: ExecuteBroadcastRunInput) {
+  return runMutation((principal) => customerBroadcastService.executeBroadcastRun(principal, input));
 }
