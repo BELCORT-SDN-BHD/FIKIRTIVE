@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import {
   evaluateSendEligibility,
   expireProviderRefusal,
@@ -10,7 +12,9 @@ import {
   recordUnqualifiedStop,
   SEND_FREQUENCY_POLICY,
   SendEligibilityError,
+  type EligibilityAxis,
   type SendEligibilityDb,
+  type SendEligibilityResult,
 } from "./index.js";
 
 const ORG_A = "eligibility-org-a";
@@ -373,6 +377,48 @@ describe("C5-M2 aggregate stays the M1-M3 unavailable branch", () => {
   it("never returns AggregateDisposition regardless of axis outcomes", async () => {
     const result = await evaluateSendEligibility(prisma, baseInput());
     expect(result.aggregate).toEqual({ status: "unavailable", reason: "SEND_PATH_UNAVAILABLE" });
+  });
+});
+
+describe("C5-M2 §11.2 four axes stay independently named, never merged (ledger review round)", () => {
+  it("SendEligibilityResult keeps the four axes as separate named fields, each shaped as EligibilityAxis (§11.2, §3.2: no merged suppression/allow list, no single boolean)", () => {
+    // Type-shape assertion (checked by `tsc`/typecheck, not by the JS runtime): the result's
+    // key set is EXACTLY the four axes plus aggregate/checkedAt. Collapsing the four axes into
+    // one boolean, one merged list, or a fifth field would change this key union and fail
+    // typecheck.
+    expectTypeOf<keyof SendEligibilityResult>().toEqualTypeOf<
+      "consentStop" | "doNotDisturb" | "providerRefusal" | "frequency" | "aggregate" | "checkedAt"
+    >();
+    // Each of the four axes independently keeps the full {status, source, reason?, checkedAt}
+    // shape — not a bare boolean, not a shared/merged object.
+    expectTypeOf<SendEligibilityResult["consentStop"]>().toEqualTypeOf<EligibilityAxis>();
+    expectTypeOf<SendEligibilityResult["doNotDisturb"]>().toEqualTypeOf<EligibilityAxis>();
+    expectTypeOf<SendEligibilityResult["providerRefusal"]>().toEqualTypeOf<EligibilityAxis>();
+    expectTypeOf<SendEligibilityResult["frequency"]>().toEqualTypeOf<EligibilityAxis>();
+    // aggregate stays the fixed M1-M3 unavailable literal (§4.4) — never a general boolean and
+    // never widened into whatever the merged-axis verdict would be.
+    expectTypeOf<SendEligibilityResult["aggregate"]>().toEqualTypeOf<{
+      status: "unavailable";
+      reason: "SEND_PATH_UNAVAILABLE";
+    }>();
+
+    // Static source-text scan: neither the evaluator nor the one caller that folds these axes
+    // into a broadcast-member verdict may fold the four axes into a single boolean or a merged
+    // suppression/block list identifier.
+    const dbSource = readFileSync(path.join(__dirname, "send-eligibility.ts"), "utf8");
+    const webSource = readFileSync(
+      path.join(__dirname, "../../../apps/web/lib/customer-broadcast-service.ts"),
+      "utf8",
+    );
+    const collapsePatterns = [/\bsuppressionList\b/i, /\bsuppressionSet\b/i, /\bblocklist\b/i, /\bmergedEligibility\b/i];
+    for (const source of [dbSource, webSource]) {
+      for (const pattern of collapsePatterns) {
+        expect(source).not.toMatch(pattern);
+      }
+    }
+    // aggregate's literal in the evaluator itself is always the M1-M3 unavailable branch —
+    // never a computed/merged verdict over the four axes.
+    expect(dbSource).toContain('aggregate: { status: "unavailable", reason: "SEND_PATH_UNAVAILABLE" }');
   });
 });
 

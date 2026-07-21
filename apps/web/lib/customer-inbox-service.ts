@@ -652,7 +652,12 @@ export function createCustomerInboxService(
       where: { id: conversation.contactIdentityId, ownerId: principal.ownerId },
       select: { contactId: true, channel: true, channelScopeId: true },
     });
-    const unavailableAxis = { status: "unavailable", source: "contact_identity_unreadable" } as const;
+    const unavailableAxis = {
+      status: "unavailable",
+      source: "contact_identity_unreadable",
+      reason: "contact_identity_unreadable",
+      checkedAt: new Date().toISOString(),
+    } as const;
     const fourAxes = identity
       ? await (async () => {
           const providerConnectionId = identity.channelScopeId
