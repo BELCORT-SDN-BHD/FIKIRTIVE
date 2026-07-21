@@ -61,7 +61,11 @@ Every merge must leave executor evidence on the PR: a Founder-executed merge is 
 by a Founder-posted comment stating the Founder personally executed it; a merge executed
 by an authorized non-author executor must self-report executor identity, the authorizing
 instruction, and the execution time on the PR. A merge without executor evidence is
-treated as unverified at audit.
+treated as unverified at audit. This requirement applies to merges executed after this
+clause first lands on `main`; earlier merges are assessed under the evidence expectations
+of their time. An unverified merge is not thereby reverted, but it may not be cited as
+compliant precedent, and the next audit must resolve it — by a Founder confirmation
+comment or by recording it as an open finding.
 
 ## Task and worktree lifecycle
 
