@@ -78,6 +78,30 @@ Reading the table below:
   logical channel account; draft or review state is not send approval. _Avoid:_ snippet, receipt,
   campaign content.
 
+- **Send eligibility** (发送资格) — The read-only "may we attempt a send to this contact right now"
+  answer, built from four independent axes (consent-STOP / DND / provider-refusal / frequency). It is
+  never a send authorization by itself and never changes consent. _Avoid:_ suppression list (there is
+  none), send gate, opt-in check.
+
+- **Four axes** (四轴) — The four separately-held send-safety axes that make up send eligibility:
+  customer consent-STOP, merchant DND (contact-wide), provider refusal (per exact scope), and
+  frequency. They stay four axes — never merged into one flag or a unified suppression list.
+  _Avoid:_ suppression list, blocklist, 抑制名单 (the anti-pattern this vocabulary forbids).
+
+- **Broadcast run** (群发运行) — One merchant-authorized proactive send to a frozen audience over one
+  logical channel account, using one frozen template version; the "exact frozen action" a two-confirm
+  binds to. A Campaign only groups it. _Avoid:_ Campaign (grouping), blast, send job.
+
+- **Frequency cap** (频控) — The unified send-layer hard limit on how many proactive sends one contact
+  may receive per rolling window; playbooks cannot bypass it and it is not a CRM field. In the
+  simulated-provider era the counter counts simulated sends. _Avoid:_ throttle, rate limit (transport),
+  cooldown.
+
+- **Provider refusal** (供应商拒发) — A provider's own hard refusal to deliver (permanent-recipient or
+  account-level), a send-safety axis independent of customer consent and merchant DND; a transient
+  429/5xx is not a long-term refusal. _Avoid:_ STOP (that is customer consent), block (ambiguous),
+  bounce.
+
 ## References & identity 参考与身份
 
 - **Entity** (实体) — A reusable cast member that recurs across shots: a Character, Location,
