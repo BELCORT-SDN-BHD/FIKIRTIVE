@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { prisma } from "@fikirtive/db";
+import { prisma, recordUnqualifiedStop } from "@fikirtive/db";
 import * as customerBroadcastGateway from "../customer-broadcast-gateway";
 import { createCustomerBroadcastService } from "../customer-broadcast-service";
 import { createMemberDirectoryService } from "../member-directory-service";
@@ -790,6 +790,99 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     );
     await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: foreign.resource.id, expectedRevision: 0 }), "RESOURCE_NOT_FOUND");
     expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: { in: OWNERS } } })).toBe(0);
+  });
+
+  it("prunes stale members on a re-freeze to a narrower segment; execution never touches the dropped ones", async () => {
+    // Give CONTACT_GRANT a spend so a spend-gated narrow segment matches ONLY it (not CONTACT_A).
+    await prisma.contact.update({ where: { id: CONTACT_GRANT }, data: { totalOrdersMyr: 100 } });
+    await prisma.segment.create({
+      data: {
+        id: "c5-m3-narrow-seg",
+        ownerId: ORG_A,
+        name: "Big spenders",
+        phrase: "spend at least 50",
+        kind: "custom",
+        createdAt: NOW,
+        rulesJson: {
+          match: "all",
+          rules: [
+            { kind: "lifetime_spend", comparison: "at_least", amountMyr: 50 },
+            { kind: "channel", channel: "whatsapp" },
+            { kind: "contactability", value: "contactable" },
+          ],
+        },
+      },
+    });
+
+    const created = await broadcast.createBroadcastRun(owner, {
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+      creationIdempotencyKey: "c5-m3-prune",
+    });
+    // Wide freeze: SEGMENT_A matches CONTACT_A (unknown, kept) + CONTACT_GRANT.
+    const wide = await broadcast.freezeAudience(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: 0,
+      segmentId: SEGMENT_A,
+    });
+    expect(wide.members.map((m) => m.contactIdentityId).sort()).toEqual([IDENTITY_A, IDENTITY_GRANT].sort());
+
+    // Re-freeze to the narrow segment (only CONTACT_GRANT): CONTACT_A must be PRUNED, not left behind.
+    const narrow = await broadcast.freezeAudience(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: wide.resource.revision,
+      segmentId: "c5-m3-narrow-seg",
+    });
+    expect(narrow.resource.audienceRevision).toBe(2);
+    expect(narrow.members.map((m) => m.contactIdentityId)).toEqual([IDENTITY_GRANT]);
+    // The member table itself holds ONLY CONTACT_GRANT at the new revision — zero stale rows.
+    const rowsNow = await prisma.broadcastAudienceMember.findMany({
+      where: { ownerId: ORG_A, broadcastRunId: created.resource.id },
+    });
+    expect(rowsNow.map((r) => r.contactIdentityId)).toEqual([IDENTITY_GRANT]);
+    expect(rowsNow.every((r) => r.audienceRevision === 2)).toBe(true);
+
+    // Confirm + execute: only CONTACT_GRANT is processed; CONTACT_A leaves zero frequency + zero residue.
+    const confirmed = await broadcast.confirmBroadcastRun(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: narrow.resource.revision,
+    });
+    const result = await broadcast.executeBroadcastRun(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: confirmed.resource.revision,
+    });
+    expect(result.members.map((m) => m.contactIdentityId)).toEqual([IDENTITY_GRANT]);
+    expect(result.members[0]!.sendState).toBe("simulated_sent");
+    expect(await freqCount(CONTACT_GRANT)).toBe(1);
+    expect(await freqCount(CONTACT_A)).toBe(0);
+    expect(
+      await prisma.broadcastAudienceMember.count({
+        where: { ownerId: ORG_A, broadcastRunId: created.resource.id, contactIdentityId: IDENTITY_A },
+      }),
+    ).toBe(0);
+  });
+
+  it("re-reads live authority at execute time: a member revoked via consent-runtime after freeze+confirm is skipped with zero frequency rows", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-live-reread");
+    // At freeze+confirm CONTACT_GRANT passed all four axes. Revoke through the REAL writer
+    // (consent-runtime STOP fan-out) AFTER confirm — proving execution re-reads live authority
+    // directly, not just the read-only getBroadcastRunLivePreflight surface.
+    const stop = await recordUnqualifiedStop({
+      ownerId: ORG_A,
+      contactId: CONTACT_GRANT,
+      channel: "whatsapp",
+      sourceKind: "stop_keyword",
+      channelEventRef: "test:inbound",
+      opaqueMessageId: "c5-m3-stop-1",
+    });
+    expect(stop.duplicate).toBe(false);
+
+    const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
+    const granted = result.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!;
+    expect(granted.sendState).toBe("skipped_ineligible");
+    expect(granted.skipReason).toContain("consentStop"); // effective_revoke, re-read at execute time
+    expect(await freqCount(CONTACT_GRANT)).toBe(0);
   });
 });
 

@@ -45,6 +45,10 @@ export const CUSTOMER_BROADCAST_ERROR_CODES = {
   IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_CONFLICT",
   SEND_PATH_UNAVAILABLE: "SEND_PATH_UNAVAILABLE",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
+  // Re-freeze found a stale member that had already advanced past `pending` — impossible under
+  // the status gating (freeze is draft/audience_frozen only, sends need confirmed/executing), so
+  // it signals corruption: fail closed and roll back rather than delete a member with send state.
+  AUDIENCE_STATE_CONFLICT: "AUDIENCE_STATE_CONFLICT",
 } as const;
 
 export type CustomerBroadcastErrorCode =
@@ -594,6 +598,24 @@ export function createCustomerBroadcastService(
         });
       }
 
+      // §5.3/§5.2: a re-freeze to a NARROWER segment must not leave the removed members behind —
+      // otherwise execution (which selects by run, not revision) would send to the UNION of every
+      // segment ever frozen, including contacts the merchant explicitly dropped. Members in the new
+      // set were just bumped to nextAudienceRevision above; anything still behind it is stale.
+      // Under the status gating (freeze is draft/audience_frozen only; a member advances past
+      // pending only under confirmed/executing), a stale member can only be `pending` — a
+      // non-pending stale member is corruption, so fail closed and roll back rather than delete it.
+      const stale = await tx.broadcastAudienceMember.findMany({
+        where: { ownerId: principal.ownerId, broadcastRunId, audienceRevision: { lt: nextAudienceRevision } },
+        select: { sendState: true },
+      });
+      if (stale.some((m) => m.sendState !== "pending")) fail("AUDIENCE_STATE_CONFLICT");
+      if (stale.length > 0) {
+        await tx.broadcastAudienceMember.deleteMany({
+          where: { ownerId: principal.ownerId, broadcastRunId, audienceRevision: { lt: nextAudienceRevision } },
+        });
+      }
+
       const changed = await tx.broadcastRun.updateMany({
         where: { id: broadcastRunId, ownerId: principal.ownerId, revision: expectedRevision },
         data: {
@@ -860,8 +882,16 @@ export function createCustomerBroadcastService(
     // (simulated_sent/skipped_ineligible) are left untouched, which is what makes a resume safe.
     // recordSendFrequencyEvent opens its OWN advisory-locked transaction (§5.4), so members are
     // processed sequentially here rather than inside one wrapping transaction.
+    // Revision-scoped (defense in depth alongside freezeAudience's prune): only members frozen at
+    // the run's CURRENT audienceRevision are executed. A leftover member from an earlier, wider
+    // freeze (e.g. a legacy row predating the prune) is never sent to.
     const pending = await db.broadcastAudienceMember.findMany({
-      where: { ownerId: principal.ownerId, broadcastRunId, sendState: "pending" },
+      where: {
+        ownerId: principal.ownerId,
+        broadcastRunId,
+        sendState: "pending",
+        audienceRevision: run.audienceRevision,
+      },
       orderBy: [{ id: "asc" }],
     });
 

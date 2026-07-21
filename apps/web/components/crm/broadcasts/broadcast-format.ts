@@ -129,6 +129,7 @@ const ERROR_COPY: Record<string, string> = {
   ACTION_DENIED: "Your account doesn't have access to this workspace's broadcasts.",
   RESOURCE_NOT_FOUND: "This item is not available. It may not exist, or you may not have access.",
   CAS_CONFLICT: "This changed since you last loaded it — reload to see the latest.",
+  AUDIENCE_STATE_CONFLICT: "This broadcast's audience is in an unexpected state — reload before re-freezing.",
   IDEMPOTENCY_CONFLICT: "That request was already recorded differently — reload to check the latest state.",
   SEND_PATH_UNAVAILABLE: "Real sending isn't available yet — this workbench only runs simulated sends.",
   INVALID_ARGUMENT: "That request wasn't valid. Please check the values and try again.",

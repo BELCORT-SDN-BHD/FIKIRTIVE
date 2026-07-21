@@ -113,4 +113,4 @@
 | debt-106 | `customer-broadcast-ui-actions.freezeAudience` | B0-43 | B7 |
 | debt-107 | `customer-broadcast-ui-actions.confirmBroadcastRun` | B0-43 | B7 |
 | debt-108 | `customer-broadcast-ui-actions.cancelBroadcastRun` | B0-43 | B7 |
-| debt-109 | `customer-broadcast-ui-actions.executeBroadcastRun` | B0-43 | B7 |
+| debt-109 | `customer-broadcast-ui-actions.executeBroadcastRun` | B0-46 | B7 |
