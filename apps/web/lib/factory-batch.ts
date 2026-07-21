@@ -13,12 +13,15 @@
  *     reserveCredits / settleCredits / refundReservation, never creates a GenJob,
  *     never calls a provider. Each cell's reserve (same-tx with the GenJob insert)
  *     and each cell's failure-refund happen INSIDE startGen / the worker — per cell.
- *   - Per-cell identity has TWO stable parts: logical cell (batchId + index) and caller attempt.
- *     The 79-char key is `batch:<logical hash>:attempt:<attempt hash>`. startGen parses that key
- *     and, under its existing owner/project advisory transaction lock, binds the logical cell's
- *     full material request and decides fresh/reused/conflict from any-status history. The same
- *     attempt is reusable forever (FAILED included); a new attempt creates only after every prior
- *     job FAILED. That atomic decision — not this layer's read-only early reject — controls reserve.
+ *   - Generic factory cells retain their positional logical identity. Callers whose cells
+ *     have durable domain ids may set `idempotencyId`; then the logical identity is a
+ *     length-delimited hash of batchId + that stable id, independent of array order. The
+ *     resulting factory key remains 79 characters and is still parsed/decided by startGen.
+ *   - Migration compatibility is read-only routing, never a reuse verdict. Stable-id batches
+ *     scan owner+project-scoped any-status positional history before dispatch and one-to-one
+ *     match full persisted material. A matched legacy cell is handed back to startGen under
+ *     its old logical prefix; startGen repeats the verdict under the project lock. Ambiguous
+ *     old/new material fails closed before any dispatch because old rows do not store entry ids.
  *   - Quote = sum of per-cell `pricedGenCredits(...)` computed from the SAME inputs
  *     the cell hands startGen, so quote == reserve == settle per cell (no batch-level
  *     price constant; §6.5 credits-only via pricedGenCredits).
@@ -35,7 +38,9 @@ import {
   factoryAttemptKey,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
+  type FactoryAttemptKey,
   type FactoryMaterial,
+  type StoredFactoryMaterial,
 } from "./batch-idempotency";
 
 /** Batch size ceiling. A money-safety guard: an unbounded batch would let one
@@ -72,6 +77,8 @@ export interface GenCell {
   aspectRatio?: string | null;
   fps?: number | null;
   audio?: boolean | null;
+  /** Server-derived durable domain id for order-independent logical-cell identity. */
+  idempotencyId?: string;
 }
 
 /** A text-only cell (e.g. an ad hook/headline variant). ALWAYS $0 — never spends. */
@@ -137,9 +144,46 @@ export interface BatchResult {
   failed: number;
 }
 
+/** A thrown infrastructure failure stops sequential dispatch. `partial` contains only outcomes
+ *  the server confirmed before the interruption. The current cell is explicitly distinguished:
+ *  a history-read failure is known not started, while a thrown startGen has an unknown outcome. */
+export interface BatchInterruption {
+  partial: BatchResult;
+  atIndex: number;
+  current: "not_started" | "unknown";
+  /** Later cells definitely not started; includes current only when current=not_started. */
+  notStarted: number;
+}
+
+export type BatchFailure = { error: string; partial?: BatchInterruption };
+
+type FactoryHistoryRow = StoredFactoryMaterial & {
+  id: string;
+  status: string;
+  idempotencyKey: string | null;
+};
+
+const FACTORY_HISTORY_SELECT = {
+  id: true,
+  status: true,
+  idempotencyKey: true,
+  prompt: true,
+  model: true,
+  kind: true,
+  count: true,
+  entityIds: true,
+  variantSel: true,
+  sourceGenerationId: true,
+  tailGenerationId: true,
+  referenceVideoGenerationId: true,
+  shotId: true,
+  threadId: true,
+  videoOptions: true,
+} as const;
+
 /** Exact persisted request shape, shared with startGen's lock-time binding. Callers pass
  *  genCellError first so a video model is valid before video defaults are resolved. */
-function cellMaterial(cell: GenCell): FactoryMaterial {
+function cellMaterial(cell: GenCell, threadId?: string | null): FactoryMaterial {
   return normalizeFactoryMaterial({
     prompt: cell.prompt,
     model: cell.model ?? "seedream",
@@ -151,6 +195,7 @@ function cellMaterial(cell: GenCell): FactoryMaterial {
     tailGenerationId: cell.tailGenerationId,
     referenceVideoGenerationId: cell.referenceVideoGenerationId,
     shotId: cell.shotId,
+    threadId,
     durationSeconds: cell.durationSeconds,
     resolution: cell.resolution,
     aspectRatio: cell.aspectRatio,
@@ -199,12 +244,129 @@ export function quoteCell(cell: BatchCell): number {
   return pricedGenCredits(cellSpendInput(cell));
 }
 
-/** Assemble the genRequest a cell hands startGen. The key binds stable logical-cell + attempt
- *  identities while remaining under genRequest's 80-char cap. */
+/** Stable ids are domain-separated and length-delimited before the existing helper hashes them.
+ *  The persisted key is still the reserved 79-char factory family parsed by startGen. */
+function stableCellAttemptKey(args: OrchestrateArgs, cell: GenCell): FactoryAttemptKey {
+  const id = cell.idempotencyId as string;
+  const stableScope = `factory-entry-v1:${args.batchId.length}:${args.batchId}:${id.length}:${id}`;
+  return factoryAttemptKey(stableScope, 0, args.attemptId);
+}
+
+interface StableCellPlan {
+  identityByIndex: Map<number, FactoryAttemptKey>;
+  historyByIndex: Map<number, FactoryHistoryRow[]>;
+}
+
+/** Resolve stable and pre-migration positional identities before any dispatch. Reads are routing
+ *  only; every selected identity still goes through startGen's owner/project lock-time verdict. */
+async function prepareStableCellPlan(
+  db: Pick<PrismaClient, "genJob">,
+  args: OrchestrateArgs,
+): Promise<StableCellPlan | { error: string }> {
+  const stableCells = args.cells
+    .map((cell, index) => ({ cell, index }))
+    .filter((item): item is { cell: GenCell; index: number } => item.cell.type === "gen");
+  if (stableCells.length === 0 || stableCells.every(({ cell }) => cell.idempotencyId == null)) {
+    return { identityByIndex: new Map(), historyByIndex: new Map() };
+  }
+
+  if (stableCells.some(({ cell }) => cell.idempotencyId == null)) {
+    return { error: "Every generated cell needs a stable id when stable idempotency is enabled." };
+  }
+
+  const stableIdentities = new Map(
+    stableCells.map(({ cell, index }) => [index, stableCellAttemptKey(args, cell)]),
+  );
+  const legacyIdentities = Array.from(
+    { length: MAX_BATCH_CELLS },
+    (_, index) => ({ index, identity: factoryAttemptKey(args.batchId, index, args.attemptId) }),
+  );
+  const prefixes = [
+    ...new Set([
+      ...[...stableIdentities.values()].map((identity) => identity.logicalPrefix),
+      ...legacyIdentities.map(({ identity }) => identity.logicalPrefix),
+    ]),
+  ];
+
+  const history = await db.genJob.findMany({
+    where: {
+      ownerId: args.ownerId,
+      projectId: args.projectId,
+      OR: prefixes.map((prefix) => ({ idempotencyKey: { startsWith: prefix } })),
+    },
+    orderBy: { createdAt: "desc" },
+    select: FACTORY_HISTORY_SELECT,
+  }) as FactoryHistoryRow[];
+
+  const historyByPrefix = new Map(
+    prefixes.map((prefix) => [
+      prefix,
+      history.filter((row) => row.idempotencyKey?.startsWith(prefix)),
+    ]),
+  );
+  const legacyWithHistory = legacyIdentities.filter(
+    ({ identity }) => (historyByPrefix.get(identity.logicalPrefix)?.length ?? 0) > 0,
+  );
+  const usedLegacyIndexes = new Set<number>();
+  const identityByIndex = new Map<number, FactoryAttemptKey>();
+  const historyByIndex = new Map<number, FactoryHistoryRow[]>();
+  const unmatched: Array<{ cell: GenCell; index: number }> = [];
+
+  // Sorting by durable id makes duplicate-material migration assignment independent of current
+  // array order. Duplicate ids were rejected before this read.
+  for (const item of [...stableCells].sort((a, b) => {
+    const left = a.cell.idempotencyId as string;
+    const right = b.cell.idempotencyId as string;
+    return left < right ? -1 : left > right ? 1 : 0;
+  })) {
+    const stableIdentity = stableIdentities.get(item.index) as FactoryAttemptKey;
+    const stableHistory = historyByPrefix.get(stableIdentity.logicalPrefix) ?? [];
+    if (stableHistory.length > 0) {
+      identityByIndex.set(item.index, stableIdentity);
+      historyByIndex.set(item.index, stableHistory);
+      continue;
+    }
+
+    const expected = cellMaterial(item.cell, args.threadId);
+    const legacy = legacyWithHistory.find(({ index, identity }) => {
+      if (usedLegacyIndexes.has(index)) return false;
+      const rows = historyByPrefix.get(identity.logicalPrefix) ?? [];
+      return rows.length > 0 && rows.every((row) => factoryMaterialMatches(row, expected));
+    });
+    if (!legacy) {
+      unmatched.push(item);
+      continue;
+    }
+
+    usedLegacyIndexes.add(legacy.index);
+    identityByIndex.set(item.index, legacy.identity);
+    historyByIndex.set(item.index, historyByPrefix.get(legacy.identity.logicalPrefix) ?? []);
+  }
+
+  // Old positional rows do not contain entry ids. Once ANY such history exists, an unmatched
+  // current cell could be an edited old entry; minting a new stable key could re-charge it.
+  if (legacyWithHistory.length > 0 && unmatched.length > 0) {
+    return {
+      error: "This existing batch cannot safely match every plan entry. Use the original approved content or choose a different project.",
+    };
+  }
+
+  // A batch with zero positional history is new: unmatched cells safely start on stable ids.
+  for (const item of unmatched) {
+    const stableIdentity = stableIdentities.get(item.index) as FactoryAttemptKey;
+    identityByIndex.set(item.index, stableIdentity);
+    historyByIndex.set(item.index, []);
+  }
+
+  return { identityByIndex, historyByIndex };
+}
+
+/** Assemble the genRequest a cell hands startGen. Identity selection (stable/legacy/positional)
+ *  is resolved separately, but all forms remain the parsed factory family. */
 function cellGenRequest(
   cell: GenCell,
   args: OrchestrateArgs,
-  index: number,
+  idempotencyKey: string,
 ): Record<string, unknown> {
   const req: Record<string, unknown> = {
     projectId: args.projectId,
@@ -213,7 +375,7 @@ function cellGenRequest(
     count: cell.kind === "video" ? 1 : cell.count ?? 1,
     kind: cell.kind ?? "image",
     model: cell.model ?? "seedream",
-    idempotencyKey: factoryAttemptKey(args.batchId, index, args.attemptId).key,
+    idempotencyKey,
   };
   if (args.threadId) req.threadId = args.threadId;
   if (cell.shotId) req.shotId = cell.shotId;
@@ -229,6 +391,36 @@ function cellGenRequest(
   return req;
 }
 
+function summarizeBatch(batchId: string, cells: CellResult[]): BatchResult {
+  const totalCredits = cells.reduce((sum, cell) => sum + cell.credits, 0);
+  return {
+    batchId,
+    cells,
+    totalCredits,
+    dispatched: cells.filter((cell) => cell.status === "queued").length,
+    reused: cells.filter((cell) => cell.status === "reused").length,
+    failed: cells.filter((cell) => cell.status === "error").length,
+  };
+}
+
+function interruptedBatch(
+  args: OrchestrateArgs,
+  cells: CellResult[],
+  atIndex: number,
+  current: BatchInterruption["current"],
+  error: string,
+): BatchFailure {
+  return {
+    error,
+    partial: {
+      partial: summarizeBatch(args.batchId, cells),
+      atIndex,
+      current,
+      notStarted: args.cells.length - atIndex - (current === "unknown" ? 1 : 0),
+    },
+  };
+}
+
 /**
  * Orchestrate one batch. Headless: dispatches every cell through startGen (or skips
  * text cells at $0), groups the resulting jobs under a GenerationBatch, and returns
@@ -238,15 +430,23 @@ function cellGenRequest(
 export async function orchestrateBatch(
   deps: OrchestrateDeps,
   args: OrchestrateArgs,
-): Promise<BatchResult | { error: string }> {
+): Promise<BatchResult | BatchFailure> {
   if (args.cells.length === 0) return { error: "A batch needs at least one cell." };
   if (args.cells.length > MAX_BATCH_CELLS) {
     return { error: `A batch can have at most ${MAX_BATCH_CELLS} cells.` };
   }
   // Shape guard (defence in depth — genRequest is still the spend authority per cell).
+  const stableIds = new Set<string>();
   for (const cell of args.cells) {
     if (cell.type === "gen") {
       if (!cell.prompt || cell.prompt.length > MAX_PROMPT) return { error: "A cell prompt is out of bounds." };
+      if (cell.idempotencyId != null) {
+        if (cell.idempotencyId.length < 1 || cell.idempotencyId.length > MAX_ID) {
+          return { error: "A stable cell id is out of bounds." };
+        }
+        if (stableIds.has(cell.idempotencyId)) return { error: "Stable cell ids must be unique." };
+        stableIds.add(cell.idempotencyId);
+      }
     } else if (cell.type === "text") {
       if (!cell.text || cell.text.length > MAX_PROMPT) return { error: "A text cell is out of bounds." };
     } else {
@@ -256,10 +456,36 @@ export async function orchestrateBatch(
   if (args.batchId.length < 1 || args.batchId.length > MAX_ID) return { error: "Invalid batch id." };
   if (args.attemptId.length < 1 || args.attemptId.length > MAX_ID) return { error: "Invalid attempt id." };
 
-  // Resolve-or-create the grouping row, owner-scoped. The batchId IS the id, so a
-  // replay reuses the same row (idempotent grouping). A cross-tenant id collision
-  // fails closed (no leak, no spend has happened yet).
-  const batch = await resolveOrCreateBatch(deps.prisma, args);
+  let stablePlan: StableCellPlan;
+  try {
+    const prepared = await prepareStableCellPlan(deps.prisma, args);
+    if ("error" in prepared) return prepared;
+    stablePlan = prepared;
+  } catch (error) {
+    console.warn(
+      "factory-batch: stable history check failed before dispatch:",
+      error instanceof Error ? error.message : error,
+    );
+    return interruptedBatch(
+      args,
+      [],
+      0,
+      "not_started",
+      "The batch could not start because its history could not be checked safely.",
+    );
+  }
+
+  // Resolve-or-create the grouping row, owner-scoped. No paid cell has started yet.
+  let batch: { id: string } | { error: string };
+  try {
+    batch = await resolveOrCreateBatch(deps.prisma, args);
+  } catch (error) {
+    console.warn(
+      "factory-batch: batch grouping could not be resolved before dispatch:",
+      error instanceof Error ? error.message : error,
+    );
+    return interruptedBatch(args, [], 0, "not_started", "The batch could not start safely.");
+  }
   if ("error" in batch) return batch;
 
   const cells: CellResult[] = [];
@@ -286,21 +512,34 @@ export async function orchestrateBatch(
     // Read-only early reject: content drift can fail before entering startGen, but this read is
     // NEVER the reserve/reuse authority. startGen repeats the same full binding and disposition
     // decision under the owner/project advisory transaction lock, closing every concurrency gap.
-    const identity = factoryAttemptKey(args.batchId, i, args.attemptId);
-    const expectedMaterial = cellMaterial(cell);
-    const history = await deps.prisma.genJob.findMany({
-      where: {
-        ownerId: args.ownerId,
-        projectId: args.projectId,
-        idempotencyKey: { startsWith: identity.logicalPrefix },
-      },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true, status: true, idempotencyKey: true, prompt: true, model: true, kind: true, count: true,
-        entityIds: true, variantSel: true, sourceGenerationId: true, tailGenerationId: true,
-        referenceVideoGenerationId: true, shotId: true, videoOptions: true,
-      },
-    });
+    const identity = stablePlan.identityByIndex.get(i) ?? factoryAttemptKey(args.batchId, i, args.attemptId);
+    const expectedMaterial = cellMaterial(cell, args.threadId);
+    let history = stablePlan.historyByIndex.get(i);
+    if (!history) {
+      try {
+        history = await deps.prisma.genJob.findMany({
+          where: {
+            ownerId: args.ownerId,
+            projectId: args.projectId,
+            idempotencyKey: { startsWith: identity.logicalPrefix },
+          },
+          orderBy: { createdAt: "desc" },
+          select: FACTORY_HISTORY_SELECT,
+        }) as FactoryHistoryRow[];
+      } catch (error) {
+        console.warn(
+          `factory-batch: history check failed before cell ${i} dispatch:`,
+          error instanceof Error ? error.message : error,
+        );
+        return interruptedBatch(
+          args,
+          cells,
+          i,
+          "not_started",
+          "The batch stopped before every item could be checked safely.",
+        );
+      }
+    }
     if (history.some((prior) => !factoryMaterialMatches(prior, expectedMaterial))) {
       cells.push({
         index: i,
@@ -312,16 +551,28 @@ export async function orchestrateBatch(
       continue;
     }
 
-    const res = await deps.startGen(cellGenRequest(cell, args, i));
+    let res: Awaited<ReturnType<StartGenPort>>;
+    try {
+      res = await deps.startGen(cellGenRequest(cell, args, identity.key));
+    } catch (error) {
+      // startGen already reconciles a lost transaction ACK by keyed lookup. If it still throws,
+      // the current cell's commit state is genuinely unknown; do not label it uncharged.
+      console.warn(
+        `factory-batch: start status unknown for cell ${i}:`,
+        error instanceof Error ? error.message : error,
+      );
+      return interruptedBatch(
+        args,
+        cells,
+        i,
+        "unknown",
+        "The batch stopped while an item's start status was being confirmed.",
+      );
+    }
     if ("error" in res) {
-      // startGen refused this cell (out of credits / disabled model / …). No job, no reserve →
-      // 0 new credits for this cell (transparency: totalCredits == this run's reservation).
       cells.push({ index: i, type: "gen", status: "error", credits: 0, error: res.error });
       continue;
     }
-    // Group the job under the batch — a pure metadata write (no money). Owner-scoped
-    // updateMany so a cross-owner id can never be written; best-effort so a grouping
-    // hiccup never fails a cell whose spend already committed inside startGen.
     await tagJobToBatch(deps.prisma, args.ownerId, res.id, args.batchId);
     if (res.disposition === "fresh") {
       cells.push({ index: i, type: "gen", status: "queued", jobId: res.id, credits: quoteCell(cell) });
@@ -330,11 +581,7 @@ export async function orchestrateBatch(
     }
   }
 
-  const totalCredits = cells.reduce((sum, c) => sum + c.credits, 0);
-  const dispatched = cells.filter((c) => c.status === "queued").length;
-  const reused = cells.filter((c) => c.status === "reused").length;
-  const failed = cells.filter((c) => c.status === "error").length;
-  return { batchId: args.batchId, cells, totalCredits, dispatched, reused, failed };
+  return summarizeBatch(args.batchId, cells);
 }
 
 async function resolveOrCreateBatch(
@@ -381,15 +628,12 @@ async function tagJobToBatch(
     await db.genJob.updateMany({ where: { id: jobId, ownerId }, data: { batchId } });
   } catch (e) {
     // Grouping is best-effort metadata: the job is already created + reserved + queued
-    // inside startGen, so a failed batchId write must NOT surface as a cell error (that
-    // would misreport a cell that is really generating). Log + continue.
+    // inside startGen, so a failed batchId write must NOT surface as a cell error.
     console.warn(`factory-batch: batchId tag failed for job ${jobId} (non-fatal):`, e instanceof Error ? e.message : e);
   }
 }
 
-/** Six-state rollup for a batch: read the grouped jobs' live statuses and count them.
- *  Pure read — never touches money. Used by callers/tests to aggregate
- *  "批状态 = 逐格六态聚合". */
+/** Six-state rollup for a batch: read the grouped jobs' live statuses and count them. */
 export interface BatchStatus {
   batchId: string;
   /** GenJob status counts among the batch's grouped jobs. */
@@ -409,7 +653,7 @@ export async function batchCellStatuses(
     where: { ownerId, batchId },
     select: { status: true },
   });
-  const count = (s: string) => jobs.filter((j) => j.status === s).length;
+  const count = (status: string) => jobs.filter((job) => job.status === status).length;
   return {
     batchId,
     queued: count("QUEUED"),
