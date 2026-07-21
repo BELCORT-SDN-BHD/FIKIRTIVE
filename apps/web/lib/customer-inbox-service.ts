@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import { newId } from "@fikirtive/core";
-import { prisma as defaultDb, type Prisma } from "@fikirtive/db";
+import { evaluateSendEligibility, prisma as defaultDb, type Prisma } from "@fikirtive/db";
 
 export const CUSTOMER_INBOX_ERROR_CODES = {
   NOT_AUTHORIZED: "NOT_AUTHORIZED",
@@ -634,6 +634,57 @@ export function createCustomerInboxService(
     const conversation = await requireConversation(db, principal.ownerId, conversationId);
     const memberMayAct =
       membership.role !== "member" || conversation.assigneeMembershipId === membership.id;
+
+    // C5-M2 §7 wiring: replace the four c5_not_read_in_m2 placeholders with the live
+    // four-axis evaluator, called for the conversation's exact channel identity.
+    // `purpose`/`callerClass` are chokepoint-derived per §3.2 and are never accepted from any
+    // payload. Preflight shows the PROACTIVE posture (§7: "aggregate 仍 SEND_PATH_UNAVAILABLE"
+    // — this display never authorizes a send), not one exact draft reply's reactive-vs-
+    // proactive classification (that open-service-window check belongs to the eventual
+    // submitConversationReply chokepoint, not this read — an interpretation the M2 worker
+    // report calls out explicitly since §7 does not pin down a purpose for a generic,
+    // not-yet-drafted preflight read). "marketing" is the conservative default: D4's
+    // unqualified STOP fans out to both marketing and review_request identically, so it does
+    // not distort the common STOP-triggered case. The acting principal for this read is
+    // always a human membership, so callerClass is always merchant_manual — Otto/automation
+    // has no path into this surface in M2.
+    const identity = await db.contactIdentity.findFirst({
+      where: { id: conversation.contactIdentityId, ownerId: principal.ownerId },
+      select: { contactId: true, channel: true, channelScopeId: true },
+    });
+    const unavailableAxis = {
+      status: "unavailable",
+      source: "contact_identity_unreadable",
+      reason: "contact_identity_unreadable",
+      checkedAt: new Date().toISOString(),
+    } as const;
+    const fourAxes = identity
+      ? await (async () => {
+          const providerConnectionId = identity.channelScopeId
+            ? ((
+                await db.channelConnection.findFirst({
+                  where: {
+                    ownerId: principal.ownerId,
+                    channelScopeId: identity.channelScopeId,
+                    kind: identity.channel,
+                  },
+                  orderBy: { createdAt: "asc" },
+                  select: { id: true },
+                })
+              )?.id ?? null)
+            : null;
+          return evaluateSendEligibility(db, {
+            ownerId: principal.ownerId,
+            contactId: identity.contactId,
+            contactIdentityId: conversation.contactIdentityId,
+            channel: identity.channel,
+            purpose: "marketing",
+            providerConnectionId,
+            callerClass: "merchant_manual",
+          });
+        })()
+      : null;
+
     return {
       conversation: {
         id: conversation.id,
@@ -647,10 +698,10 @@ export function createCustomerInboxService(
       },
       connection: { status: "unknown", source: "stored_evidence_unavailable" },
       d8Carrier: { status: "unavailable", source: "not_implemented" },
-      consentStop: { status: "unknown", source: "c5_not_read_in_m2" },
-      doNotDisturb: { status: "unknown", source: "c5_not_read_in_m2" },
-      providerRefusal: { status: "unknown", source: "c5_not_read_in_m2" },
-      frequency: { status: "unknown", source: "c5_not_read_in_m2" },
+      consentStop: fourAxes?.consentStop ?? unavailableAxis,
+      doNotDisturb: fourAxes?.doNotDisturb ?? unavailableAxis,
+      providerRefusal: fourAxes?.providerRefusal ?? unavailableAxis,
+      frequency: fourAxes?.frequency ?? unavailableAxis,
       exactApproval: { status: "unavailable", source: "d8_not_implemented" },
       sendEligibility: { status: "unavailable", reason: "SEND_PATH_UNAVAILABLE" },
       checkedAt: now(),
