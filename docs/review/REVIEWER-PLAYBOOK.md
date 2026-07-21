@@ -22,6 +22,7 @@
 5. **每笔真实花费**(fal/BytePlus/Stripe 验证跑)逐笔向 founder 确认 —— 「问」就是上限。
 6. **产品取舍**摆选项+利弊给 founder,不替他拍板。
 7. 审 diff 一律对着 `origin/main` 比,不信任本地 worktree 的旧文件。
+8. **证据指针必须可核实**:完工/审查记录写「证据在 X」,X 必须内联原文或给出精确可点链接;死链、错行号、对不上内容的指针本身即为 finding(起评 P3)。
 
 ## Worker 管线(ingest / render / caption / 队列 / reaper)
 
