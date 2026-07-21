@@ -65,7 +65,7 @@ treated as unverified at audit. This requirement applies to merges executed afte
 clause first lands on `main`; earlier merges are assessed under the evidence expectations
 of their time. An unverified merge is not thereby reverted, but it may not be cited as
 compliant precedent, and the next audit must resolve it — by a Founder confirmation
-comment or by recording it as an open finding.
+comment that records the missing executor evidence or by recording it as an open finding.
 
 ## Task and worktree lifecycle
 
