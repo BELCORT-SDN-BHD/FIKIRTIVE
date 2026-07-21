@@ -434,7 +434,9 @@ cadence、encryption、日志/telemetry redaction。当前提案建议 Phase-1�
 - **retention/TTL**：回执与对账事实的最终保留时长**仍 Unknown**，本文**不冻结具体 TTL、也不预设默认方向**——两个方向各有代价，
   中性陈述交 Founder 判断：**长留**便于事后对账/审计/纠纷举证与迟到 reconciliation，但 PII-adjacent 元数据留存越久、隐私与合规
   暴露面越大（PDPA/数据最小化压力，B0-93）；**短留/定期删**降低隐私暴露，但牺牲历史对账能力，且删除须与「回执是外部真相、
-  不得删后重投」（§10 Rollback）协调。真实era 后旧行 terminal 处理策略一并交 Founder（§14）；
+  不得删后重投」（§10 Rollback）协调。真实era 后旧行 terminal 处理策略一并交 Founder（§14）；【状态 2026-07-22】
+  retention/TTL 已由 Founder Resolution 冻结：回执数据商家自有；平台默认 24 个月、到期清理前提醒、商家可调长/调短/关闭；
+  随时手动删/导出（证据：#359 issuecomment-5037075282；#405 issuecomment-5037395417 八点批件）。原中性陈述保留为决策背景。
 - production backup/PITR 实际 cadence 仍 Unknown，不能在本文宣称。
 
 Founder 对本文 §4/§7 的方向若批准，也**不等于**上述 B13 rows 与 TTL 已通过；privacy gate 仍在 migration 前独立到期（`#11/#12`、`#359`）。
@@ -572,7 +574,7 @@ evidence；独立 cross-family review unresolved P0=0/P1=0；CI unavailable 不�
 | 动作 | 何时单独问 |
 |---|---|
 | schema/migration implementation 或 DB apply（`MessageDeliveryEvent`/`MessageDeliveryState`） | 对应 M1 issue 首次动作前 |
-| B13/privacy rows、retention/**TTL 具体时长**、encryption/export/delete（两 carrier） | M1 migration 前（`#11/#12`、`#359`） |
+| B13/privacy rows、retention/**TTL 具体时长**、encryption/export/delete（两 carrier） | M1 migration 前（`#11/#12`、`#359`）。【2026-07-22】rows+TTL 内容已呈 PR #407（合并即闭）；backup cadence 仍 Unknown。 |
 | B0-42 commerce connector 物理载体范围（是否纳入 C6-M1、是否与 messaging 回执分表、commerce fact taxonomy） | commerce seam 实现前（独立 scope 决定） |
 | template-review 外部事实的载体归属（共用脊柱表 vs 独立 bounded carrier） | template-review ingestion 实现前 |
 | 回复率/转化归因到具体 broadcast 的精确口径（依赖 E5-06/07、D10） | 归因层接入前 |
@@ -585,7 +587,7 @@ evidence；独立 cross-family review unresolved P0=0/P1=0；CI unavailable 不�
 
 ### §14.2 当前 Unknown（不偷偷填）
 
-- 两个 carrier 的最终 retention/export/delete 方向与 TTL 具体时长（回执无模拟行，无 cutover 清理项，§7.2）；
+- 两个 carrier 的最终 retention/export/delete 方向与 TTL 具体时长（回执无模拟行，无 cutover 清理项，§7.2）；【2026-07-22 已冻结，见 §9.2 状态注记】
 - B0-42 commerce fact taxonomy 与载体范围（订单/付款/退款/积分的规范化边界）；
 - template-review 外部事实的载体归属；
 - 回复率/转化归因到具体 broadcast 的精确口径（归因层未接）；
