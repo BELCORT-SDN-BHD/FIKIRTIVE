@@ -1,5 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { prisma } from "@fikirtive/db";
+import {
+  prisma,
+  recordContactDndEvent,
+  recordConsentEvent,
+  recordSendFrequencyEvent,
+} from "@fikirtive/db";
 import * as customerInboxGateway from "../customer-inbox-gateway";
 import { createCustomerInboxService } from "../customer-inbox-service";
 import { requireOwner } from "../auth-guard";
@@ -94,6 +99,12 @@ async function cleanup(): Promise<void> {
   await prisma.actionEvent.deleteMany({
     where: { ownerId: { in: OWNERS }, type: { startsWith: "c4.inbox.impersonation" } },
   });
+  // C5-M2 preflight wiring (ledger #386): the four axes now read real consent/DND/frequency
+  // facts, so tests that write them need cleanup before Contact's onDelete:Restrict FKs below.
+  await prisma.contactSendFrequencyEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.consentStateProjection.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.consentEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.contactDndEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.customerMessageTemplateVersion.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.customerMessageTemplate.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.customerConversationDraft.deleteMany({ where: { ownerId: { in: OWNERS } } });
@@ -1186,5 +1197,78 @@ describe("C4b-M3 transaction-time role recheck (ledger #359 item 25)", () => {
         where: { ownerId: ORG_A, id: CONVERSATION_OWNER },
       }),
     ).resolves.toMatchObject({ revision: 0 });
+  });
+});
+
+describe("C5-M2 preflight four-axis wiring (ledger #386)", () => {
+  it("reads the live evaluator instead of the c5_not_read_in_m2 placeholders, honest empty-state defaults", async () => {
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    for (const axis of [
+      preflight.consentStop,
+      preflight.doNotDisturb,
+      preflight.providerRefusal,
+      preflight.frequency,
+    ]) {
+      expect(axis.source).not.toBe("c5_not_read_in_m2");
+    }
+    // No consent/DND/refusal/frequency facts exist yet for CONTACT_A/IDENTITY_A: unknown
+    // consent state reads risk for the human-membership preflight caller (§4.2.1), and the
+    // other three axes are honestly empty (pass).
+    expect(preflight.consentStop).toMatchObject({ status: "risk", source: "consent_state_projection" });
+    expect(preflight.doNotDisturb).toMatchObject({ status: "pass", source: "contact_dnd_fold" });
+    expect(preflight.providerRefusal).toMatchObject({ status: "pass", source: "provider_refusal_state" });
+    expect(preflight.frequency).toMatchObject({ status: "pass", source: "send_frequency_counter" });
+    // C5 lighting the four axes never lights the send path itself (§7).
+    expect(preflight.sendEligibility).toEqual({ status: "unavailable", reason: "SEND_PATH_UNAVAILABLE" });
+  });
+
+  it("reflects a DND block on the doNotDisturb axis", async () => {
+    await recordContactDndEvent({
+      ownerId: ORG_A,
+      contactId: CONTACT_A,
+      sourceKind: "crm_ui",
+      action: "set",
+      idempotencyKey: "c5-m2-preflight-test-dnd-set",
+    });
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    expect(preflight.doNotDisturb).toMatchObject({ status: "block", reason: "dnd_set" });
+  });
+
+  it("reflects an effective_revoke consent block on the consentStop axis", async () => {
+    await recordConsentEvent({
+      ownerId: ORG_A,
+      contactId: CONTACT_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+      sourceKind: "unsubscribe_link",
+      action: "revoke",
+      evidenceRef: "evidence:c5-m2-preflight-test",
+      idempotencyKey: "c5-m2-preflight-test-consent-revoke",
+    });
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    expect(preflight.consentStop).toMatchObject({ status: "block", reason: "effective_revoke" });
+  });
+
+  it("reflects a frequency-cap block on the frequency axis once the rolling window is spent", async () => {
+    await recordSendFrequencyEvent({
+      ownerId: ORG_A,
+      contactId: CONTACT_A,
+      channel: "whatsapp",
+      purposeClass: "proactive_non_transactional",
+      sourceKind: "conversation_reply",
+      sendRef: "c5-m2-preflight-test-send-1",
+      simulated: true,
+      idempotencyKey: "freq:conv:c4b-m2-test-org-a:c5-m2-preflight-test-send-1",
+    });
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    expect(preflight.frequency).toMatchObject({ status: "block", reason: "frequency_cap_reached" });
   });
 });
