@@ -878,6 +878,23 @@ describe("C4b-M2 preflight capability gate", () => {
   });
 });
 
+describe("C4b-M3 preflight freshness contract (issue #378)", () => {
+  it("returns the three freshness timestamps separately, honest about missing provider/health evidence", async () => {
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    // Per §7.3: never merge these into one synthetic "last synced" — a missing value is
+    // honest unknown, not a guess from unrelated evidence.
+    expect(preflight.freshness).toEqual({
+      lastProviderEventAt: null,
+      lastHealthCheckedAt: null,
+      lastDataLoadedAt: NOW,
+    });
+    // Additive-only: the pre-existing checkedAt field is untouched.
+    expect(preflight.checkedAt).toEqual(NOW);
+  });
+});
+
 describe("C4b-M2 principal identity cross-tenant check", () => {
   it("denies a membershipId whose real orgId doesn't match the claimed ownerId", async () => {
     // MEMBER_B genuinely exists, but under ORG_B — pairing it with a claimed ORG_A
@@ -942,6 +959,70 @@ describe("C4b-M2 needs_reply view integrity", () => {
   });
 });
 
+describe("C4b-M3 needs_reply keyset pagination (ledger #359 item 21)", () => {
+  it("returns exactly `limit` needs_reply conversations, most-recent-first, when more exist", async () => {
+    const poolSize = 8;
+    const requestedLimit = 5;
+    const pool = Array.from({ length: poolSize }, (_, i) => ({
+      identityId: `c4b-m3-test-identity-needs-reply-${i}`,
+      conversationId: `c4b-m3-test-conversation-needs-reply-${i}`,
+      messageId: `c4b-m3-test-message-needs-reply-${i}`,
+      externalId: `+601998${String(i).padStart(6, "0")}`,
+      // Strictly increasing, all more recent than the seeded conversations, so ranking
+      // within the pool is unambiguous regardless of what else exists for ORG_A.
+      activity: new Date(NOW.getTime() + (i + 1) * 1000),
+    }));
+    await prisma.contactIdentity.createMany({
+      data: pool.map((p) => ({
+        id: p.identityId,
+        ownerId: ORG_A,
+        contactId: CONTACT_A,
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        externalId: p.externalId,
+      })),
+    });
+    await prisma.customerConversation.createMany({
+      data: pool.map((p) => ({
+        id: p.conversationId,
+        ownerId: ORG_A,
+        contactIdentityId: p.identityId,
+        status: "open",
+        revision: 0,
+        lastMessageAt: p.activity,
+        lastActivityAt: p.activity,
+      })),
+    });
+    await prisma.customerMessage.createMany({
+      data: pool.map((p) => ({
+        id: p.messageId,
+        ownerId: ORG_A,
+        conversationId: p.conversationId,
+        direction: "inbound",
+        actorKind: "customer",
+        kind: "text",
+        contentJson: { schemaVersion: 1, type: "text", text: "Still waiting on a reply" },
+        searchText: "Still waiting on a reply",
+        contentHash: `needs-reply-content-${p.messageId}`,
+        canonicalizationVersion: "v1",
+        receivedAt: p.activity,
+      })),
+    });
+
+    const results = await inbox.listConversations(owner, {
+      view: "needs_reply",
+      limit: requestedLimit,
+    });
+    expect(results).toHaveLength(requestedLimit);
+
+    const expectedIds = [...pool]
+      .sort((a, b) => b.activity.getTime() - a.activity.getTime())
+      .slice(0, requestedLimit)
+      .map((p) => p.conversationId);
+    expect(results.map((row) => (row as { id: string }).id)).toEqual(expectedIds);
+  });
+});
+
 describe("C4b-M2 control-character validation", () => {
   it("rejects a control character but allows tabs and newlines in bounded text", async () => {
     await expectCode(
@@ -949,6 +1030,26 @@ describe("C4b-M2 control-character validation", () => {
         channelScopeId: SCOPE_A,
         channel: "whatsapp",
         name: "bad\x07name",
+        locale: "en_MY",
+      }),
+      "INVALID_ARGUMENT",
+    );
+    // C1 control (U+0080-U+009F) and Unicode line separator (U+2028) must also be
+    // rejected — ledger #359 item 24 extended CONTROL_CHARS past the old C0-only class.
+    await expectCode(
+      inbox.createMessageTemplate(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        name: "bad\u0080name",
+        locale: "en_MY",
+      }),
+      "INVALID_ARGUMENT",
+    );
+    await expectCode(
+      inbox.createMessageTemplate(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        name: "bad\u2028name",
         locale: "en_MY",
       }),
       "INVALID_ARGUMENT",
@@ -962,5 +1063,128 @@ describe("C4b-M2 control-character validation", () => {
     expect(saved.resource.contentJson).toMatchObject({
       text: "Line one\nLine two\twith a tab",
     });
+  });
+});
+
+// Wraps the real Prisma client so the first `membership.findFirst` call matching
+// `membershipId` — the outer, pre-transaction read done by requireWriteMembership — is
+// followed by a real, committed role change against Postgres, before that read's own
+// promise resolves back to the caller. This reproduces "the caller was demoted between
+// the outer check and the in-transaction recheck" deterministically (no timing race):
+// the demotion is chained directly onto the intercepted call, so it is guaranteed to
+// commit before the outer check returns and before the function reaches its
+// `db.$transaction(...)` call. The transaction's own tx-scoped `activeMembership` read
+// goes through Prisma's real transaction client, which this harness never touches, so it
+// genuinely re-reads the now-demoted row from Postgres — this exercises real committed
+// state, not a stub of the recheck logic under test.
+//
+// A pure-trigger approach (as used by the rollback test above) does not reach here:
+// Postgres triggers fire on DML, not on SELECT, so there is no BEFORE-SELECT hook to fire
+// the demotion exactly between the two reads. Racing a concurrent UPDATE against the
+// few-microsecond gap between the two awaited reads would be non-deterministic. Chaining
+// the demotion onto the intercepted call — a minimal, commented interception at the
+// `db` seam the service already accepts as a constructor option — is the smallest change
+// that keeps the timing exact while leaving every other query real.
+function createRoleDemotionHarness(membershipId: string, demoteTo: string): typeof prisma {
+  let intercepted = false;
+  const membershipProxy = new Proxy(prisma.membership, {
+    get(target, prop, receiver) {
+      if (prop !== "findFirst") return Reflect.get(target, prop, receiver);
+      return async (...args: unknown[]) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (target.findFirst as any)(...args);
+        if (!intercepted && result?.id === membershipId) {
+          intercepted = true;
+          await prisma.membership.update({
+            where: { id: membershipId },
+            data: { role: demoteTo },
+          });
+        }
+        return result;
+      };
+    },
+  });
+  return new Proxy(prisma, {
+    get(target, prop, receiver) {
+      if (prop === "membership") return membershipProxy;
+      const value = Reflect.get(target, prop, receiver);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return typeof value === "function" ? (value as any).bind(target) : value;
+    },
+  }) as typeof prisma;
+}
+
+describe("C4b-M3 transaction-time role recheck (ledger #359 item 25)", () => {
+  it("denies createMessageTemplate when the caller is demoted to member between the outer check and the tx-scoped recheck", async () => {
+    const demotingInbox = createCustomerInboxService({
+      db: createRoleDemotionHarness(ADMIN, "member"),
+      clock: () => NOW,
+      id: () => `c4b-m3-test-generated-${++sequence}`,
+    });
+    await expectCode(
+      demotingInbox.createMessageTemplate(admin, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        name: "demoted_admin_template",
+        locale: "en_MY",
+      }),
+      "ACTION_DENIED",
+    );
+    await expect(
+      prisma.membership.findFirstOrThrow({ where: { id: ADMIN } }),
+    ).resolves.toMatchObject({ role: "member" });
+    expect(
+      await prisma.customerMessageTemplate.count({
+        where: { ownerId: ORG_A, name: "demoted_admin_template" },
+      }),
+    ).toBe(0);
+  });
+
+  it("denies createMessageTemplateVersion when the caller is demoted to member between the outer check and the tx-scoped recheck", async () => {
+    const demotingInbox = createCustomerInboxService({
+      db: createRoleDemotionHarness(ADMIN, "member"),
+      clock: () => NOW,
+      id: () => `c4b-m3-test-generated-${++sequence}`,
+    });
+    await expectCode(
+      demotingInbox.createMessageTemplateVersion(admin, {
+        templateId: TEMPLATE_A,
+        body: "Demoted admin body",
+        variables: [],
+      }),
+      "ACTION_DENIED",
+    );
+    await expect(
+      prisma.membership.findFirstOrThrow({ where: { id: ADMIN } }),
+    ).resolves.toMatchObject({ role: "member" });
+    expect(
+      await prisma.customerMessageTemplateVersion.count({
+        where: { ownerId: ORG_A, templateId: TEMPLATE_A, revision: { gt: 1 } },
+      }),
+    ).toBe(0);
+  });
+
+  it("denies requestAutomationResume when the caller is demoted to member between the outer check and the tx-scoped recheck", async () => {
+    const demotingInbox = createCustomerInboxService({
+      db: createRoleDemotionHarness(ADMIN, "member"),
+      clock: () => NOW,
+      id: () => `c4b-m3-test-generated-${++sequence}`,
+    });
+    await expectCode(
+      demotingInbox.requestAutomationResume(admin, {
+        conversationId: CONVERSATION_OWNER,
+        expectedRevision: 0,
+        note: "Demoted resume attempt",
+      }),
+      "ACTION_DENIED",
+    );
+    await expect(
+      prisma.membership.findFirstOrThrow({ where: { id: ADMIN } }),
+    ).resolves.toMatchObject({ role: "member" });
+    await expect(
+      prisma.customerConversation.findFirstOrThrow({
+        where: { ownerId: ORG_A, id: CONVERSATION_OWNER },
+      }),
+    ).resolves.toMatchObject({ revision: 0 });
   });
 });

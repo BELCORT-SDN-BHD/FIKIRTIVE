@@ -1,4 +1,4 @@
-# 86 条对等债 → 矩阵行 对照表（缝 9 棘轮台账）
+# 100 条对等债 → 矩阵行 对照表（缝 9 棘轮台账）
 
 > 真源=`packages/otto/src/parity-manifest.ts`（棘轮基线见 `scripts/parity-debt-baseline.json`）。每块验收=本表该块债清零。
 > debt-85/86：PR #268（B4 W-B4-2）新增 `ottoReject` 导出的记账行——D-015⑥ 当时明确批准作者迁自己的行；当前不构成 standing authority。
@@ -91,3 +91,17 @@
 | debt-84 | `api:otto/thread-activity.GET` | B0-77 | B9 |
 | debt-85 | `otto-actions.ottoReject` | B0-79 | B9 |
 | debt-86 | `otto-client-actions.ottoReject` | B0-79 | B9 |
+| debt-87 | `customer-inbox-ui-actions.listConversations` | B0-31 | B5 |
+| debt-88 | `customer-inbox-ui-actions.getConversation` | B0-31 | B5 |
+| debt-89 | `customer-inbox-ui-actions.searchConversations` | B0-31 | B5 |
+| debt-90 | `customer-inbox-ui-actions.getHistory` | B0-31 | B5 |
+| debt-91 | `customer-inbox-ui-actions.getConversationPreflight` | B0-31 | B5 |
+| debt-92 | `customer-inbox-ui-actions.listTemplates` | B0-32 | B5 |
+| debt-93 | `customer-inbox-ui-actions.saveConversationDraft` | B0-31 | B5 |
+| debt-94 | `customer-inbox-ui-actions.assignConversation` | B0-31 | B5 |
+| debt-95 | `customer-inbox-ui-actions.takeOverConversation` | B0-31 | B5 |
+| debt-96 | `customer-inbox-ui-actions.handOffConversation` | B0-31 | B5 |
+| debt-97 | `customer-inbox-ui-actions.setConversationStatus` | B0-31 | B5 |
+| debt-98 | `customer-inbox-ui-actions.requestAutomationResume` | B0-31 | B5 |
+| debt-99 | `customer-inbox-ui-actions.createMessageTemplate` | B0-32 | B5 |
+| debt-100 | `customer-inbox-ui-actions.createMessageTemplateVersion` | B0-32 | B5 |
