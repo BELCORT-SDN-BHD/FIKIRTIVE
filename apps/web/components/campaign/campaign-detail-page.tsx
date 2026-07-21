@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   CalendarDays,
@@ -13,6 +14,7 @@ import {
   Plus,
   Save,
   Send,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import {
@@ -216,6 +218,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
   }
 
   const entries = campaign.plan?.entries ?? [];
+  const approvedCount = entries.filter((entry) => entry.status === "approved").length;
   const proposalReady = proposal.date && proposal.hook.trim() && proposal.brief.trim();
 
   return (
@@ -239,8 +242,16 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
           </div>
         </header>
 
-        <div className="mt-6 rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm leading-6 text-info-soft-foreground">
-          This is a zero-cost planning surface. Estimated credits are display-only. Marking an entry approved does not generate, schedule, send, or publish anything.
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm leading-6 text-info-soft-foreground">
+          <span>This is a zero-cost planning surface. Estimated credits are display-only. Marking an entry approved does not generate, schedule, send, or publish anything.</span>
+          {approvedCount > 0 ? (
+            <Button asChild size="sm" className="shrink-0">
+              <Link href={`/campaign/${campaign.id}/confirm`}>
+                <Sparkles />
+                Generate approved · {approvedCount}
+              </Link>
+            </Button>
+          ) : null}
         </div>
         {error ? <div className="mt-4 rounded-xl border border-error-soft bg-error-soft p-4 text-sm text-destructive">{error}</div> : null}
         {notice ? <div className="mt-4 rounded-xl border border-success/25 bg-success-soft p-4 text-sm text-success-soft-foreground">{notice}</div> : null}
