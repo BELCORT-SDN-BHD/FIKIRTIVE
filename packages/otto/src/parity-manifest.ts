@@ -142,6 +142,8 @@ export const PARITY_MANIFEST = {
   "campaign-actions.setCampaignGrouping": { skill: "planCampaign", reason: "B0-52/C2a: Project/ScheduledPost/Generation grouping validates both Campaign and target against the authenticated owner." },
   "campaign-view-data.listCampaigns": { skill: "readCampaigns", reason: "B0-55/C2a read parity: owner-scoped Campaign list and structured plan summaries." },
   "campaign-view-data.getCampaign": { skill: "readCampaigns", reason: "B0-52/55/C2a read parity: exact owner-scoped Campaign detail with independently owner-scoped grouped summaries." },
+  "campaign-generation-confirm.quoteCampaignGeneration": { todoSkill: true, reason: "B0-57/C2b human-only pack-confirm UI (issue #395, debt-110): $0 owner-scoped server-recompute of the approved-plan price from the live config; the Otto planCampaign/generate skill is staged for a later Founder-approved milestone per the B8 §7.2 contract." },
+  "campaign-generation-confirm.confirmCampaignGeneration": { todoSkill: true, reason: "B0-57/C2b human-only pack-confirm UI (issue #395, debt-111): owner-only batch generation confirm; adds NO spend path — it reuses the existing orchestrateBatch→startGen authority (per-cell reserve/settle/refund). Otto generate skill staged for a later Founder-approved milestone per B8 §7.2." },
 
   "crm-actions.createContact": { skill: "manageContacts", reason: "B0-59/C1 act parity: creates only an owner-scoped Contact and returns deterministic duplicate suggestions; identity and consent are never inferred." },
   "crm-actions.setContactConsent": { skill: "manageContacts", reason: "B0-60/C1 act parity: manual consent capture enters the shared ConsentEvent runtime as crm_manual merchant/backfill/asserted." },
