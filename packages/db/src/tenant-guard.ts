@@ -42,6 +42,8 @@ export const TENANT_MODELS = new Set([
   // C4b-M1 (2026-07-20): provider-neutral Customer Inbox storage carriers.
   "CustomerConversation", "CustomerMessage", "CustomerConversationEvent",
   "CustomerConversationDraft", "CustomerMessageTemplate", "CustomerMessageTemplateVersion",
+  // C5-M1 (2026-07-21): additive-only broadcast/frequency storage carriers.
+  "BroadcastRun", "BroadcastAudienceMember", "ContactSendFrequencyEvent",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
