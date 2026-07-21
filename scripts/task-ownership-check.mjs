@@ -216,7 +216,13 @@ function resolveMainlineBaselines(cwd) {
 }
 
 function pathIdenticalToRef(cwd, ref, path) {
-  const result = gitResult(cwd, ["diff", "--quiet", ref, "HEAD", "--", path]);
+  // --literal-pathspecs disables pathspec magic (":(glob)", ":(attr:...)", etc.) so a path
+  // that is itself a literal Git tree path (as every path here is, taken from -z write-set
+  // output) can never be reinterpreted as a matcher. Without it, an out-of-scope path whose
+  // literal name happens to start with a magic prefix could match zero files, making the
+  // diff spuriously empty (exit 0) and smuggling arbitrary out-of-scope content past the
+  // fence as a false "identical to mainline" exemption.
+  const result = gitResult(cwd, ["--literal-pathspecs", "diff", "--quiet", ref, "HEAD", "--", path]);
   return result.status === 0;
 }
 
