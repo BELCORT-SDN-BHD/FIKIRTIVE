@@ -105,3 +105,12 @@
 | debt-98 | `customer-inbox-ui-actions.requestAutomationResume` | B0-31 | B5 |
 | debt-99 | `customer-inbox-ui-actions.createMessageTemplate` | B0-32 | B5 |
 | debt-100 | `customer-inbox-ui-actions.createMessageTemplateVersion` | B0-32 | B5 |
+| debt-101 | `customer-broadcast-ui-actions.listBroadcastRuns` | B0-43 | B7 |
+| debt-102 | `customer-broadcast-ui-actions.getBroadcastRun` | B0-43 | B7 |
+| debt-103 | `customer-broadcast-ui-actions.getBroadcastRunLivePreflight` | B0-45 | B7 |
+| debt-104 | `customer-broadcast-ui-actions.previewAudienceEligibility` | B0-44 | B7 |
+| debt-105 | `customer-broadcast-ui-actions.createBroadcastRun` | B0-43 | B7 |
+| debt-106 | `customer-broadcast-ui-actions.freezeAudience` | B0-43 | B7 |
+| debt-107 | `customer-broadcast-ui-actions.confirmBroadcastRun` | B0-43 | B7 |
+| debt-108 | `customer-broadcast-ui-actions.cancelBroadcastRun` | B0-43 | B7 |
+| debt-109 | `customer-broadcast-ui-actions.executeBroadcastRun` | B0-43 | B7 |

@@ -168,6 +168,16 @@ export const PARITY_MANIFEST = {
   "customer-inbox-ui-actions.createMessageTemplate": { todoSkill: true, reason: "C4b-M3 human-only Inbox UI (issue #378); Otto Inbox skill is staged for a later Founder-approved milestone per the C4a contract (spec §6/§10)." },
   "customer-inbox-ui-actions.createMessageTemplateVersion": { todoSkill: true, reason: "C4b-M3 human-only Inbox UI (issue #378); Otto Inbox skill is staged for a later Founder-approved milestone per the C4a contract (spec §6/§10)." },
 
+  "customer-broadcast-ui-actions.listBroadcastRuns": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.getBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.getBroadcastRunLivePreflight": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.previewAudienceEligibility": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.createBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.freezeAudience": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.confirmBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.cancelBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+  "customer-broadcast-ui-actions.executeBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388): SIMULATED execution (zero real provider/spend); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
+
   "canvas-actions.listCanvasNodes": { skill: "manageCanvas" },
   "canvas-actions.createCanvasNode": { skill: "manageCanvas" },
   "canvas-actions.moveCanvasNode": { exempt: "VISUAL", reason: "Pure canvas positioning is a visual micro-operation." },
