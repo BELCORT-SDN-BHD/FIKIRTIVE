@@ -34,6 +34,10 @@ deployment, spend, credential or cleanup authority.
    node scripts/task-ownership-check.mjs check --claim-id <unique-task-claim>
    ```
 
+   Scope must include every registry or export file the new module will necessarily
+   touch (a package's `index.ts`, the tenant-guard allowlist, a parity manifest or
+   baseline, etc.); omitting one leaves it out of scope, and `check` fails closed once
+   the mutation reaches that file.
 4. Re-run `check --claim-id` on resume and immediately before commit or handoff. It
    verifies the declared base/worktree and fences committed, staged, unstaged and
    untracked paths; rename detection is disabled so both sides are checked.
