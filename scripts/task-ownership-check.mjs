@@ -197,12 +197,15 @@ function blobAt(cwd, ref, path) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-// Committed-only out-of-scope paths are exempt when their HEAD content is byte-identical
-// to the same path in mainline (merge-base(HEAD, origin/main) or origin/main's tip) — i.e.
-// the path was pulled in unchanged by merging origin/main, not authored by this claim. When
-// origin/main cannot be resolved at all (offline, shallow clone, no tracking ref), no
-// baseline exists and this returns no exemptions: behavior fails closed to the prior,
-// unexempted check.
+// Committed-only out-of-scope paths are exempt when their HEAD tree entry (mode and
+// content, not content alone) is identical to the same path in mainline (merge-base(HEAD,
+// origin/main) or origin/main's tip) — i.e. the path was pulled in unchanged by merging
+// origin/main, not authored by this claim. Comparing the tree entry rather than just the
+// blob closes a mode-bit-only escape: a permission-mode flip (e.g. 100644 -> 100755) leaves
+// the blob hash unchanged but is still a real change this claim made, so it must not be
+// exempt. When origin/main cannot be resolved at all (offline, shallow clone, no tracking
+// ref), no baseline exists and this returns no exemptions: behavior fails closed to the
+// prior, unexempted check.
 function resolveMainlineBaselines(cwd) {
   const mainTip = resolveRef(cwd, "origin/main");
   if (!mainTip) return [];
@@ -212,11 +215,15 @@ function resolveMainlineBaselines(cwd) {
   return [...baselines];
 }
 
+function pathIdenticalToRef(cwd, ref, path) {
+  const result = gitResult(cwd, ["diff", "--quiet", ref, "HEAD", "--", path]);
+  return result.status === 0;
+}
+
 function isExemptByMainline(cwd, path, baselines) {
   if (baselines.length === 0) return false;
-  const headBlob = blobAt(cwd, "HEAD", path);
-  if (!headBlob) return false;
-  return baselines.some((ref) => blobAt(cwd, ref, path) === headBlob);
+  if (!blobAt(cwd, "HEAD", path)) return false;
+  return baselines.some((ref) => pathIdenticalToRef(cwd, ref, path));
 }
 
 function scopeContainsPath(scope, path) {
