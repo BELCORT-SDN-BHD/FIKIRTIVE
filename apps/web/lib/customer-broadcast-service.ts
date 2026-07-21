@@ -6,29 +6,35 @@ import { contactMatchesRules, validateSegmentRuleGroup, type SegmentContactFacts
 import {
   evaluateSendEligibility,
   prisma as defaultDb,
+  recordSendFrequencyEvent,
+  SendEligibilityError,
+  type EligibilityAxis,
   type Prisma,
   type SendEligibilityResult,
 } from "@fikirtive/db";
 
 /**
- * C5-M2 broadcast domain actions. Spec:
- * docs/superpowers/specs/2026-07-21-c5-broadcast-eligibility-physical-contract.md §6/§10.
+ * C5 broadcast domain actions. Spec:
+ * docs/superpowers/specs/2026-07-21-c5-broadcast-eligibility-physical-contract.md §5/§6/§10.
  *
- * SCOPE NOTE (read before extending this file): §10's M2 boundary is explicit —
- * "实现 submitBroadcastRun 域动作（建/冻结受众/confirm + 冻结 verdict 快照），但执行/发送保持
- * SEND_PATH_UNAVAILABLE（真实与模拟都不发）" and the M2 "不做" list names "真实/模拟发送" — BOTH
- * real AND simulated sends are out of scope until M3. BroadcastRun.status's
- * executing/completed values and BroadcastAudienceMember.sendState's simulated_sent value are
- * therefore UNREACHABLE from this file by design (only draft/audience_frozen/confirmed/
- * cancelled are ever written here) — see the M2 worker report for the full deviation note
- * against a task brief that additionally asked for an M3-scope executeBroadcastRun mutation.
+ * M2 built create/freeze/confirm/cancel + the hard-disabled real-send chokepoint
+ * (submitBroadcastRun, always SEND_PATH_UNAVAILABLE). M3 (issue #388) adds the SIMULATED
+ * execution path — executeBroadcastRun — which is the ONLY function here that ever moves a run
+ * into an execution or terminal-send state, or marks a member simulated. It runs entirely
+ * on the simulated-provider layer (ledger #359 item 28): it re-reads live four-axis eligibility
+ * per member, marks four-axes-pass members simulated_sent + records exactly one frequency event
+ * (simulated=true), and marks any-axis-blocked members skipped_ineligible with a stable reason —
+ * with ZERO real adapter/provider/webhook/credential/spend. The real-send path stays
+ * SEND_PATH_UNAVAILABLE in submitBroadcastRun (unchanged from M2). See the M3 static
+ * no-second-real-send-path test for the machine proof of "no real provider entry point".
  *
  * RBAC NOTE: §14.2 lists "C5 broadcast creator/approver/org-role 的 exact capability matrix"
  * as Founder-Unknown, with an explicit instruction: "未决期间所有 mutation default deny". Every
- * mutation below is therefore restricted to role "owner" ONLY (the most conservative
- * available choice) until the Founder decides the real matrix — see the M2 worker report.
+ * mutation below (create/freeze/confirm/cancel/execute) is therefore restricted to role "owner"
+ * ONLY (the most conservative available choice) until the Founder decides the real matrix.
  * Reads stay open to every active role, matching customer-inbox-service.ts's read pattern
- * (the "default deny" instruction is scoped to "mutation" only).
+ * (the "default deny" instruction is scoped to "mutation" only). The UI shows non-owner viewers
+ * the controls disabled with an inline explanation, but the server here is the sole enforcer.
  */
 
 export const CUSTOMER_BROADCAST_ERROR_CODES = {
@@ -39,6 +45,10 @@ export const CUSTOMER_BROADCAST_ERROR_CODES = {
   IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_CONFLICT",
   SEND_PATH_UNAVAILABLE: "SEND_PATH_UNAVAILABLE",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
+  // Re-freeze found a stale member that had already advanced past `pending` — impossible under
+  // the status gating (freeze is draft/audience_frozen only, sends need confirmed/executing), so
+  // it signals corruption: fail closed and roll back rather than delete a member with send state.
+  AUDIENCE_STATE_CONFLICT: "AUDIENCE_STATE_CONFLICT",
 } as const;
 
 export type CustomerBroadcastErrorCode =
@@ -63,7 +73,14 @@ export type BroadcastPurpose = (typeof BROADCAST_PURPOSES)[number];
 
 const BROADCAST_STATUSES_ALLOWING_FREEZE = new Set(["draft", "audience_frozen"]);
 const BROADCAST_STATUSES_ALLOWING_CONFIRM = new Set(["audience_frozen"]);
+// A confirmed run may still be cancelled; an executing/completed one may not (it has already
+// spent frequency cap on simulated sends — cancelling would misrepresent what happened).
 const BROADCAST_STATUSES_ALLOWING_CANCEL = new Set(["draft", "audience_frozen", "confirmed"]);
+// Frequency counts on purposeClass, not the run's marketing/review_request purpose — both
+// broadcast purposes are proactive_non_transactional (§5.4).
+const BROADCAST_PURPOSE_CLASS = "proactive_non_transactional" as const;
+// The four axes, in the fixed order a skip reason is derived from (first non-pass wins).
+const AXIS_ORDER = ["consentStop", "doNotDisturb", "providerRefusal", "frequency"] as const;
 
 type ActiveRole = "owner" | "admin" | "member";
 type DatabaseClient = typeof defaultDb | Prisma.TransactionClient;
@@ -95,6 +112,8 @@ export type FreezeAudienceInput = {
 export type ConfirmBroadcastRunInput = { broadcastRunId: string; expectedRevision: number };
 export type CancelBroadcastRunInput = { broadcastRunId: string; expectedRevision: number };
 export type SubmitBroadcastRunInput = { broadcastRunId: string };
+export type ExecuteBroadcastRunInput = { broadcastRunId: string; expectedRevision: number };
+export type BroadcastRunLivePreflightInput = { broadcastRunId: string };
 
 export type PreviewAudienceEligibilityInput = {
   segmentId: string;
@@ -161,8 +180,36 @@ function verdictHash(verdict: unknown): string {
   return createHash("sha256").update("c5-eligibility-verdict:v1\0").update(JSON.stringify(verdict)).digest("hex");
 }
 
-function asConsent(value: string): SegmentContactFacts["marketingConsent"] {
-  return value === "opt_in" || value === "opt_out" || value === "unknown" ? value : undefined;
+/** True only when all four axes read `pass` — the sole condition for a simulated send (§4.4). */
+function axisAllPass(verdict: SendEligibilityResult): boolean {
+  return AXIS_ORDER.every((name) => (verdict[name] as EligibilityAxis).status === "pass");
+}
+
+/**
+ * Stable, merchant-visible skip code naming the FIRST non-pass axis (fixed order) and its
+ * reason — never PII, never a merged boolean (§5.3 skipReason / §3.2 four-axes-stay-four).
+ * e.g. "consentStop:effective_revoke", "doNotDisturb:dnd_set", "frequency:frequency_cap_reached".
+ */
+function firstBlockingSkipReason(verdict: SendEligibilityResult): string {
+  for (const name of AXIS_ORDER) {
+    const axis = verdict[name] as EligibilityAxis;
+    if (axis.status !== "pass") return `${name}:${axis.reason ?? axis.status}`;
+  }
+  // Unreachable when called only after axisAllPass() is false, but stay honest rather than lie.
+  return "unknown:no_blocking_axis";
+}
+
+/**
+ * §5.4 broadcast frequency idempotency key. Deliberately EXCLUDES audienceRevision so a
+ * CAS re-freeze or an execution retry/resume reuses the same key and never double-counts.
+ */
+function broadcastFrequencyKey(
+  ownerId: string,
+  broadcastRunId: string,
+  contactIdentityId: string,
+  channel: string,
+): string {
+  return `freq:${ownerId}:${broadcastRunId}:${contactIdentityId}:${channel}:${BROADCAST_PURPOSE_CLASS}`;
 }
 
 export function createCustomerBroadcastService(
@@ -243,12 +290,23 @@ export function createCustomerBroadcastService(
    * file's allowed surface does not include segment-actions.ts, and the two callers need the
    * result paired with per-identity eligibility rather than segment-actions.ts's aggregate
    * counts.
+   *
+   * Ledger #35 repaid here: the segment-contactability estimate now derives from
+   * ConsentStateProjection (the R-010 consent authority the eligibility axes already read),
+   * NOT the legacy Contact.marketingConsent column — killing the double source of truth. Only a
+   * per-(contact,channel,purpose) `effective_revoke` projection excludes a contact from this
+   * ESTIMATE; unknown / no-projection / verified_grant all stay in (unknown flag + keep, B0-44 —
+   * the estimate never shrinks the merchant's list on missing evidence). The estimate is still
+   * only an estimate: the frozen verdict snapshot and the execution-time live re-read are what
+   * actually gate a send. The dead `Contact.doNotDisturb` read is gone too — DND is a separate
+   * axis carried honestly in each member's verdict, never a silent estimate filter.
    */
   async function resolveSegmentAudience(
     client: DatabaseClient,
     ownerId: string,
     segmentId: string,
     channel: string,
+    purpose: BroadcastPurpose,
   ): Promise<AudienceCandidate[]> {
     const segment = await client.segment.findFirst({
       where: { id: segmentId, ownerId, deletedAt: null },
@@ -263,26 +321,31 @@ export function createCustomerBroadcastService(
       select: {
         id: true,
         totalOrdersMyr: true,
-        marketingConsent: true,
-        doNotDisturb: true,
         identities: { where: { ownerId, channel, deletedAt: null }, select: { id: true, channel: true } },
       },
     });
 
+    // Consent authority for the estimate: only a known effective_revoke (per this channel +
+    // broadcast purpose) is treated as "not contactable". Everything else — including a contact
+    // with no projection row yet — stays contactable so unknown permission is flagged + kept.
+    const revoked = await client.consentStateProjection.findMany({
+      where: { ownerId, channel, purpose, state: "effective_revoke" },
+      select: { contactId: true },
+    });
+    const revokedContactIds = new Set(revoked.map((row) => row.contactId));
+
     const evaluatedAt = now().toISOString();
     const candidates: AudienceCandidate[] = [];
     for (const contact of contacts) {
-      const marketingConsent = asConsent(contact.marketingConsent) ?? "unknown";
-      // Audience selection (not a send gate): unknown consent stays included (B0-44), only a
-      // known opt-out is excluded from this segment-matching estimate. DND never filters here
-      // — it is a separate axis the frozen verdict snapshot below carries honestly.
-      const contactable = marketingConsent !== "opt_out";
+      const contactable = !revokedContactIds.has(contact.id);
       const facts: SegmentContactFacts = {
         lifetimeSpendMyr:
           contact.totalOrdersMyr === null || contact.totalOrdersMyr === undefined
             ? undefined
             : Number(contact.totalOrdersMyr),
         channels: [channel],
+        // Translated for the segment "contactability" rule only: a not-known-revoked contact
+        // reads as opt_in so unknown permission stays in the estimate (flag + keep, B0-44).
         marketingConsent: contactable ? "opt_in" : "opt_out",
         doNotDisturb: false,
       };
@@ -314,6 +377,12 @@ export function createCustomerBroadcastService(
     const members = await db.broadcastAudienceMember.findMany({
       where: { ownerId: principal.ownerId, broadcastRunId },
       orderBy: [{ id: "asc" }],
+      // Display enrichment for the workbench: the customer's name and channel handle (never the
+      // team-membership directory — that is a separate owner-scoped read). Read-only.
+      include: {
+        contact: { select: { name: true } },
+        contactIdentity: { select: { channel: true, handle: true, label: true, externalId: true } },
+      },
     });
     return { run, members };
   }
@@ -340,7 +409,7 @@ export function createCustomerBroadcastService(
     });
     if (!scope) fail("RESOURCE_NOT_FOUND");
 
-    const candidates = (await resolveSegmentAudience(db, principal.ownerId, segmentId, channel)).slice(0, take);
+    const candidates = (await resolveSegmentAudience(db, principal.ownerId, segmentId, channel, purpose)).slice(0, take);
     const providerConnectionId = await resolveProviderConnectionId(db, principal.ownerId, channelScopeId, channel);
 
     const members: Array<AudienceCandidate & { verdict: SendEligibilityResult; includedByMerchant: true }> = [];
@@ -471,7 +540,13 @@ export function createCustomerBroadcastService(
       if (!BROADCAST_STATUSES_ALLOWING_FREEZE.has(run.status)) fail("ACTION_DENIED");
       if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
 
-      const candidates = await resolveSegmentAudience(tx, principal.ownerId, segmentId, run.channel);
+      const candidates = await resolveSegmentAudience(
+        tx,
+        principal.ownerId,
+        segmentId,
+        run.channel,
+        run.purpose as BroadcastPurpose,
+      );
       const providerConnectionId = await resolveProviderConnectionId(
         tx,
         principal.ownerId,
@@ -520,6 +595,24 @@ export function createCustomerBroadcastService(
             eligibilityVerdictJson: snapshot,
             verdictHash: verdictHash(snapshot),
           },
+        });
+      }
+
+      // §5.3/§5.2: a re-freeze to a NARROWER segment must not leave the removed members behind —
+      // otherwise execution (which selects by run, not revision) would send to the UNION of every
+      // segment ever frozen, including contacts the merchant explicitly dropped. Members in the new
+      // set were just bumped to nextAudienceRevision above; anything still behind it is stale.
+      // Under the status gating (freeze is draft/audience_frozen only; a member advances past
+      // pending only under confirmed/executing), a stale member can only be `pending` — a
+      // non-pending stale member is corruption, so fail closed and roll back rather than delete it.
+      const stale = await tx.broadcastAudienceMember.findMany({
+        where: { ownerId: principal.ownerId, broadcastRunId, audienceRevision: { lt: nextAudienceRevision } },
+        select: { sendState: true },
+      });
+      if (stale.some((m) => m.sendState !== "pending")) fail("AUDIENCE_STATE_CONFLICT");
+      if (stale.length > 0) {
+        await tx.broadcastAudienceMember.deleteMany({
+          where: { ownerId: principal.ownerId, broadcastRunId, audienceRevision: { lt: nextAudienceRevision } },
         });
       }
 
@@ -609,15 +702,289 @@ export function createCustomerBroadcastService(
     fail("SEND_PATH_UNAVAILABLE");
   }
 
+  /**
+   * READ-ONLY companion to the frozen verdict snapshot (§6.2): for each frozen audience member,
+   * re-runs the live four-axis evaluator NOW, so the audience-confirmation page can show the
+   * frozen snapshot and the live preflight side by side (a diverged pair is the honest "stale"
+   * signal — the snapshot is display/audit only; execution always re-reads). Writes nothing.
+   */
+  async function getBroadcastRunLivePreflight(
+    principal: CustomerBroadcastPrincipal,
+    input: BroadcastRunLivePreflightInput,
+  ) {
+    await requireReadMembership(principal);
+    const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
+    const run = await requireBroadcastRun(db, principal.ownerId, broadcastRunId);
+    const members = await db.broadcastAudienceMember.findMany({
+      where: { ownerId: principal.ownerId, broadcastRunId },
+      orderBy: [{ id: "asc" }],
+      include: {
+        contact: { select: { name: true } },
+        contactIdentity: { select: { channel: true, handle: true, label: true, externalId: true } },
+      },
+    });
+    const providerConnectionId = await resolveProviderConnectionId(
+      db,
+      principal.ownerId,
+      run.channelScopeId,
+      run.channel,
+    );
+    const rows = [];
+    for (const member of members) {
+      const liveVerdict = await evaluateSendEligibility(db, {
+        ownerId: principal.ownerId,
+        contactId: member.contactId,
+        contactIdentityId: member.contactIdentityId,
+        channel: run.channel,
+        purpose: run.purpose as BroadcastPurpose,
+        providerConnectionId,
+        callerClass: "merchant_manual",
+      });
+      rows.push({
+        id: member.id,
+        contactId: member.contactId,
+        contactIdentityId: member.contactIdentityId,
+        includedByMerchant: member.includedByMerchant,
+        sendState: member.sendState,
+        skipReason: member.skipReason,
+        contact: member.contact,
+        contactIdentity: member.contactIdentity,
+        frozenVerdict: member.eligibilityVerdictJson,
+        liveVerdict,
+        eligibleNow: axisAllPass(liveVerdict),
+      });
+    }
+    return { run, members: rows };
+  }
+
+  /**
+   * Owner-scoped option lists for the structured create form (§10 M3: "结构化发起，不靠 chat
+   * prompt"). Read-only; every list is tenant-filtered. No send authority.
+   */
+  async function getBroadcastComposerOptions(principal: CustomerBroadcastPrincipal) {
+    await requireReadMembership(principal);
+    const [channelScopes, segments, templateVersions, campaigns] = await Promise.all([
+      db.channelScope.findMany({
+        where: { ownerId: principal.ownerId },
+        orderBy: [{ channel: "asc" }, { scopeKey: "asc" }],
+        select: { id: true, channel: true, scopeKey: true },
+      }),
+      db.segment.findMany({
+        where: { ownerId: principal.ownerId, deletedAt: null },
+        orderBy: [{ name: "asc" }],
+        select: { id: true, name: true, phrase: true, kind: true },
+      }),
+      db.customerMessageTemplateVersion.findMany({
+        where: { ownerId: principal.ownerId },
+        orderBy: [{ createdAt: "desc" }],
+        take: MAX_LIMIT,
+        select: {
+          id: true,
+          revision: true,
+          purposeClass: true,
+          category: true,
+          availabilityState: true,
+          template: { select: { name: true, channel: true, channelScopeId: true } },
+        },
+      }),
+      db.campaign.findMany({
+        where: { ownerId: principal.ownerId, deletedAt: null },
+        orderBy: [{ createdAt: "desc" }],
+        select: { id: true, name: true, status: true },
+      }),
+    ]);
+    return { channelScopes, segments, templateVersions, campaigns };
+  }
+
+  /**
+   * C5-M3 SIMULATED execution (§6.2 simulated branch / §10 M3). The ONLY function that ever
+   * writes an executing/completed run status or a simulated_sent member sendState. Zero real
+   * adapter/provider/webhook/credential/spend — the real-send path stays SEND_PATH_UNAVAILABLE
+   * in submitBroadcastRun.
+   *
+   * Contract:
+   *  - only a `confirmed` run may START; an `executing` run RESUMES (safe retry after an
+   *    interruption); a `completed` run is an idempotent no-op. All other statuses are denied.
+   *  - overall CAS: the confirmed->executing claim and the executing->completed finish each
+   *    take the run's monotonic revision; a concurrent double-start loses the CAS race.
+   *  - per member, execution RE-READS live four-axis authority (never the frozen snapshot):
+   *      · four axes pass -> sendState=simulated_sent + EXACTLY ONE ContactSendFrequencyEvent
+   *        (simulated=true) under the §5.4 broadcast idempotency key (retry/resume double-counts
+   *        zero);
+   *      · any axis not pass (incl. consentRisk / DND / provider block / over-cap) ->
+   *        sendState=skipped_ineligible + a stable skipReason, and ZERO frequency rows / zero
+   *        cap spent.
+   *  - the concurrent last-cap-slot race is resolved by recordSendFrequencyEvent's atomic
+   *    count-and-insert: the loser gets FREQUENCY_CAP_REACHED and becomes an honest skip.
+   */
+  async function executeBroadcastRun(
+    principal: CustomerBroadcastPrincipal,
+    input: ExecuteBroadcastRunInput,
+  ) {
+    await requireOwnerMutationMembership(principal);
+    const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
+    const expectedRevision = revision(input?.expectedRevision);
+    const at = now();
+
+    async function markSimulatedSent(memberId: string): Promise<void> {
+      await db.broadcastAudienceMember.updateMany({
+        where: { id: memberId, ownerId: principal.ownerId },
+        data: { sendState: "simulated_sent", skipReason: null },
+      });
+    }
+    async function markSkipped(memberId: string, skipReason: string): Promise<void> {
+      await db.broadcastAudienceMember.updateMany({
+        where: { id: memberId, ownerId: principal.ownerId },
+        data: { sendState: "skipped_ineligible", skipReason },
+      });
+    }
+
+    // Phase 1 — claim the run for execution (CAS). Re-checks owner inside the tx (a caller
+    // demoted between the outer guard and here must not slip execution through).
+    const claimed = await db.$transaction(async (tx) => {
+      const membership = await activeMembership(tx, principal);
+      if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+      const run = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
+      if (run.status === "completed") return { run, alreadyComplete: true as const };
+      if (run.status === "executing") {
+        // Resume: the caller passes the CURRENT (executing) revision — CAS still holds.
+        if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
+        return { run, alreadyComplete: false as const };
+      }
+      if (run.status !== "confirmed") fail("ACTION_DENIED");
+      if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
+      const changed = await tx.broadcastRun.updateMany({
+        where: { id: broadcastRunId, ownerId: principal.ownerId, revision: expectedRevision, status: "confirmed" },
+        data: { status: "executing", executedAt: at, revision: { increment: 1 }, updatedAt: at },
+      });
+      if (changed.count !== 1) fail("CAS_CONFLICT");
+      const reread = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
+      return { run: reread, alreadyComplete: false as const };
+    });
+
+    if (claimed.alreadyComplete) {
+      const members = await db.broadcastAudienceMember.findMany({
+        where: { ownerId: principal.ownerId, broadcastRunId },
+        orderBy: [{ id: "asc" }],
+      });
+      return { ok: true as const, resource: claimed.run, members, alreadyComplete: true as const };
+    }
+
+    const run = claimed.run;
+    const providerConnectionId = await resolveProviderConnectionId(
+      db,
+      principal.ownerId,
+      run.channelScopeId,
+      run.channel,
+    );
+
+    // Phase 2 — process every still-pending member. Already-terminal members
+    // (simulated_sent/skipped_ineligible) are left untouched, which is what makes a resume safe.
+    // recordSendFrequencyEvent opens its OWN advisory-locked transaction (§5.4), so members are
+    // processed sequentially here rather than inside one wrapping transaction.
+    // Revision-scoped (defense in depth alongside freezeAudience's prune): only members frozen at
+    // the run's CURRENT audienceRevision are executed. A leftover member from an earlier, wider
+    // freeze (e.g. a legacy row predating the prune) is never sent to.
+    const pending = await db.broadcastAudienceMember.findMany({
+      where: {
+        ownerId: principal.ownerId,
+        broadcastRunId,
+        sendState: "pending",
+        audienceRevision: run.audienceRevision,
+      },
+      orderBy: [{ id: "asc" }],
+    });
+
+    for (const member of pending) {
+      const key = broadcastFrequencyKey(principal.ownerId, broadcastRunId, member.contactIdentityId, run.channel);
+
+      // Crash recovery: if this member's frequency event was already recorded on a prior attempt
+      // (we crashed before flipping sendState), finish the transition. Never re-read and mis-skip
+      // a send that already spent cap — the recorded event is the terminal truth.
+      const alreadyRecorded = await db.contactSendFrequencyEvent.findFirst({
+        where: { ownerId: principal.ownerId, idempotencyKey: key },
+        select: { id: true },
+      });
+      if (alreadyRecorded) {
+        await markSimulatedSent(member.id);
+        continue;
+      }
+
+      const verdict = await evaluateSendEligibility(db, {
+        ownerId: principal.ownerId,
+        contactId: member.contactId,
+        contactIdentityId: member.contactIdentityId,
+        channel: run.channel,
+        purpose: run.purpose as BroadcastPurpose,
+        providerConnectionId,
+        callerClass: "merchant_manual",
+      });
+
+      if (!axisAllPass(verdict)) {
+        await markSkipped(member.id, firstBlockingSkipReason(verdict));
+        continue;
+      }
+
+      // Four axes pass at read time; the atomic count-and-insert is the true gate. A concurrent
+      // send may have taken the last cap slot since the read — the loser gets
+      // FREQUENCY_CAP_REACHED and becomes an honest skip, never a phantom double-send.
+      try {
+        await recordSendFrequencyEvent({
+          ownerId: principal.ownerId,
+          contactId: member.contactId,
+          channel: run.channel,
+          purposeClass: BROADCAST_PURPOSE_CLASS,
+          sourceKind: "broadcast_run",
+          sendRef: member.id,
+          simulated: true,
+          idempotencyKey: key,
+        });
+        await markSimulatedSent(member.id);
+      } catch (error) {
+        if (error instanceof SendEligibilityError && error.code === "FREQUENCY_CAP_REACHED") {
+          await markSkipped(member.id, "frequency:frequency_cap_reached");
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    // Phase 3 — finish (CAS executing->completed). A concurrent resumer that already completed
+    // the run is fine; re-read for truth rather than surface a spurious conflict.
+    const done = await db.$transaction(async (tx) => {
+      const current = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
+      if (current.status === "completed") return current;
+      const changed = await tx.broadcastRun.updateMany({
+        where: { id: broadcastRunId, ownerId: principal.ownerId, status: "executing" },
+        data: { status: "completed", revision: { increment: 1 }, updatedAt: at },
+      });
+      if (changed.count !== 1) {
+        const latest = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
+        if (latest.status !== "completed") fail("CAS_CONFLICT");
+        return latest;
+      }
+      return requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
+    });
+
+    const members = await db.broadcastAudienceMember.findMany({
+      where: { ownerId: principal.ownerId, broadcastRunId },
+      orderBy: [{ id: "asc" }],
+    });
+    return { ok: true as const, resource: done, members, alreadyComplete: false as const };
+  }
+
   return {
     listBroadcastRuns,
     getBroadcastRun,
+    getBroadcastRunLivePreflight,
+    getBroadcastComposerOptions,
     previewAudienceEligibility,
     createBroadcastRun,
     freezeAudience,
     confirmBroadcastRun,
     cancelBroadcastRun,
     submitBroadcastRun,
+    executeBroadcastRun,
   };
 }
 

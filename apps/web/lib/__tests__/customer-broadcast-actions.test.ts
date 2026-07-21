@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { prisma } from "@fikirtive/db";
+import { prisma, recordUnqualifiedStop } from "@fikirtive/db";
 import * as customerBroadcastGateway from "../customer-broadcast-gateway";
 import { createCustomerBroadcastService } from "../customer-broadcast-service";
+import { createMemberDirectoryService } from "../member-directory-service";
 import { requireOwner } from "../auth-guard";
 
 vi.mock("../auth-guard", () => ({
@@ -28,11 +29,13 @@ const MEMBER = "c5-m2-test-member";
 const MEMBER_B = "c5-m2-test-member-b";
 const CONTACT_A = "c5-m2-test-contact-a";
 const CONTACT_A_OPTOUT = "c5-m2-test-contact-a-optout";
+const CONTACT_GRANT = "c5-m2-test-contact-grant";
 const CONTACT_B = "c5-m2-test-contact-b";
 const SCOPE_A = "c5-m2-test-scope-a";
 const SCOPE_B = "c5-m2-test-scope-b";
 const IDENTITY_A = "c5-m2-test-identity-a";
 const IDENTITY_A_OPTOUT = "c5-m2-test-identity-a-optout";
+const IDENTITY_GRANT = "c5-m2-test-identity-grant";
 const IDENTITY_B = "c5-m2-test-identity-b";
 const SEGMENT_A = "c5-m2-test-segment-a";
 const SEGMENT_B = "c5-m2-test-segment-b";
@@ -120,7 +123,19 @@ async function seed(): Promise<void> {
         source: "whatsapp",
         firstTouchAt: NOW,
         lastSeenAt: NOW,
+        // Legacy column kept opt_out ON PURPOSE: ledger #35 proves the estimate no longer reads
+        // it. The exclusion below is now sourced from the effective_revoke ConsentStateProjection.
         marketingConsent: "opt_out",
+      },
+      {
+        // Fully eligible: verified_grant consent (below), no DND, no provider refusal, whatsapp
+        // (a channel with a frequency policy). A simulated run marks this contact simulated_sent.
+        id: CONTACT_GRANT,
+        ownerId: ORG_A,
+        name: "Chandra",
+        source: "whatsapp",
+        firstTouchAt: NOW,
+        lastSeenAt: NOW,
       },
       { id: CONTACT_B, ownerId: ORG_B, name: "Mei", source: "whatsapp", firstTouchAt: NOW, lastSeenAt: NOW },
     ],
@@ -135,7 +150,38 @@ async function seed(): Promise<void> {
     data: [
       { id: IDENTITY_A, ownerId: ORG_A, contactId: CONTACT_A, channelScopeId: SCOPE_A, channel: "whatsapp", externalId: "+60111111111" },
       { id: IDENTITY_A_OPTOUT, ownerId: ORG_A, contactId: CONTACT_A_OPTOUT, channelScopeId: SCOPE_A, channel: "whatsapp", externalId: "+60111111112" },
+      { id: IDENTITY_GRANT, ownerId: ORG_A, contactId: CONTACT_GRANT, channelScopeId: SCOPE_A, channel: "whatsapp", externalId: "+60111111113" },
       { id: IDENTITY_B, ownerId: ORG_B, contactId: CONTACT_B, channelScopeId: SCOPE_B, channel: "whatsapp", externalId: "+60222222222" },
+    ],
+  });
+  // Consent authority (R-010). ledger #35: the audience estimate reads THESE projections, not
+  // Contact.marketingConsent. CONTACT_A has no projection (unknown → kept + flagged).
+  await prisma.consentStateProjection.createMany({
+    data: [
+      {
+        ownerId: ORG_A,
+        contactId: CONTACT_A_OPTOUT,
+        channel: "whatsapp",
+        purpose: "marketing",
+        state: "effective_revoke",
+        lastEventId: "c5-m2-test-proj-optout-event",
+        lastReceivedAt: NOW,
+        stateActorKind: "customer",
+        stateSourceKind: "explicit_inbox_optout",
+        evidenceStatus: "verified",
+      },
+      {
+        ownerId: ORG_A,
+        contactId: CONTACT_GRANT,
+        channel: "whatsapp",
+        purpose: "marketing",
+        state: "verified_grant",
+        lastEventId: "c5-m2-test-proj-grant-event",
+        lastReceivedAt: NOW,
+        stateActorKind: "customer",
+        stateSourceKind: "explicit_inbox_optin",
+        evidenceStatus: "verified",
+      },
     ],
   });
   await prisma.segment.createMany({
@@ -167,6 +213,29 @@ async function ownerCounts(ownerId = ORG_A) {
   ]);
   return { runs, members };
 }
+
+/** create -> freeze(SEGMENT_A) -> confirm; returns the confirmed run id + its current revision. */
+async function createFrozenConfirmedRun(key: string, segmentId = SEGMENT_A) {
+  const created = await broadcast.createBroadcastRun(owner, {
+    channelScopeId: SCOPE_A,
+    channel: "whatsapp",
+    purpose: "marketing",
+    creationIdempotencyKey: key,
+  });
+  const frozen = await broadcast.freezeAudience(owner, {
+    broadcastRunId: created.resource.id,
+    expectedRevision: 0,
+    segmentId,
+  });
+  const confirmed = await broadcast.confirmBroadcastRun(owner, {
+    broadcastRunId: created.resource.id,
+    expectedRevision: frozen.resource.revision,
+  });
+  return { id: created.resource.id, revision: confirmed.resource.revision };
+}
+
+const freqCount = (contactId: string, ownerId = ORG_A) =>
+  prisma.contactSendFrequencyEvent.count({ where: { ownerId, contactId } });
 
 beforeEach(async () => {
   await cleanup();
@@ -383,16 +452,24 @@ describe("C5-M2 frozen snapshot is display/audit-only, never live authority", ()
     expect((staleMember.eligibilityVerdictJson as { consentStop: { status: string } }).consentStop.status).toBe(
       "pass",
     );
-    // A fresh preview (the live evaluator, exactly what any future execution step must call
-    // instead of trusting the frozen row) correctly reflects the flip.
+    // The live preflight re-evaluates the SAME frozen member against live authority (exactly what
+    // execution does) and correctly reflects the flip to block — while the frozen snapshot above
+    // stays pass. This is the frozen-vs-live divergence the workbench surfaces as "stale".
+    const livePreflight = await broadcast.getBroadcastRunLivePreflight(owner, { broadcastRunId: run.resource.id });
+    const liveMember = livePreflight.members.find((m) => m.contactIdentityId === IDENTITY_A)!;
+    expect((liveMember.liveVerdict as { consentStop: { status: string } }).consentStop.status).toBe("block");
+    expect((liveMember.frozenVerdict as { consentStop: { status: string } }).consentStop.status).toBe("pass");
+    expect(liveMember.eligibleNow).toBe(false);
+
+    // #35 note: a fresh AUDIENCE ESTIMATE now derives from ConsentStateProjection, so it drops the
+    // just-revoked contact entirely (unknown/verified stay in; effective_revoke is excluded).
     const freshPreview = await broadcast.previewAudienceEligibility(owner, {
       segmentId: SEGMENT_A,
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
       purpose: "marketing",
     });
-    const freshMember = freshPreview.members.find((m) => m.contactIdentityId === IDENTITY_A)!;
-    expect(freshMember.verdict.consentStop.status).toBe("block");
+    expect(freshPreview.members.map((m) => m.contactIdentityId)).not.toContain(IDENTITY_A);
   });
 });
 
@@ -471,21 +548,369 @@ describe("C5-M2 submitBroadcastRun — hard-disabled chokepoint", () => {
   });
 });
 
-describe("C5-M2 static no-second-send-path", () => {
-  it("submitBroadcastRun is the only send chokepoint; no code path writes an M3-only status/sendState literal", () => {
-    const source = readFileSync(path.join(__dirname, "../customer-broadcast-service.ts"), "utf8");
-    // M2's frozen boundary (§10): real AND simulated sends are both out of scope. These
-    // literals only ever become reachable once an M3-scope execute action exists.
-    for (const forbidden of ['"executing"', '"completed"', '"simulated_sent"', '"send_unavailable"']) {
-      expect(source).not.toContain(forbidden);
-    }
-    // Exactly one function fails with SEND_PATH_UNAVAILABLE, and it never reaches an adapter.
-    const submitBody = source.slice(source.indexOf("async function submitBroadcastRun"));
+describe("C5-M3 static no-second-REAL-send-path (simulated executor excepted)", () => {
+  // Evolved from M2's no-second-send-path test in the SAME spirit: M3 adds the SIMULATED
+  // executor (executeBroadcastRun), so the executing/completed/simulated_sent literals are now
+  // legitimately reachable — but the file must still statically prove ZERO real provider entry
+  // point, and the executor is called out as the single, isolated exception.
+  const source = readFileSync(path.join(__dirname, "../customer-broadcast-service.ts"), "utf8");
+
+  it("has zero real provider entry point anywhere; the real-send chokepoint stays hard-disabled", () => {
+    // No real provider I/O anywhere in the domain file — not in submit, not in the simulated
+    // executor. Every "send" is a DB write to BroadcastAudienceMember / ContactSendFrequencyEvent.
+    expect(source).not.toMatch(/\badapter\s*\.|\.adapter\b|fetch\s*\(|\baxios\b|https?\.request|new WebSocket/i);
+
+    // submitBroadcastRun (the REAL send path) always fails SEND_PATH_UNAVAILABLE and never
+    // re-reads eligibility or writes a frequency row — its body is unchanged from M2.
+    const submitStart = source.indexOf("async function submitBroadcastRun");
+    const submitEnd = source.indexOf("async function", submitStart + 1);
+    const submitBody = source.slice(submitStart, submitEnd);
     expect(submitBody).toContain("SEND_PATH_UNAVAILABLE");
-    // "adapter." (a real property access / call) never appears — only the comment explaining
-    // its deliberate absence, which reads "no adapter call" (no trailing dot) and must not
-    // trip this check.
-    expect(submitBody.slice(0, submitBody.indexOf("\n\n"))).not.toMatch(/adapter\s*\.|fetch\(|axios|http\.request/i);
+    expect(submitBody).not.toContain("recordSendFrequencyEvent");
+    expect(submitBody).not.toContain("simulated_sent");
+  });
+
+  it("confines the simulated-send transitions to executeBroadcastRun (the single exception)", () => {
+    const execStart = source.indexOf("async function executeBroadcastRun");
+    expect(execStart).toBeGreaterThan(-1);
+    // The M3-only transitions appear ONLY at/after the executor — no earlier function moves a run
+    // into an execution/terminal-send state or marks a member simulated.
+    for (const literal of ['"simulated_sent"', '"executing"', '"completed"']) {
+      expect(source.indexOf(literal), `${literal} must not appear before executeBroadcastRun`).toBeGreaterThan(
+        execStart,
+      );
+    }
+    // The simulated frequency counter is written ONLY from the executor.
+    expect(source.indexOf("recordSendFrequencyEvent(")).toBeGreaterThan(execStart);
+  });
+});
+
+describe("C5-M3 ledger #35: audience estimate derives from ConsentStateProjection, not legacy marketingConsent", () => {
+  it("keeps a legacy opt_out contact once its projection is not effective_revoke (legacy column no longer read)", async () => {
+    // CONTACT_A_OPTOUT keeps its legacy marketingConsent=opt_out column, but flip its projection
+    // to verified_grant. The estimate must now KEEP it — proving the legacy column is ignored.
+    await prisma.consentStateProjection.update({
+      where: {
+        ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_A_OPTOUT, channel: "whatsapp", purpose: "marketing" },
+      },
+      data: { state: "verified_grant" },
+    });
+    const preview = await broadcast.previewAudienceEligibility(owner, {
+      segmentId: SEGMENT_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+    });
+    expect(preview.members.map((m) => m.contactIdentityId)).toContain(IDENTITY_A_OPTOUT);
+  });
+
+  it("excludes a contact whose projection is effective_revoke regardless of the legacy column", async () => {
+    await prisma.consentStateProjection.update({
+      where: {
+        ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_GRANT, channel: "whatsapp", purpose: "marketing" },
+      },
+      data: { state: "effective_revoke" },
+    });
+    const preview = await broadcast.previewAudienceEligibility(owner, {
+      segmentId: SEGMENT_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+    });
+    expect(preview.members.map((m) => m.contactIdentityId)).not.toContain(IDENTITY_GRANT);
+  });
+
+  it("keeps estimate and verdict separate: an unknown-consent contact is kept by the estimate but its verdict is not pass", async () => {
+    const preview = await broadcast.previewAudienceEligibility(owner, {
+      segmentId: SEGMENT_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+    });
+    const kept = preview.members.find((m) => m.contactIdentityId === IDENTITY_A)!;
+    expect(kept.includedByMerchant).toBe(true); // estimate keeps unknown (flag + keep)
+    expect(kept.verdict.consentStop.status).toBe("risk"); // verdict flags it — the two are separate
+  });
+});
+
+describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real send, zero spend)", () => {
+  it("marks a four-axis-pass contact simulated_sent with exactly one frequency event, and skips a consent-risk contact with zero", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-exec-e2e");
+    const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
+    expect(result.resource.status).toBe("completed");
+    expect(result.alreadyComplete).toBe(false);
+
+    const byIdentity = new Map(result.members.map((m) => [m.contactIdentityId, m]));
+    const granted = byIdentity.get(IDENTITY_GRANT)!;
+    expect(granted.sendState).toBe("simulated_sent");
+    expect(granted.skipReason).toBeNull();
+    const risky = byIdentity.get(IDENTITY_A)!;
+    expect(risky.sendState).toBe("skipped_ineligible");
+    expect(risky.skipReason).toContain("consentStop");
+
+    // Exactly one frequency event for the granted contact; zero for the skipped one.
+    expect(await freqCount(CONTACT_GRANT)).toBe(1);
+    expect(await freqCount(CONTACT_A)).toBe(0);
+    const freq = await prisma.contactSendFrequencyEvent.findFirstOrThrow({ where: { ownerId: ORG_A, contactId: CONTACT_GRANT } });
+    expect(freq.simulated).toBe(true);
+    expect(freq.sourceKind).toBe("broadcast_run");
+    expect(freq.purposeClass).toBe("proactive_non_transactional");
+  });
+
+  it("a completed run re-executed is an idempotent no-op with zero extra frequency rows (retry double-counts zero)", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-exec-retry");
+    const first = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
+    const afterFirst = await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } });
+    const second = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: first.resource.revision });
+    expect(second.alreadyComplete).toBe(true);
+    expect(second.resource.status).toBe("completed");
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(afterFirst);
+  });
+
+  it("resumes an interrupted (executing) run: a pre-recorded frequency event finishes as simulated_sent, never re-counted or mis-skipped", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-exec-resume");
+    // Simulate a crash right AFTER recording the granted contact's frequency event but BEFORE the
+    // member sendState flipped: run is executing, the member is still pending, the freq row exists.
+    await prisma.broadcastRun.update({ where: { id: run.id }, data: { status: "executing" } });
+    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const key = `freq:${ORG_A}:${run.id}:${IDENTITY_GRANT}:whatsapp:proactive_non_transactional`;
+    await prisma.contactSendFrequencyEvent.create({
+      data: {
+        id: "c5-m3-resume-freq",
+        ownerId: ORG_A,
+        contactId: CONTACT_GRANT,
+        channel: "whatsapp",
+        purposeClass: "proactive_non_transactional",
+        sourceKind: "broadcast_run",
+        sendRef: "prior-attempt",
+        simulated: true,
+        idempotencyKey: key,
+        countedAt: new Date(),
+      },
+    });
+    // Flip consent to revoke AFTER the freq event: recovery must NOT re-read and mis-skip a send
+    // that already spent cap.
+    await prisma.consentStateProjection.update({
+      where: {
+        ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_GRANT, channel: "whatsapp", purpose: "marketing" },
+      },
+      data: { state: "effective_revoke" },
+    });
+
+    const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: executing.revision });
+    expect(result.resource.status).toBe("completed");
+    const granted = result.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!;
+    expect(granted.sendState).toBe("simulated_sent"); // recovered from the pre-recorded event
+    expect(await freqCount(CONTACT_GRANT)).toBe(1); // exactly one — zero double-count
+  });
+
+  it("triggers the frequency cap on a second broadcast to the same contact: skipped with exactly one count total", async () => {
+    const run1 = await createFrozenConfirmedRun("c5-m3-freq-1");
+    await broadcast.executeBroadcastRun(owner, { broadcastRunId: run1.id, expectedRevision: run1.revision });
+    expect(await freqCount(CONTACT_GRANT)).toBe(1);
+
+    const run2 = await createFrozenConfirmedRun("c5-m3-freq-2");
+    const result2 = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run2.id, expectedRevision: run2.revision });
+    const granted2 = result2.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!;
+    expect(granted2.sendState).toBe("skipped_ineligible");
+    expect(granted2.skipReason).toBe("frequency:frequency_cap_reached");
+    expect(await freqCount(CONTACT_GRANT)).toBe(1); // the cap held; no second count
+  });
+
+  it("resolves a concurrent last-cap-slot race across two runs: exactly one simulated_sent, one skipped, one frequency row", async () => {
+    const runA = await createFrozenConfirmedRun("c5-m3-race-a");
+    const runB = await createFrozenConfirmedRun("c5-m3-race-b");
+    const [resA, resB] = await Promise.all([
+      broadcast.executeBroadcastRun(owner, { broadcastRunId: runA.id, expectedRevision: runA.revision }),
+      broadcast.executeBroadcastRun(owner, { broadcastRunId: runB.id, expectedRevision: runB.revision }),
+    ]);
+    const grantedStates = [resA, resB].map((r) => r.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!.sendState);
+    expect(grantedStates.filter((s) => s === "simulated_sent")).toHaveLength(1);
+    expect(grantedStates.filter((s) => s === "skipped_ineligible")).toHaveLength(1);
+    expect(await freqCount(CONTACT_GRANT)).toBe(1);
+  });
+
+  it("skips a DND-blocked contact with a doNotDisturb reason and zero frequency rows", async () => {
+    await prisma.contact.update({ where: { id: CONTACT_GRANT }, data: { doNotDisturb: true } });
+    const run = await createFrozenConfirmedRun("c5-m3-dnd");
+    const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
+    const granted = result.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!;
+    expect(granted.sendState).toBe("skipped_ineligible");
+    expect(granted.skipReason).toBe("doNotDisturb:dnd_set");
+    expect(await freqCount(CONTACT_GRANT)).toBe(0);
+  });
+
+  it("never simulated-sends a consent-risk contact — the D5 override is unreachable (fail closed)", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-d5");
+    const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
+    const risky = result.members.find((m) => m.contactIdentityId === IDENTITY_A)!;
+    expect(risky.sendState).toBe("skipped_ineligible");
+    expect(risky.skipReason).toContain("consentStop");
+    expect(await freqCount(CONTACT_A)).toBe(0);
+  });
+
+  it("only a confirmed run may start execution; draft and audience_frozen are denied", async () => {
+    const created = await broadcast.createBroadcastRun(owner, {
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+      creationIdempotencyKey: "c5-m3-status",
+    });
+    await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: created.resource.id, expectedRevision: 0 }), "ACTION_DENIED");
+    const frozen = await broadcast.freezeAudience(owner, { broadcastRunId: created.resource.id, expectedRevision: 0, segmentId: SEGMENT_A });
+    await expectCode(
+      broadcast.executeBroadcastRun(owner, { broadcastRunId: created.resource.id, expectedRevision: frozen.resource.revision }),
+      "ACTION_DENIED",
+    );
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
+  });
+
+  it("a stale expectedRevision on a confirmed run is CAS_CONFLICT, zero sends", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-cas");
+    await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: 99 }), "CAS_CONFLICT");
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
+    const untouched = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(untouched.status).toBe("confirmed");
+  });
+
+  it("denies admin and member from executing (owner-only, transaction-recheck path), zero sends", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-rbac");
+    for (const principal of [admin, member]) {
+      await expectCode(broadcast.executeBroadcastRun(principal, { broadcastRunId: run.id, expectedRevision: run.revision }), "ACTION_DENIED");
+    }
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
+    const untouched = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    expect(untouched.status).toBe("confirmed");
+  });
+
+  it("treats a foreign run as RESOURCE_NOT_FOUND on execute, zero writes", async () => {
+    const foreign = await broadcast.createBroadcastRun(
+      { ownerId: ORG_B, membershipId: MEMBER_B, impersonating: false },
+      { channelScopeId: SCOPE_B, channel: "whatsapp", purpose: "marketing", creationIdempotencyKey: "c5-m3-foreign" },
+    );
+    await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: foreign.resource.id, expectedRevision: 0 }), "RESOURCE_NOT_FOUND");
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: { in: OWNERS } } })).toBe(0);
+  });
+
+  it("prunes stale members on a re-freeze to a narrower segment; execution never touches the dropped ones", async () => {
+    // Give CONTACT_GRANT a spend so a spend-gated narrow segment matches ONLY it (not CONTACT_A).
+    await prisma.contact.update({ where: { id: CONTACT_GRANT }, data: { totalOrdersMyr: 100 } });
+    await prisma.segment.create({
+      data: {
+        id: "c5-m3-narrow-seg",
+        ownerId: ORG_A,
+        name: "Big spenders",
+        phrase: "spend at least 50",
+        kind: "custom",
+        createdAt: NOW,
+        rulesJson: {
+          match: "all",
+          rules: [
+            { kind: "lifetime_spend", comparison: "at_least", amountMyr: 50 },
+            { kind: "channel", channel: "whatsapp" },
+            { kind: "contactability", value: "contactable" },
+          ],
+        },
+      },
+    });
+
+    const created = await broadcast.createBroadcastRun(owner, {
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      purpose: "marketing",
+      creationIdempotencyKey: "c5-m3-prune",
+    });
+    // Wide freeze: SEGMENT_A matches CONTACT_A (unknown, kept) + CONTACT_GRANT.
+    const wide = await broadcast.freezeAudience(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: 0,
+      segmentId: SEGMENT_A,
+    });
+    expect(wide.members.map((m) => m.contactIdentityId).sort()).toEqual([IDENTITY_A, IDENTITY_GRANT].sort());
+
+    // Re-freeze to the narrow segment (only CONTACT_GRANT): CONTACT_A must be PRUNED, not left behind.
+    const narrow = await broadcast.freezeAudience(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: wide.resource.revision,
+      segmentId: "c5-m3-narrow-seg",
+    });
+    expect(narrow.resource.audienceRevision).toBe(2);
+    expect(narrow.members.map((m) => m.contactIdentityId)).toEqual([IDENTITY_GRANT]);
+    // The member table itself holds ONLY CONTACT_GRANT at the new revision — zero stale rows.
+    const rowsNow = await prisma.broadcastAudienceMember.findMany({
+      where: { ownerId: ORG_A, broadcastRunId: created.resource.id },
+    });
+    expect(rowsNow.map((r) => r.contactIdentityId)).toEqual([IDENTITY_GRANT]);
+    expect(rowsNow.every((r) => r.audienceRevision === 2)).toBe(true);
+
+    // Confirm + execute: only CONTACT_GRANT is processed; CONTACT_A leaves zero frequency + zero residue.
+    const confirmed = await broadcast.confirmBroadcastRun(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: narrow.resource.revision,
+    });
+    const result = await broadcast.executeBroadcastRun(owner, {
+      broadcastRunId: created.resource.id,
+      expectedRevision: confirmed.resource.revision,
+    });
+    expect(result.members.map((m) => m.contactIdentityId)).toEqual([IDENTITY_GRANT]);
+    expect(result.members[0]!.sendState).toBe("simulated_sent");
+    expect(await freqCount(CONTACT_GRANT)).toBe(1);
+    expect(await freqCount(CONTACT_A)).toBe(0);
+    expect(
+      await prisma.broadcastAudienceMember.count({
+        where: { ownerId: ORG_A, broadcastRunId: created.resource.id, contactIdentityId: IDENTITY_A },
+      }),
+    ).toBe(0);
+  });
+
+  it("re-reads live authority at execute time: a member revoked via consent-runtime after freeze+confirm is skipped with zero frequency rows", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-live-reread");
+    // At freeze+confirm CONTACT_GRANT passed all four axes. Revoke through the REAL writer
+    // (consent-runtime STOP fan-out) AFTER confirm — proving execution re-reads live authority
+    // directly, not just the read-only getBroadcastRunLivePreflight surface.
+    const stop = await recordUnqualifiedStop({
+      ownerId: ORG_A,
+      contactId: CONTACT_GRANT,
+      channel: "whatsapp",
+      sourceKind: "stop_keyword",
+      channelEventRef: "test:inbound",
+      opaqueMessageId: "c5-m3-stop-1",
+    });
+    expect(stop.duplicate).toBe(false);
+
+    const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
+    const granted = result.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!;
+    expect(granted.sendState).toBe("skipped_ineligible");
+    expect(granted.skipReason).toContain("consentStop"); // effective_revoke, re-read at execute time
+    expect(await freqCount(CONTACT_GRANT)).toBe(0);
+  });
+});
+
+describe("C5-M3 member directory (#27)", () => {
+  const directory = createMemberDirectoryService();
+
+  it("returns the owner-scoped memberships with a server-derived self, marking isSelf, no cross-tenant leak", async () => {
+    const result = await directory.listMemberDirectory({ ownerId: ORG_A, membershipId: OWNER });
+    expect(result.self).toEqual({ membershipId: OWNER, role: "owner" });
+    const ids = result.members.map((m) => m.membershipId).sort();
+    expect(ids).toEqual([ADMIN, MEMBER, OWNER].sort());
+    expect(result.members.find((m) => m.membershipId === OWNER)!.isSelf).toBe(true);
+    expect(result.members.find((m) => m.membershipId === ADMIN)!.isSelf).toBe(false);
+    expect(ids).not.toContain(MEMBER_B); // ORG_B membership never appears
+  });
+
+  it("derives self and role from the passed membership (server-derived), falling back to email for the display name", async () => {
+    const result = await directory.listMemberDirectory({ ownerId: ORG_A, membershipId: MEMBER });
+    expect(result.self).toEqual({ membershipId: MEMBER, role: "member" });
+    const self = result.members.find((m) => m.membershipId === MEMBER)!;
+    expect(self.displayName).toBe("c5-m2-member@example.test"); // user row has no name -> email
+  });
+
+  it("fails closed when the principal is not an active member of the org", async () => {
+    await expectCode(
+      directory.listMemberDirectory({ ownerId: ORG_A, membershipId: "c5-m3-not-a-member" }),
+      "ACTION_DENIED",
+    );
   });
 });
 
