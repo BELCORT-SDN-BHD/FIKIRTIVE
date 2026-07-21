@@ -57,6 +57,12 @@ workflow job and gate locally using the current workflow plus `docs/runbooks/loc
 publish exact-head evidence in the PR, and obtain the Founder's explicit CI-unavailable
 approval before any merge.
 
+Every merge must leave executor evidence on the PR: a Founder-executed merge is confirmed
+by a Founder-posted comment stating the Founder personally executed it; a merge executed
+by an authorized non-author executor must self-report executor identity, the authorizing
+instruction, and the execution time on the PR. A merge without executor evidence is
+treated as unverified at audit.
+
 ## Task and worktree lifecycle
 
 - Project continuity belongs to the scoped GitHub issue or map, not a permanently living session.
