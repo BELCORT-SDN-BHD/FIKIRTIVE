@@ -163,10 +163,14 @@ const MAX_SEARCH = 200;
 const MAX_TEMPLATE_NAME = 128;
 const MAX_LOCALE = 32;
 const MAX_VARIABLES = 20;
+// Page size for the needs_reply keyset scan (Task 1, ledger #359 item 21). Bounded so
+// every DB round-trip stays cheap regardless of tenant size; see listConversations.
+const NEEDS_REPLY_PAGE_SIZE = 50;
 // Control-character class per docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md
 // §5.3. Tab/newline/CR are deliberately excluded — message and draft bodies legitimately
-// contain them.
-const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+// contain them. Also rejects C1 controls (U+0080-U+009F) and the Unicode line/paragraph
+// separators (U+2028/U+2029), which are as unsafe in stored text as the C0 controls above.
+const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F\u2028\u2029]/;
 
 function fail(code: CustomerInboxErrorCode): never {
   throw new CustomerInboxError(code);
@@ -433,56 +437,101 @@ export function createCustomerInboxService(
     const where: Prisma.CustomerConversationWhereInput = { ownerId: principal.ownerId };
     if (view === "mine") where.assigneeMembershipId = membership.id;
     if (view === "unassigned") where.assigneeMembershipId = null;
-    // needs_reply is necessarily status:"open"; pushing that down means a burst of
-    // closed-thread activity can no longer crowd a genuine match out of the query
-    // window. The last-message direction can't also be pushed down — Prisma has no
-    // "latest related row" predicate without raw SQL — so it's still derived below,
-    // but querying every open conversation (instead of a fixed top-N slice) means the
-    // in-memory attention filter can no longer silently drop a genuine match either.
-    if (view === "needs_reply") where.status = "open";
+
+    const include = {
+      contactIdentity: {
+        select: {
+          id: true,
+          channel: true,
+          externalId: true,
+          handle: true,
+          label: true,
+          contact: { select: { id: true, name: true, lifecycleStage: true } },
+        },
+      },
+      assigneeMembership: { select: { id: true, role: true } },
+      messages: {
+        orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
+        take: 1,
+        select: {
+          id: true,
+          direction: true,
+          kind: true,
+          contentJson: true,
+          receivedAt: true,
+        },
+      },
+    } satisfies Prisma.CustomerConversationInclude;
+
+    function projectAttention(row: { status: string; messages: { direction: string }[] }) {
+      return row.status === "open" && row.messages[0]?.direction === "inbound"
+        ? "needs_reply"
+        : row.status === "open" && row.messages[0]?.direction === "outbound"
+          ? "waiting_on_customer"
+          : "none";
+    }
+
+    if (view === "needs_reply") {
+      // needs_reply is necessarily status:"open"; pushing that down means a burst of
+      // closed-thread activity can no longer crowd a genuine match out of the query
+      // window. The last-message direction can't also be pushed down — Prisma has no
+      // "latest related row" predicate without raw SQL — so it's still derived per page
+      // below. Rather than loading every open conversation into memory in one shot, walk
+      // bounded pages of NEEDS_REPLY_PAGE_SIZE rows in (lastActivityAt, id) keyset order,
+      // derive attention per page, and accumulate matches until `take` is satisfied or
+      // pages run out. Every round-trip carries a fixed, bounded `take`, so a tenant with
+      // thousands of open conversations no longer pays a full scan on every call — this
+      // is the "两段查询" (two-stage/keyset-batched query) option from ledger #359 item 21;
+      // a materialized attention column was the other approved option but would require a
+      // schema change, which is out of scope for this service-layer pass.
+      where.status = "open";
+      type MatchRow = Prisma.CustomerConversationGetPayload<{ include: typeof include }> & {
+        attention: string;
+      };
+      const matches: MatchRow[] = [];
+      let cursor: { lastActivityAt: Date; id: string } | null = null;
+      for (;;) {
+        const pageWhere: Prisma.CustomerConversationWhereInput = cursor
+          ? {
+              AND: [
+                where,
+                {
+                  OR: [
+                    { lastActivityAt: { lt: cursor.lastActivityAt } },
+                    { lastActivityAt: cursor.lastActivityAt, id: { lt: cursor.id } },
+                  ],
+                },
+              ],
+            }
+          : where;
+        const rows = await db.customerConversation.findMany({
+          where: pageWhere,
+          orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
+          take: NEEDS_REPLY_PAGE_SIZE,
+          include,
+        });
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          const attention = projectAttention(row);
+          if (attention === "needs_reply") {
+            matches.push({ ...row, attention });
+            if (matches.length >= take) break;
+          }
+        }
+        if (matches.length >= take || rows.length < NEEDS_REPLY_PAGE_SIZE) break;
+        const last = rows[rows.length - 1];
+        cursor = { lastActivityAt: last.lastActivityAt, id: last.id };
+      }
+      return matches;
+    }
 
     const rows = await db.customerConversation.findMany({
       where,
       orderBy: [{ lastActivityAt: "desc" }, { id: "desc" }],
-      take: view === "needs_reply" ? undefined : take,
-      include: {
-        contactIdentity: {
-          select: {
-            id: true,
-            channel: true,
-            externalId: true,
-            handle: true,
-            label: true,
-            contact: { select: { id: true, name: true, lifecycleStage: true } },
-          },
-        },
-        assigneeMembership: { select: { id: true, role: true } },
-        messages: {
-          orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
-          take: 1,
-          select: {
-            id: true,
-            direction: true,
-            kind: true,
-            contentJson: true,
-            receivedAt: true,
-          },
-        },
-      },
+      take,
+      include,
     });
-    const projected = rows.map((row) => ({
-      ...row,
-      attention:
-        row.status === "open" && row.messages[0]?.direction === "inbound"
-          ? "needs_reply"
-          : row.status === "open" && row.messages[0]?.direction === "outbound"
-            ? "waiting_on_customer"
-            : "none",
-    }));
-    return (view === "needs_reply"
-      ? projected.filter((row) => row.attention === "needs_reply")
-      : projected
-    ).slice(0, take);
+    return rows.map((row) => ({ ...row, attention: projectAttention(row) }));
   }
 
   async function getConversation(
