@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { prisma } from "@fikirtive/db";
 import * as customerInboxUiActions from "../customer-inbox-ui-actions";
 import { requireOwner } from "../auth-guard";
@@ -107,11 +109,57 @@ describe("customer-inbox-ui-actions wrapper", () => {
 
   it("never wraps the two hard-disabled gateway sends, under any export name", () => {
     const disabledCalls = ["submitConversationReply", "submitTemplateReview"];
-    // Name check: nothing is literally exported under either disabled name.
-    expect(Object.keys(customerInboxUiActions)).not.toEqual(expect.arrayContaining(disabledCalls));
-    // Body check: no export — under any name — calls through to a disabled gateway
-    // function. This is what actually fails if someone later adds e.g. a
-    // `submitReply` wrapper that forwards to `submitConversationReply`.
+
+    // Import-source check: the gateway import(s) in the actual .ts source must not name
+    // either disabled call, aliased or not. A per-export runtime check alone is defeated by
+    // `import { submitConversationReply as gatewaySend } from "./customer-inbox-gateway"` —
+    // the export's own toString() only ever shows the local alias, never the real gateway
+    // name it was imported under. Reading the file source (not the compiled export) is what
+    // catches that. Uses matchAll, not match, so a bypass added via a *second* import
+    // statement from the same module can't hide from the first (only) match.
+    const srcPath = path.resolve(__dirname, "../customer-inbox-ui-actions.ts");
+    const src = fs.readFileSync(srcPath, "utf8");
+    const gatewayImports = [
+      ...src.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']\.\/customer-inbox-gateway["']/g),
+    ];
+    expect(gatewayImports.length, "expected at least one named import from ./customer-inbox-gateway").toBeGreaterThan(0);
+    const importedNames = gatewayImports.flatMap((match) =>
+      match[1]!
+        .split(",")
+        .map((specifier) => specifier.trim())
+        .filter(Boolean)
+        .map((specifier) => specifier.split(/\s+as\s+/)[0]!.trim()),
+    );
+    for (const disabledCall of disabledCalls) {
+      expect(
+        importedNames.includes(disabledCall),
+        `the gateway import(s) must not name "${disabledCall}", aliased or not — found: ${importedNames.join(", ")}`,
+      ).toBe(false);
+    }
+
+    // Export-set check: an explicit allowlist. Any new export — for either disabled call
+    // or anything else — must be consciously added here to pass, rather than silently
+    // widening what this wrapper exposes.
+    const APPROVED_EXPORTS = [
+      "assignConversation",
+      "createMessageTemplate",
+      "createMessageTemplateVersion",
+      "getConversation",
+      "getConversationPreflight",
+      "getHistory",
+      "handOffConversation",
+      "listConversations",
+      "listTemplates",
+      "requestAutomationResume",
+      "saveConversationDraft",
+      "searchConversations",
+      "setConversationStatus",
+      "takeOverConversation",
+    ].sort();
+    expect(Object.keys(customerInboxUiActions).sort()).toEqual(APPROVED_EXPORTS);
+
+    // Body check (defense in depth): no export — under any name — calls through to a
+    // disabled gateway function under its real name.
     for (const [exportName, exportValue] of Object.entries(customerInboxUiActions)) {
       if (typeof exportValue !== "function") continue;
       const source = exportValue.toString();

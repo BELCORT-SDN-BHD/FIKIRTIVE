@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, FileText, LoaderCircle, Plus, ShieldAlert } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, LoaderCircle, Plus, RefreshCw, ShieldAlert } from "lucide-react";
 import {
   createMessageTemplate,
   createMessageTemplateVersion,
@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { dateTimeLabel, errorMessage } from "./inbox-format";
+import { dateTimeLabel, errorMessage, isDenialErrorCode } from "./inbox-format";
 
 type ListResult = Awaited<ReturnType<typeof listTemplates>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
@@ -62,15 +62,38 @@ function DeniedState({ message }: { message: string }) {
 }
 
 export default function InboxTemplatesPage({ initialState }: { initialState: ListResult }) {
-  if (!initialState.ok) return <DeniedState message={errorMessage(initialState.error)} />;
-  return <TemplatesWorkspace initialState={initialState} />;
+  if (!initialState.ok && isDenialErrorCode(initialState.error)) {
+    return <DeniedState message={errorMessage(initialState.error)} />;
+  }
+  return (
+    <TemplatesWorkspace
+      initialTemplates={initialState.ok ? initialState.resource : []}
+      initialErrorCode={initialState.ok ? null : initialState.error}
+    />
+  );
 }
 
-function TemplatesWorkspace({ initialState }: { initialState: ListSuccess }) {
-  const [templates, setTemplates] = useState<TemplateRow[]>(initialState.resource);
+// Read failures that aren't a `{ code, message }` result from the ui-actions wrapper —
+// a thrown transport/network error has no stable CustomerInboxErrorCode to show.
+type ReadError = { kind: "code"; code: string } | { kind: "network" };
+
+function readErrorMessage(error: ReadError): string {
+  return error.kind === "code" ? errorMessage(error.code) : "The template request could not finish. Please retry.";
+}
+
+function TemplatesWorkspace({
+  initialTemplates,
+  initialErrorCode,
+}: {
+  initialTemplates: TemplateRow[];
+  initialErrorCode: string | null;
+}) {
+  const [templates, setTemplates] = useState<TemplateRow[]>(initialTemplates);
   const [scopeFilter, setScopeFilter] = useState("");
   const [loading, setLoading] = useState(false);
-  const [readError, setReadError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<ReadError | null>(
+    initialErrorCode ? { kind: "code", code: initialErrorCode } : null,
+  );
 
   const [channelScopeId, setChannelScopeId] = useState("");
   const [channel, setChannel] = useState("whatsapp");
@@ -85,10 +108,10 @@ function TemplatesWorkspace({ initialState }: { initialState: ListSuccess }) {
     setReadError(null);
     try {
       const result = await listTemplates(nextScope.trim() ? { channelScopeId: nextScope.trim() } : {});
-      if (!result.ok) return setReadError(errorMessage(result.error));
+      if (!result.ok) return setReadError({ kind: "code", code: result.error });
       setTemplates(result.resource);
     } catch {
-      setReadError("The template request could not finish. Please retry.");
+      setReadError({ kind: "network" });
     } finally {
       setLoading(false);
     }
@@ -169,11 +192,26 @@ function TemplatesWorkspace({ initialState }: { initialState: ListSuccess }) {
               <Input value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)} maxLength={256} placeholder="Filter by channel scope ID (optional)" aria-label="Filter by channel scope ID" />
               <Button type="submit" variant="secondary" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : null}Apply filter</Button>
             </form>
-            {readError ? <p className="mt-3 text-sm text-destructive">{readError}</p> : null}
+            {readError ? (
+              <p className="mt-3 text-sm text-destructive">
+                {readErrorMessage(readError)}
+                {readError.kind === "code" ? ` (${readError.code})` : ""}
+              </p>
+            ) : null}
           </CardContent>
         </Card>
 
-        {templates.length === 0 ? (
+        {readError && templates.length === 0 ? (
+          <section className="mt-5 rounded-[var(--radius-card)] border border-dashed border-destructive/40 bg-card px-6 py-14 text-center shadow-sm">
+            <AlertCircle className="mx-auto size-8 text-destructive" />
+            <h2 className="mt-4 text-lg font-semibold">Templates could not load</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">{readErrorMessage(readError)}</p>
+            {readError.kind === "code" ? <p className="mt-2 text-xs font-mono text-muted-foreground">Error code: {readError.code}</p> : null}
+            <Button className="mt-5" type="button" variant="secondary" onClick={() => void refresh()} disabled={loading}>
+              {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Retry
+            </Button>
+          </section>
+        ) : templates.length === 0 ? (
           <section className="mt-5 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-6 py-14 text-center shadow-sm">
             <FileText className="mx-auto size-8 text-muted-foreground" />
             <h2 className="mt-4 text-lg font-semibold">No templates recorded yet</h2>

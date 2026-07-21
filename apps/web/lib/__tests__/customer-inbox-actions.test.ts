@@ -878,6 +878,23 @@ describe("C4b-M2 preflight capability gate", () => {
   });
 });
 
+describe("C4b-M3 preflight freshness contract (issue #378)", () => {
+  it("returns the three freshness timestamps separately, honest about missing provider/health evidence", async () => {
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    // Per §7.3: never merge these into one synthetic "last synced" — a missing value is
+    // honest unknown, not a guess from unrelated evidence.
+    expect(preflight.freshness).toEqual({
+      lastProviderEventAt: null,
+      lastHealthCheckedAt: null,
+      lastDataLoadedAt: NOW,
+    });
+    // Additive-only: the pre-existing checkedAt field is untouched.
+    expect(preflight.checkedAt).toEqual(NOW);
+  });
+});
+
 describe("C4b-M2 principal identity cross-tenant check", () => {
   it("denies a membershipId whose real orgId doesn't match the claimed ownerId", async () => {
     // MEMBER_B genuinely exists, but under ORG_B — pairing it with a claimed ORG_A

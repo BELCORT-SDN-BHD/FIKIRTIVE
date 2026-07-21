@@ -108,6 +108,16 @@ export function errorMessage(code: string): string {
   return ERROR_COPY[code] ?? `The request failed (${code}). Please retry.`;
 }
 
+// Per docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md §7.2: only
+// these three codes get the deliberately indistinguishable "not available" page (denied —
+// never leak whether a resource exists vs. is merely inaccessible). Every other stable
+// error code is honest and gets an in-page error card that keeps the header/filters intact.
+const DENIAL_ERROR_CODES = new Set(["NOT_AUTHORIZED", "ACTION_DENIED", "RESOURCE_NOT_FOUND"]);
+
+export function isDenialErrorCode(code: string): boolean {
+  return DENIAL_ERROR_CODES.has(code);
+}
+
 function shortId(id: string | null | undefined): string {
   if (!id) return "unassigned";
   return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;

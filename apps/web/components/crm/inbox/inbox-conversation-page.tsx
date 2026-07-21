@@ -36,6 +36,7 @@ import {
   dateTimeLabel,
   errorMessage,
   eventDescription,
+  isDenialErrorCode,
   messageText,
   relativeTimeLabel,
   statusPresentation,
@@ -84,7 +85,10 @@ export default function InboxConversationPage({
   conversationId: string;
   initialState: ConversationInitialState;
 }) {
-  if (!initialState.conversation.ok) return <DetailUnavailable />;
+  if (!initialState.conversation.ok) {
+    if (isDenialErrorCode(initialState.conversation.error)) return <DetailUnavailable />;
+    return <DetailErrorState conversationId={conversationId} code={initialState.conversation.error} />;
+  }
   return (
     <ConversationWorkspace
       conversationId={conversationId}
@@ -92,6 +96,74 @@ export default function InboxConversationPage({
       initialHistory={initialState.history}
       initialPreflight={initialState.preflight}
     />
+  );
+}
+
+/** Spec §7.2 `error` row: the authority read (getConversation) failed with a code that
+ *  isn't a denial — keep a generic page shell (nav + eyebrow, no contact-specific header
+ *  since that data never loaded) and offer Retry with the stable error code visible.
+ *  A successful retry re-fetches history/preflight alongside the conversation and mounts
+ *  the real workspace, same as the initial server-side read would have. */
+function DetailErrorState({ conversationId, code }: { conversationId: string; code: string }) {
+  const [currentCode, setCurrentCode] = useState(code);
+  const [retrying, setRetrying] = useState(false);
+  const [loaded, setLoaded] = useState<{
+    conversation: ConversationResource;
+    history: HistoryResult;
+    preflight: PreflightResult;
+  } | null>(null);
+
+  async function retry() {
+    setRetrying(true);
+    try {
+      const [conv, hist, pre] = await Promise.all([
+        getConversation({ conversationId }),
+        getHistory({ conversationId }),
+        getConversationPreflight({ conversationId }),
+      ]);
+      if (!conv.ok) {
+        setCurrentCode(conv.error);
+        return;
+      }
+      setLoaded({ conversation: conv.resource, history: hist, preflight: pre });
+    } catch {
+      // Transport failure, not a structured error code — keep showing the last known code.
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  if (loaded) {
+    return (
+      <ConversationWorkspace
+        conversationId={conversationId}
+        initialConversation={loaded.conversation}
+        initialHistory={loaded.history}
+        initialPreflight={loaded.preflight}
+      />
+    );
+  }
+
+  return (
+    <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
+      <div className="mx-auto max-w-6xl">
+        <Link href="/crm/inbox" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
+          <ArrowLeft className="size-4" />Back to Inbox
+        </Link>
+        <header className="mt-4 border-b border-border pb-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM · Conversation</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">This conversation could not load</h1>
+        </header>
+        <section className="mt-6 rounded-[var(--radius-card)] border border-dashed border-destructive/40 bg-card px-6 py-14 text-center shadow-sm">
+          <AlertCircle className="mx-auto size-8 text-destructive" />
+          <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-muted-foreground">{errorMessage(currentCode)}</p>
+          <p className="mt-2 text-xs font-mono text-muted-foreground">Error code: {currentCode}</p>
+          <Button className="mt-5" type="button" variant="secondary" onClick={() => void retry()} disabled={retrying}>
+            {retrying ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Retry
+          </Button>
+        </section>
+      </div>
+    </main>
   );
 }
 
@@ -132,13 +204,22 @@ function ConversationWorkspace({
   const [handoffNote, setHandoffNote] = useState("");
   const [resumeNote, setResumeNote] = useState("");
 
+  // Fix 4 (poll/mutation race guard): each refresh() call captures a monotonically
+  // increasing sequence number when it starts. If a newer refresh has since started by the
+  // time this call's responses land — regardless of which round-trip actually finishes
+  // first — this call's results are discarded instead of applied, so a slow poll response
+  // can never revert state a faster, more recent mutation-triggered refresh already set.
+  const refreshSeqRef = useRef(0);
+
   const refresh = useCallback(async (): Promise<ConversationResource | null> => {
+    const seq = (refreshSeqRef.current += 1);
     try {
       const [conv, hist, pre] = await Promise.all([
         getConversation({ conversationId }),
         getHistory({ conversationId }),
         getConversationPreflight({ conversationId }),
       ]);
+      if (seq !== refreshSeqRef.current) return null;
       let fresh: ConversationResource | null = null;
       if (conv.ok) {
         fresh = conv.resource;
@@ -160,7 +241,7 @@ function ConversationWorkspace({
       setRefreshFailed(!conv.ok);
       return fresh;
     } catch {
-      setRefreshFailed(true);
+      if (seq === refreshSeqRef.current) setRefreshFailed(true);
       return null;
     }
   }, [conversationId]);
@@ -230,7 +311,13 @@ function ConversationWorkspace({
   }
 
   async function doSaveDraft() {
-    const draftBaseRevision = conversation.draft?.revision ?? null;
+    // Fix 1: pin the CAS base to the revision that was current when THIS edit started
+    // (draftRevisionAtEditStartRef), not `conversation.draft?.revision`. The latter tracks
+    // whatever the 20s poll last saw, which can silently advance past a concurrent
+    // teammate's committed draft while the user is still typing — using it here would make
+    // the server's CAS check pass against that fresher revision and overwrite the
+    // teammate's change instead of failing closed with CAS_CONFLICT.
+    const draftBaseRevision = draftRevisionAtEditStartRef.current;
     await runMutation(
       "draft",
       () =>
@@ -319,6 +406,10 @@ function ConversationWorkspace({
   // a compile error. The check stays honest/future-proof for whenever a connection
   // axis can report "pass".
   const connectionStatus: string = preflightOk ? preflightResult.resource.connection.status : "unknown";
+  // Spec §7.3: the three freshness timestamps are server-supplied and returned separately —
+  // never merged into one synthetic "last synced" value. A missing value renders as an
+  // honest "no X yet", not a fabricated fallback date.
+  const freshness = preflightOk ? preflightResult.resource.freshness : null;
   const control = controlBadgePresentation(conversation.automationState);
   const status = statusPresentation(conversation.status);
   const identity = conversation.contactIdentity;
@@ -345,8 +436,9 @@ function ConversationWorkspace({
 
         <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />Last message: {conversation.lastMessageAt ? dateTimeLabel(conversation.lastMessageAt) : "No messages yet"}</span>
-          <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />Connection health check: {preflightOk ? "No health check has run yet" : "Unknown — diagnostics could not load"}</span>
-          <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />This screen loaded: {dateTimeLabel(refreshedAt)}</span>
+          <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />Last provider event: {freshness ? (freshness.lastProviderEventAt ? dateTimeLabel(freshness.lastProviderEventAt) : "No provider events yet") : "Unknown — diagnostics could not load"}</span>
+          <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />Connection health check: {freshness ? (freshness.lastHealthCheckedAt ? dateTimeLabel(freshness.lastHealthCheckedAt) : "No health check has run yet") : "Unknown — diagnostics could not load"}</span>
+          <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />This screen loaded: {freshness ? dateTimeLabel(freshness.lastDataLoadedAt) : "Unknown — diagnostics could not load"}</span>
         </div>
 
         {connectionStatus !== "pass" ? (
@@ -393,6 +485,7 @@ function ConversationWorkspace({
                   draftDirty={draftDirty}
                   actionsDisabled={actionsDisabled}
                   busy={busy}
+                  saveDisabled={conflictNotice !== null}
                   onDraftChange={onDraftChange}
                   onSave={doSaveDraft}
                   onTakeOver={doTakeOver}
@@ -475,6 +568,7 @@ function Composer({
   draftDirty,
   actionsDisabled,
   busy,
+  saveDisabled,
   onDraftChange,
   onSave,
   onTakeOver,
@@ -485,6 +579,9 @@ function Composer({
   draftDirty: boolean;
   actionsDisabled: boolean;
   busy: string | null;
+  // True while a conflictNotice (stale/committed-elsewhere draft) is showing — Save must
+  // stay disabled until the user reloads, matching the "never silently overwrite" guarantee.
+  saveDisabled: boolean;
   onDraftChange: (text: string) => void;
   onSave: () => void;
   onTakeOver: () => void;
@@ -519,7 +616,7 @@ function Composer({
       ) : null}
       <Textarea value={draftText} onChange={(event) => onDraftChange(event.target.value)} maxLength={4096} rows={6} placeholder="Write an internal reply draft…" aria-label="Reply draft" />
       <div className="flex items-center gap-3">
-        <Button type="button" onClick={onSave} disabled={busy !== null || !draftDirty}>
+        <Button type="button" onClick={onSave} disabled={busy !== null || !draftDirty || saveDisabled}>
           {busy === "draft" ? <LoaderCircle className="animate-spin" /> : <Save />}Save draft
         </Button>
         {draftDirty ? <span className="text-xs text-muted-foreground">Unsaved changes</span> : null}

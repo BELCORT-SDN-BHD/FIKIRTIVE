@@ -8,6 +8,7 @@ import {
   ArrowRight,
   Inbox as InboxIcon,
   LoaderCircle,
+  RefreshCw,
   Search,
   Unplug,
   X,
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import {
   attentionPresentation,
   errorMessage,
+  isDenialErrorCode,
   messageText,
   relativeTimeLabel,
   statusPresentation,
@@ -70,27 +72,65 @@ function DeniedState({ message }: { message: string }) {
 }
 
 export default function InboxListPage({ initialState }: { initialState: ListResult }) {
-  if (!initialState.ok) return <DeniedState message={errorMessage(initialState.error)} />;
-  return <InboxWorkspace initialState={initialState} />;
+  if (!initialState.ok && isDenialErrorCode(initialState.error)) {
+    return <DeniedState message={errorMessage(initialState.error)} />;
+  }
+  return (
+    <InboxWorkspace
+      initialRows={initialState.ok ? initialState.resource : []}
+      initialErrorCode={initialState.ok ? null : initialState.error}
+    />
+  );
 }
 
-function InboxWorkspace({ initialState }: { initialState: ListSuccess }) {
-  const [rows, setRows] = useState<Row[]>(initialState.resource);
+// Read failures that aren't a `{ code, message }` result from the ui-actions wrapper —
+// a thrown transport/network error has no stable CustomerInboxErrorCode to show.
+type ReadError = { kind: "code"; code: string } | { kind: "network" };
+
+function readErrorMessage(error: ReadError): string {
+  return error.kind === "code" ? errorMessage(error.code) : "The request could not finish. Please retry.";
+}
+
+function InboxWorkspace({
+  initialRows,
+  initialErrorCode,
+}: {
+  initialRows: Row[];
+  initialErrorCode: string | null;
+}) {
+  const [rows, setRows] = useState<Row[]>(initialRows);
   const [mode, setMode] = useState<Mode>({ kind: "view", view: "all" });
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [readError, setReadError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<ReadError | null>(
+    initialErrorCode ? { kind: "code", code: initialErrorCode } : null,
+  );
 
   async function loadView(view: ViewFilter) {
     setLoading(true);
     setReadError(null);
     try {
       const result = await listConversations({ view });
-      if (!result.ok) return setReadError(errorMessage(result.error));
+      if (!result.ok) return setReadError({ kind: "code", code: result.error });
       setRows(result.resource);
       setMode({ kind: "view", view });
     } catch {
-      setReadError("The Inbox request could not finish. Please retry.");
+      setReadError({ kind: "network" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function performSearch(trimmed: string) {
+    setLoading(true);
+    setReadError(null);
+    try {
+      const result = await searchConversations({ query: trimmed });
+      if (!result.ok) return setReadError({ kind: "code", code: result.error });
+      setRows(result.resource);
+      setMode({ kind: "search", query: trimmed });
+    } catch {
+      setReadError({ kind: "network" });
     } finally {
       setLoading(false);
     }
@@ -100,17 +140,16 @@ function InboxWorkspace({ initialState }: { initialState: ListSuccess }) {
     event.preventDefault();
     const trimmed = query.trim();
     if (!trimmed) return;
-    setLoading(true);
-    setReadError(null);
-    try {
-      const result = await searchConversations({ query: trimmed });
-      if (!result.ok) return setReadError(errorMessage(result.error));
-      setRows(result.resource);
-      setMode({ kind: "search", query: trimmed });
-    } catch {
-      setReadError("The search request could not finish. Please retry.");
-    } finally {
-      setLoading(false);
+    await performSearch(trimmed);
+  }
+
+  // Spec §7.2 `error` row: re-runs whatever read most recently failed — the current view or
+  // the current search query — via the same ui-actions wrapper the original attempt used.
+  async function retryLastRead() {
+    if (mode.kind === "search") {
+      await performSearch(mode.query);
+    } else {
+      await loadView(mode.view);
     }
   }
 
@@ -167,7 +206,12 @@ function InboxWorkspace({ initialState }: { initialState: ListSuccess }) {
                 <Button type="button" variant="ghost" onClick={clearSearch} disabled={loading}><X />Clear search</Button>
               ) : null}
             </form>
-            {readError ? <p className="text-sm text-destructive">{readError}</p> : null}
+            {readError ? (
+              <p className="text-sm text-destructive">
+                {readErrorMessage(readError)}
+                {readError.kind === "code" ? ` (${readError.code})` : ""}
+              </p>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -175,7 +219,9 @@ function InboxWorkspace({ initialState }: { initialState: ListSuccess }) {
           <p className="mt-5 text-sm text-muted-foreground">Search results for &ldquo;{mode.query}&rdquo;</p>
         ) : null}
 
-        {rows.length === 0 ? (
+        {readError && rows.length === 0 ? (
+          <ListErrorSection error={readError} onRetry={() => void retryLastRead()} retrying={loading} />
+        ) : rows.length === 0 ? (
           mode.kind === "search" ? (
             <section className="mt-4 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-6 py-14 text-center shadow-sm">
               <Search className="mx-auto size-8 text-muted-foreground" />
@@ -205,6 +251,33 @@ function InboxWorkspace({ initialState }: { initialState: ListSuccess }) {
         )}
       </div>
     </main>
+  );
+}
+
+/** Spec §7.2 `error` row: the authority read (listConversations/searchConversations)
+ *  failed with a non-denial code and left no rows to show. Distinct from the genuine
+ *  `empty`/`search-empty` states above — those only render once a read has actually
+ *  succeeded with zero matches. The page header and filter card around this section stay
+ *  mounted regardless (see the parent render), so this never has to rebuild them. */
+function ListErrorSection({
+  error,
+  onRetry,
+  retrying,
+}: {
+  error: ReadError;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
+  return (
+    <section className="mt-4 rounded-[var(--radius-card)] border border-dashed border-destructive/40 bg-card px-6 py-14 text-center shadow-sm">
+      <AlertCircle className="mx-auto size-8 text-destructive" />
+      <h2 className="mt-4 text-lg font-semibold">This list could not load</h2>
+      <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">{readErrorMessage(error)}</p>
+      {error.kind === "code" ? <p className="mt-2 text-xs font-mono text-muted-foreground">Error code: {error.code}</p> : null}
+      <Button className="mt-5" type="button" variant="secondary" onClick={onRetry} disabled={retrying}>
+        {retrying ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Retry
+      </Button>
+    </section>
   );
 }
 

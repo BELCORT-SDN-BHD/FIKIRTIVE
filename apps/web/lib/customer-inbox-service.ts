@@ -654,6 +654,17 @@ export function createCustomerInboxService(
       exactApproval: { status: "unavailable", source: "d8_not_implemented" },
       sendEligibility: { status: "unavailable", reason: "SEND_PATH_UNAVAILABLE" },
       checkedAt: now(),
+      // Per docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md §7.3:
+      // the read model returns these three freshness timestamps separately — never merged
+      // into one synthetic "last synced" value. A missing value is honest unknown, not a
+      // guess: no provider event has ever been received in M3 (fake data from internal
+      // message rows would misrepresent provider truth as verified), and no health check
+      // has ever run. lastDataLoadedAt is server-issued at read time, same clock as checkedAt.
+      freshness: {
+        lastProviderEventAt: null,
+        lastHealthCheckedAt: null,
+        lastDataLoadedAt: now(),
+      },
     } as const;
   }
 
