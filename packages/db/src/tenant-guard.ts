@@ -44,6 +44,8 @@ export const TENANT_MODELS = new Set([
   "CustomerConversationDraft", "CustomerMessageTemplate", "CustomerMessageTemplateVersion",
   // C5-M1 (2026-07-21): additive-only broadcast/frequency storage carriers.
   "BroadcastRun", "BroadcastAudienceMember", "ContactSendFrequencyEvent",
+  // C6-M1 (2026-07-22): additive-only messaging receipt storage carriers.
+  "MessageDeliveryEvent", "MessageDeliveryState",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
