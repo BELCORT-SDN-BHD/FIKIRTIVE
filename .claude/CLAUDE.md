@@ -31,6 +31,7 @@ deployment, spend, or project-wide authority.
 5. **Tenant isolation is absolute.** Every owner-scoped query uses the authenticated `ownerId`; client-supplied identity is never trusted.
 6. **Production and external effects are Founder-only.** Never deploy, change production, alter credentials or permissions, publish externally, spend, or delete external state without the required explicit authorization.
 7. **Product decisions remain Founder decisions.** Direction, identity, scope, user behaviour, and acceptance changes require a durable GitHub Founder Resolution or the applicable Blueprint process.
+8. **Verify model identity behind process evidence.** When Founder-set orchestrator/worker rules condition authority on model identity, verify that identity at session start and after every claimed model switch using process-level evidence (e.g., `ps` on launch arguments); never accept an unverified model or harness claim. If the model condition fails verification, the authority it gates is suspended immediately.
 
 ## Merge authority
 
