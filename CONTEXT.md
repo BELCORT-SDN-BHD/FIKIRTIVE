@@ -102,6 +102,34 @@ Reading the table below:
   429/5xx is not a long-term refusal. _Avoid:_ STOP (that is customer consent), block (ambiguous),
   bounce.
 
+- **Receipt** (回执) — A read-only, verified record of what a provider actually did with an already-
+  attempted send (accepted / delivered / read / failed / replied). A local message row, a draft, an
+  outbox start, or a simulated send is NOT a receipt. C5 answers "may we send"; a receipt is the C6
+  fact of "what happened after". _Avoid:_ send result, message row, delivery status (a local guess),
+  账本/ledger (a receipt never custodies or books anything).
+
+- **Delivery truth** (送达真相) — The normalized provider lifecycle fact for one send: accepted →
+  delivered → read, with failed terminal and unknown when there is no fact. It comes only from a real
+  provider webhook/reconcile; in the simulated-provider era there is none, so it is honestly unknown —
+  never faked green. _Avoid:_ sent (local), read receipt as proof-of-anything, delivered-by-default.
+
+- **Reconciliation** (对账) — Converging "what we tried to send" (the action) with "what the provider
+  says happened" (the receipt) by a stable logical-send ref, into one per-send state: converged /
+  pending / conflict / timeout_unknown. A timeout is never delivered; a conflict is never silently
+  resolved; C6 never blind-retries (that is the send side). _Avoid:_ retry, sync, matching (loose).
+
+- **Report read surface** (报告读面) — The owner-scoped, read-only aggregation the merchant reads:
+  attempted / skipped / unavailable (from the C5 send side) and delivered / read / failed (from C6
+  receipts), each labeled with its authority and freshness; unknown is shown honestly, never zero-
+  filled to fake completion. Human-operable in full (Otto reads in parity, never a blind operator).
+  _Avoid:_ analytics engine as an Otto replacement, dashboard (overloaded), 报表引擎归 Otto.
+
+- **Commerce connector seam** (经营事实只读接入 / B0-42) — A read-only intake of a merchant's business
+  facts (orders / transactions / points) from a replaceable commerce provider (EasyStore an optional
+  first adapter), used for status/attribution/receipts like pixel tracking. Zero connectors must not
+  block the CRM core. _Avoid:_ ledger, custody, write-back, invoicing/collections (Fikirtive never
+  owns or holds those — read only).
+
 ## References & identity 参考与身份
 
 - **Entity** (实体) — A reusable cast member that recurs across shots: a Character, Location,
