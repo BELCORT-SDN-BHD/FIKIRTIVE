@@ -51,7 +51,7 @@ seam，M4）与 D8 发送侧 ExternalEffect/ActionReceipt 绑定（`#359` 第 10
   `ContactSendFrequencyEvent`）作报告，**绝不复制、绝不重算 eligibility、绝不据四轴作任何发送决定**（C6 是发送**之后**的域）。
 - **第二发送入口**：C6 不建、不暴露任何 send/enqueue/outbox/retry/confirm 路径。会话发送唯一 chokepoint 仍是 C4
   `submitConversationReply`（C4a §6.2），群发唯一 chokepoint 仍是 C5 `submitBroadcastRun`（C5 §6.2）；二者「结果交 C6
-  receipt/reconciliation，**不回写假的 delivery status**」（C5 §6.2 第 447 行、C4a §4.2 第 431 行）。C6 只**读入**它们产生的事实。
+  receipt/reconciliation，**不回写假的 delivery status**」（C5 §6.2 第 447 行、C4a §6.2 第 431 行）。C6 只**读入**它们产生的事实。
 - **D8 发送侧运行时载体**：`DeliveryManifest`、confirmation-outbox、worker、lock/retry、`ActionReceipt`（发送侧运行时回执产物）、
   两次确认铸造/消费、`actionId/actionRevision → outbox/worker → provider` 全归 D8 各自 native task（`#359` 第 10 条；C5 §8、
   C4a §8）。C6 只承接**入站 provider 事实**（送达/已读/失败/回复）与**对账读**，靠 D8 送发侧提供的 `provider-message-ref ↔
@@ -62,7 +62,8 @@ seam，M4）与 D8 发送侧 ExternalEffect/ActionReceipt 绑定（`#359` 第 10
   `spec-ready`，`docs/ops/route-b/matrix/02-B2.md:15-16`），其报告消费端**汇入** B0-41 报告面，但**本 M0 不冻结它们**；D10
   tracked-generation 逐 path bounded contract 归 R-010 §11.2 gate 5（`docs/design/route-b/2026-07-18-b8-full-map-crm-coverage.md:205`）。
   「回复率」等**把回复/转化归因到某次具体群发**的能力依赖该归因层，本文只如实呈可得口径、把精确归因列为 deferred（§6.4、§14）。
-  （map §8 C6 候选行含 E5-06/07，但 `#399` scope 只列 B0-41/42——此张力见 §14 待 Founder。）
+  （map §8 C6 候选行含 E5-06/07，但 `#399` scope 只列 B0-41/42；本文据此**裁定**：归因/追踪原语归 B2 层（已 spec-ready）与 D10
+  bounded contract、**不在 C6-M0**——此边界**已决**，非悬而未决的张力。§14 只保留「回复率口径」这一更窄的 Founder 问题。）
 - **真实外界**：Meta Cloud API/Tech Provider 连接、Embedded Signup、WABA 凭证、Meta App Review、真实 webhook endpoint、
   真实 delivery/read/failure 事实、生产库迁移（`#11/#12`）、B13 privacy、production/deploy——全部集中到最终「连接与上线」阶段
   （`#359` 第 28/29 条）；本文零 provider call、零 spend、零真实回执。
@@ -203,7 +204,7 @@ interface DeliveryReceiptView {
 unknown」的纯读投影，才能既满足「如实标 simulated」又满足「绝不伪造 delivery 真相」（`#399` scope 第 1 条）。`MessageDeliveryEvent`
 载体在 M1 建表但**在真实era（M4）前保持空**——这是如实的空态，报告据此如实呈现 delivered/read/failed = unknown（§6.3）。
 （对照：C5 `ContactSendFrequencyEvent` 需要在模拟era 写行是因为**频控必须计模拟发送**以验证防打扰；回执**没有**任何必须在模拟era
-落库的真相，故不写——两者差异是刻意的，见 §11。）
+落库的真相，故不写——两者差异是刻意的，见 §11.2。）
 
 ### §4.4 真实era webhook ingestion 约束（M4+，只定契约，不实现）
 
@@ -214,15 +215,20 @@ unknown」的纯读投影，才能既满足「如实标 simulated」又满足「
 1. **owner/scope 解析**：只在 adapter 验签成功后，从 verified account claim 找唯一 `ChannelConnection`/`ChannelScope`；
    zero/multiple/mismatch 拒绝、零产品写、不泄漏 tenant 是否存在（C4a §4.2 第 148-149 行）。webhook 是「收信与授权回执」，
    合宪（`docs/BLUEPRINT.md:85`），但真实 endpoint/secret/mapping 须动作前另取 Founder authorization。
-2. **logical-send 绑定**：delivery 事实携带的 `provider-message-ref` 必须经**发送侧 D8 ExternalEffect/ActionReceipt 的
-   `provider-message-ref ↔ logical-send` 绑定**解析为 C6 的 `logicalSendRef`；该绑定归 D8（`#359` 第 10 条）。**D8 绑定未落地前，
-   真实回执 ingestion 不可用**（fail closed）——无法把一条 provider 事实安全归到某次 send。caller/webhook 不可自报 `logicalSendRef`。
+2. **logical-send 绑定（tenant-consistent）**：delivery 事实携带的 `provider-message-ref` 必须经**发送侧 D8 ExternalEffect/ActionReceipt
+   的 `provider-message-ref ↔ logical-send` 绑定**解析为 C6 的 `logicalSendRef`；该绑定归 D8（`#359` 第 10 条）。**绑定解析必须在
+   step 1 已 verified 的 owner 边界内完成**：解析出的 `logicalSendRef`（及其发送侧 run/identity/connection）其 `ownerId` 必须**恒等于**
+   step 1 验签所得的 owner；**cross-owner 或 ambiguous（zero/multiple）解析一律 reject、fail closed、零产品写、不泄漏 tenant 是否
+   存在**——这是租户不变量在 ingestion **写路径**的点名落点，不靠 §3.2 泛化兜底。**D8 绑定未落地前，真实回执 ingestion 不可用**
+   （fail closed）——无法把一条 provider 事实安全归到某次 send。caller/webhook 不可自报 `logicalSendRef`。
 3. **幂等**：每个 normalized fact 各持含 `eventKind` 的 namespaced server-derived `sourceEventKey`/`sourcePayloadHash`；同 key 同
    hash = no-op replay，同 key 不同 hash = 冲突零覆盖零第二行（C4a §4.2 第 157 行）。不得拿整包 request ID 让一事实替另一事实去重。
 4. **乱序**：provider `occurredAt` 只展示；规范顺序以 server `receivedAt` + stable id 决定；迟到事件**不倒写**较新 state
    （C4a §4.2 第 164 行）。生命周期单调：一条迟到的 `accepted` 不得把已 `delivered`/`read` 的 state 回退。
 5. **冲突**：同一 `logicalSendRef` 收到互斥终态（`delivered` 之后又 `failed`，或反之）→ `reconciliation=conflict`，
-   如实呈现并留可见 reason，**不静默择一、不假装成功**。终态优先级与人工核对流程列为待 Founder（§14）。
+   如实呈现并留可见 reason，**不静默择一、不假装成功**。**M2 lifecycle 投影占位规则**：`lifecycle` 保持已单调达到的值**不动**
+   （不因冲突事实回退、也不擅自跳到冲突事实的终态），冲突这一事实**只由 `reconciliation=conflict` 轴呈现**、不污染 lifecycle 轴；
+   `delivered/failed` 的**终态择定规则**仍留 §14 待 Founder。（此占位让 §11.2 fixture 断言有据：冲突下 lifecycle 稳定、conflict 轴点亮。）
 6. **超时/丢失**：已尝试但 provider response 丢失/超时 → `reconciliation=timeout_unknown` + reconciliation-needed；
    **不宣称 delivered、不盲重投**（C4a §4.2 第 167/169 行）。重投属发送侧 D8/outbox，不是 C6 对账动作。
 7. **未识别事实**：不明 provider 事实只进**已获批 quarantine/可重放载体**，不写产品回执真相（C4a §4.2 第 171 行）；该 quarantine
@@ -230,6 +236,10 @@ unknown」的纯读投影，才能既满足「如实标 simulated」又满足「
 8. **template-review 外部事实**（C4a §4.1 路由到「C6 receipt writer」，第 135 行）：Meta 模板送审 approved/rejected 亦是 C6
    承接的入站 provider 事实，materialize 后**投影回 C4 模板三轴**（C4a §5.6）。其物理载体是与 `MessageDeliveryEvent` 共用同一
    脊柱还是独立 bounded carrier，列为待 Founder（§14）——本 M0 只固定「C6 owns 它、C4 只消费其 verified projection」这条边界。
+   **显式调和义务**：该后置载体决定**必须调和** C4a §5.6（`reviewRevision` 只由 C6 verified receipt materializer 推进）与 §7.6
+   的「不改 C4b 六表」——「不改」指**不改 C4b 表的 schema/列/既有行为**；C6 materializer 依 C4a §5.6 已冻结契约把 verified
+   projection 值写入既有 `CustomerMessageTemplateVersion` 字段，是**该契约下的数据推进**、非 schema 变更；exact writer 边界
+   （C6 直接推进 vs C4 从 C6 verified fact 自推）是待 Founder 决定的一部分（§14），本文不静默裁定。
 
 ## §5 对账（reconciliation）
 
@@ -253,17 +263,27 @@ unknown」的纯读投影，才能既满足「如实标 simulated」又满足「
 
 ### §6.1 读面轴与 authority
 
-报告面对一次群发 / 一个 Campaign / 一个联系人时间线，呈以下**逐项标注 authority 与 freshness** 的只读聚合：
+报告面对一次群发 / 一个 Campaign / 一个联系人时间线，呈**三组正交轴**（A 发送侧 / B 回执侧 / C 对账侧）、逐项标注 authority
+与 freshness 的只读聚合，**三组不得跨组合并**：
 
-| 读数 | 定义 | authority 源 | 模拟era 可得性 |
-|---|---|---|---|
-| **发出（attempted）** | 进入发送尝试的成员数 | C5 `BroadcastAudienceMember.sendState ∈ {simulated_sent}`（真实era：reached-provider） | **已知**（模拟尝试） |
-| **跳过（skipped）** | 因资格 block 未发的成员数 + 逐轴 skipReason | C5 `sendState=skipped_ineligible` + `skipReason`（`schema.prisma:1711-1712`） | **已知**（读 C5） |
-| **不可用（unavailable）** | send path 不可达的成员数 | C5 `sendState=send_unavailable` | **已知**（读 C5） |
-| **送达（delivered）** | 收到 `delivered` 回执数 | C6 `MessageDeliveryState.lifecycle` | **unknown**（无真源，§4.3） |
-| **已读（read）** | 收到 `read` 回执数 | C6 `MessageDeliveryState.lifecycle` | **unknown** |
-| **失败（failed）** | 收到 `failed` 回执数 | C6 `MessageDeliveryState.lifecycle` | **unknown** |
-| **回复率（reply rate）** | 回复量 / 基数 | 依归因层（E5-06/07、D10）；C6 只呈可得会话级口径 | **deferred**（§6.4） |
+| 组 | 读数 | 定义 | authority 源 | 模拟era 可得性 |
+|---|---|---|---|---|
+| A 发送侧 | **发出（attempted）** | 进入发送尝试的成员数 | C5 `BroadcastAudienceMember.sendState ∈ {simulated_sent}`（真实era：reached-provider） | **已知**（模拟尝试） |
+| A 发送侧 | **待执行（pending）** | 尚未进入发送尝试的成员数（run 中断/部分执行的余量——分母不漏） | C5 `sendState=pending`（`schema.prisma:1711`） | **已知**（读 C5） |
+| A 发送侧 | **跳过（skipped）** | 因资格 block 未发的成员数 + 逐轴 skipReason | C5 `sendState=skipped_ineligible` + `skipReason`（`schema.prisma:1711-1712`） | **已知**（读 C5） |
+| A 发送侧 | **不可用（unavailable）** | send path 不可达的成员数 | C5 `sendState=send_unavailable` | **已知**（读 C5） |
+| B 回执侧 | **送达（delivered）** | `reconciliation=converged` 且 lifecycle 达 `delivered` 的 send 净数 | C6 `MessageDeliveryState` | **unknown**（无真源，§4.3） |
+| B 回执侧 | **已读（read）** | `reconciliation=converged` 且 lifecycle 达 `read` 的 send 净数 | C6 `MessageDeliveryState` | **unknown** |
+| B 回执侧 | **失败（failed）** | `reconciliation=converged` 且 lifecycle 达 `failed` 的 send 净数 | C6 `MessageDeliveryState` | **unknown** |
+| C 对账侧 | **对账在途（pending）** | 已尝试、尚无终态回执的 send 数 | C6 `MessageDeliveryState.reconciliation=pending` | **已知**（模拟era 全部已尝试 send 恒在此） |
+| C 对账侧 | **对账冲突（conflict）** | 收到互斥终态、未决的 send 数 | C6 `reconciliation=conflict` | 0（无真源） |
+| C 对账侧 | **对账超时未决（timeout_unknown）** | 已尝试但 response 丢失/超时的 send 数 | C6 `reconciliation=timeout_unknown` | 0（无真源） |
+| — | **回复率（reply rate）** | 回复量 / 基数 | 依归因层（E5-06/07、D10）；C6 只呈可得会话级口径 | **deferred**（§6.4） |
+
+**净数封死（防洗绿）**：B 组的 delivered/read/failed **只**数 `reconciliation=converged` 的 send；**`conflict` 与 `timeout_unknown`
+的 send 绝不计入 delivered/read/failed 任何净数**——它们**只**出现在 C 组对账轴。这正是本契约要在逐 send 层封死、绝不让冲突/超时
+在聚合层被洗成绿的事（呼应 §4.2「lifecycle 与 reconciliation 两轴不得合并」）。A、B、C 三组各自求和、各自展示；报告 UI 不得把
+三组压成单一「成功率」数字掩盖 unknown/conflict/timeout。
 
 报告面是**纯读**：聚合查询跨 C5 发送侧表 + C6 `MessageDeliveryState` + C4 会话回复，不写任何表、不重算 eligibility、
 不触发任何发送。
@@ -321,14 +341,15 @@ code validator、historical relation `onDelete: Restrict`、partial unique 由 m
 | `actorKind` | code-validated `provider / system`（`system` 仅限受控 reconcile/backfill；`merchant`/`otto` 禁止——回执非人工可写） |
 | `sourceEventKey` | server-derived、含 `eventKind` namespace 的幂等 key（partial-unique live 谓词由 migration raw SQL 建） |
 | `sourcePayloadHash` | versioned canonical hash；同 key 同 hash = no-op、同 key 不同 hash = 冲突（§4.4 step3） |
-| `simulated` | boolean；**M1–M3 无真实事实 → 此表恒空**，`simulated` 语义位为真实era cutover 预留（读时按本次事实自身 flag 过滤，同 C5 §5.4 的 era filter 纪律，杜绝跨 era 幻影） |
 | `occurredAt` | nullable 声称业务时间，仅展示（`Timestamptz(6)`） |
 | `receivedAt` | server canonical 时间，规范顺序据此（`Timestamptz(6)`） |
 | `createdAt` | DB insert time |
 
 约束/索引：`UNIQUE(ownerId, sourceEventKey)`（幂等）；index `(ownerId, logicalSendRef, receivedAt, id)`（对账主查询）；
 index `(ownerId, providerConnectionId, receivedAt, id)`（连接级 reconcile 游标）。append-only：无 `updatedAt`/`deletedAt`
-（更正靠新事实，不 in-place 改，同 `ConsentEvent`/`ProviderRefusalEvent`）。
+（更正靠新事实，不 in-place 改，同 `ConsentEvent`/`ProviderRefusalEvent`）。**无 `simulated` 列**：C6 在模拟era **从不写行**
+（§4.3 的设计选择），此表只含真实 provider 事实，故不需要 C5 `ContactSendFrequencyEvent` 那样的 era-filter 列——这是与 C5 的
+**刻意差异**（C5 必须计模拟发送、C6 没有任何模拟真相可落库）；因而此表也**没有模拟行需要 cutover 清理**（§9.2、M4）。
 
 ### §7.3 `MessageDeliveryState`（PROPOSED，rebuildable 投影）
 
@@ -370,7 +391,9 @@ webhook（「收信」合宪，`docs/BLUEPRINT.md:85`）接入订单/交易/积�
 - **不新增 outbox/worker/lock/retry/`ActionReceipt`/`DeliveryManifest`**：发送侧运行时全归 D8（`#359` 第 10 条；C5 §8、C4a §8）。
 - **不新增任何 ledger/账本/钱路表**：经营事实只读、类比 pixel tracking（`docs/BLUEPRINT.md:48`）；通道费账道归 C4a §10 M6。
 - **不新增第二发送/enqueue/confirm 入口**：C6 只读入 provider 事实；发送 chokepoint 仍是 C4/C5 各自唯一入口。
-- **不改** C5 三表、C4b 六表、consent/refusal 五表、publishing `Channel`——C6 只**读**它们并新增回执两表。
+- **不改** C5 三表、C4b 六表、consent/refusal 五表、publishing `Channel`——C6 只**读**它们并新增回执两表（此处「不改」指
+  schema/列/既有行为不变；template-review 外部事实经 C4a §5.6 推进既有 `reviewRevision` 的 writer 边界，须按 §4.4 step8 的
+  **显式调和义务**处理，不在本 M0 静默裁定）。
 - **不新增归因/tracked-link 表**：E5-06/07 归 B2 层（已 spec-ready），D10 归 R-010 §11.2 gate 5（§2.2、§6.4）。
 
 ## §8 D8 / C5 / C6 fail-closed matrix（C6 列为本票 scope）
@@ -405,11 +428,13 @@ delivery ingestion 都是 disabled/fail-closed/no availability claim。JSON、ca
 B13/privacy 必须逐一给两表新增 row，冻结：source、data class、merchant ownership、read/export/delete、retention、backup
 cadence、encryption、日志/telemetry redaction。当前提案建议 Phase-1（**均须 Founder 批**）：
 
-- 回执事实为 merchant-owned；平台不自动 retention delete/compact；
+- 回执事实为 merchant-owned；平台自动 retention 的**方向**（长留 vs 定期删/compact）本身是 Founder 判断题（见下 retention/TTL 条），本文不预设默认；
 - Contact/Identity/BroadcastRun archive 不级联抹掉回执历史（`onDelete: Restrict`）；删除/导出走后续正常 privacy capability；
 - `receiptRef`/`providerCode` 依 DB at-rest encryption + tenant boundary，不做不可搜索的 ad-hoc field crypto；
-- **retention/TTL**：回执与对账事实的最终保留时长（尤其真实era 后旧行 terminal 处理、模拟行 cutover 清理）**仍 Unknown**，
-  本文只提出「保守默认：merchant-owned、不自动删」作**待 Founder** 建议，**不冻结具体 TTL 时长**（§14）；
+- **retention/TTL**：回执与对账事实的最终保留时长**仍 Unknown**，本文**不冻结具体 TTL、也不预设默认方向**——两个方向各有代价，
+  中性陈述交 Founder 判断：**长留**便于事后对账/审计/纠纷举证与迟到 reconciliation，但 PII-adjacent 元数据留存越久、隐私与合规
+  暴露面越大（PDPA/数据最小化压力，B0-93）；**短留/定期删**降低隐私暴露，但牺牲历史对账能力，且删除须与「回执是外部真相、
+  不得删后重投」（§10 Rollback）协调。真实era 后旧行 terminal 处理策略一并交 Founder（§14）；
 - production backup/PITR 实际 cadence 仍 Unknown，不能在本文宣称。
 
 Founder 对本文 §4/§7 的方向若批准，也**不等于**上述 B13 rows 与 TTL 已通过；privacy gate 仍在 migration 前独立到期（`#11/#12`、`#359`）。
@@ -442,7 +467,8 @@ Founder 对本文 §4/§7 的方向若批准，也**不等于**上述 B13 rows �
   Unknown/default deny；
 - fake clock/fixture 完成对账 + 报告 contract tests（含 tenant、幂等占位、乱序占位、unknown-不伪装、冲突处置）。
 - **验收**：模拟era 报告如实呈 delivered/read/failed=unknown、绝不补零/补绿；发出/跳过/不可用读自 C5 且不重算四轴；
-  对账对空回执表恒 `pending`、超时占位恒 `timeout_unknown`。**不做**：真实 provider、真实 webhook、真实回执、发送。
+  对账对空回执表恒 `pending`、超时占位恒 `timeout_unknown`。**不做**：真实 provider、真实 webhook、真实回执、发送、
+  **commerce seam 实现（B0-42）**、**归因层（E5-06/07）接入**。
 
 ### M3 — 报告读面 UI（模拟数据 + Founder 认证走查）
 
@@ -451,7 +477,7 @@ Founder 对本文 §4/§7 的方向若批准，也**不等于**上述 B13 rows �
 - 人工可完整操作（`docs/BLUEPRINT.md:66`），Otto read 对等（不做瞎子操作员，`docs/BLUEPRINT.md:69`）；
 - **Founder 认证走查**（本地 magic-link；对标 respond.io Broadcast/Analytics 报告面走查在此站补齐，§12）。
 - **验收**：报告端到端只读可恢复；模拟era 零假回执、零补零冒充、unknown 如实；0 跨租户；人工/Otto 双读一致。
-  **不做**：真实 webhook、真实 provider、真实回执、发送、commerce 写回。
+  **不做**：真实 webhook、真实 provider、真实回执、发送、commerce 写回、**commerce seam 实现（B0-42）**、**归因层（E5-06/07）接入**。
 
 ### M4 — 真实回执 ingestion（最终「连接与上线」阶段，D8/C4a adapter/M6，另取 authorization）
 
@@ -459,7 +485,8 @@ Founder 对本文 §4/§7 的方向若批准，也**不等于**上述 B13 rows �
   Signup（**非 Gupshup**）；
 - C4a §4 adapter port 接真实 provider、真实 webhook endpoint/secret、D8 发送侧 `provider-message-ref↔logical-send` 绑定
   （`#359` 第 10 条）全部另获批、实现、验证后，才可打开 §4.4 的真实 ingestion；
-- `MessageDeliveryEvent` 切真实era：读按事实自身 `simulated=false` 过滤（§7.2），模拟测试行（若有）经 cutover 清理，绝不造幻影；
+- `MessageDeliveryEvent` **无模拟行**（模拟era 从不写，§4.3/§7.2）→ 真实era 上市**无模拟行需 cutover 清理**、无跨 era 幻影之虞；
+  真实事实自 M4 首个 verified webhook 起累积；
 - B0-89 隐私政策/ToS/数据删除回调、B13、production 迁移（`#11/#12`）、deploy、exact-head CI + independent review 全绿。
 
 Rollback：
@@ -484,15 +511,20 @@ Rollback：
 - **幂等回执**：同 `sourceEventKey` 同 `sourcePayloadHash` 二次 ingestion = no-op；同 key 不同 hash = 冲突、零覆盖、零第二行；
 - **乱序**：迟到 `accepted` 不把已 `delivered/read` 的 state 回退；`occurredAt` 乱序不改 server `receivedAt` 规范顺序；
 - **对账收敛**：已尝试无终态 → `pending`；超时/response 丢失 → `timeout_unknown`（不 delivered、不盲重投）；互斥终态 →
-  `conflict`（不静默择一）；缺 D8 绑定/缺 capability → fail closed；
+  `conflict`（不静默择一）——**且冲突下 `lifecycle` 保持已达单调值不动、冲突只由 reconciliation 轴呈现**（§4.4 step5 占位规则）；
+  缺 D8 绑定/缺 capability → fail closed；
 - **跨租户**：两 Org 互换 `logicalSendRef`/deliveryEvent/state/broadcastRun/contact IDs → 统一 not-found/denied，零泄漏、零写、
-  零 provider call；
+  零 provider call；**ingestion 绑定 tenant 一致性**（§4.4 step2）：一条 provider 事实解析出的 `logicalSendRef` 若属**另一 owner**、
+  或 ambiguous（zero/multiple）→ reject、fail closed、零产品写、不泄漏 tenant 是否存在；
 - **零第二发送入口**：静态可达性断言——C6 无任何 send/enqueue/outbox/retry/confirm 路径；ingestion 只写回执事实、绝不触发发送。
 
 ### §11.3 报告读面 / 边界（M2/M3）
 
-- 报告发出/跳过/不可用读自 C5（`sendState`/`skipReason`）且**不重算四轴**、**不改** C5 数据；送达/已读/失败据 C6 回执，模拟era
-  恒 unknown；
+- 报告发出/待执行/跳过/不可用读自 C5（`sendState`/`skipReason`）且**不重算四轴**、**不改** C5 数据；送达/已读/失败据 C6 回执，
+  模拟era 恒 unknown；**`pending` sendState 成员（中断/部分执行 run）计入报告分母不漏**（§6.1 A 组）；
+- **对账轴聚合**：报告分列 A 发送侧 / B 回执侧 / C 对账侧三组；断言 **`conflict` 与 `timeout_unknown` 的 send 绝不计入
+  delivered/read/failed 任何净数**（不被 lifecycle 聚合洗绿），B 组净数只数 `reconciliation=converged`；C 组 pending/conflict/
+  timeout_unknown 计数独立呈现；报告不得把三组压成单一「成功率」掩盖 unknown/conflict/timeout；
 - 频控计数不被当作送达数；「跳过（by axis，发送前）」与「发出未送达（回执，发送后）」分列、不混为一谈；
 - 回复率归因 deferred 时报告不编造 broadcast 级回复归因（只呈会话级可得口径，§6.4）；
 - `loading/empty/disconnected/degraded/stale/partial-error/error/ready` 的 desktop/mobile snapshot/interaction tests；
@@ -553,7 +585,7 @@ evidence；独立 cross-family review unresolved P0=0/P1=0；CI unavailable 不�
 
 ### §14.2 当前 Unknown（不偷偷填）
 
-- 两个 carrier 的最终 retention/export/delete 与 TTL 具体时长、模拟行 cutover 清理策略；
+- 两个 carrier 的最终 retention/export/delete 方向与 TTL 具体时长（回执无模拟行，无 cutover 清理项，§7.2）；
 - B0-42 commerce fact taxonomy 与载体范围（订单/付款/退款/积分的规范化边界）；
 - template-review 外部事实的载体归属；
 - 回复率/转化归因到具体 broadcast 的精确口径（归因层未接）；
