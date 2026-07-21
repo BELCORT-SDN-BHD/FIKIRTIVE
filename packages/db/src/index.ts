@@ -16,6 +16,7 @@ export * from "../generated/prisma/client.js";
 export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCreditsTx, InsufficientCredits, type CreditGrantSource } from "./credits.js";
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
+export * from "./send-eligibility.js";
 
 function buildClient(): PrismaClient {
   // `||` not `??`: empty-string env vars (common in .env templates) must fall through.
