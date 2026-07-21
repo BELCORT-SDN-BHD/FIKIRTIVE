@@ -661,6 +661,8 @@ model Organization {
   broadcastRuns             BroadcastRun[]
   broadcastAudienceMembers  BroadcastAudienceMember[]
   contactSendFrequencyEvents ContactSendFrequencyEvent[]
+  messageDeliveryEvents     MessageDeliveryEvent[]
+  messageDeliveryStates     MessageDeliveryState[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -1140,6 +1142,7 @@ model ChannelScope {
   contactIdentities  ContactIdentity[]
   customerMessageTemplates CustomerMessageTemplate[]
   broadcastRuns      BroadcastRun[]
+  messageDeliveryEvents MessageDeliveryEvent[]
 
   @@unique([ownerId, channel, scopeKey])
   // Required by the composite references below so they cannot cross owner or channel boundaries.
@@ -1179,6 +1182,7 @@ model ChannelConnection {
   // WHERE externalId IS NULL lives in the accompanying migration (repo idiom, same as
   // PublishAttempt_one_applying_per_post: Prisma can't model a partial index, so not declared here).
   providerRefusalEvents ProviderRefusalEvent[]
+  messageDeliveryEvents MessageDeliveryEvent[]
 
   @@unique([ownerId, kind, externalId])
   // Required by tenant-qualified ProviderRefusalEvent references.
@@ -1741,6 +1745,58 @@ model ContactSendFrequencyEvent {
 
   @@unique([ownerId, idempotencyKey])
   @@index([ownerId, contactId, channel, purposeClass, countedAt, id], map: "ContactSendFrequencyEvent_window_idx")
+}
+
+// ── C6-M1 (2026-07-22): additive-only messaging receipt storage ──────────────────────────
+// docs/superpowers/specs/2026-07-22-c6-receipts-reports-physical-contract.md §7. These
+// carriers store verified external facts and a rebuildable per-send projection only. They add no
+// sender, outbox, retry path, ledger, retention policy, or simulated receipt rows. Closed
+// taxonomies remain code-validated Strings, matching the existing CRM carrier convention.
+
+// Append-only normalized provider facts. Corrections append a new fact; rows have no update or
+// delete lifecycle columns. Provider metadata remains opaque and relies on database encryption at
+// rest plus the tenant boundary; no raw payload, message, phone, token, or signature is stored.
+model MessageDeliveryEvent {
+  id                     String            @id
+  ownerId                String
+  organization           Organization      @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  logicalSendRef         String
+  channelScopeId         String
+  channel                String
+  channelScope           ChannelScope      @relation(fields: [channelScopeId, ownerId, channel], references: [id, ownerId, channel], onDelete: Restrict)
+  providerConnectionId   String
+  providerConnection     ChannelConnection @relation(fields: [providerConnectionId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  factKind               String // accepted | delivered | read | failed | replied (code-validated)
+  providerCode           String // opaque provider code; never a raw payload
+  externalMessageRef     String? // opaque corroborating reference only; never authority
+  receiptRef             String // opaque reference only; never raw provider material
+  actorKind              String // provider | system (code-validated; merchant and otto are forbidden)
+  sourceEventKey         String // server-derived, event-kind-namespaced idempotency key
+  sourcePayloadHash      String // versioned canonical hash
+  occurredAt             DateTime?         @db.Timestamptz(6) // claimed provider time; display only
+  receivedAt             DateTime          @db.Timestamptz(6) // server-canonical ordering time
+  createdAt              DateTime          @default(now())
+
+  @@unique([ownerId, sourceEventKey])
+  @@index([ownerId, logicalSendRef, receivedAt, id], map: "MessageDeliveryEvent_owner_send_received_idx")
+  @@index([ownerId, providerConnectionId, receivedAt, id], map: "MessageDeliveryEvent_owner_connection_received_idx")
+}
+
+// Rebuildable cache for one logical send. lastEventId is a scalar CAS cursor, matching the existing
+// consent/refusal projection convention; it is not an independent authority or mutation API.
+// Lifecycle is code-validated and folded monotonically by the later reconciliation writer.
+model MessageDeliveryState {
+  ownerId                String
+  organization           Organization @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  logicalSendRef         String
+  lifecycle              String // unknown | accepted | delivered | read | failed (code-validated; monotonic)
+  reconciliation         String // converged | pending | conflict | timeout_unknown (code-validated)
+  lastEventId            String // latest MessageDeliveryEvent.id used as the CAS cursor
+  lastProviderEventAt    DateTime?    @db.Timestamptz(6) // null means unknown
+  lastReconciledAt       DateTime     @db.Timestamptz(6)
+  updatedAt              DateTime     @updatedAt
+
+  @@unique([ownerId, logicalSendRef])
 }
 
 // ── Schedule (蓝图 P1½「排期 + Routine」) ──────────────────────────────────
