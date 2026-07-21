@@ -168,10 +168,15 @@ function nullSeparatedGit(cwd, args) {
   return result.stdout.split("\0").filter(Boolean);
 }
 
-function currentWriteSet(cwd, baseSha) {
+function committedWriteSet(cwd, baseSha) {
+  return new Set(
+    nullSeparatedGit(cwd, ["diff", "--name-only", "--no-renames", "-z", `${baseSha}..HEAD`, "--"]),
+  );
+}
+
+function uncommittedWriteSet(cwd) {
   const paths = new Set();
   const commands = [
-    ["diff", "--name-only", "--no-renames", "-z", `${baseSha}..HEAD`, "--"],
     ["diff", "--cached", "--name-only", "--no-renames", "-z", "--"],
     ["diff", "--name-only", "--no-renames", "-z", "--"],
     ["ls-files", "--others", "--exclude-standard", "-z", "--"],
@@ -179,7 +184,52 @@ function currentWriteSet(cwd, baseSha) {
   for (const args of commands) {
     for (const path of nullSeparatedGit(cwd, args)) paths.add(path);
   }
-  return [...paths].sort();
+  return paths;
+}
+
+function resolveRef(cwd, ref) {
+  const result = gitResult(cwd, ["rev-parse", "--verify", "-q", ref]);
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+function blobAt(cwd, ref, path) {
+  const result = gitResult(cwd, ["rev-parse", "--verify", "-q", `${ref}:${path}`]);
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+// Committed-only out-of-scope paths are exempt when their HEAD tree entry (mode and
+// content, not content alone) is identical to the same path in mainline (merge-base(HEAD,
+// origin/main) or origin/main's tip) — i.e. the path was pulled in unchanged by merging
+// origin/main, not authored by this claim. Comparing the tree entry rather than just the
+// blob closes a mode-bit-only escape: a permission-mode flip (e.g. 100644 -> 100755) leaves
+// the blob hash unchanged but is still a real change this claim made, so it must not be
+// exempt. When origin/main cannot be resolved at all (offline, shallow clone, no tracking
+// ref), no baseline exists and this returns no exemptions: behavior fails closed to the
+// prior, unexempted check.
+function resolveMainlineBaselines(cwd) {
+  const mainTip = resolveRef(cwd, "origin/main");
+  if (!mainTip) return [];
+  const baselines = new Set([mainTip]);
+  const mergeBase = gitResult(cwd, ["merge-base", "HEAD", "origin/main"]);
+  if (mergeBase.status === 0 && mergeBase.stdout.trim()) baselines.add(mergeBase.stdout.trim());
+  return [...baselines];
+}
+
+function pathIdenticalToRef(cwd, ref, path) {
+  // --literal-pathspecs disables pathspec magic (":(glob)", ":(attr:...)", etc.) so a path
+  // that is itself a literal Git tree path (as every path here is, taken from -z write-set
+  // output) can never be reinterpreted as a matcher. Without it, an out-of-scope path whose
+  // literal name happens to start with a magic prefix could match zero files, making the
+  // diff spuriously empty (exit 0) and smuggling arbitrary out-of-scope content past the
+  // fence as a false "identical to mainline" exemption.
+  const result = gitResult(cwd, ["--literal-pathspecs", "diff", "--quiet", ref, "HEAD", "--", path]);
+  return result.status === 0;
+}
+
+function isExemptByMainline(cwd, path, baselines) {
+  if (baselines.length === 0) return false;
+  if (!blobAt(cwd, "HEAD", path)) return false;
+  return baselines.some((ref) => pathIdenticalToRef(cwd, ref, path));
 }
 
 function scopeContainsPath(scope, path) {
@@ -245,10 +295,15 @@ function validateActivePhysical(entry, context, errors) {
     if (ancestor.status !== 0) {
       errors.push(`${label}.base_sha is not an ancestor of worktree HEAD`);
     } else {
-      for (const path of currentWriteSet(activeContext.root, claim.base_sha)) {
-        if (!scopeContainsPath(scope, path)) {
-          errors.push(`${label} has an out-of-scope committed/index/worktree/untracked path: ${path}`);
-        }
+      const committed = committedWriteSet(activeContext.root, claim.base_sha);
+      const uncommitted = uncommittedWriteSet(activeContext.root);
+      const baselines = resolveMainlineBaselines(activeContext.root);
+      const allPaths = new Set([...committed, ...uncommitted]);
+      for (const path of [...allPaths].sort()) {
+        if (scopeContainsPath(scope, path)) continue;
+        const committedOnly = committed.has(path) && !uncommitted.has(path);
+        if (committedOnly && isExemptByMainline(activeContext.root, path, baselines)) continue;
+        errors.push(`${label} has an out-of-scope committed/index/worktree/untracked path: ${path}`);
       }
     }
   } catch (error) {

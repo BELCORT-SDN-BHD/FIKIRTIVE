@@ -301,6 +301,136 @@ test("red: committed, index, worktree, untracked, and rename destinations are sc
   }
 });
 
+test("green: a committed path merged in unchanged from origin/main is exempt", (t) => {
+  const fixture = makeFixture(t);
+
+  // Advance "mainline" (the repo's main branch) with a file the claim never authored.
+  mkdirSync(join(fixture.repo, "docs"));
+  writeFileSync(join(fixture.repo, "docs/mainline-added.md"), "mainline content\n");
+  git(fixture.repo, ["add", "docs/mainline-added.md"]);
+  git(fixture.repo, ["commit", "-m", "mainline progress"]);
+  const mainlineSha = git(fixture.repo, ["rev-parse", "HEAD"]);
+  git(fixture.linked, ["update-ref", "refs/remotes/origin/main", mainlineSha]);
+
+  // The claim does its own in-scope work, then merges origin/main into the task branch,
+  // pulling in docs/mainline-added.md untouched (the C5-M3 close-path scenario).
+  mkdirSync(join(fixture.linked, "docs"));
+  writeFileSync(join(fixture.linked, "docs/owned.md"), "owned\n");
+  git(fixture.linked, ["add", "docs/owned.md"]);
+  git(fixture.linked, ["commit", "-m", "own work"]);
+  git(fixture.linked, ["merge", "--no-ff", "-m", "merge mainline", mainlineSha]);
+
+  const registry = {
+    ...emptyRegistry(),
+    claims: [claim(fixture, { scope: ["docs/owned.md"] })],
+  };
+  assert.equal(
+    validateOwnershipRegistry(registry, { context: fixture.linkedContext, now: NOW }).active.length,
+    1,
+  );
+});
+
+test("red: a committed path that diverges from origin/main after a mainline merge still fails", (t) => {
+  const fixture = makeFixture(t);
+
+  mkdirSync(join(fixture.repo, "docs"));
+  writeFileSync(join(fixture.repo, "docs/mainline-added.md"), "mainline content\n");
+  git(fixture.repo, ["add", "docs/mainline-added.md"]);
+  git(fixture.repo, ["commit", "-m", "mainline progress"]);
+  const mainlineSha = git(fixture.repo, ["rev-parse", "HEAD"]);
+  git(fixture.linked, ["update-ref", "refs/remotes/origin/main", mainlineSha]);
+
+  mkdirSync(join(fixture.linked, "docs"));
+  writeFileSync(join(fixture.linked, "docs/owned.md"), "owned\n");
+  git(fixture.linked, ["add", "docs/owned.md"]);
+  git(fixture.linked, ["commit", "-m", "own work"]);
+  git(fixture.linked, ["merge", "--no-ff", "-m", "merge mainline", mainlineSha]);
+
+  // Genuinely out-of-scope: this claim edits the merged-in file, so its committed content
+  // no longer matches mainline and the mainline exemption must not apply.
+  writeFileSync(join(fixture.linked, "docs/mainline-added.md"), "task divergent content\n");
+  git(fixture.linked, ["add", "docs/mainline-added.md"]);
+  git(fixture.linked, ["commit", "-m", "diverge from mainline"]);
+
+  const registry = {
+    ...emptyRegistry(),
+    claims: [claim(fixture, { scope: ["docs/owned.md"] })],
+  };
+  expectOwnershipError(
+    () => validateOwnershipRegistry(registry, { context: fixture.linkedContext, now: NOW }),
+    /out-of-scope committed\/index\/worktree\/untracked path: docs\/mainline-added\.md/,
+  );
+});
+
+test("red: a mode-bit-only change to a mainline-merged path still fails", (t) => {
+  const fixture = makeFixture(t);
+
+  mkdirSync(join(fixture.repo, "docs"));
+  writeFileSync(join(fixture.repo, "docs/mainline-added.md"), "mainline content\n");
+  git(fixture.repo, ["add", "docs/mainline-added.md"]);
+  git(fixture.repo, ["commit", "-m", "mainline progress"]);
+  const mainlineSha = git(fixture.repo, ["rev-parse", "HEAD"]);
+  git(fixture.linked, ["update-ref", "refs/remotes/origin/main", mainlineSha]);
+
+  mkdirSync(join(fixture.linked, "docs"));
+  writeFileSync(join(fixture.linked, "docs/owned.md"), "owned\n");
+  git(fixture.linked, ["add", "docs/owned.md"]);
+  git(fixture.linked, ["commit", "-m", "own work"]);
+  git(fixture.linked, ["merge", "--no-ff", "-m", "merge mainline", mainlineSha]);
+
+  // Genuinely out-of-scope: the blob content is byte-identical to mainline, but this claim's
+  // own commit flips the executable bit. The blob hash alone can't see this, so the fence
+  // must compare the full tree entry (mode + blob) and refuse the mainline exemption here.
+  chmodSync(join(fixture.linked, "docs/mainline-added.md"), 0o755);
+  git(fixture.linked, ["add", "docs/mainline-added.md"]);
+  git(fixture.linked, ["commit", "-m", "flip executable bit"]);
+
+  const registry = {
+    ...emptyRegistry(),
+    claims: [claim(fixture, { scope: ["docs/owned.md"] })],
+  };
+  expectOwnershipError(
+    () => validateOwnershipRegistry(registry, { context: fixture.linkedContext, now: NOW }),
+    /out-of-scope committed\/index\/worktree\/untracked path: docs\/mainline-added\.md/,
+  );
+});
+
+test("red: an out-of-scope path with a literal pathspec-magic-like name still fails", (t) => {
+  const fixture = makeFixture(t);
+
+  mkdirSync(join(fixture.repo, "docs"));
+  writeFileSync(join(fixture.repo, "docs/mainline-added.md"), "mainline content\n");
+  git(fixture.repo, ["add", "docs/mainline-added.md"]);
+  git(fixture.repo, ["commit", "-m", "mainline progress"]);
+  const mainlineSha = git(fixture.repo, ["rev-parse", "HEAD"]);
+  git(fixture.linked, ["update-ref", "refs/remotes/origin/main", mainlineSha]);
+
+  mkdirSync(join(fixture.linked, "docs"));
+  writeFileSync(join(fixture.linked, "docs/owned.md"), "owned\n");
+  git(fixture.linked, ["add", "docs/owned.md"]);
+  git(fixture.linked, ["commit", "-m", "own work"]);
+  git(fixture.linked, ["merge", "--no-ff", "-m", "merge mainline", mainlineSha]);
+
+  // Genuinely out-of-scope: mainline never had this file at all. Its literal filename
+  // happens to start with a Git pathspec "magic" prefix (":(attr:zzz)"). Without
+  // --literal-pathspecs, the diff invocation would parse that prefix as an attribute
+  // filter matching zero paths, making the diff spuriously empty (exit 0) and smuggling
+  // the content past the fence as a false mainline-identical exemption. Staged with
+  // `add -A` (not by literal name) so the malicious name reaches the commit unmangled.
+  writeFileSync(join(fixture.linked, ":(attr:zzz)evil.md"), "smuggled content\n");
+  git(fixture.linked, ["add", "-A"]);
+  git(fixture.linked, ["commit", "-m", "smuggle"]);
+
+  const registry = {
+    ...emptyRegistry(),
+    claims: [claim(fixture, { scope: ["docs/owned.md"] })],
+  };
+  expectOwnershipError(
+    () => validateOwnershipRegistry(registry, { context: fixture.linkedContext, now: NOW }),
+    /out-of-scope committed\/index\/worktree\/untracked path: :\(attr:zzz\)evil\.md/,
+  );
+});
+
 test("red: registry directory and file symlinks are rejected", (t) => {
   const fixture = makeFixture(t);
   const outside = join(fixture.root, "outside-registry");
