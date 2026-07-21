@@ -15,6 +15,7 @@ import {
   Video as VideoIcon,
   XCircle,
 } from "lucide-react";
+import { displayCredits } from "@fikirtive/core/spend";
 import {
   confirmCampaignGeneration,
   type CampaignGenQuote,
@@ -82,11 +83,6 @@ function ConfirmWorkspace({
   const [error, setError] = useState<string | null>(initialQuote && "error" in initialQuote ? initialQuote.error : null);
   const [result, setResult] = useState<BatchResult | null>(null);
 
-  const displayByEntry = useMemo(
-    () => Object.fromEntries(approvedLines.map((line) => [line.entryId, line])),
-    [approvedLines],
-  );
-
   // The server derives the stable batch id (per campaign+project) and a fresh attempt id, so a
   // double-submit / retry cannot double-charge — succeeded cells reuse (0 charge) and only
   // all-FAILED cells re-dispatch. The client passes no idempotency material.
@@ -98,7 +94,9 @@ function ConfirmWorkspace({
     setBusy(true);
     setError(null);
     try {
-      const response = await confirmCampaignGeneration({ campaignId, projectId });
+      // Bind the price the owner reviewed (this page's rendered total). The server refuses if
+      // the plan/config moved it — fail-closed, nothing charged.
+      const response = await confirmCampaignGeneration({ campaignId, projectId, expectedTotalCredits: totalDisplayCredits });
       if (!("ok" in response)) {
         setError(response.error);
         return;
@@ -142,9 +140,10 @@ function ConfirmWorkspace({
 
   // ── results view (honest per-cell outcome) ─────────────────────────────────
   if (result) {
-    const reservedThisRun = result.cells
-      .filter((cell) => cell.status === "queued")
-      .reduce((sum, cell) => sum + (displayByEntry[approvedLines[cell.index]?.entryId]?.displayCredits ?? 0), 0);
+    // Authoritative: the run total + per-cell charge come from the SERVER dispatch result
+    // (result.totalCredits / result.cells[].credits, in internal credits), not the load-time
+    // quote snapshot.
+    const reservedThisRun = displayCredits(result.totalCredits);
     return (
       <Shell>
         <ConfirmHeader campaign={campaign} />
@@ -169,9 +168,9 @@ function ConfirmWorkspace({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold">{entry?.hook || `Entry ${cell.index + 1}`}</p>
                     <p className="mt-1 truncate text-xs text-muted-foreground">{entry?.brief}</p>
-                    {cell.error ? <p className="mt-1 text-xs text-destructive">{cell.error}</p> : null}
+                    {cell.error ? <p className="mt-1 text-xs text-destructive">{friendlyCellError(cell.error)}</p> : null}
                   </div>
-                  <CellStatus status={cell.status} credits={line?.displayCredits ?? 0} />
+                  <CellStatus status={cell.status} credits={displayCredits(cell.credits)} />
                 </div>
               );
             })}
@@ -303,6 +302,16 @@ function EmptyState({ icon, title, body, campaignId }: { icon: React.ReactNode; 
       </CardContent>
     </Card>
   );
+}
+
+/** Map the shared spend-gate errors to copy that is accurate for THIS flow. The "different
+ *  content" conflict means an already-generated entry's plan changed under the stable batch —
+ *  we never re-word gen-actions' shared message at the source, only at this presentation seam. */
+function friendlyCellError(raw: string): string {
+  if (/different content/i.test(raw)) {
+    return "This entry's plan changed since it was last generated. Undo the edit, or generate it into a different project.";
+  }
+  return raw;
 }
 
 function CellStatus({ status, credits }: { status: "queued" | "reused" | "text" | "error"; credits: number }) {

@@ -114,5 +114,5 @@
 | debt-107 | `customer-broadcast-ui-actions.confirmBroadcastRun` | B0-43 | B7 |
 | debt-108 | `customer-broadcast-ui-actions.cancelBroadcastRun` | B0-43 | B7 |
 | debt-109 | `customer-broadcast-ui-actions.executeBroadcastRun` | B0-46 | B7 |
-| debt-110 | `campaign-generation-confirm.quoteCampaignGeneration` | B0-20 | B3 |
-| debt-111 | `campaign-generation-confirm.confirmCampaignGeneration` | B0-20 | B3 |
+| debt-110 | `campaign-generation-confirm.quoteCampaignGeneration` | B0-57 | B8 |
+| debt-111 | `campaign-generation-confirm.confirmCampaignGeneration` | B0-57 | B8 |

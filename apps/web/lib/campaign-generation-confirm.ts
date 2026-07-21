@@ -201,6 +201,14 @@ const confirmInputSchema = z
     campaignId: campaignIdSchema,
     /** Destination project — must be owned AND grouped under this campaign. */
     projectId: z.string().min(1).max(64),
+    /**
+     * The displayed total the owner reviewed on the confirm page. The server re-derives the
+     * total from the persisted plan and refuses if it no longer matches (price-consent binding,
+     * canvas/cowork `expectedCredits` precedent — gen-actions.ts). This fails closed BEFORE any
+     * dispatch, so a plan/price change between review and confirm can never silently charge a
+     * different amount than the owner agreed to.
+     */
+    expectedTotalCredits: z.number().int().min(0),
   })
   .strict();
 
@@ -227,7 +235,7 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
 
   const parsed = confirmInputSchema.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { campaignId, projectId } = parsed.data;
+  const { campaignId, projectId, expectedTotalCredits } = parsed.data;
 
   // Owner-scoped campaign load — the persisted plan is the ONLY source of what will generate.
   const campaign = await prisma.campaign.findFirst({
@@ -254,6 +262,15 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   const models = { image: activeImageModel(), video: activeVideoModel() };
   const cells = buildCampaignGenCells(approved, models);
   const quote = quoteCampaignGenCells(approved, cells);
+
+  // Price-consent binding (fail-closed, BEFORE any dispatch): the owner authorised a specific
+  // total on the confirm page. If the plan or the config moved that total, refuse — nothing is
+  // charged and the owner re-reviews the new number (canvas/cowork expectedCredits precedent).
+  if (quote.totalDisplayCredits !== expectedTotalCredits) {
+    return {
+      error: `This plan or its price changed since you reviewed it (was ${expectedTotalCredits}, now ${quote.totalDisplayCredits} credits). Refresh and confirm again.`,
+    };
+  }
 
   // Stable batch id (per campaign+project) + a fresh attempt id per call. The stable batch id
   // makes a replay / concurrent confirm reuse the same logical cells (startGen dedups a

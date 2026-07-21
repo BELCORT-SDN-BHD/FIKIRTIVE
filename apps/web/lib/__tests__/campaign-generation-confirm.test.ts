@@ -216,7 +216,7 @@ describe("confirmCampaignGeneration — builds cells from the PERSISTED plan (an
       entry("E3", { brief: "flat lay on marble" }),
     ]);
     seedProject();
-    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID });
+    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
     if (!("ok" in res)) throw new Error(res.error);
     expect(res.result.cells).toHaveLength(2);
     expect(res.result.dispatched).toBe(2);
@@ -234,13 +234,13 @@ describe("confirmCampaignGeneration — builds cells from the PERSISTED plan (an
   it("empty when nothing is approved; blocked while impersonating", async () => {
     seedCampaign([entry("E1", { status: "proposed" })]);
     seedProject();
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }))
+    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
       .toEqual({ error: "Approve at least one plan entry before generating." });
     expect(h.startGen).not.toHaveBeenCalled();
 
     seedCampaign([entry("E1")]);
     h.isImpersonating.mockResolvedValue(true);
-    const blocked = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID });
+    const blocked = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG });
     expect("error" in blocked && blocked.error).toMatch(/impersonating/i);
     expect(h.startGen).not.toHaveBeenCalled();
   });
@@ -250,13 +250,13 @@ describe("confirmCampaignGeneration — exactly-once / zero double charge", () =
   it("a replay / re-confirm reuses the same logical cells — zero new charge", async () => {
     seedCampaign([entry("E1"), entry("E2")]);
     seedProject();
-    const first = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID });
+    const first = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
     if (!("ok" in first)) throw new Error(first.error);
     expect(first.result.dispatched).toBe(2);
     expect(h.store.jobs.size).toBe(2);
     const firstKeys = h.startGen.mock.calls.map((c) => (c[0] as Record<string, unknown>).idempotencyKey as string);
 
-    const second = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID });
+    const second = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
     if (!("ok" in second)) throw new Error(second.error);
     expect(second.result.dispatched).toBe(0);
     expect(second.result.reused).toBe(2);
@@ -274,13 +274,40 @@ describe("confirmCampaignGeneration — exactly-once / zero double charge", () =
     seedCampaign([entry("E1"), entry("E2")]);
     seedProject();
     const [a, b] = await Promise.all([
-      confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }),
-      confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }),
+      confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG }),
+      confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG }),
     ]);
     if (!("ok" in a) || !("ok" in b)) throw new Error("confirm failed");
     // Across both runs, each of the two logical cells minted exactly one job (no duplicate).
     expect(h.store.jobs.size).toBe(2);
     expect(a.result.dispatched + b.result.dispatched).toBe(2);
+  });
+});
+
+describe("confirmCampaignGeneration — price-consent binding (fail-closed)", () => {
+  it("refuses when the reviewed total no longer matches the recomputed total — zero dispatch", async () => {
+    seedCampaign([entry("E1"), entry("E2")]); // real total = IMG + IMG = 2
+    seedProject();
+    const stale = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 5 });
+    expect("error" in stale && stale.error).toMatch(/changed since you reviewed it/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(0);
+
+    // the correct reviewed total is accepted and dispatches normally
+    const ok = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG });
+    if (!("ok" in ok)) throw new Error(ok.error);
+    expect(ok.result.dispatched).toBe(2);
+  });
+
+  it("catches a plan change made AFTER the quote was rendered (format flip 1cr → 8cr)", async () => {
+    seedCampaign([entry("E1", { format: "image" })]); // rendered total the owner saw = 1
+    seedProject();
+    // the plan is edited to a video format between review and confirm → recomputed total = 8
+    seedCampaign([entry("E1", { format: "video" })]);
+    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG });
+    expect("error" in res && res.error).toMatch(/was 1, now 8 credits/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(0);
   });
 });
 
@@ -293,7 +320,7 @@ describe("confirmCampaignGeneration — honest partial failure, $0 for failed ce
     ]);
     seedProject();
     failPrompts = new Set(["fails here"]);
-    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID });
+    const res = await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: IMG + IMG + IMG });
     if (!("ok" in res)) throw new Error(res.error);
     expect(res.result.dispatched).toBe(2);
     expect(res.result.failed).toBe(1);
@@ -308,7 +335,7 @@ describe("confirmCampaignGeneration — RBAC owner-only + fail-closed", () => {
     h.requireOwner.mockResolvedValue({ error: "Not authorized." });
     seedCampaign([entry("E1")]);
     seedProject();
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }))
+    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
       .toEqual({ error: "Not authorized." });
     expect(h.startGen).not.toHaveBeenCalled();
   });
@@ -316,7 +343,7 @@ describe("confirmCampaignGeneration — RBAC owner-only + fail-closed", () => {
   it("a cross-tenant campaign is not found (owner-scoped query)", async () => {
     seedCampaign([entry("E1")], OTHER_OWNER);
     seedProject(CAMPAIGN_ID, OTHER_OWNER);
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }))
+    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
       .toEqual({ error: "Campaign not found." });
     expect(h.startGen).not.toHaveBeenCalled();
   });
@@ -324,7 +351,7 @@ describe("confirmCampaignGeneration — RBAC owner-only + fail-closed", () => {
   it("a project not grouped under this campaign is refused before any dispatch", async () => {
     seedCampaign([entry("E1")]);
     seedProject(null); // owned, but campaignId null
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }))
+    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
       .toEqual({ error: "Choose a project that belongs to this campaign." });
     expect(h.startGen).not.toHaveBeenCalled();
   });
@@ -332,7 +359,7 @@ describe("confirmCampaignGeneration — RBAC owner-only + fail-closed", () => {
   it("a project owned by another tenant is not found", async () => {
     seedCampaign([entry("E1")]);
     h.store.projects.set(PROJECT_ID, { id: PROJECT_ID, ownerId: OTHER_OWNER, campaignId: CAMPAIGN_ID, deletedAt: null });
-    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID }))
+    expect(await confirmCampaignGeneration({ campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits: 0 }))
       .toEqual({ error: "Project not found." });
     expect(h.startGen).not.toHaveBeenCalled();
   });
