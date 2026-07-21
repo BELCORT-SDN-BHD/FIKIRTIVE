@@ -658,6 +658,9 @@ model Organization {
   customerMessageTemplates        CustomerMessageTemplate[]
   customerMessageTemplateVersions CustomerMessageTemplateVersion[]
   segments                Segment[]
+  broadcastRuns             BroadcastRun[]
+  broadcastAudienceMembers  BroadcastAudienceMember[]
+  contactSendFrequencyEvents ContactSendFrequencyEvent[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -683,6 +686,7 @@ model Membership {
   customerConversationEventsTo    CustomerConversationEvent[]      @relation("CustomerConversationEventToAssignee")
   customerConversationDrafts      CustomerConversationDraft[]      @relation("CustomerConversationDraftAuthor")
   customerMessageTemplateVersions CustomerMessageTemplateVersion[] @relation("CustomerMessageTemplateVersionAuthor")
+  createdBroadcastRuns            BroadcastRun[]                   @relation("BroadcastRunCreatedBy")
 
   @@unique([userId, orgId])
   // Required by every tenant-qualified Inbox actor/assignee relation.
@@ -1135,6 +1139,7 @@ model ChannelScope {
   channelConnections ChannelConnection[]
   contactIdentities  ContactIdentity[]
   customerMessageTemplates CustomerMessageTemplate[]
+  broadcastRuns      BroadcastRun[]
 
   @@unique([ownerId, channel, scopeKey])
   // Required by the composite references below so they cannot cross owner or channel boundaries.
@@ -1271,7 +1276,11 @@ model Campaign {
   scheduledPosts    ScheduledPost[]
   trendSnapshots    TrendSnapshot[]
   firstTouchContacts Contact[] @relation("ContactFirstTouchCampaign")
+  broadcastRuns     BroadcastRun[]
 
+  // C5-M1: additive-only, required by BroadcastRun's composite tenant FK (same pattern as
+  // PR #375's Membership @@unique([id, orgId])). No existing column/behavior changes.
+  @@unique([id, ownerId])
   @@index([ownerId, status, deletedAt])
 }
 
@@ -1315,6 +1324,8 @@ model Contact {
   consentEvents            ConsentEvent[]
   consentStateProjections  ConsentStateProjection[]
   dndEvents                ContactDndEvent[]
+  broadcastAudienceMembers BroadcastAudienceMember[]
+  sendFrequencyEvents      ContactSendFrequencyEvent[]
 
   // Required by tenant-qualified consent and DND references.
   @@unique([id, ownerId])
@@ -1345,9 +1356,15 @@ model ContactIdentity {
   // preserves the existing legacy three-fact partial unique unchanged; reader/writer behavior stays put.
   providerRefusalEvents ProviderRefusalEvent[]
   customerConversations CustomerConversation[]
+  broadcastAudienceMembers BroadcastAudienceMember[]
 
   // Required by tenant-qualified ProviderRefusalEvent references.
   @@unique([id, ownerId])
+  // C5-M1 P2-1 (review-driven, additive): binds an identity to its owning contact so
+  // BroadcastAudienceMember's triple FK can reject a contactId/contactIdentityId mismatch at
+  // the DB layer — a writer bug pairing contact A with contact B's identity is now impossible,
+  // not just unvalidated.
+  @@unique([id, contactId, ownerId])
   @@index([ownerId, contactId, deletedAt])
 }
 
@@ -1495,6 +1512,8 @@ model CustomerMessageTemplateVersion {
   createdAt             DateTime                @default(now())
   updatedAt             DateTime                @updatedAt
 
+  broadcastRuns BroadcastRun[]
+
   @@unique([id, ownerId])
   @@unique([ownerId, templateId, revision], map: "CustomerMessageTemplateVersion_owner_template_revision_key")
   @@index([ownerId, templateId, revision], map: "CustomerMessageTemplateVersion_owner_template_revision_idx")
@@ -1618,6 +1637,110 @@ model Segment {
   deletedAt DateTime?
 
   @@index([ownerId, kind, deletedAt])
+}
+
+// ── C5-M1 (2026-07-21): additive-only broadcast/frequency storage ──────────────────────────
+// docs/superpowers/specs/2026-07-21-c5-broadcast-eligibility-physical-contract.md §5. No send
+// authority, no receipt, no merged suppression/blocklist table — the four eligibility axes stay
+// separate fold-reads over the existing consent-runtime tables (ConsentStateProjection,
+// ContactDndEvent, ProviderRefusalState); consent-runtime remains their sole writer. These three
+// carriers only add broadcast run/audience/frequency storage. Closed taxonomies stay
+// code-validated Strings (house style), matching C4b-M1.
+
+// One merchant, one frozen audience, one logical channel account, one frozen template version,
+// per §5.2. NOT send authority, NOT a receipt, NOT a suppression list, and NOT Campaign (Campaign
+// only groups it, B0-51/52 — its FK is composite-tenant-qualified but the relationship is grouping
+// only). Real execution stays SEND_PATH_UNAVAILABLE until D8/C6/M6 land (§6.2).
+model BroadcastRun {
+  id                     String       @id
+  ownerId                String
+  organization           Organization @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  channelScopeId         String
+  channel                String
+  channelScope           ChannelScope @relation(fields: [channelScopeId, ownerId, channel], references: [id, ownerId, channel], onDelete: Restrict)
+  campaignId             String?
+  campaign               Campaign?    @relation(fields: [campaignId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  templateVersionId      String?
+  templateVersion        CustomerMessageTemplateVersion? @relation(fields: [templateVersionId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  purpose                String // marketing | review_request (code-validated; proactive only — transactional never broadcasts, R-010 §4.3.2)
+  status                 String       @default("draft") // draft | audience_frozen | confirmed | executing | completed | cancelled | failed (code-validated)
+  audienceRevision       Int          @default(0) // CAS integer over the frozen audience snapshot; a new audience needs a new revision
+  revision               Int          @default(0) // aggregate monotonic CAS; +1 on every status/audience mutation
+  creationIdempotencyKey String // caller-supplied dedup key (house idempotencyKey shape); guards duplicate run creation on double-submit/replay
+  frozenAt               DateTime?
+  confirmedAt            DateTime?
+  executedAt             DateTime?
+  createdByMembershipId  String
+  createdByMembership    Membership   @relation("BroadcastRunCreatedBy", fields: [createdByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  audienceMembers BroadcastAudienceMember[]
+
+  @@unique([id, ownerId])
+  @@unique([ownerId, creationIdempotencyKey])
+  @@index([ownerId, status, createdAt, id], map: "BroadcastRun_owner_status_created_idx")
+  @@index([ownerId, campaignId, createdAt, id], map: "BroadcastRun_owner_campaign_created_idx")
+}
+
+// Frozen audience member snapshot: one row per (run, contact identity), idempotent under retry.
+// eligibilityVerdictJson is a display/audit-only snapshot taken at freeze time — §6.2 requires
+// execution to RE-READ live four-axis authority, never send off a stale frozen PASS. NOT a merged
+// suppression list, NOT a consent source of truth, NOT a provider receipt.
+model BroadcastAudienceMember {
+  id                     String          @id
+  ownerId                String
+  organization           Organization    @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  broadcastRunId         String
+  broadcastRun           BroadcastRun    @relation(fields: [broadcastRunId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  contactId              String
+  contact                Contact         @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  contactIdentityId      String
+  // C5-M1 P2-1 (review-driven, additive hardening beyond spec §5.3's shape): the triple FK binds
+  // contactIdentityId to THIS row's own contactId (not just ownerId), so Postgres rejects a member
+  // pairing one contact with a different contact's identity — closing a mis-pairing writer bug that
+  // would otherwise silently charge the wrong contact's frequency cap (frequency counts on
+  // contactId; broadcast idempotency counts on contactIdentityId).
+  contactIdentity        ContactIdentity @relation(fields: [contactIdentityId, contactId, ownerId], references: [id, contactId, ownerId], onDelete: Restrict, map: "BroadcastAudienceMember_identity_contact_owner_fkey")
+  audienceRevision       Int // the run's audienceRevision this member's snapshot belongs to
+  // Frozen per-axis verdict snapshot: { consentStop, doNotDisturb, providerRefusal, frequency,
+  // aggregate, evaluatedAt }, each axis { status, source, reason?, checkedAt }. Display/audit only.
+  eligibilityVerdictJson Json
+  verdictHash            String // versioned canonical hash of eligibilityVerdictJson (integrity)
+  includedByMerchant     Boolean // merchant's audience-inclusion choice; unknown-permission members are flagged + kept (B0-44), never silently dropped
+  sendState              String          @default("pending") // pending | skipped_ineligible | simulated_sent | send_unavailable (code-validated; a REAL send state never appears here in M1-M3)
+  skipReason             String? // stable merchant-visible code for which axis blocked; never PII
+  createdAt              DateTime        @default(now())
+
+  @@unique([id, ownerId])
+  @@unique([ownerId, broadcastRunId, contactIdentityId], map: "BroadcastAudienceMember_owner_run_identity_key")
+  @@index([ownerId, broadcastRunId, sendState, id], map: "BroadcastAudienceMember_owner_run_state_idx")
+}
+
+// Append-only frequency-counting facts. The rolling window is counted by ROW COUNT over
+// countedAt at read time (§5.4) — deliberately NOT a mutable single-row counter (rolling windows
+// need time-based expiry, which a single count can only approximate via racy decrement/sweep).
+// NOT a suppression list, NOT a consent/DND fact. Written exactly-once only when a member
+// transitions into simulated_sent (simulated era) or reached-provider terminal (real era);
+// skipped_ineligible/send_unavailable members never write a row (untouched sends don't spend cap).
+model ContactSendFrequencyEvent {
+  id             String        @id
+  ownerId        String
+  organization   Organization  @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  contactId      String
+  contact        Contact       @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  channel        String // provider-neutral closed taxonomy (code-validated)
+  purposeClass   String // proactive_non_transactional only, for now (code-validated); frequency never gates transactional/reactive_service_reply
+  sourceKind     String // broadcast_run | conversation_reply (code-validated) — which send layer produced this count
+  sendRef        String // opaque ref to the send that produced this count (e.g. audience member id / conversation send id); never a receipt
+  simulated      Boolean // true throughout M1-M3 (simulated sends only); a real send writes false only after M6, filtered by the attempt's own flag, never a global env/era switch
+  idempotencyKey String // server-derived, frozen logical-send identity; see §5.4 for the broadcast vs. conversation-reply derivations (never collapsed to conversationId)
+  occurredAt     DateTime?     @db.Timestamptz(6) // claimed business time, display only
+  countedAt      DateTime      @db.Timestamptz(6) // server-canonical time; the rolling window counts on this column
+  createdAt      DateTime      @default(now())
+
+  @@unique([ownerId, idempotencyKey])
+  @@index([ownerId, contactId, channel, purposeClass, countedAt, id], map: "ContactSendFrequencyEvent_window_idx")
 }
 
 // ── Schedule (蓝图 P1½「排期 + Routine」) ──────────────────────────────────
