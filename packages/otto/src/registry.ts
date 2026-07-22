@@ -51,6 +51,8 @@ import { readCampaignsSkill } from "./skills/read-campaigns.js";
 import { planCampaignSkill } from "./skills/plan-campaign.js";
 import { readContactsSkill } from "./skills/read-contacts.js";
 import { manageContactsSkill } from "./skills/manage-contacts.js";
+import { readWorkflowsSkill } from "./skills/read-workflows.js";
+import { draftWorkflowsSkill } from "./skills/draft-workflows.js";
 
 /** Add a new skill here (one line). Order is the agent's tool order. */
 export const allSkills: OttoSkill[] = [
@@ -105,6 +107,8 @@ export const allSkills: OttoSkill[] = [
   planCampaignSkill,
   readContactsSkill,
   manageContactsSkill,
+  readWorkflowsSkill,
+  draftWorkflowsSkill,
 ];
 
 export interface SkillMeta {

@@ -162,6 +162,46 @@ export type TrendSnapshotSummary = {
   createdAt: string;
 };
 
+/** C7 Workflow Routine scope exposed to Otto. This mirrors the engine's closed M2 shape only;
+ * empty collections/zero limits authorize nothing, and the authenticated service validates it again. */
+export type OttoWorkflowRoutineScope = {
+  actionKinds: Array<"conversation_reply" | "broadcast_run" | "wait" | "complete">;
+  channelScopes: Array<{ channel: string; providerConnectionId: string | null }>;
+  contactIds: string[];
+  segmentIds: string[];
+  maxActions: number;
+  maxRecipients: number;
+};
+
+/** C7 Workflow read/draft capability. Exactly eight authenticated methods are exposed: no tenant
+ * identity argument and no activate/authorize/kill/run/journey/dispatch/send/provider/spend seam.
+ * Routine credit caps and summary policy are deliberately absent; the web adapter fixes them. */
+export type OttoWorkflowsPort = {
+  listWorkflowDefinitions(input?: { limit?: number }): Promise<unknown>;
+  getWorkflowDefinition(input: { workflowDefinitionId: string }): Promise<unknown>;
+  listWorkflowRevisions(input: { workflowDefinitionId: string; limit?: number }): Promise<unknown>;
+  createWorkflowDefinition(input: {
+    slug: string;
+    name: string;
+    definitionKind: "rule" | "journey";
+    originKind: "custom";
+  }): Promise<unknown>;
+  validateWorkflowRules(input: { workflowDefinitionId: string; rulesSource: string }): Promise<unknown>;
+  saveWorkflowRevision(input: { workflowDefinitionId: string; rulesSource: string }): Promise<unknown>;
+  publishWorkflowRevision(input: {
+    workflowDefinitionId: string;
+    workflowRevisionId: string;
+    expectedRowRevision: number;
+  }): Promise<unknown>;
+  createRoutineDraft(input: {
+    workflowDefinitionId: string;
+    workflowRevisionId: string;
+    routineKey: string;
+    scopeJson: OttoWorkflowRoutineScope;
+    expiresAt?: string | null;
+  }): Promise<unknown>;
+};
+
 /** Minimal structural re-declaration of MetaAdObject for the otto package.
  *  The web type (apps/web/lib/meta-objects.ts) must NOT be imported here. */
 export type MetaAdObject = {
@@ -257,6 +297,9 @@ export interface OttoContext {
   /** The latest generation's status for THIS thread (best-effort), so Otto speaks truthfully
    *  about progress instead of guessing. Null/undefined = unknown. */
   activeJob?: { status: string; kind: string; error?: string | null } | null;
+  /** C7 Workflow read/draft parity. The web caller injects an exact authenticated eight-method
+   * capability. Workflow publish moves only the definition pointer; Routine authority is absent. */
+  workflows?: OttoWorkflowsPort;
   /** CRM Segments port (B0-61/C3, $0). Every method is injected by the web caller and delegates to
    * the SAME requireOwner-gated Segment server actions the human page uses. `build` accepts only a
    * structured rule group; it never compiles free-form language inside the skill. Create IDs and

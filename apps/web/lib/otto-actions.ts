@@ -90,6 +90,7 @@ import { makeOttoRefgenPort } from "./otto-refgen-port";
 import { makeOttoEntitiesPort } from "./otto-entities-port";
 import { makeOttoLibraryPort } from "./otto-library-port";
 import { makeOttoBrandMemoryPort } from "./otto-brand-memory-port";
+import { makeOttoWorkflowsPort } from "./otto-workflows-port";
 import {
   buildSegment as buildCrmSegment,
   getSegment as getCrmSegment,
@@ -494,6 +495,9 @@ export async function buildOttoContext({
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,
+    // C7: exact authenticated read/draft capability. Revision publish changes only the definition
+    // pointer; activation, authorization, run, dispatch, send, provider, and spend methods are absent.
+    workflows: makeOttoWorkflowsPort(),
     // B0-61/C3: list/get/preview/build all enter the authenticated Segment action layer.
     // The port never accepts ownerId and never compiles free-form language into rules.
     segments: makeOttoSegmentsPort(),

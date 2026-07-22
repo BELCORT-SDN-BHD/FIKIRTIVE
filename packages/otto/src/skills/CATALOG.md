@@ -8,6 +8,7 @@
 | cancelScheduledPost | free | write | internal | ❌ | Cancel a scheduled post so it will not publish. $0 and reversible only by re-cre |
 | deleteReferenceVariant | free | write | internal | ❌ | Delete one of an element's reference variants (and its generated reference image |
 | describeRefs | free | write | internal | ❌ | Cache visual descriptions of reference images shown to you this turn. For each r |
+| draftWorkflows | free | write | internal | ❌ | Create a custom Workflow definition, validate or save its readable rule source,  |
 | editScheduledPost | free | write | internal | ❌ | Edit a DRAFT or queued scheduled post — change its caption, scheduled time (UTC/ |
 | editStoryboard | free | write | internal | ❌ | Edit an EXISTING storyboard card the user is reviewing: change a shot's prompts  |
 | generate | spend | write | internal | ✅ | Execute a generation proposal (GEN_CARD) that the user has approved. This SPENDS |
@@ -40,6 +41,7 @@
 | readCampaigns | free | read | internal | ❌ | Read the user's Campaign list, one exact Campaign with structured plan entries a |
 | readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the same owner-scoped action |
 | readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer as the C |
+| readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, one exact definition, or its immutable rev |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
 | renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisp |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |
