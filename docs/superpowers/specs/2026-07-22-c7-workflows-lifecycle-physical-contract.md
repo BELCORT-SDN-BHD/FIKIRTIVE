@@ -134,8 +134,9 @@ C7 是 simulated-era product phase 的最后一柱；本 docs-only M0 只冻结�
 - **exactly-once 是 DB 合同**：先建 Run/Step 行再 dispatch；run、step 与 customer action 各有 stable semantic occurrence key，均
   **不含** authorization/policy revision 或 payload hash，另存 comparison hash；same-key/same-hash no-op，same-key/different-hash hard
   conflict。queue 的 at-least-once delivery 不得因重授权、改营业时间、跨 workflow replay 或改 action payload 变成重复 customer action。
-- **kill switch fail closed**：每个 step 在 delegation 前于 transaction 内锁/重读 Routine；若 engaged/revoked/expired/hash drift，
-  该 step 记 blocked，零 downstream call。已到 provider 的 external effect 由 D8/C6 reconcile，不伪装成可撤回。
+- **kill switch fail closed**：每个 step 在 delegation 前于 transaction 内锁/重读 Routine；block 条件以 §5.2 的 canonical
+  enumeration 为唯一清单；命中任一条件即该 step 记 blocked，零 downstream call。已到 provider 的 external effect 由 D8/C6
+  reconcile，不伪装成可撤回。
 - **模拟诚实**：M1–M3 无 provider/credential/webhook/spend；`simulated` 不是 sent/delivered/read。C6 delivery truth 仍 unknown。
 - **missing = unavailable**：缺 rule revision、authorization、scope、budget rule、timezone、identity、C5 axis、queue lease、D8/C6
   dependency 都 fail closed，不拼 optimistic green。
@@ -202,6 +203,10 @@ resolve 不到、跨 tenant、hash drift 或 dependency invalid 均 unavailable�
 B0-48 的人工「开关」不映射 `WorkflowDefinition.status`，也不直接写一个裸 Boolean：
 
 - OFF 必须走同一 Routine shared action，立即 engage kill switch 并阻止新 Run/Step；历史不删；
+- ARCHIVE 与 OFF 不同：`WorkflowDefinition` archive 前必须证明其所有 revisions 被 active Routine 引用数为 0；若仍有 N 条，
+  acknowledgment step 必须逐条原样列出这些 Routine 的 `routineKey`/`id`，并逐字显示
+  `Archiving does not stop these N active Routines`；human 必须对每条先 kill 或显式确认继续运行，archive 方可提交；archive
+  本身不 kill/stop 任一 Routine；
 - ON 若无 exact authorized Routine，必须打开四件套授权书，明确 human confirm 后才能 active；
 - ON 若已有同 hash 的 paused Routine，是否可直接 resume 或须重新确认是 Founder gate；任何 revision/dependency/scope/budget drift
   一律不得 resume，必须创建新 authorization envelope；
@@ -228,9 +233,12 @@ pause/revoke 旧行，不 in-place 覆盖旧批准。Routine 不能授权规则�
 
 - `scopeJson` 是 closed schema，至少绑定允许的 action kinds、channel scopes、contact/segment boundary、max actions/recipients；
   exact vocabulary 与上限值由 Founder gate 决定。Unknown field = deny。
+- channel/provider-connection identity binding 位于 `scopeJson` 的 channel-scope vocabulary 内，因此随 `scopeJson` 纳入
+  `authorizationHash`；dispatch channel 或 provider connection 超出已授权 channel scope 时，必须产生新 hash并取得新的 human authorization。
 - `maxCreditsPerRun` / `maxCreditsPerMonth` 是非负整数；`0` = 不允许 credit spend，不是 unlimited。模拟era 恒 0 且不接 ledger。
   真 spend 前须复用 Credit ledger reserve→settle/refund、scoped lock 与 money-safety；channel-fee 是独立账道，不能塞进 credits cap。
-- `killSwitchEngaged=true`、`status!=active`、expired、hash drift 或 budget unavailable 任一命中即 block。kill 不删除历史。
+- **canonical fail-closed enumeration**：`killSwitchEngaged=true`、`status!=active`、expired、hash drift 或 budget unavailable 任一命中即
+  block。kill 不删除历史。
 - 每个 terminal RoutineRun 必须有 bounded `summaryJson` 或明确 `summary_unavailable` reason；摘要不能含 raw phone/message/provider
   payload。摘要是事后可见性，不是 receipt。
 - `authorizationRevision` 在同一 `routineKey` 内由 transaction 单调分配；它是 immutable envelope 的序号，不是允许原地编辑的
@@ -341,11 +349,11 @@ composite FK、closed taxonomy String + code validator、historical refs `onDele
 | `slug` | tenant-local stable path segment；normalized server-side；archive 前不可复用 |
 | `name` | bounded merchant-visible name；不是 execution prompt |
 | `definitionKind` | code-validated `rule / journey` |
-| `originKind` | code-validated `custom / inbox_recipe / business_hours_recipe` |
+| `originKind` | code-validated `custom / inbox_recipe` |
 | `recipeKey / recipeCatalogVersion` | nullable；origin=recipe 时 required，引用 server config，不是 tenant authority |
 | `currentRevision` | nullable integer；publish 后指本 definition 的 exact revision；draft 可 null |
 | `rowRevision` | monotonic CAS；pointer/status mutation +1 |
-| `status` | code-validated `draft / published / archived`；执行开关在 Routine，不复制 |
+| `status` | code-validated `draft / published / archived`；执行开关在 Routine，不复制；archive 必须满足 §4.4 active-Routine 盘点/确认门 |
 | `createdByMembershipId` | tenant-qualified FK `(id, ownerId) → Membership(id, orgId)` |
 | `archivedAt` | nullable；archive 不删除 history |
 | `createdAt / updatedAt` | row lifecycle |
@@ -505,7 +513,7 @@ index `(ownerId,status,nextEligibleAt,id)` 与 `(ownerId,contactId,updatedAt,id)
 | `actionKind` | code-validated proposal `conversation_reply / broadcast_run / wait / complete` |
 | `actionPayloadHash` | versioned canonical action hash；不存 message正文 |
 | `stepIdempotencyKey` | server-derived semantic key：owner+run+journey/none+stepKey；刻意不含 payload hash，才能检测同 key 漂移 |
-| `actionIdempotencyKey` | customer-facing 时 required logical action occurrence key；可跨 run 去重；不含 payload/version hash |
+| `actionIdempotencyKey` | customer-facing 时 required server-derived semantic occurrence key；exact closed mapping 见下；可跨 run 去重 |
 | `status` | code-validated `reserved / blocked / simulated / delegated / unavailable / failed` |
 | `purpose / callerClass` | customer-facing 时 required frozen server-derived C5 closed values；caller 恒 `unconfirmed_automatic` |
 | `eligibilityInputHash` | exact owner/target/channel/connection/purpose/caller inputs 的 versioned hash；不可由 rule/client 提交 |
@@ -515,6 +523,15 @@ index `(ownerId,status,nextEligibleAt,id)` 与 `(ownerId,contactId,updatedAt,id)
 | `simulated` | M1–M3 恒 true；`simulated` 不等于 delivered |
 | `reasonCode / errorCode` | nullable stable code；无 raw PII/exception |
 | `reservedAt / delegatedAt / settledAt / createdAt / updatedAt` | server canonical times |
+
+`actionIdempotencyKey` closed mapping/conditional checks：
+`journey_step=ownerId+workflowDefinitionId+contactJourneyStateId+stepKey`；
+`scheduled_routine=ownerId+workflowDefinitionId+routineKey+schedule+canonical UTC scheduledFor+stepKey`；B0-98 的 customer-inbound 专用 case
+继续使用 §6.2 已冻结的
+`business_hours_auto_reply=ownerId+conversationId+CustomerMessage.sourceEventKey+channel+business_hours_auto_reply`。
+三式都不含 Routine row、authorization revision/hash、workflow/policy revision 或 action payload hash；`actionPayloadHash`、
+`eligibilityInputHash` 与 verdict hash 继续作为 key 外的 comparison facts。journey case 必有 exact journey FK，scheduled case 必有
+`triggerKind=schedule` 与 canonical `scheduledFor`。
 
 约束：`UNIQUE(id,ownerId)`；`UNIQUE(ownerId,stepIdempotencyKey)`；customer-facing partial unique
 `(ownerId,actionIdempotencyKey) WHERE actionIdempotencyKey IS NOT NULL`；
@@ -541,11 +558,16 @@ index `(ownerId,status,nextEligibleAt,id)` 与 `(ownerId,contactId,updatedAt,id)
 | `name` | bounded merchant-visible revision name |
 | `timeZone` | required canonical IANA zone；fixed offset 禁止 |
 | `weeklyWindowsJson` | closed array：ISO weekday 1–7 + sorted non-overlap `{startMinute,endMinute}`；start<end |
-| `status` | code-validated `draft / published / archived`；execution enable 在 Routine，不复制 |
+| `status` | code-validated `draft / published / archived`；execution enable 在 Routine，不复制；archive gate 见下 |
 | `rowRevision` | monotonic CAS，仅 status/archive mutation +1；不是 content revision |
 | `contentHash` | timezone+canonical windows 的 versioned hash；不含 reply template |
 | `createdByMembershipId` | tenant-qualified author FK |
-| `archivedAt / createdAt / updatedAt` | row lifecycle；archive 不删 run history |
+| `archivedAt / createdAt / updatedAt` | row lifecycle；archive 不删 run history，也不 stop active Routine |
+
+BusinessHoursPolicy archive mirror §4.4：archive exact policy revision 前，必须证明 pinned WorkflowRevision dependency manifest
+引用它的 active Routine 为 0；若仍有 N 条，acknowledgment step 必须逐条原样列出这些 Routine 的 `routineKey`/`id`，并逐字显示
+`Archiving does not stop these N active Routines`；human 必须对每条先 kill 或显式确认继续运行，archive 方可提交；archive 本身不
+kill/stop 任一 Routine。
 
 约束：`UNIQUE(id,ownerId)`；candidate key `UNIQUE(id,ownerId,policyKey)`；
 `UNIQUE(ownerId,policyKey,revision)`；`UNIQUE(ownerId,policyKey,contentHash)` 吸收 exact-content replay；`supersedesPolicyId` 以
@@ -762,6 +784,9 @@ truth 并 reconcile；绝不删事实后重投。任何 tenant/idempotency/priva
 - 人工可完整查看/编辑/validate/publish rule、查看 Routine 授权四件套、kill、run summary、journey state、business hours；
 - editor switch OFF 经 shared action engage kill；ON 无 exact authority 时打开 human authorization，不直改 client flag；resume/kill Otto
   parity 按 Founder 决定的 closed capability 验收；
+- WorkflowDefinition/BusinessHoursPolicy archive 在 active Routine 引用为 0 时可直接提交；N>0 时确认面逐条原样列出
+  `routineKey`/`id` 并逐字显示 `Archiving does not stop these N active Routines`，且每条先 kill 或显式确认继续运行后方可 archive；
+  archive 本身不改变 Routine active/kill 状态；
 - Otto read/draft 使用同 action，不直 DB；身份参数在 schema 中被 `defineOttoSkill` 拒绝；Otto 不能 activate/authorize/代 human confirm；
 - rules page 无 node/edge/canvas builder；recipe install default disabled；catalog upgrade 不 silent apply；
 - loading/empty/invalid/unavailable/paused/killed/stale/conflict/partial-error/error/ready desktop/mobile snapshot+interaction；界面秒级反映 kill/run state。
