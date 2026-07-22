@@ -5,7 +5,7 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "./better-auth/compat";
 import {
   CustomerBroadcastReportError,
-  customerBroadcastReportService,
+  createCustomerBroadcastReportService,
   type BroadcastDeliveryReceiptInput,
   type CustomerBroadcastReportErrorCode,
   type CustomerBroadcastReportInput,
@@ -47,9 +47,13 @@ async function runRead<T>(
 }
 
 export async function getBroadcastDeliveryReceipt(input: BroadcastDeliveryReceiptInput) {
-  return runRead((principal) => customerBroadcastReportService.getBroadcastDeliveryReceipt(principal, input));
+  return runRead((principal) =>
+    createCustomerBroadcastReportService(prisma).getBroadcastDeliveryReceipt(principal, input),
+  );
 }
 
 export async function getCustomerBroadcastReport(input: CustomerBroadcastReportInput) {
-  return runRead((principal) => customerBroadcastReportService.getCustomerBroadcastReport(principal, input));
+  return runRead((principal) =>
+    createCustomerBroadcastReportService(prisma).getCustomerBroadcastReport(principal, input),
+  );
 }

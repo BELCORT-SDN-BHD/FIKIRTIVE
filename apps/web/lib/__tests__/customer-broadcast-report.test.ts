@@ -69,7 +69,7 @@ const member: CustomerBroadcastReportPrincipal = {
   impersonating: false,
 };
 
-const reportService = createCustomerBroadcastReportService({ clock: () => NOW });
+const reportService = createCustomerBroadcastReportService(prisma, { clock: () => NOW });
 
 function errorCode(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "code" in error

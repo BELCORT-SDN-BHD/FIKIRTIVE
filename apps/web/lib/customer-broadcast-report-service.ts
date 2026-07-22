@@ -3,9 +3,9 @@ import "server-only";
 import {
   aggregateDeliveryAxes,
   createMessageDeliveryReconciliation,
-  prisma as defaultDb,
   type DeliveryReceiptView,
   type KnownDeliveryMetric,
+  type MessageDeliveryReconciliationDb,
 } from "@fikirtive/db";
 
 export const CUSTOMER_BROADCAST_REPORT_ERROR_CODES = {
@@ -95,11 +95,11 @@ function maxTimestamp(values: Array<string | null>): string | null {
 }
 
 export function createCustomerBroadcastReportService(
-  options: { db?: typeof defaultDb; clock?: () => Date } = {},
+  db: MessageDeliveryReconciliationDb,
+  options: { clock?: () => Date } = {},
 ) {
-  const db = options.db ?? defaultDb;
   const clock = options.clock ?? (() => new Date());
-  const reconciliation = createMessageDeliveryReconciliation({ db, clock });
+  const reconciliation = createMessageDeliveryReconciliation(db, { clock });
 
   async function requireOwnerRead(principal: CustomerBroadcastReportPrincipal): Promise<void> {
     if (!principal || typeof principal.ownerId !== "string" || typeof principal.membershipId !== "string") {
@@ -225,5 +225,3 @@ export function createCustomerBroadcastReportService(
 
   return { getBroadcastDeliveryReceipt, getCustomerBroadcastReport };
 }
-
-export const customerBroadcastReportService = createCustomerBroadcastReportService();

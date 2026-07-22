@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateDeliveryAxes,
   classifyDeliveryEventReplay,
+  createMessageDeliveryReconciliation,
+  prisma,
   reconcileDeliveryReceipt,
   type DeliveryEventForReconciliation,
   type DeliveryReceiptView,
   type DeliveryStateForReconciliation,
-} from "./message-delivery-reconciliation.js";
+} from "./index.js";
 
 const NOW = new Date("2026-07-22T10:00:00.000Z");
 const clock = () => NOW;
@@ -40,6 +42,12 @@ function reconcile(
 }
 
 describe("C6-M2 replay placeholder", () => {
+  it("constructs from the package-root client without eager database access", () => {
+    const reconciliation = createMessageDeliveryReconciliation(prisma, { clock });
+    expect(reconciliation.getBroadcastMemberReceipt).toBeTypeOf("function");
+    expect(reconciliation.readReceipts).toBeTypeOf("function");
+  });
+
   it("classifies a fresh fact, an exact duplicate, and a same-key hash conflict without writing", () => {
     const existing = { sourceEventKey: "delivery:1", sourcePayloadHash: "v1:aaa" };
     expect(classifyDeliveryEventReplay(null, existing)).toBe("new");

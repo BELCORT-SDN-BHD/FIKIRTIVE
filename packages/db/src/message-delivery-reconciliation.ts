@@ -1,5 +1,4 @@
-import { Prisma } from "../generated/prisma/client.js";
-import { prisma as defaultDb } from "./index.js";
+import type { Prisma, PrismaClient } from "../generated/prisma/client.js";
 
 export const DELIVERY_LIFECYCLES = ["unknown", "accepted", "delivered", "read", "failed"] as const;
 export type DeliveryLifecycle = (typeof DELIVERY_LIFECYCLES)[number];
@@ -46,7 +45,7 @@ export type ReconcileDeliveryInput = {
 
 export type ReplayClassification = "new" | "duplicate" | "conflict";
 
-type DatabaseClient = typeof defaultDb | Prisma.TransactionClient;
+export type MessageDeliveryReconciliationDb = PrismaClient | Prisma.TransactionClient;
 type ReceiptMember = { id: string; sendState: string };
 
 const FACT_KINDS = new Set<DeliveryFactKind>(["accepted", "delivered", "read", "failed", "replied"]);
@@ -210,9 +209,9 @@ export function aggregateDeliveryAxes(
 }
 
 export function createMessageDeliveryReconciliation(
-  options: { db?: DatabaseClient; clock?: () => Date } = {},
+  db: MessageDeliveryReconciliationDb,
+  options: { clock?: () => Date } = {},
 ) {
-  const db = options.db ?? defaultDb;
   const clock = options.clock ?? (() => new Date());
 
   async function readReceipts(
@@ -277,5 +276,3 @@ export function createMessageDeliveryReconciliation(
 
   return { getBroadcastMemberReceipt, readReceipts };
 }
-
-export const messageDeliveryReconciliation = createMessageDeliveryReconciliation();
