@@ -17,6 +17,7 @@ export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCr
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
 export * from "./send-eligibility.js";
+export * from "./message-delivery-reconciliation.js";
 
 function buildClient(): PrismaClient {
   // `||` not `??`: empty-string env vars (common in .env templates) must fall through.
