@@ -63,3 +63,7 @@ export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
 });
 
 export * from "./message-delivery-reconciliation.js";
+export * from "./workflow-compiler.js";
+export * from "./workflow-business-hours.js";
+export * from "./workflow-engine.js";
+export * from "./workflow-journey.js";
