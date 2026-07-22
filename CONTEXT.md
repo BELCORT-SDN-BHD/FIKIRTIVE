@@ -130,6 +130,40 @@ Reading the table below:
   block the CRM core. _Avoid:_ ledger, custody, write-back, invoicing/collections (Fikirtive never
   owns or holds those — read only).
 
+- **Workflow definition** (工作流定义) — An owner-scoped, versioned declarative description of
+  a trigger, conditions, and ordered steps: what an automation could do. The definition itself
+  grants neither run authority nor send authority. _Avoid:_ workflow run, Routine, send approval,
+  node graph.
+
+- **Workflow rule file** (工作流规则文件) — The human-readable file-form carrier of a Workflow
+  definition, edited and validated as rules rather than as a node canvas. A valid rule file is
+  still not executable or send authority. _Avoid:_ visual workflow, script, Routine authorization,
+  send gate.
+
+- **Routine authorization** (Routine 授权) — Bounded, auditable standing authority that a Routine
+  must prove before it may start within its approved limits. It never authorizes a customer-facing
+  send; every such action must still pass the shared C5 four-axis eligibility gate. _Avoid:_ consent,
+  send approval, blanket mandate, API key.
+
+- **Routine run** (Routine 运行) — One idempotent execution instance of a versioned Routine, tied
+  to its trigger and Routine-authorization proof; it records progress and outcome but grants no
+  send authority. _Avoid:_ Workflow definition, Broadcast run, send job, authorization.
+
+- **Contact journey state** (顾客旅程状态) — Owner-scoped, customer-linked personal data recording
+  one Contact’s progress and waiting position through one exact Workflow version. It is operational
+  state, not a replacement customer profile. _Avoid:_ Workflow definition, conversation state,
+  audience, CRM profile.
+
+- **Workflow step execution** (工作流步骤执行) — The exactly-once record of one step being evaluated
+  or attempted within a Routine run, including its outcome and idempotency identity. A customer-
+  facing step references the shared action/gate result; it is neither an outbox item nor a C6
+  Receipt. _Avoid:_ send, receipt, Customer message, job.
+
+- **Business-hours policy** (营业时间政策) — Owner-scoped configuration used to resolve whether
+  current local time is inside or outside the configured business hours. Missing or unresolved policy is
+  unavailable, never default-open; an available result must still pass all four C5 axes. _Avoid:_
+  send permission, calendar truth, DND, default-open hours.
+
 ## References & identity 参考与身份
 
 - **Entity** (实体) — A reusable cast member that recurs across shots: a Character, Location,
