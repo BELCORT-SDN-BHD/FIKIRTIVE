@@ -116,3 +116,5 @@
 | debt-109 | `customer-broadcast-ui-actions.executeBroadcastRun` | B0-46 | B7 |
 | debt-110 | `campaign-generation-confirm.quoteCampaignGeneration` | B0-57 | B8 |
 | debt-111 | `campaign-generation-confirm.confirmCampaignGeneration` | B0-57 | B8 |
+| debt-112 | `customer-broadcast-report-ui-actions.getBroadcastDeliveryReceipt` | B0-41 | B6 |
+| debt-113 | `customer-broadcast-report-ui-actions.getCustomerBroadcastReport` | B0-41 | B6 |
