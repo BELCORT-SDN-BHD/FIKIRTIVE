@@ -533,6 +533,8 @@ index `(ownerId,status,nextEligibleAt,id)` 与 `(ownerId,contactId,updatedAt,id)
 `eligibilityInputHash` 与 verdict hash 继续作为 key 外的 comparison facts。journey case 必有 exact journey FK，scheduled case 必有
 `triggerKind=schedule` 与 canonical `scheduledFor`。
 
+【澄清 2026-07-22,M2 施工裁决】customer-facing 执行在 target 绑定前即被阻断时，其 occurrence key 必须从上述适用的 §7.7 家族派生；customer-message 缺失的 conversationId/channel 分量使用固定 sentinel `target:none`，manual occurrence 则用 `ownerId+workflowDefinitionId+routineKey+manual triggerOccurrenceRef+stepKey+target:none`。
+
 约束：`UNIQUE(id,ownerId)`；`UNIQUE(ownerId,stepIdempotencyKey)`；customer-facing partial unique
 `(ownerId,actionIdempotencyKey) WHERE actionIdempotencyKey IS NOT NULL`；
 `(routineRunId,ownerId,workflowRevisionId) → RoutineRun(id,ownerId,workflowRevisionId)`；journey step 另以
