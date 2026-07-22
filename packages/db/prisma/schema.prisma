@@ -663,6 +663,13 @@ model Organization {
   contactSendFrequencyEvents ContactSendFrequencyEvent[]
   messageDeliveryEvents     MessageDeliveryEvent[]
   messageDeliveryStates     MessageDeliveryState[]
+  workflowDefinitions       WorkflowDefinition[]
+  workflowRevisions         WorkflowRevision[]
+  routines                  Routine[]
+  routineRuns               RoutineRun[]
+  contactJourneyStates      ContactJourneyState[]
+  workflowStepExecutions    WorkflowStepExecution[]
+  businessHoursPolicies     BusinessHoursPolicy[]
 }
 
 // User <-> Organization join, carrying the per-org role. role/status are code-validated
@@ -689,6 +696,12 @@ model Membership {
   customerConversationDrafts      CustomerConversationDraft[]      @relation("CustomerConversationDraftAuthor")
   customerMessageTemplateVersions CustomerMessageTemplateVersion[] @relation("CustomerMessageTemplateVersionAuthor")
   createdBroadcastRuns            BroadcastRun[]                   @relation("BroadcastRunCreatedBy")
+  createdWorkflowDefinitions      WorkflowDefinition[]             @relation("WorkflowDefinitionCreatedBy")
+  createdWorkflowRevisions        WorkflowRevision[]               @relation("WorkflowRevisionCreatedBy")
+  authorizedRoutines              Routine[]                        @relation("RoutineAuthorizedBy")
+  killedRoutines                  Routine[]                        @relation("RoutineKilledBy")
+  createdRoutines                 Routine[]                        @relation("RoutineCreatedBy")
+  createdBusinessHoursPolicies    BusinessHoursPolicy[]            @relation("BusinessHoursPolicyCreatedBy")
 
   @@unique([userId, orgId])
   // Required by every tenant-qualified Inbox actor/assignee relation.
@@ -1183,10 +1196,13 @@ model ChannelConnection {
   // PublishAttempt_one_applying_per_post: Prisma can't model a partial index, so not declared here).
   providerRefusalEvents ProviderRefusalEvent[]
   messageDeliveryEvents MessageDeliveryEvent[]
+  workflowStepExecutions WorkflowStepExecution[]
 
   @@unique([ownerId, kind, externalId])
   // Required by tenant-qualified ProviderRefusalEvent references.
   @@unique([id, ownerId])
+  // C7-M1: additive candidate key for an exact tenant/channel connection bind.
+  @@unique([id, ownerId, kind])
   @@index([ownerId])
 }
 
@@ -1330,6 +1346,8 @@ model Contact {
   dndEvents                ContactDndEvent[]
   broadcastAudienceMembers BroadcastAudienceMember[]
   sendFrequencyEvents      ContactSendFrequencyEvent[]
+  journeyStates            ContactJourneyState[]
+  workflowStepExecutions   WorkflowStepExecution[]
 
   // Required by tenant-qualified consent and DND references.
   @@unique([id, ownerId])
@@ -1361,6 +1379,8 @@ model ContactIdentity {
   providerRefusalEvents ProviderRefusalEvent[]
   customerConversations CustomerConversation[]
   broadcastAudienceMembers BroadcastAudienceMember[]
+  journeyStates ContactJourneyState[]
+  workflowStepExecutions WorkflowStepExecution[]
 
   // Required by tenant-qualified ProviderRefusalEvent references.
   @@unique([id, ownerId])
@@ -1369,6 +1389,8 @@ model ContactIdentity {
   // the DB layer — a writer bug pairing contact A with contact B's identity is now impossible,
   // not just unvalidated.
   @@unique([id, contactId, ownerId])
+  // C7-M1: additive candidate key for a contact-bound identity on an exact channel.
+  @@unique([id, contactId, ownerId, channel])
   @@index([ownerId, contactId, deletedAt])
 }
 
@@ -1797,6 +1819,283 @@ model MessageDeliveryState {
   updatedAt              DateTime     @updatedAt
 
   @@unique([ownerId, logicalSendRef])
+}
+
+// ── C7-M1 (2026-07-22): additive-only workflows/lifecycle storage ─────────────────────────
+// docs/superpowers/specs/2026-07-22-c7-workflows-lifecycle-physical-contract.md §7.
+// These seven owner-scoped carriers persist deterministic rules, standing authorization facts,
+// execution cursors, and business-hours policy revisions only. They add no parser/runtime, send
+// path, provider adapter, receipt, outbox, consent/frequency writer, attribution table, or spend.
+
+model WorkflowDefinition {
+  id                    String       @id
+  ownerId               String
+  organization          Organization @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  slug                  String
+  name                  String
+  definitionKind        String // rule | journey (code-validated)
+  originKind            String // custom | inbox_recipe (code-validated)
+  recipeKey             String?
+  recipeCatalogVersion  String?
+  currentRevision       Int?
+  currentRevisionRecord WorkflowRevision? @relation("WorkflowDefinitionCurrentRevision", fields: [ownerId, id, currentRevision], references: [ownerId, workflowDefinitionId, revision], onDelete: Restrict, map: "WorkflowDefinition_current_revision_fkey")
+  rowRevision           Int          @default(0)
+  status                String       @default("draft") // draft | published | archived (code-validated)
+  createdByMembershipId String
+  createdByMembership   Membership   @relation("WorkflowDefinitionCreatedBy", fields: [createdByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "WorkflowDefinition_created_by_owner_fkey")
+  archivedAt            DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  revisions WorkflowRevision[] @relation("WorkflowDefinitionRevisions")
+  routines  Routine[]
+
+  @@unique([id, ownerId])
+  // Live slug uniqueness is a partial unique index in the C7-M1 migration.
+  @@index([ownerId, status, updatedAt, id], map: "WorkflowDefinition_owner_status_updated_idx")
+}
+
+model WorkflowRevision {
+  id                     String             @id
+  ownerId                String
+  organization           Organization       @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  workflowDefinitionId   String
+  workflowDefinition     WorkflowDefinition @relation("WorkflowDefinitionRevisions", fields: [workflowDefinitionId, ownerId], references: [id, ownerId], onDelete: Restrict, map: "WorkflowRevision_definition_owner_fkey")
+  revision               Int
+  formatVersion          String // fikirtive-workflow/v1 (code-validated)
+  rulesSource            String
+  compiledRuleJson       Json
+  dependencyManifestJson Json
+  dependencyHash         String
+  compilerVersion        String
+  contentHash            String
+  validationState        String // valid | invalid | unavailable (code-validated)
+  validationErrorsJson   Json
+  createdByMembershipId  String
+  createdByMembership    Membership @relation("WorkflowRevisionCreatedBy", fields: [createdByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "WorkflowRevision_created_by_owner_fkey")
+  createdAt              DateTime   @default(now())
+
+  currentForDefinitions WorkflowDefinition[]  @relation("WorkflowDefinitionCurrentRevision")
+  routines              Routine[]
+  journeyStates         ContactJourneyState[]
+
+  @@unique([id, ownerId])
+  @@unique([id, ownerId, workflowDefinitionId], map: "WorkflowRevision_id_owner_definition_key")
+  @@unique([ownerId, workflowDefinitionId, revision], map: "WorkflowRevision_owner_definition_revision_key")
+  @@unique([ownerId, workflowDefinitionId, contentHash], map: "WorkflowRevision_owner_definition_content_key")
+  @@index([ownerId, workflowDefinitionId, revision, id], map: "WorkflowRevision_owner_definition_revision_idx")
+}
+
+model Routine {
+  id                       String             @id
+  ownerId                  String
+  organization             Organization       @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  workflowDefinitionId     String
+  workflowDefinition       WorkflowDefinition @relation(fields: [workflowDefinitionId, ownerId], references: [id, ownerId], onDelete: Restrict, map: "Routine_workflow_definition_owner_fkey")
+  workflowRevisionId       String
+  workflowRevision         WorkflowRevision   @relation(fields: [workflowRevisionId, ownerId, workflowDefinitionId], references: [id, ownerId, workflowDefinitionId], onDelete: Restrict, map: "Routine_workflow_revision_definition_fkey")
+  routineKey               String
+  supersedesRoutineId      String?
+  supersedesRoutine        Routine?            @relation("RoutineSupersession", fields: [supersedesRoutineId, ownerId, routineKey, workflowDefinitionId], references: [id, ownerId, routineKey, workflowDefinitionId], onDelete: Restrict, map: "Routine_supersedes_owner_key_fkey")
+  supersededBy             Routine[]            @relation("RoutineSupersession")
+  status                   String               @default("draft") // draft | active | paused | revoked | expired
+  scopeJson                Json
+  scopeHash                String
+  maxCreditsPerRun         Int
+  maxCreditsPerMonth       Int
+  summaryPolicyJson        Json
+  authorizationRevision    Int
+  authorizationHash        String?
+  authorizedByMembershipId String?
+  authorizedByMembership   Membership? @relation("RoutineAuthorizedBy", fields: [authorizedByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "Routine_authorized_by_owner_fkey")
+  authorizedAt             DateTime?
+  expiresAt                DateTime?
+  killSwitchEngaged        Boolean     @default(false)
+  killedByMembershipId     String?
+  killedByMembership       Membership? @relation("RoutineKilledBy", fields: [killedByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "Routine_killed_by_owner_fkey")
+  killedAt                 DateTime?
+  killReasonCode           String?
+  rowRevision              Int         @default(0)
+  createdByMembershipId    String
+  createdByMembership      Membership  @relation("RoutineCreatedBy", fields: [createdByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "Routine_created_by_owner_fkey")
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
+
+  routineRuns   RoutineRun[]
+  journeyStates ContactJourneyState[]
+
+  @@unique([id, ownerId])
+  @@unique([id, ownerId, workflowDefinitionId], map: "Routine_id_owner_definition_key")
+  @@unique([id, ownerId, workflowRevisionId], map: "Routine_id_owner_revision_key")
+  @@unique([id, ownerId, routineKey, workflowDefinitionId], map: "Routine_id_owner_key_definition_key")
+  @@unique([id, ownerId, workflowDefinitionId, workflowRevisionId], map: "Routine_id_owner_definition_revision_key")
+  @@unique([id, ownerId, routineKey, workflowDefinitionId, workflowRevisionId], map: "Routine_id_owner_key_definition_revision_key")
+  @@unique([id, ownerId, routineKey, workflowDefinitionId, workflowRevisionId, authorizationRevision, authorizationHash], map: "Routine_authorization_proof_key")
+  @@unique([ownerId, workflowDefinitionId, routineKey, authorizationRevision], map: "Routine_owner_definition_key_authorization_revision_key")
+  // At most one active envelope per tenant + Definition-local routineKey is enforced by raw SQL.
+  @@index([ownerId, status, expiresAt, id], map: "Routine_owner_status_expires_idx")
+  @@index([ownerId, workflowDefinitionId, status, id], map: "Routine_owner_definition_status_idx")
+}
+
+model RoutineRun {
+  id                       String              @id
+  ownerId                  String
+  organization             Organization        @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  routineId                String
+  routineKey               String
+  workflowDefinitionId     String
+  workflowRevisionId       String
+  routine                  Routine             @relation(fields: [routineId, ownerId, routineKey, workflowDefinitionId, workflowRevisionId, authorizationRevision, authorizationHash], references: [id, ownerId, routineKey, workflowDefinitionId, workflowRevisionId, authorizationRevision, authorizationHash], onDelete: Restrict, map: "RoutineRun_routine_authorization_fkey")
+  contactJourneyStateId    String?
+  contactJourneyState      ContactJourneyState? @relation("RoutineRunJourney", fields: [contactJourneyStateId, ownerId, routineId, workflowRevisionId], references: [id, ownerId, routineId, workflowRevisionId], onDelete: Restrict, map: "RoutineRun_journey_routine_revision_fkey")
+  triggerKind              String // manual | schedule | customer_message | journey_due
+  triggerOccurrenceRef     String
+  triggerEventRef          String?
+  scheduledFor             DateTime?           @db.Timestamptz(6)
+  runIdempotencyKey        String
+  triggerPayloadHash       String
+  authorizationRevision    Int
+  authorizationHash        String
+  authorizationSnapshotJson Json
+  status                   String              @default("queued") // queued | running | waiting | completed | blocked | cancelled | failed
+  currentStepKey           String?
+  rowRevision              Int                 @default(0)
+  simulated                Boolean             @default(true)
+  reservedCredits          Int                 @default(0)
+  settledCredits           Int                 @default(0)
+  creditReservationRef     String?
+  summaryJson              Json?
+  blockReason              String?
+  errorCode                String?
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  stepExecutions        WorkflowStepExecution[] @relation("WorkflowStepExecutionRun")
+  journeyStepExecutions WorkflowStepExecution[] @relation("WorkflowStepExecutionJourneyRun")
+  lastForJourneyStates ContactJourneyState[] @relation("JourneyLastRoutineRun")
+
+  @@unique([id, ownerId])
+  @@unique([id, ownerId, workflowRevisionId], map: "RoutineRun_id_owner_revision_key")
+  @@unique([id, ownerId, contactJourneyStateId], map: "RoutineRun_id_owner_journey_key")
+  @@unique([id, ownerId, workflowRevisionId, contactJourneyStateId], map: "RoutineRun_id_owner_revision_journey_key")
+  @@unique([ownerId, runIdempotencyKey])
+  @@index([ownerId, routineId, status, createdAt, id], map: "RoutineRun_owner_routine_status_created_idx")
+  @@index([ownerId, status, scheduledFor, id], map: "RoutineRun_owner_status_scheduled_idx")
+}
+
+model ContactJourneyState {
+  id                       String             @id
+  ownerId                  String
+  organization             Organization       @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  contactId                String
+  contact                  Contact            @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  contactIdentityId        String?
+  contactIdentity          ContactIdentity?   @relation(fields: [contactIdentityId, contactId, ownerId], references: [id, contactId, ownerId], onDelete: Restrict, map: "ContactJourneyState_identity_contact_owner_fkey")
+  workflowDefinitionId     String
+  workflowRevisionId       String
+  workflowRevision         WorkflowRevision   @relation(fields: [workflowRevisionId, ownerId, workflowDefinitionId], references: [id, ownerId, workflowDefinitionId], onDelete: Restrict, map: "ContactJourneyState_workflow_revision_fkey")
+  routineId                String
+  routine                  Routine            @relation(fields: [routineId, ownerId, workflowRevisionId], references: [id, ownerId, workflowRevisionId], onDelete: Restrict, map: "ContactJourneyState_routine_revision_fkey")
+  enrollmentIdempotencyKey String
+  status                   String             @default("active") // active | waiting | paused | completed | exited | blocked | failed
+  currentStepKey           String?
+  nextEligibleAt           DateTime?          @db.Timestamptz(6)
+  waitGeneration           Int                @default(0)
+  stateJson                Json
+  lastRoutineRunId         String?
+  lastRoutineRun           RoutineRun?        @relation("JourneyLastRoutineRun", fields: [lastRoutineRunId, ownerId, id], references: [id, ownerId, contactJourneyStateId], onDelete: Restrict, map: "ContactJourneyState_last_run_owner_fkey")
+  rowRevision              Int                @default(0)
+  enrolledAt               DateTime
+  terminalAt               DateTime?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  routineRuns    RoutineRun[]             @relation("RoutineRunJourney")
+  stepExecutions WorkflowStepExecution[]
+
+  @@unique([id, ownerId])
+  @@unique([id, ownerId, workflowRevisionId], map: "ContactJourneyState_id_owner_revision_key")
+  @@unique([id, ownerId, routineId, workflowRevisionId], map: "ContactJourneyState_id_owner_routine_revision_key")
+  @@unique([ownerId, enrollmentIdempotencyKey])
+  @@index([ownerId, status, nextEligibleAt, id], map: "ContactJourneyState_owner_status_due_idx")
+  @@index([ownerId, contactId, updatedAt, id], map: "ContactJourneyState_owner_contact_updated_idx")
+}
+
+model WorkflowStepExecution {
+  id                      String              @id
+  ownerId                 String
+  organization            Organization        @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  routineRunId            String
+  contactJourneyStateId   String?
+  workflowRevisionId      String
+  routineRun              RoutineRun          @relation("WorkflowStepExecutionRun", fields: [routineRunId, ownerId, workflowRevisionId], references: [id, ownerId, workflowRevisionId], onDelete: Restrict, map: "WorkflowStepExecution_run_revision_fkey")
+  journeyRoutineRun       RoutineRun?         @relation("WorkflowStepExecutionJourneyRun", fields: [routineRunId, ownerId, workflowRevisionId, contactJourneyStateId], references: [id, ownerId, workflowRevisionId, contactJourneyStateId], onDelete: Restrict, map: "WorkflowStepExecution_run_journey_revision_fkey")
+  contactJourneyState     ContactJourneyState? @relation(fields: [contactJourneyStateId, ownerId, workflowRevisionId], references: [id, ownerId, workflowRevisionId], onDelete: Restrict, map: "WorkflowStepExecution_journey_revision_fkey")
+  contactId               String?
+  contact                 Contact?            @relation(fields: [contactId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  contactIdentityId       String?
+  contactIdentity         ContactIdentity?    @relation(fields: [contactIdentityId, contactId, ownerId, channel], references: [id, contactId, ownerId, channel], onDelete: Restrict, map: "WorkflowStepExecution_identity_channel_fkey")
+  channel                 String?
+  providerConnectionId    String?
+  providerConnection      ChannelConnection?  @relation(fields: [providerConnectionId, ownerId, channel], references: [id, ownerId, kind], onDelete: Restrict, map: "WorkflowStepExecution_connection_channel_fkey")
+  stepKey                 String
+  actionKind              String // conversation_reply | broadcast_run | wait | complete
+  actionPayloadHash       String
+  stepIdempotencyKey      String
+  actionIdempotencyKey    String?
+  status                  String              @default("reserved") // reserved | blocked | simulated | delegated | unavailable | failed
+  purpose                 String?
+  callerClass             String?
+  eligibilityInputHash    String?
+  eligibilityVerdictJson  Json?
+  eligibilityVerdictHash  String?
+  downstreamKind          String              @default("none") // none | conversation_reply | broadcast_run
+  downstreamRef           String?
+  simulated               Boolean             @default(true)
+  reasonCode              String?
+  errorCode               String?
+  reservedAt              DateTime            @default(now())
+  delegatedAt             DateTime?
+  settledAt               DateTime?
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  @@unique([id, ownerId])
+  @@unique([ownerId, stepIdempotencyKey])
+  // Customer-facing action uniqueness is a partial unique index in the C7-M1 migration.
+  @@index([ownerId, routineRunId, status, id], map: "WorkflowStepExecution_owner_run_status_idx")
+  @@index([ownerId, contactJourneyStateId, createdAt, id], map: "WorkflowStepExecution_owner_journey_created_idx")
+}
+
+model BusinessHoursPolicy {
+  id                    String       @id
+  ownerId               String
+  organization          Organization @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  policyKey             String
+  revision              Int
+  supersedesPolicyId    String?
+  supersedesPolicy      BusinessHoursPolicy?  @relation("BusinessHoursPolicySupersession", fields: [supersedesPolicyId, ownerId, policyKey], references: [id, ownerId, policyKey], onDelete: Restrict, map: "BusinessHoursPolicy_supersedes_owner_key_fkey")
+  supersededBy          BusinessHoursPolicy[] @relation("BusinessHoursPolicySupersession")
+  name                  String
+  timeZone              String
+  weeklyWindowsJson     Json
+  status                String       @default("draft") // draft | published | archived
+  rowRevision           Int          @default(0)
+  contentHash           String
+  createdByMembershipId String
+  createdByMembership   Membership   @relation("BusinessHoursPolicyCreatedBy", fields: [createdByMembershipId, ownerId], references: [id, orgId], onDelete: Restrict, map: "BusinessHoursPolicy_created_by_owner_fkey")
+  archivedAt            DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@unique([id, ownerId])
+  @@unique([id, ownerId, policyKey], map: "BusinessHoursPolicy_id_owner_policy_key")
+  @@unique([ownerId, policyKey, revision])
+  @@unique([ownerId, policyKey, contentHash])
+  @@index([ownerId, policyKey, revision, id], map: "BusinessHoursPolicy_owner_policy_revision_idx")
+  @@index([ownerId, status, updatedAt, id], map: "BusinessHoursPolicy_owner_status_updated_idx")
 }
 
 // ── Schedule (蓝图 P1½「排期 + Routine」) ──────────────────────────────────

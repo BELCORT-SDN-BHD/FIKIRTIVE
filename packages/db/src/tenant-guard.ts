@@ -46,6 +46,9 @@ export const TENANT_MODELS = new Set([
   "BroadcastRun", "BroadcastAudienceMember", "ContactSendFrequencyEvent",
   // C6-M1 (2026-07-22): additive-only messaging receipt storage carriers.
   "MessageDeliveryEvent", "MessageDeliveryState",
+  // C7-M1 (2026-07-22): additive-only workflows/lifecycle storage carriers.
+  "WorkflowDefinition", "WorkflowRevision", "Routine", "RoutineRun",
+  "ContactJourneyState", "WorkflowStepExecution", "BusinessHoursPolicy",
 ]);
 
 /** ownerId models deliberately NOT runtime-guarded — every entry carries its reason.
