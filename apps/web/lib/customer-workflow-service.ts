@@ -365,6 +365,16 @@ function compiledCustomerAction(compiled: unknown, stepKey: string): CompiledCus
   };
 }
 
+function broadcastPurposeFromTemplate(template: {
+  category: string;
+  purposeClass: string;
+}): "marketing" | null {
+  return template.category === "marketing" &&
+    template.purposeClass === "proactive_non_transactional"
+    ? "marketing"
+    : null;
+}
+
 function allAxesPass(verdict: SendEligibilityResult): boolean {
   return AXES.every((name) => (verdict[name] as EligibilityAxis).status === "pass");
 }
@@ -1361,6 +1371,33 @@ export function workflowLifecycleService(
       }
       const action = compiledCustomerAction(revisionRow.compiledRuleJson, stepKey);
       if (!action) fail("AUTHORITY_UNAVAILABLE");
+      const reserveUnavailableStep = async (
+        reason: "workflow_dependency_unavailable" | "workflow_target_unavailable",
+      ) => {
+        try {
+          const reservation = await reserveWorkflowStepInTransaction(tx, {
+            id: issueId(),
+            ownerId,
+            routineRunId,
+            stepKey,
+            actionKind: action.action.type,
+            actionPayload: action,
+            actionOccurrence: null,
+            target: null,
+            preDispatchUnavailableReason: reason,
+            now: dispatchAt,
+          });
+          if (reservation.execution.status !== "reserved") return reservation.execution;
+          return await settleWorkflowStepInTransaction(tx, {
+            ownerId,
+            stepExecutionId: reservation.execution.id,
+            settlement: { status: "unavailable", reasonCode: reason },
+            now: dispatchAt,
+          });
+        } catch (error) {
+          return translateCoreError(error);
+        }
+      };
       if (!loaded.authority.ok) {
         try {
           const blocked = await reserveWorkflowStepInTransaction(tx, {
@@ -1379,8 +1416,15 @@ export function workflowLifecycleService(
           return translateCoreError(error);
         }
       }
-      await assertLiveRevisionDependencies(tx, ownerId, revisionRow);
-      let broadcastPurpose: "marketing" | "review_request" | null = null;
+      try {
+        await assertLiveRevisionDependencies(tx, ownerId, revisionRow);
+      } catch (error) {
+        if (prismaCode(error) === "AUTHORITY_UNAVAILABLE") {
+          return reserveUnavailableStep("workflow_dependency_unavailable");
+        }
+        throw error;
+      }
+      let broadcastPurpose: "marketing" | null = null;
       if (action.action.type === "broadcast_run") {
         const template = await tx.customerMessageTemplateVersion.findFirst({
           where: {
@@ -1389,60 +1433,29 @@ export function workflowLifecycleService(
             revision: action.action.dependency.resourceRevision,
             contentHash: action.action.dependency.contentHash,
           },
-          select: { purposeClass: true },
+          select: { category: true, purposeClass: true },
         });
-        if (
-          !template ||
-          (template.purposeClass !== "marketing" && template.purposeClass !== "review_request")
-        ) {
-          fail("AUTHORITY_UNAVAILABLE");
+        if (!template) {
+          return reserveUnavailableStep("workflow_dependency_unavailable");
         }
-        broadcastPurpose = template.purposeClass;
+        broadcastPurpose = broadcastPurposeFromTemplate(template);
+        if (!broadcastPurpose) {
+          return reserveUnavailableStep("workflow_dependency_unavailable");
+        }
       }
       const scope = canonicalizeRoutineScope(loaded.routine.scopeJson);
       if (
         !scope ||
-        !scope.actionKinds.includes(action.action.type) ||
-        scope.maxActions < 1 ||
-        scope.maxRecipients < 1 ||
         loaded.routine.maxCreditsPerRun !== 0 ||
         loaded.routine.maxCreditsPerMonth !== 0 ||
         loaded.run.reservedCredits !== 0 ||
         loaded.run.settledCredits !== 0
       ) {
-        fail("AUTHORITY_UNAVAILABLE");
+        return reserveUnavailableStep("workflow_dependency_unavailable");
       }
       if (loaded.run.triggerKind === "manual" || loaded.run.triggerKind === "schedule") {
-        const actionOccurrence: WorkflowActionOccurrence | null =
-          loaded.run.triggerKind === "schedule" && loaded.run.scheduledFor
-            ? {
-                kind: "scheduled_routine",
-                ownerId,
-                workflowDefinitionId: loaded.run.workflowDefinitionId,
-                routineKey: loaded.run.routineKey,
-                scheduledFor: loaded.run.scheduledFor,
-                stepKey,
-              }
-            : null;
-        try {
-          const unavailable = await reserveWorkflowStepInTransaction(tx, {
-            id: issueId(),
-            ownerId,
-            routineRunId,
-            stepKey,
-            actionKind: action.action.type,
-            actionPayload: action,
-            actionOccurrence,
-            target: null,
-            preDispatchUnavailableReason: "workflow_target_unavailable",
-            now: dispatchAt,
-          });
-          return unavailable.execution;
-        } catch (error) {
-          return translateCoreError(error);
-        }
+        return reserveUnavailableStep("workflow_target_unavailable");
       }
-      let contactJourneyStateId: string | null = null;
       let contactId: string;
       let contactIdentityId: string;
       let channel: string;
@@ -1460,8 +1473,8 @@ export function workflowLifecycleService(
             workflowRevisionId: loaded.run.workflowRevisionId,
           },
         });
-        if (!journey || !journey.contactIdentityId || !scope.contactIds.includes(journey.contactId)) {
-          fail("AUTHORITY_UNAVAILABLE");
+        if (!journey || !journey.contactIdentityId) {
+          return reserveUnavailableStep("workflow_target_unavailable");
         }
         const identity = await tx.contactIdentity.findFirst({
           where: {
@@ -1472,8 +1485,9 @@ export function workflowLifecycleService(
           },
           select: { id: true, contactId: true, channel: true, channelScopeId: true },
         });
-        if (!identity || !identity.channelScopeId) fail("AUTHORITY_UNAVAILABLE");
-        contactJourneyStateId = journey.id;
+        if (!identity || !identity.channelScopeId) {
+          return reserveUnavailableStep("workflow_target_unavailable");
+        }
         contactId = identity.contactId;
         contactIdentityId = identity.id;
         channel = identity.channel;
@@ -1515,13 +1529,13 @@ export function workflowLifecycleService(
           message.actorKind !== "customer" ||
           loaded.run.triggerOccurrenceRef !== `message:${message.sourceEventKey}`
         ) {
-          fail("AUTHORITY_UNAVAILABLE");
+          return reserveUnavailableStep("workflow_target_unavailable");
         }
         const conversation = await tx.customerConversation.findFirst({
           where: { id: message.conversationId, ownerId },
           select: { id: true, contactIdentityId: true, automationState: true },
         });
-        if (!conversation) fail("RESOURCE_NOT_FOUND");
+        if (!conversation) return reserveUnavailableStep("workflow_target_unavailable");
         const identity = await tx.contactIdentity.findFirst({
           where: {
             id: conversation.contactIdentityId,
@@ -1532,20 +1546,21 @@ export function workflowLifecycleService(
         });
         if (
           !identity ||
-          !identity.channelScopeId ||
-          !scope.contactIds.includes(identity.contactId)
+          !identity.channelScopeId
         ) {
-          fail("AUTHORITY_UNAVAILABLE");
+          return reserveUnavailableStep("workflow_target_unavailable");
         }
         const compiled = revisionRow.compiledRuleJson;
         if (!isRecord(compiled) || !Array.isArray(compiled.conditions)) {
-          fail("AUTHORITY_UNAVAILABLE");
+          return reserveUnavailableStep("workflow_dependency_unavailable");
         }
         const businessHoursConditions = compiled.conditions.filter(
           (condition): condition is Prisma.JsonObject =>
             isRecord(condition) && condition.type === "outside_business_hours",
         );
-        if (businessHoursConditions.length !== 1) fail("AUTHORITY_UNAVAILABLE");
+        if (businessHoursConditions.length !== 1) {
+          return reserveUnavailableStep("workflow_dependency_unavailable");
+        }
         const condition = businessHoursConditions[0]!;
         if (
           !isRecord(condition.dependency) ||
@@ -1554,7 +1569,7 @@ export function workflowLifecycleService(
           !Number.isSafeInteger(condition.dependency.resourceRevision) ||
           typeof condition.dependency.contentHash !== "string"
         ) {
-          fail("AUTHORITY_UNAVAILABLE");
+          return reserveUnavailableStep("workflow_dependency_unavailable");
         }
         const expectedPolicy = {
           ownerId,
@@ -1594,11 +1609,13 @@ export function workflowLifecycleService(
           channel: identity.channel,
         };
       } else {
-        fail("AUTHORITY_UNAVAILABLE");
+        return reserveUnavailableStep("workflow_target_unavailable");
       }
 
       const authorizedChannels = scope.channelScopes.filter((entry) => entry.channel === channel);
-      if (authorizedChannels.length !== 1) fail("AUTHORITY_UNAVAILABLE");
+      if (authorizedChannels.length !== 1) {
+        return reserveUnavailableStep("workflow_target_unavailable");
+      }
       const providerConnectionId = authorizedChannels[0]!.providerConnectionId;
       if (providerConnectionId) {
         const connection = await tx.channelConnection.findFirst({
@@ -1606,28 +1623,11 @@ export function workflowLifecycleService(
           select: { id: true, channelScopeId: true },
         });
         if (!connection || connection.channelScopeId !== channelScopeId) {
-          fail("AUTHORITY_UNAVAILABLE");
+          return reserveUnavailableStep("workflow_target_unavailable");
         }
       }
       // $executeRaw: pg_advisory_xact_lock returns void, which $queryRaw cannot deserialize.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`c7-dispatch:${ownerId}:${routineRunId}`}, 0))`;
-      const existingForStep = await tx.workflowStepExecution.findFirst({
-        where: { ownerId, routineRunId, contactJourneyStateId, stepKey },
-        select: { id: true },
-      });
-      if (!existingForStep) {
-        const prior = await tx.workflowStepExecution.findMany({
-          where: { ownerId, routineRunId },
-          select: { contactId: true },
-        });
-        if (prior.length >= scope.maxActions) fail("AUTHORITY_UNAVAILABLE");
-        const priorRecipients = new Set(
-          prior.flatMap((entry) => (entry.contactId === null ? [] : [entry.contactId])),
-        );
-        if (!priorRecipients.has(contactId) && priorRecipients.size >= scope.maxRecipients) {
-          fail("AUTHORITY_UNAVAILABLE");
-        }
-      }
       const callerClass = "unconfirmed_automatic" as const;
       const purpose =
         action.action.type === "broadcast_run"

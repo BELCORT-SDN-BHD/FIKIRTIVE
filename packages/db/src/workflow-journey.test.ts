@@ -444,24 +444,54 @@ describe("C7 step ledger", () => {
     const fixture = new JourneyFixture();
     fixture.seedAuthority();
     (fixture.revisions[0]!.compiledRuleJson as { trigger: { type: string } }).trigger.type = "schedule";
-    await createRoutineRun(fixture.db(), {
+    const scheduledRun = await createRoutineRun(fixture.db(), {
       id: "run-schedule", ownerId: "owner-1", routineId: "routine-1",
       trigger: { kind: "schedule", scheduledFor: NOW }, trustedTriggerPayload: {}, now: NOW,
     });
-    const scheduled = await reserveWorkflowStep(fixture.db(), {
+    if (scheduledRun.kind === "blocked") throw new Error("Expected scheduled run");
+    const scheduledReservation = {
       id: "step-schedule", ownerId: "owner-1", routineRunId: "run-schedule", stepKey: "reply",
       actionKind: "conversation_reply", actionPayload: { templateVersionId: "template-v1" },
-      actionOccurrence: {
-        kind: "scheduled_routine", ownerId: "owner-1", workflowDefinitionId: "definition-1",
-        routineKey: "routine-key-1", scheduledFor: NOW, stepKey: "reply",
-      },
+      actionOccurrence: null,
       target: null, preDispatchUnavailableReason: "workflow_target_unavailable", now: NOW,
-    });
+    } as const;
+    const scheduled = await reserveWorkflowStep(fixture.db(), scheduledReservation);
     expect(scheduled).toMatchObject({
       shouldCallDownstream: false,
-      execution: { status: "unavailable", reasonCode: "workflow_target_unavailable" },
+      execution: {
+        status: "reserved",
+        reasonCode: "workflow_target_unavailable",
+        settledAt: null,
+      },
     });
-    expect(scheduled.execution.actionIdempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(scheduled.execution.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
+      ownerId: "owner-1",
+      workflowDefinitionId: scheduledRun.run.workflowDefinitionId,
+      routineKey: scheduledRun.run.routineKey,
+      triggerKind: scheduledRun.run.triggerKind,
+      triggerOccurrenceRef: scheduledRun.run.triggerOccurrenceRef,
+      contactJourneyStateId: scheduledRun.run.contactJourneyStateId,
+      scheduledFor: scheduledRun.run.scheduledFor,
+      stepKey: "reply",
+    }));
+    await expect(reserveWorkflowStep(fixture.db(), {
+      ...scheduledReservation,
+      id: "step-schedule-retry",
+    })).resolves.toMatchObject({
+      kind: "replayed",
+      shouldCallDownstream: false,
+      execution: { id: "step-schedule", reasonCode: "workflow_target_unavailable" },
+    });
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1", stepExecutionId: scheduled.execution.id, now: NOW,
+      settlement: { status: "unavailable", reasonCode: "workflow_target_unavailable" },
+    })).resolves.toMatchObject({ status: "unavailable", reasonCode: "workflow_target_unavailable" });
+    await expect(reserveWorkflowStep(fixture.db(), {
+      ...scheduledReservation,
+      id: "step-schedule-conflict",
+      preDispatchUnavailableReason: "workflow_dependency_unavailable",
+    })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(fixture.steps).toHaveLength(1);
 
     (fixture.revisions[0]!.compiledRuleJson as { trigger: { type: string } }).trigger.type = "manual";
     const manualRun = await createRoutineRun(fixture.db(), {
@@ -478,8 +508,9 @@ describe("C7 step ledger", () => {
     expect(manual).toMatchObject({
       shouldCallDownstream: false,
       execution: {
-        status: "unavailable",
+        status: "reserved",
         reasonCode: "workflow_target_unavailable",
+        settledAt: null,
       },
     });
     expect(manual.execution.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
@@ -492,6 +523,181 @@ describe("C7 step ledger", () => {
       scheduledFor: manualRun.run.scheduledFor,
       stepKey: "reply",
     }));
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1", stepExecutionId: manual.execution.id, now: NOW,
+      settlement: { status: "unavailable", reasonCode: "workflow_target_unavailable" },
+    })).resolves.toMatchObject({ status: "unavailable", reasonCode: "workflow_target_unavailable" });
+  });
+
+  it("derives the clarified customer-message target:none occurrence for unavailable reservation", async () => {
+    const fixture = new JourneyFixture();
+    fixture.seedAuthority();
+    (fixture.revisions[0]!.compiledRuleJson as { trigger: { type: string } }).trigger.type = "customer_message";
+    const run = await createRoutineRun(fixture.db(), {
+      id: "run-message-unavailable", ownerId: "owner-1", routineId: "routine-1",
+      trigger: { kind: "customer_message", sourceEventKey: "source-unavailable", triggerEventRef: "message-unavailable" },
+      trustedTriggerPayload: {}, now: NOW,
+    });
+    if (run.kind === "blocked") throw new Error("Expected customer-message run");
+    const unavailable = await reserveWorkflowStep(fixture.db(), {
+      id: "step-message-unavailable", ownerId: "owner-1", routineRunId: run.run.id, stepKey: "reply",
+      actionKind: "conversation_reply", actionPayload: { templateVersionId: "template-v1" },
+      actionOccurrence: null, target: null,
+      preDispatchUnavailableReason: "workflow_target_unavailable", now: NOW,
+    });
+    expect(unavailable).toMatchObject({
+      shouldCallDownstream: false,
+      execution: {
+        status: "reserved",
+        reasonCode: "workflow_target_unavailable",
+        settledAt: null,
+      },
+    });
+    expect(unavailable.execution.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
+      ownerId: "owner-1",
+      workflowDefinitionId: run.run.workflowDefinitionId,
+      routineKey: run.run.routineKey,
+      triggerKind: run.run.triggerKind,
+      triggerOccurrenceRef: run.run.triggerOccurrenceRef,
+      contactJourneyStateId: run.run.contactJourneyStateId,
+      scheduledFor: run.run.scheduledFor,
+      stepKey: "reply",
+    }));
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1", stepExecutionId: unavailable.execution.id, now: NOW,
+      settlement: { status: "unavailable", reasonCode: "workflow_target_unavailable" },
+    })).resolves.toMatchObject({ status: "unavailable", reasonCode: "workflow_target_unavailable" });
+  });
+
+  it("replays a real-target customer-message step before and after business settlement", async () => {
+    const fixture = new JourneyFixture();
+    fixture.seedAuthority();
+    (fixture.revisions[0]!.compiledRuleJson as { trigger: { type: string } }).trigger.type = "customer_message";
+    const run = await createRoutineRun(fixture.db(), {
+      id: "run-message-real-target", ownerId: "owner-1", routineId: "routine-1",
+      trigger: { kind: "customer_message", sourceEventKey: "source-real-target", triggerEventRef: "message-real-target" },
+      trustedTriggerPayload: {}, now: NOW,
+    });
+    if (run.kind === "blocked") throw new Error("Expected customer-message run");
+    const reservationInput = {
+      id: "step-message-real-target", ownerId: "owner-1", routineRunId: run.run.id, stepKey: "reply",
+      actionKind: "conversation_reply" as const, actionPayload: { templateVersionId: "template-v1" },
+      actionOccurrence: {
+        kind: "business_hours_auto_reply" as const,
+        ownerId: "owner-1",
+        conversationId: "conversation-real-target",
+        customerMessageSourceEventKey: "source-real-target",
+        channel: "whatsapp",
+      },
+      target: {
+        contactId: "contact-1",
+        contactIdentityId: "identity-1",
+        channel: "whatsapp",
+        providerConnectionId: null,
+        purpose: "strict_classification_unavailable",
+      },
+      now: NOW,
+    };
+    const reserved = await reserveWorkflowStep(fixture.db(), reservationInput);
+    expect(reserved).toMatchObject({
+      kind: "created",
+      shouldCallDownstream: true,
+      execution: { id: "step-message-real-target", status: "reserved", reasonCode: null },
+    });
+    await expect(reserveWorkflowStep(fixture.db(), {
+      ...reservationInput,
+      id: "step-message-real-target-before-settle-retry",
+    })).resolves.toMatchObject({
+      kind: "replayed",
+      shouldCallDownstream: true,
+      execution: { id: "step-message-real-target", status: "reserved", reasonCode: null },
+    });
+
+    const frozenEligibilityInput = eligibilityInput("strict_classification_unavailable");
+    const frozenEligibilityVerdict = eligibilityVerdict({
+      consentStop: "unavailable",
+      doNotDisturb: "unavailable",
+      providerRefusal: "unavailable",
+      frequency: "unavailable",
+    });
+    const settled = await settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1",
+      stepExecutionId: reserved.execution.id,
+      settlement: {
+        status: "unavailable",
+        reasonCode: "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE",
+        eligibilityInput: frozenEligibilityInput,
+        eligibilityVerdict: frozenEligibilityVerdict,
+      },
+      now: NOW,
+    });
+    expect(settled).toMatchObject({
+      id: "step-message-real-target",
+      status: "unavailable",
+      reasonCode: "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE",
+      eligibilityInputHash: expect.any(String),
+      eligibilityVerdictHash: expect.any(String),
+    });
+    await expect(reserveWorkflowStep(fixture.db(), {
+      ...reservationInput,
+      id: "step-message-real-target-after-settle-retry",
+    })).resolves.toMatchObject({
+      kind: "replayed",
+      shouldCallDownstream: false,
+      execution: {
+        id: "step-message-real-target",
+        status: "unavailable",
+        reasonCode: "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE",
+      },
+    });
+    expect(fixture.steps).toHaveLength(1);
+  });
+
+  it("reuses the journey occurrence for reserved then dependency-unavailable targetless work", async () => {
+    const fixture = new JourneyFixture();
+    fixture.seedAuthority();
+    fixture.journeys.push({
+      id: "journey-unavailable", ownerId: "owner-1", contactId: "contact-1", contactIdentityId: "identity-1",
+      workflowDefinitionId: "definition-1", workflowRevisionId: "revision-1", routineId: "routine-1",
+      enrollmentIdempotencyKey: "enrollment-unavailable", status: "active", currentStepKey: "reply", nextEligibleAt: null,
+      waitGeneration: 1, stateJson: {}, lastRoutineRunId: null, rowRevision: 0, enrolledAt: NOW, terminalAt: null,
+    });
+    const run = await createRoutineRun(fixture.db(), {
+      id: "run-journey-unavailable", ownerId: "owner-1", routineId: "routine-1",
+      trigger: { kind: "journey_due", contactJourneyStateId: "journey-unavailable", waitGeneration: 1, nextEligibleAt: NOW },
+      trustedTriggerPayload: {}, now: NOW,
+    });
+    if (run.kind === "blocked") throw new Error("Expected journey run");
+    const reservation = await reserveWorkflowStep(fixture.db(), {
+      id: "step-journey-unavailable", ownerId: "owner-1", routineRunId: run.run.id, stepKey: "reply",
+      actionKind: "conversation_reply", actionPayload: { templateVersionId: "template-v1" },
+      actionOccurrence: null, target: null,
+      preDispatchUnavailableReason: "workflow_dependency_unavailable", now: NOW,
+    });
+    expect(reservation).toMatchObject({
+      shouldCallDownstream: false,
+      execution: {
+        status: "reserved",
+        reasonCode: "workflow_dependency_unavailable",
+        settledAt: null,
+      },
+    });
+    expect(reservation.execution.actionIdempotencyKey).toBe(deriveActionIdempotencyKey({
+      kind: "journey_step",
+      ownerId: "owner-1",
+      workflowDefinitionId: "definition-1",
+      contactJourneyStateId: "journey-unavailable",
+      stepKey: "reply",
+    }));
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1", stepExecutionId: reservation.execution.id, now: NOW,
+      settlement: { status: "unavailable", reasonCode: "workflow_dependency_unavailable" },
+    })).resolves.toMatchObject({
+      status: "unavailable",
+      reasonCode: "workflow_dependency_unavailable",
+      downstreamKind: "none",
+      downstreamRef: null,
+    });
   });
 
   it("replays a killed customer step with one stable blocked identity", async () => {
@@ -706,7 +912,7 @@ describe("C7 step ledger", () => {
     });
   });
 
-  it("a kill between reservation and settlement blocks the step; delegated settlement anchors both times", async () => {
+  it("a kill between reservation and settlement blocks local work but preserves delegated evidence", async () => {
     const fixture = new JourneyFixture();
     fixture.seedAuthority();
     (fixture.revisions[0]!.compiledRuleJson as { trigger: { type: string } }).trigger.type = "manual";
@@ -749,17 +955,101 @@ describe("C7 step ledger", () => {
       target: { contactId: "contact-1", contactIdentityId: "identity-1", channel: "whatsapp", providerConnectionId: null, purpose: "marketing" },
       now: NOW,
     });
+    await engageRoutineKillSwitch(fixture.db(), {
+      ownerId: "owner-1", routineId: "routine-2", expectedRowRevision: 0,
+      killedByMembershipId: "membership-1", killReasonCode: "merchant_kill", now: NOW,
+    });
+    const delegatedSettlement = {
+      status: "delegated" as const,
+      downstreamKind: "conversation_reply" as const,
+      downstreamRef: "conversation-action-1",
+      eligibilityInput: eligibilityInput(),
+      eligibilityVerdict: eligibilityVerdict(),
+    };
     const completed = await settleWorkflowStep(fixture.db(), {
       ownerId: "owner-1", stepExecutionId: "step-complete",
-      settlement: {
-        status: "delegated", downstreamKind: "conversation_reply", downstreamRef: "conversation-action-1",
-        eligibilityInput: eligibilityInput(),
-        eligibilityVerdict: eligibilityVerdict(),
-      },
+      settlement: delegatedSettlement,
       now: NOW,
+    });
+    expect(completed).toMatchObject({
+      status: "delegated",
+      reasonCode: "delegated_then_routine_authority_kill",
+      downstreamKind: "conversation_reply",
+      downstreamRef: "conversation-action-1",
+      eligibilityInputHash: expect.any(String),
+      eligibilityVerdictHash: expect.any(String),
     });
     expect(completed.settledAt?.toISOString()).toBe(NOW.toISOString());
     expect(completed.delegatedAt?.toISOString()).toBe(NOW.toISOString());
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1", stepExecutionId: "step-complete",
+      settlement: delegatedSettlement,
+      now: new Date("2026-07-22T10:01:00Z"),
+    })).resolves.toMatchObject({ id: "step-complete", downstreamRef: "conversation-action-1" });
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1", stepExecutionId: "step-complete",
+      settlement: { ...delegatedSettlement, downstreamRef: "changed-action" },
+      now: new Date("2026-07-22T10:01:00Z"),
+    })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    const raceRows = authRows();
+    raceRows.routine.id = "routine-race";
+    raceRows.routine.routineKey = "routine-key-race";
+    raceRows.routine.authorizationHash = computeRoutineAuthorizationHash({
+      ownerId: raceRows.routine.ownerId,
+      routineKey: raceRows.routine.routineKey,
+      workflowDefinitionId: raceRows.routine.workflowDefinitionId,
+      workflowRevisionId: raceRows.routine.workflowRevisionId,
+      workflowRevision: raceRows.revision.revision,
+      workflowContentHash: raceRows.revision.contentHash,
+      dependencyHash: raceRows.revision.dependencyHash,
+      scopeJson: raceRows.routine.scopeJson,
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      expiresAt: raceRows.routine.expiresAt,
+      summaryPolicyJson: raceRows.routine.summaryPolicyJson,
+      authorizationRevision: 1,
+    });
+    fixture.routines.push(raceRows.routine);
+    await createRoutineRun(fixture.db(), {
+      id: "run-delegated-race", ownerId: "owner-1", routineId: "routine-race",
+      trigger: { kind: "customer_message", sourceEventKey: "source-race", triggerEventRef: "message-race" },
+      trustedTriggerPayload: {}, now: NOW,
+    });
+    await reserveWorkflowStep(fixture.db(), {
+      id: "step-delegated-race", ownerId: "owner-1", routineRunId: "run-delegated-race", stepKey: "reply",
+      actionKind: "conversation_reply", actionPayload: { templateVersionId: "template-v1" },
+      actionOccurrence: {
+        kind: "business_hours_auto_reply", ownerId: "owner-1", conversationId: "conversation-race",
+        customerMessageSourceEventKey: "source-race", channel: "whatsapp",
+      },
+      target: {
+        contactId: "contact-1", contactIdentityId: "identity-1", channel: "whatsapp",
+        providerConnectionId: null, purpose: "marketing",
+      },
+      now: NOW,
+    });
+    const originalUpdateMany = fixture.tx.workflowStepExecution.updateMany;
+    fixture.tx.workflowStepExecution.updateMany = async ({ where, data }: any) => {
+      if (where.id !== "step-delegated-race") return originalUpdateMany({ where, data });
+      const row = fixture.steps.find((item) => item.id === where.id);
+      if (!row) return { count: 0 };
+      applyData(row as unknown as Record<string, any>, {
+        ...data,
+        reasonCode: "delegated_then_routine_authority_kill",
+      });
+      return { count: 0 };
+    };
+    await expect(settleWorkflowStep(fixture.db(), {
+      ownerId: "owner-1",
+      stepExecutionId: "step-delegated-race",
+      settlement: { ...delegatedSettlement, downstreamRef: "conversation-action-race" },
+      now: NOW,
+    })).resolves.toMatchObject({
+      status: "delegated",
+      reasonCode: "delegated_then_routine_authority_kill",
+      downstreamRef: "conversation-action-race",
+    });
   });
 });
 

@@ -666,17 +666,20 @@ export async function createRoutineRunInTransaction(
   const existing = (await tx.routineRun.findFirst({
     where: { ownerId: input.ownerId, runIdempotencyKey },
   })) as RoutineRunRecord | null;
-  if (existing) {
-    if (!sameRunComparison(existing, expected)) fail("IDEMPOTENCY_CONFLICT");
+  if (existing && !sameRunComparison(existing, expected)) fail("IDEMPOTENCY_CONFLICT");
+  if (!authority.ok) {
+    if (!existing) return { kind: "blocked", reason: authority.reason };
     return {
       kind: "replayed",
       run: existing,
-      shouldDispatch: authority.ok && existing.status === "queued",
-      ...(!authority.ok ? { blockedReason: authority.reason } : {}),
+      shouldDispatch: false,
+      blockedReason: authority.reason,
     };
   }
-  if (!authority.ok) return { kind: "blocked", reason: authority.reason };
 
+  // Authority-ok replays deliberately reach the database uniqueness boundary. This makes a
+  // concurrent double tick exercise the same ON CONFLICT path as a queue replay instead of
+  // relying on an earlier read that cannot itself provide exactly-once exclusion.
   const inserted = await tx.routineRun.createMany({
     data: [
       {

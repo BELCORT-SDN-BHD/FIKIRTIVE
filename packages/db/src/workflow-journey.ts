@@ -802,9 +802,22 @@ export type ReserveWorkflowStepInput = {
   actionPayload: unknown;
   actionOccurrence: WorkflowActionOccurrence | null;
   target: WorkflowStepTarget | null;
-  preDispatchUnavailableReason?: "workflow_target_unavailable";
+  preDispatchUnavailableReason?:
+    | "workflow_dependency_unavailable"
+    | "workflow_target_unavailable";
   now: Date;
 };
+
+type PreDispatchUnavailableReason = NonNullable<
+  ReserveWorkflowStepInput["preDispatchUnavailableReason"]
+>;
+
+function isPreDispatchUnavailableReason(
+  value: string | null,
+): value is PreDispatchUnavailableReason {
+  return value === "workflow_dependency_unavailable" ||
+    value === "workflow_target_unavailable";
+}
 
 export type WorkflowStepExecutionRecord = {
   id: string;
@@ -900,28 +913,13 @@ function unavailableActionKey(
   run: RoutineRunRecord,
 ): string {
   if (
-    input.preDispatchUnavailableReason !== "workflow_target_unavailable" ||
+    (input.preDispatchUnavailableReason !== "workflow_dependency_unavailable" &&
+      input.preDispatchUnavailableReason !== "workflow_target_unavailable") ||
     input.target !== null ||
+    input.actionOccurrence !== null ||
     (input.actionKind !== "conversation_reply" && input.actionKind !== "broadcast_run")
   ) {
     fail("INVALID_ARGUMENT");
-  }
-  if (input.actionOccurrence === null) {
-    if (run.triggerKind !== "manual") fail("INVALID_ARGUMENT");
-  } else {
-    const occurrence = input.actionOccurrence;
-    if (
-      occurrence.kind !== "scheduled_routine" ||
-      run.triggerKind !== "schedule" ||
-      run.scheduledFor === null ||
-      occurrence.ownerId !== input.ownerId ||
-      occurrence.workflowDefinitionId !== run.workflowDefinitionId ||
-      occurrence.routineKey !== run.routineKey ||
-      occurrence.stepKey !== input.stepKey ||
-      finiteDate(occurrence.scheduledFor).getTime() !== run.scheduledFor.getTime()
-    ) {
-      fail("INVALID_ARGUMENT");
-    }
   }
   return deriveNoTargetActionIdempotencyKey({
     ownerId: input.ownerId,
@@ -951,7 +949,9 @@ function sameStepReservation(
     row.contactIdentityId === expected.contactIdentityId &&
     row.channel === expected.channel &&
     row.providerConnectionId === expected.providerConnectionId &&
-    row.purpose === expected.purpose
+    row.purpose === expected.purpose &&
+    (!isPreDispatchUnavailableReason(expected.reasonCode) ||
+      row.reasonCode === expected.reasonCode)
   );
 }
 
@@ -1026,7 +1026,7 @@ export async function reserveWorkflowStepInTransaction(
     const priorRunRecipientIds = new Set(
       priorRunSteps.flatMap((row) => row.contactId === null ? [] : [row.contactId]),
     );
-    const scopeAllowed = loaded.authority.ok && !input.preDispatchUnavailableReason && scopeAllowsStep(
+    const scopeAllowed = loaded.authority.ok && scopeAllowsStep(
       loaded.authority.snapshot.scopeJson,
       input,
       priorRunSteps.length,
@@ -1049,11 +1049,9 @@ export async function reserveWorkflowStepInTransaction(
       actionIdempotencyKey,
       status: !loaded.authority.ok
         ? "blocked"
-        : input.preDispatchUnavailableReason
-          ? "unavailable"
-          : scopeAllowed
-            ? "reserved"
-            : "blocked",
+        : scopeAllowed
+          ? "reserved"
+          : "blocked",
       purpose: input.target?.purpose ?? null,
       callerClass: input.target ? "unconfirmed_automatic" : null,
       eligibilityInputHash: null,
@@ -1064,12 +1062,13 @@ export async function reserveWorkflowStepInTransaction(
       simulated: true,
       reasonCode: !loaded.authority.ok
         ? `routine_authority_${loaded.authority.reason}`
-        : input.preDispatchUnavailableReason ??
-          (scopeAllowed ? null : "routine_scope_denied"),
+        : scopeAllowed
+          ? input.preDispatchUnavailableReason ?? null
+          : "routine_scope_denied",
       errorCode: null,
       reservedAt: now,
       delegatedAt: null,
-      settledAt: loaded.authority.ok && scopeAllowed && !input.preDispatchUnavailableReason ? null : now,
+      settledAt: loaded.authority.ok && scopeAllowed ? null : now,
     };
 
     const existingRows = (await tx.workflowStepExecution.findMany({
@@ -1091,7 +1090,11 @@ export async function reserveWorkflowStepInTransaction(
       return {
         kind: "replayed",
         execution: byStep,
-        shouldCallDownstream: byStep.status === "reserved" && loaded.authority.ok && scopeAllowed,
+        shouldCallDownstream:
+          byStep.status === "reserved" &&
+          loaded.authority.ok &&
+          scopeAllowed &&
+          !input.preDispatchUnavailableReason,
       };
     }
     if (byAction) {
@@ -1148,7 +1151,11 @@ export async function reserveWorkflowStepInTransaction(
       return {
         kind: inserted.count === 1 ? "created" : "replayed",
         execution: persistedByStep,
-        shouldCallDownstream: persistedByStep.status === "reserved" && loaded.authority.ok && scopeAllowed,
+        shouldCallDownstream:
+          persistedByStep.status === "reserved" &&
+          loaded.authority.ok &&
+          scopeAllowed &&
+          !input.preDispatchUnavailableReason,
       };
     }
     if (persistedByAction) {
@@ -1293,7 +1300,26 @@ function plannedSettlement(
 ): Partial<WorkflowStepExecutionRecord> {
   if (settlement.status === "blocked" || settlement.status === "unavailable") {
     if (!compact(settlement.reasonCode)) fail("INVALID_ARGUMENT");
-    const evidence = eligibilityEvidence(row, settlement.eligibilityInput, settlement.eligibilityVerdict);
+    const targetlessUnavailable =
+      settlement.status === "unavailable" &&
+      (row.actionKind === "conversation_reply" || row.actionKind === "broadcast_run") &&
+      row.contactId === null &&
+      row.contactIdentityId === null &&
+      row.channel === null &&
+      row.purpose === null &&
+      row.callerClass === null &&
+      settlement.eligibilityInput === undefined &&
+      settlement.eligibilityVerdict === undefined;
+    if (
+      targetlessUnavailable &&
+      isPreDispatchUnavailableReason(row.reasonCode) &&
+      settlement.reasonCode !== row.reasonCode
+    ) {
+      fail("IDEMPOTENCY_CONFLICT");
+    }
+    const evidence = targetlessUnavailable
+      ? null
+      : eligibilityEvidence(row, settlement.eligibilityInput, settlement.eligibilityVerdict);
     return {
       status: settlement.status,
       reasonCode: settlement.reasonCode,
@@ -1367,6 +1393,21 @@ function sameSettlement(
   return canonicalJson(settlementComparison(row)) === canonicalJson(settlementComparison(expected));
 }
 
+function isLateDelegationAuthorityReason(value: string | null): boolean {
+  return value !== null && /^delegated_then_routine_authority_(?:kill|status|expired|hash_drift|budget_unavailable)$/.test(value);
+}
+
+function replaySettlement(
+  row: WorkflowStepExecutionRecord,
+  expected: Partial<WorkflowStepExecutionRecord>,
+): Partial<WorkflowStepExecutionRecord> {
+  return row.status === "delegated" &&
+    expected.status === "delegated" &&
+    isLateDelegationAuthorityReason(row.reasonCode)
+    ? { ...expected, reasonCode: row.reasonCode }
+    : expected;
+}
+
 export async function settleWorkflowStepInTransaction(
   tx: WorkflowJourneyTransaction,
   input: SettleWorkflowStepInput,
@@ -1380,7 +1421,8 @@ export async function settleWorkflowStepInTransaction(
     const requested = plannedSettlement(current, input.settlement, now);
     if (current.status !== "reserved") {
       if (!SETTLED_STEP_STATUSES.has(current.status)) fail("STEP_NOT_RESERVED");
-      if (!sameSettlement(current, requested)) fail("IDEMPOTENCY_CONFLICT");
+      const replayExpected = replaySettlement(current, requested);
+      if (!sameSettlement(current, replayExpected)) fail("IDEMPOTENCY_CONFLICT");
       return current;
     }
 
@@ -1392,18 +1434,26 @@ export async function settleWorkflowStepInTransaction(
     );
     const effective: Partial<WorkflowStepExecutionRecord> = loaded.authority.ok
       ? requested
-      : {
-          status: "blocked",
-          reasonCode: `routine_authority_${loaded.authority.reason}`,
-          errorCode: null,
-          eligibilityInputHash: null,
-          eligibilityVerdictJson: null,
-          eligibilityVerdictHash: null,
-          downstreamKind: "none",
-          downstreamRef: null,
-          delegatedAt: null,
-          settledAt: now,
-        };
+      : input.settlement.status === "delegated"
+        ? {
+            ...requested,
+            status: "delegated",
+            reasonCode: `delegated_then_routine_authority_${loaded.authority.reason}`,
+            errorCode: null,
+            settledAt: now,
+          }
+        : {
+            status: "blocked",
+            reasonCode: `routine_authority_${loaded.authority.reason}`,
+            errorCode: null,
+            eligibilityInputHash: null,
+            eligibilityVerdictJson: null,
+            eligibilityVerdictHash: null,
+            downstreamKind: "none",
+            downstreamRef: null,
+            delegatedAt: null,
+            settledAt: now,
+          };
     const updated = await tx.workflowStepExecution.updateMany({
       where: { id: current.id, ownerId: input.ownerId, status: "reserved" },
       data: {
@@ -1427,7 +1477,7 @@ export async function settleWorkflowStepInTransaction(
         where: { id: current.id, ownerId: input.ownerId },
       })) as WorkflowStepExecutionRecord | null;
       if (!raced) fail("RESOURCE_NOT_FOUND");
-      if (!sameSettlement(raced, effective)) fail("IDEMPOTENCY_CONFLICT");
+      if (!sameSettlement(raced, replaySettlement(raced, effective))) fail("IDEMPOTENCY_CONFLICT");
       return raced;
     }
     const settled = (await tx.workflowStepExecution.findFirst({

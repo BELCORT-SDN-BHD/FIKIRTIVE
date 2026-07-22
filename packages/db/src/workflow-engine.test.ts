@@ -118,6 +118,7 @@ class EngineFixture {
   revisions: WorkflowRevisionAuthorityRow[] = [];
   runs: RoutineRunRecord[] = [];
   ownerFilters: string[] = [];
+  runCreateAttempts = 0;
 
   tx: any = { $queryRaw: async (..._args: unknown[]) => [] };
 
@@ -164,6 +165,7 @@ class EngineFixture {
         ) ?? null;
       },
       createMany: async ({ data }: any) => {
+        this.runCreateAttempts += 1;
         const item = data[0];
         if (this.runs.some((row) => row.ownerId === item.ownerId && row.runIdempotencyKey === item.runIdempotencyKey)) {
           return { count: 0 };
@@ -350,6 +352,7 @@ describe("C7 RoutineRun exactly-once and CAS", () => {
     expect(fixture.runs).toHaveLength(1);
     const replay = await createRoutineRun(fixture.db(), { ...runInput(), id: "run-retry" });
     expect(replay).toMatchObject({ kind: "replayed", shouldDispatch: true, run: { id: "run-1" } });
+    expect(fixture.runCreateAttempts).toBe(2);
     await expect(createRoutineRun(fixture.db(), runInput("routine-1", { operation: "changed" }))).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     expect(fixture.runs).toHaveLength(1);
     expect(fixture.ownerFilters.every((ownerId) => ownerId === "owner-1")).toBe(true);

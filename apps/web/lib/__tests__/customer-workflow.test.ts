@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { deriveNoTargetActionIdempotencyKey, prisma } from "@fikirtive/db";
+import {
+  deriveNoTargetActionIdempotencyKey,
+  prisma,
+  type Prisma,
+  type PrismaClient,
+} from "@fikirtive/db";
 import * as gateway from "../customer-workflow-gateway";
 import {
   workflowLifecycleService,
@@ -44,6 +49,10 @@ const TEMPLATE_B = "c7-m1-test-template-b";
 const TEMPLATE_VERSION_A = "c7-m1-test-template-version-a";
 const TEMPLATE_VERSION_B = "c7-m1-test-template-version-b";
 const POLICY_B = "c7-m1-test-policy-b";
+const REAL_TEMPLATE_TAXONOMY = Object.freeze({
+  purposeClass: "proactive_non_transactional",
+  category: "marketing",
+});
 const OWNERS = [ORG_A, ORG_B];
 
 const principalA: CustomerWorkflowPrincipal = {
@@ -95,6 +104,106 @@ async function expectCode(promise: Promise<unknown>, code: string): Promise<void
     if (error instanceof Error && error.message === `Expected ${code}`) throw error;
     expect(errorCode(error)).toBe(code);
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function captureOutcome<T>(promise: Promise<T>) {
+  return promise.then(
+    (value) => ({ kind: "fulfilled" as const, value }),
+    (error: unknown) => ({ kind: "rejected" as const, error }),
+  );
+}
+
+function createTransactionBarrierHarness(
+  wrapTransaction: (tx: Prisma.TransactionClient) => Prisma.TransactionClient,
+  backendPids: number[] = [],
+  onTransactionStart?: () => Promise<void>,
+): PrismaClient {
+  return new Proxy(prisma, {
+    get(target, prop, receiver) {
+      if (prop === "$transaction") {
+        return async <T>(callback: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> =>
+          target.$transaction(async (tx) => {
+            const connection = await tx.$queryRaw<Array<{ backendPid: number }>>`
+              SELECT pg_backend_pid()::int AS "backendPid"
+            `;
+            backendPids.push(connection[0]!.backendPid);
+            await onTransactionStart?.();
+            return callback(wrapTransaction(tx));
+          });
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as PrismaClient;
+}
+
+function proxyDelegateMethod(
+  tx: Prisma.TransactionClient,
+  delegateName: string,
+  methodName: string,
+  around: (invoke: () => Promise<unknown>, args: unknown[]) => Promise<unknown>,
+): Prisma.TransactionClient {
+  const delegate = (tx as unknown as Record<string, unknown>)[delegateName] as object;
+  const delegateProxy = new Proxy(delegate, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === methodName && typeof value === "function") {
+        return (...args: unknown[]) => around(
+          () => Reflect.apply(value, target, args) as Promise<unknown>,
+          args,
+        );
+      }
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return new Proxy(tx, {
+    get(target, prop, receiver) {
+      if (prop === delegateName) return delegateProxy;
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function proxyTransactionMethod(
+  tx: Prisma.TransactionClient,
+  methodName: "$queryRaw" | "$executeRaw",
+  afterInvoke: () => void,
+): Prisma.TransactionClient {
+  return new Proxy(tx, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (prop === methodName && typeof value === "function") {
+        return (...args: unknown[]) => {
+          const pending = Promise.resolve(Reflect.apply(value, target, args));
+          queueMicrotask(afterInvoke);
+          return pending;
+        };
+      }
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+async function expectPostgresBlockedBy(blockedPid: number, blockerPid: number): Promise<void> {
+  let observed = false;
+  for (let attempt = 0; attempt < 50 && !observed; attempt += 1) {
+    const rows = await prisma.$queryRaw<Array<{ isBlocked: boolean }>>`
+      SELECT ${blockerPid}::int = ANY(pg_blocking_pids(${blockedPid}::int)) AS "isBlocked"
+    `;
+    observed = rows[0]?.isBlocked === true;
+  }
+  expect(observed).toBe(true);
 }
 
 function source(
@@ -228,8 +337,7 @@ async function seed(): Promise<void> {
         ownerId: ORG_A,
         templateId: TEMPLATE_A,
         revision: 1,
-        purposeClass: "marketing",
-        category: "marketing",
+        ...REAL_TEMPLATE_TAXONOMY,
         definitionJson: { schemaVersion: 1, body: "Hello {{name}}", variables: [{ key: "name", sample: "Aisyah" }] },
         contentHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         createdByMembershipId: OWNER_A,
@@ -239,8 +347,7 @@ async function seed(): Promise<void> {
         ownerId: ORG_B,
         templateId: TEMPLATE_B,
         revision: 1,
-        purposeClass: "marketing",
-        category: "marketing",
+        ...REAL_TEMPLATE_TAXONOMY,
         definitionJson: { schemaVersion: 1, body: "Private B", variables: [] },
         contentHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         createdByMembershipId: OWNER_B,
@@ -562,7 +669,108 @@ describe("customer workflow lifecycle and dispatch", () => {
       status: "unavailable",
       reasonCode: "workflow_target_unavailable",
     });
-    expect(scheduledStep.actionIdempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(scheduledStep.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
+      ownerId: ORG_A,
+      workflowDefinitionId: scheduledRun.run.workflowDefinitionId,
+      routineKey: scheduledRun.run.routineKey,
+      triggerKind: scheduledRun.run.triggerKind,
+      triggerOccurrenceRef: scheduledRun.run.triggerOccurrenceRef,
+      contactJourneyStateId: scheduledRun.run.contactJourneyStateId,
+      scheduledFor: scheduledRun.run.scheduledFor,
+      stepKey: "send_offer",
+    }));
+  });
+
+  it("maps the real template-writer taxonomy into all four C5 eligibility axes", async () => {
+    expect(await prisma.customerMessageTemplateVersion.findFirst({
+      where: { id: TEMPLATE_VERSION_A, ownerId: ORG_A },
+      select: { category: true, purposeClass: true },
+    })).toEqual(REAL_TEMPLATE_TAXONOMY);
+    const lifecycle = await createLifecycle(
+      principalA,
+      "real-template-taxonomy",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const run = await dueRun(
+      workerA,
+      lifecycle,
+      CONTACT_PASS,
+      IDENTITY_PASS,
+      "real-template-taxonomy-1",
+    );
+    const execution = await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    });
+    expect(execution).toMatchObject({
+      status: "unavailable",
+      reasonCode: "BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE",
+      purpose: "marketing",
+      callerClass: "unconfirmed_automatic",
+      eligibilityVerdictJson: {
+        consentStop: { status: "pass" },
+        doNotDisturb: { status: "pass" },
+        providerRefusal: { status: "pass" },
+        frequency: { status: "pass" },
+      },
+    });
+  });
+
+  it("persists unavailable for the known non-broadcast C4 transactional tuple", async () => {
+    const purposeClass = "transactional";
+    const category = "utility";
+    const lifecycle = await createLifecycle(
+      principalA,
+      `unmapped-template-${category}-${purposeClass}`,
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const run = await dueRun(
+      workerA,
+      lifecycle,
+      CONTACT_PASS,
+      IDENTITY_PASS,
+      `unmapped-template-${category}-${purposeClass}`,
+    );
+    await prisma.customerMessageTemplateVersion.update({
+      where: { id: TEMPLATE_VERSION_A },
+      data: { purposeClass, category },
+    });
+    const execution = await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    });
+    expect(execution).toMatchObject({
+      status: "unavailable",
+      reasonCode: "workflow_dependency_unavailable",
+      contactId: null,
+      contactIdentityId: null,
+      purpose: null,
+      downstreamKind: "none",
+      downstreamRef: null,
+    });
+    expect(execution.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
+      ownerId: ORG_A,
+      workflowDefinitionId: run.workflowDefinitionId,
+      routineKey: run.routineKey,
+      triggerKind: run.triggerKind,
+      triggerOccurrenceRef: run.triggerOccurrenceRef,
+      contactJourneyStateId: run.contactJourneyStateId,
+      scheduledFor: run.scheduledFor,
+      stepKey: "send_offer",
+    }));
+    expect((await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    })).id).toBe(execution.id);
+    expect(await prisma.workflowStepExecution.count({
+      where: { ownerId: ORG_A, routineRunId: run.id },
+    })).toBe(1);
+    expect(await prisma.broadcastRun.count({ where: { ownerId: ORG_A } })).toBe(0);
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
   });
 
   it("kills before dispatch, records real separate axes, and keeps every downstream seam unavailable", async () => {
@@ -730,11 +938,133 @@ describe("customer workflow lifecycle and dispatch", () => {
       where: { id: TEMPLATE_VERSION_A },
       data: { contentHash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
     });
-    await expectCode(
-      workflows.dispatchWorkflowStep(workerA, { routineRunId: run.id, stepKey: "send_offer" }),
-      "AUTHORITY_UNAVAILABLE",
+    const unavailable = await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    });
+    expect(unavailable).toMatchObject({
+      status: "unavailable",
+      reasonCode: "workflow_dependency_unavailable",
+      downstreamKind: "none",
+      downstreamRef: null,
+    });
+    expect(unavailable.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
+      ownerId: ORG_A,
+      workflowDefinitionId: run.workflowDefinitionId,
+      routineKey: run.routineKey,
+      triggerKind: run.triggerKind,
+      triggerOccurrenceRef: run.triggerOccurrenceRef,
+      contactJourneyStateId: run.contactJourneyStateId,
+      scheduledFor: run.scheduledFor,
+      stepKey: "send_offer",
+    }));
+    expect((await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    })).id).toBe(unavailable.id);
+    expect(await prisma.workflowStepExecution.count({
+      where: { ownerId: ORG_A, routineRunId: run.id },
+    })).toBe(1);
+  });
+
+  it("persists the customer-message target:none sentinel when the frozen target disappears", async () => {
+    const canonical = workflows.canonicalizeWorkflowBusinessHoursPolicy({
+      timeZone: "Asia/Kuala_Lumpur",
+      weeklyWindows: [{ weekday: 3, startMinute: 540, endMinute: 720 }],
+    });
+    if (!canonical.ok) throw new Error("Expected canonical policy");
+    const policyId = "c7-m1-test-policy-message-sentinel";
+    const conversationId = "c7-m1-test-conversation-message-sentinel";
+    const messageId = "c7-m1-test-message-sentinel";
+    const sourceEventKey = "scope-a:message-sentinel";
+    await prisma.businessHoursPolicy.create({
+      data: {
+        id: policyId,
+        ownerId: ORG_A,
+        policyKey: "message_sentinel_hours",
+        revision: 1,
+        name: "Message sentinel hours",
+        timeZone: canonical.value.timeZone,
+        weeklyWindowsJson: canonical.value.weeklyWindowsJson,
+        status: "published",
+        contentHash: canonical.value.contentHash,
+        createdByMembershipId: OWNER_A,
+      },
+    });
+    await prisma.customerConversation.create({
+      data: {
+        id: conversationId,
+        ownerId: ORG_A,
+        contactIdentityId: IDENTITY_PASS,
+        status: "open",
+        automationState: "otto_active",
+        revision: 0,
+        lastActivityAt: NOW,
+      },
+    });
+    await prisma.customerMessage.create({
+      data: {
+        id: messageId,
+        ownerId: ORG_A,
+        conversationId,
+        direction: "inbound",
+        actorKind: "customer",
+        kind: "text",
+        contentJson: { schemaVersion: 1, type: "text", text: "Sentinel" },
+        searchText: "Sentinel",
+        contentHash: "message-sentinel-content",
+        sourceEventKey,
+        sourcePayloadHash: "message-sentinel-payload",
+        canonicalizationVersion: "v1",
+        receivedAt: NOW,
+      },
+    });
+    const lifecycle = await createLifecycle(
+      principalA,
+      "message-sentinel",
+      TEMPLATE_VERSION_A,
+      "conversation_reply",
+      [CONTACT_PASS],
+      customerMessageSource(TEMPLATE_VERSION_A, policyId),
     );
-    expect(await prisma.workflowStepExecution.count({ where: { ownerId: ORG_A } })).toBe(0);
+    const created = await workflows.createWorkflowRun(workerA, {
+      routineId: lifecycle.routine.id,
+      trigger: { kind: "customer_message", sourceEventKey, triggerEventRef: messageId },
+      trustedTriggerPayload: { source: "verified_inbox" },
+    });
+    if (created.kind === "blocked") throw new Error("Expected customer-message run");
+    await prisma.contactIdentity.update({
+      where: { id: IDENTITY_PASS },
+      data: { deletedAt: NOW },
+    });
+    const unavailable = await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: created.run.id,
+      stepKey: "send_offer",
+    });
+    expect(unavailable).toMatchObject({
+      status: "unavailable",
+      reasonCode: "workflow_target_unavailable",
+      contactId: null,
+      downstreamKind: "none",
+      downstreamRef: null,
+    });
+    expect(unavailable.actionIdempotencyKey).toBe(deriveNoTargetActionIdempotencyKey({
+      ownerId: ORG_A,
+      workflowDefinitionId: created.run.workflowDefinitionId,
+      routineKey: created.run.routineKey,
+      triggerKind: created.run.triggerKind,
+      triggerOccurrenceRef: created.run.triggerOccurrenceRef,
+      contactJourneyStateId: created.run.contactJourneyStateId,
+      scheduledFor: created.run.scheduledFor,
+      stepKey: "send_offer",
+    }));
+    expect((await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: created.run.id,
+      stepKey: "send_offer",
+    })).id).toBe(unavailable.id);
+    expect(await prisma.workflowStepExecution.count({
+      where: { ownerId: ORG_A, routineRunId: created.run.id },
+    })).toBe(1);
   });
 
   it("uses the frozen customer-message occurrence and business-hours pin without reaching C4", async () => {
@@ -878,6 +1208,9 @@ describe("customer workflow lifecycle and dispatch", () => {
       routineRunId: outsideRunResult.run.id,
       stepKey: "send_offer",
     })).id).toBe(outsideStep.id);
+    expect(await prisma.workflowStepExecution.count({
+      where: { ownerId: ORG_A, routineRunId: outsideRunResult.run.id },
+    })).toBe(1);
     const runCount = await prisma.routineRun.count({ where: { ownerId: ORG_A } });
     await prisma.customerMessage.update({
       where: { id: "c7-m1-test-message-outside" },
@@ -914,6 +1247,269 @@ describe("customer workflow lifecycle and dispatch", () => {
     expect(await prisma.routineRun.count({ where: { ownerId: ORG_A } })).toBe(runCount);
     expect(await prisma.workflowStepExecution.count({ where: { ownerId: ORG_A } })).toBe(2);
     expect(await prisma.customerMessage.count({ where: { ownerId: ORG_A, direction: "outbound" } })).toBe(0);
+  });
+
+  it("commits a kill before an in-flight dispatch and records zero downstream work", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "concurrent-kill",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const run = await dueRun(
+      workerA,
+      lifecycle,
+      CONTACT_PASS,
+      IDENTITY_PASS,
+      "concurrent-kill-1",
+    );
+    const killStaged = deferred<void>();
+    const releaseKill = deferred<void>();
+    const dispatchReachedAuthorityLock = deferred<void>();
+    const dispatchBackendPids: number[] = [];
+    const killBackendPids: number[] = [];
+    let dispatchSequence = 0;
+    let killSequence = 0;
+    const dispatchWorkflows = workflowLifecycleService(
+      createTransactionBarrierHarness(
+        (tx) => proxyTransactionMethod(
+          tx,
+          "$queryRaw",
+          () => dispatchReachedAuthorityLock.resolve(undefined),
+        ),
+        dispatchBackendPids,
+      ),
+      {
+        clock: () => NOW,
+        id: () => `c7-m1-concurrent-dispatch-${++dispatchSequence}`,
+        resolveWorkerContext,
+      },
+    );
+    const killWorkflows = workflowLifecycleService(
+      createTransactionBarrierHarness(
+        (tx) => proxyDelegateMethod(
+          tx,
+          "routine",
+          "updateMany",
+          async (invoke) => {
+            const updated = await invoke();
+            killStaged.resolve(undefined);
+            await releaseKill.promise;
+            return updated;
+          },
+        ),
+        killBackendPids,
+      ),
+      {
+        clock: () => NOW,
+        id: () => `c7-m1-concurrent-kill-${++killSequence}`,
+        resolveWorkerContext,
+      },
+    );
+    const killPromise = killWorkflows.killRoutine(principalA, {
+      routineId: lifecycle.routine.id,
+      expectedRowRevision: lifecycle.routine.rowRevision,
+      reasonCode: "concurrent_owner_stop",
+    });
+    await Promise.race([
+      killStaged.promise,
+      killPromise.then(
+        () => { throw new Error("Kill committed before its transaction barrier"); },
+        (error: unknown) => { throw error; },
+      ),
+    ]);
+    const dispatchPromise = dispatchWorkflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    });
+    try {
+      await Promise.race([
+        dispatchReachedAuthorityLock.promise,
+        dispatchPromise.then(
+          () => { throw new Error("Dispatch completed before reaching the authority lock"); },
+          (error: unknown) => { throw error; },
+        ),
+      ]);
+      expect(dispatchBackendPids).toHaveLength(1);
+      expect(killBackendPids).toHaveLength(1);
+      expect(dispatchBackendPids[0]).not.toBe(killBackendPids[0]);
+      await expectPostgresBlockedBy(dispatchBackendPids[0]!, killBackendPids[0]!);
+    } finally {
+      releaseKill.resolve(undefined);
+    }
+    const [killed, execution] = await Promise.all([killPromise, dispatchPromise]);
+    expect(killed.resource).toMatchObject({ status: "paused", killSwitchEngaged: true });
+    expect(execution).toMatchObject({
+      status: "blocked",
+      reasonCode: "routine_authority_kill",
+      downstreamKind: "none",
+      downstreamRef: null,
+    });
+    expect(await prisma.workflowStepExecution.count({
+      where: { ownerId: ORG_A, routineRunId: run.id },
+    })).toBe(1);
+    expect(await prisma.broadcastRun.count({ where: { ownerId: ORG_A } })).toBe(0);
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
+  });
+
+  it("races duplicate schedule ticks through the RoutineRun uniqueness boundary", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "concurrent-schedule",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+      source(TEMPLATE_VERSION_A, "broadcast_run", "schedule"),
+    );
+    const bothTransactionsStarted = deferred<void>();
+    const backendPids: number[] = [];
+    let createManyCalls = 0;
+    let scheduleSequence = 0;
+    const concurrentWorkflows = workflowLifecycleService(createTransactionBarrierHarness(
+      (tx) => proxyDelegateMethod(
+        tx,
+        "routineRun",
+        "createMany",
+        async (invoke) => {
+          createManyCalls += 1;
+          return invoke();
+        },
+      ),
+      backendPids,
+      async () => {
+        if (backendPids.length === 2) bothTransactionsStarted.resolve(undefined);
+        await bothTransactionsStarted.promise;
+      },
+    ), {
+      clock: () => NOW,
+      id: () => `c7-m1-concurrent-schedule-${++scheduleSequence}`,
+      resolveWorkerContext,
+    });
+    const input = {
+      routineId: lifecycle.routine.id,
+      trigger: { kind: "schedule" as const, scheduledFor: NOW },
+      trustedTriggerPayload: { source: "double_tick" },
+    };
+    const results = await Promise.all([
+      concurrentWorkflows.createWorkflowRun(workerA, input),
+      concurrentWorkflows.createWorkflowRun(workerA, input),
+    ]);
+    expect(new Set(backendPids).size).toBe(2);
+    expect(createManyCalls).toBe(2);
+    expect(results.map((result) => result.kind).sort()).toEqual(["created", "replayed"]);
+    const runIds = results.map((result) => {
+      if (result.kind === "blocked") throw new Error("Expected created/replayed schedule runs");
+      return result.run.id;
+    });
+    expect(new Set(runIds).size).toBe(1);
+    expect(await prisma.routineRun.count({
+      where: { ownerId: ORG_A, routineId: lifecycle.routine.id },
+    })).toBe(1);
+  });
+
+  it("serializes concurrent enrollment across two Routines on the advisory lock", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "concurrent-enrollment",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const secondDraft = await workflows.createRoutineDraft(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      workflowRevisionId: lifecycle.revision.id,
+      routineKey: "routine_concurrent_enrollment_second",
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: { mode: "counts_only" },
+    });
+    const secondRoutine = await workflows.activateRoutine(principalA, {
+      routineId: secondDraft.resource.id,
+      expectedRowRevision: 0,
+    });
+    const firstInserted = deferred<void>();
+    const releaseFirstEnrollment = deferred<void>();
+    const secondReachedAdvisoryLock = deferred<void>();
+    const leftBackendPids: number[] = [];
+    const rightBackendPids: number[] = [];
+    let leftSequence = 0;
+    let rightSequence = 0;
+    const left = workflowLifecycleService(createTransactionBarrierHarness(
+      (tx) => proxyDelegateMethod(
+        tx,
+        "contactJourneyState",
+        "createMany",
+        async (invoke) => {
+          const result = await invoke();
+          firstInserted.resolve(undefined);
+          await releaseFirstEnrollment.promise;
+          return result;
+        },
+      ),
+      leftBackendPids,
+    ), {
+      clock: () => NOW,
+      id: () => `c7-m1-concurrent-enrollment-left-${++leftSequence}`,
+      resolveWorkerContext,
+    });
+    const right = workflowLifecycleService(createTransactionBarrierHarness(
+      (tx) => proxyTransactionMethod(
+        tx,
+        "$executeRaw",
+        () => secondReachedAdvisoryLock.resolve(undefined),
+      ),
+      rightBackendPids,
+    ), {
+      clock: () => NOW,
+      id: () => `c7-m1-concurrent-enrollment-right-${++rightSequence}`,
+      resolveWorkerContext,
+    });
+    const firstPromise = captureOutcome(left.enrollWorkflowJourney(workerA, {
+      routineId: lifecycle.routine.id,
+      contactId: CONTACT_PASS,
+      contactIdentityId: IDENTITY_PASS,
+      enrollmentOccurrenceRef: "concurrent-enrollment-left",
+      initialStepKey: "send_offer",
+      initialStateJson: {},
+    }));
+    await Promise.race([
+      firstInserted.promise,
+      firstPromise.then(() => { throw new Error("First enrollment completed before its transaction barrier"); }),
+    ]);
+    const secondPromise = captureOutcome(right.enrollWorkflowJourney(workerA, {
+      routineId: secondRoutine.resource.id,
+      contactId: CONTACT_PASS,
+      contactIdentityId: IDENTITY_PASS,
+      enrollmentOccurrenceRef: "concurrent-enrollment-right",
+      initialStepKey: "send_offer",
+      initialStateJson: {},
+    }));
+    try {
+      await Promise.race([
+        secondReachedAdvisoryLock.promise,
+        secondPromise.then(() => { throw new Error("Second enrollment completed before reaching the advisory lock"); }),
+      ]);
+      expect(leftBackendPids).toHaveLength(1);
+      expect(rightBackendPids).toHaveLength(1);
+      expect(leftBackendPids[0]).not.toBe(rightBackendPids[0]);
+      await expectPostgresBlockedBy(rightBackendPids[0]!, leftBackendPids[0]!);
+    } finally {
+      releaseFirstEnrollment.resolve(undefined);
+    }
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first).toMatchObject({ kind: "fulfilled", value: { kind: "created" } });
+    expect(second.kind).toBe("rejected");
+    if (second.kind !== "rejected") throw new Error("Expected the second enrollment to fail");
+    expect(errorCode(second.error)).toBe("LIVE_ENROLLMENT_EXISTS");
+    expect(await prisma.contactJourneyState.count({
+      where: {
+        ownerId: ORG_A,
+        workflowDefinitionId: lifecycle.definition.id,
+        contactId: CONTACT_PASS,
+      },
+    })).toBe(1);
   });
 
   it("fails every cross-tenant carrier swap without leaking or writing tenant B", async () => {
