@@ -180,6 +180,9 @@ export const PARITY_MANIFEST = {
   "customer-broadcast-ui-actions.cancelBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
   "customer-broadcast-ui-actions.executeBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388): SIMULATED execution (zero real provider/spend); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
 
+  "customer-broadcast-report-ui-actions.getBroadcastDeliveryReceipt": { todoSkill: true, reason: "C6-M3 human-only report read surface (issue #412); Otto report skill is staged for a later Founder-approved milestone, mirroring the C5-M3 precedent (issue #388)." },
+  "customer-broadcast-report-ui-actions.getCustomerBroadcastReport": { todoSkill: true, reason: "C6-M3 human-only report read surface (issue #412); Otto report skill is staged for a later Founder-approved milestone, mirroring the C5-M3 precedent (issue #388)." },
+
   "canvas-actions.listCanvasNodes": { skill: "manageCanvas" },
   "canvas-actions.createCanvasNode": { skill: "manageCanvas" },
   "canvas-actions.moveCanvasNode": { exempt: "VISUAL", reason: "Pure canvas positioning is a visual micro-operation." },
