@@ -665,6 +665,12 @@ export/delete/DSAR、retention/terminal compaction、backup/replica expiry、at-
 
 Founder 批准 §4/§7 的 schema direction 也**不等于** B13 rows 通过；缺逐表 privacy gate，M1 migration 不得开始。
 
+**2026-07-22 更新（#416）**：七表 B13 rows 与 retention 方向已依 Founder Resolution
+（[#416 issuecomment-5044757427](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/416#issuecomment-5044757427)）
+冻结，落地于 `docs/superpowers/specs/2026-07-19-b13-privacy-carrier-gate.md` §2（本 PR 新增七行）。冻结随本 PR
+生效——本 PR **OPEN，尚未合并**；M1 schema/migration 仍须等待本 PR 合并后，schema PR 才依「本 PR 合并顺序」
+开动，本条不构成本 PR 合并前的 M1 授权。
+
 ## §11 M-station、activation 与 rollback 提案
 
 每一站**另取 Founder 授权**；本任务没有可核实的「多站一次性授权」。
@@ -841,6 +847,13 @@ pause/kill→history）并排证据、版本/日期、desktop/mobile、Founder �
 | production migration/backfill/reconcile/deploy/cleanup | 每个 production/destructive 动作前 |
 | **M1 / M2 / M3 / A-station / M4** | **逐站另取 Founder 授权；无一次性授权推定** |
 | CI-unavailable merge | merge 前；本地复现不替代 Founder 明示批准 |
+
+**七 carrier B13 rows 现状（2026-07-22）**：上表「七 carrier B13 rows、retention/export/delete/encryption/
+backup/support access」一行已依 Founder Resolution
+（[#416](https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/416#issuecomment-5044757427)）冻结，落地于
+`docs/superpowers/specs/2026-07-19-b13-privacy-carrier-gate.md` §2。本 PR **OPEN，尚未合并**——冻结在本 PR
+合并前不生效；schema/migration 仍受上表「七 carrier schema/migration/DB apply、partial unique/check 方向 |
+M1 首次动作前」一行门控，schema PR 须在本 PR 合并之后按合并顺序另开，本条不构成 M1 授权。
 
 ### §14.2 当前 Unknown（不偷偷填）
 
