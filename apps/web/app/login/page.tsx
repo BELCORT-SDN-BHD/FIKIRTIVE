@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Sign in · Fikirtive" };
 
 const ERRORS: Record<string, string> = {
-  AccessDenied: "This email isn't on the allowlist.",
+  AccessDenied: "Sign-in failed. Try again.",
   Verification: "That link expired or was already used. Request a new one.",
   Configuration: "Sign-in is misconfigured. Check the server logs.",
   Default: "Sign-in failed. Try again.",
