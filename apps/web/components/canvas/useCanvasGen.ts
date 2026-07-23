@@ -10,8 +10,6 @@ import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
 import {
   CANVAS_IMAGE_DEFAULT_COUNT,
   canvasGenCostQuote,
-  canvasImageCostCredits,
-  canvasVideoCostCredits,
   clampImageVariantCount,
 } from "@/lib/canvas-gen-costs";
 
@@ -45,6 +43,10 @@ type CanvasVideoResumeOptions = {
   threadId?: string | null;
   approvedCredits?: number;
 };
+
+function isConfirmedCreditQuote(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
 
 export type CanvasGenProgress = {
   nodeId: string;
@@ -371,9 +373,11 @@ export function useCanvasGen(
       if (
         response === null || typeof response !== "object" ||
         typeof (response as { image?: unknown }).image !== "string" ||
+        !(response as { image: string }).image ||
         typeof (response as { video?: unknown }).video !== "string" ||
-        typeof (response as { imageCredits?: unknown }).imageCredits !== "number" ||
-        typeof (response as { videoCredits?: unknown }).videoCredits !== "number"
+        !(response as { video: string }).video ||
+        !isConfirmedCreditQuote((response as { imageCredits?: unknown }).imageCredits) ||
+        !isConfirmedCreditQuote((response as { videoCredits?: unknown }).videoCredits)
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -419,19 +423,22 @@ export function useCanvasGen(
     // clamped to [1, MAX] here and re-validated by the server genRequest gate. Any sibling
     // cards below are pure placement of already-charged variants (no extra spend).
     const safeCount = clampImageVariantCount(count);
-    let image = options.resumeModel;
-    let activeModels: ActiveGenModels | null = null;
-    if (!image) {
+    let image: string;
+    let approvedCredits: number;
+    if (typeof options.resumeModel === "string") {
+      if (!options.resumeModel || !isConfirmedCreditQuote(options.resumeApprovedCredits)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      image = options.resumeModel;
+      approvedCredits = options.resumeApprovedCredits;
+    } else {
       const models = await loadModelsForAction();
       if (!models) return false;
-      activeModels = models;
       image = models.image;
+      approvedCredits = models.imageCredits * safeCount;
     }
     const actionId = options.actionId ?? freshCanvasActionId();
-    const approvedCredits = options.resumeApprovedCredits
-      ?? (activeModels
-        ? activeModels.imageCredits * safeCount
-        : canvasImageCostCredits(image, safeCount));
     const requestThreadId = options.resumeThreadId !== undefined
       ? options.resumeThreadId
       : activeThreadId ?? null;
@@ -582,17 +589,22 @@ export function useCanvasGen(
     actionId?: string,
     resume: CanvasVideoResumeOptions = {},
   ): Promise<boolean> => {
-    let video = resume.model;
-    let activeModels: ActiveGenModels | null = null;
-    if (!video) {
+    let video: string;
+    let approvedCredits: number;
+    if (typeof resume.model === "string") {
+      if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      video = resume.model;
+      approvedCredits = resume.approvedCredits;
+    } else {
       const models = await loadModelsForAction();
       if (!models) return false;
-      activeModels = models;
       video = models.video;
+      approvedCredits = models.videoCredits;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
-    const approvedCredits = resume.approvedCredits
-      ?? (activeModels ? activeModels.videoCredits : canvasVideoCostCredits(video));
     const requestThreadId = resume.threadId !== undefined
       ? resume.threadId
       : activeThreadId ?? null;
@@ -675,17 +687,22 @@ export function useCanvasGen(
     actionId?: string,
     resume: CanvasVideoResumeOptions = {},
   ): Promise<boolean> => {
-    let video = resume.model;
-    let activeModels: ActiveGenModels | null = null;
-    if (!video) {
+    let video: string;
+    let approvedCredits: number;
+    if (typeof resume.model === "string") {
+      if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      video = resume.model;
+      approvedCredits = resume.approvedCredits;
+    } else {
       const models = await loadModelsForAction();
       if (!models) return false;
-      activeModels = models;
       video = models.video;
+      approvedCredits = models.videoCredits;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
-    const approvedCredits = resume.approvedCredits
-      ?? (activeModels ? activeModels.videoCredits : canvasVideoCostCredits(video));
     const requestThreadId = resume.threadId !== undefined
       ? resume.threadId
       : activeThreadId ?? null;

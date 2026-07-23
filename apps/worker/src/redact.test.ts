@@ -1,21 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { sanitizeError } from "./redact.js";
+import { redactProviderNames, sanitizeError } from "./redact.js";
 
 const SECRET_TERMS =
   /seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu;
 
 describe("sanitizeError provider secrecy", () => {
+  it.each([
+    "customer Claude Martin",
+    "Claude's Diner Promo",
+    "anthropic principle",
+    "claude@example.com",
+  ])("keeps merchant and customer text intact: %s", (raw) => {
+    expect(redactProviderNames(raw)).toBe(raw);
+  });
+
   it("redacts provider names, model references, and signed URLs before persistence", () => {
     const raw = [
       "Seedance 2.0 Fast",
+      "seedance-2-fast",
       "seedream-5-0",
       "BYTEPLUS",
       "ByteDance",
       "jimeng",
       "即梦",
       "fal.ai/model",
-      "Anthropic",
-      "claude-as-provider",
+      "Anthropic API error 529",
+      "claude-sonnet-5",
       "BytePlusProvider",
       "AnthropicError",
       "ClaudeAsProvider",

@@ -276,8 +276,8 @@ describe("toChatMessageDTO — TURN_ERROR payload passthrough", () => {
       payload: {
         kind: "stream_run_error",
         error: {
-          kind: "provider_error",
-          text: "Claude via Anthropic failed at https://provider.example.test/private",
+          kind: "error",
+          text: "Campaign draft failed after Claude SDK called Anthropic API at https://provider.example.test/private while customer order 42 remained saved.",
         },
       },
     } as never, new Map());
@@ -285,5 +285,7 @@ describe("toChatMessageDTO — TURN_ERROR payload passthrough", () => {
     const serialized = JSON.stringify(dto.payload);
     expect(serialized).not.toMatch(/anthropic|claude/iu);
     expect(serialized).not.toContain("provider.example.test");
+    expect(serialized).toContain("Campaign draft failed after");
+    expect(serialized).toContain("customer order 42 remained saved.");
   });
 });
