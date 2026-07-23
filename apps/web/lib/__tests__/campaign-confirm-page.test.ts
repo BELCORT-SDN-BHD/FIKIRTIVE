@@ -136,6 +136,8 @@ describe("campaign generation result title", () => {
     [{ dispatched: 1, failed: 1 }, null, "Generation partly started"],
     [{ dispatched: 2, failed: 0 }, null, "Generation started"],
     [{ dispatched: 0, failed: 0 }, { current: "unknown" as const }, "Generation partly started"],
+    [{ dispatched: 0, failed: 0 }, { current: "not_started" as const }, "Generation did not start"],
+    [{ dispatched: 1, failed: 0 }, { current: "not_started" as const }, "Generation partly started"],
   ])("derives the title from the server-confirmed outcome", (result, interruption, expected) => {
     expect(campaignGenerationResultTitle(result, interruption)).toBe(expected);
   });

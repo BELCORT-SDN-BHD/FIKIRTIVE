@@ -615,12 +615,13 @@ describe("money-safety static guards", () => {
   });
 
   it("keeps the balance addition read-only and owner-scoped", () => {
+    const creditAccountWrite =
+      /(?:CreditAccount|creditAccount)\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;
     expect(confirmCode).toMatch(
       /prisma\s*\.\s*creditAccount\s*\.\s*findUnique\s*\(\s*\{\s*where:\s*\{\s*orgId:\s*gate\.ownerId\s*\},\s*select:\s*\{\s*balance:\s*true\s*\}/,
     );
-    expect(confirmCode).not.toMatch(
-      /creditAccount\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/,
-    );
+    expect(confirmCode).not.toMatch(creditAccountWrite);
+    expect(batchCode).not.toMatch(creditAccountWrite);
   });
 
   it("never claims zero charge from an unconfirmed client transport failure", () => {
