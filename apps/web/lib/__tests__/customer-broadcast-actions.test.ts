@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { prisma, recordUnqualifiedStop } from "@fikirtive/db";
+import {
+  prisma,
+  recordProviderRefusalEvent,
+  recordUnqualifiedStop,
+  type Prisma,
+} from "@fikirtive/db";
 import * as customerBroadcastGateway from "../customer-broadcast-gateway";
 import { createCustomerBroadcastService } from "../customer-broadcast-service";
 import { createMemberDirectoryService } from "../member-directory-service";
@@ -51,6 +56,9 @@ const TEMPLATE_VERSION_A_ALT = "c5-m2-test-template-version-a-alt";
 const TEMPLATE_VERSION_A_UNMAPPABLE = "c5-m2-test-template-version-a-unmappable";
 const TEMPLATE_VERSION_A_OTHER_SCOPE = "c5-m2-test-template-version-a-other-scope";
 const TEMPLATE_VERSION_B = "c5-m2-test-template-version-b";
+const CONNECTION_STALE = "c5-m2-test-connection-stale";
+const CONNECTION_ACTIVE = "c5-m2-test-connection-active";
+const CONNECTION_ACTIVE_SECOND = "c5-m2-test-connection-active-second";
 const NOW = new Date("2026-07-21T08:00:00.000Z");
 const OWNERS = [ORG_A, ORG_B];
 
@@ -88,10 +96,123 @@ async function expectCode(promise: Promise<unknown>, code: string): Promise<void
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
+type DbMethodHook = (
+  invoke: () => Promise<unknown>,
+  args: unknown[],
+) => Promise<unknown>;
+
+function proxyDatabaseDelegates(
+  client: Prisma.TransactionClient | typeof prisma,
+  hooks: Record<string, DbMethodHook>,
+): Prisma.TransactionClient | typeof prisma {
+  return new Proxy(client, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string") {
+        const matchingHooks = Object.entries(hooks).filter(([key]) =>
+          key.startsWith(`${prop}.`),
+        );
+        if (matchingHooks.length > 0) {
+          const delegate = Reflect.get(target, prop, receiver) as object;
+          return new Proxy(delegate, {
+            get(delegateTarget, delegateProp, delegateReceiver) {
+              const value = Reflect.get(delegateTarget, delegateProp, delegateReceiver);
+              const hook = hooks[`${prop}.${String(delegateProp)}`];
+              if (hook && typeof value === "function") {
+                return (...args: unknown[]) =>
+                  hook(
+                    () => Reflect.apply(value, delegateTarget, args) as Promise<unknown>,
+                    args,
+                  );
+              }
+              return typeof value === "function" ? value.bind(delegateTarget) : value;
+            },
+          });
+        }
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function createHookedBroadcastDb(hooks: Record<string, DbMethodHook>): typeof prisma {
+  const directClient = proxyDatabaseDelegates(prisma, hooks);
+  return new Proxy(directClient, {
+    get(target, prop, receiver) {
+      if (prop === "$transaction") {
+        return async <T>(
+          callback: (tx: Prisma.TransactionClient) => Promise<T>,
+        ): Promise<T> =>
+          prisma.$transaction((tx) =>
+            callback(
+              proxyDatabaseDelegates(tx, hooks) as Prisma.TransactionClient,
+            ),
+          );
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as typeof prisma;
+}
+
+function createBroadcastRunP2002RaceDb(creationIdempotencyKey: string) {
+  const bothInitialReadsFinished = deferred<void>();
+  let initialReadCount = 0;
+  let p2002Count = 0;
+  const db = createHookedBroadcastDb({
+    "broadcastRun.findFirst": async (invoke, args) => {
+      const result = await invoke();
+      const where = (
+        args[0] as { where?: { creationIdempotencyKey?: string } } | undefined
+      )?.where;
+      if (
+        where?.creationIdempotencyKey === creationIdempotencyKey &&
+        result === null &&
+        initialReadCount < 2
+      ) {
+        initialReadCount += 1;
+        if (initialReadCount === 2) bothInitialReadsFinished.resolve();
+        await bothInitialReadsFinished.promise;
+      }
+      return result;
+    },
+  });
+  const countedDb = new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop === "$transaction") {
+        const transaction = Reflect.get(target, prop, receiver) as (
+          callback: (tx: Prisma.TransactionClient) => Promise<unknown>,
+        ) => Promise<unknown>;
+        return async (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+          try {
+            return await transaction(callback);
+          } catch (error) {
+            if (errorCode(error) === "P2002") p2002Count += 1;
+            throw error;
+          }
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as typeof prisma;
+  return { db: countedDb, p2002Count: () => p2002Count };
+}
+
 async function cleanup(): Promise<void> {
   await prisma.broadcastAudienceMember.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.broadcastRun.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contactSendFrequencyEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.providerRefusalState.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.providerRefusalEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.consentStateProjection.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.consentEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.customerMessageTemplateVersion.deleteMany({ where: { ownerId: { in: OWNERS } } });
@@ -99,6 +220,7 @@ async function cleanup(): Promise<void> {
   await prisma.campaign.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.segment.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contactIdentity.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.channelConnection.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.channelScope.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contact.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.membership.deleteMany({ where: { orgId: { in: OWNERS } } });
@@ -342,31 +464,75 @@ describe("C5-M2 createBroadcastRun", () => {
     expect(first.duplicate).toBe(false);
     expect(first.resource).toMatchObject({ status: "draft", audienceRevision: 0, revision: 0 });
 
+    const creationIdempotencyKey = "c5-m2-test-create-key-2";
+    const race = createBroadcastRunP2002RaceDb(creationIdempotencyKey);
+    const racingBroadcast = createCustomerBroadcastService({
+      db: race.db,
+      clock: () => NOW,
+      id: () => `c5-m2-test-generated-${++sequence}`,
+    });
     const settled = await Promise.allSettled([
-      broadcast.createBroadcastRun(owner, { ...input, creationIdempotencyKey: "c5-m2-test-create-key-2" }),
-      broadcast.createBroadcastRun(owner, { ...input, creationIdempotencyKey: "c5-m2-test-create-key-2" }),
+      racingBroadcast.createBroadcastRun(owner, { ...input, creationIdempotencyKey }),
+      racingBroadcast.createBroadcastRun(owner, { ...input, creationIdempotencyKey }),
     ]);
+    expect(race.p2002Count()).toBe(1);
     expect(settled.every((r) => r.status === "fulfilled")).toBe(true);
-    expect(await ownerCounts()).toEqual({ runs: 2, members: 0 });
-  });
-
-  it("returns IDEMPOTENCY_CONFLICT when the same key is reused with a different payload", async () => {
-    const key = "c5-m2-test-conflict-key";
-    await broadcast.createBroadcastRun(owner, {
+    const fulfilled = settled.map((result) => {
+      if (result.status !== "fulfilled") throw result.reason;
+      return result.value;
+    });
+    expect(fulfilled.map((result) => result.duplicate).sort()).toEqual([false, true]);
+    expect(new Set(fulfilled.map((result) => result.resource.id)).size).toBe(1);
+    expect(fulfilled[0]!.resource).toMatchObject({
+      ownerId: ORG_A,
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
       templateVersionId: TEMPLATE_VERSION_A,
-      creationIdempotencyKey: key,
+      purpose: "marketing",
     });
-    await expectCode(
-      broadcast.createBroadcastRun(owner, {
+    expect(await ownerCounts()).toEqual({ runs: 2, members: 0 });
+  });
+
+  it("unwinds a genuine concurrent P2002 and returns IDEMPOTENCY_CONFLICT for a different payload", async () => {
+    const key = "c5-m2-test-conflict-key";
+    const race = createBroadcastRunP2002RaceDb(key);
+    const racingBroadcast = createCustomerBroadcastService({
+      db: race.db,
+      clock: () => NOW,
+      id: () => `c5-m2-test-generated-${++sequence}`,
+    });
+    const inputs = [
+      {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A,
+        creationIdempotencyKey: key,
+      },
+      {
         channelScopeId: SCOPE_A,
         channel: "whatsapp",
         templateVersionId: TEMPLATE_VERSION_A_ALT,
         creationIdempotencyKey: key,
-      }),
-      "IDEMPOTENCY_CONFLICT",
+      },
+    ];
+    const settled = await Promise.allSettled(
+      inputs.map((input) => racingBroadcast.createBroadcastRun(owner, input)),
     );
+    expect(race.p2002Count()).toBe(1);
+    const fulfilledIndexes = settled.flatMap((result, index) =>
+      result.status === "fulfilled" ? [index] : [],
+    );
+    const rejected = settled.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(fulfilledIndexes).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(errorCode(rejected[0]!.reason)).toBe("IDEMPOTENCY_CONFLICT");
+    const winner = await prisma.broadcastRun.findFirstOrThrow({
+      where: { ownerId: ORG_A, creationIdempotencyKey: key },
+    });
+    expect(winner.templateVersionId).toBe(inputs[fulfilledIndexes[0]!]!.templateVersionId);
+    expect(await prisma.broadcastRun.count({ where: { ownerId: ORG_A, creationIdempotencyKey: key } })).toBe(1);
   });
 
   it("rejects a foreign campaignId/templateVersionId as RESOURCE_NOT_FOUND, zero writes", async () => {
@@ -489,6 +655,100 @@ describe("C5-M2 createBroadcastRun", () => {
       "TEMPLATE_CHANNEL_MISMATCH",
     );
     expect(await ownerCounts()).toEqual({ runs: 0, members: 0 });
+  });
+});
+
+describe("C5-M2 provider-connection resolution", () => {
+  async function createConnection(
+    id: string,
+    status: "active" | "expired",
+    createdAt: Date,
+  ) {
+    return prisma.channelConnection.create({
+      data: {
+        id,
+        ownerId: ORG_A,
+        kind: "whatsapp",
+        channelScopeId: SCOPE_A,
+        externalId: id,
+        accessTokenEnc: `ciphertext:${id}`,
+        status,
+        createdAt,
+      },
+    });
+  }
+
+  async function previewGrantedProviderAxis() {
+    const preview = await broadcast.previewAudienceEligibility(owner, {
+      segmentId: SEGMENT_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      templateVersionId: TEMPLATE_VERSION_A,
+    });
+    return preview.members.find((row) => row.contactIdentityId === IDENTITY_GRANT)!
+      .verdict.providerRefusal;
+  }
+
+  it("ignores an expired oldest connection and blocks on the one active connection's refusal", async () => {
+    await createConnection(CONNECTION_STALE, "expired", new Date("2026-07-01T00:00:00Z"));
+    await createConnection(CONNECTION_ACTIVE, "active", new Date("2026-07-02T00:00:00Z"));
+    await recordProviderRefusalEvent({
+      ownerId: ORG_A,
+      providerConnectionId: CONNECTION_ACTIVE,
+      kind: "account_level",
+      action: "block",
+      providerCode: "account_suspended",
+      receiptRef: "receipt:c5-active-block",
+      idempotencyKey: "c5-provider-active-block",
+    });
+
+    expect(await previewGrantedProviderAxis()).toMatchObject({
+      status: "block",
+      reason: "account_level_block",
+    });
+  });
+
+  it("does not adopt an expired oldest connection's refusal when the sole active connection is clear", async () => {
+    await createConnection(CONNECTION_STALE, "expired", new Date("2026-07-01T00:00:00Z"));
+    await createConnection(CONNECTION_ACTIVE, "active", new Date("2026-07-02T00:00:00Z"));
+    await recordProviderRefusalEvent({
+      ownerId: ORG_A,
+      providerConnectionId: CONNECTION_STALE,
+      kind: "account_level",
+      action: "block",
+      providerCode: "account_suspended",
+      receiptRef: "receipt:c5-stale-block",
+      idempotencyKey: "c5-provider-stale-block",
+    });
+
+    expect(await previewGrantedProviderAxis()).toMatchObject({ status: "pass" });
+  });
+
+  it("fails closed with a distinct typed conflict when more than one active connection matches", async () => {
+    await createConnection(CONNECTION_ACTIVE, "active", new Date("2026-07-01T00:00:00Z"));
+    await createConnection(
+      CONNECTION_ACTIVE_SECOND,
+      "active",
+      new Date("2026-07-02T00:00:00Z"),
+    );
+
+    await expectCode(
+      broadcast.previewAudienceEligibility(owner, {
+        segmentId: SEGMENT_A,
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A,
+      }),
+      "PROVIDER_CONNECTION_CONFLICT",
+    );
+  });
+
+  it("preserves the existing no-connection refusal-axis shape when zero active connections match", async () => {
+    await createConnection(CONNECTION_STALE, "expired", new Date("2026-07-01T00:00:00Z"));
+    expect(await previewGrantedProviderAxis()).toMatchObject({
+      status: "pass",
+      reason: "no_provider_connection",
+    });
   });
 });
 
@@ -754,7 +1014,7 @@ describe("C5-M3 static no-second-REAL-send-path (simulated executor excepted)", 
       );
     }
     // The simulated frequency counter is written ONLY from the executor.
-    expect(source.indexOf("recordSendFrequencyEvent(")).toBeGreaterThan(execStart);
+    expect(source.indexOf("recordSendFrequencyEventInTransaction(")).toBeGreaterThan(execStart);
   });
 });
 
@@ -901,6 +1161,278 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     expect(grantedStates.filter((s) => s === "simulated_sent")).toHaveLength(1);
     expect(grantedStates.filter((s) => s === "skipped_ineligible")).toHaveLength(1);
     expect(await freqCount(CONTACT_GRANT)).toBe(1);
+  });
+
+  it("serializes two resumers finalizing the same pending member so state and frequency event cannot contradict", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-same-member-finalize-race");
+    await prisma.broadcastRun.update({
+      where: { id: run.id },
+      data: { status: "executing" },
+    });
+    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const grantedMember = await prisma.broadcastAudienceMember.findFirstOrThrow({
+      where: {
+        ownerId: ORG_A,
+        broadcastRunId: run.id,
+        contactIdentityId: IDENTITY_GRANT,
+      },
+    });
+    const frequencyKey = `freq:${ORG_A}:${run.id}:${IDENTITY_GRANT}:whatsapp:proactive_non_transactional`;
+    const bothEventChecksFinished = deferred<void>();
+    const sentClaimed = deferred<void>();
+    let eventCheckCount = 0;
+
+    const sharedHooks: Record<string, DbMethodHook> = {
+      "contactSendFrequencyEvent.findFirst": async (invoke, args) => {
+        const result = await invoke();
+        const key = (
+          args[0] as { where?: { idempotencyKey?: string } } | undefined
+        )?.where?.idempotencyKey;
+        if (key === frequencyKey && result === null && eventCheckCount < 2) {
+          eventCheckCount += 1;
+          if (eventCheckCount === 2) bothEventChecksFinished.resolve();
+          await bothEventChecksFinished.promise;
+        }
+        return result;
+      },
+    };
+    const senderDb = createHookedBroadcastDb({
+      ...sharedHooks,
+      "broadcastAudienceMember.updateMany": async (invoke, args) => {
+        const update = args[0] as {
+          where?: { id?: string };
+          data?: { sendState?: string };
+        };
+        const result = await invoke();
+        if (
+          update.where?.id === grantedMember.id &&
+          update.data?.sendState === "simulated_sent"
+        ) {
+          sentClaimed.resolve();
+        }
+        return result;
+      },
+    });
+    const blockerDb = createHookedBroadcastDb({
+      ...sharedHooks,
+      "consentStateProjection.findUnique": async (invoke, args) => {
+        const key = (
+          args[0] as {
+            where?: {
+              ownerId_contactId_channel_purpose?: {
+                ownerId?: string;
+                contactId?: string;
+                channel?: string;
+                purpose?: string;
+              };
+            };
+          } | undefined
+        )?.where?.ownerId_contactId_channel_purpose;
+        if (
+          key?.ownerId === ORG_A &&
+          key.contactId === CONTACT_GRANT &&
+          key.channel === "whatsapp" &&
+          key.purpose === "marketing"
+        ) {
+          return { state: "effective_revoke" };
+        }
+        return invoke();
+      },
+      "broadcastAudienceMember.updateMany": async (invoke, args) => {
+        const update = args[0] as {
+          where?: { id?: string };
+          data?: { sendState?: string };
+        };
+        if (
+          update.where?.id === grantedMember.id &&
+          update.data?.sendState === "skipped_ineligible"
+        ) {
+          await sentClaimed.promise;
+        }
+        return invoke();
+      },
+    });
+    const sender = createCustomerBroadcastService({
+      db: senderDb,
+      clock: () => NOW,
+      id: () => `c5-m3-sender-${++sequence}`,
+    });
+    const blocker = createCustomerBroadcastService({
+      db: blockerDb,
+      clock: () => NOW,
+      id: () => `c5-m3-blocker-${++sequence}`,
+    });
+
+    const settled = await Promise.allSettled([
+      sender.executeBroadcastRun(owner, {
+        broadcastRunId: run.id,
+        expectedRevision: executing.revision,
+      }),
+      blocker.executeBroadcastRun(owner, {
+        broadcastRunId: run.id,
+        expectedRevision: executing.revision,
+      }),
+    ]);
+    expect(settled.every((result) => result.status === "fulfilled")).toBe(true);
+
+    const terminal = await prisma.broadcastAudienceMember.findFirstOrThrow({
+      where: { id: grantedMember.id, ownerId: ORG_A },
+    });
+    const frequencyEvents = await prisma.contactSendFrequencyEvent.count({
+      where: { ownerId: ORG_A, idempotencyKey: frequencyKey },
+    });
+    expect(["simulated_sent", "skipped_ineligible"]).toContain(terminal.sendState);
+    expect(frequencyEvents).toBe(terminal.sendState === "simulated_sent" ? 1 : 0);
+  });
+
+  it("lets the blocked loser reclaim a member after the winner's frequency-cap rollback", async () => {
+    const run = await createFrozenConfirmedRun("c5-m3-same-member-cap-rollback");
+    await prisma.broadcastRun.update({
+      where: { id: run.id },
+      data: { status: "executing" },
+    });
+    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const grantedMember = await prisma.broadcastAudienceMember.findFirstOrThrow({
+      where: {
+        ownerId: ORG_A,
+        broadcastRunId: run.id,
+        contactIdentityId: IDENTITY_GRANT,
+      },
+    });
+    const frequencyKey = `freq:${ORG_A}:${run.id}:${IDENTITY_GRANT}:whatsapp:proactive_non_transactional`;
+    const bothEventChecksFinished = deferred<void>();
+    const winnerClaimed = deferred<void>();
+    const loserUpdateStarted = deferred<void>();
+    let eventCheckCount = 0;
+    let winnerClaimCount = 0;
+    let loserClaimCount = 0;
+    let winnerFrequencyCountCalls = 0;
+    let injectedCapCount = 0;
+
+    const sharedHooks: Record<string, DbMethodHook> = {
+      "contactSendFrequencyEvent.findFirst": async (invoke, args) => {
+        const result = await invoke();
+        const key = (
+          args[0] as { where?: { idempotencyKey?: string } } | undefined
+        )?.where?.idempotencyKey;
+        if (key === frequencyKey && result === null && eventCheckCount < 2) {
+          eventCheckCount += 1;
+          if (eventCheckCount === 2) bothEventChecksFinished.resolve();
+          await bothEventChecksFinished.promise;
+        }
+        return result;
+      },
+    };
+    const winnerDb = createHookedBroadcastDb({
+      ...sharedHooks,
+      "broadcastAudienceMember.updateMany": async (invoke, args) => {
+        const update = args[0] as {
+          where?: { id?: string };
+          data?: { sendState?: string };
+        };
+        const result = (await invoke()) as { count: number };
+        if (
+          update.where?.id === grantedMember.id &&
+          update.data?.sendState === "simulated_sent" &&
+          result.count === 1
+        ) {
+          winnerClaimCount += 1;
+          winnerClaimed.resolve();
+          await loserUpdateStarted.promise;
+        }
+        return result;
+      },
+      "contactSendFrequencyEvent.count": async (invoke, args) => {
+        const where = (
+          args[0] as {
+            where?: {
+              ownerId?: string;
+              contactId?: string;
+              channel?: string;
+              purposeClass?: string;
+            };
+          } | undefined
+        )?.where;
+        if (
+          where?.ownerId === ORG_A &&
+          where.contactId === CONTACT_GRANT &&
+          where.channel === "whatsapp" &&
+          where.purposeClass === "proactive_non_transactional"
+        ) {
+          winnerFrequencyCountCalls += 1;
+          if (winnerFrequencyCountCalls === 2) {
+            injectedCapCount += 1;
+            return 1;
+          }
+        }
+        return invoke();
+      },
+    });
+    const loserDb = createHookedBroadcastDb({
+      ...sharedHooks,
+      "broadcastAudienceMember.updateMany": async (invoke, args) => {
+        const update = args[0] as {
+          where?: { id?: string };
+          data?: { sendState?: string };
+        };
+        if (
+          update.where?.id === grantedMember.id &&
+          update.data?.sendState === "simulated_sent"
+        ) {
+          await winnerClaimed.promise;
+          const blockedUpdate = invoke() as Promise<{ count: number }>;
+          loserUpdateStarted.resolve();
+          const result = await blockedUpdate;
+          if (result.count === 1) loserClaimCount += 1;
+          return result;
+        }
+        return invoke();
+      },
+    });
+    const winner = createCustomerBroadcastService({
+      db: winnerDb,
+      clock: () => NOW,
+      id: () => `c5-m3-cap-winner-${++sequence}`,
+    });
+    const loser = createCustomerBroadcastService({
+      db: loserDb,
+      clock: () => NOW,
+      id: () => `c5-m3-cap-loser-${++sequence}`,
+    });
+
+    const settled = await Promise.allSettled([
+      winner.executeBroadcastRun(owner, {
+        broadcastRunId: run.id,
+        expectedRevision: executing.revision,
+      }),
+      loser.executeBroadcastRun(owner, {
+        broadcastRunId: run.id,
+        expectedRevision: executing.revision,
+      }),
+    ]);
+    expect(settled.every((result) => result.status === "fulfilled")).toBe(true);
+    expect(winnerClaimCount).toBe(1);
+    expect(injectedCapCount).toBe(1);
+    expect(loserClaimCount).toBe(1);
+
+    const terminalRows = await prisma.broadcastAudienceMember.findMany({
+      where: { id: grantedMember.id, ownerId: ORG_A },
+    });
+    expect(terminalRows).toHaveLength(1);
+    expect(terminalRows.filter((row) => row.sendState !== "pending")).toHaveLength(1);
+    expect(terminalRows[0].sendState).toBe("simulated_sent");
+
+    const frequencyEvents = await prisma.contactSendFrequencyEvent.count({
+      where: { ownerId: ORG_A, idempotencyKey: frequencyKey },
+    });
+    expect(frequencyEvents).toBe(
+      terminalRows[0].sendState === "simulated_sent" ? 1 : 0,
+    );
+    await expect(
+      prisma.broadcastAudienceMember.count({
+        where: { id: grantedMember.id, ownerId: ORG_A, sendState: "pending" },
+      }),
+    ).resolves.toBe(0);
   });
 
   it("skips a DND-blocked contact with a doNotDisturb reason and zero frequency rows", async () => {
