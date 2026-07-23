@@ -12,6 +12,7 @@ export type AccountViewData = {
   channels: ChannelState[];
   packs: CreditPack[];
   adsAutonomy: "ASK" | "AUTO";
+  canPublish: boolean;
 };
 
 export async function getAccountViewData(): Promise<AccountViewData | { error: string }> {
@@ -35,5 +36,6 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
   ]);
   const settings = settingsRes && !("error" in settingsRes) ? settingsRes : DEFAULT_SETTINGS;
   const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
-  return { settings, channels, packs, adsAutonomy };
+  const canPublish = !("error" in metaConn) && metaConn.canPublish === true;
+  return { settings, channels, packs, adsAutonomy, canPublish };
 }

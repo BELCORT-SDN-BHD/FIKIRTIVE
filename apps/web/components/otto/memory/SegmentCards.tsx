@@ -122,7 +122,7 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
                     {archived && (
                       <span className="text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap text-muted-foreground bg-accent">Archived</span>
                     )}
-                    <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand bg-brand/10" : "text-muted-foreground bg-accent"}`}>
+                    <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                       {r.source === "otto" ? "✦ Otto learned" : "You added"}
                     </span>
                     <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => setEditingId(r.id)}>✎</button>
@@ -162,7 +162,7 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
             ) : (
               <div className="flex items-start gap-2">
                 <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{n.content}</span>
-                <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand bg-brand/10" : "text-muted-foreground bg-accent"}`}>
+                <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                   {n.source === "otto" ? "✦ Otto learned" : "You added"}
                 </span>
                 <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</button>

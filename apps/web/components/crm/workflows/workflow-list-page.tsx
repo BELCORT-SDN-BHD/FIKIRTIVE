@@ -169,7 +169,7 @@ export default function WorkflowListPage({
         <header className="flex items-end justify-between gap-8 border-b border-border pb-7">
           <div>
             <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" />Return to Otto</Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
             <h1 className="mt-2 text-4xl font-semibold tracking-[-0.035em]">Workflows</h1>
             <p className="mt-3 max-w-3xl text-base leading-7 text-muted-foreground">Write readable rules, authorize exactly what a Routine may do, and inspect every simulated decision. Workflows never send or spend from this workspace.</p>
           </div>

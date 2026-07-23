@@ -57,7 +57,7 @@ function TileChrome({ item }: { item: StuffItem }) {
   return (
     <>
       {item.productName && (
-        <span className="absolute left-1.5 top-1.5 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand">
+        <span className="absolute left-1.5 top-1.5 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand-strong">
           Used by product: {item.productName}
         </span>
       )}
@@ -268,7 +268,7 @@ export function StuffLibrary({
                   <button
                     type="button"
                     onClick={() => onOpenGeneration?.(item.generationId!, item.projectId!)}
-                    className="block w-full truncate border-0 bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground cursor-pointer hover:text-brand focus-visible:outline-2 focus-visible:outline-brand"
+                    className="block w-full truncate border-0 bg-transparent px-2 py-1.5 text-left text-[0.8125rem] font-medium text-foreground cursor-pointer hover:text-brand-strong focus-visible:outline-2 focus-visible:outline-brand"
                   >
                     {item.label}
                   </button>

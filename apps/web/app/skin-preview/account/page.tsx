@@ -11,7 +11,7 @@ export const metadata = { title: "Account preview (dev)" };
 export default function AccountPreview() {
   if (process.env.NODE_ENV === "production") notFound();
   const account: AccountInfo = {
-    email: "owner@bloomcoffee.my", isFounder: false, balance: 842, reserved: 12, balanceUsd: 84.2,
+    email: "owner@bloomcoffee.my", organizationName: "Bloom Coffee", isFounder: false, balance: 842, reserved: 12, balanceUsd: 84.2,
     recent: [
       { id: "a1", label: "Credits added", delta: 1000, at: new Date(0).toISOString() },
       { id: "a2", label: "Generation", delta: -8, at: new Date(0).toISOString() },
@@ -29,7 +29,7 @@ export default function AccountPreview() {
   return (
     <div className="fk gb-skin" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK" } satisfies AccountViewData} />
+        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK", canPublish: false } satisfies AccountViewData} />
       </div>
     </div>
   );

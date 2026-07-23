@@ -72,7 +72,7 @@ function Media({
         <button
           type="button"
           onClick={() => { setErrored(false); setAttempt((a) => a + 1); }}
-          className="text-[0.875rem] text-brand bg-transparent border-none cursor-pointer p-0 underline"
+          className="text-[0.875rem] text-brand-strong bg-transparent border-none cursor-pointer p-0 underline"
         >
           Reload
         </button>
@@ -296,14 +296,14 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
                 href={url}
                 target="_blank"
                 rel="noreferrer"
-                className="font-semibold text-brand underline underline-offset-2"
+                className="font-semibold text-brand-strong underline underline-offset-2"
               >
                 Open asset
               </a>
               <button
                 type="button"
                 onClick={() => copyLink(url)}
-                className="border-0 bg-transparent p-0 font-semibold text-brand underline underline-offset-2 cursor-pointer"
+                className="border-0 bg-transparent p-0 font-semibold text-brand-strong underline underline-offset-2 cursor-pointer"
               >
                 Try again
               </button>

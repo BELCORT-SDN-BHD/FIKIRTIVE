@@ -1,7 +1,55 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SettingsSection, SettingsField } from "./types";
 import { Switch } from "./Switch";
+
+type NumberFieldData = Extract<SettingsField, { kind: "number" }>;
+
+function NumberField({ field }: { field: NumberFieldData }) {
+  const [status, setStatus] = useState<"saving" | "saved" | "error" | null>(null);
+  const clearStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (clearStatusTimer.current) clearTimeout(clearStatusTimer.current);
+  }, []);
+
+  async function save(value: number) {
+    if (clearStatusTimer.current) clearTimeout(clearStatusTimer.current);
+    setStatus("saving");
+    try {
+      const result = await field.onSave(value);
+      if (result && typeof result === "object" && "error" in result) {
+        setStatus("error");
+        return;
+      }
+      setStatus("saved");
+      clearStatusTimer.current = setTimeout(() => setStatus(null), 2000);
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  return (
+    <span className="cv-set-num">
+      <input
+        className="cv-set-input cv-set-input-num"
+        type="number"
+        defaultValue={field.value}
+        onBlur={(event) => void save(Number(event.target.value))}
+      />
+      {field.unit ? <em>{field.unit}</em> : null}
+      {status ? (
+        <span
+          role="status"
+          aria-live="polite"
+          className={status === "saved" ? "text-success" : status === "error" ? "text-error" : "text-muted-foreground"}
+        >
+          {status === "saving" ? "Saving…" : status === "saved" ? "Saved" : "Could not save"}
+        </span>
+      ) : null}
+    </span>
+  );
+}
 
 function FieldRow({ f }: { f: SettingsField }) {
   if (f.kind === "custom") return <div className="cv-set-row">{f.render()}</div>;
@@ -10,10 +58,7 @@ function FieldRow({ f }: { f: SettingsField }) {
       <div className="cv-set-lbl"><span>{f.label}</span>{"hint" in f && f.hint ? <span className="cv-set-hint">{f.hint}</span> : null}</div>
       {f.kind === "text" && <input className="cv-set-input" defaultValue={f.value} readOnly={f.readOnly} />}
       {f.kind === "toggle" && <Switch checked={f.value} onChange={f.onToggle} disabled={f.disabled} aria-label={f.label} />}
-      {f.kind === "number" && (
-        <span className="cv-set-num"><input className="cv-set-input cv-set-input-num" type="number" defaultValue={f.value}
-          onBlur={(e) => f.onSave(Number(e.target.value))} />{f.unit ? <em>{f.unit}</em> : null}</span>
-      )}
+      {f.kind === "number" && <NumberField field={f} />}
       {f.kind === "action" && <button className={f.tone === "danger" ? "cv-set-btn danger" : "cv-set-btn"} onClick={f.onClick}>{f.button}</button>}
     </div>
   );

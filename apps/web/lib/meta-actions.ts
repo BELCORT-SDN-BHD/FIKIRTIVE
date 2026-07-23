@@ -68,21 +68,21 @@ async function getMyAdAccounts(
 }
 
 export async function getMetaConnection(): Promise<
-  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; canManagePages?: boolean; defaultPageId?: string | null; accounts?: MetaAdAccount[]; needsReconnect?: boolean; transientError?: boolean }
+  | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; canManagePages?: boolean; canPublish?: boolean; defaultPageId?: string | null; accounts?: MetaAdAccount[]; needsReconnect?: boolean; transientError?: boolean }
   | { error: string }
 > {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const conn = await prisma.metaConnection.findUnique({
     where: { ownerId: gate.ownerId },
-    select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true, canManagePages: true, defaultPageId: true },
+    select: { status: true, adsAutonomy: true, canWrite: true, adsWritesPaused: true, canManagePages: true, canPublish: true, defaultPageId: true },
   });
   if (!conn) return { connected: false };
   const res = await getMyAdAccounts(gate.ownerId);
   // F37: transient failure — report the REAL stored status (the token is fine) so the
   // UI shows "couldn't reach Meta — retry" instead of a false reconnect scare.
-  if ("transientError" in res) return { connected: true, status: conn.status, transientError: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, defaultPageId: conn.defaultPageId ?? null };
-  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, defaultPageId: conn.defaultPageId ?? null };
+  if ("transientError" in res) return { connected: true, status: conn.status, transientError: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, canPublish: conn.canPublish ?? false, defaultPageId: conn.defaultPageId ?? null };
+  if ("needsReconnect" in res) return { connected: true, status: "expired", needsReconnect: true, adsAutonomy: conn.adsAutonomy ?? "ASK", canWrite: conn.canWrite ?? false, adsWritesPaused: conn.adsWritesPaused ?? false, canManagePages: conn.canManagePages ?? false, canPublish: conn.canPublish ?? false, defaultPageId: conn.defaultPageId ?? null };
   return {
     connected: true,
     status: conn.status,
@@ -90,6 +90,7 @@ export async function getMetaConnection(): Promise<
     canWrite: conn.canWrite,
     adsWritesPaused: conn.adsWritesPaused,
     canManagePages: conn.canManagePages,
+    canPublish: conn.canPublish,
     defaultPageId: conn.defaultPageId,
     accounts: res.accounts,
   };

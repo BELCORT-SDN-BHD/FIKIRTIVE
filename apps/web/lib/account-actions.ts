@@ -21,6 +21,7 @@ export type AccountActivity = {
 };
 export type AccountInfo = {
   email: string;
+  organizationName: string;
   isFounder: boolean;
   balance: number; // spendable, DISPLAYED credits
   reserved: number; // in-flight hold, DISPLAYED credits
@@ -71,7 +72,11 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
   if ("error" in owner) return { error: owner.error };
   const { email, ownerId } = owner;
 
-  const [account, ledger] = await Promise.all([
+  const [organization, account, ledger] = await Promise.all([
+    prisma.organization.findFirst({
+      where: { id: ownerId, deletedAt: null },
+      select: { name: true },
+    }),
     prisma.creditAccount.findUnique({ where: { orgId: ownerId }, select: { balance: true, reserved: true } }),
     prisma.creditLedger.findMany({
       // balanceDelta != 0 filters in the DB so "25 recent" means 25 balance-moving rows
@@ -82,6 +87,7 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
       select: { id: true, kind: true, reason: true, refId: true, balanceDelta: true, createdAt: true },
     }),
   ]);
+  if (!organization) return { error: "Could not load your organization." };
 
   const genJobRefIds = ledger
     .map((l) => l.refId)
@@ -105,6 +111,7 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
 
   return {
     email,
+    organizationName: organization.name,
     isFounder: ownerId === FOUNDER_OWNER_ID,
     balance: displayCredits(balanceInternal),
     reserved: displayCredits(account?.reserved ?? 0),

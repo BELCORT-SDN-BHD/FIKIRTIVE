@@ -237,7 +237,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
         <header className="mt-7 grid gap-5 border-b border-border pb-7 lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
             <div className="flex flex-wrap items-center gap-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Campaign detail</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Campaign detail</p>
               <Badge variant={campaign.status === "ACTIVE" ? "success" : "warning"}>{campaign.status.toLowerCase()}</Badge>
             </div>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{campaign.name}</h1>

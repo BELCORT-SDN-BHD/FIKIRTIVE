@@ -34,7 +34,7 @@ export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: 
             ) : (
               <div className="flex items-start gap-2">
                 <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{r.content}</span>
-                <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand bg-brand/10" : "text-muted-foreground bg-accent"}`}>
+                <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${r.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                   {r.source === "otto" ? "✦ Otto learned" : "You added"}
                 </span>
                 <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setEditingId(r.id); setText(r.content); }}>✎</button>

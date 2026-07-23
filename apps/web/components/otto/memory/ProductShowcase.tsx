@@ -422,7 +422,7 @@ export function ProductShowcase({
                   </button>
                 )}
                 {r.pinned && (
-                  <span className="absolute left-2 top-2 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand">
+                  <span className="absolute left-2 top-2 rounded-[8px] bg-card/90 px-1.5 py-0.5 text-[0.6875rem] font-semibold text-brand-strong">
                     ⭐ Pinned
                   </span>
                 )}
@@ -528,7 +528,7 @@ export function ProductShowcase({
               ) : (
                 <div className="flex items-start gap-2">
                   <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{n.content}</span>
-                  <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand bg-brand/10" : "text-muted-foreground bg-accent"}`}>
+                  <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand-strong bg-brand/10" : "text-muted-foreground bg-accent"}`}>
                     {n.source === "otto" ? "✦ Otto learned" : "You added"}
                   </span>
                   <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</button>

@@ -154,7 +154,7 @@ function TemplatesWorkspace({
         </Link>
 
         <header className="mt-4 border-b border-border pb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM · Inbox</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Inbox</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Message templates</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             A logical template groups immutable versions. Every state shown here is a local Fikirtive record — not Meta or

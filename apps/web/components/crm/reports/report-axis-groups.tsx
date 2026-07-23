@@ -44,7 +44,7 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-brand bg-card p-4" aria-labelledby={`sending-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-brand">Axis A</p>
+              <p className="text-xs font-semibold text-brand-strong">Axis A</p>
               <h3 id={`sending-${report.broadcastRunId}`} className="mt-1 font-semibold">Sending attempts</h3>
             </div>
             <Badge variant="soft">Known from C5</Badge>

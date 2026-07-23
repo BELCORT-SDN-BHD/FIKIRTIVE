@@ -8,6 +8,7 @@ import { setAdsAutonomy } from "@/lib/otto-client-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
 import { creditsLabel } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
+import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 
 export type ChannelState = {
   id: string;
@@ -30,10 +31,13 @@ export function buildSettingsSections(args: {
   channels: ChannelState[];
   packs: CreditPack[];
   adsAutonomy: "ASK" | "AUTO";
+  canPublish: boolean;
   onDeleteAccountRequest: () => void;
 }): SettingsSection[] {
-  const { account, settings, channels, packs, adsAutonomy, onDeleteAccountRequest } = args;
+  const { account, settings, channels, packs, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
   const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
+  const connectedChannelIds = channels.filter((c) => c.status === "connected").map((c) => c.id);
+  const autoPublishAvailable = canAutoPublish(connectedChannelIds, canPublish);
 
   const toggle =
     (k: keyof OwnerSettings) =>
@@ -55,6 +59,13 @@ export function buildSettingsSections(args: {
           label: "Email",
           hint: "Used to sign in",
           value: account.email,
+          readOnly: true,
+        },
+        {
+          kind: "text",
+          id: "workspace",
+          label: "Workspace",
+          value: account.organizationName,
           readOnly: true,
         },
         {
@@ -158,7 +169,7 @@ export function buildSettingsSections(args: {
       id: "connections",
       title: "Connections",
       subtitle:
-        "Connect Instagram and Facebook so Otto can schedule posts, remind you to post, and read results — auto-publish is coming soon.",
+        "Connect Instagram and Facebook so Otto can schedule posts, remind you to post, and read results — auto-publish unlocks once Meta approves publishing.",
       fields: channels.map((c) => ({
         kind: "custom" as const,
         id: `conn-${c.id}`,
@@ -208,8 +219,11 @@ export function buildSettingsSections(args: {
           kind: "toggle",
           id: "autopub",
           label: "Auto-publish posts",
-          hint: "Publish approved posts automatically at their time",
+          hint: autoPublishAvailable
+            ? "Publish approved posts automatically at their time"
+            : AUTO_PUBLISH_GATE_HINT,
           value: settings.autoPublish,
+          disabled: !autoPublishAvailable,
           onToggle: toggle("autoPublish"),
         },
         {

@@ -127,7 +127,7 @@ export default function WorkflowMonitoring({
     <section id="activity" className="scroll-mt-8" aria-labelledby="workflow-activity-heading">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Observe</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Observe</p>
           <h2 id="workflow-activity-heading" className="mt-2 text-2xl font-semibold tracking-tight">Runs and journeys</h2>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">A run is one trigger occurrence. Local status is not a provider receipt or delivery claim.</p>
         </div>

@@ -59,7 +59,7 @@ export default function CampaignWorkbenchPage({ initialState }: { initialState: 
       <div className="mx-auto max-w-5xl">
         <CampaignNav current="workbench" />
         <header className="mt-7 border-b border-border pb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Structured setup</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Structured setup</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Campaign workbench</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             Create the campaign container with a clear goal and period. This form does not use a chat prompt.

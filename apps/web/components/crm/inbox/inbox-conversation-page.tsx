@@ -151,7 +151,7 @@ function DetailErrorState({ conversationId, code }: { conversationId: string; co
           <ArrowLeft className="size-4" />Back to Inbox
         </Link>
         <header className="mt-4 border-b border-border pb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM · Conversation</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">This conversation could not load</h1>
         </header>
         <section className="mt-6 rounded-[var(--radius-card)] border border-dashed border-destructive/40 bg-card px-6 py-14 text-center shadow-sm">
@@ -424,7 +424,7 @@ function ConversationWorkspace({
 
         <header className="mt-4 flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM · Conversation</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{identity.contact.name}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{identity.channel} · {identity.externalId}</p>
           </div>

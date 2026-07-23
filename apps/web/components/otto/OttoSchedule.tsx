@@ -25,6 +25,7 @@ import {
 } from "@/lib/schedule-actions";
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
+import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 import { CHANNEL_META, channelMeta } from "@/lib/channels/channel-meta";
 import type { ChannelId, ChannelCapabilities } from "@/lib/channels/types";
 import {
@@ -173,6 +174,7 @@ export function OttoSchedule({
   const [targets, setTargets] = useState<OwnerTarget[]>([]);
   const [targetsLoaded, setTargetsLoaded] = useState(false);
   const [autoPublish, setAutoPublish] = useState(false);
+  const [canPublish, setCanPublish] = useState(false);
   const [defaultTz, setDefaultTz] = useState<string>("Asia/Kuala_Lumpur");
   const [savingAuto, setSavingAuto] = useState(false);
   const [composer, setComposer] = useState<ComposerSeed | null>(null);
@@ -218,7 +220,11 @@ export function OttoSchedule({
     // synchronously in the effect body (the lint rule can't see through the promise).
     void reload();
     void getMetaConnection().then((res) => {
-      if ("error" in res || !res.connected) return setConn({ phase: "disconnected" });
+      if ("error" in res || !res.connected) {
+        setCanPublish(false);
+        return setConn({ phase: "disconnected" });
+      }
+      setCanPublish(res.canPublish === true);
       if (res.needsReconnect) return setConn({ phase: "reconnect" });
       setConn({ phase: "connected", targets: [] });
     });
@@ -295,6 +301,10 @@ export function OttoSchedule({
   );
 
   const isConnected = connectedChannels.length > 0;
+  const autoPublishAvailable = canAutoPublish(
+    connectedChannels.map((channel) => channel.id),
+    canPublish,
+  );
 
   function openNew() {
     setComposer({
@@ -358,8 +368,11 @@ export function OttoSchedule({
           </div>
           <div className="flex-1" />
           {/* OTTO auto-publish toggle — persists to owner settings; no live effect this slice. */}
-          <label className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none" title="Auto-publish approved posts at their time (turns on once Meta approves publishing).">
-            <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto} aria-label="Otto auto-publish" />
+          <label
+            className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
+            title={autoPublishAvailable ? "Publish approved posts automatically at their time" : AUTO_PUBLISH_GATE_HINT}
+          >
+            <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto || !autoPublishAvailable} aria-label="Otto auto-publish" />
             Auto-publish
           </label>
           {/* View switcher */}
@@ -812,7 +825,7 @@ function MonthGrid({
               key={cell.key}
               className={`min-h-[92px] border-b border-r border-border p-1.5 flex flex-col gap-1 ${cell.inMonth ? "" : "bg-secondary/40"}`}
             >
-              <div className={`text-[11px] font-semibold ${cell.key === todayKey ? "text-brand" : cell.inMonth ? "text-foreground" : "text-muted-foreground/60"}`}>
+              <div className={`text-[11px] font-semibold ${cell.key === todayKey ? "text-brand-strong" : cell.inMonth ? "text-foreground" : "text-muted-foreground/60"}`}>
                 {cell.day}
               </div>
               {shown.map((post) => {
@@ -1272,7 +1285,7 @@ function Composer({
                         <img src={m.url ?? undefined} alt="" loading="lazy" className="w-full h-full object-cover" />
                       )}
                       {selected && (
-                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-brand text-brand-foreground text-[9px] font-bold">{idx + 1}</span>
+                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-brand-strong text-brand-foreground text-[9px] font-bold">{idx + 1}</span>
                       )}
                     </button>
                   );

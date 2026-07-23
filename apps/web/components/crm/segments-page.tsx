@@ -434,7 +434,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
               <ArrowLeft className="size-4" />
               Return to Otto
             </Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Customer segments</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
               Build one-level, deterministic rules and see exactly who matches before you save.
@@ -571,7 +571,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
           <CardHeader className="border-b border-border pb-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">
                   {editingId ? "Edit segment" : "New segment"}
                 </p>
                 <CardTitle className="mt-2">{editingId ? "Update this rule group" : "Build a rule group"}</CardTitle>

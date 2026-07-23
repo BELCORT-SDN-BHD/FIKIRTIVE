@@ -87,7 +87,7 @@ export default function CampaignTrendsPage({
       <div className="mx-auto max-w-6xl">
         <CampaignNav current="trends" />
         <header className="mt-7 border-b border-border pb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Research conclusions</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Research conclusions</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Trend archive</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             Save thin, source-labelled conclusions for campaign planning. This archive does not call a provider.

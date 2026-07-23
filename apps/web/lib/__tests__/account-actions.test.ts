@@ -20,10 +20,12 @@ vi.mock("next/navigation", () => ({ redirect: mockRedirect }));
 // ONLY read methods are provided — a stray write (create/update/upsert) would throw
 // "is not a function", so this also guards the read-only contract by construction.
 const findUnique = vi.fn();
+const organizationFindFirst = vi.fn();
 const creditLedgerFindMany = vi.fn();
 const genJobFindMany = vi.fn();
 vi.mock("@fikirtive/db", () => ({
   prisma: {
+    organization: { findFirst: organizationFindFirst },
     creditAccount: { findUnique },
     creditLedger: { findMany: creditLedgerFindMany },
     genJob: { findMany: genJobFindMany },
@@ -38,9 +40,11 @@ beforeEach(() => {
   mockHeaders.mockReset();
   mockRedirect.mockClear();
   findUnique.mockReset();
+  organizationFindFirst.mockReset();
   creditLedgerFindMany.mockReset();
   genJobFindMany.mockReset();
   genJobFindMany.mockResolvedValue([]);
+  organizationFindFirst.mockResolvedValue({ name: "Acme Studio" });
   mockHeaders.mockResolvedValue(new Headers({ cookie: "better-auth.session_token=test" }));
   mockSignOut.mockResolvedValue(undefined);
 });
@@ -51,6 +55,7 @@ describe("getMyAccount", () => {
     const res = await getMyAccount();
     expect(res).toEqual({ error: "Not authorized." });
     expect(findUnique).not.toHaveBeenCalled();
+    expect(organizationFindFirst).not.toHaveBeenCalled();
     expect(creditLedgerFindMany).not.toHaveBeenCalled();
     expect(genJobFindMany).not.toHaveBeenCalled();
   });
@@ -77,10 +82,15 @@ describe("getMyAccount", () => {
     // tenant scoping: never a constant — both reads filter by the resolver's ownerId,
     // and the ledger read excludes hold-only (balanceDelta 0) rows in the DB
     expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { orgId: "orgA" } }));
+    expect(organizationFindFirst).toHaveBeenCalledWith({
+      where: { id: "orgA", deletedAt: null },
+      select: { name: true },
+    });
     expect(creditLedgerFindMany.mock.calls[0][0].where).toEqual({ orgId: "orgA", balanceDelta: { not: 0 } });
     expect(genJobFindMany.mock.calls[0][0].where).toEqual({ ownerId: "orgA", id: { in: ["genjob_abc", "genjob_video"] } });
 
     expect(res.email).toBe("a@test");
+    expect(res.organizationName).toBe("Acme Studio");
     expect(res.balance).toBe(999); // 9990 internal / 10 = 999 displayed
     expect(res.reserved).toBe(10); // 100 / 10
     expect(res.balanceUsd).toBeCloseTo(99.9); // 9990 / 100
