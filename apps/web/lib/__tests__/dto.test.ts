@@ -183,3 +183,28 @@ describe("toChatMessageDTO — PERFORMANCE_CARD payload passthrough", () => {
     expect(p.verdicts?.[0].verdict).toBe("winner");
   });
 });
+
+describe("toChatMessageDTO — TURN_ERROR payload passthrough", () => {
+  it("keeps the typed stream failure needed to rehydrate its notice", () => {
+    const payload = {
+      kind: "stream_run_error",
+      userMessageId: "user_1",
+      error: {
+        kind: "insufficient_credits",
+        text: "You're out of credits.",
+      },
+    };
+    const dto = toChatMessageDTO({
+      id: "error_1",
+      role: "AGENT",
+      kind: "TURN_ERROR",
+      seq: 2,
+      text: "You're out of credits.",
+      genJobId: null,
+      createdAt: new Date("2026-07-23T00:00:00Z"),
+      payload,
+    } as never, new Map());
+
+    expect(dto.payload).toEqual(payload);
+  });
+});

@@ -43,7 +43,10 @@ describe("persistStreamTurnError", () => {
       userMessageId: "msg_user",
       refId: "otto-stream:msg_user",
       errorId: "OTTO-ERR12345",
-      text: streamTurnErrorText("OTTO-ERR12345"),
+      error: {
+        kind: "error",
+        text: streamTurnErrorText("OTTO-ERR12345"),
+      },
     });
 
     expect(chatMessageFindFirst).toHaveBeenCalledWith({
@@ -65,6 +68,44 @@ describe("persistStreamTurnError", () => {
           refId: "otto-stream:msg_user",
           userMessageId: "msg_user",
           kind: "stream_run_error",
+          error: {
+            kind: "error",
+            text: "Otto hit a snag - please try again. Reference: OTTO-ERR12345",
+          },
+        },
+      }),
+    });
+  });
+
+  it("persists the exact insufficient-credits kind and text without inventing an error id", async () => {
+    chatMessageFindFirst.mockResolvedValue({ seq: 1 });
+
+    await persistStreamTurnError({
+      ownerId: "org_1",
+      threadId: "thread_1",
+      seqAfterUser: 1,
+      userMessageId: "msg_user",
+      refId: "otto-stream:msg_user",
+      error: {
+        kind: "insufficient_credits",
+        text: "You're out of credits.",
+      },
+    });
+
+    expect(chatMessageCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        role: "AGENT",
+        kind: "TURN_ERROR",
+        seq: 2,
+        text: "You're out of credits.",
+        payload: {
+          refId: "otto-stream:msg_user",
+          userMessageId: "msg_user",
+          kind: "stream_run_error",
+          error: {
+            kind: "insufficient_credits",
+            text: "You're out of credits.",
+          },
         },
       }),
     });

@@ -315,8 +315,11 @@ export function OttoApp({
     handleThreadsChange([thread, ...threads.filter((t) => t.id !== thread.id)]);
     setActiveThreadId(thread.id);
     setView("otto");
-    pushLocalRoute(projectHref(thread.projectId || curProjectId, thread.id));
-  }, [curProjectId, handleThreadsChange, projectHref, pushLocalRoute, threads]);
+    // State already owns this same-project transition. Keep the URL in sync without
+    // starting an RSC replacement that can remount the just-opened stream against the
+    // empty thread shell before its durable first turn lands.
+    pushViewHistory(projectHref(thread.projectId || curProjectId, thread.id));
+  }, [curProjectId, handleThreadsChange, projectHref, pushViewHistory, threads]);
 
   const handleCampaignNamingChange = useCallback((active: boolean) => {
     setCampaignNamingActive(active);

@@ -73,8 +73,25 @@ describe("threadToUiMessages", () => {
     const out = threadToUiMessages(
       thread([
         msg({ id: "d1", role: "AGENT", kind: "DENIAL", text: "I can't help with that." }),
+        msg({
+          id: "e1",
+          role: "AGENT",
+          kind: "TURN_ERROR",
+          text: "You're out of credits.",
+          payload: {
+            kind: "stream_run_error",
+            userMessageId: "u1",
+            error: { kind: "insufficient_credits", text: "You're out of credits." },
+          },
+        }),
       ]),
     );
     expect(out[0].parts).toEqual([{ type: "text", text: "I can't help with that." }]);
+    expect(out[1].parts).toEqual([{ type: "text", text: "You're out of credits." }]);
+    expect(out[1].metadata?.payload).toEqual({
+      kind: "stream_run_error",
+      userMessageId: "u1",
+      error: { kind: "insufficient_credits", text: "You're out of credits." },
+    });
   });
 });

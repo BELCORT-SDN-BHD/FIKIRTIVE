@@ -82,7 +82,7 @@ export function GeneratingBody({ gb, kind, onRefresh }: { gb?: boolean; kind: "i
   }
   return (
     <div className="cv-gen">
-      <span className="cv-gen-otto"><OttoCloud /> OTTO is making this</span>
+      <span className="cv-gen-otto"><OttoCloud /> Otto is making this</span>
       <div className="cv-gen-bar" />
       <div className="cv-gen-meta">billed only when it finishes</div>
       <RefreshButton onRefresh={onRefresh} />

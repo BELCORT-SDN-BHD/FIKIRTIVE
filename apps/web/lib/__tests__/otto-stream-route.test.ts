@@ -270,7 +270,7 @@ describe("POST /api/otto/stream", () => {
     }));
   });
 
-  it("surfaces insufficient credits as a stream error without running Otto or persisting an AGENT message", async () => {
+  it("persists and surfaces a first-turn insufficient-credits failure without running Otto", async () => {
     mocks.withLlmBudget.mockRejectedValue(new mocks.MockInsufficientCredits());
 
     const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
@@ -291,16 +291,89 @@ describe("POST /api/otto/stream", () => {
     );
     expect(mocks.run).not.toHaveBeenCalled();
     expect(mocks.finalizeOttoRun).not.toHaveBeenCalled();
-    expect(mocks.chatMessageCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.chatMessageCreate).toHaveBeenCalledTimes(2);
     expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ role: "USER", kind: "TEXT", text: "Make a launch post" }),
       }),
     );
-    expect(mocks.chatMessageCreate).not.toHaveBeenCalledWith(
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ role: "AGENT" }),
+        data: expect.objectContaining({
+          role: "AGENT",
+          kind: "TURN_ERROR",
+          text: "You're out of credits.",
+          payload: expect.objectContaining({
+            kind: "stream_run_error",
+            error: { kind: "insufficient_credits", text: "You're out of credits." },
+          }),
+        }),
       }),
     );
+  });
+
+  it("keeps the existing-thread insufficient-credits response and persists the same durable failure", async () => {
+    mocks.chatThreadFindFirst.mockResolvedValue({ projectId: "proj_stream", ottoState: null });
+    mocks.withLlmBudget.mockRejectedValue(new mocks.MockInsufficientCredits());
+
+    const res = await POST(req({
+      projectId: "proj_stream",
+      threadId: "thread_existing",
+      text: "Try another post",
+    }));
+    const parts = await res.json();
+
+    expect(parts).toContainEqual({
+      type: "data-error",
+      data: { kind: "insufficient_credits", text: "You're out of credits." },
+    });
+    expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          threadId: "thread_existing",
+          role: "AGENT",
+          kind: "TURN_ERROR",
+          text: "You're out of credits.",
+          payload: expect.objectContaining({
+            kind: "stream_run_error",
+            error: { kind: "insufficient_credits", text: "You're out of credits." },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("keeps generic run failures durable with the same typed stream response", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.withLlmBudget.mockRejectedValue(new Error("provider detail must stay private"));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+    const parts = await res.json() as Array<{ type?: string; data?: { kind?: string; text?: string } }>;
+    const streamedError = parts.find((part) => part.type === "data-error")?.data;
+
+    expect(streamedError).toEqual({
+      kind: "error",
+      text: expect.stringMatching(/^Otto hit a snag - please try again\. Reference: OTTO-/),
+    });
+    expect(streamedError?.text).not.toContain("provider detail");
+    expect(log).toHaveBeenCalledWith(
+      "[otto/stream] run failed:",
+      expect.objectContaining({ error: "Error | provider detail must stay private" }),
+    );
+    expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          role: "AGENT",
+          kind: "TURN_ERROR",
+          text: streamedError?.text,
+          payload: expect.objectContaining({
+            kind: "stream_run_error",
+            error: streamedError,
+          }),
+        }),
+      }),
+    );
+    log.mockRestore();
   });
 });

@@ -442,7 +442,7 @@ export function ProductShowcase({
                 {/* Row 1: badges wrap as whole units; updated label pushed right. */}
                 <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.6875rem] text-muted-foreground/70">
                   <span className="whitespace-nowrap rounded-full bg-accent px-2 py-[2px] font-medium text-muted-foreground">
-                    {r.source === "otto" ? "✦ OTTO learned" : "You added"}
+                    {r.source === "otto" ? "✦ Otto learned" : "You added"}
                   </span>
                   {f.category && (
                     <span className="whitespace-nowrap rounded-full bg-accent px-2 py-[2px] text-[0.6875rem] text-muted-foreground">
@@ -529,7 +529,7 @@ export function ProductShowcase({
                 <div className="flex items-start gap-2">
                   <span className="text-[0.875rem] leading-[1.45] text-foreground flex-1">{n.content}</span>
                   <span className={`text-[0.6875rem] rounded-full px-2 py-[2px] font-medium whitespace-nowrap ${n.source === "otto" ? "text-brand bg-brand/10" : "text-muted-foreground bg-accent"}`}>
-                    {n.source === "otto" ? "✦ OTTO learned" : "You added"}
+                    {n.source === "otto" ? "✦ Otto learned" : "You added"}
                   </span>
                   <button type="button" aria-label="Edit" className="text-muted-foreground hover:text-foreground" onClick={() => { setNoteEditId(n.id); setNoteText(n.content); }}>✎</button>
                   <button type="button" aria-label="Delete" className="text-muted-foreground hover:text-foreground" onClick={() => void onNoteDelete(n.id)}>🗑</button>

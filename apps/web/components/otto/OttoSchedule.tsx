@@ -359,7 +359,7 @@ export function OttoSchedule({
           <div className="flex-1" />
           {/* OTTO auto-publish toggle — persists to owner settings; no live effect this slice. */}
           <label className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none" title="Auto-publish approved posts at their time (turns on once Meta approves publishing).">
-            <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto} aria-label="OTTO auto-publish" />
+            <Switch checked={autoPublish} onCheckedChange={toggleAutoPublish} disabled={savingAuto} aria-label="Otto auto-publish" />
             Auto-publish
           </label>
           {/* View switcher */}
@@ -561,9 +561,9 @@ function PlanView({
         <div className="rounded-[16px] border border-border bg-card p-[18px] flex items-center gap-3">
           <CoralCloud size={28} />
           <div className="flex-1">
-            <div className="text-[14px] font-semibold text-foreground">No plan from OTTO yet</div>
+            <div className="text-[14px] font-semibold text-foreground">No plan from Otto yet</div>
             <div className="text-[13px] text-muted-foreground">
-              Ask OTTO to plan your week — say something like &ldquo;post 3 times this week&rdquo; and it&rsquo;ll draft a schedule for you to approve.
+              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and it&rsquo;ll draft a schedule for you to approve.
             </div>
           </div>
           <Button variant="secondary" size="sm" onClick={onNew}>
@@ -579,7 +579,7 @@ function PlanView({
           <div className="flex-1" />
           <ChannelFilterBar value={channelFilter} onChange={onChannelFilter} />
         </div>
-        <QueueList posts={queue} mediaLookup={mediaLookup} onEdit={onEdit} emptyText="Nothing queued yet. Approve OTTO's plan or add a post." />
+        <QueueList posts={queue} mediaLookup={mediaLookup} onEdit={onEdit} emptyText="Nothing queued yet. Approve Otto's plan or add a post." />
       </div>
     </div>
   );
@@ -626,7 +626,7 @@ function PlanCard({
       <div className="flex items-center gap-[11px] px-[18px] py-[14px] border-b border-[#FBD9C9]">
         <CoralCloud size={24} />
         <div className="flex-1">
-          <div className="text-[14px] font-bold text-foreground">OTTO planned {posts.length} post{posts.length === 1 ? "" : "s"} this week</div>
+          <div className="text-[14px] font-bold text-foreground">Otto planned {posts.length} post{posts.length === 1 ? "" : "s"} this week</div>
           <div className="text-[12px] text-muted-foreground">Nothing sends until you say go — review, tweak, then approve.</div>
         </div>
       </div>
@@ -1001,7 +1001,7 @@ function QueueView({
         <div className="flex-1" />
         <Button variant="secondary" size="sm" onClick={onNew}><Plus size={15} /> New post</Button>
       </div>
-      <QueueList posts={filtered} mediaLookup={mediaLookup} onEdit={onEdit} emptyText="No posts yet. Add one or ask OTTO to plan your week." />
+      <QueueList posts={filtered} mediaLookup={mediaLookup} onEdit={onEdit} emptyText="No posts yet. Add one or ask Otto to plan your week." />
     </div>
   );
 }
@@ -1295,10 +1295,10 @@ function Composer({
             <button
               type="button"
               disabled
-              title="Coming soon — OTTO will draft this from your brand memory."
+              title="Coming soon — Otto will draft this from your brand memory."
               className="mt-1 inline-flex items-center gap-1.5 text-[12px] font-semibold text-muted-foreground opacity-60 cursor-default"
             >
-              <CoralCloud size={16} /> Ask OTTO to write it
+              <CoralCloud size={16} /> Ask Otto to write it
             </button>
           </Field>
 

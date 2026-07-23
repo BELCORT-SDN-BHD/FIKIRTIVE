@@ -47,13 +47,13 @@ export default async function LoginPage({
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} className="size-3.5">
               <path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10z" />
             </svg>
-            Meet OTTO, your marketing operator
+            Meet Otto, your marketing operator
           </span>
           <h1 className="text-[42px] font-extrabold leading-[1.08] tracking-[-0.025em] text-[#141412]">
             Run real campaigns without becoming a <span className="text-brand">marketer</span>.
           </h1>
           <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
-            Tell OTTO what you&apos;re launching. It researches your brand, writes the copy, designs the
+            Tell Otto what you&apos;re launching. It researches your brand, writes the copy, designs the
             images, films the video, and gets it ready to post. You just approve.
           </p>
           <ul className="mt-7 flex flex-col gap-[11px]">
@@ -87,7 +87,7 @@ export default async function LoginPage({
             <h2 className="text-[25px] font-bold tracking-[-0.02em] text-foreground">Welcome back</h2>
           </div>
           <p className="mb-6 text-[14.5px] text-muted-foreground">
-            Sign in to pick up where you and OTTO left off.
+            Sign in to pick up where you and Otto left off.
           </p>
 
           {error && (

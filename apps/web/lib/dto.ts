@@ -109,6 +109,22 @@ export function toChatMessageDTO(
         ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
         : {}),
     };
+  } else if (m.kind === "TURN_ERROR" && m.payload) {
+    // Rehydrate only the client-facing failure contract. Internal refId/errorId
+    // fields stay server-side; the renderer needs the exact kind/text plus the
+    // triggering USER id to restore the existing retry affordance.
+    const p = m.payload as Record<string, unknown>;
+    const error = p.error as Record<string, unknown> | undefined;
+    if (
+      (error?.kind === "insufficient_credits" || error?.kind === "error")
+      && typeof error.text === "string"
+    ) {
+      payload = {
+        kind: "stream_run_error",
+        ...(typeof p.userMessageId === "string" ? { userMessageId: p.userMessageId } : {}),
+        error: { kind: error.kind, text: error.text },
+      };
+    }
   } else if (m.kind === "STORYBOARD_CARD" && m.payload) {
     // Pass the storyboard payload through so the STORYBOARD_CARD render branch has
     // shots to draw — both on reload and on live mid-turn inject. No spend/approval
