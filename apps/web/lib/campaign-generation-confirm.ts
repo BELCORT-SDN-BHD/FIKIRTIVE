@@ -183,11 +183,14 @@ function quoteCampaignGenCells(entries: ApprovedCampaignEntry[], cells: GenCell[
 
 const campaignIdSchema = z.string().regex(ULID_PATTERN);
 
-export type CampaignGenQuoteResult = { ok: true; quote: CampaignGenQuote } | { error: string };
+export type CampaignGenQuoteResult =
+  | { ok: true; quote: CampaignGenQuote; balanceDisplayCredits: number }
+  | { error: string };
 
 /**
  * Server-recompute the per-entry + total price and content fingerprint for a campaign's
- * APPROVED plan entries. READ-only and $0 — it never dispatches, reserves, or writes.
+ * APPROVED plan entries, plus the owner's point-in-time spendable balance. READ-only and $0 —
+ * it never dispatches, reserves, or writes.
  */
 export async function quoteCampaignGeneration(rawCampaignId: unknown): Promise<CampaignGenQuoteResult> {
   "use server";
@@ -202,10 +205,18 @@ export async function quoteCampaignGeneration(rawCampaignId: unknown): Promise<C
   });
   if (!campaign) return { error: "Campaign not found." };
 
+  const account = await prisma.creditAccount.findUnique({
+    where: { orgId: gate.ownerId },
+    select: { balance: true },
+  });
   const approved = approvedEntriesFromPlan(campaign.planJson);
   const models = { image: activeImageModel(), video: activeVideoModel() };
   const cells = buildCampaignGenCells(approved, models);
-  return { ok: true, quote: quoteCampaignGenCells(approved, cells) };
+  return {
+    ok: true,
+    quote: quoteCampaignGenCells(approved, cells),
+    balanceDisplayCredits: displayCredits(account?.balance ?? 0),
+  };
 }
 
 /**
