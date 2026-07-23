@@ -13,6 +13,7 @@ import {
   SEND_FREQUENCY_POLICY,
   SendEligibilityError,
   type EligibilityAxis,
+  type Prisma,
   type SendEligibilityDb,
   type SendEligibilityResult,
 } from "./index.js";
@@ -62,6 +63,88 @@ function baseInput(overrides: Partial<Parameters<typeof evaluateSendEligibility>
     callerClass: "merchant_manual" as const,
     ...overrides,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+  return { promise, resolve };
+}
+
+function createFrequencyP2002RaceDb(idempotencyKey: string) {
+  const bothInitialReadsFinished = deferred<void>();
+  let initialReadCount = 0;
+  let p2002Count = 0;
+
+  const db = new Proxy(prisma, {
+    get(target, prop, receiver) {
+      if (prop === "$transaction") {
+        return async <T>(callback: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> => {
+          try {
+            return await target.$transaction(async (tx) => {
+              const frequencyDelegate = tx.contactSendFrequencyEvent;
+              const proxiedFrequencyDelegate = new Proxy(frequencyDelegate, {
+                get(delegateTarget, delegateProp, delegateReceiver) {
+                  const value = Reflect.get(delegateTarget, delegateProp, delegateReceiver);
+                  if (delegateProp === "findFirst" && typeof value === "function") {
+                    return async (...args: unknown[]) => {
+                      const result = await Reflect.apply(value, delegateTarget, args);
+                      const where = (
+                        args[0] as { where?: { idempotencyKey?: string } } | undefined
+                      )?.where;
+                      if (
+                        where?.idempotencyKey === idempotencyKey &&
+                        result === null &&
+                        initialReadCount < 2
+                      ) {
+                        initialReadCount += 1;
+                        if (initialReadCount === 2) bothInitialReadsFinished.resolve();
+                        await bothInitialReadsFinished.promise;
+                      }
+                      return result;
+                    };
+                  }
+                  return typeof value === "function" ? value.bind(delegateTarget) : value;
+                },
+              });
+              const proxiedTx = new Proxy(tx, {
+                get(txTarget, txProp, txReceiver) {
+                  if (txProp === "contactSendFrequencyEvent") return proxiedFrequencyDelegate;
+                  if (txProp === "$executeRaw") {
+                    // The production advisory lock makes same-payload P2002 unreachable. This
+                    // harness removes only that lock while keeping two real PostgreSQL
+                    // transactions, forcing both initial reads to see no row and one INSERT to
+                    // lose at the unique constraint. The recovery path therefore sees genuine
+                    // PostgreSQL aborted-transaction semantics.
+                    return async () => 0;
+                  }
+                  const value = Reflect.get(txTarget, txProp, txReceiver);
+                  return typeof value === "function" ? value.bind(txTarget) : value;
+                },
+              }) as Prisma.TransactionClient;
+              return callback(proxiedTx);
+            });
+          } catch (error) {
+            if (
+              typeof error === "object" &&
+              error !== null &&
+              "code" in error &&
+              error.code === "P2002"
+            ) {
+              p2002Count += 1;
+            }
+            throw error;
+          }
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as typeof prisma;
+
+  return { db, p2002Count: () => p2002Count };
 }
 
 // A db proxy that throws on one model's read methods — the only way to exercise the
@@ -477,6 +560,96 @@ describe("C5-M2 recordSendFrequencyEvent — exactly-once writer", () => {
     expect(first.duplicate).toBe(false);
     expect(retry.duplicate).toBe(true);
     expect(retry.id).toBe(first.id);
+    expect(await countRows(CONTACT_A)).toBe(1);
+  });
+
+  it("unwinds a genuine concurrent P2002 before re-reading the same semantic event as a replay", async () => {
+    const idempotencyKey =
+      "freq:eligibility-test:p2002-same:identity-a:whatsapp:proactive_non_transactional";
+    const input = {
+      ownerId: ORG_A,
+      contactId: CONTACT_A,
+      channel: "whatsapp",
+      purposeClass: "proactive_non_transactional" as const,
+      sourceKind: "broadcast_run" as const,
+      sendRef: "run-p2002-same:member-1",
+      simulated: true,
+      idempotencyKey,
+    };
+    const race = createFrequencyP2002RaceDb(idempotencyKey);
+    const settled = await Promise.allSettled([
+      recordSendFrequencyEvent(input, race.db),
+      recordSendFrequencyEvent(input, race.db),
+    ]);
+
+    expect(race.p2002Count()).toBe(1);
+    expect(settled.every((result) => result.status === "fulfilled")).toBe(true);
+    const fulfilled = settled.map((result) => {
+      if (result.status !== "fulfilled") throw result.reason;
+      return result.value;
+    });
+    expect(fulfilled.map((result) => result.duplicate).sort()).toEqual([false, true]);
+    expect(new Set(fulfilled.map((result) => result.id)).size).toBe(1);
+
+    const winner = await prisma.contactSendFrequencyEvent.findFirstOrThrow({
+      where: { ownerId: ORG_A, idempotencyKey },
+    });
+    expect(winner).toMatchObject({
+      contactId: CONTACT_A,
+      channel: "whatsapp",
+      purposeClass: "proactive_non_transactional",
+      sourceKind: "broadcast_run",
+      sendRef: input.sendRef,
+      simulated: true,
+    });
+    expect(await countRows(CONTACT_A)).toBe(1);
+  });
+
+  it("turns a genuine concurrent P2002 with a different semantic payload into a typed conflict", async () => {
+    const idempotencyKey =
+      "freq:eligibility-test:p2002-conflict:identity-a:whatsapp:proactive_non_transactional";
+    const inputs = [
+      {
+        ownerId: ORG_A,
+        contactId: CONTACT_A,
+        channel: "whatsapp",
+        purposeClass: "proactive_non_transactional" as const,
+        sourceKind: "broadcast_run" as const,
+        sendRef: "run-p2002-conflict:member-a",
+        simulated: true,
+        idempotencyKey,
+      },
+      {
+        ownerId: ORG_A,
+        contactId: CONTACT_A,
+        channel: "whatsapp",
+        purposeClass: "proactive_non_transactional" as const,
+        sourceKind: "broadcast_run" as const,
+        sendRef: "run-p2002-conflict:member-b",
+        simulated: true,
+        idempotencyKey,
+      },
+    ];
+    const race = createFrequencyP2002RaceDb(idempotencyKey);
+    const settled = await Promise.allSettled(
+      inputs.map((input) => recordSendFrequencyEvent(input, race.db)),
+    );
+
+    expect(race.p2002Count()).toBe(1);
+    const fulfilledIndexes = settled.flatMap((result, index) =>
+      result.status === "fulfilled" ? [index] : [],
+    );
+    const rejected = settled.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(fulfilledIndexes).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0]!.reason as SendEligibilityError).code).toBe("IDEMPOTENCY_CONFLICT");
+
+    const winner = await prisma.contactSendFrequencyEvent.findFirstOrThrow({
+      where: { ownerId: ORG_A, idempotencyKey },
+    });
+    expect(winner.sendRef).toBe(inputs[fulfilledIndexes[0]!]!.sendRef);
     expect(await countRows(CONTACT_A)).toBe(1);
   });
 

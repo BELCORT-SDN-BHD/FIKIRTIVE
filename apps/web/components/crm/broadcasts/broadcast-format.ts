@@ -135,6 +135,7 @@ const ERROR_COPY: Record<string, string> = {
   INVALID_ARGUMENT: "That request wasn't valid. Please check the values and try again.",
   TEMPLATE_CHANNEL_MISMATCH: "That template belongs to a different channel account. Choose a matching template.",
   TEMPLATE_CLASSIFICATION_UNSUPPORTED: "That template cannot be used for a broadcast because its purpose is unavailable.",
+  PROVIDER_CONNECTION_CONFLICT: "Broadcast eligibility could not be verified because more than one active channel connection matched.",
 };
 
 export function errorMessage(code: string): string {

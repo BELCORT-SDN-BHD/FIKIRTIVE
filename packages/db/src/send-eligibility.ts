@@ -19,6 +19,7 @@ export type SendEligibilityDb = typeof prisma | Tx;
 
 export type SendEligibilityErrorCode =
   | "INVALID_ARGUMENT"
+  | "IDEMPOTENCY_CONFLICT"
   | "MISSING_CHANNEL_POLICY"
   | "FREQUENCY_CAP_REACHED";
 
@@ -353,17 +354,19 @@ export type RecordSendFrequencyEventResult = {
   countedAt: string;
 };
 
-/**
- * The ONLY writer of ContactSendFrequencyEvent (§5.4). Atomic count-and-insert under a
- * per-(ownerId,contactId,channel,purposeClass) advisory transaction lock — same
- * scoped-lock precedent as consent-runtime's STOP fan-out (R-010 §4.3.4) — so two distinct
- * concurrent sends racing for the last cap slot never both count. A retry with the same
- * idempotencyKey is a no-op (zero new rows); a send that never reaches simulated_sent/
- * reached-provider-terminal must never call this at all (untouched sends don't spend cap).
- */
-export async function recordSendFrequencyEvent(
-  input: RecordSendFrequencyEventInput,
-): Promise<RecordSendFrequencyEventResult> {
+type FrequencyEventDraft = {
+  ownerId: string;
+  contactId: string;
+  channel: string;
+  purposeClass: "proactive_non_transactional";
+  sourceKind: "broadcast_run" | "conversation_reply";
+  sendRef: string;
+  simulated: boolean;
+  idempotencyKey: string;
+  occurredAt: Date | null;
+};
+
+function frequencyEventDraft(input: RecordSendFrequencyEventInput): FrequencyEventDraft {
   const ownerId = requireText(input.ownerId, "ownerId");
   const contactId = requireText(input.contactId, "contactId");
   const channel = requireToken(input.channel, "channel");
@@ -378,71 +381,148 @@ export async function recordSendFrequencyEvent(
   if (typeof input.simulated !== "boolean") {
     throw new SendEligibilityError("INVALID_ARGUMENT", "simulated must be a boolean.");
   }
-  const policy = SEND_FREQUENCY_POLICY[channel];
-  if (!policy) {
+  if (!SEND_FREQUENCY_POLICY[channel]) {
     throw new SendEligibilityError(
       "MISSING_CHANNEL_POLICY",
       `No SEND_FREQUENCY_POLICY entry for channel "${channel}".`,
     );
   }
+  return {
+    ownerId,
+    contactId,
+    channel,
+    purposeClass: input.purposeClass,
+    sourceKind: input.sourceKind,
+    sendRef,
+    simulated: input.simulated,
+    idempotencyKey,
+    occurredAt: input.occurredAt ?? null,
+  };
+}
 
-  return prisma.$transaction(async (tx) => {
-    // $executeRaw: pg_advisory_xact_lock returns void, which $queryRaw cannot deserialize.
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`send-frequency:${ownerId}:${contactId}:${channel}:${input.purposeClass}`}, 0))`;
+function sameFrequencyEventPayload(
+  existing: {
+    ownerId: string;
+    contactId: string;
+    channel: string;
+    purposeClass: string;
+    sourceKind: string;
+    sendRef: string;
+    simulated: boolean;
+    idempotencyKey: string;
+    occurredAt: Date | null;
+  },
+  draft: FrequencyEventDraft,
+): boolean {
+  return (
+    existing.ownerId === draft.ownerId &&
+    existing.contactId === draft.contactId &&
+    existing.channel === draft.channel &&
+    existing.purposeClass === draft.purposeClass &&
+    existing.sourceKind === draft.sourceKind &&
+    existing.sendRef === draft.sendRef &&
+    existing.simulated === draft.simulated &&
+    existing.idempotencyKey === draft.idempotencyKey &&
+    (existing.occurredAt?.getTime() ?? null) === (draft.occurredAt?.getTime() ?? null)
+  );
+}
 
-    const existing = await tx.contactSendFrequencyEvent.findFirst({
-      where: { ownerId, idempotencyKey },
-      select: { id: true, countedAt: true },
-    });
-    if (existing) {
-      return { duplicate: true, id: existing.id, countedAt: existing.countedAt.toISOString() };
-    }
-
-    const windowStart = new Date(Date.now() - policy.windowHours * 60 * 60 * 1000);
-    const count = await tx.contactSendFrequencyEvent.count({
-      where: {
-        ownerId,
-        contactId,
-        channel,
-        purposeClass: input.purposeClass,
-        countedAt: { gt: windowStart },
-        simulated: input.simulated,
-      },
-    });
-    if (count >= policy.maxProactiveSends) {
-      throw new SendEligibilityError(
-        "FREQUENCY_CAP_REACHED",
-        "The rolling-window frequency cap is already reached for this contact/channel/purposeClass.",
-      );
-    }
-
-    try {
-      const inserted = await tx.contactSendFrequencyEvent.create({
-        data: {
-          id: randomUUID(),
-          ownerId,
-          contactId,
-          channel,
-          purposeClass: input.purposeClass,
-          sourceKind: input.sourceKind,
-          sendRef,
-          simulated: input.simulated,
-          idempotencyKey,
-          occurredAt: input.occurredAt ?? null,
-          countedAt: new Date(),
-        },
-      });
-      return { duplicate: false, id: inserted.id, countedAt: inserted.countedAt.toISOString() };
-    } catch (error) {
-      if (prismaCode(error) === "P2002") {
-        // The advisory lock serializes same-key writers, so this should be unreachable in
-        // practice; stay defensive and replay rather than surface a spurious constraint error.
-        const raced = await tx.contactSendFrequencyEvent.findFirstOrThrow({
-          where: { ownerId, idempotencyKey },
-        });
-        return { duplicate: true, id: raced.id, countedAt: raced.countedAt.toISOString() };
-      }
-      throw error;
-    }
+async function existingFrequencyEventReplay(
+  tx: Tx,
+  draft: FrequencyEventDraft,
+): Promise<RecordSendFrequencyEventResult | null> {
+  const existing = await tx.contactSendFrequencyEvent.findFirst({
+    where: { ownerId: draft.ownerId, idempotencyKey: draft.idempotencyKey },
   });
+  if (!existing) return null;
+  if (!sameFrequencyEventPayload(existing, draft)) {
+    throw new SendEligibilityError(
+      "IDEMPOTENCY_CONFLICT",
+      "The frequency-event idempotency key is already bound to a different semantic payload.",
+    );
+  }
+  return { duplicate: true, id: existing.id, countedAt: existing.countedAt.toISOString() };
+}
+
+async function recordFrequencyEventInTransaction(
+  tx: Tx,
+  draft: FrequencyEventDraft,
+): Promise<RecordSendFrequencyEventResult> {
+  const policy = SEND_FREQUENCY_POLICY[draft.channel]!;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`send-frequency:${draft.ownerId}:${draft.contactId}:${draft.channel}:${draft.purposeClass}`}, 0))`;
+
+  const existing = await existingFrequencyEventReplay(tx, draft);
+  if (existing) return existing;
+
+  const windowStart = new Date(Date.now() - policy.windowHours * 60 * 60 * 1000);
+  const count = await tx.contactSendFrequencyEvent.count({
+    where: {
+      ownerId: draft.ownerId,
+      contactId: draft.contactId,
+      channel: draft.channel,
+      purposeClass: draft.purposeClass,
+      countedAt: { gt: windowStart },
+      simulated: draft.simulated,
+    },
+  });
+  if (count >= policy.maxProactiveSends) {
+    throw new SendEligibilityError(
+      "FREQUENCY_CAP_REACHED",
+      "The rolling-window frequency cap is already reached for this contact/channel/purposeClass.",
+    );
+  }
+
+  const inserted = await tx.contactSendFrequencyEvent.create({
+    data: {
+      id: randomUUID(),
+      ownerId: draft.ownerId,
+      contactId: draft.contactId,
+      channel: draft.channel,
+      purposeClass: draft.purposeClass,
+      sourceKind: draft.sourceKind,
+      sendRef: draft.sendRef,
+      simulated: draft.simulated,
+      idempotencyKey: draft.idempotencyKey,
+      occurredAt: draft.occurredAt,
+      countedAt: new Date(),
+    },
+  });
+  return { duplicate: false, id: inserted.id, countedAt: inserted.countedAt.toISOString() };
+}
+
+/**
+ * Transaction-composable form used when the caller must commit a send-state CAS and its
+ * frequency event atomically. The caller owns the transaction boundary.
+ */
+export async function recordSendFrequencyEventInTransaction(
+  tx: Tx,
+  input: RecordSendFrequencyEventInput,
+): Promise<RecordSendFrequencyEventResult> {
+  return recordFrequencyEventInTransaction(tx, frequencyEventDraft(input));
+}
+
+/**
+ * The ONLY writer of ContactSendFrequencyEvent (§5.4). Atomic count-and-insert under a
+ * per-(ownerId,contactId,channel,purposeClass) advisory transaction lock — same
+ * scoped-lock precedent as consent-runtime's STOP fan-out (R-010 §4.3.4) — so two distinct
+ * concurrent sends racing for the last cap slot never both count. A retry with the same
+ * idempotencyKey is a no-op (zero new rows); a send that never reaches simulated_sent/
+ * reached-provider-terminal must never call this at all (untouched sends don't spend cap).
+ */
+export async function recordSendFrequencyEvent(
+  input: RecordSendFrequencyEventInput,
+  db: typeof prisma = prisma,
+): Promise<RecordSendFrequencyEventResult> {
+  const draft = frequencyEventDraft(input);
+  try {
+    return await db.$transaction((tx) => recordFrequencyEventInTransaction(tx, draft));
+  } catch (error) {
+    if (prismaCode(error) === "P2002") {
+      // PostgreSQL aborts the losing transaction after a unique violation. Recovery must
+      // unwind first, then compare the committed winner in a fresh transaction.
+      const raced = await db.$transaction((tx) => existingFrequencyEventReplay(tx, draft));
+      if (raced) return raced;
+    }
+    throw error;
+  }
 }

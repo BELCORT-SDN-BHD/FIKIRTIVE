@@ -6,7 +6,7 @@ import { contactMatchesRules, validateSegmentRuleGroup, type SegmentContactFacts
 import {
   evaluateSendEligibility,
   prisma as defaultDb,
-  recordSendFrequencyEvent,
+  recordSendFrequencyEventInTransaction,
   SendEligibilityError,
   type EligibilityAxis,
   type Prisma,
@@ -51,6 +51,7 @@ export const CUSTOMER_BROADCAST_ERROR_CODES = {
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
   TEMPLATE_CHANNEL_MISMATCH: "TEMPLATE_CHANNEL_MISMATCH",
   TEMPLATE_CLASSIFICATION_UNSUPPORTED: "TEMPLATE_CLASSIFICATION_UNSUPPORTED",
+  PROVIDER_CONNECTION_CONFLICT: "PROVIDER_CONNECTION_CONFLICT",
   // Re-freeze found a stale member that had already advanced past `pending` — impossible under
   // the status gating (freeze is draft/audience_frozen only, sends need confirmed/executing), so
   // it signals corruption: fail closed and roll back rather than delete a member with send state.
@@ -218,6 +219,31 @@ function broadcastFrequencyKey(
   return `freq:${ownerId}:${broadcastRunId}:${contactIdentityId}:${channel}:${BROADCAST_PURPOSE_CLASS}`;
 }
 
+function sameBroadcastRunPayload(
+  existing: {
+    channelScopeId: string;
+    channel: string;
+    purpose: string;
+    campaignId: string | null;
+    templateVersionId: string | null;
+  },
+  expected: {
+    channelScopeId: string;
+    channel: string;
+    purpose: BroadcastPurpose;
+    campaignId: string | null;
+    templateVersionId: string;
+  },
+): boolean {
+  return (
+    existing.channelScopeId === expected.channelScopeId &&
+    existing.channel === expected.channel &&
+    existing.purpose === expected.purpose &&
+    existing.campaignId === expected.campaignId &&
+    existing.templateVersionId === expected.templateVersionId
+  );
+}
+
 export function createCustomerBroadcastService(
   options: {
     db?: typeof defaultDb;
@@ -281,12 +307,14 @@ export function createCustomerBroadcastService(
     channelScopeId: string,
     channel: string,
   ): Promise<string | null> {
-    const connection = await client.channelConnection.findFirst({
-      where: { ownerId, channelScopeId, kind: channel },
+    const connections = await client.channelConnection.findMany({
+      where: { ownerId, channelScopeId, kind: channel, status: "active" },
       orderBy: { createdAt: "asc" },
+      take: 2,
       select: { id: true },
     });
-    return connection?.id ?? null;
+    if (connections.length > 1) fail("PROVIDER_CONNECTION_CONFLICT");
+    return connections[0]?.id ?? null;
   }
 
   async function requireBroadcastTemplate(
@@ -496,48 +524,49 @@ export function createCustomerBroadcastService(
     const creationIdempotencyKey = requiredString(input?.creationIdempotencyKey, MAX_TEXT);
     const at = now();
 
-    return db.$transaction(async (tx) => {
-      // Transaction-time recheck (mirrors customer-inbox-service.ts, ledger #359 item 25): a
-      // caller demoted from owner between the outer check above and this write must not slip
-      // a broadcast run through on the stale outer read.
-      const membership = await activeMembership(tx, principal);
-      if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
-      const scope = await tx.channelScope.findFirst({
-        where: { id: channelScopeId, ownerId: principal.ownerId, channel },
-        select: { id: true },
-      });
-      if (!scope) fail("RESOURCE_NOT_FOUND");
-      if (campaignId) {
-        const campaign = await tx.campaign.findFirst({
-          where: { id: campaignId, ownerId: principal.ownerId },
+    try {
+      return await db.$transaction(async (tx) => {
+        // Transaction-time recheck (mirrors customer-inbox-service.ts, ledger #359 item 25): a
+        // caller demoted from owner between the outer check above and this write must not slip
+        // a broadcast run through on the stale outer read.
+        const membership = await activeMembership(tx, principal);
+        if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+        const scope = await tx.channelScope.findFirst({
+          where: { id: channelScopeId, ownerId: principal.ownerId, channel },
           select: { id: true },
         });
-        if (!campaign) fail("RESOURCE_NOT_FOUND");
-      }
-      const purpose = await requireBroadcastTemplate(
-        tx,
-        principal.ownerId,
-        templateVersionId,
-        channelScopeId,
-        channel,
-      );
+        if (!scope) fail("RESOURCE_NOT_FOUND");
+        if (campaignId) {
+          const campaign = await tx.campaign.findFirst({
+            where: { id: campaignId, ownerId: principal.ownerId },
+            select: { id: true },
+          });
+          if (!campaign) fail("RESOURCE_NOT_FOUND");
+        }
+        const purpose = await requireBroadcastTemplate(
+          tx,
+          principal.ownerId,
+          templateVersionId,
+          channelScopeId,
+          channel,
+        );
+        const expected = {
+          channelScopeId,
+          channel,
+          purpose,
+          campaignId,
+          templateVersionId,
+        };
 
-      const existing = await tx.broadcastRun.findFirst({
-        where: { ownerId: principal.ownerId, creationIdempotencyKey },
-      });
-      if (existing) {
-        const same =
-          existing.channelScopeId === channelScopeId &&
-          existing.channel === channel &&
-          existing.purpose === purpose &&
-          existing.campaignId === campaignId &&
-          existing.templateVersionId === templateVersionId;
-        if (!same) fail("IDEMPOTENCY_CONFLICT");
-        return { ok: true as const, duplicate: true as const, resource: existing };
-      }
+        const existing = await tx.broadcastRun.findFirst({
+          where: { ownerId: principal.ownerId, creationIdempotencyKey },
+        });
+        if (existing) {
+          if (!sameBroadcastRunPayload(existing, expected)) fail("IDEMPOTENCY_CONFLICT");
+          return { ok: true as const, duplicate: true as const, resource: existing };
+        }
 
-      const id = issueId();
-      try {
+        const id = issueId();
         const resource = await tx.broadcastRun.create({
           data: {
             id,
@@ -557,16 +586,38 @@ export function createCustomerBroadcastService(
           },
         });
         return { ok: true as const, duplicate: false as const, resource };
-      } catch (error) {
-        if (prismaCode(error) === "P2002") {
-          const raced = await tx.broadcastRun.findFirst({
+      });
+    } catch (error) {
+      if (prismaCode(error) === "P2002") {
+        // PostgreSQL aborts the losing transaction after the unique violation. Unwind it
+        // completely, then re-read and compare the committed winner in a fresh transaction.
+        const raced = await db.$transaction(async (tx) => {
+          const purpose = await requireBroadcastTemplate(
+            tx,
+            principal.ownerId,
+            templateVersionId,
+            channelScopeId,
+            channel,
+          );
+          const resource = await tx.broadcastRun.findFirst({
             where: { ownerId: principal.ownerId, creationIdempotencyKey },
           });
-          if (raced) return { ok: true as const, duplicate: true as const, resource: raced };
+          return { purpose, resource };
+        });
+        if (raced.resource) {
+          const same = sameBroadcastRunPayload(raced.resource, {
+            channelScopeId,
+            channel,
+            purpose: raced.purpose,
+            campaignId,
+            templateVersionId,
+          });
+          if (!same) fail("IDEMPOTENCY_CONFLICT");
+          return { ok: true as const, duplicate: true as const, resource: raced.resource };
         }
-        throw error;
       }
-    });
+      throw error;
+    }
   }
 
   /**
@@ -883,16 +934,42 @@ export function createCustomerBroadcastService(
     const expectedRevision = revision(input?.expectedRevision);
     const at = now();
 
-    async function markSimulatedSent(memberId: string): Promise<void> {
-      await db.broadcastAudienceMember.updateMany({
-        where: { id: memberId, ownerId: principal.ownerId },
-        data: { sendState: "simulated_sent", skipReason: null },
+    async function rereadFinalizedMember(
+      client: DatabaseClient,
+      memberId: string,
+      audienceRevision: number,
+    ): Promise<void> {
+      const winner = await client.broadcastAudienceMember.findFirst({
+        where: {
+          id: memberId,
+          ownerId: principal.ownerId,
+          broadcastRunId,
+          audienceRevision,
+        },
+        select: { sendState: true },
       });
+      if (!winner || winner.sendState === "pending") fail("AUDIENCE_STATE_CONFLICT");
     }
-    async function markSkipped(memberId: string, skipReason: string): Promise<void> {
-      await db.broadcastAudienceMember.updateMany({
-        where: { id: memberId, ownerId: principal.ownerId },
-        data: { sendState: "skipped_ineligible", skipReason },
+
+    async function markSkipped(
+      memberId: string,
+      audienceRevision: number,
+      skipReason: string,
+    ): Promise<void> {
+      await db.$transaction(async (tx) => {
+        const changed = await tx.broadcastAudienceMember.updateMany({
+          where: {
+            id: memberId,
+            ownerId: principal.ownerId,
+            broadcastRunId,
+            audienceRevision,
+            sendState: "pending",
+          },
+          data: { sendState: "skipped_ineligible", skipReason },
+        });
+        if (changed.count === 0) {
+          await rereadFinalizedMember(tx, memberId, audienceRevision);
+        }
       });
     }
 
@@ -935,10 +1012,10 @@ export function createCustomerBroadcastService(
       run.channel,
     );
 
-    // Phase 2 — process every still-pending member. Already-terminal members
-    // (simulated_sent/skipped_ineligible) are left untouched, which is what makes a resume safe.
-    // recordSendFrequencyEvent opens its OWN advisory-locked transaction (§5.4), so members are
-    // processed sequentially here rather than inside one wrapping transaction.
+    // Phase 2 — process every still-pending member. Each member is finalized in its own
+    // transaction. The pending->simulated_sent CAS happens BEFORE the frequency insert, but both
+    // commit atomically: a failed insert rolls the state claim back, while a lost CAS attempts no
+    // event. This preserves sent=>one event and skipped=>zero events across concurrent resumers.
     // Revision-scoped (defense in depth alongside freezeAudience's prune): only members frozen at
     // the run's CURRENT audienceRevision are executed. A leftover member from an earlier, wider
     // freeze (e.g. a legacy row predating the prune) is never sent to.
@@ -955,51 +1032,108 @@ export function createCustomerBroadcastService(
     for (const member of pending) {
       const key = broadcastFrequencyKey(principal.ownerId, broadcastRunId, member.contactIdentityId, run.channel);
 
-      // Crash recovery: if this member's frequency event was already recorded on a prior attempt
-      // (we crashed before flipping sendState), finish the transition. Never re-read and mis-skip
-      // a send that already spent cap — the recorded event is the terminal truth.
-      const alreadyRecorded = await db.contactSendFrequencyEvent.findFirst({
-        where: { ownerId: principal.ownerId, idempotencyKey: key },
-        select: { id: true },
-      });
-      if (alreadyRecorded) {
-        await markSimulatedSent(member.id);
-        continue;
-      }
-
-      const verdict = await evaluateSendEligibility(db, {
-        ownerId: principal.ownerId,
-        contactId: member.contactId,
-        contactIdentityId: member.contactIdentityId,
-        channel: run.channel,
-        purpose: run.purpose as BroadcastPurpose,
-        providerConnectionId,
-        callerClass: "merchant_manual",
-      });
-
-      if (!axisAllPass(verdict)) {
-        await markSkipped(member.id, firstBlockingSkipReason(verdict));
-        continue;
-      }
-
-      // Four axes pass at read time; the atomic count-and-insert is the true gate. A concurrent
-      // send may have taken the last cap slot since the read — the loser gets
-      // FREQUENCY_CAP_REACHED and becomes an honest skip, never a phantom double-send.
       try {
-        await recordSendFrequencyEvent({
-          ownerId: principal.ownerId,
-          contactId: member.contactId,
-          channel: run.channel,
-          purposeClass: BROADCAST_PURPOSE_CLASS,
-          sourceKind: "broadcast_run",
-          sendRef: member.id,
-          simulated: true,
-          idempotencyKey: key,
+        await db.$transaction(async (tx) => {
+          const current = await tx.broadcastAudienceMember.findFirst({
+            where: {
+              id: member.id,
+              ownerId: principal.ownerId,
+              broadcastRunId,
+              audienceRevision: run.audienceRevision,
+            },
+            select: { sendState: true },
+          });
+          if (!current) fail("AUDIENCE_STATE_CONFLICT");
+          if (current.sendState !== "pending") return;
+
+          // Crash recovery for an event committed by an older implementation before its member
+          // state flipped. The event remains terminal truth, but the state repair is still a CAS.
+          const alreadyRecorded = await tx.contactSendFrequencyEvent.findFirst({
+            where: { ownerId: principal.ownerId, idempotencyKey: key },
+            select: { id: true },
+          });
+          if (alreadyRecorded) {
+            const changed = await tx.broadcastAudienceMember.updateMany({
+              where: {
+                id: member.id,
+                ownerId: principal.ownerId,
+                broadcastRunId,
+                audienceRevision: run.audienceRevision,
+                sendState: "pending",
+              },
+              data: { sendState: "simulated_sent", skipReason: null },
+            });
+            if (changed.count === 0) {
+              await rereadFinalizedMember(tx, member.id, run.audienceRevision);
+            }
+            return;
+          }
+
+          const verdict = await evaluateSendEligibility(tx, {
+            ownerId: principal.ownerId,
+            contactId: member.contactId,
+            contactIdentityId: member.contactIdentityId,
+            channel: run.channel,
+            purpose: run.purpose as BroadcastPurpose,
+            providerConnectionId,
+            callerClass: "merchant_manual",
+          });
+
+          if (!axisAllPass(verdict)) {
+            const changed = await tx.broadcastAudienceMember.updateMany({
+              where: {
+                id: member.id,
+                ownerId: principal.ownerId,
+                broadcastRunId,
+                audienceRevision: run.audienceRevision,
+                sendState: "pending",
+              },
+              data: {
+                sendState: "skipped_ineligible",
+                skipReason: firstBlockingSkipReason(verdict),
+              },
+            });
+            if (changed.count === 0) {
+              await rereadFinalizedMember(tx, member.id, run.audienceRevision);
+            }
+            return;
+          }
+
+          // Claim the terminal sent state first. The frequency gate/insert below shares this
+          // transaction, so failure rolls the claim back and success exposes both atomically.
+          const changed = await tx.broadcastAudienceMember.updateMany({
+            where: {
+              id: member.id,
+              ownerId: principal.ownerId,
+              broadcastRunId,
+              audienceRevision: run.audienceRevision,
+              sendState: "pending",
+            },
+            data: { sendState: "simulated_sent", skipReason: null },
+          });
+          if (changed.count === 0) {
+            await rereadFinalizedMember(tx, member.id, run.audienceRevision);
+            return;
+          }
+
+          await recordSendFrequencyEventInTransaction(tx, {
+            ownerId: principal.ownerId,
+            contactId: member.contactId,
+            channel: run.channel,
+            purposeClass: BROADCAST_PURPOSE_CLASS,
+            sourceKind: "broadcast_run",
+            sendRef: member.id,
+            simulated: true,
+            idempotencyKey: key,
+          });
         });
-        await markSimulatedSent(member.id);
       } catch (error) {
         if (error instanceof SendEligibilityError && error.code === "FREQUENCY_CAP_REACHED") {
-          await markSkipped(member.id, "frequency:frequency_cap_reached");
+          await markSkipped(
+            member.id,
+            run.audienceRevision,
+            "frequency:frequency_cap_reached",
+          );
           continue;
         }
         throw error;
