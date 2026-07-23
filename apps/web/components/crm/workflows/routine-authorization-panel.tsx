@@ -16,7 +16,9 @@ import {
 import {
   activateRoutine,
   createRoutineDraft,
+  getRoutine,
   killRoutine,
+  listRoutines,
   listWorkflowRevisions,
   reauthorizeRoutine,
 } from "@/lib/customer-workflow-ui-actions";
@@ -44,6 +46,10 @@ type RevisionsResult = Awaited<ReturnType<typeof listWorkflowRevisions>>;
 type Revision = Extract<RevisionsResult, { ok: true }>["resource"][number];
 type RoutineDraftResult = Awaited<ReturnType<typeof createRoutineDraft>>;
 type Routine = Extract<RoutineDraftResult, { ok: true }>["resource"];
+type RoutinesResult = Awaited<ReturnType<typeof listRoutines>>;
+type PersistedRoutine = Extract<RoutinesResult, { ok: true }>["resource"]["items"][number];
+type RoutineDetailResult = Awaited<ReturnType<typeof getRoutine>>;
+type RoutineDetail = Extract<RoutineDetailResult, { ok: true }>["resource"];
 
 type ActionKind = "conversation_reply" | "broadcast_run" | "wait" | "complete";
 type EnvelopeDraft = {
@@ -102,11 +108,17 @@ export default function RoutineAuthorizationPanel({
   workflowDefinitionId,
   workflowSlug,
   revisions,
+  routines,
+  routineReadError,
+  onRoutinesChanged,
   disabled,
 }: {
   workflowDefinitionId: string;
   workflowSlug: string;
   revisions: Revision[];
+  routines: PersistedRoutine[];
+  routineReadError: string | null;
+  onRoutinesChanged: () => void;
   disabled: boolean;
 }) {
   const validRevisions = revisions.filter((revision) => revision.validationState === "valid");
@@ -115,7 +127,7 @@ export default function RoutineAuthorizationPanel({
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [confirmationChecked, setConfirmationChecked] = useState(false);
   const [mode, setMode] = useState<"activate" | "reauthorize">("activate");
-  const [busy, setBusy] = useState<null | "draft" | "activate" | "kill" | "reauthorize">(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [sessionEnvelopes, setSessionEnvelopes] = useState<SessionEnvelope[]>([]);
   const [pendingDraft, setPendingDraft] = useState<SessionEnvelope | null>(null);
@@ -128,6 +140,11 @@ export default function RoutineAuthorizationPanel({
   const [maxActions, setMaxActions] = useState("1");
   const [maxRecipients, setMaxRecipients] = useState("1");
   const [expiresAt, setExpiresAt] = useState("");
+  const [persistedRoutines, setPersistedRoutines] = useState(routines);
+  const [selectedRoutineId, setSelectedRoutineId] = useState<string | null>(null);
+  const [routineDetail, setRoutineDetail] = useState<RoutineDetail | null>(null);
+  const [detailBusy, setDetailBusy] = useState<string | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   const currentEnvelope = sessionEnvelopes.at(-1) ?? pendingDraft;
   const currentRoutine = currentEnvelope?.routine ?? null;
@@ -137,6 +154,9 @@ export default function RoutineAuthorizationPanel({
     () => sessionEnvelopes.filter((entry) => entry.routine.routineKey === currentRoutine?.routineKey),
     [currentRoutine?.routineKey, sessionEnvelopes],
   );
+  const activePersistedCount = persistedRoutines.filter(
+    (routine) => routine.status === "active" && !routine.killSwitchEngaged,
+  ).length;
 
   function buildEnvelope(): EnvelopeDraft | null {
     const actions = Number.parseInt(maxActions, 10);
@@ -249,6 +269,7 @@ export default function RoutineAuthorizationPanel({
       setPendingDraft(null);
       setConfirmationOpen(false);
       setSetupOpen(false);
+      onRoutinesChanged();
     } catch {
       setErrorCode("NETWORK");
     } finally {
@@ -275,10 +296,66 @@ export default function RoutineAuthorizationPanel({
         return [...next, { routine: result.resource, details: currentEnvelope!.details }];
       });
       setPendingDraft(null);
+      onRoutinesChanged();
     } catch {
       setErrorCode("NETWORK");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function killPersistedRoutine(routine: PersistedRoutine) {
+    if (routine.killSwitchEngaged || !["draft", "active", "paused"].includes(routine.status)) return;
+    setBusy(routine.id);
+    setErrorCode(null);
+    try {
+      const result = await killRoutine({
+        routineId: routine.id,
+        expectedRowRevision: routine.rowRevision,
+        reasonCode: "merchant_kill_switch",
+      });
+      if (!result.ok) {
+        setErrorCode(result.error);
+        return;
+      }
+      setPersistedRoutines((current) => current.map((item) => item.id === routine.id
+        ? {
+            ...item,
+            status: "paused",
+            killSwitchEngaged: true,
+            killedAt: result.resource.killedAt,
+            killReasonCode: result.resource.killReasonCode,
+            rowRevision: result.resource.rowRevision,
+            updatedAt: result.resource.updatedAt,
+          }
+        : item));
+      onRoutinesChanged();
+    } catch {
+      setErrorCode("NETWORK");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function viewPersistedRoutine(routineId: string) {
+    if (selectedRoutineId === routineId && routineDetail) {
+      setSelectedRoutineId(null);
+      setRoutineDetail(null);
+      setDetailError(null);
+      return;
+    }
+    setSelectedRoutineId(routineId);
+    setRoutineDetail(null);
+    setDetailBusy(routineId);
+    setDetailError(null);
+    try {
+      const result = await getRoutine({ routineId });
+      if (!result.ok) setDetailError(result.error);
+      else setRoutineDetail(result.resource);
+    } catch {
+      setDetailError("NETWORK");
+    } finally {
+      setDetailBusy(null);
     }
   }
 
@@ -298,19 +375,26 @@ export default function RoutineAuthorizationPanel({
             A Routine is standing permission for one exact rule revision, scope, budget, expiry, and summary policy. Publishing a rule does not activate it.
           </p>
         </div>
-        {currentStatus ? <Badge variant={currentStatus.variant}>{currentStatus.label}</Badge> : <Badge variant="outline">Status unavailable</Badge>}
+        {currentStatus ? <Badge variant={currentStatus.variant}>{currentStatus.label}</Badge> : routineReadError ? <Badge variant="outline">Status unavailable</Badge> : activePersistedCount > 0 ? <Badge variant="brand">{activePersistedCount} active</Badge> : <Badge variant="outline">No active Routines</Badge>}
       </div>
 
-      <div className="mt-5 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
-        <Unplug className="mt-0.5 size-4 shrink-0" />
-        <span><strong>Existing Routine status is unavailable.</strong> The current shared read surface does not return Routine envelopes. Only an envelope created in this open page can be shown or controlled here; no existing authorization is inferred.</span>
-      </div>
+      {routineReadError ? <div className="mt-5 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><Unplug className="mt-0.5 size-4 shrink-0" /><span><strong>Routine status could not be refreshed.</strong> {routineReadError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(routineReadError)} No authorization is inferred.</span></div> : null}
 
       {errorCode ? (
         <div className="mt-4 rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive">
           <p className="font-semibold">The Routine action could not finish</p>
           <p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p>
           <p className="mt-1 font-mono text-xs">Error code: {errorCode}</p>
+        </div>
+      ) : null}
+
+      {!routineReadError ? (
+        <div className="mt-5 grid gap-3">
+          {persistedRoutines.length === 0 ? <p className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-sm text-muted-foreground">No Routine authorization envelopes exist for this workflow.</p> : persistedRoutines.map((routine) => {
+            const persistedStatus = routineStatusPresentation(routine.status);
+            const canKill = !routine.killSwitchEngaged && ["draft", "active", "paused"].includes(routine.status);
+            return <Card key={routine.id}><CardContent><div className="grid grid-cols-[minmax(0,1fr)_auto] gap-5"><div><div className="flex flex-wrap items-center gap-2"><Badge variant={persistedStatus.variant}>{persistedStatus.label}</Badge>{routine.killSwitchEngaged ? <Badge variant="destructive">Kill switch engaged</Badge> : null}<Badge variant="outline">Authorization {routine.authorization.revision}</Badge></div><p className="mt-3 font-mono text-xs">{routine.routineKey}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{routine.id}</p><p className="mt-3 text-xs leading-5 text-muted-foreground">Revision {routine.workflowRevision.revision} · {routine.scopeSummary.actionKinds.map(actionLabel).join(", ") || "No actions"} · {routine.scopeSummary.contactCount} contacts · {routine.scopeSummary.segmentCount} segments</p><p className="mt-1 text-xs text-muted-foreground">Updated {dateTimeLabel(routine.updatedAt)}{routine.authorization.expiresAt ? ` · expires ${dateTimeLabel(routine.authorization.expiresAt)}` : ""}</p></div><div className="flex items-start gap-2"><Button type="button" variant="secondary" disabled={detailBusy !== null} onClick={() => void viewPersistedRoutine(routine.id)}>{detailBusy === routine.id ? <LoaderCircle className="animate-spin" /> : null}{selectedRoutineId === routine.id && routineDetail ? "Hide details" : "View authorization"}</Button><Button type="button" variant="destructive" disabled={busy !== null || !canKill} onClick={() => void killPersistedRoutine(routine)}>{busy === routine.id ? <LoaderCircle className="animate-spin" /> : <Power />}{routine.killSwitchEngaged ? "Killed" : "Kill Routine"}</Button></div></div>{selectedRoutineId === routine.id ? <div className="mt-5 border-t border-border pt-5">{detailError ? <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><p className="font-semibold">Authorization details could not be read</p><p className="mt-1">{detailError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(detailError)} No missing envelope or predecessor is inferred.</p><p className="mt-1 font-mono text-xs">Error code: {detailError}</p></div> : routineDetail ? <div><div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">Exact authorization envelope</h4><Badge variant="outline">{routineDetail.predecessors.length} superseded {routineDetail.predecessors.length === 1 ? "authorization" : "authorizations"}</Badge></div><p className="mt-2 text-xs leading-5 text-muted-foreground">This is the complete owner-scoped read result, including exact scope, budget, summary policy, kill state, and ordered predecessor chain.</p><pre className="mt-3 max-h-[520px] overflow-auto rounded-xl bg-[#111114] p-4 text-[11px] leading-5 text-[#F4F4F5]">{JSON.stringify(routineDetail, null, 2)}</pre></div> : <p className="text-sm text-muted-foreground">Reading the exact authorization envelope…</p>}</div> : null}</CardContent></Card>;
+          })}
         </div>
       ) : null}
 

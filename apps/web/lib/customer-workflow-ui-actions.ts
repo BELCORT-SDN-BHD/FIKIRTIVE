@@ -13,8 +13,14 @@ import {
   archiveWorkflowDefinition as gatewayArchiveWorkflowDefinition,
   createRoutineDraft as gatewayCreateRoutineDraft,
   createWorkflowDefinition as gatewayCreateWorkflowDefinition,
+  getBusinessHoursPolicy as gatewayGetBusinessHoursPolicy,
+  getContactJourneyStates as gatewayGetContactJourneyStates,
+  getRoutine as gatewayGetRoutine,
   getWorkflowDefinition as gatewayGetWorkflowDefinition,
   killRoutine as gatewayKillRoutine,
+  listBusinessHoursPolicies as gatewayListBusinessHoursPolicies,
+  listRoutineRuns as gatewayListRoutineRuns,
+  listRoutines as gatewayListRoutines,
   listWorkflowDefinitions as gatewayListWorkflowDefinitions,
   listWorkflowRevisions as gatewayListWorkflowRevisions,
   publishWorkflowRevision as gatewayPublishWorkflowRevision,
@@ -27,7 +33,13 @@ import type {
   ArchiveWorkflowDefinitionInput,
   CreateRoutineDraftInput,
   CreateWorkflowDefinitionInput,
+  GetBusinessHoursPolicyInput,
+  GetContactJourneyStatesInput,
+  GetRoutineInput,
   KillRoutineInput,
+  ListBusinessHoursPoliciesInput,
+  ListRoutineRunsInput,
+  ListRoutinesInput,
   ListWorkflowDefinitionsInput,
   ListWorkflowRevisionsInput,
   PublishWorkflowRevisionInput,
@@ -43,6 +55,32 @@ export async function listWorkflowDefinitions(input: ListWorkflowDefinitionsInpu
 
 export async function getWorkflowDefinition(input: WorkflowDefinitionIdInput) {
   return gatewayGetWorkflowDefinition(input);
+}
+
+export async function listRoutines(input: ListRoutinesInput = {}) {
+  return gatewayListRoutines(input);
+}
+
+export async function getRoutine(input: GetRoutineInput) {
+  return gatewayGetRoutine(input);
+}
+
+export async function listRoutineRuns(input: ListRoutineRunsInput) {
+  return gatewayListRoutineRuns(input);
+}
+
+export async function getContactJourneyStates(input: GetContactJourneyStatesInput) {
+  return gatewayGetContactJourneyStates(input);
+}
+
+export async function listBusinessHoursPolicies(
+  input: ListBusinessHoursPoliciesInput = {},
+) {
+  return gatewayListBusinessHoursPolicies(input);
+}
+
+export async function getBusinessHoursPolicy(input: GetBusinessHoursPolicyInput) {
+  return gatewayGetBusinessHoursPolicy(input);
 }
 
 export async function createWorkflowDefinition(input: CreateWorkflowDefinitionInput) {

@@ -7,8 +7,14 @@ const gateway = vi.hoisted(() => ({
   archiveWorkflowDefinition: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   createRoutineDraft: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   createWorkflowDefinition: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
+  getBusinessHoursPolicy: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
+  getContactJourneyStates: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
+  getRoutine: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   getWorkflowDefinition: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   killRoutine: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
+  listBusinessHoursPolicies: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
+  listRoutineRuns: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
+  listRoutines: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   listWorkflowDefinitions: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   listWorkflowRevisions: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
   publishWorkflowRevision: vi.fn(async (input: unknown) => ({ ok: true, resource: input })),
@@ -26,8 +32,14 @@ const APPROVED_EXPORTS = [
   "archiveWorkflowDefinition",
   "createRoutineDraft",
   "createWorkflowDefinition",
+  "getBusinessHoursPolicy",
+  "getContactJourneyStates",
+  "getRoutine",
   "getWorkflowDefinition",
   "killRoutine",
+  "listBusinessHoursPolicies",
+  "listRoutineRuns",
+  "listRoutines",
   "listWorkflowDefinitions",
   "listWorkflowRevisions",
   "publishWorkflowRevision",
@@ -49,12 +61,21 @@ const WORKER_ONLY_NAMES = [
 
 describe("customer-workflow-ui-actions pass-through", () => {
   it("passes a read input and result through unchanged", async () => {
-    const input = { limit: 25 };
-    await expect(customerWorkflowUiActions.listWorkflowDefinitions(input)).resolves.toEqual({
-      ok: true,
-      resource: input,
-    });
-    expect(gateway.listWorkflowDefinitions).toHaveBeenCalledWith(input);
+    const reads = [
+      ["listRoutines", { workflowDefinitionId: "definition-1", limit: 25 }],
+      ["getRoutine", { routineId: "routine-1" }],
+      ["listRoutineRuns", { routineId: "routine-1", limit: 25 }],
+      ["getContactJourneyStates", { workflowDefinitionId: "definition-1", limit: 25 }],
+      ["listBusinessHoursPolicies", { status: "published", limit: 25 }],
+      ["getBusinessHoursPolicy", { businessHoursPolicyId: "policy-1" }],
+    ] as const;
+
+    for (const [name, input] of reads) {
+      await expect(
+        (customerWorkflowUiActions[name] as (value: typeof input) => Promise<unknown>)(input),
+      ).resolves.toEqual({ ok: true, resource: input });
+      expect(gateway[name]).toHaveBeenCalledWith(input);
+    }
   });
 
   it("passes a human-only mutation input and result through unchanged", async () => {

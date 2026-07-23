@@ -132,6 +132,76 @@ export type KillRoutineInput = {
   reasonCode: string;
 };
 
+export const CUSTOMER_WORKFLOW_ROUTINE_STATUSES = [
+  "draft",
+  "active",
+  "paused",
+  "revoked",
+  "expired",
+] as const;
+export type CustomerWorkflowRoutineStatus =
+  (typeof CUSTOMER_WORKFLOW_ROUTINE_STATUSES)[number];
+
+export const CUSTOMER_WORKFLOW_RUN_STATUSES = [
+  "queued",
+  "running",
+  "waiting",
+  "completed",
+  "blocked",
+  "cancelled",
+  "failed",
+] as const;
+export type CustomerWorkflowRunStatus =
+  (typeof CUSTOMER_WORKFLOW_RUN_STATUSES)[number];
+
+export const CUSTOMER_WORKFLOW_JOURNEY_STATUSES = [
+  "active",
+  "waiting",
+  "paused",
+  "completed",
+  "exited",
+  "blocked",
+  "failed",
+] as const;
+export type CustomerWorkflowJourneyStatus =
+  (typeof CUSTOMER_WORKFLOW_JOURNEY_STATUSES)[number];
+
+export const CUSTOMER_WORKFLOW_BUSINESS_HOURS_POLICY_STATUSES = [
+  "draft",
+  "published",
+  "archived",
+] as const;
+export type CustomerWorkflowBusinessHoursPolicyStatus =
+  (typeof CUSTOMER_WORKFLOW_BUSINESS_HOURS_POLICY_STATUSES)[number];
+
+export type ListRoutinesInput = {
+  workflowDefinitionId?: string;
+  status?: CustomerWorkflowRoutineStatus;
+  cursor?: string;
+  limit?: number;
+};
+export type GetRoutineInput = { routineId: string };
+export type ListRoutineRunsInput = {
+  routineId?: string;
+  workflowDefinitionId?: string;
+  status?: CustomerWorkflowRunStatus;
+  cursor?: string;
+  limit?: number;
+};
+export type GetContactJourneyStatesInput = {
+  routineId?: string;
+  workflowDefinitionId?: string;
+  status?: CustomerWorkflowJourneyStatus;
+  cursor?: string;
+  limit?: number;
+};
+export type ListBusinessHoursPoliciesInput = {
+  status?: CustomerWorkflowBusinessHoursPolicyStatus;
+  cursor?: string;
+  limit?: number;
+};
+export type GetBusinessHoursPolicyInput = { businessHoursPolicyId: string };
+
 export type ReauthorizeRoutineInput = {
   routineId: string;
   expectedRowRevision: number;
@@ -198,6 +268,8 @@ type CompiledCustomerAction = {
 
 const MAX_TEXT = 512;
 const MAX_JSON_BYTES = 32 * 1024;
+const MAX_SAFE_RUN_SUMMARY_BYTES = 8 * 1024;
+const MAX_SAFE_RUN_SUMMARY_KEYS = 64;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const TOKEN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
@@ -250,6 +322,78 @@ function limit(value: unknown): number {
     fail("INVALID_ARGUMENT");
   }
   return value as number;
+}
+
+function optionalFilterId(value: unknown): string | undefined {
+  return value === undefined ? undefined : requiredString(value);
+}
+
+function optionalCursor(value: unknown): string | undefined {
+  return value === undefined ? undefined : requiredString(value);
+}
+
+function exactStatus<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !allowed.includes(value as T)) fail("INVALID_ARGUMENT");
+  return value as T;
+}
+
+function exactlyOneParentFilter(input: {
+  routineId?: unknown;
+  workflowDefinitionId?: unknown;
+}): { routineId?: string; workflowDefinitionId?: string } {
+  const routineId = optionalFilterId(input.routineId);
+  const workflowDefinitionId = optionalFilterId(input.workflowDefinitionId);
+  if ((routineId === undefined) === (workflowDefinitionId === undefined)) {
+    fail("INVALID_ARGUMENT");
+  }
+  return { routineId, workflowDefinitionId };
+}
+
+function safeRunSummary(value: unknown): Record<string, number | boolean | null> | null {
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > MAX_SAFE_RUN_SUMMARY_KEYS) return null;
+  const summary: Record<string, number | boolean | null> = {};
+  for (const [key, item] of entries) {
+    if (
+      key.length === 0 ||
+      key.length > 128 ||
+      /[\u0000-\u001f\u007f]/.test(key) ||
+      !(
+        item === null ||
+        typeof item === "boolean" ||
+        (typeof item === "number" && Number.isFinite(item) && item >= 0)
+      )
+    ) {
+      return null;
+    }
+    summary[key] = item as number | boolean | null;
+  }
+  if (Buffer.byteLength(JSON.stringify(summary), "utf8") > MAX_SAFE_RUN_SUMMARY_BYTES) {
+    return null;
+  }
+  return summary;
+}
+
+function safeSummaryPolicy(value: unknown): Record<string, string | number | boolean | null> {
+  if (!isRecord(value)) return {};
+  const safe: Record<string, string | number | boolean | null> = {};
+  for (const key of ["schemaVersion", "mode", "scope", "destination", "afterEachRun"] as const) {
+    const item = value[key];
+    if (
+      item === null ||
+      typeof item === "boolean" ||
+      (typeof item === "number" && Number.isFinite(item) && item >= 0) ||
+      (typeof item === "string" && item.length <= 128 && !/[\u0000-\u001f\u007f]/.test(item))
+    ) {
+      safe[key] = item;
+    }
+  }
+  return safe;
 }
 
 function optionalDate(value: unknown): Date | null {
@@ -442,6 +586,486 @@ export function workflowLifecycleService(
     });
     if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
     return { id: membership.id, role: "owner" };
+  }
+
+  const routineReadSelect = {
+    id: true,
+    workflowDefinitionId: true,
+    workflowRevisionId: true,
+    routineKey: true,
+    supersedesRoutineId: true,
+    status: true,
+    scopeJson: true,
+    maxCreditsPerRun: true,
+    maxCreditsPerMonth: true,
+    summaryPolicyJson: true,
+    authorizationRevision: true,
+    authorizationHash: true,
+    authorizedAt: true,
+    expiresAt: true,
+    killSwitchEngaged: true,
+    killedAt: true,
+    killReasonCode: true,
+    rowRevision: true,
+    createdAt: true,
+    updatedAt: true,
+    workflowDefinition: {
+      select: { id: true, slug: true, name: true, definitionKind: true, status: true },
+    },
+    workflowRevision: {
+      select: { id: true, revision: true, validationState: true },
+    },
+  } satisfies Prisma.RoutineSelect;
+
+  type RoutineReadRow = Prisma.RoutineGetPayload<{ select: typeof routineReadSelect }>;
+
+  function storedStatus<T extends string>(value: string, allowed: readonly T[]): T {
+    if (!allowed.includes(value as T)) fail("AUTHORITY_UNAVAILABLE");
+    return value as T;
+  }
+
+  function projectRoutineSummary(row: RoutineReadRow) {
+    const scope = canonicalizeRoutineScope(row.scopeJson);
+    if (!scope) fail("AUTHORITY_UNAVAILABLE");
+    return {
+      id: row.id,
+      routineKey: row.routineKey,
+      supersedesRoutineId: row.supersedesRoutineId,
+      status: storedStatus(row.status, CUSTOMER_WORKFLOW_ROUTINE_STATUSES),
+      workflowDefinition: row.workflowDefinition,
+      workflowRevision: row.workflowRevision,
+      authorization: {
+        revision: row.authorizationRevision,
+        authorized: row.authorizationHash !== null && row.authorizedAt !== null,
+        authorizedAt: row.authorizedAt,
+        expiresAt: row.expiresAt,
+      },
+      scopeSummary: {
+        actionKinds: scope.actionKinds,
+        channelCount: scope.channelScopes.length,
+        contactCount: scope.contactIds.length,
+        segmentCount: scope.segmentIds.length,
+        maxActions: scope.maxActions,
+        maxRecipients: scope.maxRecipients,
+      },
+      maxCreditsPerRun: row.maxCreditsPerRun,
+      maxCreditsPerMonth: row.maxCreditsPerMonth,
+      summaryPolicy: safeSummaryPolicy(row.summaryPolicyJson),
+      killSwitchEngaged: row.killSwitchEngaged,
+      killedAt: row.killedAt,
+      killReasonCode: row.killReasonCode,
+      rowRevision: row.rowRevision,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  function projectRoutine(row: RoutineReadRow) {
+    const scope = canonicalizeRoutineScope(row.scopeJson);
+    if (!scope) fail("AUTHORITY_UNAVAILABLE");
+    return { ...projectRoutineSummary(row), scope };
+  }
+
+  async function assertDefinitionFilter(
+    tx: Prisma.TransactionClient,
+    ownerId: string,
+    workflowDefinitionId: string,
+  ): Promise<void> {
+    const definition = await tx.workflowDefinition.findFirst({
+      where: { id: workflowDefinitionId, ownerId },
+      select: { id: true },
+    });
+    if (!definition) fail("RESOURCE_NOT_FOUND");
+  }
+
+  async function assertRoutineFilter(
+    tx: Prisma.TransactionClient,
+    ownerId: string,
+    routineId: string,
+  ): Promise<void> {
+    const routine = await tx.routine.findFirst({
+      where: { id: routineId, ownerId },
+      select: { id: true },
+    });
+    if (!routine) fail("RESOURCE_NOT_FOUND");
+  }
+
+  async function listRoutines(
+    principal: CustomerWorkflowPrincipal,
+    input: ListRoutinesInput = {},
+  ) {
+    const workflowDefinitionId = optionalFilterId(input.workflowDefinitionId);
+    const status = exactStatus(input.status, CUSTOMER_WORKFLOW_ROUTINE_STATUSES);
+    const cursor = optionalCursor(input.cursor);
+    const take = limit(input.limit);
+    return db.$transaction(async (tx) => {
+      await requireOwnerMembership(tx, principal);
+      if (workflowDefinitionId) {
+        await assertDefinitionFilter(tx, principal.ownerId, workflowDefinitionId);
+      }
+      const filter: Prisma.RoutineWhereInput = {
+        ownerId: principal.ownerId,
+        ...(workflowDefinitionId ? { workflowDefinitionId } : {}),
+        ...(status ? { status } : {}),
+      };
+      const cursorRow = cursor
+        ? await tx.routine.findFirst({
+            where: { ...filter, id: cursor },
+            select: { id: true, updatedAt: true },
+          })
+        : null;
+      if (cursor && !cursorRow) fail("RESOURCE_NOT_FOUND");
+      const rows = await tx.routine.findMany({
+        where: {
+          ...filter,
+          ...(cursorRow
+            ? {
+                OR: [
+                  { updatedAt: { lt: cursorRow.updatedAt } },
+                  { updatedAt: cursorRow.updatedAt, id: { lt: cursorRow.id } },
+                ],
+              }
+            : {}),
+        },
+        select: routineReadSelect,
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: take + 1,
+      });
+      const hasMore = rows.length > take;
+      if (hasMore) rows.pop();
+      return {
+        items: rows.map(projectRoutineSummary),
+        nextCursor: hasMore ? rows.at(-1)?.id ?? null : null,
+      };
+    });
+  }
+
+  async function getRoutine(
+    principal: CustomerWorkflowPrincipal,
+    input: GetRoutineInput,
+  ) {
+    const routineId = requiredString(input?.routineId);
+    return db.$transaction(async (tx) => {
+      await requireOwnerMembership(tx, principal);
+      const row = await tx.routine.findFirst({
+        where: { id: routineId, ownerId: principal.ownerId },
+        select: routineReadSelect,
+      });
+      if (!row) fail("RESOURCE_NOT_FOUND");
+      const predecessors: ReturnType<typeof projectRoutineSummary>[] = [];
+      const seen = new Set<string>([row.id]);
+      let predecessorId = row.supersedesRoutineId;
+      while (predecessorId) {
+        if (seen.has(predecessorId) || seen.size > MAX_LIMIT) fail("AUTHORITY_UNAVAILABLE");
+        seen.add(predecessorId);
+        const predecessor = await tx.routine.findFirst({
+          where: {
+            id: predecessorId,
+            ownerId: principal.ownerId,
+            workflowDefinitionId: row.workflowDefinitionId,
+            routineKey: row.routineKey,
+          },
+          select: routineReadSelect,
+        });
+        if (!predecessor) fail("AUTHORITY_UNAVAILABLE");
+        predecessors.push(projectRoutineSummary(predecessor));
+        predecessorId = predecessor.supersedesRoutineId;
+      }
+      return { routine: projectRoutine(row), predecessors };
+    });
+  }
+
+  async function listRoutineRuns(
+    principal: CustomerWorkflowPrincipal,
+    input: ListRoutineRunsInput,
+  ) {
+    const parent = exactlyOneParentFilter(input ?? {});
+    const status = exactStatus(input?.status, CUSTOMER_WORKFLOW_RUN_STATUSES);
+    const cursor = optionalCursor(input?.cursor);
+    const take = limit(input?.limit);
+    return db.$transaction(async (tx) => {
+      await requireOwnerMembership(tx, principal);
+      if (parent.routineId) await assertRoutineFilter(tx, principal.ownerId, parent.routineId);
+      if (parent.workflowDefinitionId) {
+        await assertDefinitionFilter(tx, principal.ownerId, parent.workflowDefinitionId);
+      }
+      const filter: Prisma.RoutineRunWhereInput = {
+        ownerId: principal.ownerId,
+        ...(parent.routineId ? { routineId: parent.routineId } : {}),
+        ...(parent.workflowDefinitionId
+          ? { workflowDefinitionId: parent.workflowDefinitionId }
+          : {}),
+        ...(status ? { status } : {}),
+      };
+      const cursorRow = cursor
+        ? await tx.routineRun.findFirst({
+            where: { ...filter, id: cursor },
+            select: { id: true, createdAt: true },
+          })
+        : null;
+      if (cursor && !cursorRow) fail("RESOURCE_NOT_FOUND");
+      const rows = await tx.routineRun.findMany({
+        where: {
+          ...filter,
+          ...(cursorRow
+            ? {
+                OR: [
+                  { createdAt: { lt: cursorRow.createdAt } },
+                  { createdAt: cursorRow.createdAt, id: { lt: cursorRow.id } },
+                ],
+              }
+            : {}),
+        },
+        select: {
+          id: true,
+          routineId: true,
+          routineKey: true,
+          workflowDefinitionId: true,
+          workflowRevisionId: true,
+          contactJourneyStateId: true,
+          triggerKind: true,
+          scheduledFor: true,
+          status: true,
+          currentStepKey: true,
+          rowRevision: true,
+          simulated: true,
+          reservedCredits: true,
+          settledCredits: true,
+          summaryJson: true,
+          blockReason: true,
+          errorCode: true,
+          startedAt: true,
+          finishedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        take: take + 1,
+      });
+      const hasMore = rows.length > take;
+      if (hasMore) rows.pop();
+      return {
+        items: rows.map(({ summaryJson, ...row }) => ({
+          ...row,
+          status: storedStatus(row.status, CUSTOMER_WORKFLOW_RUN_STATUSES),
+          summary: safeRunSummary(summaryJson),
+        })),
+        nextCursor: hasMore ? rows.at(-1)?.id ?? null : null,
+      };
+    });
+  }
+
+  async function getContactJourneyStates(
+    principal: CustomerWorkflowPrincipal,
+    input: GetContactJourneyStatesInput,
+  ) {
+    const parent = exactlyOneParentFilter(input ?? {});
+    const status = exactStatus(input?.status, CUSTOMER_WORKFLOW_JOURNEY_STATUSES);
+    const cursor = optionalCursor(input?.cursor);
+    const take = limit(input?.limit);
+    return db.$transaction(async (tx) => {
+      await requireOwnerMembership(tx, principal);
+      if (parent.routineId) await assertRoutineFilter(tx, principal.ownerId, parent.routineId);
+      if (parent.workflowDefinitionId) {
+        await assertDefinitionFilter(tx, principal.ownerId, parent.workflowDefinitionId);
+      }
+      const filter: Prisma.ContactJourneyStateWhereInput = {
+        ownerId: principal.ownerId,
+        ...(parent.routineId ? { routineId: parent.routineId } : {}),
+        ...(parent.workflowDefinitionId
+          ? { workflowDefinitionId: parent.workflowDefinitionId }
+          : {}),
+        ...(status ? { status } : {}),
+      };
+      const cursorRow = cursor
+        ? await tx.contactJourneyState.findFirst({
+            where: { ...filter, id: cursor },
+            select: { id: true, updatedAt: true },
+          })
+        : null;
+      if (cursor && !cursorRow) fail("RESOURCE_NOT_FOUND");
+      const rows = await tx.contactJourneyState.findMany({
+        where: {
+          ...filter,
+          ...(cursorRow
+            ? {
+                OR: [
+                  { updatedAt: { lt: cursorRow.updatedAt } },
+                  { updatedAt: cursorRow.updatedAt, id: { lt: cursorRow.id } },
+                ],
+              }
+            : {}),
+        },
+        select: {
+          id: true,
+          contact: { select: { id: true, name: true } },
+          workflowDefinitionId: true,
+          workflowRevisionId: true,
+          routineId: true,
+          status: true,
+          currentStepKey: true,
+          nextEligibleAt: true,
+          waitGeneration: true,
+          lastRoutineRunId: true,
+          lastRoutineRun: {
+            select: {
+              id: true,
+              status: true,
+              blockReason: true,
+              errorCode: true,
+              startedAt: true,
+              finishedAt: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          },
+          rowRevision: true,
+          enrolledAt: true,
+          terminalAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: take + 1,
+      });
+      const hasMore = rows.length > take;
+      if (hasMore) rows.pop();
+      return {
+        items: rows.map((row) => ({
+          ...row,
+          status: storedStatus(row.status, CUSTOMER_WORKFLOW_JOURNEY_STATUSES),
+          lastRoutineRun: row.lastRoutineRun
+            ? {
+                ...row.lastRoutineRun,
+                status: storedStatus(
+                  row.lastRoutineRun.status,
+                  CUSTOMER_WORKFLOW_RUN_STATUSES,
+                ),
+              }
+            : null,
+        })),
+        nextCursor: hasMore ? rows.at(-1)?.id ?? null : null,
+      };
+    });
+  }
+
+  async function listBusinessHoursPolicies(
+    principal: CustomerWorkflowPrincipal,
+    input: ListBusinessHoursPoliciesInput = {},
+  ) {
+    const status = exactStatus(
+      input.status,
+      CUSTOMER_WORKFLOW_BUSINESS_HOURS_POLICY_STATUSES,
+    );
+    const cursor = optionalCursor(input.cursor);
+    const take = limit(input.limit);
+    return db.$transaction(async (tx) => {
+      await requireOwnerMembership(tx, principal);
+      const filter: Prisma.BusinessHoursPolicyWhereInput = {
+        ownerId: principal.ownerId,
+        ...(status ? { status } : {}),
+      };
+      const cursorRow = cursor
+        ? await tx.businessHoursPolicy.findFirst({
+            where: { ...filter, id: cursor },
+            select: { id: true, updatedAt: true },
+          })
+        : null;
+      if (cursor && !cursorRow) fail("RESOURCE_NOT_FOUND");
+      const rows = await tx.businessHoursPolicy.findMany({
+        where: {
+          ...filter,
+          ...(cursorRow
+            ? {
+                OR: [
+                  { updatedAt: { lt: cursorRow.updatedAt } },
+                  { updatedAt: cursorRow.updatedAt, id: { lt: cursorRow.id } },
+                ],
+              }
+            : {}),
+        },
+        select: {
+          id: true,
+          policyKey: true,
+          revision: true,
+          supersedesPolicyId: true,
+          name: true,
+          timeZone: true,
+          status: true,
+          rowRevision: true,
+          archivedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: take + 1,
+      });
+      const hasMore = rows.length > take;
+      if (hasMore) rows.pop();
+      return {
+        items: rows.map((row) => ({
+          ...row,
+          status: storedStatus(
+            row.status,
+            CUSTOMER_WORKFLOW_BUSINESS_HOURS_POLICY_STATUSES,
+          ),
+        })),
+        nextCursor: hasMore ? rows.at(-1)?.id ?? null : null,
+      };
+    });
+  }
+
+  async function getBusinessHoursPolicy(
+    principal: CustomerWorkflowPrincipal,
+    input: GetBusinessHoursPolicyInput,
+  ) {
+    const businessHoursPolicyId = requiredString(input?.businessHoursPolicyId);
+    return db.$transaction(async (tx) => {
+      await requireOwnerMembership(tx, principal);
+      const row = await tx.businessHoursPolicy.findFirst({
+        where: { id: businessHoursPolicyId, ownerId: principal.ownerId },
+        select: {
+          id: true,
+          policyKey: true,
+          revision: true,
+          supersedesPolicyId: true,
+          name: true,
+          timeZone: true,
+          weeklyWindowsJson: true,
+          status: true,
+          rowRevision: true,
+          contentHash: true,
+          archivedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+      if (!row) fail("RESOURCE_NOT_FOUND");
+      const canonical = canonicalizeBusinessHoursPolicy({
+        timeZone: row.timeZone,
+        weeklyWindows: row.weeklyWindowsJson,
+      });
+      if (!canonical.ok || canonical.value.contentHash !== row.contentHash) {
+        fail("AUTHORITY_UNAVAILABLE");
+      }
+      return {
+        id: row.id,
+        policyKey: row.policyKey,
+        revision: row.revision,
+        supersedesPolicyId: row.supersedesPolicyId,
+        name: row.name,
+        timeZone: row.timeZone,
+        status: storedStatus(
+          row.status,
+          CUSTOMER_WORKFLOW_BUSINESS_HOURS_POLICY_STATUSES,
+        ),
+        weeklyWindows: canonical.value.weeklyWindowsJson,
+        rowRevision: row.rowRevision,
+        archivedAt: row.archivedAt,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      };
+    });
   }
 
   function dependencyResolver(
@@ -1732,6 +2356,12 @@ export function workflowLifecycleService(
   }
 
   return {
+    listRoutines,
+    getRoutine,
+    listRoutineRuns,
+    getContactJourneyStates,
+    listBusinessHoursPolicies,
+    getBusinessHoursPolicy,
     createWorkflowDefinition,
     getWorkflowDefinition,
     listWorkflowDefinitions,

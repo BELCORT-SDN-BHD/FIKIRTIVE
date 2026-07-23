@@ -6,6 +6,7 @@ import {
   archiveWorkflowDefinition,
   getWorkflowDefinition,
   killRoutine,
+  listRoutines,
 } from "@/lib/customer-workflow-ui-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,23 +32,65 @@ export type ArchiveRoutineReference = {
 
 export default function ArchiveWorkflowDialog({
   definition,
-  activeRoutines,
   onArchived,
 }: {
   definition: Definition;
-  activeRoutines: ArchiveRoutineReference[] | null;
   onArchived: (definition: Definition) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [references, setReferences] = useState(activeRoutines);
+  const [references, setReferences] = useState<ArchiveRoutineReference[] | null>(null);
   const [confirmed, setConfirmed] = useState<string[]>([]);
   const active = references?.filter((routine) => routine.active) ?? null;
   const allReviewed = active !== null && active.every((routine) => confirmed.includes(routine.id));
   const exactMessage = active ? `Archiving does not stop these ${active.length} active Routines` : null;
 
+  async function openDialog() {
+    setOpen(true);
+    setReferences(null);
+    setConfirmed([]);
+    setErrorCode(null);
+    setBusy("read");
+    try {
+      const nextReferences: ArchiveRoutineReference[] = [];
+      const seen = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const page = await listRoutines({
+          workflowDefinitionId: definition.id,
+          status: "active",
+          limit: 200,
+          ...(cursor ? { cursor } : {}),
+        });
+        if (!page.ok) {
+          setErrorCode(page.error);
+          return;
+        }
+        nextReferences.push(...page.resource.items.map((routine) => ({
+          id: routine.id,
+          routineKey: routine.routineKey,
+          rowRevision: routine.rowRevision,
+          active: routine.status === "active" && !routine.killSwitchEngaged,
+        })));
+        const next = page.resource.nextCursor ?? undefined;
+        if (next && seen.has(next)) {
+          setErrorCode("AUTHORITY_UNAVAILABLE");
+          return;
+        }
+        if (next) seen.add(next);
+        cursor = next;
+      } while (cursor);
+      setReferences(nextReferences);
+    } catch {
+      setErrorCode("NETWORK");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function archive() {
+    if (active === null) return;
     setBusy("archive");
     setErrorCode(null);
     try {
@@ -100,10 +143,10 @@ export default function ArchiveWorkflowDialog({
 
   return (
     <>
-      <Button type="button" variant="ghost" disabled={definition.status === "archived"} onClick={() => setOpen(true)}>
+      <Button type="button" variant="ghost" disabled={definition.status === "archived"} onClick={() => void openDialog()}>
         <Archive />Archive
       </Button>
-      <Dialog open={open} onOpenChange={(next) => { if (busy === null) setOpen(next); }}>
+      <Dialog open={open} onOpenChange={(next) => { if (!next && busy === null) setOpen(false); }}>
         <DialogContent className="max-w-[680px]">
           <DialogHeader>
             <DialogTitle>Archive this workflow?</DialogTitle>
@@ -116,7 +159,7 @@ export default function ArchiveWorkflowDialog({
 
           {active === null ? (
             <div className="rounded-xl border border-border bg-secondary/25 p-4">
-              <div className="flex items-start gap-3"><Unplug className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div><div className="flex items-center gap-2"><p className="text-sm font-semibold">Active Routine list unavailable</p><Badge variant="outline">Fail closed</Badge></div><p className="mt-2 text-sm leading-6 text-muted-foreground">The gateway cannot list the exact Routine keys and IDs required for acknowledgment. You may ask the server to archive only if there are zero active Routines. If any remain, archiving stops here and nothing changes.</p></div></div>
+              <div className="flex items-start gap-3"><Unplug className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div><div className="flex items-center gap-2"><p className="text-sm font-semibold">{busy === "read" ? "Loading every active Routine" : "Active Routine list unavailable"}</p><Badge variant="outline">Fail closed</Badge></div><p className="mt-2 text-sm leading-6 text-muted-foreground">{busy === "read" ? "Archive stays disabled until every page of active Routine references has loaded." : "The exact active Routine keys and IDs could not be verified. Archive remains disabled and nothing changes."}</p></div></div>
             </div>
           ) : active.length > 0 ? (
             <div>
@@ -146,7 +189,7 @@ export default function ArchiveWorkflowDialog({
 
           <DialogFooter>
             <Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setOpen(false)}>Cancel</Button>
-            <Button type="button" variant="destructive" disabled={busy !== null || (active !== null && active.length > 0 && !allReviewed)} onClick={() => void archive()}>{busy === "archive" ? <LoaderCircle className="animate-spin" /> : <Archive />}{active === null ? "Archive only if no Routines are active" : "Archive workflow"}</Button>
+            <Button type="button" variant="destructive" disabled={busy !== null || active === null || (active.length > 0 && !allReviewed)} onClick={() => void archive()}>{busy === "archive" ? <LoaderCircle className="animate-spin" /> : <Archive />}Archive workflow</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

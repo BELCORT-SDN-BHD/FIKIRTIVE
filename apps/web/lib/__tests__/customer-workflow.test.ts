@@ -1512,6 +1512,277 @@ describe("customer workflow lifecycle and dispatch", () => {
     })).toBe(1);
   });
 
+  it("reads paged owner-scoped workflow state through safe service and gateway projections", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "read-surface",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const run = await dueRun(
+      workerA,
+      lifecycle,
+      CONTACT_PASS,
+      IDENTITY_PASS,
+      "read-surface-run",
+    );
+    await prisma.routineRun.update({
+      where: { id: run.id },
+      data: { summaryJson: { actionCount: 2, simulated: true, skippedCount: 0 } },
+    });
+    await workflows.createRoutineDraft(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      workflowRevisionId: lifecycle.revision.id,
+      routineKey: "routine_read_surface_draft",
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: { mode: "counts_only" },
+    });
+    const reauthorized = await workflows.reauthorizeRoutine(principalA, {
+      routineId: lifecycle.routine.id,
+      expectedRowRevision: lifecycle.routine.rowRevision,
+      workflowRevisionId: lifecycle.revision.id,
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: { mode: "counts_only", scope: "workflow_activity" },
+    });
+    const canonical = workflows.canonicalizeWorkflowBusinessHoursPolicy({
+      timeZone: "Asia/Kuala_Lumpur",
+      weeklyWindows: [{ weekday: 3, startMinute: 540, endMinute: 1020 }],
+    });
+    if (!canonical.ok) throw new Error("Expected canonical business-hours policy");
+    const policyId = "c7-m1-test-policy-read-surface";
+    await prisma.businessHoursPolicy.create({
+      data: {
+        id: policyId,
+        ownerId: ORG_A,
+        policyKey: "read_surface_hours",
+        revision: 1,
+        name: "Read surface hours",
+        timeZone: canonical.value.timeZone,
+        weeklyWindowsJson: canonical.value.weeklyWindowsJson,
+        status: "published",
+        contentHash: canonical.value.contentHash,
+        createdByMembershipId: OWNER_A,
+      },
+    });
+
+    const firstRoutinePage = await workflows.listRoutines(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      limit: 1,
+    });
+    expect(firstRoutinePage.items).toHaveLength(1);
+    expect(firstRoutinePage.nextCursor).toBe(firstRoutinePage.items[0]!.id);
+    const secondRoutinePage = await workflows.listRoutines(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      cursor: firstRoutinePage.nextCursor!,
+      limit: 2,
+    });
+    expect([
+      ...firstRoutinePage.items.map((item) => item.id),
+      ...secondRoutinePage.items.map((item) => item.id),
+    ]).toEqual(expect.arrayContaining([
+      lifecycle.routine.id,
+      reauthorized.resource.id,
+    ]));
+    await expectCode(
+      workflows.listRoutines(principalA, {
+        status: firstRoutinePage.items[0]!.status === "draft" ? "active" : "draft",
+        cursor: firstRoutinePage.items[0]!.id,
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+
+    const routine = await workflows.getRoutine(principalA, {
+      routineId: reauthorized.resource.id,
+    });
+    expect(routine.routine).toMatchObject({
+      id: reauthorized.resource.id,
+      status: "active",
+      authorization: { revision: 2, authorized: true },
+      scope: { contactIds: [CONTACT_PASS], maxActions: 8, maxRecipients: 8 },
+    });
+    expect(routine.predecessors.map((item) => item.id)).toEqual([lifecycle.routine.id]);
+
+    const runs = await workflows.listRoutineRuns(principalA, {
+      routineId: lifecycle.routine.id,
+      status: "queued",
+      limit: 10,
+    });
+    expect(runs.items).toHaveLength(1);
+    expect(runs.items[0]).toMatchObject({
+      id: run.id,
+      status: "queued",
+      summary: { actionCount: 2, simulated: true, skippedCount: 0 },
+    });
+    for (const forbidden of [
+      "ownerId",
+      "runIdempotencyKey",
+      "triggerOccurrenceRef",
+      "triggerEventRef",
+      "triggerPayloadHash",
+      "authorizationHash",
+      "authorizationSnapshotJson",
+      "summaryJson",
+    ]) {
+      expect(runs.items[0]).not.toHaveProperty(forbidden);
+    }
+    await expectCode(
+      workflows.listRoutineRuns(principalA, {
+        routineId: reauthorized.resource.id,
+        cursor: runs.items[0]!.id,
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await prisma.routineRun.update({
+      where: { id: run.id },
+      data: { summaryJson: { rawMessage: "must not cross the read boundary" } },
+    });
+    expect((await workflows.listRoutineRuns(principalA, {
+      routineId: lifecycle.routine.id,
+    })).items[0]!.summary).toBeNull();
+
+    const journeys = await workflows.getContactJourneyStates(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      limit: 10,
+    });
+    expect(journeys.items[0]).toMatchObject({
+      contact: { id: CONTACT_PASS, name: "Passing target" },
+      status: "active",
+      currentStepKey: "send_offer",
+      lastRoutineRun: { id: run.id, status: "queued", blockReason: null, errorCode: null },
+    });
+    expect(journeys.items[0]).not.toHaveProperty("stateJson");
+    expect(journeys.items[0]).not.toHaveProperty("contactIdentityId");
+    await expectCode(
+      workflows.getContactJourneyStates(principalA, {
+        routineId: reauthorized.resource.id,
+        cursor: journeys.items[0]!.id,
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+
+    const policies = await workflows.listBusinessHoursPolicies(principalA, {
+      status: "published",
+      limit: 10,
+    });
+    expect(policies.items).toContainEqual(expect.objectContaining({
+      id: policyId,
+      status: "published",
+      timeZone: "Asia/Kuala_Lumpur",
+    }));
+    await expectCode(
+      workflows.listBusinessHoursPolicies(principalA, {
+        status: "archived",
+        cursor: policyId,
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+    const policy = await workflows.getBusinessHoursPolicy(principalA, {
+      businessHoursPolicyId: policyId,
+    });
+    expect(policy).toMatchObject({
+      id: policyId,
+      status: "published",
+      weeklyWindows: [{ weekday: 3, startMinute: 540, endMinute: 1020 }],
+    });
+    expect(policy).not.toHaveProperty("ownerId");
+    expect(policy).not.toHaveProperty("contentHash");
+    expect(policy).not.toHaveProperty("createdByMembershipId");
+
+    await expect(gateway.listRoutines({
+      workflowDefinitionId: lifecycle.definition.id,
+      status: "active",
+    })).resolves.toMatchObject({
+      ok: true,
+      resource: { items: [{ id: reauthorized.resource.id, status: "active" }] },
+    });
+    await expect(gateway.getBusinessHoursPolicy({
+      businessHoursPolicyId: policyId,
+    })).resolves.toMatchObject({
+      ok: true,
+      resource: { id: policyId, status: "published" },
+    });
+  });
+
+  it("rejects foreign read filters, resources, and cursors without exposing tenant B", async () => {
+    const a = await createLifecycle(
+      principalA,
+      "read-tenant-a",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const b = await createLifecycle(
+      principalB,
+      "read-tenant-b",
+      TEMPLATE_VERSION_B,
+      "broadcast_run",
+      [CONTACT_B],
+    );
+    await dueRun(workerB, b, CONTACT_B, IDENTITY_B, "read-tenant-b-run");
+    const bRoutinePage = await workflows.listRoutines(principalB, {
+      workflowDefinitionId: b.definition.id,
+      limit: 10,
+    });
+    const bPolicyPage = await workflows.listBusinessHoursPolicies(principalB, { limit: 10 });
+
+    await expectCode(
+      workflows.listRoutines(principalA, { workflowDefinitionId: b.definition.id }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.getRoutine(principalA, { routineId: b.routine.id }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.listRoutineRuns(principalA, { routineId: b.routine.id }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.listRoutineRuns(principalA, { workflowDefinitionId: b.definition.id }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.getContactJourneyStates(principalA, { routineId: b.routine.id }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.getContactJourneyStates(principalA, {
+        workflowDefinitionId: b.definition.id,
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.getBusinessHoursPolicy(principalA, { businessHoursPolicyId: POLICY_B }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.listRoutines(principalA, { cursor: bRoutinePage.items[0]!.id }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      workflows.listBusinessHoursPolicies(principalA, {
+        cursor: bPolicyPage.items[0]!.id,
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+
+    await expect(gateway.getRoutine({ routineId: b.routine.id })).resolves.toEqual({
+      ok: false,
+      error: "RESOURCE_NOT_FOUND",
+    });
+    await expect(gateway.listRoutineRuns({
+      workflowDefinitionId: b.definition.id,
+    })).resolves.toEqual({ ok: false, error: "RESOURCE_NOT_FOUND" });
+    await expect(gateway.getContactJourneyStates({
+      workflowDefinitionId: a.definition.id,
+    })).resolves.toMatchObject({ ok: true, resource: { items: [] } });
+  });
+
   it("fails every cross-tenant carrier swap without leaking or writing tenant B", async () => {
     const a = await createLifecycle(
       principalA,

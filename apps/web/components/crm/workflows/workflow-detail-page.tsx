@@ -18,7 +18,11 @@ import {
   Unplug,
 } from "lucide-react";
 import {
+  getContactJourneyStates,
   getWorkflowDefinition,
+  listBusinessHoursPolicies,
+  listRoutineRuns,
+  listRoutines,
   listWorkflowRevisions,
   publishWorkflowRevision,
   saveWorkflowRevision,
@@ -47,6 +51,11 @@ type DefinitionResult = Awaited<ReturnType<typeof getWorkflowDefinition>>;
 type Definition = Extract<DefinitionResult, { ok: true }>["resource"];
 type RevisionsResult = Awaited<ReturnType<typeof listWorkflowRevisions>>;
 type Revision = Extract<RevisionsResult, { ok: true }>["resource"][number];
+type RoutinesResult = Awaited<ReturnType<typeof listRoutines>>;
+type Routine = Extract<RoutinesResult, { ok: true }>["resource"]["items"][number];
+type RunsResult = Awaited<ReturnType<typeof listRoutineRuns>>;
+type JourneysResult = Awaited<ReturnType<typeof getContactJourneyStates>>;
+type PoliciesResult = Awaited<ReturnType<typeof listBusinessHoursPolicies>>;
 type Compilation = { validationState: string; validationErrorsJson: unknown };
 
 const STARTER_RULE = [
@@ -75,14 +84,44 @@ function UnavailableState({ message }: { message: string }) {
   );
 }
 
+async function listAllDefinitionRoutines(workflowDefinitionId: string) {
+  const items: Routine[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await listRoutines({
+      workflowDefinitionId,
+      limit: 200,
+      ...(cursor ? { cursor } : {}),
+    });
+    if (!page.ok) return page;
+    items.push(...page.resource.items);
+    const next = page.resource.nextCursor ?? undefined;
+    if (next && seen.has(next)) {
+      return { ok: false as const, error: "AUTHORITY_UNAVAILABLE" as const };
+    }
+    if (next) seen.add(next);
+    cursor = next;
+  } while (cursor);
+  return { ok: true as const, resource: { items, nextCursor: null } };
+}
+
 export default function WorkflowDetailPage({
   workflowDefinitionId,
   initialDefinition,
   initialRevisions,
+  initialRoutines,
+  initialRuns,
+  initialJourneys,
+  initialPolicies,
 }: {
   workflowDefinitionId: string;
   initialDefinition: DefinitionResult;
   initialRevisions: RevisionsResult;
+  initialRoutines: RoutinesResult;
+  initialRuns: RunsResult;
+  initialJourneys: JourneysResult;
+  initialPolicies: PoliciesResult;
 }) {
   const initialRevisionRows = initialRevisions.ok ? initialRevisions.resource : [];
   const initialCurrent = initialDefinition.ok
@@ -93,6 +132,12 @@ export default function WorkflowDetailPage({
   const [selectedRevisionId, setSelectedRevisionId] = useState<string | null>(initialCurrent?.id ?? null);
   const [rulesSource, setRulesSource] = useState(initialCurrent?.rulesSource ?? STARTER_RULE);
   const [compilation, setCompilation] = useState<Compilation | null>(initialCurrent ?? null);
+  const [routinesResult, setRoutinesResult] = useState<RoutinesResult>(initialRoutines);
+  const [runsResult, setRunsResult] = useState<RunsResult>(initialRuns);
+  const [journeysResult, setJourneysResult] = useState<JourneysResult>(initialJourneys);
+  const [policiesResult, setPoliciesResult] = useState<PoliciesResult>(initialPolicies);
+  const [routineRefreshError, setRoutineRefreshError] = useState<string | null>(null);
+  const [readGeneration, setReadGeneration] = useState(0);
   const [readError, setReadError] = useState<string | null>(
     !initialDefinition.ok ? initialDefinition.error : !initialRevisions.ok ? initialRevisions.error : null,
   );
@@ -114,6 +159,11 @@ export default function WorkflowDetailPage({
   const validation = validationStatusPresentation(compilation?.validationState ?? "not_validated");
   const issues = validationIssues(compilation?.validationErrorsJson);
   const archived = definition.status === "archived";
+  const routineRows = routinesResult.ok ? routinesResult.resource.items : [];
+  const routineReadError = routineRefreshError ?? (!routinesResult.ok ? routinesResult.error : null);
+  const activeRoutineCount = routineRows.filter(
+    (routine) => routine.status === "active" && !routine.killSwitchEngaged,
+  ).length;
   const canPublish = Boolean(
     selectedRevision &&
     !dirty &&
@@ -126,25 +176,54 @@ export default function WorkflowDetailPage({
     setBusy("refresh");
     setActionError(null);
     try {
-      const [definitionResult, revisionsResult] = await Promise.all([
+      const results = await Promise.allSettled([
         getWorkflowDefinition({ workflowDefinitionId }),
-        listWorkflowRevisions({ workflowDefinitionId }),
+        listWorkflowRevisions({ workflowDefinitionId, limit: 200 }),
+        listAllDefinitionRoutines(workflowDefinitionId),
+        listRoutineRuns({ workflowDefinitionId, limit: 50 }),
+        getContactJourneyStates({ workflowDefinitionId, limit: 50 }),
+        listBusinessHoursPolicies({ limit: 50 }),
       ]);
-      if (!definitionResult.ok) {
-        setReadError(definitionResult.error);
-        return;
+      const refreshErrors: string[] = [];
+      const [definitionRequest, revisionsRequest, routinesRequest, runsRequest, journeysRequest, policiesRequest] = results;
+      if (definitionRequest.status === "fulfilled") {
+        if (definitionRequest.value.ok) setDefinition(definitionRequest.value.resource);
+        else refreshErrors.push(definitionRequest.value.error);
+      } else refreshErrors.push("NETWORK");
+      if (revisionsRequest.status === "fulfilled") {
+        if (revisionsRequest.value.ok) setRevisions(revisionsRequest.value.resource);
+        else refreshErrors.push(revisionsRequest.value.error);
+      } else refreshErrors.push("NETWORK");
+      if (routinesRequest.status === "fulfilled") {
+        setRoutinesResult(routinesRequest.value);
+        setRoutineRefreshError(null);
+      } else {
+        setRoutineRefreshError("NETWORK");
+        refreshErrors.push("NETWORK");
       }
-      setDefinition(definitionResult.resource);
-      if (!revisionsResult.ok) {
-        setReadError(revisionsResult.error);
-        return;
-      }
-      setRevisions(revisionsResult.resource);
-      setReadError(null);
+      if (runsRequest.status === "fulfilled") setRunsResult(runsRequest.value);
+      else refreshErrors.push("NETWORK");
+      if (journeysRequest.status === "fulfilled") setJourneysResult(journeysRequest.value);
+      else refreshErrors.push("NETWORK");
+      if (policiesRequest.status === "fulfilled") setPoliciesResult(policiesRequest.value);
+      else refreshErrors.push("NETWORK");
+      setReadError(refreshErrors[0] ?? null);
+      setReadGeneration((current) => current + 1);
     } catch {
       setReadError("NETWORK");
     } finally {
       setBusy(null);
+    }
+  }
+
+  async function refreshRoutines() {
+    try {
+      const result = await listAllDefinitionRoutines(workflowDefinitionId);
+      setRoutinesResult(result);
+      setRoutineRefreshError(null);
+      setReadGeneration((current) => current + 1);
+    } catch {
+      setRoutineRefreshError("NETWORK");
     }
   }
 
@@ -219,11 +298,11 @@ export default function WorkflowDetailPage({
 
         <header className="mt-4 flex items-start justify-between gap-8 border-b border-border pb-6">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Contact journey" : "Rule"}</Badge><Badge variant="outline">Routine status unavailable</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Contact journey" : "Rule"}</Badge>{routineReadError ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutineCount > 0 ? <Badge variant="brand">{activeRoutineCount} active {activeRoutineCount === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div>
             <h1 className="mt-3 truncate text-3xl font-semibold tracking-[-0.03em]">{definition.name}</h1>
             <p className="mt-2 font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml · {shortWorkflowId(definition.id)}</p>
           </div>
-          <div className="flex shrink-0 items-center gap-2"><Button type="button" variant="ghost" disabled={busy !== null} onClick={() => void refresh()}>{busy === "refresh" ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button><ArchiveWorkflowDialog definition={definition} activeRoutines={null} onArchived={setDefinition} /></div>
+          <div className="flex shrink-0 items-center gap-2"><Button type="button" variant="ghost" disabled={busy !== null} onClick={() => void refresh()}>{busy === "refresh" ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button><ArchiveWorkflowDialog definition={definition} onArchived={(archivedDefinition) => { setDefinition(archivedDefinition); void refreshRoutines(); }} /></div>
         </header>
 
         <nav className="sticky top-0 z-20 -mx-2 flex gap-1 border-b border-border bg-background/95 px-2 py-3 backdrop-blur" aria-label="Workflow sections">
@@ -277,9 +356,9 @@ export default function WorkflowDetailPage({
           </Card>
         </section>
 
-        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} disabled={archived} /></div>
-        <div className="mt-12 border-t border-border pt-10"><WorkflowMonitoring data={null} /></div>
-        <div className="mt-12 border-t border-border pt-10 pb-16"><WorkflowRecipesPanel /></div>
+        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel key={`routines-${readGeneration}`} workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
+        <div className="mt-12 border-t border-border pt-10"><WorkflowMonitoring key={`monitoring-${readGeneration}`} workflowDefinitionId={definition.id} initialRuns={runsResult} initialJourneys={journeysResult} /></div>
+        <div className="mt-12 border-t border-border pt-10 pb-16"><WorkflowRecipesPanel key={`policies-${readGeneration}`} initialPolicies={policiesResult} /></div>
       </div>
     </main>
   );

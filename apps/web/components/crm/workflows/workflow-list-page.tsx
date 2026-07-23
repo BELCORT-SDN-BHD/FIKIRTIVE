@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import {
   createWorkflowDefinition,
+  listRoutines,
   listWorkflowDefinitions,
 } from "@/lib/customer-workflow-ui-actions";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +41,24 @@ import {
 
 type DefinitionsResult = Awaited<ReturnType<typeof listWorkflowDefinitions>>;
 type Definition = Extract<DefinitionsResult, { ok: true }>["resource"][number];
+type RoutinesResult = Awaited<ReturnType<typeof listRoutines>>;
+type Routine = Extract<RoutinesResult, { ok: true }>["resource"]["items"][number];
+
+async function listAllRoutines() {
+  const items: Routine[] = [];
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await listRoutines({ limit: 200, ...(cursor ? { cursor } : {}) });
+    if (!page.ok) return page;
+    items.push(...page.resource.items);
+    const next = page.resource.nextCursor ?? undefined;
+    if (next && seen.has(next)) return { ok: false as const, error: "AUTHORITY_UNAVAILABLE" as const };
+    if (next) seen.add(next);
+    cursor = next;
+  } while (cursor);
+  return { ok: true as const, resource: { items, nextCursor: null } };
+}
 
 function safeSlug(value: string): string {
   return value
@@ -64,10 +83,20 @@ function DeniedState({ message }: { message: string }) {
   );
 }
 
-export default function WorkflowListPage({ initialDefinitions }: { initialDefinitions: DefinitionsResult }) {
+export default function WorkflowListPage({
+  initialDefinitions,
+  initialRoutines,
+}: {
+  initialDefinitions: DefinitionsResult;
+  initialRoutines: RoutinesResult;
+}) {
   const router = useRouter();
   const [definitions, setDefinitions] = useState<Definition[]>(initialDefinitions.ok ? initialDefinitions.resource : []);
   const [errorCode, setErrorCode] = useState<string | null>(initialDefinitions.ok ? null : initialDefinitions.error);
+  const [routines, setRoutines] = useState<Routine[]>(initialRoutines.ok ? initialRoutines.resource.items : []);
+  const [routineErrorCode, setRoutineErrorCode] = useState<string | null>(
+    initialRoutines.ok ? null : initialRoutines.error,
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -83,11 +112,21 @@ export default function WorkflowListPage({ initialDefinitions }: { initialDefini
   async function refresh() {
     setRefreshing(true);
     try {
-      const result = await listWorkflowDefinitions({});
-      if (!result.ok) setErrorCode(result.error);
+      const [definitionsResult, routinesResult] = await Promise.allSettled([
+        listWorkflowDefinitions({ limit: 200 }),
+        listAllRoutines(),
+      ]);
+      if (definitionsResult.status === "rejected") setErrorCode("NETWORK");
+      else if (!definitionsResult.value.ok) setErrorCode(definitionsResult.value.error);
       else {
-        setDefinitions(result.resource);
+        setDefinitions(definitionsResult.value.resource);
         setErrorCode(null);
+      }
+      if (routinesResult.status === "rejected") setRoutineErrorCode("NETWORK");
+      else if (!routinesResult.value.ok) setRoutineErrorCode(routinesResult.value.error);
+      else {
+        setRoutines(routinesResult.value.resource.items);
+        setRoutineErrorCode(null);
       }
     } catch {
       setErrorCode("NETWORK");
@@ -170,12 +209,18 @@ export default function WorkflowListPage({ initialDefinitions }: { initialDefini
             <div className="mt-4 grid gap-3">
               {definitions.map((definition) => {
                 const status = definitionStatusPresentation(definition.status);
+                const definitionRoutines = routines.filter(
+                  (routine) => routine.workflowDefinition.id === definition.id,
+                );
+                const activeRoutines = definitionRoutines.filter(
+                  (routine) => routine.status === "active" && !routine.killSwitchEngaged,
+                );
                 return (
                   <Link key={definition.id} href={`/crm/workflows/${definition.id}`} className="group block">
                     <Card className="transition-[border-color,transform,box-shadow] group-hover:-translate-y-0.5 group-hover:border-foreground/20 group-hover:shadow-md">
                       <CardContent className="grid grid-cols-[minmax(0,1fr)_220px_auto] items-center gap-6">
                         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Journey" : "Rule"}</Badge>{definition.originKind === "inbox_recipe" ? <Badge variant="outline">Recipe</Badge> : null}</div><h3 className="mt-3 truncate text-lg font-semibold">{definition.name}</h3><p className="mt-1 truncate font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml</p></div>
-                        <div className="border-l border-border pl-6"><div className="flex items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" /><Badge variant="outline">Routine status unavailable</Badge></div><p className="mt-2 text-xs leading-5 text-muted-foreground">Published never implies active.</p></div>
+                        <div className="border-l border-border pl-6"><div className="flex items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="brand">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} authorization ${definitionRoutines.length === 1 ? "envelope" : "envelopes"}. Published never implies active.`}</p></div>
                         <div className="text-right"><p className="text-xs text-muted-foreground">Updated {dateTimeLabel(definition.updatedAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(definition.id)}</p><ArrowRight className="ml-auto mt-3 size-4 text-muted-foreground transition-transform group-hover:translate-x-1" /></div>
                       </CardContent>
                     </Card>

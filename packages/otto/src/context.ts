@@ -173,13 +173,40 @@ export type OttoWorkflowRoutineScope = {
   maxRecipients: number;
 };
 
-/** C7 Workflow read/draft capability. Exactly eight authenticated methods are exposed: no tenant
- * identity argument and no activate/authorize/kill/run/journey/dispatch/send/provider/spend seam.
- * Routine credit caps and summary policy are deliberately absent; the web adapter fixes them. */
+/** C7 Workflow read/draft capability. Exactly fourteen authenticated methods are exposed: no tenant
+ * identity argument and no activate/authorize/kill/create/advance/dispatch/send/provider/spend seam.
+ * Routine draft credit caps and summary policy inputs are deliberately absent; the web adapter fixes them. */
 export type OttoWorkflowsPort = {
   listWorkflowDefinitions(input?: { limit?: number }): Promise<unknown>;
   getWorkflowDefinition(input: { workflowDefinitionId: string }): Promise<unknown>;
   listWorkflowRevisions(input: { workflowDefinitionId: string; limit?: number }): Promise<unknown>;
+  listRoutines(input?: {
+    workflowDefinitionId?: string;
+    status?: "draft" | "active" | "paused" | "revoked" | "expired";
+    cursor?: string;
+    limit?: number;
+  }): Promise<unknown>;
+  getRoutine(input: { routineId: string }): Promise<unknown>;
+  listRoutineRuns(input: {
+    routineId?: string;
+    workflowDefinitionId?: string;
+    status?: "queued" | "running" | "waiting" | "completed" | "blocked" | "cancelled" | "failed";
+    cursor?: string;
+    limit?: number;
+  }): Promise<unknown>;
+  getContactJourneyStates(input: {
+    routineId?: string;
+    workflowDefinitionId?: string;
+    status?: "active" | "waiting" | "paused" | "completed" | "exited" | "blocked" | "failed";
+    cursor?: string;
+    limit?: number;
+  }): Promise<unknown>;
+  listBusinessHoursPolicies(input?: {
+    status?: "draft" | "published" | "archived";
+    cursor?: string;
+    limit?: number;
+  }): Promise<unknown>;
+  getBusinessHoursPolicy(input: { businessHoursPolicyId: string }): Promise<unknown>;
   createWorkflowDefinition(input: {
     slug: string;
     name: string;

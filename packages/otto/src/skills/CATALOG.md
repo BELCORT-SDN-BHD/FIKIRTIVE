@@ -41,7 +41,7 @@
 | readCampaigns | free | read | internal | ❌ | Read the user's Campaign list, one exact Campaign with structured plan entries a |
 | readContacts | free | read | internal | ❌ | List, search, or read one exact CRM Contact through the same owner-scoped action |
 | readSegments | free | read | internal | ❌ | Read the user's CRM Segments through the same owner-scoped action layer as the C |
-| readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, one exact definition, or its immutable rev |
+| readWorkflows | free | read | internal | ❌ | Read the user's Workflow definitions, immutable revisions, Routine authorization |
 | rememberBrandFact | free | write | internal | ❌ | Save ONE durable brand FACT to Brand Memory. $0, persists across campaigns. Cate |
 | renderVideo | free | write | internal | ❌ | Export the project's saved cut to a video and add $0 captions ($0 — ffmpeg/whisp |
 | researchWeb | free | read | external | ❌ | Fetch a public web page or search the web to ground your response in real inform |

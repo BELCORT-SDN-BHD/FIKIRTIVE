@@ -15,6 +15,9 @@ import {
 
 const DEFINITION_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const REVISION_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const ROUTINE_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
+const POLICY_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB1";
+const CURSOR_ID = "01ARZ3NDEKTSV4RRFFQ69G5FB2";
 const CONTACT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
 const SEGMENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAY";
 const CONNECTION_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAZ";
@@ -45,6 +48,12 @@ function ports() {
     listWorkflowDefinitions: vi.fn().mockResolvedValue({ ok: true, resource: [] }),
     getWorkflowDefinition: vi.fn().mockResolvedValue({ ok: true, resource: { id: DEFINITION_ID } }),
     listWorkflowRevisions: vi.fn().mockResolvedValue({ ok: true, resource: [] }),
+    listRoutines: vi.fn().mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } }),
+    getRoutine: vi.fn().mockResolvedValue({ ok: true, resource: { routine: {}, predecessors: [] } }),
+    listRoutineRuns: vi.fn().mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } }),
+    getContactJourneyStates: vi.fn().mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } }),
+    listBusinessHoursPolicies: vi.fn().mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } }),
+    getBusinessHoursPolicy: vi.fn().mockResolvedValue({ ok: true, resource: { id: POLICY_ID } }),
     createWorkflowDefinition: vi.fn().mockResolvedValue({
       ok: true,
       resource: { id: DEFINITION_ID, status: "draft" },
@@ -104,6 +113,23 @@ describe("C7 Workflow skills", () => {
       operation: "listWorkflowDefinitions",
       ownerId: "other-owner",
     }).success).toBe(false);
+    for (const invalidRead of [
+      { operation: "listWorkflowDefinitions", workflowDefinitionId: DEFINITION_ID },
+      { operation: "getWorkflowDefinition", workflowDefinitionId: DEFINITION_ID, limit: 1 },
+      { operation: "listRoutines", routineId: ROUTINE_ID },
+      { operation: "listRoutines", status: "queued" },
+      { operation: "getRoutine", routineId: ROUTINE_ID, status: "active" },
+      { operation: "listRoutineRuns", routineId: ROUTINE_ID, workflowDefinitionId: DEFINITION_ID },
+      { operation: "listRoutineRuns", status: "queued" },
+      { operation: "listRoutineRuns", routineId: ROUTINE_ID, status: "published" },
+      { operation: "getContactJourneyStates", routineId: ROUTINE_ID, ownerId: "other-owner" },
+      { operation: "getContactJourneyStates", routineId: ROUTINE_ID, status: "cancelled" },
+      { operation: "listBusinessHoursPolicies", workflowDefinitionId: DEFINITION_ID },
+      { operation: "listBusinessHoursPolicies", status: "active" },
+      { operation: "getBusinessHoursPolicy", businessHoursPolicyId: POLICY_ID, cursor: CURSOR_ID },
+    ]) {
+      expect(readWorkflowsParams.safeParse(invalidRead).success, JSON.stringify(invalidRead)).toBe(false);
+    }
 
     const base = {
       operation: "createWorkflowDefinition",
@@ -136,7 +162,7 @@ describe("C7 Workflow skills", () => {
     }).success).toBe(false);
   });
 
-  it("routes all three reads and requires exact ids", async () => {
+  it("routes all nine reads with only their owner-free operation parameters", async () => {
     const workflowPorts = ports();
     await executeReadWorkflows(
       { operation: "listWorkflowDefinitions", limit: 10 },
@@ -150,6 +176,38 @@ describe("C7 Workflow skills", () => {
       { operation: "listWorkflowRevisions", workflowDefinitionId: DEFINITION_ID, limit: 5 },
       runContext(workflowPorts),
     );
+    await executeReadWorkflows({
+      operation: "listRoutines",
+      workflowDefinitionId: DEFINITION_ID,
+      status: "active",
+      cursor: CURSOR_ID,
+      limit: 4,
+    }, runContext(workflowPorts));
+    await executeReadWorkflows({
+      operation: "getRoutine",
+      routineId: ROUTINE_ID,
+    }, runContext(workflowPorts));
+    await executeReadWorkflows({
+      operation: "listRoutineRuns",
+      routineId: ROUTINE_ID,
+      status: "blocked",
+      limit: 3,
+    }, runContext(workflowPorts));
+    await executeReadWorkflows({
+      operation: "getContactJourneyStates",
+      workflowDefinitionId: DEFINITION_ID,
+      status: "waiting",
+      limit: 2,
+    }, runContext(workflowPorts));
+    await executeReadWorkflows({
+      operation: "listBusinessHoursPolicies",
+      status: "published",
+      limit: 6,
+    }, runContext(workflowPorts));
+    await executeReadWorkflows({
+      operation: "getBusinessHoursPolicy",
+      businessHoursPolicyId: POLICY_ID,
+    }, runContext(workflowPorts));
     expect(workflowPorts.listWorkflowDefinitions).toHaveBeenCalledWith({ limit: 10 });
     expect(workflowPorts.getWorkflowDefinition).toHaveBeenCalledWith({
       workflowDefinitionId: DEFINITION_ID,
@@ -158,9 +216,36 @@ describe("C7 Workflow skills", () => {
       workflowDefinitionId: DEFINITION_ID,
       limit: 5,
     });
+    expect(workflowPorts.listRoutines).toHaveBeenCalledWith({
+      workflowDefinitionId: DEFINITION_ID,
+      status: "active",
+      cursor: CURSOR_ID,
+      limit: 4,
+    });
+    expect(workflowPorts.getRoutine).toHaveBeenCalledWith({ routineId: ROUTINE_ID });
+    expect(workflowPorts.listRoutineRuns).toHaveBeenCalledWith({
+      routineId: ROUTINE_ID,
+      status: "blocked",
+      cursor: undefined,
+      limit: 3,
+    });
+    expect(workflowPorts.getContactJourneyStates).toHaveBeenCalledWith({
+      workflowDefinitionId: DEFINITION_ID,
+      status: "waiting",
+      cursor: undefined,
+      limit: 2,
+    });
+    expect(workflowPorts.listBusinessHoursPolicies).toHaveBeenCalledWith({
+      status: "published",
+      cursor: undefined,
+      limit: 6,
+    });
+    expect(workflowPorts.getBusinessHoursPolicy).toHaveBeenCalledWith({
+      businessHoursPolicyId: POLICY_ID,
+    });
 
     await expect(executeReadWorkflows(
-      { operation: "getWorkflowDefinition", workflowDefinitionId: "guessed" },
+      { operation: "getWorkflowDefinition", workflowDefinitionId: "guessed" } as never,
       runContext(workflowPorts),
     )).resolves.toMatchObject({ ok: false, error: expect.stringContaining("exact") });
     expect(workflowPorts.getWorkflowDefinition).toHaveBeenCalledTimes(1);
@@ -261,7 +346,13 @@ describe("C7 Workflow skills", () => {
     expect(Object.keys(workflowPorts).sort()).toEqual([
       "createRoutineDraft",
       "createWorkflowDefinition",
+      "getBusinessHoursPolicy",
+      "getContactJourneyStates",
+      "getRoutine",
       "getWorkflowDefinition",
+      "listBusinessHoursPolicies",
+      "listRoutineRuns",
+      "listRoutines",
       "listWorkflowDefinitions",
       "listWorkflowRevisions",
       "publishWorkflowRevision",
@@ -293,6 +384,15 @@ describe("C7 Workflow skills", () => {
     }, runContext())).resolves.toMatchObject({ ok: false });
 
     const workflowPorts = ports();
+    await expect(executeReadWorkflows({
+      operation: "listRoutineRuns",
+      routineId: ROUTINE_ID,
+      workflowDefinitionId: DEFINITION_ID,
+    } as never, runContext(workflowPorts))).resolves.toMatchObject({
+      ok: false,
+      error: expect.stringContaining("exact parameters"),
+    });
+    expect(workflowPorts.listRoutineRuns).not.toHaveBeenCalled();
     await expect(executeDraftWorkflows({
       operation: "publishWorkflowRevision",
       workflowDefinitionId: DEFINITION_ID,
