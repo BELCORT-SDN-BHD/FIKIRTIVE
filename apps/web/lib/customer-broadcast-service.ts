@@ -407,17 +407,25 @@ export function createCustomerBroadcastService(
     await requireReadMembership(principal);
     const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
     const run = await requireBroadcastRun(db, principal.ownerId, broadcastRunId);
-    const members = await db.broadcastAudienceMember.findMany({
-      where: { ownerId: principal.ownerId, broadcastRunId },
-      orderBy: [{ id: "asc" }],
-      // Display enrichment for the workbench: the customer's name and channel handle (never the
-      // team-membership directory — that is a separate owner-scoped read). Read-only.
-      include: {
-        contact: { select: { name: true } },
-        contactIdentity: { select: { channel: true, handle: true, label: true, externalId: true } },
-      },
-    });
-    return { run, members };
+    const [members, campaign] = await Promise.all([
+      db.broadcastAudienceMember.findMany({
+        where: { ownerId: principal.ownerId, broadcastRunId },
+        orderBy: [{ id: "asc" }],
+        // Display enrichment for the workbench: the customer's name and channel handle (never the
+        // team-membership directory — that is a separate owner-scoped read). Read-only.
+        include: {
+          contact: { select: { name: true } },
+          contactIdentity: { select: { channel: true, handle: true, label: true, externalId: true } },
+        },
+      }),
+      run.campaignId
+        ? db.campaign.findFirst({
+            where: { id: run.campaignId, ownerId: principal.ownerId, deletedAt: null },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    return { run, members, campaign };
   }
 
   /**

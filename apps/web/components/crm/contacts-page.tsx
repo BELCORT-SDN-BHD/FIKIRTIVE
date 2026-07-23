@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import { createContact, importContacts, type ImportContactsResult } from "@/lib/crm-actions";
+import { CRM_CONSENT_LABELS } from "@/lib/crm-consent-labels";
 import { listContacts, type CrmContactRow } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,9 +32,9 @@ function consentPresentation(state: CrmContactRow["consentState"]["state"]): {
   label: string;
   variant: "success" | "destructive" | "warning";
 } {
-  if (state === "verified_grant") return { label: "Verified opt-in", variant: "success" };
-  if (state === "effective_revoke") return { label: "Opted out", variant: "destructive" };
-  return { label: "Unknown", variant: "warning" };
+  if (state === "verified_grant") return { label: CRM_CONSENT_LABELS[state], variant: "success" };
+  if (state === "effective_revoke") return { label: CRM_CONSENT_LABELS[state], variant: "destructive" };
+  return { label: CRM_CONSENT_LABELS[state], variant: "warning" };
 }
 
 function dateLabel(value: Date | string): string {

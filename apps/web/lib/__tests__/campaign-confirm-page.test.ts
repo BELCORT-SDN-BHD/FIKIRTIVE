@@ -50,6 +50,7 @@ function confirmProps(
           projects: [{ id: "project-1", name: "Raya project", createdAt: "2026-07-23T00:00:00.000Z" }],
           scheduledPosts: [],
           generations: [],
+          broadcasts: [],
         },
         available: {
           projects: [],

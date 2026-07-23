@@ -11,6 +11,7 @@ import {
   Image as ImageIcon,
   Link2,
   LoaderCircle,
+  Megaphone,
   Plus,
   Save,
   Send,
@@ -26,7 +27,15 @@ import {
   type CampaignPlanEntry,
   type ProposedCampaignEntry,
 } from "@/lib/campaign-actions";
-import { getCampaign, type CampaignDetailRow } from "@/lib/campaign-view-data";
+import {
+  getCampaign,
+  type CampaignDetailRow,
+  type CampaignGroupedBroadcast,
+} from "@/lib/campaign-view-data";
+import {
+  purposeLabel,
+  runStatusPresentation,
+} from "@/components/crm/broadcasts/broadcast-format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -335,6 +344,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
           </section>
 
           <aside className="grid content-start gap-5">
+            <CampaignBroadcastsCard broadcasts={campaign.grouped.broadcasts} />
             <GroupingCard
               title="Projects"
               campaignId={campaign.id}
@@ -369,6 +379,48 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
         </div>
       </div>
     </main>
+  );
+}
+
+export function CampaignBroadcastsCard({
+  broadcasts,
+}: {
+  broadcasts: CampaignGroupedBroadcast[];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <span className="flex items-center gap-2 [&_svg]:size-4 [&_svg]:text-muted-foreground">
+          <Megaphone />
+          <CardTitle>Broadcasts</CardTitle>
+        </span>
+        <CardDescription>Broadcasts grouped into this campaign.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {broadcasts.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nothing grouped yet.</p>
+        ) : broadcasts.map((broadcast) => {
+          const status = runStatusPresentation(broadcast.status);
+          return (
+            <Link
+              key={broadcast.id}
+              href={`/crm/broadcasts/${broadcast.id}`}
+              className="rounded-xl border border-border p-3 outline-none transition-colors hover:bg-secondary/40 focus-visible:ring-[3px] focus-visible:ring-ring/40"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="truncate text-sm font-semibold">{purposeLabel(broadcast.purpose)} broadcast</p>
+                <Badge variant={status.variant}>{status.label}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {broadcast.executedAt
+                  ? `Sent (simulated) ${dateLabel(broadcast.executedAt)}`
+                  : `Created ${dateLabel(broadcast.createdAt)}`}
+              </p>
+            </Link>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 

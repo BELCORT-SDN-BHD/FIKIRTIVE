@@ -70,14 +70,16 @@ const STARTER_RULE = [
   "      type: complete",
 ].join("\n");
 
-function UnavailableState({ message }: { message: string }) {
+function UnavailableState() {
   return (
     <main className="min-h-dvh bg-background px-8 py-10 text-foreground">
       <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-8 shadow-[var(--shadow-sm)]">
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground"><AlertCircle className="size-5" /></span>
         <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Workflows</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This workflow is not available</h1>
-        <p className="mt-3 text-sm leading-6 text-muted-foreground">{message}</p>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          It may not exist, or you may not have access. Nothing was changed, and no workflow data was guessed.
+        </p>
         <Button asChild className="mt-6" variant="secondary"><Link href="/crm/workflows"><ArrowLeft />Back to workflows</Link></Button>
       </section>
     </main>
@@ -149,8 +151,8 @@ export default function WorkflowDetailPage({
     : !initialRevisions.ok && isDenialErrorCode(initialRevisions.error)
       ? initialRevisions.error
       : null;
-  if (denialCode) return <UnavailableState message={workflowErrorMessage(denialCode)} />;
-  if (!definition) return <UnavailableState message={workflowErrorMessage(readError ?? "RESOURCE_NOT_FOUND")} />;
+  if (denialCode) return <UnavailableState />;
+  if (!definition) return <UnavailableState />;
   const currentDefinition = definition;
 
   const selectedRevision = revisions.find((revision) => revision.id === selectedRevisionId) ?? null;

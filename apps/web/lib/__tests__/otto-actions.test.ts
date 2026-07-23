@@ -749,7 +749,7 @@ describe("buildOttoContext", () => {
     };
     const detail = {
       ...campaign,
-      grouped: { projects: [], scheduledPosts: [], generations: [] },
+      grouped: { projects: [], scheduledPosts: [], generations: [], broadcasts: [] },
       available: { projects: [], scheduledPosts: [], generations: [] },
       trendSnapshots: [],
     };

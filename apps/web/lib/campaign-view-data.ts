@@ -90,11 +90,20 @@ export type CampaignGroupedGeneration = {
   createdAt: string;
 };
 
+export type CampaignGroupedBroadcast = {
+  id: string;
+  purpose: string;
+  status: string;
+  createdAt: string;
+  executedAt: string | null;
+};
+
 export type CampaignDetailRow = CampaignListRow & {
   grouped: {
     projects: CampaignGroupedProject[];
     scheduledPosts: CampaignGroupedPost[];
     generations: CampaignGroupedGeneration[];
+    broadcasts: CampaignGroupedBroadcast[];
   };
   available: {
     projects: CampaignGroupedProject[];
@@ -202,7 +211,7 @@ export async function getCampaign(id: string): Promise<
     }) as CampaignDbRow | null;
     if (!row) return { error: "Campaign not found." };
 
-    const [projects, scheduledPosts, generations, trendSnapshots] = await Promise.all([
+    const [projects, scheduledPosts, generations, broadcasts, trendSnapshots] = await Promise.all([
       prisma.project.findMany({
         where: {
           ownerId: gate.ownerId,
@@ -241,6 +250,12 @@ export async function getCampaign(id: string): Promise<
         take: 100,
         select: { id: true, assetId: true, modelRef: true, campaignId: true, createdAt: true },
       }),
+      prisma.broadcastRun.findMany({
+        where: { ownerId: gate.ownerId, campaignId: id },
+        orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+        take: 100,
+        select: { id: true, purpose: true, status: true, createdAt: true, executedAt: true },
+      }),
       prisma.trendSnapshot.findMany({
         where: { ownerId: gate.ownerId, campaignId: id, deletedAt: null },
         orderBy: [{ capturedAt: "desc" }, { createdAt: "desc" }],
@@ -277,6 +292,13 @@ export async function getCampaign(id: string): Promise<
           projects: publicProjects.filter((_, index) => projects[index].campaignId === id),
           scheduledPosts: publicPosts.filter((_, index) => scheduledPosts[index].campaignId === id),
           generations: publicGenerations.filter((_, index) => generations[index].campaignId === id),
+          broadcasts: broadcasts.map((broadcast) => ({
+            id: broadcast.id,
+            purpose: broadcast.purpose,
+            status: broadcast.status,
+            createdAt: broadcast.createdAt.toISOString(),
+            executedAt: broadcast.executedAt?.toISOString() ?? null,
+          })),
         },
         available: {
           projects: publicProjects.filter((_, index) => projects[index].campaignId === null),

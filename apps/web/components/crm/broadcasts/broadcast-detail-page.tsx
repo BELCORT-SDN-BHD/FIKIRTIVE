@@ -22,6 +22,7 @@ import {
   freezeAudience,
   getBroadcastRunLivePreflight,
 } from "@/lib/customer-broadcast-ui-actions";
+import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
 import type {
   getBroadcastComposerOptions,
   getBroadcastRun,
@@ -119,6 +120,7 @@ export default function BroadcastDetailPage({
   initialPreflight,
   initialDirectory,
   initialOptions,
+  initialReportAvailable,
   preselectedSegmentId,
 }: {
   broadcastRunId: string;
@@ -126,6 +128,7 @@ export default function BroadcastDetailPage({
   initialPreflight: PreflightResult;
   initialDirectory: DirectoryResult;
   initialOptions: OptionsResult;
+  initialReportAvailable: boolean;
   preselectedSegmentId: string | null;
 }) {
   // Degraded/partial honest state: if the live preflight read failed but the plain run read
@@ -136,6 +139,7 @@ export default function BroadcastDetailPage({
   const [rows, setRows] = useState<Row[]>(initialPreflight.ok ? initialPreflight.resource.members : []);
   const [readError, setReadError] = useState<string | null>(initialPreflight.ok ? null : initialPreflight.error);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reportAvailable, setReportAvailable] = useState(initialReportAvailable);
   const [busy, setBusy] = useState<null | "freeze" | "confirm" | "execute" | "cancel" | "refresh">(null);
   const [segmentId, setSegmentId] = useState(preselectedSegmentId ?? "");
 
@@ -149,6 +153,7 @@ export default function BroadcastDetailPage({
   const isOwner = directory?.self.role === "owner";
   const selfRole = directory?.self.role ?? null;
   const options = initialOptions.ok ? initialOptions.resource : null;
+  const campaign = initialRun.ok ? initialRun.resource.campaign : null;
   const createdByName =
     run && directory ? directory.members.find((m) => m.membershipId === run.createdByMembershipId)?.displayName ?? null : null;
 
@@ -156,7 +161,11 @@ export default function BroadcastDetailPage({
     setBusy("refresh");
     setActionError(null);
     try {
-      const result = await getBroadcastRunLivePreflight({ broadcastRunId });
+      const [result, report] = await Promise.all([
+        getBroadcastRunLivePreflight({ broadcastRunId }),
+        getCustomerBroadcastReport({ broadcastRunId }),
+      ]);
+      setReportAvailable(report.ok);
       if (!result.ok) {
         setReadError(result.error);
       } else {
@@ -236,10 +245,26 @@ export default function BroadcastDetailPage({
               {createdByName ? `Created by ${createdByName} · ` : ""}{dateTimeLabel(run.createdAt)} · revision {run.revision}
             </p>
           </div>
-          <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={busy !== null}>
-            <RefreshCw className={busy === "refresh" ? "animate-spin" : undefined} />Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={busy !== null}>
+              <RefreshCw className={busy === "refresh" ? "animate-spin" : undefined} />Refresh
+            </Button>
+            {reportAvailable ? (
+              <Button asChild variant="secondary">
+                <Link href={`/crm/reports/${run.id}`}>View report</Link>
+              </Button>
+            ) : null}
+          </div>
         </header>
+
+        {campaign ? (
+          <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium text-muted-foreground">Campaign</span>
+            <Link href={`/campaign/${campaign.id}`} className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
+              <Badge variant="outline">{campaign.name}</Badge>
+            </Link>
+          </div>
+        ) : null}
 
         {/* Provider quota / degrade banner — honestly unavailable in the simulated era (§6.1). */}
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
