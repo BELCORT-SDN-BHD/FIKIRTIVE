@@ -1,4 +1,4 @@
-# FIKIRTIVE 决策日志(史官仪式)
+# FIKIRTIVE Founder 决策索引(史官仪式)
 
 > 目的:Founder 决策的单行索引,永不再依赖会话记忆。全文与出处以链接为准。
 > 仪式(Founder 批准 2026-07-24 建立):每个工作 session 收尾时,当次 Founder 新决策以
