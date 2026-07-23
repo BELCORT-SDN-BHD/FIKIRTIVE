@@ -118,3 +118,7 @@
 | debt-111 | `campaign-generation-confirm.confirmCampaignGeneration` | B0-57 | B8 |
 | debt-112 | `customer-broadcast-report-ui-actions.getBroadcastDeliveryReceipt` | B0-41 | B6 |
 | debt-113 | `customer-broadcast-report-ui-actions.getCustomerBroadcastReport` | B0-41 | B6 |
+| debt-114 | `customer-workflow-ui-actions.archiveWorkflowDefinition` | B0-48 | B7 |
+| debt-115 | `customer-workflow-ui-actions.activateRoutine` | B0-47 | B7 |
+| debt-116 | `customer-workflow-ui-actions.killRoutine` | B0-47 | B7 |
+| debt-117 | `customer-workflow-ui-actions.reauthorizeRoutine` | B0-47 | B7 |
