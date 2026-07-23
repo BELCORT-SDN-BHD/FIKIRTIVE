@@ -1,6 +1,11 @@
 "use client";
 import { useCallback, useEffect, useRef } from "react";
-import { startCanvasGen, getGenJob, getActiveGenModels } from "../../lib/gen-actions";
+import {
+  startCanvasGen,
+  getGenJob,
+  getActiveGenModels,
+  type ActiveGenModels,
+} from "../../lib/gen-actions";
 import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
 import {
   CANVAS_IMAGE_DEFAULT_COUNT,
@@ -357,21 +362,22 @@ export function useCanvasGen(
     cancelledRef.current = false;
     return () => { cancelledRef.current = true; };
   }, []);
-  // F18: resolve the active models SERVER-side (the client can't — the env isn't bundled, so
-  // activeVideoModel() in the browser always returns the wrong default). Cache after first fetch;
-  // await before every spend so the gen request carries the real model the server gate expects.
-  const modelsRef = useRef<{ image: string; video: string } | null>(null);
+  // Resolve active capability ids + exact quotes server-side. Cache after first fetch and await
+  // before every spend; provider-backed model ids never enter the browser.
+  const modelsRef = useRef<ActiveGenModels | null>(null);
   const ensureModels = useCallback(async () => {
     if (!modelsRef.current) {
       const response: unknown = await getActiveGenModels();
       if (
         response === null || typeof response !== "object" ||
         typeof (response as { image?: unknown }).image !== "string" ||
-        typeof (response as { video?: unknown }).video !== "string"
+        typeof (response as { video?: unknown }).video !== "string" ||
+        typeof (response as { imageCredits?: unknown }).imageCredits !== "number" ||
+        typeof (response as { videoCredits?: unknown }).videoCredits !== "number"
       ) {
         throw new Error("Unexpected generation model response");
       }
-      modelsRef.current = response as { image: string; video: string };
+      modelsRef.current = response as ActiveGenModels;
     }
     return modelsRef.current;
   }, []);
@@ -414,14 +420,18 @@ export function useCanvasGen(
     // cards below are pure placement of already-charged variants (no extra spend).
     const safeCount = clampImageVariantCount(count);
     let image = options.resumeModel;
+    let activeModels: ActiveGenModels | null = null;
     if (!image) {
       const models = await loadModelsForAction();
       if (!models) return false;
+      activeModels = models;
       image = models.image;
     }
     const actionId = options.actionId ?? freshCanvasActionId();
     const approvedCredits = options.resumeApprovedCredits
-      ?? canvasImageCostCredits(image, safeCount);
+      ?? (activeModels
+        ? activeModels.imageCredits * safeCount
+        : canvasImageCostCredits(image, safeCount));
     const requestThreadId = options.resumeThreadId !== undefined
       ? options.resumeThreadId
       : activeThreadId ?? null;
@@ -573,13 +583,16 @@ export function useCanvasGen(
     resume: CanvasVideoResumeOptions = {},
   ): Promise<boolean> => {
     let video = resume.model;
+    let activeModels: ActiveGenModels | null = null;
     if (!video) {
       const models = await loadModelsForAction();
       if (!models) return false;
+      activeModels = models;
       video = models.video;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
-    const approvedCredits = resume.approvedCredits ?? canvasVideoCostCredits(video);
+    const approvedCredits = resume.approvedCredits
+      ?? (activeModels ? activeModels.videoCredits : canvasVideoCostCredits(video));
     const requestThreadId = resume.threadId !== undefined
       ? resume.threadId
       : activeThreadId ?? null;
@@ -663,13 +676,16 @@ export function useCanvasGen(
     resume: CanvasVideoResumeOptions = {},
   ): Promise<boolean> => {
     let video = resume.model;
+    let activeModels: ActiveGenModels | null = null;
     if (!video) {
       const models = await loadModelsForAction();
       if (!models) return false;
+      activeModels = models;
       video = models.video;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
-    const approvedCredits = resume.approvedCredits ?? canvasVideoCostCredits(video);
+    const approvedCredits = resume.approvedCredits
+      ?? (activeModels ? activeModels.videoCredits : canvasVideoCostCredits(video));
     const requestThreadId = resume.threadId !== undefined
       ? resume.threadId
       : activeThreadId ?? null;

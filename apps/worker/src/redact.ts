@@ -11,10 +11,19 @@
  */
 
 const URL_RE = /https?:\/\/[^\s'"`]+/gi;
+const PROVIDER_NAME_RE =
+  /(?:(?:seedance|seedream|byteplus|bytedance|jimeng|anthropic|claude)[a-z0-9]*(?:[./:_-][a-z0-9][a-z0-9./:_-]*)*(?:[ \t]+\d+(?:\.\d+)*(?:[ \t]+fast)?)?|\bfal(?:provider|client|error|[./:_-][a-z0-9][a-z0-9./:_-]*)?\b|即梦)/giu;
 
 /** Redact signed media URLs (incl. their X-Amz signature query) from a console/log line. */
 export function scrubUrls(s: string): string {
   return s.replace(URL_RE, "<redacted-url>");
+}
+
+/** Replace trade-secret provider/model names while keeping the surrounding error useful. */
+export function redactProviderNames(s: string): string {
+  return s
+    .replace(PROVIDER_NAME_RE, "generation provider")
+    .replace(/\bgeneration provider(?:\s+generation provider)+\b/gi, "generation provider");
 }
 
 /**
@@ -35,5 +44,5 @@ export function sanitizeError(err: unknown, max = 300): string {
     }
   }
   const raw = err instanceof Error ? err.message : String(err);
-  return scrubUrls(raw).slice(0, max);
+  return redactProviderNames(scrubUrls(raw)).slice(0, max);
 }

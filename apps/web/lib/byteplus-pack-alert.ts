@@ -40,7 +40,7 @@ export function buildBytePlusPackSignal(args: {
       status: "configure alert",
       count: Math.round(estimatedUsedUsd * 100),
       detail:
-        "Set BYTEPLUS_RESOURCE_PACK_USD and mirror the BytePlus console remaining alert before launch; pack expiry shifts video COGS to on-demand list pricing.",
+        "Configure the generation capacity and remaining-usage alert before launch; capacity expiry shifts video cost to on-demand pricing.",
       tone: "warning",
     };
   }
@@ -48,13 +48,13 @@ export function buildBytePlusPackSignal(args: {
   const usedUsd = usedOverrideUsd ?? estimatedUsedUsd;
   const remainingUsd = capacityUsd - usedUsd;
   const remainingPct = Math.max(0, (remainingUsd / capacityUsd) * 100);
-  const source = usedOverrideUsd === null ? "estimated from frozen spend snapshots" : "from BYTEPLUS_RESOURCE_PACK_USED_USD";
+  const source = usedOverrideUsd === null ? "estimated from frozen spend snapshots" : "from the configured usage override";
 
   if (remainingUsd <= 0) {
     return {
       status: "depleted",
       count: 0,
-      detail: `BytePlus pack is over capacity (${source}); renew before more Seedance traffic uses on-demand list pricing.`,
+      detail: `Generation capacity is exhausted (${source}); renew before more video traffic uses on-demand pricing.`,
       tone: "danger",
     };
   }

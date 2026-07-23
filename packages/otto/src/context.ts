@@ -148,7 +148,7 @@ export type CampaignDetailSummary = CampaignSummary & {
       status: string;
       createdAt: string;
     }[];
-    generations: { id: string; assetId: string; modelRef: string; createdAt: string }[];
+    generations: { id: string; assetId: string; kind: "image" | "video"; createdAt: string }[];
   };
   trendSnapshots: Omit<TrendSnapshotSummary, "campaignId">[];
 };

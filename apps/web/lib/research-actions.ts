@@ -18,6 +18,7 @@ import { RESEARCH_TIERS, researchTierBudgetInternal, type ResearchCardPayload } 
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { requireOwner } from "./auth-guard";
 import { getBoss } from "./queue";
+import { sanitizeUserError } from "./provider-secrecy";
 
 const approveInput = z.object({ cardId: z.string().min(1) });
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
@@ -78,7 +79,13 @@ export async function getResearchCard(raw: unknown): Promise<{ payload: Research
 
   const card = await loadCard(parsed.data.cardId, ownerId);
   if (!card) return { error: "Card not found." };
-  return { payload: (card.payload ?? {}) as ResearchPayload };
+  const payload = (card.payload ?? {}) as ResearchPayload & { error?: unknown };
+  return {
+    payload: {
+      ...payload,
+      ...(typeof payload.error === "string" ? { error: sanitizeUserError(payload.error) } : {}),
+    } as ResearchPayload,
+  };
 }
 
 export async function approveResearch(raw: unknown): Promise<Ok | Err> {

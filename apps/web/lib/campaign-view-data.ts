@@ -86,7 +86,7 @@ export type CampaignGroupedPost = {
 export type CampaignGroupedGeneration = {
   id: string;
   assetId: string;
-  modelRef: string;
+  kind: "image" | "video";
   createdAt: string;
 };
 
@@ -248,7 +248,13 @@ export async function getCampaign(id: string): Promise<
         },
         orderBy: [{ createdAt: "desc" }, { id: "asc" }],
         take: 100,
-        select: { id: true, assetId: true, modelRef: true, campaignId: true, createdAt: true },
+        select: {
+          id: true,
+          assetId: true,
+          campaignId: true,
+          createdAt: true,
+          asset: { select: { ext: true } },
+        },
       }),
       prisma.broadcastRun.findMany({
         where: { ownerId: gate.ownerId, campaignId: id },
@@ -279,7 +285,7 @@ export async function getCampaign(id: string): Promise<
     const publicGenerations = generations.map((generation) => ({
       id: generation.id,
       assetId: generation.assetId,
-      modelRef: generation.modelRef,
+      kind: ["mp4", "mov", "webm"].includes(generation.asset.ext.toLowerCase()) ? "video" as const : "image" as const,
       createdAt: generation.createdAt.toISOString(),
     }));
     const draft = issueCampaignEntryDraft(gate.ownerId, id);

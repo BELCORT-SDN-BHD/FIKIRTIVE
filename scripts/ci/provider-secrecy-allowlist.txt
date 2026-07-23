@@ -1,0 +1,40 @@
+# Exact production-code occurrences that are internal identifiers, configuration,
+# server-side routing, or the secrecy sanitizer itself. Format: path<TAB>trimmed source line.
+apps/web/components/admin/AdminDashboardV2.tsx	<SelectItem value="fal">{providerLabel("fal")}</SelectItem>
+apps/web/components/admin/AdminDashboardV2.tsx	const [family, setFamily] = useState(data.otto.families[0] ?? "seedream");
+apps/web/components/admin/AdminDashboardV2.tsx	if (/seedance/i.test(value)) return "Video";
+apps/web/components/admin/AdminDashboardV2.tsx	if (/seedream/i.test(value)) return "Image";
+apps/web/components/admin/AdminDashboardV2.tsx	return /seedance|seedream/i.test(model.id)
+apps/web/components/admin/SettingsAdmin.tsx	<option value="fal">{providerLabel("fal")}</option>
+apps/web/components/otto/stuff/AddAssetDialog.tsx	const refgenCostLabel = creditsLabel(displayCredits(pricedRefgenCredits({ model: "seedream", count: 1 })));
+apps/web/components/otto/stuff/AddAssetDialog.tsx	model: "seedream",
+apps/web/lib/admin-actions.ts	if (key === "cowork_provider" && value.provider === "fal" && !process.env.FAL_KEY) {
+apps/web/lib/admin-v2.ts	.filter((job) => BYTEPLUS_MODELS.has(job.internalModel))
+apps/web/lib/admin-v2.ts	alertPct: process.env.BYTEPLUS_RESOURCE_PACK_ALERT_PCT,
+apps/web/lib/admin-v2.ts	capacityUsd: process.env.BYTEPLUS_RESOURCE_PACK_USD,
+apps/web/lib/admin-v2.ts	const BYTEPLUS_MODELS = new Set(["seedream", "seedance-2-fast"]);
+apps/web/lib/admin-v2.ts	const bytePlusPack = buildBytePlusPackSignal({
+apps/web/lib/admin-v2.ts	count: bytePlusPack.count,
+apps/web/lib/admin-v2.ts	detail: bytePlusPack.detail,
+apps/web/lib/admin-v2.ts	id: "byteplus-pack",
+apps/web/lib/admin-v2.ts	import { buildBytePlusPackSignal } from "@/lib/byteplus-pack-alert";
+apps/web/lib/admin-v2.ts	status: bytePlusPack.status,
+apps/web/lib/admin-v2.ts	tone: bytePlusPack.tone,
+apps/web/lib/admin-v2.ts	usedUsd: process.env.BYTEPLUS_RESOURCE_PACK_USED_USD,
+apps/web/lib/byteplus-pack-alert.ts	env?: BytePlusPackEnv;
+apps/web/lib/byteplus-pack-alert.ts	export function buildBytePlusPackSignal(args: {
+apps/web/lib/byteplus-pack-alert.ts	export type BytePlusPackEnv = {
+apps/web/lib/byteplus-pack-alert.ts	export type BytePlusPackSignal = {
+apps/web/lib/byteplus-pack-alert.ts	}): BytePlusPackSignal {
+apps/web/lib/campaign-generation-confirm.ts	cell.model ?? "seedream",
+apps/web/lib/factory-batch.ts	const model = cell.model ?? "seedream";
+apps/web/lib/factory-batch.ts	model: cell.model ?? "seedream",
+apps/web/lib/otto-stream-bridge.ts	seedancePrompt: "Crafting the video prompt",
+apps/web/lib/otto-stream-bridge.ts	seedreamPrompt: "Crafting the image prompt",
+apps/web/lib/provider-secrecy.ts	/(?:(?:seedance|seedream|byteplus|bytedance|jimeng|anthropic|claude)[a-z0-9]*(?:[./:_-][a-z0-9][a-z0-9./:_-]*)*(?:[ \t]+\d+(?:\.\d+)*(?:[ \t]+fast)?)?|\bfal(?:provider|client|error|[./:_-][a-z0-9][a-z0-9./:_-]*)?\b|即梦)/giu;
+apps/web/lib/refgen-actions.ts	const cost = pricedRefgenCredits({ model: "seedream", count: 1 });
+apps/web/lib/refgen-actions.ts	data: { id: newId(), ownerId, entityId, prompt, count: 1, model: "seedream", mode: "VARIANT", variantId },
+apps/web/lib/refgen-actions.ts	if (isModelDisabled("seedream", disabled)) {
+apps/worker/src/jobs/gen.ts	console.warn(`[gen] ${job.id}: redelivery already failed+refunded this job mid-flight — rolled back outputs, not delivering. Founder absorbed the fal cost.`);
+apps/worker/src/jobs/refgen.ts	console.warn(`[refgen] ${job.id}: redelivery already failed+refunded this job mid-flight — discarding the (orphan) outputs, not attaching. Founder absorbed the fal cost.`);
+apps/worker/src/redact.ts	/(?:(?:seedance|seedream|byteplus|bytedance|jimeng|anthropic|claude)[a-z0-9]*(?:[./:_-][a-z0-9][a-z0-9./:_-]*)*(?:[ \t]+\d+(?:\.\d+)*(?:[ \t]+fast)?)?|\bfal(?:provider|client|error|[./:_-][a-z0-9][a-z0-9./:_-]*)?\b|即梦)/giu;

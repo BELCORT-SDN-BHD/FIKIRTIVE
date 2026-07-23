@@ -153,16 +153,16 @@ function selectedVideoModel(disabledModels: string[]): GenVideoModel {
 }
 
 // ---------------------------------------------------------------------------
-// getStoryboardVideoOptions — $0 read: the SELECTED video model + its durations
+// getStoryboardVideoOptions — $0 read: the selected video capability's durations
 // ---------------------------------------------------------------------------
 //
 // Model-driven, zero hardcoding: derive the video model the SAME way minting will
-// (suggestModel — the activeVideoModel lock), then return THAT model's durations from
+// (suggestModel — the activeVideoModel lock), then return only its durations from
 // the shared GEN_VIDEO_MODEL_OPTIONS capability table. A future model swap (activeVideoModel
 // change) flows through automatically — no values copied here.
 
 export async function getStoryboardVideoOptions(): Promise<
-  { model: string; durations: number[] } | Err
+  { durations: number[] } | Err
 > {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -170,7 +170,7 @@ export async function getStoryboardVideoOptions(): Promise<
   const disabledModels = Array.from(await resolveDisabledModels());
   const model = selectedVideoModel(disabledModels);
   const durations = GEN_VIDEO_MODEL_OPTIONS[model].durations;
-  return { model, durations };
+  return { durations };
 }
 
 /** 铸一张子 GEN_CARD($0):定价走 buildProposeCard,payload 加 storyboardCardId+shotId 回链。

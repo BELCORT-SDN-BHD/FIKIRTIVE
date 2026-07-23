@@ -13,6 +13,12 @@ import { saveRuntimeConfig } from "@/lib/admin-actions";
 
 type Vision = { enabled: boolean; maxImages: number; maxBytes: number };
 
+function providerLabel(value: string): string {
+  if (value === "mock") return "Simulation";
+  if (value === "modal") return "Self-hosted";
+  return "Hosted AI";
+}
+
 function VisionCard({ vision }: { vision: Vision }) {
   const [enabled, setEnabled] = useState(vision.enabled);
   const [maxImages, setMaxImages] = useState(vision.maxImages);
@@ -99,9 +105,9 @@ function ProviderCard({ provider, canModal }: { provider: string; canModal: bool
           value={value} onChange={(e) => setValue(e.target.value)}
           style={{ font: "var(--text-body)", padding: "6px 10px", borderRadius: 8, background: "var(--muted)", color: "var(--foreground)", border: "1px solid var(--border)" }}
         >
-          <option value="mock">mock</option>
-          <option value="fal">fal</option>
-          {canModal && <option value="modal">modal (self-hosted)</option>}
+          <option value="mock">{providerLabel("mock")}</option>
+          <option value="fal">{providerLabel("fal")}</option>
+          {canModal && <option value="modal">{providerLabel("modal")}</option>}
         </select>
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -126,7 +132,7 @@ export function SettingsAdmin({ vision, provider, canModal }: { vision: Vision; 
       <VisionCard vision={vision} />
       <ProviderCard provider={provider} canModal={canModal} />
       <p style={{ font: "var(--text-caption)", color: "var(--muted-foreground)", margin: 0 }}>
-        Worker-side keys (GENERATION_PROVIDER, FAL_KEY) are restart-required and not shown here.
+                Worker-side provider settings are restart-required and not shown here.
       </p>
     </main>
   );

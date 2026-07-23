@@ -50,7 +50,7 @@ const SERVICES: Service[] = [
   { name: "web", health: "healthy", detail: "p95 180ms · 0 errors / 5m" },
   { name: "worker", health: "healthy", detail: "queue depth 3 · 0 stuck jobs" },
   { name: "postgres", health: "healthy", detail: "12% connections · replica in sync" },
-  { name: "fal provider", health: "degraded", detail: "elevated latency · retries holding" },
+  { name: "generation service", health: "degraded", detail: "elevated latency · retries holding" },
 ];
 
 interface Release {

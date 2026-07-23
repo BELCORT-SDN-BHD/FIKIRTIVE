@@ -48,7 +48,7 @@ export default function AdminError({
           <h2 className="text-sm font-semibold text-foreground">What to check next</h2>
           <div className="mt-3 grid gap-2 text-sm text-muted-foreground">
             <p>1. Reload admin data once. If it recovers, the failure was likely transient.</p>
-            <p>2. Open System Health for queue, spend, and BytePlus pack signals.</p>
+            <p>2. Open System Health for queue, spend, and generation capacity signals.</p>
             <p>3. Open Audit for the last admin/system action before the failure.</p>
             <p>4. Check Railway web and worker logs for server-action or database errors around this time.</p>
           </div>

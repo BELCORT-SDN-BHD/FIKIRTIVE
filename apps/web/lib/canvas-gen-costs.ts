@@ -42,11 +42,15 @@ export function canvasVideoCostCredits(model: string): number {
 }
 
 export function canvasGenCostQuote(
-  models: { image: string; video: string },
+  models: { image: string; video: string; imageCredits?: number; videoCredits?: number },
   imageCount = CANVAS_IMAGE_DEFAULT_COUNT,
 ): CanvasGenCostQuote {
   return {
-    imageCredits: canvasImageCostCredits(models.image, imageCount),
-    videoCredits: canvasVideoCostCredits(models.video),
+    imageCredits: typeof models.imageCredits === "number"
+      ? models.imageCredits * clampImageVariantCount(imageCount)
+      : canvasImageCostCredits(models.image, imageCount),
+    videoCredits: typeof models.videoCredits === "number"
+      ? models.videoCredits
+      : canvasVideoCostCredits(models.video),
   };
 }

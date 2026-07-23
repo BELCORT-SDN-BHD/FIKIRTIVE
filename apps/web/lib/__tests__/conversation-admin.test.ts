@@ -111,8 +111,8 @@ describe("getConversation", () => {
 
     // kind-specific shaping
     expect(detail!.messages[1].planSteps).toEqual(["generate keyframe", "animate"]);
-    expect(detail!.messages[2].card).toMatchObject({ model: "seedream", kind: "image", prompt: "a cat in a forest", estimatedPriceUsd: 0.04 });
-    expect(detail!.messages[3].result).toMatchObject({ model: "seedream", kind: "image", genJobId: "job1", status: "DONE", spentUsd: 0.04 });
+    expect(detail!.messages[2].card).toMatchObject({ capability: "Image", prompt: "a cat in a forest", estimatedPriceUsd: 0.04 });
+    expect(detail!.messages[3].result).toMatchObject({ capability: "Image", genJobId: "job1", status: "DONE", spentUsd: 0.04 });
     expect(detail!.projectName).toBe("Spring promo");
 
     // SAFETY INVARIANT: the shaped output must NEVER carry a storage URL, even though
@@ -122,6 +122,7 @@ describe("getConversation", () => {
     expect(json).not.toContain("leak.png");
     expect(json).not.toContain("secret.png");
     expect(json).not.toMatch(/https?:\/\//);
+    expect(json).not.toMatch(/seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu);
   });
 
   it("labels the founder org owner as 'founder' when no owner email exists", async () => {

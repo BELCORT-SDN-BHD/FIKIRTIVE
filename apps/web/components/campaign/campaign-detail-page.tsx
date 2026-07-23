@@ -370,8 +370,8 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
               campaignId={campaign.id}
               icon={<ImageIcon />}
               targetType="generation"
-              grouped={campaign.grouped.generations.map((item) => ({ id: item.id, label: item.modelRef || "Existing asset", meta: `Asset ${item.assetId.slice(-8)}` }))}
-              available={campaign.available.generations.map((item) => ({ id: item.id, label: item.modelRef || "Existing asset", meta: `Asset ${item.assetId.slice(-8)}` }))}
+              grouped={campaign.grouped.generations.map((item) => ({ id: item.id, label: item.kind === "video" ? "Video" : "Image", meta: `Asset ${item.assetId.slice(-8)}` }))}
+              available={campaign.available.generations.map((item) => ({ id: item.id, label: item.kind === "video" ? "Video" : "Image", meta: `Asset ${item.assetId.slice(-8)}` }))}
               busy={busy}
               onChange={changeGrouping}
             />

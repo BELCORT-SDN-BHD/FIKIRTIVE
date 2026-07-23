@@ -100,7 +100,7 @@ describe("getCampaign", () => {
       { id: "s1", channel: "instagram", caption: "Post", scheduledAt: NOW, status: "DRAFT", campaignId: CAMPAIGN_ID, createdAt: NOW },
     ]);
     mockGenerationFindMany.mockResolvedValue([
-      { id: "g1", assetId: "asset-1", modelRef: "seedream", campaignId: CAMPAIGN_ID, createdAt: NOW },
+      { id: "g1", assetId: "asset-1", campaignId: CAMPAIGN_ID, createdAt: NOW, asset: { ext: "png" } },
     ]);
     mockBroadcastFindMany.mockResolvedValue([
       { id: "b1", purpose: "marketing", status: "completed", createdAt: NOW, executedAt: NOW },
@@ -117,7 +117,7 @@ describe("getCampaign", () => {
         grouped: {
           projects: [{ id: "p1" }],
           scheduledPosts: [{ id: "s1" }],
-          generations: [{ id: "g1" }],
+          generations: [{ id: "g1", kind: "image" }],
           broadcasts: [{ id: "b1", purpose: "marketing", status: "completed" }],
         },
         available: { projects: [{ id: "p2" }] },

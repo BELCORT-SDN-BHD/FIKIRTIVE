@@ -273,7 +273,9 @@ function ConfirmWorkspace({
                   </div>
                   <p className="mt-3 text-sm font-semibold">{entry?.hook || "Untitled entry"}</p>
                   <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{line.brief}</p>
-                  <p className="mt-2 text-xs text-muted-foreground">Model: {line.model}</p>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Capability: {line.kind === "video" ? "Video" : "Image"}
+                  </p>
                 </div>
               );
             })}

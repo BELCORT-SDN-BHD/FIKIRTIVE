@@ -47,6 +47,7 @@ prepare_workspace() {
 case "$job" in
   check)
     prepare_workspace
+    node scripts/ci/check-provider-secrecy.mjs
     pnpm -r typecheck
     bash scripts/check-skill-imports.sh
     pnpm lint:otto-cli
