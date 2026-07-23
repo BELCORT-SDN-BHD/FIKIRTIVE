@@ -1,14 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { authClient } from "@/lib/better-auth/client";
 import { sanitizeCallbackURL } from "@/lib/safe-redirect";
+import {
+  MAGIC_LINK_INVALID_EMAIL_MESSAGE,
+  MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
+  normalizeMagicLinkEmail,
+  type MagicLinkFailure,
+  type MagicLinkRequestResult,
+} from "@/lib/better-auth/magic-link-contract";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { requestMagicLink } from "./actions";
+
+type LoginFormError =
+  | ({ source: "magic_link" } & MagicLinkFailure)
+  | { source: "password" | "social"; message: string };
 
 /** Interactive sign-in surface. Email + password is the primary path; magic link
- *  (passwordless) and Google sit beneath as alternatives. All three go through
- *  authClient (Better Auth). `from` preserves the post-login redirect. */
+ *  (passwordless) and Google sit beneath as alternatives. Password/social use
+ *  authClient; magic link uses the typed server action backed by Better Auth.
+ *  `from` preserves the post-login redirect. */
 export function LoginForm({ from }: { from: string }) {
   const callbackURL = sanitizeCallbackURL(from);
   const [email, setEmail] = useState("");
@@ -16,7 +29,16 @@ export function LoginForm({ from }: { from: string }) {
   const [showPw, setShowPw] = useState(false);
   const [busy, setBusy] = useState<"magic" | "google" | "password" | null>(null);
   const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<LoginFormError | null>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const focusEmailAfterReset = useRef(false);
+
+  useEffect(() => {
+    if (!sent && focusEmailAfterReset.current) {
+      focusEmailAfterReset.current = false;
+      emailInputRef.current?.focus();
+    }
+  }, [sent]);
 
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
@@ -25,23 +47,42 @@ export function LoginForm({ from }: { from: string }) {
     setError(null);
     const { error } = await authClient.signIn.email({ email: email.trim(), password });
     setBusy(null);
-    if (error) setError(error.message ?? "Wrong email or password.");
+    if (error) setError({ source: "password", message: error.message ?? "Wrong email or password." });
     else window.location.assign(callbackURL);
   }
 
   async function sendMagicLink(e?: React.SyntheticEvent) {
     e?.preventDefault();
     if (busy) return;
-    if (!email.trim()) {
-      setError("Enter your email first, then I'll send you a link.");
+    const normalizedEmail = normalizeMagicLinkEmail(email);
+    if (!normalizedEmail) {
+      setError({
+        source: "magic_link",
+        status: "error",
+        reason: "invalid_email",
+        message: MAGIC_LINK_INVALID_EMAIL_MESSAGE,
+      });
+      emailInputRef.current?.focus();
       return;
     }
     setBusy("magic");
     setError(null);
-    const { error } = await authClient.signIn.magicLink({ email: email.trim(), callbackURL });
+    let result: MagicLinkRequestResult;
+    try {
+      result = await requestMagicLink({ email: normalizedEmail, callbackURL });
+    } catch {
+      result = {
+        status: "error" as const,
+        reason: "unknown" as const,
+        message: MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
+      };
+    }
     setBusy(null);
-    if (error) setError(error.message ?? "Sign-in failed. Try again.");
-    else setSent(true);
+    if (result.status === "error") {
+      setError({ source: "magic_link", ...result });
+    } else {
+      setSent(true);
+    }
   }
 
   async function signInWithGoogle() {
@@ -52,8 +93,16 @@ export function LoginForm({ from }: { from: string }) {
     // On success the browser is redirected to Google; only reachable on error.
     if (error) {
       setBusy(null);
-      setError(error.message ?? "Google sign-in failed. Try again.");
+      setError({ source: "social", message: error.message ?? "Sign-in failed. Try again." });
     }
+  }
+
+  function useDifferentEmail() {
+    setEmail("");
+    setPassword("");
+    setError(null);
+    focusEmailAfterReset.current = true;
+    setSent(false);
   }
 
   if (sent) {
@@ -61,16 +110,12 @@ export function LoginForm({ from }: { from: string }) {
       <div className="rounded-[var(--radius-card)] border border-border bg-card p-5 text-center shadow-xs">
         <p className="text-[15px] font-semibold text-foreground">Check your email</p>
         <p className="mt-1.5 text-[13.5px] leading-[1.5] text-muted-foreground">
-          We sent a sign-in link to{" "}
-          <span className="font-medium text-foreground">{email.trim()}</span>. Open it on this device
-          to continue.
+          If <span className="font-medium text-foreground">{email.trim()}</span> has access, a
+          sign-in link is on its way — check your inbox.
         </p>
         <button
           type="button"
-          onClick={() => {
-            setSent(false);
-            setPassword("");
-          }}
+          onClick={useDifferentEmail}
           className="mt-3.5 text-[13.5px] font-semibold text-muted-foreground underline underline-offset-4 hover:text-foreground"
         >
           Use a different email
@@ -83,7 +128,7 @@ export function LoginForm({ from }: { from: string }) {
     <div className="flex flex-col gap-3.5">
       {error && (
         <p role="alert" className="text-[13.5px] font-medium text-destructive">
-          {error}
+          {error.message}
         </p>
       )}
 
@@ -93,6 +138,7 @@ export function LoginForm({ from }: { from: string }) {
             Email
           </label>
           <Input
+            ref={emailInputRef}
             id="email"
             type="email"
             name="email"
@@ -115,7 +161,7 @@ export function LoginForm({ from }: { from: string }) {
               onClick={() => sendMagicLink()}
               className="text-[12.5px] font-semibold text-muted-foreground hover:text-foreground"
             >
-              Forgot?
+              Email me a sign-in link
             </button>
           </div>
           <div className="relative">
@@ -170,7 +216,7 @@ export function LoginForm({ from }: { from: string }) {
                 <rect x="2" y="4" width="20" height="16" rx="2" />
                 <path d="m2 7 10 6 10-6" />
               </svg>
-              Email me a magic link
+              Email me a sign-in link
             </>
           )}
         </Button>

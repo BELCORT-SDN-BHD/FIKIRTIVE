@@ -15,9 +15,15 @@ describe("sendAuthEmail", () => {
   });
 
   it("rate-limits after 5 sends per address per hour", async () => {
-    const { sendAuthEmail } = await import("@/lib/better-auth/sender");
+    const { MagicLinkRateLimitError, sendAuthEmail } = await import("@/lib/better-auth/sender");
     const call = () => sendAuthEmail({ to: "rl@x.test", subject: "S", url: "u", intro: "i" });
     for (let i = 0; i < 5; i++) await call();
-    await expect(call()).rejects.toThrow(/Too many/);
+    await expect(call()).rejects.toEqual(
+      expect.objectContaining({
+        name: "MagicLinkRateLimitError",
+        message: "Too many sign-in links requested — try again in an hour.",
+      }),
+    );
+    await expect(call()).rejects.toBeInstanceOf(MagicLinkRateLimitError);
   });
 });

@@ -3,13 +3,14 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { magicLink, customSession, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
-import { createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
 import { sendAuthEmail } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
+import { isAllowedEmail } from "@/lib/allowlist";
 
 // Secret guard — BUILD-SAFE. Do NOT hard-throw at module top level (that can break `next build`
 // before env is wired). better-auth already fails closed without a valid secret; this just warns
@@ -45,9 +46,9 @@ export const auth = betterAuth({
     // NON-REMOVABLE: better-auth's default is OFF; without this an unverified email+password signup mints a session → account takeover via convergeIdentity. Keep true.
     requireEmailVerification: true,
     sendResetPassword: async ({ user, url }) => {
-      // Allowlist-gate the reset email (F17): hooks.before only covers /sign-in + /sign-up, so a
-      // revoked/removed user could otherwise still receive a valid reset link. Mirror sendMagicLink.
-      await assertAllowedEmail(user.email);
+      // Keep Better Auth's neutral reset response for removed users while still suppressing the
+      // email (F17). Session creation independently re-checks access and remains fail-closed.
+      if (!(await isAllowedEmail(user.email))) return;
       await sendAuthEmail({ to: user.email, subject: "Reset your Fikirtive password", url, intro: "Reset your password" });
     },
   },
@@ -63,7 +64,23 @@ export const auth = betterAuth({
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
       const email: string | undefined = (ctx.body as Record<string, unknown> | undefined)?.email as string | undefined;
-      if (email && (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up"))) {
+      if (!email) return;
+      if (ctx.path === "/sign-in/magic-link") {
+        if (!(await isAllowedEmail(email))) {
+          // Enumeration-safe parity: the public endpoint returns the same success body without
+          // creating a verification token or attempting delivery for an address without access.
+          return ctx.json({ status: true });
+        }
+      } else if (ctx.path === "/sign-in/email") {
+        if (!(await isAllowedEmail(email))) {
+          // Match Better Auth's native invalid-credential response so the password form cannot
+          // be used as a second allowlist-membership probe.
+          throw new APIError("UNAUTHORIZED", {
+            code: "INVALID_EMAIL_OR_PASSWORD",
+            message: "Invalid email or password",
+          });
+        }
+      } else if (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up")) {
         await assertAllowedEmail(email);
       }
     }),
@@ -100,7 +117,10 @@ export const auth = betterAuth({
     magicLink({
       expiresIn: 60 * 15,
       sendMagicLink: async ({ email, url }) => {
-        await assertAllowedEmail(email);
+        // Re-check after the before-hook in case access was revoked between the two awaits.
+        // Returning normally keeps the endpoint response neutral while session creation remains
+        // independently fail-closed through databaseHooks.session.create.before.
+        if (!(await isAllowedEmail(email))) return;
         await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
       },
     }),
