@@ -64,6 +64,35 @@ export function dataErrorOf(parts: readonly RawDataPart[]): OttoErrorData | null
   return null;
 }
 
+/**
+ * Recover the typed stream failure stored on a durable TURN_ERROR payload.
+ * Older TURN_ERROR rows predate the nested `error` contract; they remain visible
+ * as generic errors using their durable text.
+ */
+export function persistedStreamErrorOf(payload: unknown, fallbackText: string): OttoErrorData {
+  if (payload && typeof payload === "object") {
+    const error = (payload as { error?: unknown }).error;
+    if (error && typeof error === "object") {
+      const kind = (error as { kind?: unknown }).kind;
+      const text = (error as { text?: unknown }).text;
+      if (
+        (kind === "insufficient_credits" || kind === "error")
+        && typeof text === "string"
+      ) {
+        return { kind, text };
+      }
+    }
+  }
+  return { kind: "error", text: fallbackText };
+}
+
+/** The durable USER message that caused a TURN_ERROR, when recorded. */
+export function persistedStreamErrorUserMessageId(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const userMessageId = (payload as { userMessageId?: unknown }).userMessageId;
+  return typeof userMessageId === "string" ? userMessageId : null;
+}
+
 /** Narrow a raw part to `OttoStepData` if its type is "data-step", else null. */
 export function asStepData(part: RawDataPart): OttoStepData | null {
   if (part.type !== "data-step") return null;

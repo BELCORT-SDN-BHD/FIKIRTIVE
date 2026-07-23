@@ -158,7 +158,7 @@ export function buildSettingsSections(args: {
       id: "connections",
       title: "Connections",
       subtitle:
-        "Connect Instagram and Facebook so OTTO can schedule posts, remind you to post, and read results — auto-publish is coming soon.",
+        "Connect Instagram and Facebook so Otto can schedule posts, remind you to post, and read results — auto-publish is coming soon.",
       fields: channels.map((c) => ({
         kind: "custom" as const,
         id: `conn-${c.id}`,
@@ -190,15 +190,15 @@ export function buildSettingsSections(args: {
     },
     {
       id: "otto",
-      title: "OTTO behavior",
-      subtitle: "How much OTTO does on its own.",
+      title: "Otto behavior",
+      subtitle: "How much Otto does on its own.",
       fields: [
         {
           kind: "toggle",
           id: "ads",
           label: "Ask before ad spend",
           hint: canChangeAdsAutonomy
-            ? "OTTO checks with you before spending on ads"
+            ? "Otto checks with you before spending on ads"
             : "Connect Meta before changing ad-spend autonomy",
           value: adsAutonomy === "ASK",
           disabled: !canChangeAdsAutonomy,
@@ -216,7 +216,7 @@ export function buildSettingsSections(args: {
           kind: "number",
           id: "cap",
           label: "Spend cap",
-          hint: "OTTO pauses a task over this many credits (0 = no cap)",
+          hint: "Otto pauses a task over this many credits (0 = no cap)",
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),

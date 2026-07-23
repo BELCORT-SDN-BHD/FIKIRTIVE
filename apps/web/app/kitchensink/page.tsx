@@ -47,7 +47,7 @@ export default function Kitchensink() {
 
         <section style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Badge>Default</Badge>
-          <Badge variant="brand">OTTO</Badge>
+          <Badge variant="brand">Otto</Badge>
           <Badge variant="success">Live</Badge>
           <Badge variant="info">Scheduled</Badge>
           <Badge variant="warning">In review</Badge>
@@ -61,7 +61,7 @@ export default function Kitchensink() {
         <Card style={{ maxWidth: 360 }}>
           <CardHeader>
             <CardTitle>Autumn menu launch</CardTitle>
-            <CardDescription>Cozy and warm. 6 assets, built with OTTO.</CardDescription>
+            <CardDescription>Cozy and warm. 6 assets, built with Otto.</CardDescription>
           </CardHeader>
         </Card>
       </div>

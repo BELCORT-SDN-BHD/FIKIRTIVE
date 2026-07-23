@@ -38,9 +38,18 @@ import { TextPart } from "./parts/TextPart";
 import { StatusLine } from "./parts/StatusLine";
 import { OttoTrace } from "./OttoTrace";
 import { ReasoningPart } from "./parts/ReasoningPart";
-import { asStatusData, asErrorData, asStepData, dataErrorOf, deriveTraceSteps } from "@/lib/otto-status-helpers";
+import { OttoStreamErrorNotice } from "./OttoStreamErrorNotice";
+import {
+  asStatusData,
+  asErrorData,
+  asStepData,
+  dataErrorOf,
+  deriveTraceSteps,
+  persistedStreamErrorOf,
+  persistedStreamErrorUserMessageId,
+} from "@/lib/otto-status-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
-import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
+import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { composerReferencePayload, composerReferencesPlaceholder, removeComposerReference, upsertComposerReference, upsertComposerReferences, type OttoComposerReference } from "@/lib/canvas-chat-reference";
@@ -119,7 +128,7 @@ export function OttoChatStream({
   /** data-error text for the in-flight turn; stays visible after the turn ends. */
   const [streamError, setStreamError] = useState<string | null>(null);
   /** data-error kind; "insufficient_credits" drives the Top-up link. */
-  const [streamErrorKind, setStreamErrorKind] = useState<string | null>(null);
+  const [streamErrorKind, setStreamErrorKind] = useState<OttoErrorData["kind"] | null>(null);
   const [retryDraft, setRetryDraft] = useState<string | null>(null);
   /** Card ids the run paused on (needs_approval) — drives OttoPlanCard's parked vs.
    *  proposed spend path. Mirrors OttoConversation's pendingApprovalCardIds set. */
@@ -959,16 +968,34 @@ export function OttoChatStream({
               );
             }
 
-            if (kind === "DENIAL" || kind === "TURN_ERROR") {
+            if (kind === "DENIAL") {
               return (
                 <div key={m.id} className="flex items-start gap-3" style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}>
                   <OttoAvatar size={26} state="idle" />
                   <div className="rounded-[5px_14px_14px_14px] bg-error-soft px-[13px] py-[10px] text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
-                    {/* DENIAL/TURN_ERROR carry their user-facing copy on the durable
-                        message text, which threadToUiMessages put into the text part. */}
+                    {/* DENIAL carries its user-facing copy on the durable message text. */}
                     {(m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text}
                   </div>
                 </div>
+              );
+            }
+
+            if (kind === "TURN_ERROR") {
+              const durableText =
+                (m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text ?? "";
+              const durableError = persistedStreamErrorOf(m.metadata?.payload, durableText);
+              const failedUserMessageId = persistedStreamErrorUserMessageId(m.metadata?.payload);
+              const durableRetryDraft = durableError.kind === "error" && failedUserMessageId
+                ? thread.messages.find((message) => message.id === failedUserMessageId && message.role === "USER")?.text ?? null
+                : null;
+              return (
+                <OttoStreamErrorNotice
+                  key={m.id}
+                  error={durableError}
+                  retryDraft={durableRetryDraft}
+                  onRetry={(draft) => setText(draft)}
+                  style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}
+                />
               );
             }
 
@@ -1052,20 +1079,13 @@ export function OttoChatStream({
               )),
               ...(partError && !streamError
                 ? [
-                    <div key={`${m.id}:err`} className="flex items-start gap-3" style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}>
-                      <OttoAvatar size={26} state="idle" />
-                      <div role="alert" className="rounded-[5px_14px_14px_14px] bg-error-soft px-[13px] py-[10px] text-[0.875rem] leading-normal text-[var(--error-soft-foreground)]">
-                        {partError.text}
-                        {partError.kind === "insufficient_credits" && (
-                          <>
-                            {" "}
-                            <a href="/billing" className="font-semibold text-[var(--error-soft-foreground)] underline">
-                              Top up
-                            </a>
-                          </>
-                        )}
-                      </div>
-                    </div>,
+                    <OttoStreamErrorNotice
+                      key={`${m.id}:err`}
+                      error={partError}
+                      retryDraft={partError.kind === "error" ? latestUserText(messages.slice(0, mi + 1)) || null : null}
+                      onRetry={(draft) => setText(draft)}
+                      style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}
+                    />,
                   ]
                 : []),
             ];
@@ -1140,44 +1160,19 @@ export function OttoChatStream({
             </div>
           )}
 
-          {/* data-error: stays visible after the turn ends — it's the only user
-              feedback when the route errors before persisting an assistant message
-              (insufficient_credits / run errors surfaced via data-error parts). */}
+          {/* Live data-error. The route also persists the same typed failure as a
+              TURN_ERROR, so remount/refresh rehydrates this exact presentation. */}
           {streamError && (
-            <div
-              role="alert"
-              className="rounded-[14px] bg-error-soft px-4 py-3 text-[0.875rem] text-[var(--error-soft-foreground)]"
-            >
-              {streamError}
-              {streamErrorKind === "insufficient_credits" && (
-                <>
-                  {" "}
-                  <a
-                    href="/billing"
-                    className="font-semibold text-[var(--error-soft-foreground)] underline"
-                  >
-                    Top up
-                  </a>
-                </>
-              )}
-              {streamErrorKind === "error" && retryDraft && (
-                <div className="mt-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => {
-                      setText(retryDraft);
-                      setStreamError(null);
-                      setStreamErrorKind(null);
-                      setRetryDraft(null);
-                    }}
-                  >
-                    Edit and retry
-                  </Button>
-                </div>
-              )}
-            </div>
+            <OttoStreamErrorNotice
+              error={{ kind: streamErrorKind ?? "error", text: streamError }}
+              retryDraft={retryDraft}
+              onRetry={(draft) => {
+                setText(draft);
+                setStreamError(null);
+                setStreamErrorKind(null);
+                setRetryDraft(null);
+              }}
+            />
           )}
 
           {/* useChat transport-level error (network / parse failures distinct from

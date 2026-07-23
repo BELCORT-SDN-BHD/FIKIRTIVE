@@ -17,9 +17,10 @@
  * Response helper: createUIMessageStreamResponse({ stream }).
  *
  * MONEY-SAFETY: withLlmBudget RESERVES inside fn (inside the open SSE stream). If
- * the reserve throws InsufficientCredits, fn is NEVER called → ZERO spend and we
- * persist NO assistant message; we just write a 'data-error' part the client can
- * surface. On any other run failure withLlmBudget refunds the whole reservation.
+ * the reserve throws InsufficientCredits, fn is NEVER called → ZERO spend. We persist
+ * the typed failure beside the already-persisted USER turn, then write the same
+ * 'data-error' part for the live client. On any other run failure withLlmBudget
+ * refunds the whole reservation.
  * Usage is only known after the stream is fully drained, so fn drains the events,
  * awaits result.completed, THEN returns { result, usage } for settlement.
  */
@@ -253,10 +254,21 @@ export async function POST(req: NextRequest): Promise<Response> {
           { meter: withLlmBudget, runAgent: run, maxTurnsExceededError: MaxTurnsExceededError },
         );
       } catch (e) {
-        // Reserve failed (InsufficientCredits): fn NEVER ran → ZERO spend, persist nothing.
+        // Reserve failed (InsufficientCredits): fn NEVER ran → ZERO spend. Persist the
+        // exact typed failure so first-turn navigation/remount and refresh stay honest.
         if (e instanceof InsufficientCredits) {
           closeOpenParts();
-          writer.write({ type: "data-error", data: { kind: "insufficient_credits", text: "You're out of credits." } satisfies OttoErrorData });
+          const error = { kind: "insufficient_credits", text: "You're out of credits." } satisfies OttoErrorData;
+          try {
+            await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, error });
+          } catch (persistError) {
+            console.error("[otto/stream] failed to persist insufficient-credits TURN_ERROR:", {
+              threadId,
+              userMessageId,
+              error: errSummary(persistError),
+            });
+          }
+          writer.write({ type: "data-error", data: error });
           return;
         }
         // MaxTurns: withLlmBudget already settled actual usage (or refunded). Persist the
@@ -282,6 +294,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         // a safe reference id without exposing provider details.
         const errorId = streamTurnErrorId();
         const text = streamTurnErrorText(errorId);
+        const error = { kind: "error", text } satisfies OttoErrorData;
         console.error("[otto/stream] run failed:", {
           errorId,
           threadId,
@@ -291,11 +304,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         });
         closeOpenParts();
         try {
-          await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, errorId, text });
+          await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, errorId, error });
         } catch (persistError) {
           console.error("[otto/stream] failed to persist TURN_ERROR:", { errorId, error: errSummary(persistError) });
         }
-        writer.write({ type: "data-error", data: { kind: "error", text } satisfies OttoErrorData });
+        writer.write({ type: "data-error", data: error });
         return;
       }
 

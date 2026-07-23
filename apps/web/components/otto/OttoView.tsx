@@ -322,8 +322,8 @@ export function OttoView({
         <button
           type="button"
           onClick={onToggleChat}
-          title="Show OTTO"
-          aria-label="Show OTTO"
+          title="Show Otto"
+          aria-label="Show Otto"
           style={{ position: "absolute", top: 54, left: "0.75rem", zIndex: 40, width: 34, height: 34, borderRadius: "10px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "var(--shadow-sm)" }}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden><path d="M13 5l7 7-7 7" /><path d="M4 5v14" /></svg>
@@ -417,8 +417,8 @@ export function OttoView({
           <button
             type="button"
             onClick={onToggleChat}
-            title="Collapse OTTO panel"
-            aria-label="Collapse OTTO panel"
+            title="Collapse Otto panel"
+            aria-label="Collapse Otto panel"
             className="otto-chat-collapse-handle"
             style={{ position: "absolute", left: -13, top: 60, zIndex: 30, width: 26, height: 26, borderRadius: "50%", border: "1px solid var(--border)", background: "var(--card)", color: "var(--muted-foreground)", boxShadow: "var(--shadow-sm)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           >

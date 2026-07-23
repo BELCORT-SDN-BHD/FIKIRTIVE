@@ -96,7 +96,7 @@ function StepRow({ step }: { step: TraceStep }) {
   );
 }
 
-export function OttoTrace({ steps, title = "OTTO is making it" }: { steps: TraceStep[]; title?: string }) {
+export function OttoTrace({ steps, title = "Otto is making it" }: { steps: TraceStep[]; title?: string }) {
   if (!steps.length) return null;
   const total = steps.length;
   const activeIdx = steps.findIndex((s) => s.status === "active");
@@ -183,7 +183,7 @@ export function OttoCanvasStatus({ label }: { label: string }) {
           <circle cx="85" cy="53" r="17" />
         </g>
       </svg>
-      <span style={{ opacity: 0.55 }}>OTTO</span>
+      <span style={{ opacity: 0.55 }}>Otto</span>
       <span style={{ width: 1, height: 13, background: "rgba(255,255,255,.25)" }} />
       <span style={{ color: "#F4A585" }}>{label}</span>
     </div>
