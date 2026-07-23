@@ -133,6 +133,8 @@ const ERROR_COPY: Record<string, string> = {
   IDEMPOTENCY_CONFLICT: "That request was already recorded differently — reload to check the latest state.",
   SEND_PATH_UNAVAILABLE: "Real sending isn't available yet — this workbench only runs simulated sends.",
   INVALID_ARGUMENT: "That request wasn't valid. Please check the values and try again.",
+  TEMPLATE_CHANNEL_MISMATCH: "That template belongs to a different channel account. Choose a matching template.",
+  TEMPLATE_CLASSIFICATION_UNSUPPORTED: "That template cannot be used for a broadcast because its purpose is unavailable.",
 };
 
 export function errorMessage(code: string): string {

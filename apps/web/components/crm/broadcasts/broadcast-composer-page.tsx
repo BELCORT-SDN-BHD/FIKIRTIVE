@@ -14,8 +14,6 @@ type OptionsSuccess = Extract<OptionsResult, { ok: true }>;
 type Options = OptionsSuccess["resource"];
 type DirectoryResult = Awaited<ReturnType<typeof getMemberDirectory>>;
 
-const PURPOSES = ["marketing", "review_request"] as const;
-
 const selectClass =
   "min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm text-foreground shadow-[var(--shadow-xs)] focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
 
@@ -46,7 +44,6 @@ export default function BroadcastComposerPage({
   // A stable key for this composer instance so a double-submit never creates two runs.
   const [idempotencyKey] = useState(() => `bc-${crypto.randomUUID()}`);
   const [channelScopeId, setChannelScopeId] = useState("");
-  const [purpose, setPurpose] = useState<(typeof PURPOSES)[number]>("marketing");
   const [templateVersionId, setTemplateVersionId] = useState("");
   const [campaignId, setCampaignId] = useState("");
   const [segmentId, setSegmentId] = useState("");
@@ -76,8 +73,10 @@ export default function BroadcastComposerPage({
   const templatesForScope = options.templateVersions.filter(
     (v) => !selectedScope || v.template.channelScopeId === selectedScope.id,
   );
+  const selectedTemplate = templatesForScope.find((v) => v.id === templateVersionId) ?? null;
+  const selectedPurpose = selectedTemplate?.broadcastPurpose ?? null;
 
-  const canSubmit = Boolean(channelScopeId && segmentId) && !submitting;
+  const canSubmit = Boolean(channelScopeId && segmentId && selectedPurpose) && !submitting;
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -88,8 +87,7 @@ export default function BroadcastComposerPage({
       const result = await createBroadcastRun({
         channelScopeId: selectedScope.id,
         channel: selectedScope.channel,
-        purpose,
-        templateVersionId: templateVersionId || null,
+        templateVersionId,
         campaignId: campaignId || null,
         creationIdempotencyKey: idempotencyKey,
       });
@@ -116,7 +114,7 @@ export default function BroadcastComposerPage({
           <span className="grid size-11 place-items-center rounded-xl bg-brand-soft text-brand"><Megaphone className="size-5" /></span>
           <div>
             <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">New broadcast</h1>
-            <p className="text-sm text-muted-foreground">Choose the channel, purpose, template, and audience. Nothing is sent — the next step is a simulated run.</p>
+            <p className="text-sm text-muted-foreground">Choose the channel, template, and audience. Nothing is sent — the next step is a simulated run.</p>
           </div>
         </div>
 
@@ -135,22 +133,24 @@ export default function BroadcastComposerPage({
           </label>
 
           <label className="grid gap-2">
-            <span className="text-sm font-semibold">Purpose</span>
-            <select className={selectClass} value={purpose} onChange={(e) => setPurpose(e.target.value as (typeof PURPOSES)[number])} disabled={submitting}>
-              {PURPOSES.map((p) => <option key={p} value={p}>{purposeLabel(p)}</option>)}
-            </select>
-            <span className="text-xs text-muted-foreground">Both broadcast purposes are proactive and count against the frequency cap.</span>
-          </label>
-
-          <label className="grid gap-2">
-            <span className="text-sm font-semibold">Template version <span className="font-normal text-muted-foreground">(optional)</span></span>
+            <span className="text-sm font-semibold">Template version</span>
             <select className={selectClass} value={templateVersionId} onChange={(e) => setTemplateVersionId(e.target.value)} disabled={submitting}>
-              <option value="">No template</option>
+              <option value="">Select a template…</option>
               {templatesForScope.map((v) => (
-                <option key={v.id} value={v.id}>{v.template.name} · v{v.revision} ({v.category})</option>
+                <option key={v.id} value={v.id} disabled={!v.broadcastPurpose}>
+                  {v.template.name} · v{v.revision} ({v.broadcastPurpose ? purposeLabel(v.broadcastPurpose) : "Unavailable"})
+                </option>
               ))}
             </select>
           </label>
+
+          <div className="grid gap-2">
+            <span className="text-sm font-semibold">Purpose</span>
+            <div className={`${selectClass} flex items-center`} aria-live="polite">
+              {selectedPurpose ? purposeLabel(selectedPurpose) : "Select a template to see its purpose"}
+            </div>
+            <span className="text-xs text-muted-foreground">Purpose comes from the template&apos;s stored classification and cannot be changed here.</span>
+          </div>
 
           <label className="grid gap-2">
             <span className="text-sm font-semibold">Campaign <span className="font-normal text-muted-foreground">(optional grouping)</span></span>

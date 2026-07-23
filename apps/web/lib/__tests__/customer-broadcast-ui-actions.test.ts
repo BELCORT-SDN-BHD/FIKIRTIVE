@@ -23,11 +23,15 @@ const ORG_A = "c5-m3-ui-test-org-a";
 const USER_OWNER = "c5-m3-ui-test-user-owner";
 const OWNER = "c5-m3-ui-test-owner";
 const SCOPE_A = "c5-m3-ui-test-scope-a";
+const TEMPLATE_A = "c5-m3-ui-test-template-a";
+const TEMPLATE_VERSION_A = "c5-m3-ui-test-template-version-a";
 const NOW = new Date("2026-07-21T08:00:00.000Z");
 
 async function cleanup(): Promise<void> {
   await prisma.broadcastAudienceMember.deleteMany({ where: { ownerId: ORG_A } });
   await prisma.broadcastRun.deleteMany({ where: { ownerId: ORG_A } });
+  await prisma.customerMessageTemplateVersion.deleteMany({ where: { ownerId: ORG_A } });
+  await prisma.customerMessageTemplate.deleteMany({ where: { ownerId: ORG_A } });
   await prisma.channelScope.deleteMany({ where: { ownerId: ORG_A } });
   await prisma.membership.deleteMany({ where: { orgId: ORG_A } });
   await prisma.organization.deleteMany({ where: { id: ORG_A } });
@@ -39,6 +43,29 @@ async function seed(): Promise<void> {
   await prisma.user.create({ data: { id: USER_OWNER, email: "c5-m3-ui-owner@example.test" } });
   await prisma.membership.create({ data: { id: OWNER, userId: USER_OWNER, orgId: ORG_A, role: "owner" } });
   await prisma.channelScope.create({ data: { id: SCOPE_A, ownerId: ORG_A, channel: "whatsapp", scopeKey: "waba-a", createdAt: NOW } });
+  await prisma.customerMessageTemplate.create({
+    data: {
+      id: TEMPLATE_A,
+      ownerId: ORG_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      name: "offer_a",
+      locale: "en_MY",
+    },
+  });
+  await prisma.customerMessageTemplateVersion.create({
+    data: {
+      id: TEMPLATE_VERSION_A,
+      ownerId: ORG_A,
+      templateId: TEMPLATE_A,
+      revision: 1,
+      purposeClass: "proactive_non_transactional",
+      category: "marketing",
+      definitionJson: { schemaVersion: 1, body: "Offer A", variables: [] },
+      contentHash: "template-a",
+      createdByMembershipId: OWNER,
+    },
+  });
 }
 
 beforeEach(async () => {
@@ -61,7 +88,7 @@ describe("customer-broadcast-ui-actions wrapper", () => {
     const result = await customerBroadcastUiActions.createBroadcastRun({
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m3-ui-create",
     });
     expect(result).toMatchObject({ ok: true, duplicate: false, resource: { status: "draft" } });

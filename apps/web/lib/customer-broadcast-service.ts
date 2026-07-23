@@ -12,6 +12,10 @@ import {
   type Prisma,
   type SendEligibilityResult,
 } from "@fikirtive/db";
+import {
+  broadcastPurposeFromTemplateClassification,
+  type BroadcastPurpose,
+} from "./customer-broadcast-purpose";
 
 /**
  * C5 broadcast domain actions. Spec:
@@ -45,6 +49,8 @@ export const CUSTOMER_BROADCAST_ERROR_CODES = {
   IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_CONFLICT",
   SEND_PATH_UNAVAILABLE: "SEND_PATH_UNAVAILABLE",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
+  TEMPLATE_CHANNEL_MISMATCH: "TEMPLATE_CHANNEL_MISMATCH",
+  TEMPLATE_CLASSIFICATION_UNSUPPORTED: "TEMPLATE_CLASSIFICATION_UNSUPPORTED",
   // Re-freeze found a stale member that had already advanced past `pending` — impossible under
   // the status gating (freeze is draft/audience_frozen only, sends need confirmed/executing), so
   // it signals corruption: fail closed and roll back rather than delete a member with send state.
@@ -66,10 +72,6 @@ export type CustomerBroadcastPrincipal = {
   membershipId: string;
   impersonating?: boolean;
 };
-
-/** The two proactive purposes a broadcast run may ever carry (§5.2; transactional never broadcasts). */
-const BROADCAST_PURPOSES = ["marketing", "review_request"] as const;
-export type BroadcastPurpose = (typeof BROADCAST_PURPOSES)[number];
 
 const BROADCAST_STATUSES_ALLOWING_FREEZE = new Set(["draft", "audience_frozen"]);
 const BROADCAST_STATUSES_ALLOWING_CONFIRM = new Set(["audience_frozen"]);
@@ -97,9 +99,8 @@ export type BroadcastRunIdInput = { broadcastRunId: string };
 export type CreateBroadcastRunInput = {
   channelScopeId: string;
   channel: string;
-  purpose: BroadcastPurpose;
   campaignId?: string | null;
-  templateVersionId?: string | null;
+  templateVersionId: string;
   creationIdempotencyKey: string;
 };
 
@@ -119,7 +120,7 @@ export type PreviewAudienceEligibilityInput = {
   segmentId: string;
   channelScopeId: string;
   channel: string;
-  purpose: BroadcastPurpose;
+  templateVersionId: string;
   limit?: number;
 };
 
@@ -152,9 +153,14 @@ function optionalString(value: unknown, max: number): string | null {
   return requiredString(value, max);
 }
 
-function requiredPurpose(value: unknown): BroadcastPurpose {
-  if (!(BROADCAST_PURPOSES as readonly string[]).includes(value as string)) fail("INVALID_ARGUMENT");
-  return value as BroadcastPurpose;
+function rejectClientPurpose(value: unknown): void {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    Object.prototype.hasOwnProperty.call(value, "purpose")
+  ) {
+    fail("INVALID_ARGUMENT");
+  }
 }
 
 function revision(value: unknown): number {
@@ -283,6 +289,33 @@ export function createCustomerBroadcastService(
     return connection?.id ?? null;
   }
 
+  async function requireBroadcastTemplate(
+    client: DatabaseClient,
+    ownerId: string,
+    templateVersionId: string,
+    channelScopeId: string,
+    channel: string,
+  ): Promise<BroadcastPurpose> {
+    const version = await client.customerMessageTemplateVersion.findFirst({
+      where: { id: templateVersionId, ownerId },
+      select: {
+        category: true,
+        purposeClass: true,
+        template: { select: { channelScopeId: true, channel: true } },
+      },
+    });
+    if (!version) fail("RESOURCE_NOT_FOUND");
+    if (
+      version.template.channelScopeId !== channelScopeId ||
+      version.template.channel !== channel
+    ) {
+      fail("TEMPLATE_CHANNEL_MISMATCH");
+    }
+    const purpose = broadcastPurposeFromTemplateClassification(version);
+    if (!purpose) fail("TEMPLATE_CLASSIFICATION_UNSUPPORTED");
+    return purpose;
+  }
+
   /**
    * Live segment-audience resolution shared by previewAudienceEligibility (no writes) and
    * freezeAudience (writes a frozen snapshot). Mirrors segment-actions.ts's contact/segment
@@ -397,10 +430,11 @@ export function createCustomerBroadcastService(
     input: PreviewAudienceEligibilityInput,
   ) {
     await requireReadMembership(principal);
+    rejectClientPurpose(input);
     const segmentId = requiredString(input?.segmentId, MAX_TEXT);
     const channelScopeId = requiredString(input?.channelScopeId, MAX_TEXT);
     const channel = requiredToken(input?.channel, 64);
-    const purpose = requiredPurpose(input?.purpose);
+    const templateVersionId = requiredString(input?.templateVersionId, MAX_TEXT);
     const take = limit(input?.limit);
 
     const scope = await db.channelScope.findFirst({
@@ -408,6 +442,13 @@ export function createCustomerBroadcastService(
       select: { id: true },
     });
     if (!scope) fail("RESOURCE_NOT_FOUND");
+    const purpose = await requireBroadcastTemplate(
+      db,
+      principal.ownerId,
+      templateVersionId,
+      channelScopeId,
+      channel,
+    );
 
     const candidates = (await resolveSegmentAudience(db, principal.ownerId, segmentId, channel, purpose)).slice(0, take);
     const providerConnectionId = await resolveProviderConnectionId(db, principal.ownerId, channelScopeId, channel);
@@ -426,7 +467,7 @@ export function createCustomerBroadcastService(
       // §3.2 unknown-not-culled: every matched candidate stays included regardless of verdict.
       members.push({ ...candidate, verdict, includedByMerchant: true });
     }
-    return { candidateCount: candidates.length, members };
+    return { candidateCount: candidates.length, members, purpose };
   }
 
   /**
@@ -439,11 +480,11 @@ export function createCustomerBroadcastService(
     input: CreateBroadcastRunInput,
   ) {
     await requireOwnerMutationMembership(principal);
+    rejectClientPurpose(input);
     const channelScopeId = requiredString(input?.channelScopeId, MAX_TEXT);
     const channel = requiredToken(input?.channel, 64);
-    const purpose = requiredPurpose(input?.purpose);
     const campaignId = optionalString(input?.campaignId, MAX_TEXT);
-    const templateVersionId = optionalString(input?.templateVersionId, MAX_TEXT);
+    const templateVersionId = requiredString(input?.templateVersionId, MAX_TEXT);
     const creationIdempotencyKey = requiredString(input?.creationIdempotencyKey, MAX_TEXT);
     const at = now();
 
@@ -465,13 +506,13 @@ export function createCustomerBroadcastService(
         });
         if (!campaign) fail("RESOURCE_NOT_FOUND");
       }
-      if (templateVersionId) {
-        const version = await tx.customerMessageTemplateVersion.findFirst({
-          where: { id: templateVersionId, ownerId: principal.ownerId },
-          select: { id: true },
-        });
-        if (!version) fail("RESOURCE_NOT_FOUND");
-      }
+      const purpose = await requireBroadcastTemplate(
+        tx,
+        principal.ownerId,
+        templateVersionId,
+        channelScopeId,
+        channel,
+      );
 
       const existing = await tx.broadcastRun.findFirst({
         where: { ownerId: principal.ownerId, creationIdempotencyKey },
@@ -793,7 +834,15 @@ export function createCustomerBroadcastService(
         select: { id: true, name: true, status: true },
       }),
     ]);
-    return { channelScopes, segments, templateVersions, campaigns };
+    return {
+      channelScopes,
+      segments,
+      templateVersions: templateVersions.map((version) => ({
+        ...version,
+        broadcastPurpose: broadcastPurposeFromTemplateClassification(version),
+      })),
+      campaigns,
+    };
   }
 
   /**

@@ -32,6 +32,7 @@ const CONTACT_A_OPTOUT = "c5-m2-test-contact-a-optout";
 const CONTACT_GRANT = "c5-m2-test-contact-grant";
 const CONTACT_B = "c5-m2-test-contact-b";
 const SCOPE_A = "c5-m2-test-scope-a";
+const SCOPE_A_OTHER = "c5-m2-test-scope-a-other";
 const SCOPE_B = "c5-m2-test-scope-b";
 const IDENTITY_A = "c5-m2-test-identity-a";
 const IDENTITY_A_OPTOUT = "c5-m2-test-identity-a-optout";
@@ -40,6 +41,16 @@ const IDENTITY_B = "c5-m2-test-identity-b";
 const SEGMENT_A = "c5-m2-test-segment-a";
 const SEGMENT_B = "c5-m2-test-segment-b";
 const CAMPAIGN_B = "c5-m2-test-campaign-b";
+const TEMPLATE_A = "c5-m2-test-template-a";
+const TEMPLATE_A_ALT = "c5-m2-test-template-a-alt";
+const TEMPLATE_A_UNMAPPABLE = "c5-m2-test-template-a-unmappable";
+const TEMPLATE_A_OTHER_SCOPE = "c5-m2-test-template-a-other-scope";
+const TEMPLATE_B = "c5-m2-test-template-b";
+const TEMPLATE_VERSION_A = "c5-m2-test-template-version-a";
+const TEMPLATE_VERSION_A_ALT = "c5-m2-test-template-version-a-alt";
+const TEMPLATE_VERSION_A_UNMAPPABLE = "c5-m2-test-template-version-a-unmappable";
+const TEMPLATE_VERSION_A_OTHER_SCOPE = "c5-m2-test-template-version-a-other-scope";
+const TEMPLATE_VERSION_B = "c5-m2-test-template-version-b";
 const NOW = new Date("2026-07-21T08:00:00.000Z");
 const OWNERS = [ORG_A, ORG_B];
 
@@ -143,7 +154,76 @@ async function seed(): Promise<void> {
   await prisma.channelScope.createMany({
     data: [
       { id: SCOPE_A, ownerId: ORG_A, channel: "whatsapp", scopeKey: "waba-a" },
+      { id: SCOPE_A_OTHER, ownerId: ORG_A, channel: "whatsapp", scopeKey: "waba-a-other" },
       { id: SCOPE_B, ownerId: ORG_B, channel: "whatsapp", scopeKey: "waba-b" },
+    ],
+  });
+  await prisma.customerMessageTemplate.createMany({
+    data: [
+      { id: TEMPLATE_A, ownerId: ORG_A, channelScopeId: SCOPE_A, channel: "whatsapp", name: "offer_a", locale: "en_MY" },
+      { id: TEMPLATE_A_ALT, ownerId: ORG_A, channelScopeId: SCOPE_A, channel: "whatsapp", name: "offer_a_alt", locale: "en_MY" },
+      { id: TEMPLATE_A_UNMAPPABLE, ownerId: ORG_A, channelScopeId: SCOPE_A, channel: "whatsapp", name: "utility_a", locale: "en_MY" },
+      { id: TEMPLATE_A_OTHER_SCOPE, ownerId: ORG_A, channelScopeId: SCOPE_A_OTHER, channel: "whatsapp", name: "offer_a_other_scope", locale: "en_MY" },
+      { id: TEMPLATE_B, ownerId: ORG_B, channelScopeId: SCOPE_B, channel: "whatsapp", name: "offer_b", locale: "en_MY" },
+    ],
+  });
+  await prisma.customerMessageTemplateVersion.createMany({
+    data: [
+      {
+        id: TEMPLATE_VERSION_A,
+        ownerId: ORG_A,
+        templateId: TEMPLATE_A,
+        revision: 1,
+        purposeClass: "proactive_non_transactional",
+        category: "marketing",
+        definitionJson: { schemaVersion: 1, body: "Offer A", variables: [] },
+        contentHash: "template-a",
+        createdByMembershipId: OWNER,
+      },
+      {
+        id: TEMPLATE_VERSION_A_ALT,
+        ownerId: ORG_A,
+        templateId: TEMPLATE_A_ALT,
+        revision: 1,
+        purposeClass: "proactive_non_transactional",
+        category: "marketing",
+        definitionJson: { schemaVersion: 1, body: "Offer A alt", variables: [] },
+        contentHash: "template-a-alt",
+        createdByMembershipId: OWNER,
+      },
+      {
+        id: TEMPLATE_VERSION_A_UNMAPPABLE,
+        ownerId: ORG_A,
+        templateId: TEMPLATE_A_UNMAPPABLE,
+        revision: 1,
+        purposeClass: "transactional",
+        category: "utility",
+        definitionJson: { schemaVersion: 1, body: "Utility A", variables: [] },
+        contentHash: "template-a-unmappable",
+        createdByMembershipId: OWNER,
+      },
+      {
+        id: TEMPLATE_VERSION_A_OTHER_SCOPE,
+        ownerId: ORG_A,
+        templateId: TEMPLATE_A_OTHER_SCOPE,
+        revision: 1,
+        purposeClass: "proactive_non_transactional",
+        category: "marketing",
+        definitionJson: { schemaVersion: 1, body: "Offer A other scope", variables: [] },
+        contentHash: "template-a-other-scope",
+        createdByMembershipId: OWNER,
+      },
+      {
+        id: TEMPLATE_VERSION_B,
+        ownerId: ORG_B,
+        templateId: TEMPLATE_B,
+        revision: 1,
+        purposeClass: "proactive_non_transactional",
+        category: "marketing",
+        definitionJson: { schemaVersion: 1, body: "Offer B", variables: [] },
+        contentHash: "template-b",
+        createdByMembershipId: MEMBER_B,
+      },
     ],
   });
   await prisma.contactIdentity.createMany({
@@ -219,7 +299,7 @@ async function createFrozenConfirmedRun(key: string, segmentId = SEGMENT_A) {
   const created = await broadcast.createBroadcastRun(owner, {
     channelScopeId: SCOPE_A,
     channel: "whatsapp",
-    purpose: "marketing",
+    templateVersionId: TEMPLATE_VERSION_A,
     creationIdempotencyKey: key,
   });
   const frozen = await broadcast.freezeAudience(owner, {
@@ -255,7 +335,7 @@ describe("C5-M2 createBroadcastRun", () => {
     const input = {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing" as const,
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-create-key-1",
     };
     const first = await broadcast.createBroadcastRun(owner, input);
@@ -275,14 +355,14 @@ describe("C5-M2 createBroadcastRun", () => {
     await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: key,
     });
     await expectCode(
       broadcast.createBroadcastRun(owner, {
         channelScopeId: SCOPE_A,
         channel: "whatsapp",
-        purpose: "review_request",
+        templateVersionId: TEMPLATE_VERSION_A_ALT,
         creationIdempotencyKey: key,
       }),
       "IDEMPOTENCY_CONFLICT",
@@ -295,9 +375,18 @@ describe("C5-M2 createBroadcastRun", () => {
       broadcast.createBroadcastRun(owner, {
         channelScopeId: SCOPE_A,
         channel: "whatsapp",
-        purpose: "marketing",
+        templateVersionId: TEMPLATE_VERSION_A,
         campaignId: CAMPAIGN_B,
         creationIdempotencyKey: "c5-m2-test-foreign-campaign",
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+    await expectCode(
+      broadcast.createBroadcastRun(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_B,
+        creationIdempotencyKey: "c5-m2-test-foreign-template",
       }),
       "RESOURCE_NOT_FOUND",
     );
@@ -310,12 +399,96 @@ describe("C5-M2 createBroadcastRun", () => {
         broadcast.createBroadcastRun(principal, {
           channelScopeId: SCOPE_A,
           channel: "whatsapp",
-          purpose: "marketing",
+          templateVersionId: TEMPLATE_VERSION_A,
           creationIdempotencyKey: `c5-m2-test-rbac-${principal.membershipId}`,
         }),
         "ACTION_DENIED",
       );
     }
+  });
+
+  it("rejects forged client purpose on create and preview", async () => {
+    const forgedCreate = {
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      templateVersionId: TEMPLATE_VERSION_A,
+      creationIdempotencyKey: "c5-m2-test-forged-create",
+      purpose: "review_request",
+    };
+    await expectCode(broadcast.createBroadcastRun(owner, forgedCreate as never), "INVALID_ARGUMENT");
+    const forgedPreview = {
+      segmentId: SEGMENT_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      templateVersionId: TEMPLATE_VERSION_A,
+      purpose: "review_request",
+    };
+    await expectCode(
+      broadcast.previewAudienceEligibility(owner, forgedPreview as never),
+      "INVALID_ARGUMENT",
+    );
+    expect(await ownerCounts()).toEqual({ runs: 0, members: 0 });
+  });
+
+  it("derives the same purpose from the template for preview and create", async () => {
+    const preview = await broadcast.previewAudienceEligibility(owner, {
+      segmentId: SEGMENT_A,
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      templateVersionId: TEMPLATE_VERSION_A,
+    });
+    const created = await broadcast.createBroadcastRun(owner, {
+      channelScopeId: SCOPE_A,
+      channel: "whatsapp",
+      templateVersionId: TEMPLATE_VERSION_A,
+      creationIdempotencyKey: "c5-m2-test-derived-purpose",
+    });
+    expect(preview.purpose).toBe("marketing");
+    expect(created.resource.purpose).toBe(preview.purpose);
+  });
+
+  it("fails closed on an unmappable template classification for create and preview", async () => {
+    await expectCode(
+      broadcast.createBroadcastRun(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A_UNMAPPABLE,
+        creationIdempotencyKey: "c5-m2-test-unmappable",
+      }),
+      "TEMPLATE_CLASSIFICATION_UNSUPPORTED",
+    );
+    await expectCode(
+      broadcast.previewAudienceEligibility(owner, {
+        segmentId: SEGMENT_A,
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A_UNMAPPABLE,
+      }),
+      "TEMPLATE_CLASSIFICATION_UNSUPPORTED",
+    );
+    expect(await ownerCounts()).toEqual({ runs: 0, members: 0 });
+  });
+
+  it("fails closed when the template belongs to another channel scope", async () => {
+    await expectCode(
+      broadcast.createBroadcastRun(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A_OTHER_SCOPE,
+        creationIdempotencyKey: "c5-m2-test-template-scope",
+      }),
+      "TEMPLATE_CHANNEL_MISMATCH",
+    );
+    await expectCode(
+      broadcast.previewAudienceEligibility(owner, {
+        segmentId: SEGMENT_A,
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A_OTHER_SCOPE,
+      }),
+      "TEMPLATE_CHANNEL_MISMATCH",
+    );
+    expect(await ownerCounts()).toEqual({ runs: 0, members: 0 });
   });
 });
 
@@ -324,7 +497,7 @@ describe("C5-M2 freezeAudience — unknown consent stays in audience, never cull
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-freeze-1",
     });
     const frozen = await broadcast.freezeAudience(owner, {
@@ -352,7 +525,7 @@ describe("C5-M2 freezeAudience — unknown consent stays in audience, never cull
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-refreeze",
     });
     const first = await broadcast.freezeAudience(owner, {
@@ -377,7 +550,7 @@ describe("C5-M2 freezeAudience — unknown consent stays in audience, never cull
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-freeze-cas",
     });
     const before = await ownerCounts();
@@ -427,7 +600,7 @@ describe("C5-M2 frozen snapshot is display/audit-only, never live authority", ()
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-frozen-snapshot",
     });
     const frozen = await broadcast.freezeAudience(owner, {
@@ -467,7 +640,7 @@ describe("C5-M2 frozen snapshot is display/audit-only, never live authority", ()
       segmentId: SEGMENT_A,
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
     });
     expect(freshPreview.members.map((m) => m.contactIdentityId)).not.toContain(IDENTITY_A);
   });
@@ -478,7 +651,7 @@ describe("C5-M2 confirmBroadcastRun / cancelBroadcastRun lifecycle", () => {
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-confirm-1",
     });
     await expectCode(
@@ -502,7 +675,7 @@ describe("C5-M2 confirmBroadcastRun / cancelBroadcastRun lifecycle", () => {
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-cancel-1",
     });
     const cancelled = await broadcast.cancelBroadcastRun(owner, {
@@ -522,7 +695,7 @@ describe("C5-M2 submitBroadcastRun — hard-disabled chokepoint", () => {
     const run = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-submit-1",
     });
     const before = await ownerCounts();
@@ -538,7 +711,7 @@ describe("C5-M2 submitBroadcastRun — hard-disabled chokepoint", () => {
       {
         channelScopeId: SCOPE_B,
         channel: "whatsapp",
-        purpose: "marketing",
+        templateVersionId: TEMPLATE_VERSION_B,
         creationIdempotencyKey: "c5-m2-test-b-run",
       },
     );
@@ -599,7 +772,7 @@ describe("C5-M3 ledger #35: audience estimate derives from ConsentStateProjectio
       segmentId: SEGMENT_A,
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
     });
     expect(preview.members.map((m) => m.contactIdentityId)).toContain(IDENTITY_A_OPTOUT);
   });
@@ -615,7 +788,7 @@ describe("C5-M3 ledger #35: audience estimate derives from ConsentStateProjectio
       segmentId: SEGMENT_A,
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
     });
     expect(preview.members.map((m) => m.contactIdentityId)).not.toContain(IDENTITY_GRANT);
   });
@@ -625,7 +798,7 @@ describe("C5-M3 ledger #35: audience estimate derives from ConsentStateProjectio
       segmentId: SEGMENT_A,
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
     });
     const kept = preview.members.find((m) => m.contactIdentityId === IDENTITY_A)!;
     expect(kept.includedByMerchant).toBe(true); // estimate keeps unknown (flag + keep)
@@ -753,7 +926,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     const created = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m3-status",
     });
     await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: created.resource.id, expectedRevision: 0 }), "ACTION_DENIED");
@@ -786,7 +959,12 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
   it("treats a foreign run as RESOURCE_NOT_FOUND on execute, zero writes", async () => {
     const foreign = await broadcast.createBroadcastRun(
       { ownerId: ORG_B, membershipId: MEMBER_B, impersonating: false },
-      { channelScopeId: SCOPE_B, channel: "whatsapp", purpose: "marketing", creationIdempotencyKey: "c5-m3-foreign" },
+      {
+        channelScopeId: SCOPE_B,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_B,
+        creationIdempotencyKey: "c5-m3-foreign",
+      },
     );
     await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: foreign.resource.id, expectedRevision: 0 }), "RESOURCE_NOT_FOUND");
     expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: { in: OWNERS } } })).toBe(0);
@@ -817,7 +995,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     const created = await broadcast.createBroadcastRun(owner, {
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m3-prune",
     });
     // Wide freeze: SEGMENT_A matches CONTACT_A (unknown, kept) + CONTACT_GRANT.
@@ -922,7 +1100,7 @@ describe("C5-M2 cross-tenant ID swaps", () => {
       {
         channelScopeId: SCOPE_B,
         channel: "whatsapp",
-        purpose: "marketing",
+        templateVersionId: TEMPLATE_VERSION_B,
         creationIdempotencyKey: "c5-m2-test-cross-b-run",
       },
     );
@@ -954,7 +1132,7 @@ describe("C5-M2 cross-tenant ID swaps", () => {
         segmentId: SEGMENT_B,
         channelScopeId: SCOPE_A,
         channel: "whatsapp",
-        purpose: "marketing",
+        templateVersionId: TEMPLATE_VERSION_A,
       }),
       "RESOURCE_NOT_FOUND",
     );
@@ -992,7 +1170,7 @@ describe("C5-M2 gateway principal resolution", () => {
     const result = await customerBroadcastGateway.createBroadcastRun({
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-gateway-create",
     });
     expect(result).toMatchObject({ ok: true, duplicate: false, resource: { status: "draft" } });
@@ -1002,7 +1180,7 @@ describe("C5-M2 gateway principal resolution", () => {
     const run = await customerBroadcastGateway.createBroadcastRun({
       channelScopeId: SCOPE_A,
       channel: "whatsapp",
-      purpose: "marketing",
+      templateVersionId: TEMPLATE_VERSION_A,
       creationIdempotencyKey: "c5-m2-test-gateway-submit",
     });
     await expect(
