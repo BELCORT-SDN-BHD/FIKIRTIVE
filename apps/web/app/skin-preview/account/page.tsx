@@ -29,7 +29,7 @@ export default function AccountPreview() {
   return (
     <div className="fk gb-skin" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK" } satisfies AccountViewData} />
+        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK", canPublish: false } satisfies AccountViewData} />
       </div>
     </div>
   );

@@ -28,7 +28,15 @@ const account: AccountInfo = {
   recent: [],
 };
 
-function sections(connected: boolean, autoPublish = false) {
+function sections({
+  connected,
+  canPublish,
+  autoPublish = false,
+}: {
+  connected: boolean;
+  canPublish: boolean;
+  autoPublish?: boolean;
+}) {
   return buildSettingsSections({
     account,
     settings: { ...DEFAULT_SETTINGS, autoPublish },
@@ -41,6 +49,7 @@ function sections(connected: boolean, autoPublish = false) {
     }],
     packs: [],
     adsAutonomy: "ASK",
+    canPublish,
     onDeleteAccountRequest: vi.fn(),
   });
 }
@@ -59,17 +68,56 @@ beforeEach(() => {
 
 describe("account settings honesty", () => {
   it("disables auto-publish and explains the Meta approval gate without a connection", () => {
-    const autoPublish = fieldById(sections(false), "otto", "autopub");
+    const autoPublish = fieldById(
+      sections({ connected: false, canPublish: false }),
+      "otto",
+      "autopub",
+    );
     expect(autoPublish).toMatchObject({
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Meta first; auto-publish turns on once Meta approves publishing.",
+      hint: "Connect Meta first — auto-publish unlocks once Meta approves publishing.",
     });
   });
 
-  it("keeps connected auto-publish behavior unchanged", async () => {
-    const autoPublish = fieldById(sections(true, true), "otto", "autopub");
+  it("renders a persisted true setting as checked and disabled with zero connections", () => {
+    const autoPublish = fieldById(
+      sections({ connected: false, canPublish: false, autoPublish: true }),
+      "otto",
+      "autopub",
+    );
+    expect(autoPublish).toMatchObject({ kind: "toggle", value: true, disabled: true });
+    const markup = renderToStaticMarkup(
+      createElement(SettingsPage, {
+        sections: [{ id: "otto", title: "Otto behavior", fields: [autoPublish] }],
+      }),
+    );
+    expect(markup).toContain('role="switch"');
+    expect(markup).toContain('aria-checked="true"');
+    expect(markup).toContain("disabled");
+  });
+
+  it("keeps auto-publish disabled until the connected Meta account is approved", () => {
+    const autoPublish = fieldById(
+      sections({ connected: true, canPublish: false }),
+      "otto",
+      "autopub",
+    );
+    expect(autoPublish).toMatchObject({
+      kind: "toggle",
+      value: false,
+      disabled: true,
+      hint: "Connect Meta first — auto-publish unlocks once Meta approves publishing.",
+    });
+  });
+
+  it("keeps approved connected auto-publish behavior unchanged", async () => {
+    const autoPublish = fieldById(
+      sections({ connected: true, canPublish: true, autoPublish: true }),
+      "otto",
+      "autopub",
+    );
     expect(autoPublish).toMatchObject({
       kind: "toggle",
       value: true,
@@ -82,7 +130,11 @@ describe("account settings honesty", () => {
   });
 
   it("renders the authenticated organization name in the Workspace field", () => {
-    const workspace = fieldById(sections(true), "profile", "workspace");
+    const workspace = fieldById(
+      sections({ connected: true, canPublish: true }),
+      "profile",
+      "workspace",
+    );
     expect(workspace).toMatchObject({ kind: "text", value: "Acme Studio", readOnly: true });
     const markup = renderToStaticMarkup(
       createElement(SettingsPage, {

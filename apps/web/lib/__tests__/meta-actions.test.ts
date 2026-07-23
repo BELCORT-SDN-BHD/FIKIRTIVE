@@ -173,11 +173,11 @@ describe("getMetaConnection", () => {
     mockFindUnique.mockResolvedValue(null);
     expect(await getMetaConnection()).toEqual({ connected: false });
   });
-  it("returns accounts, adsAutonomy, canWrite, adsWritesPaused and NEVER the token", async () => {
+  it("returns owner-scoped canPublish with the account view and NEVER the token", async () => {
     // first findUnique: status+meta fields; second findUnique (inside getMyAdAccounts): full row with enc token
     const { encryptToken } = await import("../token-encryption");
     mockFindUnique
-      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: true, adsWritesPaused: false, canManagePages: false, defaultPageId: null })
+      .mockResolvedValueOnce({ status: "active", adsAutonomy: "ASK", canWrite: true, adsWritesPaused: false, canManagePages: false, canPublish: true, defaultPageId: null })
       .mockResolvedValueOnce({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
     mockFetch.mockResolvedValueOnce(jsonRes({ data: [{ account_id: "act_1", name: "Kaia Cafe", currency: "MYR", account_status: 1 }] }));
     const res = await getMetaConnection();
@@ -188,11 +188,24 @@ describe("getMetaConnection", () => {
       canWrite: true,
       adsWritesPaused: false,
       canManagePages: false,
+      canPublish: true,
       defaultPageId: null,
       accounts: [{ id: "act_1", name: "Kaia Cafe", currency: "MYR", status: "1" }],
     });
     expect(JSON.stringify(res)).not.toContain("LONGTOKEN");
     expect(JSON.stringify(res)).not.toContain("accessTokenEnc");
+    expect(mockFindUnique).toHaveBeenNthCalledWith(1, {
+      where: { ownerId: "u1" },
+      select: {
+        status: true,
+        adsAutonomy: true,
+        canWrite: true,
+        adsWritesPaused: true,
+        canManagePages: true,
+        canPublish: true,
+        defaultPageId: true,
+      },
+    });
   });
   it("flags needsReconnect + marks expired on a Graph auth error", async () => {
     const { encryptToken } = await import("../token-encryption");
@@ -202,7 +215,7 @@ describe("getMetaConnection", () => {
     mockFetch.mockResolvedValueOnce(jsonRes({ error: { message: "invalid token", code: 190 } }, false));
     mockUpdate.mockResolvedValue({});
     const res = await getMetaConnection();
-    expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true, adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, defaultPageId: null });
+    expect(res).toEqual({ connected: true, status: "expired", needsReconnect: true, adsAutonomy: "ASK", canWrite: false, adsWritesPaused: false, canManagePages: false, canPublish: false, defaultPageId: null });
     expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: { ownerId: "u1" }, data: { status: "expired" } }));
   });
   it("F37: a transient Graph failure (network throw) reports transientError, NOT needsReconnect, and does NOT mark expired", async () => {
@@ -220,6 +233,7 @@ describe("getMetaConnection", () => {
       canWrite: true,
       adsWritesPaused: false,
       canManagePages: false,
+      canPublish: false,
       defaultPageId: null,
     });
     expect(mockUpdate).not.toHaveBeenCalled();
