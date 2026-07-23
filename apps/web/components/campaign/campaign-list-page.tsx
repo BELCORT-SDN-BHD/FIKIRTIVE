@@ -31,7 +31,7 @@ export default function CampaignListPage({ initialState }: { initialState: ListR
         <CampaignNav current="list" />
         <header className="mt-7 flex flex-col gap-5 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Campaign planning</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Campaign planning</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Campaigns</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
               Keep goals, dates, plan entries, and existing work together without generating or publishing anything.

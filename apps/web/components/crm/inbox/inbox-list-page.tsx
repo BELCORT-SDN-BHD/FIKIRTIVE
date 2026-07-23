@@ -168,7 +168,7 @@ function InboxWorkspace({
             <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
               <ArrowLeft className="size-4" />Return to Otto
             </Link>
-            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM</p>
+            <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Inbox</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
               Every conversation your team and Otto have with a customer, in one place. Fikirtive shows what is stored; it never sends on your behalf.

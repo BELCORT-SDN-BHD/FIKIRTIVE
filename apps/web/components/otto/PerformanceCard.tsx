@@ -108,7 +108,7 @@ function PerfRowView({ row, variant }: { row: PerfRow; variant: "winner" | "lose
             href={citation.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-[3px] text-[0.71875rem] font-semibold text-brand bg-[#FEF2EC] rounded-[6px] px-[7px] py-[1px] mt-[6px]"
+            className="inline-flex items-center gap-[3px] text-[0.71875rem] font-semibold text-brand-strong bg-[#FEF2EC] rounded-[6px] px-[7px] py-[1px] mt-[6px]"
           >
             Meta: {citation.title} ↗
           </a>

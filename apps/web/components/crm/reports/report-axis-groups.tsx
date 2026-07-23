@@ -44,7 +44,7 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-brand bg-card p-4" aria-labelledby={`sending-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-brand">Axis A</p>
+              <p className="text-xs font-semibold text-brand-strong">Axis A</p>
               <h3 id={`sending-${report.broadcastRunId}`} className="mt-1 font-semibold">Sending attempts</h3>
             </div>
             <Badge variant="soft">Known from C5</Badge>
@@ -75,7 +75,7 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-muted-foreground/35 bg-card p-4" aria-labelledby={`delivery-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-muted-foreground">Axis B</p>
+              <p className="text-xs font-semibold text-brand-strong">Axis B</p>
               <h3 id={`delivery-${report.broadcastRunId}`} className="mt-1 font-semibold">Provider receipts</h3>
             </div>
             <Badge variant="outline"><CircleHelp />Unknown</Badge>
@@ -95,7 +95,7 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-warning/60 bg-card p-4" aria-labelledby={`reconciliation-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-warning-soft-foreground">Axis C</p>
+              <p className="text-xs font-semibold text-brand-strong">Axis C</p>
               <h3 id={`reconciliation-${report.broadcastRunId}`} className="mt-1 font-semibold">Reconciliation</h3>
             </div>
             <Badge variant="warning"><Scale />Separate</Badge>

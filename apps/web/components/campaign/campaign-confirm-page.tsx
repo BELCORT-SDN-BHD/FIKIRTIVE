@@ -347,7 +347,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 function ConfirmHeader({ campaign }: { campaign: Extract<DetailResult, { ok: true }>["campaign"] }) {
   return (
     <header className="mt-7 border-b border-border pb-6">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">Confirm generation</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Confirm generation</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{campaign.name}</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
         Turn this campaign&apos;s approved plan entries into real generations.

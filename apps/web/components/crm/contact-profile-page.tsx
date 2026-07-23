@@ -173,7 +173,7 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
           <Link href="/crm/contacts" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" />Back to contacts</Link>
           <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand">CRM · Contact profile</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Contact profile</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{contact.name}</h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
                 Records are the merchant&apos;s asset. Fikirtive records facts and reminds; it does not delete the record, decide consent, or merge identities.

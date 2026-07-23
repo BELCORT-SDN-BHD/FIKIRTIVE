@@ -812,7 +812,7 @@ function MonthGrid({
               key={cell.key}
               className={`min-h-[92px] border-b border-r border-border p-1.5 flex flex-col gap-1 ${cell.inMonth ? "" : "bg-secondary/40"}`}
             >
-              <div className={`text-[11px] font-semibold ${cell.key === todayKey ? "text-brand" : cell.inMonth ? "text-foreground" : "text-muted-foreground/60"}`}>
+              <div className={`text-[11px] font-semibold ${cell.key === todayKey ? "text-brand-strong" : cell.inMonth ? "text-foreground" : "text-muted-foreground/60"}`}>
                 {cell.day}
               </div>
               {shown.map((post) => {
@@ -1272,7 +1272,7 @@ function Composer({
                         <img src={m.url ?? undefined} alt="" loading="lazy" className="w-full h-full object-cover" />
                       )}
                       {selected && (
-                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-brand text-brand-foreground text-[9px] font-bold">{idx + 1}</span>
+                        <span className="absolute top-0.5 right-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-brand-strong text-brand-foreground text-[9px] font-bold">{idx + 1}</span>
                       )}
                     </button>
                   );

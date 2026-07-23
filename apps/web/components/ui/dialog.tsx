@@ -32,7 +32,15 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
   )
 }
 
-function DialogContent({ className, children, ...props }: React.ComponentProps<typeof DialogPrimitive.Content>) {
+function DialogContent({
+  className,
+  children,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
+  ...props
+}: React.ComponentProps<typeof DialogPrimitive.Content>) {
+  const returnFocusRef = React.useRef<HTMLElement | null>(null)
+
   return (
     <DialogPortal>
       <DialogOverlay />
@@ -44,6 +52,21 @@ function DialogContent({ className, children, ...props }: React.ComponentProps<t
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
           className
         )}
+        onOpenAutoFocus={(event) => {
+          returnFocusRef.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null
+          onOpenAutoFocus?.(event)
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event)
+          if (event.defaultPrevented) return
+
+          const returnTarget = returnFocusRef.current
+          if (returnTarget?.isConnected) {
+            event.preventDefault()
+            returnTarget.focus()
+          }
+        }}
         {...props}
       >
         {children}

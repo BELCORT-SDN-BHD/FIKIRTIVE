@@ -538,6 +538,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --ring: #EC5828;
 
   --brand: #EC5828;       --brand-foreground: #FFFFFF;
+  /* Same-hue AA companion for small coral text and filled badges. */
+  --brand-strong: #C93F12;
   --brand-soft: #FBE4D8;  --brand-soft-foreground: #9A3A1A;
 
   --success: #16A34A; --success-soft: #E7F6EC; --success-soft-foreground: #15803D;
@@ -587,7 +589,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --secondary:#1C1C1F; --secondary-foreground:#FAFAFA; --muted:#161619; --muted-foreground:#A1A1A8;
   --accent:#1C1C1F; --accent-foreground:#FAFAFA; --destructive:#F2555A; --destructive-foreground:#0B0B0C;
   --border:#262629; --input:#262629; --ring:#F26A3C;
-  --brand:#F26A3C; --brand-foreground:#0B0B0C; --brand-soft:#3A1E12; --brand-soft-foreground:#F4A585;
+  --brand:#F26A3C; --brand-strong:#F26A3C; --brand-foreground:#0B0B0C; --brand-soft:#3A1E12; --brand-soft-foreground:#F4A585;
   --success:#2BB36B; --success-soft:#122A1B; --success-soft-foreground:#5EE0A0;
   --warning:#E0A82B; --warning-soft:#2A1E08; --warning-soft-foreground:#F0C463;
   --error:#F2555A; --error-soft:#2A1011; --error-soft-foreground:#F58E92;
@@ -618,7 +620,8 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --color-border: var(--border);
   --color-destructive: var(--destructive);   --color-destructive-foreground: var(--destructive-foreground);
   --color-input: var(--input);               --color-ring: var(--ring);
-  --color-brand: var(--brand);               --color-brand-foreground: var(--brand-foreground);
+  --color-brand: var(--brand);               --color-brand-strong: var(--brand-strong);
+  --color-brand-foreground: var(--brand-foreground);
   --color-brand-soft: var(--brand-soft);     --color-brand-soft-foreground: var(--brand-soft-foreground);
   /* State base colours — three-place rule (§T5): without these registrations Tailwind v4
      silently generates nothing for text-success / bg-error / text-info etc. (code-gaps #11).
@@ -874,7 +877,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   gap: 6px;
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--brand);
+  color: var(--brand-strong);
 }
 .gb .react-flow__node .cv-gen-bar {
   width: 70%;

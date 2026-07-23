@@ -34,6 +34,7 @@ export function buildSettingsSections(args: {
 }): SettingsSection[] {
   const { account, settings, channels, packs, adsAutonomy, onDeleteAccountRequest } = args;
   const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
+  const canAutoPublish = canChangeAdsAutonomy;
 
   const toggle =
     (k: keyof OwnerSettings) =>
@@ -55,6 +56,13 @@ export function buildSettingsSections(args: {
           label: "Email",
           hint: "Used to sign in",
           value: account.email,
+          readOnly: true,
+        },
+        {
+          kind: "text",
+          id: "workspace",
+          label: "Workspace",
+          value: account.organizationName,
           readOnly: true,
         },
         {
@@ -208,8 +216,11 @@ export function buildSettingsSections(args: {
           kind: "toggle",
           id: "autopub",
           label: "Auto-publish posts",
-          hint: "Publish approved posts automatically at their time",
+          hint: canAutoPublish
+            ? "Publish approved posts automatically at their time"
+            : "Connect Meta first; auto-publish turns on once Meta approves publishing.",
           value: settings.autoPublish,
+          disabled: !canAutoPublish,
           onToggle: toggle("autoPublish"),
         },
         {

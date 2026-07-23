@@ -136,7 +136,7 @@ export function OttoTrace({ steps, title = "Otto is making it" }: { steps: Trace
       >
         <OttoGlyph size={17} />
         <span style={{ flex: 1, fontSize: "0.875rem", fontWeight: 700, color: CORAL_INK }}>{title}</span>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--brand)" }}>{counter}</span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--brand-strong)" }}>{counter}</span>
       </div>
       <div style={{ padding: "7px 5px", display: "flex", flexDirection: "column" }}>
         {steps.map((s, i) => (

@@ -320,7 +320,7 @@ function OttoChatContent() {
           {otto.working ? (
             <span
               role="status"
-              className="hidden shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-xs font-medium text-brand md:inline-flex"
+              className="hidden shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-0.5 text-xs font-medium text-brand-strong md:inline-flex"
             >
               <OttoAvatar size={14} mood="thinking" />
               {otto.label}

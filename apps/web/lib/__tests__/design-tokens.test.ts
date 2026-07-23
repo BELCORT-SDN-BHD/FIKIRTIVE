@@ -22,6 +22,21 @@ import { pathToFileURL } from "node:url";
 
 const webRoot = path.resolve(__dirname, "../..");
 
+function relativeLuminance(hex: string): number {
+  const channels = [1, 3, 5].map((offset) => {
+    const srgb = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrastRatio(left: string, right: string): number {
+  const [lighter, darker] = [relativeLuminance(left), relativeLuminance(right)].sort(
+    (a, b) => b - a,
+  );
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 async function compileGlobals(candidates: string[]): Promise<string> {
   // @tailwindcss/node is not a direct dep — resolve it through @tailwindcss/postcss
   // (direct devDep), whose own compiler it is. Keeps the test on the production pipeline.
@@ -43,6 +58,8 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     "bg-error",
     "text-info",
     "text-data-label",
+    "text-brand-strong",
+    "bg-brand-strong",
     "duration-[var(--dur-2)]",
     "ease-[var(--ease-spring)]",
   ];
@@ -70,6 +87,16 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     expect(css).toMatch(/\.bg-error\s*\{[^}]*var\(--error\)/);
     expect(css).toMatch(/\.text-info\s*\{[^}]*var\(--info\)/);
     expect(css).toMatch(/\.text-data-label\s*\{[^}]*var\(--data-label\)/);
+    expect(css).toMatch(/\.text-brand-strong\s*\{[^}]*var\(--brand-strong\)/);
+    expect(css).toMatch(/\.bg-brand-strong\s*\{[^}]*var\(--brand-strong\)/);
+  });
+
+  it("brand-strong passes WCAG AA for small text in both directions against white", async () => {
+    const source = await fs.readFile(path.join(webRoot, "app/globals.css"), "utf8");
+    const literal = source.match(/--brand-strong:\s*(#[0-9A-F]{6});/)?.[1];
+    expect(literal).toBeDefined();
+    expect(contrastRatio(literal!, "#FFFFFF")).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio("#FFFFFF", literal!)).toBeGreaterThanOrEqual(4.5);
   });
 
   it("global two-layer coral focus ring (§A2) is present", async () => {

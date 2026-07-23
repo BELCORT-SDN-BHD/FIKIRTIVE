@@ -33,7 +33,7 @@ export default function TracePreviewPage() {
           </span>
         </div>
         <div style={{ flex: 1, padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
-          <div style={{ alignSelf: "flex-end", background: "var(--brand)", color: "var(--text-on-brand)", borderRadius: "15px 15px 5px 15px", padding: "10px 13px", fontSize: "var(--text-sm)", maxWidth: 280 }}>
+          <div style={{ alignSelf: "flex-end", background: "var(--brand-strong, #C93F12)", color: "var(--brand-foreground, #FFFFFF)", borderRadius: "15px 15px 5px 15px", padding: "10px 13px", fontSize: "var(--text-sm)", maxWidth: 280 }}>
             Make 3 posts for our autumn menu launch — cozy vibe, ready for Instagram.
           </div>
           <div style={{ background: "var(--surface-sunken)", borderRadius: "5px 15px 15px 15px", padding: "10px 13px", fontSize: "var(--text-sm)", color: "var(--text-body)", maxWidth: 320 }}>

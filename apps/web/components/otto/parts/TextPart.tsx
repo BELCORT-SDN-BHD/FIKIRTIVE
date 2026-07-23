@@ -28,7 +28,7 @@ export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
           style={{
             maxWidth: "75%",
             padding: "0.75rem 1rem",
-            background: "var(--brand)",
+            background: "var(--brand-strong)",
             color: "var(--primary-foreground)",
             borderRadius: "20px 20px 0.25rem 20px",
             fontSize: "0.875rem",
