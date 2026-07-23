@@ -81,7 +81,10 @@ comment that records the missing executor evidence or by recording it as an open
 
 ## Project conventions
 
-- Specs and skill docs use 华语; generation prompts use English; UI copy uses English sentence case.
+- Specs and skill docs use 华语; UI copy uses English sentence case. Generation prompt
+  language is decided per engine by its prompt authority module, by measured best practice
+  (e.g. Seedance 2.0 performs best with Chinese prompts) — Blueprint v2.13 relocated this
+  from the constitution.
 - Pricing lives in configuration and respects the Blueprint margin floor; never scatter price literals through business or UI code.
 - Every new Otto capability uses `defineOttoSkill` and the shared action layer; never create a bypass or second app.
 - Before reviewing a PR, read the task-relevant sections of `docs/review/REVIEWER-PLAYBOOK.md` and verify its dated implementation claims against live `main`.
