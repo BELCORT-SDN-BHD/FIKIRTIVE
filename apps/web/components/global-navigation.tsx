@@ -1,6 +1,6 @@
 "use client";
 
-import type { ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -42,6 +42,14 @@ const navigationLinkClass =
 
 function pathMatches(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+type CrmDisclosureUpdate =
+  | { type: "navigation"; pathname: string }
+  | { type: "toggle"; open: boolean };
+
+export function nextCrmDisclosureOpen(update: CrmDisclosureUpdate): boolean {
+  return update.type === "toggle" ? update.open : pathMatches(update.pathname, "/crm");
 }
 
 export function isMerchantSurface(pathname: string): boolean {
@@ -87,6 +95,14 @@ export function GlobalNavigation({
   signOutAction: () => Promise<void>;
 }) {
   const crmActive = pathMatches(pathname, "/crm");
+  const [crmOpen, setCrmOpen] = useState(() =>
+    nextCrmDisclosureOpen({ type: "navigation", pathname }),
+  );
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Navigation intentionally resets a manual disclosure toggle.
+    setCrmOpen(nextCrmDisclosureOpen({ type: "navigation", pathname }));
+  }, [pathname]);
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-card text-foreground">
@@ -98,7 +114,10 @@ export function GlobalNavigation({
         FIKIRTIVE
       </Link>
 
-      <nav aria-label="Global navigation" className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-5">
+      <nav
+        aria-label="Global navigation"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-5"
+      >
         <div className="space-y-1">
           <NavigationLink
             item={{ href: "/otto", label: "Otto", icon: Bot }}
@@ -109,7 +128,15 @@ export function GlobalNavigation({
             active={pathMatches(pathname, "/campaign")}
           />
 
-          <details className="group" open={crmActive}>
+          <details
+            className="group"
+            open={crmOpen}
+            onToggle={(event) =>
+              setCrmOpen(
+                nextCrmDisclosureOpen({ type: "toggle", open: event.currentTarget.open }),
+              )
+            }
+          >
             <summary
               className={cn(
                 navigationLinkClass,
