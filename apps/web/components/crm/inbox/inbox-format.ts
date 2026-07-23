@@ -99,6 +99,7 @@ const ERROR_COPY: Record<string, string> = {
   SEND_PATH_UNAVAILABLE: "Sending isn't available yet.",
   TEMPLATE_SUBMISSION_UNAVAILABLE: "Template submission isn't available yet.",
   INVALID_ARGUMENT: "That request wasn't valid. Please check the values and try again.",
+  PROVIDER_CONNECTION_CONFLICT: "Inbox eligibility could not be verified because more than one active channel connection matched.",
 };
 
 /** Plain-English copy for a CustomerInboxErrorCode. Falls back to a generic

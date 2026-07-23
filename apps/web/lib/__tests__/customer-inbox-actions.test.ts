@@ -3,6 +3,7 @@ import {
   prisma,
   recordContactDndEvent,
   recordConsentEvent,
+  recordProviderRefusalEvent,
   recordSendFrequencyEvent,
 } from "@fikirtive/db";
 import * as customerInboxGateway from "../customer-inbox-gateway";
@@ -59,6 +60,9 @@ const TEMPLATE_A = "c4b-m2-test-template-a";
 const TEMPLATE_B = "c4b-m2-test-template-b";
 const TEMPLATE_VERSION_A = "c4b-m2-test-template-version-a";
 const TEMPLATE_VERSION_B = "c4b-m2-test-template-version-b";
+const CONNECTION_EXPIRED = "c4b-m2-test-connection-expired";
+const CONNECTION_ACTIVE = "c4b-m2-test-connection-active";
+const CONNECTION_ACTIVE_SECOND = "c4b-m2-test-connection-active-second";
 const NOW = new Date("2026-07-21T08:00:00.000Z");
 const OWNERS = [ORG_A, ORG_B];
 
@@ -102,6 +106,8 @@ async function cleanup(): Promise<void> {
   // C5-M2 preflight wiring (ledger #386): the four axes now read real consent/DND/frequency
   // facts, so tests that write them need cleanup before Contact's onDelete:Restrict FKs below.
   await prisma.contactSendFrequencyEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.providerRefusalState.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.providerRefusalEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.consentStateProjection.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.consentEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contactDndEvent.deleteMany({ where: { ownerId: { in: OWNERS } } });
@@ -112,6 +118,7 @@ async function cleanup(): Promise<void> {
   await prisma.customerMessage.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.customerConversation.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contactIdentity.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.channelConnection.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.channelScope.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contact.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.membership.deleteMany({ where: { orgId: { in: OWNERS } } });
@@ -903,6 +910,113 @@ describe("C4b-M3 preflight freshness contract (issue #378)", () => {
     });
     // Additive-only: the pre-existing checkedAt field is untouched.
     expect(preflight.checkedAt).toEqual(NOW);
+  });
+});
+
+describe("C5-M2 preflight provider-connection resolution", () => {
+  async function createConnection(
+    id: string,
+    status: "active" | "expired",
+    createdAt: Date,
+  ) {
+    return prisma.channelConnection.create({
+      data: {
+        id,
+        ownerId: ORG_A,
+        kind: "whatsapp",
+        channelScopeId: SCOPE_A,
+        externalId: id,
+        accessTokenEnc: `ciphertext:${id}`,
+        status,
+        createdAt,
+      },
+    });
+  }
+
+  async function providerRefusalAxis() {
+    const preflight = await inbox.getConversationPreflight(owner, {
+      conversationId: CONVERSATION_ASSIGNED,
+    });
+    return preflight.providerRefusal;
+  }
+
+  it("ignores an expired connection's refusal", async () => {
+    await createConnection(
+      CONNECTION_EXPIRED,
+      "expired",
+      new Date("2026-07-01T00:00:00Z"),
+    );
+    await createConnection(
+      CONNECTION_ACTIVE,
+      "active",
+      new Date("2026-07-02T00:00:00Z"),
+    );
+    await recordProviderRefusalEvent({
+      ownerId: ORG_A,
+      providerConnectionId: CONNECTION_EXPIRED,
+      kind: "account_level",
+      action: "block",
+      providerCode: "account_suspended",
+      receiptRef: "receipt:c4b-expired-block",
+      idempotencyKey: "c4b-provider-expired-block",
+    });
+
+    const axisResult = await providerRefusalAxis();
+    expect(axisResult.status).toBe("pass");
+    expect(axisResult.reason).toBeUndefined();
+  });
+
+  it("uses the sole active connection", async () => {
+    await createConnection(
+      CONNECTION_ACTIVE,
+      "active",
+      new Date("2026-07-02T00:00:00Z"),
+    );
+    await recordProviderRefusalEvent({
+      ownerId: ORG_A,
+      providerConnectionId: CONNECTION_ACTIVE,
+      kind: "account_level",
+      action: "block",
+      providerCode: "account_suspended",
+      receiptRef: "receipt:c4b-active-block",
+      idempotencyKey: "c4b-provider-active-block",
+    });
+
+    expect(await providerRefusalAxis()).toMatchObject({
+      status: "block",
+      reason: "account_level_block",
+    });
+  });
+
+  it("preserves the no-connection refusal-axis shape when zero active connections match", async () => {
+    await createConnection(
+      CONNECTION_EXPIRED,
+      "expired",
+      new Date("2026-07-01T00:00:00Z"),
+    );
+    expect(await providerRefusalAxis()).toMatchObject({
+      status: "pass",
+      reason: "no_provider_connection",
+    });
+  });
+
+  it("returns the typed gateway conflict when more than one active connection matches", async () => {
+    await createConnection(
+      CONNECTION_ACTIVE,
+      "active",
+      new Date("2026-07-01T00:00:00Z"),
+    );
+    await createConnection(
+      CONNECTION_ACTIVE_SECOND,
+      "active",
+      new Date("2026-07-02T00:00:00Z"),
+    );
+
+    await expect(
+      customerInboxGateway.getConversationPreflight({
+        conversationId: CONVERSATION_ASSIGNED,
+      }),
+    ).resolves.toEqual({ ok: false, error: "PROVIDER_CONNECTION_CONFLICT" });
   });
 });
 

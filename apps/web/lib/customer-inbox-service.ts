@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { newId } from "@fikirtive/core";
 import { evaluateSendEligibility, prisma as defaultDb, type Prisma } from "@fikirtive/db";
+import { resolveActiveProviderConnectionId } from "./channel-connection-resolve";
 
 export const CUSTOMER_INBOX_ERROR_CODES = {
   NOT_AUTHORIZED: "NOT_AUTHORIZED",
@@ -15,6 +16,7 @@ export const CUSTOMER_INBOX_ERROR_CODES = {
   SEND_PATH_UNAVAILABLE: "SEND_PATH_UNAVAILABLE",
   TEMPLATE_SUBMISSION_UNAVAILABLE: "TEMPLATE_SUBMISSION_UNAVAILABLE",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
+  PROVIDER_CONNECTION_CONFLICT: "PROVIDER_CONNECTION_CONFLICT",
 } as const;
 
 export type CustomerInboxErrorCode =
@@ -661,17 +663,13 @@ export function createCustomerInboxService(
     const fourAxes = identity
       ? await (async () => {
           const providerConnectionId = identity.channelScopeId
-            ? ((
-                await db.channelConnection.findFirst({
-                  where: {
-                    ownerId: principal.ownerId,
-                    channelScopeId: identity.channelScopeId,
-                    kind: identity.channel,
-                  },
-                  orderBy: { createdAt: "asc" },
-                  select: { id: true },
-                })
-              )?.id ?? null)
+            ? await resolveActiveProviderConnectionId(
+                db,
+                principal.ownerId,
+                identity.channelScopeId,
+                identity.channel,
+                () => fail("PROVIDER_CONNECTION_CONFLICT"),
+              )
             : null;
           return evaluateSendEligibility(db, {
             ownerId: principal.ownerId,

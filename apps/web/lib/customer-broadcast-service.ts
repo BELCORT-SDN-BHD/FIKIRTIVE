@@ -16,6 +16,7 @@ import {
   broadcastPurposeFromTemplateClassification,
   type BroadcastPurpose,
 } from "./customer-broadcast-purpose";
+import { resolveActiveProviderConnectionId } from "./channel-connection-resolve";
 
 /**
  * C5 broadcast domain actions. Spec:
@@ -301,22 +302,6 @@ export function createCustomerBroadcastService(
     return row;
   }
 
-  async function resolveProviderConnectionId(
-    client: DatabaseClient,
-    ownerId: string,
-    channelScopeId: string,
-    channel: string,
-  ): Promise<string | null> {
-    const connections = await client.channelConnection.findMany({
-      where: { ownerId, channelScopeId, kind: channel, status: "active" },
-      orderBy: { createdAt: "asc" },
-      take: 2,
-      select: { id: true },
-    });
-    if (connections.length > 1) fail("PROVIDER_CONNECTION_CONFLICT");
-    return connections[0]?.id ?? null;
-  }
-
   async function requireBroadcastTemplate(
     client: DatabaseClient,
     ownerId: string,
@@ -487,7 +472,13 @@ export function createCustomerBroadcastService(
     );
 
     const candidates = (await resolveSegmentAudience(db, principal.ownerId, segmentId, channel, purpose)).slice(0, take);
-    const providerConnectionId = await resolveProviderConnectionId(db, principal.ownerId, channelScopeId, channel);
+    const providerConnectionId = await resolveActiveProviderConnectionId(
+      db,
+      principal.ownerId,
+      channelScopeId,
+      channel,
+      () => fail("PROVIDER_CONNECTION_CONFLICT"),
+    );
 
     const members: Array<AudienceCandidate & { verdict: SendEligibilityResult; includedByMerchant: true }> = [];
     for (const candidate of candidates) {
@@ -647,11 +638,12 @@ export function createCustomerBroadcastService(
         run.channel,
         run.purpose as BroadcastPurpose,
       );
-      const providerConnectionId = await resolveProviderConnectionId(
+      const providerConnectionId = await resolveActiveProviderConnectionId(
         tx,
         principal.ownerId,
         run.channelScopeId,
         run.channel,
+        () => fail("PROVIDER_CONNECTION_CONFLICT"),
       );
       const nextAudienceRevision = run.audienceRevision + 1;
       const nextRevision = expectedRevision + 1;
@@ -823,11 +815,12 @@ export function createCustomerBroadcastService(
         contactIdentity: { select: { channel: true, handle: true, label: true, externalId: true } },
       },
     });
-    const providerConnectionId = await resolveProviderConnectionId(
+    const providerConnectionId = await resolveActiveProviderConnectionId(
       db,
       principal.ownerId,
       run.channelScopeId,
       run.channel,
+      () => fail("PROVIDER_CONNECTION_CONFLICT"),
     );
     const rows = [];
     for (const member of members) {
@@ -922,8 +915,9 @@ export function createCustomerBroadcastService(
    *      · any axis not pass (incl. consentRisk / DND / provider block / over-cap) ->
    *        sendState=skipped_ineligible + a stable skipReason, and ZERO frequency rows / zero
    *        cap spent.
-   *  - the concurrent last-cap-slot race is resolved by recordSendFrequencyEvent's atomic
-   *    count-and-insert: the loser gets FREQUENCY_CAP_REACHED and becomes an honest skip.
+   *  - the concurrent last-cap-slot race is resolved by
+   *    recordSendFrequencyEventInTransaction's atomic count-and-insert: the loser gets
+   *    FREQUENCY_CAP_REACHED and becomes an honest skip.
    */
   async function executeBroadcastRun(
     principal: CustomerBroadcastPrincipal,
@@ -1005,11 +999,12 @@ export function createCustomerBroadcastService(
     }
 
     const run = claimed.run;
-    const providerConnectionId = await resolveProviderConnectionId(
+    const providerConnectionId = await resolveActiveProviderConnectionId(
       db,
       principal.ownerId,
       run.channelScopeId,
       run.channel,
+      () => fail("PROVIDER_CONNECTION_CONFLICT"),
     );
 
     // Phase 2 — process every still-pending member. Each member is finalized in its own
