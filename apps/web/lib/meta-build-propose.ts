@@ -13,6 +13,7 @@ import { fetchOwnerPages } from "./meta-pages";
 import { fetchOwnerAdObjects, fetchOwnerAdAccounts } from "./meta-objects";
 import { buildAdBuildCard, isSupportedObjective, isValidHttpUrl, type AdBuildInput } from "./meta-build-spec";
 import { maybeAutoBuild } from "./meta-build-actions";
+import { sanitizeUserError } from "./provider-secrecy";
 
 export { type AdBuildInput };
 
@@ -137,7 +138,7 @@ export async function proposeAdBuildForOwner(
     );
   } catch (err) {
     return {
-      invalid: [{ field: "build", reason: err instanceof Error ? err.message : String(err) }],
+      invalid: [{ field: "build", reason: sanitizeUserError(err) }],
     };
   }
 

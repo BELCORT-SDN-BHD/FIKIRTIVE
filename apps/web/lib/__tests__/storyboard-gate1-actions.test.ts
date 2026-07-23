@@ -1261,13 +1261,13 @@ describe("syncStoryboardMedia — $0 对账(视频 + 级联 + urls)", () => {
 describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
   it("返回 suggestModel 选定视频模型在真实能力表里的 durations(kling → [5,10])", async () => {
     const res = await getStoryboardVideoOptions();
-    expect("model" in res).toBe(true);
-    if (!("model" in res)) return;
+    expect("durations" in res).toBe(true);
+    if (!("durations" in res)) return;
     // model = the SAME suggestModel path minting uses (kind:"video")
     expect(mockSuggestModel).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "video" }),
     );
-    expect(res.model).toBe("kling");
+    expect(res).not.toHaveProperty("model");
     // durations come from the REAL GEN_VIDEO_MODEL_OPTIONS table (not hardcoded)
     expect(res.durations).toEqual([5, 10]);
     // $0: no writes at all
@@ -1285,8 +1285,8 @@ describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
       requested: {},
     });
     const res = await getStoryboardVideoOptions();
-    if (!("model" in res)) throw new Error("expected model");
-    expect(res.model).toBe("veo3.1-lite");
+    if (!("durations" in res)) throw new Error("expected durations");
+    expect(res).not.toHaveProperty("model");
     expect(res.durations).toEqual([4, 6, 8]); // real table, zero hardcoding
   });
 

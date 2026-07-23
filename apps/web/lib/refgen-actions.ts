@@ -20,6 +20,7 @@ import { getBoss } from "./queue";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
+import { sanitizeUserError } from "./provider-secrecy";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
 // (worker died mid-run) so a new generation isn't blocked forever.
@@ -416,7 +417,7 @@ export async function getRefGenJobs(entityId: string, variantId?: string | null)
     progress: j.progress,
     count: j.count,
     produced: j.outputAssetIds.length,
-    error: j.error,
+    error: sanitizeUserError(j.error),
     createdAt: j.createdAt.toISOString(),
   }));
 }

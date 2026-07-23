@@ -10,6 +10,62 @@ vi.mock("../storage", () => ({
 
 import { toChatMessageDTO } from "../dto";
 
+describe("toChatMessageDTO — generation provider secrecy", () => {
+  it("keeps GEN_CARD grouping fields but strips server-only model selection fields", () => {
+    const dto = toChatMessageDTO({
+      id: "gen-card-1",
+      role: "AGENT",
+      kind: "GEN_CARD",
+      seq: 1,
+      text: "",
+      genJobId: null,
+      createdAt: new Date("2026-07-24T00:00:00Z"),
+      payload: {
+        kind: "image",
+        structuredPrompt: "A product hero",
+        entityIds: [],
+        variantSel: {},
+        model: "seedream",
+        params: { count: 1 },
+        reason: "Selected by the generation provider",
+        packId: "pack-1",
+        packTitle: "Launch pack",
+        storyboardCardId: "storyboard-1",
+        estimatedCredits: 1,
+      },
+    } as never, new Map());
+
+    const payload = dto.payload as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      kind: "image",
+      packId: "pack-1",
+      packTitle: "Launch pack",
+      storyboardCardId: "storyboard-1",
+      estimatedCredits: 1,
+    });
+    expect(payload).not.toHaveProperty("model");
+    expect(payload).not.toHaveProperty("params");
+    expect(payload).not.toHaveProperty("reason");
+    expect(JSON.stringify(payload)).not.toMatch(/seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu);
+  });
+
+  it("does not return a GEN_RESULT model field", () => {
+    const dto = toChatMessageDTO({
+      id: "gen-result-1",
+      role: "AGENT",
+      kind: "GEN_RESULT",
+      seq: 2,
+      text: "",
+      genJobId: "job-1",
+      createdAt: new Date("2026-07-24T00:00:00Z"),
+      payload: { kind: "image", model: "seedream", costCredits: 1 },
+    } as never, new Map());
+
+    expect(dto.payload).not.toHaveProperty("model");
+    expect(JSON.stringify(dto.payload)).not.toContain("seedream");
+  });
+});
+
 // ── FIX G: the ACTION_CARD client DTO must NOT leak approval internals ──
 describe("toChatMessageDTO — ACTION_CARD client safety", () => {
   function actionCardMessage(payloadExtra: Record<string, unknown> = {}) {
@@ -206,5 +262,30 @@ describe("toChatMessageDTO — TURN_ERROR payload passthrough", () => {
     } as never, new Map());
 
     expect(dto.payload).toEqual(payload);
+  });
+
+  it("redacts provider names and URLs from a persisted stream error", () => {
+    const dto = toChatMessageDTO({
+      id: "error_2",
+      role: "AGENT",
+      kind: "TURN_ERROR",
+      seq: 3,
+      text: "",
+      genJobId: null,
+      createdAt: new Date("2026-07-24T00:00:00Z"),
+      payload: {
+        kind: "stream_run_error",
+        error: {
+          kind: "error",
+          text: "Campaign draft failed after Claude SDK called Anthropic API at https://provider.example.test/private while customer order 42 remained saved.",
+        },
+      },
+    } as never, new Map());
+
+    const serialized = JSON.stringify(dto.payload);
+    expect(serialized).not.toMatch(/anthropic|claude/iu);
+    expect(serialized).not.toContain("provider.example.test");
+    expect(serialized).toContain("Campaign draft failed after");
+    expect(serialized).toContain("customer order 42 remained saved.");
   });
 });

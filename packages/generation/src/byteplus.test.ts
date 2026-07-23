@@ -64,7 +64,7 @@ describe("generateVideo (Seedance, async)", () => {
       : jsonRes({ id: "cgt-3" }));
     const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
     // Attach rejection handler before advancing timers to avoid unhandled rejection warning
-    const assertion = expect(promise).rejects.toThrow(/byteplus video.*failed/);
+    const assertion = expect(promise).rejects.toThrow(/generation provider.*failed/);
     await vi.runAllTimersAsync();
     await assertion;
   });

@@ -112,7 +112,7 @@ export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { 
     }
   }
   if (key === "cowork_provider" && value.provider === "fal" && !process.env.FAL_KEY) {
-    return { error: "FAL_KEY is not set in this environment — can't switch to fal." };
+    return { error: "The hosted AI provider is not configured in this environment." };
   }
   try {
     await prisma.$transaction(async (tx) => {

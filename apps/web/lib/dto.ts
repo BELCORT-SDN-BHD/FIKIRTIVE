@@ -1,6 +1,7 @@
 import "server-only";
 import { storageKey, coworkProposalSchema } from "@fikirtive/core";
 import { storage, kindOf } from "./storage";
+import { sanitizeUserError } from "./provider-secrecy";
 import type { EntityWithRefs, ChatThreadWithMessages } from "./data";
 import type { EntityDTO, ChatMessageDTO, ChatThreadDTO } from "./types";
 
@@ -59,9 +60,17 @@ export function toChatMessageDTO(
       variantSel: p.variantSel ?? {},
     });
     // malformed → render as plain text (no card)
-    payload = proposal.success ? { ...p, ...proposal.data } : null;
+    if (proposal.success) {
+      const {
+        model: _model,
+        params: _params,
+        reason: _reason,
+        ...publicPayload
+      } = p;
+      payload = { ...publicPayload, ...proposal.data };
+    }
   } else if (m.kind === "GEN_RESULT") {
-    const p = (m.payload ?? {}) as { kind?: string; model?: string; costCredits?: number };
+    const p = (m.payload ?? {}) as { kind?: string; costCredits?: number };
     const resolved = m.genJobId ? urlsByJob.get(m.genJobId) : undefined;
     // kind is always written by the worker (gen.ts); a missing/invalid value signals payload
     // corruption — surface it instead of silently coercing (e.g. a video result → "image").
@@ -71,7 +80,6 @@ export function toChatMessageDTO(
     }
     payload = {
       kind,
-      model: p.model ?? "",
       urls: resolved?.urls ?? [],
       generationIds: resolved?.generationIds ?? [], // "Animate this result" → i2v source-frame
       // the real metered charge (frozen ledger value) so the caption shows what was actually
@@ -91,10 +99,14 @@ export function toChatMessageDTO(
     // payload in the DB stays intact; only this DTO sent to the client is stripped.
     const p = m.payload as Record<string, unknown>;
     const approval = (p.approval ?? null) as Record<string, unknown> | null;
+    const autoOutcome = (p.autoOutcome ?? null) as Record<string, unknown> | null;
     payload = {
       ...p,
       ...(approval
         ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
+        : {}),
+      ...(autoOutcome && typeof autoOutcome.reason === "string"
+        ? { autoOutcome: { ...autoOutcome, reason: sanitizeUserError(autoOutcome.reason) } }
         : {}),
     };
   } else if (m.kind === "BUILD_CARD" && m.payload) {
@@ -103,10 +115,14 @@ export function toChatMessageDTO(
     // display fields (planTitle, etc.), and buildOutcome for card state rendering.
     const p = m.payload as Record<string, unknown>;
     const approval = (p.approval ?? null) as Record<string, unknown> | null;
+    const buildOutcome = (p.buildOutcome ?? null) as Record<string, unknown> | null;
     payload = {
       ...p,
       ...(approval
         ? { approval: { expiresAt: approval.expiresAt, consumedAt: approval.consumedAt } }
+        : {}),
+      ...(buildOutcome && typeof buildOutcome.reason === "string"
+        ? { buildOutcome: { ...buildOutcome, reason: sanitizeUserError(buildOutcome.reason) } }
         : {}),
     };
   } else if (m.kind === "TURN_ERROR" && m.payload) {
@@ -122,7 +138,7 @@ export function toChatMessageDTO(
       payload = {
         kind: "stream_run_error",
         ...(typeof p.userMessageId === "string" ? { userMessageId: p.userMessageId } : {}),
-        error: { kind: error.kind, text: error.text },
+        error: { kind: error.kind, text: sanitizeUserError(error.text) },
       };
     }
   } else if (m.kind === "STORYBOARD_CARD" && m.payload) {
@@ -134,7 +150,11 @@ export function toChatMessageDTO(
     // Pass the research payload through so the render branch has the plan/report to draw.
     // No spend/approval internals live on the $0 RESEARCH_CARD (approve→reserve is S3);
     // parseResearchCardPayload defends the shape client-side.
-    payload = m.payload;
+    const p = m.payload as Record<string, unknown>;
+    payload = {
+      ...p,
+      ...(typeof p.error === "string" ? { error: sanitizeUserError(p.error) } : {}),
+    };
   } else if (m.kind === "PERFORMANCE_CARD" && m.payload) {
     // Pass the diagnosis payload through so the PERFORMANCE_CARD render branch has the per-ad
     // verdicts to draw — both on reload and on live mid-turn inject. $0 card, no spend/approval

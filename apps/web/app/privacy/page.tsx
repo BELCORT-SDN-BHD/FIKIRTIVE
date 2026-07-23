@@ -38,9 +38,9 @@ export default function PrivacyPage() {
           <h2 className="pt-4 text-lg font-semibold text-foreground">Where your data lives</h2>
           <p>
             Fikirtive runs on hosted infrastructure and sub-processors: application hosting and database (Railway,
-            Neon), file storage and networking (Cloudflare), payments (Stripe), email delivery (Resend), AI providers
-            for Otto and generation (Anthropic, BytePlus, fal.ai), and Meta for connected ad accounts. Each processes
-            only the data needed for its role.
+            Neon), file storage and networking (Cloudflare), payments (Stripe), email delivery (Resend), third-party AI
+            infrastructure providers that process content to render Otto and generation results, and Meta for connected
+            ad accounts. Each processes only the data needed for its role.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Your choices and PDPA rights</h2>

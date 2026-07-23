@@ -70,7 +70,14 @@ vi.mock("../cowork-guardian", () => ({ checkCast: mockCheckCast }));
 const mockResolveDisabledModels = vi.fn();
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabledModels }));
 
-const { startCanvasGen, startCoworkGen, startGen } = await import("../gen-actions");
+const {
+  getGenJob,
+  getRecentGenResults,
+  getActiveGenModels,
+  startCanvasGen,
+  startCoworkGen,
+  startGen,
+} = await import("../gen-actions");
 const { canvasActionKey } = await import("../batch-idempotency");
 
 const prevDefaultVideoModel = process.env.OTTO_DEFAULT_VIDEO_MODEL;
@@ -1124,5 +1131,78 @@ describe("startGen", () => {
     expect(db.genJobUpdate).not.toHaveBeenCalled();
     expect(db.refundReservation).not.toHaveBeenCalled();
     expect(db.actionEventCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("generation read boundaries", () => {
+  const SECRET_TERMS =
+    /seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu;
+  const persistedLeak =
+    "FAL fal.ai/model FalProvider Seedance 2.0 Fast seedream BYTEPLUS BytePlusProvider ByteDance jimeng 即梦 AnthropicError claude-as-provider https://media.example.test/file?X-Amz-Signature=secret";
+
+  it("returns only opaque capability ids and server-computed quote metadata", async () => {
+    const models = await getActiveGenModels();
+    const serialized = JSON.stringify(models);
+
+    expect(models.image).toMatch(/^capability-image-\d+$/);
+    expect(models.video).toMatch(/^capability-video-\d+$/);
+    expect(models.imageCredits).toBeGreaterThan(0);
+    expect(models.videoCredits).toBeGreaterThan(0);
+    expect(serialized).not.toMatch(SECRET_TERMS);
+  });
+
+  it("resolves an opaque image capability before the unchanged create-and-reserve path", async () => {
+    const models = await getActiveGenModels();
+
+    const result = await startCanvasGen({
+      actionId: "opaque-capability",
+      expectedCredits: models.imageCredits,
+      projectId: "p1",
+      prompt: "product hero",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: models.image,
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ model: "seedream" }),
+    }));
+    expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it("redacts a legacy GenJob error before returning it to the browser", async () => {
+    db.genJobFindFirst.mockResolvedValueOnce({
+      id: "job-leak",
+      status: "FAILED",
+      progress: 100,
+      error: persistedLeak,
+      generationIds: [],
+      spent: false,
+    });
+
+    const result = await getGenJob("job-leak", "p1");
+
+    expect(result?.error).not.toMatch(SECRET_TERMS);
+    expect(result?.error).not.toContain("X-Amz-Signature");
+    expect(result?.error).toContain("generation provider");
+  });
+
+  it("redacts legacy recent-result errors and does not return model identifiers", async () => {
+    db.genJobFindMany.mockResolvedValueOnce([{
+      id: "job-recent-leak",
+      status: "FAILED",
+      prompt: "product hero",
+      kind: "IMAGE",
+      error: persistedLeak,
+      generationIds: [],
+    }]);
+
+    const [result] = await getRecentGenResults("p1");
+
+    expect(result?.error).not.toMatch(SECRET_TERMS);
+    expect(result?.error).not.toContain("X-Amz-Signature");
+    expect(result).not.toHaveProperty("model");
   });
 });

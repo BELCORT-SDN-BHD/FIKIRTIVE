@@ -58,6 +58,7 @@ import { verifyApproval, type PlanStep } from "./meta-approval";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import type { MetaActionCardPayload, MetaActionStep } from "./meta-plan-card";
+import { sanitizeUserError } from "./provider-secrecy";
 
 export type StepResultStatus = "APPLIED" | "SKIPPED" | "DIVERGED" | "FAILED" | "NEEDS_CONFIRM";
 export type StepResult = { index: number; status: StepResultStatus; reason?: string };
@@ -282,7 +283,7 @@ export async function runApprovedPlan(ownerId: string, cardId: string): Promise<
       live = parseLive(raw as Record<string, unknown>);
     } catch (e) {
       await prisma.metaActionExecution.update({ where: { id: row.id }, data: { status: "FAILED" } }).catch(() => {});
-      const reason = e instanceof Error ? e.message.slice(0, 200) : "live re-read failed";
+      const reason = e instanceof Error ? sanitizeUserError(e.message, 200) : "live re-read failed";
       results.push({ index: stepIndex, status: "FAILED", reason });
       break; // stop-on-first-failure.
     }
@@ -305,7 +306,7 @@ export async function runApprovedPlan(ownerId: string, cardId: string): Promise<
     } catch (e) {
       // 3d. Write error → row FAILED, result FAILED, STOP the batch. No auto-rollback.
       await prisma.metaActionExecution.update({ where: { id: row.id }, data: { status: "FAILED" } }).catch(() => {});
-      const reason = e instanceof Error ? e.message.slice(0, 200) : "write failed";
+      const reason = e instanceof Error ? sanitizeUserError(e.message, 200) : "write failed";
       results.push({ index: stepIndex, status: "FAILED", reason });
       break;
     }

@@ -23,6 +23,7 @@ import { listConversations } from "@/lib/conversation-admin";
 import { listTenants } from "@/lib/tenant-admin";
 import { resolveVisionConfig } from "@/lib/runtime-config";
 import { buildBytePlusPackSignal } from "@/lib/byteplus-pack-alert";
+import { sanitizeUserError } from "@/lib/provider-secrecy";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -440,12 +441,13 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       return rank[a.risk] - rank[b.risk] || a.balance - b.balance;
     });
 
-  const moneyJobs: MoneyJobRow[] = [
+  const moneyJobs: Array<MoneyJobRow & { internalModel: string }> = [
     ...genJobs.map((job) => ({
       id: job.id,
       source: "gen" as const,
       label: job.kind === "VIDEO" ? "video" : "image",
-      model: job.model,
+      model: job.kind === "VIDEO" ? "Video" : "Image",
+      internalModel: job.model,
       count: job.count,
       status: job.status,
       spentUsd: job.spentUsd ?? 0,
@@ -455,7 +457,8 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       id: job.id,
       source: "refgen" as const,
       label: `ref:${job.mode.toLowerCase()}`,
-      model: job.model,
+      model: "Image",
+      internalModel: job.model,
       count: job.count,
       status: job.status,
       spentUsd: job.spentUsd ?? 0,
@@ -524,9 +527,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       projectName: row.projectId,
       area: "Generation queue",
       status: row.kind === "VIDEO" ? "video failed" : "image failed",
-      detail: row.error || row.model,
+      detail: sanitizeUserError(row.error || (row.kind === "VIDEO" ? "Video generation failed." : "Image generation failed.")),
       updatedAt: (row.finishedAt ?? row.updatedAt).toISOString(),
-      metadata: [row.model, row.projectId],
+      metadata: [row.kind === "VIDEO" ? "Video" : "Image", row.projectId],
     })),
     ...refGenFailed.map((row) => ({
       id: row.id,
@@ -534,9 +537,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       projectName: "Reference generation",
       area: "Reference queue",
       status: `ref:${row.mode.toLowerCase()} failed`,
-      detail: row.error || row.model,
+      detail: sanitizeUserError(row.error || "Reference image generation failed."),
       updatedAt: (row.finishedAt ?? row.updatedAt).toISOString(),
-      metadata: [row.model],
+      metadata: ["Image"],
     })),
     ...renderFailed.map((row) => ({
       id: row.id,
@@ -544,7 +547,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       projectName: row.projectId,
       area: "Render queue",
       status: "render failed",
-      detail: row.error || "ffmpeg",
+      detail: sanitizeUserError(row.error || "Media render failed."),
       updatedAt: (row.finishedAt ?? row.updatedAt).toISOString(),
       metadata: ["ffmpeg", row.projectId],
     })),
@@ -581,7 +584,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
   ];
   const bytePlusPack = buildBytePlusPackSignal({
     estimatedUsedUsd: moneyJobs
-      .filter((job) => BYTEPLUS_MODELS.has(job.model))
+      .filter((job) => BYTEPLUS_MODELS.has(job.internalModel))
       .reduce((sum, job) => sum + job.spentUsd, 0),
     env: {
       capacityUsd: process.env.BYTEPLUS_RESOURCE_PACK_USD,
@@ -591,7 +594,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
   });
   systemIncidents.push({
     id: "byteplus-pack",
-    area: "BytePlus pack",
+    area: "Generation capacity",
     status: bytePlusPack.status,
     count: bytePlusPack.count,
     detail: bytePlusPack.detail,
@@ -654,7 +657,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         status: "sampled",
         severity: "low" as const,
         createdAt: row.createdAt.toISOString(),
-        metadata: [row.modelRef || "model unknown", `asset .${row.asset.ext}`],
+        metadata: [row.asset.ext.toLowerCase() === "mp4" ? "Video" : "Image", `asset .${row.asset.ext}`],
       };
     }),
   ].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -775,7 +778,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       balance: founderAccount?.balance ?? 0,
       reserved: founderAccount?.reserved ?? 0,
       days: Array.from(daysByKey.values()).sort((a, b) => b.day.localeCompare(a.day)),
-      jobs: moneyJobs,
+      jobs: moneyJobs.map(({ internalModel: _internalModel, ...job }) => job),
       ledger,
     },
     staff: {

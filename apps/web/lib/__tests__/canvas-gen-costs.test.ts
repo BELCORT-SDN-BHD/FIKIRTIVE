@@ -7,8 +7,8 @@ import {
 } from "../canvas-gen-costs";
 
 describe("canvasGenCostQuote", () => {
-  it("quotes the default single image and one video at core pricing", () => {
-    const quote = canvasGenCostQuote({ image: "seedream", video: "seedance-2-fast" });
+  it("uses the exact server-supplied quote for one image and one video", () => {
+    const quote = canvasGenCostQuote({ imageCredits: 1, videoCredits: 8 });
 
     expect(CANVAS_IMAGE_DEFAULT_COUNT).toBe(1);
     expect(CANVAS_IMAGE_MAX_VARIANT_COUNT).toBe(4);
@@ -17,8 +17,9 @@ describe("canvasGenCostQuote", () => {
   });
 
   it("quotes the selected image variant count after applying the 1-4 clamp", () => {
-    expect(canvasGenCostQuote({ image: "seedream", video: "seedance-2-fast" }, 3).imageCredits).toBe(3);
-    expect(canvasGenCostQuote({ image: "seedream", video: "seedance-2-fast" }, 99).imageCredits).toBe(4);
+    const serverQuote = { imageCredits: 2, videoCredits: 9 };
+    expect(canvasGenCostQuote(serverQuote, 3)).toEqual({ imageCredits: 6, videoCredits: 9 });
+    expect(canvasGenCostQuote(serverQuote, 99)).toEqual({ imageCredits: 8, videoCredits: 9 });
   });
 });
 

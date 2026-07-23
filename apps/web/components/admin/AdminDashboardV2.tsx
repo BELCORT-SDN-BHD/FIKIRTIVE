@@ -50,6 +50,24 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
+function providerLabel(value: string): string {
+  if (value === "mock") return "Simulation";
+  if (value === "modal") return "Self-hosted";
+  return "Hosted AI";
+}
+
+function modelLabel(model: { id: string; kind: "image" | "video" }): string {
+  return /seedance|seedream/i.test(model.id)
+    ? model.kind === "video" ? "Primary video" : "Primary image"
+    : model.id;
+}
+
+function familyLabel(value: string): string {
+  if (/seedream/i.test(value)) return "Image";
+  if (/seedance/i.test(value)) return "Video";
+  return value;
+}
+
 type Props = {
   section: AdminV2Section;
   data: AdminV2Data;
@@ -741,7 +759,7 @@ function OttoSection({ data, currentRole }: { data: AdminV2Data; currentRole: st
   return (
     <div className="grid gap-5">
       <div className="grid gap-3 md:grid-cols-4">
-        <MetricCard label="Provider" value={data.otto.provider} detail="Runtime provider mode from existing config." tone={data.otto.provider === "mock" ? "warning" : "info"} />
+        <MetricCard label="Provider" value={providerLabel(data.otto.provider)} detail="Runtime provider mode from existing config." tone={data.otto.provider === "mock" ? "warning" : "info"} />
         <MetricCard label="Enabled models" value={`${data.otto.enabledModelCount}/${data.otto.modelCount}`} detail="Typed catalogs minus disabled overlay rows." tone="neutral" />
         <MetricCard label="Directive cells" value={`${data.otto.filledDirectiveCells}/${data.otto.directiveCells}`} detail="Enabled prompt directive cells with content." tone="info" />
         <MetricCard label="Family coverage" value={`${data.otto.coveredFamilies}/${data.otto.routedFamilies}`} detail="Routed video families with at least one directive." tone={data.otto.coveredFamilies === data.otto.routedFamilies ? "success" : "warning"} />
@@ -816,17 +834,17 @@ function RuntimeConfigPanel({ data, canModal }: { data: AdminV2Data; canModal: b
               <h3 className="text-sm font-semibold text-foreground">Otto provider</h3>
               <p className="mt-1 text-xs text-muted-foreground">Paid providers remain server-gated.</p>
             </div>
-            <Badge variant={provider === "mock" ? "warning" : "info"}>{provider}</Badge>
+            <Badge variant={provider === "mock" ? "warning" : "info"}>{providerLabel(provider)}</Badge>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <label className="grid gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Provider</span>
               <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger className="w-full bg-card"><span>{provider}</span></SelectTrigger>
+                <SelectTrigger className="w-full bg-card"><span>{providerLabel(provider)}</span></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mock">mock</SelectItem>
-                  <SelectItem value="fal">fal</SelectItem>
-                  {canModal ? <SelectItem value="modal">modal</SelectItem> : null}
+                  <SelectItem value="mock">{providerLabel("mock")}</SelectItem>
+                  <SelectItem value="fal">{providerLabel("fal")}</SelectItem>
+                  {canModal ? <SelectItem value="modal">{providerLabel("modal")}</SelectItem> : null}
                 </SelectContent>
               </Select>
             </label>
@@ -925,10 +943,10 @@ function ModelControlRow({ row }: { row: AdminV2Data["otto"]["models"][number] }
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium text-foreground">{row.id}</span>
+            <span className="truncate text-sm font-medium text-foreground">{modelLabel(row)}</span>
             <Badge variant={row.kind === "video" ? "info" : "outline"}>{row.kind}</Badge>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{row.family}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{familyLabel(row.family)}</p>
         </div>
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input type="checkbox" checked={enabled} disabled={saving} onChange={(event) => toggle(event.target.checked)} />
@@ -972,9 +990,9 @@ function DirectivesPanel({ data }: { data: AdminV2Data }) {
       action={
         <div className="flex items-center gap-2">
           <Select value={family} onValueChange={setFamily}>
-            <SelectTrigger size="sm" className="w-[132px] bg-card"><span>{family}</span></SelectTrigger>
+            <SelectTrigger size="sm" className="w-[132px] bg-card"><span>{familyLabel(family)}</span></SelectTrigger>
             <SelectContent align="end">
-              {data.otto.families.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
+              {data.otto.families.map((item) => <SelectItem key={item} value={item}>{familyLabel(item)}</SelectItem>)}
             </SelectContent>
           </Select>
           <Button type="button" variant="secondary" size="sm" disabled={seeding} onClick={seed}>{seeding ? "Seeding" : "Seed"}</Button>

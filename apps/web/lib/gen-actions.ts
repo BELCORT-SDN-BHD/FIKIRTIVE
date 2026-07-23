@@ -20,6 +20,11 @@ import {
   pricedGenCredits,
   activeImageModel,
   activeVideoModel,
+  GEN_MODELS,
+  GEN_VIDEO_MODELS,
+  GEN_VIDEO_MODEL_OPTIONS,
+  videoDefaults,
+  type GenVideoModel,
   type GenJobData,
 } from "@fikirtive/core";
 import { getBoss } from "./queue";
@@ -27,6 +32,7 @@ import { checkCast } from "./cowork-guardian";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
+import { sanitizeUserError } from "./provider-secrecy";
 import {
   canvasActionKey,
   factoryMaterialMatches,
@@ -43,7 +49,40 @@ export type StartGenResult =
   | { id: string; disposition: "fresh" | "reused" }
   | { error: string; disposition?: "conflict"; refunded?: true };
 
+export type ActiveGenModels = {
+  /** Opaque browser control ids. The real provider-backed model ids remain server-side. */
+  image: string;
+  video: string;
+  imageCredits: number;
+  videoCredits: number;
+  videoDefaults: ReturnType<typeof videoDefaults>;
+  videoAspectRatios: string[];
+};
+
 class QueuePrepareFailed extends Error {}
+
+function modelMenu(kind: "image" | "video"): readonly string[] {
+  return kind === "video" ? GEN_VIDEO_MODELS : GEN_MODELS;
+}
+
+function publicModelAlias(kind: "image" | "video", model: string): string {
+  const index = modelMenu(kind).indexOf(model);
+  if (index < 0) throw new Error("Active generation capability is not configured.");
+  return `capability-${kind}-${index + 1}`;
+}
+
+/** Translate only our opaque browser ids; legacy/internal model ids keep their exact behavior. */
+function resolvePublicModelAlias(raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  const kind = record.kind === "video" ? "video" : "image";
+  const match = typeof record.model === "string"
+    ? new RegExp(`^capability-${kind}-(\\d+)$`, "u").exec(record.model)
+    : null;
+  if (!match) return raw;
+  const model = modelMenu(kind)[Number(match[1]) - 1];
+  return model ? { ...record, model } : raw;
+}
 
 const FACTORY_HISTORY_SELECT = {
   id: true,
@@ -147,7 +186,7 @@ export async function startCanvasGen(raw: unknown): Promise<StartGenResult> {
 /** Otto/GEN_CARD's paid entrypoint. The durable card — not the browser or model — supplies
  * the approved displayed-credit quote and binds it to this owner, thread, project, and key. */
 export async function startCoworkGen(raw: unknown): Promise<StartGenResult> {
-  const parsed = genRequest.safeParse(raw);
+  const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { idempotencyKey, projectId, threadId } = parsed.data;
   if (!idempotencyKey?.startsWith("cowork:") || idempotencyKey.length <= "cowork:".length || !threadId) {
@@ -209,7 +248,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
   const { ownerId } = gate;
   const OWNED = { ownerId, deletedAt: null } as const;
-  const parsed = genRequest.safeParse(raw);
+  const parsed = genRequest.safeParse(resolvePublicModelAlias(raw));
   if (!parsed.success) return { error: "That generation request is out of bounds." };
   const { projectId, shotId, sourceGenerationId, tailGenerationId, referenceVideoGenerationId, prompt, entityIds, count, kind, model, durationSeconds, resolution, aspectRatio, fps, audio, idempotencyKey, variantSel, threadId } = parsed.data;
   const parsedCanvasAction = parseCanvasActionKey(idempotencyKey);
@@ -348,7 +387,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     try {
       await prisma.actionEvent.create({ data: { id: newId(), ownerId, projectId, type: "gen.guardian-block", payload: { findings: block.report.findings } } });
     } catch { /* audit best-effort — a log hiccup must not swallow the block */ }
-    return { error: block.error };
+    return { error: sanitizeUserError(block.error) };
   }
 
   // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
@@ -362,7 +401,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
 
   const kindForModel = kind === "image" ? "image" : "video";
   const spendable = assertSpendableModel(model, kindForModel);
-  if (!spendable.ok) return { error: spendable.error };
+  if (!spendable.ok) return { error: sanitizeUserError(spendable.error) };
 
   // P2: the deterministic CHARGE in internal credits — reserved atomically with the
   // job insert below, settled at commit, refunded on terminal failure (the worker).
@@ -618,13 +657,30 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   return { id: job.id, disposition: "fresh" };
 }
 
-/** F18: resolve the active image/video models SERVER-side (where OTTO_DEFAULT_VIDEO_MODEL is
- *  actually in the environment). Client components must NOT call activeImageModel()/
- *  activeVideoModel() directly — that env is not bundled, so the browser computes the code
- *  default instead of the server-configured model and can mismatch what the server gate
- *  accepts. Clients fetch this instead so their gen requests carry the real model. */
-export async function getActiveGenModels(): Promise<{ image: string; video: string }> {
-  return { image: activeImageModel(), video: activeVideoModel() };
+/** Resolve active capabilities and exact quote metadata server-side. The browser receives
+ * opaque control ids; startGen translates them back before the existing validation/price path. */
+export async function getActiveGenModels(): Promise<ActiveGenModels> {
+  const imageModel = activeImageModel();
+  const videoModel = activeVideoModel();
+  const defaults = videoDefaults(videoModel as GenVideoModel);
+  return {
+    image: publicModelAlias("image", imageModel),
+    video: publicModelAlias("video", videoModel),
+    imageCredits: displayCredits(pricedGenCredits({
+      kind: "IMAGE",
+      model: imageModel,
+      count: 1,
+      videoOptions: null,
+    })),
+    videoCredits: displayCredits(pricedGenCredits({
+      kind: "VIDEO",
+      model: videoModel,
+      count: 1,
+      videoOptions: null,
+    })),
+    videoDefaults: defaults,
+    videoAspectRatios: [...GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel].aspectRatios],
+  };
 }
 
 /** Poll a gen job + return its produced generations' image URLs when DONE. */
@@ -649,7 +705,15 @@ export async function getGenJob(jobId: string, projectId?: string) {
       .filter((g): g is NonNullable<typeof g> => !!g)
       .map((g) => storageKeyToSrc(storageKey(g.asset.ownerId, g.asset.contentHash, g.asset.ext)));
   }
-  return { id: job.id, status: job.status, progress: job.progress, error: job.error, urls, generationIds: job.generationIds, spent: job.spent };
+  return {
+    id: job.id,
+    status: job.status,
+    progress: job.progress,
+    error: sanitizeUserError(job.error),
+    urls,
+    generationIds: job.generationIds,
+    spent: job.spent,
+  };
 }
 
 /** Recent gen results for a project, newest first. Gen space rehydrates its result
@@ -664,7 +728,7 @@ export async function getRecentGenResults(projectId: string, limit = 12) {
   const jobs = await prisma.genJob.findMany({
     where: { projectId, ownerId, threadId: null },
     orderBy: { createdAt: "desc" }, take: limit,
-    select: { id: true, status: true, prompt: true, model: true, kind: true, error: true, generationIds: true },
+    select: { id: true, status: true, prompt: true, kind: true, error: true, generationIds: true },
   });
   const ids = jobs.flatMap((j) => j.generationIds);
   const gens = ids.length ? await prisma.generation.findMany({ where: { id: { in: ids }, ownerId, deletedAt: null }, include: { asset: true } }) : [];
@@ -673,9 +737,8 @@ export async function getRecentGenResults(projectId: string, limit = 12) {
     jobId: j.id,
     status: j.status,
     prompt: j.prompt,
-    model: j.model,
     kind: j.kind === "VIDEO" ? ("video" as const) : ("image" as const),
-    error: j.error,
+    error: sanitizeUserError(j.error),
     urls: j.generationIds
       .map((gid) => byId.get(gid))
       .filter((g): g is NonNullable<typeof g> => !!g)

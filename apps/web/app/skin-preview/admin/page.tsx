@@ -16,8 +16,8 @@ const DAYS: DayRow[] = [
   { day: "2026-06-28", usd: 211.07, jobs: 489 },
 ];
 const JOBS: JobRow[] = [
-  { id: "gj_8c21", source: "gen", label: "video", model: "seedance-1.0-pro", count: 1, status: "SUCCEEDED", spentUsd: 0.62, finishedAt: "2026-06-30T14:22:00.000Z" },
-  { id: "rg_77a2", source: "refgen", label: "ref:remix", model: "seedream-3.0", count: 2, status: "FAILED", spentUsd: 0.0, finishedAt: "2026-06-30T13:51:00.000Z" },
+  { id: "gj_8c21", source: "gen", label: "video", model: "Video", count: 1, status: "SUCCEEDED", spentUsd: 0.62, finishedAt: "2026-06-30T14:22:00.000Z" },
+  { id: "rg_77a2", source: "refgen", label: "ref:remix", model: "Image", count: 2, status: "FAILED", spentUsd: 0.0, finishedAt: "2026-06-30T13:51:00.000Z" },
 ];
 
 export default async function AdminSkinPreview({ searchParams }: { searchParams?: Promise<{ c?: string }> }) {
@@ -33,7 +33,7 @@ export default async function AdminSkinPreview({ searchParams }: { searchParams?
       </nav>
       <main className="admin-content">
         {which === "settings"
-          ? <SettingsAdmin vision={{ enabled: true, maxImages: 4, maxBytes: 5242880 }} provider="byteplus" canModal={true} />
+          ? <SettingsAdmin vision={{ enabled: true, maxImages: 4, maxBytes: 5242880 }} provider="mock" canModal={true} />
           : <CostAdmin days={DAYS} jobs={JOBS} totalUsd={516.59} jobCount={1170} sinceDays={30} />}
       </main>
     </div>

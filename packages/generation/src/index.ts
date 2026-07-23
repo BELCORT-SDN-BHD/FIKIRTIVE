@@ -221,7 +221,7 @@ export class FalProvider implements GenerationProvider {
 
   async generate(req: GenerationRequest): Promise<GeneratedImage[]> {
     const ids = FAL_MODELS[req.model];
-    if (!ids) throw new Error(`fal: no model mapping for ${req.model}`);
+    if (!ids) throw new Error("generation provider has no image model mapping");
     const conditioned = req.inputImageUrls.length > 0;
     const modelId = conditioned ? ids.edit : ids.t2i;
 
@@ -239,7 +239,8 @@ export class FalProvider implements GenerationProvider {
     if (!res.ok) {
       // pre-charge failure (the model never ran) — safe for the worker to retry
       const detail = await res.text().catch(() => "");
-      throw new Error(`fal ${modelId} → ${res.status}: ${detail.slice(0, 300)}`);
+      console.error("generation provider image request failed:", { modelId, status: res.status, detail: detail.slice(0, 300) });
+      throw new Error(`generation provider image request failed (${res.status})`);
     }
     // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
     // past here must terminal-fail (chargedError), never retry-and-re-charge.
@@ -248,7 +249,7 @@ export class FalProvider implements GenerationProvider {
       const images = data.images ?? [];
       // we paid for req.count images — a short batch (or none) is a charged failure,
       // never a silent partial DONE
-      if (images.length !== req.count) throw new Error(`expected ${req.count} images, fal returned ${images.length}`);
+      if (images.length !== req.count) throw new Error(`expected ${req.count} images, generation provider returned ${images.length}`);
       // download every result. allSettled (NOT Promise.all) so each download is
       // awaited even if one fails — no leaked response bodies on the first reject —
       // but a paid batch is all-or-nothing (no partial-success contract): if ANY
@@ -266,21 +267,22 @@ export class FalProvider implements GenerationProvider {
       if (ok.length !== images.length) throw new Error(`only ${ok.length}/${images.length} results downloaded`);
       return ok;
     } catch (e) {
-      throw chargedError(`fal ${modelId} billed but result unusable: ${e instanceof Error ? e.message : String(e)}`);
+      console.error("generation provider returned an unusable image result:", { modelId, error: e instanceof Error ? e.message : String(e) });
+      throw chargedError("generation provider billed but returned an unusable image result");
     }
   }
 
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
-    if (req.refVideoUrl) throw new Error("fal provider does not support whole-clip reference video (BytePlus only)"); // pre-spend
+    if (req.refVideoUrl) throw new Error("generation provider does not support whole-clip reference video"); // pre-spend
     // Resolve the model's fal wiring. Unknown model → fail BEFORE the paid POST
     // (no spend); the contract already rejects it, this is defense in depth.
     const cfg = VIDEO_CFG[req.model as GenVideoModel];
-    if (!cfg) throw new Error(`fal: no video model mapping for ${req.model}`);
+    if (!cfg) throw new Error("generation provider has no video model mapping");
     // A source frame → image-to-video (Storyboard Animate); no frame →
     // text-to-video (Gen space). image_url (i2v) is a presigned R2 GET fal
     // fetches; the sync endpoint blocks until the clip is ready.
     const i2v = req.imageUrl.length > 0;
-    if (req.tailImageUrl && !i2v) throw new Error("fal: an end frame needs a start image"); // pre-POST, no spend
+    if (req.tailImageUrl && !i2v) throw new Error("generation provider needs a start image for an end frame"); // pre-POST, no spend
 
     let modelId: string;
     const body: Record<string, unknown> = { prompt: req.prompt };
@@ -312,7 +314,7 @@ export class FalProvider implements GenerationProvider {
       } else {
         // model has no end-frame support — fail before the paid POST (no spend).
         // The contract already rejects this; defense in depth.
-        throw new Error(`fal: ${req.model} does not support an end frame`);
+        throw new Error("generation provider does not support an end frame for this video model");
       }
     } else if (i2v) {
       modelId = cfg.i2v;
@@ -328,7 +330,8 @@ export class FalProvider implements GenerationProvider {
     if (!res.ok) {
       // pre-charge failure (the model never ran) — safe for the worker to retry
       const detail = await res.text().catch(() => "");
-      throw new Error(`fal ${modelId} → ${res.status}: ${detail.slice(0, 300)}`);
+      console.error("generation provider video request failed:", { modelId, status: res.status, detail: detail.slice(0, 300) });
+      throw new Error(`generation provider video request failed (${res.status})`);
     }
     // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
     // past here must terminal-fail (chargedError), never retry-and-re-charge.
@@ -341,7 +344,8 @@ export class FalProvider implements GenerationProvider {
       const ext = extFromUrl(url) ?? "mp4";
       return { bytes: new Uint8Array(await r.arrayBuffer()), ext };
     } catch (e) {
-      throw chargedError(`fal ${modelId} billed but result unusable: ${e instanceof Error ? e.message : String(e)}`);
+      console.error("generation provider returned an unusable video result:", { modelId, error: e instanceof Error ? e.message : String(e) });
+      throw chargedError("generation provider billed but returned an unusable video result");
     }
   }
 }

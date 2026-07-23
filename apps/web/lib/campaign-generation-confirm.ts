@@ -125,7 +125,6 @@ export interface CampaignGenQuoteLine {
   /** Exact persisted generation content rendered with this server quote. */
   brief: string;
   kind: CampaignGenKind;
-  model: string;
   /** displayed credits for this entry (the per-cell reserve, displayed). */
   displayCredits: number;
 }
@@ -154,7 +153,6 @@ function quoteCampaignGenCells(entries: ApprovedCampaignEntry[], cells: GenCell[
         entryId: entries[index].id,
         brief: entries[index].brief,
         kind: (cell.kind ?? "image") as CampaignGenKind,
-        model: cell.model ?? "seedream",
         displayCredits: displayCredits(internalCredits),
       },
     };

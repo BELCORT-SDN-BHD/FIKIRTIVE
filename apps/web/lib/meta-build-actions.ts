@@ -35,6 +35,7 @@ import { verifyApproval, type PlanStep } from "./meta-approval";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import type { MetaAdBuildCardPayload } from "./meta-build-spec";
+import { sanitizeUserError } from "./provider-secrecy";
 
 export type BuildState = "done" | "partial" | "failed" | "needs_review";
 export type BuildResult = { createdIds: Record<string, string>; state: BuildState };
@@ -543,7 +544,7 @@ export async function maybeAutoBuild(
     return await record(ownerId, cardId, payload, { built: true, state: result.state, createdIds: result.createdIds });
   } catch (e) {
     // A throw (incl. KILL_SWITCH from a race) must never break the propose turn.
-    const reason = e instanceof Error ? e.message.slice(0, 200) : "build-threw";
+    const reason = e instanceof Error ? sanitizeUserError(e.message, 200) : "build-threw";
     return await record(ownerId, cardId, null, { built: false, reason });
   }
 }

@@ -1,5 +1,3 @@
-import { displayCredits, pricedGenCredits } from "@fikirtive/core/spend";
-
 /** Founder decision (2026-07-06): one image per canvas generation by default; the
  *  owner requests more variants explicitly, up to the max. */
 export const CANVAS_IMAGE_DEFAULT_COUNT = 1;
@@ -19,34 +17,12 @@ export type CanvasGenCostQuote = {
   videoCredits: number;
 };
 
-export function canvasImageCostCredits(model: string, count = CANVAS_IMAGE_DEFAULT_COUNT): number {
-  return displayCredits(
-    pricedGenCredits({
-      kind: "IMAGE",
-      model,
-      count: clampImageVariantCount(count),
-      videoOptions: null,
-    }),
-  );
-}
-
-export function canvasVideoCostCredits(model: string): number {
-  return displayCredits(
-    pricedGenCredits({
-      kind: "VIDEO",
-      model,
-      count: 1,
-      videoOptions: null,
-    }),
-  );
-}
-
 export function canvasGenCostQuote(
-  models: { image: string; video: string },
+  unitQuote: CanvasGenCostQuote,
   imageCount = CANVAS_IMAGE_DEFAULT_COUNT,
 ): CanvasGenCostQuote {
   return {
-    imageCredits: canvasImageCostCredits(models.image, imageCount),
-    videoCredits: canvasVideoCostCredits(models.video),
+    imageCredits: unitQuote.imageCredits * clampImageVariantCount(imageCount),
+    videoCredits: unitQuote.videoCredits,
   };
 }

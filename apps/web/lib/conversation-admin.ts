@@ -18,7 +18,7 @@ import { FOUNDER_OWNER_ID } from "@fikirtive/core";
  *
  * NEVER emits a storage URL. GEN_RESULT/GEN_CARD payloads can hold `/files/<key>` paths
  * whose key embeds the owning tenant; cross-tenant they 403 at /files anyway, so only safe
- * metadata (model / kind / prompt / cost) is shaped out.
+ * metadata (capability / prompt / cost) is shaped out.
  */
 
 const LIST_LIMIT = 50;
@@ -45,8 +45,8 @@ export type ConversationMessage = {
   createdAt: string; // ISO
   // kind-specific safe extras (all optional)
   planSteps?: string[];
-  card?: { model: string; kind: string; prompt: string; estimatedPriceUsd: number | null };
-  result?: { model: string; kind: string; genJobId: string | null; status: string | null; spentUsd: number | null };
+  card?: { capability: string; prompt: string; estimatedPriceUsd: number | null };
+  result?: { capability: string; genJobId: string | null; status: string | null; spentUsd: number | null };
 };
 
 export type ConversationDetail = {
@@ -159,9 +159,9 @@ export async function getConversation(threadId: string): Promise<ConversationDet
       if (Array.isArray(steps)) base.planSteps = steps.filter((s): s is string => typeof s === "string");
     } else if (m.kind === "GEN_CARD" && m.payload && typeof m.payload === "object") {
       const p = m.payload as Record<string, unknown>;
+      const capability = p.kind === "video" ? "Video" : "Image";
       base.card = {
-        model: typeof p.model === "string" ? p.model : "",
-        kind: typeof p.kind === "string" ? p.kind : "",
+        capability,
         prompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : "",
         estimatedPriceUsd: typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : null,
       };
@@ -169,8 +169,7 @@ export async function getConversation(threadId: string): Promise<ConversationDet
       const p = (m.payload ?? {}) as Record<string, unknown>;
       const job = m.genJobId ? jobById.get(m.genJobId) : undefined;
       base.result = {
-        model: typeof p.model === "string" ? p.model : "",
-        kind: typeof p.kind === "string" ? p.kind : "",
+        capability: p.kind === "video" ? "Video" : "Image",
         genJobId: m.genJobId,
         status: job?.status ?? null,
         spentUsd: typeof job?.spentUsd === "number" ? job.spentUsd : null,

@@ -70,7 +70,6 @@ function confirmProps(
           entryId: ENTRY_ID,
           brief: "A festive product image",
           kind: "image",
-          model: "image-model",
           displayCredits: totalDisplayCredits,
         }],
         totalDisplayCredits,

@@ -5,22 +5,20 @@
  * Opens as an absolute overlay inside the canvas container (not position:fixed).
  * Escape or click-on-backdrop closes; clicking the panel itself does not.
  */
-import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 import type { Area } from "react-easy-crop";
 import { getGeneration } from "@/lib/asset-actions";
 import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
-import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
-import { readPick, writePick } from "@/lib/result-pick";
 import {
-  GEN_VIDEO_MODEL_OPTIONS,
-  videoDefaults,
-  type GenVideoModel,
-} from "@fikirtive/core/gen";
-import { activeVideoModel } from "@fikirtive/core/model-config";
-import { displayCredits, pricedGenCredits } from "@fikirtive/core/spend";
+  startGen,
+  getGenJob,
+  getActiveGenModels,
+  type ActiveGenModels,
+} from "@/lib/gen-actions";
+import { readPick, writePick } from "@/lib/result-pick";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button as UiButton } from "@/components/ui/button";
@@ -120,22 +118,18 @@ export default function DetailPanel({
   const editBusyRef = useRef(false);
 
   const cancelledRef = useRef(false);
-  // F18: the active models must be resolved SERVER-side (the OTTO_DEFAULT_VIDEO_MODEL env isn't
-  // bundled into the client, so activeVideoModel() in the browser returns the wrong default and
-  // the server gate rejects it). Fetch once; the spend handlers await it, render uses it once loaded.
-  const [activeModels, setActiveModels] = useState<{ image: string; video: string } | null>(null);
-  const modelsRef = useRef<{ image: string; video: string } | null>(null);
+  // Fetch opaque active capability ids, exact quotes, and video controls once. Spend handlers
+  // await this server-derived contract; provider-backed model ids stay server-side.
+  const [activeModels, setActiveModels] = useState<ActiveGenModels | null>(null);
+  const modelsRef = useRef<ActiveGenModels | null>(null);
   const ensureModels = async () => {
     if (!modelsRef.current) modelsRef.current = await getActiveGenModels();
     setActiveModels(modelsRef.current);
     return modelsRef.current;
   };
   useEffect(() => { void ensureModels(); }, []);
-  const videoModel = (activeModels?.video ?? activeVideoModel()) as GenVideoModel;
-  const currentVideoModel = useEffectEvent(() => videoModel);
 
   useEffect(() => {
-    const loadVideoModel = currentVideoModel();
     cancelledRef.current = false;
     queueMicrotask(() => {
       if (cancelledRef.current) return;
@@ -161,19 +155,20 @@ export default function DetailPanel({
         setSelectedIdx(saved);
       }
 
-      // Init aspect picker default (F18: use the server-resolved model, falling back to the
-      // client default only until it loads — display-only, the spend paths await the real model)
-      const vm = loadVideoModel;
-      const opts = GEN_VIDEO_MODEL_OPTIONS[vm];
-      if (opts?.aspectRatios?.length) {
-        const def = videoDefaults(vm).aspectRatio || opts.aspectRatios[0]!;
-        setChosenAspect(def);
-      }
     });
     return () => {
       cancelledRef.current = true;
     };
   }, [generationId]);
+
+  useEffect(() => {
+    if (!activeModels) return;
+    const initialAspect =
+      activeModels.videoDefaults.aspectRatio ||
+      activeModels.videoAspectRatios[0] ||
+      "";
+    if (initialAspect) queueMicrotask(() => setChosenAspect((current) => current || initialAspect));
+  }, [activeModels]);
 
   // Clear edit composer on generation change
   useEffect(() => {
@@ -206,22 +201,8 @@ export default function DetailPanel({
   // starred/edited against the wrong image (F08/F09). Still an owned id resolved server-side.
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
   const targetProjectId = gen?.projectId ?? projectId;
-  const imageCost = activeModels
-    ? displayCredits(pricedGenCredits({ kind: "IMAGE", model: activeModels.image, count: 1, videoOptions: null }))
-    : null;
-  const activeVideoDefaults = activeModels ? videoDefaults(activeModels.video as GenVideoModel) : null;
-  const videoCost = activeModels && activeVideoDefaults
-    ? displayCredits(pricedGenCredits({
-      kind: "VIDEO",
-      model: activeModels.video,
-      count: 1,
-      videoOptions: {
-        seconds: activeVideoDefaults.seconds,
-        resolution: activeVideoDefaults.resolution,
-        audio: activeVideoDefaults.audio,
-      },
-    }))
-    : null;
+  const imageCost = activeModels?.imageCredits ?? null;
+  const videoCost = activeModels?.videoCredits ?? null;
   const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
   const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
 
@@ -323,8 +304,9 @@ export default function DetailPanel({
     animBusyRef.current = true;
     try {
       setAnimStatus("running");
-      const vm = (await ensureModels()).video as GenVideoModel; // F18: server-resolved model
-      const vd = videoDefaults(vm);
+      const models = await ensureModels();
+      const vm = models.video;
+      const vd = models.videoDefaults;
       // Use user's chosen aspect ratio if set; fall back to videoDefaults
       const effectiveAspect = chosenAspect || vd.aspectRatio;
       const result = await startGen({
@@ -524,9 +506,7 @@ export default function DetailPanel({
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
 
   // Aspect ratios for picker (only show if model has options) — F18: server-resolved model
-  const vm = videoModel;
-  const videoOpts = GEN_VIDEO_MODEL_OPTIONS[vm];
-  const aspectRatios = videoOpts?.aspectRatios ?? [];
+  const aspectRatios = activeModels?.videoAspectRatios ?? [];
 
   return (
     // Faux-viewport overlay — absolute inside the canvas container, not fixed
