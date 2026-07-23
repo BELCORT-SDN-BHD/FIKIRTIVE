@@ -18,9 +18,14 @@ const h = vi.hoisted(() => {
   const store = {
     campaigns: new Map<string, { id: string; ownerId: string; name: string; planJson: unknown; deletedAt: Date | null }>(),
     projects: new Map<string, { id: string; ownerId: string; campaignId: string | null; deletedAt: Date | null }>(),
+    creditAccounts: new Map<string, number>(),
     batches: new Map<string, { id: string; ownerId: string }>(),
     jobs: new Map<string, Record<string, unknown>>(),
   };
+  const creditAccountFindUnique = vi.fn(async ({ where }: { where: { orgId: string } }) => {
+    const balance = store.creditAccounts.get(where.orgId);
+    return balance == null ? null : { balance };
+  });
 
   type PrefixClause = { idempotencyKey: { startsWith: string } };
   const prisma = {
@@ -37,6 +42,9 @@ const h = vi.hoisted(() => {
         if (!row || row.ownerId !== where.ownerId || row.deletedAt !== null) return null;
         return { id: row.id, campaignId: row.campaignId };
       },
+    },
+    creditAccount: {
+      findUnique: creditAccountFindUnique,
     },
     generationBatch: {
       findFirst: async ({ where }: { where: { id: string; ownerId: string } }) => {
@@ -84,6 +92,7 @@ const h = vi.hoisted(() => {
     startGen: vi.fn(),
     requireOwner: vi.fn(),
     isImpersonating: vi.fn(async () => false),
+    creditAccountFindUnique,
   };
 });
 
@@ -173,12 +182,14 @@ function storedMaterial(prompt: string) {
 beforeEach(() => {
   h.store.campaigns.clear();
   h.store.projects.clear();
+  h.store.creditAccounts.clear();
   h.store.batches.clear();
   h.store.jobs.clear();
   failPrompts = new Set();
   vi.clearAllMocks();
   h.requireOwner.mockResolvedValue({ email: "o@example.test", ownerId: OWNER });
   h.isImpersonating.mockResolvedValue(false);
+  h.store.creditAccounts.set(OWNER, 100 * INTERNAL_PER_DISPLAY);
 
   // Faithful model of startGen's owner+project-scoped, lock-time factory verdict.
   h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
@@ -221,6 +232,29 @@ beforeEach(() => {
 });
 
 describe("quoteCampaignGeneration — server-recomputed price + content binding", () => {
+  it("returns the current display balance from a read scoped to requireOwner's ownerId", async () => {
+    seedCampaign([entry("E1")]);
+    h.store.creditAccounts.set(OWNER, 37 * INTERNAL_PER_DISPLAY);
+
+    const result = await quoteCampaignGeneration(CAMPAIGN_ID);
+
+    expect(result).toMatchObject({ ok: true, balanceDisplayCredits: 37 });
+    expect(h.creditAccountFindUnique).toHaveBeenCalledWith({
+      where: { orgId: OWNER },
+      select: { balance: true },
+    });
+  });
+
+  it("returns a zero display balance when the owner's CreditAccount is missing", async () => {
+    seedCampaign([entry("E1")]);
+    h.store.creditAccounts.delete(OWNER);
+
+    expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toMatchObject({
+      ok: true,
+      balanceDisplayCredits: 0,
+    });
+  });
+
   it("prices only approved entries from config and returns a deterministic fingerprint", async () => {
     seedCampaign([
       entry("E1"),
@@ -573,11 +607,21 @@ describe("money-safety static guards", () => {
   );
 
   it("opens no ledger/job-create/queue/provider path outside startGen", () => {
-    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|CreditAccount|creditAccount|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|\.\s*\$transaction|provider\s*\./;
+    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|\.\s*\$transaction|provider\s*\./;
     expect(banned.test(confirmCode)).toBe(false);
     expect(banned.test(batchCode)).toBe(false);
     expect(/from\s+["']\.\/gen-actions["']/.test(confirmCode)).toBe(true);
     expect(/orchestrateBatch\s*\(\s*\{\s*startGen\s*,\s*prisma\s*\}/.test(confirmCode)).toBe(true);
+  });
+
+  it("keeps the balance addition read-only and owner-scoped", () => {
+    const creditAccountWrite =
+      /(?:CreditAccount|creditAccount)\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;
+    expect(confirmCode).toMatch(
+      /prisma\s*\.\s*creditAccount\s*\.\s*findUnique\s*\(\s*\{\s*where:\s*\{\s*orgId:\s*gate\.ownerId\s*\},\s*select:\s*\{\s*balance:\s*true\s*\}/,
+    );
+    expect(confirmCode).not.toMatch(creditAccountWrite);
+    expect(batchCode).not.toMatch(creditAccountWrite);
   });
 
   it("never claims zero charge from an unconfirmed client transport failure", () => {

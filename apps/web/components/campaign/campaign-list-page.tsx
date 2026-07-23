@@ -82,7 +82,9 @@ export default function CampaignListPage({ initialState }: { initialState: ListR
                     </div>
                     <div className="flex items-center gap-2">
                       <Target className="size-4 text-muted-foreground" />
-                      <span>{campaign.plan?.entries.length ?? 0} plan entries</span>
+                      <span>
+                        {campaign.plan?.entries.length ?? 0} plan {(campaign.plan?.entries.length ?? 0) === 1 ? "entry" : "entries"}
+                      </span>
                     </div>
                   </div>
                   <Button asChild className="mt-4 w-full" variant="secondary">
@@ -100,4 +102,3 @@ export default function CampaignListPage({ initialState }: { initialState: ListR
     </main>
   );
 }
-

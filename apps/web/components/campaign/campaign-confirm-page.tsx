@@ -19,6 +19,7 @@ import { displayCredits } from "@fikirtive/core/spend";
 import {
   confirmCampaignGeneration,
   type CampaignGenQuote,
+  type CampaignGenQuoteResult,
   type ConfirmCampaignGenerationResult,
 } from "@/lib/campaign-generation-confirm";
 import type { BatchInterruption } from "@/lib/factory-batch";
@@ -30,8 +31,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CampaignNav } from "./campaign-nav";
 
 type DetailResult = Awaited<ReturnType<typeof getCampaign>>;
-type QuoteResult = { ok: true; quote: CampaignGenQuote } | { error: string };
+type QuoteResult = CampaignGenQuoteResult;
+type QuoteSnapshot = { ok: true; quote: CampaignGenQuote } | { error: string };
 type BatchResult = Extract<ConfirmCampaignGenerationResult, { ok: true }>["result"];
+
+export function campaignGenerationResultTitle(
+  result: Pick<BatchResult, "dispatched" | "failed">,
+  interruption: Pick<BatchInterruption, "current"> | null,
+): "Generation did not start" | "Generation partly started" | "Generation started" {
+  const currentUnknown = interruption?.current === "unknown";
+  if (result.dispatched === 0 && !currentUnknown) return "Generation did not start";
+  if (interruption || result.failed > 0) return "Generation partly started";
+  return "Generation started";
+}
 
 export default function CampaignConfirmPage({
   campaignId,
@@ -74,7 +86,9 @@ function ConfirmWorkspace({
     () => Object.fromEntries((campaign.plan?.entries ?? []).map((entry) => [entry.id, entry])),
     [campaign.plan],
   );
-  const [quoteSnapshot, setQuoteSnapshot] = useState<QuoteResult>(initialQuote);
+  const [quoteSnapshot, setQuoteSnapshot] = useState<QuoteSnapshot>(
+    "ok" in initialQuote ? { ok: true, quote: initialQuote.quote } : initialQuote,
+  );
 
   // Quote lines are the server-authoritative review snapshot. Do not filter them through the
   // separately loaded detail snapshot: those reads happen in parallel and could observe
@@ -83,6 +97,8 @@ function ConfirmWorkspace({
   const approvedLines = "ok" in quoteSnapshot ? quoteSnapshot.quote.lines : [];
   const totalDisplayCredits = "ok" in quoteSnapshot ? quoteSnapshot.quote.totalDisplayCredits : 0;
   const contentFingerprint = "ok" in quoteSnapshot ? quoteSnapshot.quote.contentFingerprint : "";
+  const balanceDisplayCredits = "ok" in initialQuote ? initialQuote.balanceDisplayCredits : 0;
+  const insufficientCredits = balanceDisplayCredits < totalDisplayCredits;
 
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
@@ -162,11 +178,7 @@ function ConfirmWorkspace({
     const reservedThisRun = displayCredits(result.totalCredits);
     const currentUnknown = interruption?.current === "unknown";
     const zeroDispatchConfirmed = result.dispatched === 0 && !currentUnknown;
-    const resultTitle = interruption
-      ? result.dispatched > 0 || currentUnknown
-        ? "Generation partly started"
-        : "Generation did not start"
-      : "Generation started";
+    const resultTitle = campaignGenerationResultTitle(result, interruption);
 
     return (
       <Shell>
@@ -186,14 +198,14 @@ function ConfirmWorkspace({
               </div>
             ) : interruption ? (
               <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
-                Confirmed reserved before the interruption: <strong>{reservedThisRun} credits</strong>.
+                Confirmed reserved before the interruption: <strong>{reservedThisRun} {reservedThisRun === 1 ? "credit" : "credits"}</strong>.
                 {currentUnknown
                   ? " One item's start status could not be confirmed and may also have reserved credits. A retry will reuse it if it exists."
                   : " The remaining items did not start."}
               </div>
             ) : (
               <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-                Reserved this run: <strong>{reservedThisRun} credits</strong>. Reused and failed items charged nothing.
+                Reserved this run: <strong>{reservedThisRun} {reservedThisRun === 1 ? "credit" : "credits"}</strong>. Reused and failed items charged nothing.
                 Any item that fails is refunded automatically.
               </div>
             )}
@@ -257,7 +269,7 @@ function ConfirmWorkspace({
                       <Badge variant="outline">{line.kind === "video" ? <VideoIcon className="size-3" /> : <ImageIcon className="size-3" />}{line.kind}</Badge>
                       <span className="text-xs text-muted-foreground">{entry?.platform} · {entry?.format}</span>
                     </span>
-                    <span className="text-sm font-semibold">{line.displayCredits} credits</span>
+                    <span className="text-sm font-semibold">{line.displayCredits} {line.displayCredits === 1 ? "credit" : "credits"}</span>
                   </div>
                   <p className="mt-3 text-sm font-semibold">{entry?.hook || "Untitled entry"}</p>
                   <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{line.brief}</p>
@@ -286,11 +298,29 @@ function ConfirmWorkspace({
               </label>
               <div className="flex items-baseline justify-between border-t border-border pt-3">
                 <span className="text-sm text-muted-foreground">Total</span>
-                <span className="text-2xl font-semibold tracking-tight">{totalDisplayCredits} credits</span>
+                <span className="text-2xl font-semibold tracking-tight">
+                  {totalDisplayCredits} {totalDisplayCredits === 1 ? "credit" : "credits"}
+                </span>
               </div>
-              <Button type="button" className="w-full" disabled={busy || !projectId} onClick={() => confirm()}>
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-muted-foreground">Current balance</span>
+                <span className="text-sm font-semibold">
+                  {balanceDisplayCredits} {balanceDisplayCredits === 1 ? "credit" : "credits"}
+                </span>
+              </div>
+              {insufficientCredits ? (
+                <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
+                  <p>
+                    <strong>Not enough credits</strong> — you have {balanceDisplayCredits} {balanceDisplayCredits === 1 ? "credit" : "credits"}, this needs {totalDisplayCredits} {totalDisplayCredits === 1 ? "credit" : "credits"}.
+                  </p>
+                  <Link href="/billing" className="mt-2 inline-flex font-semibold underline underline-offset-4">
+                    Top up credits
+                  </Link>
+                </div>
+              ) : null}
+              <Button type="button" className="w-full" disabled={busy || !projectId || insufficientCredits} onClick={() => confirm()}>
                 {busy ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
-                Confirm · {totalDisplayCredits} credits
+                Confirm · {totalDisplayCredits} {totalDisplayCredits === 1 ? "credit" : "credits"}
               </Button>
               <Button asChild variant="ghost" className="w-full">
                 <Link href={`/campaign/${campaignId}`}><ArrowLeft />Back without generating</Link>
