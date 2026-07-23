@@ -7,6 +7,7 @@ const {
   mockProjectFindMany,
   mockPostFindMany,
   mockGenerationFindMany,
+  mockBroadcastFindMany,
   mockTrendFindMany,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
@@ -15,6 +16,7 @@ const {
   mockProjectFindMany: vi.fn(),
   mockPostFindMany: vi.fn(),
   mockGenerationFindMany: vi.fn(),
+  mockBroadcastFindMany: vi.fn(),
   mockTrendFindMany: vi.fn(),
 }));
 
@@ -27,6 +29,7 @@ vi.mock("@fikirtive/db", () => ({
     project: { findMany: mockProjectFindMany },
     scheduledPost: { findMany: mockPostFindMany },
     generation: { findMany: mockGenerationFindMany },
+    broadcastRun: { findMany: mockBroadcastFindMany },
     trendSnapshot: { findMany: mockTrendFindMany },
   },
 }));
@@ -61,6 +64,7 @@ beforeEach(() => {
   mockProjectFindMany.mockResolvedValue([]);
   mockPostFindMany.mockResolvedValue([]);
   mockGenerationFindMany.mockResolvedValue([]);
+  mockBroadcastFindMany.mockResolvedValue([]);
   mockTrendFindMany.mockResolvedValue([]);
 });
 
@@ -98,6 +102,9 @@ describe("getCampaign", () => {
     mockGenerationFindMany.mockResolvedValue([
       { id: "g1", assetId: "asset-1", modelRef: "seedream", campaignId: CAMPAIGN_ID, createdAt: NOW },
     ]);
+    mockBroadcastFindMany.mockResolvedValue([
+      { id: "b1", purpose: "marketing", status: "completed", createdAt: NOW, executedAt: NOW },
+    ]);
     mockTrendFindMany.mockResolvedValue([
       { id: "t1", summary: "Trend", sources: [], capturedAt: NOW, createdAt: NOW },
     ]);
@@ -111,6 +118,7 @@ describe("getCampaign", () => {
           projects: [{ id: "p1" }],
           scheduledPosts: [{ id: "s1" }],
           generations: [{ id: "g1" }],
+          broadcasts: [{ id: "b1", purpose: "marketing", status: "completed" }],
         },
         available: { projects: [{ id: "p2" }] },
         trendSnapshots: [{ id: "t1" }],
@@ -121,11 +129,21 @@ describe("getCampaign", () => {
       mockProjectFindMany.mock.calls[0][0],
       mockPostFindMany.mock.calls[0][0],
       mockGenerationFindMany.mock.calls[0][0],
+      mockBroadcastFindMany.mock.calls[0][0],
       mockTrendFindMany.mock.calls[0][0],
     ]) {
       expect(query.where.ownerId).toBe(OWNER);
-      expect(query.where.deletedAt).toBeNull();
     }
+    expect(mockBroadcastFindMany.mock.calls[0][0].where).toEqual({
+      ownerId: OWNER,
+      campaignId: CAMPAIGN_ID,
+    });
+    for (const query of [
+      mockProjectFindMany.mock.calls[0][0],
+      mockPostFindMany.mock.calls[0][0],
+      mockGenerationFindMany.mock.calls[0][0],
+      mockTrendFindMany.mock.calls[0][0],
+    ]) expect(query.where.deletedAt).toBeNull();
   });
 
   it("returns zero bytes for another tenant's Campaign id and never reads grouped rows", async () => {
@@ -136,7 +154,7 @@ describe("getCampaign", () => {
     expect(mockProjectFindMany).not.toHaveBeenCalled();
     expect(mockPostFindMany).not.toHaveBeenCalled();
     expect(mockGenerationFindMany).not.toHaveBeenCalled();
+    expect(mockBroadcastFindMany).not.toHaveBeenCalled();
     expect(mockTrendFindMany).not.toHaveBeenCalled();
   });
 });
-

@@ -5,6 +5,7 @@ import {
   getBroadcastRunLivePreflight,
   getMemberDirectory,
 } from "@/lib/customer-broadcast-gateway";
+import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Broadcast · Fikirtive" };
@@ -17,11 +18,12 @@ export default async function CrmBroadcastDetailRoute({
   searchParams: Promise<{ segment?: string }>;
 }) {
   const [{ id }, query] = await Promise.all([params, searchParams]);
-  const [run, preflight, directory, options] = await Promise.all([
+  const [run, preflight, directory, options, report] = await Promise.all([
     getBroadcastRun({ broadcastRunId: id }),
     getBroadcastRunLivePreflight({ broadcastRunId: id }),
     getMemberDirectory(),
     getBroadcastComposerOptions(),
+    getCustomerBroadcastReport({ broadcastRunId: id }),
   ]);
   return (
     <BroadcastDetailPage
@@ -30,6 +32,7 @@ export default async function CrmBroadcastDetailRoute({
       initialPreflight={preflight}
       initialDirectory={directory}
       initialOptions={options}
+      initialReportAvailable={report.ok}
       preselectedSegmentId={query.segment ?? null}
     />
   );

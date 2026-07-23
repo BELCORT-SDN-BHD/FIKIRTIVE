@@ -5,6 +5,7 @@ import { useState } from "react";
 import { AlertCircle, ArrowLeft, ArrowRight, Megaphone, Plus, RefreshCw, Unplug } from "lucide-react";
 import { listBroadcastRuns } from "@/lib/customer-broadcast-ui-actions";
 import type { getMemberDirectory } from "@/lib/customer-broadcast-gateway";
+import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,11 +42,14 @@ function DeniedState({ message }: { message: string }) {
 export default function BroadcastListPage({
   initialRuns,
   initialDirectory,
+  initialReportRunIds,
 }: {
   initialRuns: ListResult;
   initialDirectory: DirectoryResult;
+  initialReportRunIds: string[];
 }) {
   const [runs, setRuns] = useState<Run[]>(initialRuns.ok ? initialRuns.resource : []);
+  const [reportRunIds, setReportRunIds] = useState(() => new Set(initialReportRunIds));
   const [errorCode, setErrorCode] = useState<string | null>(initialRuns.ok ? null : initialRuns.error);
   const [loading, setLoading] = useState(false);
 
@@ -67,7 +71,14 @@ export default function BroadcastListPage({
       const result = await listBroadcastRuns({});
       if (!result.ok) setErrorCode(result.error);
       else {
+        const reports = await Promise.all(
+          result.resource.map(async (run) => ({
+            id: run.id,
+            report: await getCustomerBroadcastReport({ broadcastRunId: run.id }),
+          })),
+        );
         setRuns(result.resource);
+        setReportRunIds(new Set(reports.filter(({ report }) => report.ok).map(({ id }) => id)));
         setErrorCode(null);
       }
     } catch {
@@ -134,9 +145,9 @@ export default function BroadcastListPage({
             {runs.map((run) => {
               const status = runStatusPresentation(run.status);
               return (
-                <Link key={run.id} href={`/crm/broadcasts/${run.id}`} className="block">
-                  <Card className="transition-colors hover:bg-secondary/40">
-                    <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Card key={run.id}>
+                  <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <Link href={`/crm/broadcasts/${run.id}`} className="min-w-0 flex-1 rounded-lg outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={status.variant}>{status.label}</Badge>
@@ -147,10 +158,17 @@ export default function BroadcastListPage({
                           Created by {nameFor(run.createdByMembershipId)} · {dateTimeLabel(run.createdAt)}
                         </p>
                       </div>
+                    </Link>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {reportRunIds.has(run.id) ? (
+                        <Button asChild size="sm" variant="secondary">
+                          <Link href={`/crm/reports/${run.id}`}>View report</Link>
+                        </Button>
+                      ) : null}
                       <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
-                    </CardContent>
-                  </Card>
-                </Link>
+                    </div>
+                  </CardContent>
+                </Card>
               );
             })}
           </section>

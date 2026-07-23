@@ -14,6 +14,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { setContactConsent, setContactDnd, updateContact } from "@/lib/crm-actions";
+import { CRM_CONSENT_LABELS } from "@/lib/crm-consent-labels";
 import { getContact, type CrmContactDetailRow } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,12 +35,6 @@ function dateTimeLabel(value: Date | string | null): string {
     minute: "2-digit",
     timeZone: "Asia/Kuala_Lumpur",
   }).format(new Date(value));
-}
-
-function consentLabel(state: CrmContactDetailRow["consentState"]["state"]): string {
-  if (state === "verified_grant") return "Verified opt-in";
-  if (state === "effective_revoke") return "Effective opt-out";
-  return "Unknown";
 }
 
 function consentVariant(state: CrmContactDetailRow["consentState"]["state"]): "success" | "destructive" | "warning" {
@@ -181,7 +176,7 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
             </div>
             <div className="flex flex-wrap gap-2">
               <Badge variant="outline">{contact.lifecycleStage}</Badge>
-              <Badge variant={consentVariant(contact.consentState.state)}>{consentLabel(contact.consentState.state)}</Badge>
+              <Badge variant={consentVariant(contact.consentState.state)}>{CRM_CONSENT_LABELS[contact.consentState.state]}</Badge>
               {contact.doNotDisturb ? <Badge variant="destructive">Do not disturb</Badge> : null}
             </div>
           </div>
@@ -233,7 +228,7 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
           <div className="grid content-start gap-5">
             <Card>
               <CardHeader>
-                <div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Consent history</CardTitle><CardDescription className="mt-1">WhatsApp × marketing projection plus append-only facts, newest first.</CardDescription></div><Badge variant={consentVariant(contact.consentState.state)}>{consentLabel(contact.consentState.state)}</Badge></div>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>Consent history</CardTitle><CardDescription className="mt-1">WhatsApp × marketing projection plus append-only facts, newest first.</CardDescription></div><Badge variant={consentVariant(contact.consentState.state)}>{CRM_CONSENT_LABELS[contact.consentState.state]}</Badge></div>
               </CardHeader>
               <CardContent>
                 <div className="rounded-xl border border-warning/25 bg-warning-soft p-4 text-sm leading-6 text-warning-soft-foreground">
