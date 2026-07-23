@@ -12,7 +12,13 @@ import {
   type CreateWorkflowDefinitionInput,
   type CustomerWorkflowErrorCode,
   type CustomerWorkflowPrincipal,
+  type GetBusinessHoursPolicyInput,
+  type GetContactJourneyStatesInput,
+  type GetRoutineInput,
   type KillRoutineInput,
+  type ListBusinessHoursPoliciesInput,
+  type ListRoutineRunsInput,
+  type ListRoutinesInput,
   type ListWorkflowDefinitionsInput,
   type ListWorkflowRevisionsInput,
   type PublishWorkflowRevisionInput,
@@ -85,6 +91,44 @@ export async function getWorkflowDefinition(input: WorkflowDefinitionIdInput) {
 export async function listWorkflowDefinitions(input: ListWorkflowDefinitionsInput = {}) {
   return runRead((principal) =>
     workflowLifecycleService(prisma).listWorkflowDefinitions(principal, input),
+  );
+}
+
+export async function listRoutines(input: ListRoutinesInput = {}) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).listRoutines(principal, input),
+  );
+}
+
+export async function getRoutine(input: GetRoutineInput) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).getRoutine(principal, input),
+  );
+}
+
+export async function listRoutineRuns(input: ListRoutineRunsInput) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).listRoutineRuns(principal, input),
+  );
+}
+
+export async function getContactJourneyStates(input: GetContactJourneyStatesInput) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).getContactJourneyStates(principal, input),
+  );
+}
+
+export async function listBusinessHoursPolicies(
+  input: ListBusinessHoursPoliciesInput = {},
+) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).listBusinessHoursPolicies(principal, input),
+  );
+}
+
+export async function getBusinessHoursPolicy(input: GetBusinessHoursPolicyInput) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).getBusinessHoursPolicy(principal, input),
   );
 }
 

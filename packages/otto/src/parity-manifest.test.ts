@@ -44,6 +44,27 @@ describe("parity manifest", () => {
     expect(PARITY_MANIFEST["trend-actions.saveTrendSnapshot"]).toMatchObject({ skill: "planCampaign" });
   });
 
+  it("registers all six Workflow lifecycle reads as real readWorkflows parity without new debt", () => {
+    for (const action of [
+      "listRoutines",
+      "getRoutine",
+      "listRoutineRuns",
+      "getContactJourneyStates",
+      "listBusinessHoursPolicies",
+      "getBusinessHoursPolicy",
+    ] as const) {
+      expect(PARITY_MANIFEST[`customer-workflow-ui-actions.${action}`]).toMatchObject({
+        skill: "readWorkflows",
+      });
+    }
+    const todoCount = entries.filter(([, entry]) => "todoSkill" in entry).length;
+    const baseline = JSON.parse(
+      fs.readFileSync(path.join(REPO_ROOT, "scripts/parity-debt-baseline.json"), "utf8"),
+    ) as { maxTodoSkill: number };
+    expect(todoCount).toBe(65);
+    expect(baseline.maxTodoSkill).toBe(65);
+  });
+
   it("every exemption uses one of the four closed classes with a non-empty reason", () => {
     const CLASSES = new Set(["ADMIN", "VISUAL", "MONEY_IN", "ACCOUNT_SECURITY"]);
     for (const [action, entry] of entries) {
