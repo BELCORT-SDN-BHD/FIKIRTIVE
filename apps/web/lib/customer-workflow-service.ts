@@ -1,6 +1,7 @@
 import "server-only";
 
 import { newId } from "@fikirtive/core";
+import { broadcastPurposeFromTemplateClassification } from "./customer-broadcast-purpose";
 import {
   canonicalHash,
   canonicalJson,
@@ -507,16 +508,6 @@ function compiledCustomerAction(compiled: unknown, stepKey: string): CompiledCus
       },
     },
   };
-}
-
-function broadcastPurposeFromTemplate(template: {
-  category: string;
-  purposeClass: string;
-}): "marketing" | null {
-  return template.category === "marketing" &&
-    template.purposeClass === "proactive_non_transactional"
-    ? "marketing"
-    : null;
 }
 
 function allAxesPass(verdict: SendEligibilityResult): boolean {
@@ -2062,7 +2053,7 @@ export function workflowLifecycleService(
         if (!template) {
           return reserveUnavailableStep("workflow_dependency_unavailable");
         }
-        broadcastPurpose = broadcastPurposeFromTemplate(template);
+        broadcastPurpose = broadcastPurposeFromTemplateClassification(template);
         if (!broadcastPurpose) {
           return reserveUnavailableStep("workflow_dependency_unavailable");
         }
