@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import { Hanken_Grotesk, JetBrains_Mono, Geist } from "next/font/google";
 import "./globals.css";
 import { isImpersonating } from "@/lib/better-auth/compat";
+import { signOutAction } from "@/lib/account-actions";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
+import { MerchantAppShell } from "@/components/global-navigation";
 import { Toaster } from "@/components/ui/sonner";
 
 // Vapor type system (legacy): Hanken Grotesk for everything
@@ -27,7 +29,9 @@ export default async function RootLayout({
     <html lang="en" className={`${body.variable} ${meta.variable} ${geist.variable} h-full antialiased`}>
       <body className="gb min-h-full flex flex-col">
         {impersonating && <ImpersonationBanner />}
-        <div className="relative z-10 flex flex-col min-h-dvh">{children}</div>
+        <div className="relative z-10 flex min-h-dvh flex-col">
+          <MerchantAppShell signOutAction={signOutAction}>{children}</MerchantAppShell>
+        </div>
         <Toaster />
       </body>
     </html>

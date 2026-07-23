@@ -10,6 +10,7 @@ export function ImpersonationBanner() {
   return (
     <div
       role="alert"
+      className="sticky top-0 z-50"
       style={{
         background: "var(--error)",
         color: "var(--primary-foreground)",
