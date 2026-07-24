@@ -22,10 +22,14 @@ const BYPASS_CASES = new Map([
   ["bypass/aliased-prisma-import.ts", REASON.MISSING],
   ["bypass/app/api/users/route.ts", REASON.MISSING],
   ["bypass/app/server-action.ts", REASON.MISSING],
+  ["bypass/catch-chain.ts", REASON.DISCARDED],
   ["bypass/computed-prisma-call.ts", REASON.UNPROVABLE],
   ["bypass/default-export.ts", REASON.MISSING],
+  ["bypass/default-param-initializer.ts", REASON.MISSING],
   ["bypass/depth-limit.ts", REASON.UNPROVABLE],
+  ["bypass/derived-id-laundering.ts", REASON.UNUSED],
   ["bypass/discarded-principal.ts", REASON.DISCARDED],
+  ["bypass/dynamic-import.ts", REASON.MISSING],
   ["bypass/imported-helper.ts", REASON.MISSING],
   ["bypass/imported-repository.ts", REASON.MISSING],
   ["bypass/imported-service.ts", REASON.MISSING],
@@ -45,13 +49,17 @@ const BYPASS_CASES = new Map([
   ["bypass/shadowed-resolver.ts", REASON.SHADOWED],
   ["bypass/transitive-local-call.ts", REASON.MISSING],
   ["bypass/unused-principal.ts", REASON.UNUSED],
+  ["bypass/void-reference.ts", REASON.UNUSED],
+  ["bypass/admin-gate-not-consumed.ts", REASON.DISCARDED],
 ]);
 
 const POSITIVE_CASES = [
+  "positive/admin-global-op.ts",
   "positive/aliased-export.ts",
   "positive/const-arrow.ts",
   "positive/default-function.ts",
   "positive/default-identifier.ts",
+  "positive/derived-id-update.ts",
   "positive/export-star.ts",
   "positive/gateway-wrapper.ts",
   "positive/internal-owner-id.ts",
@@ -59,6 +67,7 @@ const POSITIVE_CASES = [
   "positive/named-function.ts",
   "positive/non-async.ts",
   "positive/queue-send.ts",
+  "positive/renamed-owner-destructure.ts",
   "positive/re-export.ts",
 ];
 
@@ -98,6 +107,14 @@ for (const [fixture, expectedReason] of BYPASS_CASES) {
     [expectedReason],
     `${fixture} must fail for ${expectedReason}`,
   );
+  if (fixture === "bypass/void-reference.ts") {
+    assert.equal(result.diagnostics.length, 2, "same-reason sensitive sites must both be reported");
+    assert.equal(
+      new Set(result.diagnostics.map((diagnostic) => diagnostic.line)).size,
+      2,
+      "same-reason diagnostics must preserve both source lines",
+    );
+  }
   console.log(`EXPECTED FAIL ${fixture} — ${expectedReason}`);
 }
 
@@ -119,7 +136,65 @@ for (const fixture of POSITIVE_CASES) {
       `${fixture} must be classified as INTERNAL-PASS`,
     );
   }
+  if (fixture === "positive/admin-global-op.ts") {
+    assert.ok(
+      result.files[0].entries.some((entry) => entry.classification === "ADMIN-PASS"),
+      `${fixture} must be classified as ADMIN-PASS`,
+    );
+  }
   console.log(`PASS ${fixture}`);
+}
+
+const dynamicDbTemp = mkdtempSync(join(tmpdir(), "auth-guard-dynamic-db-"));
+try {
+  writeFileSync(
+    join(dynamicDbTemp, "require-bound.ts"),
+    [
+      '"use server";',
+      'export function leak() {',
+      '  const { prisma: db } = require("@fikirtive/db");',
+      '  return db.user.findMany({ where: { ownerId: "attacker-controlled" } });',
+      '}',
+      '',
+    ].join("\n"),
+  );
+  const requireBound = await analyzeAuthGuards({
+    repoRoot: dynamicDbTemp,
+    entryFiles: ["require-bound.ts"],
+    exemptionsPath: null,
+    trustedAuthGuardPaths: [],
+  });
+  assert.equal(requireBound.ok, false, "a bound require() DB alias must remain sensitive");
+  assert.deepEqual(
+    [...new Set(requireBound.diagnostics.map((diagnostic) => diagnostic.reason))],
+    [REASON.MISSING],
+    "a bound require() DB alias must feed normal principal tracking",
+  );
+
+  writeFileSync(
+    join(dynamicDbTemp, "unbound.ts"),
+    [
+      '"use server";',
+      'export function leak() {',
+      '  return import("@fikirtive/db").then((db) => db.prisma.user.findMany());',
+      '}',
+      '',
+    ].join("\n"),
+  );
+  const unbound = await analyzeAuthGuards({
+    repoRoot: dynamicDbTemp,
+    entryFiles: ["unbound.ts"],
+    exemptionsPath: null,
+    trustedAuthGuardPaths: [],
+  });
+  assert.equal(unbound.ok, false, "an unbound dynamic DB load must fail closed");
+  assert.ok(
+    unbound.diagnostics.some((diagnostic) => diagnostic.reason === REASON.UNPROVABLE),
+    "an unbound dynamic DB load must include an unprovable diagnostic",
+  );
+  console.log("PASS bound require() tracking and unbound dynamic DB fail-closed checks");
+} finally {
+  rmSync(dynamicDbTemp, { recursive: true, force: true });
 }
 
 const exemptionTemp = mkdtempSync(join(tmpdir(), "auth-guard-exemptions-"));

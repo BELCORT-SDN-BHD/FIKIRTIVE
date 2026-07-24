@@ -100,6 +100,10 @@ export const AUTH_GUARD_EXPORTS = new Set([
   "requireOwner",
 ]);
 
+// `requireRole` is the only live staff/admin RBAC boundary in auth-guard.ts. A name alone never
+// qualifies: trustedImportedResolver still requires an exact value import from the audited module.
+export const ADMIN_GUARD_EXPORTS = new Set(["requireRole"]);
+
 export const LOCAL_PRINCIPAL_PRODUCERS = new Set(["resolvePrincipal"]);
 export const RAW_SQL_MEMBERS = new Set([
   "$queryRaw",
@@ -121,6 +125,20 @@ export const PRISMA_CALL_MEMBERS = new Set([
   "groupBy",
   "update",
   "updateMany",
+  "upsert",
+]);
+export const PRISMA_READ_MEMBERS = new Set([
+  "aggregate",
+  "count",
+  "findFirst",
+  "findMany",
+  "findUnique",
+  "groupBy",
+]);
+const PRISMA_PRINCIPAL_DERIVED_RESULT_MEMBERS = new Set([
+  ...PRISMA_READ_MEMBERS,
+  "create",
+  "update",
   "upsert",
 ]);
 
@@ -281,6 +299,40 @@ function unwrapped(expression) {
   return node;
 }
 
+function dbPackageLoadCall(expression) {
+  if (!expression) return null;
+  const node = unwrapped(expression);
+  if (!ts.isCallExpression(node) || node.arguments.length !== 1) return null;
+  const specifier = unwrapped(node.arguments[0]);
+  if (!ts.isStringLiteralLike(specifier) || specifier.text !== "@fikirtive/db") return null;
+  const callee = unwrapped(node.expression);
+  if (callee.kind === ts.SyntaxKind.ImportKeyword) return node;
+  if (ts.isIdentifier(callee) && callee.text === "require") return node;
+  return null;
+}
+
+function dynamicDbBindingNames(name) {
+  if (ts.isIdentifier(name)) return [name.text];
+  if (!ts.isObjectBindingPattern(name)) return [];
+  const names = [];
+  for (const element of name.elements) {
+    if (propertyNameText(element.propertyName ?? element.name) !== "prisma") continue;
+    names.push(...identifierNames(element.name));
+  }
+  return names;
+}
+
+function initializerDeclarationFor(node) {
+  let current = node;
+  while (current.parent && !ts.isVariableDeclaration(current.parent)) {
+    current = current.parent;
+  }
+  const declaration = current.parent;
+  return declaration?.initializer && unwrapped(declaration.initializer) === node
+    ? declaration
+    : null;
+}
+
 function lineOf(info, node) {
   return info.sourceFile.getLineAndCharacterOfPosition(node.getStart(info.sourceFile)).line + 1;
 }
@@ -304,13 +356,17 @@ function isEntryModule(info) {
 
 function cloneState(state) {
   return {
-    guarded: state.guarded,
+    resolved: state.resolved,
     pending: new Set(state.pending),
     dbBindings: new Set(state.dbBindings),
     queueBindings: new Set(state.queueBindings),
     principalBindings: new Set(state.principalBindings),
     principalObjects: new Set(state.principalObjects),
+    principalDerivedBindings: new Set(state.principalDerivedBindings),
     optionalPrincipalParameters: new Set(state.optionalPrincipalParameters),
+    adminResolved: state.adminResolved,
+    adminPending: new Set(state.adminPending),
+    returnedDerived: state.returnedDerived,
     discardedResolver: state.discardedResolver,
     shadowedResolver: state.shadowedResolver,
   };
@@ -321,13 +377,17 @@ function dedupeStates(states) {
   const out = [];
   for (const state of states) {
     const key = [
-      state.guarded ? "1" : "0",
+      state.resolved ? "1" : "0",
       [...state.pending].sort().join(","),
       [...state.dbBindings].sort().join(","),
       [...state.queueBindings].sort().join(","),
       [...state.principalBindings].sort().join(","),
       [...state.principalObjects].sort().join(","),
+      [...state.principalDerivedBindings].sort().join(","),
       [...state.optionalPrincipalParameters].sort().join(","),
+      state.adminResolved ? "1" : "0",
+      [...state.adminPending].sort().join(","),
+      state.returnedDerived ? "1" : "0",
       state.discardedResolver ? "1" : "0",
       state.shadowedResolver ? "1" : "0",
     ].join("|");
@@ -341,13 +401,17 @@ function dedupeStates(states) {
 
 function createState(info) {
   return {
-    guarded: false,
+    resolved: false,
     pending: new Set(),
     dbBindings: new Set(info.staticDbAliases),
     queueBindings: new Set(),
     principalBindings: new Set(),
     principalObjects: new Set(),
+    principalDerivedBindings: new Set(),
     optionalPrincipalParameters: new Set(),
+    adminResolved: false,
+    adminPending: new Set(),
+    returnedDerived: false,
     discardedResolver: false,
     shadowedResolver: false,
   };
@@ -367,6 +431,18 @@ class SemanticProject {
 
   isReviewedExemptExport(info, exportName) {
     return this.reviewedExemptExports.has(`${info.relPath}\0${exportName}`);
+  }
+
+  isPrincipalEstablishmentModule(info) {
+    return Boolean(info && EXCLUDED_PRODUCTION_FILES.has(info.relPath));
+  }
+
+  isIndependentlyAnalyzedEntry(info) {
+    return Boolean(
+      info &&
+      info.isEntry &&
+      this.requestedSourceFiles.includes(info.path),
+    );
   }
 
   getModule(path) {
@@ -393,6 +469,8 @@ class SemanticProject {
       localFunctions: new Map(),
       localValues: new Map(),
       prismaImports: new Set(),
+      dynamicDbAliases: new Set(),
+      unboundDbLoads: [],
       staticDbAliases: new Set(),
       importsDbPackage: false,
       getBossImports: new Set(),
@@ -468,7 +546,23 @@ class SemanticProject {
       this.indexExportRecord(info, statement);
     }
 
-    info.staticDbAliases = new Set(info.prismaImports);
+    const indexDbLoads = (node) => {
+      const load = dbPackageLoadCall(node);
+      if (load) {
+        info.importsDbPackage = true;
+        const declaration = initializerDeclarationFor(load);
+        const names = declaration ? dynamicDbBindingNames(declaration.name) : [];
+        if (names.length) {
+          for (const name of names) info.dynamicDbAliases.add(name);
+        } else {
+          info.unboundDbLoads.push(load);
+        }
+      }
+      ts.forEachChild(node, indexDbLoads);
+    };
+    indexDbLoads(info.sourceFile);
+
+    info.staticDbAliases = new Set([...info.prismaImports, ...info.dynamicDbAliases]);
     let aliasesChanged = true;
     while (aliasesChanged) {
       aliasesChanged = false;
@@ -503,6 +597,10 @@ class SemanticProject {
       ts.forEachChild(node, visit);
     };
     visit(info.sourceFile);
+    if (info.unboundDbLoads.length) {
+      info.directSensitive = true;
+      info.firstSensitiveNode ??= info.unboundDbLoads[0];
+    }
   }
 
   indexExportRecord(info, statement) {
@@ -816,6 +914,9 @@ function applyPrincipalParameters(state, node, inherited = null) {
   if (inherited) {
     for (const name of inherited.principalBindings ?? []) next.principalBindings.add(name);
     for (const name of inherited.principalObjects ?? []) next.principalObjects.add(name);
+    for (const name of inherited.principalDerivedBindings ?? []) {
+      next.principalDerivedBindings.add(name);
+    }
     for (const name of inherited.optionalPrincipalParameters ?? []) {
       next.optionalPrincipalParameters.add(name);
     }
@@ -834,33 +935,60 @@ function applyPrincipalParameters(state, node, inherited = null) {
   return next;
 }
 
-function principalExpressionKind(expression, state) {
+function principalExpressionKind(expression, state, derivedExpressions = null) {
   if (!expression) return null;
   const node = unwrapped(expression);
   if (ts.isIdentifier(node)) {
     if (state.principalBindings.has(node.text)) return "binding";
     if (state.principalObjects.has(node.text)) return "object";
+    if (state.principalDerivedBindings.has(node.text)) return "derived";
     return null;
   }
   if (isFunctionLike(node) || ts.isClassExpression(node)) return null;
+  if (derivedExpressions?.has(node)) return "derived";
   if (ts.isCallExpression(node)) {
     const callee = unwrapped(node.expression);
     if (
       ts.isIdentifier(callee) &&
       INTERNAL_OWNER_DERIVER_NAMES.includes(callee.text) &&
       node.arguments.some(
-        (argument) => principalExpressionKind(argument, state) === "object",
+        (argument) =>
+          principalExpressionKind(argument, state, derivedExpressions) === "object",
       )
     ) {
       return "binding";
     }
+    if (ts.isPropertyAccessExpression(callee) && callee.name.text === "map") {
+      const receiverKind = principalExpressionKind(
+        callee.expression,
+        state,
+        derivedExpressions,
+      );
+      if (receiverKind === "derived") return "derived";
+      for (const argument of node.arguments) {
+        const callback = unwrapped(argument);
+        if (!isFunctionLike(callback)) continue;
+        const bodyKind = principalExpressionKind(
+          callback.body,
+          state,
+          derivedExpressions,
+        );
+        if (bodyKind === "binding") return "binding";
+        if (bodyKind === "derived") return "derived";
+      }
+    }
+    // A Prisma result does not inherit trust merely because some unrelated argument is trusted.
+    // Principal-derived read results are introduced explicitly in analyzeCall instead. Ordinary
+    // local transformations retain the pre-existing argument-tree propagation rule.
+    if (PRISMA_CALL_MEMBERS.has(callMemberName(node))) return null;
   }
   if (ts.isPropertyAccessExpression(node)) {
     const root = rootIdentifier(node.expression);
     if (root && state.principalObjects.has(root)) {
       return node.name.text === "ownerId" ? "binding" : null;
     }
-    return principalExpressionKind(node.expression, state);
+    if (root && state.principalDerivedBindings.has(root)) return "derived";
+    return principalExpressionKind(node.expression, state, derivedExpressions);
   }
   if (ts.isElementAccessExpression(node)) {
     const root = rootIdentifier(node.expression);
@@ -871,28 +999,110 @@ function principalExpressionKind(expression, state) {
         ? "binding"
         : null;
     }
+    if (root && state.principalDerivedBindings.has(root)) return "derived";
   }
 
   let sawObject = false;
+  let sawDerived = false;
   for (const child of node.getChildren()) {
     if (child === node) continue;
-    const kind = principalExpressionKind(child, state);
+    const kind = principalExpressionKind(child, state, derivedExpressions);
     if (kind === "binding") return "binding";
     if (kind === "object") sawObject = true;
+    if (kind === "derived") sawDerived = true;
   }
+  if (sawDerived) return "derived";
   return sawObject ? "object" : null;
 }
 
-function operationUsesPrincipal(node, state) {
-  if (ts.isTaggedTemplateExpression(node)) {
-    if (!ts.isTemplateExpression(node.template)) return false;
-    return node.template.templateSpans.some(
-      (span) => principalExpressionKind(span.expression, state) === "binding",
-    );
+function callMemberName(node) {
+  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return null;
+  const expression = unwrapped(node.expression);
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  if (
+    ts.isElementAccessExpression(expression) &&
+    expression.argumentExpression &&
+    ts.isStringLiteralLike(expression.argumentExpression)
+  ) {
+    return expression.argumentExpression.text;
   }
-  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return false;
-  return [...(node.arguments ?? [])].some(
-    (argument) => principalExpressionKind(argument, state) === "binding",
+  return null;
+}
+
+function objectPropertyInitializer(expression, propertyName) {
+  const node = unwrapped(expression);
+  if (!ts.isObjectLiteralExpression(node)) return null;
+  for (const property of node.properties) {
+    if (
+      ts.isPropertyAssignment(property) &&
+      propertyNameText(property.name) === propertyName
+    ) {
+      return property.initializer;
+    }
+    if (
+      ts.isShorthandPropertyAssignment(property) &&
+      property.name.text === propertyName
+    ) {
+      return property.name;
+    }
+  }
+  return null;
+}
+
+// For direct Prisma calls, trust must reach the authority-bearing subtree. In particular,
+// `update({ where: { id: attackerId }, data: { audit: derived.id } })` is not owner-scoped.
+// Non-Prisma sensitive surfaces (queue payloads, local/import boundaries) retain the complete
+// argument-tree rule because they do not share Prisma's stable `where`/`data` shape.
+function operationAuthorityExpressions(node) {
+  if (ts.isTaggedTemplateExpression(node)) {
+    return ts.isTemplateExpression(node.template)
+      ? node.template.templateSpans.map((span) => span.expression)
+      : [];
+  }
+  if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return [];
+  const args = [...(node.arguments ?? [])];
+  const member = callMemberName(node);
+  if (!member || !PRISMA_CALL_MEMBERS.has(member) || !args.length) return args;
+  const authorityProperty =
+    member === "create" || member === "createMany" ? "data" : "where";
+  const authority = objectPropertyInitializer(args[0], authorityProperty);
+  // A pre-built argument object may itself be principal-derived. Keep that narrow case, but do
+  // not scan unrelated properties of a visible object literal when its authority key is absent.
+  return authority ? [authority] : ts.isIdentifier(unwrapped(args[0])) ? [args[0]] : [];
+}
+
+function operationUsesPrincipal(node, state, derivedExpressions = null) {
+  const allExpressions = ts.isTaggedTemplateExpression(node)
+    ? operationAuthorityExpressions(node)
+    : [...(node.arguments ?? [])];
+  if (
+    allExpressions.some(
+      (argument) => principalExpressionKind(argument, state) === "binding",
+    )
+  ) {
+    return true;
+  }
+  return operationAuthorityExpressions(node).some(
+    (argument) =>
+      principalExpressionKind(argument, state, derivedExpressions) === "derived",
+  );
+}
+
+function operationReferencesPrincipal(node, state, derivedExpressions = null) {
+  const allExpressions = ts.isTaggedTemplateExpression(node)
+    ? operationAuthorityExpressions(node)
+    : [...(node.arguments ?? [])];
+  if (
+    allExpressions.some((argument) => {
+      const kind = principalExpressionKind(argument, state, derivedExpressions);
+      return kind === "binding" || kind === "object";
+    })
+  ) {
+    return true;
+  }
+  return operationAuthorityExpressions(node).some(
+    (argument) =>
+      principalExpressionKind(argument, state, derivedExpressions) === "derived",
   );
 }
 
@@ -936,8 +1146,13 @@ class EntryAnalyzer {
     this.covered = false;
     this.internalCovered = false;
     this.resolvedCovered = false;
+    this.adminCovered = false;
     this.internalAllowed = !originInfo.isEntry;
     this.knownPrincipalBindings = new Set();
+    this.nullableDerivedBindings = new Set();
+    this.safeDerivedCollections = new Set();
+    this.validatedInputCandidates = new Map();
+    this.principalDerivedExpressions = new WeakSet();
     this.callStack = [];
   }
 
@@ -951,7 +1166,13 @@ class EntryAnalyzer {
       reason,
       detail,
     };
-    const key = `${diagnostic.path}\0${diagnostic.exportName}\0${diagnostic.reason}`;
+    const key = [
+      diagnostic.path,
+      diagnostic.exportName,
+      diagnostic.reason,
+      diagnostic.implementationPath,
+      diagnostic.line,
+    ].join("\0");
     Object.defineProperty(diagnostic, "key", { value: key, enumerable: false });
     const existingIndex = this.diagnostics.findIndex((entry) => entry.key === key);
     if (existingIndex === -1) {
@@ -965,11 +1186,99 @@ class EntryAnalyzer {
   }
 
   reasonForUnguarded(frame, node, state) {
+    if (this.hasPriorScopedValidation(frame, node, state)) {
+      return REASON.UNPROVABLE;
+    }
     if (state.pending.size) return REASON.UNUSED;
     if (state.discardedResolver) return REASON.DISCARDED;
     if (state.shadowedResolver) return REASON.SHADOWED;
     if (this.hasResolverAfter(frame, node.getStart(frame.info.sourceFile))) return REASON.AFTER;
     return REASON.MISSING;
+  }
+
+  hasPriorScopedValidation(frame, node, state) {
+    const operationNames = new Set();
+    for (const authority of operationAuthorityExpressions(node)) {
+      const visitAuthority = (child) => {
+        if (
+          ts.isIdentifier(child) &&
+          principalExpressionKind(
+            child,
+            state,
+            this.principalDerivedExpressions,
+          ) === null
+        ) {
+          operationNames.add(child.text);
+        }
+        ts.forEachChild(child, visitAuthority);
+      };
+      visitAuthority(authority);
+    }
+    if (!operationNames.size) return false;
+
+    let found = false;
+    const visit = (candidate, root = false) => {
+      if (found || candidate.getStart(frame.info.sourceFile) >= node.getStart(frame.info.sourceFile)) {
+        return;
+      }
+      if (!root && isFunctionLike(candidate)) return;
+      if (
+        ts.isCallExpression(candidate) &&
+        (callMemberName(candidate) === "findFirst" ||
+          callMemberName(candidate) === "findUnique") &&
+        this.project.directSensitiveKind(frame.info, candidate, state) &&
+        operationReferencesPrincipal(
+          candidate,
+          state,
+          this.principalDerivedExpressions,
+        )
+      ) {
+        const candidateNames = this.scopedReadClientKeyNames(candidate, state);
+        let declaration = candidate.parent;
+        while (
+          declaration &&
+          declaration !== frame.node &&
+          !ts.isVariableDeclaration(declaration) &&
+          !isFunctionLike(declaration)
+        ) {
+          declaration = declaration.parent;
+        }
+        const resultName =
+          declaration &&
+          ts.isVariableDeclaration(declaration) &&
+          ts.isIdentifier(declaration.name)
+            ? declaration.name.text
+            : null;
+        if (
+          resultName &&
+          this.isDominatedByTruthyBinding(frame, node, resultName) &&
+          [...candidateNames].some((name) => operationNames.has(name))
+        ) {
+          found = true;
+          return;
+        }
+      }
+      ts.forEachChild(candidate, (child) => visit(child));
+    };
+    visit(frame.node, true);
+    return found;
+  }
+
+  isDominatedByTruthyBinding(frame, node, bindingName) {
+    let current = node;
+    while (current && current !== frame.node) {
+      const parent = current.parent;
+      if (
+        parent &&
+        ts.isIfStatement(parent) &&
+        parent.thenStatement === current &&
+        this.truthyResultNames(parent.expression, true).has(bindingName)
+      ) {
+        return true;
+      }
+      current = parent;
+    }
+    return false;
   }
 
   hasResolverAfter(frame, position) {
@@ -1001,22 +1310,39 @@ class EntryAnalyzer {
 
   recordSensitive(frame, node, states, detail, reasonOverride = null) {
     this.covered = true;
+    const nextStates = [];
     for (const state of states) {
       if (reasonOverride) {
         this.addDiagnostic(frame.info, node, reasonOverride, detail);
+        nextStates.push(state);
         continue;
       }
-      if (state.guarded) {
+      if (
+        state.resolved &&
+        operationReferencesPrincipal(node, state, this.principalDerivedExpressions)
+      ) {
         this.resolvedCovered = true;
+        nextStates.push(state);
         continue;
       }
-      if (this.internalAllowed && operationUsesPrincipal(node, state)) {
+      if (state.adminResolved && state.adminPending.size === 0) {
+        this.adminCovered = true;
+        nextStates.push(state);
+        continue;
+      }
+      if (
+        this.internalAllowed &&
+        operationUsesPrincipal(node, state, this.principalDerivedExpressions)
+      ) {
         this.internalCovered = true;
+        nextStates.push(state);
         continue;
       }
       let reason = this.reasonForUnguarded(frame, node, state);
       if (
         this.internalAllowed &&
+        reason !== REASON.UNUSED &&
+        reason !== REASON.UNPROVABLE &&
         (state.principalBindings.size || state.principalObjects.size)
       ) {
         reason = REASON.PARAM_UNUSED;
@@ -1024,19 +1350,38 @@ class EntryAnalyzer {
         reason = REASON.PARAM_OPTIONAL;
       }
       this.addDiagnostic(frame.info, node, reason, detail);
+      nextStates.push(state);
     }
-    return states;
+    return dedupeStates(nextStates);
   }
 
   recordDepthLimited(frame, node, states, detail, { trustedEntryBoundary = false } = {}) {
     this.covered = true;
-    if (trustedEntryBoundary || states.every((state) => state.guarded)) {
+    if (trustedEntryBoundary) {
       this.resolvedCovered = true;
       return states;
     }
     if (
+      states.every(
+        (state) =>
+          state.resolved &&
+          operationReferencesPrincipal(node, state, this.principalDerivedExpressions),
+      )
+    ) {
+      this.resolvedCovered = true;
+      return states;
+    }
+    if (
+      states.every((state) => state.adminResolved && state.adminPending.size === 0)
+    ) {
+      this.adminCovered = true;
+      return states;
+    }
+    if (
       this.internalAllowed &&
-      states.every((state) => operationUsesPrincipal(node, state))
+      states.every((state) =>
+        operationUsesPrincipal(node, state, this.principalDerivedExpressions),
+      )
     ) {
       this.internalCovered = true;
       return states;
@@ -1083,25 +1428,63 @@ class EntryAnalyzer {
     return !this.trustedImportedResolver(frame.info, call) && !this.localProducer(frame, call);
   }
 
+  resolvedPrincipalExpression(frame, expression, state) {
+    const node = unwrapped(expression);
+    if (!state.resolved || !ts.isCallExpression(node)) return false;
+    return Boolean(this.trustedImportedResolver(frame.info, node) || this.localProducer(frame, node));
+  }
+
   activateIdentifier(states, name) {
+    return states;
+  }
+
+  consumeAdminErrorDiscriminant(states, expression) {
+    const names = new Set();
+    const visit = (node) => {
+      const current = unwrapped(node);
+      if (
+        ts.isBinaryExpression(current) &&
+        current.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+        ts.isStringLiteralLike(unwrapped(current.left)) &&
+        unwrapped(current.left).text === "error" &&
+        ts.isIdentifier(unwrapped(current.right))
+      ) {
+        names.add(unwrapped(current.right).text);
+        return;
+      }
+      if (isFunctionLike(current) || ts.isClassExpression(current)) return;
+      ts.forEachChild(current, visit);
+    };
+    visit(expression);
+    if (!names.size) return states;
     return states.map((state) => {
-      if (!state.pending.has(name)) return state;
       const next = cloneState(state);
-      next.pending.delete(name);
-      next.guarded = true;
+      for (const name of names) {
+        if (!next.adminPending.has(name)) continue;
+        next.adminPending.delete(name);
+        next.pending.delete(name);
+      }
       return next;
     });
   }
 
-  applyResolverUse(states, context) {
+  applyResolverUse(states, context, resolverName) {
+    const isAdmin = ADMIN_GUARD_EXPORTS.has(resolverName);
     return states.map((state) => {
       const next = cloneState(state);
       if (context.kind === "discarded") {
         next.discardedResolver = true;
       } else if (context.kind === "assigned" && context.name) {
         next.pending.add(context.name);
+        next.principalObjects.add(context.name);
+        next.resolved = true;
+        if (isAdmin) {
+          next.adminResolved = true;
+          next.adminPending.add(context.name);
+        }
       } else {
-        next.guarded = true;
+        next.resolved = true;
+        if (isAdmin) next.adminResolved = true;
       }
       return next;
     });
@@ -1209,12 +1592,27 @@ class EntryAnalyzer {
         const assignedName = unwrapped(expression.left).text;
         return right.map((state) => {
           const next = cloneState(state);
-          const kind = principalExpressionKind(expression.right, state);
+          const kind = principalExpressionKind(
+            expression.right,
+            state,
+            this.principalDerivedExpressions,
+          );
           if (kind === "binding") {
             next.principalBindings.add(assignedName);
             this.knownPrincipalBindings.add(assignedName);
           } else if (kind === "object") {
             next.principalObjects.add(assignedName);
+          } else if (kind === "derived") {
+            next.principalDerivedBindings.add(assignedName);
+          } else if (
+            this.nullableDerivedBindings.has(assignedName) &&
+            unwrapped(expression.right).kind !== ts.SyntaxKind.NullKeyword &&
+            !(
+              ts.isIdentifier(unwrapped(expression.right)) &&
+              unwrapped(expression.right).text === "undefined"
+            )
+          ) {
+            this.nullableDerivedBindings.delete(assignedName);
           }
           return next;
         });
@@ -1440,9 +1838,145 @@ class EntryAnalyzer {
     );
   }
 
+  markPrincipalDerivedOperationResult(call, states, frame, context) {
+    const derivedNames = context.derivedNames ?? [];
+    const member = callMemberName(call);
+    if (!member || !PRISMA_PRINCIPAL_DERIVED_RESULT_MEMBERS.has(member)) return states;
+    const scoped = states.map(
+      (state) =>
+        Boolean(this.project.directSensitiveKind(frame.info, call, state)) &&
+        operationReferencesPrincipal(call, state, this.principalDerivedExpressions),
+    );
+    if (scoped.some(Boolean)) this.principalDerivedExpressions.add(unwrapped(call));
+    let nextStates = states;
+    if (member === "create") {
+      const firstArgument = call.arguments?.[0];
+      const data = firstArgument
+        ? objectPropertyInitializer(firstArgument, "data")
+        : null;
+      const object = data ? unwrapped(data) : null;
+      const idValue =
+        object && ts.isObjectLiteralExpression(object)
+          ? objectPropertyInitializer(object, "id")
+          : null;
+      const id = idValue ? unwrapped(idValue) : null;
+      if (id && ts.isIdentifier(id)) {
+        nextStates = states.map((state, index) => {
+          if (!scoped[index]) return state;
+          const next = cloneState(state);
+          next.principalDerivedBindings.add(id.text);
+          return next;
+        });
+      }
+    }
+    if (
+      scoped.some(Boolean) &&
+      (member === "findFirst" || member === "findUnique")
+    ) {
+      const candidateNames = this.scopedReadClientKeyNames(
+        call,
+        states[scoped.findIndex(Boolean)],
+      );
+      for (const resultName of derivedNames) {
+        if (candidateNames.size) {
+          this.validatedInputCandidates.set(resultName, candidateNames);
+        }
+      }
+    }
+    if (!derivedNames.length) return nextStates;
+    return nextStates.map((state, index) => {
+      if (!scoped[index]) return state;
+      const next = cloneState(state);
+      for (const name of derivedNames) next.principalDerivedBindings.add(name);
+      return next;
+    });
+  }
+
+  scopedReadClientKeyNames(call, state) {
+    const names = new Set();
+    const firstArgument = call.arguments?.[0];
+    const where = firstArgument
+      ? objectPropertyInitializer(firstArgument, "where")
+      : null;
+    const object = where ? unwrapped(where) : null;
+    if (!object || !ts.isObjectLiteralExpression(object)) return names;
+    for (const property of object.properties) {
+      if (
+        !ts.isPropertyAssignment(property) &&
+        !ts.isShorthandPropertyAssignment(property)
+      ) {
+        continue;
+      }
+      const key = propertyNameText(property.name);
+      const value = ts.isShorthandPropertyAssignment(property)
+        ? property.name
+        : unwrapped(property.initializer);
+      if (
+        (!key || (key !== "id" && !key.endsWith("Id"))) ||
+        !ts.isIdentifier(value) ||
+        principalExpressionKind(
+          value,
+          state,
+          this.principalDerivedExpressions,
+        ) !== null
+      ) {
+        continue;
+      }
+      names.add(value.text);
+    }
+    return names;
+  }
+
+  truthyResultNames(expression, truthy) {
+    const node = unwrapped(expression);
+    if (ts.isIdentifier(node)) return truthy ? new Set([node.text]) : new Set();
+    if (
+      ts.isPrefixUnaryExpression(node) &&
+      node.operator === ts.SyntaxKind.ExclamationToken
+    ) {
+      return this.truthyResultNames(node.operand, !truthy);
+    }
+    if (ts.isBinaryExpression(node)) {
+      const isAnd = node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken;
+      const isOr = node.operatorToken.kind === ts.SyntaxKind.BarBarToken;
+      if ((truthy && isAnd) || (!truthy && isOr)) {
+        return new Set([
+          ...this.truthyResultNames(node.left, truthy),
+          ...this.truthyResultNames(node.right, truthy),
+        ]);
+      }
+    }
+    return new Set();
+  }
+
+  applyValidatedInputs(states, resultNames) {
+    if (!resultNames.size) return states;
+    return states.map((state) => {
+      const next = cloneState(state);
+      for (const resultName of resultNames) {
+        for (const inputName of this.validatedInputCandidates.get(resultName) ?? []) {
+          next.principalDerivedBindings.add(inputName);
+        }
+      }
+      return next;
+    });
+  }
+
+  applyInvokedReturn(call, invoked, callerStates) {
+    if (invoked.some((state) => state.returnedDerived)) {
+      this.principalDerivedExpressions.add(unwrapped(call));
+    }
+    return invoked.map((state, index) => {
+      const next = cloneState(state);
+      const caller = callerStates[Math.min(index, callerStates.length - 1)];
+      next.returnedDerived = caller?.returnedDerived ?? false;
+      return next;
+    });
+  }
+
   async analyzeCallback(callback, states, frame, importDepth, { transaction = false } = {}) {
     const node = unwrapped(callback);
-    if (!isFunctionLike(node)) return;
+    if (!isFunctionLike(node)) return [];
     const callbackStates = states.map((state) => {
       const next = cloneState(state);
       const txParameter = node.parameters?.[0];
@@ -1463,15 +1997,29 @@ class EntryAnalyzer {
       localFunctions,
     );
     if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
-      await this.asyncExpression(
+      const returned = await this.asyncExpression(
         node.body,
         callbackStates,
         callbackFrame,
         { kind: "consumed" },
         importDepth,
       );
+      return returned.map((state) => {
+        const next = cloneState(state);
+        if (
+          principalExpressionKind(
+            node.body,
+            state,
+            this.principalDerivedExpressions,
+          ) === "derived"
+        ) {
+          next.returnedDerived = true;
+        }
+        return next;
+      });
     } else {
-      await this.analyzeBlock(node.body, callbackStates, callbackFrame, importDepth);
+      const flow = await this.analyzeBlock(node.body, callbackStates, callbackFrame, importDepth);
+      return flow.returned;
     }
   }
 
@@ -1484,6 +2032,7 @@ class EntryAnalyzer {
       ? this.trustedImportedResolver(frame.info, call)
       : null;
     const localProducer = ts.isCallExpression(call) ? this.localProducer(frame, call) : null;
+    let transactionReturnsDerived = false;
 
     if (this.isShadowedResolverCall(frame, call)) {
       current = current.map((state) => {
@@ -1502,7 +2051,7 @@ class EntryAnalyzer {
         callee.expression,
         current,
         frame,
-        { kind: "consumed" },
+        { kind: "discarded" },
         importDepth,
       );
     }
@@ -1510,13 +2059,16 @@ class EntryAnalyzer {
     for (const argument of args) {
       if (isFunctionLike(unwrapped(argument))) {
         if (transactionCall || !earlyBinding) {
-          await this.analyzeCallback(
+          const callbackExits = await this.analyzeCallback(
             argument,
             current,
             frame,
             importDepth,
             { transaction: transactionCall },
           );
+          if (transactionCall && callbackExits.some((state) => state.returnedDerived)) {
+            transactionReturnsDerived = true;
+          }
         }
         continue;
       }
@@ -1529,9 +2081,62 @@ class EntryAnalyzer {
       );
     }
 
-    if (trustedResolver) return this.applyResolverUse(current, context);
+    if (transactionReturnsDerived) this.principalDerivedExpressions.add(unwrapped(call));
+
+    if (
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(unwrapped(call.expression)) &&
+      unwrapped(call.expression).name.text === "push"
+    ) {
+      const receiver = rootIdentifier(unwrapped(call.expression).expression);
+      if (receiver) {
+        current = current.map((state) => {
+          const next = cloneState(state);
+          const carriesOnlyDerived =
+            args.length > 0 &&
+            args.every(
+              (argument) =>
+                principalExpressionKind(
+                  argument,
+                  state,
+                  this.principalDerivedExpressions,
+                ) === "derived",
+            );
+          if (carriesOnlyDerived) next.principalDerivedBindings.add(receiver);
+          else next.principalDerivedBindings.delete(receiver);
+          if (carriesOnlyDerived) this.safeDerivedCollections.add(receiver);
+          else this.safeDerivedCollections.delete(receiver);
+          return next;
+        });
+      }
+    }
+
+    if (trustedResolver) return this.applyResolverUse(current, context, trustedResolver);
 
     const binding = earlyBinding;
+    if (
+      (binding?.kind === "import" || binding?.kind === "import-surface") &&
+      this.project.isPrincipalEstablishmentModule(binding.targetInfo)
+    ) {
+      return current;
+    }
+    if (
+      ts.isNewExpression(call) &&
+      binding?.kind === "import" &&
+      binding.name.endsWith("Error")
+    ) {
+      return current;
+    }
+    if (
+      binding?.kind === "import" &&
+      binding.targetInfo?.path !== this.originInfo.path &&
+      this.project.isIndependentlyAnalyzedEntry(binding.targetInfo) &&
+      this.project.moduleMayReachSensitive(binding.targetInfo)
+    ) {
+      this.covered = true;
+      this.resolvedCovered = true;
+      return current;
+    }
     if (binding?.kind === "local" || binding?.kind === "callback" || localProducer) {
       const target = localProducer
         ? { info: frame.info, node: localProducer.target, name: localProducer.name }
@@ -1550,26 +2155,28 @@ class EntryAnalyzer {
         invoked = invoked.map((state, index) => {
           const before = incoming[Math.min(index, incoming.length - 1)] ?? createState(frame.info);
           const next = cloneState(state);
-          const producedPrincipal = !before.guarded && state.guarded;
-          if (!before.guarded && !producedPrincipal) {
-            next.guarded = false;
+          const producedPrincipal = !before.resolved && state.resolved;
+          if (!before.resolved && !producedPrincipal) {
+            next.resolved = false;
             next.pending = new Set(before.pending);
             next.shadowedResolver = true;
             return next;
           }
           if (context.kind === "discarded") {
-            next.guarded = before.guarded;
+            next.resolved = before.resolved;
             next.pending = new Set(before.pending);
             next.discardedResolver = true;
           } else if (context.kind === "assigned" && context.name) {
-            next.guarded = before.guarded;
+            next.resolved = true;
             next.pending = new Set(before.pending);
             next.pending.add(context.name);
+            next.principalObjects = new Set(before.principalObjects);
+            next.principalObjects.add(context.name);
           }
           return next;
         });
       }
-      return invoked;
+      return this.applyInvokedReturn(call, invoked, incoming);
     }
 
     if (binding?.kind === "import") {
@@ -1595,7 +2202,7 @@ class EntryAnalyzer {
             );
           }
         } else {
-          return this.invokeFunction(
+          const invoked = await this.invokeFunction(
             binding.target.info,
             unwrapped(binding.target.node),
             binding.name,
@@ -1604,6 +2211,7 @@ class EntryAnalyzer {
             current,
             importDepth + 1,
           );
+          return this.applyInvokedReturn(call, invoked, current);
         }
       } else if (binding.targetInfo && this.project.moduleMayReachSensitive(binding.targetInfo)) {
         const reason = importDepth >= MAX_SAME_PACKAGE_IMPORT_DEPTH ? REASON.UNPROVABLE : null;
@@ -1649,6 +2257,9 @@ class EntryAnalyzer {
         computed ? `${sensitive}; computed dispatch cannot be proven` : sensitive,
         computed ? REASON.UNPROVABLE : null,
       );
+      if (!computed) {
+        current = this.markPrincipalDerivedOperationResult(call, current, frame, context);
+      }
     }
     return current;
   }
@@ -1674,9 +2285,11 @@ class EntryAnalyzer {
         next.dbBindings = new Set(info.staticDbAliases);
         next.queueBindings = new Set();
         next.pending = new Set();
+        next.returnedDerived = false;
         if (info.path !== callerFrame.info.path) {
           next.principalBindings = new Set();
           next.principalObjects = new Set();
+          next.principalDerivedBindings = new Set();
           next.optionalPrincipalParameters = new Set();
         }
         for (let index = 0; index < (node.parameters?.length ?? 0); index += 1) {
@@ -1684,7 +2297,15 @@ class EntryAnalyzer {
           const argument = args[index];
           if (!argument) continue;
           const argumentNode = unwrapped(argument);
-          const principalKind = principalExpressionKind(argumentNode, state);
+          const principalKind =
+            principalExpressionKind(
+              argumentNode,
+              state,
+              this.principalDerivedExpressions,
+            ) ??
+            (this.resolvedPrincipalExpression(callerFrame, argumentNode, state)
+              ? "object"
+              : null);
           if (ts.isObjectBindingPattern(parameter.name)) {
             if (principalKind) {
               for (const element of parameter.name.elements) {
@@ -1717,7 +2338,9 @@ class EntryAnalyzer {
               next.queueBindings.add(parameter.name.text);
             }
             const parameterShape = principalParameterShape(parameter);
-            if (principalKind === "object" || parameterShape?.kind === "object") {
+            if (principalKind === "derived") {
+              next.principalDerivedBindings.add(parameter.name.text);
+            } else if (principalKind === "object" || parameterShape?.kind === "object") {
               if (principalKind) next.principalObjects.add(parameter.name.text);
             } else if (principalKind === "binding") {
               next.principalBindings.add(parameter.name.text);
@@ -1734,28 +2357,42 @@ class EntryAnalyzer {
         inheritedFunctions.set(localName, localNode);
       }
       const frame = makeFrame(info, node, name, callbacks, inheritedFunctions);
+      let preparedStates = calleeStates;
+      for (const parameter of node.parameters ?? []) {
+        if (!parameter.initializer) continue;
+        preparedStates = await this.asyncExpression(
+          parameter.initializer,
+          preparedStates,
+          frame,
+          { kind: "consumed" },
+          importDepth,
+        );
+      }
       let flow;
       if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
         const returned = await this.asyncExpression(
           node.body,
-          calleeStates,
+          preparedStates,
           frame,
           { kind: "consumed" },
           importDepth,
         );
         flow = { continuing: [], returned };
       } else {
-        flow = await this.analyzeBlock(node.body, calleeStates, frame, importDepth);
+        flow = await this.analyzeBlock(node.body, preparedStates, frame, importDepth);
       }
       const exits = dedupeStates([...flow.returned, ...flow.continuing]);
-      return exits.map((state) => {
+      return exits.map((state, index) => {
         const next = cloneState(state);
-        const callerBase = states[0] ?? createState(callerFrame.info);
+        const callerBase =
+          states[Math.min(index, states.length - 1)] ??
+          createState(callerFrame.info);
         next.dbBindings = new Set(callerBase.dbBindings);
         next.queueBindings = new Set(callerBase.queueBindings);
         next.pending = new Set(callerBase.pending);
         next.principalBindings = new Set(callerBase.principalBindings);
         next.principalObjects = new Set(callerBase.principalObjects);
+        next.principalDerivedBindings = new Set(callerBase.principalDerivedBindings);
         next.optionalPrincipalParameters = new Set(callerBase.optionalPrincipalParameters);
         return next;
       });
@@ -1767,9 +2404,33 @@ class EntryAnalyzer {
   async analyzeVariableDeclaration(declaration, states, frame, importDepth) {
     if (!declaration.initializer) return states;
     const names = identifierNames(declaration.name);
+    if (
+      ts.isIdentifier(declaration.name) &&
+      unwrapped(declaration.initializer).kind === ts.SyntaxKind.NullKeyword
+    ) {
+      this.nullableDerivedBindings.add(declaration.name.text);
+    }
+    if (
+      ts.isIdentifier(declaration.name) &&
+      ts.isArrayLiteralExpression(unwrapped(declaration.initializer)) &&
+      unwrapped(declaration.initializer).elements.length === 0
+    ) {
+      this.safeDerivedCollections.add(declaration.name.text);
+    }
     if (isFunctionLike(unwrapped(declaration.initializer))) return states;
+    const dbLoad = dbPackageLoadCall(declaration.initializer);
+    const dynamicDbNames = dbLoad ? dynamicDbBindingNames(declaration.name) : [];
+    if (dynamicDbNames.length) {
+      return states.map((state) => {
+        const next = cloneState(state);
+        for (const name of dynamicDbNames) next.dbBindings.add(name);
+        return next;
+      });
+    }
     const context =
-      names.length === 1 ? { kind: "assigned", name: names[0] } : { kind: "consumed" };
+      names.length === 1
+        ? { kind: "assigned", name: names[0], derivedNames: names }
+        : { kind: "consumed", derivedNames: names };
     let current = await this.asyncExpression(
       declaration.initializer,
       states,
@@ -1783,9 +2444,25 @@ class EntryAnalyzer {
         const next = cloneState(state);
         if (this.expressionTaintsDb(frame, declaration.initializer, state)) next.dbBindings.add(name);
         if (this.isGetBossCall(frame, declaration.initializer)) next.queueBindings.add(name);
-        const principalKind = principalExpressionKind(declaration.initializer, state);
-        if (principalKind === "object") next.principalObjects.add(name);
-        else if (principalKind === "binding") next.principalBindings.add(name);
+        const principalKind = principalExpressionKind(
+          declaration.initializer,
+          state,
+          this.principalDerivedExpressions,
+        );
+        if (principalKind === "object" && ts.isObjectBindingPattern(declaration.name)) {
+          for (const element of declaration.name.elements) {
+            if (propertyNameText(element.propertyName ?? element.name) !== "ownerId") continue;
+            for (const binding of identifierNames(element.name)) {
+              next.principalBindings.add(binding);
+            }
+          }
+        } else if (principalKind === "object") {
+          next.principalObjects.add(name);
+        } else if (principalKind === "binding") {
+          next.principalBindings.add(name);
+        } else if (principalKind === "derived") {
+          next.principalDerivedBindings.add(name);
+        }
         return next;
       });
       if (current.some((state) => state.principalBindings.has(name))) {
@@ -1794,9 +2471,15 @@ class EntryAnalyzer {
     } else if (names.length) {
       current = current.map((state) => {
         const next = cloneState(state);
-        const principalKind = principalExpressionKind(declaration.initializer, state);
+        const principalKind = principalExpressionKind(
+          declaration.initializer,
+          state,
+          this.principalDerivedExpressions,
+        );
         if (principalKind === "binding") {
           for (const name of names) next.principalBindings.add(name);
+        } else if (principalKind === "derived") {
+          for (const name of names) next.principalDerivedBindings.add(name);
         } else if (
           principalKind === "object" &&
           ts.isObjectBindingPattern(declaration.name)
@@ -1834,7 +2517,7 @@ class EntryAnalyzer {
       return { continuing, returned: [] };
     }
     if (ts.isReturnStatement(statement)) {
-      const returned = statement.expression
+      let returned = statement.expression
         ? await this.asyncExpression(
             statement.expression,
             states,
@@ -1843,6 +2526,21 @@ class EntryAnalyzer {
             importDepth,
           )
         : states;
+      if (statement.expression) {
+        returned = returned.map((state) => {
+          const next = cloneState(state);
+          if (
+            principalExpressionKind(
+              statement.expression,
+              state,
+              this.principalDerivedExpressions,
+            ) === "derived"
+          ) {
+            next.returnedDerived = true;
+          }
+          return next;
+        });
+      }
       return { continuing: [], returned };
     }
     if (ts.isThrowStatement(statement)) {
@@ -1856,13 +2554,14 @@ class EntryAnalyzer {
       return { continuing: [], returned };
     }
     if (ts.isIfStatement(statement)) {
-      const condition = await this.asyncExpression(
+      let condition = await this.asyncExpression(
         statement.expression,
         states,
         frame,
         { kind: "consumed" },
         importDepth,
       );
+      condition = this.consumeAdminErrorDiscriminant(condition, statement.expression);
       if (statement.expression.kind === ts.SyntaxKind.TrueKeyword) {
         return this.analyzeStatement(statement.thenStatement, condition, frame, importDepth);
       }
@@ -1871,7 +2570,7 @@ class EntryAnalyzer {
           ? this.analyzeStatement(statement.elseStatement, condition, frame, importDepth)
           : { continuing: condition, returned: [] };
       }
-      const thenStates = condition.map((state) => {
+      let thenStates = condition.map((state) => {
         const next = cloneState(state);
         const expression = unwrapped(statement.expression);
         if (
@@ -1880,22 +2579,36 @@ class EntryAnalyzer {
         ) {
           next.principalBindings.add(expression.text);
         }
+        if (
+          ts.isIdentifier(expression) &&
+          this.nullableDerivedBindings.has(expression.text)
+        ) {
+          next.principalDerivedBindings.add(expression.text);
+        }
         return next;
       });
+      thenStates = this.applyValidatedInputs(
+        thenStates,
+        this.truthyResultNames(statement.expression, true),
+      );
       const thenFlow = await this.analyzeStatement(
         statement.thenStatement,
         thenStates,
         frame,
         importDepth,
       );
+      const elseStates = this.applyValidatedInputs(
+        condition.map(cloneState),
+        this.truthyResultNames(statement.expression, false),
+      );
       const elseFlow = statement.elseStatement
         ? await this.analyzeStatement(
             statement.elseStatement,
-            condition.map(cloneState),
+            elseStates,
             frame,
             importDepth,
           )
-        : { continuing: condition.map(cloneState), returned: [] };
+        : { continuing: elseStates, returned: [] };
       return {
         continuing: dedupeStates([...thenFlow.continuing, ...elseFlow.continuing]),
         returned: dedupeStates([...thenFlow.returned, ...elseFlow.returned]),
@@ -1909,6 +2622,36 @@ class EntryAnalyzer {
       ts.isForOfStatement(statement)
     ) {
       let entered = states.map(cloneState);
+      if (
+        (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) &&
+        ts.isVariableDeclarationList(statement.initializer)
+      ) {
+        entered = entered.map((state) => {
+          const next = cloneState(state);
+          const iterableKind = principalExpressionKind(
+            statement.expression,
+            state,
+            this.principalDerivedExpressions,
+          );
+          if (iterableKind === "derived") {
+            for (const declaration of statement.initializer.declarations) {
+              for (const name of identifierNames(declaration.name)) {
+                next.principalDerivedBindings.add(name);
+              }
+            }
+          } else if (
+            ts.isIdentifier(unwrapped(statement.expression)) &&
+            this.safeDerivedCollections.has(unwrapped(statement.expression).text)
+          ) {
+            for (const declaration of statement.initializer.declarations) {
+              for (const name of identifierNames(declaration.name)) {
+                next.principalDerivedBindings.add(name);
+              }
+            }
+          }
+          return next;
+        });
+      }
       if (ts.isForStatement(statement) && statement.initializer) {
         if (ts.isVariableDeclarationList(statement.initializer)) {
           for (const declaration of statement.initializer.declarations) {
@@ -2088,29 +2831,42 @@ class EntryAnalyzer {
       localFunctions.set(localName, localNode);
     }
     const frame = makeFrame(target.info, node, target.name, new Map(), localFunctions);
-    const states = [
-      applyPrincipalParameters(
-        createState(target.info),
-        node,
-        target.inheritedPrincipal ?? null,
-      ),
+    let states = [
+      this.internalAllowed
+        ? applyPrincipalParameters(
+            createState(target.info),
+            node,
+            target.inheritedPrincipal ?? null,
+          )
+        : createState(target.info),
     ];
+    const importDepth = target.info.path === this.originInfo.path ? 0 : 1;
     this.callStack.push(`${target.info.path}:${node.pos}:${target.name}`);
     try {
+      for (const parameter of node.parameters ?? []) {
+        if (!parameter.initializer) continue;
+        states = await this.asyncExpression(
+          parameter.initializer,
+          states,
+          frame,
+          { kind: "consumed" },
+          importDepth,
+        );
+      }
       if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
         await this.asyncExpression(
           node.body,
           states,
           frame,
           { kind: "consumed" },
-          target.info.path === this.originInfo.path ? 0 : 1,
+          importDepth,
         );
       } else {
         await this.analyzeBlock(
           node.body,
           states,
           frame,
-          target.info.path === this.originInfo.path ? 0 : 1,
+          importDepth,
         );
       }
     } finally {
@@ -2155,10 +2911,13 @@ function factorySurfaceTargets(target) {
   if (target.unknown || !isFunctionLike(unwrapped(target.node))) return [];
   const node = unwrapped(target.node);
   const localFunctions = scopedFunctionBindings(node);
-  const inheritedState = applyPrincipalParameters(createState(target.info), node);
+  const inheritedState = target.info.isEntry
+    ? createState(target.info)
+    : applyPrincipalParameters(createState(target.info), node);
   const inheritedPrincipal = {
     principalBindings: [...inheritedState.principalBindings],
     principalObjects: [...inheritedState.principalObjects],
+    principalDerivedBindings: [...inheritedState.principalDerivedBindings],
     optionalPrincipalParameters: [...inheritedState.optionalPrincipalParameters],
   };
   const targets = [];
@@ -2272,7 +3031,11 @@ export async function analyzeAuthGuards({
         entries.push({
           exportName,
           covered: analyzer.covered,
-          classification: analyzer.internalCovered ? "INTERNAL-PASS" : "PASS",
+          classification: analyzer.adminCovered
+            ? "ADMIN-PASS"
+            : analyzer.internalCovered
+              ? "INTERNAL-PASS"
+              : "PASS",
           diagnostics: analyzer.diagnostics,
         });
       }
@@ -2284,11 +3047,42 @@ export async function analyzeAuthGuards({
           entries.push({
             exportName: surfaceName,
             covered: surfaceAnalyzer.covered,
-            classification: surfaceAnalyzer.internalCovered ? "INTERNAL-PASS" : "PASS",
+            classification: surfaceAnalyzer.adminCovered
+              ? "ADMIN-PASS"
+              : surfaceAnalyzer.internalCovered
+                ? "INTERNAL-PASS"
+                : "PASS",
             diagnostics: surfaceAnalyzer.diagnostics,
           });
         }
       }
+    }
+
+    const diagnosedUnboundLoads = new Set(
+      entries
+        .flatMap((entry) => entry.diagnostics)
+        .filter((diagnostic) => diagnostic.reason === REASON.UNPROVABLE)
+        .map((diagnostic) => `${diagnostic.implementationPath}:${diagnostic.line}`),
+    );
+    const uncoveredDbLoads = info.unboundDbLoads.filter(
+      (node) => !diagnosedUnboundLoads.has(`${info.relPath}:${lineOf(info, node)}`),
+    );
+    if (uncoveredDbLoads.length) {
+      const analyzer = new EntryAnalyzer(project, info, "<dynamic-db-load>");
+      for (const node of uncoveredDbLoads) {
+        analyzer.addDiagnostic(
+          info,
+          node,
+          REASON.UNPROVABLE,
+          "dynamic @fikirtive/db load cannot be bound to a statically tracked Prisma alias",
+        );
+      }
+      entries.push({
+        exportName: "<dynamic-db-load>",
+        covered: true,
+        classification: "PASS",
+        diagnostics: analyzer.diagnostics,
+      });
     }
 
     // A sensitive construct that exists in a callable closure but could not be connected to a
@@ -2353,7 +3147,13 @@ export async function analyzeAuthGuards({
 
 export function formatResult(result) {
   const lines = [];
-  const counts = { PASS: 0, "INTERNAL-PASS": 0, EXEMPT: 0, FINDING: 0 };
+  const counts = {
+    PASS: 0,
+    "INTERNAL-PASS": 0,
+    "ADMIN-PASS": 0,
+    EXEMPT: 0,
+    FINDING: 0,
+  };
   lines.push(`auth-guard-fence: ${result.ok ? "PASS" : "FAIL"}`);
   for (const file of result.files) {
     const unexpected = result.unexpected.filter((entry) => entry.path === file.path);
@@ -2375,10 +3175,18 @@ export function formatResult(result) {
       counts.EXEMPT += 1;
       const entries = exempted
         .map(
-          ({ diagnostic }) => `${diagnostic.exportName}:${diagnostic.reason}`,
+          ({ diagnostic }) =>
+            `${diagnostic.implementationPath}:${diagnostic.line} ${diagnostic.exportName}:${diagnostic.reason}`,
         )
         .join(", ");
       lines.push(`EXEMPT ${file.path} [${entries}]`);
+    } else if (file.entries.some((entry) => entry.classification === "ADMIN-PASS")) {
+      counts["ADMIN-PASS"] += 1;
+      const entries = file.entries
+        .filter((entry) => entry.classification === "ADMIN-PASS")
+        .map((entry) => entry.exportName)
+        .join(", ");
+      lines.push(`ADMIN-PASS ${file.path} [${entries}]`);
     } else if (file.entries.some((entry) => entry.classification === "INTERNAL-PASS")) {
       counts["INTERNAL-PASS"] += 1;
       const entries = file.entries
@@ -2397,7 +3205,7 @@ export function formatResult(result) {
     );
   }
   lines.push(
-    `summary: PASS=${counts.PASS} INTERNAL-PASS=${counts["INTERNAL-PASS"]} EXEMPT=${counts.EXEMPT} FINDING=${counts.FINDING}; ${result.files.length} covered files; ${result.unexpected.length} finding(s); ${result.exempted.length} reviewed exemption(s); ${result.staleExemptions.length} stale exemption(s)`,
+    `summary: PASS=${counts.PASS} INTERNAL-PASS=${counts["INTERNAL-PASS"]} ADMIN-PASS=${counts["ADMIN-PASS"]} EXEMPT=${counts.EXEMPT} FINDING=${counts.FINDING}; ${result.files.length} covered files; ${result.unexpected.length} finding(s); ${result.exempted.length} reviewed exemption(s); ${result.staleExemptions.length} stale exemption(s)`,
   );
   return lines.join("\n");
 }
