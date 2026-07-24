@@ -4,6 +4,6 @@ import { prisma } from "@fikirtive/db";
 type CustomerInboxPrincipal = { ownerId: string; membershipId: string };
 
 export async function readOwned(principal: CustomerInboxPrincipal) {
-  const owned = { ownerId: principal.ownerId };
-  return prisma.user.findMany({ where: owned });
+  const ownerId = principal.ownerId;
+  return prisma.user.findMany({ where: { ownerId } });
 }

@@ -16,7 +16,8 @@ export async function updateOwnedJobs(clientId: string) {
     where: { ownerId: gate.ownerId },
     select: { id: true },
   });
-  const ids = jobs.map((job) => job.id);
+  const ids: string[] = [];
+  for (const ownedJob of jobs) ids.push(ownedJob.id);
   const [firstMappedId] = ids;
 
   const job = await prisma.genJob.findFirst({

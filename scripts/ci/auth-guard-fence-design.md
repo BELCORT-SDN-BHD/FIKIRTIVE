@@ -73,10 +73,10 @@ implementation 的 `file:line`；跨模块时同时打印 origin export。
 Round 4 的「每个敏感操作自己的 authority 参数树必须引用 principal」不变。Round 5
 只补上可证明的数据流：一条 Prisma read 的 `where` 已引用 principal 时，该 read 的
 result 才成为 `principal-derived`。从这个 result 取得的 property、destructure local、
-连续 `const` alias、derived list 的 `.map(...)` 结果，以及传入同文件 helper parameter
-的值继续保留 taint；同文件/一层 package call 仍受既有深度限制。owner-scoped `create`
-中由服务端生成的 `data.id` 也保留同一来源，供 transaction return、队列 payload 与
-后续状态更新使用。
+连续 `const` alias，以及传入同文件 helper parameter 的值继续保留 taint；同文件/一层
+package call 仍受既有深度限制。Round 7 已撤销早期对 `.map(...)` call result 的推断：
+collection callback 的整体返回值不再自动带 taint。owner-scoped `create` 中由服务端生成的
+`data.id` 也保留同一来源，供 transaction return、队列 payload 与后续状态更新使用。
 
 result 本身不要求额外 null check：若后续操作直接用 `job.id`，来源已经由前一条
 owner-scoped read 决定。另一个更窄的常见形状——先以 `{ id, ownerId }` 查到 row，
@@ -136,3 +136,133 @@ Round 5 最终为：
 - 1 个真正缺口：`softDeleteEntity(entityId)` 在 owner-scoped entity update 验证之前，
   先以客户端 `entityId` 执行 `shotEntityRef.count`。该项明确登记为 #458 append
   candidate；本轮没有修改 app code，也没有把它描述成安全路径。
+
+## 7. Round 7：表达式传播必须 default deny
+
+`principalExpressionKind` 的永久不变量是 **default deny**：只有明确建模了“该 AST 节点
+的结果值来自哪个 operand”的形状才传播 principal taint；函数末尾必须是 `return null`。
+禁止恢复“递归遍历所有 child，只要 subtree 某处出现 tainted name 就授信”的 fallback。
+那个 fallback 会把“参数里出现过正确 owner”误当成“调用结果就是该 owner”，所以任何
+新语法形状都会默认成为 false PASS。
+
+唯一允许传播结果值的 node kind 是：
+
+- `Identifier`：直接查当前 binding/object/derived 状态；
+- `PropertyAccessExpression`、`ElementAccessExpression`：只从已带 provenance 的
+  receiver 传播；principal object 只允许精确的 `.ownerId` / `["ownerId"]`；
+- 值不变 wrapper：`ParenthesizedExpression`、`AsExpression`、
+  `TypeAssertionExpression`、`NonNullExpression`、`SatisfiesExpression`；
+- `AwaitExpression`：只传播其 operand；
+- `ConditionalExpression`：两个结果 branch 都有 taint 才传播；
+- `BinaryExpression`：仅 `||`、`??`、`&&`，且左右 operand 都有 taint才传播；
+  comma、算术、拼接、比较和其他 operator 一律不传播。
+
+所有其他表达式，包括普通 call、array/object literal、template literal、spread、
+`new`、tagged template、arrow/function expression，一律返回 `null`。object literal
+只会在 Prisma `where`/`data` 的 authority container 检查中逐 property 读取，不会
+因此成为可任意复用的 tainted value。普通 call 也绝不能因某个 argument tainted 而
+获得 taint。唯一例外是既有 bounded local/import call following：checker 实际分析
+callee body，且每个正常 return 都证明同一 principal value 或 owner-scoped object；
+throw/abrupt exit 不伪装成返回值。现场需要的两个窄模型是：
+
+- 两个 branch 都 owner-neutral 的 conditional spread，或两个 branch 都带同一
+  owner authority 的 conditional filter；
+- checker 实际跟进的 local helper 返回 top-level `ownerId` object，且 ordered spread
+  检查证明后面没有未知 override。
+
+这些是 operation authority 的显式模型，不是 generic subtree taint。对应 positive
+fixtures 是 `default-deny-allowlist.ts` 与 `modeled-owner-objects.ts`。
+
+## 8. Round 7：object identity 与失效规则
+
+principal-derived object 的 taint 属于对象 identity，不属于某个变量名。直接 whole-object
+alias（例如 `const alias = job`）把所有名字连入同一个 alias group；callee parameter
+若由 checker 实际跟进，也加入同一 group。以下任一事件会从当前位置起使整个 group
+失效：
+
+- 任一 alias 的 property/element 被直接、compound、`++`/`--` 或 `delete` 写入；
+- object 被传给 checker 没有完整建模的任意 call，包括 `Object.assign`；
+- object 被 spread/rebuild 进一个新 object/array，或以嵌套 carrier 逃逸。
+
+失效会清除 group 中每个名字的 object、derived 和 operation-authority 状态，并从已分析
+callee 传播回 caller。即使现场写入的是看似无害的 sibling property，也不能继续依赖
+旧 taint；这是有意的保守边界。标量 `ownerId` 传给未知 validator 不按 object mutation
+失效，但未知 call 的 return 仍是 default-deny `null`。空 derived collection 只有通过
+显式循环和只接收 derived item 的 `.push()` 才保留集合 provenance；`.map()` 等普通
+call 不传播整体结果。
+
+Round 7 的六个 adversarial fixture 都因此失败：
+
+- call-argument laundering：call result 不看 arguments；
+- comma：非 allow-list binary operator；
+- array + index：array literal 不传播；
+- alias mutation：member write 失效整个 alias group；
+- `Object.assign`：未知 call 的 object argument 失效；
+- spread rebuild：新 object 不传播，且旧 object escape 后失效。
+
+## 9. Round 7 收敛与人工 ledger
+
+Round 6 基线为：
+
+`PASS=41 INTERNAL-PASS=31 ADMIN-PASS=2 EXEMPT=22 FINDING=0`，96 个 covered file，
+81 个 reviewed exemption site；fixtures 为 36 个 bypass fail、16 个 positive pass。
+
+严格 default-deny 首次扫描暴露 221 个 site、23 个 finding file（101 个 export/reason
+identity）。只加入上述有证明的窄模型后，仍有 78 个 site、13 个 finding file；没有
+重新放宽 fallback。最终审计又确认“在敏感 call 内直接 spread”也必须立即失效；该次
+收紧另暴露 63 个 site。现场已复核但静态不可证明的路径最终登记为 53 个精确
+`path + export + diagnostic reason` identity，覆盖 107 个 Round 7 reviewed site。ledger
+第三栏继续保存 checker 的精确失败原因以维持 exact-match/stale 检测；每条
+justification 以 `Round 7 unprovable:` 明示人工处置及 analyzer limitation。
+
+53 个新增 identity 的完整清单如下（同一 export 的 `missing` 与 `unused` 是两个精确
+identity）：
+
+- template/advisory-lock 或关联的 branch-merged id：
+  `actions.ts#deleteProject`、`canvas-node-placement.ts#placeCanvasJobNode`、
+  `canvas-node-placement.ts#tombstoneCanvasNode`、`cowork-actions.ts#coworkDeleteThread`、
+  `customer-workflow-service.ts#workflowLifecycleService.createRoutineDraft`、
+  `gen-actions.ts#startCanvasGen`、`#startCoworkGen`、`#startGen`、
+  `otto-actions.ts#deleteCoworkThread`、`research-actions.ts#approveResearch`，
+  以及 `storyboard-gate1-actions.ts` 的五个 export 各一条 `missing`；
+- collection callback return：
+  `actions.ts#saveShotPrompt`、`cowork-actions.ts#coworkVaryCard`、
+  `schedule-actions.ts#updateScheduledPost`；
+- prior-read / validated-id correlation：
+  `actions.ts#getTranscript`，以及 `storyboard-gate1-actions.ts` 的五个 export
+  各一条 `unused`；
+- mutable owner filter：
+  `customer-inbox-service.ts#createCustomerInboxService.listConversations`、
+  `schedule-actions.ts#listScheduledPosts`；
+- nested principal carrier：
+  `customer-inbox-service.ts` 的 `assignConversation`、`takeOverConversation`、
+  `handOffConversation`、`setConversationStatus`、`requestAutomationResume`；
+- opaque scalar normalizer return：
+  `customer-inbox-service.ts#createCustomerInboxService.writeNormalizedInbound`；
+- injected worker resolver：
+  `customer-workflow-service.ts` 的 `createWorkflowRun`、
+  `evaluateWorkflowBusinessHours`、`dispatchWorkflowStep`；
+- multi-factory Otto carrier：
+  `otto-client-actions.ts#ottoApprove`；
+- direct spread/rebuild 或 member-call object escape：
+  `app/api/otto/stream/route.ts#POST`、
+  `crm-identity.ts#findContactDuplicateSuggestions`、
+  `customer-inbox-service.ts#createCustomerInboxService.writeNormalizedInbound`
+  的额外 `missing` identity、`customer-workflow-service.ts` 的 `listRoutines`、
+  `listRoutineRuns`、`getContactJourneyStates`、`listBusinessHoursPolicies`、
+  `factory-batch.ts#orchestrateBatch`、`otto-actions.ts#ottoTurn`、
+  `refgen-actions.ts` 的 `startRefGen`、`setBaseAsset`、`createVariant`、
+  `regenerateVariant`、`deleteVariant`，以及 `renameVariant` 的 `unused` 与 `missing`
+  两条 identity、`segment-actions.ts#buildSegment`。
+
+把底层 `factory-batch.ts#orchestrateBatch` 与 `otto-actions.ts#ottoTurn` 登记后，相关
+thin wrapper 不再重复产生 finding；一个原有的
+`otto-client-actions.ts#ottoTurn:unprovable` ledger identity（4 个 site）因此变成
+stale 并已删除，所以 reviewed site 的净增量是 `+103`。
+
+最终扫描为：
+
+`PASS=36 INTERNAL-PASS=26 ADMIN-PASS=2 EXEMPT=32 FINDING=0`，96 个 covered file，
+0 个 finding、184 个 reviewed exemption site、0 个 stale entry。相对 Round 6：
+`PASS -5`、`INTERNAL-PASS -5`、`ADMIN-PASS ±0`、`EXEMPT +10`、`FINDING ±0`，
+reviewed site `81 → 184`。fixtures 为 42 个 bypass fail、18 个 positive pass。
