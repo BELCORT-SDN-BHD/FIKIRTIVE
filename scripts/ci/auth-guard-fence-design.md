@@ -374,3 +374,151 @@ production site 均由同层 outer owner authority 或已证明 owner-scoped fil
 `PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
 0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
 identity，delta 为 0；full-tree runtime 1.76 秒。
+
+## 16. Round 10：callback shape、ordered spread 与 derived key
+
+已知 callback consumer 现在按 argument position 判定 callback：collection/promise
+consumer 的 callback 位，以及 timer 的第一个参数，才进入 callback resolution。
+property access、element access、factory/bind call 与 conditional 若出现在该位置但无法
+解析，统一 fail closed 并失效当前 tainted state；`reduce` initial value、`forEach`
+`thisArg` 等普通 data 位不再被误判成 callback。对象参数中直接传入的 arrow property
+会沿同文件 wrapper 映射到 `input.mutate(...)` 之类的调用点，继续分析 callback body 与
+captured alias invalidation；arrow 的 lexical `this` 不会被误当成可改写 carrier。
+
+Prisma authority object 改为按 property 顺序解释 last-write-wins。每条 authority 保留
+其顶层 key；后续已知 spread 只覆盖同名 key，unknown/untrusted spread 因可能覆盖任意
+authority key 而清空此前证明。相反，unknown spread 在前、明确 authority 在后可通过；
+known neutral literal、immutable owner object 与由 principal-derived identity scalar
+重建的 immutable owner object也保留证明。
+
+principal-derived row 不再让任意 property 获得 authority。来源 property 必须是 `id`、
+`*Id` 或 `*Ids` 的 identity naming 形状；object destructure 使用同一规则。Prisma
+`where`/`data` 的目标路径也必须落在 identity key，或在 nested relation/logical
+container 中最终落到 identity key。于是 `status: job.status` 与 `status: job.id` 都不能
+替 unsafe OR 洗白，而 `id: job.id`、`projectId: project.id`、`id: { in:
+job.generationIds }` 仍可证明。real-tree 审计确认合法 Rule-A 路径均可由该 identity
+invariant、直接 `ownerId` 或既有 validated-client-id 规则证明。
+
+对象 callback carrier 首次收紧时曾暂时暴露 `campaign-actions.ts` 的四个 false positive：
+shared helper 在调用 `input.mutate(...)` 后仍使用直接来自 `gate.ownerId` 的
+`input.ownerId`。arrow property mapping 证明该 callback 不改写 carrier；structured
+callback 内不携带 principal 的纯 recursive canonicalizer只截断重复展开，携带 principal
+的 recursion 仍保持 fail closed。没有修改 app code，也没有新增 exemption。
+
+## 17. Round 10 收敛、real tree 与 ledger
+
+fixtures 为 57 个 bypass fail、25 个 positive pass。新增 red 覆盖 property/element/bound
+callback、trailing untrusted spread，以及 incidental derived property/非 identity 目标
+key；新增 green 覆盖 callback data 位、object callback wrapper、spread ordering、
+known-neutral spread 与 immutable principal-derived owner spread。
+
+最终扫描仍为：
+
+`PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0；full-tree runtime 1.21 秒。
+
+## 18. Round 11：正向 filter、assignment pattern 与 callback carrier
+
+principal-derived identity 只有在 Prisma filter 对结果集施加可证明的正向约束时才算
+authority。direct equality，以及 identity filter 内的 `equals`、`in`、`has`、
+`hasSome` 保留证明；`not`、`notIn`、`gt`、`gte`、`lt`、`lte`、`isNot`、`none`、
+`every`、`hasEvery` 不提供 authority（`*Every` 对空集合可 vacuous true）。identity
+scalar/list filter 内的未知
+operator 同样 fail closed，不能仅因 operand 来自 owned row 就洗白。relation 的 `is` /
+`some` 仍须由 nested positive identity 或 `ownerId` 证明，反向/全称量词本身不算证明。
+
+Prisma compound unique key 不是 filter operator。形如
+`ownerId_broadcastRunId_contactIdentityId: { ownerId, ... }` 的 `_` 分隔 identity key
+object 继续按内部 identity 字段分析，避免把合法复合唯一键误判为未知 scalar operator。
+真实代码树第一次扫描暴露的唯一 finding 即属此类；加入该语义区分与 positive fixture
+后恢复 0 finding，没有修改 app code 或 exemption ledger。
+
+赋值流现在收集 Object/Array assignment pattern 中所有实际写入的 binding root。无论是
+`({ id } = body)`、`[id] = body.ids`、nested/default/rest target，旧的 principal、
+derived、authority、owner-neutral 与 alias 状态都在写入后失效；同一 root 也进入
+reassignment 索引，不能让 callback resolver 回看已经被覆写的旧 initializer。未知
+destructure source 不尝试恢复 trust。
+
+已知 callback consumer 的 callback argument 若是 `SpreadElement`，即使 spread 内容看似
+tuple，也不能静态保证 runtime callback 位置与 target，统一按 unresolved callback
+fail closed。structured object carrier 则扩展到 method shorthand、function expression
+与 shorthand property：静态可解析者分析真实 function body 并合并 captured alias
+invalidation；conditional/import/spread/computed 等无法解析的 property 在
+`input.mutate()`（含静态 element access）被调用时失效当前 tainted state。普通未调用
+data property 不受影响。
+
+## 19. Round 11 收敛、real tree 与 ledger
+
+fixtures 为 61 个 bypass fail、27 个 positive pass。新增 red 覆盖 11 类
+negative/relational/quantified/unknown Prisma operator、Object/Array destructuring
+reassignment、callback-position spread，以及 method/function/shorthand/unresolved
+structured callback carrier；新增 green 覆盖 `equals`/`in`/`hasSome`、compound unique
+identity object 与三种静态 structured callback form。
+
+最终扫描仍为：
+
+`PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0；本轮 full-tree runtime 1.24 秒。
+
+## 20. Round 12：default assignment target 与 recursive carrier
+
+assignment target root 收集现在把 assignment `BinaryExpression` 解释为写入其 left
+target。于是 object alias default `({ source: id = fallback } = body)` 不会因静态分析
+default 分支时暂时从 derived `fallback` 恢复 trust；outer assignment 最终仍会按 runtime
+可能写入的 `id` 清除旧 principal/derived/authority/alias。规则递归覆盖 nested object、
+array default 与 object/array rest；只作用于 assignment target 与 reassignment 索引，
+不把合法 variable/binding declaration 当成运行时覆写。
+
+structured callback 内的无 principal recursive call 不再无条件 `return states`。在截断
+recursive function body 前，checker 先检查 recursive argument 中的 object callback
+carrier：method、function/arrow 与可解析 shorthand 会按真实 callback body 分析，并把
+captured alias invalidation 合并回 caller；callback-shaped conditional/import/reference
+或 spread/computed property 无法证明时 fail closed。普通 literal data property不当成
+callback，且 callback recursion stack 继续阻止无限展开。
+
+这一规则锁住 two-level carrier：outer structured callback 定义 recursive helper，
+第一次传入 safe callback，第二层 carrier 才写入 captured owned row。旧 guard 因 recursive
+args 本身不携带 principal 而跳过第二层 method；新规则会分析该 method 并失效 captured
+derived object。既有 `callback-data-argument.ts` pure recursive canonicalizer 仍通过，
+证明无 callback carrier 的合法递归仍按原边界截断。
+
+## 21. Round 12 收敛、real tree 与 ledger
+
+fixtures 为 63 个 bypass fail、27 个 positive pass。新增 red 覆盖 derived fallback 的
+object alias default（同一 pattern 含 nested array/default 与两类 rest）以及 two-level
+recursive structured carrier；既有 recursive structured positive 作为防误报 green。
+
+最终扫描仍为：
+
+`PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0；本轮 full-tree runtime 1.40 秒。
+
+## 22. Round 13：recursive carrier 的 called-property 证据
+
+recursive structured-carrier 截断前，checker 现在把 recursive function 的同位置参数与
+object argument 对齐，并收集 function body 中直接执行的静态 property call：
+`input.f()` 与 `input["f"]()` 都证明 carrier 的 `f` 是 callback 位。若 argument 为
+`{ f }` / `{ f: reference }`，即使短名不匹配 callback/handler/mutate 启发式，只要
+`f` 随后被调用而 reference 无法解析到稳定 function body，就 fail closed 并失效当前
+taint。computed property call 无法确定目标名时同样 fail closed。
+
+这补住 `let f; f = () => { job.id = body.id }; recurse(..., { f })`：无 initializer 且
+被 reassignment 的 `f` 不能再因普通短名被归为 data。静态 method/function/shorthand
+仍分析真实 callback body；未在 recursive body 中作为 method 调用的普通 data property
+不因本规则被升级成 callback。扫描只在 recursive structured-carrier path 生效，不改变
+一般 object/data argument 的分类。
+
+## 23. Round 13 收敛、real tree 与 ledger
+
+fixtures 为 64 个 bypass fail、27 个 positive pass。新增 red 覆盖无 initializer 后赋值
+的普通短名 callback shorthand；既有 two-level recursive carrier、pure recursive
+canonicalizer 与普通 callback data 正例全部保留。
+
+最终扫描仍为：
+
+`PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0。
