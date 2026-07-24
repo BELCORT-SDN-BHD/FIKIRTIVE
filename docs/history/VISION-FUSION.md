@@ -1,6 +1,7 @@
 # 《愿景融合与 Otto 最优化融合方案》
 
 > 档案截点：2026-07-24  
+> 档案性质:快照档(见 [README.md](README.md) 刷新约定)——过档案截点后仅作历史证据,现状以 live 查询与权威层为准。
 > 主要读者：Founder Nicks，以及未来每一位 AI / human collaborator  
 > 性质：历史综合后的**决策输入**，不是新裁决、不是新路线、不是完成声明  
 > 上位依据：live `docs/BLUEPRINT.md`；基础档案：`PROJECT-HISTORY.md`、`FOUNDER-JOURNEY.md`、`BIG-PICTURE-MAP.md`；全量证据：`history-digests/` 18 份 digest

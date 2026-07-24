@@ -1,6 +1,7 @@
 # FIKIRTIVE《大局观现状地图 + 偏差与升级清单》
 
 > 档案截点：2026-07-24  
+> 档案性质:快照档(见 [README.md](README.md) 刷新约定)——过档案截点后仅作历史证据,现状以 live 查询与权威层为准。
 > 读者：Founder Nicks，以及以后每一位 AI / human collaborator  
 > 性质：历史与现状的决策输入，不是新的产品裁决，不替 Founder 决定
 
