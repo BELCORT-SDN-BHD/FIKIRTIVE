@@ -1,0 +1,23 @@
+# Reviewed principal-less authorities from issue #442's semantic fence rollout.
+# Format: path<TAB>export<TAB>reason<TAB>one-line authority justification
+# Matching is exact. A missing finding makes its entry stale and fails the fence.
+apps/web/app/api/health/route.ts	GET	missing-principal-resolution	Public health probe is intentionally sessionless and exposes only worker liveness.
+apps/web/app/api/meta/data-deletion/route.ts	POST	missing-principal-resolution	Meta's verified signed_request HMAC is the callback authority; there is no user session.
+apps/web/app/api/stripe/webhook/route.ts	POST	missing-principal-resolution	Stripe's verified webhook signature is the money-in authority; there is no user session.
+apps/web/lib/account-actions.ts	signOutAction	missing-principal-resolution	Better Auth's current-session cookie is the authority for clearing that same session.
+apps/web/lib/admin-v2.ts	getAdminV2Data	missing-principal-resolution	pre-existing, ticketed #458 — remove when fixed
+apps/web/lib/conversation-admin.ts	listConversations	missing-principal-resolution	pre-existing, ticketed #458 — remove when fixed
+apps/web/lib/conversation-admin.ts	getConversation	missing-principal-resolution	pre-existing, ticketed #458 — remove when fixed
+apps/web/lib/cowork-knowledge.ts	getEnhanceDirective	missing-principal-resolution	Reads founder-owned global model guidance, not tenant-owned data.
+apps/web/lib/cowork-knowledge.ts	listDirectives	missing-principal-resolution	Reads founder-owned global model guidance for the admin grid, not tenant-owned data.
+apps/web/lib/cowork-knowledge.ts	getCastRule	missing-principal-resolution	Reads founder-owned global model guidance, not tenant-owned data.
+apps/web/lib/cowork-knowledge.ts	getRulesMap	missing-principal-resolution	Reads founder-owned global model guidance, not tenant-owned data.
+apps/web/lib/model-registry.ts	resolveDisabledModels	missing-principal-resolution	Reads the founder-owned global model-disable overlay, not tenant-owned data.
+apps/web/lib/otto-actions.ts	finalizeOttoRun	principal-parameter-unused-by-sensitive-operation	pre-existing, ticketed #458 — remove when fixed
+apps/web/lib/runtime-config.ts	resolveVisionConfig	missing-principal-resolution	Reads the singleton global vision configuration, not tenant-owned data.
+apps/web/lib/share-preview.ts	verifySharePreview	missing-principal-resolution	The HMAC-attested share token supplies and binds ownerId plus postId without a session.
+apps/web/lib/tenant-admin.ts	listTenants	missing-principal-resolution	pre-existing, ticketed #458 — remove when fixed
+apps/web/lib/tenant-admin.ts	getTenantDetail	missing-principal-resolution	pre-existing, ticketed #458 — remove when fixed
+apps/web/lib/tenant-actions.ts	stopImpersonatingTenant	unprovable	Better Auth's impersonatedBy session marker is the authority for ending impersonation.
+apps/web/lib/tenant-actions.ts	stopImpersonatingTenant	missing-principal-resolution	Better Auth permits stopImpersonating only on the current impersonated session.
+apps/web/lib/web-page-cache.ts	readPageCached	missing-principal-resolution	Global URL-content cache is tenant-neutral and keyed only by normalized URL hash.
