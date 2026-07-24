@@ -23,6 +23,9 @@ const BYPASS_CASES = new Map([
   ["bypass/app/api/users/route.ts", REASON.MISSING],
   ["bypass/app/server-action.ts", REASON.MISSING],
   ["bypass/catch-chain.ts", REASON.DISCARDED],
+  ["bypass/callback-mutation-foreach.ts", REASON.UNUSED],
+  ["bypass/callback-mutation-nested.ts", REASON.UNUSED],
+  ["bypass/callback-mutation-then.ts", REASON.UNUSED],
   ["bypass/call-argument-launder.ts", REASON.UNUSED],
   ["bypass/comma-launder.ts", REASON.UNUSED],
   ["bypass/computed-prisma-call.ts", REASON.UNPROVABLE],
@@ -42,6 +45,7 @@ const BYPASS_CASES = new Map([
   ["bypass/array-index-launder.ts", REASON.UNUSED],
   ["bypass/alias-mutation-launder.ts", REASON.UNUSED],
   ["bypass/mutation-launder.ts", REASON.UNUSED],
+  ["bypass/mutating-member-call.ts", REASON.UNUSED],
   ["bypass/non-async-export.ts", REASON.MISSING],
   ["bypass/or-launder.ts", REASON.UNUSED],
   ["bypass/object-assign-launder.ts", REASON.UNUSED],
@@ -63,6 +67,10 @@ const BYPASS_CASES = new Map([
 ]);
 
 const MULTI_EXPORT_BYPASSES = new Map([
+  [
+    "bypass/callback-mutation-foreach.ts",
+    ["leakForEachCallback", "leakTracedLocalCallback"],
+  ],
   ["bypass/derived-id-laundering.ts", ["leak", "leakUncheckedClientId"]],
   ["bypass/mutation-launder.ts", ["leakMutatedGate", "leakMutatedResult"]],
   ["bypass/ternary-launder.ts", ["leakAssignedTernary", "leakInlineTernary"]],
@@ -80,11 +88,13 @@ const POSITIVE_CASES = [
   "positive/gateway-wrapper.ts",
   "positive/internal-owner-id.ts",
   "positive/internal-principal-derived.ts",
+  "positive/immutable-const-owned-spread.ts",
   "positive/modeled-owner-objects.ts",
   "positive/named-function.ts",
   "positive/non-async.ts",
   "positive/nullish-principal-branches.ts",
   "positive/queue-send.ts",
+  "positive/read-only-property-method.ts",
   "positive/renamed-owner-destructure.ts",
   "positive/re-export.ts",
 ];

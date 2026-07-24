@@ -133,6 +133,7 @@ export const PRISMA_READ_MEMBERS = new Set([
   "findUnique",
   "groupBy",
 ]);
+const READ_ONLY_SCALAR_MEMBER_CALLS = new Set(["trim"]);
 const PRISMA_PRINCIPAL_DERIVED_RESULT_MEMBERS = new Set([
   ...PRISMA_READ_MEMBERS,
   "create",
@@ -297,6 +298,15 @@ function unwrapped(expression) {
   return node;
 }
 
+function isKnownReadOnlyPropertyMethodCall(call) {
+  if (!ts.isCallExpression(call) || call.arguments.length !== 0) return false;
+  const callee = unwrapped(call.expression);
+  if (!ts.isPropertyAccessExpression(callee)) return false;
+  if (!READ_ONLY_SCALAR_MEMBER_CALLS.has(callee.name.text)) return false;
+  const receiver = unwrapped(callee.expression);
+  return ts.isPropertyAccessExpression(receiver) || ts.isElementAccessExpression(receiver);
+}
+
 function dbPackageLoadCall(expression) {
   if (!expression) return null;
   const node = unwrapped(expression);
@@ -402,6 +412,33 @@ function expressionIsOwnerNeutral(expression, neutralBindings) {
   });
 }
 
+// This is intentionally stricter than proving individual mutation forms: if the binding is ever
+// used as anything except an exact object spread, it cannot receive the immutable-spread waiver.
+function bindingIsOnlyObjectSpread(scope, declaration, name) {
+  let spreadSeen = false;
+  let otherReferenceSeen = false;
+  const visit = (node) => {
+    if (otherReferenceSeen) return;
+    if (ts.isIdentifier(node) && node.text === name) {
+      if (node === declaration.name) return;
+      const parent = node.parent;
+      if (
+        parent &&
+        ts.isSpreadAssignment(parent) &&
+        unwrapped(parent.expression) === node
+      ) {
+        spreadSeen = true;
+      } else {
+        otherReferenceSeen = true;
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  return spreadSeen && !otherReferenceSeen;
+}
+
 function moduleOwnerNeutralBindings(info) {
   const neutral = new Set();
   let changed = true;
@@ -497,6 +534,7 @@ function clearPrincipalName(state, name) {
   state.principalDerivedObjects.delete(name);
   state.principalAuthorityBindings.delete(name);
   state.principalOwnerNeutralBindings.delete(name);
+  state.principalImmutableObjectBindings.delete(name);
 }
 
 function invalidatePrincipalAlias(state, name) {
@@ -521,6 +559,9 @@ function cloneState(state) {
     principalDerivedObjects: new Set(state.principalDerivedObjects),
     principalAuthorityBindings: new Map(state.principalAuthorityBindings),
     principalOwnerNeutralBindings: new Set(state.principalOwnerNeutralBindings),
+    principalImmutableObjectBindings: new Set(
+      state.principalImmutableObjectBindings,
+    ),
     principalAliases: clonePrincipalAliases(state.principalAliases),
     invalidatedPrincipalAliases: new Set(state.invalidatedPrincipalAliases),
     optionalPrincipalParameters: new Set(state.optionalPrincipalParameters),
@@ -548,6 +589,7 @@ function dedupeStates(states) {
       [...state.principalDerivedObjects].sort().join(","),
       principalAuthorityKey(state.principalAuthorityBindings),
       [...state.principalOwnerNeutralBindings].sort().join(","),
+      [...state.principalImmutableObjectBindings].sort().join(","),
       principalAliasKey(state.principalAliases),
       [...state.invalidatedPrincipalAliases].sort().join(","),
       [...state.optionalPrincipalParameters].sort().join(","),
@@ -578,6 +620,7 @@ function createState(info) {
     principalDerivedObjects: new Set(),
     principalAuthorityBindings: new Map(),
     principalOwnerNeutralBindings: moduleOwnerNeutralBindings(info),
+    principalImmutableObjectBindings: new Set(),
     principalAliases: new Map(),
     invalidatedPrincipalAliases: new Set(),
     optionalPrincipalParameters: new Set(),
@@ -1196,6 +1239,68 @@ function principalExpressionKind(expression, state, derivedExpressions = null) {
   return null;
 }
 
+function isLiteralValue(expression) {
+  const node = unwrapped(expression);
+  return (
+    ts.isStringLiteralLike(node) ||
+    ts.isNumericLiteral(node) ||
+    ts.isNoSubstitutionTemplateLiteral(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword
+  );
+}
+
+function isImmutablePrincipalObjectDeclaration(
+  declaration,
+  state,
+  frame,
+  derivedExpressions,
+) {
+  if (
+    !ts.isIdentifier(declaration.name) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    !(declaration.parent.flags & ts.NodeFlags.Const)
+  ) {
+    return false;
+  }
+  const initializer = declaration.initializer
+    ? unwrapped(declaration.initializer)
+    : null;
+  if (!initializer || !ts.isObjectLiteralExpression(initializer)) return false;
+  const valuesAreSafe = initializer.properties.every((property) => {
+    if (
+      !ts.isPropertyAssignment(property) &&
+      !ts.isShorthandPropertyAssignment(property)
+    ) {
+      return false;
+    }
+    if (
+      ts.isPropertyAssignment(property) &&
+      ts.isComputedPropertyName(property.name)
+    ) {
+      return false;
+    }
+    const value = ts.isShorthandPropertyAssignment(property)
+      ? property.name
+      : property.initializer;
+    if (isLiteralValue(value)) return true;
+    const kind = principalExpressionKind(value, state, derivedExpressions);
+    if (kind === "binding") return true;
+    if (kind !== "derived") return false;
+    const root = rootIdentifier(value);
+    return !root || !state.principalDerivedObjects.has(root);
+  });
+  return (
+    valuesAreSafe &&
+    bindingIsOnlyObjectSpread(
+      frame.node,
+      declaration,
+      declaration.name.text,
+    )
+  );
+}
+
 function callMemberName(node) {
   if (!ts.isCallExpression(node) && !ts.isNewExpression(node)) return null;
   const expression = unwrapped(node.expression);
@@ -1739,9 +1844,15 @@ class EntryAnalyzer {
     }
   }
 
-  invalidatePrincipalRoot(states, name) {
+  invalidatePrincipalRoot(states, name, { preserveImmutable = false } = {}) {
     const invalidated = new Set();
     const nextStates = states.map((state) => {
+      if (
+        preserveImmutable &&
+        state.principalImmutableObjectBindings.has(name)
+      ) {
+        return state;
+      }
       if (
         !principalNameIsTainted(state, name) &&
         !state.principalAliases.has(name) &&
@@ -1767,7 +1878,10 @@ class EntryAnalyzer {
   invalidateEscapedAliases(
     states,
     expression,
-    { invalidateOwnerNeutral = true } = {},
+    {
+      invalidateOwnerNeutral = true,
+      preserveImmutableName = null,
+    } = {},
   ) {
     let current = states;
     for (const name of escapedAliasIdentifiers(expression)) {
@@ -1780,7 +1894,9 @@ class EntryAnalyzer {
         });
       }
       if (current.some((state) => principalNameIsObjectTainted(state, name))) {
-        current = this.invalidatePrincipalRoot(current, name);
+        current = this.invalidatePrincipalRoot(current, name, {
+          preserveImmutable: name === preserveImmutableName,
+        });
       }
     }
     return current;
@@ -1792,8 +1908,26 @@ class EntryAnalyzer {
       current = this.invalidateEscapedAliases(current, argument);
     }
     const called = unwrapped(call.expression);
-    if (ts.isPropertyAccessExpression(called) || ts.isElementAccessExpression(called)) {
+    if (
+      (ts.isPropertyAccessExpression(called) ||
+        ts.isElementAccessExpression(called)) &&
+      !isKnownReadOnlyPropertyMethodCall(call)
+    ) {
       current = this.invalidateDirectAlias(current, called.expression);
+    }
+    return current;
+  }
+
+  mergeCallbackInvalidations(states, callbackExits) {
+    const invalidated = new Set();
+    for (const state of callbackExits) {
+      for (const name of state.invalidatedPrincipalAliases) {
+        invalidated.add(name);
+      }
+    }
+    let current = states;
+    for (const name of invalidated) {
+      current = this.invalidatePrincipalRoot(current, name);
     }
     return current;
   }
@@ -2127,8 +2261,10 @@ class EntryAnalyzer {
             { kind: "consumed" },
             importDepth,
           );
+          const spread = unwrapped(property.expression);
           current = this.invalidateEscapedAliases(current, property.expression, {
             invalidateOwnerNeutral: false,
+            preserveImmutableName: ts.isIdentifier(spread) ? spread.text : null,
           });
         }
       }
@@ -2447,7 +2583,7 @@ class EntryAnalyzer {
 
   async analyzeCallback(callback, states, frame, importDepth, { transaction = false } = {}) {
     const node = unwrapped(callback);
-    if (!isFunctionLike(node)) return [];
+    if (!isFunctionLike(node)) return { returned: [], exits: [] };
     const callbackStates = states.map((state) => {
       const next = cloneState(state);
       const txParameter = node.parameters?.[0];
@@ -2475,7 +2611,7 @@ class EntryAnalyzer {
         { kind: "consumed" },
         importDepth,
       );
-      return returned.map((state) => {
+      const expressionExits = returned.map((state) => {
         const next = cloneState(state);
         const expressionKind = principalExpressionKind(
           node.body,
@@ -2492,9 +2628,13 @@ class EntryAnalyzer {
         next.returnedDerived = kind === "derived";
         return next;
       });
+      return { returned: expressionExits, exits: expressionExits };
     } else {
       const flow = await this.analyzeBlock(node.body, callbackStates, callbackFrame, importDepth);
-      return flow.returned;
+      return {
+        returned: flow.returned,
+        exits: dedupeStates([...flow.returned, ...flow.continuing]),
+      };
     }
   }
 
@@ -2507,6 +2647,25 @@ class EntryAnalyzer {
       ? this.trustedImportedResolver(frame.info, call)
       : null;
     const localProducer = ts.isCallExpression(call) ? this.localProducer(frame, call) : null;
+    const importedBodyModeled =
+      earlyBinding?.kind === "import" &&
+      earlyBinding.target &&
+      !earlyBinding.target.unknown &&
+      isFunctionLike(unwrapped(earlyBinding.target.node)) &&
+      importDepth < MAX_SAME_PACKAGE_IMPORT_DEPTH &&
+      !this.project.isReviewedExemptExport(earlyBinding.targetInfo, earlyBinding.name) &&
+      !(
+        earlyBinding.targetInfo?.path !== this.originInfo.path &&
+        this.project.isIndependentlyAnalyzedEntry(earlyBinding.targetInfo) &&
+        this.project.moduleMayReachSensitive(earlyBinding.targetInfo)
+      );
+    const callbackCallIsFullyTraced =
+      transactionCall ||
+      earlyBinding?.kind === "local" ||
+      earlyBinding?.kind === "callback" ||
+      Boolean(localProducer) ||
+      importedBodyModeled;
+    const callbackAnalyses = [];
     let transactionReturnsDerived = false;
 
     if (this.isShadowedResolverCall(frame, call)) {
@@ -2533,15 +2692,19 @@ class EntryAnalyzer {
 
     for (const argument of args) {
       if (isFunctionLike(unwrapped(argument))) {
-        if (transactionCall || !earlyBinding) {
-          const callbackExits = await this.analyzeCallback(
+        if (!callbackCallIsFullyTraced || transactionCall) {
+          const callbackAnalysis = await this.analyzeCallback(
             argument,
             current,
             frame,
             importDepth,
             { transaction: transactionCall },
           );
-          if (transactionCall && callbackExits.some((state) => state.returnedDerived)) {
+          callbackAnalyses.push(callbackAnalysis);
+          if (
+            transactionCall &&
+            callbackAnalysis.returned.some((state) => state.returnedDerived)
+          ) {
             transactionReturnsDerived = true;
           }
         }
@@ -2617,18 +2780,6 @@ class EntryAnalyzer {
       ts.isCallExpression(call) &&
       ts.isPropertyAccessExpression(unwrapped(call.expression)) &&
       unwrapped(call.expression).name.text === "push";
-    const importedBodyModeled =
-      earlyBinding?.kind === "import" &&
-      earlyBinding.target &&
-      !earlyBinding.target.unknown &&
-      isFunctionLike(unwrapped(earlyBinding.target.node)) &&
-      importDepth < MAX_SAME_PACKAGE_IMPORT_DEPTH &&
-      !this.project.isReviewedExemptExport(earlyBinding.targetInfo, earlyBinding.name) &&
-      !(
-        earlyBinding.targetInfo?.path !== this.originInfo.path &&
-        this.project.isIndependentlyAnalyzedEntry(earlyBinding.targetInfo) &&
-        this.project.moduleMayReachSensitive(earlyBinding.targetInfo)
-      );
     const callIsModeled =
       Boolean(trustedResolver) ||
       Boolean(localProducer) ||
@@ -2638,6 +2789,14 @@ class EntryAnalyzer {
       transactionCall ||
       pushCall ||
       Boolean(directSensitive && !directSensitive.startsWith("computed "));
+    if (transactionCall || !callbackCallIsFullyTraced) {
+      for (const callbackAnalysis of callbackAnalyses) {
+        current = this.mergeCallbackInvalidations(
+          current,
+          callbackAnalysis.exits,
+        );
+      }
+    }
     const deferredSensitiveBoundary =
       (earlyBinding?.kind === "import-surface" &&
         earlyBinding.targetInfo &&
@@ -2837,6 +2996,7 @@ class EntryAnalyzer {
           next.principalDerivedObjects = new Set();
           next.principalAuthorityBindings = new Map();
           next.principalOwnerNeutralBindings = moduleOwnerNeutralBindings(info);
+          next.principalImmutableObjectBindings = new Set();
           next.optionalPrincipalParameters = new Set();
         }
         for (let index = 0; index < (node.parameters?.length ?? 0); index += 1) {
@@ -2983,6 +3143,9 @@ class EntryAnalyzer {
         next.principalOwnerNeutralBindings = new Set(
           callerBase.principalOwnerNeutralBindings,
         );
+        next.principalImmutableObjectBindings = new Set(
+          callerBase.principalImmutableObjectBindings,
+        );
         next.principalAliases = clonePrincipalAliases(callerBase.principalAliases);
         next.invalidatedPrincipalAliases = new Set(callerBase.invalidatedPrincipalAliases);
         for (const invalidated of state.invalidatedPrincipalAliases) {
@@ -3065,6 +3228,15 @@ class EntryAnalyzer {
           declaration.initializer,
           state.principalOwnerNeutralBindings,
         );
+        const immutablePrincipalObject =
+          Boolean(authorityKind) &&
+          isImmutablePrincipalObjectDeclaration(
+            declaration,
+            state,
+            frame,
+            this.principalDerivedExpressions,
+          );
+        next.principalImmutableObjectBindings.delete(name);
         if (principalKind === "object" && ts.isObjectBindingPattern(declaration.name)) {
           for (const element of declaration.name.elements) {
             if (propertyNameText(element.propertyName ?? element.name) !== "ownerId") continue;
@@ -3084,6 +3256,9 @@ class EntryAnalyzer {
         }
         if (ownerNeutral && ts.isIdentifier(declaration.name)) {
           next.principalOwnerNeutralBindings.add(name);
+        }
+        if (immutablePrincipalObject) {
+          next.principalImmutableObjectBindings.add(name);
         }
         const aliasSource = ts.isIdentifier(declaration.name)
           ? directAliasIdentifier(declaration.initializer)

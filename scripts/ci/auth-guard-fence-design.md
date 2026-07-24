@@ -266,3 +266,57 @@ stale 并已删除，所以 reviewed site 的净增量是 `+103`。
 0 个 finding、184 个 reviewed exemption site、0 个 stale entry。相对 Round 6：
 `PASS -5`、`INTERNAL-PASS -5`、`ADMIN-PASS ±0`、`EXEMPT +10`、`FINDING ±0`，
 reviewed site `81 → 184`。fixtures 为 42 个 bypass fail、18 个 positive pass。
+
+## 10. Round 8：callback boundary 的 caller-state 失效
+
+传给 checker 无法完整跟进之 call 的 inline function/arrow callback，仍以 caller state
+的 clone 分析 callback 内部；Round 8 另外保留 callback 的全部正常/abrupt exit state。
+callback 中 property/element/compound write、`++`/`--`、`delete` 或未知 mutating call
+一旦使 captured principal alias group 失效，call boundary 会在分析 caller 后续语句前，
+把 `invalidatedPrincipalAliases` 合并回 caller continuation。合并只传播失效，不传播
+callback return taint，也不把普通 call result 洗成 principal-derived。
+
+内层未知 callback 先把失效合并到外层 callback state，所以一层 nested callback 会继续
+传回原 caller；`.then()` 与 collection callbacks 使用同一规则。checker 实际跟进的
+local/import helper 仍由 `invokeFunction` 在 callee exit → caller base 的既有 merge
+传播失效；`$transaction` inline callback 则在 transaction boundary 显式做同一 merge。
+
+## 11. Round 8：immutable const owner spread
+
+object spread 只对以下全部成立的 binding 保留 owner authority：
+
+1. binding 由 `const` 声明；
+2. initializer 是 object literal，且每个 value 只能是 literal、principal scalar 或
+   principal-derived scalar；
+3. enclosing analyzed function 内没有 reassignment、property/element write、
+   compound write、`++`/`--` 或 `delete`；
+4. binding 没有 whole-object alias/return/call escape，也没有作为 member-call receiver，
+   包括 nested callback 内的这些事件。
+
+资格在 declaration 处登记到 flow state；静态证明采用更窄的充分条件：该 binding 的
+每一个后续 reference 都必须是精确 object spread `...binding`。因此任何 alias、
+property read/write、call/return、array spread 或 callback mutation 都自动失格。spread
+只保护该精确 identifier；任一条件失败仍走 Round 7 invalidate-on-spread。普通 unknown
+call 与 nested carrier 没有取得新豁免。另一个独立窄模型只认零参数
+scalar-property `.trim()` 为 read-only；
+它不失效 parent object，但 call return 仍是 default-deny。`.push()`、`.set()` 与其他
+未列 member call 继续失效 parent alias group。
+
+## 12. Round 8 收敛与 ledger
+
+fixture 收敛为 46 个 bypass fail、20 个 positive pass：新增 `.forEach()`、`.then()`、
+一层 nested callback、traced local callback 与 mutating member-call red coverage，以及
+immutable `OWNED` spread 和 read-only property `.trim()` green coverage。
+
+ledger identity 从 80 降为 72（净减 8）。删除 10 个 stale identity：8 个 immutable
+spread、`refgen-actions.ts#renameVariant:missing` 的 callback-boundary identity，以及
+`crm-identity.ts#findContactDuplicateSuggestions:missing` 的 read-only member-call
+identity。移除底层 `otto-actions.ts#ottoTurn:unused` 后，薄 server-action wrapper 会消耗
+one-module budget，故新增 2 个精确且已审核的
+`otto-client-actions.ts#ottoTurn` wrapper identity（`unprovable`、`missing`）；direct
+`ottoTurn` 本身已由 full-tree 分析证明。
+
+最终扫描为：
+
+`PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。
