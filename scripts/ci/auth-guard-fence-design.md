@@ -522,3 +522,101 @@ canonicalizer 与普通 callback data 正例全部保留。
 `PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
 0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
 identity，delta 为 0。
+
+## 24. Round 14：默认 discovery 的 production universe
+
+默认 source root 现在是 `apps/web/lib` 与整个 `apps/web/app`，不再只枚举
+`apps/web/app/api`。production universe 递归包含这些 root 下的
+`.ts/.tsx/.mts/.cts`，继续排除 `__tests__`、`fixtures`、`*.test.*`、`*.spec.*`、
+`.d.ts` 与 `EXCLUDED_PRODUCTION_FILES` 中逐路径审核的 principal-establishment
+implementation。`--entry` 仍只用于 fixture/定点分析，不能作为默认 coverage 的证据。
+
+永久不变量是：真实 production `apps/web/app/**` 中 directive prologue 含顶层
+`"use server"` 的每个文件，都必须出现在零参数 `analyzeAuthGuards()` 的
+`sourceFiles`。回归测试独立使用 TypeScript AST 枚举真实 app tree，再与默认 enumeration
+比对；旧 root 的 RED 精确漏掉 `apps/web/app/login/actions.ts`，因此 explicit
+`entryFiles` 无法再冒充 default discovery。
+
+默认 source enumeration 从 176 增至 279，app source 从 8 增至 111；进入语义 verdict
+的 covered file 从 96 增至 117。首次扩大 root 没有改 app 或 ledger，但诚实暴露
+`apps/web/app/otto/page.tsx` 经 `apps/web/lib/data.ts` 的 3 个 false-positive site；
+它们没有被 exempt，而是在 Round 15 收紧 imported callback 的可证明边界。
+
+## 25. Round 15：bounded imported pure callback
+
+`callbackArgumentResolution` 只在以下闭集内解析 imported callback：
+
+- callback 是静态 identifier，并对应当前 module 的 non-type value import；
+- module specifier 是 repository 内可静态解析的相对路径或 `@/` 路径；
+- import 精确指向目标 module 自己明确 export 的 function body，不递归追 re-export；
+- binding 未被 reassignment，且仍在既有 one-module import depth 内。
+
+满足闭集时，checker 用真实 imported function body执行既有 `analyzeCallback`，并把
+callback 造成的 alias invalidation 合并回 caller。callback 的 import depth 随 mapping
+传递，所以 imported callback 内不能再多追一层 sensitive helper。dynamic/namespace
+property、factory return、conditional、reassignment、超深、external package 与任何
+解析失败仍为 `unresolved` 并 fail closed；本轮没有加入 general recursive module
+resolver。
+
+Round 15 positive fixture 锁住：
+`requireOwner → imported owner-scoped query → rows.map(imported pure DTO export) → imported
+owner-scoped query`。两个 negative fixture分别证明 imported callback 对 principal
+object 的 mutation 会使 alias 失效，以及 imported factory 返回的 callback 仍 unresolved；
+两者后续 sensitive operation 都继续失败。
+
+最终 fixtures 为 66 个 bypass fail、28 个 positive pass。真实扫描为：
+
+`PASS=58 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，117 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry；
+`apps/web/app/otto/page.tsx` 现在显式显示 `PASS`。ledger 仍为 72 个 identity，
+delta 为 0。
+
+## 26. Round 16：provider export binding reassignment
+
+Round 15 的 direct imported function export 还必须证明 provider 端 binding 稳定。只检查
+consumer import binding 不够：provider 可以先 `export let callback = safeInitializer`，
+再在 module body 把同一 binding 赋为 mutator；若 checker 只解释旧 initializer，就会把
+runtime mutator false-green。
+
+接受 imported callback target 前，checker 现在对 provider source 中可命名的 direct
+function binding复用 `bindingIsReassigned`。出现 assignment、update 或 loop overwrite
+即返回 `unresolved`，沿用既有 fail-closed invalidation。匿名 direct default function
+没有可检查的 local binding，继续按 Round 15 的 direct-body规则处理。此检查不追
+re-export，也没有新增 general export/module resolver。
+
+Round 16 negative fixture 使用一个先安全、后改写为 principal-object mutator 的 exported
+callback。旧实现 RED 为 `result.ok=true`；修复后后续 owner-sensitive query 以
+`principal-result-unused` 失败。
+
+最终 fixtures 为 67 个 bypass fail、28 个 positive pass。真实扫描保持：
+
+`PASS=58 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，117 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0。
+
+## 27. Round 17：local alias binding chain
+
+Round 16 只检查 final function target 的名字仍不足够。`resolveLocalTarget` 原先会把
+`const safe = fn; export let callback = safe` 折叠成 `safe` 的 function target，并丢掉
+live exported binding `callback`；export-list alias 的 local binding 也有同一缺口。之后
+改写 `callback` 时，仅检查 `safe` 会继续 false-green。
+
+local target resolution 现在附带从 exported/local binding 到 final function body 的完整
+`localBindings` 链。direct named function 的链含自身；identifier initializer 每折叠一层
+就把当前 local binding 加入链；anonymous direct default function 用明确空链表示没有
+可改写的 local binding。cycle、unknown initializer 或跨 module 的不完整链仍返回
+null/unknown，不会获得 callback trust。
+
+接受 imported callback 前，checker 要求该链存在，并逐个用 `bindingIsReassigned`
+核对 provider source。任一 binding 被改写即 `unresolved` 并 fail closed。此证据只附着
+于既有 local resolution，不追 re-export，也不扩 general module resolver。
+
+Round 17 multi-export negative fixture 同时锁住 identifier initializer 与 export-list alias；
+旧实现 RED 为 `result.ok=true`，修复后两个 leak export 都以
+`principal-result-unused` 失败。新增 anonymous default positive 继续通过。
+
+最终 fixtures 为 68 个 bypass fail、29 个 positive pass。真实扫描保持：
+
+`PASS=58 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，117 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0。

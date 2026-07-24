@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import {
   mkdtempSync,
   readFileSync,
@@ -11,11 +12,13 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { analyzeAuthGuards, REASON } from "../verify-auth-guards.mjs";
+import { analyzeAuthGuards, REASON, REPO_ROOT } from "../verify-auth-guards.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_ROOT = join(TEST_DIR, "fixtures", "auth-guards");
 const FIXTURE_AUTH_GUARDS = ["support/auth-guard.ts"];
+const requireFromWeb = createRequire(join(REPO_ROOT, "apps/web/package.json"));
+const ts = requireFromWeb("typescript");
 
 const BYPASS_CASES = new Map([
   ["bypass/aliased-export.ts", REASON.MISSING],
@@ -47,6 +50,10 @@ const BYPASS_CASES = new Map([
   ["bypass/discarded-principal.ts", REASON.DISCARDED],
   ["bypass/dynamic-import.ts", REASON.MISSING],
   ["bypass/imported-helper.ts", REASON.MISSING],
+  ["bypass/imported-callback-factory.ts", REASON.UNUSED],
+  ["bypass/imported-callback-alias-reassignment.ts", REASON.UNUSED],
+  ["bypass/imported-callback-mutation.ts", REASON.UNUSED],
+  ["bypass/imported-callback-reassignment.ts", REASON.UNUSED],
   ["bypass/imported-repository.ts", REASON.MISSING],
   ["bypass/imported-service.ts", REASON.MISSING],
   ["bypass/internal-entry-param.ts", REASON.MISSING],
@@ -113,6 +120,10 @@ const MULTI_EXPORT_BYPASSES = new Map([
     ],
   ],
   ["bypass/ternary-launder.ts", ["leakAssignedTernary", "leakInlineTernary"]],
+  [
+    "bypass/imported-callback-alias-reassignment.ts",
+    ["leakAfterExportListAliasReassignment", "leakAfterIdentifierInitializerReassignment"],
+  ],
 ]);
 
 const POSITIVE_CASES = [
@@ -129,6 +140,8 @@ const POSITIVE_CASES = [
   "positive/gateway-wrapper.ts",
   "positive/internal-owner-id.ts",
   "positive/internal-principal-derived.ts",
+  "positive/imported-anonymous-callback.ts",
+  "positive/imported-pure-callback.ts",
   "positive/immutable-const-owned-spread.ts",
   "positive/modeled-owner-objects.ts",
   "positive/named-function.ts",
@@ -154,6 +167,58 @@ function fixtureFiles(root) {
   }
   return files.sort();
 }
+
+function productionAppFiles(root) {
+  const files = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name !== "__tests__" && entry.name !== "fixtures") {
+        files.push(...productionAppFiles(path));
+      }
+    } else if (
+      /\.(?:[cm]?ts|tsx)$/u.test(entry.name) &&
+      !/\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(entry.name) &&
+      !entry.name.endsWith(".d.ts")
+    ) {
+      files.push(path);
+    }
+  }
+  return files.sort();
+}
+
+function hasTopLevelUseServerDirective(path) {
+  const source = readFileSync(path, "utf8");
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, false);
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isExpressionStatement(statement) ||
+      !ts.isStringLiteral(statement.expression)
+    ) {
+      return false;
+    }
+    if (statement.expression.text === "use server") return true;
+  }
+  return false;
+}
+
+const defaultDiscovery = await analyzeAuthGuards();
+const defaultSourceFiles = new Set(defaultDiscovery.sourceFiles);
+const expectedAppServerActions = productionAppFiles(join(REPO_ROOT, "apps/web/app")).filter(
+  hasTopLevelUseServerDirective,
+);
+assert.ok(
+  expectedAppServerActions.length > 0,
+  "the production app tree must contain a top-level use-server discovery sentinel",
+);
+assert.deepEqual(
+  expectedAppServerActions.filter((path) => !defaultSourceFiles.has(path)),
+  [],
+  "default discovery must enumerate every production apps/web/app/** top-level use-server file",
+);
+console.log(
+  `PASS default discovery covers ${expectedAppServerActions.length} production app use-server file(s)`,
+);
 
 const discoveredCases = fixtureFiles(join(FIXTURE_ROOT, "bypass"))
   .concat(fixtureFiles(join(FIXTURE_ROOT, "positive")))

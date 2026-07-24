@@ -43,7 +43,7 @@ const requireFromWeb = createRequire(join(REPO_ROOT, "apps/web/package.json"));
 const ts = requireFromWeb("typescript");
 
 export const MAX_SAME_PACKAGE_IMPORT_DEPTH = 1;
-export const DEFAULT_SOURCE_ROOTS = ["apps/web/lib", "apps/web/app/api"];
+export const DEFAULT_SOURCE_ROOTS = ["apps/web/lib", "apps/web/app"];
 export const DEFAULT_EXEMPTIONS_PATH = "scripts/ci/auth-guard-exemptions.txt";
 export const DEFAULT_TRUSTED_AUTH_GUARD_PATHS = ["apps/web/lib/auth-guard.ts"];
 
@@ -982,13 +982,40 @@ class SemanticProject {
     seen.add(key);
 
     const functionNode = info.localFunctions.get(local);
-    if (functionNode) return { info, node: functionNode, name: local, unknown: false };
+    if (functionNode) {
+      return {
+        info,
+        node: functionNode,
+        name: local,
+        unknown: false,
+        localBindings: [local],
+      };
+    }
 
     const initializer = info.localValues.get(local);
     if (initializer) {
       const node = unwrapped(initializer);
-      if (isFunctionLike(node)) return { info, node, name: local, unknown: false };
-      if (ts.isIdentifier(node)) return this.resolveLocalTarget(info, node.text, seen);
+      if (isFunctionLike(node)) {
+        return {
+          info,
+          node,
+          name: local,
+          unknown: false,
+          localBindings: [local],
+        };
+      }
+      if (ts.isIdentifier(node)) {
+        const target = this.resolveLocalTarget(info, node.text, seen);
+        if (!target) return null;
+        return {
+          ...target,
+          localBindings:
+            target.info.path === info.path &&
+            Array.isArray(target.localBindings)
+              ? [local, ...target.localBindings]
+              : null,
+        };
+      }
     }
 
     const imported = info.imports.get(local);
@@ -1014,14 +1041,26 @@ class SemanticProject {
         const target =
           (record.local && this.resolveLocalTarget(info, record.local)) ||
           (isFunctionLike(unwrapped(record.node))
-            ? { info, node: unwrapped(record.node), name: record.exported, unknown: false }
+            ? {
+                info,
+                node: unwrapped(record.node),
+                name: record.exported,
+                unknown: false,
+                localBindings: [],
+              }
             : { info, node: record.node, name: record.exported, unknown: true });
         exports.set(record.exported, target);
       } else if (record.kind === "default-expression") {
         const expression = unwrapped(record.node);
         let target = null;
         if (isFunctionLike(expression)) {
-          target = { info, node: expression, name: "default", unknown: false };
+          target = {
+            info,
+            node: expression,
+            name: "default",
+            unknown: false,
+            localBindings: [],
+          };
         } else if (ts.isIdentifier(expression)) {
           target = this.resolveLocalTarget(info, expression.text);
         }
@@ -2485,6 +2524,7 @@ class EntryAnalyzer {
   callbackArgumentResolution(
     frame,
     expression,
+    importDepth = 0,
     seen = new Set(),
     consumerCall = null,
     consumerArgument = expression,
@@ -2562,6 +2602,7 @@ class EntryAnalyzer {
         return this.callbackArgumentResolution(
           frame,
           initializer,
+          importDepth,
           nextSeen,
           consumerCall,
           consumerArgument,
@@ -2596,9 +2637,50 @@ class EntryAnalyzer {
 
     const imported = frame.info.imports.get(node.text);
     if (imported && !imported.typeOnly) {
-      return plausibleCallback
-        ? { kind: "unresolved" }
-        : { kind: "not-callback" };
+      if (!plausibleCallback) return { kind: "not-callback" };
+      if (
+        importDepth >= MAX_SAME_PACKAGE_IMPORT_DEPTH ||
+        bindingIsReassigned(frame.info.sourceFile, node.text)
+      ) {
+        return { kind: "unresolved" };
+      }
+      const targetPath = this.project.resolveModuleSpecifier(
+        frame.info,
+        imported.source,
+      );
+      const targetInfo = targetPath
+        ? this.project.getModule(targetPath)
+        : null;
+      const target = targetInfo
+        ? this.project.exportTargets(targetInfo).get(imported.imported)
+        : null;
+      if (
+        !targetInfo ||
+        !target ||
+        target.unknown ||
+        target.info.path !== targetInfo.path ||
+        !Array.isArray(target.localBindings) ||
+        target.localBindings.some((name) =>
+          bindingIsReassigned(targetInfo.sourceFile, name)
+        ) ||
+        !isFunctionLike(unwrapped(target.node))
+      ) {
+        return { kind: "unresolved" };
+      }
+      const targetNode = unwrapped(target.node);
+      const callbackFrame = makeFrame(
+        targetInfo,
+        targetNode,
+        imported.imported,
+        new Map(),
+        new Map(targetInfo.localFunctions),
+      );
+      return {
+        kind: "analyzable",
+        node: targetNode,
+        frame: callbackFrame,
+        importDepth: importDepth + 1,
+      };
     }
 
     const moduleInitializer = frame.info.localValues.get(node.text);
@@ -2621,6 +2703,7 @@ class EntryAnalyzer {
         return this.callbackArgumentResolution(
           frame,
           initializer,
+          importDepth,
           nextSeen,
           consumerCall,
           consumerArgument,
@@ -2771,6 +2854,7 @@ class EntryAnalyzer {
         const resolution = this.callbackArgumentResolution(
           frame,
           callbackExpression,
+          importDepth,
         );
         if (resolution.kind !== "analyzable") {
           if (failIfUnresolved) {
@@ -2782,7 +2866,7 @@ class EntryAnalyzer {
           resolution.node,
           current,
           resolution.frame,
-          importDepth,
+          resolution.importDepth ?? importDepth,
         );
         current = this.mergeCallbackInvalidations(
           current,
@@ -3620,6 +3704,7 @@ class EntryAnalyzer {
       const callbackResolution = this.callbackArgumentResolution(
         frame,
         argument,
+        importDepth,
         new Set(),
         call,
       );
@@ -3629,7 +3714,7 @@ class EntryAnalyzer {
             callbackResolution.node,
             current,
             callbackResolution.frame,
-            importDepth,
+            callbackResolution.importDepth ?? importDepth,
             { transaction: transactionCall },
           );
           callbackAnalyses.push(callbackAnalysis);
@@ -3793,7 +3878,9 @@ class EntryAnalyzer {
           args,
           frame,
           current,
-          importDepth,
+          binding?.kind === "callback"
+            ? binding.importDepth ?? importDepth
+            : importDepth,
         );
       } finally {
         if (structuredCallback) this.structuredCallbackDepth -= 1;
@@ -4031,6 +4118,7 @@ class EntryAnalyzer {
               const resolution = this.callbackArgumentResolution(
                 callerFrame,
                 callbackExpression,
+                importDepth,
               );
               callbacks.set(
                 `${parameter.name.text}.${propertyName}`,
@@ -4039,6 +4127,7 @@ class EntryAnalyzer {
                       info: resolution.frame.info,
                       node: resolution.node,
                       callerFrame: resolution.frame,
+                      importDepth: resolution.importDepth ?? importDepth,
                       structured: true,
                     }
                   : {
@@ -4063,12 +4152,14 @@ class EntryAnalyzer {
           const callbackResolution = this.callbackArgumentResolution(
             callerFrame,
             argumentNode,
+            importDepth,
           );
           if (callbackResolution.kind === "analyzable") {
             callbacks.set(parameter.name.text, {
               info: callbackResolution.frame.info,
               node: callbackResolution.node,
               callerFrame: callbackResolution.frame,
+              importDepth: callbackResolution.importDepth ?? importDepth,
             });
           } else {
             if (this.expressionTaintsDb(callerFrame, argumentNode, state)) {
