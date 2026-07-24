@@ -320,3 +320,57 @@ one-module budget，故新增 2 个精确且已审核的
 
 `PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
 0 个 finding、174 个 reviewed exemption site、0 个 stale entry。
+
+## 13. Round 9：named callback 与不可解析 callback
+
+untraced call 的 callback argument 不再只认 inline function/arrow。identifier 若解析到
+当前 module 内未 reassignment 的 function declaration 或 function-like initializer，
+checker 会用 caller state 分析同一函数体，并把 callback exit 的 alias invalidation
+合并回 caller。identifier 经已跟进 local wrapper 传入 function parameter 时，callback
+target 也随 parameter mapping 传递，所以 wrapper 内的 `.forEach(callback)` 不会丢失
+原 callback body。
+
+以下 target 不冒充可分析：imported mutator、function-typed/明确 callback 形状的 parameter、
+factory call return，以及被 reassignment 的 function binding。在 untraced callback
+boundary，checker 对这些形状 fail closed：使当前 state 中所有 tainted binding 失效。
+普通 data identifier 不因 `unknown`/`any` type 自动被当成 callback；只有 function type、
+callback/mutator 等明确 binding 形状，或 `.map()`/`.forEach()`/`.then()` 等 callback
+consumer 才进入这条 default-deny 路径。全局 `Boolean`/`Number`/`String` 是窄的已建模
+pure callback；同名 local/import binding 会先被 lexical resolution 截获，不能借此
+allowlist 洗白。named recursive callback 由独立 recursion stack 截断重复展开；外层
+callback body 仍完整分析，避免无限递归和 state 爆炸。
+
+factory fixture 另外锁住既有 escape 规则：`makeCallback(job)` 若 factory call 本身无法
+跟进，`job` 作为 argument 在 factory boundary 已失效；后续 callback 使用不能恢复 taint。
+
+## 14. Round 9：Prisma boolean combinator
+
+Prisma `where` 内的 authority recursion 采用以下语义：
+
+| 结构 | authority 规则 | 原因 |
+|---|---|---|
+| ordinary object / outer `ownerId` | 同层字段 AND-combine；direct outer authority 足够 | 外层条件约束整个 subtree |
+| `AND: [...]` | 任一 element owner-scoped 即计入 authority | AND 只会收窄结果 |
+| `OR: [...]` | array 每个 element 都分别 owner-scoped 才计入 authority | 任一无 owner 分支都会扩大到跨租户结果 |
+| `NOT: ...` | subtree authority 永不计入 | NOT 会反转 owner 条件 |
+| computed combinator / non-literal OR / spread OR element | 不计入 OR authority | 无法静态证明 every-branch invariant |
+
+规则递归组合：`AND: [{ OR: [...] }]` 先按 OR 的 every-branch 规则判定；
+`OR: [{ AND: [...] }, ...]` 则要求每个 OR sibling 的 AND subtree 都能证明 authority。
+`{ ownerId, OR: [...] }` 继续通过，因为 direct outer `ownerId` 与整个 OR 做 AND；
+OR 内部 owner authority 只有 sibling 全部 scoped 才能独立成立。
+
+## 15. Round 9 收敛、real tree 与 ledger
+
+fixtures 为 52 个 bypass fail、23 个 positive pass；Round 8 的 46 个 red 与 20 个 green
+全部保留。新增 callback red 覆盖 named mutation、untraced factory return、imported
+mutator through wrapper；新增 Prisma red 覆盖 partial OR、NOT-only authority、AND 内 nested
+unscoped OR；green 覆盖 outer owner + OR、all-branches-owned OR、owner-scoped AND。
+
+real tree 有 18 个 textual `OR:` site（16 production、2 test）；Round 9 没有新增 finding。
+production site 均由同层 outer owner authority 或已证明 owner-scoped filter 与 OR 做 AND，
+不是 #458 candidate。最终扫描与 Round 8 相同：
+
+`PASS=37 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，96 个 covered file，
+0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，delta 为 0；full-tree runtime 1.76 秒。

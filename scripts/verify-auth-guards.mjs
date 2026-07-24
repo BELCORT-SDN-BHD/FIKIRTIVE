@@ -134,6 +134,23 @@ export const PRISMA_READ_MEMBERS = new Set([
   "groupBy",
 ]);
 const READ_ONLY_SCALAR_MEMBER_CALLS = new Set(["trim"]);
+const CALLBACK_CONSUMER_MEMBERS = new Set([
+  "catch",
+  "every",
+  "filter",
+  "finally",
+  "find",
+  "findIndex",
+  "flatMap",
+  "forEach",
+  "map",
+  "reduce",
+  "reduceRight",
+  "some",
+  "sort",
+  "then",
+]);
+const MODELED_PURE_CALLBACK_GLOBALS = new Set(["Boolean", "Number", "String"]);
 const PRISMA_PRINCIPAL_DERIVED_RESULT_MEMBERS = new Set([
   ...PRISMA_READ_MEMBERS,
   "create",
@@ -1447,15 +1464,40 @@ function authorityExpressionKinds(expression, state, derivedExpressions = null, 
     if (ownerKind) out.push(ownerKind);
     for (const property of node.properties) {
       if (ts.isPropertyAssignment(property)) {
-        if (
-          !ts.isComputedPropertyName(property.name) &&
-          propertyNameText(property.name) === "ownerId"
-        ) {
+        if (ts.isComputedPropertyName(property.name)) continue;
+        const propertyName = propertyNameText(property.name);
+        if (propertyName === "ownerId" || propertyName === "NOT") continue;
+        if (propertyName === "OR") {
+          const branches = unwrapped(property.initializer);
+          if (
+            !ts.isArrayLiteralExpression(branches) ||
+            branches.elements.length === 0 ||
+            branches.elements.some(ts.isSpreadElement)
+          ) {
+            continue;
+          }
+          const branchKinds = branches.elements.map((branch) =>
+            authorityExpressionKinds(branch, state, derivedExpressions, []),
+          );
+          if (branchKinds.some((kinds) => kinds.length === 0)) continue;
+          const allKinds = branchKinds.flat();
+          const firstKind = allKinds[0];
+          out.push(
+            allKinds.every((candidate) => candidate === firstKind)
+              ? firstKind
+              : "derived",
+          );
           continue;
         }
         authorityExpressionKinds(property.initializer, state, derivedExpressions, out);
       } else if (ts.isShorthandPropertyAssignment(property)) {
-        if (property.name.text === "ownerId") continue;
+        if (
+          property.name.text === "ownerId" ||
+          property.name.text === "OR" ||
+          property.name.text === "NOT"
+        ) {
+          continue;
+        }
         authorityExpressionKinds(property.name, state, derivedExpressions, out);
       }
     }
@@ -1525,6 +1567,115 @@ function scopedFunctionBindings(node) {
   return functions;
 }
 
+const REASSIGNED_BINDINGS = new WeakMap();
+
+function visibleScopedBinding(frameNode, reference, name) {
+  const position = reference.getStart();
+  let current = reference;
+  while (current && current !== frameNode) {
+    const block = current.parent;
+    if (block && ts.isBlock(block)) {
+      let candidate = null;
+      for (const statement of block.statements) {
+        if (
+          ts.isFunctionDeclaration(statement) &&
+          statement.name?.text === name
+        ) {
+          candidate ??= { kind: "function", node: statement };
+        } else if (
+          ts.isVariableStatement(statement) &&
+          statement.getStart() <= position
+        ) {
+          for (const declaration of statement.declarationList.declarations) {
+            if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+              candidate = { kind: "value", declaration };
+            }
+          }
+        }
+      }
+      if (candidate) return candidate;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function parameterBinding(node, name) {
+  return (node.parameters ?? []).find((parameter) =>
+    identifierNames(parameter.name).includes(name),
+  ) ?? null;
+}
+
+function identifierMayNameCallback(name) {
+  return /(?:callback|handler|listener|mutat(?:e|or)|predicate|visitor|^cb$|^fn$)/iu.test(name);
+}
+
+function callMayConsumeCallback(call) {
+  const member = callMemberName(call);
+  if (member && CALLBACK_CONSUMER_MEMBERS.has(member)) return true;
+  const callee = unwrapped(call.expression);
+  return (
+    ts.isIdentifier(callee) &&
+    new Set(["queueMicrotask", "setImmediate", "setInterval", "setTimeout"]).has(callee.text)
+  );
+}
+
+function parameterMayBeCallback(parameter) {
+  if (!parameter.type) {
+    return identifierNames(parameter.name).some(identifierMayNameCallback);
+  }
+  const type = parameter.type;
+  if (ts.isFunctionTypeNode(type) || ts.isConstructorTypeNode(type)) return true;
+  if (ts.isUnionTypeNode(type) || ts.isIntersectionTypeNode(type)) {
+    return type.types.some((candidate) =>
+      parameterMayBeCallback({ type: candidate }),
+    );
+  }
+  if (ts.isTypeReferenceNode(type)) {
+    const name = type.typeName.getText();
+    return /(?:callback|handler|function|mutator|predicate|listener|fn)/iu.test(name);
+  }
+  return false;
+}
+
+function reassignedBindings(scope) {
+  const cached = REASSIGNED_BINDINGS.get(scope);
+  if (cached) return cached;
+  const reassigned = new Set();
+  const visit = (node) => {
+    if (
+      ts.isBinaryExpression(node) &&
+      ts.isAssignmentOperator(node.operatorToken.kind) &&
+      ts.isIdentifier(unwrapped(node.left))
+    ) {
+      reassigned.add(unwrapped(node.left).text);
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken) &&
+      ts.isIdentifier(unwrapped(node.operand))
+    ) {
+      reassigned.add(unwrapped(node.operand).text);
+    }
+    if (
+      ts.isIdentifier(node) &&
+      (ts.isForInStatement(node.parent) || ts.isForOfStatement(node.parent)) &&
+      node.parent.initializer === node
+    ) {
+      reassigned.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  REASSIGNED_BINDINGS.set(scope, reassigned);
+  return reassigned;
+}
+
+function bindingIsReassigned(scope, name) {
+  return reassignedBindings(scope).has(name);
+}
+
 function makeFrame(
   info,
   node,
@@ -1552,6 +1703,7 @@ class EntryAnalyzer {
     this.validatedInputCandidates = new Map();
     this.principalDerivedExpressions = new WeakMap();
     this.callStack = [];
+    this.callbackStack = [];
   }
 
   addDiagnostic(info, node, reason, detail) {
@@ -1930,6 +2082,176 @@ class EntryAnalyzer {
       current = this.invalidatePrincipalRoot(current, name);
     }
     return current;
+  }
+
+  invalidateAllTaintedBindings(states) {
+    const tainted = new Set();
+    for (const state of states) {
+      for (const name of state.principalBindings) tainted.add(name);
+      for (const name of state.principalObjects) tainted.add(name);
+      for (const name of state.principalDerivedBindings) tainted.add(name);
+      for (const name of state.principalDerivedObjects) tainted.add(name);
+      for (const name of state.principalAuthorityBindings.keys()) tainted.add(name);
+      for (const name of state.principalAliases.keys()) tainted.add(name);
+    }
+    let current = states;
+    for (const name of tainted) {
+      current = this.invalidatePrincipalRoot(current, name);
+    }
+    return current;
+  }
+
+  callbackArgumentResolution(
+    frame,
+    expression,
+    seen = new Set(),
+    consumerCall = null,
+  ) {
+    const node = unwrapped(expression);
+    if (isFunctionLike(node)) {
+      return { kind: "analyzable", node, frame };
+    }
+    if (!ts.isIdentifier(node)) return { kind: "not-callback" };
+    if (seen.has(node.text)) return { kind: "unresolved" };
+    const nextSeen = new Set(seen);
+    nextSeen.add(node.text);
+    const plausibleCallback =
+      identifierMayNameCallback(node.text) ||
+      Boolean(consumerCall && callMayConsumeCallback(consumerCall));
+
+    const parameter = parameterBinding(frame.node, node.text);
+    if (parameter) {
+      const mapped = frame.callbacks.get(node.text);
+      if (
+        mapped &&
+        !bindingIsReassigned(frame.node, node.text, parameter.name)
+      ) {
+        return {
+          kind: "analyzable",
+          node: mapped.node,
+          frame: mapped.callerFrame ?? frame,
+        };
+      }
+      return parameterMayBeCallback(parameter) || plausibleCallback
+        ? { kind: "unresolved" }
+        : { kind: "not-callback" };
+    }
+
+    const scopedBinding = visibleScopedBinding(frame.node, node, node.text);
+    if (scopedBinding?.kind === "value") {
+      const { declaration } = scopedBinding;
+      if (
+        bindingIsReassigned(frame.node, node.text, declaration.name) ||
+        !declaration.initializer
+      ) {
+        return plausibleCallback
+          ? { kind: "unresolved" }
+          : { kind: "not-callback" };
+      }
+      const initializer = unwrapped(declaration.initializer);
+      if (isFunctionLike(initializer)) {
+        return { kind: "analyzable", node: initializer, frame };
+      }
+      if (ts.isIdentifier(initializer)) {
+        return this.callbackArgumentResolution(
+          frame,
+          initializer,
+          nextSeen,
+          consumerCall,
+        );
+      }
+      if (
+        ts.isCallExpression(initializer) ||
+        ts.isPropertyAccessExpression(initializer) ||
+        ts.isElementAccessExpression(initializer) ||
+        ts.isConditionalExpression(initializer)
+      ) {
+        return plausibleCallback
+          ? { kind: "unresolved" }
+          : { kind: "not-callback" };
+      }
+      return { kind: "not-callback" };
+    }
+    if (scopedBinding?.kind === "function") {
+      if (bindingIsReassigned(frame.node, node.text)) {
+        return { kind: "unresolved" };
+      }
+      return { kind: "analyzable", node: scopedBinding.node, frame };
+    }
+
+    const inheritedFunction = frame.localFunctions.get(node.text);
+    if (inheritedFunction) {
+      if (bindingIsReassigned(frame.node, node.text)) {
+        return { kind: "unresolved" };
+      }
+      return { kind: "analyzable", node: inheritedFunction, frame };
+    }
+
+    const imported = frame.info.imports.get(node.text);
+    if (imported && !imported.typeOnly) {
+      return plausibleCallback
+        ? { kind: "unresolved" }
+        : { kind: "not-callback" };
+    }
+
+    const moduleInitializer = frame.info.localValues.get(node.text);
+    if (moduleInitializer) {
+      if (bindingIsReassigned(frame.info.sourceFile, node.text)) {
+        return { kind: "unresolved" };
+      }
+      const initializer = unwrapped(moduleInitializer);
+      if (isFunctionLike(initializer)) {
+        const callbackFrame = makeFrame(
+          frame.info,
+          initializer,
+          node.text,
+          new Map(),
+          new Map(frame.info.localFunctions),
+        );
+        return { kind: "analyzable", node: initializer, frame: callbackFrame };
+      }
+      if (ts.isIdentifier(initializer)) {
+        return this.callbackArgumentResolution(
+          frame,
+          initializer,
+          nextSeen,
+          consumerCall,
+        );
+      }
+      if (
+        ts.isCallExpression(initializer) ||
+        ts.isPropertyAccessExpression(initializer) ||
+        ts.isElementAccessExpression(initializer) ||
+        ts.isConditionalExpression(initializer)
+      ) {
+        return plausibleCallback
+          ? { kind: "unresolved" }
+          : { kind: "not-callback" };
+      }
+      return { kind: "not-callback" };
+    }
+
+    const moduleFunction = frame.info.localFunctions.get(node.text);
+    if (moduleFunction) {
+      if (bindingIsReassigned(frame.info.sourceFile, node.text, moduleFunction.name ?? null)) {
+        return { kind: "unresolved" };
+      }
+      const callbackFrame = makeFrame(
+        frame.info,
+        moduleFunction,
+        node.text,
+        new Map(),
+        new Map(frame.info.localFunctions),
+      );
+      return { kind: "analyzable", node: moduleFunction, frame: callbackFrame };
+    }
+
+    if (MODELED_PURE_CALLBACK_GLOBALS.has(node.text)) {
+      return { kind: "not-callback" };
+    }
+    return plausibleCallback
+      ? { kind: "unresolved" }
+      : { kind: "not-callback" };
   }
 
   consumeAdminErrorDiscriminant(states, expression) {
@@ -2584,57 +2906,67 @@ class EntryAnalyzer {
   async analyzeCallback(callback, states, frame, importDepth, { transaction = false } = {}) {
     const node = unwrapped(callback);
     if (!isFunctionLike(node)) return { returned: [], exits: [] };
-    const callbackStates = states.map((state) => {
-      const next = cloneState(state);
-      const txParameter = node.parameters?.[0];
-      if (transaction && txParameter && ts.isIdentifier(txParameter.name)) {
-        next.dbBindings.add(txParameter.name.text);
-      }
-      return next;
-    });
-    const localFunctions = new Map(frame.localFunctions);
-    for (const [localName, localNode] of scopedFunctionBindings(node)) {
-      localFunctions.set(localName, localNode);
+    const stackKey = `${frame.info.path}:${node.pos}`;
+    if (this.callbackStack.includes(stackKey)) {
+      const exits = states.map(cloneState);
+      return { returned: [], exits };
     }
-    const callbackFrame = makeFrame(
-      frame.info,
-      node,
-      `${frame.name}.$transaction`,
-      new Map(frame.callbacks),
-      localFunctions,
-    );
-    if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
-      const returned = await this.asyncExpression(
-        node.body,
-        callbackStates,
-        callbackFrame,
-        { kind: "consumed" },
-        importDepth,
-      );
-      const expressionExits = returned.map((state) => {
+    this.callbackStack.push(stackKey);
+    try {
+      const callbackStates = states.map((state) => {
         const next = cloneState(state);
-        const expressionKind = principalExpressionKind(
-          node.body,
-          state,
-          this.principalDerivedExpressions,
-        );
-        const authorityKind = principalOwnerAuthorityKind(
-          node.body,
-          state,
-          this.principalDerivedExpressions,
-        );
-        const kind = expressionKind ?? (authorityKind ? "derived" : null);
-        next.returnedPrincipalKind = kind;
-        next.returnedDerived = kind === "derived";
+        const txParameter = node.parameters?.[0];
+        if (transaction && txParameter && ts.isIdentifier(txParameter.name)) {
+          next.dbBindings.add(txParameter.name.text);
+        }
         return next;
       });
-      return { returned: expressionExits, exits: expressionExits };
-    } else {
-      const flow = await this.analyzeBlock(node.body, callbackStates, callbackFrame, importDepth);
-      return {
-        returned: flow.returned,
-        exits: dedupeStates([...flow.returned, ...flow.continuing]),
-      };
+      const localFunctions = new Map(frame.localFunctions);
+      for (const [localName, localNode] of scopedFunctionBindings(node)) {
+        localFunctions.set(localName, localNode);
+      }
+      const callbackFrame = makeFrame(
+        frame.info,
+        node,
+        `${frame.name}.$transaction`,
+        new Map(frame.callbacks),
+        localFunctions,
+      );
+      if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) {
+        const returned = await this.asyncExpression(
+          node.body,
+          callbackStates,
+          callbackFrame,
+          { kind: "consumed" },
+          importDepth,
+        );
+        const expressionExits = returned.map((state) => {
+          const next = cloneState(state);
+          const expressionKind = principalExpressionKind(
+            node.body,
+            state,
+            this.principalDerivedExpressions,
+          );
+          const authorityKind = principalOwnerAuthorityKind(
+            node.body,
+            state,
+            this.principalDerivedExpressions,
+          );
+          const kind = expressionKind ?? (authorityKind ? "derived" : null);
+          next.returnedPrincipalKind = kind;
+          next.returnedDerived = kind === "derived";
+          return next;
+        });
+        return { returned: expressionExits, exits: expressionExits };
+      } else {
+        const flow = await this.analyzeBlock(node.body, callbackStates, callbackFrame, importDepth);
+        return {
+          returned: flow.returned,
+          exits: dedupeStates([...flow.returned, ...flow.continuing]),
+        };
+      }
+    } finally {
+      this.callbackStack.pop();
     }
   }
 
@@ -2691,12 +3023,18 @@ class EntryAnalyzer {
     }
 
     for (const argument of args) {
-      if (isFunctionLike(unwrapped(argument))) {
+      const callbackResolution = this.callbackArgumentResolution(
+        frame,
+        argument,
+        new Set(),
+        call,
+      );
+      if (callbackResolution.kind === "analyzable") {
         if (!callbackCallIsFullyTraced || transactionCall) {
           const callbackAnalysis = await this.analyzeCallback(
-            argument,
+            callbackResolution.node,
             current,
-            frame,
+            callbackResolution.frame,
             importDepth,
             { transaction: transactionCall },
           );
@@ -2717,6 +3055,12 @@ class EntryAnalyzer {
         { kind: "consumed" },
         importDepth,
       );
+      if (
+        callbackResolution.kind === "unresolved" &&
+        (!callbackCallIsFullyTraced || transactionCall)
+      ) {
+        current = this.invalidateAllTaintedBindings(current);
+      }
     }
 
     if (transactionReturnsDerived) {
@@ -3036,16 +3380,17 @@ class EntryAnalyzer {
             continue;
           }
           if (!ts.isIdentifier(parameter.name)) continue;
-          if (isFunctionLike(argumentNode)) {
+          const callbackResolution = this.callbackArgumentResolution(
+            callerFrame,
+            argumentNode,
+          );
+          if (callbackResolution.kind === "analyzable") {
             callbacks.set(parameter.name.text, {
-              info: callerFrame.info,
-              node: argumentNode,
-              callerFrame,
+              info: callbackResolution.frame.info,
+              node: callbackResolution.node,
+              callerFrame: callbackResolution.frame,
             });
           } else {
-            const inheritedCallback =
-              ts.isIdentifier(argumentNode) && callerFrame.callbacks.get(argumentNode.text);
-            if (inheritedCallback) callbacks.set(parameter.name.text, inheritedCallback);
             if (this.expressionTaintsDb(callerFrame, argumentNode, state)) {
               next.dbBindings.add(parameter.name.text);
             }
