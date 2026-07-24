@@ -37,7 +37,9 @@ const BYPASS_CASES = new Map([
   ["bypass/internal-param-optional.ts", REASON.PARAM_OPTIONAL],
   ["bypass/internal-param-unused.ts", REASON.PARAM_UNUSED],
   ["bypass/local-helper.ts", REASON.MISSING],
+  ["bypass/mutation-launder.ts", REASON.UNUSED],
   ["bypass/non-async-export.ts", REASON.MISSING],
+  ["bypass/or-launder.ts", REASON.UNUSED],
   ["bypass/queue-send.ts", REASON.MISSING],
   ["bypass/raw-sql.ts", REASON.MISSING],
   ["bypass/re-export.ts", REASON.MISSING],
@@ -47,10 +49,17 @@ const BYPASS_CASES = new Map([
   ["bypass/resolver-in-string.ts", REASON.MISSING],
   ["bypass/server-only-not-gateway.ts", REASON.MISSING],
   ["bypass/shadowed-resolver.ts", REASON.SHADOWED],
+  ["bypass/ternary-launder.ts", REASON.UNUSED],
   ["bypass/transitive-local-call.ts", REASON.MISSING],
   ["bypass/unused-principal.ts", REASON.UNUSED],
   ["bypass/void-reference.ts", REASON.UNUSED],
   ["bypass/admin-gate-not-consumed.ts", REASON.DISCARDED],
+]);
+
+const MULTI_EXPORT_BYPASSES = new Map([
+  ["bypass/derived-id-laundering.ts", ["leak", "leakUncheckedClientId"]],
+  ["bypass/mutation-launder.ts", ["leakMutatedGate", "leakMutatedResult"]],
+  ["bypass/ternary-launder.ts", ["leakAssignedTernary", "leakInlineTernary"]],
 ]);
 
 const POSITIVE_CASES = [
@@ -66,6 +75,7 @@ const POSITIVE_CASES = [
   "positive/internal-principal-derived.ts",
   "positive/named-function.ts",
   "positive/non-async.ts",
+  "positive/nullish-principal-branches.ts",
   "positive/queue-send.ts",
   "positive/renamed-owner-destructure.ts",
   "positive/re-export.ts",
@@ -107,6 +117,14 @@ for (const [fixture, expectedReason] of BYPASS_CASES) {
     [expectedReason],
     `${fixture} must fail for ${expectedReason}`,
   );
+  const expectedFailingExports = MULTI_EXPORT_BYPASSES.get(fixture);
+  if (expectedFailingExports) {
+    assert.deepEqual(
+      [...new Set(result.diagnostics.map((diagnostic) => diagnostic.exportName))].sort(),
+      expectedFailingExports,
+      `${fixture} must reject every laundering form`,
+    );
+  }
   if (fixture === "bypass/void-reference.ts") {
     assert.equal(result.diagnostics.length, 2, "same-reason sensitive sites must both be reported");
     assert.equal(

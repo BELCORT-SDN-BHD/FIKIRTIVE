@@ -946,6 +946,39 @@ function principalExpressionKind(expression, state, derivedExpressions = null) {
   }
   if (isFunctionLike(node) || ts.isClassExpression(node)) return null;
   if (derivedExpressions?.has(node)) return "derived";
+  if (ts.isConditionalExpression(node)) {
+    const whenTrueKind = principalExpressionKind(
+      node.whenTrue,
+      state,
+      derivedExpressions,
+    );
+    const whenFalseKind = principalExpressionKind(
+      node.whenFalse,
+      state,
+      derivedExpressions,
+    );
+    if (!whenTrueKind || !whenFalseKind) return null;
+    return whenTrueKind === whenFalseKind ? whenTrueKind : "derived";
+  }
+  if (
+    ts.isBinaryExpression(node) &&
+    (node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+      node.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+      node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+  ) {
+    const leftKind = principalExpressionKind(
+      node.left,
+      state,
+      derivedExpressions,
+    );
+    const rightKind = principalExpressionKind(
+      node.right,
+      state,
+      derivedExpressions,
+    );
+    if (!leftKind || !rightKind) return null;
+    return leftKind === rightKind ? leftKind : "derived";
+  }
   if (ts.isCallExpression(node)) {
     const callee = unwrapped(node.expression);
     if (
@@ -1585,6 +1618,24 @@ class EntryAnalyzer {
         { kind: "consumed" },
         importDepth,
       );
+      const assignmentTarget = unwrapped(expression.left);
+      if (
+        ts.isAssignmentOperator(expression.operatorToken.kind) &&
+        (ts.isPropertyAccessExpression(assignmentTarget) ||
+          ts.isElementAccessExpression(assignmentTarget))
+      ) {
+        const mutatedRoot = rootIdentifier(assignmentTarget);
+        if (mutatedRoot) {
+          this.nullableDerivedBindings.delete(mutatedRoot);
+          this.safeDerivedCollections.delete(mutatedRoot);
+          return right.map((state) => {
+            const next = cloneState(state);
+            next.principalObjects.delete(mutatedRoot);
+            next.principalDerivedBindings.delete(mutatedRoot);
+            return next;
+          });
+        }
+      }
       if (
         expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         ts.isIdentifier(unwrapped(expression.left))

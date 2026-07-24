@@ -106,6 +106,12 @@ Rule B 按 export 判定，不按文件判定。只有 `requireRole` 支配该 e
 waiver只表达 staff/admin 操作本来就是跨 tenant/global，并不放松 Round 1 的 resolver
 支配规则。
 
+前瞻风险：`ADMIN_GUARD_EXPORTS` 目前会让任何成功消费 `requireRole(section, action)` 的
+export 取得跨 tenant waiver，而不区分该 export 的层级；今天之所以可接受，是因为
+`requireRole` 的外层仍由 founder staff allowlist 封住。若未来有 export 用它保护
+tenant-facing（非 staff-console）操作，这个 waiver 会错误放行；reviewer 必须在新增
+`requireRole` 调用点时确认其仍是 staff/admin surface，不能把租户操作带进该集合。
+
 ## 6. Round 5 收敛与人工 ledger
 
 Round 4 基线为：
