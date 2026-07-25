@@ -896,6 +896,17 @@ captured-binding invalidation 已移到共同 expression entry，所以普通 ca
 > 而不 poison，因此后续一次 trusted push 仍能重新 bless 整组 provenance。该断言自
 > Round 26 起才真正成立，机制与证据见 §41。
 
+> 再更正（Round 28 补记）：上面那句「自 Round 26 起才真正成立」**说过头了**。
+> Round 26 关掉的是「已 tracked 的空 collection 被非 push 插入型 mutation 污染」
+> 这一族。sticky-poison 不变式至今**仍不完整**，实测另有两族污染进不了 poison：
+> 构造期污染（`const keys: string[] = [input.clientKey]`）与 callback 体内插入
+> （`input.rows.forEach((row) => { keys.push(row.raw); })`），两者后接一次 trusted
+> push 都以 `ok=true`、零 diagnostic 通过。两族都是**旧有**缺口而非 Round 26/27 的
+> 回归——在 Round 26 之前的 HEAD 上它们同样不报红（那时该处根本没有 storage
+> sensitive channel，files=0）。逐条形态、根因与实测证据见 §43「尚未关闭」。
+> 正确的表述是：**插入型 member mutation** 一旦进入已 tracked 的 collection，
+> sticky-negative 会保留到重新声明；构造期与 callback 体内的插入尚未纳入。
+
 最终 focused suite 为 129 个 bypass fail、38 个 positive pass，实测
 `real 49.65s`（`user 71.18s`、`sys 2.80s`）。默认 production scan 实测
 `real 48.94s`（`user 70.62s`、`sys 2.68s`），结果为
@@ -1131,6 +1142,25 @@ collection（`box.keys`）在本 checker 里从来不是 tracked collection，si
 它在修复前后都报红（由 `nested-derived-collection-carrier.ts` 一族固定），本轮不为它
 新增建模。
 
+> 更正（Round 28 补记）：上面这段（连同「修复」节末尾「该路径不可达」那句论证）
+> **只对经属性链读取的 sink 成立**，覆盖不到攻击者真正会用的形态。实测：
+>
+> ```ts
+> const keys: string[] = [];
+> const box = { list: keys };
+> if (input.extra) box.list.unshift(input.clientKey);          // 经属性链写入
+> keys.push(storageKey(gate.ownerId, "a".repeat(64), "png"));  // 重新 bless
+> return Promise.all(keys.map((key) => storage.get(key)));     // sink 读**裸标识符**
+> ```
+>
+> 结果是 `ok=true`、**零 diagnostic**。只有把最后两行也改成经 `box.list` 读写
+> （`box.list.push(...)` + `box.list.map(...)`）才报红 `principal-result-unused`。
+> 原论证只证明了「`box.keys` 这个**receiver 形态**在 sink 侧不是 tracked
+> collection」，没有证明「经 `box.list` 写入的污染到不了裸名 `keys`」——而
+> `const box = { list: keys }` 让两者指向同一个运行时数组，污染当然到得了。
+> 真实敞口是：**经属性链写入 + 经裸标识符读取**这条组合路径至今未关闭。
+> 本轮（Round 28）不修它，只把描述改成可证的事实，并列入 §43「尚未关闭」。
+
 ### fixture
 
 新增七个 one-export bypass negative control，全部固定为 `principal-result-unused`，
@@ -1159,6 +1189,21 @@ focused suite 由 139 bypass / 40 positive 升至 **146 bypass / 42 positive**�
 `EXPECTED FAIL` 与 2 条 `PASS`，既有 bypass 全部以原 reason 保持红、既有 positive
 全部保持绿。ledger 未改，exemption site 与 identity 数均未变。FINDING 仍为 0，
 真实树没有新增未受保护的 tenant-scoped 调用点，无需在 #458 立单。
+
+> 更正（Round 28 补记）：上面这句「零回归」以 suite 日志为判据，是**成立的**——
+> 但它看不见 suite 之外的**精度**回归，而本轮确实引入了一个。
+> `poisonMutatedCollectionReceiver` 的 `carriesOnlyDerived` 要求**每一个**实参都
+> principal-derived，于是位置型数字实参会把豁免打掉：
+> `keys.splice(0, 0, <owner-derived>)` 报红 `principal-result-unused`，而语义等价的
+> `keys.unshift(<owner-derived>)` 是绿的；`keys.fill(<owner-derived>, 0, 1)` 与
+> `keys.copyWithin(0, 1)` 同理。它 fail closed，不是安全损失，但它**过度决定**了本节
+> 新增的两个 fixture：把 `derived-collection-splice-poison.ts` 与
+> `derived-collection-object-assign-poison.ts` 里的攻击者 key 换成 owner-derived key
+> 之后两者**仍然报红**，说明它们那时并没有隔离出自己声称的 bypass class
+> （`derived-collection-fill-poison.ts` 的对照组正确转绿，不受影响）。
+> Round 28 用 `RANGE_ONLY_MUTATOR_SLOTS` 修掉了数字位置参数这一项，
+> `splice` 的对照组随即转绿；`Object.assign` 那条另有第二个成因，仍未隔离，
+> 两者见 §43。
 
 ## 42. Round 27：local object/class surface —— 本地对象门面整File脱离扫描
 
@@ -1279,6 +1324,38 @@ covered entry 数 ≥ 465、以及任何 covered file 都不得报告 0 个 entr
 `new ImportedClass().run(prisma, id)` 走第二层报红（不解析跨文件 class 体），
 不做递归跨模块 class 解析——fail closed，非静默放行。
 
+> 更正（Round 28 补记）：这一节**漏列了真正保留的边界**，读起来像是本节开头那句
+> 「proof-carrying gate 最坏的失效形态」已经被关掉了。实际上「整个文件从扫描里静默
+> 消失」这一失效形态**至今仍可复现**，只是入口换了几种 receiver 形态。
+> 复现前提是那句未加 scope 的查询**不在 entry 文件文本内**（否则 module 级 fallback
+> 仍会响，正如本节自己写过的兜底说明）；把 helper 挪进独立 module 后实测：
+>
+> | 形态 | 实测 |
+> |---|---|
+> | `class S { static list(db, id) { return findA(db, id) } }` → `S.list(prisma, id)` | `ok=true` **files=0** diags=0 |
+> | `class S { static list = (db, id) => findA(db, id) }` → `S.list(prisma, id)` | `ok=true` **files=0** diags=0 |
+> | `makeService().list(prisma, id)`（call-expression receiver） | `ok=true` **files=0** diags=0 |
+> | `service.list(prisma, id)`（参数 receiver） | `ok=true` **files=0** diags=0 |
+> | 函数体内 `new Map([...]).get("list")!(prisma, id)`（容器取出 callable） | `ok=true` **files=0** diags=0 |
+> | 对照组 `findA(prisma, id)` | 报红 `missing-principal-resolution` |
+> | `handlers[0](prisma, id)`（数组下标取出） | 报红 `unprovable` |
+> | `new S().list(prisma, id)`（本地 class 实例） | 报红 `missing-principal-resolution` |
+>
+> 根因是第二层那道兜底闸门的**取名范围**：`visibleScopedBinding` 只认
+> `FunctionDeclaration` 与 `VariableStatement`，`info.localValues` 也只从
+> `VariableStatement` 填充，`ClassDeclaration` 两者皆不中；参数、call 表达式、
+> 容器取出的 callable 同样拿不到「本地变量声明」这个身份。于是
+> `unresolvedLocalReceiverNames` 返回 `[]`，`:6284` 的 fail-closed 闸门永不触发。
+> 本节真正保留的边界应写为：**static class 成员 dispatch、call-expression receiver、
+> 参数 receiver、容器取出的 callable**，加上原文那条跨模块 class 体。这些都是
+> 静默放行（files=0），不是 fail closed——这是与本节其余部分性质完全不同的一类。
+> Round 28 只做记录，不修（属于独立的范围决定），见 §43「尚未关闭」。
+>
+> 同时补一句上文 covered-file / covered-entry floor 的边界：它按构造只抓**既有覆盖
+> 下跌**。上表这些形态若出现在一个**新增**文件里，该文件从出生起就 files=0，
+> 120/465 两个 floor 都不会下跌，因此 floor 对「一出生就隐形」零信号——
+> 那一类只能靠 fixture 与 default-deny 建模兜底。
+
 ### 结果
 
 focused suite 由 146 bypass / 42 positive 升至 **160 bypass / 45 positive**，exit 0。
@@ -1292,3 +1369,180 @@ focused suite 由 146 bypass / 42 positive 升至 **160 bypass / 45 positive**�
 保持红、既有 positive 全部保持绿。ledger 未改。FINDING 仍为 0，真实树没有新增
 未受保护的 tenant-scoped 调用点，无需在 #458 立单——事前 grep 也确认真实树不存在
 「对象门面/class 实例方法接收 capability」这一形态（只有 Error 子类与 `new Stripe`）。
+
+## 43. Round 28：trailing spread 覆盖已证明的 carrier ownerId —— 一次 RED→GREEN 回归
+
+### 漏洞：Round 25 引入的回归
+
+`principalPropertiesForExpression` 的 spread 分支不撤销任何 provenance，于是一个
+**尾随的** spread 可以在运行时覆盖掉已经证明过的 `ownerId`，而围栏仍然全绿。
+同一分析器、同一组探针，在 Round 25 之前的 HEAD（`1ec837cf`）与本轮开工时的
+HEAD（`f17f98aa`）上的实测对照：
+
+| 形态 | `1ec837cf`（Round ≤24） | `f17f98aa`（Round 25–27） |
+|---|---|---|
+| `load({ ownerId: gate.ownerId, ...input })` | 红 `missing-principal-resolution` | **绿，`ok=true`，零 diagnostic** |
+| `load({ ownerId: input.ownerId })`（对照） | 红 | 红 |
+| `load({ ...input })`（对照） | — | 红 |
+| `load({ ownerId: gate.ownerId })`（干净） | 绿 | 绿 |
+| `load({ ...input, ownerId: gate.ownerId })`（安全顺序） | — | 绿（正确） |
+
+自明的荒谬之处：**两个各自都报红的部件，合起来反而转绿**。而运行时语义正好相反——
+`{ ownerId: gate.ownerId, ...input }` 里尾随的 spread **覆盖** `ownerId`，下游那句
+`prisma.contact.findMany({ where: { ownerId: scope.ownerId } })` 因此被 scope 到
+**调用方自己挑的** tenant 上。这是跨租户读取，不是精度问题。
+
+### 根因
+
+`principalPropertiesForExpression` 的四个分支里，只有 spread 分支**没有 reject
+action**：computed key 走 `properties.clear()`，未知 kind 的具名属性走
+`properties.delete(name)`，唯独 spread 把未知内容当成一张空表 merge 进来，于是先前
+写下的 `ownerId -> "binding"` 原封不动地活了下来。
+
+同一个文件对**同一个运行时风险**在别处的处理是**正确**的：
+`principalOwnerAuthorityKind` 的 spread 分支对「无法证明、且不是 owner-neutral」的
+spread 会把 `ownerKind` 置 `null`；`principalKeyAuthorityEntries` 的 spread 分支更进
+一步，用 `knownSpreadPropertyNames`（`:2284`）区分「已知 shape 只掀掉它能提供的键」
+与「未知 shape 全清」。两个函数、同一语义、相反默认——而 Round 25 把弱的那个提拔成
+了全树权威。
+
+放大器是 Round 25 的第 4 步：撤掉参数传递处的 `isWorkspacePackageModule` 闸门之后，
+这条不健全的子规则从 `packages/*` 扩到了**整个默认目标树**（`apps/web/lib`、
+`apps/web/app`）。§40 第 4 点因此需要更正，见下。
+
+### 修复
+
+让 spread 分支镜像 `principalOwnerAuthorityKind` / `principalKeyAuthorityEntries`，
+复用既有的 `knownSpreadPropertyNames`。改动落在 `:2036-2050`：
+
+1. spread 的 shape **已知**时，从 `properties` 里删掉「它能提供、却证明不了」的每一个键；
+2. spread 的 shape **未知**时，`properties.clear()`，再把 spread **自己**证明得了的键写回；
+3. 两种情况最后都写回 spread 自证的键，因此 `{ ...OWNED }` 这类形态不受影响。
+
+顺序是本修复的要点：spread 必须作废**写在它之前**的键，**不得**作废写在它之后的键。
+因为循环按源码顺序处理，写在 spread 之后的键天然在其后被重新 `set`，所以
+`{ ...input, ownerId: gate.ownerId }` 合法地保持绿灯。
+
+**它只删 provenance、从不新增**，因此不放宽任何默认——这一点对本项目
+「绝不可再放宽默认」的硬约束是关键的。
+
+修复后同一组探针的实测（另加两条钉住已知 shape 分支的精度）：
+
+| 形态 | 修复后 |
+|---|---|
+| `load({ ownerId: gate.ownerId, ...input })` | **红** `missing-principal-resolution` |
+| `load({ ownerId: gate.ownerId, ...patch })`，`patch = { ownerId: input.ownerId }` | **红** |
+| `load({ ownerId: gate.ownerId, ...{ ownerId: input.ownerId } })` | **红** |
+| `load({ ownerId: input.ownerId })` / `load({ ...input })`（对照） | 红（不变） |
+| `load({ ownerId: gate.ownerId })`（干净） | 绿（不变） |
+| `load({ ...input, ownerId: gate.ownerId })`（安全顺序） | **绿**（不变，必须保持） |
+| `load({ ownerId: gate.ownerId, ...{ label: input.label } })` | **绿**（已知 shape 提供不了 ownerId，精度不被误伤） |
+| `load({ ownerId: input.ownerId, ...{ ownerId: gate.ownerId } })` | **绿**（spread 自证覆盖，last-wins 正确） |
+
+### 对 §40 第 4 点的明确更正
+
+§40 第 4 点原文写「撤掉参数传递处的 `workspacePropertyProvenance` 闸，逐属性
+provenance 对所有 module 生效。**这不是放宽**」。对本节这一形态而言，
+**它就是相对 HEAD 的 RED→GREEN 放宽**：`{ ownerId: gate.ownerId, ...input }` 在
+Round 25 之前报红，之后转绿。原句成立的前提是「逐属性 provenance 会对每个未证明
+的属性 default-deny」——而 spread 分支当时并不 default-deny，前提不成立，结论也就
+不成立。`:6804-6813` 的代码注释同步更正为「Round 25 的 default-deny 自陈当时是错
+的，它现在成立、且仅因 Round 28 的撤销而成立」。逐属性 provenance 本身的方向
+（严格窄于 blanket object 授予）没有问题，问题在于当时缺了 spread 这一道撤销。
+
+### 附带修掉的精度回归
+
+`poisonMutatedCollectionReceiver` 的 `carriesOnlyDerived` 要求**每一个**实参都
+principal-derived，于是位置型数字实参会把豁免打掉：`keys.splice(0, 0, <owner-derived>)`
+报红，而语义等价的 `keys.unshift(<owner-derived>)` 是绿的。它 fail closed，不是安全
+损失，但它**过度决定**了 Round 26 新增的 fixture（见 §41 的 Round 28 更正）。
+
+修法是**新增健全建模**而非放宽：新增 `RANGE_ONLY_MUTATOR_SLOTS`（`:201-213`），
+只登记那些「按签名定义就只能寻址、不可能把值送进 collection」的位置：
+`splice(start, deleteCount, …)` 的前两位、`fill(value, start, end)` 的第 1 位起、
+`copyWithin(target, start, end)` 的全部（它只搬运 receiver 里已有的元素，引入不了新
+内容）。豁免另加两道限制：实参必须是**纯数字字面量**（计算出来的下标仍是不透明
+escape，继续 fail closed），且成员名必须由 `callMemberName` 静态解析得出（动态成员
+返回 `null`，拿不到豁免）。`Object.assign` 那个挂载点不传成员名，行为完全不变。
+
+实测：`splice(0, 0, <owner-derived>)`、`fill(<owner-derived>, 0, 1)`、
+`copyWithin(0, 1)` 由红转绿；`splice(0, 0, input.clientKey)` 与
+`splice(0, 1, input.clientKey)`（攻击者参数夹在数字之间）保持红。
+
+### fixture
+
+spread 修复新增两个 bypass，全部固定为 `missing-principal-resolution`：
+`trailing-spread-carrier.ts`（未知 shape 的尾随 spread）与
+`trailing-spread-known-carrier.ts`（两个 export：内联已知 shape 与本地变量 shape，
+用 `MULTI_EXPORT_BYPASSES` 钉住两条都必须红）。
+新增 positive `leading-spread-carrier.ts`（两个 export：安全顺序
+`{ ...input, ownerId: gate.ownerId }` 必须绿；已知 shape 只提供 `label` 时
+`ownerId` 不得被误伤），双向钉死「作废写在前面的、不作废写在后面的」这条顺序语义。
+
+精度修复新增 positive `derived-collection-derived-splice.ts`
+（`splice(0, 0, <owner-derived>)` 与 `fill(<owner-derived>, 0, 1)` 必须绿），
+把这条精度钉住，防止再次静默漂移。
+
+### 结果
+
+focused suite 由 160 bypass / 45 positive 升至 **162 bypass / 47 positive**，exit 0，
+实测 `real 1:59.96`（`user 197.34s`、`sys 6.63s`）。covered-file / covered-entry floor
+仍为 `120 file(s) / 465 entr(ies)`，两个 floor 均未改动。
+
+默认 production scan 实测 `real 1:59.65`（`user 196.86s`、`sys 6.45s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+222 个 reviewed exemption site、0 个 stale entry，exit 0。把 `f17f98aa` 的
+`scripts/verify-auth-guards.mjs` 原样取出单独跑一遍作基线，两份完整输出
+**逐字节相同**。
+
+零回归由 suite 自身证明：它对每一个 bypass fixture 断言**精确的 reason**、对每一个
+positive fixture 断言**零 diagnostic**，160 条既有 bypass 与 45 条既有 positive 全部
+以原判据通过，日志差异只有新增的 2 条 `EXPECTED FAIL` 与 2 条 `PASS`。ledger 未改，
+exemption site 与 identity 数均未变。FINDING 仍为 0，真实树没有新增未受保护的
+tenant-scoped 调用点，无需在 #458 立单。
+
+### 尚未关闭（本轮明确不修，只据实记录）
+
+以下四族都**在本轮开工前就已存在**，不是 Round 26/27/28 的回归；它们各自需要独立的
+范围决定，不应被塞进这一轮悄悄扩面。每条都附可复现的实测形态。
+
+1. **构造期污染**（§38 更正指向此条）。
+   `const keys: string[] = [input.clientKey];` 之后一次 trusted push →
+   `ok=true`、零 diagnostic。根因：`emptySafeCollection`（`:7250`）要求 initializer 是
+   **元素数为 0** 的数组字面量，非空字面量因此从头到尾**不被 tracking**，
+   `poisonedCollections` 里自然没有它；随后那次 `carriesOnlyDerived` 的 push 看到
+   `wasPoisoned === false`，直接把整个 list 写进 `safeDerivedCollections`。
+   对照组 `if (input.extra) keys.push(input.clientKey);` 正确报红。
+
+2. **callback 体内插入**（§38 更正指向此条）。
+   `input.rows.forEach((row) => { keys.push(row.raw); });` 之后一次 trusted push →
+   `ok=true`、零 diagnostic。poison 在 callback 退出时被丢掉，没有回映到 caller 的
+   collection binding。
+
+3. **经属性链写入 + 经裸标识符读取**（§41 更正指向此条）。
+   `const box = { list: keys }; box.list.unshift(input.clientKey);` 之后一次 trusted
+   push、sink 读**裸名** `keys` → `ok=true`、零 diagnostic。§41 原先记的边界只覆盖了
+   「sink 也经 `box.list` 读」的形态（那一支确实报红），覆盖不到攻击者真正会用的
+   裸名 sink。
+
+4. **整文件静默脱离扫描**（§42 更正指向此条，含实测对照表）。
+   static class 成员 dispatch、static class 属性箭头、call-expression receiver、
+   参数 receiver、函数体内容器取出的 callable，五种形态在「敏感 helper 位于独立
+   module」时都是 `ok=true`、**files=0**、零 diagnostic——文件连同 entry 一起从报告里
+   消失。根因是 `visibleScopedBinding` 只认 `FunctionDeclaration` 与
+   `VariableStatement`、`info.localValues` 只从 `VariableStatement` 填充，
+   `ClassDeclaration` 两者皆不中，于是 `unresolvedLocalReceiverNames` 返回 `[]`，
+   `:6323` 的 fail-closed 闸门永不触发。数组下标取出（`handlers[0](...)`）与本地
+   class 实例方法则**正确 fail closed**。
+   与之配套的诚实说明：covered-file / covered-entry floor 按构造只抓**既有覆盖下跌**，
+   一个从出生起就 files=0 的新文件不会让 floor 下跌，因此 floor 对这一族零信号。
+
+另有一条**精度**（非安全）缺口：`derived-collection-object-assign-poison.ts` 在把攻击者
+key 换成 owner-derived key 后**仍然报红**，所以它至今没有隔离出自己声称的 bypass
+class。第二个成因与上面那条数字位置参数无关：
+`Object.assign(keys, { 0: <owner-derived> })` 里那个**容器字面量实参**本身永远不是
+`"derived"`——`principalExpressionKind` 不对对象/数组字面量做逐元素推导，只有裸的
+derived 表达式（`Object.assign(keys, <derived>)`）才拿得到绿灯。要关它就得给
+`carriesOnlyDerived` 增加容器字面量的逐元素 provenance 建模，那是独立的范围决定，
+本轮不做，也**不**用「字面量一律视为安全」这种放宽默认的捷径去凑绿。该 fixture
+作为 bypass 仍然有效（攻击者形态正确报红），只是它的隔离性待补。

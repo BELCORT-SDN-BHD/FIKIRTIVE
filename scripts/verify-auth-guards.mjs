@@ -198,6 +198,19 @@ const PURE_COLLECTION_READ_MEMBERS = new Set([
   "toString",
   "values",
 ]);
+// Round 28: in these inserting mutators some positional slots address a range instead
+// of supplying content, so an integer there can never become an element of the
+// receiver. Only those slots are exempt from the derived-only argument requirement,
+// and only when the argument is a plain numeric literal — a computed index is still an
+// opaque escape and keeps failing closed.
+const RANGE_ONLY_MUTATOR_SLOTS = new Map([
+  // splice(start, deleteCount, ...items)
+  ["splice", (index) => index < 2],
+  // fill(value, start, end)
+  ["fill", (index) => index >= 1],
+  // copyWithin(target, start, end) — only moves elements the receiver already holds
+  ["copyWithin", () => true],
+]);
 const STORAGE_OWNER_RELATION_MEMBERS = new Set(["asset"]);
 const POSITIVE_PRISMA_IDENTITY_FILTER_OPERATORS = new Set([
   "equals",
@@ -2020,6 +2033,20 @@ function principalPropertiesForExpression(
         state,
         derivedExpressions,
       );
+      // A spread overwrites at runtime every key it supplies, so it must revoke the
+      // provenance of the keys written before it that it can silently replace. This
+      // mirrors principalOwnerAuthorityKind's spread branch: when the spread shape is
+      // known, only the keys it can supply lose their earlier proof; when the shape is
+      // unknown it could supply anything, so nothing written earlier survives. Keys
+      // written after the spread are unaffected, because the loop reaches them later.
+      const spreadNames = knownSpreadPropertyNames(property.expression);
+      if (spreadNames) {
+        for (const name of spreadNames) {
+          if (!spread.has(name)) properties.delete(name);
+        }
+      } else {
+        properties.clear();
+      }
       for (const [name, kind] of spread) properties.set(name, kind);
       continue;
     }
@@ -3802,16 +3829,24 @@ class EntryAnalyzer {
   // the callee receiver is the bare identifier itself — that is the exact shape a later
   // `.push` can bless — so scalar reads through a property chain (`row.asset.ext.foo()`)
   // never strip owner provenance from the chain root.
-  poisonMutatedCollectionReceiver(states, frame, receiverExpression, args) {
+  poisonMutatedCollectionReceiver(states, frame, receiverExpression, args, memberName = null) {
     const rootNode = rootIdentifierNode(receiverExpression);
     if (!rootNode) return states;
     const root = rootNode.text;
     if (!visibleBindingNode(frame.info.sourceFile, rootNode, root)) return states;
     const bareReceiver = ts.isIdentifier(unwrapped(receiverExpression));
+    const rangeOnlySlot = memberName ? RANGE_ONLY_MUTATOR_SLOTS.get(memberName) : null;
     return states.map((state) => {
       const carriesOnlyDerived =
         args.length > 0 &&
-        args.every((argument) => {
+        args.every((argument, index) => {
+          if (
+            rangeOnlySlot &&
+            rangeOnlySlot(index) &&
+            ts.isNumericLiteral(unwrapped(argument))
+          ) {
+            return true;
+          }
           const kind = principalExpressionKind(
             argument,
             state,
@@ -6343,6 +6378,7 @@ class EntryAnalyzer {
           frame,
           calledExpression.expression,
           args,
+          callbackMember,
         );
       }
       current = this.poisonEscapedCollections(current, frame, args);
@@ -6767,8 +6803,14 @@ class EntryAnalyzer {
           const principalKind = callerPrincipalKind;
           // Exact per-property provenance is the only authority a carrier argument can
           // hand its callee. It applies to every module, not just workspace packages:
-          // it is strictly narrower than a blanket object grant and default-denies any
-          // property whose value is not itself proven principal.
+          // it is strictly narrower than a blanket object grant. Round 25 shipped this
+          // claiming it default-denied every unproven property, which was false — the
+          // spread branch of principalPropertiesForExpression merged unknown content
+          // without revoking anything, so `{ ownerId: gate.ownerId, ...input }` kept the
+          // guard's proof even though the spread overwrites ownerId at runtime. Round 28
+          // made that branch revoke what a spread can supply but cannot prove; the
+          // default-deny claim only holds because of that revocation, so read the two
+          // together (see auth-guard-fence-design.md §43).
           const argumentPrincipalProperties = principalPropertiesForExpression(
             argumentNode,
             state,
