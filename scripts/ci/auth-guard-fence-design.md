@@ -1,8 +1,8 @@
 # Auth guard fence：双契约设计
 
 `scripts/verify-auth-guards.mjs` 对每个可达敏感操作证明以下两种契约之一。敏感操作包括
-Prisma/原始 SQL、队列发送，以及一层同 package 的敏感调用；无法静态解析的动态分派
-仍然 fail closed。
+Prisma/原始 SQL、对象存储 I/O、队列发送，以及一层同 package 的敏感调用；无法静态
+解析的动态分派仍然 fail closed。
 
 ## 1. ENTRY 契约
 
@@ -527,7 +527,7 @@ identity，delta 为 0。
 
 默认 source root 现在是 `apps/web/lib` 与整个 `apps/web/app`，不再只枚举
 `apps/web/app/api`。production universe 递归包含这些 root 下的
-`.ts/.tsx/.mts/.cts`，继续排除 `__tests__`、`fixtures`、`*.test.*`、`*.spec.*`、
+`.ts/.tsx/.mts/.cts`，继续排除 `__tests__`、`*.test.*`、`*.spec.*`、
 `.d.ts` 与 `EXCLUDED_PRODUCTION_FILES` 中逐路径审核的 principal-establishment
 implementation。`--entry` 仍只用于 fixture/定点分析，不能作为默认 coverage 的证据。
 
@@ -620,3 +620,675 @@ Round 17 multi-export negative fixture 同时锁住 identifier initializer 与 e
 `PASS=58 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，117 个 covered file，
 0 个 finding、174 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
 identity，delta 为 0。
+
+## 28. Round 18：storage 是一等敏感 capability
+
+checker 现在把精确 storage module 的 named `storage` import、静态 alias 与跨 callable
+参数传播纳入 capability state。`get`、`put`、`head`、`delete`、presign 等 object
+I/O 都是敏感操作。纯 URL 格式化只在精确 trusted `storage.url(storageKey(...))`
+结构、且 `storageKey` 是从 `@fikirtive/core` 精确导入并收到三个参数时免除敏感
+判定；任意 key、同名 local helper 或其他调用结构均不免除。computed dispatch 继续
+`unprovable`。因此只有 storage、没有 Prisma 的 export 也必须获得语义 coverage，
+不能再以 0 covered file 通过。
+
+storage key 的合法 authority 采用闭集，不把任意字符串当 owner identity：
+
+- `storageKey(owner-derived value, ...)` 的返回值；
+- 支配后续 I/O 的精确 `keyOwnerMatches(key, gate.ownerId)` 成功分支；
+- 精确 `verifyMediaToken` 返回 non-null claims 后，再由
+  `keyOwnerMatches(claims.key, claims.ownerId)` 绑定的 signed-media/HMAC 路径；
+- owner-scoped row 经过已分析的 `map`、tuple、local `Map` 与 `get` 所形成的有限
+  collection 流。
+
+上述 signed authority 只放行 storage，不授予 Prisma authority。真实
+`upload-actions.ts`、files storage route 与 signed-media route 都由测试断言为显式
+covered export，而不是依赖 exemption。
+
+## 29. Round 18：lexical binding 与 path-sensitive admin
+
+`knownPrincipalBindings`、`nullableDerivedBindings` 与 `safeDerivedCollections` 已从
+EntryAnalyzer 全局名字 cache 移入每条 flow state。新 variable/function declaration
+与 callee parameter 先清除同名 inherited metadata；跨 module callee 从干净 lexical
+metadata 开始，返回 caller 时也只恢复 caller state。owner-derived 身份若通过 object
+literal 传给 destructured callee，只传播参数声明中同名、且 caller 已证明的 identity
+field；generic resolver field（例如 `role`）不会成为 owner identity。
+
+admin waiver 只接受单一 identifier 接住 `requireRole` 的结果，并在控制流证明
+`"error"` 不存在的路径上清除 pending gate。丢弃、condition-only、multi-binding 或
+destructured resolver result 都不能获得 waiver；拒绝分支若会继续执行，继续路径仍保留
+pending 并 fail closed。既有正确的 `ownerId` destructure 与单一 assigned admin gate
+仍通过，`admin-global-op.ts` 仍显示 `ADMIN-PASS`。
+
+## 30. Round 18：depth boundary 与 production discovery
+
+one-module import depth 到顶时，只要实参携带 tracked DB、storage 或 queue capability，
+即使目标 module 的预扫描没有发现敏感调用，也必须直接 `unprovable`；capability 不能在
+第三个 module 静默消失。薄 ENTRY 若自身没有 resolver，又连续跨越多个无 principal
+实参的 opaque sensitive factory boundary，会同时保留一次
+`missing-principal-resolution`，避免把 nested carrier 误写成已证明路径。
+
+production discovery 不再通用排除名字为 `fixtures` 的目录；只保留 `__tests__`、
+`*.test.*`、`*.spec.*` 与 `.d.ts` 排除。isolated temp regression 会创建
+`apps/web/lib/fixtures/production-leak.ts`，并同时证明默认 enumeration 包含它、语义
+verdict 为 red。fixture expectation table 与实际 bypass/positive 目录继续保持严格
+双射。
+
+## 31. Round 18 收敛、real tree 与 ledger
+
+最终 fixtures 为 77 个 bypass fail、33 个 positive pass。新增 red 覆盖 storage-only、
+三类同名 lexical reuse、四类 admin result/branch bypass、single-role destructure，以及
+三 module DB capability depth；新增 green 覆盖 owner-derived storage key、支配式
+key-owner check、signed-media authority 与真实 storage collection flow。
+
+真实扫描为：
+
+`PASS=60 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，119 个 covered file，
+0 个 finding、175 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，内容与数量都没有变化。
+
+## 32. Issue #442 defensive review hardening
+
+trusted storage capability 改为显式、封闭的 path registry。production 默认只列出
+`apps/web/lib/storage.ts`；fixture 必须显式传入自己的 audited storage path。每个
+registry path 必须存在、必须是 file，并在 `realpath` 后仍位于当前 repo root 内。
+import origin 也必须解析到 registry 中同一个 realpath；不使用 basename、path suffix
+或 export 名字启发式。named import 与 namespace import 都依赖此 identity；同名
+untrusted module 以及 unresolved origin 一律 `unprovable`。
+
+独立 review 项逐项收窄如下：
+
+- signed-media authority 只接受精确二参数 `verifyMediaToken`、精确二参数
+  `keyOwnerMatches(claims.key, claims.ownerId)`、同一 claims root、直接 member
+  reference，以及支配后续 call 的直接 lexical 成功分支；storage `get` 只接受一个
+  精确 `claims.key` 参数。
+- owner-derived storage key 不再接受 conditional/logical 等未建模组合；只接受已追踪
+  binding、已追踪 object 上的直接 `ownerId` member，或 production 已有且显式列入
+  canonical relation 的一层 `.asset.ownerId`；任意深 path 仅以 `.ownerId` 结尾不算证明。
+- one-module depth 边界会递归检查 nested object/array capability carrier；到边界仍携带
+  DB、storage 或 queue capability 时 fail closed，不能靠额外 wrapper module 消失。
+  body 确实不可解析时直接 `unprovable`；callback body 则交由既有 callback analyzer。
+- `storage.url` 的 exact pure proof 与 raw client key、同名 local key builder 两个
+  negative control 成对；trusted namespace positive 则与 named wrong-origin、
+  namespace wrong-origin、unresolved-origin 三个 negative control 成对。
+- registry 另有 symlink 指向 repo 外部的 realpath escape negative test。fixture
+  harness 继续严格枚举 bypass/positive 内容，未声明 fixture 会直接失败。
+
+收敛 fixtures 为 93 个 bypass fail、35 个 positive pass。真实扫描为：
+
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file，
+0 个 finding、175 个 reviewed exemption site、0 个 stale entry。ledger 仍为 72 个
+identity，没有新增、删除或修改。
+
+## 33. 174 → 175 reviewed-site delta 的逐路径证据
+
+此数字计算 diagnostic occurrence，不是 ledger identity 数量。相对 Round 17 的
+174，当前 175 是以下 site delta 的净结果：
+
+- `+1`：
+  `apps/web/app/api/otto/stream/route.ts` / `POST` / `unprovable`，implementation
+  `apps/web/lib/otto-actions.ts:307`；
+- `-1`：
+  `apps/web/lib/canvas-node-placement.ts` / `placeCanvasJobNode` /
+  `principal-parameter-unused-by-sensitive-operation`，implementation
+  `apps/web/lib/canvas-node-placement.ts:246`；
+- `+1`：
+  `apps/web/lib/otto-client-actions.ts` / `ottoTurn` / `unprovable`，
+  implementation `apps/web/lib/otto-actions.ts:307`。
+
+另外两个 `missing-principal-resolution` occurrence 仅由
+`apps/web/lib/otto-actions.ts:759` 搬到 `:592`（`ottoTurn` 与 `ottoApprove` 各一），
+数量净变化为 0。所有新增/搬移 occurrence 都由原有精确
+`path + export + reason` identity 覆盖，所以 ledger 保持 72 条，scanner 同时证明
+0 stale entry。
+
+## 34. Round 19：workspace source 与 pg-boss transaction adapter
+
+capability depth 闸不能把 workspace package 当成 opaque external package。checker 现在
+从当前 repo `packages/*/package.json` 建立精确 package-name registry，只接受 manifest
+中 exact `exports` subpath，并把 runtime `dist/.../*.js` 映射回同 package 内实际存在的
+`src/**/*.ts`。package 内 NodeNext 风格 `export ... from "./helper.js"` 也只按同 stem
+解析到实际 `.ts` source；candidate 经 `realpath` 后仍须留在该 package 目录。fixture
+repo 没有对应 package manifest 时继续 unresolved、fail closed，所以
+`workspace-storage-helper-capability.ts` 与 `workspace-storage-surface-capability.ts` 不会
+借 production workspace 获得解析或被放行。isolated regression 同时证明 owner-scoped
+helper 可由 body 通过、unscoped helper 会由 body 报红；这里没有 package/export
+allowlist。
+
+external `pg-boss` 只承认一个语义闭集：精确 named import
+`fromPrisma` from `"pg-boss"`、一个直接 tracked transaction 参数、直接位于 tracked
+queue `.send(name, data, options)` 第三个参数 object 的 `db:` property。它只是把同一
+Prisma transaction 交给既有 queue-send 敏感点；queue send 本身仍须引用 owner-derived
+authority。赋值、返回、其他 caller、其他 package、其他 option shape 一律仍走 unresolved
+capability fail-closed。negative fixture `from-prisma-outside-queue-send.ts` 固定此边界。
+
+storage canonical relation 也同步收窄：一层 `.asset.ownerId` 的 root 只能是 principal
+object 或 derived object；scalar `principalDerivedBindings` 不再获得 relation authority。
+`storage-key-scalar-relation.ts` 固定这个 negative control。
+
+workspace body 展开后新增的 provenance 只在已由 manifest 精确解析的 workspace source
+内生效，不扩散到普通 app helper。内部 callable 的 required `ownerId` contract 可追踪
+同 module 的 type alias/interface，但只在跨 source boundary 时建立；同文件 utility
+不能借自己的 domain row type 自动取得 principal。owner-derived template string 可在
+workspace 内把 provenance 传给 advisory-lock helper。精确解析出的 literal array export
+上的 `.includes(...)` 被识别为静态只读数据操作，不再误判成会触达 package sensitive
+surface；unknown export 与其他 member call 仍 fail closed。
+
+flow state 现在携带 invocation lineage，callee 分支返回时按 lineage 找回原 caller state，
+不再按 array index 错配。跨 module 时只重建实际传入参数的 alias，caller 其他 lexical
+alias 不会泄漏进 package callback；`Date#toISOString()` 作为零参数只读 scalar method
+不会误撤销 row authority。简单 boolean branch fact 会跨精确 object destructuring call
+传递，已 owner-scoped create 的 `isNew` 路径因此不会和 existing-row 路径交叉。nullable
+queue state 只在 `getBoss()` 成功态与已知 null 态之间做 truthiness 收窄，确保
+`if (!boss) throw` 后的 `fromPrisma(tx)` 仍必须位于 tracked queue send。
+
+空数组的 structured provenance 另记录“已执行至少一次 push”。只有
+`length === 0` 的反分支确实排除零次 push state 时，for-of destructuring 才继承 exact
+property provenance；未知 push 即使通过 non-empty guard 也仍报红。
+`nonempty-derived-collection.ts` / `nonempty-untrusted-collection.ts` 固定这对正反例，
+nullable queue 形态则由更新后的 `queue-send-transaction.ts` 固定。
+
+最终 fixtures 为 105 个 bypass fail、37 个 positive pass。真实扫描为：
+
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file，
+0 个 finding、176 个 reviewed exemption site、0 个 stale entry。ledger 没有新增、
+删除或修改。
+
+## 35. Round 20：opaque worker callback 的精确 ledger 边界
+
+移除 workspace `parameterShape` authority fallback 后，真实扫描正确暴露
+`workflowLifecycleService.transitionWorkflowRun`、`enrollWorkflowJourney`、
+`advanceWorkflowJourney`、`enterWorkflowJourneyWait` 与
+`createWorkflowJourneyDueRun`。这五个 identity 与已复核的 `createWorkflowRun`
+具有同一静态限制：`requireWorker` 验证注入的 `resolveWorkerContext` 返回值，但
+callback return 对 checker 仍是 opaque。这里必须逐 identity 登记，不能把
+owner-shaped type、`verified` 字段、函数名或返回值形状升级成通用 principal authority；
+否则任意未受信 callback 都可伪造 owner provenance。
+
+isolated temporary-repo regression 创建两个同名
+`createLifecycleService.run` export：两者都消费注入 callback 返回的
+`{ ownerId, verified: true }` 后访问 Prisma，ledger 只列其中一个 path。结果只有精确
+`path + export + reason` identity 被豁免；未列 path 仍以
+`missing-principal-resolution` 报红，证明 ledger 不按名字或形状泛化。既有 workspace
+shape negative 与 `requireOwner() → gate.ownerId` positive 均继续通过。
+
+最终 fixtures 为 109 个 bypass fail、37 个 positive pass。真实扫描为：
+
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file，
+0 个 finding、237 个 reviewed exemption site、0 个 stale entry。actual pre/post scan
+中，五个新 identity 覆盖 38 个 diagnostic occurrence，reviewed-site 从 199 增至 237，
+delta `+38`；ledger identity 从 72 增至 77。generic scanner 仍保持 fail-closed。
+
+## 36. Round 21：captured write、local capability carrier 与 member loop target
+
+本轮修复三个有界 false-green。第一，traced nested helper 或 modeled callback 对 captured
+principal 做 whole-binding assignment 时，checker 先按 lexical binding 判断该名字是否
+属于 callee 自己；只有真正 captured 的 principal 才把完整 alias group invalidation 带回
+caller。callee 自己的同名 parameter、local（包括 function-scoped `var`）不会误伤 caller。
+boolean fact correlation 若与 live state 全部冲突，不再返回空 state 集合；它保留执行路径并
+删除该名字的 stale fact authority。
+
+第二，function-local object/array initializer 若语义上包含已追踪 DB、storage 或 queue
+capability，该 local binding 继续携带保守 capability taint；nested object 与 local alias
+不能让 capability 在 imported helper 边界消失。call/new expression 的返回值保持 opaque，
+不会因为调用过程出现 capability 就把返回值猜成 capability。
+
+第三，`for...of` / `for...in` 的 member assignment target 走与普通 property assignment
+相同的 root invalidation，因而 `gate.ownerId` 会使 `gate` 的完整 principal alias group
+失效；既有 identifier 与 destructuring target 继续按 binding reassignment 清理。
+
+新增六个 bypass negative control：local captured overwrite、`.forEach` captured overwrite、
+captured overwrite + stale boolean、direct local DB carrier、nested/aliased local DB
+carrier，以及 aliased principal member loop target；另加一个 positive 同时固定 callee
+同名 parameter/local 不影响 caller。
+
+最终 focused suite 为 115 个 bypass fail、38 个 positive pass，实测
+`real 41.63s`（`user 60.57s`、`sys 2.41s`）。默认 production scan 实测
+`real 41.53s`（`user 60.91s`、`sys 2.36s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+0 个 finding、237 个 reviewed exemption site、0 个 stale entry。本轮没有改 ledger；
+其 diff 仍恰为上一轮既有五条 addition（总 identity 77）。本轮没有 #392 / #36 的直接
+验收证据，因此不声称两者已解决。
+
+## 37. Round 22：mixed collection、capability return 与 cross-module captured write
+
+本轮关闭三个 v7 false-green。non-empty correlation 以实际 lexical collection binding
+记录 modeled callback/traced callee 的 captured push；guard 保留该 binding 的全部
+runtime-plausible state，不再因另一 branch 有 `knownNonEmpty` 而丢弃未知 branch，也不把
+owner authority 泛化。member write 会把 RHS capability 保守带到 target root；只有已解析
+traced callee 的真实 return path 可标记 exact call expression 为 returned capability，
+opaque imported call/new 仍不猜测。cross-module callback 则记录被改写的实际 lexical
+binding identity，并在 defining scope 的后续 call 前失效；同名 callee parameter/local
+仍不受影响。
+
+新增五个 bypass negative control：mixed visible/callback 与 traced-callee push、
+member-write DB carrier、
+traced-return DB carrier、imported-wrapper captured identifier overwrite 与 captured member
+overwrite。最终 focused suite 为 120 个 bypass fail、38 个 positive pass，实测
+`real 45.61s`（`user 65.54s`、`sys 2.58s`）。默认 production scan 实测
+`real 45.34s`（`user 65.39s`、`sys 2.65s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+0 个 finding、237 个 reviewed exemption site、0 个 stale entry。ledger 未改；其 diff
+仍恰为既有五条 addition、零 removal。#392 / #36 仍没有直接 acceptance evidence，
+本轮不声称两者已解决。
+
+## 38. Round 23：v8 P1 收敛
+
+non-empty narrowing 现在只排除 `definitelyEmpty` state，不再用「已知 non-empty」反推并
+丢弃未知但可运行的分支。collection poison 绑定实际 lexical alias group：element write、
+alias push 或其他不可信元素一旦进入，sticky-negative 会保留到重新声明，后续 trusted
+push 不能恢复整组 provenance。所有 member assignment operator 都把 RHS capability
+带到 target root；精确未遮蔽的 `Object.assign` 与数组 `.push` 分别传播 object/array
+carrier，opaque mutator 只在同一 call 同时收到 tracked capability 与另一 local mutable
+carrier 时保守标记 carrier，不猜测 opaque call/new return。
+
+captured-binding invalidation 已移到共同 expression entry，所以普通 call 与 tagged raw SQL
+都会先清除同一 lexical binding 的 stale owner authority。新增九个 one-export negative：
+`nonempty-mixed-element-write.ts`、`nonempty-mixed-alias-push.ts`、
+`local-db-carrier-nullish-member-write.ts`、`local-db-carrier-object-assign.ts`、
+`local-db-carrier-array-push.ts`、`local-db-carrier-opaque-mutator.ts`、
+`captured-owner-reassignment-imported-raw-sql.ts`、
+`captured-owner-member-reassignment-imported-raw-sql.ts` 与
+`derived-collection-sticky-poison.ts`。
+
+> 更正（Round 26 补记）：上文「element write、alias push **或其他不可信元素**一旦进入」
+> 这一句在 Round 23 只是**意图**，并未落地。当时 member call 的 poison 唯一生产者是
+> `.push`，`unshift`/`splice`/`fill`/`Object.assign` 等插入型 mutation 只 invalidate
+> 而不 poison，因此后续一次 trusted push 仍能重新 bless 整组 provenance。该断言自
+> Round 26 起才真正成立，机制与证据见 §41。
+
+最终 focused suite 为 129 个 bypass fail、38 个 positive pass，实测
+`real 49.65s`（`user 71.18s`、`sys 2.80s`）。默认 production scan 实测
+`real 48.94s`（`user 70.62s`、`sys 2.68s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+237 个 reviewed exemption site、0 个 stale entry。ledger 未改，diff 仍为既有
+`+5/-0`、总 identity 77。#392 / #36 仍无直接 acceptance evidence，本轮不声称两者
+已解决。
+
+## 39. Round 24：v9 nested carrier、binding origin 与动态 capability 收敛
+
+modeled/traced call 现在为每次 invocation 建立以 caller 实际 declaration node 为键的
+argument→parameter origin map；callee 的同名 parameter/local 不再切断或伪造回传。
+object/array literal 内可按引用修改的 principal/collection alias 会精确带入 carrier root，
+callee 的 poison/invalidation 再映回原 caller binding；标量拷贝不会被误作可变 carrier。
+未能形成普通 call binding 的 computed namespace 与 conditional callee，只有在表达式可
+解析到同 repo function 且参数携带已追踪 DB/storage/queue capability 时才以
+`unprovable` fail closed；普通 built-in 与任意 callback 不因此取得 authority。
+
+新增五个 one-export bypass negative control，分别固定 nested derived collection、
+nested principal object、跨 module 同名 local，以及 computed/conditional capability
+crossing。最终 focused suite 为 134 个 bypass fail、38 个 positive pass，实测
+`real 48.16s`（`user 70.21s`、`sys 2.42s`）。默认 production scan 实测
+`real 48.52s`（`user 70.89s`、`sys 2.29s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+237 个 reviewed exemption site、0 个 stale entry。ledger 未改，diff 仍为既有
+`+5/-0`、77 个唯一四字段 identity。#392 / #36 仍无直接 acceptance evidence，本轮
+不声称两者已解决。
+
+## 40. Round 25：mixed carrier —— 把「可达 principal」与「是 principal」拆开
+
+### 漏洞
+
+Round 24 的 nested carrier origin map 有一个致命的语义混用。对于 identifier
+parameter 搭配非 identifier argument 的调用，checker 会遍历
+`escapedAliasIdentifierNodes(argumentNode)`，只要 object literal 内**任意一处**含有
+object-tainted 名字，就把整个 callee parameter 加进 `principalObjects`。而
+`principalObjects` 同时是 `principalExpressionKind` 的 identifier 分支所认定的
+「本身就是 principal object」——一旦成立，property access 分支的兜底规则
+`receiverKind === "object" → name === "ownerId" ? "binding" : null` 就把该 carrier
+的 `.ownerId` 直接判成已认证 ownerId。
+
+于是只要在 carrier 里塞一个真 principal 作陪，同一字面量里由攻击者控制的
+`ownerId` 兄弟属性就免费取得 authority：
+
+```ts
+const gate = await requireOwner();
+return load({ session: gate, ownerId: input.ownerId });  // 攻击者控制
+```
+
+`load` 内的 `ctx.ownerId` 被判为 `binding`，跨租户读取以 `ok=true`、**零条
+diagnostic** 通过围栏。read sink、write sink（`create({data:{ownerId}})`）、
+一层 imported helper、更深的嵌套 carrier（`{meta:{audit:{session:gate}}, …}`）、
+以及 element access `ctx["ownerId"]` 五种形态全部同样绿灯。
+
+加重因素：per-property provenance 此前被 `workspacePropertyProvenance`
+（`isWorkspacePackageModule`）闸住，而 `workspacePackageRegistry` 只登记
+`packages/*`，`DEFAULT_SOURCE_ROOTS` 的 `apps/web/lib`、`apps/web/app` 都不是
+workspace package。也就是说在**整棵真实目标树**上，上述 blanket object 规则是
+carrier authority 的唯一来源——脆弱路径就是默认路径。
+
+这个洞还直接击穿了 repo 自己已有的断言：workspace 块里
+`shapedHelper(prisma, { ownerId: searchParams.owner })` 断言 `ok=false`，只要给同一
+字面量补一个 `session: gate` 就会转绿。
+
+### 修复
+
+根因是 `principalObjects` 把两种语义压成了一个集合：「此 binding **是**已认证
+principal object」（授予 `.ownerId ⇒ binding`）与「此 binding 是一个**能到达**
+principal 的 carrier」（只有 mutation/poison/alias 追踪需要）。本轮把两者拆开：
+
+1. 新增 state 集合 `principalCarrierObjects`，carrier 映射改写入它；
+   `createState`、`cloneState`、`dedupeStates` state key、`clearPrincipalName`、
+   跨 module reset、invocation-exit caller restore 六处同步登记。
+2. `principalNameIsTainted` 与 `principalNameIsObjectTainted` 都纳入新集合，
+   因此 carrier mutation 仍然精确 poison/invalidate 回原 caller binding——
+   `nested-principal-object-carrier.ts` 的 `poison({ gate }, body.ownerId)`
+   洗白路径保持报红，语义与 Round 24 完全一致。
+3. `principalExpressionKind` 的 identifier 分支**不**认新集合。carrier 的
+   `ctx.ownerId` 与 `ctx["ownerId"]` 因此落回 `principalPropertyBindings`
+   逐属性查表，未证明 provenance 的属性默认拒绝。真 principal object
+   （guard result、destructuring、`principalKind` 路径所设）不受影响，
+   `ctx.session.ownerId` 这类形态仍按原规则成立。
+4. 撤掉参数传递处的 `workspacePropertyProvenance` 闸，逐属性 provenance 对所有
+   module 生效。这不是放宽：逐属性 provenance 严格窄于 blanket object 授予，
+   属性 kind 一律取自 caller state 的 `principalExpressionKind`，无法凭空制造
+   authority；没有它，第 3 步会把 `apps/web` 里合法的 `{ownerId: gate.ownerId}`
+   carrier 全部误报。`workspacePropertyProvenance` 常量随之成为孤儿，一并删除。
+5. 深层 carrier（`ctx.meta.audit.session.ownerId`）不递归推导，按 fail closed
+   处理——这是本轮的明确取舍，由 `mixed-principal-carrier-nested.ts` 固定。
+
+对抗性验证另外确认四点：callee 先 `ctx.ownerId = evil` 再读取报红；
+`{...{ownerId: input.ownerId}, session: gate}` spread 洗白报红；
+untrusted local 的 shorthand `{ ownerId, session: gate }` 报红；重复键
+`{ownerId: gate.ownerId, ownerId: input.ownerId}` 按 last-wins 报红。而
+owner-proven carrier 再转发一层（`forward(ctx) → sink(ctx)`）正确保持通过。
+
+### fixture
+
+新增五个 one-export bypass negative control：`mixed-principal-carrier.ts`、
+`-imported.ts`、`-write.ts`、`-element-access.ts`、`-nested.ts`，全部固定为
+`missing-principal-resolution`。新增两个 positive：
+`principal-session-carrier.ts`（`{session: gate}` → `ctx.session.ownerId`）与
+`principal-owner-id-carrier.ts`（`{ownerId: gate.ownerId}` → `ctx.ownerId`）；
+前者在修复前其实是**误报**（apps 形态无 per-property provenance），现在证明通过。
+workspace 块另加 `shaped-mixed.ts`（混合 carrier 必须红）与
+`shaped-carrier.ts`（owner-proven carrier 必须绿），把 provenance 闸的改动在
+`packages/*` 形态上双向钉死。
+
+### 结果
+
+最终 focused suite 为 139 个 bypass fail、40 个 positive pass，实测
+`real 48.42s`（`user 71.14s`、`sys 2.28s`）。默认 production scan 实测
+`real 48.28s`（`user 70.72s`、`sys 2.23s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+222 个 reviewed exemption site、0 个 stale entry。
+
+FINDING 仍为 0，真实树没有新增未受保护的 tenant-scoped 调用点。第 4 步的逐属性
+provenance 反而使 `customer-inbox-service.ts` 的 `assignConversation`、
+`takeOverConversation`、`handOffConversation`、`setConversationStatus`、
+`requestAutomationResume` 五个 export 首次被**证明**——它们走的正是
+`commitConversationEvent(tx, { principal, current, … })` 这一合法 nested carrier，
+sink 读的是 `args.principal.ownerId`。这五条 Round 7 豁免（理由原文即
+「nested carrier provenance is intentionally not inferred」）随即转为 STALE，
+按 ledger 卫生规则删除；exemption site 由 237 降为 222，唯一四字段 identity
+由 77 降为 72。这是收紧而非放宽：这五个 export 今后必须每轮自证，证明一旦断裂
+就报红，而不再被豁免静默吸收。#392 / #36 仍无直接 acceptance evidence，本轮
+不声称两者已解决。
+
+## 41. Round 26：collection washing —— 让 poison 的生产脱离 `.push`
+
+### 漏洞
+
+§38（Round 23）写下的 sticky-poison 不变式是「element write、alias push 或其他不可信
+元素一旦进入，sticky-negative 会保留到重新声明，后续 trusted push 不能恢复整组
+provenance」。实现只兑现了前两项。member call 路径上 poison 的**唯一**生产者是
+`.push` handler：`wasPoisoned` / `becomesPoisoned` 与 `poisonedCollections.add`
+全部长在那一个 handler 里；另一个生产者是 element-access assignment。
+
+任何**非 push 的插入型 mutation** 都落到 un-modeled member call 分支，只走
+`markCollectionsPossiblyMutated`（仅 `definitelyEmptyCollections.delete`）与
+`invalidateCallEscapes → invalidateDirectAlias`。而 `invalidateDirectAlias` 在名字尚未
+object-tainted 时直接 early-return——对一个刚声明的 `const keys: string[] = []` 是纯
+no-op。于是 `keys` 保留干净的 tracked state，紧随其后的一次 trusted push 算出
+`wasPoisoned === false`，把整个 list（含仍坐在 index 0 的攻击者元素）重新 bless：
+
+```ts
+const gate = await requireOwner();
+if ("error" in gate) return gate;
+const keys: string[] = [];
+if (input.extra) keys.unshift(input.clientKey);              // 攻击者控制，index 0
+keys.push(storageKey(gate.ownerId, "a".repeat(64), "png"));  // 把整组重新 bless
+return Promise.all(keys.map((key) => storage.get(key)));     // index 0 被真的取出
+```
+
+以 `ok=true`、**零条 diagnostic** 通过围栏。最锋利的证据：把既有红 fixture
+`derived-collection-sticky-poison.ts` 里唯一的 `keys.push(input.clientKey)` 改成
+`keys.unshift(...)`，同一个文件立刻转绿。
+
+第二条洗白路线：即便 receiver 已经 object-tainted，
+`invalidatePrincipalAlias → clearPrincipalName` 会丢掉
+`safeDerivedCollections` / `knownNonEmpty` / `definitelyEmpty` 却**从不**写入
+`poisonedCollections`，随后 `collectionAliasesForState` 对这个已不再 tracked 的名字
+返回空集，下一次 push 的 `wasPoisoned` 依然是 false。
+
+实测转绿的形态：`unshift`、`splice(0,0,x)`、`fill(x)`、
+`Object.assign(keys,{0:x,length:1})`、alias（`const alias = keys; alias.unshift(x)`）、
+imported helper（callee 体内 `target.unshift(value)`）、`copyWithin`、
+element access `keys["unshift"](x)`、动态成员 `keys[input.mutator](x)` 共九种。
+
+### 修复
+
+把 poison 的生产从 `.push` 里剥出来，改成 un-modeled member call 分支的一等公民。
+
+1. 新增 `PURE_COLLECTION_READ_MEMBERS` **allowlist**（`:171`），沿用 Round 7 的
+   default-deny 架构：只列举不可能插入新元素的成员——`map`/`filter`/`forEach`/
+   `slice`/`concat`/`join`/`find*`/`some`/`every`/`reduce*`/`includes`/`indexOf`/
+   `at`/`entries`/`keys`/`values`/`flat`/`flatMap`/`toString`，外加非插入型 mutator
+   `pop`/`shift`/`sort`/`reverse`。**不用 denylist**：`keys.map(...)` 这类
+   positive 必须保持绿灯，而未知成员、`callMemberName` 返回 null 的动态成员，
+   一律落在 allowlist 之外 → 报红。
+2. `poisonCollectionNames`（`:3622`）是唯一的 poison 写入点：对 alias group 里每个
+   名字做 `poisonedCollections.add` + `safeDerivedCollections` /
+   `principalDerivedBindings` / `principalDerivedObjects` /
+   `definitelyEmptyCollections` 四删。`affectedNames` 在 alias group 尚未 tracked 时
+   回落到 receiver 本名——这一步是**必需**的，镜像 push handler 的同款回落：
+   `new Array(1)` 这种未 tracked 的 receiver 否则仍可被洗白，而 poison 条目本身
+   正是让该名字此后变为 tracked 的东西（`collectionAliasesForState` 的 tracked 判据
+   含 `poisonedCollections`），下一次 push 的 `wasPoisoned` 因此为 true。
+3. `poisonMutatedCollectionReceiver`（`:3641`）复用 push handler 的
+   `carriesOnlyDerived` 判据（`principalExpressionKind === "derived"` 且无
+   object-tainted escape）。参数并非全部 principal-derived（含 `args.length === 0`
+   的全不透明 mutation）才 poison。挂载点在 un-modeled call 分支内、
+   `invalidateCallEscapes` **之前**（`:6104`），并额外补在 `Object.assign` 自己的
+   handler 上（`:5880`），因为 `Object.assign` 属于 modeled call、走不到前者。
+4. `poisonEscapedCollections`（`:3672`）把同一 poison 延伸到**参数位置**：tracked
+   collection 一旦交给 un-modeled callee，alias group 直接 poison（`:6111`）。这里
+   刻意**只**处理已 tracked 的 collection——任意 identifier 传进 opaque call 由既有
+   escape invalidation 负责，不在此扩权。imported helper 形态则由既有的
+   traced-callee 回映（callee 内 parameter 被 poison → caller argument origin 被
+   poison）覆盖，无需新增映射。
+5. `clearPrincipalName` **不动**：它本来就不清 `poisonedCollections`，poison 因此能
+   活过后续的 `invalidatePrincipalAlias`，正是第二条洗白路线所需的解法。
+
+### 一次自伤与收敛方式（重要）
+
+第一版把 receiver poison 无条件应用到**所有**非 allowlist 成员调用，真实树立刻从
+`FINDING=0` 变成 `FINDING=4`（7 条 diagnostic），全部落在
+`data.ts:198/242/281` 与 `library-actions.ts:66` 的 `storage.exists`。根因是同一份
+production 形态：
+
+```ts
+const ext = g.asset.ext.toLowerCase();
+const key = storageKey(g.asset.ownerId, g.asset.contentHash, ext);
+```
+
+`toLowerCase` 不在 collection allowlist 内，于是 chain root `g` 被 poison、被踢出
+`principalDerivedBindings`，`g.asset.ownerId` 的 owner provenance 随之蒸发——这是**我
+自己引入的建模缺陷**，不是真实的未受保护调用点。
+
+收敛方式是**新增健全建模**，不是放宽默认：未 tracked 的 receiver 只在 callee receiver
+恰为**裸 identifier**时才 poison（`:3646`、`:3663`）。理由是精确的——裸 identifier 正是
+后续 `.push` 唯一能 bless 进 `safeDerivedCollections` 的形态；经属性链访问的
+collection（`box.keys`）在本 checker 里从来不是 tracked collection，sink 侧
+`collectionReceiverIsDerived` 也要求 `ts.isIdentifier(receiver)`，因此该路径不可达。
+同时把整块 receiver poison 收进 `!callIsModeled` 分支，避免误伤
+`derivedMapGetCall`（`labels.get(...)`）、`derivedCollectionPreservingCall`
+（`.slice()`）与 storage/prisma 等 modeled receiver。修正后真实树回到
+`FINDING=0`，输出与基线**逐字节相同**。
+
+### 刻意保留的边界
+
+`box.keys.unshift(x)` 这类经属性链的 collection 不做递归推导，按 fail closed 处理——
+它在修复前后都报红（由 `nested-derived-collection-carrier.ts` 一族固定），本轮不为它
+新增建模。
+
+### fixture
+
+新增七个 one-export bypass negative control，全部固定为 `principal-result-unused`，
+每个都是既有 `derived-collection-sticky-poison.ts` 的单 token 变体：
+`derived-collection-unshift-poison.ts`、`-splice-poison.ts`、`-fill-poison.ts`、
+`-object-assign-poison.ts`、`derived-collection-alias-unshift-poison.ts`、
+`derived-collection-imported-unshift-poison.ts`（配套 support
+`unshift-keys.ts`）、`derived-collection-dynamic-member-poison.ts`（把 allowlist 的
+default-deny 语义钉死：动态成员名必须报红）。
+
+新增两个 positive，双向钉住 allowlist：
+`derived-collection-derived-unshift.ts`（`unshift` 只携带 owner-derived 值时必须绿，
+锁住 `carriesOnlyDerived` 出口）与 `derived-collection-pure-read.ts`（`.slice()` 等
+纯读成员不得 poison owner-derived collection）。
+
+### 结果
+
+focused suite 由 139 bypass / 40 positive 升至 **146 bypass / 42 positive**，exit 0，
+实测 `real 2:00.66`（`user 197.62s`、`sys 6.70s`）。默认 production scan 实测
+`real 1:59.31`（`user 196.92s`、`sys 6.68s`），结果为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+222 个 reviewed exemption site、0 个 stale entry，exit 0——与 Round 25 基线输出
+**逐字节相同**。
+
+零回归：把 Round 25 的 suite 日志与本轮日志逐行 diff，唯一差异就是新增的 7 条
+`EXPECTED FAIL` 与 2 条 `PASS`，既有 bypass 全部以原 reason 保持红、既有 positive
+全部保持绿。ledger 未改，exemption site 与 identity 数均未变。FINDING 仍为 0，
+真实树没有新增未受保护的 tenant-scoped 调用点，无需在 #458 立单。
+
+## 42. Round 27：local object/class surface —— 本地对象门面整File脱离扫描
+
+### 漏洞
+
+本地声明的对象字面量（或本地 class 实例）只要用它的方法转发一个 tracked
+capability，**整个文件会从扫描里静默消失**：`ok=true`、covered files = 0、
+零 diagnostic、`FINDING=0` 全绿。这是 proof-carrying gate 最坏的失效形态——
+不是把某个 entry 判错，而是连同文件一起从报告里删掉，没有任何信号。
+
+```ts
+"use server";
+const dispatch = { run: (db: typeof prisma, assetId: string) => find(db, assetId) };
+return dispatch.run(prisma, id);   // find 体内是 db.contact.findMany({ where: { id } })
+```
+
+对照组 `return find(prisma, id);` 正确报红 `missing-principal-resolution`。
+
+机制是三处**同时**失效：
+
+1. `callBinding` 的 property-access 分支只解析 `frame.callbacks`、
+   `namespaceImports`、`imports`；`const dispatch = { run: ... }` 三者皆不中，
+   返回 `null` → `earlyBinding` 为空。
+2. `unresolvedSameRepoCalleeNames` 的 property-access 分支只咨询
+   `namespaceFunction`，对本地 receiver 返回 `[]`。
+3. 于是 `unresolved same-repo callee …` 那道 fail-closed 闸门虽然
+   `callPassesTrackedCapability` 已为 true，却因为名字表为空而从不触发。
+
+同时 arrow body 根本没有被走过：`asyncExpression` 遇到 function-like 直接
+`return states`，而对象字面量的属性函数只有在**作为 call argument 传入**并注册成
+callback 时才会被展开；`info.localFunctions` 只登记函数声明与「initializer 本身就是
+函数」的变量声明，对象字面量永远进不去。
+
+**这是疏漏而非范围裁剪**：imported 同构形态一直是红的——
+`import { repo } from …; repo.read(prisma, id)` → `unprovable`，
+理由 `imported object surface repo.read receives a tracked DB/storage/queue
+capability but its callee body cannot be resolved`。imported receiver 红、
+local receiver 隐形，且文件头已自陈「Unresolved dynamic dispatch and computed
+sensitive calls are always `unprovable`」。
+
+实测转绿的形态共九种：arrow 属性、method shorthand、element access
+`dispatch["run"]`、嵌套 `api.db.read`、module-scope 对象字面量、本地 class 实例
+方法（`new Service().run` 与 `const svc = new Service(); svc.run`）、storage
+capability 变体、以及**先正确 await requireOwner() 再泄漏**的 guard-then-leak 形态。
+唯一残存的兜底是：当那句未加 scope 的查询**文本上就在 entry 文件内**时，
+module 级 fallback 仍会响——但 capability tracker 在两种形态下都被绕开了。
+
+### 修复
+
+分两层，第一层给精确 diagnostic，第二层是它背后的 fail-closed 网。
+
+1. **解析本地成员体**（`callBinding` 尾部，`:5127`）。新增
+   `localMemberFunctionNode`（`:3166`）：用既有的 `memberPath` 拿到
+   `{ root, members }`（property access 与字符串字面量 element access 通吃），
+   经 `localReceiverInitializer`（`:3076`）取声明处 initializer——参数、import、
+   global 一律不解析——再沿 `members` 逐层走对象字面量，
+   末端是 function-like 就返回 `{ kind: "local", … }`。既有的 `kind === "local"`
+   路径随即走 `invokeFunction` 追踪函数体，于是复现用例产出与直接调用对照组
+   **完全相同**的 `missing-principal-resolution`。
+   本地 class 走 `localClassMethodNode`（`:3153`）：`new X()` 形态经
+   `visibleClassDeclaration` 找到本文件可见的 `ClassDeclaration`，再取
+   `MethodDeclaration`。
+   **不健全就不解析**（否则落到第二层）：receiver root 被重新赋值或被写成员
+   （`dispatch.run = leak`，`assignmentTargetRootNames` 把它归到 root，
+   故 `bindingIsReassigned` 一并覆盖）、receiver 被交给任何 call/new/spread
+   （新增 `escapedReceiverNames`，`:3042`，专防 `Object.assign(dispatch, …)`
+   这类不透明改写）、字面量含 spread 或 computed key、class 有 heritage clause。
+2. **本地 receiver 兜底报红**（`unresolvedLocalReceiverNames`，`:5493`；
+   闸门 `:6284`）。刻意**另起一个方法**而不改
+   `unresolvedSameRepoCalleeNames`，既有行为零风险。命中条件：root 是本仓库内的
+   局部变量声明（`visibleBindingNode` 得到 `VariableDeclaration`，或落在
+   `frame.info.localValues`），且**不是** import / namespace import / callback /
+   参数 / global，且**不是** tracked capability 本身
+   （`expressionContainsTrackedCapability`）。沿用既有报错文案与
+   `REASON.UNPROVABLE`。
+   两道防回归护栏：闸门加 `!callIsModeled`，让 `$transaction`、`push`、
+   `Object.assign`、derived-Map get、pg-boss `fromPrisma` adapter 等已建模形态保住
+   各自的精确处理；root 解析不到任何本地声明时**不**加名字，保住 §39 对内建函数与
+   任意 callback 的刻意豁免。因为它只在 `callPassesTrackedCapability` 已为 true 时
+   才可能触发，爆炸半径被钉死在「本地非函数 receiver 被塞进 prisma/storage/queue」
+   这一危险形态上。
+   顺带按同一 default-deny 收口：computed 成员名（`dispatch[pick](prisma, id)`）
+   原本因 `memberPath` 给出 `null` 而漏网，现在记为 `[computed]` 照样报红——
+   动态 dispatch 本就永远钉不到函数体。
+
+### fixture
+
+8 个第一层 bypass（`local-object-surface-{arrow,method,element,nested,module-scope,
+guarded,storage}.ts`、`local-class-surface-method.ts`），全部以
+`missing-principal-resolution` 报红，与直接调用对照组同因。
+
+6 个第二层 bypass（`local-object-surface-{assign-rewrite,member-write,spread,
+dynamic-member,reassigned}.ts`、`local-class-surface-inherited.ts`），
+全部以 `unprovable` 报红，逐条钉住上面每一个「不健全就不解析」的出口。
+
+3 个 positive 证明第二层不误伤：`local-object-helper-pure.ts`
+（不携带 capability 的普通本地 helper 对象）、
+`local-object-repository-owned.ts` 与 `local-class-repository-owned.ts`
+（按 ownerId 正确 scope 的本地 repository 形态，第一层把它们从**基线上的
+误报 `unprovable`** 变成真正的绿灯——这正是第一层要买的精度）。
+
+`assert.equal(result.files.length, 1, "must be content-covered")` 本来就在
+fixture 侧，所以这批 fixture 天然把「静默掉出扫描」钉成硬失败。
+
+### 针对「静默掉覆盖」本身的护栏
+
+原先没有任何断言看住 production 的 covered-file 数，文件从被扫到消失读起来就是绿的。
+`verify-auth-guards.test.mjs:338` 新增三条：covered file 数 ≥ 120、
+covered entry 数 ≥ 465、以及任何 covered file 都不得报告 0 个 entry。
+注释写明这两个 floor 只可随真实覆盖增长而上调，**绝不可为了让某次运行通过而下调**——
+下跌正是它要抓的症状。实测把 floor 临时改成 121 会以
+`production coverage fell to 120 file(s), below the 121 floor` 失败。
+边界说明：floor 抓的是**既有覆盖下跌**（即本轮漏洞的失效形态），
+新增文件一出生就隐形不会让 floor 下跌，那一类仍由 fixture 与 default-deny 建模兜底。
+
+### 刻意保留的边界
+
+`new ImportedClass().run(prisma, id)` 走第二层报红（不解析跨文件 class 体），
+不做递归跨模块 class 解析——fail closed，非静默放行。
+
+### 结果
+
+focused suite 由 146 bypass / 42 positive 升至 **160 bypass / 45 positive**，exit 0。
+默认 production scan 为
+`PASS=61 INTERNAL-PASS=27 ADMIN-PASS=2 EXEMPT=30 FINDING=0`，120 个 covered file、
+222 个 reviewed exemption site、0 个 stale entry，exit 0——与 Round 26 基线输出
+**逐字节相同**。
+
+零回归：把 Round 26 的 suite 日志与本轮逐行 diff，`<` 侧唯一一行就是那句统计汇总，
+`>` 侧只有新增的 14 条 `EXPECTED FAIL` 与 3 条 `PASS`；既有 bypass 全部以原 reason
+保持红、既有 positive 全部保持绿。ledger 未改。FINDING 仍为 0，真实树没有新增
+未受保护的 tenant-scoped 调用点，无需在 #458 立单——事前 grep 也确认真实树不存在
+「对象门面/class 实例方法接收 capability」这一形态（只有 Error 子类与 `new Stripe`）。

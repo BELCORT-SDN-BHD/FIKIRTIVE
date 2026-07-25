@@ -24,7 +24,13 @@
  *   node scripts/verify-auth-guards.mjs
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import {
   dirname,
@@ -46,6 +52,7 @@ export const MAX_SAME_PACKAGE_IMPORT_DEPTH = 1;
 export const DEFAULT_SOURCE_ROOTS = ["apps/web/lib", "apps/web/app"];
 export const DEFAULT_EXEMPTIONS_PATH = "scripts/ci/auth-guard-exemptions.txt";
 export const DEFAULT_TRUSTED_AUTH_GUARD_PATHS = ["apps/web/lib/auth-guard.ts"];
+export const DEFAULT_TRUSTED_STORAGE_PATHS = ["apps/web/lib/storage.ts"];
 
 // Exact, audited idioms used by parameterized-principal internal modules in the live tree.
 // Generic `args`/`input` names never qualify by themselves: their type must be listed or contain
@@ -133,7 +140,11 @@ export const PRISMA_READ_MEMBERS = new Set([
   "findUnique",
   "groupBy",
 ]);
-const READ_ONLY_SCALAR_MEMBER_CALLS = new Set(["trim"]);
+const READ_ONLY_SCALAR_MEMBER_CALLS = new Set([
+  "toISOString",
+  "toLowerCase",
+  "trim",
+]);
 const CALLBACK_CONSUMER_ARGUMENT_INDEXES = new Map([
   ["catch", new Set([0])],
   ["every", new Set([0])],
@@ -151,6 +162,43 @@ const CALLBACK_CONSUMER_ARGUMENT_INDEXES = new Map([
   ["then", new Set([0, 1])],
 ]);
 const MODELED_PURE_CALLBACK_GLOBALS = new Set(["Boolean", "Number", "String"]);
+const DERIVED_COLLECTION_CALLBACK_MEMBERS = new Set(["map"]);
+const DERIVED_COLLECTION_PRESERVING_MEMBERS = new Set(["slice"]);
+// Allowlist (default-deny, Round 7 architecture): member calls that cannot insert a
+// new element into the receiver collection. Everything else — unshift/splice/fill/
+// copyWithin, Object.assign onto the receiver, and every unknown or dynamically named
+// member — is treated as an inserting mutation and poisons the receiver alias group.
+const PURE_COLLECTION_READ_MEMBERS = new Set([
+  "at",
+  "concat",
+  "entries",
+  "every",
+  "filter",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flat",
+  "flatMap",
+  "forEach",
+  "includes",
+  "indexOf",
+  "join",
+  "keys",
+  "lastIndexOf",
+  "map",
+  "pop",
+  "reduce",
+  "reduceRight",
+  "reverse",
+  "shift",
+  "slice",
+  "some",
+  "sort",
+  "toString",
+  "values",
+]);
+const STORAGE_OWNER_RELATION_MEMBERS = new Set(["asset"]);
 const POSITIVE_PRISMA_IDENTITY_FILTER_OPERATORS = new Set([
   "equals",
   "has",
@@ -239,6 +287,130 @@ function slash(path) {
   return path.split(sep).join("/");
 }
 
+function pathIsContained(root, candidate) {
+  const fromRoot = relative(root, candidate);
+  return (
+    fromRoot === "" ||
+    (!isAbsolute(fromRoot) && fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`))
+  );
+}
+
+function trustedModuleRegistry(repoRoot, paths, label) {
+  const realRoot = realpathSync(repoRoot);
+  const registry = new Set();
+  for (const configuredPath of paths) {
+    if (typeof configuredPath !== "string" || configuredPath.length === 0) {
+      throw new Error(`${label} trusted module path must be a non-empty string`);
+    }
+    const absolutePath = isAbsolute(configuredPath)
+      ? resolve(configuredPath)
+      : resolve(repoRoot, configuredPath);
+    if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) {
+      throw new Error(`${label} trusted module does not exist as a file: ${configuredPath}`);
+    }
+    const realPath = realpathSync(absolutePath);
+    if (!pathIsContained(realRoot, realPath)) {
+      throw new Error(`${label} trusted module escapes the repository root: ${configuredPath}`);
+    }
+    registry.add(realPath);
+  }
+  return registry;
+}
+
+function conditionalPackageExportTarget(value) {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const target = conditionalPackageExportTarget(candidate);
+      if (target) return target;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  for (const condition of ["source", "import", "default"]) {
+    if (!Object.hasOwn(value, condition)) continue;
+    const target = conditionalPackageExportTarget(value[condition]);
+    if (target) return target;
+  }
+  return null;
+}
+
+function packageExportTarget(exportsField, subpath) {
+  if (typeof exportsField === "string" || Array.isArray(exportsField)) {
+    return subpath === "." ? conditionalPackageExportTarget(exportsField) : null;
+  }
+  if (!exportsField || typeof exportsField !== "object") return null;
+  const subpathKeys = Object.keys(exportsField).filter((key) => key.startsWith("."));
+  if (subpathKeys.length) {
+    if (!Object.hasOwn(exportsField, subpath)) return null;
+    return conditionalPackageExportTarget(exportsField[subpath]);
+  }
+  return subpath === "." ? conditionalPackageExportTarget(exportsField) : null;
+}
+
+function workspacePackageRegistry(repoRoot) {
+  const realRoot = realpathSync(repoRoot);
+  const packagesRoot = join(repoRoot, "packages");
+  const registry = new Map();
+  if (!existsSync(packagesRoot)) return registry;
+  for (const entry of readdirSync(packagesRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const packageDir = join(packagesRoot, entry.name);
+    const manifestPath = join(packageDir, "package.json");
+    if (!existsSync(manifestPath) || !statSync(manifestPath).isFile()) continue;
+    const realPackageDir = realpathSync(packageDir);
+    if (!pathIsContained(realRoot, realPackageDir)) {
+      throw new Error(`workspace package escapes the repository root: packages/${entry.name}`);
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (typeof manifest.name !== "string" || !manifest.exports) continue;
+    if (registry.has(manifest.name)) {
+      throw new Error(`duplicate workspace package name: ${manifest.name}`);
+    }
+    registry.set(manifest.name, {
+      dir: resolve(packageDir),
+      realDir: realPackageDir,
+      exports: manifest.exports,
+    });
+  }
+  return registry;
+}
+
+function sourcePathCandidates(base) {
+  const extension = extname(base);
+  if (SOURCE_EXTENSIONS.includes(extension)) return [base];
+  if (extension === ".js") {
+    const stem = base.slice(0, -extension.length);
+    return [`${stem}.ts`, `${stem}.tsx`];
+  }
+  if (extension === ".mjs") return [`${base.slice(0, -extension.length)}.mts`];
+  if (extension === ".cjs") return [`${base.slice(0, -extension.length)}.cts`];
+  if (extension) return [];
+  return [
+    ...SOURCE_EXTENSIONS.map((candidate) => `${base}${candidate}`),
+    ...SOURCE_EXTENSIONS.map((candidate) => join(base, `index${candidate}`)),
+  ];
+}
+
+function memberPath(expression) {
+  const members = [];
+  let node = unwrapped(expression);
+  while (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    if (ts.isPropertyAccessExpression(node)) {
+      members.unshift(node.name.text);
+    } else if (node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)) {
+      members.unshift(node.argumentExpression.text);
+    } else {
+      members.unshift(null);
+    }
+    node = unwrapped(node.expression);
+  }
+  return {
+    root: ts.isIdentifier(node) ? node.text : null,
+    members,
+  };
+}
+
 function hasModifier(node, kind) {
   return Boolean(node.modifiers?.some((modifier) => modifier.kind === kind));
 }
@@ -256,7 +428,6 @@ function isTestOrFixturePath(path) {
   const normalized = slash(path);
   return (
     normalized.includes("/__tests__/") ||
-    normalized.includes("/fixtures/") ||
     /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(normalized) ||
     normalized.endsWith(".d.ts")
   );
@@ -290,7 +461,7 @@ function propertyNameText(name) {
   return null;
 }
 
-function rootIdentifier(expression) {
+function rootIdentifierNode(expression) {
   let node = expression;
   while (
     ts.isParenthesizedExpression(node) ||
@@ -315,7 +486,11 @@ function rootIdentifier(expression) {
       node = node.expression;
     }
   }
-  return ts.isIdentifier(node) ? node.text : null;
+  return ts.isIdentifier(node) ? node : null;
+}
+
+function rootIdentifier(expression) {
+  return rootIdentifierNode(expression)?.text ?? null;
 }
 
 function unwrapped(expression) {
@@ -374,6 +549,47 @@ function assignmentTargetRootNames(target, out = new Set()) {
         assignmentTargetRootNames(element.left, out);
       } else {
         assignmentTargetRootNames(element, out);
+      }
+    }
+  }
+  return out;
+}
+
+function assignmentTargetMemberRootNames(target, out = new Set()) {
+  const node = unwrapped(target);
+  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    const root = rootIdentifier(node);
+    if (root) out.add(root);
+    return out;
+  }
+  if (
+    ts.isBinaryExpression(node) &&
+    ts.isAssignmentOperator(node.operatorToken.kind)
+  ) {
+    return assignmentTargetMemberRootNames(node.left, out);
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    for (const property of node.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        assignmentTargetMemberRootNames(property.initializer, out);
+      } else if (ts.isSpreadAssignment(property)) {
+        assignmentTargetMemberRootNames(property.expression, out);
+      }
+    }
+    return out;
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    for (const element of node.elements) {
+      if (ts.isOmittedExpression(element)) continue;
+      if (ts.isSpreadElement(element)) {
+        assignmentTargetMemberRootNames(element.expression, out);
+      } else if (
+        ts.isBinaryExpression(element) &&
+        ts.isAssignmentOperator(element.operatorToken.kind)
+      ) {
+        assignmentTargetMemberRootNames(element.left, out);
+      } else {
+        assignmentTargetMemberRootNames(element, out);
       }
     }
   }
@@ -465,6 +681,31 @@ function principalAuthorityKey(authorities) {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, kind]) => `${name}:${kind}`)
     .join(",");
+}
+
+function principalPropertyKey(root, property) {
+  return `${root}\0${property}`;
+}
+
+function hasPrincipalProperties(bindings, root) {
+  const prefix = `${root}\0`;
+  return [...bindings.keys()].some((key) => key.startsWith(prefix));
+}
+
+function clearPrincipalProperties(bindings, root) {
+  const prefix = `${root}\0`;
+  for (const key of bindings.keys()) {
+    if (key.startsWith(prefix)) bindings.delete(key);
+  }
+}
+
+function principalPropertiesForRoot(bindings, root) {
+  const prefix = `${root}\0`;
+  const properties = new Map();
+  for (const [key, kind] of bindings) {
+    if (key.startsWith(prefix)) properties.set(key.slice(prefix.length), kind);
+  }
+  return properties;
 }
 
 function expressionIsOwnerNeutral(expression, neutralBindings) {
@@ -567,6 +808,30 @@ function escapedAliasIdentifiers(expression, out = new Set()) {
   return out;
 }
 
+function escapedAliasIdentifierNodes(expression, out = []) {
+  const node = unwrapped(expression);
+  if (ts.isIdentifier(node)) {
+    out.push(node);
+  } else if (ts.isObjectLiteralExpression(node)) {
+    for (const property of node.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        escapedAliasIdentifierNodes(property.initializer, out);
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        out.push(property.name);
+      } else if (ts.isSpreadAssignment(property)) {
+        escapedAliasIdentifierNodes(property.expression, out);
+      }
+    }
+  } else if (ts.isArrayLiteralExpression(node)) {
+    for (const element of node.elements) {
+      escapedAliasIdentifierNodes(element, out);
+    }
+  } else if (ts.isSpreadElement(node)) {
+    escapedAliasIdentifierNodes(node.expression, out);
+  }
+  return out;
+}
+
 function principalAliasMembers(state, name) {
   return state.principalAliases.get(name) ?? new Set([name]);
 }
@@ -575,16 +840,28 @@ function principalNameIsTainted(state, name) {
   return (
     state.principalBindings.has(name) ||
     state.principalObjects.has(name) ||
+    state.principalCarrierObjects.has(name) ||
     state.principalDerivedBindings.has(name) ||
-    state.principalAuthorityBindings.has(name)
+    state.principalAuthorityBindings.has(name) ||
+    hasPrincipalProperties(state.principalPropertyBindings, name) ||
+    hasPrincipalProperties(state.principalCollectionPropertyBindings, name) ||
+    state.signedMediaClaims.has(name) ||
+    state.nonNullableSignedMediaClaims.has(name) ||
+    state.authorizedSignedMediaClaims.has(name)
   );
 }
 
 function principalNameIsObjectTainted(state, name) {
   return (
     state.principalObjects.has(name) ||
+    state.principalCarrierObjects.has(name) ||
     state.principalDerivedObjects.has(name) ||
-    state.principalAuthorityBindings.has(name)
+    state.principalAuthorityBindings.has(name) ||
+    hasPrincipalProperties(state.principalPropertyBindings, name) ||
+    hasPrincipalProperties(state.principalCollectionPropertyBindings, name) ||
+    state.signedMediaClaims.has(name) ||
+    state.nonNullableSignedMediaClaims.has(name) ||
+    state.authorizedSignedMediaClaims.has(name)
   );
 }
 
@@ -612,11 +889,34 @@ function linkPrincipalAliases(state, left, right) {
 function clearPrincipalName(state, name) {
   state.principalBindings.delete(name);
   state.principalObjects.delete(name);
+  state.principalCarrierObjects.delete(name);
   state.principalDerivedBindings.delete(name);
   state.principalDerivedObjects.delete(name);
   state.principalAuthorityBindings.delete(name);
+  state.booleanFacts.delete(name);
+  clearPrincipalProperties(state.principalPropertyBindings, name);
+  clearPrincipalProperties(state.principalCollectionPropertyBindings, name);
   state.principalOwnerNeutralBindings.delete(name);
   state.principalImmutableObjectBindings.delete(name);
+  state.knownPrincipalBindings.delete(name);
+  state.nullableDerivedBindings.delete(name);
+  state.safeDerivedCollections.delete(name);
+  state.knownNonEmptyCollections.delete(name);
+  state.definitelyEmptyCollections.delete(name);
+  state.signedMediaClaims.delete(name);
+  state.nonNullableSignedMediaClaims.delete(name);
+  state.authorizedSignedMediaClaims.delete(name);
+}
+
+function copySignedMediaTrust(targetState, sourceState, sourceName, targetName) {
+  if (!sourceState.signedMediaClaims.has(sourceName)) return;
+  targetState.signedMediaClaims.add(targetName);
+  if (sourceState.nonNullableSignedMediaClaims.has(sourceName)) {
+    targetState.nonNullableSignedMediaClaims.add(targetName);
+  }
+  if (sourceState.authorizedSignedMediaClaims.has(sourceName)) {
+    targetState.authorizedSignedMediaClaims.add(targetName);
+  }
 }
 
 function invalidatePrincipalAlias(state, name) {
@@ -629,17 +929,45 @@ function invalidatePrincipalAlias(state, name) {
   return members;
 }
 
+function correlateNonEmptyCollectionStates(
+  states,
+  name,
+) {
+  if (!name) return states;
+  const correlated = states.filter(
+    (state) => !state.definitelyEmptyCollections.has(name),
+  );
+  if (correlated.length) return correlated;
+  return states.map((state) => {
+    const next = cloneState(state);
+    invalidatePrincipalAlias(next, name);
+    return next;
+  });
+}
+
 function cloneState(state) {
   return {
     resolved: state.resolved,
     pending: new Set(state.pending),
     dbBindings: new Set(state.dbBindings),
+    storageBindings: new Set(state.storageBindings),
+    storageNamespaceBindings: new Set(state.storageNamespaceBindings),
+    unsupportedStorageBindings: new Set(state.unsupportedStorageBindings),
+    unsupportedStorageNamespaceBindings: new Set(
+      state.unsupportedStorageNamespaceBindings,
+    ),
     queueBindings: new Set(state.queueBindings),
     principalBindings: new Set(state.principalBindings),
     principalObjects: new Set(state.principalObjects),
+    principalCarrierObjects: new Set(state.principalCarrierObjects),
     principalDerivedBindings: new Set(state.principalDerivedBindings),
     principalDerivedObjects: new Set(state.principalDerivedObjects),
     principalAuthorityBindings: new Map(state.principalAuthorityBindings),
+    booleanFacts: new Map(state.booleanFacts),
+    principalPropertyBindings: new Map(state.principalPropertyBindings),
+    principalCollectionPropertyBindings: new Map(
+      state.principalCollectionPropertyBindings,
+    ),
     principalOwnerNeutralBindings: new Set(state.principalOwnerNeutralBindings),
     principalImmutableObjectBindings: new Set(
       state.principalImmutableObjectBindings,
@@ -647,10 +975,21 @@ function cloneState(state) {
     principalAliases: clonePrincipalAliases(state.principalAliases),
     invalidatedPrincipalAliases: new Set(state.invalidatedPrincipalAliases),
     optionalPrincipalParameters: new Set(state.optionalPrincipalParameters),
+    knownPrincipalBindings: new Set(state.knownPrincipalBindings),
+    nullableDerivedBindings: new Set(state.nullableDerivedBindings),
+    safeDerivedCollections: new Set(state.safeDerivedCollections),
+    knownNonEmptyCollections: new Set(state.knownNonEmptyCollections),
+    definitelyEmptyCollections: new Set(state.definitelyEmptyCollections),
+    poisonedCollections: new Set(state.poisonedCollections),
+    signedMediaClaims: new Set(state.signedMediaClaims),
+    nonNullableSignedMediaClaims: new Set(state.nonNullableSignedMediaClaims),
+    authorizedSignedMediaClaims: new Set(state.authorizedSignedMediaClaims),
     adminResolved: state.adminResolved,
     adminPending: new Set(state.adminPending),
     returnedDerived: state.returnedDerived,
     returnedPrincipalKind: state.returnedPrincipalKind,
+    returnedCapability: state.returnedCapability,
+    callLineage: [...state.callLineage],
     discardedResolver: state.discardedResolver,
     shadowedResolver: state.shadowedResolver,
   };
@@ -664,21 +1003,40 @@ function dedupeStates(states) {
       state.resolved ? "1" : "0",
       [...state.pending].sort().join(","),
       [...state.dbBindings].sort().join(","),
+      [...state.storageBindings].sort().join(","),
+      [...state.storageNamespaceBindings].sort().join(","),
+      [...state.unsupportedStorageBindings].sort().join(","),
+      [...state.unsupportedStorageNamespaceBindings].sort().join(","),
       [...state.queueBindings].sort().join(","),
       [...state.principalBindings].sort().join(","),
       [...state.principalObjects].sort().join(","),
+      [...state.principalCarrierObjects].sort().join(","),
       [...state.principalDerivedBindings].sort().join(","),
       [...state.principalDerivedObjects].sort().join(","),
       principalAuthorityKey(state.principalAuthorityBindings),
+      principalAuthorityKey(state.booleanFacts),
+      principalAuthorityKey(state.principalPropertyBindings),
+      principalAuthorityKey(state.principalCollectionPropertyBindings),
       [...state.principalOwnerNeutralBindings].sort().join(","),
       [...state.principalImmutableObjectBindings].sort().join(","),
       principalAliasKey(state.principalAliases),
       [...state.invalidatedPrincipalAliases].sort().join(","),
       [...state.optionalPrincipalParameters].sort().join(","),
+      [...state.knownPrincipalBindings].sort().join(","),
+      [...state.nullableDerivedBindings].sort().join(","),
+      [...state.safeDerivedCollections].sort().join(","),
+      [...state.knownNonEmptyCollections].sort().join(","),
+      [...state.definitelyEmptyCollections].sort().join(","),
+      [...state.poisonedCollections].sort().join(","),
+      [...state.signedMediaClaims].sort().join(","),
+      [...state.nonNullableSignedMediaClaims].sort().join(","),
+      [...state.authorizedSignedMediaClaims].sort().join(","),
       state.adminResolved ? "1" : "0",
       [...state.adminPending].sort().join(","),
       state.returnedDerived ? "1" : "0",
       state.returnedPrincipalKind ?? "",
+      state.returnedCapability ? "1" : "0",
+      state.callLineage.join(","),
       state.discardedResolver ? "1" : "0",
       state.shadowedResolver ? "1" : "0",
     ].join("|");
@@ -695,31 +1053,64 @@ function createState(info) {
     resolved: false,
     pending: new Set(),
     dbBindings: new Set(info.staticDbAliases),
+    storageBindings: new Set(info.staticStorageAliases),
+    storageNamespaceBindings: new Set(info.staticStorageNamespaceAliases),
+    unsupportedStorageBindings: new Set(info.staticUnsupportedStorageAliases),
+    unsupportedStorageNamespaceBindings: new Set(
+      info.staticUnsupportedStorageNamespaceAliases,
+    ),
     queueBindings: new Set(),
     principalBindings: new Set(),
     principalObjects: new Set(),
+    principalCarrierObjects: new Set(),
     principalDerivedBindings: new Set(),
     principalDerivedObjects: new Set(),
     principalAuthorityBindings: new Map(),
+    booleanFacts: new Map(),
+    principalPropertyBindings: new Map(),
+    principalCollectionPropertyBindings: new Map(),
     principalOwnerNeutralBindings: moduleOwnerNeutralBindings(info),
     principalImmutableObjectBindings: new Set(),
     principalAliases: new Map(),
     invalidatedPrincipalAliases: new Set(),
     optionalPrincipalParameters: new Set(),
+    knownPrincipalBindings: new Set(),
+    nullableDerivedBindings: new Set(),
+    safeDerivedCollections: new Set(),
+    knownNonEmptyCollections: new Set(),
+    definitelyEmptyCollections: new Set(),
+    poisonedCollections: new Set(),
+    signedMediaClaims: new Set(),
+    nonNullableSignedMediaClaims: new Set(),
+    authorizedSignedMediaClaims: new Set(),
     adminResolved: false,
     adminPending: new Set(),
     returnedDerived: false,
     returnedPrincipalKind: null,
+    returnedCapability: false,
+    callLineage: [],
     discardedResolver: false,
     shadowedResolver: false,
   };
 }
 
 class SemanticProject {
-  constructor({ repoRoot, sourceFiles, trustedAuthGuardPaths, reviewedExemptions = [] }) {
+  constructor({
+    repoRoot,
+    sourceFiles,
+    trustedAuthGuardPaths,
+    trustedStoragePaths,
+    reviewedExemptions = [],
+  }) {
     this.repoRoot = resolve(repoRoot);
     this.requestedSourceFiles = [...new Set(sourceFiles.map((file) => resolve(file)))].sort();
     this.trustedAuthGuardPaths = new Set(trustedAuthGuardPaths.map(slash));
+    this.trustedStoragePaths = trustedModuleRegistry(
+      this.repoRoot,
+      trustedStoragePaths,
+      "storage",
+    );
+    this.workspacePackages = workspacePackageRegistry(this.repoRoot);
     this.reviewedExemptExports = new Set(
       reviewedExemptions.map((entry) => `${entry.path}\0${entry.exportName}`),
     );
@@ -740,6 +1131,15 @@ class SemanticProject {
       info &&
       info.isEntry &&
       this.requestedSourceFiles.includes(info.path),
+    );
+  }
+
+  isWorkspacePackageModule(info) {
+    return Boolean(
+      info &&
+      [...this.workspacePackages.values()].some((workspacePackage) =>
+        pathIsContained(workspacePackage.dir, info.path),
+      ),
     );
   }
 
@@ -766,10 +1166,19 @@ class SemanticProject {
       namespaceImports: new Map(),
       localFunctions: new Map(),
       localValues: new Map(),
+      localTypes: new Map(),
       prismaImports: new Set(),
+      storageImports: new Set(),
+      storageNamespaceImports: new Set(),
+      unsupportedStorageImports: new Set(),
+      unsupportedStorageNamespaceImports: new Set(),
       dynamicDbAliases: new Set(),
       unboundDbLoads: [],
       staticDbAliases: new Set(),
+      staticStorageAliases: new Set(),
+      staticStorageNamespaceAliases: new Set(),
+      staticUnsupportedStorageAliases: new Set(),
+      staticUnsupportedStorageNamespaceAliases: new Set(),
       importsDbPackage: false,
       getBossImports: new Set(),
       exportRecords: [],
@@ -800,6 +1209,14 @@ class SemanticProject {
         const bindings = clause.namedBindings;
         if (bindings && ts.isNamespaceImport(bindings)) {
           info.namespaceImports.set(bindings.name.text, { source, typeOnly: clause.isTypeOnly });
+          if (!clause.isTypeOnly) {
+            const storageOrigin = this.storageModuleOrigin(info, source);
+            (
+              storageOrigin === "trusted"
+                ? info.storageNamespaceImports
+                : info.unsupportedStorageNamespaceImports
+            ).add(bindings.name.text);
+          }
         } else if (bindings && ts.isNamedImports(bindings)) {
           for (const element of bindings.elements) {
             const imported = (element.propertyName ?? element.name).text;
@@ -810,6 +1227,18 @@ class SemanticProject {
             });
             if (!clause.isTypeOnly && !element.isTypeOnly && source === "@fikirtive/db" && imported === "prisma") {
               info.prismaImports.add(element.name.text);
+            }
+            if (
+              !clause.isTypeOnly &&
+              !element.isTypeOnly &&
+              imported === "storage"
+            ) {
+              const storageOrigin = this.storageModuleOrigin(info, source);
+              (
+                storageOrigin === "trusted"
+                  ? info.storageImports
+                  : info.unsupportedStorageImports
+              ).add(element.name.text);
             }
             if (
               !clause.isTypeOnly &&
@@ -826,6 +1255,13 @@ class SemanticProject {
 
       if (ts.isFunctionDeclaration(statement) && statement.name) {
         info.localFunctions.set(statement.name.text, statement);
+      }
+      if (
+        (ts.isInterfaceDeclaration(statement) ||
+          ts.isTypeAliasDeclaration(statement)) &&
+        statement.name
+      ) {
+        info.localTypes.set(statement.name.text, statement);
       }
       if (ts.isVariableStatement(statement)) {
         for (const declaration of statement.declarationList.declarations) {
@@ -861,6 +1297,12 @@ class SemanticProject {
     indexDbLoads(info.sourceFile);
 
     info.staticDbAliases = new Set([...info.prismaImports, ...info.dynamicDbAliases]);
+    info.staticStorageAliases = new Set(info.storageImports);
+    info.staticStorageNamespaceAliases = new Set(info.storageNamespaceImports);
+    info.staticUnsupportedStorageAliases = new Set(info.unsupportedStorageImports);
+    info.staticUnsupportedStorageNamespaceAliases = new Set(
+      info.unsupportedStorageNamespaceImports,
+    );
     let aliasesChanged = true;
     while (aliasesChanged) {
       aliasesChanged = false;
@@ -869,18 +1311,94 @@ class SemanticProject {
         for (const node of statement.declarationList.declarations) {
           if (!node.initializer) continue;
           let carriesDb = false;
+          let carriesStorage = false;
+          let carriesStorageNamespace = false;
+          let carriesUnsupportedStorage = false;
+          let carriesUnsupportedStorageNamespace = false;
+          const initializerPath = memberPath(node.initializer);
+          if (
+            initializerPath.root &&
+            info.staticStorageNamespaceAliases.has(initializerPath.root)
+          ) {
+            if (initializerPath.members[0] === "storage") carriesStorage = true;
+            else if (initializerPath.members.length === 0) carriesStorageNamespace = true;
+          }
+          if (
+            initializerPath.root &&
+            info.staticUnsupportedStorageNamespaceAliases.has(initializerPath.root)
+          ) {
+            if (initializerPath.members[0] === "storage") {
+              carriesUnsupportedStorage = true;
+            } else if (initializerPath.members.length === 0) {
+              carriesUnsupportedStorageNamespace = true;
+            }
+          }
           const inspect = (child, isRoot = false) => {
             if (!isRoot && isFunctionLike(child)) return;
             if (ts.isIdentifier(child) && info.staticDbAliases.has(child.text)) carriesDb = true;
-            if (!carriesDb) ts.forEachChild(child, (nested) => inspect(nested));
+            if (ts.isIdentifier(child) && info.staticStorageAliases.has(child.text)) {
+              carriesStorage = true;
+            }
+            if (
+              ts.isIdentifier(child) &&
+              info.staticStorageNamespaceAliases.has(child.text)
+            ) {
+              carriesStorageNamespace = true;
+            }
+            if (
+              ts.isIdentifier(child) &&
+              info.staticUnsupportedStorageAliases.has(child.text)
+            ) {
+              carriesUnsupportedStorage = true;
+            }
+            if (
+              ts.isIdentifier(child) &&
+              info.staticUnsupportedStorageNamespaceAliases.has(child.text)
+            ) {
+              carriesUnsupportedStorageNamespace = true;
+            }
+            if (
+              !carriesDb ||
+              !carriesStorage ||
+              !carriesStorageNamespace ||
+              !carriesUnsupportedStorage ||
+              !carriesUnsupportedStorageNamespace
+            ) {
+              ts.forEachChild(child, (nested) => inspect(nested));
+            }
           };
           inspect(node.initializer, true);
-          if (carriesDb) {
-            for (const name of identifierNames(node.name)) {
+          for (const name of identifierNames(node.name)) {
+            if (carriesDb) {
               if (!info.staticDbAliases.has(name)) {
                 info.staticDbAliases.add(name);
                 aliasesChanged = true;
               }
+            }
+            if (carriesStorage && !info.staticStorageAliases.has(name)) {
+              info.staticStorageAliases.add(name);
+              aliasesChanged = true;
+            }
+            if (
+              carriesStorageNamespace &&
+              !info.staticStorageNamespaceAliases.has(name)
+            ) {
+              info.staticStorageNamespaceAliases.add(name);
+              aliasesChanged = true;
+            }
+            if (
+              carriesUnsupportedStorage &&
+              !info.staticUnsupportedStorageAliases.has(name)
+            ) {
+              info.staticUnsupportedStorageAliases.add(name);
+              aliasesChanged = true;
+            }
+            if (
+              carriesUnsupportedStorageNamespace &&
+              !info.staticUnsupportedStorageNamespaceAliases.has(name)
+            ) {
+              info.staticUnsupportedStorageNamespaceAliases.add(name);
+              aliasesChanged = true;
             }
           }
         }
@@ -961,19 +1479,59 @@ class SemanticProject {
     return /(?:^|\/)queue(?:\.[cm]?[jt]sx?)?$/u.test(source);
   }
 
+  storageModuleOrigin(info, source) {
+    const targetPath = this.resolveModuleSpecifier(info, source);
+    if (!targetPath) return "unsupported";
+    const realTargetPath = realpathSync(targetPath);
+    return this.trustedStoragePaths.has(realTargetPath) ? "trusted" : "unsupported";
+  }
+
+  resolveWorkspacePackageSpecifier(source) {
+    const packageNames = [...this.workspacePackages.keys()]
+      .filter((name) => source === name || source.startsWith(`${name}/`))
+      .sort((left, right) => right.length - left.length);
+    const packageName = packageNames[0];
+    if (!packageName) return null;
+    const workspacePackage = this.workspacePackages.get(packageName);
+    const subpath =
+      source === packageName ? "." : `./${source.slice(packageName.length + 1)}`;
+    const target = packageExportTarget(workspacePackage.exports, subpath);
+    if (!target || !target.startsWith("./")) return null;
+
+    const targetRelative = target.slice(2);
+    const sourceBases = [];
+    if (targetRelative.startsWith("dist/")) {
+      const withoutDist = targetRelative.slice("dist/".length);
+      sourceBases.push(join(workspacePackage.dir, withoutDist));
+      if (!withoutDist.startsWith("src/")) {
+        sourceBases.push(join(workspacePackage.dir, "src", withoutDist));
+      }
+    } else {
+      sourceBases.push(join(workspacePackage.dir, targetRelative));
+    }
+
+    for (const base of sourceBases) {
+      if (!pathIsContained(workspacePackage.dir, base)) continue;
+      for (const candidate of sourcePathCandidates(base)) {
+        if (!existsSync(candidate) || !statSync(candidate).isFile()) continue;
+        const realCandidate = realpathSync(candidate);
+        if (pathIsContained(workspacePackage.realDir, realCandidate)) {
+          return resolve(candidate);
+        }
+      }
+    }
+    return null;
+  }
+
   resolveModuleSpecifier(info, source) {
     let base;
     if (source.startsWith("@/")) base = join(this.repoRoot, "apps/web", source.slice(2));
     else if (source.startsWith(".")) base = resolve(dirname(info.path), source);
-    else return null;
+    else return this.resolveWorkspacePackageSpecifier(source);
 
-    const candidates = [];
-    if (SOURCE_EXTENSIONS.includes(extname(base))) candidates.push(base);
-    else {
-      for (const extension of SOURCE_EXTENSIONS) candidates.push(`${base}${extension}`);
-      for (const extension of SOURCE_EXTENSIONS) candidates.push(join(base, `index${extension}`));
-    }
-    return candidates.find((candidate) => existsSync(candidate)) ?? null;
+    return sourcePathCandidates(base).find(
+      (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
+    ) ?? null;
   }
 
   resolveLocalTarget(info, local, seen = new Set()) {
@@ -1141,9 +1699,29 @@ class SemanticProject {
     }
     if (!ts.isCallExpression(node)) return null;
     const expression = unwrapped(node.expression);
+    const storagePath = memberPath(expression);
+    const trustedStorage =
+      Boolean(storagePath.root && state.storageBindings.has(storagePath.root)) ||
+      Boolean(
+        storagePath.root &&
+        state.storageNamespaceBindings.has(storagePath.root) &&
+        storagePath.members[0] === "storage",
+      );
+    const unsupportedStorage =
+      Boolean(
+        storagePath.root &&
+        state.unsupportedStorageBindings.has(storagePath.root),
+      ) ||
+      Boolean(
+        storagePath.root &&
+        state.unsupportedStorageNamespaceBindings.has(storagePath.root) &&
+        storagePath.members[0] === "storage",
+      );
     if (ts.isElementAccessExpression(expression)) {
-      const root = rootIdentifier(expression);
+      const root = storagePath.root;
       if (root && state.dbBindings.has(root)) return "computed Prisma call";
+      if (unsupportedStorage) return "unsupported storage origin";
+      if (trustedStorage) return "computed storage call";
       if (root && state.queueBindings.has(root)) return "computed queue call";
       return null;
     }
@@ -1161,6 +1739,12 @@ class SemanticProject {
         ts.isElementAccessExpression(expression.expression))
     ) {
       return `possible Prisma call ${expression.getText(info.sourceFile)}`;
+    }
+    if (unsupportedStorage) {
+      return `unsupported storage origin ${expression.getText(info.sourceFile)}`;
+    }
+    if (trustedStorage) {
+      return `storage call ${expression.getText(info.sourceFile)}`;
     }
     if (member === "send" && root && state.queueBindings.has(root)) {
       return `queue send ${expression.getText(info.sourceFile)}`;
@@ -1189,16 +1773,40 @@ function typeAllowsMissing(typeNode) {
   );
 }
 
-function typeHasRequiredOwnerId(typeNode) {
+function typeHasRequiredOwnerId(typeNode, info = null, seen = new Set()) {
   if (!typeNode) return false;
-  if (ts.isParenthesizedTypeNode(typeNode)) return typeHasRequiredOwnerId(typeNode.type);
+  if (ts.isParenthesizedTypeNode(typeNode)) {
+    return typeHasRequiredOwnerId(typeNode.type, info, seen);
+  }
   const reference = typeReferenceName(typeNode);
   if (reference && INTERNAL_PRINCIPAL_TYPE_NAMES.includes(reference)) return true;
+  if (reference && info?.localTypes.has(reference) && !seen.has(reference)) {
+    const declaration = info.localTypes.get(reference);
+    const nextSeen = new Set(seen);
+    nextSeen.add(reference);
+    if (ts.isTypeAliasDeclaration(declaration)) {
+      return typeHasRequiredOwnerId(declaration.type, info, nextSeen);
+    }
+    if (ts.isInterfaceDeclaration(declaration)) {
+      return typeMembersHaveRequiredOwnerId(declaration.members) ||
+        declaration.heritageClauses?.some((clause) =>
+          clause.types.some((part) =>
+            typeHasRequiredOwnerId(part, info, nextSeen),
+          ),
+        ) === true;
+    }
+  }
   if (ts.isIntersectionTypeNode(typeNode)) {
-    return typeNode.types.some((part) => typeHasRequiredOwnerId(part));
+    return typeNode.types.some((part) =>
+      typeHasRequiredOwnerId(part, info, seen),
+    );
   }
   if (!ts.isTypeLiteralNode(typeNode)) return false;
-  return typeNode.members.some(
+  return typeMembersHaveRequiredOwnerId(typeNode.members);
+}
+
+function typeMembersHaveRequiredOwnerId(members) {
+  return members.some(
     (member) =>
       ts.isPropertySignature(member) &&
       propertyNameText(member.name) === "ownerId" &&
@@ -1207,7 +1815,7 @@ function typeHasRequiredOwnerId(typeNode) {
   );
 }
 
-function principalParameterShape(parameter) {
+function principalParameterShape(parameter, info = null) {
   const required =
     !parameter.questionToken &&
     !parameter.initializer &&
@@ -1215,7 +1823,7 @@ function principalParameterShape(parameter) {
   const typeName = typeReferenceName(parameter.type);
   const configuredType =
     Boolean(typeName) && INTERNAL_PRINCIPAL_TYPE_NAMES.includes(typeName);
-  const structuredOwner = typeHasRequiredOwnerId(parameter.type);
+  const structuredOwner = typeHasRequiredOwnerId(parameter.type, info);
 
   if (ts.isIdentifier(parameter.name)) {
     const name = parameter.name.text;
@@ -1246,7 +1854,7 @@ function principalParameterShape(parameter) {
   return null;
 }
 
-function applyPrincipalParameters(state, node, inherited = null) {
+function applyPrincipalParameters(state, node, inherited = null, info = null) {
   const next = cloneState(state);
   if (inherited) {
     for (const name of inherited.principalBindings ?? []) next.principalBindings.add(name);
@@ -1262,7 +1870,7 @@ function applyPrincipalParameters(state, node, inherited = null) {
     }
   }
   for (const parameter of node.parameters ?? []) {
-    const shape = principalParameterShape(parameter);
+    const shape = principalParameterShape(parameter, info);
     if (!shape) continue;
     if (!shape.required) {
       for (const name of shape.names) next.optionalPrincipalParameters.add(name);
@@ -1341,6 +1949,13 @@ function principalExpressionKind(expression, state, derivedExpressions = null) {
     return leftKind === rightKind ? leftKind : "derived";
   }
   if (ts.isPropertyAccessExpression(node)) {
+    const directReceiver = unwrapped(node.expression);
+    if (ts.isIdentifier(directReceiver)) {
+      const propertyKind = state.principalPropertyBindings.get(
+        principalPropertyKey(directReceiver.text, node.name.text),
+      );
+      if (propertyKind) return propertyKind;
+    }
     const receiverKind = principalExpressionKind(
       node.expression,
       state,
@@ -1354,6 +1969,17 @@ function principalExpressionKind(expression, state, derivedExpressions = null) {
       : null;
   }
   if (ts.isElementAccessExpression(node)) {
+    const directReceiver = unwrapped(node.expression);
+    if (
+      ts.isIdentifier(directReceiver) &&
+      node.argumentExpression &&
+      ts.isStringLiteralLike(node.argumentExpression)
+    ) {
+      const propertyKind = state.principalPropertyBindings.get(
+        principalPropertyKey(directReceiver.text, node.argumentExpression.text),
+      );
+      if (propertyKind) return propertyKind;
+    }
     const receiverKind = principalExpressionKind(
       node.expression,
       state,
@@ -1374,6 +2000,70 @@ function principalExpressionKind(expression, state, derivedExpressions = null) {
       : null;
   }
   return null;
+}
+
+function principalPropertiesForExpression(
+  expression,
+  state,
+  derivedExpressions = null,
+) {
+  const node = unwrapped(expression);
+  if (ts.isIdentifier(node)) {
+    return principalPropertiesForRoot(state.principalPropertyBindings, node.text);
+  }
+  if (!ts.isObjectLiteralExpression(node)) return new Map();
+  const properties = new Map();
+  for (const property of node.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      const spread = principalPropertiesForExpression(
+        property.expression,
+        state,
+        derivedExpressions,
+      );
+      for (const [name, kind] of spread) properties.set(name, kind);
+      continue;
+    }
+    if (ts.isComputedPropertyName(property.name)) {
+      properties.clear();
+      continue;
+    }
+    const name = propertyNameText(property.name);
+    if (!name) {
+      properties.clear();
+      continue;
+    }
+    let value = null;
+    if (ts.isPropertyAssignment(property)) value = property.initializer;
+    else if (ts.isShorthandPropertyAssignment(property)) value = property.name;
+    if (!value) {
+      properties.delete(name);
+      continue;
+    }
+    const kind = principalExpressionKind(value, state, derivedExpressions);
+    if (kind) properties.set(name, kind);
+    else properties.delete(name);
+  }
+  return properties;
+}
+
+function principalCollectionExpressionKind(
+  expression,
+  state,
+  derivedExpressions = null,
+) {
+  const node = unwrapped(expression);
+  if (
+    !ts.isArrayLiteralExpression(node) ||
+    node.elements.length === 0 ||
+    node.elements.some(ts.isSpreadElement)
+  ) {
+    return null;
+  }
+  return node.elements.every((element) =>
+    principalExpressionKind(element, state, derivedExpressions),
+  )
+    ? "derived"
+    : null;
 }
 
 function isLiteralValue(expression) {
@@ -1935,6 +2625,200 @@ function operationReferencesPrincipal(node, state, derivedExpressions = null) {
   );
 }
 
+function directMemberReference(expression) {
+  const node = unwrapped(expression);
+  if (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(unwrapped(node.expression))
+  ) {
+    return {
+      root: unwrapped(node.expression).text,
+      member: node.name.text,
+    };
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    ts.isIdentifier(unwrapped(node.expression)) &&
+    node.argumentExpression &&
+    ts.isStringLiteralLike(node.argumentExpression)
+  ) {
+    return {
+      root: unwrapped(node.expression).text,
+      member: node.argumentExpression.text,
+    };
+  }
+  return null;
+}
+
+function collectionAssertedNonEmpty(expression, truthy) {
+  const node = unwrapped(expression);
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.ExclamationToken
+  ) {
+    return collectionAssertedNonEmpty(node.operand, !truthy);
+  }
+  if (!ts.isBinaryExpression(node)) return null;
+  const lengthRoot = (candidate) => {
+    const value = unwrapped(candidate);
+    return ts.isPropertyAccessExpression(value) &&
+      value.name.text === "length" &&
+      ts.isIdentifier(unwrapped(value.expression))
+      ? unwrapped(value.expression)
+      : null;
+  };
+  const isZero = (candidate) => {
+    const value = unwrapped(candidate);
+    return ts.isNumericLiteral(value) && value.text === "0";
+  };
+  const root =
+    (isZero(node.right) && lengthRoot(node.left)) ||
+    (isZero(node.left) && lengthRoot(node.right));
+  if (!root) return null;
+  const equality =
+    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken ||
+    node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken;
+  const inequality =
+    node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken ||
+    node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  return (equality && !truthy) || (inequality && truthy)
+    ? { name: root.text, reference: root }
+    : null;
+}
+
+function booleanBranchFact(expression, truthy) {
+  const node = unwrapped(expression);
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.ExclamationToken
+  ) {
+    return booleanBranchFact(node.operand, !truthy);
+  }
+  return ts.isIdentifier(node) ? { name: node.text, value: truthy } : null;
+}
+
+function booleanFactForExpression(expression, state) {
+  const node = unwrapped(expression);
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.ExclamationToken
+  ) {
+    const fact = booleanFactForExpression(node.operand, state);
+    return fact === null ? null : !fact;
+  }
+  return ts.isIdentifier(node) && state.booleanFacts.has(node.text)
+    ? state.booleanFacts.get(node.text)
+    : null;
+}
+
+function isCanonicalDerivedObjectMember(
+  expression,
+  state,
+  derivedObjectExpressions,
+) {
+  const node = unwrapped(expression);
+  if (
+    !ts.isPropertyAccessExpression(node) &&
+    !ts.isElementAccessExpression(node)
+  ) {
+    return false;
+  }
+  const member =
+    ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : node.argumentExpression &&
+          ts.isStringLiteralLike(node.argumentExpression)
+        ? node.argumentExpression.text
+        : null;
+  if (!member || !STORAGE_OWNER_RELATION_MEMBERS.has(member)) return false;
+  const receiver = unwrapped(node.expression);
+  if (derivedObjectExpressions.has(receiver)) return true;
+  return Boolean(
+    ts.isIdentifier(receiver) &&
+    (
+      state.principalObjects.has(receiver.text) ||
+      state.principalDerivedObjects.has(receiver.text)
+    ),
+  );
+}
+
+function expressionReferencesAuthorizedSignedMediaKey(expression, state) {
+  const node = unwrapped(expression);
+  if (ts.isConditionalExpression(node)) {
+    return (
+      expressionReferencesAuthorizedSignedMediaKey(node.whenTrue, state) &&
+      expressionReferencesAuthorizedSignedMediaKey(node.whenFalse, state)
+    );
+  }
+  const member = directMemberReference(node);
+  return Boolean(
+    member &&
+    member.member === "key" &&
+    state.authorizedSignedMediaClaims.has(member.root),
+  );
+}
+
+function operationReferencesAuthorizedSignedMedia(node, state) {
+  return Boolean(
+    ts.isCallExpression(node) &&
+    callMemberName(node) === "get" &&
+    node.arguments.length === 1 &&
+    expressionReferencesAuthorizedSignedMediaKey(node.arguments[0], state),
+  );
+}
+
+function storageOwnerExpressionReferencesPrincipal(
+  expression,
+  state,
+  derivedExpressions = null,
+) {
+  if (!expression) return false;
+  const node = unwrapped(expression);
+  if (ts.isIdentifier(node)) {
+    const kind = principalExpressionKind(node, state, derivedExpressions);
+    return kind === "binding" || kind === "derived";
+  }
+  if (
+    !ts.isPropertyAccessExpression(node) &&
+    !ts.isElementAccessExpression(node)
+  ) {
+    return false;
+  }
+  const member =
+    ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : ts.isElementAccessExpression(node) &&
+          node.argumentExpression &&
+          ts.isStringLiteralLike(node.argumentExpression)
+        ? node.argumentExpression.text
+        : null;
+  const receiver = unwrapped(node.expression);
+  const directReceiver = ts.isIdentifier(receiver) ? receiver.text : null;
+  const relationReceiver = directMemberReference(receiver);
+  return Boolean(
+    member === "ownerId" &&
+    (
+      (
+        directReceiver &&
+        (
+          state.principalObjects.has(directReceiver) ||
+          state.principalDerivedObjects.has(directReceiver)
+        )
+      ) ||
+      (
+        relationReceiver &&
+        STORAGE_OWNER_RELATION_MEMBERS.has(relationReceiver.member) &&
+        (
+          state.principalObjects.has(relationReceiver.root) ||
+          state.principalDerivedObjects.has(relationReceiver.root)
+        )
+      )
+    ),
+  );
+}
+
 function scopedFunctionBindings(node) {
   const functions = new Map();
   if (!node.body || !ts.isBlock(node.body)) return functions;
@@ -1993,6 +2877,80 @@ function parameterBinding(node, name) {
   return (node.parameters ?? []).find((parameter) =>
     identifierNames(parameter.name).includes(name),
   ) ?? null;
+}
+
+function functionScopedVarBinding(node, name) {
+  let found = false;
+  const visit = (candidate) => {
+    if (found) return;
+    if (candidate !== node && isFunctionLike(candidate)) return;
+    if (
+      ts.isVariableDeclaration(candidate) &&
+      ts.isVariableDeclarationList(candidate.parent) &&
+      !(candidate.parent.flags & ts.NodeFlags.BlockScoped) &&
+      identifierNames(candidate.name).includes(name)
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(candidate, visit);
+  };
+  if (node.body) visit(node.body);
+  return found;
+}
+
+function frameOwnsIdentifierBinding(frameNode, reference, name) {
+  if (
+    parameterBinding(frameNode, name) ||
+    frameNode.name?.text === name ||
+    visibleScopedBinding(frameNode, reference, name) ||
+    functionScopedVarBinding(frameNode, name)
+  ) {
+    return true;
+  }
+  let current = reference;
+  while (current && current !== frameNode) {
+    const parent = current.parent;
+    if (
+      ts.isCatchClause(parent) &&
+      parent.variableDeclaration &&
+      identifierNames(parent.variableDeclaration.name).includes(name)
+    ) {
+      return true;
+    }
+    if (
+      (
+        ts.isForStatement(parent) ||
+        ts.isForInStatement(parent) ||
+        ts.isForOfStatement(parent)
+      ) &&
+      parent.initializer &&
+      ts.isVariableDeclarationList(parent.initializer) &&
+      parent.initializer.declarations.some((declaration) =>
+        identifierNames(declaration.name).includes(name),
+      )
+    ) {
+      return true;
+    }
+    current = parent;
+  }
+  return false;
+}
+
+function visibleBindingNode(scope, reference, name) {
+  const scoped = visibleScopedBinding(scope, reference, name);
+  if (scoped?.kind === "value") return scoped.declaration;
+  if (scoped?.kind === "function") return scoped.node;
+  let current = reference.parent;
+  while (current && current !== scope) {
+    if (isFunctionLike(current)) {
+      const parameter = parameterBinding(current, name);
+      if (parameter) return parameter;
+      if (current.name?.text === name) return current;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 function identifierMayNameCallback(name) {
@@ -2074,6 +3032,170 @@ function bindingIsReassigned(scope, name) {
   return reassignedBindings(scope).has(name);
 }
 
+const ESCAPED_RECEIVERS = new WeakMap();
+
+// A receiver handed to any call, constructor, or spread can be rewritten by an
+// opaque mutator (`Object.assign(dispatch, { run: leak })`). Once that happens the
+// literal's declared shape is no longer what the member call dispatches to, so the
+// declaration-site resolution below must refuse it and fall through to the
+// fail-closed net in unresolvedLocalReceiverNames.
+function escapedReceiverNames(scope) {
+  const cached = ESCAPED_RECEIVERS.get(scope);
+  if (cached) return cached;
+  const escaped = new Set();
+  const visit = (node) => {
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      for (const argument of node.arguments ?? []) {
+        const value = unwrapped(argument);
+        if (ts.isIdentifier(value)) escaped.add(value.text);
+      }
+    }
+    if (
+      (ts.isSpreadAssignment(node) || ts.isSpreadElement(node)) &&
+      ts.isIdentifier(unwrapped(node.expression))
+    ) {
+      escaped.add(unwrapped(node.expression).text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(scope);
+  ESCAPED_RECEIVERS.set(scope, escaped);
+  return escaped;
+}
+
+function memberPathBase(expression) {
+  let node = unwrapped(expression);
+  while (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    node = unwrapped(node.expression);
+  }
+  return node;
+}
+
+// Resolves the declaration-site initializer of a receiver root that is local to
+// this repo. Parameters, imports and globals stay unresolved on purpose.
+function localReceiverInitializer(frame, reference, root) {
+  if (parameterBinding(frame.node, root)) return null;
+  const binding = visibleBindingNode(frame.node, reference, root);
+  if (binding) {
+    return ts.isVariableDeclaration(binding) && binding.initializer
+      ? unwrapped(binding.initializer)
+      : null;
+  }
+  const moduleInitializer = frame.info.localValues.get(root);
+  return moduleInitializer ? unwrapped(moduleInitializer) : null;
+}
+
+function objectLiteralMemberValue(frame, literal, member) {
+  // A spread rebuilds the surface from an unknown source and a computed key hides
+  // which slot is written; either makes the whole literal unprovable.
+  for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) return null;
+    if (property.name && ts.isComputedPropertyName(property.name)) return null;
+  }
+  for (const property of literal.properties) {
+    const name = property.name;
+    if (!name || !(ts.isIdentifier(name) || ts.isStringLiteralLike(name))) continue;
+    if (name.text !== member) continue;
+    if (ts.isMethodDeclaration(property)) return property;
+    if (ts.isPropertyAssignment(property)) return unwrapped(property.initializer);
+    if (ts.isShorthandPropertyAssignment(property)) {
+      return (
+        frame.localFunctions.get(name.text) ??
+        frame.info.localFunctions.get(name.text) ??
+        null
+      );
+    }
+    return null;
+  }
+  return null;
+}
+
+function visibleClassDeclaration(frame, reference, name) {
+  let current = reference;
+  while (current && current !== frame.node) {
+    const block = current.parent;
+    if (block && ts.isBlock(block)) {
+      for (const statement of block.statements) {
+        if (ts.isClassDeclaration(statement) && statement.name?.text === name) {
+          return statement;
+        }
+      }
+    }
+    current = current.parent;
+  }
+  for (const statement of frame.info.sourceFile.statements) {
+    if (ts.isClassDeclaration(statement) && statement.name?.text === name) {
+      return statement;
+    }
+  }
+  return null;
+}
+
+function classMethodNode(classNode, member) {
+  // Inherited members live in another declaration; never guess at them.
+  if (classNode.heritageClauses?.length) return null;
+  for (const element of classNode.members) {
+    if (element.name && ts.isComputedPropertyName(element.name)) return null;
+  }
+  for (const element of classNode.members) {
+    const name = element.name;
+    if (!name || !(ts.isIdentifier(name) || ts.isStringLiteralLike(name))) continue;
+    if (name.text !== member) continue;
+    if (ts.isMethodDeclaration(element)) return element;
+    if (ts.isPropertyDeclaration(element) && element.initializer) {
+      return unwrapped(element.initializer);
+    }
+    return null;
+  }
+  return null;
+}
+
+function localClassMethodNode(frame, reference, constructorExpression, member) {
+  const constructorName = unwrapped(constructorExpression);
+  if (!ts.isIdentifier(constructorName)) return null;
+  const classNode = visibleClassDeclaration(frame, reference, constructorName.text);
+  if (!classNode) return null;
+  const method = classMethodNode(classNode, member);
+  return method && isFunctionLike(method) ? method : null;
+}
+
+// A locally declared object literal (or local class instance) whose method forwards
+// a tracked capability must not escape the fence the way an imported object surface
+// never could. Resolving the member body keeps the precise diagnostic; anything that
+// cannot be pinned here falls through to unresolvedLocalReceiverNames.
+function localMemberFunctionNode(frame, callee) {
+  const node = unwrapped(callee);
+  if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) {
+    return null;
+  }
+  const { members } = memberPath(node);
+  if (members.length === 0 || members.some((member) => member === null)) return null;
+  const base = memberPathBase(node);
+  if (ts.isNewExpression(base)) {
+    return members.length === 1
+      ? localClassMethodNode(frame, base, base.expression, members[0])
+      : null;
+  }
+  if (!ts.isIdentifier(base)) return null;
+  const root = base.text;
+  // Reassignment of the root, a member write (`dispatch.run = leak`) or handing the
+  // receiver to an opaque mutator all invalidate the declaration-site shape.
+  if (bindingIsReassigned(frame.info.sourceFile, root)) return null;
+  if (escapedReceiverNames(frame.info.sourceFile).has(root)) return null;
+  let value = localReceiverInitializer(frame, node, root);
+  if (value && ts.isNewExpression(value)) {
+    return members.length === 1
+      ? localClassMethodNode(frame, value, value.expression, members[0])
+      : null;
+  }
+  for (const member of members) {
+    if (!value || !ts.isObjectLiteralExpression(value)) return null;
+    const next = objectLiteralMemberValue(frame, value, member);
+    value = next ? unwrapped(next) : null;
+  }
+  return value && isFunctionLike(value) ? value : null;
+}
+
 function makeFrame(
   info,
   node,
@@ -2095,14 +3217,18 @@ class EntryAnalyzer {
     this.resolvedCovered = false;
     this.adminCovered = false;
     this.internalAllowed = !originInfo.isEntry;
-    this.knownPrincipalBindings = new Set();
-    this.nullableDerivedBindings = new Set();
-    this.safeDerivedCollections = new Set();
     this.validatedInputCandidates = new Map();
     this.principalDerivedExpressions = new WeakMap();
+    this.principalDerivedObjectExpressions = new WeakSet();
+    this.trackedCapabilityExpressions = new WeakSet();
+    this.capturedBindingInvalidations = new Map();
     this.callStack = [];
     this.callbackStack = [];
+    this.invocationSequence = 0;
     this.structuredCallbackDepth = 0;
+    this.originResolvesPrincipal = false;
+    this.missingPrincipalBoundaryCount = 0;
+    this.missingPrincipalBoundaryRecorded = false;
   }
 
   addDiagnostic(info, node, reason, detail) {
@@ -2257,7 +3383,32 @@ class EntryAnalyzer {
     return found;
   }
 
-  recordSensitive(frame, node, states, detail, reasonOverride = null) {
+  frameContainsPrincipalResolver(frame) {
+    let found = false;
+    const visit = (node, root = false) => {
+      if (found) return;
+      if (!root && isFunctionLike(node)) return;
+      if (
+        ts.isCallExpression(node) &&
+        (this.trustedImportedResolver(frame.info, node) || this.localProducer(frame, node))
+      ) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(node, (child) => visit(child));
+    };
+    visit(frame.node, true);
+    return found;
+  }
+
+  recordSensitive(
+    frame,
+    node,
+    states,
+    detail,
+    reasonOverride = null,
+    authorityKind = "principal",
+  ) {
     this.covered = true;
     const nextStates = [];
     for (const state of states) {
@@ -2269,6 +3420,14 @@ class EntryAnalyzer {
       if (
         state.resolved &&
         operationReferencesPrincipal(node, state, this.principalDerivedExpressions)
+      ) {
+        this.resolvedCovered = true;
+        nextStates.push(state);
+        continue;
+      }
+      if (
+        authorityKind === "storage" &&
+        operationReferencesAuthorizedSignedMedia(node, state)
       ) {
         this.resolvedCovered = true;
         nextStates.push(state);
@@ -2304,7 +3463,13 @@ class EntryAnalyzer {
     return dedupeStates(nextStates);
   }
 
-  recordDepthLimited(frame, node, states, detail, { trustedEntryBoundary = false } = {}) {
+  recordDepthLimited(
+    frame,
+    node,
+    states,
+    detail,
+    { trustedEntryBoundary = false, missingPrincipalBoundary = false } = {},
+  ) {
     this.covered = true;
     if (trustedEntryBoundary) {
       this.resolvedCovered = true;
@@ -2335,7 +3500,24 @@ class EntryAnalyzer {
       this.internalCovered = true;
       return states;
     }
-    return this.recordSensitive(frame, node, states, detail, REASON.UNPROVABLE);
+    const recorded = this.recordSensitive(
+      frame,
+      node,
+      states,
+      detail,
+      REASON.UNPROVABLE,
+    );
+    if (missingPrincipalBoundary && !this.originResolvesPrincipal) {
+      this.missingPrincipalBoundaryCount += 1;
+      if (
+        this.missingPrincipalBoundaryCount > 1 &&
+        !this.missingPrincipalBoundaryRecorded
+      ) {
+        this.missingPrincipalBoundaryRecorded = true;
+        return this.recordSensitive(frame, node, recorded, detail);
+      }
+    }
+    return recorded;
   }
 
   trustedImportedResolver(info, call) {
@@ -2358,6 +3540,110 @@ class EntryAnalyzer {
       return null;
     }
     return binding.imported;
+  }
+
+  exactImportedCall(frame, call, source, imported) {
+    const expression = unwrapped(call.expression);
+    if (!ts.isIdentifier(expression)) return false;
+    const binding = frame.info.imports.get(expression.text);
+    return Boolean(
+      binding &&
+      !binding.typeOnly &&
+      binding.source === source &&
+      binding.imported === imported,
+    );
+  }
+
+  isStorageKeyCall(frame, call) {
+    return this.exactImportedCall(frame, call, "@fikirtive/core", "storageKey");
+  }
+
+  isProvenPureStorageUrlCall(frame, call, sensitive) {
+    if (
+      !sensitive?.startsWith("storage ") ||
+      callMemberName(call) !== "url" ||
+      call.arguments.length !== 1
+    ) {
+      return false;
+    }
+    const key = unwrapped(call.arguments[0]);
+    return Boolean(
+      ts.isCallExpression(key) &&
+      key.arguments.length === 3 &&
+      this.isStorageKeyCall(frame, key),
+    );
+  }
+
+  isKeyOwnerMatchesCall(frame, call) {
+    return this.exactImportedCall(frame, call, "@fikirtive/core", "keyOwnerMatches");
+  }
+
+  isSignedMediaVerifierCall(frame, call) {
+    return Boolean(
+      call.arguments.length === 2 &&
+      this.exactImportedCall(
+        frame,
+        call,
+        "@fikirtive/token-crypto",
+        "verifyMediaToken",
+      ),
+    );
+  }
+
+  isModeledPureGlobalCall(frame, call) {
+    const expression = unwrapped(call.expression);
+    if (
+      !ts.isIdentifier(expression) ||
+      !MODELED_PURE_CALLBACK_GLOBALS.has(expression.text)
+    ) {
+      return false;
+    }
+    return Boolean(
+      !frame.info.imports.has(expression.text) &&
+      !frame.info.localFunctions.has(expression.text) &&
+      !frame.localFunctions.has(expression.text) &&
+      !parameterBinding(frame.node, expression.text) &&
+      !visibleScopedBinding(frame.node, expression, expression.text),
+    );
+  }
+
+  isUnshadowedGlobal(frame, expression, name) {
+    const node = unwrapped(expression);
+    return Boolean(
+      ts.isIdentifier(node) &&
+      node.text === name &&
+      !frame.info.imports.has(name) &&
+      !frame.info.localFunctions.has(name) &&
+      !frame.localFunctions.has(name) &&
+      !parameterBinding(frame.node, name) &&
+      !visibleScopedBinding(frame.node, node, name),
+    );
+  }
+
+  isObjectAssignCall(frame, call) {
+    const expression = unwrapped(call.expression);
+    return Boolean(
+      ts.isCallExpression(call) &&
+      ts.isPropertyAccessExpression(expression) &&
+      expression.name.text === "assign" &&
+      this.isUnshadowedGlobal(frame, expression.expression, "Object"),
+    );
+  }
+
+  isLocalMapReceiver(frame, expression) {
+    const node = unwrapped(expression);
+    if (!ts.isIdentifier(node)) return false;
+    const binding = visibleScopedBinding(frame.node, node, node.text);
+    const initializer =
+      binding?.kind === "value"
+        ? binding.declaration.initializer
+        : frame.info.localValues.get(node.text);
+    const value = initializer ? unwrapped(initializer) : null;
+    return Boolean(
+      value &&
+      ts.isNewExpression(value) &&
+      this.isUnshadowedGlobal(frame, value.expression, "Map"),
+    );
   }
 
   localProducer(frame, call) {
@@ -2387,16 +3673,38 @@ class EntryAnalyzer {
     return states;
   }
 
-  forgetPrincipalNames(names) {
-    for (const name of names) {
-      this.knownPrincipalBindings.delete(name);
-      this.nullableDerivedBindings.delete(name);
-      this.safeDerivedCollections.delete(name);
-    }
+  recordCapturedBindingInvalidation(frame, reference, name) {
+    const binding = visibleBindingNode(
+      frame.info.sourceFile,
+      reference,
+      name,
+    );
+    if (!binding) return;
+    const bindings = this.capturedBindingInvalidations.get(name) ?? new Set();
+    bindings.add(binding);
+    this.capturedBindingInvalidations.set(name, bindings);
   }
 
-  invalidatePrincipalRoot(states, name, { preserveImmutable = false } = {}) {
-    const invalidated = new Set();
+  applyCapturedBindingInvalidations(states, frame, reference) {
+    let current = states;
+    for (const [name, bindings] of this.capturedBindingInvalidations) {
+      const visible = visibleBindingNode(
+        frame.info.sourceFile,
+        reference,
+        name,
+      );
+      if (visible && bindings.has(visible)) {
+        current = this.invalidatePrincipalRoot(current, name);
+      }
+    }
+    return current;
+  }
+
+  invalidatePrincipalRoot(
+    states,
+    name,
+    { preserveImmutable = false, recordInvalidation = false } = {},
+  ) {
     const nextStates = states.map((state) => {
       if (
         preserveImmutable &&
@@ -2407,16 +3715,142 @@ class EntryAnalyzer {
       if (
         !principalNameIsTainted(state, name) &&
         !state.principalAliases.has(name) &&
-        !state.principalOwnerNeutralBindings.has(name)
+        !state.principalOwnerNeutralBindings.has(name) &&
+        !state.knownPrincipalBindings.has(name) &&
+        !state.nullableDerivedBindings.has(name) &&
+        !state.safeDerivedCollections.has(name) &&
+        !state.signedMediaClaims.has(name) &&
+        !state.nonNullableSignedMediaClaims.has(name) &&
+        !state.authorizedSignedMediaClaims.has(name)
       ) {
-        return state;
+        if (!recordInvalidation) return state;
+        const next = cloneState(state);
+        next.invalidatedPrincipalAliases.add(name);
+        return next;
       }
       const next = cloneState(state);
-      for (const member of invalidatePrincipalAlias(next, name)) invalidated.add(member);
+      invalidatePrincipalAlias(next, name);
       return next;
     });
-    this.forgetPrincipalNames(invalidated);
     return nextStates;
+  }
+
+  collectionAliasesForState(state, name) {
+    const aliases = new Set(principalAliasMembers(state, name));
+    const tracked = [...aliases].some(
+      (alias) =>
+        state.safeDerivedCollections.has(alias) ||
+        state.knownNonEmptyCollections.has(alias) ||
+        state.definitelyEmptyCollections.has(alias) ||
+        state.poisonedCollections.has(alias) ||
+        hasPrincipalProperties(
+          state.principalCollectionPropertyBindings,
+          alias,
+        ),
+    );
+    return tracked ? aliases : new Set();
+  }
+
+  markCollectionsPossiblyMutated(states, frame, expressions) {
+    const roots = [];
+    for (const expression of expressions) {
+      const root = rootIdentifierNode(expression);
+      if (
+        root &&
+        visibleBindingNode(frame.info.sourceFile, root, root.text)
+      ) {
+        roots.push(root.text);
+      }
+    }
+    if (!roots.length) return states;
+    return states.map((state) => {
+      let next = state;
+      for (const root of roots) {
+        const aliases = this.collectionAliasesForState(state, root);
+        if (!aliases.size) continue;
+        if (next === state) next = cloneState(state);
+        for (const alias of aliases) {
+          next.definitelyEmptyCollections.delete(alias);
+        }
+      }
+      return next;
+    });
+  }
+
+  // Round 26: sticky collection poison, produced independently of `.push`.
+  // `affectedNames` falls back to the bare receiver name when the alias group is not
+  // yet tracked (mirrors the push handler at the `.push` site): an untracked receiver
+  // such as `new Array(1)` must still be poisonable, because the later trusted push
+  // would otherwise bless that same bare name into safeDerivedCollections. The poison
+  // entry itself is what makes the name tracked from then on.
+  poisonCollectionNames(state, name, tracked) {
+    const affectedNames = tracked.size ? tracked : new Set([name]);
+    const next = cloneState(state);
+    for (const affected of affectedNames) {
+      next.poisonedCollections.add(affected);
+      next.safeDerivedCollections.delete(affected);
+      next.principalDerivedBindings.delete(affected);
+      next.principalDerivedObjects.delete(affected);
+      next.definitelyEmptyCollections.delete(affected);
+    }
+    return next;
+  }
+
+  // Round 26: an un-modeled member call outside the pure-read allowlist may insert an
+  // untrusted element into its receiver, so it poisons the receiver alias group unless
+  // every argument is principal-derived. An untracked receiver is only poisoned when
+  // the callee receiver is the bare identifier itself — that is the exact shape a later
+  // `.push` can bless — so scalar reads through a property chain (`row.asset.ext.foo()`)
+  // never strip owner provenance from the chain root.
+  poisonMutatedCollectionReceiver(states, frame, receiverExpression, args) {
+    const rootNode = rootIdentifierNode(receiverExpression);
+    if (!rootNode) return states;
+    const root = rootNode.text;
+    if (!visibleBindingNode(frame.info.sourceFile, rootNode, root)) return states;
+    const bareReceiver = ts.isIdentifier(unwrapped(receiverExpression));
+    return states.map((state) => {
+      const carriesOnlyDerived =
+        args.length > 0 &&
+        args.every((argument) => {
+          const kind = principalExpressionKind(
+            argument,
+            state,
+            this.principalDerivedExpressions,
+          );
+          const objectEscapes = [...escapedAliasIdentifiers(argument)].some(
+            (alias) => principalNameIsObjectTainted(state, alias),
+          );
+          return kind === "derived" && !objectEscapes;
+        });
+      if (carriesOnlyDerived) return state;
+      const tracked = this.collectionAliasesForState(state, root);
+      if (!tracked.size && !bareReceiver) return state;
+      return this.poisonCollectionNames(state, root, tracked);
+    });
+  }
+
+  // Round 26: a tracked collection handed to an un-modeled callee may be mutated by
+  // an inserting method inside that callee, so its alias group is poisoned on escape.
+  // Only already-tracked collections are poisoned here — an arbitrary identifier
+  // passed to an opaque call is handled by the existing escape invalidation.
+  poisonEscapedCollections(states, frame, expressions) {
+    const roots = [];
+    for (const expression of expressions) {
+      const root = rootIdentifierNode(expression);
+      if (root && visibleBindingNode(frame.info.sourceFile, root, root.text)) {
+        roots.push(root.text);
+      }
+    }
+    if (!roots.length) return states;
+    return states.map((state) => {
+      let next = state;
+      for (const root of roots) {
+        const tracked = this.collectionAliasesForState(state, root);
+        if (!tracked.size) continue;
+        next = this.poisonCollectionNames(next, root, tracked);
+      }
+      return next;
+    });
   }
 
   invalidateDirectAlias(states, expression) {
@@ -2492,6 +3926,9 @@ class EntryAnalyzer {
       for (const name of state.principalDerivedObjects) tainted.add(name);
       for (const name of state.principalAuthorityBindings.keys()) tainted.add(name);
       for (const name of state.principalAliases.keys()) tainted.add(name);
+      for (const name of state.signedMediaClaims) tainted.add(name);
+      for (const name of state.nonNullableSignedMediaClaims) tainted.add(name);
+      for (const name of state.authorizedSignedMediaClaims) tainted.add(name);
     }
     let current = states;
     for (const name of tainted) {
@@ -2877,24 +4314,29 @@ class EntryAnalyzer {
     return current;
   }
 
-  consumeAdminErrorDiscriminant(states, expression) {
-    const names = new Set();
-    const visit = (node) => {
-      const current = unwrapped(node);
-      if (
-        ts.isBinaryExpression(current) &&
-        current.operatorToken.kind === ts.SyntaxKind.InKeyword &&
-        ts.isStringLiteralLike(unwrapped(current.left)) &&
-        unwrapped(current.left).text === "error" &&
-        ts.isIdentifier(unwrapped(current.right))
-      ) {
-        names.add(unwrapped(current.right).text);
-        return;
-      }
-      if (isFunctionLike(current) || ts.isClassExpression(current)) return;
-      ts.forEachChild(current, visit);
-    };
-    visit(expression);
+  adminNonErrorNames(expression, truthy) {
+    const node = unwrapped(expression);
+    if (
+      ts.isPrefixUnaryExpression(node) &&
+      node.operator === ts.SyntaxKind.ExclamationToken
+    ) {
+      return this.adminNonErrorNames(node.operand, !truthy);
+    }
+    if (
+      !truthy &&
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.InKeyword &&
+      ts.isStringLiteralLike(unwrapped(node.left)) &&
+      unwrapped(node.left).text === "error" &&
+      ts.isIdentifier(unwrapped(node.right))
+    ) {
+      return new Set([unwrapped(node.right).text]);
+    }
+    return new Set();
+  }
+
+  applyAdminNonErrorBranch(states, expression, truthy) {
+    const names = this.adminNonErrorNames(expression, truthy);
     if (!names.size) return states;
     return states.map((state) => {
       const next = cloneState(state);
@@ -2902,6 +4344,106 @@ class EntryAnalyzer {
         if (!next.adminPending.has(name)) continue;
         next.adminPending.delete(name);
         next.pending.delete(name);
+      }
+      return next;
+    });
+  }
+
+  applySignedMediaTruthiness(states, expression, truthy) {
+    const names = this.truthyResultNames(expression, truthy);
+    if (!names.size) return states;
+    return states.map((state) => {
+      const next = cloneState(state);
+      for (const name of names) {
+        if (next.signedMediaClaims.has(name)) {
+          next.nonNullableSignedMediaClaims.add(name);
+        }
+      }
+      return next;
+    });
+  }
+
+  applyBooleanFactBranch(states, expression, truthy) {
+    const fact = booleanBranchFact(expression, truthy);
+    if (!fact) return states;
+    const correlated = states
+      .filter(
+        (state) =>
+          !state.booleanFacts.has(fact.name) ||
+          state.booleanFacts.get(fact.name) === fact.value,
+      )
+      .map((state) => {
+        const next = cloneState(state);
+        next.booleanFacts.set(fact.name, fact.value);
+        return next;
+      });
+    if (correlated.length) return correlated;
+    return states.map((state) => {
+      const next = cloneState(state);
+      next.booleanFacts.delete(fact.name);
+      return next;
+    });
+  }
+
+  applyQueueTruthiness(states, expression, truthy) {
+    const fact = booleanBranchFact(expression, truthy);
+    if (
+      !fact ||
+      !states.some((state) => state.queueBindings.has(fact.name)) ||
+      !states.some((state) => state.nullableDerivedBindings.has(fact.name))
+    ) {
+      return states;
+    }
+    return states.filter((state) => {
+      const queue = state.queueBindings.has(fact.name);
+      const nullable = state.nullableDerivedBindings.has(fact.name);
+      if (!queue && !nullable) return true;
+      return fact.value ? queue : nullable;
+    });
+  }
+
+  applyOwnerMatchBranch(states, frame, expression, truthy) {
+    const node = unwrapped(expression);
+    if (
+      ts.isPrefixUnaryExpression(node) &&
+      node.operator === ts.SyntaxKind.ExclamationToken
+    ) {
+      return this.applyOwnerMatchBranch(states, frame, node.operand, !truthy);
+    }
+    if (
+      !truthy ||
+      !ts.isCallExpression(node) ||
+      !this.isKeyOwnerMatchesCall(frame, node) ||
+      node.arguments.length !== 2
+    ) {
+      return states;
+    }
+    const keyExpression = unwrapped(node.arguments[0]);
+    const ownerExpression = unwrapped(node.arguments[1]);
+    return states.map((state) => {
+      const next = cloneState(state);
+      if (
+        ts.isIdentifier(keyExpression) &&
+        principalExpressionKind(
+          ownerExpression,
+          state,
+          this.principalDerivedExpressions,
+        )
+      ) {
+        next.principalDerivedBindings.add(keyExpression.text);
+        return next;
+      }
+      const keyMember = directMemberReference(keyExpression);
+      const ownerMember = directMemberReference(ownerExpression);
+      if (
+        keyMember &&
+        ownerMember &&
+        keyMember.root === ownerMember.root &&
+        keyMember.member === "key" &&
+        ownerMember.member === "ownerId" &&
+        state.nonNullableSignedMediaClaims.has(keyMember.root)
+      ) {
+        next.authorizedSignedMediaClaims.add(keyMember.root);
       }
       return next;
     });
@@ -2921,9 +4463,22 @@ class EntryAnalyzer {
           next.adminResolved = true;
           next.adminPending.add(context.name);
         }
+      } else if (context.kind === "destructured") {
+        if (isAdmin || !context.ownerNames?.length) {
+          next.discardedResolver = true;
+        } else {
+          next.resolved = true;
+          for (const name of context.ownerNames) {
+            next.pending.add(name);
+            next.principalBindings.add(name);
+          }
+        }
       } else {
-        next.resolved = true;
-        if (isAdmin) next.adminResolved = true;
+        if (isAdmin) {
+          next.discardedResolver = true;
+        } else {
+          next.resolved = true;
+        }
       }
       return next;
     });
@@ -2932,6 +4487,11 @@ class EntryAnalyzer {
   async asyncExpression(node, states, frame, context, importDepth) {
     if (!node) return states;
     const expression = unwrapped(node);
+    states = this.applyCapturedBindingInvalidations(
+      states,
+      frame,
+      expression,
+    );
 
     if (ts.isIdentifier(expression)) {
       return this.activateIdentifier(states, expression.text);
@@ -3030,9 +4590,58 @@ class EntryAnalyzer {
         (ts.isPropertyAccessExpression(assignmentTarget) ||
           ts.isElementAccessExpression(assignmentTarget))
       ) {
-        const mutatedRoot = rootIdentifier(assignmentTarget);
+        const mutatedRootNode = rootIdentifierNode(assignmentTarget);
+        const mutatedRoot = mutatedRootNode?.text ?? null;
         if (mutatedRoot) {
-          return this.invalidatePrincipalRoot(right, mutatedRoot);
+          const capturedWrite = !frameOwnsIdentifierBinding(
+            frame.node,
+            mutatedRootNode,
+            mutatedRoot,
+          );
+          if (capturedWrite) {
+            this.recordCapturedBindingInvalidation(
+              frame,
+              mutatedRootNode,
+              mutatedRoot,
+            );
+          }
+          const assigned = right.map((state) => {
+            if (
+              !this.expressionContainsTrackedCapability(
+                frame,
+                expression.right,
+                state,
+              )
+            ) {
+              return state;
+            }
+            const next = cloneState(state);
+            next.dbBindings.add(mutatedRoot);
+            return next;
+          });
+          const collectionUpdated = assigned.map((state) => {
+            if (!ts.isElementAccessExpression(assignmentTarget)) return state;
+            const collectionNames = this.collectionAliasesForState(
+              state,
+              mutatedRoot,
+            );
+            if (!collectionNames.size) return state;
+            const next = cloneState(state);
+            const carriesDerived =
+              principalExpressionKind(
+                expression.right,
+                state,
+                this.principalDerivedExpressions,
+              ) === "derived";
+            for (const name of collectionNames) {
+              next.definitelyEmptyCollections.delete(name);
+              if (!carriesDerived) next.poisonedCollections.add(name);
+            }
+            return next;
+          });
+          return this.invalidatePrincipalRoot(collectionUpdated, mutatedRoot, {
+            recordInvalidation: capturedWrite,
+          });
         }
       }
       if (
@@ -3043,7 +4652,6 @@ class EntryAnalyzer {
         )
       ) {
         const assignedNames = assignmentTargetRootNames(assignmentTarget);
-        this.forgetPrincipalNames(assignedNames);
         let invalidated = right;
         for (const name of assignedNames) {
           invalidated = this.invalidatePrincipalRoot(invalidated, name);
@@ -3061,35 +4669,57 @@ class EntryAnalyzer {
         expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
         ts.isIdentifier(unwrapped(expression.left))
       ) {
-        const assignedName = unwrapped(expression.left).text;
+        const assignedTarget = unwrapped(expression.left);
+        const assignedName = assignedTarget.text;
         const aliasSource = directAliasIdentifier(expression.right);
-        this.forgetPrincipalNames([assignedName]);
-        return right.map((state) => {
+        const capturedWrite = !frameOwnsIdentifierBinding(
+          frame.node,
+          assignedTarget,
+          assignedName,
+        );
+        if (capturedWrite) {
+          this.recordCapturedBindingInvalidation(
+            frame,
+            assignedTarget,
+            assignedName,
+          );
+        }
+        const assignmentStates = capturedWrite
+          ? this.invalidatePrincipalRoot(right, assignedName, {
+              recordInvalidation: true,
+            })
+          : right;
+        return assignmentStates.map((state, index) => {
+          const sourceState = right[index] ?? state;
           const next = cloneState(state);
           detachPrincipalAlias(next, assignedName);
           clearPrincipalName(next, assignedName);
+          next.queueBindings.delete(assignedName);
+          if (this.expressionTaintsQueue(frame, expression.right, sourceState)) {
+            next.queueBindings.add(assignedName);
+          }
           const kind = principalExpressionKind(
             expression.right,
-            state,
+            sourceState,
             this.principalDerivedExpressions,
           );
           const rightNode = unwrapped(expression.right);
           const authorityKind =
             ts.isObjectLiteralExpression(rightNode) ||
-            (aliasSource && state.principalAuthorityBindings.has(aliasSource))
+            (aliasSource && sourceState.principalAuthorityBindings.has(aliasSource))
               ? principalOwnerAuthorityKind(
                   expression.right,
-                  state,
+                  sourceState,
                   this.principalDerivedExpressions,
                 )
               : null;
           const ownerNeutral = expressionIsOwnerNeutral(
             expression.right,
-            state.principalOwnerNeutralBindings,
+            sourceState.principalOwnerNeutralBindings,
           );
           if (kind === "binding") {
             next.principalBindings.add(assignedName);
-            this.knownPrincipalBindings.add(assignedName);
+            next.knownPrincipalBindings.add(assignedName);
           } else if (kind === "object") {
             next.principalObjects.add(assignedName);
           } else if (kind === "derived") {
@@ -3098,8 +4728,21 @@ class EntryAnalyzer {
           if (authorityKind) {
             next.principalAuthorityBindings.set(assignedName, authorityKind);
           }
+          if (this.project.isWorkspacePackageModule(frame.info)) {
+            for (const [propertyName, propertyKind] of principalPropertiesForExpression(
+              expression.right,
+              sourceState,
+              this.principalDerivedExpressions,
+            )) {
+              next.principalPropertyBindings.set(
+                principalPropertyKey(assignedName, propertyName),
+                propertyKind,
+              );
+            }
+          }
           if (ownerNeutral) next.principalOwnerNeutralBindings.add(assignedName);
-          if (aliasSource && principalNameIsObjectTainted(state, aliasSource)) {
+          if (aliasSource && principalNameIsObjectTainted(sourceState, aliasSource)) {
+            copySignedMediaTrust(next, sourceState, aliasSource, assignedName);
             if (kind === "derived") next.principalDerivedObjects.add(assignedName);
             linkPrincipalAliases(next, assignedName, aliasSource);
           }
@@ -3110,9 +4753,26 @@ class EntryAnalyzer {
         ts.isAssignmentOperator(expression.operatorToken.kind) &&
         ts.isIdentifier(unwrapped(expression.left))
       ) {
-        const assignedName = unwrapped(expression.left).text;
-        this.forgetPrincipalNames([assignedName]);
-        return right.map((state) => {
+        const assignedTarget = unwrapped(expression.left);
+        const assignedName = assignedTarget.text;
+        const capturedWrite = !frameOwnsIdentifierBinding(
+          frame.node,
+          assignedTarget,
+          assignedName,
+        );
+        if (capturedWrite) {
+          this.recordCapturedBindingInvalidation(
+            frame,
+            assignedTarget,
+            assignedName,
+          );
+        }
+        const assignmentStates = capturedWrite
+          ? this.invalidatePrincipalRoot(right, assignedName, {
+              recordInvalidation: true,
+            })
+          : right;
+        return assignmentStates.map((state) => {
           const next = cloneState(state);
           detachPrincipalAlias(next, assignedName);
           clearPrincipalName(next, assignedName);
@@ -3160,12 +4820,44 @@ class EntryAnalyzer {
       if (!mutatesOperand) return current;
       const target = unwrapped(operand);
       if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-        const mutatedRoot = rootIdentifier(target);
-        return mutatedRoot ? this.invalidatePrincipalRoot(current, mutatedRoot) : current;
+        const mutatedRootNode = rootIdentifierNode(target);
+        const mutatedRoot = mutatedRootNode?.text ?? null;
+        if (!mutatedRoot) return current;
+        const capturedWrite = !frameOwnsIdentifierBinding(
+          frame.node,
+          mutatedRootNode,
+          mutatedRoot,
+        );
+        if (capturedWrite) {
+          this.recordCapturedBindingInvalidation(
+            frame,
+            mutatedRootNode,
+            mutatedRoot,
+          );
+        }
+        return this.invalidatePrincipalRoot(current, mutatedRoot, {
+          recordInvalidation: capturedWrite,
+        });
       }
       if (ts.isIdentifier(target)) {
-        this.forgetPrincipalNames([target.text]);
-        return current.map((state) => {
+        const capturedWrite = !frameOwnsIdentifierBinding(
+          frame.node,
+          target,
+          target.text,
+        );
+        if (capturedWrite) {
+          this.recordCapturedBindingInvalidation(
+            frame,
+            target,
+            target.text,
+          );
+        }
+        const assignmentStates = capturedWrite
+          ? this.invalidatePrincipalRoot(current, target.text, {
+              recordInvalidation: true,
+            })
+          : current;
+        return assignmentStates.map((state) => {
           const next = cloneState(state);
           detachPrincipalAlias(next, target.text);
           clearPrincipalName(next, target.text);
@@ -3184,8 +4876,24 @@ class EntryAnalyzer {
       );
       const target = unwrapped(expression.expression);
       if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
-        const mutatedRoot = rootIdentifier(target);
-        return mutatedRoot ? this.invalidatePrincipalRoot(current, mutatedRoot) : current;
+        const mutatedRootNode = rootIdentifierNode(target);
+        const mutatedRoot = mutatedRootNode?.text ?? null;
+        if (!mutatedRoot) return current;
+        const capturedWrite = !frameOwnsIdentifierBinding(
+          frame.node,
+          mutatedRootNode,
+          mutatedRoot,
+        );
+        if (capturedWrite) {
+          this.recordCapturedBindingInvalidation(
+            frame,
+            mutatedRootNode,
+            mutatedRoot,
+          );
+        }
+        return this.invalidatePrincipalRoot(current, mutatedRoot, {
+          recordInvalidation: capturedWrite,
+        });
       }
       return current;
     }
@@ -3295,6 +5003,22 @@ class EntryAnalyzer {
         importDepth,
       );
     }
+    if (
+      this.project.isWorkspacePackageModule(frame.info) &&
+      states.length > 0 &&
+      states.every((state) =>
+        template.templateSpans.some((span) => {
+          const kind = principalExpressionKind(
+            span.expression,
+            state,
+            this.principalDerivedExpressions,
+          );
+          return kind === "binding" || kind === "derived";
+        }),
+      )
+    ) {
+      this.principalDerivedExpressions.set(template, "derived");
+    }
     return current;
   }
 
@@ -3360,6 +5084,17 @@ class EntryAnalyzer {
         if (imported && !imported.typeOnly) {
           const targetPath = this.project.resolveModuleSpecifier(frame.info, imported.source);
           const targetInfo = targetPath ? this.project.getModule(targetPath) : null;
+          const target = targetInfo
+            ? this.project.exportTargets(targetInfo).get(imported.imported)
+            : null;
+          const targetNode = target ? unwrapped(target.node) : null;
+          if (
+            expression.name.text === "includes" &&
+            targetNode &&
+            ts.isArrayLiteralExpression(targetNode)
+          ) {
+            return null;
+          }
           return {
             kind: "import-surface",
             binding: imported,
@@ -3389,6 +5124,16 @@ class EntryAnalyzer {
         };
       }
     }
+    const localMember = localMemberFunctionNode(frame, expression);
+    if (localMember) {
+      const path = memberPath(expression);
+      return {
+        kind: "local",
+        info: frame.info,
+        node: localMember,
+        name: [path.root, ...path.members].filter(Boolean).join("."),
+      };
+    }
     return null;
   }
 
@@ -3404,6 +5149,392 @@ class EntryAnalyzer {
       }
     }
     return false;
+  }
+
+  expressionTaintsStorage(frame, expression, state) {
+    const node = unwrapped(expression);
+    const path = memberPath(node);
+    if (path.root && state.storageBindings.has(path.root)) return true;
+    if (
+      path.root &&
+      state.storageNamespaceBindings.has(path.root) &&
+      path.members[0] === "storage"
+    ) {
+      return true;
+    }
+    if (ts.isIdentifier(node)) {
+      const initializer = frame.info.localValues.get(node.text);
+      if (initializer && initializer !== expression) {
+        return this.expressionTaintsStorage(frame, initializer, state);
+      }
+    }
+    return false;
+  }
+
+  expressionTaintsStorageNamespace(frame, expression, state) {
+    const node = unwrapped(expression);
+    const path = memberPath(node);
+    if (
+      path.root &&
+      path.members.length === 0 &&
+      state.storageNamespaceBindings.has(path.root)
+    ) {
+      return true;
+    }
+    if (ts.isIdentifier(node)) {
+      const initializer = frame.info.localValues.get(node.text);
+      if (initializer && initializer !== expression) {
+        return this.expressionTaintsStorageNamespace(frame, initializer, state);
+      }
+    }
+    return false;
+  }
+
+  expressionTaintsUnsupportedStorage(frame, expression, state) {
+    const node = unwrapped(expression);
+    const path = memberPath(node);
+    if (path.root && state.unsupportedStorageBindings.has(path.root)) return true;
+    if (
+      path.root &&
+      state.unsupportedStorageNamespaceBindings.has(path.root) &&
+      path.members[0] === "storage"
+    ) {
+      return true;
+    }
+    if (ts.isIdentifier(node)) {
+      const initializer = frame.info.localValues.get(node.text);
+      if (initializer && initializer !== expression) {
+        return this.expressionTaintsUnsupportedStorage(frame, initializer, state);
+      }
+    }
+    return false;
+  }
+
+  expressionTaintsUnsupportedStorageNamespace(frame, expression, state) {
+    const node = unwrapped(expression);
+    const path = memberPath(node);
+    if (
+      path.root &&
+      path.members.length === 0 &&
+      state.unsupportedStorageNamespaceBindings.has(path.root)
+    ) {
+      return true;
+    }
+    if (ts.isIdentifier(node)) {
+      const initializer = frame.info.localValues.get(node.text);
+      if (initializer && initializer !== expression) {
+        return this.expressionTaintsUnsupportedStorageNamespace(
+          frame,
+          initializer,
+          state,
+        );
+      }
+    }
+    return false;
+  }
+
+  expressionTaintsQueue(frame, expression, state) {
+    const node = unwrapped(expression);
+    const root = rootIdentifier(node);
+    return Boolean(
+      (root && state.queueBindings.has(root)) ||
+      this.isGetBossCall(frame, node),
+    );
+  }
+
+  expressionContainsTrackedCapability(
+    frame,
+    expression,
+    state,
+    seenBindings = new Set(),
+  ) {
+    let found = false;
+    const visit = (node) => {
+      if (found) return;
+      const current = unwrapped(node);
+      if (isFunctionLike(current)) return;
+      if (this.trackedCapabilityExpressions.has(current)) {
+        found = true;
+        return;
+      }
+      const path = memberPath(current);
+      if (
+        path.root &&
+        (
+          state.dbBindings.has(path.root) ||
+          state.storageBindings.has(path.root) ||
+          state.unsupportedStorageBindings.has(path.root) ||
+          state.queueBindings.has(path.root) ||
+          (
+            state.storageNamespaceBindings.has(path.root) &&
+            (path.members.length === 0 || path.members[0] === "storage")
+          ) ||
+          (
+            state.unsupportedStorageNamespaceBindings.has(path.root) &&
+            (path.members.length === 0 || path.members[0] === "storage")
+          )
+        )
+      ) {
+        found = true;
+        return;
+      }
+      if (
+        ts.isPropertyAccessExpression(current) ||
+        ts.isElementAccessExpression(current)
+      ) {
+        if (
+          ts.isElementAccessExpression(current) &&
+          current.argumentExpression
+        ) {
+          visit(current.argumentExpression);
+        }
+        return;
+      }
+      if (ts.isCallExpression(current)) {
+        if (this.isGetBossCall(frame, current)) found = true;
+        return;
+      }
+      if (ts.isNewExpression(current)) return;
+      if (ts.isIdentifier(current)) {
+        const name = current.text;
+        const initializer = frame.info.localValues.get(name);
+        if (initializer && !seenBindings.has(name)) {
+          const nextSeen = new Set(seenBindings);
+          nextSeen.add(name);
+          if (
+            this.expressionContainsTrackedCapability(
+              frame,
+              initializer,
+              state,
+              nextSeen,
+            )
+          ) {
+            found = true;
+          }
+        }
+        return;
+      }
+      if (ts.isObjectLiteralExpression(current)) {
+        for (const property of current.properties) {
+          if (ts.isPropertyAssignment(property)) visit(property.initializer);
+          else if (ts.isShorthandPropertyAssignment(property)) visit(property.name);
+          else if (ts.isSpreadAssignment(property)) visit(property.expression);
+        }
+        return;
+      }
+      ts.forEachChild(current, visit);
+    };
+    visit(expression);
+    return found;
+  }
+
+  localMutableCarrierRoot(frame, expression, seenBindings = new Set()) {
+    const root = rootIdentifierNode(expression);
+    if (!root || seenBindings.has(root.text)) return null;
+    const binding = visibleBindingNode(
+      frame.info.sourceFile,
+      root,
+      root.text,
+    );
+    if (!binding) return null;
+    if (ts.isParameter(binding)) {
+      const type = binding.type;
+      const scalarType =
+        type &&
+        new Set([
+          ts.SyntaxKind.StringKeyword,
+          ts.SyntaxKind.NumberKeyword,
+          ts.SyntaxKind.BooleanKeyword,
+          ts.SyntaxKind.BigIntKeyword,
+          ts.SyntaxKind.SymbolKeyword,
+        ]).has(type.kind);
+      return scalarType ? null : root.text;
+    }
+    if (!ts.isVariableDeclaration(binding) || !binding.initializer) return null;
+    const initializer = unwrapped(binding.initializer);
+    if (
+      ts.isObjectLiteralExpression(initializer) ||
+      ts.isArrayLiteralExpression(initializer)
+    ) {
+      return root.text;
+    }
+    if (!ts.isIdentifier(initializer)) return null;
+    const nextSeen = new Set(seenBindings);
+    nextSeen.add(root.text);
+    return this.localMutableCarrierRoot(frame, initializer, nextSeen)
+      ? root.text
+      : null;
+  }
+
+  propagateOpaqueCallCapabilities(states, frame, args) {
+    if (args.length < 2) return states;
+    return states.map((state) => {
+      if (
+        !args.some((argument) =>
+          this.expressionContainsTrackedCapability(frame, argument, state),
+        )
+      ) {
+        return state;
+      }
+      const carriers = args
+        .filter(
+          (argument) =>
+            !this.expressionContainsTrackedCapability(
+              frame,
+              argument,
+              state,
+            ),
+        )
+        .map((argument) =>
+          this.localMutableCarrierRoot(frame, argument),
+        )
+        .filter(Boolean);
+      if (!carriers.length) return state;
+      const next = cloneState(state);
+      for (const carrier of carriers) next.dbBindings.add(carrier);
+      return next;
+    });
+  }
+
+  callPassesTrackedCapability(frame, args, states) {
+    return states.some((state) =>
+      args.some((argument) =>
+        this.expressionContainsTrackedCapability(frame, argument, state),
+      ),
+    );
+  }
+
+  unresolvedSameRepoCalleeNames(frame, expression) {
+    // This is only a fail-close detector for dynamic callee shapes. It recognizes
+    // functions whose exact local/imported body is in this repo; globals and callback
+    // parameters remain opaque and do not acquire authority.
+    const names = new Set();
+    const importedFunction = (localName) => {
+      const imported = frame.info.imports.get(localName);
+      if (!imported || imported.typeOnly) return;
+      const targetPath = this.project.resolveModuleSpecifier(
+        frame.info,
+        imported.source,
+      );
+      const targetInfo = targetPath ? this.project.getModule(targetPath) : null;
+      const target = targetInfo
+        ? this.project.exportTargets(targetInfo).get(imported.imported)
+        : null;
+      if (
+        target &&
+        !target.unknown &&
+        isFunctionLike(unwrapped(target.node))
+      ) {
+        names.add(imported.imported);
+      }
+    };
+    const namespaceFunction = (root, member) => {
+      const namespace = frame.info.namespaceImports.get(root);
+      if (!namespace || namespace.typeOnly) return;
+      const targetPath = this.project.resolveModuleSpecifier(
+        frame.info,
+        namespace.source,
+      );
+      const targetInfo = targetPath ? this.project.getModule(targetPath) : null;
+      const target = targetInfo
+        ? this.project.exportTargets(targetInfo).get(member)
+        : null;
+      if (
+        target &&
+        !target.unknown &&
+        isFunctionLike(unwrapped(target.node))
+      ) {
+        names.add(member);
+      }
+    };
+    const visit = (candidate) => {
+      const node = unwrapped(candidate);
+      if (ts.isIdentifier(node)) {
+        const local =
+          frame.localFunctions.get(node.text) ??
+          frame.info.localFunctions.get(node.text);
+        if (local && isFunctionLike(unwrapped(local))) {
+          names.add(node.text);
+        } else {
+          importedFunction(node.text);
+        }
+        return;
+      }
+      if (ts.isPropertyAccessExpression(node)) {
+        const root = rootIdentifier(node);
+        if (root) namespaceFunction(root, node.name.text);
+        return;
+      }
+      if (
+        ts.isElementAccessExpression(node) &&
+        node.argumentExpression &&
+        ts.isStringLiteralLike(node.argumentExpression)
+      ) {
+        const root = rootIdentifier(node);
+        if (root) namespaceFunction(root, node.argumentExpression.text);
+        if (ts.isArrayLiteralExpression(unwrapped(node.expression))) {
+          for (const element of unwrapped(node.expression).elements) visit(element);
+        }
+        return;
+      }
+      if (ts.isConditionalExpression(node)) {
+        visit(node.whenTrue);
+        visit(node.whenFalse);
+        return;
+      }
+      if (ts.isArrayLiteralExpression(node)) {
+        for (const element of node.elements) visit(element);
+      }
+    };
+    visit(expression);
+    return [...names].sort();
+  }
+
+  unresolvedLocalReceiverNames(frame, expression, states) {
+    // Fail-closed companion to callBinding's local member resolution. A callable
+    // member of an in-repo local receiver that could not be pinned to a body must
+    // never silently accept a tracked capability, exactly as an imported object
+    // surface never can. Globals, parameters and imports keep their deliberate
+    // opaque carve-out and do not acquire authority here.
+    const node = unwrapped(expression);
+    if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node)) {
+      return [];
+    }
+    const { members } = memberPath(node);
+    // A computed member name is dynamic dispatch: it can never be pinned to a body,
+    // so it stays unprovable rather than silently resolving to nothing.
+    const member = members[members.length - 1] ?? "[computed]";
+    const base = memberPathBase(node);
+    if (ts.isNewExpression(base)) {
+      const constructorName = unwrapped(base.expression);
+      const label = ts.isIdentifier(constructorName) ? constructorName.text : "new";
+      return [`${label}.${member}`];
+    }
+    if (!ts.isIdentifier(base)) return [];
+    const root = base.text;
+    if (frame.info.imports.has(root) || frame.info.namespaceImports.has(root)) return [];
+    if (
+      frame.callbacks.has(root) ||
+      frame.callbacks.has(`${root}.${member}`) ||
+      frame.callbacks.has(`${root}.*`)
+    ) {
+      return [];
+    }
+    if (
+      states.some((state) =>
+        this.expressionContainsTrackedCapability(frame, base, state),
+      )
+    ) {
+      return [];
+    }
+    if (parameterBinding(frame.node, root)) return [];
+    const binding = visibleBindingNode(frame.node, node, root);
+    if (binding) {
+      if (!ts.isVariableDeclaration(binding)) return [];
+    } else if (!frame.info.localValues.has(root)) {
+      return [];
+    }
+    return [`${root}.${member}`];
   }
 
   isGetBossCall(frame, expression) {
@@ -3423,6 +5554,46 @@ class EntryAnalyzer {
       expression.argumentExpression &&
       ts.isStringLiteralLike(expression.argumentExpression) &&
       expression.argumentExpression.text === "$transaction"
+    );
+  }
+
+  isPgBossPrismaSendAdapterCall(frame, call, states) {
+    if (
+      call.arguments.length !== 1 ||
+      !this.exactImportedCall(frame, call, "pg-boss", "fromPrisma")
+    ) {
+      return false;
+    }
+    const transaction = unwrapped(call.arguments[0]);
+    if (
+      !ts.isIdentifier(transaction) ||
+      !states.length ||
+      !states.every((state) => state.dbBindings.has(transaction.text))
+    ) {
+      return false;
+    }
+    const property = call.parent;
+    if (
+      !ts.isPropertyAssignment(property) ||
+      property.initializer !== call ||
+      propertyNameText(property.name) !== "db"
+    ) {
+      return false;
+    }
+    const options = property.parent;
+    const sendCall = options?.parent;
+    if (
+      !ts.isObjectLiteralExpression(options) ||
+      !ts.isCallExpression(sendCall) ||
+      sendCall.arguments[2] !== options ||
+      callMemberName(sendCall) !== "send"
+    ) {
+      return false;
+    }
+    const queueRoot = rootIdentifier(unwrapped(sendCall.expression));
+    return Boolean(
+      queueRoot &&
+      states.every((state) => state.queueBindings.has(queueRoot)),
     );
   }
 
@@ -3562,9 +5733,12 @@ class EntryAnalyzer {
   }
 
   applyInvokedReturn(call, invoked, callerStates) {
-    const returnedKinds = invoked
-      .filter((state) => state.returnedPrincipalKind !== "abrupt")
-      .map((state) => state.returnedPrincipalKind);
+    const normalReturns = invoked.filter(
+      (state) => state.returnedPrincipalKind !== "abrupt",
+    );
+    const returnedKinds = normalReturns.map(
+      (state) => state.returnedPrincipalKind,
+    );
     if (returnedKinds.length && returnedKinds.every(Boolean)) {
       const firstKind = returnedKinds[0];
       const kind = returnedKinds.every((candidate) => candidate === firstKind)
@@ -3572,16 +5746,26 @@ class EntryAnalyzer {
         : "derived";
       this.principalDerivedExpressions.set(unwrapped(call), kind);
     }
+    if (normalReturns.some((state) => state.returnedCapability)) {
+      this.trackedCapabilityExpressions.add(unwrapped(call));
+    }
     return invoked.map((state, index) => {
       const next = cloneState(state);
       const caller = callerStates[Math.min(index, callerStates.length - 1)];
       next.returnedDerived = caller?.returnedDerived ?? false;
       next.returnedPrincipalKind = caller?.returnedPrincipalKind ?? null;
+      next.returnedCapability = caller?.returnedCapability ?? false;
       return next;
     });
   }
 
-  async analyzeCallback(callback, states, frame, importDepth, { transaction = false } = {}) {
+  async analyzeCallback(
+    callback,
+    states,
+    frame,
+    importDepth,
+    { transaction = false, derivedCollectionElement = false } = {},
+  ) {
     const node = unwrapped(callback);
     if (!isFunctionLike(node)) return { returned: [], exits: [] };
     const stackKey = `${frame.info.path}:${node.pos}`;
@@ -3593,9 +5777,24 @@ class EntryAnalyzer {
     try {
       const callbackStates = states.map((state) => {
         const next = cloneState(state);
+        for (const parameter of node.parameters ?? []) {
+          for (const name of identifierNames(parameter.name)) {
+            detachPrincipalAlias(next, name);
+            clearPrincipalName(next, name);
+            next.poisonedCollections.delete(name);
+          }
+        }
         const txParameter = node.parameters?.[0];
         if (transaction && txParameter && ts.isIdentifier(txParameter.name)) {
           next.dbBindings.add(txParameter.name.text);
+        }
+        if (
+          derivedCollectionElement &&
+          txParameter &&
+          ts.isIdentifier(txParameter.name)
+        ) {
+          next.principalDerivedBindings.add(txParameter.name.text);
+          next.principalDerivedObjects.add(txParameter.name.text);
         }
         return next;
       });
@@ -3621,6 +5820,10 @@ class EntryAnalyzer {
         const expressionExits = returned.map((state) => {
           const next = cloneState(state);
           const expressionKind = principalExpressionKind(
+            node.body,
+            state,
+            this.principalDerivedExpressions,
+          ) ?? principalCollectionExpressionKind(
             node.body,
             state,
             this.principalDerivedExpressions,
@@ -3657,12 +5860,26 @@ class EntryAnalyzer {
       ? this.trustedImportedResolver(frame.info, call)
       : null;
     const localProducer = ts.isCallExpression(call) ? this.localProducer(frame, call) : null;
+    const storageKeyCall =
+      ts.isCallExpression(call) && this.isStorageKeyCall(frame, call);
+    const keyOwnerMatchesCall =
+      ts.isCallExpression(call) && this.isKeyOwnerMatchesCall(frame, call);
+    const signedMediaVerifierCall =
+      ts.isCallExpression(call) && this.isSignedMediaVerifierCall(frame, call);
+    const modeledPureGlobalCall =
+      ts.isCallExpression(call) && this.isModeledPureGlobalCall(frame, call);
+    const importedWorkspaceBody =
+      earlyBinding?.kind === "import" &&
+      this.project.isWorkspacePackageModule(earlyBinding.targetInfo);
     const importedBodyModeled =
       earlyBinding?.kind === "import" &&
       earlyBinding.target &&
       !earlyBinding.target.unknown &&
       isFunctionLike(unwrapped(earlyBinding.target.node)) &&
-      importDepth < MAX_SAME_PACKAGE_IMPORT_DEPTH &&
+      (
+        importDepth < MAX_SAME_PACKAGE_IMPORT_DEPTH ||
+        importedWorkspaceBody
+      ) &&
       !this.project.isReviewedExemptExport(earlyBinding.targetInfo, earlyBinding.name) &&
       !(
         earlyBinding.targetInfo?.path !== this.originInfo.path &&
@@ -3677,6 +5894,59 @@ class EntryAnalyzer {
       importedBodyModeled;
     const callbackAnalyses = [];
     let transactionReturnsDerived = false;
+    const calledExpression = unwrapped(call.expression);
+    const callbackMember = callMemberName(call);
+    const collectionReceiver =
+      ts.isPropertyAccessExpression(calledExpression) ||
+      ts.isElementAccessExpression(calledExpression)
+        ? calledExpression.expression
+        : null;
+    const collectionReceiverIsDerived =
+      Boolean(collectionReceiver) &&
+      current.length > 0 &&
+      current.every((state) => {
+        const kind = principalExpressionKind(
+          collectionReceiver,
+          state,
+          this.principalDerivedExpressions,
+        );
+        const root = rootIdentifier(collectionReceiver);
+        return (
+          kind === "derived" ||
+          Boolean(root && state.safeDerivedCollections.has(root))
+        );
+      });
+    const collectionReceiverIsDerivedObject =
+      Boolean(collectionReceiver) &&
+      current.length > 0 &&
+      current.every((state) => {
+        const receiver = unwrapped(collectionReceiver);
+        if (this.principalDerivedObjectExpressions.has(receiver)) return true;
+        return Boolean(
+          ts.isIdentifier(receiver) &&
+          (
+            state.principalDerivedObjects.has(receiver.text) ||
+            state.safeDerivedCollections.has(receiver.text)
+          ),
+        );
+      });
+    const derivedCollectionElement =
+      Boolean(callbackMember) &&
+      DERIVED_COLLECTION_CALLBACK_MEMBERS.has(callbackMember) &&
+      collectionReceiverIsDerived;
+    const derivedCollectionPreservingCall =
+      Boolean(callbackMember) &&
+      DERIVED_COLLECTION_PRESERVING_MEMBERS.has(callbackMember) &&
+      collectionReceiverIsDerived &&
+      collectionReceiverIsDerivedObject;
+    const derivedMapGetCall =
+      callbackMember === "get" &&
+      Boolean(collectionReceiver) &&
+      this.isLocalMapReceiver(frame, collectionReceiver) &&
+      collectionReceiverIsDerived;
+    const derivedMapConstructor =
+      ts.isNewExpression(call) &&
+      this.isUnshadowedGlobal(frame, call.expression, "Map");
 
     if (this.isShadowedResolverCall(frame, call)) {
       current = current.map((state) => {
@@ -3715,7 +5985,10 @@ class EntryAnalyzer {
             current,
             callbackResolution.frame,
             callbackResolution.importDepth ?? importDepth,
-            { transaction: transactionCall },
+            {
+              transaction: transactionCall,
+              derivedCollectionElement,
+            },
           );
           callbackAnalyses.push(callbackAnalysis);
           if (
@@ -3745,17 +6018,147 @@ class EntryAnalyzer {
     if (transactionReturnsDerived) {
       this.principalDerivedExpressions.set(unwrapped(call), "derived");
     }
+    const derivedMapCallbackResult =
+      derivedCollectionElement &&
+      callbackMember === "map" &&
+      callbackAnalyses.length > 0 &&
+      callbackAnalyses.every(
+        (analysis) =>
+          analysis.returned.length > 0 &&
+          analysis.returned.every((state) => state.returnedDerived),
+      );
+    const derivedMapConstructorResult =
+      derivedMapConstructor &&
+      args.length > 0 &&
+      current.length > 0 &&
+      current.every((state) =>
+        Boolean(
+          principalExpressionKind(
+            args[0],
+            state,
+            this.principalDerivedExpressions,
+          ),
+        ),
+      );
+    if (
+      derivedCollectionPreservingCall ||
+      derivedMapCallbackResult ||
+      derivedMapConstructorResult ||
+      derivedMapGetCall
+    ) {
+      this.principalDerivedExpressions.set(unwrapped(call), "derived");
+      this.principalDerivedObjectExpressions.add(unwrapped(call));
+    }
+    if (
+      storageKeyCall &&
+      current.length > 0 &&
+      current.every((state) =>
+        storageOwnerExpressionReferencesPrincipal(
+          args[0],
+          state,
+          this.principalDerivedExpressions,
+        ),
+      )
+    ) {
+      this.principalDerivedExpressions.set(unwrapped(call), "derived");
+    }
+    if (
+      signedMediaVerifierCall &&
+      context.kind === "assigned" &&
+      context.name
+    ) {
+      current = current.map((state) => {
+        const next = cloneState(state);
+        next.signedMediaClaims.add(context.name);
+        return next;
+      });
+    }
+    const pgBossPrismaSendAdapterCall =
+      ts.isCallExpression(call) &&
+      this.isPgBossPrismaSendAdapterCall(frame, call, current);
+    const objectAssignCall = this.isObjectAssignCall(frame, call);
+    if (objectAssignCall && args.length > 1) {
+      const target = rootIdentifierNode(args[0]);
+      if (target) {
+        current = current.map((state) => {
+          if (
+            !args.slice(1).some((argument) =>
+              this.expressionContainsTrackedCapability(
+                frame,
+                argument,
+                state,
+              ),
+            )
+          ) {
+            return state;
+          }
+          const next = cloneState(state);
+          next.dbBindings.add(target.text);
+          return next;
+        });
+        // Round 26: Object.assign writes elements into its target, so a non-derived
+        // source poisons the target alias group exactly like an inserting mutator.
+        current = this.poisonMutatedCollectionReceiver(
+          current,
+          frame,
+          args[0],
+          args.slice(1),
+        );
+        current = this.invalidatePrincipalRoot(current, target.text);
+      }
+    }
 
     if (
       ts.isCallExpression(call) &&
       ts.isPropertyAccessExpression(unwrapped(call.expression)) &&
       unwrapped(call.expression).name.text === "push"
     ) {
-      const receiver = rootIdentifier(unwrapped(call.expression).expression);
+      const receiverRoot = rootIdentifierNode(
+        unwrapped(call.expression).expression,
+      );
+      const receiver = receiverRoot?.text ?? null;
       if (receiver) {
-        const invalidated = new Set();
         current = current.map((state) => {
           const next = cloneState(state);
+          const collectionNames = this.collectionAliasesForState(
+            state,
+            receiver,
+          );
+          const pushedProperties =
+            args.length === 1
+              ? principalPropertiesForExpression(
+                  args[0],
+                  state,
+                  this.principalDerivedExpressions,
+                )
+              : new Map();
+          const existingProperties = principalPropertiesForRoot(
+            state.principalCollectionPropertyBindings,
+            receiver,
+          );
+          const initializesStructuredCollection =
+            state.safeDerivedCollections.has(receiver) &&
+            existingProperties.size === 0;
+          clearPrincipalProperties(
+            next.principalCollectionPropertyBindings,
+            receiver,
+          );
+          if (initializesStructuredCollection) {
+            for (const [propertyName, propertyKind] of pushedProperties) {
+              next.principalCollectionPropertyBindings.set(
+                principalPropertyKey(receiver, propertyName),
+                propertyKind,
+              );
+            }
+          } else {
+            for (const [propertyName, propertyKind] of existingProperties) {
+              if (pushedProperties.get(propertyName) !== propertyKind) continue;
+              next.principalCollectionPropertyBindings.set(
+                principalPropertyKey(receiver, propertyName),
+                propertyKind,
+              );
+            }
+          }
           const carriesOnlyDerived =
             args.length > 0 &&
             args.every(
@@ -3771,19 +6174,59 @@ class EntryAnalyzer {
                 return kind === "derived" && !objectEscapes;
               },
             );
-          if (carriesOnlyDerived) {
+          const carriesStructuredProperties =
+            args.length === 1 &&
+            ts.isObjectLiteralExpression(unwrapped(args[0])) &&
+            pushedProperties.size > 0;
+          const wasPoisoned = [...collectionNames].some((name) =>
+            state.poisonedCollections.has(name),
+          );
+          const becomesPoisoned =
+            args.length > 0 &&
+            !carriesOnlyDerived &&
+            !carriesStructuredProperties;
+          const collectionPoisoned = wasPoisoned || becomesPoisoned;
+          if (carriesStructuredProperties && !collectionPoisoned) {
+            next.principalDerivedBindings.delete(receiver);
+            next.principalDerivedObjects.delete(receiver);
+            next.safeDerivedCollections.delete(receiver);
+          } else if (carriesOnlyDerived && !collectionPoisoned) {
             next.principalDerivedBindings.add(receiver);
             next.principalDerivedObjects.add(receiver);
           } else if (principalNameIsTainted(next, receiver)) {
-            for (const member of invalidatePrincipalAlias(next, receiver)) {
-              invalidated.add(member);
+            invalidatePrincipalAlias(next, receiver);
+          }
+          if (!carriesStructuredProperties) {
+            if (carriesOnlyDerived && !collectionPoisoned) {
+              next.safeDerivedCollections.add(receiver);
+            } else next.safeDerivedCollections.delete(receiver);
+          }
+          if (args.length > 0) {
+            const affectedNames = collectionNames.size
+              ? collectionNames
+              : new Set([receiver]);
+            for (const name of affectedNames) {
+              next.definitelyEmptyCollections.delete(name);
+              next.knownNonEmptyCollections.add(name);
+              if (becomesPoisoned) next.poisonedCollections.add(name);
             }
           }
-          if (carriesOnlyDerived) this.safeDerivedCollections.add(receiver);
-          else this.safeDerivedCollections.delete(receiver);
+          if (
+            args.some((argument) =>
+              this.expressionContainsTrackedCapability(
+                frame,
+                argument,
+                state,
+              ),
+            )
+          ) {
+            const affectedNames = collectionNames.size
+              ? collectionNames
+              : new Set([receiver]);
+            for (const name of affectedNames) next.dbBindings.add(name);
+          }
           return next;
         });
-        this.forgetPrincipalNames(invalidated);
         for (const argument of args) {
           current = this.invalidateEscapedAliases(current, argument);
         }
@@ -3811,7 +6254,49 @@ class EntryAnalyzer {
       importedBodyModeled ||
       transactionCall ||
       pushCall ||
+      storageKeyCall ||
+      keyOwnerMatchesCall ||
+      signedMediaVerifierCall ||
+      modeledPureGlobalCall ||
+      pgBossPrismaSendAdapterCall ||
+      objectAssignCall ||
+      derivedCollectionPreservingCall ||
+      derivedMapCallbackResult ||
+      derivedMapConstructorResult ||
+      derivedMapGetCall ||
       Boolean(directSensitive && !directSensitive.startsWith("computed "));
+    const unresolvedCapabilityCallees =
+      !earlyBinding && ts.isCallExpression(call)
+        ? this.unresolvedSameRepoCalleeNames(frame, call.expression)
+        : [];
+    if (
+      unresolvedCapabilityCallees.length > 0 &&
+      this.callPassesTrackedCapability(frame, args, current)
+    ) {
+      return this.recordSensitive(
+        frame,
+        call,
+        current,
+        `unresolved same-repo callee ${unresolvedCapabilityCallees.join("/")} receives a tracked DB/storage/queue capability`,
+        REASON.UNPROVABLE,
+      );
+    }
+    const unresolvedLocalReceivers =
+      !earlyBinding && !callIsModeled && ts.isCallExpression(call)
+        ? this.unresolvedLocalReceiverNames(frame, call.expression, current)
+        : [];
+    if (
+      unresolvedLocalReceivers.length > 0 &&
+      this.callPassesTrackedCapability(frame, args, current)
+    ) {
+      return this.recordSensitive(
+        frame,
+        call,
+        current,
+        `unresolved same-repo callee ${unresolvedLocalReceivers.join("/")} receives a tracked DB/storage/queue capability`,
+        REASON.UNPROVABLE,
+      );
+    }
     if (transactionCall || !callbackCallIsFullyTraced) {
       for (const callbackAnalysis of callbackAnalyses) {
         current = this.mergeCallbackInvalidations(
@@ -3829,6 +6314,43 @@ class EntryAnalyzer {
         this.project.isIndependentlyAnalyzedEntry(earlyBinding.targetInfo) &&
         this.project.moduleMayReachSensitive(earlyBinding.targetInfo));
     if (!callIsModeled && !deferredSensitiveBoundary) {
+      current = this.propagateOpaqueCallCapabilities(
+        current,
+        frame,
+        args,
+      );
+      const possiblyMutated = [...args];
+      if (
+        ts.isPropertyAccessExpression(calledExpression) ||
+        ts.isElementAccessExpression(calledExpression)
+      ) {
+        possiblyMutated.push(calledExpression.expression);
+      }
+      // Round 26: `.push` used to be the only producer of collection poison for member
+      // calls, so every other inserting mutation (unshift/splice/fill/copyWithin, an
+      // unknown or dynamically named member) merely invalidated the receiver, and one
+      // later owner-derived push re-blessed the whole list — attacker-controlled
+      // elements included. Poison production is now independent of `.push`.
+      // `clearPrincipalName` deliberately never clears poisonedCollections, so the
+      // poison outlives the invalidation below and the next push sees wasPoisoned.
+      if (
+        (ts.isPropertyAccessExpression(calledExpression) ||
+          ts.isElementAccessExpression(calledExpression)) &&
+        !(callbackMember && PURE_COLLECTION_READ_MEMBERS.has(callbackMember))
+      ) {
+        current = this.poisonMutatedCollectionReceiver(
+          current,
+          frame,
+          calledExpression.expression,
+          args,
+        );
+      }
+      current = this.poisonEscapedCollections(current, frame, args);
+      current = this.markCollectionsPossiblyMutated(
+        current,
+        frame,
+        possiblyMutated,
+      );
       current = this.invalidateCallEscapes(current, call, args);
     }
 
@@ -3844,6 +6366,7 @@ class EntryAnalyzer {
     if (binding?.kind === "callback" && binding.unresolved) {
       return this.invalidateAllTaintedBindings(current);
     }
+    if (pgBossPrismaSendAdapterCall) return current;
     if (
       ts.isNewExpression(call) &&
       binding?.kind === "import" &&
@@ -3920,19 +6443,50 @@ class EntryAnalyzer {
       ) {
         return current;
       }
+      const importedBodyResolved = Boolean(
+        binding.target &&
+        !binding.target.unknown &&
+        isFunctionLike(unwrapped(binding.target.node)),
+      );
+      if (
+        this.callPassesTrackedCapability(frame, args, current) &&
+        (
+          !importedBodyResolved ||
+          (
+            importDepth >= MAX_SAME_PACKAGE_IMPORT_DEPTH &&
+            !importedWorkspaceBody
+          )
+        )
+      ) {
+        return this.recordSensitive(
+          frame,
+          call,
+          current,
+          importedBodyResolved
+            ? `same-package call ${binding.name} receives a tracked DB/storage/queue capability beyond the one-module analysis limit`
+            : `imported call ${binding.name} receives a tracked DB/storage/queue capability but its body cannot be resolved`,
+          REASON.UNPROVABLE,
+        );
+      }
       if (
         binding.target &&
         !binding.target.unknown &&
         isFunctionLike(unwrapped(binding.target.node))
       ) {
-        if (importDepth >= MAX_SAME_PACKAGE_IMPORT_DEPTH) {
+        if (
+          importDepth >= MAX_SAME_PACKAGE_IMPORT_DEPTH &&
+          !importedWorkspaceBody
+        ) {
           if (this.project.moduleMayReachSensitive(binding.targetInfo)) {
             return this.recordDepthLimited(
               frame,
               call,
               current,
               `same-package call ${binding.name} exceeds the one-module analysis limit`,
-              { trustedEntryBoundary: binding.targetInfo?.isEntry === true },
+              {
+                trustedEntryBoundary: binding.targetInfo?.isEntry === true,
+                missingPrincipalBoundary: args.length === 0,
+              },
             );
           }
         } else {
@@ -3943,7 +6497,7 @@ class EntryAnalyzer {
             args,
             frame,
             current,
-            importDepth + 1,
+            importDepth + (importedWorkspaceBody ? 0 : 1),
           );
           return this.applyInvokedReturn(call, invoked, current);
         }
@@ -3958,6 +6512,25 @@ class EntryAnalyzer {
             })
           : this.recordSensitive(frame, call, current, detail);
       }
+    }
+
+    if (
+      binding?.kind === "import-surface" &&
+      !transactionCall &&
+      !directSensitive &&
+      this.callPassesTrackedCapability(frame, args, current)
+    ) {
+      return this.invalidateCallEscapes(
+        this.recordSensitive(
+          frame,
+          call,
+          current,
+          `imported object surface ${binding.name} receives a tracked DB/storage/queue capability but its callee body cannot be resolved`,
+          REASON.UNPROVABLE,
+        ),
+        call,
+        args,
+      );
     }
 
     if (
@@ -3987,15 +6560,25 @@ class EntryAnalyzer {
     const sensitive = directSensitive;
     if (sensitive) {
       if (transactionCall) return current;
+      if (this.isProvenPureStorageUrlCall(frame, call, sensitive)) {
+        this.covered = true;
+        return current;
+      }
       const computed = sensitive.startsWith("computed ");
+      const unsupportedStorage = sensitive.startsWith("unsupported storage origin");
       current = this.recordSensitive(
         frame,
         call,
         current,
-        computed ? `${sensitive}; computed dispatch cannot be proven` : sensitive,
-        computed ? REASON.UNPROVABLE : null,
+        computed
+          ? `${sensitive}; computed dispatch cannot be proven`
+          : unsupportedStorage
+            ? `${sensitive}; module is not in the trusted storage registry`
+            : sensitive,
+        computed || unsupportedStorage ? REASON.UNPROVABLE : null,
+        sensitive.startsWith("storage ") ? "storage" : "principal",
       );
-      if (!computed) {
+      if (!computed && !unsupportedStorage) {
         current = this.markPrincipalDerivedOperationResult(call, current, frame, context);
       }
     }
@@ -4033,29 +6616,135 @@ class EntryAnalyzer {
     this.callStack.push(stackKey);
     try {
       const callbacks = new Map();
-      const calleeStates = states.map((state) => {
+      const invocationId = ++this.invocationSequence;
+      const callerStatesByLineage = new Map();
+      // Invocation-local origin maps are keyed by the caller's exact declaration node.
+      // Callee parameters and locals with the same text therefore cannot sever or
+      // fabricate propagation back to the caller.
+      const callerOriginsByLineage = new Map();
+      const calleeStates = states.map((state, index) => {
         const next = cloneState(state);
+        const lineage = `${invocationId}:${index}`;
+        const callerOrigins = [];
+        next.callLineage.push(lineage);
+        callerStatesByLineage.set(lineage, state);
         next.dbBindings = new Set(info.staticDbAliases);
+        next.storageBindings = new Set(info.staticStorageAliases);
+        next.storageNamespaceBindings = new Set(info.staticStorageNamespaceAliases);
+        next.unsupportedStorageBindings = new Set(
+          info.staticUnsupportedStorageAliases,
+        );
+        next.unsupportedStorageNamespaceBindings = new Set(
+          info.staticUnsupportedStorageNamespaceAliases,
+        );
         next.queueBindings = new Set();
         next.pending = new Set();
         next.returnedDerived = false;
         next.returnedPrincipalKind = null;
+        next.returnedCapability = false;
         if (info.path !== callerFrame.info.path) {
           next.principalBindings = new Set();
           next.principalObjects = new Set();
+          next.principalCarrierObjects = new Set();
           next.principalDerivedBindings = new Set();
           next.principalDerivedObjects = new Set();
           next.principalAuthorityBindings = new Map();
+          next.booleanFacts = new Map();
+          next.principalPropertyBindings = new Map();
+          next.principalCollectionPropertyBindings = new Map();
           next.principalOwnerNeutralBindings = moduleOwnerNeutralBindings(info);
           next.principalImmutableObjectBindings = new Set();
+          next.principalAliases = new Map();
+          next.invalidatedPrincipalAliases = new Set();
           next.optionalPrincipalParameters = new Set();
+          next.knownPrincipalBindings = new Set();
+          next.nullableDerivedBindings = new Set();
+          next.safeDerivedCollections = new Set();
+          next.knownNonEmptyCollections = new Set();
+          next.definitelyEmptyCollections = new Set();
+          next.poisonedCollections = new Set();
+          next.signedMediaClaims = new Set();
+          next.nonNullableSignedMediaClaims = new Set();
+          next.authorizedSignedMediaClaims = new Set();
         }
         for (let index = 0; index < (node.parameters?.length ?? 0); index += 1) {
           const parameter = node.parameters[index];
           const argument = args[index];
+          for (const parameterName of identifierNames(parameter.name)) {
+            detachPrincipalAlias(next, parameterName);
+            clearPrincipalName(next, parameterName);
+            next.poisonedCollections.delete(parameterName);
+          }
           if (!argument) continue;
           const argumentNode = unwrapped(argument);
-          const parameterShape = principalParameterShape(parameter);
+          if (ts.isIdentifier(parameter.name)) {
+            const directArgument = ts.isIdentifier(argumentNode);
+            const origins = new Map();
+            for (const reference of escapedAliasIdentifierNodes(argumentNode)) {
+              const binding = visibleBindingNode(
+                callerFrame.info.sourceFile,
+                reference,
+                reference.text,
+              );
+              if (!binding || origins.has(binding)) continue;
+              const objectTainted = principalNameIsObjectTainted(
+                state,
+                reference.text,
+              );
+              const collectionTracked = Boolean(
+                this.collectionAliasesForState(state, reference.text).size,
+              );
+              if (!objectTainted && !collectionTracked) continue;
+              origins.set(binding, { name: reference.text });
+              // A nested object/array carrier receives only the reference-capable
+              // authority reachable from its exact caller binding. Mutating the carrier
+              // then poisons/invalidates that mapped origin at invocation exit.
+              // Reachability is NOT identity: a carrier that merely contains a principal
+              // is never itself a principal object, so its own `.ownerId` stays subject
+              // to the default-deny per-property provenance below.
+              if (!directArgument && objectTainted) {
+                next.principalCarrierObjects.add(parameter.name.text);
+              }
+              if (!directArgument && collectionTracked) {
+                if (state.safeDerivedCollections.has(reference.text)) {
+                  next.safeDerivedCollections.add(parameter.name.text);
+                }
+                if (state.knownNonEmptyCollections.has(reference.text)) {
+                  next.knownNonEmptyCollections.add(parameter.name.text);
+                }
+                if (state.definitelyEmptyCollections.has(reference.text)) {
+                  next.definitelyEmptyCollections.add(parameter.name.text);
+                }
+                if (state.poisonedCollections.has(reference.text)) {
+                  next.poisonedCollections.add(parameter.name.text);
+                }
+              }
+            }
+            if (origins.size) {
+              callerOrigins.push({
+                parameterName: parameter.name.text,
+                origins,
+              });
+            }
+          }
+          if (
+            ts.isIdentifier(parameter.name) &&
+            ts.isIdentifier(argumentNode)
+          ) {
+            if (state.safeDerivedCollections.has(argumentNode.text)) {
+              next.safeDerivedCollections.add(parameter.name.text);
+            }
+            if (state.knownNonEmptyCollections.has(argumentNode.text)) {
+              next.knownNonEmptyCollections.add(parameter.name.text);
+            }
+            if (state.definitelyEmptyCollections.has(argumentNode.text)) {
+              next.definitelyEmptyCollections.add(parameter.name.text);
+            }
+            if (state.poisonedCollections.has(argumentNode.text)) {
+              next.poisonedCollections.add(parameter.name.text);
+            }
+          }
+          const parameterShape = principalParameterShape(parameter, info);
           const ownerAuthorityKind =
             parameterShape?.kind === "object" || ts.isObjectBindingPattern(parameter.name)
               ? principalOwnerAuthorityKind(
@@ -4064,7 +6753,7 @@ class EntryAnalyzer {
                   this.principalDerivedExpressions,
                 )
               : null;
-          const principalKind =
+          const callerPrincipalKind =
             principalExpressionKind(
               argumentNode,
               state,
@@ -4075,18 +6764,91 @@ class EntryAnalyzer {
               : ownerAuthorityKind
                 ? "object"
                 : null);
+          const principalKind = callerPrincipalKind;
+          // Exact per-property provenance is the only authority a carrier argument can
+          // hand its callee. It applies to every module, not just workspace packages:
+          // it is strictly narrower than a blanket object grant and default-denies any
+          // property whose value is not itself proven principal.
+          const argumentPrincipalProperties = principalPropertiesForExpression(
+            argumentNode,
+            state,
+            this.principalDerivedExpressions,
+          );
           if (ts.isObjectBindingPattern(parameter.name)) {
             if (principalKind) {
               for (const element of parameter.name.elements) {
-                if (propertyNameText(element.propertyName ?? element.name) !== "ownerId") continue;
-                for (const name of identifierNames(element.name)) {
-                  next.principalBindings.add(name);
+                const sourceName = propertyNameText(element.propertyName ?? element.name);
+                if (sourceName === "ownerId") {
+                  for (const name of identifierNames(element.name)) {
+                    next.principalBindings.add(name);
+                  }
+                  continue;
+                }
+                if (
+                  !sourceName ||
+                  !isPrincipalIdentityKeyName(sourceName) ||
+                  !ts.isObjectLiteralExpression(argumentNode)
+                ) {
+                  continue;
+                }
+                const propertyValue = objectPropertyInitializer(argumentNode, sourceName);
+                if (
+                  propertyValue &&
+                  principalExpressionKind(
+                    propertyValue,
+                    state,
+                    this.principalDerivedExpressions,
+                  ) === "derived"
+                ) {
+                  for (const name of identifierNames(element.name)) {
+                    next.principalDerivedBindings.add(name);
+                  }
+                }
+              }
+            }
+            for (const element of parameter.name.elements) {
+              const sourceName = propertyNameText(
+                element.propertyName ?? element.name,
+              );
+              const propertyValue =
+                sourceName && ts.isObjectLiteralExpression(argumentNode)
+                  ? objectPropertyInitializer(argumentNode, sourceName)
+                  : null;
+              const booleanFact = propertyValue
+                ? booleanFactForExpression(propertyValue, state)
+                : null;
+              if (booleanFact !== null) {
+                for (const bindingName of identifierNames(element.name)) {
+                  next.booleanFacts.set(bindingName, booleanFact);
+                }
+              }
+              const propertyKind = sourceName
+                ? argumentPrincipalProperties.get(sourceName)
+                : null;
+              if (!propertyKind) continue;
+              for (const bindingName of identifierNames(element.name)) {
+                if (propertyKind === "binding") {
+                  next.principalBindings.add(bindingName);
+                } else if (propertyKind === "object") {
+                  next.principalObjects.add(bindingName);
+                } else {
+                  next.principalDerivedBindings.add(bindingName);
                 }
               }
             }
             continue;
           }
           if (!ts.isIdentifier(parameter.name)) continue;
+          const booleanFact = booleanFactForExpression(argumentNode, state);
+          if (booleanFact !== null) {
+            next.booleanFacts.set(parameter.name.text, booleanFact);
+          }
+          for (const [propertyName, propertyKind] of argumentPrincipalProperties) {
+            next.principalPropertyBindings.set(
+              principalPropertyKey(parameter.name.text, propertyName),
+              propertyKind,
+            );
+          }
           if (ts.isObjectLiteralExpression(argumentNode)) {
             let hasUnknownProperties = false;
             for (const property of argumentNode.properties) {
@@ -4162,7 +6924,62 @@ class EntryAnalyzer {
               importDepth: callbackResolution.importDepth ?? importDepth,
             });
           } else {
-            if (this.expressionTaintsDb(callerFrame, argumentNode, state)) {
+            const carriesDb = this.expressionTaintsDb(
+              callerFrame,
+              argumentNode,
+              state,
+            );
+            const carriesStorage = this.expressionTaintsStorage(
+              callerFrame,
+              argumentNode,
+              state,
+            );
+            const carriesStorageNamespace = this.expressionTaintsStorageNamespace(
+              callerFrame,
+              argumentNode,
+              state,
+            );
+            const carriesUnsupportedStorage =
+              this.expressionTaintsUnsupportedStorage(
+                callerFrame,
+                argumentNode,
+                state,
+              );
+            const carriesUnsupportedStorageNamespace =
+              this.expressionTaintsUnsupportedStorageNamespace(
+                callerFrame,
+                argumentNode,
+                state,
+              );
+            if (carriesDb) {
+              next.dbBindings.add(parameter.name.text);
+            }
+            if (carriesStorage) {
+              next.storageBindings.add(parameter.name.text);
+            }
+            if (carriesStorageNamespace) {
+              next.storageNamespaceBindings.add(parameter.name.text);
+            }
+            if (carriesUnsupportedStorage) {
+              next.unsupportedStorageBindings.add(parameter.name.text);
+            }
+            if (carriesUnsupportedStorageNamespace) {
+              next.unsupportedStorageNamespaceBindings.add(parameter.name.text);
+            }
+            if (
+              !carriesDb &&
+              !carriesStorage &&
+              !carriesStorageNamespace &&
+              !carriesUnsupportedStorage &&
+              !carriesUnsupportedStorageNamespace &&
+              this.expressionContainsTrackedCapability(
+                callerFrame,
+                argumentNode,
+                state,
+              )
+            ) {
+              // The carrier shape is outside the bounded capability model. Keep it
+              // tainted across the remaining call boundary so it cannot disappear.
               next.dbBindings.add(parameter.name.text);
             }
             if (
@@ -4179,18 +6996,30 @@ class EntryAnalyzer {
               next.principalBindings.add(parameter.name.text);
             }
             const aliasSource = directAliasIdentifier(argumentNode);
+            if (aliasSource) {
+              copySignedMediaTrust(
+                next,
+                state,
+                aliasSource,
+                parameter.name.text,
+              );
+            }
             if (
               aliasSource &&
               principalNameIsObjectTainted(state, aliasSource) &&
-              (principalKind === "object" || principalKind === "derived")
+              (
+                principalKind === "object" ||
+                principalKind === "derived" ||
+                state.signedMediaClaims.has(aliasSource)
+              )
             ) {
               if (principalKind === "derived") {
                 next.principalDerivedObjects.add(parameter.name.text);
               }
-              linkPrincipalAliases(next, parameter.name.text, aliasSource);
             }
           }
         }
+        callerOriginsByLineage.set(lineage, callerOrigins);
         return next;
       });
       const inheritedFunctions =
@@ -4227,6 +7056,10 @@ class EntryAnalyzer {
             node.body,
             state,
             this.principalDerivedExpressions,
+          ) ?? principalCollectionExpressionKind(
+            node.body,
+            state,
+            this.principalDerivedExpressions,
           );
           const authorityKind = principalOwnerAuthorityKind(
             node.body,
@@ -4236,6 +7069,11 @@ class EntryAnalyzer {
           const kind = expressionKind ?? (authorityKind ? "derived" : null);
           next.returnedPrincipalKind = kind;
           next.returnedDerived = kind === "derived";
+          next.returnedCapability = this.expressionContainsTrackedCapability(
+            frame,
+            node.body,
+            state,
+          );
           return next;
         });
         flow = { continuing: [], returned };
@@ -4243,19 +7081,40 @@ class EntryAnalyzer {
         flow = await this.analyzeBlock(node.body, preparedStates, frame, importDepth);
       }
       const exits = dedupeStates([...flow.returned, ...flow.continuing]);
-      return exits.map((state, index) => {
+      return exits.map((state) => {
         const next = cloneState(state);
+        const lineage = next.callLineage.pop();
         const callerBase =
-          states[Math.min(index, states.length - 1)] ??
+          callerStatesByLineage.get(lineage) ??
+          states[0] ??
           createState(callerFrame.info);
+        const callerOrigins = callerOriginsByLineage.get(lineage) ?? [];
         next.dbBindings = new Set(callerBase.dbBindings);
+        next.storageBindings = new Set(callerBase.storageBindings);
+        next.storageNamespaceBindings = new Set(
+          callerBase.storageNamespaceBindings,
+        );
+        next.unsupportedStorageBindings = new Set(
+          callerBase.unsupportedStorageBindings,
+        );
+        next.unsupportedStorageNamespaceBindings = new Set(
+          callerBase.unsupportedStorageNamespaceBindings,
+        );
         next.queueBindings = new Set(callerBase.queueBindings);
         next.pending = new Set(callerBase.pending);
         next.principalBindings = new Set(callerBase.principalBindings);
         next.principalObjects = new Set(callerBase.principalObjects);
+        next.principalCarrierObjects = new Set(callerBase.principalCarrierObjects);
         next.principalDerivedBindings = new Set(callerBase.principalDerivedBindings);
         next.principalDerivedObjects = new Set(callerBase.principalDerivedObjects);
         next.principalAuthorityBindings = new Map(callerBase.principalAuthorityBindings);
+        next.booleanFacts = new Map(callerBase.booleanFacts);
+        next.principalPropertyBindings = new Map(
+          callerBase.principalPropertyBindings,
+        );
+        next.principalCollectionPropertyBindings = new Map(
+          callerBase.principalCollectionPropertyBindings,
+        );
         next.principalOwnerNeutralBindings = new Set(
           callerBase.principalOwnerNeutralBindings,
         );
@@ -4264,16 +7123,69 @@ class EntryAnalyzer {
         );
         next.principalAliases = clonePrincipalAliases(callerBase.principalAliases);
         next.invalidatedPrincipalAliases = new Set(callerBase.invalidatedPrincipalAliases);
-        for (const invalidated of state.invalidatedPrincipalAliases) {
-          if (callerBase.invalidatedPrincipalAliases.has(invalidated)) continue;
-          if (
-            principalNameIsTainted(next, invalidated) ||
-            next.principalAliases.has(invalidated)
-          ) {
-            invalidatePrincipalAlias(next, invalidated);
+        next.signedMediaClaims = new Set(callerBase.signedMediaClaims);
+        next.nonNullableSignedMediaClaims = new Set(
+          callerBase.nonNullableSignedMediaClaims,
+        );
+        next.authorizedSignedMediaClaims = new Set(
+          callerBase.authorizedSignedMediaClaims,
+        );
+        next.optionalPrincipalParameters = new Set(callerBase.optionalPrincipalParameters);
+        next.knownPrincipalBindings = new Set(callerBase.knownPrincipalBindings);
+        next.nullableDerivedBindings = new Set(callerBase.nullableDerivedBindings);
+        next.safeDerivedCollections = new Set(callerBase.safeDerivedCollections);
+        next.knownNonEmptyCollections = new Set(
+          callerBase.knownNonEmptyCollections,
+        );
+        next.definitelyEmptyCollections = new Set(
+          callerBase.definitelyEmptyCollections,
+        );
+        next.poisonedCollections = new Set(callerBase.poisonedCollections);
+        if (info.path === callerFrame.info.path) {
+          for (const name of callerBase.definitelyEmptyCollections) {
+            if (!state.definitelyEmptyCollections.has(name)) {
+              next.definitelyEmptyCollections.delete(name);
+            }
+          }
+          for (const name of state.poisonedCollections) {
+            if (
+              !callerBase.poisonedCollections.has(name) &&
+              this.collectionAliasesForState(callerBase, name).size
+            ) {
+              next.poisonedCollections.add(name);
+            }
+          }
+          for (const invalidated of state.invalidatedPrincipalAliases) {
+            if (callerBase.invalidatedPrincipalAliases.has(invalidated)) continue;
+            if (
+              principalNameIsTainted(next, invalidated) ||
+              next.principalAliases.has(invalidated)
+            ) {
+              invalidatePrincipalAlias(next, invalidated);
+            }
           }
         }
-        next.optionalPrincipalParameters = new Set(callerBase.optionalPrincipalParameters);
+        for (const { parameterName, origins } of callerOrigins) {
+          for (const origin of origins.values()) {
+            if (
+              callerBase.definitelyEmptyCollections.has(origin.name) &&
+              !state.definitelyEmptyCollections.has(parameterName)
+            ) {
+              next.definitelyEmptyCollections.delete(origin.name);
+            }
+            if (state.knownNonEmptyCollections.has(parameterName)) {
+              next.knownNonEmptyCollections.add(origin.name);
+            }
+            if (state.poisonedCollections.has(parameterName)) {
+              invalidatePrincipalAlias(next, origin.name);
+              next.poisonedCollections.add(origin.name);
+              continue;
+            }
+            if (state.invalidatedPrincipalAliases.has(parameterName)) {
+              invalidatePrincipalAlias(next, origin.name);
+            }
+          }
+        }
         return next;
       });
     } finally {
@@ -4282,8 +7194,17 @@ class EntryAnalyzer {
   }
 
   async analyzeVariableDeclaration(declaration, states, frame, importDepth) {
-    if (!declaration.initializer) return states;
     const names = identifierNames(declaration.name);
+    let current = states.map((state) => {
+      const next = cloneState(state);
+      for (const name of names) {
+        detachPrincipalAlias(next, name);
+        clearPrincipalName(next, name);
+        next.poisonedCollections.delete(name);
+      }
+      return next;
+    });
+    if (!declaration.initializer) return current;
     const emptySafeCollection =
       ts.isIdentifier(declaration.name) &&
       ts.isArrayLiteralExpression(unwrapped(declaration.initializer)) &&
@@ -4292,28 +7213,37 @@ class EntryAnalyzer {
       ts.isIdentifier(declaration.name) &&
       unwrapped(declaration.initializer).kind === ts.SyntaxKind.NullKeyword
     ) {
-      this.nullableDerivedBindings.add(declaration.name.text);
+      current = current.map((state) => {
+        const next = cloneState(state);
+        next.nullableDerivedBindings.add(declaration.name.text);
+        return next;
+      });
     }
-    if (emptySafeCollection) {
-      this.safeDerivedCollections.add(declaration.name.text);
-    }
-    if (isFunctionLike(unwrapped(declaration.initializer))) return states;
+    if (isFunctionLike(unwrapped(declaration.initializer))) return current;
     const dbLoad = dbPackageLoadCall(declaration.initializer);
     const dynamicDbNames = dbLoad ? dynamicDbBindingNames(declaration.name) : [];
     if (dynamicDbNames.length) {
-      return states.map((state) => {
+      return current.map((state) => {
         const next = cloneState(state);
         for (const name of dynamicDbNames) next.dbBindings.add(name);
         return next;
       });
     }
-    const context =
-      names.length === 1
-        ? { kind: "assigned", name: names[0], derivedNames: names }
+    const ownerNames = ts.isObjectBindingPattern(declaration.name)
+      ? declaration.name.elements.flatMap((element) =>
+          propertyNameText(element.propertyName ?? element.name) === "ownerId"
+            ? identifierNames(element.name)
+            : [],
+        )
+      : [];
+    const context = ts.isIdentifier(declaration.name)
+      ? { kind: "assigned", name: declaration.name.text, derivedNames: names }
+      : ts.isObjectBindingPattern(declaration.name)
+        ? { kind: "destructured", ownerNames, derivedNames: names }
         : { kind: "consumed", derivedNames: names };
-    let current = await this.asyncExpression(
+    current = await this.asyncExpression(
       declaration.initializer,
-      states,
+      current,
       frame,
       context,
       importDepth,
@@ -4322,7 +7252,46 @@ class EntryAnalyzer {
       const name = names[0];
       current = current.map((state) => {
         const next = cloneState(state);
+        if (
+          this.expressionContainsTrackedCapability(
+            frame,
+            declaration.initializer,
+            state,
+          )
+        ) {
+          next.dbBindings.add(name);
+        }
         if (this.expressionTaintsDb(frame, declaration.initializer, state)) next.dbBindings.add(name);
+        if (this.expressionTaintsStorage(frame, declaration.initializer, state)) {
+          next.storageBindings.add(name);
+        }
+        if (
+          this.expressionTaintsStorageNamespace(
+            frame,
+            declaration.initializer,
+            state,
+          )
+        ) {
+          next.storageNamespaceBindings.add(name);
+        }
+        if (
+          this.expressionTaintsUnsupportedStorage(
+            frame,
+            declaration.initializer,
+            state,
+          )
+        ) {
+          next.unsupportedStorageBindings.add(name);
+        }
+        if (
+          this.expressionTaintsUnsupportedStorageNamespace(
+            frame,
+            declaration.initializer,
+            state,
+          )
+        ) {
+          next.unsupportedStorageNamespaceBindings.add(name);
+        }
         if (this.isGetBossCall(frame, declaration.initializer)) next.queueBindings.add(name);
         const principalKind = principalExpressionKind(
           declaration.initializer,
@@ -4330,6 +7299,13 @@ class EntryAnalyzer {
           this.principalDerivedExpressions,
         );
         const initializerNode = unwrapped(declaration.initializer);
+        const derivedObjectExpression =
+          this.principalDerivedObjectExpressions.has(initializerNode);
+        const derivedObjectMember = isCanonicalDerivedObjectMember(
+          initializerNode,
+          state,
+          this.principalDerivedObjectExpressions,
+        );
         const authorityKind =
           ts.isObjectLiteralExpression(initializerNode) ||
           (ts.isIdentifier(initializerNode) &&
@@ -4367,8 +7343,29 @@ class EntryAnalyzer {
         } else if (principalKind === "derived") {
           next.principalDerivedBindings.add(name);
         }
+        if (derivedObjectMember) {
+          next.principalDerivedObjects.add(name);
+        }
+        if (principalKind === "derived" && derivedObjectExpression) {
+          next.principalDerivedObjects.add(name);
+        }
         if (authorityKind && ts.isIdentifier(declaration.name)) {
           next.principalAuthorityBindings.set(name, authorityKind);
+        }
+        if (
+          ts.isIdentifier(declaration.name) &&
+          this.project.isWorkspacePackageModule(frame.info)
+        ) {
+          for (const [propertyName, propertyKind] of principalPropertiesForExpression(
+            declaration.initializer,
+            state,
+            this.principalDerivedExpressions,
+          )) {
+            next.principalPropertyBindings.set(
+              principalPropertyKey(name, propertyName),
+              propertyKind,
+            );
+          }
         }
         if (ownerNeutral && ts.isIdentifier(declaration.name)) {
           next.principalOwnerNeutralBindings.add(name);
@@ -4380,19 +7377,31 @@ class EntryAnalyzer {
           ? directAliasIdentifier(declaration.initializer)
           : null;
         if (aliasSource && principalNameIsObjectTainted(state, aliasSource)) {
+          copySignedMediaTrust(next, state, aliasSource, name);
           if (principalKind === "derived") next.principalDerivedObjects.add(name);
           linkPrincipalAliases(next, name, aliasSource);
         }
+        if (
+          aliasSource &&
+          state.definitelyEmptyCollections.has(aliasSource)
+        ) {
+          next.definitelyEmptyCollections.add(name);
+        }
+        if (aliasSource && state.poisonedCollections.has(aliasSource)) {
+          next.poisonedCollections.add(name);
+        }
+        if (next.principalBindings.has(name)) {
+          next.knownPrincipalBindings.add(name);
+        }
         return next;
       });
-      if (current.some((state) => state.principalBindings.has(name))) {
-        this.knownPrincipalBindings.add(name);
-      }
       if (emptySafeCollection) {
         current = current.map((state) => {
           const next = cloneState(state);
           next.principalDerivedBindings.add(name);
           next.principalDerivedObjects.add(name);
+          next.safeDerivedCollections.add(name);
+          next.definitelyEmptyCollections.add(name);
           return next;
         });
       }
@@ -4430,6 +7439,34 @@ class EntryAnalyzer {
           for (const element of declaration.name.elements) {
             if (propertyNameText(element.propertyName ?? element.name) !== "ownerId") continue;
             for (const name of identifierNames(element.name)) next.principalBindings.add(name);
+          }
+        }
+        if (
+          ts.isObjectBindingPattern(declaration.name) &&
+          this.project.isWorkspacePackageModule(frame.info)
+        ) {
+          const initializerProperties = principalPropertiesForExpression(
+            declaration.initializer,
+            state,
+            this.principalDerivedExpressions,
+          );
+          for (const element of declaration.name.elements) {
+            const sourceName = propertyNameText(
+              element.propertyName ?? element.name,
+            );
+            const propertyKind = sourceName
+              ? initializerProperties.get(sourceName)
+              : null;
+            if (!propertyKind) continue;
+            for (const bindingName of identifierNames(element.name)) {
+              if (propertyKind === "binding") {
+                next.principalBindings.add(bindingName);
+              } else if (propertyKind === "object") {
+                next.principalObjects.add(bindingName);
+              } else {
+                next.principalDerivedBindings.add(bindingName);
+              }
+            }
           }
         }
         return next;
@@ -4476,6 +7513,10 @@ class EntryAnalyzer {
             statement.expression,
             state,
             this.principalDerivedExpressions,
+          ) ?? principalCollectionExpressionKind(
+            statement.expression,
+            state,
+            this.principalDerivedExpressions,
           );
           const authorityKind = principalOwnerAuthorityKind(
             statement.expression,
@@ -4485,6 +7526,11 @@ class EntryAnalyzer {
           const kind = expressionKind ?? (authorityKind ? "derived" : null);
           next.returnedPrincipalKind = kind;
           next.returnedDerived = kind === "derived";
+          next.returnedCapability = this.expressionContainsTrackedCapability(
+            frame,
+            statement.expression,
+            state,
+          );
           return next;
         });
       }
@@ -4502,6 +7548,7 @@ class EntryAnalyzer {
         const next = cloneState(state);
         next.returnedPrincipalKind = "abrupt";
         next.returnedDerived = false;
+        next.returnedCapability = false;
         return next;
       });
       return { continuing: [], returned };
@@ -4514,7 +7561,6 @@ class EntryAnalyzer {
         { kind: "consumed" },
         importDepth,
       );
-      condition = this.consumeAdminErrorDiscriminant(condition, statement.expression);
       if (statement.expression.kind === ts.SyntaxKind.TrueKeyword) {
         return this.analyzeStatement(statement.thenStatement, condition, frame, importDepth);
       }
@@ -4523,18 +7569,44 @@ class EntryAnalyzer {
           ? this.analyzeStatement(statement.elseStatement, condition, frame, importDepth)
           : { continuing: condition, returned: [] };
       }
-      let thenStates = condition.map((state) => {
+      let thenStates = this.applyAdminNonErrorBranch(
+        condition.map(cloneState),
+        statement.expression,
+        true,
+      );
+      thenStates = this.applyBooleanFactBranch(
+        thenStates,
+        statement.expression,
+        true,
+      );
+      thenStates = this.applyQueueTruthiness(
+        thenStates,
+        statement.expression,
+        true,
+      );
+      thenStates = this.applySignedMediaTruthiness(
+        thenStates,
+        statement.expression,
+        true,
+      );
+      thenStates = this.applyOwnerMatchBranch(
+        thenStates,
+        frame,
+        statement.expression,
+        true,
+      );
+      thenStates = thenStates.map((state) => {
         const next = cloneState(state);
         const expression = unwrapped(statement.expression);
         if (
           ts.isIdentifier(expression) &&
-          this.knownPrincipalBindings.has(expression.text)
+          state.knownPrincipalBindings.has(expression.text)
         ) {
           next.principalBindings.add(expression.text);
         }
         if (
           ts.isIdentifier(expression) &&
-          this.nullableDerivedBindings.has(expression.text)
+          state.nullableDerivedBindings.has(expression.text)
         ) {
           next.principalDerivedBindings.add(expression.text);
         }
@@ -4544,15 +7616,57 @@ class EntryAnalyzer {
         thenStates,
         this.truthyResultNames(statement.expression, true),
       );
+      const thenNonEmptyCollection = collectionAssertedNonEmpty(
+        statement.expression,
+        true,
+      );
+      thenStates = correlateNonEmptyCollectionStates(
+        thenStates,
+        thenNonEmptyCollection?.name,
+      );
       const thenFlow = await this.analyzeStatement(
         statement.thenStatement,
         thenStates,
         frame,
         importDepth,
       );
-      const elseStates = this.applyValidatedInputs(
+      let elseStates = this.applyAdminNonErrorBranch(
         condition.map(cloneState),
+        statement.expression,
+        false,
+      );
+      elseStates = this.applyBooleanFactBranch(
+        elseStates,
+        statement.expression,
+        false,
+      );
+      elseStates = this.applyQueueTruthiness(
+        elseStates,
+        statement.expression,
+        false,
+      );
+      elseStates = this.applySignedMediaTruthiness(
+        elseStates,
+        statement.expression,
+        false,
+      );
+      elseStates = this.applyOwnerMatchBranch(
+        elseStates,
+        frame,
+        statement.expression,
+        false,
+      );
+      elseStates = this.applyValidatedInputs(
+        elseStates,
         this.truthyResultNames(statement.expression, false),
+      );
+      const elseNonEmptyCollection = collectionAssertedNonEmpty(
+        statement.expression,
+        false,
+      );
+      elseStates = correlateNonEmptyCollectionStates(
+        elseStates,
+        elseNonEmptyCollection?.name,
       );
       const elseFlow = statement.elseStatement
         ? await this.analyzeStatement(
@@ -4577,28 +7691,106 @@ class EntryAnalyzer {
       let entered = states.map(cloneState);
       if (
         (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) &&
+        !ts.isVariableDeclarationList(statement.initializer)
+      ) {
+        const assignedNames = assignmentTargetRootNames(statement.initializer);
+        const memberRoots = assignmentTargetMemberRootNames(statement.initializer);
+        for (const name of memberRoots) {
+          entered = this.invalidatePrincipalRoot(entered, name);
+        }
+        entered = entered.map((state) => {
+          const next = cloneState(state);
+          for (const name of assignedNames) {
+            if (memberRoots.has(name)) continue;
+            detachPrincipalAlias(next, name);
+            clearPrincipalName(next, name);
+          }
+          return next;
+        });
+      }
+      if (
+        (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) &&
         ts.isVariableDeclarationList(statement.initializer)
       ) {
         entered = entered.map((state) => {
           const next = cloneState(state);
+          for (const declaration of statement.initializer.declarations) {
+            for (const name of identifierNames(declaration.name)) {
+              detachPrincipalAlias(next, name);
+              clearPrincipalName(next, name);
+              next.poisonedCollections.delete(name);
+            }
+          }
           const iterableKind = principalExpressionKind(
             statement.expression,
             state,
             this.principalDerivedExpressions,
           );
+          const iterableRoot = ts.isIdentifier(unwrapped(statement.expression))
+            ? unwrapped(statement.expression).text
+            : null;
+          const iterableIsDerivedObject = Boolean(
+            iterableRoot &&
+            state.principalDerivedObjects.has(iterableRoot),
+          );
           if (iterableKind === "derived") {
+            for (const declaration of statement.initializer.declarations) {
+              for (const name of identifierNames(declaration.name)) {
+                next.principalDerivedBindings.add(name);
+                if (
+                  iterableIsDerivedObject &&
+                  ts.isIdentifier(declaration.name)
+                ) {
+                  next.principalDerivedObjects.add(name);
+                }
+              }
+            }
+          } else if (
+            ts.isIdentifier(unwrapped(statement.expression)) &&
+            state.safeDerivedCollections.has(unwrapped(statement.expression).text)
+          ) {
             for (const declaration of statement.initializer.declarations) {
               for (const name of identifierNames(declaration.name)) {
                 next.principalDerivedBindings.add(name);
               }
             }
-          } else if (
-            ts.isIdentifier(unwrapped(statement.expression)) &&
-            this.safeDerivedCollections.has(unwrapped(statement.expression).text)
-          ) {
+          }
+          if (iterableRoot) {
+            const collectionProperties = principalPropertiesForRoot(
+              state.principalCollectionPropertyBindings,
+              iterableRoot,
+            );
             for (const declaration of statement.initializer.declarations) {
-              for (const name of identifierNames(declaration.name)) {
-                next.principalDerivedBindings.add(name);
+              if (ts.isIdentifier(declaration.name)) {
+                for (const [propertyName, propertyKind] of collectionProperties) {
+                  next.principalPropertyBindings.set(
+                    principalPropertyKey(
+                      declaration.name.text,
+                      propertyName,
+                    ),
+                    propertyKind,
+                  );
+                }
+                continue;
+              }
+              if (!ts.isObjectBindingPattern(declaration.name)) continue;
+              for (const element of declaration.name.elements) {
+                const sourceName = propertyNameText(
+                  element.propertyName ?? element.name,
+                );
+                const propertyKind = sourceName
+                  ? collectionProperties.get(sourceName)
+                  : null;
+                if (!propertyKind) continue;
+                for (const bindingName of identifierNames(element.name)) {
+                  if (propertyKind === "binding") {
+                    next.principalBindings.add(bindingName);
+                  } else if (propertyKind === "object") {
+                    next.principalObjects.add(bindingName);
+                  } else {
+                    next.principalDerivedBindings.add(bindingName);
+                  }
+                }
               }
             }
           }
@@ -4659,10 +7851,24 @@ class EntryAnalyzer {
         frame,
         importDepth,
       );
+      const catchStates =
+        statement.catchClause?.variableDeclaration
+          ? states.map((state) => {
+              const next = cloneState(state);
+              for (const name of identifierNames(
+                statement.catchClause.variableDeclaration.name,
+              )) {
+                detachPrincipalAlias(next, name);
+                clearPrincipalName(next, name);
+                next.poisonedCollections.delete(name);
+              }
+              return next;
+            })
+          : states.map(cloneState);
       const catchFlow = statement.catchClause
         ? await this.analyzeBlock(
             statement.catchClause.block,
-            states.map(cloneState),
+            catchStates,
             frame,
             importDepth,
           )
@@ -4762,7 +7968,22 @@ class EntryAnalyzer {
 
   async analyzeBlock(block, states, frame, importDepth) {
     if (!block) return { continuing: states, returned: [] };
-    return this.analyzeStatements(block.statements, states, frame, importDepth);
+    const scopedDeclarationNames = block.statements.flatMap((statement) =>
+      ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)
+        ? identifierNames(statement.name)
+        : [],
+    );
+    const scopedStates = scopedDeclarationNames.length
+      ? states.map((state) => {
+          const next = cloneState(state);
+          for (const name of scopedDeclarationNames) {
+            detachPrincipalAlias(next, name);
+            clearPrincipalName(next, name);
+          }
+          return next;
+        })
+      : states;
+    return this.analyzeStatements(block.statements, scopedStates, frame, importDepth);
   }
 
   async analyzeTarget(target) {
@@ -4784,12 +8005,14 @@ class EntryAnalyzer {
       localFunctions.set(localName, localNode);
     }
     const frame = makeFrame(target.info, node, target.name, new Map(), localFunctions);
+    this.originResolvesPrincipal = this.frameContainsPrincipalResolver(frame);
     let states = [
       this.internalAllowed
         ? applyPrincipalParameters(
             createState(target.info),
             node,
             target.inheritedPrincipal ?? null,
+            target.info,
           )
         : createState(target.info),
     ];
@@ -4953,8 +8176,12 @@ export async function analyzeAuthGuards({
   entryFiles = null,
   exemptionsPath = DEFAULT_EXEMPTIONS_PATH,
   trustedAuthGuardPaths = DEFAULT_TRUSTED_AUTH_GUARD_PATHS,
+  trustedStoragePaths = null,
 } = {}) {
   const absoluteRoot = resolve(repoRoot);
+  const configuredTrustedStoragePaths =
+    trustedStoragePaths ??
+    (absoluteRoot === REPO_ROOT ? DEFAULT_TRUSTED_STORAGE_PATHS : []);
   const files = entryFiles
     ? entryFiles.map((file) => (isAbsolute(file) ? file : join(absoluteRoot, file)))
     : productionSourceFiles(absoluteRoot, sourceRoots);
@@ -4968,6 +8195,7 @@ export async function analyzeAuthGuards({
     repoRoot: absoluteRoot,
     sourceFiles: files,
     trustedAuthGuardPaths,
+    trustedStoragePaths: configuredTrustedStoragePaths,
     reviewedExemptions: exemptions,
   });
   const fileResults = [];
