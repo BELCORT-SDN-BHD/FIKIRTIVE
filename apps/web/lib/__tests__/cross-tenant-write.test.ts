@@ -2,14 +2,21 @@
  * Cross-tenant WRITE red-team suite — the write-side twin of isolation.test.ts.
  *
  * WHAT THIS PROVES (green, always executed):
- *  - The tenant guard is ARMED under NODE_ENV=test: `updateMany`/`deleteMany` on a
- *    TENANT_MODELS model with no ownerId filter THROWS, and org A's row is untouched.
+ *  - The tenant guard is ARMED under NODE_ENV=test: `updateMany`/`deleteMany` with no
+ *    ownerId filter THROWS, and org A's row is untouched. Checked on TWO models (Shot
+ *    and Project) so that a model silently dropping out of TENANT_MODELS is caught.
  *  - The product surface is fail-closed: org B calling the real exported server actions
- *    (deleteProject / saveShotPrompt / attachGeneration) with org A's ids gets a
- *    "not found" refusal and writes nothing. That is the actual attack path a merchant
- *    can drive from a browser, so it is tested through the real requireOwner() path.
+ *    (deleteProject / renameProject / createShot / saveShotPrompt / attachGeneration)
+ *    with org A's ids gets a "not found" refusal and writes nothing. That is the actual
+ *    attack path a merchant can drive from a browser, so it is tested through the real
+ *    requireOwner() path.
  *  - saveShotPrompt's IDOR guard stops the cross-tenant FOREIGN KEY shape at the product
  *    layer: org B cannot link org A's Entity into org B's own Shot.
+ *  - The raw-SQL ownerId predicate is load-bearing: the same statement differing only in
+ *    ownerId touches 0 rows cross-tenant and 1 row same-tenant.
+ *  - Transcript — a GLOBAL content-addressed cache by design — is safe because its READ
+ *    path is owner-gated: a tenant reaches a cached transcript only for content it
+ *    demonstrably possesses. See the Transcript describe block for the full ruling.
  *
  * WHAT THIS DOES NOT PROVE (deliberately pinned as executable characterizations):
  *  - The guard is a PRESENCE check, not an IDENTITY check. It has no authenticated
@@ -22,10 +29,16 @@
  *    same-tenant composite foreign keys — those tables don't even carry the
  *    `@@unique([id, ownerId])` such an FK requires — so org B can point an FK at an
  *    org-A row and then read that row back through its OWN owner-scoped query (#317).
+ *    The tripwires cover THREE edges (ShotEntityRef→Entity, Shot→Project,
+ *    Generation→Shot) precisely so that fixing one edge cannot flip the marker and be
+ *    read as "#317 done"; the remaining edges are enumerated in that describe block.
  *    NOTE: the pattern is NOT absent from the database — the newer CRM/consent tables
  *    (Contact, ChannelScope, ChannelConnection, Membership, …) already ship
  *    `@@unique([id, ownerId])` + `FOREIGN KEY (x, ownerId) REFERENCES y(id, ownerId)`.
  *    #317 is about extending that existing pattern backwards, not inventing it.
+ *  - Transcript is NOT in this family. Its global `@@unique([contentHash, model])` is a
+ *    deliberate cross-tenant cache, not a leak (schema.prisma:378-383,
+ *    actions.ts:1092-1099). #320 must EXEMPT it, not refuse it — see its describe block.
  *
  * OPEN GAPS AND THEIR OWNING ISSUES:
  *  - #320 — tenant-guard vacuum: `update` / `upsert` / `delete` are not in CHECKED_OPS,
@@ -42,18 +55,22 @@
  *  → the suite goes RED. The fix therefore cannot land silently; removing the `.fails`
  *  marker is the acceptance evidence for the owning issue.
  *  CAVEAT: `.fails` is a WEAK oracle on its own — `rejects.toThrow()` fails identically
- *  whether the promise RESOLVED or rejected for an unrelated reason. So every `.fails`
- *  case keeps its body to a single assertion AND is paired with a plain-green
- *  `[… impact]` case that performs the same write on its OWN throwaway row and READS
- *  BACK the result. The green half is the real oracle (it proves the write lands today);
- *  the `.fails` half is the tripwire (it goes red when the gap closes). All seeding stays
- *  in beforeAll.
+ *  whether the promise RESOLVED or rejected for an unrelated reason. Two rules keep it
+ *  honest, and both must be preserved by anyone editing this file:
+ *   1. MATCH THE SPECIFIC FAILURE. A guard tripwire matches /tenant-guard/; a database
+ *      tripwire matches the P2003 foreign-key code (and `[control] the #317 matcher`
+ *      proves that matcher really fires on a real FK violation, so the #317 tripwires
+ *      cannot be satisfied by an unrelated DB error).
+ *   2. PAIR IT WITH A GREEN READ-BACK ON THE SAME ROW. Each `.fails` body stays a single
+ *      assertion; the following `[… impact]` case reads back THAT EXACT ROW and proves
+ *      the write really landed. Same row, deliberately: a row-specific failure inside the
+ *      tripwire would otherwise hide behind a companion that used a different row.
  *  ALSO: those green halves are coupled to their gaps by construction. Once #320 lands,
- *  `[#320 impact] Shot.update`, `[#320 impact] Shot.delete` and `[#320 impact] Transcript
- *  upsert TAKES OVER` all start throwing, and `[scope note] forged compound unique key`
- *  stays green only if the fix descends into compound-unique wrappers. Once #317 lands,
- *  `[#317 impact]` goes red too — its shotEntityRef.create becomes a constraint violation.
- *  Expect both PRs to revisit this file in more places than just removing `.fails` markers.
+ *  `[#320 impact] Shot.update` and `[#320 impact] Shot.delete` start failing (their rows
+ *  survive), and `[scope note] forged compound unique key` stays green only if the fix
+ *  descends into compound-unique wrappers. Once #317 lands, `[#317 impact]` goes red too —
+ *  its shotEntityRef.create becomes a constraint violation. Expect both PRs to revisit
+ *  this file in more places than just removing `.fails` markers.
  *
  * Harness: same as isolation.test.ts — two real organisations bootstrapped through the
  * real requireOwner() against the local *_test Postgres (see apps/web/vitest.config.ts
@@ -95,6 +112,7 @@ const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const data = await import("@/lib/data");
 const actions = await import("@/lib/actions");
+const { storageKey, storageKeyToSrc } = await import("@fikirtive/core");
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -108,17 +126,17 @@ let aGenerationId: string;           // read-only witness: A's own generation, n
 let aShotId: string;                 // read-only witness: nothing in this file may mutate it
 let aShotForForgedUpdate: string;    // throwaway — the forged-ownerId updateMany clobbers it
 let aShotForForgedDelete: string;    // throwaway — the forged-ownerId deleteMany removes it
-let aShotForUncheckedUpdate: string; // throwaway — the #320 `update` it.fails case clobbers it
-let aShotForUncheckedDelete: string; // throwaway — the #320 `delete` it.fails case removes it
-let aShotForUpdateImpact: string;    // throwaway — the #320 `update` GREEN read-back clobbers it
-let aShotForDeleteImpact: string;    // throwaway — the #320 `delete` GREEN read-back removes it
+let aShotForUncheckedUpdate: string; // throwaway — the #320 `update` pair clobbers it
+let aShotForUncheckedDelete: string; // throwaway — the #320 `delete` pair removes it
 let aShotForRawSql: string;          // throwaway — the $executeRaw case clobbers it
-// Transcript's unique key is GLOBAL (@@unique([contentHash, model]) — no ownerId), so these
-// must be unique per run or they would collide with another test file's transcript rows.
-const A_TRANSCRIPT_HASH = randomUUID().replace(/-/g, "").repeat(2);   // characterization: B's upsert clobbers it
-const A_TRANSCRIPT_HASH_2 = randomUUID().replace(/-/g, "").repeat(2); // #320 it.fails case
+let aSrc: string;                    // A's content-addressed src (/files/u/<orgA>/<hash>.png)
+// The cached transcript's key is GLOBAL (@@unique([contentHash, model]) — no ownerId), so
+// A's content hash is randomised per run: a fixed hash would collide with a leftover row
+// from an earlier run (or another test file) and break seeding.
+const A_TRANSCRIPT_CUES = [{ startMs: 0, lengthMs: 1000, text: "A's private transcript" }];
 // org B — the attacker
-let bProjectId: string, bShotId: string, bShotId2: string, bGenerationId: string;
+let bProjectId: string, bShotId: string, bShotId2: string, bGenerationId: string, bAssetId: string;
+let bSrcForAContent: string;         // B's OWN namespace, A's content hash — a forged src
 
 let shotSeq = 900_000;
 async function seedShot(ownerId: string, projectId: string, title: string): Promise<string> {
@@ -137,7 +155,9 @@ beforeAll(async () => {
   //    through the real guard / the real action, exactly as isolation.test.ts does.
   aProjectId = `prj_${randomUUID()}`;
   await prisma.project.create({ data: { id: aProjectId, ownerId: orgA, name: "A campaign" } });
-  aAssetHash = "a".repeat(64);
+  aAssetHash = randomUUID().replace(/-/g, "").repeat(2); // 64 hex chars — storageKey requires it
+  aSrc = storageKeyToSrc(storageKey(orgA, aAssetHash, "png"));
+  bSrcForAContent = storageKeyToSrc(storageKey(orgB, aAssetHash, "png"));
   const aAsset = await prisma.asset.create({ data: { id: `ast_${randomUUID()}`, ownerId: orgA, contentHash: aAssetHash, ext: "png", mime: "image/png", sizeBytes: BigInt(10), source: "UPLOAD" } });
   // A LIVE org-A generation, unattached (shotId null) — so attachGeneration's own
   // generation lookup is exercised with a REAL cross-tenant id, not a nonexistent one.
@@ -150,14 +170,12 @@ beforeAll(async () => {
   aShotForForgedDelete = await seedShot(orgA, aProjectId, "A forged-delete target");
   aShotForUncheckedUpdate = await seedShot(orgA, aProjectId, "A unchecked-update target");
   aShotForUncheckedDelete = await seedShot(orgA, aProjectId, "A unchecked-delete target");
-  aShotForUpdateImpact = await seedShot(orgA, aProjectId, "A update-impact target");
-  aShotForDeleteImpact = await seedShot(orgA, aProjectId, "A delete-impact target");
   aShotForRawSql = await seedShot(orgA, aProjectId, "A raw-sql target");
-  for (const contentHash of [A_TRANSCRIPT_HASH, A_TRANSCRIPT_HASH_2]) {
-    await prisma.transcript.create({
-      data: { id: `trs_${randomUUID()}`, ownerId: orgA, contentHash, model: "base.en", cuesJson: [{ start: 0, end: 1, text: "A's private transcript" }] },
-    });
-  }
+  // the cached transcript for A's content, in the REAL CaptionCue shape (startMs/lengthMs/
+  // text) — the wrong shape would fail getTranscript's zod parse and silently return [].
+  await prisma.transcript.create({
+    data: { id: `trs_${randomUUID()}`, ownerId: orgA, contentHash: aAssetHash, model: "base.en", cuesJson: A_TRANSCRIPT_CUES },
+  });
 
   // ── org B's own data (the attacker needs legitimate rows to attack FROM)
   bProjectId = `prj_${randomUUID()}`;
@@ -165,14 +183,15 @@ beforeAll(async () => {
   bShotId = await seedShot(orgB, bProjectId, "B shot");
   bShotId2 = await seedShot(orgB, bProjectId, "B shot 2");
   const bAsset = await prisma.asset.create({ data: { id: `ast_${randomUUID()}`, ownerId: orgB, contentHash: "b".repeat(64), ext: "png", mime: "image/png", sizeBytes: BigInt(10), source: "UPLOAD" } });
+  bAssetId = bAsset.id;
   const bGen = await prisma.generation.create({ data: { id: `gen_${randomUUID()}`, ownerId: orgB, projectId: bProjectId, assetId: bAsset.id, source: "GENERATED", entitySnapshot: {} } });
   bGenerationId = bGen.id;
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
 describe("cross-tenant write — the guard is armed (control)", () => {
-  // If either of these two fails, the whole file is meaningless: it means the guard
-  // is not in strict mode, or the harness never reached the database.
+  // If any of these fails, the whole file is meaningless: it means the guard is not in
+  // strict mode, or the harness never reached the database.
   it("Shot.updateMany with no ownerId THROWS, and org A's row is untouched", async () => {
     await expect(
       prisma.shot.updateMany({ where: { id: aShotId }, data: { title: "pwned by B" } }),
@@ -186,6 +205,26 @@ describe("cross-tenant write — the guard is armed (control)", () => {
       prisma.shot.deleteMany({ where: { id: aShotId } }),
     ).rejects.toThrow(/tenant-guard/);
     const after = await prisma.shot.findFirst({ where: { ownerId: orgA, id: aShotId }, select: { id: true } });
+    expect(after).not.toBeNull();
+  });
+
+  // A SECOND model, deliberately. The guard's coverage is a hand-maintained registry
+  // (TENANT_MODELS in packages/db/src/tenant-guard.ts): a model can silently fall out of
+  // that Set and every Shot-only control stays green. Project is the highest-value second
+  // witness — it is the root of the creative-core graph and the target of deleteProject.
+  it("Project.updateMany with no ownerId THROWS (TENANT_MODELS still covers Project)", async () => {
+    await expect(
+      prisma.project.updateMany({ where: { id: aProjectId }, data: { name: "pwned by B" } }),
+    ).rejects.toThrow(/tenant-guard/);
+    const after = await prisma.project.findFirst({ where: { ownerId: orgA, id: aProjectId }, select: { name: true } });
+    expect(after?.name).toBe("A campaign");
+  });
+
+  it("Project.deleteMany with no ownerId THROWS, and org A's campaign still exists", async () => {
+    await expect(
+      prisma.project.deleteMany({ where: { id: aProjectId } }),
+    ).rejects.toThrow(/tenant-guard/);
+    const after = await prisma.project.findFirst({ where: { ownerId: orgA, id: aProjectId }, select: { id: true } });
     expect(after).not.toBeNull();
   });
 });
@@ -221,9 +260,9 @@ describe("cross-tenant write — #320: unique-key writes are not checked at all"
   // CHECKED_OPS = {findMany, findFirst, findFirstOrThrow, updateMany, deleteMany}.
   // `update` / `upsert` / `delete` are absent, so these three reach org A's rows with
   // no guard involvement whatsoever. Each gap is stated TWICE: an it.fails tripwire that
-  // goes RED the moment #320 lands, and a plain-green `[#320 impact]` case on its own
-  // throwaway row that READS BACK the damage — because `rejects.toThrow()` alone cannot
-  // tell "the call resolved" from "the call threw something else".
+  // goes RED the moment #320 lands, and a plain-green `[#320 impact]` case that reads back
+  // THE SAME ROW the tripwire targeted — because `rejects.toThrow()` alone cannot tell "the
+  // call resolved" from "the call threw something else about that row".
 
   it.fails("[#320] Shot.update by id on org A's row MUST be refused", async () => {
     await expect(
@@ -231,11 +270,12 @@ describe("cross-tenant write — #320: unique-key writes are not checked at all"
     ).rejects.toThrow(/tenant-guard/);
   });
 
-  it("[#320 impact] Shot.update by id really DOES rewrite org A's row today", async () => {
-    // The read-back oracle for the it.fails case above, on its own row: proves the write
-    // lands (not merely that some error was absent).
-    await prisma.shot.update({ where: { id: aShotForUpdateImpact }, data: { title: "pwned by B via update" } });
-    const after = await prisma.shot.findFirst({ where: { ownerId: orgA, id: aShotForUpdateImpact }, select: { title: true } });
+  it("[#320 impact] the update above really DID rewrite org A's row", async () => {
+    // The oracle for the tripwire directly above, reading back THE SAME ROW it targeted.
+    // If that update had failed for a row-specific reason (missing row, constraint, …) the
+    // tripwire would still be green — but this read-back would catch it, because the title
+    // would still be the seeded one.
+    const after = await prisma.shot.findFirst({ where: { ownerId: orgA, id: aShotForUncheckedUpdate }, select: { title: true } });
     expect(after?.title).toBe("pwned by B via update"); // ← org A's row, rewritten, no guard involved
   });
 
@@ -245,36 +285,11 @@ describe("cross-tenant write — #320: unique-key writes are not checked at all"
     ).rejects.toThrow(/tenant-guard/);
   });
 
-  it("[#320 impact] Shot.delete by id really DOES remove org A's row today", async () => {
-    await prisma.shot.delete({ where: { id: aShotForDeleteImpact } });
-    const gone = await prisma.shot.findFirst({ where: { ownerId: orgA, id: aShotForDeleteImpact }, select: { id: true } });
+  it("[#320 impact] the delete above really DID remove org A's row", async () => {
+    // Same-row oracle for the tripwire directly above. beforeAll's `prisma.shot.create`
+    // throws on failure, so the row provably existed before that delete ran.
+    const gone = await prisma.shot.findFirst({ where: { ownerId: orgA, id: aShotForUncheckedDelete }, select: { id: true } });
     expect(gone).toBeNull(); // ← destructive, and the guard never saw it
-  });
-
-  it.fails("[#320] Transcript.upsert by contentHash_model (no ownerId in the key) MUST be refused", async () => {
-    // Transcript's only unique key is @@unique([contentHash, model]) — NO ownerId.
-    // Cross-tenant dedup is deliberate (two merchants uploading the same video share one
-    // row), which makes this the structurally hardest case in the file: #320 must decide
-    // whether the guard refuses it or the schema grows a per-org key.
-    await expect(
-      prisma.transcript.upsert({
-        where: { contentHash_model: { contentHash: A_TRANSCRIPT_HASH_2, model: "base.en" } },
-        update: { ownerId: orgB, cuesJson: [{ start: 0, end: 1, text: "pwned by B" }] },
-        create: { id: `trs_${randomUUID()}`, ownerId: orgB, contentHash: A_TRANSCRIPT_HASH_2, model: "base.en", cuesJson: [] },
-      }),
-    ).rejects.toThrow(/tenant-guard/);
-  });
-
-  it("[#320 impact] the same Transcript upsert TAKES OVER org A's cached row today", async () => {
-    // The executable proof of what the it.fails case above is protecting against: the row
-    // A owns is rewritten in place — its ownerId AND its content now belong to B.
-    await prisma.transcript.upsert({
-      where: { contentHash_model: { contentHash: A_TRANSCRIPT_HASH, model: "base.en" } },
-      update: { ownerId: orgB, cuesJson: [{ start: 0, end: 1, text: "pwned by B" }] },
-      create: { id: `trs_${randomUUID()}`, ownerId: orgB, contentHash: A_TRANSCRIPT_HASH, model: "base.en", cuesJson: [] },
-    });
-    const row = await prisma.transcript.findUnique({ where: { contentHash_model: { contentHash: A_TRANSCRIPT_HASH, model: "base.en" } } });
-    expect(row?.ownerId).toBe(orgB); // ← org A's cache entry was taken over
   });
 
   it("[scope note] a FORGED compound unique key survives #320's presence check", async () => {
@@ -292,6 +307,58 @@ describe("cross-tenant write — #320: unique-key writes are not checked at all"
     });
     expect(asset.ownerId).toBe(orgA);
     expect(asset.originalFilename).toBe("pwned-by-B.png"); // ← org A's asset, mutated
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────
+describe("Transcript — a GLOBAL content-addressed cache, gated at the READ path", () => {
+  // WHY THERE IS NO #320 TRIPWIRE HERE (read this before adding one).
+  // Transcript's `@@unique([contentHash, model])` carries no ownerId ON PURPOSE. It is a
+  // whisper.cpp CACHE, not tenant data: transcription is deterministic for fixed
+  // (audio bytes, model, flags), so two tenants holding the same bytes derive the SAME
+  // cues — one "overwriting" the other writes identical content.
+  //   schema.prisma:380-383 — "Cached whisper.cpp transcript, keyed by (contentHash,
+  //                            model). Deterministic … → cache is always valid"
+  //   actions.ts:1092-1099  — global-but-owner-gated is the deliberate P0 choice; per-org
+  //                           is a P3 schema decision, and "a per-org filter here without
+  //                           changing that unique would break a second org's write"
+  //   caption.ts:60,100,163 — the worker reads and upserts this cache UNSCOPED by design
+  // Transcript stays in TENANT_MODELS — its LIST queries are correctly owner-scoped today.
+  // What #320 must NOT do is extend that to the global-unique path: adding `upsert` to
+  // CHECKED_OPS without a documented per-operation exemption for Transcript would break the
+  // worker's caption path outright. Exemption, with a written reason, not refusal. The row's
+  // `ownerId` column is first-writer bookkeeping, not an authority field. That is precisely
+  // why the security property lives in the READ path, and why these cases pin THAT.
+  // ORDER MATTERS: case 4 gives org B the same bytes, which legitimately opens the cache to
+  // it. Cases 2 and 3 must run before it.
+
+  it("[design] org A reads its own cached transcript (control — the cache is reachable)", async () => {
+    await asUser(A_EMAIL);
+    expect(await actions.getTranscript(aProjectId, aSrc)).toEqual(A_TRANSCRIPT_CUES);
+  });
+
+  it("[security] org B cannot read A's cached transcript with A's src", async () => {
+    await asUser(B_EMAIL);
+    // keyOwnerMatches() rejects the foreign namespace inside ownedAssetFromSrc (actions.ts:1026)
+    expect(await actions.getTranscript(bProjectId, aSrc)).toEqual([]);
+    // and A's project id doesn't help either — the project gate is owner-scoped too
+    expect(await actions.getTranscript(aProjectId, aSrc)).toEqual([]);
+  });
+
+  it("[security] org B cannot read it by forging its OWN src for A's content hash", async () => {
+    // The src now passes keyOwnerMatches (it is B's namespace), so the ONLY thing standing
+    // between B and A's cached cues is "do you own an asset with this contentHash?".
+    await asUser(B_EMAIL);
+    expect(await actions.getTranscript(bProjectId, bSrcForAContent)).toEqual([]);
+  });
+
+  it("[design] once org B actually possesses the same bytes, it shares the cache row", async () => {
+    // This is the design working as intended, not a leak: B now holds an asset with the same
+    // contentHash, so whisper would produce these exact cues for B anyway. Sharing the row is
+    // the $0 + 0 CPU cache hit the schema comment describes.
+    await prisma.asset.create({ data: { id: `ast_${randomUUID()}`, ownerId: orgB, contentHash: aAssetHash, ext: "png", mime: "image/png", sizeBytes: BigInt(10), source: "UPLOAD" } });
+    await asUser(B_EMAIL);
+    expect(await actions.getTranscript(bProjectId, bSrcForAContent)).toEqual(A_TRANSCRIPT_CUES);
   });
 });
 
@@ -373,24 +440,63 @@ describe("cross-tenant write — #317: no cross-tenant composite foreign keys", 
     }
   });
 
-  it.fails("[#317] the cross-tenant FK write MUST be rejected by the database", async () => {
-    // A composite FK (shotId+ownerId → Shot, entityId+ownerId → Entity) would make this a
-    // constraint violation — exactly what ConsentEvent(contactId, ownerId) → Contact(id,
-    // ownerId) already does on the CRM side; Shot/Entity lack even the @@unique([id,
-    // ownerId]) that FK needs. Today it succeeds. The created row is cleaned up in afterAll —
-    // an it.fails body stops at the assertion, so no in-body cleanup would run.
+  // THREE EDGES, NOT ONE. The creative-core graph has several ID-only relations, and each
+  // needs its own composite FK before #317 can be called done. If this file tripwired only
+  // ShotEntityRef→Entity, shipping that ONE constraint would flip the marker red and read as
+  // "#317 complete" while Shot→Project and Generation→Shot stayed wide open. Edges still
+  // uncovered here, for whoever implements #317: Generation→Project, Generation→Asset,
+  // ShotEntityRef→Shot, ReferenceImage→Entity/Asset, EntityVariant→Entity.
+  //
+  // Every tripwire below matches the P2003 foreign-key code specifically — an unrelated DB
+  // error must NOT read as "the gap closed". The control case proves that matcher fires.
+
+  it("[control] the #317 matcher really does fire on a foreign-key violation", async () => {
+    // Without this, every `.fails` below could be green because P2003 never matches anything
+    // — the tripwires would be dead and nobody would notice.
+    await expect(
+      prisma.shotEntityRef.create({ data: { shotId: bShotId, entityId: `ent_missing_${randomUUID()}`, ownerId: orgB } }),
+    ).rejects.toMatchObject({ code: "P2003" });
+  });
+
+  it.fails("[#317 edge 1] ShotEntityRef.entityId → Entity: B's ref at A's entity MUST be rejected", async () => {
+    // A composite FK (entityId+ownerId → Entity) would make this a constraint violation —
+    // exactly what ConsentEvent(contactId, ownerId) → Contact(id, ownerId) already does on
+    // the CRM side; Shot/Entity lack even the @@unique([id, ownerId]) that FK needs. Today it
+    // succeeds. The created row is cleaned up in afterAll — an it.fails body stops at the
+    // assertion, so no in-body cleanup would run.
     await expect(
       prisma.shotEntityRef.create({ data: { shotId: bShotId2, entityId: aEntityId, ownerId: orgB } }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: "P2003" });
+  });
+
+  it.fails("[#317 edge 2] Shot.projectId → Project: B's shot inside A's campaign MUST be rejected", async () => {
+    // schema.prisma:219 — `project Project @relation(fields: [projectId], references: [id])`,
+    // no ownerId component. A B-owned Shot can therefore live inside org A's campaign.
+    await expect(
+      prisma.shot.create({ data: { id: `sht_${randomUUID()}`, ownerId: orgB, projectId: aProjectId, number: shotSeq++, title: "B shot in A's campaign" } }),
+    ).rejects.toMatchObject({ code: "P2003" });
+  });
+
+  it.fails("[#317 edge 3] Generation.shotId → Shot: B's generation on A's shot MUST be rejected", async () => {
+    // schema.prisma:277 — `shot Shot? @relation(fields: [shotId], references: [id], onDelete:
+    // Restrict)`, again ID-only. This edge is worse than a dangling pointer: the RESTRICT
+    // means B's row also BLOCKS deletion of A's shot until B's row goes away.
+    await expect(
+      prisma.generation.create({ data: { id: `gen_${randomUUID()}`, ownerId: orgB, projectId: bProjectId, assetId: bAssetId, shotId: aShotId, source: "GENERATED", entitySnapshot: {} } }),
+    ).rejects.toMatchObject({ code: "P2003" });
   });
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
 describe("cross-tenant write — the real product surface (what a merchant can actually drive)", () => {
-  // These three exported server actions are the highest-risk write paths a browser can
-  // reach with attacker-chosen ids:
+  // These exported server actions are the highest-risk write paths a browser can reach
+  // with attacker-chosen ids:
   //   deleteProject      — the largest blast radius in the app (hard-deletes a campaign
   //                        and cascades deleteMany across ~12 tables)
+  //   renameProject      — the smallest-looking one, and therefore the easiest to ship
+  //                        with an unscoped lookup nobody notices
+  //   createShot         — a CREATE whose parent id is attacker-chosen: an unscoped parent
+  //                        lookup plants a B-owned row inside A's campaign (#317 edge 2)
   //   saveShotPrompt     — the only place the product defends against the #317 shape
   //                        (its IDOR guard on @-mentioned entity ids)
   //   attachGeneration   — a two-object write whose two ids arrive from independent
@@ -406,6 +512,30 @@ describe("cross-tenant write — the real product surface (what a merchant can a
     expect(still).not.toBeNull();
     const shotsLeft = await prisma.shot.findMany({ where: { ownerId: orgA, projectId: aProjectId }, select: { id: true } });
     expect(shotsLeft.length).toBeGreaterThan(0);
+  });
+
+  it("renameProject: B cannot rename A's campaign", async () => {
+    // Mutation gap found by review: renameProject's lookup (actions.ts:276) is the ONLY thing
+    // stopping this — dropping `ownerId` from it lets B rename A's campaign, and no other case
+    // in this file calls renameProject.
+    await asUser(B_EMAIL);
+    expect(await actions.renameProject(aProjectId, "pwned by B")).toEqual({ error: "Project not found." });
+    const after = await prisma.project.findFirst({ where: { ownerId: orgA, id: aProjectId }, select: { name: true } });
+    expect(after?.name).toBe("A campaign");
+  });
+
+  it("createShot: B cannot create a shot inside A's campaign", async () => {
+    // Mutation gap found by review: createShot's Project lookup (actions.ts:497) is the only
+    // guard against a B-owned Shot landing in org A's campaign — the exact #317 edge-2 shape,
+    // reached through the product surface instead of raw Prisma.
+    // Measured as a DELTA, not an absolute: the `[#317 edge 2]` tripwire above deliberately
+    // plants a B-owned Shot in A's campaign through raw Prisma (that is the gap it pins), so
+    // "zero such rows" is not true here. What createShot is answerable for is not ADDING one.
+    await asUser(B_EMAIL);
+    const before = await prisma.shot.count({ where: { ownerId: orgB, projectId: aProjectId } });
+    expect(await actions.createShot(aProjectId)).toEqual({ error: "Project not found." });
+    const after = await prisma.shot.count({ where: { ownerId: orgB, projectId: aProjectId } });
+    expect(after).toBe(before); // createShot planted nothing inside A's campaign
   });
 
   it("saveShotPrompt: B cannot write A's shot", async () => {
@@ -449,23 +579,38 @@ describe("cross-tenant write — the real product surface (what a merchant can a
 });
 
 afterAll(async () => {
-  // BOTH orgs' refs go first, before ANY org's entity delete. The #317 case leaves a
-  // ShotEntityRef owned by org B that POINTS AT org A's Entity, so cleaning refs per-owner
-  // inside the loop below would run entity.deleteMany(orgA) while org B's ref still
-  // references it → ON DELETE RESTRICT → swallowed by .catch() → one org-A Entity leaked
-  // on every run.
-  for (const ownerId of [orgA, orgB]) {
-    await prisma.shotEntityRef.deleteMany({ where: { ownerId } }).catch(() => {});
-  }
-  // best-effort cleanup of both orgs' seeded rows (ON DELETE RESTRICT means order matters)
-  for (const ownerId of [orgA, orgB]) {
-    await prisma.generation.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.shot.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.transcript.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.referenceImage.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.entity.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.asset.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.project.deleteMany({ where: { ownerId } }).catch(() => {});
-    await prisma.actionEvent.deleteMany({ where: { ownerId } }).catch(() => {});
-  }
+  // TABLE BY TABLE ACROSS BOTH ORGS — never owner-by-owner. Cross-tenant edges are this
+  // file's whole subject: the #317 tripwires deliberately leave B-owned children pointing at
+  // A-owned parents (ShotEntityRef→A's Entity, Shot→A's Project, Generation→A's Shot). An
+  // owner-by-owner sweep would try to delete A's parents while B's children still reference
+  // them → ON DELETE RESTRICT → swallowed by the best-effort catch → silent row leak that
+  // grows every run. Deleting each child table for BOTH orgs first is immune to that.
+  const both = [orgA, orgB];
+  const purge = async (step: (id: string) => Promise<unknown>) => {
+    for (const id of both) {
+      try { await step(id); } catch { /* best-effort cleanup — never fail the suite here */ }
+    }
+  };
+  // business rows, child → parent
+  await purge((ownerId) => prisma.shotEntityRef.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.generation.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.shot.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.transcript.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.referenceImage.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.entity.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.asset.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.project.deleteMany({ where: { ownerId } }));
+  await purge((ownerId) => prisma.actionEvent.deleteMany({ where: { ownerId } }));
+  // IDENTITY rows requireOwner bootstrapped for this run (auth-guard.ts:88 — Organization +
+  // Membership + CreditAccount + the beta CreditLedger grant). Scoped to THIS run's two
+  // random identities only; nothing outside them is ever touched. Credits → membership →
+  // org → user, so no FK blocks the next step.
+  await purge((orgId) => prisma.creditLedger.deleteMany({ where: { orgId } }));
+  await purge((orgId) => prisma.creditAccount.deleteMany({ where: { orgId } }));
+  await purge((orgId) => prisma.membership.deleteMany({ where: { orgId } }));
+  await purge((orgId) => prisma.organization.deleteMany({ where: { id: orgId } }));
+  // User cascades to Account/Session/Membership (schema.prisma:564, 573, 688)
+  try {
+    await prisma.user.deleteMany({ where: { email: { in: [A_EMAIL, B_EMAIL] } } });
+  } catch { /* best-effort cleanup */ }
 });
