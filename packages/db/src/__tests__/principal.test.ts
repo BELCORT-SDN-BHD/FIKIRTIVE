@@ -20,7 +20,6 @@
 import { AsyncLocalStorage, AsyncResource } from "node:async_hooks";
 import { describe, expect, it } from "vitest";
 import {
-  PRINCIPAL_STORE_SYMBOL,
   getPrincipal,
   runAsSystem,
   runAsTenant,
@@ -28,6 +27,15 @@ import {
   type Principal,
   type UserPrincipal,
 } from "../principal.js";
+
+/**
+ * The module deliberately does NOT export this symbol (exporting it would advertise the raw
+ * AsyncLocalStorage as a supported handle, and with it `enterWith`/`disable`). It does not need to:
+ * `Symbol.for` reads the GLOBAL symbol registry, so this recomputes the identical symbol from the
+ * documented string key. This test file is the one sanctioned reach-through — it exists to pin
+ * instance identity, not to establish frames.
+ */
+const PRINCIPAL_STORE_SYMBOL: symbol = Symbol.for("fikirtive.principal.als");
 
 /** A resolved merchant identity, as the CRM gateways build it (design contract §2-v2). */
 function userPrincipal(suffix: string): UserPrincipal {
@@ -43,6 +51,13 @@ function userPrincipal(suffix: string): UserPrincipal {
   };
 }
 
+/**
+ * Both cases below DERIVE their handle from the documented string key rather than importing a
+ * symbol from the module, so the "the module pins its store under `fikirtive.principal.als`"
+ * contract is pinned by them directly. (A third case used to assert
+ * `PRINCIPAL_STORE_SYMBOL === Symbol.for("fikirtive.principal.als")`; with the export gone that
+ * comparison is a tautology, so it was removed rather than kept as a test that cannot fail.)
+ */
 describe("principal store instance identity", () => {
   it("is pinned on globalThis under the well-known symbol", () => {
     const pinned = (globalThis as unknown as Record<symbol, unknown>)[PRINCIPAL_STORE_SYMBOL];
@@ -58,10 +73,6 @@ describe("principal store instance identity", () => {
       getPrincipal(),
     );
     expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
-  });
-
-  it("the symbol is the documented well-known key", () => {
-    expect(PRINCIPAL_STORE_SYMBOL).toBe(Symbol.for("fikirtive.principal.als"));
   });
 });
 

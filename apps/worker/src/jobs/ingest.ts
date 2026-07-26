@@ -58,7 +58,10 @@ export const INGEST_REDISPATCH_MIN_AGE_MS = 15 * 60_000;
 export const INGEST_REDISPATCH_MAX_AGE_MS = 24 * 60 * 60_000;
 
 // #463: a cross-tenant scan with a named system identity. Unlike the other reapers there is no
-// per-row tenant phase — this function performs NO database writes, it only re-enqueues.
+// per-row tenant phase — this function performs no application-domain Prisma writes, it only
+// re-enqueues. Not "no writes at all": the injected `send` is `boss.send` (apps/worker/src/index.ts:256),
+// which persists pg-boss queue state. That write is platform-scoped (the job table, keyed by
+// singletonKey), carries no tenant column, and is why the system frame here stays `ownerId: null`.
 export async function redispatchLostIngest(
   send: (assetId: string) => Promise<unknown>,
   now: Date = new Date(),

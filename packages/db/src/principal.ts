@@ -117,8 +117,20 @@ export type UserPrincipal = Extract<Principal, { kind: "user" }>;
  * resolution (bundled copy vs. dist copy, or two pnpm instances) cannot produce two
  * AsyncLocalStorage objects — which would make `getPrincipal()` return undefined forever,
  * silently. `principal.test.ts` pins this instance identity.
+ *
+ * DELIBERATELY NOT EXPORTED. The symbol is in the GLOBAL symbol registry, so anyone who wants
+ * the raw store can still write `Symbol.for("fikirtive.principal.als")` themselves — not
+ * exporting it does not make that impossible, it removes the supported handle that made it look
+ * sanctioned. The honest scope of this module's safety claim:
+ *  - the SUPPORTED RUNNERS (`runAsSystem` / `runAsTenant` / `runAsUser`) cannot bleed a principal
+ *    across requests: each one is `store.run(frame, fn)`, whose frame pops with the callback; and
+ *  - production code contains no `enterWith` (nor `disable`) anywhere.
+ * What is NOT claimed: reaching the raw AsyncLocalStorage through `globalThis` and calling
+ * `enterWith()`/`disable()` on it remains PHYSICALLY POSSIBLE. It is forbidden by rule, not by
+ * construction; a CI fence could make that mechanical later. `principal.test.ts` does exactly
+ * this reach-through on purpose, to pin instance identity — that is the one sanctioned use.
  */
-export const PRINCIPAL_STORE_SYMBOL: symbol = Symbol.for("fikirtive.principal.als");
+const PRINCIPAL_STORE_SYMBOL: symbol = Symbol.for("fikirtive.principal.als");
 
 const globalStore = globalThis as unknown as Record<
   symbol,
@@ -151,7 +163,9 @@ export function runAsSystem<T>(reason: SystemReason, fn: () => T): T {
  * Run `fn` under a resolved user identity.
  *
  * This WRAPS THE CONTINUATION — `store.run(principal, fn)` — and nothing else. There is no
- * `enterWith` in this module and there must never be one. `enterWith` binds onto the CURRENT
+ * `enterWith` in this module and there must never be one (a statement about this module's own
+ * code — see the store docblock above for what is, and is not, claimed about the raw store).
+ * `enterWith` binds onto the CURRENT
  * async resource, and by the time a principal can exist the request has already awaited
  * (session + Prisma), so that resource is shared with the caller: the FIRST identity sticks to
  * the process and every later request reads it instead of its own. Probe `als-probe3.mjs`
