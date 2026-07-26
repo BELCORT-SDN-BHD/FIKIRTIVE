@@ -60,13 +60,15 @@ case "$job" in
     node scripts/check-margin-floor.mjs
     bash scripts/check-blueprint-integrity.sh
     bash scripts/check-destructive-migrations.sh
+    node scripts/ci/check-money-path-review.mjs
     node scripts/__tests__/verify-auth-guards.test.mjs
     node scripts/verify-auth-guards.mjs
     node scripts/route-b-matrix-check.mjs
     node --test \
       scripts/__tests__/task-ownership-check.test.mjs \
       scripts/__tests__/ci-job-parity.test.mjs \
-      scripts/__tests__/check-project-authority.test.mjs
+      scripts/__tests__/check-project-authority.test.mjs \
+      scripts/__tests__/governance-hooks.test.mjs
     node scripts/check-project-authority.mjs
     ;;
   test)

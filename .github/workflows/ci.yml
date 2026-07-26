@@ -5,6 +5,27 @@ name: CI
 
 on:
   pull_request:
+    # `edited` is load-bearing, not decoration: scripts/ci/check-money-path-review.mjs reads the
+    # review token out of the pull_request body carried by the event payload, and a re-run replays
+    # the ORIGINAL payload. Without `edited`, adding the token to the PR body would never reach the
+    # gate — the only way to clear it would be a new commit, which changes the head SHA and voids
+    # the SHA-bound token again. Editing the body must be able to re-run CI, or the gate is a trap.
+    #
+    # What `edited` costs, stated in full (review round 2 found the first statement of this
+    # trade-off incomplete):
+    #   * GitHub fires `edited` for a TITLE or BASE-BRANCH change too, not only the body, so all
+    #     four jobs re-run on edits that cannot possibly affect the build.
+    #   * `concurrency.cancel-in-progress` below groups by github.ref, so "push, then add the
+    #     token to the body" CANCELS the push-triggered run. A cancelled run is not green, and
+    #     project law clause 2 requires every current-head check to be green — read the LATEST
+    #     run for the head SHA, and re-run the cancelled one if a reviewer needs it green too.
+    # The alternative considered and NOT taken: have the gate fetch the body live
+    # (`gh api repos/{owner}/{repo}/pulls/{n} --jq .body`) instead of reading the event payload,
+    # which would remove the need for `edited` entirely. It is rejected here because it would put
+    # a network call and a GH_TOKEN grant inside a fail-CLOSED gate — an API hiccup would then
+    # block merges, and adding token scope to CI is a permissions change that is Founder-only
+    # (clause 6). Revisit only with the Founder, as its own change.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 

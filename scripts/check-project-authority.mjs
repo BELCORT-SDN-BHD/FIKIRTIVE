@@ -14,6 +14,21 @@ import { fileURLToPath } from "node:url";
 
 const CANONICAL_LAW = ".claude/CLAUDE.md";
 const ROOT_ADAPTER = "AGENTS.md";
+// The overlay is prose that gets rewritten; a Chinese substring made every rewrite a
+// tripwire. The anchor is a stable, machine-owned marker instead: whoever moves or
+// deletes the claim-policy section has to notice this check.
+export const OVERLAY_CLAIM_ANCHOR = "<!-- fikirtive:claim-policy -->";
+// The anchor alone is a marker, not a policy: review round 2 showed that an overlay
+// containing ONLY the comment and no claim rule at all still passed this check, while the
+// Chinese substring it replaced would have failed — a horizontal move, not the "anchoring,
+// no relaxation" that was claimed. So the section the anchor introduces must still carry
+// the three facts that make it a policy: the mandatory claim, the law clause it derives
+// from, and the runbook that operates it. Three independent facts, not one brittle sentence.
+export const OVERLAY_CLAIM_SUBSTANCE = [
+  ["the mandatory task-linked `ACTIVE` claim", /`ACTIVE`\s*claim/],
+  ["the project-law clause it derives from (第 12 条)", /第\s*12\s*条/],
+  ["the task-ownership runbook pointer", /docs\/runbooks\/task-ownership\.md/],
+];
 const LOCAL_PAIRS = [
   ["apps/web/AGENTS.md", "apps/web/CLAUDE.md"],
   ["packages/otto/src/skills/AGENTS.md", "packages/otto/src/skills/CLAUDE.md"],
@@ -335,8 +350,19 @@ export function checkProjectAuthority(root = process.cwd()) {
       join(canonicalRoot, ".claude/skills/fikirtive-orchestration-overlay/SKILL.md"),
       "utf8",
     );
-    if (!/每个 repo-mutating task 必须/.test(overlay)) {
-      errors.push("orchestration overlay must require task ownership before repository mutation");
+    if (!overlay.includes(OVERLAY_CLAIM_ANCHOR)) {
+      errors.push(
+        `orchestration overlay must keep the ${OVERLAY_CLAIM_ANCHOR} claim-policy anchor`,
+      );
+    } else {
+      const section = overlay.slice(
+        overlay.indexOf(OVERLAY_CLAIM_ANCHOR) + OVERLAY_CLAIM_ANCHOR.length,
+      );
+      for (const [label, pattern] of OVERLAY_CLAIM_SUBSTANCE) {
+        if (!pattern.test(section)) {
+          errors.push(`orchestration overlay claim-policy section is missing ${label}`);
+        }
+      }
     }
     const plan = readFileSync(
       join(canonicalRoot, "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md"),
