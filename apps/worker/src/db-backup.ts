@@ -14,6 +14,10 @@
  * keys that pass keyOwnerMatches (u/<owner>/…), and parseStorageKey rejects
  * everything else, so a backup object is unreachable from any browser-facing path.
  *
+ * #463: intentionally NO principal frame — this module makes zero Prisma calls (pg_dump to a
+ * subprocess, bytes to R2), so there is nothing for an identity to scope. Do not flag it as a
+ * missing system context.
+ *
  * Failure policy: fail-soft — log (sanitized) + Sentry, never crash the worker,
  * never block the reap loop. The DATABASE_URL must NEVER appear in logs or
  * errors: the connection string is passed to pg_dump ONLY via PG* env vars

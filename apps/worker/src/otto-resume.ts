@@ -67,6 +67,9 @@ export async function resumeOttoAfterGen(job: {
       orgId: job.ownerId,
       // Worker has no session — only job.ownerId. userId is the owner/tenant scope (= orgId),
       // NOT a distinct verified per-user id. See OttoContext.userId doc.
+      // #463 deliberately does NOT change this. The ambient principal here is the tenant frame
+      // opened by the gen handler/reaper, which carries no actor either (no job column persists
+      // one). Threading a real actor onto GenJob is ②-D, not this ticket.
       userId: job.ownerId,
       projectId: job.projectId,
       threadId: job.threadId,

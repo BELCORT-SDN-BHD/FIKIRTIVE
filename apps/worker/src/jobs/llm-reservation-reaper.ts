@@ -1,4 +1,5 @@
 import { prisma, refundReservation } from "@fikirtive/db";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 
 // An Otto LLM credit reservation (withLlmBudget) is held for at most one turn. 60 min is
 // comfortably longer than any real turn (incl. the worker verdict turn, which runs after a
@@ -16,10 +17,16 @@ const LLM_RESERVATION_STALE_MS = 1000 * 60 * 60;
  *  than the stale window, with NO SETTLE/REFUND finalizer, and refunds them. refundReservation
  *  is idempotent and mutually exclusive with SETTLE via the CreditLedger_finalizer_once unique
  *  index, so a settle/refund that lands between the query and the refund makes this a safe
- *  no-op. Returns how many leaked reservations it swept. */
+ *  no-op. Returns how many leaked reservations it swept.
+ *
+ *  #463 two-phase identity: the scan is cross-tenant by construction (there is no job row and
+ *  no request to attach an owner to), so it runs under "llm-reservation-reaper"; each refund is
+ *  re-scoped to the org the leaked RESERVE belongs to. Note the scan is raw SQL and therefore
+ *  invisible to any Prisma extension — #464's comparison has to key on the refund, not the read. */
 export async function reapStaleLlmReservations(): Promise<number> {
-  const cutoff = new Date(Date.now() - LLM_RESERVATION_STALE_MS);
-  const leaked = await prisma.$queryRaw<{ orgId: string; refId: string }[]>`
+  return runAsSystem("llm-reservation-reaper", async () => {
+    const cutoff = new Date(Date.now() - LLM_RESERVATION_STALE_MS);
+    const leaked = await prisma.$queryRaw<{ orgId: string; refId: string }[]>`
     SELECT r."orgId", r."refId"
     FROM "CreditLedger" r
     WHERE r."kind" = 'RESERVE'
@@ -35,10 +42,12 @@ export async function reapStaleLlmReservations(): Promise<number> {
         WHERE f."orgId" = r."orgId" AND f."refId" = r."refId"
           AND f."kind" IN ('SETTLE', 'REFUND')
       )`;
-  let reaped = 0;
-  for (const { orgId, refId } of leaked) {
-    await prisma.$transaction(async (tx) => { await refundReservation(tx, { orgId, refId }); });
-    reaped++;
-  }
-  return reaped;
+    let reaped = 0;
+    for (const { orgId, refId } of leaked) {
+      // per-row phase: the refund belongs to this org, not to the platform
+      await runAsTenant(orgId, () => prisma.$transaction(async (tx) => { await refundReservation(tx, { orgId, refId }); }));
+      reaped++;
+    }
+    return reaped;
+  });
 }

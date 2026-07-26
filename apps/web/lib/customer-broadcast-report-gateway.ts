@@ -1,6 +1,8 @@
 import "server-only";
 
 import { prisma } from "@fikirtive/db";
+import { runAsUser, type UserPrincipal } from "@fikirtive/db/principal";
+import { isOrgRole } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "./better-auth/compat";
 import {
@@ -14,7 +16,17 @@ import {
 
 type GatewayFailure = { ok: false; error: CustomerBroadcastReportErrorCode };
 
-async function resolvePrincipal(): Promise<CustomerBroadcastReportPrincipal> {
+/**
+ * #463 — this gateway is one of the four request-level principal SEAMS (design contract §2-v2).
+ *
+ * `service` is byte-for-byte the object the service layer has always received; `ambient` is the
+ * full identity pushed into the AsyncLocalStorage store by runRead and handed to NOBODY. Both
+ * come out of the one membership query that was already here — widened by three selected
+ * columns, with no extra round trip.
+ */
+type ResolvedPrincipal = { service: CustomerBroadcastReportPrincipal; ambient: UserPrincipal };
+
+async function resolvePrincipal(): Promise<ResolvedPrincipal> {
   const gate = await requireOwner();
   if ("error" in gate) throw new CustomerBroadcastReportError("NOT_AUTHORIZED");
   const membership = await prisma.membership.findFirst({
@@ -25,13 +37,23 @@ async function resolvePrincipal(): Promise<CustomerBroadcastReportPrincipal> {
       deletedAt: null,
       user: { email: gate.email },
     },
-    select: { id: true },
+    select: { id: true, role: true, userId: true },
   });
   if (!membership) throw new CustomerBroadcastReportError("ACTION_DENIED");
+  const impersonating = await isImpersonating();
   return {
-    ownerId: gate.ownerId,
-    membershipId: membership.id,
-    impersonating: await isImpersonating(),
+    service: { ownerId: gate.ownerId, membershipId: membership.id, impersonating },
+    ambient: {
+      kind: "user",
+      subjectUserId: membership.userId,
+      subjectEmail: gate.email,
+      ownerId: gate.ownerId,
+      orgRole: isOrgRole(membership.role) ? membership.role : null,
+      membershipId: membership.id,
+      impersonating,
+      // #463 never carries the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).
+      impersonatedByBaUserId: null,
+    },
   };
 }
 
@@ -39,7 +61,8 @@ async function runRead<T>(
   operation: (principal: CustomerBroadcastReportPrincipal) => Promise<T>,
 ): Promise<{ ok: true; resource: T } | GatewayFailure> {
   try {
-    return { ok: true, resource: await operation(await resolvePrincipal()) };
+    const { service, ambient } = await resolvePrincipal();
+    return { ok: true, resource: await runAsUser(ambient, () => operation(service)) };
   } catch (error) {
     if (error instanceof CustomerBroadcastReportError) return { ok: false, error: error.code };
     throw error;

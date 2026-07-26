@@ -48,6 +48,7 @@ import {
   type PublishJobData,
 } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
+import { runAsSystem } from "@fikirtive/db/principal";
 
 // Long-lived worker prefers the DIRECT url — a persistent process gains nothing
 // from PgBouncer and the direct path avoids pooler quirks (audit P3).
@@ -212,10 +213,12 @@ async function main(): Promise<void> {
   // Heartbeat: the status panel's "worker alive" signal (appendix A) + the durable
   // liveness row /api/health reads (2026-07-04 可观测性盲区修复). A failed write is
   // logged but never crashes the worker — health degrades to "stale", which is the signal.
+  // #463: platform-level row (WorkerHeartbeat has no tenant), written under a named system identity.
   const beat = () =>
-    prisma.workerHeartbeat
-      .upsert({ where: { id: "worker" }, create: { id: "worker", at: new Date() }, update: { at: new Date() } })
-      .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e));
+    runAsSystem("worker-heartbeat", () =>
+      prisma.workerHeartbeat
+        .upsert({ where: { id: "worker" }, create: { id: "worker", at: new Date() }, update: { at: new Date() } })
+        .catch((e) => console.warn("[worker] heartbeat write failed:", e instanceof Error ? e.message : e)));
   setInterval(() => {
     console.log(`[worker] heartbeat ${new Date().toISOString()}`);
     void beat();
@@ -226,31 +229,35 @@ async function main(): Promise<void> {
   // never runs) would sit GENERATING forever, holding the credit reservation and spinning
   // the UI. Sweep every 5 min — fail-close + refund + post a terminal message.
   let reaping = false; // re-entrancy guard — a long sweep must not overlap the next tick
+  // #463: the whole tick carries a named system identity; each sub-reaper re-enters with its own
+  // reason for its scan and with the row's tenant for each write (two-phase).
   const reap = async () => {
     if (reaping) return;
     reaping = true;
     try {
-      const n = await reapStaleGenJobs();
-      if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
-      const rn = await reapStaleRefGenJobs();
-      if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
-      const ln = await reapStaleLlmReservations();
-      if (ln) console.log(`[worker] reaped ${ln} leaked LLM reservation(s)`);
-      // Research: a worker SIGKILL'd mid-run (retryLimit:0 → no redelivery) strands the card
-      // "Researching…" forever. Credits are already recovered by reapStaleLlmReservations above;
-      // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).
-      const sn = await reapStaleResearchJobs();
-      if (sn) console.log(`[worker] reaped ${sn} stale research job(s)`);
-      // L1 publish (spec §四F): reconcile dangling APPLYING attempts (worker crashed mid-publish) —
-      // query Meta's truth first, then PUBLISHED vs NEEDS_ATTENTION, never a blind re-post.
-      const pn = await reapStalePublishAttempts();
-      if (pn) console.log(`[worker] reconciled ${pn} dangling publish attempt(s)`);
-      // F41(c): recover uploads whose ingest dispatch was lost (finalize commits
-      // rows before the send). singletonKey dedupes while a re-send is in flight.
-      const ri = await redispatchLostIngest((assetId) =>
-        boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
-      );
-      if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
+      await runAsSystem("worker-reaper-tick", async () => {
+        const n = await reapStaleGenJobs();
+        if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
+        const rn = await reapStaleRefGenJobs();
+        if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
+        const ln = await reapStaleLlmReservations();
+        if (ln) console.log(`[worker] reaped ${ln} leaked LLM reservation(s)`);
+        // Research: a worker SIGKILL'd mid-run (retryLimit:0 → no redelivery) strands the card
+        // "Researching…" forever. Credits are already recovered by reapStaleLlmReservations above;
+        // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).
+        const sn = await reapStaleResearchJobs();
+        if (sn) console.log(`[worker] reaped ${sn} stale research job(s)`);
+        // L1 publish (spec §四F): reconcile dangling APPLYING attempts (worker crashed mid-publish) —
+        // query Meta's truth first, then PUBLISHED vs NEEDS_ATTENTION, never a blind re-post.
+        const pn = await reapStalePublishAttempts();
+        if (pn) console.log(`[worker] reconciled ${pn} dangling publish attempt(s)`);
+        // F41(c): recover uploads whose ingest dispatch was lost (finalize commits
+        // rows before the send). singletonKey dedupes while a re-send is in flight.
+        const ri = await redispatchLostIngest((assetId) =>
+          boss.send(QUEUES.ingest, { assetId } satisfies IngestJobData, { singletonKey: `ingest-recover:${assetId}` }),
+        );
+        if (ri) console.log(`[worker] re-dispatched ${ri} lost ingest job(s)`);
+      });
     } catch (e) {
       console.error("[worker] reaper error:", e);
       captureError(e);
@@ -261,6 +268,8 @@ async function main(): Promise<void> {
   // Nightly DB backup (P0-1②) rides the same 5-min tick: fail-soft by contract
   // (never throws), own re-entrancy flag inside the module, and its trigger rule
   // (KL >= 03:00 + key-not-in-R2) makes every extra call a cheap no-op.
+  // #463: intentionally NOT wrapped in a principal frame — db-backup.ts makes zero Prisma
+  // calls (pg_dump → R2). Do not flag it as a missing system context.
   setInterval(() => { void reap(); void maybeRunNightlyBackup(); }, 5 * 60_000);
   void reap(); // also sweep once on startup (clears anything stranded by a prior crash)
   void maybeRunNightlyBackup(); // startup check too — a worker restart must not skip a missed night
@@ -270,15 +279,19 @@ async function main(): Promise<void> {
   // so this is an inert no-op in prod (zero behavior change). singletonKey dedupes an id whose
   // previous publish is still in flight; the handler's triple idempotency is the real guard.
   let scheduling = false;
+  // #463: the due-post scan spans every authorized tenant by design — a named system identity,
+  // never a tenant one. The enqueue below carries only ids; the consumer resolves the owner.
   const schedule = async () => {
     if (scheduling) return;
     scheduling = true;
     try {
-      const due = await scanDuePublishPosts();
-      for (const scheduledPostId of due) {
-        await boss.send(PUBLISH_QUEUE, { scheduledPostId } satisfies PublishJobData, { singletonKey: `publish:${scheduledPostId}` });
-      }
-      if (due.length) console.log(`[worker] enqueued ${due.length} due publish job(s)`);
+      await runAsSystem("publish-scheduler", async () => {
+        const due = await scanDuePublishPosts();
+        for (const scheduledPostId of due) {
+          await boss.send(PUBLISH_QUEUE, { scheduledPostId } satisfies PublishJobData, { singletonKey: `publish:${scheduledPostId}` });
+        }
+        if (due.length) console.log(`[worker] enqueued ${due.length} due publish job(s)`);
+      });
     } catch (e) {
       console.error("[worker] publish scheduler error:", e);
       captureError(e);

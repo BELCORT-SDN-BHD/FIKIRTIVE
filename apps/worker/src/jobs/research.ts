@@ -23,6 +23,7 @@
  * All reads are owner-scoped off ResearchJob.ownerId.
  */
 import { prisma } from "@fikirtive/db";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   RESEARCH_TIERS,
   researchAgent,
@@ -149,137 +150,142 @@ export async function handleResearch(data: { jobId: string }, _retryCount: numbe
     return;
   }
 
-  // (b) RETRY-IDEMPOTENCY (money-critical): CAS status QUEUED→RUNNING. On any redelivery/duplicate
-  // the row is no longer QUEUED → count===0 → return BEFORE any spend. Primary double-reserve guard.
-  const { count } = await prisma.researchJob.updateMany({
-    where: { id: job.id, status: "QUEUED" },
-    data: { status: "RUNNING" },
-  });
-  if (count === 0) {
-    console.log(`[research] job ${job.id}: not QUEUED (already handled/redelivery) — no-op`);
-    return;
-  }
-
-  // (c) Load the RESEARCH_CARD (owner + thread scoped) + parse tier → caps.
-  const card = await prisma.chatMessage.findFirst({
-    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-    select: { payload: true },
-  });
-  const payload = (card?.payload ?? {}) as ResearchCardPayloadShape;
-  const tierKey = (payload.tier && payload.tier in RESEARCH_TIERS ? payload.tier : job.tier) as keyof typeof RESEARCH_TIERS;
-  const tier = RESEARCH_TIERS[tierKey] ?? RESEARCH_TIERS.standard;
-  const topic = payload.topic ?? "";
-
-  // (d) Build the small, mutable ResearchContext. search/readPage are FREE ports; counters cap use.
-  const ctx: ResearchContext = {
-    search: buildSearch(),
-    readPage: (url: string, page?: number) => readPageWorker(url, page),
-    sourcesRead: [],
-    maxSearches: tier.maxSearches,
-    maxPages: tier.maxPages,
-    searchesUsed: 0,
-    pagesUsed: 0,
-  };
-
-  // Compose the agent's task from the card plan.
-  const goalLine = payload.goal ? `\nGoal: ${payload.goal}` : "";
-  const questionsLine =
-    payload.questions && payload.questions.length > 0
-      ? `\nSub-questions to investigate:\n${payload.questions.map((q) => `- ${q}`).join("\n")}`
-      : "";
-  const researchInput = `Research this topic and write a thorough, well-organized report.\n\nTopic: ${topic}${goalLine}${questionsLine}`;
-
-  // (e) THE SPEND — the sole credit path. Copies the otto-resume shape EXACTLY. withLlmBudget
-  // reserves turnBudgetInternal(maxSteps) up front, runs, settles ACTUAL token cost, refunds the
-  // rest. On MaxTurnsExceeded (graceful truncation) usageOnError feeds actual usage → settle actual.
-  const refId = `research:${job.cardId}`;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let result: any;
-  try {
-    result = await withLlmBudget(
-      {
-        orgId: job.ownerId,
-        refId,
-        model: ottoModelRuntime.billableModelId,
-        paid: true,
-        maxSteps: tier.maxSteps,
-        usageOnError: (e) =>
-          e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage
-            ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
-            : null,
-      },
-      async () => {
-        const run_ = await run(researchAgent, researchInput, { context: ctx, maxTurns: tier.maxSteps });
-        return { result: run_, usage: mapOttoUsage(run_.state.usage) };
-      },
-    );
-  } catch (e) {
-    // withLlmBudget threw (insufficient balance / provider / max-turns w/o usable state / etc.).
-    // Credits already refunded/settled INSIDE withLlmBudget — we do NOT touch credits here.
-    // PERSISTED error surfaces in the RESEARCH_CARD/ResearchJob and is rendered to the user/admin —
-    // strip any URL a fetch/network error from researchWeb may carry (mirrors gen.ts/refgen.ts/
-    // render.ts/caption.ts/publish.ts, the other 5 jobs that sanitize before persisting).
-    const errorText =
-      e instanceof MaxTurnsExceededError
-        ? "The research hit its step budget before finishing."
-        : sanitizeError(e);
-    console.warn(`[research] job ${job.id}: withLlmBudget threw — marking failed:`, errorText);
-    await failResearch(job, errorText);
-    return;
-  }
-
-  // (f) SUCCESS: the agent's final message text IS the report synthesis.
-  const synthesis = extractText(result);
-
-  // Write a RESEARCH_REPORT ChatMessage (seq+1, owner/thread from the job), mirroring appendCoworkResult.
-  try {
-    const last = await prisma.chatMessage.findFirst({
-      where: { threadId: job.threadId, ownerId: job.ownerId },
-      orderBy: { seq: "desc" },
-      select: { seq: true },
+  // #463: the payload carries only the job id — the tenant is knowable only after the row
+  // load above. The CAS claim, the LLM budget reservation and every write below run scoped
+  // to this job's owner.
+  await runAsTenant(job.ownerId, async () => {
+    // (b) RETRY-IDEMPOTENCY (money-critical): CAS status QUEUED→RUNNING. On any redelivery/duplicate
+    // the row is no longer QUEUED → count===0 → return BEFORE any spend. Primary double-reserve guard.
+    const { count } = await prisma.researchJob.updateMany({
+      where: { id: job.id, status: "QUEUED" },
+      data: { status: "RUNNING" },
     });
-    await prisma.chatMessage.create({
-      data: {
-        id: newId(),
-        threadId: job.threadId,
-        ownerId: job.ownerId,
-        role: "AGENT",
-        kind: "RESEARCH_REPORT",
-        seq: (last?.seq ?? 0) + 1,
-        text: topic ? `Research report: ${topic}` : "Research report",
-        payload: {
-          topic,
-          synthesis,
-          sources: ctx.sourcesRead,
-        } as unknown as object,
-      },
-    });
-  } catch (e) {
-    // Best-effort: a report-write hiccup must not flip the job back / re-spend. Log + continue to
-    // mark the card/job done (the spend already settled; the run succeeded).
-    console.warn(`[research] job ${job.id}: RESEARCH_REPORT write failed (non-fatal):`, e instanceof Error ? e.message : e);
-  }
+    if (count === 0) {
+      console.log(`[research] job ${job.id}: not QUEUED (already handled/redelivery) — no-op`);
+      return;
+    }
 
-  // Card → "done" (RMW: re-read payload, byte-preserve other fields, flip only status).
-  const freshCard = await prisma.chatMessage.findFirst({
-    where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-    select: { payload: true },
-  });
-  if (freshCard) {
-    const cur = (freshCard.payload ?? {}) as ResearchCardPayloadShape;
-    await prisma.chatMessage.updateMany({
+    // (c) Load the RESEARCH_CARD (owner + thread scoped) + parse tier → caps.
+    const card = await prisma.chatMessage.findFirst({
       where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
-      data: { payload: { ...cur, status: "done" } as unknown as object },
+      select: { payload: true },
     });
-  }
+    const payload = (card?.payload ?? {}) as ResearchCardPayloadShape;
+    const tierKey = (payload.tier && payload.tier in RESEARCH_TIERS ? payload.tier : job.tier) as keyof typeof RESEARCH_TIERS;
+    const tier = RESEARCH_TIERS[tierKey] ?? RESEARCH_TIERS.standard;
+    const topic = payload.topic ?? "";
 
-  // Job → DONE (owner-scoped). actualCredits is omitted — the authoritative settle lives in the
-  // CreditLedger via withLlmBudget; we do NOT re-derive a spend figure outside the wrapper.
-  await prisma.researchJob.updateMany({
-    where: { id: job.id, ownerId: job.ownerId },
-    data: { status: "DONE" },
+    // (d) Build the small, mutable ResearchContext. search/readPage are FREE ports; counters cap use.
+    const ctx: ResearchContext = {
+      search: buildSearch(),
+      readPage: (url: string, page?: number) => readPageWorker(url, page),
+      sourcesRead: [],
+      maxSearches: tier.maxSearches,
+      maxPages: tier.maxPages,
+      searchesUsed: 0,
+      pagesUsed: 0,
+    };
+
+    // Compose the agent's task from the card plan.
+    const goalLine = payload.goal ? `\nGoal: ${payload.goal}` : "";
+    const questionsLine =
+      payload.questions && payload.questions.length > 0
+        ? `\nSub-questions to investigate:\n${payload.questions.map((q) => `- ${q}`).join("\n")}`
+        : "";
+    const researchInput = `Research this topic and write a thorough, well-organized report.\n\nTopic: ${topic}${goalLine}${questionsLine}`;
+
+    // (e) THE SPEND — the sole credit path. Copies the otto-resume shape EXACTLY. withLlmBudget
+    // reserves turnBudgetInternal(maxSteps) up front, runs, settles ACTUAL token cost, refunds the
+    // rest. On MaxTurnsExceeded (graceful truncation) usageOnError feeds actual usage → settle actual.
+    const refId = `research:${job.cardId}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let result: any;
+    try {
+      result = await withLlmBudget(
+        {
+          orgId: job.ownerId,
+          refId,
+          model: ottoModelRuntime.billableModelId,
+          paid: true,
+          maxSteps: tier.maxSteps,
+          usageOnError: (e) =>
+            e instanceof MaxTurnsExceededError && (e as { state?: { usage?: unknown } }).state?.usage
+              ? mapOttoUsage((e as { state: { usage: Parameters<typeof mapOttoUsage>[0] } }).state.usage)
+              : null,
+        },
+        async () => {
+          const run_ = await run(researchAgent, researchInput, { context: ctx, maxTurns: tier.maxSteps });
+          return { result: run_, usage: mapOttoUsage(run_.state.usage) };
+        },
+      );
+    } catch (e) {
+      // withLlmBudget threw (insufficient balance / provider / max-turns w/o usable state / etc.).
+      // Credits already refunded/settled INSIDE withLlmBudget — we do NOT touch credits here.
+      // PERSISTED error surfaces in the RESEARCH_CARD/ResearchJob and is rendered to the user/admin —
+      // strip any URL a fetch/network error from researchWeb may carry (mirrors gen.ts/refgen.ts/
+      // render.ts/caption.ts/publish.ts, the other 5 jobs that sanitize before persisting).
+      const errorText =
+        e instanceof MaxTurnsExceededError
+          ? "The research hit its step budget before finishing."
+          : sanitizeError(e);
+      console.warn(`[research] job ${job.id}: withLlmBudget threw — marking failed:`, errorText);
+      await failResearch(job, errorText);
+      return;
+    }
+
+    // (f) SUCCESS: the agent's final message text IS the report synthesis.
+    const synthesis = extractText(result);
+
+    // Write a RESEARCH_REPORT ChatMessage (seq+1, owner/thread from the job), mirroring appendCoworkResult.
+    try {
+      const last = await prisma.chatMessage.findFirst({
+        where: { threadId: job.threadId, ownerId: job.ownerId },
+        orderBy: { seq: "desc" },
+        select: { seq: true },
+      });
+      await prisma.chatMessage.create({
+        data: {
+          id: newId(),
+          threadId: job.threadId,
+          ownerId: job.ownerId,
+          role: "AGENT",
+          kind: "RESEARCH_REPORT",
+          seq: (last?.seq ?? 0) + 1,
+          text: topic ? `Research report: ${topic}` : "Research report",
+          payload: {
+            topic,
+            synthesis,
+            sources: ctx.sourcesRead,
+          } as unknown as object,
+        },
+      });
+    } catch (e) {
+      // Best-effort: a report-write hiccup must not flip the job back / re-spend. Log + continue to
+      // mark the card/job done (the spend already settled; the run succeeded).
+      console.warn(`[research] job ${job.id}: RESEARCH_REPORT write failed (non-fatal):`, e instanceof Error ? e.message : e);
+    }
+
+    // Card → "done" (RMW: re-read payload, byte-preserve other fields, flip only status).
+    const freshCard = await prisma.chatMessage.findFirst({
+      where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+      select: { payload: true },
+    });
+    if (freshCard) {
+      const cur = (freshCard.payload ?? {}) as ResearchCardPayloadShape;
+      await prisma.chatMessage.updateMany({
+        where: { id: job.cardId, ownerId: job.ownerId, kind: "RESEARCH_CARD" },
+        data: { payload: { ...cur, status: "done" } as unknown as object },
+      });
+    }
+
+    // Job → DONE (owner-scoped). actualCredits is omitted — the authoritative settle lives in the
+    // CreditLedger via withLlmBudget; we do NOT re-derive a spend figure outside the wrapper.
+    await prisma.researchJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId },
+      data: { status: "DONE" },
+    });
+    console.log(`[research] job ${job.id}: DONE (${ctx.searchesUsed} searches, ${ctx.pagesUsed} reads, ${ctx.sourcesRead.length} sources)`);
   });
-  console.log(`[research] job ${job.id}: DONE (${ctx.searchesUsed} searches, ${ctx.pagesUsed} reads, ${ctx.sourcesRead.length} sources)`);
 }
 
 // A research run holds NO "started" timestamp on the job row — handleResearch's QUEUED→RUNNING CAS
@@ -327,35 +333,39 @@ async function hasLiveResearchMessage(jobId: string): Promise<boolean> {
  * jobs it swept.
  */
 export async function reapStaleResearchJobs(): Promise<number> {
-  const cutoff = new Date(Date.now() - RESEARCH_STALE_MS);
-  const stuck = await prisma.researchJob.findMany({
-    where: { status: "RUNNING", updatedAt: { lt: cutoff } },
-    select: { id: true, ownerId: true, cardId: true },
-  });
-  let reaped = 0;
-  for (const job of stuck) {
-    const { count } = await prisma.researchJob.updateMany({
-      where: { id: job.id, ownerId: job.ownerId, status: "RUNNING", updatedAt: { lt: cutoff } },
-      data: { status: "FAILED", error: RESEARCH_INTERRUPTED },
+  return runAsSystem("research-reaper", async () => {
+    const cutoff = new Date(Date.now() - RESEARCH_STALE_MS);
+    const stuck = await prisma.researchJob.findMany({
+      where: { status: "RUNNING", updatedAt: { lt: cutoff } },
+      select: { id: true, ownerId: true, cardId: true },
     });
-    if (count === 0) continue; // lost the claim (finished / concurrent sweep) — leave it alone
-    await failResearchCard(job.cardId, job.ownerId, RESEARCH_INTERRUPTED);
-    reaped++;
-  }
+    let reaped = 0;
+    for (const job of stuck) {
+      // #463 per-row phase: the scan above is cross-tenant, these two writes are not.
+      const { count } = await runAsTenant(job.ownerId, () => prisma.researchJob.updateMany({
+        where: { id: job.id, ownerId: job.ownerId, status: "RUNNING", updatedAt: { lt: cutoff } },
+        data: { status: "FAILED", error: RESEARCH_INTERRUPTED },
+      }));
+      if (count === 0) continue; // lost the claim (finished / concurrent sweep) — leave it alone
+      await runAsTenant(job.ownerId, () => failResearchCard(job.cardId, job.ownerId, RESEARCH_INTERRUPTED));
+      reaped++;
+    }
 
-  const queued = await prisma.researchJob.findMany({
-    where: { status: "QUEUED", createdAt: { lt: cutoff } },
-    select: { id: true, ownerId: true, cardId: true },
-  });
-  for (const job of queued) {
-    if (await hasLiveResearchMessage(job.id)) continue;
-    const { count } = await prisma.researchJob.updateMany({
-      where: { id: job.id, ownerId: job.ownerId, status: "QUEUED", createdAt: { lt: cutoff } },
-      data: { status: "FAILED", error: RESEARCH_NOT_STARTED },
+    const queued = await prisma.researchJob.findMany({
+      where: { status: "QUEUED", createdAt: { lt: cutoff } },
+      select: { id: true, ownerId: true, cardId: true },
     });
-    if (count === 0) continue;
-    await failResearchCard(job.cardId, job.ownerId, RESEARCH_NOT_STARTED);
-    reaped++;
-  }
-  return reaped;
+    for (const job of queued) {
+      if (await hasLiveResearchMessage(job.id)) continue;
+      // #463 per-row phase (the pg-boss liveness check above is platform state, not tenant data).
+      const { count } = await runAsTenant(job.ownerId, () => prisma.researchJob.updateMany({
+        where: { id: job.id, ownerId: job.ownerId, status: "QUEUED", createdAt: { lt: cutoff } },
+        data: { status: "FAILED", error: RESEARCH_NOT_STARTED },
+      }));
+      if (count === 0) continue;
+      await runAsTenant(job.ownerId, () => failResearchCard(job.cardId, job.ownerId, RESEARCH_NOT_STARTED));
+      reaped++;
+    }
+    return reaped;
+  });
 }

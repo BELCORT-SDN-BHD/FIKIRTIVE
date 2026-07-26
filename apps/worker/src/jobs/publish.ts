@@ -25,6 +25,7 @@
  *      ⇒ a retry after the ambiguous NEEDS_ATTENTION can't re-select the post and double-post.
  */
 import { prisma } from "@fikirtive/db";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { decryptToken, signMediaToken } from "@fikirtive/token-crypto";
 import {
   publishInstagram,
@@ -463,180 +464,185 @@ export async function handlePublish(
     return;
   }
 
-  // Lock 1: already published ⇒ short-circuit (idempotent; never re-post).
-  if (post.metaPostId) {
-    if (post.status !== "PUBLISHED") {
-      await prisma.scheduledPost.updateMany({ where: { id: post.id, status: "PUBLISHING" }, data: { status: "PUBLISHED" } });
-    }
-    return;
-  }
-  // Only a due SCHEDULED post (or a PUBLISHING one being redelivered) is publishable.
-  if (post.status !== "SCHEDULED" && post.status !== "PUBLISHING") {
-    console.log(`[publish] ${post.id}: status ${post.status} — nothing to do`);
-    return;
-  }
-
-  // Lock 4 (D2) — the recovery double-post guard, fail-closed BEFORE any claim or Meta call. A prior
-  // ambiguous publish that crossed Meta's side-effect point but lost its receipt records an
-  // UNCONFIRMED attempt (the two ambiguity sinks below): the post MAY already be live. Its metaPostId
-  // was never stamped (M2), so lock 1 can't catch it, and the prior attempt is no longer APPLYING so
-  // lock 2 frees — a retry (NEEDS_ATTENTION→SCHEDULED) would let scanDue re-select this post and the
-  // worker build a SECOND live container. So if ANY (not just the latest) UNCONFIRMED attempt exists
-  // for this post, refuse deterministically → NEEDS_ATTENTION, ZERO Meta calls. This is a VISIBLE
-  // refusal (M1-shaped), never a silent scanDue WHERE exclusion (a silent skip is a new debugging
-  // trap); a human then confirms/links the live post or cancels (NEEDS_ATTENTION→CANCELLED).
-  const unconfirmed = await prisma.publishAttempt.findFirst({
-    where: { scheduledPostId: post.id, state: "UNCONFIRMED" },
-    select: { id: true },
-  });
-  if (unconfirmed) {
-    await prisma.scheduledPost.updateMany({
-      where: { id: post.id, status: { in: ["SCHEDULED", "PUBLISHING"] }, metaPostId: null },
-      data: { status: "NEEDS_ATTENTION", lastError: "This post may already be live — please confirm before publishing again." },
-    });
-    console.warn(`[publish] ${post.id}: an UNCONFIRMED attempt exists — may already be live; refusing to re-publish (NEEDS_ATTENTION, no Meta call)`);
-    return;
-  }
-
-  // Lock 2: atomic claim = insert PublishAttempt(APPLYING). The partial-unique index
-  // (one APPLYING per post) makes a second racing worker's insert P2002 → it skips.
-  const attemptId = newId();
-  try {
-    await prisma.publishAttempt.create({ data: { id: attemptId, scheduledPostId: post.id, state: "APPLYING" } });
-  } catch (e) {
-    if ((e as { code?: string }).code === "P2002") {
-      console.log(`[publish] ${post.id}: another worker holds the APPLYING claim — skipping`);
+  // #463: the payload carries only the scheduled-post id — the tenant is knowable only after
+  // the row load above. Every lock, the publish attempt and the external Meta call below run
+  // scoped to this post's owner.
+  await runAsTenant(post.ownerId, async () => {
+    // Lock 1: already published ⇒ short-circuit (idempotent; never re-post).
+    if (post.metaPostId) {
+      if (post.status !== "PUBLISHED") {
+        await prisma.scheduledPost.updateMany({ where: { id: post.id, status: "PUBLISHING" }, data: { status: "PUBLISHED" } });
+      }
       return;
     }
-    throw e;
-  }
+    // Only a due SCHEDULED post (or a PUBLISHING one being redelivered) is publishable.
+    if (post.status !== "SCHEDULED" && post.status !== "PUBLISHING") {
+      console.log(`[publish] ${post.id}: status ${post.status} — nothing to do`);
+      return;
+    }
 
-  // H4 — the fail-closed status CAS, the sole gate on reaching Meta. Our `post` snapshot is STALE:
-  // between the read and now the post may have been cancelled, edited back to DRAFT, deleted, or
-  // published by another path. This single atomic UPDATE both (a) transitions SCHEDULED→PUBLISHING
-  // on the fresh row and (b) proves the row is STILL publishable (SCHEDULED, or PUBLISHING on a
-  // legit redelivery) with no metaPostId and not soft-deleted. Only count === 1 authorizes ANY Meta
-  // call — otherwise we'd fire a publish the DB no longer wants (a ghost post). On a miss we release
-  // the APPLYING claim and stop, never calling Meta.
-  const claimed = await prisma.scheduledPost.updateMany({
-    where: { id: post.id, status: { in: ["SCHEDULED", "PUBLISHING"] }, metaPostId: null, deletedAt: null },
-    data: { status: "PUBLISHING" },
-  });
-  if (claimed.count !== 1) {
-    await prisma.publishAttempt.update({
-      where: { id: attemptId },
-      data: { state: "FAILED", error: "post no longer publishable at claim time (cancelled/edited/published/deleted)", finishedAt: new Date() },
+    // Lock 4 (D2) — the recovery double-post guard, fail-closed BEFORE any claim or Meta call. A prior
+    // ambiguous publish that crossed Meta's side-effect point but lost its receipt records an
+    // UNCONFIRMED attempt (the two ambiguity sinks below): the post MAY already be live. Its metaPostId
+    // was never stamped (M2), so lock 1 can't catch it, and the prior attempt is no longer APPLYING so
+    // lock 2 frees — a retry (NEEDS_ATTENTION→SCHEDULED) would let scanDue re-select this post and the
+    // worker build a SECOND live container. So if ANY (not just the latest) UNCONFIRMED attempt exists
+    // for this post, refuse deterministically → NEEDS_ATTENTION, ZERO Meta calls. This is a VISIBLE
+    // refusal (M1-shaped), never a silent scanDue WHERE exclusion (a silent skip is a new debugging
+    // trap); a human then confirms/links the live post or cancels (NEEDS_ATTENTION→CANCELLED).
+    const unconfirmed = await prisma.publishAttempt.findFirst({
+      where: { scheduledPostId: post.id, state: "UNCONFIRMED" },
+      select: { id: true },
     });
-    console.warn(`[publish] ${post.id}: not publishable at claim (count=${claimed.count}) — releasing lock, NO Meta call`);
-    return;
-  }
+    if (unconfirmed) {
+      await prisma.scheduledPost.updateMany({
+        where: { id: post.id, status: { in: ["SCHEDULED", "PUBLISHING"] }, metaPostId: null },
+        data: { status: "NEEDS_ATTENTION", lastError: "This post may already be live — please confirm before publishing again." },
+      });
+      console.warn(`[publish] ${post.id}: an UNCONFIRMED attempt exists — may already be live; refusing to re-publish (NEEDS_ATTENTION, no Meta call)`);
+      return;
+    }
 
-  let result: PublishResult | PublishAuthRefused | PublishMediaContractRefused;
-  try {
-    result = await execute(post, attemptId);
-  } catch (err) {
-    // An unexpected throw inside the executor (network/store) — treat as transient.
-    result = { error: sanitizeError(err), retryable: true };
-  }
+    // Lock 2: atomic claim = insert PublishAttempt(APPLYING). The partial-unique index
+    // (one APPLYING per post) makes a second racing worker's insert P2002 → it skips.
+    const attemptId = newId();
+    try {
+      await prisma.publishAttempt.create({ data: { id: attemptId, scheduledPostId: post.id, state: "APPLYING" } });
+    } catch (e) {
+      if ((e as { code?: string }).code === "P2002") {
+        console.log(`[publish] ${post.id}: another worker holds the APPLYING claim — skipping`);
+        return;
+      }
+      throw e;
+    }
 
-  if ("authFailed" in result || "mediaContractRefused" in result) {
-    // M1 — deterministic authorization/config refusal, OR a deterministic IG media-contract
-    // refusal (buildMediaUrls rejected a non-image/* asset before transcodeToJpeg()/any Graph
-    // call). ZERO Meta calls happened either way. Re-posting can't fix it → six-state ②
-    // NEEDS_ATTENTION, never FAILED. CAS-scoped so a concurrently-resolved row is never clobbered.
-    const reason = sanitizeError(result.error);
-    await prisma.$transaction([
-      prisma.scheduledPost.updateMany({
-        where: { id: post.id, status: "PUBLISHING", metaPostId: null },
-        data: { status: "NEEDS_ATTENTION", lastError: reason },
-      }),
-      prisma.publishAttempt.updateMany({
-        where: { id: attemptId, state: "APPLYING" },
-        data: { state: "FAILED", error: reason, finishedAt: new Date() },
-      }),
-    ]);
-    console.warn(`[publish] ${post.id}: NEEDS_ATTENTION (authorization) — ${reason}`);
-    return;
-  }
-
-  if ("externalId" in result) {
-    // ① success. Stamp the metaPostId ANCHOR durably (lock 1 for any future delivery) + APPLIED.
-    // The CAS keys on metaPostId=null (the anchor), NOT status: even if a racing reaper/cancel moved
-    // the row out of PUBLISHING, we must still record the id — losing it would risk a future
-    // double-post. count !== 1 means the anchor was already set (another path won) → surface it.
-    const [stamped] = await prisma.$transaction([
-      prisma.scheduledPost.updateMany({
-        where: { id: post.id, metaPostId: null },
-        data: { status: "PUBLISHED", metaPostId: result.externalId, lastError: null },
-      }),
-      prisma.publishAttempt.update({
+    // H4 — the fail-closed status CAS, the sole gate on reaching Meta. Our `post` snapshot is STALE:
+    // between the read and now the post may have been cancelled, edited back to DRAFT, deleted, or
+    // published by another path. This single atomic UPDATE both (a) transitions SCHEDULED→PUBLISHING
+    // on the fresh row and (b) proves the row is STILL publishable (SCHEDULED, or PUBLISHING on a
+    // legit redelivery) with no metaPostId and not soft-deleted. Only count === 1 authorizes ANY Meta
+    // call — otherwise we'd fire a publish the DB no longer wants (a ghost post). On a miss we release
+    // the APPLYING claim and stop, never calling Meta.
+    const claimed = await prisma.scheduledPost.updateMany({
+      where: { id: post.id, status: { in: ["SCHEDULED", "PUBLISHING"] }, metaPostId: null, deletedAt: null },
+      data: { status: "PUBLISHING" },
+    });
+    if (claimed.count !== 1) {
+      await prisma.publishAttempt.update({
         where: { id: attemptId },
-        data: { state: "APPLIED", metaPostId: result.externalId, finishedAt: new Date() },
-      }),
-    ]);
-    if (stamped.count !== 1) {
-      console.warn(`[publish] ${post.id}: published ${result.externalId} but the post row had already moved (count=${stamped.count}); the attempt records the anchor`);
-    }
-    console.log(`[publish] ${post.id}: PUBLISHED → ${result.externalId}`);
-    return;
-  }
-
-  if ("ambiguous" in result) {
-    // H5 — the publish request MAY have already crossed Meta's side-effect point (timeout / dropped
-    // connection / 5xx / success-without-id). NEVER free the lock and retry — that risks a second
-    // live post. Reconcile Meta's TRUTH first (IG: the creationId anchor; FB: NEEDS_ATTENTION for
-    // now). Only a confirmed post becomes PUBLISHED; otherwise a human decides. The reconcile uses
-    // GETs only (idempotent — they can't double-post). Status stays PUBLISHING until we know.
-    const reason = sanitizeError(result.error);
-    const attempt = await prisma.publishAttempt.findUnique({
-      where: { id: attemptId },
-      select: { id: true, scheduledPostId: true, creationId: true },
-    });
-    const verdict = attempt
-      ? await reconcile(attempt, { ownerId: post.ownerId, channel: post.channel, metaTargetId: post.metaTargetId, metaPostId: null })
-      : "needs_attention";
-    if (verdict === "published") {
-      console.log(`[publish] ${post.id}: ambiguous publish reconciled → confirmed live`);
+        data: { state: "FAILED", error: "post no longer publishable at claim time (cancelled/edited/published/deleted)", finishedAt: new Date() },
+      });
+      console.warn(`[publish] ${post.id}: not publishable at claim (count=${claimed.count}) — releasing lock, NO Meta call`);
       return;
     }
+
+    let result: PublishResult | PublishAuthRefused | PublishMediaContractRefused;
+    try {
+      result = await execute(post, attemptId);
+    } catch (err) {
+      // An unexpected throw inside the executor (network/store) — treat as transient.
+      result = { error: sanitizeError(err), retryable: true };
+    }
+
+    if ("authFailed" in result || "mediaContractRefused" in result) {
+      // M1 — deterministic authorization/config refusal, OR a deterministic IG media-contract
+      // refusal (buildMediaUrls rejected a non-image/* asset before transcodeToJpeg()/any Graph
+      // call). ZERO Meta calls happened either way. Re-posting can't fix it → six-state ②
+      // NEEDS_ATTENTION, never FAILED. CAS-scoped so a concurrently-resolved row is never clobbered.
+      const reason = sanitizeError(result.error);
+      await prisma.$transaction([
+        prisma.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null },
+          data: { status: "NEEDS_ATTENTION", lastError: reason },
+        }),
+        prisma.publishAttempt.updateMany({
+          where: { id: attemptId, state: "APPLYING" },
+          data: { state: "FAILED", error: reason, finishedAt: new Date() },
+        }),
+      ]);
+      console.warn(`[publish] ${post.id}: NEEDS_ATTENTION (authorization) — ${reason}`);
+      return;
+    }
+
+    if ("externalId" in result) {
+      // ① success. Stamp the metaPostId ANCHOR durably (lock 1 for any future delivery) + APPLIED.
+      // The CAS keys on metaPostId=null (the anchor), NOT status: even if a racing reaper/cancel moved
+      // the row out of PUBLISHING, we must still record the id — losing it would risk a future
+      // double-post. count !== 1 means the anchor was already set (another path won) → surface it.
+      const [stamped] = await prisma.$transaction([
+        prisma.scheduledPost.updateMany({
+          where: { id: post.id, metaPostId: null },
+          data: { status: "PUBLISHED", metaPostId: result.externalId, lastError: null },
+        }),
+        prisma.publishAttempt.update({
+          where: { id: attemptId },
+          data: { state: "APPLIED", metaPostId: result.externalId, finishedAt: new Date() },
+        }),
+      ]);
+      if (stamped.count !== 1) {
+        console.warn(`[publish] ${post.id}: published ${result.externalId} but the post row had already moved (count=${stamped.count}); the attempt records the anchor`);
+      }
+      console.log(`[publish] ${post.id}: PUBLISHED → ${result.externalId}`);
+      return;
+    }
+
+    if ("ambiguous" in result) {
+      // H5 — the publish request MAY have already crossed Meta's side-effect point (timeout / dropped
+      // connection / 5xx / success-without-id). NEVER free the lock and retry — that risks a second
+      // live post. Reconcile Meta's TRUTH first (IG: the creationId anchor; FB: NEEDS_ATTENTION for
+      // now). Only a confirmed post becomes PUBLISHED; otherwise a human decides. The reconcile uses
+      // GETs only (idempotent — they can't double-post). Status stays PUBLISHING until we know.
+      const reason = sanitizeError(result.error);
+      const attempt = await prisma.publishAttempt.findUnique({
+        where: { id: attemptId },
+        select: { id: true, scheduledPostId: true, creationId: true },
+      });
+      const verdict = attempt
+        ? await reconcile(attempt, { ownerId: post.ownerId, channel: post.channel, metaTargetId: post.metaTargetId, metaPostId: null })
+        : "needs_attention";
+      if (verdict === "published") {
+        console.log(`[publish] ${post.id}: ambiguous publish reconciled → confirmed live`);
+        return;
+      }
+      await prisma.$transaction([
+        prisma.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null },
+          data: { status: "NEEDS_ATTENTION", lastError: reason },
+        }),
+        prisma.publishAttempt.updateMany({
+          where: { id: attemptId, state: "APPLYING" },
+          // Ambiguity sink (D2): the publish MAY have gone live — mark UNCONFIRMED (not FAILED, which
+          // frees the retry) so lock 4 blocks any re-publish until a human confirms.
+          data: { state: "UNCONFIRMED", error: reason, finishedAt: new Date() },
+        }),
+      ]);
+      console.warn(`[publish] ${post.id}: NEEDS_ATTENTION — publish outcome unconfirmed, NOT retried: ${reason}`);
+      return;
+    }
+
+    const reason = sanitizeError(result.error);
+    const givingUp = retryCount >= PUBLISH_RETRY_LIMIT;
+
+    if (result.retryable && !givingUp) {
+      // ④ transient, retries remain — free the APPLYING lock (mark this attempt FAILED so the
+      // partial-unique frees) and THROW so pg-boss redelivers → a fresh APPLYING claim. Status
+      // stays PUBLISHING during retries (six-state ④).
+      await prisma.publishAttempt.update({ where: { id: attemptId }, data: { state: "FAILED", error: reason, finishedAt: new Date() } });
+      console.warn(`[publish] ${post.id}: transient (try ${retryCount + 1}) — retrying: ${reason}`);
+      throw new Error(reason);
+    }
+
+    // ③ hard reject → FAILED; ② no-permission / ④ over the retry budget → NEEDS_ATTENTION.
+    const nextStatus = result.retryable ? "NEEDS_ATTENTION" : "FAILED";
     await prisma.$transaction([
       prisma.scheduledPost.updateMany({
-        where: { id: post.id, status: "PUBLISHING", metaPostId: null },
-        data: { status: "NEEDS_ATTENTION", lastError: reason },
+        where: { id: post.id, status: "PUBLISHING" },
+        data: { status: nextStatus, lastError: reason },
       }),
-      prisma.publishAttempt.updateMany({
-        where: { id: attemptId, state: "APPLYING" },
-        // Ambiguity sink (D2): the publish MAY have gone live — mark UNCONFIRMED (not FAILED, which
-        // frees the retry) so lock 4 blocks any re-publish until a human confirms.
-        data: { state: "UNCONFIRMED", error: reason, finishedAt: new Date() },
-      }),
+      prisma.publishAttempt.update({ where: { id: attemptId }, data: { state: "FAILED", error: reason, finishedAt: new Date() } }),
     ]);
-    console.warn(`[publish] ${post.id}: NEEDS_ATTENTION — publish outcome unconfirmed, NOT retried: ${reason}`);
-    return;
-  }
-
-  const reason = sanitizeError(result.error);
-  const givingUp = retryCount >= PUBLISH_RETRY_LIMIT;
-
-  if (result.retryable && !givingUp) {
-    // ④ transient, retries remain — free the APPLYING lock (mark this attempt FAILED so the
-    // partial-unique frees) and THROW so pg-boss redelivers → a fresh APPLYING claim. Status
-    // stays PUBLISHING during retries (six-state ④).
-    await prisma.publishAttempt.update({ where: { id: attemptId }, data: { state: "FAILED", error: reason, finishedAt: new Date() } });
-    console.warn(`[publish] ${post.id}: transient (try ${retryCount + 1}) — retrying: ${reason}`);
-    throw new Error(reason);
-  }
-
-  // ③ hard reject → FAILED; ② no-permission / ④ over the retry budget → NEEDS_ATTENTION.
-  const nextStatus = result.retryable ? "NEEDS_ATTENTION" : "FAILED";
-  await prisma.$transaction([
-    prisma.scheduledPost.updateMany({
-      where: { id: post.id, status: "PUBLISHING" },
-      data: { status: nextStatus, lastError: reason },
-    }),
-    prisma.publishAttempt.update({ where: { id: attemptId }, data: { state: "FAILED", error: reason, finishedAt: new Date() } }),
-  ]);
-  console.warn(`[publish] ${post.id}: ${nextStatus} — ${reason}`);
+    console.warn(`[publish] ${post.id}: ${nextStatus} — ${reason}`);
+  });
 }
 
 /* ── reconcile + reaper (spec §四F, six-state ⑥) ── */
@@ -689,54 +695,62 @@ export async function reconcileAttempt(
 /** Sweep dangling APPLYING attempts (worker crashed mid-publish). Reconcile TRUTH first, then set
  *  PUBLISHED or NEEDS_ATTENTION. Never blind re-publishes. Returns how many it swept. */
 export async function reapStalePublishAttempts(): Promise<number> {
-  const cutoff = new Date(Date.now() - PUBLISH_STALE_MS);
-  const stale = await prisma.publishAttempt.findMany({
-    where: { state: "APPLYING", startedAt: { lt: cutoff } },
-    select: { id: true, scheduledPostId: true, creationId: true },
-  });
-  let reaped = 0;
-  for (const attempt of stale) {
-    const post = await prisma.scheduledPost.findUnique({
-      where: { id: attempt.scheduledPostId },
-      select: { ownerId: true, channel: true, metaTargetId: true, metaPostId: true, status: true },
+  return runAsSystem("publish-reaper", async () => {
+    const cutoff = new Date(Date.now() - PUBLISH_STALE_MS);
+    const stale = await prisma.publishAttempt.findMany({
+      where: { state: "APPLYING", startedAt: { lt: cutoff } },
+      select: { id: true, scheduledPostId: true, creationId: true },
     });
-    if (!post) continue;
-    const verdict = await reconcileAttempt(attempt, post);
-    if (verdict === "needs_attention") {
-      // P1-1 — distinguish a PROVABLY-safe interrupt from a genuine ambiguity. The IG creationId is
-      // CAS-persisted onto the attempt BEFORE media_publish (realExecute.onCreationId → publishInstagram
-      // line "Persist the container id BEFORE publishing"), so for IG a null creationId proves the
-      // container was never created and media_publish was never reached — NOTHING went live. That
-      // attempt is FAILED (retryable, NOT frozen by lock 4), restoring the pre-D2 behavior for a
-      // provably-safe interrupt. Any OTHER interrupted attempt — IG WITH a creationId (the crash may
-      // have straddled media_publish) or FB (a single call with NO pre-side-effect anchor) — MAY have
-      // gone live → UNCONFIRMED, so lock 4 blocks a re-publish until a human confirms.
-      const provablyNotPublished = post.channel === "instagram" && attempt.creationId == null;
-      const attemptState = provablyNotPublished ? "FAILED" : "UNCONFIRMED";
-      const attemptError = provablyNotPublished
-        ? "publish interrupted before the media container was created — nothing went live"
-        : "publish interrupted — reconcile couldn't confirm it went out";
-      // Release the lock + surface it, ATOMICALLY (M3): a mid-way DB failure between the two writes
-      // would otherwise strand the post PUBLISHING forever or the attempt APPLYING forever. Both
-      // writes are CAS-scoped so a PUBLISHED the reconcile just set is never clobbered; a zero row
-      // count means the state moved underneath us (safe no-op) and is logged, not forced.
-      const [attemptWrite, postWrite] = await prisma.$transaction([
-        prisma.publishAttempt.updateMany({
-          where: { id: attempt.id, state: "APPLYING" },
-          data: { state: attemptState, error: attemptError, finishedAt: new Date() },
-        }),
-        prisma.scheduledPost.updateMany({
-          where: { id: attempt.scheduledPostId, status: "PUBLISHING", metaPostId: null },
-          data: { status: "NEEDS_ATTENTION", lastError: "Publishing was interrupted — please review before retrying." },
-        }),
-      ]);
-      if (attemptWrite.count !== 1 || postWrite.count !== 1) {
-        console.warn(`[publish] ${attempt.scheduledPostId}: reaper CAS partial (attempt=${attemptWrite.count}, post=${postWrite.count}) — state moved concurrently`);
-      }
+    let reaped = 0;
+    for (const attempt of stale) {
+      const post = await prisma.scheduledPost.findUnique({
+        where: { id: attempt.scheduledPostId },
+        select: { ownerId: true, channel: true, metaTargetId: true, metaPostId: true, status: true },
+      });
+      if (!post) continue;
+      // #463 per-row phase. PublishAttempt carries NO ownerId column, so the tenant is reached
+      // transitively through the parent post — the schema question is recorded as a non-goal of
+      // #463 (it would be a migration, i.e. Founder-only). Covers reconcile (which calls Meta)
+      // and the CAS transaction below.
+      await runAsTenant(post.ownerId, async () => {
+        const verdict = await reconcileAttempt(attempt, post);
+        if (verdict === "needs_attention") {
+          // P1-1 — distinguish a PROVABLY-safe interrupt from a genuine ambiguity. The IG creationId is
+          // CAS-persisted onto the attempt BEFORE media_publish (realExecute.onCreationId → publishInstagram
+          // line "Persist the container id BEFORE publishing"), so for IG a null creationId proves the
+          // container was never created and media_publish was never reached — NOTHING went live. That
+          // attempt is FAILED (retryable, NOT frozen by lock 4), restoring the pre-D2 behavior for a
+          // provably-safe interrupt. Any OTHER interrupted attempt — IG WITH a creationId (the crash may
+          // have straddled media_publish) or FB (a single call with NO pre-side-effect anchor) — MAY have
+          // gone live → UNCONFIRMED, so lock 4 blocks a re-publish until a human confirms.
+          const provablyNotPublished = post.channel === "instagram" && attempt.creationId == null;
+          const attemptState = provablyNotPublished ? "FAILED" : "UNCONFIRMED";
+          const attemptError = provablyNotPublished
+            ? "publish interrupted before the media container was created — nothing went live"
+            : "publish interrupted — reconcile couldn't confirm it went out";
+          // Release the lock + surface it, ATOMICALLY (M3): a mid-way DB failure between the two writes
+          // would otherwise strand the post PUBLISHING forever or the attempt APPLYING forever. Both
+          // writes are CAS-scoped so a PUBLISHED the reconcile just set is never clobbered; a zero row
+          // count means the state moved underneath us (safe no-op) and is logged, not forced.
+          const [attemptWrite, postWrite] = await prisma.$transaction([
+            prisma.publishAttempt.updateMany({
+              where: { id: attempt.id, state: "APPLYING" },
+              data: { state: attemptState, error: attemptError, finishedAt: new Date() },
+            }),
+            prisma.scheduledPost.updateMany({
+              where: { id: attempt.scheduledPostId, status: "PUBLISHING", metaPostId: null },
+              data: { status: "NEEDS_ATTENTION", lastError: "Publishing was interrupted — please review before retrying." },
+            }),
+          ]);
+          if (attemptWrite.count !== 1 || postWrite.count !== 1) {
+            console.warn(`[publish] ${attempt.scheduledPostId}: reaper CAS partial (attempt=${attemptWrite.count}, post=${postWrite.count}) — state moved concurrently`);
+          }
+        }
+      });
+      reaped++;
     }
-    reaped++;
-  }
-  return reaped;
+    return reaped;
+  });
 }
 
 /* ── scheduler: which approved posts are due AND currently authorized to publish ── */

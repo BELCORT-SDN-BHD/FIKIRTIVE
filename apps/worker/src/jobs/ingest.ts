@@ -10,6 +10,7 @@
  */
 import { execa } from "execa";
 import { prisma } from "@fikirtive/db";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { storageKey, sha256Stream, newId } from "@fikirtive/core";
 import { storage } from "../storage.js";
 
@@ -56,31 +57,35 @@ export async function probeFile(file: string): Promise<ProbeResult> {
 export const INGEST_REDISPATCH_MIN_AGE_MS = 15 * 60_000;
 export const INGEST_REDISPATCH_MAX_AGE_MS = 24 * 60 * 60_000;
 
+// #463: a cross-tenant scan with a named system identity. Unlike the other reapers there is no
+// per-row tenant phase — this function performs NO database writes, it only re-enqueues.
 export async function redispatchLostIngest(
   send: (assetId: string) => Promise<unknown>,
   now: Date = new Date(),
 ): Promise<number> {
-  const assets = await prisma.asset.findMany({
-    where: {
-      ownerId: { not: "" },
-      deletedAt: null,
-      // GENERATED assets never get ingest jobs (worker-computed hash, no probe)
-      // — sweeping them would re-dispatch every generated image forever.
-      source: "UPLOAD",
-      width: null,
-      height: null,
-      durationS: null,
-      createdAt: {
-        lt: new Date(now.getTime() - INGEST_REDISPATCH_MIN_AGE_MS),
-        gt: new Date(now.getTime() - INGEST_REDISPATCH_MAX_AGE_MS),
+  return runAsSystem("ingest-redispatch", async () => {
+    const assets = await prisma.asset.findMany({
+      where: {
+        ownerId: { not: "" },
+        deletedAt: null,
+        // GENERATED assets never get ingest jobs (worker-computed hash, no probe)
+        // — sweeping them would re-dispatch every generated image forever.
+        source: "UPLOAD",
+        width: null,
+        height: null,
+        durationS: null,
+        createdAt: {
+          lt: new Date(now.getTime() - INGEST_REDISPATCH_MIN_AGE_MS),
+          gt: new Date(now.getTime() - INGEST_REDISPATCH_MAX_AGE_MS),
+        },
       },
-    },
-    select: { id: true },
-    orderBy: { createdAt: "asc" },
-    take: 100, // per-tick bound; the next 5-min tick picks up the rest
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+      take: 100, // per-tick bound; the next 5-min tick picks up the rest
+    });
+    for (const a of assets) await send(a.id);
+    return assets.length;
   });
-  for (const a of assets) await send(a.id);
-  return assets.length;
 }
 
 export async function handleIngest(data: IngestJobData): Promise<void> {
@@ -94,56 +99,60 @@ export async function handleIngest(data: IngestJobData): Promise<void> {
     // its object may be gone (would falsely throw the read below)
     return;
   }
-  const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
+  // #463: the queue payload carries only the asset id, so the tenant is knowable only after the
+  // row load. The scope opens here — past the early returns, before the first write.
+  await runAsTenant(asset.ownerId, async () => {
+    const key = storageKey(asset.ownerId, asset.contentHash, asset.ext);
 
-  // D19 hash re-verification: the key's hash segment is a client claim until
-  // proven here. This is load-bearing security, not best-effort — a read
-  // failure must THROW so pg-boss retries with backoff (a swallowed failure
-  // would let a forged same-size upload survive). Only a CONFIRMED mismatch
-  // deletes; transient storage errors bubble up to the queue.
-  const actualHash = await sha256Stream(await storage.readStream(key));
-  if (actualHash !== asset.contentHash) {
-    console.error(
-      `[ingest] HASH MISMATCH ${asset.id}: key claims ${asset.contentHash}, bytes are ${actualHash} — deleting`,
+    // D19 hash re-verification: the key's hash segment is a client claim until
+    // proven here. This is load-bearing security, not best-effort — a read
+    // failure must THROW so pg-boss retries with backoff (a swallowed failure
+    // would let a forged same-size upload survive). Only a CONFIRMED mismatch
+    // deletes; transient storage errors bubble up to the queue.
+    const actualHash = await sha256Stream(await storage.readStream(key));
+    if (actualHash !== asset.contentHash) {
+      console.error(
+        `[ingest] HASH MISMATCH ${asset.id}: key claims ${asset.contentHash}, bytes are ${actualHash} — deleting`,
+      );
+      await storage.deleteObject(key);
+      await prisma.$transaction([
+        prisma.asset.update({ where: { id: asset.id }, data: { deletedAt: new Date() } }),
+        // candidates pointing at the forged blob must vanish too — read paths
+        // include the asset without re-checking asset.deletedAt (codex round)
+        prisma.generation.updateMany({
+          where: { assetId: asset.id, deletedAt: null },
+          data: { deletedAt: new Date() },
+        }),
+        prisma.actionEvent.create({
+          data: {
+            id: newId(),
+            ownerId: asset.ownerId,
+            type: "asset.hash_mismatch",
+            payload: { assetId: asset.id, claimed: asset.contentHash, actual: actualHash },
+          },
+        }),
+      ]);
+      return;
+    }
+
+    let file: string;
+    try {
+      file = await storage.ffmpegInput(key);
+    } catch {
+      console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
+      return;
+    }
+    const probe = await probeFile(file);
+    await prisma.asset.update({
+      where: { id: asset.id },
+      data: {
+        durationS: probe.durationS,
+        width: probe.width,
+        height: probe.height,
+      },
+    });
+    console.log(
+      `[ingest] ${asset.id}: ${probe.width}x${probe.height} ${probe.durationS ?? "?"}s audio=${probe.hasAudio}`,
     );
-    await storage.deleteObject(key);
-    await prisma.$transaction([
-      prisma.asset.update({ where: { id: asset.id }, data: { deletedAt: new Date() } }),
-      // candidates pointing at the forged blob must vanish too — read paths
-      // include the asset without re-checking asset.deletedAt (codex round)
-      prisma.generation.updateMany({
-        where: { assetId: asset.id, deletedAt: null },
-        data: { deletedAt: new Date() },
-      }),
-      prisma.actionEvent.create({
-        data: {
-          id: newId(),
-          ownerId: asset.ownerId,
-          type: "asset.hash_mismatch",
-          payload: { assetId: asset.id, claimed: asset.contentHash, actual: actualHash },
-        },
-      }),
-    ]);
-    return;
-  }
-
-  let file: string;
-  try {
-    file = await storage.ffmpegInput(key);
-  } catch {
-    console.error(`[ingest] blob for ${asset.id} unreachable — skipping`);
-    return;
-  }
-  const probe = await probeFile(file);
-  await prisma.asset.update({
-    where: { id: asset.id },
-    data: {
-      durationS: probe.durationS,
-      width: probe.width,
-      height: probe.height,
-    },
   });
-  console.log(
-    `[ingest] ${asset.id}: ${probe.width}x${probe.height} ${probe.durationS ?? "?"}s audio=${probe.hasAudio}`,
-  );
 }

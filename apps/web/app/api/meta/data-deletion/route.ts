@@ -10,13 +10,21 @@
  * 找不到匹配也返回 200 + code —— "无可删"是合法结果,Meta 只要求可追溯。
  */
 import { prisma } from "@fikirtive/db";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { newId } from "@fikirtive/core";
 import { parseMetaSignedRequest } from "@/lib/meta-signed-request";
 import type { NextRequest } from "next/server";
 
 export const dynamic = "force-dynamic";
 
+// #463: no session by construction (the HMAC is the auth), and ONE request legitimately writes
+// to N different tenants. That is the two-phase shape: the handler runs under the named system
+// identity "meta-data-deletion", and each per-org transaction re-enters under that org.
 export async function POST(req: NextRequest | Request): Promise<Response> {
+  return runAsSystem("meta-data-deletion", () => handleDataDeletion(req));
+}
+
+async function handleDataDeletion(req: NextRequest | Request): Promise<Response> {
   const secret = process.env.META_APP_SECRET;
   if (!secret) return Response.json({ error: "not configured" }, { status: 400 }); // fail-closed
 
@@ -41,7 +49,8 @@ export async function POST(req: NextRequest | Request): Promise<Response> {
     select: { id: true, ownerId: true },
   });
   for (const m of matches) {
-    await prisma.$transaction(async (tx) => {
+    // per-org phase: the scan above is cross-tenant, this write is not
+    await runAsTenant(m.ownerId, () => prisma.$transaction(async (tx) => {
       await tx.metaConnection.delete({ where: { id: m.id } });
       await tx.actionEvent.create({
         data: {
@@ -51,7 +60,7 @@ export async function POST(req: NextRequest | Request): Promise<Response> {
           payload: { metaUserId: parsed.userId, connectionId: m.id, confirmationCode },
         },
       });
-    });
+    }));
   }
   if (matches.length === 0) {
     // 无匹配也留一条平台级痕迹(best-effort,founder org 缺失时不 500)。
