@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "default": "./dist/src/index.js"
+    },
+    "./principal": {
+      "types": "./dist/src/principal.d.ts",
+      "default": "./dist/src/principal.js"
     }
   },
   "scripts": {

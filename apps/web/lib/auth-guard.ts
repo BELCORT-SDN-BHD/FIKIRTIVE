@@ -2,6 +2,7 @@ import "server-only";
 import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
+import { runAsSystem } from "@fikirtive/db/principal";
 import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, type Section, type Action, type Role } from "@fikirtive/core";
 
 /** In-handler auth (R7): re-assert auth()+allowlist INSIDE every action, not just
@@ -84,11 +85,18 @@ export async function requireOwner(): Promise<{ email: string; ownerId: string }
  *  stable key "signup:<orgId>" (grantCredits is ledger-first idempotent) — so a grant that
  *  failed after a prior commit is retried on the next call. `org_<userId>` is charset-safe for
  *  storageKey (/[^0-9A-Za-z_-]/) because the next-auth user id is. Shared by requireOwner
- *  (authoritative) and events.signIn (convergence). */
+ *  (authoritative) and events.signIn (convergence).
+ *
+ *  #463 — this is one of the two canonical system contexts. On the sign-in hook path the
+ *  session cookie does not exist yet (Better Auth calls convergeIdentity BEFORE
+ *  setSessionCookie), so there is no user principal to resolve, by construction. The tx
+ *  therefore runs under the named system identity "auth:bootstrap-personal-org" rather than
+ *  a nameless third state. Ordering, atomicity and every constraint below are unchanged —
+ *  the wrapper adds a name, nothing else. */
 export async function bootstrapPersonalOrg(userId: string, email: string): Promise<string | null> {
   const orgId = `org_${userId}`; // deterministic → concurrent callers converge on ONE org
   try {
-    await prisma.$transaction(async (tx) => {
+    await runAsSystem("auth:bootstrap-personal-org", () => prisma.$transaction(async (tx) => {
       await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: email }, update: {} });
       await tx.membership.upsert({
         where: { userId_orgId: { userId, orgId } },
@@ -111,9 +119,13 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
         amount: BETA_INITIAL_GRANT_CREDITS,
         source: "BETA",
         reason: "beta signup grant",
+        // #463: name the writer. The ledger's createdBy defaulted to "" here — the one place
+        // the beta grant was unattributable. Same value as the system reason above; amount,
+        // source, idempotencyKey and the dedup semantics are untouched.
+        createdBy: "auth:bootstrap-personal-org",
         idempotencyKey: `signup:${orgId}`,
       });
-    });
+    }));
     return orgId;
   } catch (e) {
     // A concurrent creator may have won the org pk / membership upsert mid-tx (P2002), aborting

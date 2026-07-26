@@ -15,6 +15,10 @@ import { storage, mimeOf } from "@/lib/storage";
  * signs tokens (energize slice) + App Review passes; nothing here can be reached otherwise.
  *
  * Node runtime (the default for a route touching @/lib/storage + node:crypto) — never edge.
+ *
+ * #463: intentionally no principal frame — no DB. This handler reaches storage only (the signed
+ * token already carries the ownerId it checks against), so there is nothing for a principal to
+ * scope. Left unwrapped on purpose; do not flag it as a missing system context.
  */
 export async function GET(
   _req: NextRequest,

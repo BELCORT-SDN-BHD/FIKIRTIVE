@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { prisma } from "@fikirtive/db";
+import { runAsTenant } from "@fikirtive/db/principal";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import {
@@ -360,241 +361,245 @@ export async function handleRender(data: RenderJobData, retryCount = 0): Promise
   }
   if (job.status === "DONE") return; // idempotent re-delivery
 
-  // atomic claim: take a QUEUED job, or RE-take a RENDERING one whose attempt is
-  // long past the ffmpeg/expire window (a crashed render — re-rendering is free,
-  // no fal spend). A redelivery while another worker is actively rendering loses
-  // the claim and exits, so it can't start a 2nd ffmpeg or flip DONE→RENDERING (#3).
-  const STALE_MS = 1000 * 60 * 13; // > ffmpeg timeout (10m), < queue expire (15m) so a crashed render is both redelivered AND claimable
-  const claim = await prisma.renderJob.updateMany({
-    where: { id: job.id, OR: [{ status: "QUEUED" }, { status: "RENDERING", startedAt: { lt: new Date(Date.now() - STALE_MS) } }] },
-    data: { status: "RENDERING", progress: 5, startedAt: new Date(), attempts: { increment: 1 } },
-  });
-  if (claim.count === 0) return; // another delivery owns it (active render or already settled)
+  // #463: the payload carries only the job id — the tenant is knowable only after the row
+  // load above. The claim and every write below run scoped to this job's owner.
+  await runAsTenant(job.ownerId, async () => {
+    // atomic claim: take a QUEUED job, or RE-take a RENDERING one whose attempt is
+    // long past the ffmpeg/expire window (a crashed render — re-rendering is free,
+    // no fal spend). A redelivery while another worker is actively rendering loses
+    // the claim and exits, so it can't start a 2nd ffmpeg or flip DONE→RENDERING (#3).
+    const STALE_MS = 1000 * 60 * 13; // > ffmpeg timeout (10m), < queue expire (15m) so a crashed render is both redelivered AND claimable
+    const claim = await prisma.renderJob.updateMany({
+      where: { id: job.id, OR: [{ status: "QUEUED" }, { status: "RENDERING", startedAt: { lt: new Date(Date.now() - STALE_MS) } }] },
+      data: { status: "RENDERING", progress: 5, startedAt: new Date(), attempts: { increment: 1 } },
+    });
+    if (claim.count === 0) return; // another delivery owns it (active render or already settled)
 
-  const work = path.join(tmpdir(), `fikirtive-render-${job.id}`);
-  try {
-    // contract police: the worker NEVER trusts stored JSON blindly
-    const edit = fikirtiveEdit.parse(job.editJson);
-    const totalSeconds = editDuration(edit);
-    const visualTrack = edit.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
-    if (!visualTrack) throw new Error("no visual track in edit");
-    const audioTracks = edit.timeline.tracks.filter((t) => t !== visualTrack);
+    const work = path.join(tmpdir(), `fikirtive-render-${job.id}`);
+    try {
+      // contract police: the worker NEVER trusts stored JSON blindly
+      const edit = fikirtiveEdit.parse(job.editJson);
+      const totalSeconds = editDuration(edit);
+      const visualTrack = edit.timeline.tracks.find((t) => t.clips.some((c) => c.asset.type !== "audio"));
+      if (!visualTrack) throw new Error("no visual track in edit");
+      const audioTracks = edit.timeline.tracks.filter((t) => t !== visualTrack);
 
-    await mkdir(work, { recursive: true });
+      await mkdir(work, { recursive: true });
 
-    // plan all inputs (visual first, then audio-track clips), probing each
-    // source once for audio-stream presence
-    const planned: PlannedInput[] = [];
-    const addInput = async (clip: FikirtiveClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
-      // local: validated file path · r2: presigned URL (ffmpeg range-reads it)
-      const file = await storage.ffmpegInput(srcToStorageKey(clip.asset.src));
-      const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);
-      planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio, trackKind, audioRole });
-    };
-    const visualClips = [...visualTrack.clips].sort((a, b) => a.start - b.start);
-    for (const c of visualClips) await addInput(c, "visual");
-    for (const t of audioTracks) for (const c of t.clips) await addInput(c, "audio", t.audioRole);
+      // plan all inputs (visual first, then audio-track clips), probing each
+      // source once for audio-stream presence
+      const planned: PlannedInput[] = [];
+      const addInput = async (clip: FikirtiveClip, trackKind: "visual" | "audio", audioRole?: AudioRole) => {
+        // local: validated file path · r2: presigned URL (ffmpeg range-reads it)
+        const file = await storage.ffmpegInput(srcToStorageKey(clip.asset.src));
+        const probe = clip.asset.type === "image" ? { hasAudio: false } : await probeFile(file);
+        planned.push({ clip, file, index: planned.length, hasAudio: probe.hasAudio, trackKind, audioRole });
+      };
+      const visualClips = [...visualTrack.clips].sort((a, b) => a.start - b.start);
+      for (const c of visualClips) await addInput(c, "visual");
+      for (const t of audioTracks) for (const c of t.clips) await addInput(c, "audio", t.audioRole);
 
-    // contract guarantees length>0 per clip so this can't fire post-parse;
-    // belt-and-braces against future schema drift (codex review, refuted-but-free)
-    if (!(totalSeconds > 0)) throw new Error("empty edit — nothing to render");
+      // contract guarantees length>0 per clip so this can't fire post-parse;
+      // belt-and-braces against future schema drift (codex review, refuted-but-free)
+      if (!(totalSeconds > 0)) throw new Error("empty edit — nothing to render");
 
-    // cap render output at HD (720p): a 1080p ffmpeg render OOM-crashed the worker.
-    // 720p is the agreed export quality; legacy 1080 edits still render, just at 720p.
-    const res = edit.output.resolution === "1080" ? "hd" : edit.output.resolution;
-    const [w, h] = SIZES[edit.output.aspectRatio]?.[res] ?? [1280, 720];
-    const fps = edit.output.fps;
-    const out = path.join(work, "out.mp4");
+      // cap render output at HD (720p): a 1080p ffmpeg render OOM-crashed the worker.
+      // 720p is the agreed export quality; legacy 1080 edits still render, just at 720p.
+      const res = edit.output.resolution === "1080" ? "hd" : edit.output.resolution;
+      const [w, h] = SIZES[edit.output.aspectRatio]?.[res] ?? [1280, 720];
+      const fps = edit.output.fps;
+      const out = path.join(work, "out.mp4");
 
-    const visualPlanned = planned.filter((p) => p.clip.asset.type !== "audio");
-    const sounded = planned.filter(
-      (p) => p.hasAudio && (p.clip.asset.volume ?? 1) > 0,
-    );
+      const visualPlanned = planned.filter((p) => p.clip.asset.type !== "audio");
+      const sounded = planned.filter(
+        (p) => p.hasAudio && (p.clip.asset.volume ?? 1) > 0,
+      );
 
-    // visualPlanned is already in timeline order (visualClips sorted by start, above).
-    const transitions = visualTrack.transitions ?? [];
+      // visualPlanned is already in timeline order (visualClips sorted by start, above).
+      const transitions = visualTrack.transitions ?? [];
 
-    // belt-and-braces (contract already enforces these at parse; guard against
-    // schema drift so a bad transition can't produce a negative xfade offset or
-    // a hang). All clips render at the same w×h (videoChain), so xfade's
-    // equal-dimensions requirement holds by construction.
-    for (const tr of transitions) {
-      const from = visualPlanned[tr.fromClipIndex];
-      const to = visualPlanned[tr.toClipIndex];
-      if (!from || !to || tr.toClipIndex !== tr.fromClipIndex + 1) {
-        throw new Error(`transition references non-adjacent or missing clips (${tr.fromClipIndex}→${tr.toClipIndex})`);
-      }
-      const durS = tr.durationMs / 1000;
-      if (durS >= from.clip.length || durS >= to.clip.length) {
-        throw new Error(`transition ${durS}s ≥ an adjacent clip length — would push xfade offset past a boundary`);
-      }
-    }
-
-    // belt-and-braces (contract enforces ≤1 music track; guard against drift).
-    // Ducking needs at least one bed clip AND one voice source, else it falls
-    // back to the flat mix — buildAudioMix handles that, but assert the partition
-    // can never produce an empty amix input list.
-    const musicSounded = sounded.filter((p) => p.trackKind === "audio" && p.audioRole === "music");
-    const musicTrackCount = new Set(
-      planned.filter((p) => p.trackKind === "audio" && p.audioRole === "music").map((p) => p.audioRole),
-    ).size;
-    if (musicTrackCount > 1) {
-      throw new Error("more than one music-role audio track — ducking is ambiguous");
-    }
-    void musicSounded; // partition recomputed inside buildAudioMix; this only asserts the cap
-
-    const renderSeconds = renderDuration(edit);
-
-    const graph: string[] = [];
-    // per-clip video normalization (geometry + colorspace + timebase + PTS reset)
-    for (const p of visualPlanned) graph.push(videoChain(p, w, h, fps));
-
-    // chain xfade per transition; hard cuts concat. Returns the final [v] label.
-    // The chain is LINEAR (one filter node per clip boundary), not quadratic.
-    let vLabel: string;
-    if (visualPlanned.length === 1) {
-      vLabel = `[v${visualPlanned[0]!.index}]`;
-    } else {
-      const byFrom = new Map<number, BetweenClipTransition>();
-      for (const tr of transitions) byFrom.set(tr.fromClipIndex, tr);
-      let acc = `[v${visualPlanned[0]!.index}]`;
-      let accEnd = visualPlanned[0]!.clip.length; // rendered duration of `acc`
-      let stage = 0;
-      for (let i = 1; i < visualPlanned.length; i++) {
-        const cur = visualPlanned[i]!;
-        const tr = byFrom.get(i - 1); // transition from clip (i-1) → i
-        const next = `[vx${stage}]`;
-        if (tr) {
-          const durS = tr.durationMs / 1000;
-          const offset = accEnd - durS; // overlap starts durS before acc ends
-          graph.push(
-            `${acc}[v${cur.index}]xfade=transition=${transitionToXfade(tr)}:duration=${durS}:offset=${offset}${next}`,
-          );
-          accEnd = accEnd + cur.clip.length - durS; // clips overlap by durS
-        } else {
-          graph.push(`${acc}[v${cur.index}]concat=n=2:v=1:a=0${next}`);
-          accEnd = accEnd + cur.clip.length;
+      // belt-and-braces (contract already enforces these at parse; guard against
+      // schema drift so a bad transition can't produce a negative xfade offset or
+      // a hang). All clips render at the same w×h (videoChain), so xfade's
+      // equal-dimensions requirement holds by construction.
+      for (const tr of transitions) {
+        const from = visualPlanned[tr.fromClipIndex];
+        const to = visualPlanned[tr.toClipIndex];
+        if (!from || !to || tr.toClipIndex !== tr.fromClipIndex + 1) {
+          throw new Error(`transition references non-adjacent or missing clips (${tr.fromClipIndex}→${tr.toClipIndex})`);
         }
-        acc = next;
-        stage++;
+        const durS = tr.durationMs / 1000;
+        if (durS >= from.clip.length || durS >= to.clip.length) {
+          throw new Error(`transition ${durS}s ≥ an adjacent clip length — would push xfade offset past a boundary`);
+        }
       }
-      vLabel = acc;
-    }
 
-    // EP3 burn-in: append captions (ASS subtitles=) + static text overlays
-    // (drawtext) onto the SINGLE final composited video stream — AFTER the
-    // xfade/concat chain set vLabel, BEFORE -map. This NEVER touches the
-    // per-clip [v${index}] labels, the offset/accEnd math, renderSeconds, or the
-    // audio amix. Timing is in RENDERED time. $0 — no network/spend path.
-    const captions = edit.timeline.captions ?? [];
-    const overlays = edit.timeline.textOverlays ?? [];
-    const assPath = await buildAssFile(captions, work, w, h, visualPlanned, transitions);
-    if (assPath) {
-      graph.push(`${vLabel}subtitles=${escapeForFilter(assPath)}[vsub]`);
-      vLabel = "[vsub]";
-    }
-    overlays.forEach((overlay, i) => {
-      const next = `[vtxt${i}]`;
-      graph.push(drawtextNode(overlay, vLabel, next, visualPlanned, transitions));
-      vLabel = next;
-    });
-
-    if (sounded.length > 0) {
-      for (const p of sounded) graph.push(audioChain(p, visualPlanned, transitions));
-    }
-    const { lines: mixLines, mapAudio } = buildAudioMix(sounded, renderSeconds);
-    for (const line of mixLines) graph.push(line);
-
-    const args: string[] = ["-y"];
-    for (const p of planned) args.push(...inputArgs(p));
-    args.push("-filter_complex", graph.join(";"), "-map", vLabel);
-    if (mapAudio) args.push("-map", "[a]", "-c:a", "aac", "-b:a", "192k");
-    args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart");
-    args.push("-progress", "pipe:1", "-nostats", out);
-
-    // matches buildAudioMix's duckable test (bed = music; voice = visual native
-    // audio OR a voice-role audio track; a neutral un-roled track does NOT duck).
-    const ducked = sounded.some((p) => p.trackKind === "audio" && p.audioRole === "music") &&
-      sounded.some((p) => p.trackKind === "visual" || (p.trackKind === "audio" && p.audioRole === "voice"));
-    console.log(
-      `[render] ${job.id}: ffmpeg ${visualPlanned.length} visual (${transitions.length} transitions) + ${sounded.length} audio${ducked ? " (ducking)" : ""} → ${w}x${h}@${fps}, ${renderSeconds}s`,
-    );
-
-    // live progress from -progress pipe:1, throttled to spare the DB
-    const proc = execa("ffmpeg", args, { timeout: 1000 * 60 * 10, buffer: false });
-    // -progress output is stream-framed: buffer to complete lines before
-    // parsing (codex review — chunks split keys mid-line)
-    let lastWrite = 0;
-    let acc = "";
-    proc.stdout?.on("data", (chunk: Buffer) => {
-      acc += chunk.toString();
-      const lines = acc.split("\n");
-      acc = lines.pop() ?? "";
-      let latestUs: number | null = null;
-      for (const line of lines) {
-        const m = /^out_time_us=(\d+)$/.exec(line.trim());
-        if (m) latestUs = Number(m[1]);
+      // belt-and-braces (contract enforces ≤1 music track; guard against drift).
+      // Ducking needs at least one bed clip AND one voice source, else it falls
+      // back to the flat mix — buildAudioMix handles that, but assert the partition
+      // can never produce an empty amix input list.
+      const musicSounded = sounded.filter((p) => p.trackKind === "audio" && p.audioRole === "music");
+      const musicTrackCount = new Set(
+        planned.filter((p) => p.trackKind === "audio" && p.audioRole === "music").map((p) => p.audioRole),
+      ).size;
+      if (musicTrackCount > 1) {
+        throw new Error("more than one music-role audio track — ducking is ambiguous");
       }
-      if (latestUs == null) return;
-      const pct = Math.min(95, Math.round((latestUs / 1e6 / renderSeconds) * 90) + 5);
-      const now = Date.now();
-      if (now - lastWrite < 2000) return;
-      lastWrite = now;
-      // guard on RENDERING so a late-arriving progress write can't land after the
-      // terminal DONE/100 write and freeze the bar below 100 (#8)
-      prisma.renderJob
-        .updateMany({ where: { id: job.id, status: "RENDERING" }, data: { progress: pct } })
-        .catch(() => {});
-    });
-    await proc;
+      void musicSounded; // partition recomputed inside buildAudioMix; this only asserts the cap
 
-    // store the output with the same content-addressed semantics as every asset
-    const bytes = await readFile(out);
-    const { contentHash } = await storage.put(job.ownerId, bytes, "mp4");
-    const asset = await prisma.asset.upsert({
-      where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash } },
-      update: { deletedAt: null },
-      create: {
-        id: newId(),
-        ownerId: job.ownerId,
-        contentHash,
-        ext: "mp4",
-        mime: "video/mp4",
-        sizeBytes: BigInt(bytes.byteLength),
-        originalFilename: `render-${job.id}.mp4`,
-        source: "RENDER",
-        width: w,
-        height: h,
-        durationS: renderSeconds,
-      },
-    });
+      const renderSeconds = renderDuration(edit);
 
-    await prisma.renderJob.update({
-      where: { id: job.id },
-      data: { status: "DONE", progress: 100, outputAssetId: asset.id, finishedAt: new Date(), error: "" },
-    });
-    console.log(`[render] ${job.id}: DONE → asset ${asset.id}`);
-  } catch (err) {
-    // PERSISTED error must never carry the ffmpeg argv (it contains the presigned
-    // -i media URL + X-Amz signature) — it surfaces verbatim in the admin UI. Store
-    // a sanitized summary; keep the full (URL-scrubbed) detail in server logs only.
-    const safe = sanitizeError(err);
-    // FAILED only when retries are exhausted: pg-boss retryCount is 0-based,
-    // so the LAST delivery has retryCount === retryLimit — `>=` marks terminal
-    // exactly once, on that delivery (codex off-by-one claim refuted by the
-    // delivery math: limit 2 → deliveries at retryCount 0,1,2).
-    const final = retryCount >= RENDER_RETRY_LIMIT;
-    console.error(`[render] ${job.id}: ${final ? "FAILED" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
-    await prisma.renderJob.update({
-      where: { id: job.id },
-      data: final
-        ? { status: "FAILED", error: safe, finishedAt: new Date() }
-        : { status: "QUEUED", error: safe, progress: 0 },
-    });
-    // rethrow a SANITIZED error: pg-boss serializes the thrown error into its own
-    // job.output column, so throwing the raw `err` would re-leak the argv/URL there.
-    throw new Error(safe); // pg-boss owns the retry schedule
-  } finally {
-    await rm(work, { recursive: true, force: true });
-  }
+      const graph: string[] = [];
+      // per-clip video normalization (geometry + colorspace + timebase + PTS reset)
+      for (const p of visualPlanned) graph.push(videoChain(p, w, h, fps));
+
+      // chain xfade per transition; hard cuts concat. Returns the final [v] label.
+      // The chain is LINEAR (one filter node per clip boundary), not quadratic.
+      let vLabel: string;
+      if (visualPlanned.length === 1) {
+        vLabel = `[v${visualPlanned[0]!.index}]`;
+      } else {
+        const byFrom = new Map<number, BetweenClipTransition>();
+        for (const tr of transitions) byFrom.set(tr.fromClipIndex, tr);
+        let acc = `[v${visualPlanned[0]!.index}]`;
+        let accEnd = visualPlanned[0]!.clip.length; // rendered duration of `acc`
+        let stage = 0;
+        for (let i = 1; i < visualPlanned.length; i++) {
+          const cur = visualPlanned[i]!;
+          const tr = byFrom.get(i - 1); // transition from clip (i-1) → i
+          const next = `[vx${stage}]`;
+          if (tr) {
+            const durS = tr.durationMs / 1000;
+            const offset = accEnd - durS; // overlap starts durS before acc ends
+            graph.push(
+              `${acc}[v${cur.index}]xfade=transition=${transitionToXfade(tr)}:duration=${durS}:offset=${offset}${next}`,
+            );
+            accEnd = accEnd + cur.clip.length - durS; // clips overlap by durS
+          } else {
+            graph.push(`${acc}[v${cur.index}]concat=n=2:v=1:a=0${next}`);
+            accEnd = accEnd + cur.clip.length;
+          }
+          acc = next;
+          stage++;
+        }
+        vLabel = acc;
+      }
+
+      // EP3 burn-in: append captions (ASS subtitles=) + static text overlays
+      // (drawtext) onto the SINGLE final composited video stream — AFTER the
+      // xfade/concat chain set vLabel, BEFORE -map. This NEVER touches the
+      // per-clip [v${index}] labels, the offset/accEnd math, renderSeconds, or the
+      // audio amix. Timing is in RENDERED time. $0 — no network/spend path.
+      const captions = edit.timeline.captions ?? [];
+      const overlays = edit.timeline.textOverlays ?? [];
+      const assPath = await buildAssFile(captions, work, w, h, visualPlanned, transitions);
+      if (assPath) {
+        graph.push(`${vLabel}subtitles=${escapeForFilter(assPath)}[vsub]`);
+        vLabel = "[vsub]";
+      }
+      overlays.forEach((overlay, i) => {
+        const next = `[vtxt${i}]`;
+        graph.push(drawtextNode(overlay, vLabel, next, visualPlanned, transitions));
+        vLabel = next;
+      });
+
+      if (sounded.length > 0) {
+        for (const p of sounded) graph.push(audioChain(p, visualPlanned, transitions));
+      }
+      const { lines: mixLines, mapAudio } = buildAudioMix(sounded, renderSeconds);
+      for (const line of mixLines) graph.push(line);
+
+      const args: string[] = ["-y"];
+      for (const p of planned) args.push(...inputArgs(p));
+      args.push("-filter_complex", graph.join(";"), "-map", vLabel);
+      if (mapAudio) args.push("-map", "[a]", "-c:a", "aac", "-b:a", "192k");
+      args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart");
+      args.push("-progress", "pipe:1", "-nostats", out);
+
+      // matches buildAudioMix's duckable test (bed = music; voice = visual native
+      // audio OR a voice-role audio track; a neutral un-roled track does NOT duck).
+      const ducked = sounded.some((p) => p.trackKind === "audio" && p.audioRole === "music") &&
+        sounded.some((p) => p.trackKind === "visual" || (p.trackKind === "audio" && p.audioRole === "voice"));
+      console.log(
+        `[render] ${job.id}: ffmpeg ${visualPlanned.length} visual (${transitions.length} transitions) + ${sounded.length} audio${ducked ? " (ducking)" : ""} → ${w}x${h}@${fps}, ${renderSeconds}s`,
+      );
+
+      // live progress from -progress pipe:1, throttled to spare the DB
+      const proc = execa("ffmpeg", args, { timeout: 1000 * 60 * 10, buffer: false });
+      // -progress output is stream-framed: buffer to complete lines before
+      // parsing (codex review — chunks split keys mid-line)
+      let lastWrite = 0;
+      let acc = "";
+      proc.stdout?.on("data", (chunk: Buffer) => {
+        acc += chunk.toString();
+        const lines = acc.split("\n");
+        acc = lines.pop() ?? "";
+        let latestUs: number | null = null;
+        for (const line of lines) {
+          const m = /^out_time_us=(\d+)$/.exec(line.trim());
+          if (m) latestUs = Number(m[1]);
+        }
+        if (latestUs == null) return;
+        const pct = Math.min(95, Math.round((latestUs / 1e6 / renderSeconds) * 90) + 5);
+        const now = Date.now();
+        if (now - lastWrite < 2000) return;
+        lastWrite = now;
+        // guard on RENDERING so a late-arriving progress write can't land after the
+        // terminal DONE/100 write and freeze the bar below 100 (#8)
+        prisma.renderJob
+          .updateMany({ where: { id: job.id, status: "RENDERING" }, data: { progress: pct } })
+          .catch(() => {});
+      });
+      await proc;
+
+      // store the output with the same content-addressed semantics as every asset
+      const bytes = await readFile(out);
+      const { contentHash } = await storage.put(job.ownerId, bytes, "mp4");
+      const asset = await prisma.asset.upsert({
+        where: { ownerId_contentHash: { ownerId: job.ownerId, contentHash } },
+        update: { deletedAt: null },
+        create: {
+          id: newId(),
+          ownerId: job.ownerId,
+          contentHash,
+          ext: "mp4",
+          mime: "video/mp4",
+          sizeBytes: BigInt(bytes.byteLength),
+          originalFilename: `render-${job.id}.mp4`,
+          source: "RENDER",
+          width: w,
+          height: h,
+          durationS: renderSeconds,
+        },
+      });
+
+      await prisma.renderJob.update({
+        where: { id: job.id },
+        data: { status: "DONE", progress: 100, outputAssetId: asset.id, finishedAt: new Date(), error: "" },
+      });
+      console.log(`[render] ${job.id}: DONE → asset ${asset.id}`);
+    } catch (err) {
+      // PERSISTED error must never carry the ffmpeg argv (it contains the presigned
+      // -i media URL + X-Amz signature) — it surfaces verbatim in the admin UI. Store
+      // a sanitized summary; keep the full (URL-scrubbed) detail in server logs only.
+      const safe = sanitizeError(err);
+      // FAILED only when retries are exhausted: pg-boss retryCount is 0-based,
+      // so the LAST delivery has retryCount === retryLimit — `>=` marks terminal
+      // exactly once, on that delivery (codex off-by-one claim refuted by the
+      // delivery math: limit 2 → deliveries at retryCount 0,1,2).
+      const final = retryCount >= RENDER_RETRY_LIMIT;
+      console.error(`[render] ${job.id}: ${final ? "FAILED" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
+      await prisma.renderJob.update({
+        where: { id: job.id },
+        data: final
+          ? { status: "FAILED", error: safe, finishedAt: new Date() }
+          : { status: "QUEUED", error: safe, progress: 0 },
+      });
+      // rethrow a SANITIZED error: pg-boss serializes the thrown error into its own
+      // job.output column, so throwing the raw `err` would re-leak the argv/URL there.
+      throw new Error(safe); // pg-boss owns the retry schedule
+    } finally {
+      await rm(work, { recursive: true, force: true });
+    }
+  });
 }
