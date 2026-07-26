@@ -1,8 +1,166 @@
 # Auth guard fence：双契约设计
 
-`scripts/verify-auth-guards.mjs` 对每个可达敏感操作证明以下两种契约之一。敏感操作包括
-Prisma/原始 SQL、对象存储 I/O、队列发送，以及一层同 package 的敏感调用；无法静态
-解析的动态分派仍然 fail closed。
+## 0. 边界与诚实披露（请先读完本节，再读下文）
+
+> 本节由 2026-07-26 的诚实性修订加入，位置刻意放在文档最前。当日 Founder 裁定：
+> 防护机制与测试**不再改动**（维持裁决五「停在第 28 轮」），改为把「绿灯不等于安全」
+> 与盲区清单如实前置到本文档开头。相关记录：PR #461、issue #442，裁决全文见 #287。
+
+### 0.1 定位：这是一条零维护的 CI 绊线，不是安全证明
+
+按 2026-07-26 裁决五，`scripts/verify-auth-guards.mjs` **停在第 28 轮，不再加固**。
+它的定位是**补充性的 CI 绊线（tripwire）**：当改动引入它已建模的违规形态时，把 PR 拦下来。
+它**不是**运行时强制，也**不是**租户隔离的证明。
+
+租户隔离真正的防线是**运行时路线**：第②步的**请求级 principal 值守卫**（#459），
+以及**跨租户复合外键**（#317）。本围栏与它们的关系是「先响的铃」，不是「锁」。
+任何把本围栏当作隔离保障来引用的说法都是错的。
+
+### 0.2 绿灯不等于安全
+
+**围栏通过（exit 0、`FINDING=0`）只说明：在它扫描到的形态里，它建模过的违规没有再出现。
+它不证明不存在串店（跨租户）写入。**
+
+顾问复审给 Founder 的原话（逐字，已置于 PR #461 正文顶部）：
+
+> 这个检查器跑绿，只代表它在它建模的形态里没找到违规——它不是代码安全的证明；特别是，
+> 一个未受保护的 export 仍可能因为与一个受保护的 export 同处一个文件而静默通过，
+> 所以绿灯永远不能替代 diff 里对鉴权处理的人工审查。
+
+三条必须一起记住的后果：
+
+1. **「没报红」有两种含义**：一种是真的被证明了，另一种是**整个文件带零告警从报告里
+   消失**（`files=0`）。后者在报告里与「这个文件本来就没有敏感操作」**无法区分**。
+2. **覆盖率地板（`120 file(s) / 465 entr(ies)`）按构造只抓「既有覆盖下跌」**。一个从出生
+   起就 `files=0` 的新文件不会让地板下跌，因此地板对「一出生就隐形」这一族**零信号**。
+3. **豁免账本按 `path + export + reason` 三字段精确匹配**，因此新增的敏感 site 可能被
+   既有豁免条目吸收而不产生任何信号（见 0.4 的 P1-3）。
+
+### 0.3 已知漏网形态清单
+
+以下形态在写下本节时**均可复现**，且**按裁决五不再修复**。编号仅为引用方便。
+「静默放行」= `ok=true`、零 diagnostic（其中若干条连文件都不出现在报告里）；
+与之相对的「报红」= fail closed，属正常拦截，**不在**本清单内。
+
+**A 组：整文件 / 整导出静默脱离扫描（`files=0`，或该 export 被跳过）**
+
+复现前提是那句未加 scope 的查询**不在 entry 文件文本内**（否则 module 级兜底仍会响）。
+完整实测对照表见 §42「刻意保留的边界」的 Round 28 补记。
+
+1. **static class 成员方法 dispatch**——`class S { static list(db, id) { return findA(db, id) } }`
+   后 `S.list(prisma, id)`：`ok=true`、**`files=0`**、零 diagnostic。
+2. **static class 属性箭头**——`class S { static list = (db, id) => findA(db, id) }`：同上。
+3. **call-expression receiver**——`makeService().list(prisma, id)`：同上。
+4. **参数 receiver**——`service.list(prisma, id)`：同上。
+5. **函数体内从容器取出的 callable**——`new Map([...]).get("list")!(prisma, id)`：同上。
+6. **导出对象字面量的方法**——`export const dispatch = { run: (db, id) => … }`。
+   **本条已确认有一个真实生产文件处于该状态**：`apps/web/lib/channels/x.ts`——
+   它今天的归属写法是正确的，但围栏看不见它，因此**归属若被删除也不会报警**。
+7. **导出类的 static 方法**、**高阶包装导出**（`export const leak = wrap(...)`）、
+   **模块初始化期查询**（`export const leaked = prisma…`）——跨厂商复审的四个探针全部返回
+   `ok:true, files:0, 无诊断`（见 0.4 的 P1-2）。这与 §34 末段「unknown export 与其他
+   member call 仍 fail closed」的表述**矛盾**，以本条实测为准。
+
+A 组共有的根因是第二层兜底闸门的**取名范围**：`visibleScopedBinding` 只认
+`FunctionDeclaration` 与 `VariableStatement`，`info.localValues` 也只从 `VariableStatement`
+填充；`ClassDeclaration`、参数、call 表达式、容器取出的 callable 都拿不到「本地变量声明」
+这个身份，于是 `unresolvedLocalReceiverNames` 返回 `[]`，fail-closed 闸门永不触发。
+
+**B 组：collection sticky-poison 不变式的缺口**（原始出处见 §43 第 1–3 条）
+
+8. **构造期污染**——`const keys: string[] = [input.clientKey];` 之后接一次 trusted push：
+   `ok=true`、零 diagnostic。根因是 `emptySafeCollection` 要求 initializer 是**元素数为 0**
+   的数组字面量，非空字面量因此从头到尾不被 tracking。对照组
+   `if (input.extra) keys.push(input.clientKey);` 正确报红。
+9. **callback 体内插入**——`input.rows.forEach((row) => { keys.push(row.raw); });` 之后接
+   一次 trusted push：`ok=true`、零 diagnostic。poison 在 callback 退出时被丢掉，没有回映
+   到 caller 的 collection binding。
+10. **经属性链写入 + 经裸标识符读取**——`const box = { list: keys };` 之后
+    `box.list.unshift(input.clientKey);`、再一次 trusted push、sink 读**裸名** `keys`：
+    `ok=true`、零 diagnostic。`box.list` 与 `keys` 指向同一个运行时数组，污染当然到得了；
+    只有把 sink 也改成经 `box.list` 读写才报红。
+
+**C 组：同文件兄弟遮蔽**
+
+11. **一个未受保护的 export，可能因为与一个受保护的 export 同处一个文件而静默通过。
+    已复现。** 这是顾问点名的「最尖锐的一条」，也正是 0.2 那段逐字引文所指。
+
+**D 组：可见性缺口（实测无活实例，属潜在风险）**
+
+12. 经**仓库内 re-export** 取得 Prisma 客户端时，全体消费者对围栏不可见。
+    2026-07-26 实测**0 个活实例**。
+
+**E 组：精度缺口（非安全）**
+
+13. `Object.assign(keys, { 0: <owner-derived> })` 里那个**容器字面量实参**本身永远不是
+    `"derived"`（`principalExpressionKind` 不对对象/数组字面量做逐元素推导），因此
+    `derived-collection-object-assign-poison.ts` 把攻击者 key 换成 owner-derived key 后
+    **仍然报红**，至今没有隔离出它自己声称的 bypass class。它作为 bypass 仍然有效
+    （攻击者形态正确报红），只是隔离性待补。详见 §43 末段。
+
+**以下属 fail closed、不在本清单内的保留边界**（一并列出以免误读）：跨模块 class 体不
+递归解析（`new ImportedClass().run(prisma, id)` 由第二层报红）、数组下标取出的 callable
+（`handlers[0](prisma, id)` 报红 `unprovable`）、本地 class 实例方法
+（`new S().list(prisma, id)` 报红 `missing-principal-resolution`）。这些是**拦下来了**，
+性质与上面 13 条完全不同。
+
+### 0.4 跨厂商复审确认的 4 项 P1 盲区
+
+来源：PR #461 评论，复审员自标日期 2026-07-26、评论发表于 2026-07-25 UTC，GPT 家族、
+read-only 密封，读取范围为 committed `origin/main...HEAD`（head `20a8d0ef`）。复审员按
+「补充性 CI 绊线、非运行时强制」这一定位评判，结论为 **P0 0 项 / P1 4 项**。四条如实
+收录如下；**四条按裁决五均不再加固，由第②步运行时守卫（#459）接手。**
+
+**P1-1 混合权属数组被当成租户安全。** 检查器对数组只要求**任一**元素可证，未证元素在
+分析中被略去（`scripts/verify-auth-guards.mjs:2348–2361`），剩余证明即满足敏感操作检查
+（`:3447–3454`）。两个探针零诊断通过：`ownerId: { in: [gate.ownerId, attackerOwnerId] }`；
+以及 `createMany` 的 data 数组中混入 `{ ownerId: attackerOwnerId }`——**后者可以真写出
+一条跨租户行，而围栏报绿**。本设计文档与 PR 正文此前均未披露此模式。
+按裁决五不再加固，由第②步运行时守卫接手。
+
+**P1-2 可调用导出面会静默从覆盖中消失。** 导出索引对若干可调用形态省略或降级为
+`unknown`（`:1435–1488`、`:1611–1623`），而 unknown 的非 route 导出被跳过
+（`:8250–8252`），模块兜底同样排除（`:8312–8317`）。四个探针全部返回
+`ok:true, files:0, 无诊断`：导出对象字面量的方法、导出类的 static 方法、高阶包装导出
+（`export const leak = wrap(...)`）、模块初始化期查询（`export const leaked = prisma…`）。
+这与本文档 §34 末段「unknown export 仍 fail closed」的表述矛盾。
+按裁决五不再加固，由第②步运行时守卫接手。
+
+**P1-3 豁免账本会吸收未来站点。** 三字段键（`path + export + reason`，见 §3）使**新增
+站点可被既有豁免条目吸收**；本文档此前未披露此性质。账本现状：72 个身份覆盖 222 个
+豁免站点（`:1492–1502`）。
+按裁决五不再加固，由第②步运行时守卫接手。
+
+**P1-4 测试未钉住每个导出与每个敏感站点。** bypass 测试断言文件覆盖与整体失败
+（`verify-auth-guards.test.mjs:412–428`），仅子集断言导出名（`:429–435`）；positive 测试
+（`:448–460`）既不断言精确导出也不断言敏感站点；聚合下限（`:346–370`）在总数高于下限时
+无法察觉某个导出被漏掉。**后果：上述 P1-1 / P1-2 的回归可以在套件全绿的情况下发生。**
+按裁决五不再加固，由第②步运行时守卫接手。
+
+复审另附两条非 P1 的观察：两个 fixture 因更弱或不同的原因通过——
+`bypass/local-class-surface-inherited.ts:7–16` 实际命中的是「凡有继承的类一律拒绝」
+（`checker:3161–3164`），而不是追踪到继承成员；`bypass/workspace-storage-helper-capability.ts:13`
+在无 workspace 包注册表的 fixture 根下运行，测的是通用未解析导入处理——以仓库根解析
+重跑该 fixture 会 PASS。
+
+复审执行说明（如实）：该复审 session 未运行 vitest，改为用 `git show` 把 committed
+检查器载入内存，对抽样 fixture 与对抗探针直接执行；外部 current-head CI 因禁网未知；
+沙箱拒绝 `ps`，故复审员无法提供项目要求的进程级身份证据。
+
+### 0.5 本节之后的内容怎么读
+
+§1 起是**按轮次记录的设计与实测档案**（Round 1–28），描述的是每一轮**当时**的建模意图
+与实测结果。凡与本节冲突之处，**以本节为准**——本节是修订日最新的如实状态。其中：
+§43「尚未关闭」是 B 组与第 13 条的原始出处；§41 / §42 的「刻意保留的边界」及其
+Round 28 补记是 A 组与第 10 条的原始实测出处。
+
+---
+
+`scripts/verify-auth-guards.mjs` 对每个**它看得见的**可达敏感操作，试图证明以下两种契约
+之一。敏感操作包括 Prisma/原始 SQL、对象存储 I/O、队列发送，以及一层同 package 的敏感
+调用。此处原文曾写「无法静态解析的动态分派仍然 fail closed」——**该表述已被实测推翻**：
+static class 成员 dispatch、call-expression receiver、参数 receiver、容器取出的 callable
+等形态是**静默放行（`files=0`）**而非 fail closed，完整清单见 §0.3。
 
 ## 1. ENTRY 契约
 
