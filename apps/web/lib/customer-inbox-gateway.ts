@@ -32,12 +32,19 @@ type GatewayFailure = { ok: false; error: CustomerInboxErrorCode };
 /**
  * #463 — this gateway is one of the four request-level principal SEAMS (design contract §2-v2).
  *
- * `service` is byte-for-byte the object the service layer has always received; `ambient` is the
- * full identity pushed into the AsyncLocalStorage store by runRead/runMutation and handed to
- * NOBODY. Both come out of the one membership query that was already here — widened by three
- * selected columns, with no extra round trip.
+ * ONE resolved principal, used for both jobs: it is the frame runAsUser pushes into the
+ * AsyncLocalStorage store, and it is the same object the service layer receives as its
+ * `CustomerInboxPrincipal` (which it structurally satisfies — the services read `ownerId`,
+ * `membershipId` and `impersonating` and nothing else). It comes out of the one membership
+ * query that was already here — widened by three selected columns, with no extra round trip.
+ *
+ * Single value on purpose (#470). The previous `{ service, ambient }` composite could only be
+ * proved by teaching the auth-guard fence per-property provenance of a destructured composite,
+ * and that capability was proved bypassable. Handing the services a freshly rebuilt look-alike
+ * would fail the fence for the same reason it fails a spread rebuild: a re-manufactured object
+ * carries no provenance. The query must be scoped by the resolved principal itself.
  */
-type ResolvedPrincipal = { service: CustomerInboxPrincipal; ambient: UserPrincipal };
+type ResolvedPrincipal = UserPrincipal & { membershipId: string };
 
 async function resolvePrincipal(): Promise<ResolvedPrincipal> {
   const gate = await requireOwner();
@@ -56,18 +63,15 @@ async function resolvePrincipal(): Promise<ResolvedPrincipal> {
 
   const impersonating = await isImpersonating();
   return {
-    service: { ownerId: gate.ownerId, membershipId: membership.id, impersonating },
-    ambient: {
-      kind: "user",
-      subjectUserId: membership.userId,
-      subjectEmail: gate.email,
-      ownerId: gate.ownerId,
-      orgRole: isOrgRole(membership.role) ? membership.role : null,
-      membershipId: membership.id,
-      impersonating,
-      // #463 never carries the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).
-      impersonatedByBaUserId: null,
-    },
+    kind: "user",
+    subjectUserId: membership.userId,
+    subjectEmail: gate.email,
+    ownerId: gate.ownerId,
+    orgRole: isOrgRole(membership.role) ? membership.role : null,
+    membershipId: membership.id,
+    impersonating,
+    // #463 never carries the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).
+    impersonatedByBaUserId: null,
   };
 }
 
@@ -75,8 +79,8 @@ async function runRead<T>(
   operation: (principal: CustomerInboxPrincipal) => Promise<T>,
 ): Promise<{ ok: true; resource: T } | GatewayFailure> {
   try {
-    const { service, ambient } = await resolvePrincipal();
-    return { ok: true, resource: await runAsUser(ambient, () => operation(service)) };
+    const principal = await resolvePrincipal();
+    return { ok: true, resource: await runAsUser(principal, () => operation(principal)) };
   } catch (error) {
     if (error instanceof CustomerInboxError) return { ok: false, error: error.code };
     throw error;
@@ -87,8 +91,8 @@ async function runMutation<T>(
   operation: (principal: CustomerInboxPrincipal) => Promise<T>,
 ): Promise<T | GatewayFailure> {
   try {
-    const { service, ambient } = await resolvePrincipal();
-    return await runAsUser(ambient, () => operation(service));
+    const principal = await resolvePrincipal();
+    return await runAsUser(principal, () => operation(principal));
   } catch (error) {
     if (error instanceof CustomerInboxError) return { ok: false, error: error.code };
     throw error;
