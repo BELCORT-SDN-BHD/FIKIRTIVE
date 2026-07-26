@@ -14,6 +14,10 @@ import { fileURLToPath } from "node:url";
 
 const CANONICAL_LAW = ".claude/CLAUDE.md";
 const ROOT_ADAPTER = "AGENTS.md";
+// The overlay is prose that gets rewritten; a Chinese substring made every rewrite a
+// tripwire. The anchor is a stable, machine-owned marker instead: whoever moves or
+// deletes the claim-policy section has to notice this check.
+export const OVERLAY_CLAIM_ANCHOR = "<!-- fikirtive:claim-policy -->";
 const LOCAL_PAIRS = [
   ["apps/web/AGENTS.md", "apps/web/CLAUDE.md"],
   ["packages/otto/src/skills/AGENTS.md", "packages/otto/src/skills/CLAUDE.md"],
@@ -335,8 +339,10 @@ export function checkProjectAuthority(root = process.cwd()) {
       join(canonicalRoot, ".claude/skills/fikirtive-orchestration-overlay/SKILL.md"),
       "utf8",
     );
-    if (!/每个 repo-mutating task 必须/.test(overlay)) {
-      errors.push("orchestration overlay must require task ownership before repository mutation");
+    if (!overlay.includes(OVERLAY_CLAIM_ANCHOR)) {
+      errors.push(
+        `orchestration overlay must keep the ${OVERLAY_CLAIM_ANCHOR} claim-policy anchor`,
+      );
     }
     const plan = readFileSync(
       join(canonicalRoot, "docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md"),

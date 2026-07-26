@@ -9,6 +9,44 @@
       "mcp__codegraph__codegraph_impact",
       "mcp__codegraph__codegraph_files",
       "mcp__codegraph__codegraph_status"
+    ],
+    "deny": [
+      "Edit(./docs/BLUEPRINT.md)",
+      "Write(./docs/BLUEPRINT.md)",
+      "Edit(./scripts/blueprint.sha256)",
+      "Write(./scripts/blueprint.sha256)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pretooluse-write-guard.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/pretooluse-bash-guard.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-model-evidence.sh"
+          }
+        ]
+      }
     ]
   }
 }

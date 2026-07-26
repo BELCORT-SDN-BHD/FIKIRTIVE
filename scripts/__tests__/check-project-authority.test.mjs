@@ -16,6 +16,7 @@ import test from "node:test";
 import {
   AuthorityError,
   checkProjectAuthority,
+  OVERLAY_CLAIM_ANCHOR,
   RETIRED_PATHS,
 } from "../check-project-authority.mjs";
 
@@ -45,7 +46,7 @@ function fixture(t) {
   symlinkSync(".claude/CLAUDE.md", join(repo, "AGENTS.md"));
   write(
     join(repo, ".claude", "skills", "fikirtive-orchestration-overlay", "SKILL.md"),
-    "bounded overlay\n每个 repo-mutating task 必须 acquire ownership\n",
+    `bounded overlay\n${OVERLAY_CLAIM_ANCHOR}\nclaim policy pointer\n`,
   );
   write(join(repo, "README.md"), "repository navigation\n");
   write(join(repo, "docs", "INDEX.md"), "documentation navigation\n");
@@ -227,6 +228,19 @@ test("red: task ownership cannot become optional in law, overlay, or Route-B", a
       expectRed(repo, /makes task ownership optional/);
     });
   }
+});
+
+test("red: dropping the overlay claim-policy anchor fails", (t) => {
+  const { repo } = fixture(t);
+  const overlay = join(
+    repo,
+    ".claude",
+    "skills",
+    "fikirtive-orchestration-overlay",
+    "SKILL.md",
+  );
+  writeFileSync(overlay, "bounded overlay without the anchor\n");
+  expectRed(repo, /claim-policy anchor/);
 });
 
 test("red: canonical law rejects machine paths, frozen IDs/state, old tool config, and deploy commands", async (t) => {

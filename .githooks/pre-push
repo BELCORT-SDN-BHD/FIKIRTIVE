@@ -3,6 +3,23 @@
 # any deployment state. Direct pushes to main are prohibited by project law.
 # Typecheck-only to stay fast; every current-head CI gate and merge-authority rule
 # in .claude/CLAUDE.md still applies.
+
+# Refuse a push whose destination is main before anything slow runs. Git feeds the
+# refs on stdin as "<local ref> <local sha> <remote ref> <remote sha>"; the loop
+# consumes stdin, which the typecheck below does not use.
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ -n "$remote_ref" ] || continue
+  case "$remote_ref" in
+    refs/heads/main)
+      echo ""
+      echo "[pre-push] BLOCKED — 直推 main 被项目法禁止(第 1 条)。"
+      echo "[pre-push] 推到任务分支再开 PR;合并由 Founder 或其明确指派的非作者执行者执行。"
+      exit 1
+      ;;
+  esac
+done
+
+echo "[pre-push] destination is not main — continuing."
 echo "[pre-push] typecheck across workspace (pnpm -r typecheck)…"
 if ! pnpm -r typecheck; then
   echo ""

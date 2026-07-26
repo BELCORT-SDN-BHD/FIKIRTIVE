@@ -20,6 +20,8 @@ Known spend-path seams include the symbols and files below, plus the catch-all a
 - **Reaper refund paths**: gen/refgen reapers + `apps/worker/src/jobs/llm-reservation-reaper.ts`(incl. its refId prefix allowlist).
 - **Catch-all(枚举防腐)**: ANY new outbound paid API call site, and ANY writer of CreditLedger or a future money ledger, is spend path — whether or not listed above.
 
+**机器镜像(改一处必须改两处)**: `scripts/ci/check-money-path-review.mjs` 持有本 Step 1 文件清单的机器副本,PR 命中清单时强制 PR 正文带 `[MONEY-SAFETY-REVIEWED: <reviewer> @ <head-sha>]`(token 绑 head sha,加 commit 即失效)。本表新增任何付费调用点或 ledger writer,必须在同一变更里同时更新那份清单,否则 CI 拦不住它。
+
 **Money-in note**: `grantCredits`/Stripe webhook diffs are guarded by REVIEWER-PLAYBOOK(admin-auth + money 清单), not this skill's checks — do not treat Step-1 NO as "money-in is unreviewed".
 
 **前瞻义务**：任何新的付费调用点、预算执行、第二钱账道或 ledger writer 动工前，先在同一变更中扩本表、对应 machine fence 与 exactly-once tests；不得因旧枚举未列出而绕过 review。
