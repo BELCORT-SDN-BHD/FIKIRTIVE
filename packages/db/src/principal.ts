@@ -20,6 +20,32 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /**
+ * The CLOSED vocabulary of system-frame names (design contract §4) — do not invent a third
+ * naming scheme beside the schema's existing `actorKind` values. Closed on purpose: #464 keys
+ * decisions on `reason`, and a free-form `string` would let `"gen-reaper "` compile and pass
+ * every gate.
+ *
+ * `"tenant-direct"` is the odd one out: it is not a caller-chosen name but the fallback
+ * `runAsTenant` assigns when there is no enclosing system frame to inherit a name from.
+ */
+export type SystemReason =
+  | "auth:converge-identity"
+  | "auth:bootstrap-personal-org"
+  | "stripe-webhook"
+  | "meta-data-deletion"
+  | "worker-heartbeat"
+  | "worker-reaper-tick"
+  | "gen-reaper"
+  | "refgen-reaper"
+  | "llm-reservation-reaper"
+  | "research-reaper"
+  | "publish-reaper"
+  | "ingest-redispatch"
+  | "publish-scheduler"
+  | "test-seed"
+  | "tenant-direct";
+
+/**
  * Who is acting.
  *
  * `actor` and `subject` are deliberately separate: under admin impersonation the SUBJECT is
@@ -38,17 +64,26 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export type Principal =
   | {
       kind: "user";
-      /** `User.id`. Null on the founder-admin early-return path, which never resolves one. */
+      /**
+       * `User.id`.
+       *
+       * RESERVED NULL: no code path currently produces null here. The only producers are the
+       * four CRM gateways, and they throw `ACTION_DENIED` before an unresolved membership can
+       * become a principal (the founder path returns `ownerId: "founder"`, so the membership
+       * `findFirst` misses and the gateway rejects). The field is nullable so ②-B/②-D can add
+       * a producer without a type break — until then, treat null as unreachable, not as a
+       * documented state.
+       */
       subjectUserId: string | null;
       subjectEmail: string;
       /** The org being acted upon (the subject org). */
       ownerId: string;
-      /** `Membership.role` in `ownerId`. Null on the founder-admin path. */
+      /** `Membership.role` in `ownerId`. RESERVED NULL — see `subjectUserId`; no producer today. */
       orgRole: "owner" | "admin" | "member" | null;
       /**
        * `Membership.id` of the acting member in `ownerId` — the same id the CRM gateways
-       * already hand their services, carried here so a reader needs no second query. Null
-       * wherever no membership was resolved (e.g. the founder-admin path).
+       * already hand their services, carried here so a reader needs no second query.
+       * RESERVED NULL — see `subjectUserId`; no producer today.
        */
       membershipId: string | null;
       /** Whether this session is an admin impersonation (compat's `isImpersonating()`). */
@@ -65,15 +100,8 @@ export type Principal =
     }
   | {
       kind: "system";
-      /**
-       * Named, closed vocabulary (design contract §4) — do not invent a third naming scheme
-       * beside the schema's existing `actorKind` values:
-       *   auth:converge-identity, auth:bootstrap-personal-org, stripe-webhook,
-       *   meta-data-deletion, worker-heartbeat, worker-reaper-tick, gen-reaper,
-       *   refgen-reaper, llm-reservation-reaper, research-reaper, publish-reaper,
-       *   ingest-redispatch, publish-scheduler, test-seed, tenant-direct
-       */
-      reason: string;
+      /** Named, closed vocabulary — see {@link SystemReason}. */
+      reason: SystemReason;
       /**
        * Two-phase system work: null during a cross-tenant scan segment, and the row's tenant
        * during the per-row write segment (see `runAsTenant`).
@@ -111,9 +139,12 @@ export function getPrincipal(): Principal | undefined {
  * This is the identity for work that has no request and no user BY CONSTRUCTION: login
  * bootstrap (the cookie does not exist yet), signed webhooks, cron reapers, cross-tenant
  * scans. It is a name, not a permission — nothing in #463 grants or checks anything.
+ *
+ * The frame is frozen: `getPrincipal()` hands out the live object, and a reader that mutated it
+ * would retroactively rewrite what every enclosing frame sees.
  */
-export function runAsSystem<T>(reason: string, fn: () => T): T {
-  return store.run({ kind: "system", reason, ownerId: null }, fn);
+export function runAsSystem<T>(reason: SystemReason, fn: () => T): T {
+  return store.run(Object.freeze({ kind: "system" as const, reason, ownerId: null }), fn);
 }
 
 /**
@@ -125,14 +156,20 @@ export function runAsSystem<T>(reason: string, fn: () => T): T {
  * (session + Prisma), so that resource is shared with the caller: the FIRST identity sticks to
  * the process and every later request reads it instead of its own. Probe `als-probe3.mjs`
  * reproduces exactly that on Node 22 — three sequential requests A, B, C all read A, and A even
- * escapes to the top-level context. `principal.test.ts` pins the `run()` shape against it.
+ * escapes to the top-level context. The LOAD-BEARING oracle for that property is the gateway
+ * sequential case in `apps/web/lib/__tests__/principal-context.test.ts` (measured: it FAILS under
+ * `enterWith`); the `packages/db` sequential case pins `store.run` frame semantics only — see the
+ * note above it.
  *
  * The practical consequence: only a call site that can WRAP the work it is about to do may
  * establish a user principal. That is why the seam is the four CRM gateways' runRead/runMutation
  * (design contract §2-v2) and not `requireOwner()`, which returns a value and wraps nothing.
+ *
+ * A frozen DEFENSIVE COPY is stored, never the caller's own object: the caller keeps a mutable
+ * reference to what it built, and a later mutation through it must not rewrite the live frame.
  */
 export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
-  return store.run(principal, fn);
+  return store.run(Object.freeze({ ...principal }), fn);
 }
 
 /**
@@ -150,10 +187,18 @@ export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
  * acted. That is the deliberate trade (carrying a user identity under someone else's tenant
  * would be worse than carrying none), and it never throws: #463 enforces nothing, it only
  * carries. Wiring this into a decision is #464's job.
+ *
+ * CALLERS: pass an `async` callback and `await` INSIDE it. A bare `prisma.x.op(…)` returns a lazy
+ * PrismaPromise — this function would return it and pop the frame before an outer `await`
+ * dispatched the query, so the query would run in the ENCLOSING frame. (`$transaction(cb)` and
+ * calls to `async function`s are eager and safe either way.)
+ *
+ * Frames are frozen. The same-tenant pass-through re-runs with the ALREADY-FROZEN user frame, so
+ * a nested reader cannot rewrite the caller's identity through the shared reference.
  */
 export function runAsTenant<T>(ownerId: string, fn: () => T): T {
   const current = store.getStore();
   if (current?.kind === "user" && current.ownerId === ownerId) return store.run(current, fn);
-  const reason = current?.kind === "system" ? current.reason : "tenant-direct";
-  return store.run({ kind: "system", reason, ownerId }, fn);
+  const reason: SystemReason = current?.kind === "system" ? current.reason : "tenant-direct";
+  return store.run(Object.freeze({ kind: "system" as const, reason, ownerId }), fn);
 }

@@ -342,10 +342,15 @@ export async function reapStaleResearchJobs(): Promise<number> {
     let reaped = 0;
     for (const job of stuck) {
       // #463 per-row phase: the scan above is cross-tenant, these two writes are not.
-      const { count } = await runAsTenant(job.ownerId, () => prisma.researchJob.updateMany({
-        where: { id: job.id, ownerId: job.ownerId, status: "RUNNING", updatedAt: { lt: cutoff } },
-        data: { status: "FAILED", error: RESEARCH_INTERRUPTED },
-      }));
+      // The `await` MUST be INSIDE the async callback. A bare `prisma.x.op()` returns a lazy
+      // PrismaPromise: `store.run` would hand it back and pop the frame before an outer `await`
+      // dispatched it, so the query would run in the enclosing (tenant-less) frame.
+      const { count } = await runAsTenant(job.ownerId, async () => {
+        return await prisma.researchJob.updateMany({
+          where: { id: job.id, ownerId: job.ownerId, status: "RUNNING", updatedAt: { lt: cutoff } },
+          data: { status: "FAILED", error: RESEARCH_INTERRUPTED },
+        });
+      });
       if (count === 0) continue; // lost the claim (finished / concurrent sweep) — leave it alone
       await runAsTenant(job.ownerId, () => failResearchCard(job.cardId, job.ownerId, RESEARCH_INTERRUPTED));
       reaped++;
@@ -358,10 +363,12 @@ export async function reapStaleResearchJobs(): Promise<number> {
     for (const job of queued) {
       if (await hasLiveResearchMessage(job.id)) continue;
       // #463 per-row phase (the pg-boss liveness check above is platform state, not tenant data).
-      const { count } = await runAsTenant(job.ownerId, () => prisma.researchJob.updateMany({
-        where: { id: job.id, ownerId: job.ownerId, status: "QUEUED", createdAt: { lt: cutoff } },
-        data: { status: "FAILED", error: RESEARCH_NOT_STARTED },
-      }));
+      const { count } = await runAsTenant(job.ownerId, async () => {
+        return await prisma.researchJob.updateMany({
+          where: { id: job.id, ownerId: job.ownerId, status: "QUEUED", createdAt: { lt: cutoff } },
+          data: { status: "FAILED", error: RESEARCH_NOT_STARTED },
+        });
+      });
       if (count === 0) continue;
       await runAsTenant(job.ownerId, () => failResearchCard(job.cardId, job.ownerId, RESEARCH_NOT_STARTED));
       reaped++;

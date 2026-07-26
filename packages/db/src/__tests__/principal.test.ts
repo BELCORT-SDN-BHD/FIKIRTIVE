@@ -8,9 +8,11 @@
  *  2. The two-phase system→tenant nesting the reapers use (scan under a named system reason,
  *     per-row writes under the same reason plus that row's tenant).
  *  3. Async isolation: concurrent chains never see each other's principal.
- *  4. SEQUENTIAL-request isolation for `runAsUser` — the regression that killed the original
- *     design. See the als-probe3 block below: this is the property an `enterWith`-based seam
- *     silently does NOT have, and the reason the seam is a wrapper instead.
+ *  4. SEQUENTIAL-request frame semantics for `runAsUser` across a realistic request shape.
+ *     NOTE: this file is NOT the project's `enterWith` oracle — read the docblock on that case
+ *     before citing it as one. The load-bearing oracle is the gateway sequential case in
+ *     apps/web/lib/__tests__/principal-context.test.ts.
+ *  5. Frames are frozen, so a reader cannot rewrite the identity every enclosing frame shares.
  *
  * No DB access — but packages/db's vitest setup opens the shared *_test client, so this file
  * runs under the same DATABASE_URL guard as its siblings.
@@ -145,25 +147,29 @@ describe("runAsUser", () => {
   });
 
   /**
-   * THE regression test for #463 (adversarial review P0-1).
+   * Sequential-request frame semantics for `store.run`.
    *
-   * The shape of `als-probe3.mjs`: each "request" enters its own `AsyncResource`, AWAITS
-   * (session + membership lookups) before an identity can exist, then reads the ambient
-   * principal after a FURTHER await — three times, sequentially, on one process.
+   * THIS CASE DOES NOT DISCRIMINATE `run` FROM `enterWith` — do not cite it as the oracle that
+   * rules `enterWith` out. An earlier version of this docblock claimed a measurement
+   * ("enterWith → ambient after each request = org_a, org_b, org_c; store.run → undefined").
+   * That measurement was re-run on this exact harness and DOES NOT REPRODUCE: substituting
+   * `store.enterWith(p); return fn()` for `runAsUser` leaves EVERY assertion below passing
+   * (`seen=[org_a,org_b,org_c]`, every ambient check undefined, under both modes). The reason
+   * is the per-request `new AsyncResource("REQ").runInAsyncScope(…)` wrapper added to make the
+   * case realistic: it gives each request its own async resource, which is precisely what
+   * CONTAINS the `enterWith` leak. The claim has been removed rather than repaired.
    *
-   * WHICH ASSERTION DISCRIMINATES — read this before "simplifying" the case. Substituting
-   * `store.enterWith(p); return fn()` for the wrapper and re-running gives:
+   * THE LOAD-BEARING ORACLE for the seam property lives in the web package:
+   * `apps/web/lib/__tests__/principal-context.test.ts`, the gateway sequential case — its call
+   * shape (test body → async gateway → async runMutation → bind → service) is one that DOES
+   * leak, and its `expect(getPrincipal()).toBeUndefined()` was measured to FAIL under
+   * `enterWith`. If you are here to change the `runAsUser` binding strategy, that is the test
+   * that must stay green.
    *
-   *     enterWith: seen=[org_a, org_b, org_c]  ambient AFTER each request = org_a, org_b, org_c
-   *     store.run: seen=[org_a, org_b, org_c]  ambient AFTER each request = undefined
-   *
-   * i.e. `seen` alone is a WEAK oracle — a wrapper-shaped call site reads back its own value
-   * either way, because the bind happens immediately before the continuation that reads it. The
-   * property that actually separates the two is the ESCAPE: after `enterWith`, request A's
-   * identity outlives request A and sits on the process context that request B starts from.
-   * That is why `expectNoAmbient()` runs BEFORE and AFTER every request — under `enterWith` the
-   * check fails at request B, and again at the top level. Delete those and the case proves
-   * nothing.
+   * What this case still pins, and why it is kept: `store.run` frame semantics across a
+   * realistic request shape — each request reads its OWN identity through two awaits, and the
+   * frame is fully popped at both ends. That is a real regression surface (a future refactor
+   * could drop the wrapper or hoist the bind) even though it is not an enterWith discriminator.
    */
   it("three SEQUENTIAL requests each read their own identity, and none escapes", async () => {
     const seen: Array<string | null | undefined> = [];
@@ -277,5 +283,63 @@ describe("async isolation", () => {
     expect(a).toBe("org_a");
     expect(b).toBe("org_b");
     expect(none).toBeNull();
+  });
+});
+
+/**
+ * #463 substitute-review P2-1. `getPrincipal()` hands out the LIVE frame object, and
+ * `runAsTenant`'s same-tenant pass-through re-runs with that identical reference — so an
+ * unfrozen frame would let a nested reader retroactively rewrite the caller's identity.
+ * Harmless while nothing reads the frame; a fail-open hole the moment #464 decides from it.
+ */
+describe("frames are frozen", () => {
+  it("every frame kind is frozen and rejects mutation (ESM = strict mode → throws)", () => {
+    runAsSystem("gen-reaper", () => {
+      const system = getPrincipal()!;
+      expect(Object.isFrozen(system)).toBe(true);
+      expect(() => {
+        (system as { ownerId: string | null }).ownerId = "org_victim";
+      }).toThrow(TypeError);
+      expect(getPrincipal()?.ownerId).toBeNull();
+
+      runAsTenant("org_a", () => {
+        const tenant = getPrincipal()!;
+        expect(Object.isFrozen(tenant)).toBe(true);
+        expect(() => {
+          (tenant as { ownerId: string | null }).ownerId = "org_victim";
+        }).toThrow(TypeError);
+        expect(getPrincipal()?.ownerId).toBe("org_a");
+      });
+    });
+
+    runAsUser(userPrincipal("a"), () => {
+      const user = getPrincipal()!;
+      expect(Object.isFrozen(user)).toBe(true);
+      expect(() => {
+        (user as { ownerId: string }).ownerId = "org_victim";
+      }).toThrow(TypeError);
+      expect(getPrincipal()?.ownerId).toBe("org_a");
+    });
+  });
+
+  it("stores a defensive COPY, so mutating the caller's own object cannot reach the frame", () => {
+    const caller = userPrincipal("a");
+    runAsUser(caller, () => {
+      // the caller kept a mutable reference to what it built; it must be inert now
+      caller.ownerId = "org_victim";
+      expect(getPrincipal()?.ownerId).toBe("org_a");
+    });
+  });
+
+  it("the same-tenant pass-through cannot be used to rewrite the enclosing user frame", () => {
+    runAsUser(userPrincipal("a"), () => {
+      runAsTenant("org_a", () => {
+        expect(Object.isFrozen(getPrincipal()!)).toBe(true);
+        expect(() => {
+          (getPrincipal() as { ownerId: string }).ownerId = "org_victim";
+        }).toThrow(TypeError);
+      });
+      expect(getPrincipal()?.ownerId).toBe("org_a"); // caller's frame survived intact
+    });
   });
 });

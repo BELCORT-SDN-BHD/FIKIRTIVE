@@ -244,8 +244,9 @@ describe("the gateway lane — the ambient USER principal (design contract §2-v
 
     // request 2 — merchant B, on the same process, after request 1 fully settled. The check
     // between the two requests is the load-bearing one: merchant A's identity must not still be
-    // ambient when merchant B's request begins (see packages/db principal.test.ts for why the
-    // per-request read-back alone is a weak oracle).
+    // ambient when merchant B's request begins. THIS case is the project's oracle for that
+    // property — measured: it fails under `enterWith`. (The packages/db sequential case does NOT
+    // discriminate run from enterWith; its per-request AsyncResource wrapper contains the leak.)
     expect(getPrincipal()).toBeUndefined();
     mockAuth.mockResolvedValue({ user: { email: MERCHANT_B_EMAIL } });
     expect(await inboxGateway.saveConversationDraft(draft())).toMatchObject({ ok: false });
