@@ -5,6 +5,12 @@ name: CI
 
 on:
   pull_request:
+    # `edited` is load-bearing, not decoration: scripts/ci/check-money-path-review.mjs reads the
+    # review token out of the pull_request body carried by the event payload, and a re-run replays
+    # the ORIGINAL payload. Without `edited`, adding the token to the PR body would never reach the
+    # gate — the only way to clear it would be a new commit, which changes the head SHA and voids
+    # the SHA-bound token again. Editing the body must be able to re-run CI, or the gate is a trap.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 

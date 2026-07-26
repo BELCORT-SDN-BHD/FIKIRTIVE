@@ -1,39 +1,75 @@
 #!/usr/bin/env node
 // Lock 3 — a diff that can move money does not merge without a named review.
 //
-// 改一处必须改两处: MONEY_PATH_FILES / MONEY_PATH_PREFIXES below are the machine
-// mirror of Step 1 in .claude/skills/money-safety-review/SKILL.md. Adding a paid
-// call site, a ledger writer or a new spend seam means editing BOTH — the skill
-// (so the human review knows to look) and this list (so CI can tell it did not).
+// 改一处必须改两处: MONEY_PATH_FILES / MONEY_IN_FILES / MONEY_PATH_PREFIXES below
+// are the machine mirror of Step 1 in .claude/skills/money-safety-review/SKILL.md.
+// Adding a paid call site, a ledger writer or a new spend seam means editing BOTH —
+// the skill (so the human review knows to look) and this list (so CI can tell it
+// did not). The lists are a FLOOR, not the definition: project law gates any diff
+// that can reach spend, and the skill's catch-all outranks this enumeration.
 //
 // The token is bound to the head SHA on purpose: `[MONEY-SAFETY-REVIEWED: <who> @
 // <head-sha>]` stops being valid the moment another commit is pushed, which is
 // exactly the "stamp it first, add the risky commit after" move the gate exists
 // to prevent. Re-review, re-stamp.
 //
+// What the token is NOT: it is an unauthenticated self-declaration. Anyone who can
+// edit the PR body can type it, and nothing here checks that a review happened or
+// that the named reviewer exists. It defends against FORGETTING, not against a
+// session (or a person) that decides to skip the review on purpose — that boundary
+// is held by project law, by the independent cross-family review, and by the human
+// who merges. Do not cite a green gate as evidence that the review was performed.
+//
 // Fail direction: closed in CI (a pull_request event with money files and no
 // valid token is a hard FAIL), open locally (no PR context = advisory notice and
 // PASS, so the local runner stays runnable).
+//
+// The workflow must keep `edited` in its pull_request `types:` — the token is read
+// from the event payload's PR body, and a re-run replays the original payload, so
+// without `edited` a body edit could never reach this gate.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+// Money-OUT: paid call sites, the spend authorities they call, the prices they
+// reserve on, the keys that keep them exactly-once, and the ledger they write.
 const MONEY_PATH_FILES = [
   "packages/core/src/gen.ts",
+  "packages/core/src/spend.ts",
   "packages/core/src/llm-prices.ts",
+  "packages/core/src/otto-budget.ts",
   "apps/web/lib/gen-actions.ts",
   "apps/web/lib/refgen-actions.ts",
+  "apps/web/lib/cowork-actions.ts",
+  "apps/web/lib/otto-actions.ts",
+  "apps/web/lib/actions.ts",
+  "apps/web/lib/factory-batch.ts",
+  "apps/web/lib/batch-idempotency.ts",
+  "apps/web/lib/campaign-generation-confirm.ts",
+  "apps/web/app/api/otto/stream/route.ts",
   "apps/worker/src/jobs/gen.ts",
   "apps/worker/src/jobs/refgen.ts",
+  "apps/worker/src/jobs/research.ts",
   "apps/worker/src/jobs/llm-reservation-reaper.ts",
   "packages/generation/src/byteplus.ts",
   "packages/generation/src/index.ts",
   "packages/db/src/credits.ts",
   "packages/otto/src/meter.ts",
+  "packages/otto/src/skills/generate.ts",
+];
+// Money-IN: the only CreditAccount/CreditLedger minting call sites. The skill's
+// Step 1 defers these to the reviewer playbook, so the message points there — but
+// the gate is the same: a money-in diff does not merge unreviewed either.
+const MONEY_IN_FILES = [
+  "apps/web/app/api/stripe/webhook/route.ts",
+  "apps/web/lib/credit-actions.ts",
+  "apps/web/lib/tenant-actions.ts",
+  "apps/web/lib/auth-guard.ts",
 ];
 const MONEY_PATH_PREFIXES = ["packages/db/prisma/migrations/"];
 const TOKEN = /\[MONEY-SAFETY-REVIEWED:\s*([^\]@]+?)\s*@\s*([0-9a-f]{7,40})\s*\]/i;
 const SKILL = ".claude/skills/money-safety-review/SKILL.md";
+const PLAYBOOK = "docs/review/REVIEWER-PLAYBOOK.md";
 
 function git(args, { allowFailure = false } = {}) {
   const result = spawnSync("git", args, { encoding: "utf8" });
@@ -57,10 +93,13 @@ function ensureCommits(shas) {
   return shas.every((sha) => hasCommit(sha));
 }
 
+// D (deletion) is in the filter deliberately: deleting credits.ts, a reaper or an
+// idempotency migration is at least as consequential as editing it, and an
+// ACMRT-only filter would let that class of diff through unreviewed.
 function changedFiles(base, head) {
   const mergeBase = git(["merge-base", base, head], { allowFailure: true });
   const from = mergeBase ? mergeBase.trim() : base;
-  const diff = git(["diff", "--name-only", "--diff-filter=ACMRT", from, head]);
+  const diff = git(["diff", "--name-only", "--diff-filter=ACDMRT", from, head]);
   return diff.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
@@ -68,8 +107,22 @@ function moneyPaths(files) {
   return files.filter(
     (file) =>
       MONEY_PATH_FILES.includes(file) ||
+      MONEY_IN_FILES.includes(file) ||
       MONEY_PATH_PREFIXES.some((prefix) => file.startsWith(prefix)),
   );
+}
+
+// Which document the reviewer has to open depends on which side of the ledger the
+// diff touches; both sides need the same token in the PR body.
+function reviewPointers(touched) {
+  const pointers = [];
+  if (touched.some((file) => !MONEY_IN_FILES.includes(file))) {
+    pointers.push(`run ${SKILL} on the full spend diff`);
+  }
+  if (touched.some((file) => MONEY_IN_FILES.includes(file))) {
+    pointers.push(`run the money + admin-auth sections of ${PLAYBOOK} on the money-in diff`);
+  }
+  return pointers;
 }
 
 function readEvent() {
@@ -92,6 +145,20 @@ function fail(lines) {
   process.exitCode = 1;
 }
 
+// The ONLY sequence that clears this gate. Order matters: the token names the head
+// SHA, so it can only be written after the last commit is pushed, and the body edit
+// is what re-runs CI (the workflow subscribes to the `edited` pull_request action —
+// a plain "Re-run jobs" replays the OLD payload and will keep reading the OLD body).
+function stampInstructions(head) {
+  return [
+    "clear it in this order — any other order cannot go green:",
+    "  1. commit and push every change you still intend to make (a later push voids the token)",
+    "  2. read the new head SHA:  git rev-parse HEAD",
+    `  3. edit the PULL REQUEST BODY (not a comment) to contain: [MONEY-SAFETY-REVIEWED: <reviewer> @ ${head}]`,
+    "  4. saving the body edit re-runs CI with the new body — do NOT press Re-run jobs, it replays the old payload",
+  ];
+}
+
 function localAdvisory() {
   const base = git(["merge-base", "origin/main", "HEAD"], { allowFailure: true });
   if (!base) {
@@ -109,10 +176,12 @@ function localAdvisory() {
     pass("no money-path file in this branch");
     return;
   }
-  console.log("money-path-review: NOTICE this branch touches the spend path:");
+  console.log("money-path-review: NOTICE this branch touches a money path:");
   for (const file of touched) console.log(`- ${file}`);
-  console.log(`money-path-review: run ${SKILL}, then put the token in the PR body:`);
-  console.log("money-path-review:   [MONEY-SAFETY-REVIEWED: <reviewer> @ <head-sha>]");
+  for (const pointer of reviewPointers(touched)) console.log(`money-path-review: ${pointer}`);
+  for (const line of stampInstructions("<head-sha-after-the-push>")) {
+    console.log(`money-path-review: ${line}`);
+  }
   pass("local run is advisory; the same check is fail-closed on the pull request");
 }
 
@@ -152,8 +221,8 @@ function main() {
   if (!match) {
     fail([
       ...touched.map((file) => `money-path file changed: ${file}`),
-      `run ${SKILL} on the full spend diff, then add to the PR body:`,
-      `  [MONEY-SAFETY-REVIEWED: <reviewer> @ ${head}]`,
+      ...reviewPointers(touched),
+      ...stampInstructions(head),
     ]);
     return;
   }
@@ -163,10 +232,11 @@ function main() {
       ...touched.map((file) => `money-path file changed: ${file}`),
       `the review token names ${stampedSha}, but the current head is ${head}`,
       "the stamp is bound to the head SHA — re-review the new commits and re-stamp",
+      ...stampInstructions(head),
     ]);
     return;
   }
-  pass(`spend path reviewed by ${reviewer.trim()} at ${head.slice(0, 12)} (${touched.length} file(s))`);
+  pass(`money path reviewed by ${reviewer.trim()} at ${head.slice(0, 12)} (${touched.length} file(s))`);
 }
 
 main();

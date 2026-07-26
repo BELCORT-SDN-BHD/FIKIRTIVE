@@ -13,8 +13,20 @@
     "deny": [
       "Edit(./docs/BLUEPRINT.md)",
       "Write(./docs/BLUEPRINT.md)",
+      "MultiEdit(./docs/BLUEPRINT.md)",
+      "NotebookEdit(./docs/BLUEPRINT.md)",
+      "Edit(**/docs/BLUEPRINT.md)",
+      "Write(**/docs/BLUEPRINT.md)",
+      "MultiEdit(**/docs/BLUEPRINT.md)",
+      "NotebookEdit(**/docs/BLUEPRINT.md)",
       "Edit(./scripts/blueprint.sha256)",
-      "Write(./scripts/blueprint.sha256)"
+      "Write(./scripts/blueprint.sha256)",
+      "MultiEdit(./scripts/blueprint.sha256)",
+      "NotebookEdit(./scripts/blueprint.sha256)",
+      "Edit(**/scripts/blueprint.sha256)",
+      "Write(**/scripts/blueprint.sha256)",
+      "MultiEdit(**/scripts/blueprint.sha256)",
+      "NotebookEdit(**/scripts/blueprint.sha256)"
     ]
   },
   "hooks": {
