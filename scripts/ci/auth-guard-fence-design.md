@@ -12,9 +12,24 @@
 它的定位是**补充性的 CI 绊线（tripwire）**：当改动引入它已建模的违规形态时，把 PR 拦下来。
 它**不是**运行时强制，也**不是**租户隔离的证明。
 
-租户隔离真正的防线是**运行时路线**：第②步的**请求级 principal 值守卫**（#459），
-以及**跨租户复合外键**（#317）。本围栏与它们的关系是「先响的铃」，不是「锁」。
-任何把本围栏当作隔离保障来引用的说法都是错的。
+租户隔离的真正防线**将来**是**运行时路线**——但必须先把话说死：**运行时路线是规划中的
+接替者，不是已经生效的防线。** 截至 2026-07-26 的逐项实际状态：
+
+- **②-A 请求级身份管道**（#463）：在 **PR #468 施工中**，且**只铺管道、不执法**——它
+  建立 principal 的传递，本身不做值比对；
+- **②-B tenant-guard 值比对收紧**（#464）：**未动工**；
+- **跨租户复合外键**（#317）：仍是待 Founder 裁的架构决策，**未动工**。
+
+因此**今天伪造 `ownerId` 仍然能通过运行时守卫**。这一点由 `main` 上的
+`apps/web/lib/__tests__/cross-tenant-write.test.ts` 钉死：其 #459 家族用例
+（`describe("cross-tenant write — the guard is a PRESENCE check, not an IDENTITY check")`
+下的「a FORGED ownerId passes the guard: updateMany / deleteMany」）是**普通的绿灯用例**，
+不是 `it.fails`——它们钉的正是「守卫只查 ownerId 在不在，从不查是不是你的」这一现状。
+
+**在 ②-A、②-B、#317 全部落地之前，围栏绿灯之外不存在第二道自动防线。**
+本围栏与运行时路线的关系是「先响的铃」，不是「锁」；而现在那把锁还没装上。
+任何把本围栏当作隔离保障来引用的说法都是错的；任何把运行时路线说成「已经接手」的说法
+同样是错的。
 
 ### 0.2 绿灯不等于安全
 
@@ -39,11 +54,18 @@
 3. **豁免账本按 `path + export + reason` 三字段精确匹配**，因此新增的敏感 site 可能被
    既有豁免条目吸收而不产生任何信号（见 0.4 的 P1-3）。
 
-### 0.3 已知漏网形态清单
+### 0.3 已知缺口清单：12 类静默漏网形态 + 1 项报红精度缺陷（共 13 项记录）
+
+**这份清单里的 13 项不是同一类东西，必须分开读**：
+
+- **第 1–12 条 = 12 类静默漏网形态**，这才是「漏网」。「静默放行」= `ok=true`、零
+  diagnostic（其中若干条连文件都不出现在报告里）。与之相对的**「报红」= fail closed，
+  属正常拦截，不属于这 12 类**。
+- **第 13 条 = 1 项报红精度缺陷，不是漏网**。它对应的用例**照常报红、照常拦得住**，
+  缺的只是报红的**归类精度**。它按「不丢记录」的原则编在同一份清单里并单列为 E 组，
+  但**不计入漏网形态**——所以本节说的是「12 类漏网」，不是「13 类漏网」。
 
 以下形态在写下本节时**均可复现**，且**按裁决五不再修复**。编号仅为引用方便。
-「静默放行」= `ok=true`、零 diagnostic（其中若干条连文件都不出现在报告里）；
-与之相对的「报红」= fail closed，属正常拦截，**不在**本清单内。
 
 **A 组：整文件 / 整导出静默脱离扫描（`files=0`，或该 export 被跳过）**
 
@@ -52,7 +74,8 @@
 即使查询就写在 entry 文件文本内，module 级兜底也不会响。** 机制是
 `scripts/verify-auth-guards.mjs:8314` 那道兜底闸门要求 `hasCallableExport`，而当一个文件的
 导出**全部是 unknown 形态**时该条件为 false，闸门整条被跳过；第 6 条点名的生产文件
-`apps/web/lib/channels/x.ts` 就处于这一状态。复审探针
+`apps/web/lib/channels/x.ts` 就处于这一状态（完整的两道闸门见本组末尾的根因说明）。
+复审探针
 `export const leak = ((fn) => fn)(async (id) => prisma.contact.findMany({ where: { id } }))`
 （查询就在 entry 文件内）实测 `files=0`、零 diagnostic。
 完整实测对照表见 §42「刻意保留的边界」的 Round 28 补记。
@@ -71,10 +94,25 @@
    `ok:true, files:0, 无诊断`（见 0.4 的 P1-2）。这与 §34 末段「unknown export 与其他
    member call 仍 fail closed」的表述**矛盾**，以本条实测为准。
 
-A 组共有的根因是第二层兜底闸门的**取名范围**：`visibleScopedBinding` 只认
+**A 组内部有两个不同的根因，不能混为一谈。**
+
+**第 1–5 条的根因**是第二层兜底闸门的**取名范围**：`visibleScopedBinding` 只认
 `FunctionDeclaration` 与 `VariableStatement`，`info.localValues` 也只从 `VariableStatement`
 填充；`ClassDeclaration`、参数、call 表达式、容器取出的 callable 都拿不到「本地变量声明」
 这个身份，于是 `unresolvedLocalReceiverNames` 返回 `[]`，fail-closed 闸门永不触发。
+
+**第 6–7 条不是这个根因——它们在更早一步就已经消失了**，因此**即使把 receiver 取名范围
+修好，也关不上第 6–7 条这条路**。实际机制是两道闸门顺次落下：
+
+1. **逐 export 循环入口就跳过**（`scripts/verify-auth-guards.mjs:8251`）：
+   `if (target.unknown && !ROUTE_EXPORT_NAMES.has(exportName)) continue;`——unknown 形态的
+   非 route 导出根本不进入分析，该文件因此一条 entry 都产不出；
+2. **module 级兜底随之被禁用**（`:8314–8317`）：兜底闸门要求 `hasCallableExport`，而当一个
+   文件的导出**全部是 unknown 形态**时该条件为 false，`info.directSensitive` 再真也不触发。
+
+跨族复审对生产文件 `apps/web/lib/channels/x.ts` 做定向分析的实测结果为
+`ok=true`、`files=0`、**零 diagnostic**——`visibleScopedBinding` 与
+`unresolvedLocalReceiverNames` 在这条路径上从未被走到。
 
 **B 组：collection sticky-poison 不变式的缺口**（原始出处见 §43 第 1–3 条）
 
@@ -100,7 +138,11 @@ A 组共有的根因是第二层兜底闸门的**取名范围**：`visibleScoped
 12. 经**仓库内 re-export** 取得 Prisma 客户端时，全体消费者对围栏不可见。
     2026-07-26 实测**0 个活实例**。
 
-**E 组：精度缺口（非安全）**
+**E 组：报红精度缺陷（不是漏网，不计入上面 12 类）**
+
+本组只有第 13 条。**它与第 1–12 条性质相反**：对应用例是 fail closed、**照常报红**，
+围栏并没有放它过去；缺陷在于报红的**归类精度**——它没能隔离出自己声称的那一类 bypass。
+之所以仍写进本清单，是为了不丢失这条记录，**不是**因为它是一条漏网形态。
 
 13. `Object.assign(keys, { 0: <owner-derived> })` 里那个**容器字面量实参**本身永远不是
     `"derived"`（`principalExpressionKind` 不对对象/数组字面量做逐元素推导），因此
@@ -108,14 +150,15 @@ A 组共有的根因是第二层兜底闸门的**取名范围**：`visibleScoped
     **仍然报红**，至今没有隔离出它自己声称的 bypass class。它作为 bypass 仍然有效
     （攻击者形态正确报红），只是隔离性待补。详见 §43 末段。
 
-**以下属 fail closed、不在本清单内的保留边界**（一并列出以免误读），**且仅当文件本身对
-扫描可见时才成立**：跨模块 class 体不
+**以下属 fail closed、既不是漏网形态也不在本清单编号内的保留边界**（一并列出以免误读），
+**且仅当文件本身对扫描可见时才成立**：跨模块 class 体不
 递归解析（`new ImportedClass().run(prisma, id)` 由第二层报红）、数组下标取出的 callable
 （`handlers[0](prisma, id)` 报红 `unprovable`）、本地 class 实例方法
 （`new S().list(prisma, id)` 报红 `missing-principal-resolution`）。这些是**拦下来了**，
-性质与上面 13 条完全不同。**但可见性是它们生效的前提**：同样的形态一旦落进 A 组的隐形
-写法（例如把 `handlers[0](...)` 挪到一个导出对象字面量后面），文件报 `files=0`、零
-diagnostic，这几条 fail closed 同样不会发生——见 A 组第 1–7 条。
+性质与上面第 1–12 条那 12 类静默漏网形态完全不同（与同属 fail closed 的第 13 条则是同
+一性质，差别只在第 13 条的报红归类不够精确）。**但可见性是它们生效的前提**：同样的形态
+一旦落进 A 组的隐形写法（例如把 `handlers[0](...)` 挪到一个导出对象字面量后面），文件报
+`files=0`、零 diagnostic，这几条 fail closed 同样不会发生——见 A 组第 1–7 条。
 
 ### 0.4 跨厂商复审确认的 4 项 P1 盲区
 
@@ -123,14 +166,15 @@ diagnostic，这几条 fail closed 同样不会发生——见 A 组第 1–7 �
 read-only 密封，读取范围为 committed `origin/main...HEAD`（head `20a8d0ef`）。复审员按
 「补充性 CI 绊线、非运行时强制」这一定位评判，其加粗结论逐字为：
 **结论：P0 0 项 / P1 4 项 —— 复审员判定「按现状不可合并」。** 四条如实
-收录如下；**四条按裁决五均不再加固，由第②步运行时守卫（#459）接手。**
+收录如下；**四条按裁决五均不再加固，规划中由第②步运行时守卫（#459）接手——按 §0.1，
+该接手者尚未生效，因此这四条盲区今天是敞着的、没有第二道自动防线兜住。**
 
 **P1-1 混合权属数组被当成租户安全。** 检查器对数组只要求**任一**元素可证，未证元素在
 分析中被略去（`scripts/verify-auth-guards.mjs:2348–2361`），剩余证明即满足敏感操作检查
 （`:3447–3454`）。两个探针零诊断通过：`ownerId: { in: [gate.ownerId, attackerOwnerId] }`；
 以及 `createMany` 的 data 数组中混入 `{ ownerId: attackerOwnerId }`——**后者可以真写出
 一条跨租户行，而围栏报绿**。本设计文档与 PR 正文此前均未披露此模式。
-按裁决五不再加固，由第②步运行时守卫接手。
+按裁决五不再加固，由第②步运行时守卫接手（**规划中，未生效**——见 §0.1）。
 
 **P1-2 可调用导出面会静默从覆盖中消失。** 导出索引对若干可调用形态省略或降级为
 `unknown`（`:1435–1488`、`:1611–1623`），而 unknown 的非 route 导出被跳过
@@ -138,18 +182,18 @@ read-only 密封，读取范围为 committed `origin/main...HEAD`（head `20a8d0
 `ok:true, files:0, 无诊断`：导出对象字面量的方法、导出类的 static 方法、高阶包装导出
 （`export const leak = wrap(...)`）、模块初始化期查询（`export const leaked = prisma…`）。
 这与本文档 §34 末段「unknown export 仍 fail closed」的表述矛盾。
-按裁决五不再加固，由第②步运行时守卫接手。
+按裁决五不再加固，由第②步运行时守卫接手（**规划中，未生效**——见 §0.1）。
 
 **P1-3 豁免账本会吸收未来站点。** 三字段键（`path + export + reason`，见 §3）使**新增
 站点可被既有豁免条目吸收**；本文档此前未披露此性质。账本现状：72 个身份覆盖 222 个
 豁免站点（见 §43 Round 28 实测）。
-按裁决五不再加固，由第②步运行时守卫接手。
+按裁决五不再加固，由第②步运行时守卫接手（**规划中，未生效**——见 §0.1）。
 
 **P1-4 测试未钉住每个导出与每个敏感站点。** bypass 测试断言文件覆盖与整体失败
 （`verify-auth-guards.test.mjs:412–428`），仅子集断言导出名（`:429–435`）；positive 测试
 （`:448–460`）既不断言精确导出也不断言敏感站点；聚合下限（`:346–370`）在总数高于下限时
 无法察觉某个导出被漏掉。**后果：上述 P1-1 / P1-2 的回归可以在套件全绿的情况下发生。**
-按裁决五不再加固，由第②步运行时守卫接手。
+按裁决五不再加固，由第②步运行时守卫接手（**规划中，未生效**——见 §0.1）。
 
 复审另附两条非 P1 的观察：两个 fixture 因更弱或不同的原因通过——
 `bypass/local-class-surface-inherited.ts:7–16` 实际命中的是「凡有继承的类一律拒绝」
