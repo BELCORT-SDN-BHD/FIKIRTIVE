@@ -47,16 +47,39 @@ const MONEY_PATH_FILES = [
   "apps/web/lib/batch-idempotency.ts",
   "apps/web/lib/campaign-generation-confirm.ts",
   "apps/web/app/api/otto/stream/route.ts",
+  "apps/web/lib/research-actions.ts",
+  "apps/web/lib/queue.ts",
   "apps/worker/src/jobs/gen.ts",
   "apps/worker/src/jobs/refgen.ts",
   "apps/worker/src/jobs/research.ts",
   "apps/worker/src/jobs/llm-reservation-reaper.ts",
+  "apps/worker/src/otto-resume.ts",
+  "apps/worker/src/index.ts",
   "packages/generation/src/byteplus.ts",
   "packages/generation/src/index.ts",
   "packages/db/src/credits.ts",
   "packages/otto/src/meter.ts",
+  "packages/otto/src/model.ts",
+  "packages/otto/src/runtime.ts",
   "packages/otto/src/skills/generate.ts",
+  "packages/otto/src/skills/propose-research.helpers.ts",
 ];
+// Why the Otto spend-PARAMETER layer above is listed (added after review round 2, which
+// found the paid call sites covered but this whole layer missing):
+//   otto-resume.ts       — a real paid turn: withLlmBudget is passed to runOttoTurn as the
+//                          meter, and refId `otto-verdict:<jobId>` is its exactly-once key.
+//   runtime.ts           — ottoBudgetArgsFor derives EVERY withLlmBudget argument (paid,
+//                          prices, maxSteps). One flipped comparison makes every paid turn
+//                          free, or every fixture turn billed.
+//   model.ts             — the frozen binding of billableModelId to pricing: llmPricesFor.
+//   propose-research.helpers.ts — researchTierBudgetInternal IS the per-tier reserve.
+//   research-actions.ts  — the balance pre-check plus the `research:<cardId>` idempotency key.
+//   worker index.ts / web queue.ts — the two places RESEARCH_QUEUE_POLICY is spread onto the
+//                          live queue; retryLimit:0 there is what stops a failed paid research
+//                          run from being redelivered into a second charge.
+// Deliberately NOT listed: the barrel re-exports packages/db/src/index.ts and
+// packages/otto/src/index.ts. They carry no spend decision, and listing them would money-gate
+// every unrelated export change; the skill's catch-all and project law still cover them.
 // Money-IN: the only CreditAccount/CreditLedger minting call sites. The skill's
 // Step 1 defers these to the reviewer playbook, so the message points there — but
 // the gate is the same: a money-in diff does not merge unreviewed either.

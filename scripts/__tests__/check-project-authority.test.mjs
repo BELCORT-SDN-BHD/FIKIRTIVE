@@ -46,7 +46,9 @@ function fixture(t) {
   symlinkSync(".claude/CLAUDE.md", join(repo, "AGENTS.md"));
   write(
     join(repo, ".claude", "skills", "fikirtive-orchestration-overlay", "SKILL.md"),
-    `bounded overlay\n${OVERLAY_CLAIM_ANCHOR}\nclaim policy pointer\n`,
+    `bounded overlay\n${OVERLAY_CLAIM_ANCHOR}\n` +
+      "Claim 政策以项目法第 12 条与 `docs/runbooks/task-ownership.md` 为准:" +
+      "每个 repo-mutating task 必须在首次 mutation 前取得自己的 task-linked `ACTIVE` claim。\n",
   );
   write(join(repo, "README.md"), "repository navigation\n");
   write(join(repo, "docs", "INDEX.md"), "documentation navigation\n");
@@ -241,6 +243,41 @@ test("red: dropping the overlay claim-policy anchor fails", (t) => {
   );
   writeFileSync(overlay, "bounded overlay without the anchor\n");
   expectRed(repo, /claim-policy anchor/);
+});
+
+test("red: an overlay carrying the anchor but no claim policy fails too", async (t) => {
+  // Review round 2: anchoring the check on a machine comment was called "no relaxation",
+  // but an overlay containing ONLY the comment passed while the Chinese substring it
+  // replaced would have failed. The anchor now has to introduce an actual policy.
+  const cases = [
+    ["anchor alone", `${OVERLAY_CLAIM_ANCHOR}\n`, /missing the mandatory/],
+    [
+      "no law clause",
+      `${OVERLAY_CLAIM_ANCHOR}\nsee \`docs/runbooks/task-ownership.md\` for the \`ACTIVE\` claim\n`,
+      /missing the project-law clause/,
+    ],
+    [
+      "no runbook pointer",
+      `${OVERLAY_CLAIM_ANCHOR}\n项目法第 12 条:必须取得 \`ACTIVE\` claim\n`,
+      /missing the task-ownership runbook pointer/,
+    ],
+    [
+      "policy text sits ABOVE the anchor",
+      "项目法第 12 条 `docs/runbooks/task-ownership.md` `ACTIVE` claim\n" +
+        `${OVERLAY_CLAIM_ANCHOR}\n`,
+      /missing the mandatory/,
+    ],
+  ];
+  for (const [name, source, pattern] of cases) {
+    await t.test(name, (child) => {
+      const { repo } = fixture(child);
+      writeFileSync(
+        join(repo, ".claude", "skills", "fikirtive-orchestration-overlay", "SKILL.md"),
+        source,
+      );
+      expectRed(repo, pattern);
+    });
+  }
 });
 
 test("red: canonical law rejects machine paths, frozen IDs/state, old tool config, and deploy commands", async (t) => {

@@ -24,9 +24,10 @@ rules; they may not relax or duplicate this law.
    Founder's explicit CI-unavailable approval before merging. Every merge leaves executor
    evidence on the PR — a Founder merge is confirmed by a Founder-posted comment stating the
    Founder executed it personally; an authorized non-author executor self-reports executor
-   identity, the authorizing instruction and the execution time. A merge without that
-   evidence is unverified at audit: never citable as precedent, and the next audit must
-   resolve it.
+   identity, the authorizing instruction and the execution time. That requirement binds
+   merges executed after this clause first landed on `main`; earlier merges are judged by the
+   evidence expectations of their time. A merge without that evidence is unverified at audit:
+   never citable as precedent, and the next audit must resolve it.
 3. Money paths stay exactly-once and fail-closed. Any diff that can reach a paid call site, a
    credit or money ledger writer, spend pricing, or exactly-once dedup must pass the
    `money-safety-review` skill; money-in (grants, Stripe) additionally follows the money and
@@ -59,12 +60,19 @@ rules; they may not relax or duplicate this law.
     inactive and ownership-clear; removing a worktree never authorizes deleting its branch.
     Every changed line traces to the current task.
 12. Before the first mutation, every repository-mutating task must acquire one task-linked `ACTIVE` claim
-    through `scripts/task-ownership-check.mjs`, and release it when the task ends; missing,
-    expired or conflicting claim state fails closed.
-13. Judgment stays with the orchestrator; anything that touches files, commands, queries or
-    research goes to a worker. Workers are hermetic, receive self-contained work orders, and
-    never spawn workers. (A write-guard hook holds the orchestrator side for the edit tools,
-    and the bash guard for the named shell write forms; both are tripwires, not proofs.)
+    through `scripts/task-ownership-check.mjs`, operated per `docs/runbooks/task-ownership.md`. On
+    resume it re-checks that same claim; when the task ends or ownership transfers it releases or
+    supersedes it and then proves the expected `ACTIVE` count. Missing, malformed, expired,
+    overlapping, wrong-base, wrong-worktree or out-of-scope claim state fails closed, and expiry
+    never transfers ownership. Read-only factual work needs no claim and may not mutate
+    repository or product state.
+13. Judgment stays with the orchestrator; writing code, editing files and gathering bulk
+    evidence go to a worker. The orchestrator's own live verification and merge-result check
+    (clauses 2 and 9) and its own claim operations (clause 12) are its work, not a delegation
+    failure — this clause never forbids what another clause requires of it. Workers are
+    hermetic, receive self-contained work orders, and never spawn workers. (A write-guard hook
+    holds the orchestrator side for the edit tools, and the bash guard for the named shell
+    write forms; both are tripwires, not proofs.)
 14. Route by shape: discovery goes to the strongest worker tier; enumerable coverage goes one
     tier down in parallel with stronger verification; critical review crosses model families;
     judges run sealed and read-only.

@@ -58,6 +58,66 @@ export function isWorkerTranscript(path) {
   return !leaf.includes("/") || (leaf.split("/").pop() ?? "").startsWith("agent-");
 }
 
+// ONE notion of "which token names the program", shared by every matcher below. Three
+// different notions is what the second review found: the push matcher scanned the whole
+// argv, the gh matcher demanded argv[0] === "gh", and the write matcher took basename of
+// argv[0] — so a single prefix walked straight through the strongest lock in the set
+// (`env FOO=1 gh pr merge`, `./gh pr merge`, `command gh pr merge`, `env FOO=1 tee
+// docs/BLUEPRINT.md` were all ALLOW). The merge lock has no server-side backstop: the
+// protect-main ruleset requires 0 approving reviews and declares no required status
+// checks, so nothing else stops `gh pr merge`.
+//
+// Returns the index of every token that could be naming `name`, most-likely first.
+// Deliberately generous: leading VAR=value assignments and wrapper programs are skipped
+// first, then the rest of argv is scanned too, because a wrapper this list has not heard
+// of (`nice -n 5 git push`) must not become a hole. Over-matching costs at most a false
+// block on a command that merely mentions the word — and every caller still requires a
+// real subcommand or a token that resolves to a real file in this repository.
+const WRAPPERS = new Set([
+  "env", "command", "builtin", "exec", "nohup", "time", "sudo", "doas",
+  "stdbuf", "setsid", "nice", "ionice", "xargs", "timeout", "script",
+]);
+
+export function basenameOf(token) {
+  return (token ?? "").split("/").pop() ?? "";
+}
+
+// The strict answer: the index of the token that actually names the program, after the
+// leading VAR=value assignments and wrapper programs are skipped. -1 when argv is all
+// prefix. Used where "is this clause a gh command" must NOT be satisfied by the word
+// appearing as an argument (`git push origin main gh` is a push, not a gh call).
+export function headIndexOf(argv) {
+  let head = 0;
+  while (head < argv.length) {
+    const token = argv[head];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(token)) { head += 1; continue; }
+    if (WRAPPERS.has(basenameOf(token))) {
+      head += 1;
+      while (
+        head < argv.length &&
+        (argv[head].startsWith("-") ||
+          /^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[head]) ||
+          /^\d+(?:\.\d+)?[smhd]?$/.test(argv[head]))
+      ) {
+        head += 1;
+      }
+      continue;
+    }
+    return head;
+  }
+  return -1;
+}
+
+export function commandIndexes(argv, name) {
+  const found = [];
+  const head = headIndexOf(argv);
+  if (head !== -1 && basenameOf(argv[head]) === name) found.push(head);
+  for (let scan = 0; scan < argv.length; scan += 1) {
+    if (scan !== head && basenameOf(argv[scan]) === name) found.push(scan);
+  }
+  return found;
+}
+
 // Only forms that write a named file: `> f` / `>> f` (a heredoc's `cat > f <<EOF`
 // carries the redirect), `tee f`, `sed -i … f`.
 export function writeTargets(clause) {
@@ -66,13 +126,15 @@ export function writeTargets(clause) {
     targets.push(match[1].replace(/["']/g, ""));
   }
   const argv = argvOf(clause);
-  const head = (argv[0] ?? "").split("/").pop();
-  const operands = argv.slice(1).filter((arg) => !arg.startsWith("-"));
-  if (head === "tee") targets.push(...operands);
-  if (head === "sed" && argv.some((arg) => arg === "-i" || arg === "--in-place" || /^-[a-zA-Z]*i/.test(arg))) {
+  for (const at of commandIndexes(argv, "tee")) {
+    targets.push(...argv.slice(at + 1).filter((arg) => !arg.startsWith("-")));
+  }
+  for (const at of commandIndexes(argv, "sed")) {
+    const rest = argv.slice(at + 1);
+    if (!rest.some((arg) => arg === "-i" || arg === "--in-place" || /^-[a-zA-Z]*i/.test(arg))) continue;
     // Every operand is a candidate; repoWrite() below rejects the sed script itself
     // because `s/a/b/` has no existing parent directory.
-    targets.push(...operands);
+    targets.push(...rest.filter((arg) => !arg.startsWith("-")));
   }
   return targets.filter((target) => target && !target.startsWith("&"));
 }
@@ -103,9 +165,10 @@ export function repoWrite(token, { cwd, repoTop }) {
   return rel;
 }
 
-function ghVerdict(argv) {
-  if (argv[0] !== "gh") return null;
-  const rest = argv.slice(1);
+export function ghVerdict(argv) {
+  const at = commandIndexes(argv, "gh")[0];
+  if (at === undefined) return null;
+  const rest = argv.slice(at + 1);
   if (rest[0] === "pr" && rest[1] === "merge") {
     return "合并权属 Founder 或其明确指派的非作者执行者,session 不得执行;--auto 更是项目法禁令(第 2 条)。";
   }
@@ -120,17 +183,22 @@ function ghVerdict(argv) {
   return null;
 }
 
-// Returns the push arguments when this clause really is a `git push`, else null.
+// Returns { args, dir } when this clause really is a `git push`, else null. `dir` is the
+// `-C <path>` git ran in, because that — not the session's cwd — is the checkout whose
+// current branch a bare `git push` inherits. Reading the branch from cwd let
+// `git -C <main checkout> push` be judged against the WRONG branch.
 export function pushArgsOf(argv) {
-  const gitAt = argv.findIndex((token) => token.split("/").pop() === "git");
-  if (gitAt === -1) return null;
+  const gitAt = commandIndexes(argv, "git")[0];
+  if (gitAt === undefined) return null;
   const after = argv.slice(gitAt + 1);
   let index = 0;
+  let dir = null;
   while (index < after.length && after[index].startsWith("-")) {
+    if (after[index] === "-C") dir = after[index + 1] ?? null;
     if (["-C", "-c", "--git-dir", "--work-tree", "--namespace"].includes(after[index])) index += 1;
     index += 1;
   }
-  return after[index] === "push" ? after.slice(index + 1) : null;
+  return after[index] === "push" ? { args: after.slice(index + 1), dir } : null;
 }
 
 export function pushVerdict(pushArgs, currentBranch) {
@@ -215,12 +283,22 @@ async function main() {
 
     const gh = ghVerdict(argv);
     if (gh) block(gh);
-    if (argv[0] === "gh") continue;
+    // Skip the push matcher only when gh is what this clause actually RUNS. Skipping on
+    // the word appearing anywhere would hand back a hole: `git push origin main gh` is a
+    // push whose refspec list contains a branch called gh.
+    const head = headIndexOf(argv);
+    if (head !== -1 && basenameOf(argv[head]) === "gh") continue;
 
-    const pushArgs = pushArgsOf(argv);
-    if (!pushArgs) continue;
-    const branch = inProjectRepo ? gitIn(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]) : null;
-    const verdict = pushVerdict(pushArgs, branch);
+    const push = pushArgsOf(argv);
+    if (!push) continue;
+    // `-C <path>` wins over cwd: that is the checkout whose HEAD a bare `git push`
+    // would follow. Outside this repository we have no tier or branch facts → allow.
+    const branchDir = push.dir ? resolve(cwd || process.cwd(), push.dir) : cwd;
+    const branchInRepo = push.dir
+      ? Boolean(projectCommon && commonDir(branchDir) === projectCommon)
+      : inProjectRepo;
+    const branch = branchInRepo ? gitIn(branchDir, ["rev-parse", "--abbrev-ref", "HEAD"]) : null;
+    const verdict = pushVerdict(push.args, branch);
     if (verdict) block(verdict);
   }
 

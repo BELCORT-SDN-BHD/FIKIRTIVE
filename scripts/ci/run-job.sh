@@ -67,7 +67,8 @@ case "$job" in
     node --test \
       scripts/__tests__/task-ownership-check.test.mjs \
       scripts/__tests__/ci-job-parity.test.mjs \
-      scripts/__tests__/check-project-authority.test.mjs
+      scripts/__tests__/check-project-authority.test.mjs \
+      scripts/__tests__/governance-hooks.test.mjs
     node scripts/check-project-authority.mjs
     ;;
   test)
