@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { identityLockClause, promptRef, CAMERA_MOVES, enOnly } from "./prompt-vocab.js";
+import { identityLockClause, identityLockClauseZh, promptRef, CAMERA_MOVES, enOnly } from "./prompt-vocab.js";
 
 describe("identityLockClause", () => {
   it("empty refs → empty string", () => {
@@ -26,6 +26,41 @@ describe("identityLockClause", () => {
     expect(out).toContain("feature A exactly");
     expect(out).toContain("; ");
     expect(out).toContain("reproduce the B logo");
+  });
+});
+
+describe("identityLockClauseZh (视频路径中文锁)", () => {
+  it("empty refs → empty string", () => {
+    expect(identityLockClauseZh([])).toBe("");
+  });
+  it("character lock keeps 同脸/同发型/同体型", () => {
+    const out = identityLockClauseZh([{ role: "character", name: "Mia", lock: true }]);
+    expect(out).toContain("Mia 与参考图保持同一人");
+    expect(out).toContain("同脸、同发型、同体型");
+  });
+  it("product lock keeps 同形状/同颜色/同标签", () => {
+    const out = identityLockClauseZh([{ role: "product", name: "AeroBottle", lock: true }]);
+    expect(out).toContain("同形状、同颜色、同标签");
+  });
+  it("location lock matches the reference environment", () => {
+    const out = identityLockClauseZh([{ role: "location", name: "老店面", lock: true }]);
+    expect(out).toContain("场景与 老店面 的参考环境保持一致");
+  });
+  it("brandmark lock keeps the logo unaltered", () => {
+    const out = identityLockClauseZh([{ role: "brandmark", name: "AeroCo", lock: true }]);
+    expect(out).toContain("AeroCo logo 按参考图原样呈现，不得变形");
+  });
+  it("lock:false switches to style-only phrasing (只借风格)", () => {
+    const out = identityLockClauseZh([{ role: "character", name: "阿澈", lock: false }]);
+    expect(out).toContain("画风参考 阿澈");
+    expect(out).not.toContain("同脸");
+  });
+  it("multiple refs joined with '；'", () => {
+    const out = identityLockClauseZh([
+      { role: "product", name: "A", lock: true },
+      { role: "character", name: "B", lock: true },
+    ]);
+    expect(out).toContain("；");
   });
 });
 

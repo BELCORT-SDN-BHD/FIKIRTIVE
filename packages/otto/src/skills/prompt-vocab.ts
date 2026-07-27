@@ -25,7 +25,7 @@ export const PACING = ["slow-motion", "hard cut", "fast cut", "timelapse", "one 
 /** 纯：去掉词表条目末尾的中文括注，只留英文（喂给 skill description，模型只看英文）。 */
 export const enOnly = (list: readonly string[]) => list.map((s) => s.replace(/\s*\(.*\)$/, ""));
 
-/** reference：像素不在这里（走 propose 的 entityIds → API 参数）。只承载织入英文措辞所需的 role + name。 */
+/** reference：像素不在这里（走 propose 的 entityIds → API 参数）。只承载织入措辞所需的 role + name。 */
 export const promptRef = z.object({
   role: z.enum(["character", "product", "location", "brandmark"]),
   name: z.string().min(1).max(64),
@@ -34,7 +34,7 @@ export const promptRef = z.object({
 export type PromptRef = z.infer<typeof promptRef>;
 type Role = PromptRef["role"];
 
-/** 纯：把每个 reference 织成一句英文身份锁定/风格借鉴短语，用 "; " 连接。空 refs → ""。 */
+/** 纯：把每个 reference 织成一句英文身份锁定/风格借鉴短语，用 "; " 连接。空 refs → ""。图像路径（英文 prompt）用。 */
 export function identityLockClause(refs: PromptRef[]): string {
   if (refs.length === 0) return "";
   const lock: Record<Role, (n: string) => string> = {
@@ -45,4 +45,17 @@ export function identityLockClause(refs: PromptRef[]): string {
   };
   const style = (n: string) => `draw stylistic inspiration from ${n}`;
   return refs.map((r) => (r.lock ? lock[r.role] : style)(r.name)).join("; ");
+}
+
+/** 纯：中文身份锁 —— 视频路径用（视频引擎 prompt 正文为中文，锁句同语言权重更稳）。空 refs → ""。 */
+export function identityLockClauseZh(refs: PromptRef[]): string {
+  if (refs.length === 0) return "";
+  const lock: Record<Role, (n: string) => string> = {
+    character: (n) => `${n} 与参考图保持同一人：同脸、同发型、同体型`,
+    product: (n) => `${n} 与参考图完全一致：同形状、同颜色、同标签`,
+    location: (n) => `场景与 ${n} 的参考环境保持一致`,
+    brandmark: (n) => `${n} logo 按参考图原样呈现，不得变形`,
+  };
+  const style = (n: string) => `画风参考 ${n}，不锁定其外观`;
+  return refs.map((r) => (r.lock ? lock[r.role] : style)(r.name)).join("；");
 }

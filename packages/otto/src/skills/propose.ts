@@ -83,7 +83,9 @@ export const proposeSkill = defineOttoSkill({
   description:
     "Build a generation proposal (GEN_CARD) the user can approve and generate later. " +
     "Call this when the user wants to create an image or video. " +
-    "Provide kind, an English structuredPrompt, and any referenced entity ids. " +
+    "Provide kind, a structuredPrompt built by the matching prompt skill (seedancePrompt returns " +
+    "Chinese for video, seedreamPrompt returns English for image — pass it through unchanged), " +
+    "and any referenced entity ids. " +
     "Do NOT pick a model or set a price — those are computed server-side. " +
     "When the user wants a few options to choose from (an 'ad pack'), pass count (2–4) " +
     "to offer that many image variants — images only; video is always a single clip.",

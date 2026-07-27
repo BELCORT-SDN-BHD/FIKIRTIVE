@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { modelFamily, GEN_MODELS } from "@fikirtive/core";
-import { PROMPT_SKILLS, PROMPT_SKILLED_FAMILIES, familyHasPromptSkill } from "./prompt-skills.js";
+import {
+  PROMPT_SKILLS,
+  PROMPT_SKILLED_FAMILIES,
+  familyHasPromptSkill,
+  PROMPT_LANGUAGES,
+  promptLanguageFor,
+} from "./prompt-skills.js";
 import { allSkills } from "./registry.js";
 
 describe("prompt-skilled families (D/E decision 6 — sole prompt authority)", () => {
@@ -31,5 +37,23 @@ describe("prompt-skilled families (D/E decision 6 — sole prompt authority)", (
     }
     // the derived set is exactly the declared families
     expect(PROMPT_SKILLED_FAMILIES).toEqual(new Set(PROMPT_SKILLS.map((p) => p.family)));
+  });
+});
+
+describe("per-engine prompt language (#437; Blueprint v2.13 — 按实测最优、由 prompt 权威模块决定)", () => {
+  it("video family prompts are Chinese; image family prompts are English", () => {
+    expect(promptLanguageFor("seedance")).toBe("zh");
+    expect(promptLanguageFor("seedream")).toBe("en");
+  });
+  it("families without a dedicated prompt skill have no language ruling", () => {
+    expect(promptLanguageFor("kling")).toBeUndefined();
+    expect(promptLanguageFor(undefined)).toBeUndefined();
+  });
+  it("every prompt-skilled family has exactly one language entry (no silent gaps)", () => {
+    const declared = PROMPT_LANGUAGES.map((p) => p.family);
+    expect(new Set(declared).size).toBe(declared.length);
+    for (const { family } of PROMPT_SKILLS) {
+      expect(declared, `missing language ruling for ${family}`).toContain(family);
+    }
   });
 });

@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import { assembleSeedream, seedreamPromptInput } from "./seedream-prompt.helpers.js";
 import { seedreamPromptSkill } from "./seedream-prompt.js";
 
+const CJK = /[一-鿿]/;
+
 describe("assembleSeedream", () => {
   it("t2i joins present fields in order, subject first", () => {
     const out = assembleSeedream(seedreamPromptInput.parse({
@@ -39,6 +41,20 @@ describe("assembleSeedream", () => {
     expect(out.startsWith("Replace the background with a beach sunset")).toBe(true);
     expect(out).toContain("preserve all foreground elements exactly");
   });
+  it("language rule: image path scaffold stays English — no Chinese in assembled output (语言按引擎定)", () => {
+    const t2i = assembleSeedream(seedreamPromptInput.parse({
+      subject: "a frosted-glass serum bottle",
+      style: "editorial photography",
+      lighting: "morning window light from the right",
+      references: [{ role: "product", name: "the SerumBottle" }, { role: "character", name: "Mia", lock: false }],
+      forVideo: true,
+    }));
+    const i2i = assembleSeedream(seedreamPromptInput.parse({
+      mode: "i2i", subject: "the source image", editVerb: "Change", editTarget: "the shirt color to sage green",
+    }));
+    expect(CJK.test(t2i)).toBe(false);
+    expect(CJK.test(i2i)).toBe(false);
+  });
 });
 
 describe("seedreamPromptSkill gate", () => {
@@ -62,5 +78,8 @@ describe("seedreamPromptSkill gate", () => {
     expect(seedreamPromptSkill.description).toContain(
       "Use mode:'i2i' ONLY when an @-referenced entity supplies the source image (pass its id via propose's entityIds); to change a prior generation with no entity, use t2i instead."
     );
+  });
+  it("description states the English-language rule for the image engine", () => {
+    expect(seedreamPromptSkill.description).toContain("ENGLISH");
   });
 });

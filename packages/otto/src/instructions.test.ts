@@ -187,3 +187,40 @@ describe("ottoInstructions — storyboard routing", () => {
     expect(ottoInstructions).toMatch(/no credits|nothing is charged|does not spend|doesn.t spend/i);
   });
 });
+
+describe("ottoInstructions — strategy families, variants, and prompt language (#437)", () => {
+  it("names all six strategy families", () => {
+    expect(ottoInstructions).toMatch(/E-commerce/);
+    expect(ottoInstructions).toMatch(/Dialogue drama/);
+    expect(ottoInstructions).toMatch(/Fantasy\/animation/);
+    expect(ottoInstructions).toMatch(/Educational/);
+    expect(ottoInstructions).toMatch(/Beat-sync/);
+    expect(ottoInstructions).toMatch(/General creative/);
+  });
+  it("routes by trilingual intent signals, with the ambiguous → ask (max 2 questions) branch", () => {
+    expect(ottoInstructions).toMatch(/English, Chinese, Malay/);
+    expect(ottoInstructions).toMatch(/ask at most 2 short questions/);
+  });
+  it("never assumes the user is a merchant (open-endedness guard)", () => {
+    expect(ottoInstructions).toMatch(/NEVER assume the user is a merchant/);
+  });
+  it("requires 2-3 variants led by different axes, banning synonym rewrites", () => {
+    expect(ottoInstructions).toMatch(/2-3 prompt variants/);
+    expect(ottoInstructions).toMatch(/composition, mood, or motion/);
+    expect(ottoInstructions).toMatch(/composition, mood, or style/);
+    expect(ottoInstructions).toMatch(/synonym/i);
+  });
+  it("requires an asset checklist with readiness and a fail-honest fallback", () => {
+    expect(ottoInstructions).toMatch(/asset checklist/i);
+    expect(ottoInstructions).toMatch(/only look similar/);
+  });
+  it("encodes per-engine prompt language: video Chinese, image English", () => {
+    expect(ottoInstructions).toMatch(/CHINESE/);
+    expect(ottoInstructions).toMatch(/ENGLISH/);
+    expect(ottoInstructions).not.toMatch(/MUST be in English/); // the old blanket rule is gone
+  });
+  it("exposes the video edit mode to Otto", () => {
+    expect(ottoInstructions).toMatch(/mode:'edit'/);
+    expect(ottoInstructions).toMatch(/editInstruction/);
+  });
+});

@@ -35,3 +35,26 @@ export const PROMPT_SKILLED_FAMILIES: ReadonlySet<ModelFamily> = new Set(
 export function familyHasPromptSkill(family: ModelFamily | undefined): boolean {
   return !!family && PROMPT_SKILLED_FAMILIES.has(family);
 }
+
+/**
+ * Per-engine prompt LANGUAGE (#437; Blueprint v2.13 relocated this out of the
+ * constitution: prompt language is decided per engine by its prompt-authority
+ * module — this registry — following measured best practice).
+ *
+ * - seedance → "zh": the video engine measurably performs best with a CHINESE
+ *   prompt body; industry camera/framing terms stay in English.
+ * - seedream → "en": current measurements show no Chinese advantage for the
+ *   image engine; prompts stay English (front-loaded token weighting).
+ *
+ * Changing an entry requires new measured evidence FIRST, then the matching
+ * assembler + skill description in the same PR — never a silent language switch.
+ */
+export const PROMPT_LANGUAGES: ReadonlyArray<{ family: ModelFamily; language: "zh" | "en" }> = [
+  { family: "seedream", language: "en" },
+  { family: "seedance", language: "zh" },
+];
+
+/** The tuned prompt language for a family, or undefined when it has no dedicated prompt skill. */
+export function promptLanguageFor(family: ModelFamily | undefined): "zh" | "en" | undefined {
+  return PROMPT_LANGUAGES.find((p) => p.family === family)?.language;
+}
