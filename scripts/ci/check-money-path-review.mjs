@@ -50,9 +50,46 @@
 // The workflow keeps `edited` in its pull_request `types:` for general responsiveness (editing
 // title/body/base still re-runs this job); it is no longer load-bearing for THIS token mechanism
 // specifically, since the comments check is always a live call, not a replay of a cached body.
+//
+// TRUST MODEL (#480 round 4, third sealed cross-family judge FAIL — comment 5089318805, "PR 改
+// 写自己审判者"): every mechanism above still runs the copy of THIS SCRIPT that the PR itself
+// checked out — which the PR can edit. Rounds 1-3 kept patching individual self-protection
+// holes (list the script's own path, list its test file, add an independent text-based
+// assertion) but the judge proved those layers can be cut ATOMICALLY in one commit (delete the
+// gate's list entry, the test file's protection, AND the test's hard-coded expectation, all at
+// once) and still show a fully green gate + a fully green independent test.
+//
+// Round 4 replaces patching with a structural fix: **run-from-base**. Before doing anything
+// else, this script re-executes the copy of ITSELF that existed at the merge-base commit — the
+// commit GitHub chose from the TARGET branch, not from the PR branch — and hands off entirely
+// (see runFromBase()). The PR's own edits to this file, to MONEY_PATH_FILES, to the token
+// regex, to the comment-verification logic — literally anything in this file — never run
+// against that PR's own diff. A PR cannot rewrite the base commit; only a merge to main moves
+// it. This makes the ENTIRE self-judging attack class structurally unavailable, not merely
+// blocked by an enumerable set of things the judge happened to try.
+//
+// The gate's actual integrity anchor is now: (a) the base-commit version of this script, which
+// this PR's diff cannot reach by construction, and, once the Founder mounts a required status
+// check on this job (a repository SETTING — Founder-only, not done as part of this PR), (b)
+// that setting itself, which likewise lives outside anything a PR's diff can touch. The
+// self-protection list entries from round 3 (this file, its test file, the workflow, run-job.sh,
+// the skill doc) remain as defense-in-depth — useful in the bootstrap window below, and as a
+// second signal if run-from-base is ever itself found to have a gap — but they are no longer the
+// PRIMARY defense against self-judging; run-from-base is.
+//
+// Bootstrap exception: this script does not exist at ANY commit before this PR introduces it —
+// there is no base version to run yet. Every run-from-base attempt against THIS PR's own diff
+// necessarily falls into bootstrap mode (clearly labeled in the output) and runs the PR's own
+// (head) copy, self-judging, exactly as every prior round did. This is unavoidable and is not a
+// gap being hidden: a script cannot enforce a rule about its own history before it has any
+// history. The exception provably disappears the moment this PR merges — every merge-base after
+// that point has SOME committed version of this file, so `runFromBase()` finds it and re-execs
+// into it; bootstrap mode can never recur for this file once the gate ships.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Money-OUT: paid call sites, the spend authorities they call, the prices they
 // reserve on, the keys that keep them exactly-once, and the ledger they write.
@@ -151,6 +188,19 @@ const MONEY_PATH_FILES = [
   "scripts/archive/verify-phaseA-base-worker.mjs",
   "scripts/archive/verify-phaseB-variant-worker.mjs",
   "scripts/archive/verify-phaseC-gen-variant-worker.mjs",
+  // Round 4 (#480 rework, third sealed cross-family judge FAIL — comment 5089318805): the
+  // search-API cluster. websearch.ts holds real Tavily/Brave API keys and makes the outbound
+  // HTTP call; research-web.ts is the Otto skill that calls the injected search port (it
+  // currently declares cost:"free", which is itself a separate bug already filed as #484 — NOT
+  // fixed here, this PR only adds the file to the money-path list so a future change to it needs
+  // review); research-agent.ts is the deep-research search client + the per-run call-count cap.
+  // Swept for siblings with `grep -rln "tavilySearch|braveSearch|WebSearchFn|research\.search"` —
+  // the only other hits are apps/web/lib/otto-actions.ts and apps/worker/src/jobs/research.ts
+  // (both already listed above) and packages/core/src/index.ts (a pure barrel re-export, same
+  // exclusion reasoning as the other barrels already excluded in this file).
+  "packages/core/src/websearch.ts",
+  "packages/otto/src/skills/research-web.ts",
+  "packages/otto/src/research-agent.ts",
   // Gate self-protection (judge P1 #3): the gate's own mechanism — the workflow trigger, the
   // runner that dispatches to it, this script, and the human-facing skill doc it mirrors — must
   // itself be a money-path file. Otherwise a single commit can quietly narrow the list, flip the
@@ -289,13 +339,29 @@ const MONEY_IN_FILES = [
 // apps/web/lib/stripe.ts (the Stripe SDK client construction) is deliberately NOT listed — it
 // makes no spend decision, same reasoning as the barrel-export exclusion above.
 const MONEY_PATH_PREFIXES = ["packages/db/prisma/migrations/"];
-// The SHA group requires exactly 40 hex chars (#480 rework, judge P1 #1): a 7-40 char range
+// The SHA groups require exactly 40 hex chars each (#480 rework, judge P1 #1): a 7-40 char range
 // combined with startsWith() let a stale-but-correct 7-char PREFIX of a LATER head keep passing
 // forever, and let a reviewer type a short token that just happens to prefix whatever head comes
 // next. The stamp must name the exact head, not a prefix of it — see the equality check below.
-const TOKEN = /\[MONEY-SAFETY-REVIEWED:\s*([^\]@]+?)\s*@\s*([0-9a-f]{40})\s*\]/i;
+//
+// Round 4 (#480 rework, third sealed judge FAIL, "凭证不绑 base"): the token now names BOTH the
+// head AND the base (merge-base) SHA. Binding only the head let a PR author widen the reviewed
+// diff for free: get a comment reviewing head H against base B1, then retarget/rebase the PR
+// onto a different base B2 (or the author's own earlier commits gain new money-path files via a
+// base change) — same head, same old token, a DIFFERENT and larger diff, still exit 0. Binding
+// both means changing EITHER commit voids the stamp.
+const TOKEN = /\[MONEY-SAFETY-REVIEWED:\s*([^\]@]+?)\s*@\s*([0-9a-f]{40})\s*base\s*([0-9a-f]{40})\s*\]/i;
 const SKILL = ".claude/skills/money-safety-review/SKILL.md";
 const PLAYBOOK = "docs/review/REVIEWER-PLAYBOOK.md";
+// The gate's own path — used both as a MONEY_PATH_FILES self-protection entry (see below) and as
+// the file runFromBase() extracts from the merge-base commit.
+const SELF_PATH = "scripts/ci/check-money-path-review.mjs";
+// Sub-process recursion guard for runFromBase(): set on the child before re-exec so the BASE
+// version of this script (which may itself be round-4-or-later, once this PR has merged) does
+// not try to re-exec AGAIN from ITS OWN merge-base. One hop is always enough: the base version's
+// job is to judge the current diff with ITS OWN (immutable, PR-unreachable) list and logic —
+// there is nothing further upstream that needs judging.
+const REEXEC_GUARD_ENV = "MONEY_PATH_REVIEW_RUNNING_FROM_BASE";
 
 function git(args, { allowFailure = false } = {}) {
   const result = spawnSync("git", args, { encoding: "utf8" });
@@ -317,6 +383,50 @@ function ensureCommits(shas) {
   if (missing.length === 0) return true;
   git(["fetch", "--no-tags", "--depth=50", "origin", ...missing], { allowFailure: true });
   return shas.every((sha) => hasCommit(sha));
+}
+
+// Run-from-base (#480 round 4): re-executes the copy of THIS SCRIPT that existed at
+// `candidateBase`, handing off the whole judgment — its own MONEY_PATH_FILES, its own token
+// regex, its own comment-verification logic, everything — to a version the current PR's diff
+// cannot have touched. Three outcomes:
+//   "reexeced"  — the base version ran to completion; its exit status is authoritative and the
+//                 caller must stop immediately (not fall through to the head version's logic).
+//   "bootstrap" — the base commit exists, but this file did not exist in its tree yet (this PR
+//                 is introducing it). There is nothing to re-exec; the caller continues with
+//                 ITS OWN (head) logic and must clearly label the output as unprotected.
+//   "hard-fail" — the base COMMIT itself could not be resolved even after a deepening fetch
+//                 (too-shallow checkout, unreachable ref). This is NOT bootstrap — a missing
+//                 commit is an infrastructure failure, not evidence the file never existed — so
+//                 the caller fails closed with `message`.
+async function runFromBase(candidateBase) {
+  if (!hasCommit(candidateBase)) {
+    git(["fetch", "--no-tags", "--depth=50", "origin", candidateBase], { allowFailure: true });
+  }
+  if (!hasCommit(candidateBase)) {
+    return {
+      mode: "hard-fail",
+      message: `cannot resolve the merge-base ${candidateBase.slice(0, 12)} locally — the checkout is too shallow, or the ref is unreachable`,
+    };
+  }
+  // cat-file -e <commit>:<path> checks the PATH exists in that commit's tree — distinct from
+  // hasCommit()'s <commit>^{commit} check, which only confirms the COMMIT object exists.
+  const pathExists = git(["cat-file", "-e", `${candidateBase}:${SELF_PATH}`], { allowFailure: true }) !== null;
+  if (!pathExists) {
+    return { mode: "bootstrap" };
+  }
+  const source = git(["show", `${candidateBase}:${SELF_PATH}`]);
+  const dir = mkdtempSync(join(tmpdir(), "money-path-review-base-"));
+  const tmpPath = join(dir, "check-money-path-review.base.mjs");
+  try {
+    writeFileSync(tmpPath, source);
+    const result = spawnSync(process.execPath, [tmpPath], {
+      stdio: "inherit",
+      env: { ...process.env, [REEXEC_GUARD_ENV]: "1" },
+    });
+    return { mode: "reexeced", status: result.status ?? 1 };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // D (deletion) is in the filter deliberately: deleting credits.ts, a reaper or an
@@ -365,19 +475,31 @@ function reviewPointers(touched) {
 // every comment for free (no second API call).
 const QUALIFYING_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
-// Test-only escape hatch: when set, PR comments are read from this JSON fixture file (an array
-// shaped like the GitHub comments API response) instead of the live API. This is the ONLY way to
-// exercise findQualifyingComment()'s logic and the fail-closed API-error path offline — it is
-// never referenced by ci.yml, so it is never set in the real workflow. Point it at a missing/
-// unparseable path to simulate "the API was unreachable" through the exact same catch block a
-// real network failure hits.
+// Test-only escape hatches: when set, PR comments are read from a JSON fixture file, or the API
+// base URL is redirected, instead of hitting the live GitHub API. This is the ONLY way to
+// exercise findQualifyingComment()'s logic, the pagination loop, and the fail-closed API-error
+// path offline. Neither is ever referenced by ci.yml, so neither is ever set in the real
+// workflow — and both are refused outright whenever GITHUB_ACTIONS=true (see below), so even a
+// compromised or malicious workflow/runner cannot smuggle a fixture through in a real run.
 const COMMENTS_FIXTURE_ENV = "MONEY_PATH_REVIEW_COMMENTS_FIXTURE";
+const API_BASE_ENV = "MONEY_PATH_REVIEW_API_BASE_URL";
 
 // Fetches the PR's top-level (issue) comments — where a human reviewer posts, as opposed to
 // inline review comments on a specific diff line — authenticated with the job's own default
 // GITHUB_TOKEN. Throws on ANY failure; the caller treats every throw identically: fail closed.
 async function fetchPrComments({ repo, prNumber }) {
   const fixturePath = process.env[COMMENTS_FIXTURE_ENV];
+  const apiBaseOverride = process.env[API_BASE_ENV];
+  // #480 round 4, judge P1 "CI 下 fixture 注入可伪造评论": GITHUB_ACTIONS is set to the literal
+  // string "true" by every Actions runner unconditionally — no workflow YAML can unset it. Both
+  // test-only overrides are refused the instant that is true, regardless of what they point at;
+  // this check runs BEFORE either override is consulted, so neither can activate in a run GitHub
+  // itself identifies as an Actions run, even by accident.
+  if ((fixturePath || apiBaseOverride) && process.env.GITHUB_ACTIONS === "true") {
+    throw new Error(
+      `${COMMENTS_FIXTURE_ENV}/${API_BASE_ENV} is set but GITHUB_ACTIONS=true — refusing test-only overrides in a real CI run`,
+    );
+  }
   if (fixturePath) {
     const parsed = JSON.parse(readFileSync(fixturePath, "utf8"));
     if (!Array.isArray(parsed)) throw new Error(`${COMMENTS_FIXTURE_ENV} must contain a JSON array`);
@@ -385,38 +507,52 @@ async function fetchPrComments({ repo, prNumber }) {
   }
   const token = process.env.GITHUB_TOKEN;
   if (!token) throw new Error("GITHUB_TOKEN is not set — cannot verify PR comments");
-  const url = `https://api.github.com/repos/${repo}/issues/${prNumber}/comments?per_page=100`;
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`GitHub API returned ${response.status} ${response.statusText} for ${url}`);
+  const apiBase = apiBaseOverride || "https://api.github.com";
+  const perPage = 100;
+  const all = [];
+  // #480 round 4, judge P2 "评论 API 固定 per_page=100 且无分页": a PR with more than 100
+  // comments could have a genuinely qualifying comment sitting on page 2+, silently invisible to
+  // a single-page fetch — a false FAIL (an availability bug, not a bypass), but still wrong. Page
+  // until a response returns fewer than perPage results (the standard "last page" signal); ANY
+  // single page's fetch failing throws immediately, which the caller treats as fail-closed same
+  // as before — pagination adds coverage, it does not loosen the failure mode.
+  for (let page = 1; ; page++) {
+    const url = `${apiBase}/repos/${repo}/issues/${prNumber}/comments?per_page=${perPage}&page=${page}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`GitHub API returned ${response.status} ${response.statusText} for ${url}`);
+    }
+    const parsed = await response.json();
+    if (!Array.isArray(parsed)) throw new Error(`GitHub API returned a non-array comments payload (page ${page})`);
+    all.push(...parsed);
+    if (parsed.length < perPage) break;
+    if (page >= 1000) throw new Error("comments API pagination exceeded 1000 pages — refusing to loop forever");
   }
-  const parsed = await response.json();
-  if (!Array.isArray(parsed)) throw new Error("GitHub API returned a non-array comments payload");
-  return parsed;
+  return all;
 }
 
 // Scans every comment for one that clears every bar: matches TOKEN, names a non-blank reviewer,
-// binds the exact current head SHA, and comes from someone OTHER than the PR author who has
-// OWNER/MEMBER/COLLABORATOR standing. Returns the first fully-qualifying match, or the most
-// specific rejection reason found across every syntactically-matching comment (priority: stale
-// SHA > blank reviewer > insufficient standing > self-authored > nothing found at all) so the
-// FAIL message is actionable instead of generic.
-function findQualifyingComment(comments, { head, prAuthorLogin }) {
+// binds BOTH the exact current head AND base SHA, and comes from someone OTHER than the PR
+// author who has OWNER/MEMBER/COLLABORATOR standing. Returns the first fully-qualifying match,
+// or the most specific rejection reason found across every syntactically-matching comment
+// (priority: stale head/base > blank reviewer > insufficient standing > self-authored > nothing
+// found at all) so the FAIL message is actionable instead of generic.
+function findQualifyingComment(comments, { head, base, prAuthorLogin }) {
   let sawSelfAuthored = false;
   let sawInsufficientStanding = null;
   let sawBlankReviewer = false;
-  let sawStaleSha = null;
+  let sawStaleStamp = null;
   for (const comment of comments) {
     const body = typeof comment?.body === "string" ? comment.body : "";
     const match = body.match(TOKEN);
     if (!match) continue;
-    const [, reviewer, stampedSha] = match;
+    const [, reviewer, stampedHead, stampedBase] = match;
     const commenterLogin = comment?.user?.login;
     if (!commenterLogin || commenterLogin === prAuthorLogin) {
       sawSelfAuthored = true;
@@ -430,16 +566,27 @@ function findQualifyingComment(comments, { head, prAuthorLogin }) {
       sawBlankReviewer = true;
       continue;
     }
-    if (head.toLowerCase() !== stampedSha.toLowerCase()) {
-      sawStaleSha = { commenterLogin, stampedSha };
+    // Round 4 (#480 rework, judge P1 "凭证不绑 base"): both SHAs must match exactly — a stamp
+    // that named the right head but a DIFFERENT base (the PR was retargeted/rebased after the
+    // comment was posted, widening or changing the reviewed diff) is just as stale as one that
+    // named the wrong head.
+    if (head.toLowerCase() !== stampedHead.toLowerCase() || base.toLowerCase() !== stampedBase.toLowerCase()) {
+      sawStaleStamp = { commenterLogin, stampedHead, stampedBase };
       continue;
     }
     return { ok: true, reviewer: reviewer.trim(), commenterLogin };
   }
-  if (sawStaleSha) {
+  if (sawStaleStamp) {
+    const mismatches = [];
+    if (head.toLowerCase() !== sawStaleStamp.stampedHead.toLowerCase()) {
+      mismatches.push(`head ${sawStaleStamp.stampedHead} vs current ${head}`);
+    }
+    if (base.toLowerCase() !== sawStaleStamp.stampedBase.toLowerCase()) {
+      mismatches.push(`base ${sawStaleStamp.stampedBase} vs current ${base}`);
+    }
     return {
       ok: false,
-      reason: `@${sawStaleSha.commenterLogin} stamped ${sawStaleSha.stampedSha}, but the current head is ${head} — re-review the new commits and re-stamp`,
+      reason: `@${sawStaleStamp.commenterLogin} stamped a mismatched ${mismatches.join(" and ")} — re-review the current diff and re-stamp`,
     };
   }
   if (sawBlankReviewer) {
@@ -485,16 +632,17 @@ function fail(lines) {
   process.exitCode = 1;
 }
 
-// The ONLY sequence that clears this gate. Order matters: the token names the head SHA, so it
-// can only be written after the last commit is pushed. Unlike the old body-token mechanism, no
-// special re-run trick is needed to pick up a new comment — comments are read LIVE from the API
-// on every run, so a plain "Re-run jobs" (which replays the cached event payload) still sees it.
-function stampInstructions(head) {
+// The ONLY sequence that clears this gate. Order matters: the token names the head AND base SHA
+// (round 4), so it can only be written after the last commit is pushed and against the PR's
+// actual target. Unlike the old body-token mechanism, no special re-run trick is needed to pick
+// up a new comment — comments are read LIVE from the API on every run, so a plain "Re-run jobs"
+// (which replays the cached event payload) still sees it.
+function stampInstructions(head, base) {
   return [
     "clear it in this order — any other order cannot go green:",
     "  1. commit and push every change you still intend to make (a later push voids the token)",
     "  2. read the new head SHA:  git rev-parse HEAD",
-    `  3. have someone OTHER than the PR's author post a PR COMMENT (not the body, not an inline review comment) containing: [MONEY-SAFETY-REVIEWED: <reviewer> @ ${head}]`,
+    `  3. have someone OTHER than the PR's author post a PR COMMENT (not the body, not an inline review comment) containing: [MONEY-SAFETY-REVIEWED: <reviewer> @ ${head} base ${base}]`,
     "  4. that reviewer needs OWNER/MEMBER/COLLABORATOR standing on this repo — an outside contributor's comment does not qualify",
     "  5. re-run the job (or push again, or just wait for the next scheduled trigger) — comments are checked live, no special replay handling needed",
   ];
@@ -506,9 +654,10 @@ function localAdvisory() {
     pass("no pull-request context and no origin/main baseline — CI re-runs this gate closed");
     return;
   }
+  const baseTrimmed = base.trim();
   let touched = [];
   try {
-    touched = moneyPaths(changedFiles(base.trim(), "HEAD"));
+    touched = moneyPaths(changedFiles(baseTrimmed, "HEAD"));
   } catch {
     pass("no pull-request context — CI re-runs this gate closed");
     return;
@@ -520,7 +669,7 @@ function localAdvisory() {
   console.log("money-path-review: NOTICE this branch touches a money path:");
   for (const file of touched) console.log(`- ${file}`);
   for (const pointer of reviewPointers(touched)) console.log(`money-path-review: ${pointer}`);
-  for (const line of stampInstructions("<head-sha-after-the-push>")) {
+  for (const line of stampInstructions("<head-sha-after-the-push>", baseTrimmed)) {
     console.log(`money-path-review: ${line}`);
   }
   pass("local run is advisory; the same check is fail-closed on the pull request");
@@ -541,6 +690,39 @@ async function main() {
   }
 
   const pr = event?.pull_request;
+
+  // Run-from-base (#480 round 4): before doing anything substantive, hand off to the version of
+  // THIS SCRIPT that existed at the merge-base commit — see the file-header comment for the full
+  // trust-model rationale. candidateBase mirrors exactly what the rest of main()/localAdvisory()
+  // would use as "base" a few lines down: the PR's own base.sha when we have a real PR event, or
+  // the local merge-base against origin/main otherwise (so a plain local run gets the same
+  // protection the runbook's CI-fallback path relies on).
+  if (!process.env[REEXEC_GUARD_ENV]) {
+    const candidateBase = pr?.base?.sha
+      ? String(pr.base.sha)
+      : (git(["merge-base", "origin/main", "HEAD"], { allowFailure: true }) || "").trim() || null;
+    if (candidateBase) {
+      const outcome = await runFromBase(candidateBase);
+      if (outcome.mode === "reexeced") {
+        process.exitCode = outcome.status;
+        return;
+      }
+      if (outcome.mode === "hard-fail") {
+        fail([outcome.message, "failing closed: an unresolvable merge-base cannot prove the spend path is untouched"]);
+        return;
+      }
+      // outcome.mode === "bootstrap": no base version exists yet (this PR introduces the gate).
+      // Fall through and run the rest of THIS function — the PR's own (head) copy — but say so
+      // loudly: this is the one and only case where the gate is judging its own diff, and it is
+      // structurally impossible for that to be true again once this PR merges (see file header).
+      console.log(
+        "money-path-review: NOTICE bootstrap mode — scripts/ci/check-money-path-review.mjs does not exist yet " +
+          `at the merge-base (${candidateBase.slice(0, 12)}); this PR is what introduces it. Running the PR's ` +
+          "own (head) copy of the gate — self-judged, same as every round before run-from-base existed. This " +
+          "exception is permanent-until-merge: it cannot recur once the gate has shipped to main.",
+      );
+    }
+  }
   // Round 3 (#480 rework, judge P1 "合法空 JSON 事件仍劝告放行"): a well-formed JSON event that
   // simply lacks the pull_request.head/base structure used to fall straight through to the open,
   // local-only advisory path — indistinguishable from "not a PR run at all." GITHUB_ACTIONS sets
@@ -613,12 +795,12 @@ async function main() {
     return;
   }
 
-  const verdict = findQualifyingComment(comments, { head, prAuthorLogin });
+  const verdict = findQualifyingComment(comments, { head, base, prAuthorLogin });
   if (!verdict.ok) {
     fail([
       ...touched.map((file) => `money-path file changed: ${file}`),
       ...(verdict.reason ? [verdict.reason] : reviewPointers(touched)),
-      ...stampInstructions(head),
+      ...stampInstructions(head, base),
     ]);
     return;
   }
