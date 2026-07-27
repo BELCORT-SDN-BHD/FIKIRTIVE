@@ -15,10 +15,21 @@ const SCRIPT = fileURLToPath(new URL("../ci/check-money-path-review.mjs", import
 // One representative path from each of the three MONEY_PATH_FILES / MONEY_IN_FILES /
 // MONEY_PATH_PREFIXES lists in the script — proves all three membership branches of
 // moneyPaths() actually trigger the gate, not just the first one.
-const MONEY_OUT_FILE = "apps/web/lib/billing-actions.ts";
+//
+// #480 rework (sealed cross-family judge P2 #1 on PR #482): MONEY_OUT_FILE used to be
+// "apps/web/lib/billing-actions.ts", which the script itself only lists under
+// MONEY_IN_FILES — so the "FAIL: MONEY_PATH_FILES branch" case was silently re-testing
+// money-in membership twice and never exercising a genuine money-OUT exact-file match.
+// gen-actions.ts is MONEY_PATH_FILES-only and foundational (the direct-gen spend entry
+// point) — it is not going anywhere near MONEY_IN_FILES.
+const MONEY_OUT_FILE = "apps/web/lib/gen-actions.ts";
 const MONEY_IN_FILE = "apps/web/lib/credit-actions.ts";
 const MONEY_PREFIX_FILE = "packages/db/prisma/migrations/20260101000000_x/migration.sql";
 const UNRELATED_FILE = "apps/web/lib/unrelated-feature.ts";
+// Gate self-protection (#480 rework, judge P1 #3): one of the four files the gate now
+// monitors about itself. check-money-path-review.mjs is the most direct case — the fixture
+// stands in a dummy copy at the same path; the REAL script (SCRIPT) still runs the check.
+const GATE_SELF_FILE = "scripts/ci/check-money-path-review.mjs";
 
 function git(cwd, args) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -48,10 +59,11 @@ function fixture(t) {
   git(repo, ["init", "-b", "main"]);
   git(repo, ["config", "user.name", "Money Gate Test"]);
   git(repo, ["config", "user.email", "money-gate@example.test"]);
-  write(repo, MONEY_OUT_FILE, "export async function createTopupCheckout() {}\n");
+  write(repo, MONEY_OUT_FILE, "export async function startGen() {}\n");
   write(repo, MONEY_IN_FILE, "export async function grantCredits() {}\n");
   write(repo, MONEY_PREFIX_FILE, "-- base migration\n");
   write(repo, UNRELATED_FILE, "export const label = \"base\";\n");
+  write(repo, GATE_SELF_FILE, "// stand-in for the gate script itself\n");
   const baseSha = commit(repo, "base");
   return { repo, baseSha };
 }
@@ -73,11 +85,14 @@ function prEvent(base, head, body = "") {
   return { pull_request: { base: { sha: base }, head: { sha: head }, body } };
 }
 
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 test("FAIL: a money-path file changed with no review token, for every list branch", async (t) => {
   const cases = [
     ["MONEY_PATH_FILES", MONEY_OUT_FILE],
     ["MONEY_IN_FILES", MONEY_IN_FILE],
     ["MONEY_PATH_PREFIXES", MONEY_PREFIX_FILE],
+    ["gate self-protection", GATE_SELF_FILE],
   ];
   for (const [label, path] of cases) {
     await t.test(label, (child) => {
@@ -87,7 +102,7 @@ test("FAIL: a money-path file changed with no review token, for every list branc
       const { status, stderr } = runGate(repo, prEvent(baseSha, headSha));
       assert.equal(status, 1, stderr);
       assert.match(stderr, /money-path-review: FAIL/);
-      assert.match(stderr, new RegExp(`money-path file changed: ${path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(stderr, new RegExp(`money-path file changed: ${escapeRegex(path)}`));
       assert.match(stderr, /MONEY-SAFETY-REVIEWED/);
     });
   }
@@ -134,6 +149,75 @@ test("local (no pull-request event): advisory NOTICE, never fails closed", (t) =
   const result = spawnSync("node", [SCRIPT], { cwd: repo, encoding: "utf8", env: { ...process.env, GITHUB_EVENT_PATH: "" } });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /NOTICE this branch touches a money path/);
-  assert.match(result.stdout, new RegExp(MONEY_OUT_FILE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(result.stdout, new RegExp(escapeRegex(MONEY_OUT_FILE)));
   assert.match(result.stdout, /local run is advisory; the same check is fail-closed on the pull request/);
+});
+
+// #480 rework — sealed cross-family judge findings on PR #482 (comment 5087841805), each
+// with its own red case below:
+
+test("FAIL (P0 #3): renaming a listed file to an unlisted path does not clear the gate", (t) => {
+  const { repo, baseSha } = fixture(t);
+  git(repo, ["mv", MONEY_OUT_FILE, "apps/web/lib/renamed-unlisted-path.ts"]);
+  const headSha = commit(repo, "rename money-out file to an unlisted path");
+  const { status, stdout, stderr } = runGate(repo, prEvent(baseSha, headSha));
+  assert.equal(status, 1, stdout + stderr);
+  assert.match(stderr, /money-path-review: FAIL/);
+  // --no-renames reports the OLD (listed) path as a deletion — that is what must trip the gate.
+  assert.match(stderr, new RegExp(`money-path file changed: ${escapeRegex(MONEY_OUT_FILE)}`));
+});
+
+test("FAIL (P0 #3): deleting a listed file does not clear the gate", (t) => {
+  const { repo, baseSha } = fixture(t);
+  git(repo, ["rm", MONEY_OUT_FILE]);
+  const headSha = commit(repo, "delete money-out file");
+  const { status, stderr } = runGate(repo, prEvent(baseSha, headSha));
+  assert.equal(status, 1, stderr);
+  assert.match(stderr, new RegExp(`money-path file changed: ${escapeRegex(MONEY_OUT_FILE)}`));
+});
+
+test("FAIL (P1 #1): a blank/whitespace-only reviewer name does not clear the gate", (t) => {
+  const { repo, baseSha } = fixture(t);
+  write(repo, MONEY_OUT_FILE, "// changed\n");
+  const headSha = commit(repo, "touch money-out file");
+  const body = `[MONEY-SAFETY-REVIEWED:  @ ${headSha}]\n`;
+  const { status, stdout, stderr } = runGate(repo, prEvent(baseSha, headSha, body));
+  assert.equal(status, 1, stdout + stderr);
+  assert.match(stderr, /blank reviewer/);
+});
+
+test("FAIL (P1 #1): a short SHA prefix does not clear the gate", (t) => {
+  const { repo, baseSha } = fixture(t);
+  write(repo, MONEY_OUT_FILE, "// changed\n");
+  const headSha = commit(repo, "touch money-out file");
+  const body = `[MONEY-SAFETY-REVIEWED: alice @ ${headSha.slice(0, 7)}]\n`;
+  const { status, stdout, stderr } = runGate(repo, prEvent(baseSha, headSha, body));
+  assert.equal(status, 1, stdout + stderr);
+  // A 7-char SHA no longer matches TOKEN at all (it requires exactly 40 hex chars), so this
+  // falls through to the standard missing-token FAIL path.
+  assert.match(stderr, /MONEY-SAFETY-REVIEWED/);
+});
+
+test("FAIL (P1 #2): a malformed PR event fails closed instead of falling back to advisory", (t) => {
+  const { repo } = fixture(t);
+  const eventPath = join(repo, "..", "broken-event.json");
+  writeFileSync(eventPath, "{ this is not valid JSON");
+  const result = spawnSync("node", [SCRIPT], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_EVENT_PATH: eventPath },
+  });
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stderr, /money-path-review: FAIL/);
+  assert.match(result.stderr, /could not be read or parsed/);
+  assert.match(result.stderr, /failing closed/);
+});
+
+test("FAIL (P1 #3): modifying the gate script itself does not clear the gate", (t) => {
+  const { repo, baseSha } = fixture(t);
+  write(repo, GATE_SELF_FILE, "// pretend the monitored-file list was quietly narrowed\n");
+  const headSha = commit(repo, "touch the gate script itself");
+  const { status, stderr } = runGate(repo, prEvent(baseSha, headSha));
+  assert.equal(status, 1, stderr);
+  assert.match(stderr, new RegExp(`money-path file changed: ${escapeRegex(GATE_SELF_FILE)}`));
 });

@@ -21,8 +21,10 @@
 // who merges. Do not cite a green gate as evidence that the review was performed.
 //
 // Fail direction: closed in CI (a pull_request event with money files and no
-// valid token is a hard FAIL), open locally (no PR context = advisory notice and
-// PASS, so the local runner stays runnable).
+// valid token is a hard FAIL — and, since #480 rework, a GITHUB_EVENT_PATH that IS
+// set but unreadable/unparseable is ALSO a hard FAIL, not an open fallback), open
+// locally when GITHUB_EVENT_PATH is simply unset (no PR context = advisory notice
+// and PASS, so the local runner stays runnable).
 //
 // The workflow must keep `edited` in its pull_request `types:` — the token is read
 // from the event payload's PR body, and a re-run replays the original payload, so
@@ -69,6 +71,62 @@ const MONEY_PATH_FILES = [
   "apps/web/lib/meta-approval.ts",
   "apps/web/lib/meta-propose.ts",
   "apps/web/lib/meta-graph.ts",
+  // Round 2 (#480 rework, sealed cross-family judge FAIL on PR #482 — comment 5087841805):
+  // the judge independently re-derived the spend graph and found the round-1 list stopped one
+  // hop short of the client in several chains, and missed two whole authorities (RefGen's type
+  // gate, the approval/consent layer) plus the model/margin gate gen-actions.ts calls before it
+  // spends. Every addition below is a hop the judge named, individually re-verified by reading
+  // the cited line ranges before adding.
+  "packages/core/src/refgen.ts",
+  "packages/core/src/gen-from-card.ts",
+  "packages/core/src/model-config.ts",
+  "packages/otto/src/skill.ts",
+  "packages/otto/src/approval-tools.ts",
+  "apps/web/lib/approval-content-hash.ts",
+  "packages/otto/src/skills/run-factory-batch.ts",
+  "apps/web/lib/factory-actions.ts",
+  "packages/otto/src/skills/generate-references.ts",
+  "apps/web/lib/otto-refgen-port.ts",
+  "apps/web/components/asset/DetailPanel.tsx",
+  "apps/web/components/otto/TemplateModal.tsx",
+  "apps/web/components/canvas/useCanvasGen.ts",
+  "apps/web/components/otto/OttoPlanCard.tsx",
+  "apps/web/components/otto/PackCard.tsx",
+  "apps/web/components/otto/StoryboardCard.tsx",
+  "apps/web/components/otto/stuff/AddAssetDialog.tsx",
+  // Real-money verification/dev scripts (judge P0 #2): these are not the product's spend path,
+  // but they ARE code that can move real money the instant someone runs them — a diff that
+  // removes their interlock() guard, points them at a live key by default, or otherwise widens
+  // what they do unattended is exactly the class of change this gate exists to catch. Verified
+  // by reading each file's own `interlock({ spends: … })` declaration (the shared guard prints
+  // and refuses unless I_UNDERSTAND_THIS_SPENDS=yes is set) or, for the two without an interlock
+  // call, by confirming they enqueue directly into the live GEN_QUEUE/REFGEN_QUEUE the real
+  // worker consumes.
+  "scripts/tools/_interlock.mjs",
+  "scripts/tools/prod-real-fal-verify.mjs",
+  "scripts/tools/refgen-moneysafe.mjs",
+  "scripts/tools/test-veo3-sound.mjs",
+  "scripts/tools/i2v-tracer.mjs",
+  "scripts/tools/refgen-tracer.mjs",
+  "apps/web/scripts/verify-reference-video.mjs",
+  "scripts/archive/prod-enhance-draft-verify.mjs",
+  "scripts/archive/prod-pass1-careful.mjs",
+  "scripts/archive/prod-pass2-sloppy.mjs",
+  "scripts/archive/prod-pass3-brute.mjs",
+  "scripts/archive/prod-pass4-power.mjs",
+  "scripts/archive/prod-pass5-mobile.mjs",
+  "scripts/archive/prod-quality-sampler.mjs",
+  "scripts/archive/prod-refgen-verify.mjs",
+  "scripts/archive/cowork-e2e-real.mjs",
+  "scripts/archive/test-cowork-llm.mjs",
+  // Gate self-protection (judge P1 #3): the gate's own mechanism — the workflow trigger, the
+  // runner that dispatches to it, this script, and the human-facing skill doc it mirrors — must
+  // itself be a money-path file. Otherwise a single commit can quietly narrow the list, flip the
+  // fail direction, or drop the job from CI, and that same commit clears itself unreviewed.
+  ".github/workflows/ci.yml",
+  "scripts/ci/run-job.sh",
+  "scripts/ci/check-money-path-review.mjs",
+  ".claude/skills/money-safety-review/SKILL.md",
 ];
 // Why the Otto spend-PARAMETER layer above is listed (added after review round 2, which
 // found the paid call sites covered but this whole layer missing):
@@ -119,23 +177,73 @@ const MONEY_PATH_FILES = [
 // `grep -n "approveMetaActionPlan|maybeAutoRun|classifyMoneyClass"` across apps/ and packages/
 // (excluding node_modules and *.test.ts), plus reading every file this touched.
 //
-// Money-IN: the only CreditAccount/CreditLedger minting call sites, plus the Stripe Checkout
-// entry point that starts a real payment. The skill's Step 1 defers these to the reviewer
-// playbook, so the message points there — but the gate is the same: a money-in diff does not
-// merge unreviewed either.
+// Round-2 additions (#480 rework), by cluster — each hop confirmed by reading the file, not
+// just trusting the judge's line citation:
+//   Approval authority — deriveNeedsApproval (skill.ts) is the ONE place cost==="spend" turns
+//     into "must ask a human first"; APPROVAL_TOOL_NAMES (approval-tools.ts) is the closed set
+//     of tool names the approve/reject matcher will act on, machine-derived so a new gated skill
+//     can't be silently un-approvable OR silently skip approval; approval-content-hash.ts binds
+//     the SHA-256 of what was actually shown to what gets executed — without it, a card minted
+//     for content A could be re-pointed at content B between propose and approve.
+//   RefGen type gate — refgen.ts (packages/core) defines the RefGenJob request boundary and the
+//     paid queue's retry/expiry policy; nothing downstream re-validates a request this rejects.
+//   Factory entrypoints — run-factory-batch.ts declares cost:"spend" (Otto skill classification);
+//     factory-actions.ts is the server action that actually wires `startGen` into the per-cell
+//     batch loop (`orchestrateBatch({ startGen, prisma }, …)`).
+//   Otto RefGen chain — generate-references.ts declares cost:"spend" and is the ONLY skill path
+//     into RefGen; otto-refgen-port.ts forwards straight to startRefGen (already listed) with no
+//     re-validation of its own; AddAssetDialog.tsx (below) is the client that calls startRefGen
+//     directly for the "quick-create from asset" flow, bypassing the Otto skill layer entirely.
+//   Client exactly-once entry points — these generate the idempotencyKey and own the
+//     outcome-unknown retry/replay decision BEFORE the paid server action ever runs; a bug here
+//     (e.g. a re-render that mints a fresh key, or a retry that doesn't preserve one) creates a
+//     real double-charge the server-side dedup can't see because it never receives a duplicate
+//     key to catch. DetailPanel.tsx (regen/animate), TemplateModal.tsx (template runs),
+//     useCanvasGen.ts (canvas gen: freshCanvasActionId + the outcome-unknown replay rule +
+//     startCanvasGen's own call site), OttoPlanCard.tsx / PackCard.tsx / StoryboardCard.tsx (the
+//     three places `coworkGenerate` is actually invoked from a card the user clicked).
+//   gen-from-card.ts (packages/core) — the pure builder `coworkGenerate` uses to turn a
+//     persisted card into the exact genRequest object; already covered indirectly through
+//     cowork-actions.ts, but a change here changes what EVERY cowork spend actually requests.
+//   model-config.ts — assertSpendableModel is the margin-floor / active-model gate `gen-actions.ts`
+//     calls immediately before spending; a model that fails this must never be charged for.
+// Deliberately NOT listed (checked, not assumed): OttoPlanCard's `ottoApprove` companion call is
+// covered because ottoApprove itself lives in otto-actions.ts (already listed); the parking/park
+// side of a card (Otto turns before a human clicks) stays $0 and out of scope, same as cowork's
+// propose side.
+//
+// Money-IN: the only CreditAccount/CreditLedger minting call sites, plus the Stripe Checkout /
+// pricing entry points that start or define a real payment. The skill's Step 1 defers these to
+// the reviewer playbook, so the message points there — but the gate is the same: a money-in diff
+// does not merge unreviewed either.
 const MONEY_IN_FILES = [
   "apps/web/app/api/stripe/webhook/route.ts",
   "apps/web/lib/credit-actions.ts",
   "apps/web/lib/tenant-actions.ts",
   "apps/web/lib/auth-guard.ts",
   "apps/web/lib/billing-actions.ts",
+  // Round 2 (#480 rework): the client entry points that actually START a money-in action, and
+  // the Stripe pricing script that DEFINES what customers can buy. Confirmed by reading each —
+  // BuyPackButton.tsx calls createTopupCheckout (already listed) directly; TenantDetail.tsx and
+  // AdminDashboardV2.tsx are the two admin credit-grant forms, each minting its own
+  // `admin-*-grant:<uuid>` idempotency key client-side before calling the server grant action.
+  "apps/web/components/billing/BuyPackButton.tsx",
+  "apps/web/components/admin/TenantDetail.tsx",
+  "apps/web/components/admin/AdminDashboardV2.tsx",
+  // create-credit-packs.mjs (#480 rework): under ALLOW_LIVE=1 with a live Stripe key this
+  // creates REAL Products/Prices — i.e. it defines what a real customer can buy for real money.
+  "apps/web/scripts/create-credit-packs.mjs",
 ];
 // billing-actions.ts (#480) — createTopupCheckout starts the real Stripe Checkout session a
 // customer pays through; listCreditPacks reads the live Stripe Price catalog that prices it.
 // apps/web/lib/stripe.ts (the Stripe SDK client construction) is deliberately NOT listed — it
 // makes no spend decision, same reasoning as the barrel-export exclusion above.
 const MONEY_PATH_PREFIXES = ["packages/db/prisma/migrations/"];
-const TOKEN = /\[MONEY-SAFETY-REVIEWED:\s*([^\]@]+?)\s*@\s*([0-9a-f]{7,40})\s*\]/i;
+// The SHA group requires exactly 40 hex chars (#480 rework, judge P1 #1): a 7-40 char range
+// combined with startsWith() let a stale-but-correct 7-char PREFIX of a LATER head keep passing
+// forever, and let a reviewer type a short token that just happens to prefix whatever head comes
+// next. The stamp must name the exact head, not a prefix of it — see the equality check below.
+const TOKEN = /\[MONEY-SAFETY-REVIEWED:\s*([^\]@]+?)\s*@\s*([0-9a-f]{40})\s*\]/i;
 const SKILL = ".claude/skills/money-safety-review/SKILL.md";
 const PLAYBOOK = "docs/review/REVIEWER-PLAYBOOK.md";
 
@@ -164,10 +272,18 @@ function ensureCommits(shas) {
 // D (deletion) is in the filter deliberately: deleting credits.ts, a reaper or an
 // idempotency migration is at least as consequential as editing it, and an
 // ACMRT-only filter would let that class of diff through unreviewed.
+//
+// --no-renames is load-bearing (#480 rework, judge P0 #3): with Git's rename detection ON,
+// `--name-only` reports ONLY the destination path of a rename — renaming a listed file
+// (e.g. gen-actions.ts) to any unlisted path made the gate print "no money-path file in this
+// pull request" (verified: PASS, exit 0) while the diff still carried the full old content
+// under the new name. Turning detection off makes Git report a rename as a plain delete of the
+// old path + a plain add of the new path; the 'D' entry for the OLD path still trips a listed
+// file, and the 'A' entry for the new path is exactly what a genuinely new file's diff would be.
 function changedFiles(base, head) {
   const mergeBase = git(["merge-base", base, head], { allowFailure: true });
   const from = mergeBase ? mergeBase.trim() : base;
-  const diff = git(["diff", "--name-only", "--diff-filter=ACDMRT", from, head]);
+  const diff = git(["diff", "--no-renames", "--name-only", "--diff-filter=ACDMRT", from, head]);
   return diff.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
@@ -193,13 +309,18 @@ function reviewPointers(touched) {
   return pointers;
 }
 
+// Distinguishes "no GITHUB_EVENT_PATH at all" (a genuine local run — advisory is correct) from
+// "GITHUB_EVENT_PATH IS set but the file could not be read or parsed" (#480 rework, judge P1
+// #2: this used to collapse both into `null` and fall through to the same open, advisory-only
+// path — a truncated/corrupt event in CI silently cleared the gate instead of failing closed).
+// hasEventFile=true + event=null is now the ONE shape main() treats as a hard failure.
 function readEvent() {
   const path = process.env.GITHUB_EVENT_PATH;
-  if (!path) return null;
+  if (!path) return { hasEventFile: false, path: null, event: null };
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
+    return { hasEventFile: true, path, event: JSON.parse(readFileSync(path, "utf8")) };
+  } catch (error) {
+    return { hasEventFile: true, path, event: null, error };
   }
 }
 
@@ -254,7 +375,19 @@ function localAdvisory() {
 }
 
 function main() {
-  const event = readEvent();
+  const { hasEventFile, path, event, error: readError } = readEvent();
+  // hasEventFile means we ARE in an automated context (GITHUB_EVENT_PATH is set by the runner);
+  // event===null there means the file could not be read or parsed. That is never "no PR
+  // context" — it is a broken CI event, and an unreadable event cannot prove the spend path is
+  // untouched. Fail closed instead of falling through to the open, local-only advisory path.
+  if (hasEventFile && event === null) {
+    fail([
+      `GITHUB_EVENT_PATH is set (${path}) but the event payload could not be read or parsed${readError ? `: ${readError.message}` : ""}`,
+      "failing closed: a broken CI event cannot prove the spend path is untouched",
+    ]);
+    return;
+  }
+
   const pr = event?.pull_request;
   if (!pr?.head?.sha || !pr?.base?.sha) {
     localAdvisory();
@@ -295,7 +428,22 @@ function main() {
     return;
   }
   const [, reviewer, stampedSha] = match;
-  if (!head.toLowerCase().startsWith(stampedSha.toLowerCase())) {
+  // #480 rework, judge P1 #1: "[MONEY-SAFETY-REVIEWED:  @ <sha>]" (a blank/whitespace-only
+  // reviewer) used to match TOKEN and print "reviewed by  at …" — the regex's reviewer group
+  // has to accept whitespace (real names can contain spaces), so this can't be pushed into the
+  // regex without also rejecting legitimate names; check post-match instead.
+  if (!reviewer.trim()) {
+    fail([
+      ...touched.map((file) => `money-path file changed: ${file}`),
+      "the review token names a blank reviewer — name a real reviewer",
+      ...stampInstructions(head),
+    ]);
+    return;
+  }
+  // Exact equality, not startsWith (#480 rework, judge P1 #1): TOKEN now requires a full
+  // 40-char SHA, so this only ever compares two full SHAs — a stale-but-prefix-matching short
+  // token can no longer exist to slip through here.
+  if (head.toLowerCase() !== stampedSha.toLowerCase()) {
     fail([
       ...touched.map((file) => `money-path file changed: ${file}`),
       `the review token names ${stampedSha}, but the current head is ${head}`,
