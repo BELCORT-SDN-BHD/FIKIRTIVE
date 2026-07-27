@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: vi.fn() }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: vi.fn(), resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@fikirtive/db", () => ({ prisma: {
   generation: { findFirst: vi.fn() },
   actionEvent: { create: vi.fn(), findMany: vi.fn() },

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
@@ -44,7 +45,7 @@ vi.mock("ai", () => ({
   },
 }));
 
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonating }));
 vi.mock("@/lib/otto-actions", () => ({
   buildOttoContext: mocks.buildOttoContext,
@@ -375,5 +376,64 @@ describe("POST /api/otto/stream", () => {
       }),
     );
     log.mockRestore();
+  });
+});
+
+/**
+ * #464 B1 acceptance for this route — see `principal-frame-b1.test.ts` for the other seamed
+ * sites and the shared rationale.
+ *
+ * This route is the one site whose frame has to survive PAST the handler's own return: the
+ * pre-stream validation runs inside `runAsUser`, but the paid turn itself runs inside the SSE
+ * `execute` callback, which is still writing after the Response object exists. Both halves are
+ * asserted here. The SDK-side reason the second half works — `ai` invoking `execute` during
+ * `createUIMessageStream` construction — is pinned separately, against the REAL SDK, in
+ * `otto-stream-frame-liveness.test.ts`; this file mocks `ai`, so it can only observe the
+ * consequence, never the cause.
+ */
+describe("POST /api/otto/stream — #464 B1 ambient user frame", () => {
+  it("carries the user frame through pre-stream validation AND into the SSE turn", async () => {
+    const seen: Record<string, Principal | undefined> = {};
+    mocks.projectFindFirst.mockImplementation(async () => {
+      seen.preStream = getPrincipal();
+      return { id: "proj_stream" };
+    });
+    mocks.finalizeOttoRun.mockImplementation(async () => {
+      // Deepest point of the turn: this runs inside `execute`, after the route already returned
+      // its Response, and it is the step that persists the run.
+      seen.insideSseTurn = getPrincipal();
+      return { status: "completed" };
+    });
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+    await res.json();
+
+    for (const [where, principal] of Object.entries(seen)) {
+      expect(principal, `ambient principal missing at ${where}`).toBeDefined();
+      // Explicit kind check: a `runAsTenant` stand-in also carries `ownerId`, and it is exactly
+      // the frame that has lost the actor.
+      expect(principal!.kind, `frame at ${where} is not a user frame`).toBe("user");
+      expect(principal).toMatchObject({
+        kind: "user",
+        ownerId: "org_stream",
+        subjectEmail: "owner@example.com",
+      });
+    }
+    expect(Object.keys(seen).sort()).toEqual(["insideSseTurn", "preStream"]);
+    // The handler's own context is clean once it has returned — `store.run` popped with it.
+    expect(getPrincipal()).toBeUndefined();
+  });
+
+  it("opens no frame when the gate denies", async () => {
+    mocks.requireOwner.mockResolvedValue({ error: "Sign in required." });
+    mocks.projectFindFirst.mockImplementation(async () => {
+      throw new Error("must not be reached");
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "Make a launch post" }));
+
+    expect(res.status).toBe(401);
+    expect(mocks.projectFindFirst).not.toHaveBeenCalled();
   });
 });
