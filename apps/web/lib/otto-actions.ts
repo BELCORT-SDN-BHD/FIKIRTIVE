@@ -54,7 +54,8 @@ import {
   approvalRefOf,
 } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
@@ -1754,22 +1755,25 @@ export async function setCoworkThreadPinned(threadId: string, pinned: boolean): 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true; pinnedAt: string | null } | { error: string }> => {
 
-  try {
-    const thread = await prisma.chatThread.findFirst({
-      where: { id: threadId, ownerId, deletedAt: null },
-      select: { id: true },
-    });
-    if (!thread) return { error: "Conversation not found." };
-    const pinnedAt = pinned ? new Date() : null;
-    const { count } = await prisma.chatThread.updateMany({
-      where: { id: thread.id, ownerId },
-      data: { pinnedAt },
-    });
-    if (!count) return { error: "Conversation not found." };
-    return { ok: true, pinnedAt: pinnedAt ? pinnedAt.toISOString() : null };
-  } catch (e) {
-    console.error("[setCoworkThreadPinned] failed:", errSummary(e));
-    return { error: "Couldn't update the conversation — please try again." };
-  }
+    try {
+      const thread = await prisma.chatThread.findFirst({
+        where: { id: threadId, ownerId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!thread) return { error: "Conversation not found." };
+      const pinnedAt = pinned ? new Date() : null;
+      const { count } = await prisma.chatThread.updateMany({
+        where: { id: thread.id, ownerId },
+        data: { pinnedAt },
+      });
+      if (!count) return { error: "Conversation not found." };
+      return { ok: true, pinnedAt: pinnedAt ? pinnedAt.toISOString() : null };
+    } catch (e) {
+      console.error("[setCoworkThreadPinned] failed:", errSummary(e));
+      return { error: "Couldn't update the conversation — please try again." };
+    }
+  });
 }

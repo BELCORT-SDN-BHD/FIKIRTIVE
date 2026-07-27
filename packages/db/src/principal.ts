@@ -67,23 +67,25 @@ export type Principal =
       /**
        * `User.id`.
        *
-       * RESERVED NULL: no code path currently produces null here. The only producers are the
-       * four CRM gateways, and they throw `ACTION_DENIED` before an unresolved membership can
-       * become a principal (the founder path returns `ownerId: "founder"`, so the membership
-       * `findFirst` misses and the gateway rejects). The field is nullable so ②-B/②-D can add
-       * a producer without a type break — until then, treat null as unreachable, not as a
-       * documented state.
+       * NULL IS NOW REACHABLE (②-B / #464). Under #463 the only producers were the four CRM
+       * gateways, and they throw `ACTION_DENIED` before an unresolved membership can become a
+       * principal, so null was unreachable then. `apps/web/lib/auth-guard.ts`
+       * `resolveUserPrincipal` — the ambient frame's resolver for the bare server actions and
+       * route handlers — must NOT deny (that would be a behaviour change), so it DEGRADES on a
+       * membership miss and leaves this null. The founder-admin path (`ownerId: "founder"`, no
+       * membership row in the founder org) is the live case. Read null as "this frame did not
+       * resolve a membership", never as "no membership exists".
        */
       subjectUserId: string | null;
       subjectEmail: string;
       /** The org being acted upon (the subject org). */
       ownerId: string;
-      /** `Membership.role` in `ownerId`. RESERVED NULL — see `subjectUserId`; no producer today. */
+      /** `Membership.role` in `ownerId`. Null is reachable — see `subjectUserId`. */
       orgRole: "owner" | "admin" | "member" | null;
       /**
        * `Membership.id` of the acting member in `ownerId` — the same id the CRM gateways
        * already hand their services, carried here so a reader needs no second query.
-       * RESERVED NULL — see `subjectUserId`; no producer today.
+       * Null is reachable — see `subjectUserId`.
        */
       membershipId: string | null;
       /** Whether this session is an admin impersonation (compat's `isImpersonating()`). */
@@ -176,8 +178,10 @@ export function runAsSystem<T>(reason: SystemReason, fn: () => T): T {
  * note above it.
  *
  * The practical consequence: only a call site that can WRAP the work it is about to do may
- * establish a user principal. That is why the seam is the four CRM gateways' runRead/runMutation
- * (design contract §2-v2) and not `requireOwner()`, which returns a value and wraps nothing.
+ * establish a user principal. That is why the seam is never `requireOwner()`, which returns a
+ * value and wraps nothing: #463 used the four CRM gateways' runRead/runMutation (design contract
+ * §2-v2), and #464-B1 has each already-guarded export wrap its OWN continuation in `runAsUser`,
+ * with `auth-guard.ts` `resolveUserPrincipal` supplying the frame as a plain value.
  *
  * A frozen DEFENSIVE COPY is stored, never the caller's own object: the caller keeps a mutable
  * reference to what it built, and a later mutation through it must not rewrite the live frame.

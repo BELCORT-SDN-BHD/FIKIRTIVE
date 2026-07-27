@@ -1,5 +1,6 @@
 "use server";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 import { fetchOwnerAdPerformance } from "./meta-performance";
 
 /** Reporting windows accepted at this boundary — the SAME set the Otto skills constrain via zod
@@ -16,5 +17,6 @@ export async function getAdPerformance(datePreset: string) {
   if (!(DATE_PRESETS as readonly string[]).includes(datePreset)) {
     return { error: "Invalid date range." };
   }
-  return fetchOwnerAdPerformance(gate.ownerId, datePreset);
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async () => fetchOwnerAdPerformance(gate.ownerId, datePreset));
 }

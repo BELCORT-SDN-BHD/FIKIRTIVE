@@ -10,7 +10,7 @@ const { mockOwner, mockFindUnique, mockUpsert, mockUpdate, mockDeleteMany, mockF
   mockIsImpersonating: vi.fn(),
 }));
 
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("../auth-guard", async () => ({ requireOwner: mockOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 vi.mock("@fikirtive/db", () => ({
   prisma: { metaConnection: { findUnique: mockFindUnique, upsert: mockUpsert, update: mockUpdate, deleteMany: mockDeleteMany } },

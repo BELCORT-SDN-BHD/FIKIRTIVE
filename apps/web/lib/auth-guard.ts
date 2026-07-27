@@ -2,8 +2,8 @@ import "server-only";
 import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
-import { runAsSystem } from "@fikirtive/db/principal";
-import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, type Section, type Action, type Role } from "@fikirtive/core";
+import { runAsSystem, type UserPrincipal } from "@fikirtive/db/principal";
+import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, isOrgRole, type Section, type Action, type Role } from "@fikirtive/core";
 
 /** In-handler auth (R7): re-assert auth()+allowlist INSIDE every action, not just
  *  at the opt-in proxy wall. Returns the email or an {error} the caller returns
@@ -73,6 +73,60 @@ export async function requireOwner(): Promise<{ email: string; ownerId: string }
   const ownerId = await bootstrapPersonalOrg(user.id, email);
   if (!ownerId) return { error: "Could not set up your workspace — please retry." };
   return { email, ownerId };
+}
+
+/** #464 ②-B — turn a SUCCESSFUL `requireOwner()` gate into the full ambient {@link UserPrincipal}.
+ *
+ *  This is HALF of the B1 seam, and the split is deliberate. `runAsUser` (the frame runner in
+ *  `@fikirtive/db/principal`) is TRANSPARENT — it is exactly `store.run(frame, fn)`, reads
+ *  nothing and decides nothing — which is what lets the CI auth-guard prover analyse
+ *  `runAsUser(p, fn)` as `fn()` in the CALLER's own proof context. A helper that did the DB
+ *  read AND the frame entry in one call would put a Prisma-reaching module between the caller's
+ *  guard and its own body, and the prover would lose the guard→sensitive-op proof across it.
+ *  So the read lives HERE, in a plain value-returning function the caller awaits in its own
+ *  context, and the frame entry stays the registered runner:
+ *
+ *      const gate = await requireOwner(); if ("error" in gate) return gate;
+ *      const principal = await resolveUserPrincipal(gate);
+ *      return runAsUser(principal, async () => { …unchanged body… });
+ *
+ *  ZERO ENFORCEMENT, ZERO BEHAVIOUR CHANGE by construction: it never throws, never denies and
+ *  never short-circuits. The guard call and its `if ("error" in gate) return gate` stay OUTSIDE
+ *  and unchanged, so a denied caller never reaches this function at all.
+ *
+ *  MEMBERSHIP MISS — deliberately DEGRADES, never denies. `requireOwner()` resolves a
+ *  founder-admin session to `ownerId: "founder"`, and that session has no Membership row in the
+ *  founder org, so this lookup legitimately misses. The four CRM gateways answer a miss with
+ *  `ACTION_DENIED`; doing that here would turn a working founder request into an error — a
+ *  behaviour change, which B1 forbids. A miss therefore yields a principal that still names the
+ *  subject and the org (`subjectEmail` + `ownerId`, the two fields tenant scoping actually
+ *  needs) and leaves `subjectUserId` / `orgRole` / `membershipId` null. This is the first
+ *  producer of those documented RESERVED NULLs: read null as "this frame did not resolve a
+ *  membership", NEVER as "no membership exists".
+ *
+ *  `impersonating` — B1 adds NO new `isImpersonating()` round trip. The exports that block
+ *  impersonation already call it and return an error BEFORE the frame opens, so `false` is the
+ *  honest value on those paths; a site that already has the answer passes it explicitly. */
+export async function resolveUserPrincipal(
+  gate: { email: string; ownerId: string },
+  opts: { impersonating?: boolean } = {},
+): Promise<UserPrincipal> {
+  // One query, the same shape and columns the four CRM gateways already resolve.
+  const membership = await prisma.membership.findFirst({
+    where: { orgId: gate.ownerId, status: "active", deletedAt: null, user: { email: gate.email } },
+    select: { id: true, role: true, userId: true },
+  });
+  return {
+    kind: "user",
+    subjectUserId: membership?.userId ?? null,
+    subjectEmail: gate.email,
+    ownerId: gate.ownerId,
+    orgRole: membership && isOrgRole(membership.role) ? membership.role : null,
+    membershipId: membership?.id ?? null,
+    impersonating: opts.impersonating ?? false,
+    // #463/#464 never carry the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).
+    impersonatedByBaUserId: null,
+  };
 }
 
 /** Create (idempotently) a personal Organization + Membership(owner) + CreditAccount with the
