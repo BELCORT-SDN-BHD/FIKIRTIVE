@@ -13,22 +13,43 @@
 // exactly the "stamp it first, add the risky commit after" move the gate exists
 // to prevent. Re-review, re-stamp.
 //
-// What the token is NOT: it is an unauthenticated self-declaration. Anyone who can
-// edit the PR body can type it, and nothing here checks that a review happened or
-// that the named reviewer exists. It defends against FORGETTING, not against a
-// session (or a person) that decides to skip the review on purpose — that boundary
-// is held by project law, by the independent cross-family review, and by the human
-// who merges. Do not cite a green gate as evidence that the review was performed.
+// Round 3 (#480 rework, second sealed cross-family judge FAIL — comment 5088727861,
+// "凭证署名不认证可伪造"): the token used to be read out of the PR BODY, which the PR's own
+// author can edit freely — so the original design note here said plainly "it is an
+// unauthenticated self-declaration... anyone who can edit the PR body can type it." That is no
+// longer true. The token must now appear in a PR COMMENT — never the body, which is no longer
+// read at all — authored by someone OTHER than the PR author, with OWNER/MEMBER/COLLABORATOR
+// standing on this repo (not just any GitHub account: forecloses the "two throwaway accounts"
+// version of self-approval). Comments are read LIVE from the GitHub REST API on every run using
+// the workflow's own default GITHUB_TOKEN — a GitHub login is not something the PR author can
+// forge without controlling that other account. If the API call fails for ANY reason (missing
+// token, network error, non-2xx, malformed response) the gate fails closed: an unreachable
+// review-comment check can no more prove an independent review happened than an unreadable diff
+// can prove the spend path is untouched. What the token STILL is not: it does not check that the
+// reviewer read the diff carefully, only that a qualifying human distinct from the author typed
+// it — that boundary is held by project law, the independent cross-family review, and the human
+// who merges. Do not cite a green gate as evidence that a careful review was performed.
 //
-// Fail direction: closed in CI (a pull_request event with money files and no
-// valid token is a hard FAIL — and, since #480 rework, a GITHUB_EVENT_PATH that IS
-// set but unreadable/unparseable is ALSO a hard FAIL, not an open fallback), open
-// locally when GITHUB_EVENT_PATH is simply unset (no PR context = advisory notice
-// and PASS, so the local runner stays runnable).
+// Why comments-over-API instead of a new `issue_comment` trigger: an `issue_comment` trigger
+// would need its own checkout-security handling (resolving and trusting a head SHA from a
+// comment-triggered context is the classic pwn-request vector) for no real benefit — the
+// comments endpoint is a LIVE call made every time THIS job runs, not a value cached in the
+// stored event payload, so an ordinary `pull_request` re-run (a new commit, or a plain "Re-run
+// jobs" click, which replays the OLD cached payload) still sees a comment posted in between,
+// because only pr.number/pr.user.login/pr.head.sha/pr.base.sha come from that cached payload —
+// none of which is "the thing being updated" when a reviewer comments.
 //
-// The workflow must keep `edited` in its pull_request `types:` — the token is read
-// from the event payload's PR body, and a re-run replays the original payload, so
-// without `edited` a body edit could never reach this gate.
+// Fail direction: closed in CI (a pull_request event with money files and no qualifying
+// review comment is a hard FAIL; a GITHUB_EVENT_PATH that IS set but unreadable/unparseable is
+// ALSO a hard FAIL; GITHUB_EVENT_NAME=pull_request with a payload that parses but has no
+// pull_request.head/base structure is ALSO a hard FAIL; an unreachable/erroring comments API
+// call is ALSO a hard FAIL), open only when GITHUB_EVENT_NAME does not claim a pull_request run
+// at all (a genuine local run, or a legitimate non-PR event like `push`) — advisory notice and
+// PASS, so the local runner stays runnable.
+//
+// The workflow keeps `edited` in its pull_request `types:` for general responsiveness (editing
+// title/body/base still re-runs this job); it is no longer load-bearing for THIS token mechanism
+// specifically, since the comments check is always a live call, not a replay of a cached body.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -119,6 +140,17 @@ const MONEY_PATH_FILES = [
   "scripts/archive/prod-refgen-verify.mjs",
   "scripts/archive/cowork-e2e-real.mjs",
   "scripts/archive/test-cowork-llm.mjs",
+  // Round 3 (#480 rework, second sealed cross-family judge FAIL — comment 5088727861): these
+  // four only refuse `GENERATION_PROVIDER === "fal"`, but apps/worker/src/generation.ts documents
+  // BOTH fal AND byteplus as real-money providers ("byteplus when … (prod, real money); fal when
+  // … (legacy fallback, real money)") — the judge ran one with GENERATION_PROVIDER=byteplus and
+  // confirmed the guard's `rejects` stayed false. All four import handleGen/handleRefGen directly
+  // and drive a real job through it, so a provider-check that only excludes ONE of the two real
+  // providers leaves the other wide open.
+  "scripts/archive/verify-gen-character-no-refs-worker.mjs",
+  "scripts/archive/verify-phaseA-base-worker.mjs",
+  "scripts/archive/verify-phaseB-variant-worker.mjs",
+  "scripts/archive/verify-phaseC-gen-variant-worker.mjs",
   // Gate self-protection (judge P1 #3): the gate's own mechanism — the workflow trigger, the
   // runner that dispatches to it, this script, and the human-facing skill doc it mirrors — must
   // itself be a money-path file. Otherwise a single commit can quietly narrow the list, flip the
@@ -127,6 +159,16 @@ const MONEY_PATH_FILES = [
   "scripts/ci/run-job.sh",
   "scripts/ci/check-money-path-review.mjs",
   ".claude/skills/money-safety-review/SKILL.md",
+  // Round 3 (#480 rework, judge P1 "自保护可被同一提交自删名单解除"): the gate's OWN test file
+  // joins the protected set too — editing it also requires a review token. This closes half of
+  // the self-delete loop; the other half is a SEPARATE, independent assertion that lives ONLY in
+  // that test file (scripts/__tests__/check-money-path-review.test.mjs), not duplicated here on
+  // purpose: the judge's exact probe was "delete the self-protection line from MONEY_PATH_FILES
+  // in the same commit that does the risky thing." A second copy of this list INSIDE this same
+  // file would be defeated by the exact same one-file edit. The independent copy has to live in
+  // a file this deletion does not touch, checking THIS FILE'S SOURCE TEXT rather than importing
+  // it (importing would also re-run main() — this script has no entry-point guard by design).
+  "scripts/__tests__/check-money-path-review.test.mjs",
 ];
 // Why the Otto spend-PARAMETER layer above is listed (added after review round 2, which
 // found the paid call sites covered but this whole layer missing):
@@ -233,6 +275,14 @@ const MONEY_IN_FILES = [
   // create-credit-packs.mjs (#480 rework): under ALLOW_LIVE=1 with a live Stripe key this
   // creates REAL Products/Prices — i.e. it defines what a real customer can buy for real money.
   "apps/web/scripts/create-credit-packs.mjs",
+  // seed-local-qa-data.mjs (round 3, judge P0 "直接 creditAccount.upsert + creditLedger.
+  // createMany"): a direct CreditLedger writer, the skill's own catch-all category. Its
+  // "DATABASE_URL must point at localhost" guard is NOT a code-level guarantee against a real
+  // write — packages/db/src/index.ts builds the actual Prisma connection from
+  // `DATABASE_URL_POOLED || DATABASE_URL`, so a shell that happens to export a real
+  // DATABASE_URL_POOLED (e.g. inherited from a deploy/staging profile) bypasses this script's
+  // check entirely and mints real credits against a real database.
+  "scripts/tools/seed-local-qa-data.mjs",
 ];
 // billing-actions.ts (#480) — createTopupCheckout starts the real Stripe Checkout session a
 // customer pays through; listCreditPacks reads the live Stripe Price catalog that prices it.
@@ -297,7 +347,7 @@ function moneyPaths(files) {
 }
 
 // Which document the reviewer has to open depends on which side of the ledger the
-// diff touches; both sides need the same token in the PR body.
+// diff touches; both sides need the same token in a qualifying PR comment.
 function reviewPointers(touched) {
   const pointers = [];
   if (touched.some((file) => !MONEY_IN_FILES.includes(file))) {
@@ -307,6 +357,107 @@ function reviewPointers(touched) {
     pointers.push(`run the money + admin-auth sections of ${PLAYBOOK} on the money-in diff`);
   }
   return pointers;
+}
+
+// A comment only counts as a review if the commenter has real standing on this repo — not just
+// any GitHub account, which forecloses an attacker using a second, throwaway account to "review"
+// their own PR (round 3, judge P1 "凭证署名不认证可伪造"). GitHub returns author_association on
+// every comment for free (no second API call).
+const QUALIFYING_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+
+// Test-only escape hatch: when set, PR comments are read from this JSON fixture file (an array
+// shaped like the GitHub comments API response) instead of the live API. This is the ONLY way to
+// exercise findQualifyingComment()'s logic and the fail-closed API-error path offline — it is
+// never referenced by ci.yml, so it is never set in the real workflow. Point it at a missing/
+// unparseable path to simulate "the API was unreachable" through the exact same catch block a
+// real network failure hits.
+const COMMENTS_FIXTURE_ENV = "MONEY_PATH_REVIEW_COMMENTS_FIXTURE";
+
+// Fetches the PR's top-level (issue) comments — where a human reviewer posts, as opposed to
+// inline review comments on a specific diff line — authenticated with the job's own default
+// GITHUB_TOKEN. Throws on ANY failure; the caller treats every throw identically: fail closed.
+async function fetchPrComments({ repo, prNumber }) {
+  const fixturePath = process.env[COMMENTS_FIXTURE_ENV];
+  if (fixturePath) {
+    const parsed = JSON.parse(readFileSync(fixturePath, "utf8"));
+    if (!Array.isArray(parsed)) throw new Error(`${COMMENTS_FIXTURE_ENV} must contain a JSON array`);
+    return parsed;
+  }
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("GITHUB_TOKEN is not set — cannot verify PR comments");
+  const url = `https://api.github.com/repos/${repo}/issues/${prNumber}/comments?per_page=100`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub API returned ${response.status} ${response.statusText} for ${url}`);
+  }
+  const parsed = await response.json();
+  if (!Array.isArray(parsed)) throw new Error("GitHub API returned a non-array comments payload");
+  return parsed;
+}
+
+// Scans every comment for one that clears every bar: matches TOKEN, names a non-blank reviewer,
+// binds the exact current head SHA, and comes from someone OTHER than the PR author who has
+// OWNER/MEMBER/COLLABORATOR standing. Returns the first fully-qualifying match, or the most
+// specific rejection reason found across every syntactically-matching comment (priority: stale
+// SHA > blank reviewer > insufficient standing > self-authored > nothing found at all) so the
+// FAIL message is actionable instead of generic.
+function findQualifyingComment(comments, { head, prAuthorLogin }) {
+  let sawSelfAuthored = false;
+  let sawInsufficientStanding = null;
+  let sawBlankReviewer = false;
+  let sawStaleSha = null;
+  for (const comment of comments) {
+    const body = typeof comment?.body === "string" ? comment.body : "";
+    const match = body.match(TOKEN);
+    if (!match) continue;
+    const [, reviewer, stampedSha] = match;
+    const commenterLogin = comment?.user?.login;
+    if (!commenterLogin || commenterLogin === prAuthorLogin) {
+      sawSelfAuthored = true;
+      continue;
+    }
+    if (!QUALIFYING_ASSOCIATIONS.has(comment?.author_association)) {
+      sawInsufficientStanding = { commenterLogin, association: comment?.author_association ?? "NONE" };
+      continue;
+    }
+    if (!reviewer.trim()) {
+      sawBlankReviewer = true;
+      continue;
+    }
+    if (head.toLowerCase() !== stampedSha.toLowerCase()) {
+      sawStaleSha = { commenterLogin, stampedSha };
+      continue;
+    }
+    return { ok: true, reviewer: reviewer.trim(), commenterLogin };
+  }
+  if (sawStaleSha) {
+    return {
+      ok: false,
+      reason: `@${sawStaleSha.commenterLogin} stamped ${sawStaleSha.stampedSha}, but the current head is ${head} — re-review the new commits and re-stamp`,
+    };
+  }
+  if (sawBlankReviewer) {
+    return { ok: false, reason: "a qualifying reviewer's comment names a blank reviewer — name a real reviewer" };
+  }
+  if (sawInsufficientStanding) {
+    return {
+      ok: false,
+      reason: `@${sawInsufficientStanding.commenterLogin} posted a review token but has no OWNER/MEMBER/COLLABORATOR standing on this repo (author_association=${sawInsufficientStanding.association})`,
+    };
+  }
+  if (sawSelfAuthored) {
+    return {
+      ok: false,
+      reason: "a review token was found, but only authored by the PR's own author — someone other than the author must post it",
+    };
+  }
+  return { ok: false, reason: null };
 }
 
 // Distinguishes "no GITHUB_EVENT_PATH at all" (a genuine local run — advisory is correct) from
@@ -334,17 +485,18 @@ function fail(lines) {
   process.exitCode = 1;
 }
 
-// The ONLY sequence that clears this gate. Order matters: the token names the head
-// SHA, so it can only be written after the last commit is pushed, and the body edit
-// is what re-runs CI (the workflow subscribes to the `edited` pull_request action —
-// a plain "Re-run jobs" replays the OLD payload and will keep reading the OLD body).
+// The ONLY sequence that clears this gate. Order matters: the token names the head SHA, so it
+// can only be written after the last commit is pushed. Unlike the old body-token mechanism, no
+// special re-run trick is needed to pick up a new comment — comments are read LIVE from the API
+// on every run, so a plain "Re-run jobs" (which replays the cached event payload) still sees it.
 function stampInstructions(head) {
   return [
     "clear it in this order — any other order cannot go green:",
     "  1. commit and push every change you still intend to make (a later push voids the token)",
     "  2. read the new head SHA:  git rev-parse HEAD",
-    `  3. edit the PULL REQUEST BODY (not a comment) to contain: [MONEY-SAFETY-REVIEWED: <reviewer> @ ${head}]`,
-    "  4. saving the body edit re-runs CI with the new body — do NOT press Re-run jobs, it replays the old payload",
+    `  3. have someone OTHER than the PR's author post a PR COMMENT (not the body, not an inline review comment) containing: [MONEY-SAFETY-REVIEWED: <reviewer> @ ${head}]`,
+    "  4. that reviewer needs OWNER/MEMBER/COLLABORATOR standing on this repo — an outside contributor's comment does not qualify",
+    "  5. re-run the job (or push again, or just wait for the next scheduled trigger) — comments are checked live, no special replay handling needed",
   ];
 }
 
@@ -374,7 +526,7 @@ function localAdvisory() {
   pass("local run is advisory; the same check is fail-closed on the pull request");
 }
 
-function main() {
+async function main() {
   const { hasEventFile, path, event, error: readError } = readEvent();
   // hasEventFile means we ARE in an automated context (GITHUB_EVENT_PATH is set by the runner);
   // event===null there means the file could not be read or parsed. That is never "no PR
@@ -389,7 +541,24 @@ function main() {
   }
 
   const pr = event?.pull_request;
+  // Round 3 (#480 rework, judge P1 "合法空 JSON 事件仍劝告放行"): a well-formed JSON event that
+  // simply lacks the pull_request.head/base structure used to fall straight through to the open,
+  // local-only advisory path — indistinguishable from "not a PR run at all." GITHUB_ACTIONS sets
+  // GITHUB_EVENT_NAME to the actual triggering event unconditionally; if it says "pull_request"
+  // but the payload can't produce head/base SHAs, that is a structurally broken PR event (a
+  // truncated payload, an unexpected schema change, a synthetic/malformed replay), not the
+  // absence of PR context — and an unreadable structure cannot prove the spend path is untouched
+  // any more than unparseable JSON could. Only fall through to localAdvisory() when
+  // GITHUB_EVENT_NAME does not claim this is a pull_request run at all (unset local run, or a
+  // genuine non-PR event like `push`).
   if (!pr?.head?.sha || !pr?.base?.sha) {
+    if (process.env.GITHUB_EVENT_NAME === "pull_request") {
+      fail([
+        "GITHUB_EVENT_NAME=pull_request but the event payload has no pull_request.head/base SHAs",
+        "failing closed: a structurally incomplete pull_request event cannot prove the spend path is untouched",
+      ]);
+      return;
+    }
     localAdvisory();
     return;
   }
@@ -417,42 +586,48 @@ function main() {
     return;
   }
 
-  const body = typeof pr.body === "string" ? pr.body : "";
-  const match = body.match(TOKEN);
-  if (!match) {
+  // Round 3 (#480 rework, judge P1 "凭证署名不认证可伪造"): the token is no longer read from
+  // pr.body (self-editable by the PR author) — it must appear in a qualifying PR comment,
+  // verified live against the GitHub API. See findQualifyingComment() for the exact bar.
+  const prAuthorLogin = pr.user?.login;
+  const prNumber = pr.number;
+  const repo = process.env.GITHUB_REPOSITORY || event?.repository?.full_name;
+  if (!prAuthorLogin || !prNumber || !repo) {
     fail([
       ...touched.map((file) => `money-path file changed: ${file}`),
-      ...reviewPointers(touched),
+      "cannot verify an independent reviewer comment: the PR event is missing author login, PR number, or repository",
+      "failing closed: an incomplete PR identity cannot prove an independent review happened",
+    ]);
+    return;
+  }
+
+  let comments;
+  try {
+    comments = await fetchPrComments({ repo, prNumber });
+  } catch (error) {
+    fail([
+      ...touched.map((file) => `money-path file changed: ${file}`),
+      `could not verify PR review comments: ${error.message}`,
+      "failing closed: an unreachable review-comment check cannot prove an independent review happened",
+    ]);
+    return;
+  }
+
+  const verdict = findQualifyingComment(comments, { head, prAuthorLogin });
+  if (!verdict.ok) {
+    fail([
+      ...touched.map((file) => `money-path file changed: ${file}`),
+      ...(verdict.reason ? [verdict.reason] : reviewPointers(touched)),
       ...stampInstructions(head),
     ]);
     return;
   }
-  const [, reviewer, stampedSha] = match;
-  // #480 rework, judge P1 #1: "[MONEY-SAFETY-REVIEWED:  @ <sha>]" (a blank/whitespace-only
-  // reviewer) used to match TOKEN and print "reviewed by  at …" — the regex's reviewer group
-  // has to accept whitespace (real names can contain spaces), so this can't be pushed into the
-  // regex without also rejecting legitimate names; check post-match instead.
-  if (!reviewer.trim()) {
-    fail([
-      ...touched.map((file) => `money-path file changed: ${file}`),
-      "the review token names a blank reviewer — name a real reviewer",
-      ...stampInstructions(head),
-    ]);
-    return;
-  }
-  // Exact equality, not startsWith (#480 rework, judge P1 #1): TOKEN now requires a full
-  // 40-char SHA, so this only ever compares two full SHAs — a stale-but-prefix-matching short
-  // token can no longer exist to slip through here.
-  if (head.toLowerCase() !== stampedSha.toLowerCase()) {
-    fail([
-      ...touched.map((file) => `money-path file changed: ${file}`),
-      `the review token names ${stampedSha}, but the current head is ${head}`,
-      "the stamp is bound to the head SHA — re-review the new commits and re-stamp",
-      ...stampInstructions(head),
-    ]);
-    return;
-  }
-  pass(`money path reviewed by ${reviewer.trim()} at ${head.slice(0, 12)} (${touched.length} file(s))`);
+  pass(`money path reviewed by ${verdict.reviewer} (@${verdict.commenterLogin}) at ${head.slice(0, 12)} (${touched.length} file(s))`);
 }
 
-main();
+main().catch((error) => {
+  fail([
+    error?.stack ?? String(error),
+    "failing closed: an unexpected error cannot prove the spend path is untouched",
+  ]);
+});
