@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const GUARD_MSG = "Paused while impersonating a customer — exit impersonation to do this.";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner, requireRole: vi.fn(), requireSession: vi.fn() }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, requireRole: vi.fn(), requireSession: vi.fn(), resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 const mockIsImpersonating = vi.fn();
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating, auth: vi.fn() }));
 

@@ -7,7 +7,7 @@ const { mockRequireOwner, mockFetchInsights, mockFetchSeries } = vi.hoisted(() =
   mockFetchSeries: vi.fn(),
 }));
 
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("../meta-insights", () => ({
   fetchOwnerInsights: mockFetchInsights,
   fetchOwnerInsightsSeries: mockFetchSeries,
