@@ -7,6 +7,7 @@
  * No real DB needed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 // ── Hoisted mock primitives (available before vi.mock factories run) ─────────
 
@@ -1825,6 +1826,51 @@ describe("setCoworkThreadPinned", () => {
       where: { id: THREAD_ID, ownerId: OWNER_ID },
       data: { pinnedAt: expect.any(Date) },
     });
+  });
+
+  /**
+   * #464 B1 acceptance for this site — see `principal-frame-b1.test.ts` for the other seamed
+   * sites and the shared rationale. It lives here rather than there because reaching the real
+   * `otto-actions` module needs this file's sixteen mocks.
+   *
+   * The owner-scoped `where` clause above proves the SCOPE; it says nothing about the ambient
+   * identity, which is what #464 adds and what B4 will later enforce on.
+   */
+  it("runs the owner-scoped read AND write inside the ambient user frame (#464 B1)", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    const seen: Record<string, Principal | undefined> = {};
+    mockChatThreadFindFirst.mockImplementation(async () => {
+      seen.read = getPrincipal();
+      return { id: THREAD_ID };
+    });
+    mockChatThreadUpdateMany.mockImplementation(async () => {
+      seen.write = getPrincipal();
+      return { count: 1 };
+    });
+
+    await setCoworkThreadPinned(THREAD_ID, true);
+
+    expect(Object.keys(seen).sort()).toEqual(["read", "write"]);
+    for (const [where, principal] of Object.entries(seen)) {
+      expect(principal, `ambient principal missing at the ${where}`).toBeDefined();
+      // Explicit kind check: a `runAsTenant` stand-in also carries `ownerId`, and it is exactly
+      // the frame that has lost the actor.
+      expect(principal!.kind, `frame at the ${where} is not a user frame`).toBe("user");
+      expect(principal).toMatchObject({ kind: "user", ownerId: OWNER_ID, subjectEmail: GATE.email });
+    }
+    expect(getPrincipal()).toBeUndefined();
+  });
+
+  it("opens no frame when the gate denies (#464 B1)", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Sign in required." });
+    mockChatThreadFindFirst.mockImplementation(async () => {
+      throw new Error("must not be reached");
+    });
+
+    const res = await setCoworkThreadPinned(THREAD_ID, true);
+
+    expect(res).toEqual({ error: "Sign in required." });
+    expect(mockChatThreadFindFirst).not.toHaveBeenCalled();
   });
 });
 

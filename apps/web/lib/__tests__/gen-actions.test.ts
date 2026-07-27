@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
+import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
@@ -1131,6 +1132,98 @@ describe("startGen", () => {
     expect(db.genJobUpdate).not.toHaveBeenCalled();
     expect(db.refundReservation).not.toHaveBeenCalled();
     expect(db.actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #464 B1 acceptance for this site — see `principal-frame-b1.test.ts` for the other seamed
+   * sites and the shared rationale. It lives here rather than there because reaching the real
+   * `gen-actions` module needs this file's mocks.
+   *
+   * `startGen` is the ONE spend authority in the app: the job row and the credit reservation are
+   * created here and nowhere else. So the frame is asserted at the three steps that matter in
+   * order — the owner-scoped project read, the GenJob create, and the credit reservation — not
+   * merely at the entry. A refactor that opened the frame too late (or dropped it before the
+   * reserve) would leave the CHARGE anonymous while the read still looked framed.
+   */
+  it("keeps the ambient user frame live through create AND reserve (#464 B1)", async () => {
+    const seen: Record<string, Principal | undefined> = {};
+    db.projectFindFirst.mockImplementation(async () => {
+      seen.projectRead = getPrincipal();
+      return { id: "p1" };
+    });
+    db.genJobCreate.mockImplementation(async () => {
+      seen.genJobCreate = getPrincipal();
+      return { id: "job_ref" };
+    });
+    db.reserveCredits.mockImplementation(async () => {
+      seen.reserveCredits = getPrincipal();
+      return { ok: true };
+    });
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "framed spend",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "frame-b1-key-1",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(Object.keys(seen).sort()).toEqual(["genJobCreate", "projectRead", "reserveCredits"]);
+    for (const [where, principal] of Object.entries(seen)) {
+      expect(principal, `ambient principal missing at ${where}`).toBeDefined();
+      // Explicit kind check: a `runAsTenant` stand-in also carries `ownerId`, and it is exactly
+      // the frame that has lost the actor — an anonymous charge.
+      expect(principal!.kind, `frame at ${where} is not a user frame`).toBe("user");
+      expect(principal).toMatchObject({
+        kind: "user",
+        ownerId: "org_ref",
+        subjectEmail: "owner@example.test",
+      });
+    }
+    expect(getPrincipal()).toBeUndefined();
+  });
+
+  it("opens no frame — and spends nothing — when the gate denies (#464 B1)", async () => {
+    mockRequireOwner.mockResolvedValue({ error: "Sign in required." });
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "denied",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "frame-b1-key-denied",
+    });
+
+    expect(result).toEqual({ error: "Sign in required." });
+    expect(db.projectFindFirst).not.toHaveBeenCalled();
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("opens no frame — and spends nothing — while impersonating (#464 B1)", async () => {
+    mockIsImpersonating.mockResolvedValue(true);
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "impersonated",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "frame-b1-key-impersonated",
+    });
+
+    expect(result).toEqual({
+      error: "Paused while impersonating a customer — exit impersonation to do this.",
+    });
+    expect(db.projectFindFirst).not.toHaveBeenCalled();
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
   });
 });
 
