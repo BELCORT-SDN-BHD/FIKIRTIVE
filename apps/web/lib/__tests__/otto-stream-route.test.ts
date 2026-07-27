@@ -44,7 +44,7 @@ vi.mock("ai", () => ({
   },
 }));
 
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonating }));
 vi.mock("@/lib/otto-actions", () => ({
   buildOttoContext: mocks.buildOttoContext,

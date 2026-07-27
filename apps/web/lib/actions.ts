@@ -28,7 +28,8 @@ import { getBoss } from "./queue";
 import { buildEntitySnapshot } from "./entity-snapshot";
 import { buildBoardEdit, transitionFor } from "./edit";
 import { getShots, getLooseVideoClips, getMediaPage, type MediaPage } from "./data";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 
 /**
  * M0 server actions. Conventions:
@@ -178,93 +179,96 @@ export async function createProject(name: string): Promise<{ id: string } | { er
 export async function deleteProject(projectId: string): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
-  const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
-  if (!project) return { error: "Project not found." };
-  try {
-    await prisma.$transaction(async (tx) => {
-      const projectLockKey = `project:${project.id}`;
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
-      const activeJobs = await tx.genJob.findMany({
-        where: { ownerId, projectId: project.id, status: { in: ["QUEUED", "GENERATING"] } },
-        select: { id: true, status: true },
-      });
-      if (activeJobs.some((job) => job.status === "GENERATING")) {
-        throw new Error("GENERATION_RUNNING_DURING_DELETE");
-      }
-      for (const job of activeJobs) {
-        const { count } = await tx.genJob.updateMany({
-          where: { id: job.id, ownerId, status: "QUEUED" },
-          data: { status: "FAILED", error: "Cancelled by campaign deletion", finishedAt: new Date() },
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
+    if (!project) return { error: "Project not found." };
+    try {
+      await prisma.$transaction(async (tx) => {
+        const projectLockKey = `project:${project.id}`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
+        const activeJobs = await tx.genJob.findMany({
+          where: { ownerId, projectId: project.id, status: { in: ["QUEUED", "GENERATING"] } },
+          select: { id: true, status: true },
         });
-        if (count !== 1) throw new Error("GENERATION_STARTED_DURING_DELETE");
-        await refundReservation(tx, { orgId: ownerId, refId: job.id });
-      }
-
-      const threads = await tx.chatThread.findMany({
-        where: { ownerId, projectId: project.id },
-        select: { id: true },
-      });
-      const threadIds = threads.map((t) => t.id);
-      if (threadIds.length > 0) {
-        for (const threadId of threadIds) {
-          const threadLockKey = `thread:${threadId}`;
-          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${threadLockKey}, 0::bigint))`;
+        if (activeJobs.some((job) => job.status === "GENERATING")) {
+          throw new Error("GENERATION_RUNNING_DURING_DELETE");
         }
-        const activeResearch = await tx.researchJob.findFirst({
-          where: { ownerId, threadId: { in: threadIds }, status: { in: ["QUEUED", "RUNNING"] } },
+        for (const job of activeJobs) {
+          const { count } = await tx.genJob.updateMany({
+            where: { id: job.id, ownerId, status: "QUEUED" },
+            data: { status: "FAILED", error: "Cancelled by campaign deletion", finishedAt: new Date() },
+          });
+          if (count !== 1) throw new Error("GENERATION_STARTED_DURING_DELETE");
+          await refundReservation(tx, { orgId: ownerId, refId: job.id });
+        }
+
+        const threads = await tx.chatThread.findMany({
+          where: { ownerId, projectId: project.id },
           select: { id: true },
         });
-        if (activeResearch) throw new Error("RESEARCH_RUNNING_DURING_DELETE");
-        await tx.researchJob.deleteMany({ where: { ownerId, threadId: { in: threadIds } } });
-        await tx.chatMessage.deleteMany({ where: { ownerId, threadId: { in: threadIds } } });
-        await tx.chatThread.deleteMany({ where: { ownerId, id: { in: threadIds } } });
-      }
+        const threadIds = threads.map((t) => t.id);
+        if (threadIds.length > 0) {
+          for (const threadId of threadIds) {
+            const threadLockKey = `thread:${threadId}`;
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${threadLockKey}, 0::bigint))`;
+          }
+          const activeResearch = await tx.researchJob.findFirst({
+            where: { ownerId, threadId: { in: threadIds }, status: { in: ["QUEUED", "RUNNING"] } },
+            select: { id: true },
+          });
+          if (activeResearch) throw new Error("RESEARCH_RUNNING_DURING_DELETE");
+          await tx.researchJob.deleteMany({ where: { ownerId, threadId: { in: threadIds } } });
+          await tx.chatMessage.deleteMany({ where: { ownerId, threadId: { in: threadIds } } });
+          await tx.chatThread.deleteMany({ where: { ownerId, id: { in: threadIds } } });
+        }
 
-      const shots = await tx.shot.findMany({
-        where: { ownerId, projectId: project.id },
-        select: { id: true },
-      });
-      const shotIds = shots.map((s) => s.id);
+        const shots = await tx.shot.findMany({
+          where: { ownerId, projectId: project.id },
+          select: { id: true },
+        });
+        const shotIds = shots.map((s) => s.id);
 
-      await tx.canvasNode.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.renderJob.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.captionJob.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.scheduledPost.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.generationBatch.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.genJob.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.generation.deleteMany({ where: { ownerId, projectId: project.id } });
-      if (shotIds.length > 0) {
-        await tx.shotEntityRef.deleteMany({ where: { ownerId, shotId: { in: shotIds } } });
-      }
-      await tx.shot.deleteMany({ where: { ownerId, projectId: project.id } });
-      await tx.actionEvent.deleteMany({ where: { ownerId, projectId: project.id } });
-      const deleted = await tx.project.deleteMany({ where: { id: project.id, ownerId } });
-      if (deleted.count !== 1) throw new Error("Project delete lost owner scope.");
-      await tx.actionEvent.create({
-        data: {
-          id: newId(),
-          ownerId,
-          projectId: null,
-          type: "project.delete",
-          payload: { projectId: project.id, name: project.name, hardDelete: true },
-        },
+        await tx.canvasNode.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.renderJob.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.captionJob.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.scheduledPost.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.generationBatch.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.genJob.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.generation.deleteMany({ where: { ownerId, projectId: project.id } });
+        if (shotIds.length > 0) {
+          await tx.shotEntityRef.deleteMany({ where: { ownerId, shotId: { in: shotIds } } });
+        }
+        await tx.shot.deleteMany({ where: { ownerId, projectId: project.id } });
+        await tx.actionEvent.deleteMany({ where: { ownerId, projectId: project.id } });
+        const deleted = await tx.project.deleteMany({ where: { id: project.id, ownerId } });
+        if (deleted.count !== 1) throw new Error("Project delete lost owner scope.");
+        await tx.actionEvent.create({
+          data: {
+            id: newId(),
+            ownerId,
+            projectId: null,
+            type: "project.delete",
+            payload: { projectId: project.id, name: project.name, hardDelete: true },
+          },
+        });
       });
-    });
-  } catch (e) {
-    if (e instanceof Error && e.message === "GENERATION_RUNNING_DURING_DELETE") {
-      return { error: "A generation is still running in this campaign. Delete it after the generation finishes." };
+    } catch (e) {
+      if (e instanceof Error && e.message === "GENERATION_RUNNING_DURING_DELETE") {
+        return { error: "A generation is still running in this campaign. Delete it after the generation finishes." };
+      }
+      if (e instanceof Error && e.message === "GENERATION_STARTED_DURING_DELETE") {
+        return { error: "A generation started while deleting this campaign. Delete it after the generation finishes." };
+      }
+      if (e instanceof Error && e.message === "RESEARCH_RUNNING_DURING_DELETE") {
+        return { error: "Research is still running in this campaign. Delete it after research finishes." };
+      }
+      console.error("[deleteProject] failed:", e);
+      return { error: "Couldn't delete the campaign — please try again." };
     }
-    if (e instanceof Error && e.message === "GENERATION_STARTED_DURING_DELETE") {
-      return { error: "A generation started while deleting this campaign. Delete it after the generation finishes." };
-    }
-    if (e instanceof Error && e.message === "RESEARCH_RUNNING_DURING_DELETE") {
-      return { error: "Research is still running in this campaign. Delete it after research finishes." };
-    }
-    console.error("[deleteProject] failed:", e);
-    return { error: "Couldn't delete the campaign — please try again." };
-  }
-  revalidatePath("/", "layout");
-  return { ok: true };
+    revalidatePath("/", "layout");
+    return { ok: true };
+  });
 }
 
 /** Rename a project (campaign). Owner-scoped, fail-closed; display-only metadata. */

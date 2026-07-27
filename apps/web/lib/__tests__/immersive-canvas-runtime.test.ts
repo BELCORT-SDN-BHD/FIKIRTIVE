@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: mocks.getOrCreateDefaultProject }));
 vi.mock("@/lib/data", () => ({ getCoworkThreads: mocks.getCoworkThreads, getProjects: mocks.getProjects }));
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));

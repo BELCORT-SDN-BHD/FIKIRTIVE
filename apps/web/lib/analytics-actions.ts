@@ -2,7 +2,8 @@
 import type { AccountMetrics } from "./meta-graph";
 import { fetchOwnerInsights, fetchOwnerInsightsSeries } from "./meta-insights";
 import { RANGES, type RangeKey, buildKpis, buildChart, buildInsightText, type Kpi, type ChartPoint } from "./analytics-view";
-import { requireOwner } from "./auth-guard";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
 
 export type AnalyticsData =
   | { state: "notConnected" }
@@ -46,26 +47,29 @@ export async function getAnalytics(raw: unknown): Promise<AnalyticsData> {
   // prompt (notConnected), not an error.
   const gate = await requireOwner();
   if ("error" in gate) return { state: "notConnected" };
+  const principal = await resolveUserPrincipal(gate);
 
-  const [insightsResult, seriesResult] = await Promise.all([
-    fetchOwnerInsights(gate.ownerId, preset),
-    fetchOwnerInsightsSeries(gate.ownerId, preset),
-  ]);
+  return runAsUser(principal, async (): Promise<AnalyticsData> => {
+    const [insightsResult, seriesResult] = await Promise.all([
+      fetchOwnerInsights(gate.ownerId, preset),
+      fetchOwnerInsightsSeries(gate.ownerId, preset),
+    ]);
 
-  // notConnected takes precedence over needsReconnect (a not-yet-connected owner should
-  // see the connect prompt, never a "reconnect" one).
-  if ("notConnected" in insightsResult || "notConnected" in seriesResult) return { state: "notConnected" };
-  if ("needsReconnect" in insightsResult || "needsReconnect" in seriesResult) return { state: "needsReconnect" };
-  // F37: a transient Graph failure (either shape) surfaces a retry, never a false reconnect.
-  if ("transientError" in insightsResult || "transientError" in seriesResult) return { state: "transientError" };
+    // notConnected takes precedence over needsReconnect (a not-yet-connected owner should
+    // see the connect prompt, never a "reconnect" one).
+    if ("notConnected" in insightsResult || "notConnected" in seriesResult) return { state: "notConnected" };
+    if ("needsReconnect" in insightsResult || "needsReconnect" in seriesResult) return { state: "needsReconnect" };
+    // F37: a transient Graph failure (either shape) surfaces a retry, never a false reconnect.
+    if ("transientError" in insightsResult || "transientError" in seriesResult) return { state: "transientError" };
 
-  const series = seriesResult.series;
-  const totals = insightsResult.accounts.map((a) => a.metrics);
+    const series = seriesResult.series;
+    const totals = insightsResult.accounts.map((a) => a.metrics);
 
-  const kpis = buildKpis(series, totals);
-  const chart = series.length ? buildChart(series, CHART_W, CHART_H) : null;
-  const insight = buildInsightText(series);
-  const empty = series.length === 0 && totals.every(metricsAllNull);
+    const kpis = buildKpis(series, totals);
+    const chart = series.length ? buildChart(series, CHART_W, CHART_H) : null;
+    const insight = buildInsightText(series);
+    const empty = series.length === 0 && totals.every(metricsAllNull);
 
-  return { state: "ready", range, kpis, chart, insight, empty };
+    return { state: "ready", range, kpis, chart, insight, empty };
+  });
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 
 const mockIsImpersonating = vi.fn();
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
