@@ -1,10 +1,30 @@
-# The four CI jobs and the local fallback share scripts/ci/run-job.sh as their only command
+# The five CI jobs and the local fallback share scripts/ci/run-job.sh as their only command
 # source. Deployment is Founder-only; external source triggers and the deployed commit must be
 # queried live rather than inferred from this workflow.
 name: CI
 
 on:
   pull_request:
+    # `edited` is load-bearing, not decoration: scripts/ci/check-money-path-review.mjs reads the
+    # review token out of the pull_request body carried by the event payload, and a re-run replays
+    # the ORIGINAL payload. Without `edited`, adding the token to the PR body would never reach the
+    # gate — the only way to clear it would be a new commit, which changes the head SHA and voids
+    # the SHA-bound token again. Editing the body must be able to re-run CI, or the gate is a trap.
+    #
+    # What `edited` costs, stated in full:
+    #   * GitHub fires `edited` for a TITLE or BASE-BRANCH change too, not only the body, so all
+    #     five jobs re-run on edits that cannot possibly affect the build.
+    #   * `concurrency.cancel-in-progress` below groups by github.ref, so "push, then add the
+    #     token to the body" CANCELS the push-triggered run. A cancelled run is not green, and
+    #     project law clause 2 requires every current-head check to be green — read the LATEST
+    #     run for the head SHA, and re-run the cancelled one if a reviewer needs it green too.
+    # The alternative considered and NOT taken: have the gate fetch the body live
+    # (`gh api repos/{owner}/{repo}/pulls/{n} --jq .body`) instead of reading the event payload,
+    # which would remove the need for `edited` entirely. It is rejected here because it would put
+    # a network call and a GH_TOKEN grant inside a fail-CLOSED gate — an API hiccup would then
+    # block merges, and adding token scope to CI is a permissions change that is Founder-only
+    # (project law clause 6). Revisit only with the Founder, as its own change.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -87,3 +107,20 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: bash scripts/ci/run-job.sh lint
+
+  # Lock 3 (#480, extracted from the #471 archive) — a diff that can move money does not merge
+  # without a named review. Fail-closed on a pull_request event with an unstamped money-path
+  # file; advisory (never blocks) on `push` to main or any run without PR context, since the
+  # skill's Step-1 catch-all and the human `git diff` at review time still cover that case.
+  # This job is NOT wired into required-status-check settings here — that is a repository
+  # setting change and stays Founder-only (project law clause 6 / issue #480's own gate).
+  money-path-review:
+    name: money-path review (spend-path gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bash scripts/ci/run-job.sh money-path-review

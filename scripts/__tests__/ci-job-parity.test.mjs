@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const JOBS = ["check", "test", "web-build", "lint"];
+const JOBS = ["check", "test", "web-build", "lint", "money-path-review"];
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function jobBlocks(workflow) {
@@ -36,7 +36,7 @@ export function parityErrors({ workflow, runbook, runner }) {
   const errors = [];
   const blocks = jobBlocks(workflow);
   if (!assertSetsEqual([...blocks.keys()], JOBS)) {
-    errors.push("workflow jobs must be the closed check/test/web-build/lint set");
+    errors.push("workflow jobs must be the closed check/test/web-build/lint/money-path-review set");
   }
   for (const job of JOBS) {
     const block = blocks.get(job);
@@ -71,12 +71,12 @@ export function parityErrors({ workflow, runbook, runner }) {
     (match) => match[1],
   );
   if (!assertSetsEqual(caseLabels, JOBS)) {
-    errors.push("runner case arms must be the closed check/test/web-build/lint set");
+    errors.push("runner case arms must be the closed check/test/web-build/lint/money-path-review set");
   }
   const guard = runner.match(/^\s{2}([a-z][a-z0-9|_-]*)\) ;;\s*$/m);
   const guardedJobs = guard ? guard[1].split("|") : [];
   if (!assertSetsEqual(guardedJobs, JOBS)) {
-    errors.push("runner argument guard must accept only check/test/web-build/lint");
+    errors.push("runner argument guard must accept only check/test/web-build/lint/money-path-review");
   }
   return errors;
 }
@@ -94,7 +94,7 @@ const actual = {
   runner: readFileSync(join(ROOT, "scripts", "ci", "run-job.sh"), "utf8"),
 };
 
-test("green: workflow and runbook share the four canonical runner commands", () => {
+test("green: workflow and runbook share the five canonical runner commands", () => {
   assert.deepEqual(parityErrors(actual), []);
 });
 
@@ -122,8 +122,8 @@ test("red: changing the runner closed set fails", () => {
   const runner = actual.runner.replace(/^  lint\)$/m, "  lint-extra)");
   assert.match(parityErrors({ ...actual, runner }).join("\n"), /closed/);
   const widenedGuard = actual.runner.replace(
-    "check|test|web-build|lint) ;;",
-    "check|test|web-build|lint|surprise) ;;",
+    "check|test|web-build|lint|money-path-review) ;;",
+    "check|test|web-build|lint|money-path-review|surprise) ;;",
   );
   assert.match(parityErrors({ ...actual, runner: widenedGuard }).join("\n"), /argument guard/);
 });
