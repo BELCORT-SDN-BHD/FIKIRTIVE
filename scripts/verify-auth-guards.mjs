@@ -1025,7 +1025,6 @@ function cloneState(state) {
     adminPending: new Set(state.adminPending),
     returnedDerived: state.returnedDerived,
     returnedPrincipalKind: state.returnedPrincipalKind,
-    returnedPrincipalProperties: new Map(state.returnedPrincipalProperties),
     returnedCapability: state.returnedCapability,
     callLineage: [...state.callLineage],
     discardedResolver: state.discardedResolver,
@@ -1073,7 +1072,6 @@ function dedupeStates(states) {
       [...state.adminPending].sort().join(","),
       state.returnedDerived ? "1" : "0",
       state.returnedPrincipalKind ?? "",
-      principalAuthorityKey(state.returnedPrincipalProperties),
       state.returnedCapability ? "1" : "0",
       state.callLineage.join(","),
       state.discardedResolver ? "1" : "0",
@@ -1126,7 +1124,6 @@ function createState(info) {
     adminPending: new Set(),
     returnedDerived: false,
     returnedPrincipalKind: null,
-    returnedPrincipalProperties: new Map(),
     returnedCapability: false,
     callLineage: [],
     discardedResolver: false,
@@ -2098,53 +2095,6 @@ function principalPropertiesForExpression(
     else properties.delete(name);
   }
   return properties;
-}
-
-// Per-property provenance of a composite RETURN value, using the same rule the scalar
-// return kind uses one level up: a property counts when its value is principal-typed, or
-// when it is an object whose owner identity the callee proved. Any shape the prover cannot
-// enumerate exactly (a spread, a computed key, an unnamed member) proves NOTHING for the
-// whole value — default deny, never a partial guess.
-function returnedPrincipalPropertyKinds(expression, state, derivedExpressions = null) {
-  const node = unwrapped(expression);
-  if (!ts.isObjectLiteralExpression(node)) return new Map();
-  const out = new Map();
-  for (const property of node.properties) {
-    if (ts.isSpreadAssignment(property)) return new Map();
-    if (!property.name || ts.isComputedPropertyName(property.name)) return new Map();
-    const name = propertyNameText(property.name);
-    if (!name) return new Map();
-    let value = null;
-    if (ts.isPropertyAssignment(property)) value = property.initializer;
-    else if (ts.isShorthandPropertyAssignment(property)) value = property.name;
-    if (!value) continue;
-    const kind =
-      principalExpressionKind(value, state, derivedExpressions) ??
-      (principalOwnerAuthorityKind(value, state, derivedExpressions) ? "derived" : null);
-    if (kind) out.set(name, kind);
-  }
-  return out;
-}
-
-// The call node behind an initializer like `await resolvePrincipal()` — the node
-// applyInvokedReturn keyed its proved return provenance on. Returns null for anything that
-// is not a direct call, so nothing dynamic can be mistaken for a proved producer.
-function producerCallExpression(expression) {
-  let node = expression;
-  while (
-    node &&
-    (ts.isParenthesizedExpression(node) ||
-      ts.isAwaitExpression(node) ||
-      ts.isAsExpression(node) ||
-      ts.isNonNullExpression(node) ||
-      ts.isTypeAssertionExpression(node) ||
-      ts.isSatisfiesExpression?.(node))
-  ) {
-    node = node.expression;
-  }
-  if (!node) return null;
-  const unwrappedNode = unwrapped(node);
-  return ts.isCallExpression(unwrappedNode) ? unwrappedNode : null;
 }
 
 function principalCollectionExpressionKind(
@@ -3320,8 +3270,6 @@ class EntryAnalyzer {
     this.internalAllowed = !originInfo.isEntry;
     this.validatedInputCandidates = new Map();
     this.principalDerivedExpressions = new WeakMap();
-    // call node -> Map(propertyName, principal kind) proved by the callee's return value
-    this.principalReturnProperties = new WeakMap();
     this.principalDerivedObjectExpressions = new WeakSet();
     this.trackedCapabilityExpressions = new WeakSet();
     this.capturedBindingInvalidations = new Map();
@@ -5868,21 +5816,6 @@ class EntryAnalyzer {
         : "derived";
       this.principalDerivedExpressions.set(unwrapped(call), kind);
     }
-    // Only properties EVERY normal return path agrees on, with the same kind, reach the
-    // caller. A path that omits a property, or proves a different kind for it, drops it.
-    const returnedPropertyMaps = normalReturns.map(
-      (state) => state.returnedPrincipalProperties ?? new Map(),
-    );
-    if (returnedPropertyMaps.length && returnedPropertyMaps.every((map) => map.size)) {
-      const [firstMap, ...restMaps] = returnedPropertyMaps;
-      const agreed = new Map();
-      for (const [property, propertyKind] of firstMap) {
-        if (restMaps.every((map) => map.get(property) === propertyKind)) {
-          agreed.set(property, propertyKind);
-        }
-      }
-      if (agreed.size) this.principalReturnProperties.set(unwrapped(call), agreed);
-    }
     if (normalReturns.some((state) => state.returnedCapability)) {
       this.trackedCapabilityExpressions.add(unwrapped(call));
     }
@@ -5891,7 +5824,6 @@ class EntryAnalyzer {
       const caller = callerStates[Math.min(index, callerStates.length - 1)];
       next.returnedDerived = caller?.returnedDerived ?? false;
       next.returnedPrincipalKind = caller?.returnedPrincipalKind ?? null;
-      next.returnedPrincipalProperties = new Map(caller?.returnedPrincipalProperties ?? []);
       next.returnedCapability = caller?.returnedCapability ?? false;
       return next;
     });
@@ -5973,16 +5905,6 @@ class EntryAnalyzer {
           );
           const kind = expressionKind ?? (authorityKind ? "derived" : null);
           next.returnedPrincipalKind = kind;
-          // A composite return collapses to ONE scalar kind, which loses the provenance of
-          // each property it carries (e.g. `return { service, ambient }`, where only
-          // `service` is owner-derived). Record the exact per-property kinds the callee
-          // proved so a caller that destructures the result can consume them instead of
-          // starting from nothing. Nothing is granted that the callee did not prove.
-          next.returnedPrincipalProperties = returnedPrincipalPropertyKinds(
-            node.body,
-            state,
-            this.principalDerivedExpressions,
-          );
           next.returnedDerived = kind === "derived";
           return next;
         });
@@ -6818,7 +6740,6 @@ class EntryAnalyzer {
         next.pending = new Set();
         next.returnedDerived = false;
         next.returnedPrincipalKind = null;
-        next.returnedPrincipalProperties = new Map();
         next.returnedCapability = false;
         if (info.path !== callerFrame.info.path) {
           next.principalBindings = new Set();
@@ -7252,16 +7173,6 @@ class EntryAnalyzer {
           );
           const kind = expressionKind ?? (authorityKind ? "derived" : null);
           next.returnedPrincipalKind = kind;
-          // A composite return collapses to ONE scalar kind, which loses the provenance of
-          // each property it carries (e.g. `return { service, ambient }`, where only
-          // `service` is owner-derived). Record the exact per-property kinds the callee
-          // proved so a caller that destructures the result can consume them instead of
-          // starting from nothing. Nothing is granted that the callee did not prove.
-          next.returnedPrincipalProperties = returnedPrincipalPropertyKinds(
-            node.body,
-            state,
-            this.principalDerivedExpressions,
-          );
           next.returnedDerived = kind === "derived";
           next.returnedCapability = this.expressionContainsTrackedCapability(
             frame,
@@ -7635,33 +7546,6 @@ class EntryAnalyzer {
             for (const name of identifierNames(element.name)) next.principalBindings.add(name);
           }
         }
-        // Per-property provenance proved by the callee's own return value. Independent of
-        // the workspace-module rule below: this map is not read off the initializer's shape,
-        // it is what the producer proved on every return path (applyInvokedReturn).
-        if (ts.isObjectBindingPattern(declaration.name)) {
-          const producerCall = producerCallExpression(declaration.initializer);
-          const producedProperties = producerCall
-            ? this.principalReturnProperties.get(producerCall)
-            : null;
-          if (producedProperties) {
-            for (const element of declaration.name.elements) {
-              const sourceName = propertyNameText(
-                element.propertyName ?? element.name,
-              );
-              const propertyKind = sourceName ? producedProperties.get(sourceName) : null;
-              if (!propertyKind) continue;
-              for (const bindingName of identifierNames(element.name)) {
-                if (propertyKind === "binding") {
-                  next.principalBindings.add(bindingName);
-                } else if (propertyKind === "object") {
-                  next.principalObjects.add(bindingName);
-                } else {
-                  next.principalDerivedBindings.add(bindingName);
-                }
-              }
-            }
-          }
-        }
         if (
           ts.isObjectBindingPattern(declaration.name) &&
           this.project.isWorkspacePackageModule(frame.info)
@@ -7746,16 +7630,6 @@ class EntryAnalyzer {
           );
           const kind = expressionKind ?? (authorityKind ? "derived" : null);
           next.returnedPrincipalKind = kind;
-          // A composite return collapses to ONE scalar kind, which loses the provenance of
-          // each property it carries (e.g. `return { service, ambient }`, where only
-          // `service` is owner-derived). Record the exact per-property kinds the callee
-          // proved so a caller that destructures the result can consume them instead of
-          // starting from nothing. Nothing is granted that the callee did not prove.
-          next.returnedPrincipalProperties = returnedPrincipalPropertyKinds(
-            statement.expression,
-            state,
-            this.principalDerivedExpressions,
-          );
           next.returnedDerived = kind === "derived";
           next.returnedCapability = this.expressionContainsTrackedCapability(
             frame,

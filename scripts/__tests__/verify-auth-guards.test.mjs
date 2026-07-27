@@ -61,6 +61,13 @@ const BYPASS_CASES = new Map([
   ["bypass/imported-repository.ts", REASON.MISSING],
   ["bypass/frame-runner-unresolved.ts", REASON.MISSING],
   ["bypass/frame-runner-unused-principal.ts", REASON.MISSING],
+  // Permanent regression guards for the #469 change-two mechanism reverted by #470
+  // (`returnedPrincipalProperties`, per-property provenance of a composite return). Each was
+  // measured on both fences: rejected here, ACCEPTED on a047d7d3 where change two was live. They
+  // are the only fixtures that fail if — and stop failing when — that mechanism comes back.
+  ["bypass/composite-return-client-identity-key.ts", REASON.MISSING],
+  ["bypass/composite-return-nested-spread.ts", REASON.MISSING],
+  ["bypass/composite-return-destructure-arity.ts", REASON.MISSING],
   ["bypass/imported-service.ts", REASON.MISSING],
   ["bypass/internal-entry-param.ts", REASON.MISSING],
   ["bypass/internal-param-optional.ts", REASON.PARAM_OPTIONAL],
