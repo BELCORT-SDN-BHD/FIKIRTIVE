@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 const h = vi.hoisted(() => ({ requireOwner: vi.fn(), fetch: vi.fn() }));
-vi.mock("./auth-guard", () => ({ requireOwner: h.requireOwner }));
+vi.mock("./auth-guard", async () => ({ requireOwner: h.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("./meta-performance", () => ({ fetchOwnerAdPerformance: h.fetch }));
 import { getAdPerformance } from "./meta-performance-actions";
 beforeEach(() => vi.clearAllMocks());

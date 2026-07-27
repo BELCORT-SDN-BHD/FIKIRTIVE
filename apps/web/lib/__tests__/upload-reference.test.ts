@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
   transaction: vi.fn(),
 }));
 
-vi.mock("../auth-guard", () => ({ requireOwner: h.requireOwner }));
+vi.mock("../auth-guard", async () => ({ requireOwner: h.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {

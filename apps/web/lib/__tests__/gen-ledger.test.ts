@@ -30,7 +30,7 @@ import { randomUUID } from "node:crypto";
 import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mockRequireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: vi.fn(async () => false) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../queue", () => ({

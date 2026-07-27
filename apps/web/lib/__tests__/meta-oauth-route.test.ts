@@ -14,7 +14,7 @@ vi.mock("next/server", () => ({
       Response.json(body, { status: init?.status ?? 200 }),
   },
 }));
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/meta-actions", () => ({ completeMetaConnect: mocks.completeMetaConnect }));
 
 const { GET: authorizeGET } = await import("@/app/api/meta/authorize/route");
