@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
-import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+import { runPackApprovalLoop, type PackApprovalOutcome } from "./approval-chain";
 import type { CardState } from "@/lib/otto-inject-helpers";
 import { packTotalCredits, canAffordPack } from "./pack-credit-math";
 
@@ -33,10 +33,12 @@ export interface PackCardProps {
   packTitle: string;
   cards: PackCardItem[];
   balanceUsd: number;
-  /** Called once the loop settles. When an ottoApprove resume parked AGAIN, the
-   *  chained outcome (ids still pending + server's localized receipt) rides along
-   *  so the parent can mark those cards pendingApproval (#498 round-4). */
-  onApproved: (chained?: ChainedApproval) => void;
+  /** Called once the loop settles with at least one successful fire (#498
+   *  round-5): the loop's server-sourced outcome — what actually fired, the
+   *  authoritative still-pending ids, the latest localized receipt, and any
+   *  persisted narration ids — so the parent derives its state from the SAME
+   *  facts (no parent-side re-derivation). */
+  onApproved: (outcome: PackApprovalOutcome) => void;
 }
 
 /** Renders a group of GEN_CARD messages that share a packId as one unit.
@@ -87,65 +89,46 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     setRunning(true);
     setError(null);
 
-    // #498 round-4: an ottoApprove resume mid-loop can park AGAIN (chained
-    // needs_approval). Collect the still-pending ids + the server's localized
-    // receipt across the loop; ids this same loop subsequently fires drop out.
-    const chainedIds = new Set<string>();
-    let chainedNotice: string | null = null;
-    const firedIds = new Set<string>();
-    const collectChained = (): ChainedApproval | undefined => {
-      firedIds.forEach((id) => chainedIds.delete(id));
-      return chainedIds.size > 0
-        ? { pendingCardIds: [...chainedIds], fallbackReply: chainedNotice }
-        : undefined;
-    };
-
-    for (let i = 0; i < idleCards.length; i++) {
-      const c = idleCards[i];
-      setCurrentIdx(i);
-      try {
-        const res = c.pendingApproval
-          ? await ottoApprove({ threadId: c.threadId, cardId: c.cardId })
-          : await coworkGenerate({
+    // #498 round-5: the loop itself is the pure runPackApprovalLoop — ONE
+    // authoritative pending set (seeded from pendingApproval, updated only from
+    // each server response), channel picked AT CALL TIME, and a card the server
+    // re-reports pending is never settled (its approve gate survives). This
+    // component only wires the real server actions and maps outcome → state.
+    const outcome = await runPackApprovalLoop({
+      cards: idleCards,
+      fire: (c, pendingApproval) =>
+        pendingApproval
+          ? ottoApprove({ threadId: c.threadId, cardId: c.cardId })
+          : coworkGenerate({
               cardId: c.cardId,
               prompt: c.p.structuredPrompt ?? "",
               entityIds: Array.isArray(c.p.entityIds) ? c.p.entityIds : [],
               variantSel: c.p.variantSel && typeof c.p.variantSel === "object" ? c.p.variantSel : {},
-            });
-        if (res && "error" in res) {
-          setError(`Card ${i + 1} of ${idleCards.length}: ${res.error}`);
-          setRunning(false);
-          setCurrentIdx(null);
-          // F11: earlier cards in this loop were already charged + started — poll them even
-          // though a later card failed, so their paid results still surface (don't strand them).
-          const chained = collectChained();
-          setChainedReceipt(chained?.fallbackReply ?? null);
-          if (i > 0 || chained) onApproved(chained);
-          return;
-        }
-        const chained = chainedApprovalOf(res);
-        if (chained) {
-          chained.pendingCardIds.forEach((id) => chainedIds.add(id));
-          if (chained.fallbackReply) chainedNotice = chained.fallbackReply;
-        }
-        firedIds.add(c.cardId);
-        setDoneCardIds((prev) => new Set(prev).add(c.cardId));
-      } catch {
-        setError(`Card ${i + 1} of ${idleCards.length} failed — please try again.`);
-        setRunning(false);
-        setCurrentIdx(null);
-        const chained = collectChained();
-        setChainedReceipt(chained?.fallbackReply ?? null);
-        if (i > 0 || chained) onApproved(chained); // F11: poll the earlier already-charged cards
-        return;
-      }
-    }
+            }),
+      onCardStart: (i) => setCurrentIdx(i),
+      onCardSettled: (cardId, cleared) => {
+        // A re-reported-pending card gets no ✓ — it still needs its approval.
+        if (cleared) setDoneCardIds((prev) => new Set(prev).add(cardId));
+      },
+    });
 
     setRunning(false);
     setCurrentIdx(null);
-    const chained = collectChained();
-    setChainedReceipt(chained?.fallbackReply ?? null);
-    onApproved(chained);
+    if (outcome.failure) {
+      const { index, message } = outcome.failure;
+      setError(
+        message
+          ? `Card ${index + 1} of ${idleCards.length}: ${message}`
+          : `Card ${index + 1} of ${idleCards.length} failed — please try again.`,
+      );
+    }
+    // The receipt only makes sense while something is still awaiting approval.
+    setChainedReceipt(outcome.pendingCardIds.length > 0 ? outcome.fallbackReply : null);
+    // F11: earlier cards in this loop were already charged + started — hand the
+    // outcome up even when a later card failed, so their paid results still
+    // surface (don't strand them). Nothing fired ⇒ nothing changed ⇒ no call
+    // (the pending set can only move on a server response).
+    if (outcome.firedCardIds.length > 0) onApproved(outcome);
   }
 
   return (

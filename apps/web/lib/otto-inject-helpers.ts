@@ -147,6 +147,33 @@ export function appendMissingCards(
   return [...messages, ...additions];
 }
 
+/**
+ * #498 round-5 P2c: append the chained park's model NARRATION so it renders live.
+ * A chained ottoApprove resume persists the model's narration as a durable TEXT
+ * via a server action — nothing streams — so the "NEVER append TEXT" rule (which
+ * protects against double-rendering STREAMED replies) starved exactly this
+ * message until a reload. The carve-out is surgical: only the TEXT durables whose
+ * ids the SERVER returned as `narrationMessageId` are appended, deduped by
+ * durableId, so no streamed or already-present text can ever double-render.
+ */
+export function appendChainedNarrations(
+  messages: OttoUiMessage[],
+  fresh: ChatThreadDTO,
+  narrationMessageIds?: readonly string[],
+): OttoUiMessage[] {
+  if (!narrationMessageIds || narrationMessageIds.length === 0) return messages;
+  const wanted = new Set(narrationMessageIds);
+  const present = new Set(
+    messages.map((m) => m.metadata?.durableId).filter((id): id is string => !!id),
+  );
+  const additions = threadToUiMessages(fresh).filter((u) => {
+    const meta = u.metadata;
+    return !!meta && meta.kind === "TEXT" && wanted.has(meta.durableId) && !present.has(meta.durableId);
+  });
+  if (additions.length === 0) return messages;
+  return [...messages, ...additions];
+}
+
 /** Patch in-memory GEN_CARD genJobIds from the durable thread. After "Make it",
  *  coworkGenerate sets genJobId on the durable GEN_CARD; without this the in-memory
  *  copy keeps genJobId=null, hasWorkingJob never flips true, and the result poll

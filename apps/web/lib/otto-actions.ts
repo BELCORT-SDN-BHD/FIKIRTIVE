@@ -669,19 +669,22 @@ const EN_TOKENS = new Set([
   "with", "for", "from", "one", "two", "three",
 ]);
 
-/** Pick the synthesized receipt's language from the merchant's message this turn.
- *  Detection boundaries, honestly:
+/** Decide ONE message's language, honestly admitting when it can't.
+ *  Detection boundaries:
  *   - Han-majority (vs latin letters) → zh, checked FIRST — a mixed CJK+Malay/English
  *    message follows whichever side has more counted characters; kana/hangul are not
  *    counted (not launch markets).
  *   - Otherwise a coarse token vote: Malay-indicative tokens (MS_TOKENS + -kan/-lah/
  *    -nya word forms) vs English-indicative tokens (EN_TOKENS). Strictly more Malay
- *    votes → ms. Malay vs Indonesian is NOT distinguished (shared function words).
- *   - Ties, no recognized tokens, and empty input default to "en" (the UI language).
- *    Short or heavily code-mixed messages often land here; the receipt is then still
- *    honest, just not localized. */
-export function fallbackLangOf(userText: string | null | undefined): FallbackLang {
-  if (!userText) return "en";
+ *    votes → ms; strictly more English votes → en. Malay vs Indonesian is NOT
+ *    distinguished (shared function words).
+ *   - #498 round-5: a mixed-language TIE ("ok teruskan"), no recognized tokens, and
+ *    empty input return null — indecisive — instead of silently defaulting to en.
+ *    The caller falls back to the thread's most recent decisive merchant message
+ *    (resolveFallbackLang below); only a thread with no decisive history lands on
+ *    "en" (the UI language). */
+export function decideFallbackLang(userText: string | null | undefined): FallbackLang | null {
+  if (!userText) return null;
   let cjk = 0;
   let latin = 0;
   for (const ch of userText) {
@@ -696,7 +699,45 @@ export function fallbackLangOf(userText: string | null | undefined): FallbackLan
     if (MS_TOKENS.has(token) || MS_WORD_FORM.test(token)) ms += 1;
     else if (EN_TOKENS.has(token)) en += 1;
   }
-  return ms > en ? "ms" : "en";
+  if (ms > en) return "ms";
+  if (en > ms) return "en";
+  return null;
+}
+
+/** Single-message projection with the UI-language default (no thread history in
+ *  reach — pure). Production receipt paths use resolveFallbackLang instead. */
+export function fallbackLangOf(userText: string | null | undefined): FallbackLang {
+  return decideFallbackLang(userText) ?? "en";
+}
+
+/** How many recent merchant messages the tie fallback may consult. */
+const FALLBACK_LANG_HISTORY_WINDOW = 10;
+
+/** #498 round-5: resolve the receipt language for a thread. The merchant's message
+ *  this turn decides when it can; an indecisive one (mixed-language tie, no
+ *  recognized tokens, or a click with no message — ottoApprove) falls back through
+ *  the thread's recent merchant messages, newest first, to the first decisive one:
+ *  that IS the most recent message's adjudicated language, because a message that
+ *  was itself indecisive was adjudicated from ITS predecessors the same way. Only
+ *  a thread with no decisive history returns "en". Copy only — no spend logic. */
+async function resolveFallbackLang(
+  ownerId: string,
+  threadId: string,
+  userText?: string | null,
+): Promise<FallbackLang> {
+  const direct = decideFallbackLang(userText);
+  if (direct) return direct;
+  const history = await prisma.chatMessage.findMany({
+    where: { threadId, ownerId, role: "USER", kind: "TEXT", deletedAt: null },
+    orderBy: { seq: "desc" },
+    take: FALLBACK_LANG_HISTORY_WINDOW,
+    select: { text: true },
+  });
+  for (const m of history) {
+    const lang = decideFallbackLang(m.text);
+    if (lang) return lang;
+  }
+  return "en";
 }
 
 /** Reply persisted when a run pauses on approvable card(s) with no model narration.
@@ -944,8 +985,9 @@ export async function finalizeOttoRun({
   result: any;
   seqAfterUser: number;
   /** The merchant's message this turn — picks the #498 fallback receipt's language
-   *  (fallbackLangOf: Han-majority → zh, Malay-token majority → ms). Copy only;
-   *  absent → English. */
+   *  (decideFallbackLang: Han-majority → zh, Malay-token majority → ms). Copy only;
+   *  indecisive or absent → the thread's recent merchant messages decide
+   *  (resolveFallbackLang), English only without decisive history. */
   userText?: string | null;
 }): Promise<FinalizeOttoRunResult> {
   const finalization = finalizeOttoTurn(result, ottoInteractiveRuntime);
@@ -992,16 +1034,19 @@ export async function finalizeOttoRun({
     // can surface it too (model-authored text already streamed as deltas; the fallback is
     // only set when no model text exists, so nothing renders twice).
     const assistantText = finalization.text;
-    const lang = fallbackLangOf(userText);
-    const fallbackReply = assistantText
-      ? null
-      : approvals.length > 0
+    let fallbackReply: string | null = null;
+    if (!assistantText) {
+      // #498 round-5: an indecisive message this turn (mixed-language tie) follows
+      // the thread's most recent decisive merchant message; en only without history.
+      const lang = await resolveFallbackLang(ownerId, threadId, userText);
+      fallbackReply = approvals.length > 0
         ? approvalPointerText({
             cardCount: approvals.length,
             allGenerate: approvals.every((a) => a.toolName === "generate"),
             lang,
           })
         : interruptedFallbackText(lang);
+    }
     const visibleText = assistantText || fallbackReply;
     if (visibleText) {
       await prisma.chatMessage.create({
@@ -1265,7 +1310,7 @@ export async function ottoTurn(raw: unknown): Promise<
 
 export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "done"; reply: string; genJobId?: string }
-  | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null }
+  | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
@@ -1556,17 +1601,13 @@ export async function ottoApprove(raw: unknown): Promise<
       // CAS won — persist any assistant text produced before the interruption.
       // #498 P1a: the RESUMED run can park again with ZERO narration — the exact
       // main-path silence, one click deeper. Synthesize the same honest receipt:
-      // the language follows the merchant's latest message (an approve is a click,
-      // not a message), and the promise follows what confirming actually does.
+      // the language follows the merchant's recent messages (an approve is a click,
+      // not a message; #498 round-5: an indecisive latest message falls back through
+      // the thread history), and the promise follows what confirming actually does.
       const assistantText = finalization.text;
       let fallbackReply: string | null = null;
       if (!assistantText) {
-        const lastUserMsg = await prisma.chatMessage.findFirst({
-          where: { threadId, ownerId, role: "USER", kind: "TEXT", deletedAt: null },
-          orderBy: { seq: "desc" },
-          select: { text: true },
-        });
-        const lang = fallbackLangOf(lastUserMsg?.text);
+        const lang = await resolveFallbackLang(ownerId, threadId, null);
         fallbackReply = chainedApprovals.length > 0
           ? approvalPointerText({
               cardCount: chainedApprovals.length,
@@ -1575,16 +1616,23 @@ export async function ottoApprove(raw: unknown): Promise<
             })
           : interruptedFallbackText(lang);
       }
+      // #498 round-5 P2c: when the model DID narrate, the text used to land in the
+      // DB only — the approve response carried fallbackReply: null and the client
+      // showed nothing until a reload. Return the persisted narration's durable id
+      // so the post-approve poll can inject that exact TEXT message live (the
+      // approve path streams nothing, so injecting it can never double-render).
       const visibleText = assistantText || fallbackReply;
+      let narrationMessageId: string | null = null;
       if (visibleText) {
         const seq = await prisma.chatMessage.findFirst({
           where: { threadId, ownerId },
           orderBy: { seq: "desc" },
           select: { seq: true },
         });
+        const visibleTextId = newId();
         await prisma.chatMessage.create({
           data: {
-            id: newId(),
+            id: visibleTextId,
             threadId,
             ownerId,
             role: "AGENT",
@@ -1593,6 +1641,9 @@ export async function ottoApprove(raw: unknown): Promise<
             text: visibleText,
           },
         });
+        // fallbackReply keeps its round-4 display channel (the card's own receipt
+        // line); only model narration rides the id for live chat injection.
+        if (assistantText) narrationMessageId = visibleTextId;
       }
 
       // Durable approval cards for chained non-generate gated asks (B4 debt-70 5.1·附①).
@@ -1612,7 +1663,7 @@ export async function ottoApprove(raw: unknown): Promise<
       }
 
       revalidatePath("/", "layout");
-      return { ok: true, status: "needs_approval", pendingCardIds, fallbackReply };
+      return { ok: true, status: "needs_approval", pendingCardIds, fallbackReply, narrationMessageId };
     }
 
     // Completed — persist Otto's reply + updated ottoState (CAS guard)

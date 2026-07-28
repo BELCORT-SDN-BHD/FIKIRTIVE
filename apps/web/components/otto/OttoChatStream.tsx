@@ -23,7 +23,7 @@ import {
   appendResearchReports,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
-import { mergeDurableIntoLive, nextPendingApprovalCardIds, type ChainedApproval } from "./approval-chain";
+import { mergeDurableIntoLive, nextPendingApprovalCardIds, type PackApprovalOutcome } from "./approval-chain";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -335,17 +335,20 @@ export function OttoChatStream({
 
   // Refetch the durable thread and inject any new worker-output messages
   // (GEN_RESULT / TURN_ERROR) AND any card-kind durables missing from the list
-  // into the useChat list, deduped by durableId. NEVER re-injects TEXT — the
-  // streamed reply already rendered. Cards matter here (#498 round-4): a chained
-  // ottoApprove re-park persists NEW GEN_CARDs via a server action (no live
-  // stream part), so the post-approve poll is what makes them render.
-  async function pollAndInjectResults() {
+  // into the useChat list, deduped by durableId. Streamed TEXT is never
+  // re-injected; the ONLY TEXTs appended are the chained-park narration ids the
+  // server returned (#498 round-5 P2c — a server action streams nothing, so
+  // without this the model's narration hid until a reload). Cards matter here
+  // (#498 round-4): a chained ottoApprove re-park persists NEW GEN_CARDs via a
+  // server action (no live stream part), so the post-approve poll is what makes
+  // them render.
+  async function pollAndInjectResults(narrationMessageIds?: readonly string[]) {
     const fresh = await getCoworkThreadClient(thread.id);
     if (!fresh) return;
     const prevResultCount = messages.filter(
       (m) => m.metadata?.kind === "GEN_RESULT" || m.metadata?.kind === "TURN_ERROR",
     ).length;
-    setMessages((cur) => mergeDurableIntoLive(cur, fresh));
+    setMessages((cur) => mergeDurableIntoLive(cur, fresh, narrationMessageIds));
     onThreadUpdate(fresh);
     // A new terminal result landed → a generation settled and credits were spent.
     const freshResultCount = fresh.messages.filter(
@@ -815,26 +818,29 @@ export function OttoChatStream({
                     pendingApproval: pendingApprovalCardIds.has(durableId),
                   };
                 });
-                const packApproved = (chained?: ChainedApproval) => {
-                  const durableIds = msgs.map((m) => m.metadata!.durableId);
-                  const stillPending = new Set(chained?.pendingCardIds ?? []);
-                  // A card the server reports as STILL pending (chained) must not be
-                  // marked submitted — that would render it "working" and bury its
-                  // approve gate.
+                const packApproved = (outcome: PackApprovalOutcome) => {
+                  // #498 round-5: parent state derives from the SAME server-sourced
+                  // outcome the pack loop ran on — never a parent-side re-derivation.
+                  const stillPending = new Set(outcome.pendingCardIds);
+                  // Submitted = actually fired AND not re-reported pending. A card the
+                  // server reports as STILL pending must not be marked submitted —
+                  // that would render it "working" and bury its approve gate; a card
+                  // the loop never reached stays exactly as it was.
                   setSubmittedCardIds((cur) => {
                     const next = new Set(cur);
-                    durableIds.forEach((id) => { if (!stillPending.has(id)) next.add(id); });
+                    outcome.firedCardIds.forEach((id) => { if (!stillPending.has(id)) next.add(id); });
                     return next;
                   });
-                  // #498 round-4: drop the approved pack cards from pending; ADD any
-                  // chained ids so the re-park's cards render pendingApproval=true and
-                  // their clicks resume via ottoApprove (never coworkGenerate).
+                  // Drop the FIRED cards from pending; ADD the authoritative ids so a
+                  // re-park's cards render pendingApproval=true and their clicks
+                  // resume via ottoApprove (never coworkGenerate).
                   setPendingApprovalCardIds((cur) =>
-                    nextPendingApprovalCardIds(cur, durableIds, chained?.pendingCardIds),
+                    nextPendingApprovalCardIds(cur, outcome.firedCardIds, outcome.pendingCardIds),
                   );
                   rearmGenerationPoll();
                   void onBalanceRefresh?.();
-                  void pollAndInjectResults();
+                  // The poll also injects any chained-park narration live (P2c).
+                  void pollAndInjectResults(outcome.narrationMessageIds);
                 };
                 return (
                   <WidgetRow key={`pack:${packId}`} animateIn={animateIn}>
@@ -900,7 +906,10 @@ export function OttoChatStream({
                       rearmGenerationPoll();
                       // An approve reserves credits — refresh the nav balance immediately.
                       void onBalanceRefresh?.();
-                      void pollAndInjectResults();
+                      // #498 round-5 P2c: inject the chained park's model narration live.
+                      void pollAndInjectResults(
+                        chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
+                      );
                     }}
                     onChangeSomething={(seed) => {
                       const ta = document.getElementById("otto-composer") as HTMLTextAreaElement | null;

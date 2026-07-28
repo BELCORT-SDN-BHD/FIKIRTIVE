@@ -70,7 +70,8 @@ export function OttoPlanCard({
    *  needs_approval) — the story didn't end with this card, and hiding that is the
    *  same silent death one click deeper. Holds the SERVER's localized receipt
    *  (fallbackReply) verbatim; null when no chained pause was observed OR the model
-   *  narrated its own text (that text is durable and shows on reload/poll). */
+   *  narrated its own text (round-5: the parent injects that narration into the
+   *  chat live via its narrationMessageId — see pollAndInjectResults). */
   const [chainedReceipt, setChainedReceipt] = useState<string | null>(null);
 
   useEffect(() => {
