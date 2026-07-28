@@ -2,6 +2,42 @@ import Link from "next/link";
 
 export const metadata = { title: "Terms · Fikirtive" };
 
+/** 事实基线:每条运营性陈述均可在代码中核对(见 legal/requirements-and-audit.md)。
+ *  本页故意不含适用法/管辖、保证免责、责任限制、赔偿、知识产权归属等条款 ——
+ *  那些是律师起草范围,清单见 legal/files/FOUNDER-DECISIONS.md。免登录(proxy.ts 放行)。
+ *
+ *  2026-07-28 真实性核验轮(legal/TRUTH-CHECK.md)后的修订:
+ *   B1 删掉「可暂停自然发布」—— 只有广告那一半有 setter(meta-write-actions.ts:21-27)与按钮
+ *      (OttoConnections.tsx:206-210);`organicPublishPaused` 全仓无写入者。
+ *   L1 适用法句搬出正文 → FOUNDER-DECISIONS L1。
+ *   L2 「告知顾客的义务在商家」这条定性搬出正文 → FOUNDER-DECISIONS L2;
+ *      正文只留能力事实(无收发通道:customer-inbox-service.ts:1243、
+ *      customer-broadcast-service.ts:794;同意状态只是商家自述:crm-actions.ts:190)。
+ *
+ *  2026-07-28 第三轮(写入点规则)—— 本页逐句过了同一把尺子:凡描述数据或商家控制的句子,
+ *  都要能指到一个真实商家用得到的生产写入点。本页无需改动,写入点如下:
+ *   邀请与撤销 tenant-actions.ts:88(upsert invited)、:97(status revoked);
+ *   点数预留/结算/退回 packages/db/src/credits.ts:42、:77、:100、:124;
+ *   审批过期不执行 otto-actions.ts:1205-1208、:1558-1561;
+ *   Stripe 托管结账 billing-actions.ts:65(仅 customer_email :72 与所选价目 :67 出境);
+ *   审核通过前拒发 channels/meta-publish-adapter.ts:40-43(canPublish 由 Meta 实授权导出,
+ *   meta-actions.ts:29-31);暂停广告写入 meta-write-actions.ts:25 + 按钮 OttoConnections.tsx:202-212;
+ *   账号删除按钮只开邮件 components/otto/OttoAccount.tsx:51。
+ *  提醒:本页仍**没有**任何「暂停自然发布」措辞 —— 那一列至今零写入者(B1 已剪,勿回填)。
+ *
+ *  2026-07-28 第四轮:剪掉 reels/stories「我们会在排期时间提醒你」那一条。
+ *   为什么是假的:`PublishMode` 只是类型(channels/types.ts:5);`ScheduledPost` 没有 `postType` 列
+ *   (schema.prisma:2107-2143),所以没人能把一条贴文标成 reel/story;`publishMode` 唯一写入是
+ *   硬编码 "AUTO"(schedule-service.ts:67),"REMINDER" 从未被写过;IG 贴文四处强制 image-only
+ *   (schedule-service.ts:48-50、schedule-actions.ts:210、:228、:358),reel/story 根本排不进来;
+ *   `apps/web/lib/channels/` 那个注册表(reminder 语义所在)**零生产调用者**,worker 直接在
+ *   publish.ts:429-439 发布,没有 reel/story 分支;全仓无 Notification/Reminder 模型,
+ *   唯一外发邮件是登录邮件(better-auth/sender.ts:29)。**没有任何提醒会到达商家。**
+ *   改成真实机制并新增一条:发不出去 → lastError + NEEDS_ATTENTION(publish.ts:556、:500、:610、
+ *   :640、:742),商家在排期里看到「Needs attention — <原因>」(OttoSchedule.tsx:1350-1352)。
+ *   注意:这里只否定 reel/story 与提醒,**不写**「其他一律排不进来」——Facebook 贴文没有 mime 白名单,
+ *   带视频的 FB 贴文排得进去(只是发布时会失败),写成全称命题就又造一句假话。
+ *  另:「暂停自然发布」与「提醒」是同一个病灶的两面 —— 都是「schema/类型里有,产品里没有」。*/
 export default function TermsPage() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
@@ -11,43 +47,113 @@ export default function TermsPage() {
         </Link>
         <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Fikirtive Terms</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Fikirtive is an invite-only beta marketing workspace. These terms are a plain-language summary for beta users.
+          Effective 28 July 2026 · Last updated 28 July 2026
+        </p>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Fikirtive is an invite-only beta marketing workspace operated by BELCORT SDN BHD, a company registered in
+          Malaysia. These terms describe how the product actually behaves during the beta, in plain language.
         </p>
 
         <section className="mt-8 space-y-4 text-[15px] leading-7 text-muted-foreground">
-          <h2 className="text-lg font-semibold text-foreground">Using Fikirtive</h2>
+          <h2 className="text-lg font-semibold text-foreground">Getting access</h2>
           <p>
-            You are responsible for the prompts, uploaded files, brand material, campaign decisions, and external
-            accounts you connect. Only upload content you own or have permission to use.
+            Access is by invitation. Sign-in is refused for any email address that is not on our invite list, whichever
+            sign-in method you use, and an invitation can be revoked. Continuing past the sign-in screen is how you
+            accept these terms and the{" "}
+            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link>.
+          </p>
+
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Using Fikirtive</h2>
+          <p>
+            You are responsible for the prompts, uploaded files, brand material, contacts, campaign decisions and
+            external accounts you connect. Only upload content you own or have permission to use.
           </p>
           <p>
             Otto can draft marketing ideas and prepare generation or ad actions, but you remain responsible for
             reviewing outputs before publishing or spending on external platforms.
           </p>
 
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Your customers&apos; details</h2>
+          <p>
+            When you add or import contact details, you are giving us other people&apos;s information. Fikirtive records
+            the consent state you tell it — it cannot verify that consent exists.
+          </p>
+          <p>
+            Fikirtive does not send messages to your customers and does not receive messages from them. There is no live
+            sending or receiving path in the product today; the message workbench runs simulated sends only. We have no
+            relationship with your customers and no way to contact them, so we cannot notify them for you.
+          </p>
+
           <h2 className="pt-4 text-lg font-semibold text-foreground">Credits and paid actions</h2>
           <p>
-            Fikirtive shows credit costs before paid generation actions. Credits are reserved before work starts and
-            settled or refunded by the credit ledger when the job finishes or fails.
+            Generation costs money, and it is paid for with credits. Credits are reserved before work starts, and then
+            either settled at the actual cost or refunded to your balance when the job finishes or fails — the credit
+            ledger records every reservation, settlement and refund, and your balance can be reconstructed from it.
           </p>
           <p>
-            Credit purchases, Stripe checkout, Meta ads, and other third-party services may also be governed by those
-            providers&apos; terms, fees, and platform rules.
+            Otto cannot spend on its own. Any action that costs money pauses and waits for your explicit approval before
+            it runs, and an unanswered approval request expires rather than proceeding.
           </p>
+          <p>
+            Credit purchases run through a Stripe-hosted checkout page. Credit purchases, Stripe checkout, Meta ads and
+            other third-party services are also governed by those providers&apos; terms, fees and platform rules.
+          </p>
+
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Publishing to social platforms</h2>
+          <p>
+            How a scheduled post reaches a platform depends on the post type and on what the platform has approved for
+            us:
+          </p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>
+              Some post types can be published automatically — Instagram feed images and carousels, and Facebook feed
+              posts.
+            </li>
+            <li>
+              Instagram reels and stories are not supported today. An Instagram post has to be an image, and the product
+              has no reel or story option, so they cannot be scheduled at all. Fikirtive does not send reminders to post.
+            </li>
+            <li>
+              If a scheduled post cannot be published, it is marked as needing attention and the reason is shown on that
+              post inside Fikirtive. Nothing is sent to you — opening your schedule is how you find out.
+            </li>
+            <li>
+              Automatic publishing and ad writes stay switched off for your connection until Meta&apos;s app review has
+              actually granted the matching permissions. Until then those actions are refused rather than attempted.
+            </li>
+            <li>
+              You can pause ad writes at any time from the Connections screen, without disconnecting.
+            </li>
+          </ul>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Beta availability</h2>
           <p>
-            The product is still changing. Features, prices, provider availability, and limits may change as the beta
-            continues. If something looks wrong, stop using the affected feature and contact the Fikirtive team through
-            your invite thread.
+            The product is still changing. Features, prices, provider availability and limits may change as the beta
+            continues. If something looks wrong, stop using the affected feature and email{" "}
+            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
+          </p>
+
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Support and deleting your account</h2>
+          <p>
+            Support, data requests and account deletion all go to{" "}
+            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>. Account
+            deletion is handled by a person: the button in Account opens that email and does not delete anything by
+            itself. See the{" "}
+            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link> and{" "}
+            <Link href="/legal/data-deletion" className="underline underline-offset-4">data deletion</Link>.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Who you are dealing with</h2>
+          {/* 现行线上页在这里有一句「These beta terms are governed by the laws of Malaysia.」——
+              适用法是已定的法律立场,按本轮约束不留在页面正文 → FOUNDER-DECISIONS.md L1
+              (逐字保留在那里,Founder/律师决定是否原样放回,并同批补齐争议解决条款)。
+              注意:这是对线上现状的改动,发布前需要 Founder 明确点头。*/}
           <p>
-            Fikirtive is operated by Belcort Sdn. Bhd. (Malaysia). These beta terms are governed by the laws of
-            Malaysia. Questions:{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>. See also our{" "}
-            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link>.
+            Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. Questions:{" "}
+            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
+          </p>
+          <p>
+            We update this page as the product changes, and change the effective date at the top when we do.
           </p>
         </section>
       </article>
