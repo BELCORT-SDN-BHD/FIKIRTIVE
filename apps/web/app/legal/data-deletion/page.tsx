@@ -26,7 +26,21 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *  2026-07-28 第三轮(写入点规则):本页逐句过尺,无未支撑主张。删除机制
  *  route.ts:38-39 验签、:47-50 按 metaUserId 查、:54 删连接行、:75-77 才随 200 发码;
  *  整账户删除的按钮只打开邮件(components/otto/OttoAccount.tsx:51,标题
- *  "Request account deletion" :40)。*/
+ *  "Request account deletion" :40)。
+ *
+ *  2026-07-28 第五轮(跨族复审返工):
+ *   P0-2 删除/保留如实化:route.ts 只删 MetaConnection(连接+加密 token)并写一条
+ *        ActionEvent("meta.data_deletion",含确认码);发布历史(ScheduledPost 的
+ *        metaTargetId/metaPostId、PublishAttempt 的帖子/素材标识)与操作审计记录
+ *        (ActionEvent,含删除请求本身)保留 —— 页面两个分支都平实写明,不辩解、不承诺将来。
+ *        保留范围的例外分类待 Founder/法务批准;#489 收口后本页需复查。
+ *   P1-8 本页对任意非空 code 都渲染同一段文案(不查库),因此措辞不再自称验证入口或
+ *        宣告「complete」状态:如实说明本页介绍删除流程,确认码是收到请求的回执
+ *        (路由行为改动归 #489,不在本页范围)。
+ *   P1-3 整账户删除段收敛为「联系我们提出请求」,不承诺时限与流程。
+ *   P1-4 快照句改滚动清理措辞(db-backup.ts:76/145/171)。
+ *   P1-6 「because they are yours and are not held on Meta's behalf」归属断言删去,只述行为。
+ *   P2-1 Privacy policy 链接文字 sentence case。*/
 export default async function DataDeletionPage({
   searchParams,
 }: {
@@ -37,7 +51,7 @@ export default async function DataDeletionPage({
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
       <article className="mx-auto max-w-[720px]">
         <Link href="/privacy" className="text-sm font-semibold text-muted-foreground underline underline-offset-4">
-          Privacy Policy
+          Privacy policy
         </Link>
         <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Data deletion</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
@@ -53,56 +67,60 @@ export default async function DataDeletionPage({
                 <code className="rounded bg-muted px-1.5 py-0.5 text-[13px] text-foreground">{code}</code>
               </p>
               <p>
-                <span className="font-semibold text-foreground">
-                  Status: if you reached this page from Meta&apos;s link, the request that code belongs to is complete.
-                </span>{" "}
-                Fikirtive issues a code like this one only after it has finished processing the deletion request Meta
-                sent us — so receiving the code is the confirmation. When Meta told us you removed Fikirtive, we looked
-                for the Meta connection stored against your Meta user ID and deleted it, together with the access token
-                we held for it. If we held no such connection, there was nothing to delete. Either way the request is
-                closed: nothing is queued or pending.
+                This code is the receipt Fikirtive returned to Meta for a deletion request it received. This page
+                explains what such a request does; it does not look the code up or verify it.
               </p>
               <p>
-                This page does not verify the code you are looking at — it shows what the code means. If you typed or
-                pasted a code by hand, or you think something was missed, email{" "}
-                <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> quoting the
-                code and we will check what happened for you.
+                When Meta sends us a deletion request, we delete the stored Meta connection for that Meta user ID,
+                including its access token. Some records are not deleted by this request: scheduled posts keep the Meta
+                account and post identifiers in their publish history, publish attempts keep their post and media
+                identifiers, and audit records — including the record of the deletion request itself — are kept.
+              </p>
+              <p>
+                To have us check a specific request, or to ask about anything beyond the Meta connection, email{" "}
+                <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> quoting
+                the code.
               </p>
             </>
           ) : (
             <>
               <h2 className="text-lg font-semibold text-foreground">How Meta deletion requests work here</h2>
               <p>
-                When you remove Fikirtive from your Facebook settings, Meta sends us a signed deletion request. We look
-                for the Meta connection stored against your Meta user ID and delete it, together with the access token
-                we held for it. We then return a confirmation code to Meta, along with a link back to this page that
-                carries the code.
+                When you remove Fikirtive from your Facebook settings, Meta sends us a signed deletion request. We
+                delete the Meta connection stored against your Meta user ID, together with the access token we held for
+                it, and return a confirmation code to Meta along with a link back to this page that carries the code.
+                The code is the receipt for a request we received.
               </p>
               <p>
-                Because the code is issued only after that work is done, opening Meta&apos;s link is what shows you the
-                status. This page has no lookup form: if you hold a code but not the link, email{" "}
+                Some records are not deleted by this request: scheduled posts keep the Meta account and post
+                identifiers in their publish history, publish attempts keep their post and media identifiers, and audit
+                records — including the record of the deletion request itself — are kept.
+              </p>
+              <p>
+                This page has no lookup form and does not verify codes. To have us check a specific request, email{" "}
                 <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> with the
-                code and we will check what happened for you.
+                code.
               </p>
               <p>
-                Deleting the Meta connection does not delete the rest of your workspace. Your uploads, generated media,
-                campaigns and contacts stay in Fikirtive, because they are yours and are not held on Meta&apos;s behalf.
-                To remove those, use the account deletion route below.
+                Deleting the Meta connection does not delete the rest of your workspace: your uploads, generated media,
+                campaigns and contacts stay in Fikirtive. To remove those, use the account deletion route below.
               </p>
             </>
           )}
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Deleting your whole account</h2>
           <p>
-            Account deletion is handled by a person, not by an automated flow. Email{" "}
+            To request deletion of your whole account, contact us: email{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> from the
             address you sign in with, or use <span className="text-foreground">Account → request account deletion</span>{" "}
-            inside Fikirtive, which opens the same email. Your workspace stays usable until we confirm the deletion.
+            inside Fikirtive, which opens the same email. There is no automated deletion flow, and the button does not
+            delete anything by itself.
           </p>
           <p>
             Deleted records can persist for a period in database backups and in our database provider&apos;s
-            point-in-time recovery window. Our own nightly snapshots are deleted 30 days after they are taken. See the{" "}
-            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link> for what we store and
+            point-in-time recovery window. Our own database snapshots are cleaned up on a rolling basis: a snapshot
+            more than about 30 days old is deleted during a later backup run. See the{" "}
+            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link> for what we store and
             who else processes it.
           </p>
         </section>

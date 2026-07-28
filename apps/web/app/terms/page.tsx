@@ -37,7 +37,18 @@ export const metadata = { title: "Terms · Fikirtive" };
  *   :640、:742),商家在排期里看到「Needs attention — <原因>」(OttoSchedule.tsx:1350-1352)。
  *   注意:这里只否定 reel/story 与提醒,**不写**「其他一律排不进来」——Facebook 贴文没有 mime 白名单,
  *   带视频的 FB 贴文排得进去(只是发布时会失败),写成全称命题就又造一句假话。
- *  另:「暂停自然发布」与「提醒」是同一个病灶的两面 —— 都是「schema/类型里有,产品里没有」。*/
+ *  另:「暂停自然发布」与「提醒」是同一个病灶的两面 —— 都是「schema/类型里有,产品里没有」。
+ *
+ *  2026-07-28 第五轮(跨族复审返工):
+ *   P1-1 「所有花费都等待批准、未回答会过期」不符实际 —— GEN_CARD 生成按商家指令直接执行并计费、
+ *        无 TTL(cowork-actions.ts:33/133),只有审批卡(ASK)有过期(otto-actions.ts:1205)。
+ *        改为两类如实描述。
+ *   P1-2 发布失败两态:可重试→needs attention,硬失败→failed(publish.ts:623/635)。
+ *   P1-3 支持/删除段收敛为「联系我们提出请求」,不承诺时限与流程。
+ *   P1-6 用户责任/第三方条款/单方变更三处措辞收敛为事实性;「过登录页即接受」保留最简式;
+ *        四处均进 Founder/法务决定清单。
+ *   P1-7 管辖法/责任/赔偿等结构性留白**保持留白**,不补写任何法律条款(律师范围)。
+ *   P2-1 标题与 Privacy policy 链接文字 sentence case。*/
 export default function TermsPage() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
@@ -45,7 +56,7 @@ export default function TermsPage() {
         <Link href="/login" className="text-sm font-semibold text-muted-foreground underline underline-offset-4">
           Back to sign in
         </Link>
-        <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Fikirtive Terms</h1>
+        <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Fikirtive terms</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Effective 28 July 2026 · Last updated 28 July 2026
         </p>
@@ -60,17 +71,18 @@ export default function TermsPage() {
             Access is by invitation. Sign-in is refused for any email address that is not on our invite list, whichever
             sign-in method you use, and an invitation can be revoked. Continuing past the sign-in screen is how you
             accept these terms and the{" "}
-            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link>.
+            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link>.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Using Fikirtive</h2>
           <p>
-            You are responsible for the prompts, uploaded files, brand material, contacts, campaign decisions and
-            external accounts you connect. Only upload content you own or have permission to use.
+            The prompts, uploaded files, brand material, contacts, campaign decisions and external account connections
+            in your workspace come from you and stay under your control. Only upload content you own or have permission
+            to use.
           </p>
           <p>
-            Otto can draft marketing ideas and prepare generation or ad actions, but you remain responsible for
-            reviewing outputs before publishing or spending on external platforms.
+            Otto can draft marketing ideas and prepare generation or ad actions. Fikirtive does not review outputs for
+            you — check them before publishing or spending on external platforms.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Your customers&apos; details</h2>
@@ -91,12 +103,14 @@ export default function TermsPage() {
             ledger records every reservation, settlement and refund, and your balance can be reconstructed from it.
           </p>
           <p>
-            Otto cannot spend on its own. Any action that costs money pauses and waits for your explicit approval before
-            it runs, and an unanswered approval request expires rather than proceeding.
+            Credits are spent only on things you start. Some actions Otto prepares pause behind an approval card before
+            they run, and an approval card left unanswered expires after its time limit rather than proceeding. Other
+            generation actions run and are charged as soon as you tell the product to run them — for example, choosing
+            to generate from a generation card — without a separate approval step.
           </p>
           <p>
-            Credit purchases run through a Stripe-hosted checkout page. Credit purchases, Stripe checkout, Meta ads and
-            other third-party services are also governed by those providers&apos; terms, fees and platform rules.
+            Credit purchases run through a Stripe-hosted checkout page. Third-party services you use through Fikirtive
+            — Stripe checkout, Meta ads and others — have their own terms, fees and platform rules.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Publishing to social platforms</h2>
@@ -114,8 +128,9 @@ export default function TermsPage() {
               has no reel or story option, so they cannot be scheduled at all. Fikirtive does not send reminders to post.
             </li>
             <li>
-              If a scheduled post cannot be published, it is marked as needing attention and the reason is shown on that
-              post inside Fikirtive. Nothing is sent to you — opening your schedule is how you find out.
+              If a scheduled post runs into a problem, the reason is shown on that post inside Fikirtive: a problem
+              that might still be resolved is marked as needing attention, and a hard failure that retrying would not
+              fix is marked as failed. Nothing is sent to you — opening your schedule is how you find out.
             </li>
             <li>
               Automatic publishing and ad writes stay switched off for your connection until Meta&apos;s app review has
@@ -128,18 +143,18 @@ export default function TermsPage() {
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Beta availability</h2>
           <p>
-            The product is still changing. Features, prices, provider availability and limits may change as the beta
-            continues. If something looks wrong, stop using the affected feature and email{" "}
+            The product is still changing: features, prices, provider availability and limits continue to change during
+            the beta. If something looks wrong, stop using the affected feature and email{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Support and deleting your account</h2>
           <p>
             Support, data requests and account deletion all go to{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>. Account
-            deletion is handled by a person: the button in Account opens that email and does not delete anything by
-            itself. See the{" "}
-            <Link href="/privacy" className="underline underline-offset-4">Privacy Policy</Link> and{" "}
+            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> — contact us
+            there to make a request. There is no automated deletion flow: the button in Account opens that email and
+            does not delete anything by itself. See the{" "}
+            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link> and{" "}
             <Link href="/legal/data-deletion" className="underline underline-offset-4">data deletion</Link>.
           </p>
 

@@ -71,7 +71,19 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *   6. 联系人日期改准(P2-c)——`lastSeenAt` 唯一写入在建档时(crm-actions.ts:146,与
  *      `firstTouchAt` :145 同值),全仓无更新点,所以不能写成会随互动变化的「last-seen」。
  *  另核:X/其他渠道**不在页面范围内是对的** —— `ChannelConnection` 全仓写入者只在测试文件,
- *  商家今天连不了 X(publish.ts:351 authorizeX 读的那张表没有生产写入点)。*/
+ *  商家今天连不了 X(publish.ts:351 authorizeX 读的那张表没有生产写入点)。
+ *
+ *  2026-07-28 第五轮(跨族复审返工 3P0/8P1/2P2):
+ *   P0-1 供应商名单→服务类别(Stripe/Google/Meta 为用户直接交互平台,保留,待 Founder 确认)。
+ *   P0-2 Meta 侧数据来源那条如实补上发布历史保留(ScheduledPost.metaTargetId/metaPostId、
+ *        PublishAttempt 的帖子/素材标识;route.ts 只删 MetaConnection 并写 ActionEvent)。
+ *   P0-3 新增 BM 版 privacy/bm/page.tsx,两页顶部互挂语言切换;译文待 Founder/法务确认。
+ *   P1-2 发布失败两态如实:可重试→NEEDS_ATTENTION,硬失败→FAILED(publish.ts:623/635)。
+ *   P1-3 访问/更正/删除收敛为「联系我们提出请求」,不承诺时限与流程(SOP 待建,见决定清单)。
+ *   P1-4 快照按滚动方式清理:超约 30 天在后续备份运行时删除(db-backup.ts:76/145/171)。
+ *   P1-5 登录会话/IP/浏览器信息/审计记录列为服务运行必然产生;客户数据清单补一句结构概括。
+ *   P1-6 「no relationship」类法律定性改事实措辞:商家控制其客户数据,客户请求向商家提出。
+ *   P2-1 标题 sentence case。P2-2 联系/安全/跨境细节不发明,进 Founder/法务决定清单。*/
 export default function PrivacyPage() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
@@ -79,7 +91,12 @@ export default function PrivacyPage() {
         <Link href="/login" className="text-sm font-semibold text-muted-foreground underline underline-offset-4">
           Back to sign in
         </Link>
-        <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Fikirtive Privacy Policy</h1>
+        <p className="mt-3 text-sm text-muted-foreground">
+          <span className="font-semibold text-foreground">English</span>
+          {" | "}
+          <Link href="/privacy/bm" className="underline underline-offset-4">Bahasa Malaysia</Link>
+        </p>
+        <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Fikirtive privacy policy</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Effective 28 July 2026 · Last updated 28 July 2026
         </p>
@@ -107,8 +124,9 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p>
-            We have no relationship with your customers and no way to contact them, so we cannot notify them for you.
-            See{" "}
+            You control the customer information you put into Fikirtive, and we process it on your instructions. If one
+            of your customers has a question or request about their information, they should raise it with you.
+            Fikirtive has no sending or receiving channel to your customers, so it cannot notify them for you. See{" "}
             <Link href="/terms" className="underline underline-offset-4">Terms</Link>.
           </p>
 
@@ -169,6 +187,10 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p>
+            Your workspace can also hold the structures you build around those records — contact segments, broadcast
+            audience selections, and automation workflow configurations.
+          </p>
+          <p>
             <span className="font-semibold text-foreground">What we deliberately do not store.</span> When you import
             contacts from a CSV, the phone, WhatsApp and email columns are used only to warn you about likely
             duplicates, and are then discarded rather than saved. The import result says so on screen. A contact record
@@ -188,8 +210,9 @@ export default function PrivacyPage() {
             <li>Google, if you choose to sign in with a Google account.</li>
             <li>
               Meta, if you connect a Meta account: your Meta user ID and the granted permissions. Your Pages, Instagram
-              accounts and ad accounts are read from Meta while you are on the screen that needs them; the only Page,
-              Instagram or ad-account identifier we keep is the one you pick for a scheduled post.
+              accounts and ad accounts are read from Meta while you are on the screen that needs them. What we keep is
+              the Page or Instagram account you pick for a scheduled post, and — once publishing has been attempted —
+              the post and media identifiers that publishing produced, as part of that post&apos;s history.
             </li>
             <li>Stripe, when a credit purchase completes.</li>
             <li>Our own systems — session records and audit records created as you use the product.</li>
@@ -202,8 +225,9 @@ export default function PrivacyPage() {
             service running and debug it.
           </p>
           <p>
-            If a scheduled post cannot be published, we store the reason on that post and mark it as needing attention,
-            so you can see what happened when you next open the schedule. Fikirtive does not send you a reminder,
+            If a scheduled post runs into a problem, we store the reason on that post. A problem that might still be
+            resolved is marked as needing attention; a hard failure that retrying would not fix is marked as failed.
+            Either way, you see what happened when you next open the schedule. Fikirtive does not send you a reminder,
             an email or any other message about a scheduled post.
           </p>
           <p>
@@ -217,16 +241,18 @@ export default function PrivacyPage() {
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Who else processes it</h2>
           <p>
-            Fikirtive runs on hosted infrastructure and uses service providers. Each receives only what its role needs:
+            Fikirtive runs on hosted infrastructure and uses service providers. Each receives only what its role needs.
+            We describe infrastructure providers by service category; the platforms you interact with directly —
+            Stripe, Google and Meta — are named:
           </p>
           <ul className="list-disc space-y-1 pl-5">
-            <li>Application hosting and database — Railway, Neon.</li>
-            <li>File storage and networking — Cloudflare.</li>
+            <li>A cloud hosting provider and a managed database provider, which run the application and hold its data.</li>
+            <li>A file storage and content delivery provider, which holds uploaded and generated files.</li>
             <li>Payments — Stripe.</li>
-            <li>Transactional email, such as sign-in links — Resend.</li>
-            <li>Error monitoring, which may include details of a failed request — Sentry.</li>
+            <li>An email delivery service, which sends transactional email such as sign-in links.</li>
+            <li>An error monitoring service, which may receive details of a failed request.</li>
             <li>Sign-in with Google — Google.</li>
-            <li>Web search, when Otto researches something — Tavily, Brave Search. Your query text is sent.</li>
+            <li>Web search providers, when Otto researches something. Your query text is sent.</li>
             <li>Connected ad and social accounts — Meta.</li>
             <li>
               Third-party AI infrastructure providers, which process content in order to produce Otto&apos;s replies and
@@ -284,39 +310,40 @@ export default function PrivacyPage() {
             </li>
             <li>Record consent or an opt-out against a contact, and set do-not-disturb on any contact.</li>
             <li>
-              Your email address is required — without it there is no account and you cannot sign in. Everything else is
-              optional: if you do not upload files, import contacts or connect an account, those features simply do
-              nothing.
+              Your email address is required — without it there is no account and you cannot sign in. Some records are
+              produced simply by using the service: sign-in sessions, the IP address and browser details recorded with
+              them, and audit records of significant actions. What you add beyond that is up to you: if you do not
+              upload files, import contacts or connect an account, those features simply do nothing.
             </li>
           </ul>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Access, correction and deletion</h2>
           <p>
-            To ask for a copy of your data, a correction, or deletion, email{" "}
+            To request a copy of your data, a correction, or deletion, contact us at{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> from the
-            address you sign in with. These requests are handled by a person, not by an automated system.
+            address you sign in with. There is no automated self-service flow for these requests today.
           </p>
           <ul className="list-disc space-y-1 pl-5">
             <li>
               <span className="text-foreground">Meta connection.</span> Automated. Removing Fikirtive in your Facebook
               settings deletes the stored connection and its access token — see{" "}
-              <Link href="/legal/data-deletion" className="underline underline-offset-4">data deletion</Link>.
+              <Link href="/legal/data-deletion" className="underline underline-offset-4">data deletion</Link> for what
+              is and is not removed.
             </li>
             <li>
-              <span className="text-foreground">Your whole account and workspace.</span> By email, handled by a person.
-              The button in Account opens that email; it does not delete anything by itself, and your workspace stays
-              usable until we confirm.
+              <span className="text-foreground">Your whole account and workspace.</span> Contact us to make the
+              request. The button in Account opens that email; it does not delete anything by itself.
             </li>
             <li>
               <span className="text-foreground">Individual contacts.</span> Contact records cannot be deleted from the
-              interface today. Email us and we will remove them.
+              interface today. Contact us to request their removal.
             </li>
           </ul>
           <p>
-            We keep your information while your workspace is open, and remove it as described above when you ask.
-            Two limits are worth knowing. Deleted records can persist for a period in database backups and in our
-            database provider&apos;s point-in-time recovery window; our own nightly snapshots are deleted 30 days after
-            they are taken. And stored files are not yet removed by an automatic clean-up job.
+            We keep your information while your workspace is open. Two limits are worth knowing. Deleted records can
+            persist for a period in database backups and in our database provider&apos;s point-in-time recovery window;
+            our own database snapshots are cleaned up on a rolling basis, so a snapshot more than about 30 days old is
+            deleted during a later backup run. And stored files are not yet removed by an automatic clean-up job.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Who you are dealing with</h2>
