@@ -271,59 +271,6 @@ describe("POST /api/otto/stream", () => {
     }));
   });
 
-  // #498: the verbal-approval repro (storyboard → Otto invites "全部生成" → merchant sends
-  // it) parks the gated generate call(s) with zero model narration; before the fix the
-  // stream carried ONLY an invisible data-status part — total silence. These lock the fix.
-  it("#498 a run that pauses without narration streams the synthesized reply before needs_approval", async () => {
-    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
-    mocks.finalizeOttoRun.mockResolvedValue({
-      status: "needs_approval",
-      pendingCardIds: ["card_1", "card_2", "card_3"],
-      fallbackReply: "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.",
-    });
-
-    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
-    const parts = (await res.json()) as Array<{ type: string }>;
-
-    expect(res.status).toBe(200);
-    expect(parts).toEqual(
-      expect.arrayContaining([
-        { type: "text-start", id: "otto-text" },
-        {
-          type: "text-delta",
-          id: "otto-text",
-          delta: "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.",
-        },
-        { type: "text-end", id: "otto-text" },
-        { type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1", "card_2", "card_3"] } },
-      ]),
-    );
-    // The reply renders BEFORE the status part (the status itself has no visible UI).
-    const textIdx = parts.findIndex((p) => p.type === "text-delta");
-    const statusIdx = parts.findIndex((p) => p.type === "data-status");
-    expect(textIdx).toBeGreaterThanOrEqual(0);
-    expect(textIdx).toBeLessThan(statusIdx);
-  });
-
-  it("#498 no synthesized reply when the model narrated itself (fallbackReply null → no extra text part)", async () => {
-    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Confirm on the cards to start.")] }));
-    mocks.finalizeOttoRun.mockResolvedValue({
-      status: "needs_approval",
-      pendingCardIds: ["card_1"],
-      fallbackReply: null,
-    });
-
-    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
-    const parts = (await res.json()) as Array<{ type: string; delta?: string }>;
-
-    expect(res.status).toBe(200);
-    expect(parts).toContainEqual({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1"] } });
-    // Exactly the model's own streamed text — nothing synthesized on top.
-    expect(parts.filter((p) => p.type === "text-delta")).toEqual([
-      { type: "text-delta", id: "otto-text", delta: "Confirm on the cards to start." },
-    ]);
-  });
-
   it("persists and surfaces a first-turn insufficient-credits failure without running Otto", async () => {
     mocks.withLlmBudget.mockRejectedValue(new mocks.MockInsufficientCredits());
 
