@@ -471,6 +471,79 @@ describe("seedancePromptInput — R4 判官四洞：能力守卫按承载字段�
   });
 });
 
+describe("seedancePromptInput — R5：承载字段按表闭合 + 写法归一（不逐个枚举写法）", () => {
+  const shot = { subject: "一只猫", action: "跃起" };
+  const dog = { subject: "一只狗", action: "追逐" };
+  const ok = (input: unknown) => seedancePromptInput.safeParse(input).success;
+
+  // (a) 能力表把 constraints 列为 singleTake 的承载字段 —— 手写扫描清单漏的就是这一格。
+  it("single-take text in CONSTRAINTS with more than one shot fails closed", () => {
+    expect(ok({ shots: [shot, dog], constraints: "全程一镜到底，无剪辑" })).toBe(false);
+    expect(ok({ shots: [{ ...shot, camera: "one continuous take" }], constraints: "全程一镜到底，无剪辑" })).toBe(true);
+  });
+
+  // (b) 能力表把 shots.action / shots.shotFraming 列为 beatSync 的承载字段。
+  it("beat text in a SHOT's action or framing demands the numeric beat length too", () => {
+    expect(ok({ shots: [{ subject: "球鞋", action: "每拍定格" }] })).toBe(false);
+    expect(ok({ shots: [{ ...shot, shotFraming: "卡点跳切景别" }] })).toBe(false);
+    expect(ok({ shots: [{ subject: "球鞋", action: "每拍定格" }], pacing: "每拍约 0.5s" })).toBe(true);
+  });
+
+  // (c)(d) 连字符类写法：半角 - / en dash / em dash / 不换行连字符，一次归一全覆盖。
+  it("hyphen, en-dash, em-dash and non-breaking-hyphen spellings all read as the same phrase", () => {
+    for (const style of ["one-take", "one–take", "one—take", "one‑take", "one-continuous-take", "single-take"]) {
+      expect(ok({ shots: [shot, dog], style }), style).toBe(false);
+    }
+    for (const pacing of ["hard-cut", "hard–cut", "hard—cut", "hard‑cut"]) {
+      expect(ok({ shots: [shot], pacing }), pacing).toBe(false);
+      expect(ok({ shots: [shot], pacing: `${pacing}, 每拍约 0.5s` }), pacing).toBe(true);
+    }
+  });
+
+  // (e) 破折号时间戳过去根本没被认成时间戳 —— 重叠检查因此从不运行。
+  it("en-dash / em-dash timestamps are timestamps: overlaps rejected, contiguous ranges accepted", () => {
+    expect(ok({ shots: [{ subject: "茶师", action: "0–1.2s: 持杯" }, { subject: "茶汤", action: "1.1–2s: 落杯" }] })).toBe(false);
+    expect(ok({ shots: [{ subject: "茶师", action: "0—2s: 持杯" }, { subject: "茶汤", action: "3—5s: 落杯" }] })).toBe(false); // 缝隙
+    expect(ok({ shots: [{ subject: "茶师", action: "0–2s: 持杯" }, { subject: "茶汤", action: "2–4s: 落杯" }] })).toBe(true);
+  });
+
+  // (f) 斜杠分隔的负向清单过去算作一项。
+  it("negative terms separated by / or ／ are counted individually", () => {
+    const six = ["多余手指", "路人", "杂物", "反光", "阴影", "水印"];
+    for (const sep of ["/", "／"]) {
+      expect(negativeTermCount(`画面中不出现：${six.join(sep)}`), sep).toBe(6);
+      expect(ok({ shots: [shot], constraints: `画面中不出现：${six.join(sep)}` }), sep).toBe(false);
+    }
+    expect(ok({ shots: [shot], constraints: `画面中不出现：${six.slice(0, 5).join("/")}` })).toBe(true);
+  });
+
+  // (g) extension 过去进得了 enum 却什么都不绑 —— 申报它等于什么也没申报。
+  it("declaring the extension capability enforces the table's requirements (continuesFromPrev + style)", () => {
+    expect(ok({ capabilities: ["extension"], shots: [{ subject: "产品", action: "缓慢旋转" }] })).toBe(false);
+    expect(ok({ capabilities: ["extension"], continuesFromPrev: true, shots: [{ subject: "产品", action: "缓慢旋转" }] })).toBe(false);
+    expect(ok({
+      capabilities: ["extension"], continuesFromPrev: true, style: "茶艺纪实风，暖色调",
+      shots: [{ subject: "产品", action: "缓慢旋转" }],
+    })).toBe(true);
+  });
+
+  it("no false positives: every legitimate shape from the R4 baseline still passes", () => {
+    const legit: unknown[] = [
+      { shots: [shot], pacing: "upbeat and cheerful" },
+      { shots: [{ ...shot, camera: "跟拍 handheld follow" }] },
+      { shots: [shot], constraints: "画面中不出现：多余手指、路人、杂物、反光、阴影" },
+      { shots: [shot] },
+      { shots: [{ subject: "老板娘 the owner", action: "掀开蒸笼 lifts the lid" }] },
+      { shots: [{ ...shot, camera: "50mm lens, 16:9" }] },
+      { shots: [{ ...shot, sceneLight: "5600K key light from left" }] },
+      { shots: [shot], pacing: "每拍约 0.5s, hard cut" },
+      { shots: [{ ...shot, camera: "one continuous take" }] },
+      { shots: [{ subject: "茶师", action: "0-2s: 持杯" }, { subject: "茶汤", action: "2-4s: 落杯" }] },
+    ];
+    for (const input of legit) expect(ok(input), JSON.stringify(input)).toBe(true);
+  });
+});
+
 describe("seedanceVariants — 负向清单永远收尾 (R3 P2)", () => {
   it("the variant treatment note sits BEFORE the negative-exclusion list; constraints stay the final line", () => {
     const i = seedancePromptInput.parse({

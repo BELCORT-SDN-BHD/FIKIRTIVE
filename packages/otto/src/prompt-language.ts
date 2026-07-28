@@ -41,6 +41,18 @@ export function promptLanguageFor(family: ModelFamily | undefined): PromptLangua
   return PROMPT_LANGUAGES.find((p) => p.family === family)?.language;
 }
 
+/**
+ * 有 prompt skill 的引擎必须在这张表里有条目 —— 缺条目是配置错误，模块加载即炸。
+ * 调用点写 `?? "zh"` 之类的兜底会变成第二个真相源：表改了、兜底没改，谁也不会红。
+ */
+export function requirePromptLanguage(family: ModelFamily): PromptLanguage {
+  const language = promptLanguageFor(family);
+  if (!language) {
+    throw new Error(`PROMPT_LANGUAGES has no entry for "${family}" — record the measured ruling there before a prompt skill names a language`);
+  }
+  return language;
+}
+
 /** 大写语言名 —— 写进 skill description，模型一眼看到（description 从此表读，不另写字面）。 */
 export const LANGUAGE_LABEL: Readonly<Record<PromptLanguage, string>> = { zh: "CHINESE", en: "ENGLISH" };
 

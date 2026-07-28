@@ -11,12 +11,12 @@
 import { defineOttoSkill } from "../skill.js";
 import { seedreamPromptInput, assembleSeedream, seedreamVariants, seedreamLanguageAdvice } from "./seedream-prompt.helpers.js";
 import { LIGHTING, STYLES, enOnly } from "./prompt-vocab.js";
-import { LANGUAGE_LABEL, LANGUAGE_REASON, promptLanguageFor } from "../prompt-language.js";
+import { LANGUAGE_LABEL, LANGUAGE_REASON, requirePromptLanguage } from "../prompt-language.js";
 import { decideStrategy } from "./prompt-strategy.js";
 import { checkVariantSet, deriveAssetChecklist, variantCountFor } from "./variant-policy.js";
 
-/** 语言权威（PROMPT_LANGUAGES）是这段 description 的唯一来源 —— 不在此另写语言字面。 */
-const IMAGE_LANGUAGE = promptLanguageFor("seedream") ?? "en";
+/** 语言权威（PROMPT_LANGUAGES）是这段 description 的唯一来源 —— 无条目即模块加载失败，不静默兜底。 */
+const IMAGE_LANGUAGE = requirePromptLanguage("seedream");
 
 export const seedreamPromptSkill = defineOttoSkill({
   name: "seedreamPrompt",

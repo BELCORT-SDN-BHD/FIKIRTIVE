@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { VIDEO_CAPABILITIES } from "./video-capabilities.js";
+import { VIDEO_CAPABILITIES, type CapabilityRequirement, type VideoCapability } from "./video-capabilities.js";
 import { seedancePromptInput, seedanceShot, assembleSeedance } from "./seedance-prompt.helpers.js";
 
 describe("VIDEO_CAPABILITIES table", () => {
@@ -30,13 +30,6 @@ describe("VIDEO_CAPABILITIES table", () => {
       }
     }
   });
-  // R4 P2：表文与 schema 真实执法必须对齐 —— 表少列一个承载字段，Otto 就不知道那里也会被拦。
-  it("field lists name every carrier field the schema actually derives a guard from", () => {
-    const fieldsOf = (id: string) => VIDEO_CAPABILITIES.find((c) => c.id === id)!.fields;
-    expect(fieldsOf("extension")).toContain("style"); // continuesFromPrev → style 必填
-    expect(fieldsOf("singleTake")).toEqual(expect.arrayContaining(["shots.camera", "style", "pacing"]));
-    expect(fieldsOf("beatSync")).toEqual(expect.arrayContaining(["pacing", "style"]));
-  });
   it("the timestamp hint promises only what the schema checks (no total-duration claim — there is no duration field)", () => {
     const hint = VIDEO_CAPABILITIES.find((c) => c.id === "timestampedShots")!.hintZh;
     expect(hint).toContain("升序");
@@ -47,6 +40,100 @@ describe("VIDEO_CAPABILITIES table", () => {
     for (const cap of VIDEO_CAPABILITIES) {
       expect(cap.labelZh.length, cap.id).toBeGreaterThan(0);
       expect(/[一-鿿]/.test(cap.hintZh), cap.id).toBe(true);
+    }
+  });
+});
+
+/**
+ * R5：箭头反向。旧测试拿手写清单去核对数据表（表→手写），于是「表里有、守卫没扫」
+ * 这类洞永远照不出来。这里改成走表核对真实执法：表里每条 requires 都必须真的被
+ * 机检，每个承载字段都必须真的被守卫扫到 —— 往表里加一条而守卫没跟上，这里就红。
+ */
+describe("VIDEO_CAPABILITIES drives the schema guard (walk the table, verify the enforcement)", () => {
+  const parse = (input: unknown) => seedancePromptInput.safeParse(input);
+  const capabilityOf = (id: string) => VIDEO_CAPABILITIES.find((c) => c.id === id)!;
+  type Input = Record<string, unknown>;
+
+  /** 占位值须同时满足「数值拍长」与「时间戳前缀」两条守卫，正向控制才有意义。 */
+  const PLACEHOLDER = "0-2s: 占位";
+  const CANDIDATES: unknown[] = [PLACEHOLDER, true, [{ role: "product", name: "占位" }]];
+  const BASES: Input[] = [
+    { mode: "i2v", shots: [{ subject: "主体", action: "动作" }] },
+    { mode: "edit", editInstruction: "占位指令", shots: [] }, // 这个基底连 shot 都没有 → 能证伪 shots.* 类要求
+  ];
+
+  /** 让一条要求成立的最小补丁；值的类型靠 schema 试出来，不按字段名写死。 */
+  const satisfy = (input: Input, req: CapabilityRequirement): Input => {
+    const [root = "", sub] = req.path.split(".");
+    const set = (value: unknown): Input => {
+      if (!sub) return { ...input, [root]: value };
+      const shots = input.shots as Input[];
+      const target = shots.length > 0 ? shots : [{ subject: "主体", action: "动作" }];
+      return { ...input, shots: target.map((s) => ({ ...s, [sub]: value })) };
+    };
+    if (req.equals !== undefined) return set(req.equals);
+    for (const candidate of CANDIDATES) {
+      const patched = set(candidate);
+      if (parse(patched).success) return patched;
+    }
+    throw new Error(`no placeholder value fits ${req.path} — extend CANDIDATES`);
+  };
+
+  /** 该能力的全部要求（可跳过一条）都满足的输入；值要求最后应用（它同时是形状信号）。 */
+  const build = (base: Input, cap: VideoCapability, skip?: CapabilityRequirement): Input => {
+    const reqs = cap.requires.filter((r) => r !== skip);
+    let input = base;
+    for (const r of reqs.filter((r) => r.equals === undefined)) input = satisfy(input, r);
+    for (const r of reqs.filter((r) => r.equals !== undefined)) input = satisfy(input, r);
+    return input;
+  };
+
+  it("no capability id is accepted by the enum and then bound to nothing", () => {
+    for (const cap of VIDEO_CAPABILITIES) expect(cap.requires.length, cap.id).toBeGreaterThan(0);
+  });
+
+  it("every declared requirement is really enforced (satisfied → accepted; only that one missing → rejected)", () => {
+    for (const cap of VIDEO_CAPABILITIES) {
+      for (const req of cap.requires) {
+        const enforced = BASES.some((base) =>
+          parse({ ...build(base, cap), capabilities: [cap.id] }).success
+          && !parse({ ...build(base, cap, req), capabilities: [cap.id] }).success);
+        expect(enforced, `${cap.id} requires ${req.path}`).toBe(true);
+      }
+    }
+  });
+
+  /** 形状信号：自证词注进该能力声明的每一个文本承载字段，守卫都必须够得着（申报与否都拦）。 */
+  const SIX_NEGATIVES = "画面中不出现：多余手指、路人、杂物、反光、阴影、水印";
+  const CONTRADICTIONS: ReadonlyArray<{ id: string; inject: string; base: Input; why: string }> = [
+    { id: "singleTake", inject: "一镜到底", base: { shots: [{ subject: "主体", action: "动作" }, { subject: "配角", action: "走开" }] }, why: "一镜到底 + 两个 shot" },
+    { id: "singleTake", inject: "one-take", base: { shots: [{ subject: "主体", action: "动作" }, { subject: "配角", action: "走开" }] }, why: "连字符写法同样算自证" },
+    { id: "beatSync", inject: "卡点", base: { shots: [{ subject: "主体", action: "动作" }] }, why: "谈卡点却没有数值拍长" },
+    { id: "timestampedShots", inject: "0-2s: 起手", base: { shots: [{ subject: "主体", action: "动作" }, { subject: "配角", action: "走开" }] }, why: "两段同区间 = 不连续" },
+    { id: "negativeExclusion", inject: SIX_NEGATIVES, base: { shots: [{ subject: "主体", action: "动作" }] }, why: "负向项数超过 5" },
+  ];
+
+  /** 该字段路径是否收字符串（由 schema 判定，不按名字猜）—— 布尔/数组类承载字段不参与文本注入。 */
+  const takesText = (path: string): boolean => {
+    const [root = "", sub] = path.split(".");
+    const shape = seedancePromptInput.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
+    const shotShape = seedanceShot.shape as Record<string, { safeParse: (v: unknown) => { success: boolean } }>;
+    const field = sub ? shotShape[sub] : shape[root];
+    return !!field && field.safeParse("占位").success;
+  };
+
+  it("the guard reaches EVERY text carrier field each capability declares", () => {
+    for (const { id, inject, base, why } of CONTRADICTIONS) {
+      expect(parse(base).success, `${id} control base`).toBe(true); // 控制组：不注入时基底合法
+      const carriers = capabilityOf(id).fields.filter(takesText);
+      expect(carriers.length, `${id} has no text carrier`).toBeGreaterThan(0);
+      for (const path of carriers) {
+        const [root = "", sub] = path.split(".");
+        const injected = sub
+          ? { ...base, shots: (base.shots as Input[]).map((s) => ({ ...s, [sub]: inject })) }
+          : { ...base, [root]: inject };
+        expect(parse(injected).success, `${id} via ${path} (${why})`).toBe(false);
+      }
     }
   });
 });

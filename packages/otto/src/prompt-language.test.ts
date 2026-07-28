@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  PROMPT_LANGUAGES, promptLanguageFor, LANGUAGE_LABEL, LANGUAGE_ADVICE, LANGUAGE_REASON, languageAdvice,
+  PROMPT_LANGUAGES, promptLanguageFor, requirePromptLanguage,
+  LANGUAGE_LABEL, LANGUAGE_ADVICE, LANGUAGE_REASON, languageAdvice,
 } from "./prompt-language.js";
 
 describe("languageAdvice (R4：非阻断信号，不是闸门)", () => {
@@ -14,8 +15,8 @@ describe("languageAdvice (R4：非阻断信号，不是闸门)", () => {
     expect(languageAdvice("zh", [])).toBeUndefined();
     expect(languageAdvice("zh", [undefined, "", "   "])).toBeUndefined();
   });
-  // 度量/比例 token 不再需要「豁免规则」（R3 的 isNumericTokenText 已删）：判定跑在整段
-  // 自由文本上，度量夹在正文里改不了结论；单独一个度量串最坏也只是多一句建议，不是拒绝。
+  // 度量/比例 token 不再需要「豁免规则」：判定跑在整段自由文本上，度量夹在正文里改不了
+  // 结论；单独一个度量串最坏也只是多一句建议，不是拒绝。
   it("measure tokens never flip the verdict when they ride alongside prose", () => {
     expect(languageAdvice("zh", ["门口的男人停下脚步", "16:9, 4K"])).toBeUndefined();
     expect(languageAdvice("en", ["a frosted-glass serum bottle", "50mm", "16:9, 4K"])).toBeUndefined();
@@ -39,6 +40,12 @@ describe("PROMPT_LANGUAGES (单一权威)", () => {
     expect(promptLanguageFor("seedance")).toBe("zh");
     expect(promptLanguageFor("seedream")).toBe("en");
     expect(promptLanguageFor("kling")).toBeUndefined();
+  });
+  // 调用点的 `?? "zh"` 兜底已撤：兜底是第二个真相源，表改了它不会红。
+  it("requirePromptLanguage returns the table's ruling and THROWS for a family the table does not rule on", () => {
+    expect(requirePromptLanguage("seedance")).toBe("zh");
+    expect(requirePromptLanguage("seedream")).toBe("en");
+    expect(() => requirePromptLanguage("kling")).toThrow(/PROMPT_LANGUAGES/);
   });
   it("every entry has a label and a one-line reason for the description to read", () => {
     for (const { language } of PROMPT_LANGUAGES) {
