@@ -12,6 +12,7 @@ import {
   cardIdsOf,
   injectCardMessage,
   appendMissingCards,
+  appendChainedNarrations,
   appendDurableResults,
   appendResearchReports,
   syncCardJobIds,
@@ -288,6 +289,42 @@ describe("appendMissingCards [F23 onFinish safety net]", () => {
     ]);
     const existing = threadToUiMessages(fresh);
     expect(appendMissingCards(existing, fresh)).toBe(existing);
+  });
+});
+
+// #498 round-5 P2c: the ONLY TEXT the poll may inject is the chained park's model
+// narration, and only under the exact durableId the SERVER returned — a surgical
+// carve-out of the "never append TEXT" double-render guard (the approve path
+// streams nothing, so this text cannot already be rendered).
+describe("appendChainedNarrations [#498 round-5 P2c]", () => {
+  const freshWithNarration = thread([
+    msg({ id: "card_a", role: "AGENT", kind: "GEN_CARD", payload: { kind: "image" } }),
+    msg({ id: "msg_n1", role: "AGENT", kind: "TEXT", text: "One down — confirm the next card.", seq: 2 }),
+    msg({ id: "t_streamed", role: "AGENT", kind: "TEXT", text: "streamed reply", seq: 3 }),
+  ]);
+
+  it("appends exactly the server-named narration TEXT, nothing else", () => {
+    const existing = threadToUiMessages(thread([msg({ id: "card_a", role: "AGENT", kind: "GEN_CARD" })]));
+    const out = appendChainedNarrations(existing, freshWithNarration, ["msg_n1"]);
+    expect(out.map((m) => m.metadata?.durableId)).toEqual(["card_a", "msg_n1"]);
+    expect(out[1].parts).toEqual([{ type: "text", text: "One down — confirm the next card." }]);
+    // The un-named TEXT (a streamed reply) stays out.
+    expect(out.some((m) => m.metadata?.durableId === "t_streamed")).toBe(false);
+  });
+
+  it("no ids / empty ids / unknown ids / non-TEXT ids → same ref, nothing appended", () => {
+    const existing = threadToUiMessages(thread([msg({ id: "card_a", role: "AGENT", kind: "GEN_CARD" })]));
+    expect(appendChainedNarrations(existing, freshWithNarration)).toBe(existing);
+    expect(appendChainedNarrations(existing, freshWithNarration, [])).toBe(existing);
+    expect(appendChainedNarrations(existing, freshWithNarration, ["msg_missing"])).toBe(existing);
+    // A card id can never smuggle a non-TEXT durable through the narration door.
+    expect(appendChainedNarrations(existing, freshWithNarration, ["card_a"])).toBe(existing);
+  });
+
+  it("dedupes by durableId — a second poll with the same id returns the same ref", () => {
+    const existing = threadToUiMessages(thread([msg({ id: "card_a", role: "AGENT", kind: "GEN_CARD" })]));
+    const once = appendChainedNarrations(existing, freshWithNarration, ["msg_n1"]);
+    expect(appendChainedNarrations(once, freshWithNarration, ["msg_n1"])).toBe(once);
   });
 });
 
