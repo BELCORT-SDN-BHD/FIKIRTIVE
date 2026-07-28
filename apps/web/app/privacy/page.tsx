@@ -2,21 +2,23 @@ import Link from "next/link";
 
 export const metadata = { title: "Privacy · Fikirtive" };
 
-/** 事实基线:每条陈述均可在代码中核对(见 legal/requirements-and-audit.md 与
- *  data-inventory.md 的 file:line 证据)。不得在此页写入代码兑现不了的承诺。
+/** 事实基线:每条陈述均可在代码中核对(核对与数据清单记录见决定清单)。
+ *  「决定清单」= https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327
+ *  (持久决定清单以该 PR 评论为准,本注释所有清单引用均指它)。
+ *  不得在此页写入代码兑现不了的承诺。
  *  provider 保密:生成类供应商按 #359 Founder Resolution 只写类别,不点名
  *  (机器防线在 apps/web/lib/provider-secrecy.ts)。免登录(proxy.ts 放行)。
  *
- *  2026-07-28 真实性核验轮(legal/TRUTH-CHECK.md)后的修订,逐条对应:
+ *  2026-07-28 真实性核验轮(记录见决定清单)后的修订,逐条对应:
  *   B1 删掉「可暂停自然发布」—— `organicPublishPaused` 全仓只有读、无写(唯一 setter 是广告那一半
  *      meta-write-actions.ts:21-27,唯一按钮 OttoConnections.tsx:206-210)。
  *   B2 审计记录改成单向 —— 商家侧 ActionEvent 读取锁死 "generation.outcome"(data.ts:431-441、:445-456),
  *      宽口径审计只在 founder 邮箱门禁后的 /admin(admin/layout.tsx:19)。
  *   B3 备份期限不写成删除上限 —— 只有我们自己的夜间快照是 30 天(db-backup.ts:39、:83、:148);
- *      数据库供应商的时点恢复窗口天数是 Founder 控制台事实(FOUNDER-DECISIONS A11),未知不得代写。
+ *      数据库供应商的时点恢复窗口天数是 Founder 控制台事实(见决定清单),未知不得代写。
  *   B4 补齐登录数据 —— 密码是主路径(LoginForm.tsx:21-23、:48、:156-181;server.ts:44-47;
  *      schema.prisma:1078)、头像落库(schema.prisma:541,写入 server.ts:100、:110)。
- *   L2/L3 法律定性(顾客通知义务在谁头上、哪部法律适用于我们)已搬出正文 → FOUNDER-DECISIONS L2/L3。
+ *   L2/L3 法律定性(顾客通知义务在谁头上、哪部法律适用于我们)已搬出正文 → 决定清单。
  *
  *  2026-07-28 第三轮(写入点规则)。判定标准从「这一列存在吗」升级为
  *  **「生产代码里有没有一个真实商家用得到的写入点(create/update/upsert/setter),file:line?」**
@@ -42,7 +44,7 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *   1. 剪掉「或提醒你去发」——`PublishMode` 只是类型(channels/types.ts:5);`ScheduledPost` 没有
  *      `postType` 列(schema.prisma:2107-2143),`publishMode` 唯一写入是硬编码 "AUTO"
  *      (schedule-service.ts:67);全仓没有 Notification/Reminder 模型,唯一的外发邮件是登录邮件
- *      (better-auth/sender.ts:29 → email/resend-adapter.ts:30)。**没有任何东西会到达商家。**
+ *      (better-auth/sender.ts:29 → 邮件发送适配器)。**没有任何东西会到达商家。**
  *      改成真实机制:发不出去时写 lastError 并置 NEEDS_ATTENTION(publish.ts:556,同族 :500 :610
  *      :640 :742),商家在排期里看到「Needs attention — <原因>」(OttoSchedule.tsx:1350-1352,
  *      数据经 schedule-actions.ts:74-75 选出)。明确写「不会给你发提醒或邮件」。
@@ -83,7 +85,14 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *   P1-4 快照按滚动方式清理:超约 30 天在后续备份运行时删除(db-backup.ts:76/145/171)。
  *   P1-5 登录会话/IP/浏览器信息/审计记录列为服务运行必然产生;客户数据清单补一句结构概括。
  *   P1-6 「no relationship」类法律定性改事实措辞:商家控制其客户数据,客户请求向商家提出。
- *   P2-1 标题 sentence case。P2-2 联系/安全/跨境细节不发明,进 Founder/法务决定清单。*/
+ *   P2-1 标题 sentence case。P2-2 联系/安全/跨境细节不发明,进 Founder/法务决定清单。
+ *
+ *  2026-07-28 第六轮(二轮跨族复审 FAIL 后的三轮返工):
+ *   P1-6 「You control … we process it on your instructions」控制者/处理者式法律定性改为
+ *        纯操作事实:联系人数据由该 workspace 的商家放入并管理,客户请求向商家提出,
+ *        Fikirtive 对这些数据做什么以本页描述为准;BM 版同段同步。
+ *   注释引用可核验化:指向仓库外/不存在文件的引用统一改为上方决定清单 URL;
+ *   邮件供应商文件路径改为类别化描述(供应商保密,消灭字节级供应商名命中)。*/
 export default function PrivacyPage() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
@@ -124,9 +133,10 @@ export default function PrivacyPage() {
             </li>
           </ul>
           <p>
-            You control the customer information you put into Fikirtive, and we process it on your instructions. If one
-            of your customers has a question or request about their information, they should raise it with you.
-            Fikirtive has no sending or receiving channel to your customers, so it cannot notify them for you. See{" "}
+            The customer information in your workspace is information you put there and manage. If one of your
+            customers has a question or request about their information, they should raise it with you. What Fikirtive
+            does with that information is what this page describes. Fikirtive has no sending or receiving channel to
+            your customers, so it cannot notify them for you. See{" "}
             <Link href="/terms" className="underline underline-offset-4">Terms</Link>.
           </p>
 

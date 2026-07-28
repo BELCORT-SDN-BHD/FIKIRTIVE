@@ -3,11 +3,20 @@ import Link from "next/link";
 export const metadata = { title: "Privasi · Fikirtive" };
 
 /** BM(Bahasa Malaysia)版隐私告知 —— 2026-07-28 跨族复审返工 P0-3:PDPA 告知双语。
+ *  「决定清单」= https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327
+ *  (持久决定清单以该 PR 评论为准)。
  *  内容与英文版 app/privacy/page.tsx(第五轮返工后)逐节对应;英文版是事实基线的来源,
  *  任何后续改动先改英文版、再同步本页,两页顶部互挂语言切换(English | Bahasa Malaysia)。
- *  译文与「以哪个语言版本为准」待 Founder/法务确认(见 PR 决定清单)。
+ *  译文与「以哪个语言版本为准」待 Founder/法务确认(见决定清单)。
  *  免登录:proxy.ts 的 matcher 以 "privacy" 前缀放行,/privacy/bm 一并覆盖。
- *  供应商保密同英文版:只写服务类别,不点名(Stripe/Google/Meta 为用户直接交互平台,保留)。*/
+ *  供应商保密同英文版:只写服务类别,不点名(Stripe/Google/Meta 为用户直接交互平台,保留)。
+ *
+ *  2026-07-28 第六轮(三轮返工):
+ *   P1-6 同步英文版:控制者/处理者式句子改纯操作事实(见英文版第六轮注)。
+ *   BM 译文精度(判官新发现):penulisan iklan → sebarang perubahan pada akaun iklan
+ *        (英文原句是 stop ad writes「停止对广告账户的写操作」,原译会被读成「停止写广告文案」);
+ *        tempahan/ditempah(会被读成「预订」)→ penahanan sementara / ditahan sementara
+ *        (与英文 reservation/reserved 的「暂时冻结/预留额度」账本语义一致)。*/
 export default function PrivacyPageBm() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
@@ -49,10 +58,11 @@ export default function PrivacyPageBm() {
             </li>
           </ul>
           <p>
-            Anda mengawal maklumat pelanggan yang anda masukkan ke dalam Fikirtive, dan kami memprosesnya mengikut
-            arahan anda. Jika pelanggan anda mempunyai soalan atau permintaan tentang maklumat mereka, mereka perlu
-            mengemukakannya kepada anda. Fikirtive tiada saluran penghantaran atau penerimaan kepada pelanggan anda,
-            jadi ia tidak dapat memaklumkan mereka bagi pihak anda. Lihat{" "}
+            Maklumat pelanggan dalam ruang kerja anda ialah maklumat yang anda masukkan dan uruskan. Jika pelanggan
+            anda mempunyai soalan atau permintaan tentang maklumat mereka, mereka perlu mengemukakannya kepada anda.
+            Apa yang Fikirtive lakukan dengan maklumat itu ialah apa yang diterangkan pada halaman ini. Fikirtive
+            tiada saluran penghantaran atau penerimaan kepada pelanggan anda, jadi ia tidak dapat memaklumkan mereka
+            bagi pihak anda. Lihat{" "}
             <Link href="/terms" className="underline underline-offset-4">Terma</Link>.
           </p>
 
@@ -86,7 +96,7 @@ export default function PrivacyPageBm() {
             </li>
             <li>
               <span className="text-foreground">Kredit dan pembelian.</span> Baki kredit anda dan lejar kredit
-              (setiap tempahan, penyelesaian dan bayaran balik), serta peristiwa pembayaran yang dilaporkan Stripe
+              (setiap penahanan sementara kredit, penyelesaian dan bayaran balik), serta peristiwa pembayaran yang dilaporkan Stripe
               kembali kepada kami. Pembelian kredit berlaku di halaman pembayaran yang dihoskan oleh Stripe: butiran
               kad anda dimasukkan di halaman Stripe dan tidak sekali-kali melalui Fikirtive. Kami menghantar kepada
               Stripe alamat e-mel anda, pek yang anda pilih, dan pengecam dalaman ruang kerja anda bersama bilangan
@@ -231,8 +241,8 @@ export default function PrivacyPageBm() {
               atau muatan mentah.
             </li>
             <li>
-              Seorang pengasas boleh membuka satu ruang kerja dan melihat alamat e-mel pemilik, baki kredit dan apa
-              yang sedang ditempah, entri lejar kredit terkini, jumlah keseluruhan kos penjanaan, bilangan projek dan
+              Seorang pengasas boleh membuka satu ruang kerja dan melihat alamat e-mel pemilik, baki kredit dan
+              jumlah yang sedang ditahan sementara, entri lejar kredit terkini, jumlah keseluruhan kos penjanaan, bilangan projek dan
               item janaan, serta jenis dan tarikh rekod audit terkini. Merentas semua ruang kerja, kawasan yang sama
               menyenaraikan aktiviti terkini sebagai metadata sahaja — bagi satu penjanaan: ruang kerja, projek, sama
               ada imej atau video, dan masanya; bagi kerja berbayar: kosnya dan masanya; dan rekod audit terkini
@@ -252,8 +262,8 @@ export default function PrivacyPageBm() {
               sebagai anda.
             </li>
             <li>
-              Suis jeda pada skrin yang sama membolehkan anda menghentikan penulisan iklan tanpa memutuskan
-              sambungan. Ia juga disekat semasa seorang pengasas sedang log masuk sebagai anda.
+              Suis jeda pada skrin yang sama membolehkan anda menghentikan sebarang perubahan pada akaun iklan tanpa
+              memutuskan sambungan. Ia juga disekat semasa seorang pengasas sedang log masuk sebagai anda.
             </li>
             <li>
               Rekodkan persetujuan atau penarikan diri pada sesuatu kenalan, dan tetapkan jangan-ganggu pada
