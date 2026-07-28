@@ -10,17 +10,19 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *  真实性约束:码是在删除事务成功之后、随 200 响应一起发出的(route.ts:51-78),
  *  因此「持有码」本身就等于「那次请求已处理完毕」。文案不得超出这一点。
  *  免登录(proxy.ts 放行 /legal)。
+ *  「决定清单」= https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327
+ *  (持久决定清单以该 PR 评论为准,本注释所有清单引用均指它)。
  *
- *  2026-07-28 真实性核验轮(legal/TRUTH-CHECK.md)后的唯一修订:B3 —— 备份那句不再把
+ *  2026-07-28 真实性核验轮(记录见决定清单)后的唯一修订:B3 —— 备份那句不再把
  *  30 天写成删除上限。「30 天」这个数字**只依据代码常数**,已就地重核:
  *  apps/worker/src/db-backup.ts:39 `RETENTION_DAYS = 30`、:83 按 key 日期算 cutoff、
  *  :148 过期对象即删(2026-07-28 第四轮就地重核:本注释上一版写 :147,那是 `selectExpiredBackups`
  *  那一行;真正的 `deleteObject` 循环在 :148 —— 行号引用正是最容易过期的一类事实)。数据库供应商的时点恢复窗口是另一个窗口,天数由 Founder 在供应商控制台设定
  *  (docs/runbooks/db-backup.md「两个恢复窗口」一节自己写着「需 founder 确认/设置」),
- *  对本会话为 UNKNOWN,因此只说「a period」→ FOUNDER-DECISIONS A11。
+ *  对本会话为 UNKNOWN,因此只说「a period」→ 决定清单。
  *  文档漂移提示(2026-07-28 第三轮核出,不在本批修复范围):该 runbook 的表格把
  *  `RETENTION_DAYS` 标为 `db-backup.ts:35`,实际在 :39 —— 本页文案不依赖那条引用,
- *  以代码为准;runbook 的修正见 FOUNDER-DECISIONS C8。
+ *  以代码为准;runbook 的修正见决定清单。
  *  本轮不加查码表单、不加数据库访问(Meta 只要求人类可读的状态说明)。
  *
  *  2026-07-28 第三轮(写入点规则):本页逐句过尺,无未支撑主张。删除机制
@@ -40,7 +42,10 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *   P1-3 整账户删除段收敛为「联系我们提出请求」,不承诺时限与流程。
  *   P1-4 快照句改滚动清理措辞(db-backup.ts:76/145/171)。
  *   P1-6 「because they are yours and are not held on Meta's behalf」归属断言删去,只述行为。
- *   P2-1 Privacy policy 链接文字 sentence case。*/
+ *   P2-1 Privacy policy 链接文字 sentence case。
+ *
+ *  2026-07-28 第六轮(三轮返工):注释引用可核验化 —— 指向仓库外/不存在文件的引用
+ *  统一改为上方决定清单 URL;本页正文无改动。*/
 export default async function DataDeletionPage({
   searchParams,
 }: {
