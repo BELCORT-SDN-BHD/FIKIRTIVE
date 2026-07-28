@@ -393,6 +393,14 @@ export interface OttoContext {
     }): Promise<unknown>;
     setDnd(input: { contactId: string; enabled: boolean; requestId: string }): Promise<unknown>;
   };
+  /** Connected channel-account port (#495/#500 read parity, $0). The web caller injects the SAME
+   * owner-scoped customer-inbox gateway read the human template/broadcast channel pickers use.
+   * The port never accepts owner identity; it returns only { id, channel, scopeKey } rows. */
+  channelScopes?: {
+    list(): Promise<
+      { ok: true; scopes: { id: string; channel: string; scopeKey: string }[] } | { error: string }
+    >;
+  };
   /** Campaign planner port (B0-51..58/C2a, $0). Every method delegates to the SAME authenticated
    * Campaign/Trend action used by the manual surface. The model cannot supply identity, mint ids,
    * write legacy UTM, dispatch generation, touch credits, or authorize publishing. */
