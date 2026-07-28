@@ -324,6 +324,16 @@ export async function POST(req: NextRequest): Promise<Response> {
         if (finalized.status === "stale") {
           writer.write({ type: "data-status", data: { kind: "stale", text: "This conversation moved on — reload to continue." } satisfies OttoStatusData });
         } else if (finalized.status === "needs_approval") {
+          // #498: a paused run must never be silent. When the model parked the gated
+          // call(s) without narrating (the verbal-approval path), finalizeOttoRun
+          // persisted a synthesized reply and returns it here — surface it live too.
+          // It is only set when NO model text streamed, so OTTO_TEXT_ID is unused and
+          // nothing renders twice.
+          if (finalized.fallbackReply) {
+            writer.write({ type: "text-start", id: OTTO_TEXT_ID });
+            writer.write({ type: "text-delta", delta: finalized.fallbackReply, id: OTTO_TEXT_ID });
+            writer.write({ type: "text-end", id: OTTO_TEXT_ID });
+          }
           writer.write({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: finalized.pendingCardIds } satisfies OttoStatusData });
         } else {
           writer.write({ type: "data-status", data: { kind: "done", threadId } satisfies OttoStatusData });
