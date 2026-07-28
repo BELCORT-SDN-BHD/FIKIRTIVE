@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { promptRef, identityLockClauseZh, majorityScript, isNumericTokenText } from "./prompt-vocab.js";
+import { promptRef, identityLockClauseZh } from "./prompt-vocab.js";
+import { languageAdvice, promptLanguageFor } from "../prompt-language.js";
 import { VIDEO_CAPABILITIES } from "./video-capabilities.js";
 import { VIDEO_VARIANT_AXES, type PromptVariant } from "./variant-policy.js";
 
@@ -16,26 +17,33 @@ export const seedanceShot = z.object({
 /** 能力 id 与 video-capabilities.ts 数据表同源（测试断言一致）。 */
 const CAPABILITY_IDS = VIDEO_CAPABILITIES.map((c) => c.id) as [string, ...string[]];
 
-/** 语言执法错误文案（中性，指导模型改写，不解释内部机制）。 */
-export const ZH_FIELD_ERROR =
-  "Write this field mainly in CHINESE — the video engine's prompt body is Chinese; " +
-  "English industry camera/technical terms inside the Chinese text are fine (e.g. dolly in).";
-
 /** 半角时间戳前缀（时间戳分镜能力）：如 "0-2s: …" / "2.5-4s: …"。 */
 const TIMESTAMP_RE = /^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s\s*[:：]/;
 /** 形状信号（R3 P1-C）：action 任意位置出现时间范围 → 该输入自证在用时间戳分镜。 */
 const TIMESTAMP_ANY = /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*s/;
-/** 形状信号：style/pacing 文本自证一镜到底。 */
+/** 形状信号：style/pacing/camera 文本自证一镜到底（R4-a：能力表把 camera 列为承载字段，必须一起扫）。 */
 const SINGLE_TAKE_TEXT = /一镜到底|one\s+(?:continuous\s+)?take|single\s+take/i;
-/** 形状信号：pacing 谈到拍/卡点/切 → 自证在做节拍剪辑，必须给数值拍长。 */
-const BEAT_PACING_TEXT = /卡点|节拍|拍|beat|bpm|hard\s*cut/i;
+/**
+ * 形状信号：文本自证在做节拍剪辑 → 必须给数值拍长。
+ * R4-P2 词面收紧到「真的在说拍子」：「upbeat」（beat 前无词界）与「跟拍」（运镜术语）
+ * 不再命中 —— 误拒合法 pacing 本身就是缺陷。
+ */
+const BEAT_PACING_TEXT = /卡点|节拍|每拍|拍点|踩拍|\bbeat|\bbpm\b|hard\s*cut/i;
+/**
+ * R4-c：「数值拍长」= 数字紧邻时间单位（s/sec/ms/BPM/秒/毫秒/拍），不是「文本里有个数字」。
+ * 旧的 /\d/ 会被 "beat 4K"、"hard cut 16:9" 这类分辨率/比例数字冒充过关。
+ */
+const BEAT_NUMBER = /\d+(?:\.\d+)?\s*(?:s(?:ec(?:onds?)?)?\b|ms\b|bpm\b|秒|毫秒|拍)/i;
 
-/** 纯：负向排除名词清单的项数（去掉「画面中不出现：」类引导语后按分隔符切）。 */
+/**
+ * 纯：负向排除名词清单的项数（去掉「画面中不出现：」类引导语后按分隔符切）。
+ * R4-d：分隔符补齐 —— 半角/全角逗号、顿号、分号、换行、竖线；少一种就能把六项写成一项混过去。
+ */
 export function negativeTermCount(constraints: string): number {
   const list = constraints.includes("：") ? constraints.slice(constraints.indexOf("：") + 1)
     : constraints.includes(":") ? constraints.slice(constraints.indexOf(":") + 1)
     : constraints;
-  return list.split(/[、,，;；]/).map((t) => t.trim()).filter((t) => t.length > 0).length;
+  return list.split(/[、,，;；\n|｜]/).map((t) => t.trim()).filter((t) => t.length > 0).length;
 }
 
 // 追加式扩展（#437）：mode 增加 'edit'（定向修改已有片段），editInstruction/preserve 仅 edit 用；
@@ -45,6 +53,8 @@ export function negativeTermCount(constraints: string): number {
 //   directionPinned —— 用户已钉死方向 → 变体出 2 个；
 //   capabilities —— 声明用到的能力 id，schema 机检其约束；R3 P1-C 起声明只是附加
 //   严格化信号，形状可导出的守卫（时间戳/负向项数/续接需 style/节拍数值/一镜到底文本）无条件执行。
+// R4：语言不再是闸门 —— schema 永不因文字系统拒绝任何输入（详见 prompt-language.ts）。
+// 这里剩下的每一条都是「输入自证的物理矛盾」，即正确性，不是风格偏好。
 export const seedancePromptInput = z
   .object({
     mode: z.enum(["i2v", "t2v", "edit"]).default("i2v"),
@@ -69,31 +79,17 @@ export const seedancePromptInput = z
       ctx.addIssue({ code: "custom", message: "at least one shot is required for i2v/t2v", path: ["shots"] });
     }
 
-    // ── 语言执法（复审 P1-B；R3 类闭合）：叙事字段主体必须中文（夹英文行业词合法；
-    // 英文/西里尔/阿拉伯等任何非中文主体一律拦）；纯数字/比例 token（"16:9, 4K"）豁免；
-    // 行业词字段（camera/shotFraming/sceneLight/pacing/style）与台词字段（audio）豁免。
-    const zhChecked: Array<[(string | number)[], string | undefined]> = [
-      [["editInstruction"], v.editInstruction],
-      [["preserve"], v.preserve],
-      [["constraints"], v.constraints],
-    ];
-    v.shots.forEach((s, i) => {
-      zhChecked.push([["shots", i, "subject"], s.subject], [["shots", i, "action"], s.action], [["shots", i, "mood"], s.mood]);
-    });
-    for (const [path, val] of zhChecked) {
-      if (val && !isNumericTokenText(val) && majorityScript(val) !== "cjk") {
-        ctx.addIssue({ code: "custom", message: ZH_FIELD_ERROR, path });
-      }
-    }
-
     // ── 能力约束机检（复审 craft 2；R3 P1-C：凡能从输入形状导出的守卫无条件执行）。
     // capabilities 声明只是「附加的严格化信号」（如 timestampedShots 声明后每个 shot 都必须
     // 带前缀、negativeExclusion 声明后 constraints 必填）——它永远不是唯一闸门：
     // 输入形状自证的物理矛盾，不声明也一律拦下。
     const caps = new Set(v.capabilities);
 
-    // 一镜到底：声明之外，style/pacing 文本提到一镜到底/one take 也触发（单 shot 无剪辑）。
-    if ((caps.has("singleTake") || SINGLE_TAKE_TEXT.test(`${v.style ?? ""} ${v.pacing ?? ""}`)) && v.shots.length !== 1) {
+    // 一镜到底：声明之外，style/pacing/camera 任一处提到一镜到底/one take 也触发（单 shot 无剪辑）。
+    // R4-a：能力表 singleTake 把 shots.camera 列为承载字段 —— 只扫 style/pacing 会漏掉
+    // 「camera: one continuous take + 三个 shot」这条自相矛盾的形状。
+    const singleTakeText = [v.style, v.pacing, ...v.shots.map((s) => s.camera)].filter(Boolean).join(" ");
+    if ((caps.has("singleTake") || SINGLE_TAKE_TEXT.test(singleTakeText)) && v.shots.length !== 1) {
       ctx.addIssue({ code: "custom", path: ["shots"],
         message: "a single continuous take requires exactly ONE shot (one continuous take has no cuts)" });
     }
@@ -126,8 +122,10 @@ export const seedancePromptInput = z
       });
     }
 
-    // 音乐卡点：pacing 谈到拍/卡点/hard cut（或已声明）→ 无条件要求数值拍长。
-    if ((caps.has("beatSync") || (v.pacing && BEAT_PACING_TEXT.test(v.pacing))) && !(v.pacing && /\d/.test(v.pacing))) {
+    // 音乐卡点：style 或 pacing 任一处谈到卡点/节拍/hard cut（或已声明）→ 无条件要求数值拍长。
+    // R4-b：只看 pacing 会让 style:"beat-synced" 无数字过关；R4-c：数值必须紧邻时间单位。
+    const beatText = [v.style, v.pacing].filter(Boolean).join(" ");
+    if ((caps.has("beatSync") || BEAT_PACING_TEXT.test(beatText)) && !BEAT_NUMBER.test(beatText)) {
       ctx.addIssue({ code: "custom", path: ["pacing"],
         message: "beat-synced pacing requires a NUMERIC beat length (e.g. 每拍约 0.5s, hard cut) — the engine cannot hear music" });
     }
@@ -149,6 +147,21 @@ export const seedancePromptInput = z
     }
   });
 export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
+
+/**
+ * 纯：语言只给建议，绝不拦（#437 R4）。叙事字段主体文字系与引擎偏好（PROMPT_LANGUAGES
+ * 里 seedance = zh）不符 → 一句 languageAdvice 随装配结果返回；相符 → undefined。
+ * 行业词字段（camera/shotFraming/sceneLight/style/pacing）与台词字段（audio）本就该夹英文，
+ * 不参与判定。
+ */
+export function seedanceLanguageAdvice(i: SeedancePromptInput): string | undefined {
+  const language = promptLanguageFor("seedance");
+  if (!language) return undefined;
+  return languageAdvice(language, [
+    i.editInstruction, i.preserve, i.constraints,
+    ...i.shots.flatMap((s) => [s.subject, s.action, s.mood]),
+  ]);
+}
 
 /** edit 模式缺省保持句（三保：画面/动作/运镜）——缺保持句 = 整片重绘。 */
 export const EDIT_PRESERVE_DEFAULT = "其余画面、人物动作与运镜保持不变";

@@ -226,6 +226,19 @@ describe("ottoInstructions — strategy families, variants, and prompt language 
     expect(ottoInstructions).toMatch(/ENGLISH/);
     expect(ottoInstructions).not.toMatch(/MUST be in English/); // the old blanket rule is gone
   });
+  // R4：语言执法只剩写作端（schema 不再拦）—— 指令必须明说「归你」且说明 languageAdvice 的意思，
+  // 否则语言要求在整条链路上无人负责。
+  it("puts prompt language on Otto and says plainly that nothing rejects a wrong-language prompt", () => {
+    expect(ottoInstructions).toMatch(/Prompt language is YOUR job/);
+    expect(ottoInstructions).toMatch(/VIDEO prompt body in CHINESE/);
+    expect(ottoInstructions).toMatch(/IMAGE prompt body in ENGLISH/);
+    expect(ottoInstructions).toMatch(/do NOT reject or translate a wrong-language prompt/);
+  });
+  it("teaches Otto what a languageAdvice note means: rewrite and re-call before proposing", () => {
+    expect(ottoInstructions).toMatch(/languageAdvice/);
+    expect(ottoInstructions).toMatch(/rewrite it .*call the skill again/);
+    expect(ottoInstructions).toMatch(/never pass an unchanged wrong-language prompt/);
+  });
   it("exposes the video edit mode to Otto", () => {
     expect(ottoInstructions).toMatch(/mode:'edit'/);
     expect(ottoInstructions).toMatch(/editInstruction/);

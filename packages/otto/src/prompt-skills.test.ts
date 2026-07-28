@@ -7,6 +7,7 @@ import {
   PROMPT_LANGUAGES,
   promptLanguageFor,
 } from "./prompt-skills.js";
+import { LANGUAGE_LABEL } from "./prompt-language.js";
 import { allSkills } from "./registry.js";
 
 describe("prompt-skilled families (D/E decision 6 — sole prompt authority)", () => {
@@ -54,6 +55,25 @@ describe("per-engine prompt language (#437; Blueprint v2.13 — 按实测最优�
     expect(new Set(declared).size).toBe(declared.length);
     for (const { family } of PROMPT_SKILLS) {
       expect(declared, `missing language ruling for ${family}`).toContain(family);
+    }
+  });
+
+  // R4：执法搬到写作端 —— 每个 skill 的 description 必须真的从这张表读语言，
+  // 且必须明说「没有闸门会替你拦」。description 与权威表脱钩 = 语言无人执法。
+  it("each skill's description states its declared language (descriptions read the authority table)", () => {
+    for (const { skill, family } of PROMPT_SKILLS) {
+      const language = promptLanguageFor(family);
+      expect(language, `missing language ruling for ${family}`).toBeDefined();
+      expect(skill.description, family).toContain(LANGUAGE_LABEL[language!]);
+      // 反面：不得同时宣告另一种语言（避免 description 与权威表漂移）
+      const other = language === "zh" ? "en" : "zh";
+      expect(skill.description, family).not.toContain(`PROMPT BODY IN ${LANGUAGE_LABEL[other]}`);
+    }
+  });
+  it("each description tells the model nothing rejects a wrong-language body (R4 authoring enforcement)", () => {
+    for (const { skill } of PROMPT_SKILLS) {
+      expect(skill.description).toContain("NOTHING REJECTS A WRONG-LANGUAGE BODY");
+      expect(skill.description).toContain("languageAdvice");
     }
   });
 });

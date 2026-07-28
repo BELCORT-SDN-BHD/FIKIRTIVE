@@ -30,6 +30,19 @@ describe("VIDEO_CAPABILITIES table", () => {
       }
     }
   });
+  // R4 P2：表文与 schema 真实执法必须对齐 —— 表少列一个承载字段，Otto 就不知道那里也会被拦。
+  it("field lists name every carrier field the schema actually derives a guard from", () => {
+    const fieldsOf = (id: string) => VIDEO_CAPABILITIES.find((c) => c.id === id)!.fields;
+    expect(fieldsOf("extension")).toContain("style"); // continuesFromPrev → style 必填
+    expect(fieldsOf("singleTake")).toEqual(expect.arrayContaining(["shots.camera", "style", "pacing"]));
+    expect(fieldsOf("beatSync")).toEqual(expect.arrayContaining(["pacing", "style"]));
+  });
+  it("the timestamp hint promises only what the schema checks (no total-duration claim — there is no duration field)", () => {
+    const hint = VIDEO_CAPABILITIES.find((c) => c.id === "timestampedShots")!.hintZh;
+    expect(hint).toContain("升序");
+    expect(hint).toContain("段段连续无缝隙");
+    expect(hint).not.toContain("总长等于系统时长参数");
+  });
   it("every capability carries a Chinese one-line hint", () => {
     for (const cap of VIDEO_CAPABILITIES) {
       expect(cap.labelZh.length, cap.id).toBeGreaterThan(0);

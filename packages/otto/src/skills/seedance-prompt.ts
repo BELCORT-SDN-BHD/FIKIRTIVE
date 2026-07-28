@@ -2,13 +2,19 @@
  * seedancePrompt — $0 确定性视频 prompt 装配 skill（free/read/internal → 不审批）。
  * 只出创作 prompt（中文正文，英文运镜词），技术 flag 由 provider 追加。Otto 提视频前先调它、用返回的 prompt。
  * 语言依据：Blueprint v2.13 —— 生成 prompt 语言由各引擎的 prompt 权威模块按实测最优决定；本引擎实测中文更优。
+ * 语言执法位置（R4）：写作端 —— 这段 description 直接从 PROMPT_LANGUAGES 读语言并明写要求；
+ * schema 不再拦（拦会误杀合法输入），不匹配只随结果回一句 languageAdvice。
  * 商密：description 与装配输出对用户只称「视频引擎」，不出现供应商/模型商号（文件名等内部标识符不受限）。
  */
 import { defineOttoSkill } from "../skill.js";
-import { seedancePromptInput, assembleSeedance, seedanceVariants } from "./seedance-prompt.helpers.js";
+import { seedancePromptInput, assembleSeedance, seedanceVariants, seedanceLanguageAdvice } from "./seedance-prompt.helpers.js";
 import { CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly } from "./prompt-vocab.js";
+import { LANGUAGE_LABEL, LANGUAGE_REASON, promptLanguageFor } from "../prompt-language.js";
 import { decideStrategy } from "./prompt-strategy.js";
 import { checkVariantSet, deriveAssetChecklist, variantCountFor } from "./variant-policy.js";
+
+/** 语言权威（PROMPT_LANGUAGES）是这段 description 的唯一来源 —— 不在此另写语言字面。 */
+const VIDEO_LANGUAGE = promptLanguageFor("seedance") ?? "zh";
 
 export const seedancePromptSkill = defineOttoSkill({
   name: "seedancePrompt",
@@ -16,9 +22,14 @@ export const seedancePromptSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "Assemble a model-tuned VIDEO prompt for the video engine. Write the prompt BODY in CHINESE — this " +
-    "engine measurably performs best with Chinese — keeping industry camera/framing terms in English " +
-    "(dolly in, close-up); subjects, actions, lighting, and mood go in Chinese. The CREATIVE prompt only; " +
+    "Assemble a model-tuned VIDEO prompt for the video engine. " +
+    `LANGUAGE — WRITE THE PROMPT BODY IN ${LANGUAGE_LABEL[VIDEO_LANGUAGE]} (${LANGUAGE_REASON[VIDEO_LANGUAGE]}). ` +
+    `Subjects, actions, moods, edit instructions, and constraints go in ${LANGUAGE_LABEL[VIDEO_LANGUAGE]}; keep ` +
+    "industry camera/framing/lighting terms in English (dolly in, close-up, golden hour) and keep quoted " +
+    "dialogue in whatever language the character speaks. NOTHING REJECTS A WRONG-LANGUAGE BODY — the schema " +
+    "never fails a prompt over its language, so a non-Chinese body would ship exactly as you wrote it. When " +
+    "the result comes back with a `languageAdvice` note, the body is in the wrong language: rewrite it and " +
+    "call this skill again BEFORE proposing. The CREATIVE prompt only; " +
     "never add resolution/duration/ratio (the system appends those). Call this FIRST before proposing a " +
     "video, then use the returned `prompt`. Primary mode i2v: describe the MOTION relative to the first " +
     "frame (what moves, how), not the static scene. Use mode:'t2v' when there is NO source frame to " +
@@ -28,8 +39,10 @@ export const seedancePromptSkill = defineOttoSkill({
     "cinematography — YOU fill it: give each shot a clear action, and add exactly ONE camera move, a shot " +
     "framing, and scene lighting even if unmentioned. One shot = one beat; use up to 4 shots for a " +
     "multi-beat clip; for precisely timed beats, prefix each shot's action with a half-width time range " +
-    "('0-2s: …') that sums to the clip's duration. For beat-synced cuts, put the numeric beat length in " +
-    "pacing (每拍约 0.5s, hard cut) — the engine cannot hear music. Set continuesFromPrev:true for a shot " +
+    "('0-2s: …') that sums to the clip's duration. For beat-synced cuts, put the beat length WITH ITS TIME " +
+    "UNIT in pacing (每拍约 0.5s / 120 BPM, hard cut) — the engine cannot hear music, and a bare number " +
+    "like 4K or 16:9 is not a beat length. A one-continuous-take clip is exactly ONE shot: never combine " +
+    "camera 'one continuous take' (or a 一镜到底 style/pacing) with several shots. Set continuesFromPrev:true for a shot " +
     "that follows a prior clip, keep style word-for-word identical across segments, and do NOT re-describe " +
     "appearances in a continuation. List @-referenced entities in `references` to lock identity. " +
     "cleanFootage defaults true (bans on-screen text/watermark/logo) — set false only when text or a logo " +
@@ -53,10 +66,13 @@ export const seedancePromptSkill = defineOttoSkill({
       family,
       i.references.map((r) => ({ role: r.role, name: r.name, ready: true, lock: r.lock })),
     );
+    // R4：语言只是提示 —— 不匹配时附一句建议，永不拒绝输入、永不改写 prompt。
+    const advice = seedanceLanguageAdvice(i);
+    const languageAdvice = advice ? { languageAdvice: advice } : {};
     // edit = 一次一处修改：变体属于「改哪里」的产品层选择，不做确定性派生。
-    if (i.mode === "edit") return { prompt, strategy, assetChecklist };
+    if (i.mode === "edit") return { prompt, strategy, assetChecklist, ...languageAdvice };
     const variants = seedanceVariants(i, variantCountFor({ family, directionPinned: i.directionPinned, editType: false }));
-    return { prompt, strategy, variants, variantCheck: checkVariantSet("video", variants), assetChecklist };
+    return { prompt, strategy, variants, variantCheck: checkVariantSet("video", variants), assetChecklist, ...languageAdvice };
   },
 });
 

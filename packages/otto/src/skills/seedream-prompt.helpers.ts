@@ -1,13 +1,13 @@
 import { z } from "zod";
-import { promptRef, identityLockClause, majorityScript, isNumericTokenText } from "./prompt-vocab.js";
+import { promptRef, identityLockClause } from "./prompt-vocab.js";
+import { languageAdvice, promptLanguageFor } from "../prompt-language.js";
 import { IMAGE_VARIANT_AXES, type PromptVariant } from "./variant-policy.js";
 
-/** 语言执法错误文案（中性）。textContent（画面内要渲染的文字）不受此限。 */
-export const EN_FIELD_ERROR =
-  "Write this field in ENGLISH — the image engine's prompts are English (textContent may be any language).";
-
 // 复审 R2 追加（全部 optional/default，旧形状兼容）：userIntent（策略路由输入）、
-// directionPinned（方向已钉死 → 2 个变体）；语言执法见 superRefine。
+// directionPinned（方向已钉死 → 2 个变体）。
+// R4：语言不再是闸门 —— schema 永不因文字系统拒绝任何输入（判官实证硬门会拒掉
+// "a product photo 辣椒酱" 这类合法输入）。语言改走 seedreamLanguageAdvice 的非阻断
+// 建议 + 写作端执法，详见 prompt-language.ts。
 export const seedreamPromptInput = z
   .object({
     mode: z.enum(["t2i", "i2i"]).default("t2i"),
@@ -28,31 +28,23 @@ export const seedreamPromptInput = z
     preserve: z.string().optional(),
     userIntent: z.string().optional(),
     directionPinned: z.boolean().default(false),
-  })
-  .superRefine((v, ctx) => {
-    // ── 语言执法（复审 P1-B 镜像；R3 类闭合）：图像 prompt 字段主体必须英文（中文/
-    // 西里尔/阿拉伯等任何非英文主体一律拦）；纯数字/比例 token（"16:9, 4K"、"50mm"）豁免；
-    // textContent（要画进图里的文字，用户语言自便）与 userIntent（用户原话）豁免。
-    const enChecked: Array<[string, string | undefined]> = [
-      ["subject", v.subject],
-      ["actionPose", v.actionPose],
-      ["environment", v.environment],
-      ["style", v.style],
-      ["lighting", v.lighting],
-      ["colorPalette", v.colorPalette],
-      ["cameraLens", v.cameraLens],
-      ["mood", v.mood],
-      ["detail", v.detail],
-      ["editTarget", v.editTarget],
-      ["preserve", v.preserve],
-    ];
-    for (const [path, val] of enChecked) {
-      if (val && !isNumericTokenText(val) && majorityScript(val) !== "latin") {
-        ctx.addIssue({ code: "custom", message: EN_FIELD_ERROR, path: [path] });
-      }
-    }
   });
+
 export type SeedreamPromptInput = z.infer<typeof seedreamPromptInput>;
+
+/**
+ * 纯：语言只给建议，绝不拦（#437 R4）。散文字段主体文字系与引擎偏好（PROMPT_LANGUAGES
+ * 里 seedream = en）不符 → 一句 languageAdvice 随装配结果返回；相符 → undefined。
+ * textContent（要画进图里的文字）与 userIntent（用户原话）本就任意语言，不参与判定；
+ * 度量类字段（cameraLens "50mm"、colorPalette）也不参与。
+ */
+export function seedreamLanguageAdvice(i: SeedreamPromptInput): string | undefined {
+  const language = promptLanguageFor("seedream");
+  if (!language) return undefined;
+  return languageAdvice(language, [
+    i.subject, i.actionPose, i.environment, i.mood, i.detail, i.editTarget, i.preserve,
+  ]);
+}
 
 /** 纯：结构化意图 → Seedream 偏好的英文 prose prompt（最前 token 权重最高）。 */
 export function assembleSeedream(i: SeedreamPromptInput): string {

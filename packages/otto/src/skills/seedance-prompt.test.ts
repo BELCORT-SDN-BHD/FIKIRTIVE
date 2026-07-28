@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { assembleSeedance, seedancePromptInput, seedanceVariants, EDIT_PRESERVE_DEFAULT } from "./seedance-prompt.helpers.js";
+import {
+  assembleSeedance, seedancePromptInput, seedanceVariants, seedanceLanguageAdvice, EDIT_PRESERVE_DEFAULT,
+  negativeTermCount,
+} from "./seedance-prompt.helpers.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
 
 const CJK = /[一-鿿]/;
@@ -227,51 +230,63 @@ describe("seedancePromptSkill gate", () => {
   });
 });
 
-describe("seedancePromptInput — language enforcement (复审 P1-B：声明变执法)", () => {
-  it("REJECTS an English-subject/action prompt (judge counterexample now fails closed)", () => {
-    const r = seedancePromptInput.safeParse({
-      shots: [{ subject: "a young man", action: "walks through the door and pauses" }],
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/CHINESE/);
+describe("seedancePromptInput — language is NEVER a rejection (R4：硬语言门撤除)", () => {
+  const advice = (input: unknown) => seedanceLanguageAdvice(seedancePromptInput.parse(input));
+
+  it("an English subject/action PASSES and yields an advisory instead of an error", () => {
+    const input = { shots: [{ subject: "a young man", action: "walks through the door and pauses" }] };
+    expect(seedancePromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toMatch(/Chinese/);
   });
-  it("accepts Chinese free text with embedded English camera vocabulary (majority-script rule)", () => {
-    const r = seedancePromptInput.safeParse({
+  it("the advisory names the engine neutrally and proposes a rewrite, never a refusal", () => {
+    const out = advice({ shots: [{ subject: "a young man", action: "walks through the door" }] })!;
+    expect(out).toContain("the video engine performs best with a Chinese prompt body");
+    expect(out).toMatch(/consider rewriting/);
+    expect(out).not.toMatch(/reject|error|invalid/i);
+  });
+  it("Chinese free text with embedded English camera vocabulary → no advisory", () => {
+    const input = {
       shots: [{ subject: "档口的老板娘", action: "掀开蒸笼，镜头随蒸气 dolly in 推进", camera: "dolly in" }],
-    });
-    expect(r.success).toBe(true);
+    };
+    expect(seedancePromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toBeUndefined();
   });
-  it("technical/dialogue fields stay exempt: English camera/framing/light/pacing and Malay dialogue pass", () => {
-    const r = seedancePromptInput.safeParse({
-      pacing: "slow-motion",
-      shots: [{
-        subject: "两位街坊", action: "相视大笑",
-        camera: "fixed", shotFraming: "medium close-up", sceneLight: "golden hour",
-        audio: "Makcik berkata: 'Sedapnya!'",
-      }],
-    });
-    expect(r.success).toBe(true);
+  it("Japanese kana/kanji free text PASSES (R1–R3 的计数争议不再能拒掉任何输入)", () => {
+    const input = { shots: [{ subject: "若い男", action: "ドアを通り抜けて立ち止まる" }] };
+    expect(seedancePromptInput.safeParse(input).success).toBe(true);
+    expect(() => advice(input)).not.toThrow();
   });
-  it("REJECTS an English editInstruction in edit mode", () => {
-    const r = seedancePromptInput.safeParse({ mode: "edit", editInstruction: "change the shirt to yellow" });
-    expect(r.success).toBe(false);
+  it("Cyrillic / Arabic / emoji / digit-prefixed free text all PASS (no script is refused any more)", () => {
+    for (const shots of [
+      [{ subject: "молодой человек", action: "идёт по улице и останавливается" }],
+      [{ subject: "رجل شاب", action: "يمشي عبر الباب ويتوقف" }],
+      [{ subject: "🎬🎬🎬", action: "4K 16:9 pan" }],
+    ]) {
+      expect(seedancePromptInput.safeParse({ shots }).success).toBe(true);
+    }
   });
-  it("R3 class closure: wholly-Cyrillic free text REJECTED (was 'neither' → passed both engines)", () => {
-    const r = seedancePromptInput.safeParse({
-      shots: [{ subject: "молодой человек", action: "идёт по улице и останавливается у двери" }],
-    });
-    expect(r.success).toBe(false);
-    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/CHINESE/);
+  it("an English editInstruction in edit mode PASSES with an advisory", () => {
+    const input = { mode: "edit", editInstruction: "change the shirt to yellow" };
+    expect(seedancePromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toMatch(/Chinese/);
   });
-  it("R3 class closure: wholly-Arabic free text REJECTED", () => {
-    expect(seedancePromptInput.safeParse({
-      shots: [{ subject: "رجل شاب", action: "يمشي عبر الباب ويتوقف" }],
-    }).success).toBe(false);
+  it("purely numeric/ratio constraints need no exemption rule — they simply produce no advisory", () => {
+    const input = { shots: [{ subject: "一只猫", action: "跃起" }], constraints: "16:9, 4K" };
+    expect(seedancePromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toBeUndefined();
   });
-  it("purely numeric/ratio token fields are NOT punished ('16:9, 4K' —— R2 已确证纯数字不判罚)", () => {
-    expect(seedancePromptInput.safeParse({
-      shots: [{ subject: "一只猫", action: "跃起" }], constraints: "16:9, 4K",
-    }).success).toBe(true);
+  it("SKILL result: an English body rides back with languageAdvice; a Chinese body has none", async () => {
+    const invoke = seedancePromptSkill.tool as unknown as { invoke: (rc: unknown, a: string) => Promise<any> };
+    const en = await invoke.invoke({ context: {} }, JSON.stringify({
+      userIntent: "make a video of a man walking in",
+      shots: [{ subject: "a young man", action: "walks through the door and pauses" }],
+    }));
+    expect(en.prompt).toContain("a young man"); // 不改写用户内容
+    expect(en.languageAdvice).toMatch(/Chinese/);
+    const zh = await invoke.invoke({ context: {} }, JSON.stringify({
+      shots: [{ subject: "画面里的男人", action: "在门口停下，深吸一口气" }],
+    }));
+    expect(zh.languageAdvice).toBeUndefined();
   });
 });
 
@@ -385,6 +400,73 @@ describe("seedancePromptInput — capability constraints machine-checked (复审
     expect(seedancePromptInput.safeParse({ shots: [shot, { subject: "一只狗", action: "追逐" }] }).success).toBe(true);
     expect(seedancePromptInput.safeParse({
       shots: [{ subject: "茶师", action: "0-2s: 持杯高举" }, { subject: "茶汤", action: "2-4s: 拉出长弧线" }],
+    }).success).toBe(true);
+  });
+});
+
+describe("seedancePromptInput — R4 判官四洞：能力守卫按承载字段闭合", () => {
+  const shot = { subject: "一只猫", action: "跃起" };
+  const dog = { subject: "一只狗", action: "追逐" };
+
+  // (a) 一镜到底：能力表把 shots.camera 列为承载字段 —— 只扫 style/pacing 会漏。
+  it("camera 'one continuous take' with MORE than one shot fails closed (camera is a carrier field)", () => {
+    expect(seedancePromptInput.safeParse({
+      shots: [{ ...shot, camera: "one continuous take" }, dog],
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      shots: [{ ...shot, camera: "一镜到底跟随" }, dog, { subject: "一只鸟", action: "起飞" }],
+    }).success).toBe(false);
+    // 恰好一个 shot 仍合法（这是这项能力的正确用法）
+    expect(seedancePromptInput.safeParse({
+      shots: [{ ...shot, camera: "one continuous take" }],
+    }).success).toBe(true);
+  });
+
+  // (b) 节拍数值：style 也承载节拍信号 —— 只看 pacing 会让 style:"beat" 无数字过关。
+  it("style declaring a beat cut with NO number fails closed (both style and pacing are scanned)", () => {
+    expect(seedancePromptInput.safeParse({ shots: [shot], style: "beat-synced sneaker montage" }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({ shots: [shot], style: "卡点快剪风" }).success).toBe(false);
+    // 数值给在 style 或 pacing 任一处都算
+    expect(seedancePromptInput.safeParse({ shots: [shot], style: "beat-synced, 每拍约 0.5s" }).success).toBe(true);
+    expect(seedancePromptInput.safeParse({
+      shots: [shot], style: "卡点快剪风", pacing: "120 BPM, hard cut",
+    }).success).toBe(true);
+  });
+
+  // (c) 「数值拍长」必须是数字紧邻时间单位，不是文本里随便有个数字。
+  it("a bare number without a time unit does NOT satisfy the beat length ('beat 4K', 'hard cut 16:9')", () => {
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "beat 4K" }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "hard cut 16:9" }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "卡点剪辑 2024 春季" }).success).toBe(false);
+    for (const pacing of ["每拍约 0.5s, hard cut", "每拍 500ms", "120 BPM 硬切", "每 4 拍一切", "2 秒一个拍点"]) {
+      expect(seedancePromptInput.safeParse({ shots: [shot], pacing }).success, pacing).toBe(true);
+    }
+  });
+
+  // (d) 负向项数：分隔符不全 → 六项写成一行也能混过 ≤5 上限。
+  it("six negative terms joined by NEWLINE or PIPE are counted as six and rejected", () => {
+    const six = ["多余手指", "路人", "杂物", "反光", "阴影", "水印"];
+    expect(negativeTermCount(`画面中不出现：${six.join("\n")}`)).toBe(6);
+    expect(negativeTermCount(`画面中不出现：${six.join(" | ")}`)).toBe(6);
+    expect(negativeTermCount(`画面中不出现：${six.join("｜")}`)).toBe(6);
+    for (const sep of ["\n", " | ", "｜", "；", "、"]) {
+      expect(seedancePromptInput.safeParse({
+        shots: [shot], constraints: `画面中不出现：${six.join(sep)}`,
+      }).success, sep).toBe(false);
+    }
+    // 五项以内仍放行（上限本身没变）
+    expect(seedancePromptInput.safeParse({
+      shots: [shot], constraints: `画面中不出现：${six.slice(0, 5).join("\n")}`,
+    }).success).toBe(true);
+  });
+
+  // P2：误拒合法 pacing 也是缺陷 —— "upbeat" 与「跟拍」不是节拍申报。
+  it("false-positive guard: 'upbeat' and 跟拍 are NOT beat declarations (no numeric beat demanded)", () => {
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "upbeat and airy" }).success).toBe(true);
+    expect(seedancePromptInput.safeParse({ shots: [shot], style: "upbeat lifestyle spot" }).success).toBe(true);
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "手持跟拍，节奏轻快" }).success).toBe(true);
+    expect(seedancePromptInput.safeParse({
+      shots: [{ ...shot, camera: "handheld follow" }], style: "跟拍纪实风",
     }).success).toBe(true);
   });
 });

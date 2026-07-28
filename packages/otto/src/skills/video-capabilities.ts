@@ -48,8 +48,8 @@ export const VIDEO_CAPABILITIES: readonly VideoCapability[] = [
   {
     id: "extension",
     labelZh: "视频延长",
-    fields: ["continuesFromPrev", "shots.action", "shots.sceneLight"],
-    hintZh: "continuesFromPrev:true；不重述场景与外观，只写新增运动；sceneLight 写「延续上一段的光线与色调」。",
+    fields: ["continuesFromPrev", "style", "shots.action", "shots.sceneLight"],
+    hintZh: "continuesFromPrev:true 且 style 必填（schema 机检：续接缺 style 直接拒 —— 逐字复用才接得上）；不重述场景与外观，只写新增运动；sceneLight 写「延续上一段的光线与色调」。",
   },
   {
     id: "audioControl",
@@ -60,8 +60,8 @@ export const VIDEO_CAPABILITIES: readonly VideoCapability[] = [
   {
     id: "singleTake",
     labelZh: "一镜到底",
-    fields: ["shots.camera", "constraints"],
-    hintZh: "camera 用 one continuous take 且只用一个 shot（schema 机检：声明 singleTake、或 style/pacing 出现一镜到底/one take，都强制恰好 1 个 shot）；路径写起点→途经（≤3 个点名地标）→终点；constraints 注明全程无剪辑。",
+    fields: ["shots.camera", "style", "pacing", "constraints"],
+    hintZh: "camera 用 one continuous take 且只用一个 shot（schema 机检：声明 singleTake、或 style/pacing/camera 任一处出现一镜到底/one take，都强制恰好 1 个 shot）；路径写起点→途经（≤3 个点名地标）→终点；constraints 注明全程无剪辑。",
   },
   {
     id: "editInstruction",
@@ -72,14 +72,14 @@ export const VIDEO_CAPABILITIES: readonly VideoCapability[] = [
   {
     id: "beatSync",
     labelZh: "音乐卡点",
-    fields: ["pacing", "shots.action", "shots.shotFraming"],
-    hintZh: "引擎听不到歌：pacing 写数值拍长（每拍约 0.5s, hard cut）；每 shot 一个爆发动作在拍点定格，相邻景别跳变。",
+    fields: ["pacing", "style", "shots.action", "shots.shotFraming"],
+    hintZh: "引擎听不到歌：pacing 写带时间单位的拍长（每拍约 0.5s / 120 BPM，hard cut）；schema 机检 style/pacing 任一处提到卡点就要求这个数值，「4K」这类裸数字不算；每 shot 一个爆发动作在拍点定格，相邻景别跳变。",
   },
   {
     id: "timestampedShots",
     labelZh: "时间戳分镜",
     fields: ["shots.action"],
-    hintZh: "action 以半角时间戳开头（0-2s:），段段连续无缝隙，总长等于系统时长参数；一段一动作一运镜。",
+    hintZh: "action 以半角时间戳开头（0-2s:）；schema 机检的是升序、不重叠、无零长区间、段段连续无缝隙（总时长由系统参数决定，这里不校验）；一段一动作一运镜。",
   },
   {
     id: "multiSegmentContinuation",

@@ -41,20 +41,14 @@ export function familyHasPromptSkill(family: ModelFamily | undefined): boolean {
  * constitution: prompt language is decided per engine by its prompt-authority
  * module — this registry — following measured best practice).
  *
- * - seedance → "zh": the video engine measurably performs best with a CHINESE
- *   prompt body; industry camera/framing terms stay in English.
- * - seedream → "en": current measurements show no Chinese advantage for the
- *   image engine; prompts stay English (front-loaded token weighting).
+ * This registry stays the authority surface; the physical table lives one module
+ * down in ./prompt-language.ts because the skill DESCRIPTIONS read the language at
+ * module-init time and this file imports those skills — defining it here would
+ * close an import cycle and throw during initialisation. Same single source, no
+ * second copy: everything (descriptions, the non-blocking advisory, this export)
+ * reads PROMPT_LANGUAGES.
  *
  * Changing an entry requires new measured evidence FIRST, then the matching
  * assembler + skill description in the same PR — never a silent language switch.
  */
-export const PROMPT_LANGUAGES: ReadonlyArray<{ family: ModelFamily; language: "zh" | "en" }> = [
-  { family: "seedream", language: "en" },
-  { family: "seedance", language: "zh" },
-];
-
-/** The tuned prompt language for a family, or undefined when it has no dedicated prompt skill. */
-export function promptLanguageFor(family: ModelFamily | undefined): "zh" | "en" | undefined {
-  return PROMPT_LANGUAGES.find((p) => p.family === family)?.language;
-}
+export { PROMPT_LANGUAGES, promptLanguageFor, type PromptLanguage } from "./prompt-language.js";

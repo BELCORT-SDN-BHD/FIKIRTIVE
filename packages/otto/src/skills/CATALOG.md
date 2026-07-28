@@ -50,8 +50,8 @@
 | saveOffer | free | write | internal | ❌ | Save or update ONE offer/promotion in the user's Brand memory (upsert by title;  |
 | saveProduct | free | write | internal | ❌ | Save or update ONE product in the user's Brand memory (upsert by name — mentioni |
 | schedulePosts | free | write | internal | ❌ | Draft one or more Instagram/Facebook/X posts onto the user's schedule as DRAFTS  |
-| seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned VIDEO prompt for the video engine. Write the prompt BODY  |
-| seedreamPrompt | free | read | internal | ❌ | Assemble a model-tuned English IMAGE prompt for the image engine — image prompts |
+| seedancePrompt | free | read | internal | ❌ | Assemble a model-tuned VIDEO prompt for the video engine. LANGUAGE — WRITE THE P |
+| seedreamPrompt | free | read | internal | ❌ | Assemble a model-tuned IMAGE prompt for the image engine. LANGUAGE — WRITE THE P |
 | setTitle | free | write | internal | ❌ | Set a concise ≤6-word title for the current conversation. Call once early in a n |
 | sharePostPreview | free | write | internal | ❌ | Create a seat-less, read-only share link for one of the user's scheduled posts s |
 | suggestPostTimes | free | read | internal | ❌ | Suggest good times to publish on a channel (Instagram/Facebook) using known best |

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleSeedream, seedreamPromptInput } from "./seedream-prompt.helpers.js";
+import { assembleSeedream, seedreamPromptInput, seedreamLanguageAdvice } from "./seedream-prompt.helpers.js";
 import { seedreamPromptSkill } from "./seedream-prompt.js";
 
 const CJK = /[一-鿿]/;
@@ -85,37 +85,56 @@ describe("seedreamPromptSkill gate", () => {
   });
 });
 
-describe("seedreamPromptInput — language enforcement (复审 P1-B 镜像：声明变执法)", () => {
-  it("REJECTS a majority-Chinese image prompt (judge counterexample now fails closed)", () => {
-    const r = seedreamPromptInput.safeParse({ subject: "一瓶磨砂玻璃精华液，摆在大理石台面上" });
-    expect(r.success).toBe(false);
-    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/ENGLISH/);
+describe("seedreamPromptInput — language is NEVER a rejection (R4：硬语言门撤除)", () => {
+  const advice = (input: unknown) => seedreamLanguageAdvice(seedreamPromptInput.parse(input));
+
+  it("THE JUDGE'S COUNTEREXAMPLE: 'a product photo 辣椒酱' passes (a gate must not block good input)", () => {
+    const input = { subject: "a product photo 辣椒酱" };
+    expect(seedreamPromptInput.safeParse(input).success).toBe(true);
+    expect(() => advice(input)).not.toThrow();
   });
-  it("accepts English free text; a proper-noun CJK fragment inside majority-English text passes", () => {
-    expect(seedreamPromptInput.safeParse({
+  it("a majority-Chinese image prompt PASSES and yields an advisory instead of an error", () => {
+    const input = { subject: "一瓶磨砂玻璃精华液，摆在大理石台面上" };
+    expect(seedreamPromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toMatch(/English/);
+  });
+  it("the advisory names the engine neutrally and proposes a rewrite, never a refusal", () => {
+    const out = advice({ subject: "一瓶磨砂玻璃精华液" })!;
+    expect(out).toContain("the image engine performs best with an English prompt body");
+    expect(out).toMatch(/consider rewriting/);
+    expect(out).not.toMatch(/reject|error|invalid/i);
+  });
+  it("English free text with a CJK proper-noun fragment → no advisory", () => {
+    const input = {
       subject: "a frosted-glass serum bottle labelled 精华 on a marble counter",
       style: "editorial photography",
-    }).success).toBe(true);
+    };
+    expect(seedreamPromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toBeUndefined();
   });
-  it("textContent stays exempt — in-image text may be any language", () => {
-    expect(seedreamPromptInput.safeParse({
-      subject: "a red festive poster", textContent: "新年快乐",
-    }).success).toBe(true);
-  });
-  it("R3 class closure: wholly-Cyrillic subject REJECTED (was 'neither' → passed both engines)", () => {
-    const r = seedreamPromptInput.safeParse({ subject: "матовая чёрная бутылка на мраморной столешнице" });
-    expect(r.success).toBe(false);
-    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/ENGLISH/);
-  });
-  it("purely numeric/ratio token fields are NOT punished (cameraLens '50mm', detail '16:9, 4K')", () => {
-    expect(seedreamPromptInput.safeParse({
-      subject: "a red apple", cameraLens: "50mm", detail: "16:9, 4K",
-    }).success).toBe(true);
-  });
-  it("REJECTS a Chinese editTarget in i2i mode", () => {
+  it("Japanese kana text and a Chinese editTarget both PASS (no script is refused any more)", () => {
+    expect(seedreamPromptInput.safeParse({ subject: "大理石のカウンターに置かれた化粧水の瓶" }).success).toBe(true);
     expect(seedreamPromptInput.safeParse({
       mode: "i2i", subject: "the source image", editVerb: "Replace", editTarget: "背景换成海滩日落",
-    }).success).toBe(false);
+    }).success).toBe(true);
+  });
+  it("textContent never drives the advisory — in-image text may be any language", () => {
+    const input = { subject: "a red festive poster on a wooden door", textContent: "新年快乐" };
+    expect(seedreamPromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toBeUndefined();
+  });
+  it("purely numeric/measure fields need no exemption rule — they simply produce no advisory", () => {
+    const input = { subject: "a red apple", cameraLens: "50mm", detail: "16:9, 4K" };
+    expect(seedreamPromptInput.safeParse(input).success).toBe(true);
+    expect(advice(input)).toBeUndefined();
+  });
+  it("SKILL result: a Chinese body rides back with languageAdvice; an English body has none", async () => {
+    const invoke = seedreamPromptSkill.tool as unknown as { invoke: (rc: unknown, a: string) => Promise<any> };
+    const zh = await invoke.invoke({ context: {} }, JSON.stringify({ subject: "一瓶磨砂玻璃精华液" }));
+    expect(zh.prompt).toContain("一瓶磨砂玻璃精华液"); // 不改写用户内容
+    expect(zh.languageAdvice).toMatch(/English/);
+    const en = await invoke.invoke({ context: {} }, JSON.stringify({ subject: "a red apple" }));
+    expect(en.languageAdvice).toBeUndefined();
   });
 });
 

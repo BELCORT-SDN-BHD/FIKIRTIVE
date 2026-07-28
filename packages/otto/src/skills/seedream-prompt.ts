@@ -2,14 +2,21 @@
  * seedreamPrompt — $0 确定性图像 prompt 装配 skill（free/read/internal → 不审批）。
  * 结构化意图 → 图像引擎调优的英文 prompt 字符串；Otto 把它喂进 propose.structuredPrompt。
  * 语言依据：Blueprint v2.13 —— 生成 prompt 语言按各引擎实测最优；本引擎现有实测英文最优，
- * 若日后实测翻转，先改 prompt-skills.ts 的 PROMPT_LANGUAGES 再改装配，不许静默换语言。
+ * 若日后实测翻转，先改 PROMPT_LANGUAGES（prompt-skills.ts 的权威表面）再改装配，不许静默换语言。
+ * 语言执法位置（R4）：写作端 —— description 直接从 PROMPT_LANGUAGES 读语言并明写要求；
+ * schema 不再拦（判官实证硬门会拒掉 "a product photo 辣椒酱" 这类合法输入），
+ * 不匹配只随结果回一句 languageAdvice。
  * 商密：description 与装配输出对用户只称「图像引擎」，不出现供应商/模型商号（文件名等内部标识符不受限）。
  */
 import { defineOttoSkill } from "../skill.js";
-import { seedreamPromptInput, assembleSeedream, seedreamVariants } from "./seedream-prompt.helpers.js";
+import { seedreamPromptInput, assembleSeedream, seedreamVariants, seedreamLanguageAdvice } from "./seedream-prompt.helpers.js";
 import { LIGHTING, STYLES, enOnly } from "./prompt-vocab.js";
+import { LANGUAGE_LABEL, LANGUAGE_REASON, promptLanguageFor } from "../prompt-language.js";
 import { decideStrategy } from "./prompt-strategy.js";
 import { checkVariantSet, deriveAssetChecklist, variantCountFor } from "./variant-policy.js";
+
+/** 语言权威（PROMPT_LANGUAGES）是这段 description 的唯一来源 —— 不在此另写语言字面。 */
+const IMAGE_LANGUAGE = promptLanguageFor("seedream") ?? "en";
 
 export const seedreamPromptSkill = defineOttoSkill({
   name: "seedreamPrompt",
@@ -17,8 +24,14 @@ export const seedreamPromptSkill = defineOttoSkill({
   effect: "read",
   reach: "internal",
   description:
-    "Assemble a model-tuned English IMAGE prompt for the image engine — image prompts stay in ENGLISH " +
-    "(front-loaded: the earliest tokens carry the most weight). Call this FIRST whenever you are about " +
+    "Assemble a model-tuned IMAGE prompt for the image engine. " +
+    `LANGUAGE — WRITE THE PROMPT BODY IN ${LANGUAGE_LABEL[IMAGE_LANGUAGE]} (${LANGUAGE_REASON[IMAGE_LANGUAGE]}; ` +
+    "front-loaded: the earliest tokens carry the most weight). Subject, pose, environment, mood, and detail " +
+    `go in ${LANGUAGE_LABEL[IMAGE_LANGUAGE]}, whatever language the user writes in; only textContent — the ` +
+    "text to be RENDERED INSIDE the image — stays in the user's language. NOTHING REJECTS A WRONG-LANGUAGE " +
+    "BODY — the schema never fails a prompt over its language, so a non-English body would ship exactly as " +
+    "you wrote it. When the result comes back with a `languageAdvice` note, the body is in the wrong " +
+    "language: rewrite it and call this skill again BEFORE proposing. Call this FIRST whenever you are about " +
     "to propose an image, then pass the returned `prompt` as propose's structuredPrompt. Our users don't " +
     "know photography — YOU supply the craft: always give a concrete subject, and add style, lighting " +
     "(direction + color temperature), camera/lens, and composition even if the user didn't mention them. " +
@@ -43,10 +56,13 @@ export const seedreamPromptSkill = defineOttoSkill({
       family,
       i.references.map((r) => ({ role: r.role, name: r.name, ready: true, lock: r.lock })),
     );
+    // R4：语言只是提示 —— 不匹配时附一句建议，永不拒绝输入、永不改写 prompt。
+    const advice = seedreamLanguageAdvice(i);
+    const languageAdvice = advice ? { languageAdvice: advice } : {};
     // i2i = 定向修改一次一处：变体属于「改哪里」的产品层选择，不做确定性派生。
-    if (i.mode === "i2i") return { prompt, strategy, assetChecklist };
+    if (i.mode === "i2i") return { prompt, strategy, assetChecklist, ...languageAdvice };
     const variants = seedreamVariants(i, variantCountFor({ family, directionPinned: i.directionPinned, editType: false }));
-    return { prompt, strategy, variants, variantCheck: checkVariantSet("image", variants), assetChecklist };
+    return { prompt, strategy, variants, variantCheck: checkVariantSet("image", variants), assetChecklist, ...languageAdvice };
   },
 });
 
