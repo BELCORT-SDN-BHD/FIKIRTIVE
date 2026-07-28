@@ -9,6 +9,13 @@ describe("ottoSimpleModeBlock", () => {
   });
 });
 
+describe("ottoInstructions — open-ended identity (复审 P1-A.3：不预设商家)", () => {
+  it("identity line is open-ended: excellent at marketing, not scoped to it", () => {
+    expect(ottoInstructions).not.toContain("AI marketing operator");
+    expect(ottoInstructions).toMatch(/excellent at marketing, but not limited to it/);
+  });
+});
+
 describe("ottoInstructions — Honesty & limits", () => {
   it("contains the honesty section header", () => {
     expect(ottoInstructions).toContain("Honesty & limits");

@@ -6,8 +6,10 @@
  * 商密：description 与装配输出对用户只称「图像引擎」，不出现供应商/模型商号（文件名等内部标识符不受限）。
  */
 import { defineOttoSkill } from "../skill.js";
-import { seedreamPromptInput, assembleSeedream } from "./seedream-prompt.helpers.js";
+import { seedreamPromptInput, assembleSeedream, seedreamVariants } from "./seedream-prompt.helpers.js";
 import { LIGHTING, STYLES, enOnly } from "./prompt-vocab.js";
+import { decideStrategy } from "./prompt-strategy.js";
+import { checkVariantSet, deriveAssetChecklist, variantCountFor } from "./variant-policy.js";
 
 export const seedreamPromptSkill = defineOttoSkill({
   name: "seedreamPrompt",
@@ -26,9 +28,26 @@ export const seedreamPromptSkill = defineOttoSkill({
     "when the image is a video's first frame. List any @-referenced entities in `references` (role + name) so " +
     "their identity is locked; the reference image itself is passed separately via propose's entityIds. " +
     `Lighting (give direction + color temperature), e.g.: ${enOnly(LIGHTING).join(", ")}. ` +
-    `Style, e.g.: ${enOnly(STYLES).join(", ")}.`,
+    `Style, e.g.: ${enOnly(STYLES).join(", ")}. ` +
+    "Always pass userIntent (the user's request in their own words, any language): the skill routes a " +
+    "strategy family from it and returns 2-3 prompt `variants` (each led by a different axis) plus an " +
+    "`assetChecklist` — present the variants and checklist to the user before proposing; set " +
+    "directionPinned:true when the user already fixed the direction (then 2 variants).",
   parameters: seedreamPromptInput,
-  execute: async (i) => ({ prompt: assembleSeedream(i) }),
+  execute: async (i) => {
+    // 复审 P1-A 接线：策略路由 + 变体 + 素材清单在 skill 执行时真实运行，随结果返回。
+    const prompt = assembleSeedream(i);
+    const strategy = decideStrategy({ text: i.userIntent ?? "", referenceRoles: i.references.map((r) => r.role) });
+    const family = strategy.kind === "route" ? strategy.family : strategy.candidates[0];
+    const assetChecklist = deriveAssetChecklist(
+      family,
+      i.references.map((r) => ({ role: r.role, name: r.name, ready: true, lock: r.lock })),
+    );
+    // i2i = 定向修改一次一处：变体属于「改哪里」的产品层选择，不做确定性派生。
+    if (i.mode === "i2i") return { prompt, strategy, assetChecklist };
+    const variants = seedreamVariants(i, variantCountFor({ family, directionPinned: i.directionPinned, editType: false }));
+    return { prompt, strategy, variants, variantCheck: checkVariantSet("image", variants), assetChecklist };
+  },
 });
 
 export const seedreamPrompt = seedreamPromptSkill.tool;

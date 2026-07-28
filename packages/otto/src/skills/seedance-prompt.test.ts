@@ -50,9 +50,26 @@ describe("assembleSeedance", () => {
     }));
     expect(out).not.toContain("画面中不出现文字");
   });
-  it("audio goes on its own 声音 line", () => {
+  it("audio closes the shot clause with the 声音 prefix (专业语序收尾)", () => {
     const out = assembleSeedance(oneShot({ audio: "安静的室内底噪" }));
-    expect(out).toContain("\n声音: 安静的室内底噪");
+    expect(out).toContain(", 声音: 安静的室内底噪");
+  });
+  it("shot grammar: fixed professional clause order 景别→主体→动作→运镜→光线→氛围→声音", () => {
+    const out = assembleSeedance(oneShot({
+      shotFraming: "close-up", sceneLight: "golden hour", mood: "温暖的氛围", audio: "海浪声",
+    }));
+    const order = ["close-up", "画面里的男人", "在门口停下", "slow dolly in", "golden hour", "温暖的氛围", "声音: 海浪声"];
+    const idx = order.map((t) => out.indexOf(t));
+    expect(idx.every((n) => n >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx); // strictly in declared order
+  });
+  it("shot grammar: missing optional fields omit cleanly — no dangling commas, order stable", () => {
+    const out = assembleSeedance(seedancePromptInput.parse({
+      shots: [{ subject: "一只猫", action: "跃起" }],
+    }));
+    expect(out).not.toMatch(/,\s*,/);
+    expect(out).not.toMatch(/,\s*$/m);
+    expect(out.indexOf("一只猫")).toBeLessThan(out.indexOf("跃起"));
   });
   it("multi-shot labels each beat", () => {
     const out = assembleSeedance(seedancePromptInput.parse({
@@ -207,5 +224,153 @@ describe("seedancePromptSkill gate", () => {
   it("description encodes the Chinese-body language rule and the edit mode", () => {
     expect(seedancePromptSkill.description).toContain("CHINESE");
     expect(seedancePromptSkill.description).toContain("mode:'edit'");
+  });
+});
+
+describe("seedancePromptInput — language enforcement (复审 P1-B：声明变执法)", () => {
+  it("REJECTS an English-subject/action prompt (judge counterexample now fails closed)", () => {
+    const r = seedancePromptInput.safeParse({
+      shots: [{ subject: "a young man", action: "walks through the door and pauses" }],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/CHINESE/);
+  });
+  it("accepts Chinese free text with embedded English camera vocabulary (majority-script rule)", () => {
+    const r = seedancePromptInput.safeParse({
+      shots: [{ subject: "档口的老板娘", action: "掀开蒸笼，镜头随蒸气 dolly in 推进", camera: "dolly in" }],
+    });
+    expect(r.success).toBe(true);
+  });
+  it("technical/dialogue fields stay exempt: English camera/framing/light/pacing and Malay dialogue pass", () => {
+    const r = seedancePromptInput.safeParse({
+      pacing: "hard cut",
+      shots: [{
+        subject: "两位街坊", action: "相视大笑",
+        camera: "fixed", shotFraming: "medium close-up", sceneLight: "golden hour",
+        audio: "Makcik berkata: 'Sedapnya!'",
+      }],
+    });
+    expect(r.success).toBe(true);
+  });
+  it("REJECTS an English editInstruction in edit mode", () => {
+    const r = seedancePromptInput.safeParse({ mode: "edit", editInstruction: "change the shirt to yellow" });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe("seedancePromptInput — capability constraints machine-checked (复审 craft 2)", () => {
+  const shot = { subject: "一只猫", action: "跃起" };
+  it("singleTake: more than one shot is rejected; exactly one passes", () => {
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["singleTake"], shots: [shot, { subject: "一只狗", action: "追逐" }],
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["singleTake"], shots: [{ ...shot, camera: "one continuous take" }],
+    }).success).toBe(true);
+  });
+  it("timestampedShots: missing prefix rejected; overlapping rejected; descending rejected; clean ascending passes", () => {
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["timestampedShots"], shots: [shot],
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["timestampedShots"],
+      shots: [{ subject: "茶师", action: "0-3s: 持杯高举" }, { subject: "茶汤", action: "2-4s: 拉出长弧线" }],
+    }).success).toBe(false); // overlap: 2 < 3
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["timestampedShots"],
+      shots: [{ subject: "茶师", action: "2-4s: 持杯高举" }, { subject: "茶汤", action: "0-2s: 拉出长弧线" }],
+    }).success).toBe(false); // descending
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["timestampedShots"],
+      shots: [{ subject: "茶师", action: "0-2s: 持杯高举" }, { subject: "茶汤", action: "2-4s: 拉出长弧线" }],
+    }).success).toBe(true);
+  });
+  it("timestampedShots: start must be before end", () => {
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["timestampedShots"], shots: [{ subject: "茶师", action: "3-3s: 持杯高举" }],
+    }).success).toBe(false);
+  });
+  it("beatSync: pacing without a numeric beat length rejected; numeric passes", () => {
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["beatSync"], shots: [shot], pacing: "快节奏卡点",
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["beatSync"], shots: [shot], pacing: "每拍约 0.5s, hard cut",
+    }).success).toBe(true);
+  });
+  it("negativeExclusion: >5 terms rejected; ≤5 passes; missing constraints rejected", () => {
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["negativeExclusion"], shots: [shot],
+      constraints: "画面中不出现：多余手指、路人、杂物、反光、阴影、水印",
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["negativeExclusion"], shots: [shot],
+      constraints: "画面中不出现：多余手指、路人",
+    }).success).toBe(true);
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["negativeExclusion"], shots: [shot],
+    }).success).toBe(false);
+  });
+  it("multiSegmentContinuation: missing style rejected; style present passes", () => {
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["multiSegmentContinuation"], shots: [shot], continuesFromPrev: true,
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      capabilities: ["multiSegmentContinuation"], shots: [shot], continuesFromPrev: true, style: "纪实风，暖色调",
+    }).success).toBe(true);
+  });
+  it("no capabilities declared → none of the extra constraints fire (旧调用方兼容)", () => {
+    expect(seedancePromptInput.safeParse({ shots: [shot, { subject: "一只狗", action: "追逐" }] }).success).toBe(true);
+  });
+});
+
+describe("seedancePrompt SKILL wiring (复审 P1-A：策略/变体/清单随 skill 执行返回)", () => {
+  const invoke = seedancePromptSkill.tool as unknown as { invoke: (rc: unknown, a: string) => Promise<any> };
+  const realistic = {
+    userIntent: "帮我的辣椒酱新品拍一条带货视频",
+    shots: [{
+      subject: "辣椒酱瓶身", action: "在木桌上缓缓旋转", camera: "dolly in",
+      shotFraming: "medium", sceneLight: "natural window light", mood: "温暖诱人",
+    }],
+    references: [{ role: "product", name: "辣椒酱经典装", lock: true }],
+  };
+
+  it("a realistic request yields 2-3 meaningfully-different variants that PASS checkVariantSet", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify(realistic));
+    expect(out.variants.length).toBeGreaterThanOrEqual(2);
+    expect(out.variants.length).toBeLessThanOrEqual(3);
+    const axes = out.variants.map((v: { axis: string }) => v.axis);
+    expect(new Set(axes).size).toBe(axes.length); // distinct leading axes
+    expect(out.variantCheck).toEqual({ ok: true, problems: [] }); // machine-verified: no synonym rewrites
+    for (const v of out.variants) {
+      expect(typeof v.prompt).toBe("string");
+      expect(v.prompt).toContain("辣椒酱瓶身"); // user content untouched
+      expect(v.prompt).toContain("辣椒酱经典装 与参考图完全一致"); // identity lock kept across variants
+    }
+  });
+  it("routes the strategy from userIntent + reference roles (decideStrategy runs inside the skill)", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify(realistic));
+    expect(out.strategy).toEqual({ kind: "route", family: "ecommerce", matched: expect.arrayContaining(["带货", "@product"]) });
+  });
+  it("attaches the asset checklist; a family-required missing asset appears not-ready with how-to-supply", async () => {
+    const withRef = await invoke.invoke({ context: {} }, JSON.stringify(realistic));
+    expect(withRef.assetChecklist).toEqual([
+      expect.objectContaining({ role: "product", name: "辣椒酱经典装", ready: true, lock: true }),
+    ]);
+    const noRef = await invoke.invoke({ context: {} }, JSON.stringify({ ...realistic, references: [] }));
+    expect(noRef.assetChecklist[0]).toMatchObject({ role: "product", ready: false });
+    expect(noRef.assetChecklist[0].howToSupply).toBeTruthy();
+  });
+  it("directionPinned → exactly 2 variants", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify({ ...realistic, directionPinned: true }));
+    expect(out.variants.length).toBe(2);
+  });
+  it("mode:'edit' returns a single prompt (one change per call) with strategy + checklist, no variants", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify({
+      mode: "edit", editInstruction: "将T恤由白色改为黄色", userIntent: "把视频里的T恤换个颜色",
+    }));
+    expect(out.variants).toBeUndefined();
+    expect(typeof out.prompt).toBe("string");
+    expect(out.assetChecklist).toEqual([]);
   });
 });

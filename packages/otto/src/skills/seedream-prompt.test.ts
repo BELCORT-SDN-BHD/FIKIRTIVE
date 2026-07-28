@@ -64,10 +64,11 @@ describe("seedreamPromptSkill gate", () => {
     expect(seedreamPromptSkill.needsApproval).toBe(false);
     expect(seedreamPromptSkill.requires).toEqual([]);
   });
-  it("built tool returns { prompt } from assembly", async () => {
-    const invoke = seedreamPromptSkill.tool as unknown as { invoke: (rc: unknown, a: string) => Promise<unknown> };
+  it("built tool returns the assembled prompt (additive result: strategy/variants/checklist ride along)", async () => {
+    const invoke = seedreamPromptSkill.tool as unknown as { invoke: (rc: unknown, a: string) => Promise<any> };
     const out = await invoke.invoke({ context: {} }, JSON.stringify({ subject: "a red apple" }));
-    expect(out).toEqual({ prompt: "a red apple" });
+    expect(out.prompt).toBe("a red apple"); // rendering contract kept: prompt is unchanged
+    expect(out.strategy).toMatchObject({ kind: "route", family: "generalCreative" }); // open-ended fallback
   });
   it("description carries concrete lighting/style vocabulary, English only", () => {
     expect(seedreamPromptSkill.description).toContain("golden hour");
@@ -81,5 +82,69 @@ describe("seedreamPromptSkill gate", () => {
   });
   it("description states the English-language rule for the image engine", () => {
     expect(seedreamPromptSkill.description).toContain("ENGLISH");
+  });
+});
+
+describe("seedreamPromptInput — language enforcement (复审 P1-B 镜像：声明变执法)", () => {
+  it("REJECTS a majority-Chinese image prompt (judge counterexample now fails closed)", () => {
+    const r = seedreamPromptInput.safeParse({ subject: "一瓶磨砂玻璃精华液，摆在大理石台面上" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/ENGLISH/);
+  });
+  it("accepts English free text; a proper-noun CJK fragment inside majority-English text passes", () => {
+    expect(seedreamPromptInput.safeParse({
+      subject: "a frosted-glass serum bottle labelled 精华 on a marble counter",
+      style: "editorial photography",
+    }).success).toBe(true);
+  });
+  it("textContent stays exempt — in-image text may be any language", () => {
+    expect(seedreamPromptInput.safeParse({
+      subject: "a red festive poster", textContent: "新年快乐",
+    }).success).toBe(true);
+  });
+  it("REJECTS a Chinese editTarget in i2i mode", () => {
+    expect(seedreamPromptInput.safeParse({
+      mode: "i2i", subject: "the source image", editVerb: "Replace", editTarget: "背景换成海滩日落",
+    }).success).toBe(false);
+  });
+});
+
+describe("seedreamPrompt SKILL wiring (复审 P1-A：策略/变体/清单随 skill 执行返回)", () => {
+  const invoke = seedreamPromptSkill.tool as unknown as { invoke: (rc: unknown, a: string) => Promise<any> };
+  const realistic = {
+    userIntent: "product launch ad for my chili sauce",
+    subject: "a jar of chili sauce on a rustic wooden table",
+    style: "product photography",
+    lighting: "natural window light from the left",
+    cameraLens: "50mm",
+    references: [{ role: "product", name: "the Classic Jar", lock: true }],
+  };
+
+  it("a realistic request yields 2-3 meaningfully-different variants that PASS checkVariantSet", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify(realistic));
+    expect(out.variants.length).toBeGreaterThanOrEqual(2);
+    expect(out.variants.length).toBeLessThanOrEqual(3);
+    const axes = out.variants.map((v: { axis: string }) => v.axis);
+    expect(new Set(axes).size).toBe(axes.length);
+    expect(out.variantCheck).toEqual({ ok: true, problems: [] });
+    for (const v of out.variants) {
+      expect(v.prompt).toContain("a jar of chili sauce"); // user content untouched
+      expect(v.prompt).toContain("feature the Classic Jar exactly as in the reference"); // identity kept
+    }
+  });
+  it("routes strategy from userIntent + roles and attaches the asset checklist", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify(realistic));
+    expect(out.strategy).toMatchObject({ kind: "route", family: "ecommerce" });
+    expect(out.assetChecklist).toEqual([
+      expect.objectContaining({ role: "product", name: "the Classic Jar", ready: true }),
+    ]);
+  });
+  it("mode:'i2i' returns a single prompt (one change per call), no variants", async () => {
+    const out = await invoke.invoke({ context: {} }, JSON.stringify({
+      mode: "i2i", subject: "the source image", editVerb: "Replace",
+      editTarget: "the background with a beach sunset", userIntent: "swap the backdrop",
+    }));
+    expect(out.variants).toBeUndefined();
+    expect(typeof out.prompt).toBe("string");
   });
 });

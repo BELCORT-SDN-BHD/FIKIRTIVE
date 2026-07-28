@@ -5,8 +5,10 @@
  * 商密：description 与装配输出对用户只称「视频引擎」，不出现供应商/模型商号（文件名等内部标识符不受限）。
  */
 import { defineOttoSkill } from "../skill.js";
-import { seedancePromptInput, assembleSeedance } from "./seedance-prompt.helpers.js";
+import { seedancePromptInput, assembleSeedance, seedanceVariants } from "./seedance-prompt.helpers.js";
 import { CAMERA_MOVES, SHOT_SCALES, LIGHTING, enOnly } from "./prompt-vocab.js";
+import { decideStrategy } from "./prompt-strategy.js";
+import { checkVariantSet, deriveAssetChecklist, variantCountFor } from "./variant-policy.js";
 
 export const seedancePromptSkill = defineOttoSkill({
   name: "seedancePrompt",
@@ -34,9 +36,28 @@ export const seedancePromptSkill = defineOttoSkill({
     "should appear in the video. Extra exclusions go in `constraints` as a short noun list (≤5 items). " +
     `Camera — use ONE per shot from: ${enOnly(CAMERA_MOVES).join(", ")}. ` +
     `Shot framing from: ${enOnly(SHOT_SCALES).join(", ")}. ` +
-    `Lighting — always give direction + color temperature, e.g.: ${enOnly(LIGHTING).join(", ")}.`,
+    `Lighting — always give direction + color temperature, e.g.: ${enOnly(LIGHTING).join(", ")}. ` +
+    "Always pass userIntent (the user's request in their own words, any language): the skill routes a " +
+    "strategy family from it and returns 2-3 prompt `variants` (each led by a different axis) plus an " +
+    "`assetChecklist` — present the variants and checklist to the user before proposing; set " +
+    "directionPinned:true when the user already fixed the direction (then 2 variants). Declare the " +
+    "capability ids you rely on in `capabilities` (e.g. singleTake, timestampedShots, beatSync, " +
+    "negativeExclusion, multiSegmentContinuation) — their constraints are machine-checked.",
   parameters: seedancePromptInput,
-  execute: async (i) => ({ prompt: assembleSeedance(i) }),
+  execute: async (i) => {
+    // 复审 P1-A 接线：策略路由 + 变体 + 素材清单在 skill 执行时真实运行，随结果返回。
+    const prompt = assembleSeedance(i);
+    const strategy = decideStrategy({ text: i.userIntent ?? "", referenceRoles: i.references.map((r) => r.role) });
+    const family = strategy.kind === "route" ? strategy.family : strategy.candidates[0];
+    const assetChecklist = deriveAssetChecklist(
+      family,
+      i.references.map((r) => ({ role: r.role, name: r.name, ready: true, lock: r.lock })),
+    );
+    // edit = 一次一处修改：变体属于「改哪里」的产品层选择，不做确定性派生。
+    if (i.mode === "edit") return { prompt, strategy, assetChecklist };
+    const variants = seedanceVariants(i, variantCountFor({ family, directionPinned: i.directionPinned, editType: false }));
+    return { prompt, strategy, variants, variantCheck: checkVariantSet("video", variants), assetChecklist };
+  },
 });
 
 export const seedancePrompt = seedancePromptSkill.tool;

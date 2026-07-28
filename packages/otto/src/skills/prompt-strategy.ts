@@ -168,8 +168,10 @@ export function decideStrategy(input: IntentSignals): StrategyDecision {
   const scored = STRATEGY_FAMILIES.filter((f) => f.family !== "generalCreative")
     .map((f) => {
       const matched: string[] = [];
-      for (const kw of [...f.signals.en, ...f.signals.zh, ...f.signals.ms]) {
-        if (hits(text, kw.toLowerCase())) matched.push(kw);
+      // 词面去重（复审 P2）："tutorial" 同挂 en 与 ms 表 —— 不去重则一词计两分。
+      const kws = new Set([...f.signals.en, ...f.signals.zh, ...f.signals.ms].map((k) => k.toLowerCase()));
+      for (const kw of kws) {
+        if (hits(text, kw)) matched.push(kw);
       }
       let score = matched.length;
       for (const role of f.roleSignals) {

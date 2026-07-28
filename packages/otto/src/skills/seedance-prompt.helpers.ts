@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { promptRef, identityLockClauseZh } from "./prompt-vocab.js";
+import { promptRef, identityLockClauseZh, majorityScript } from "./prompt-vocab.js";
+import { VIDEO_CAPABILITIES } from "./video-capabilities.js";
+import { VIDEO_VARIANT_AXES, type PromptVariant } from "./variant-policy.js";
 
 export const seedanceShot = z.object({
   subject: z.string().min(1),
@@ -11,8 +13,31 @@ export const seedanceShot = z.object({
   audio: z.string().optional(),
 });
 
+/** 能力 id 与 video-capabilities.ts 数据表同源（测试断言一致）。 */
+const CAPABILITY_IDS = VIDEO_CAPABILITIES.map((c) => c.id) as [string, ...string[]];
+
+/** 语言执法错误文案（中性，指导模型改写，不解释内部机制）。 */
+export const ZH_FIELD_ERROR =
+  "Write this field mainly in CHINESE — the video engine's prompt body is Chinese; " +
+  "English industry camera/technical terms inside the Chinese text are fine (e.g. dolly in).";
+
+/** 半角时间戳前缀（时间戳分镜能力）：如 "0-2s: …" / "2.5-4s: …"。 */
+const TIMESTAMP_RE = /^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s\s*[:：]/;
+
+/** 纯：负向排除名词清单的项数（去掉「画面中不出现：」类引导语后按分隔符切）。 */
+export function negativeTermCount(constraints: string): number {
+  const list = constraints.includes("：") ? constraints.slice(constraints.indexOf("：") + 1)
+    : constraints.includes(":") ? constraints.slice(constraints.indexOf(":") + 1)
+    : constraints;
+  return list.split(/[、,，;；]/).map((t) => t.trim()).filter((t) => t.length > 0).length;
+}
+
 // 追加式扩展（#437）：mode 增加 'edit'（定向修改已有片段），editInstruction/preserve 仅 edit 用；
 // shots 对 i2v/t2v 仍必填（superRefine 保底），对 edit 可空 —— 旧调用方形状全部兼容。
+// 复审 R2 追加（全部 optional/default，旧形状兼容）：
+//   userIntent —— 用户原话（任意语言），策略路由与变体派生的输入；
+//   directionPinned —— 用户已钉死方向 → 变体出 2 个；
+//   capabilities —— 声明用到的能力 id，schema 机检其约束（声明即执法）。
 export const seedancePromptInput = z
   .object({
     mode: z.enum(["i2v", "t2v", "edit"]).default("i2v"),
@@ -25,6 +50,9 @@ export const seedancePromptInput = z
     constraints: z.string().optional(),
     editInstruction: z.string().optional(),
     preserve: z.string().optional(),
+    userIntent: z.string().optional(),
+    directionPinned: z.boolean().default(false),
+    capabilities: z.array(z.enum(CAPABILITY_IDS)).default([]),
   })
   .superRefine((v, ctx) => {
     if (v.mode === "edit" && !v.editInstruction?.trim()) {
@@ -32,6 +60,68 @@ export const seedancePromptInput = z
     }
     if (v.mode !== "edit" && v.shots.length === 0) {
       ctx.addIssue({ code: "custom", message: "at least one shot is required for i2v/t2v", path: ["shots"] });
+    }
+
+    // ── 语言执法（复审 P1-B）：叙事字段主体必须中文；行业词字段（camera/shotFraming/
+    // sceneLight/pacing/style）与台词字段（audio —— 对白语言随用户）豁免。
+    const zhChecked: Array<[(string | number)[], string | undefined]> = [
+      [["editInstruction"], v.editInstruction],
+      [["preserve"], v.preserve],
+      [["constraints"], v.constraints],
+    ];
+    v.shots.forEach((s, i) => {
+      zhChecked.push([["shots", i, "subject"], s.subject], [["shots", i, "action"], s.action], [["shots", i, "mood"], s.mood]);
+    });
+    for (const [path, val] of zhChecked) {
+      if (val && majorityScript(val) === "latin") {
+        ctx.addIssue({ code: "custom", message: ZH_FIELD_ERROR, path });
+      }
+    }
+
+    // ── 能力约束机检（复审 craft 2）：声明了能力，schema 就验证其形状。
+    const caps = new Set(v.capabilities);
+    if (caps.has("singleTake") && v.shots.length !== 1) {
+      ctx.addIssue({ code: "custom", path: ["shots"],
+        message: "capability singleTake requires exactly ONE shot (one continuous take has no cuts)" });
+    }
+    if (caps.has("timestampedShots")) {
+      let prevEnd = -1;
+      v.shots.forEach((s, i) => {
+        const m = TIMESTAMP_RE.exec(s.action);
+        if (!m) {
+          ctx.addIssue({ code: "custom", path: ["shots", i, "action"],
+            message: "capability timestampedShots requires every shot's action to start with a half-width time range like '0-2s:'" });
+          return;
+        }
+        const start = Number(m[1]);
+        const end = Number(m[2]);
+        if (!(start < end)) {
+          ctx.addIssue({ code: "custom", path: ["shots", i, "action"],
+            message: "timestamp range must have start < end" });
+        }
+        if (start < prevEnd) {
+          ctx.addIssue({ code: "custom", path: ["shots", i, "action"],
+            message: "timestamps must be ascending and non-overlapping across shots" });
+        }
+        prevEnd = Math.max(prevEnd, end);
+      });
+    }
+    if (caps.has("beatSync") && !(v.pacing && /\d/.test(v.pacing))) {
+      ctx.addIssue({ code: "custom", path: ["pacing"],
+        message: "capability beatSync requires pacing with a NUMERIC beat length (e.g. 每拍约 0.5s, hard cut) — the engine cannot hear music" });
+    }
+    if (caps.has("negativeExclusion")) {
+      if (!v.constraints?.trim()) {
+        ctx.addIssue({ code: "custom", path: ["constraints"],
+          message: "capability negativeExclusion requires constraints (a short noun list of things to exclude)" });
+      } else if (negativeTermCount(v.constraints) > 5) {
+        ctx.addIssue({ code: "custom", path: ["constraints"],
+          message: "capability negativeExclusion allows at most 5 negative terms — keep the strongest 5" });
+      }
+    }
+    if (caps.has("multiSegmentContinuation") && !v.style?.trim()) {
+      ctx.addIssue({ code: "custom", path: ["style"],
+        message: "capability multiSegmentContinuation requires style (reuse it word-for-word across segments)" });
     }
   });
 export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
@@ -57,18 +147,20 @@ export function assembleSeedance(i: SeedancePromptInput): string {
   if (i.style) lines.push(i.style);
   const single = i.shots.length === 1;
   i.shots.forEach((s, idx) => {
+    // 固定专业语序（复审 craft 1）：景别 → 主体 → 动作 → 运镜 → 光线 → 氛围 → 声音。
+    // 缺省字段整句省略（filter(Boolean) —— 无悬空逗号），子句顺序恒定，不代填内容。
     const seg = [
       idx === 0 && i.continuesFromPrev && "承接上一段画面",
       idx === 0 && !i.continuesFromPrev && i.mode === "i2v" && "从给定的首帧画面开始",
-      s.shotFraming,
-      s.subject,
-      s.action,
-      s.camera,
-      s.sceneLight,
-      s.mood,
+      s.shotFraming, // 景别
+      s.subject, // 主体
+      s.action, // 动作
+      s.camera, // 运镜
+      s.sceneLight, // 光线
+      s.mood, // 氛围
+      s.audio && `声音: ${s.audio}`, // 声音收尾
     ].filter(Boolean).join(", ");
     lines.push(single ? seg : `Shot ${idx + 1}: ${seg}`);
-    if (s.audio) lines.push(`声音: ${s.audio}`);
   });
   if (i.mode === "i2v") lines.push("主体与首帧画面保持一致");
   if (locks) lines.push(locks);
@@ -77,4 +169,44 @@ export function assembleSeedance(i: SeedancePromptInput): string {
   if (i.cleanFootage && !hasLockedBrandmark) lines.push("画面中不出现文字、水印或 logo");
   if (i.constraints) lines.push(i.constraints);
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// 变体派生（复审 P1-A 接线）：同一意图 → 2-3 条由不同主导轴驱动的 prompt。
+// 每个轴的处理 = 替换该轴字段 + 追加一行三子句的专业处理说明（确定性数据表，
+// 非同义改写 —— checkVariantSet 的子句级相似度守卫由构造保证通过）。
+// 身份 references 与用户内容（subject/action）在所有变体间保持不动。
+// ---------------------------------------------------------------------------
+type VideoAxis = "composition" | "mood" | "motion"; // = VIDEO_VARIANT_AXES（测试断言同源）
+
+const VIDEO_AXIS_TREATMENTS: Readonly<
+  Record<VideoAxis, ReadonlyArray<{ shot: Partial<z.infer<typeof seedanceShot>>; note: string }>>
+> = {
+  composition: [
+    { shot: { shotFraming: "close-up" }, note: "低角度仰拍，主体占满画面，背景被压缩" },
+    { shot: { shotFraming: "wide" }, note: "对称构图，主体置于画面中央，四周留出大量负空间" },
+  ],
+  mood: [
+    { shot: { sceneLight: "moody low-key", mood: "克制而安静的氛围" }, note: "冷色调低照度，侧逆光勾出轮廓，情绪内敛" },
+    { shot: { sceneLight: "bright high-key", mood: "轻快明亮的氛围" }, note: "暖色调高调光，正面柔光铺满，情绪轻盈" },
+  ],
+  motion: [
+    { shot: { camera: "orbit" }, note: "运镜绕主体匀速环绕，路径连贯，收在主体正面" },
+    { shot: { camera: "handheld follow" }, note: "手持跟拍带轻微晃动，贴近主体，节奏加快" },
+  ],
+};
+
+/**
+ * 纯：确定性视频变体。取前 count 个轴（composition/mood/motion），每轴选第一个
+ * 与现有输入不重合的处理（重合则取第二个），全 shot 应用字段替换并追加处理说明行。
+ * edit 模式不在此派生（一次一处修改，变体由 Otto 层给出不同的修改方向）。
+ */
+export function seedanceVariants(i: SeedancePromptInput, count: 2 | 3): PromptVariant[] {
+  const base = assembleSeedance(i);
+  return (VIDEO_VARIANT_AXES.slice(0, count) as VideoAxis[]).map((axis) => {
+    const options = VIDEO_AXIS_TREATMENTS[axis];
+    const t = options.find((o) => Object.values(o.shot).every((val) => !base.includes(String(val)))) ?? options[1]!;
+    const patched: SeedancePromptInput = { ...i, shots: i.shots.map((s) => ({ ...s, ...t.shot })) };
+    return { axis, note: t.note, prompt: `${assembleSeedance(patched)}\n${t.note}` };
+  });
 }

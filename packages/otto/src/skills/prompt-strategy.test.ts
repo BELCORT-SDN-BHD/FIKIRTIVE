@@ -102,6 +102,30 @@ describe("decideStrategy — ambiguous branch (≤2 questions)", () => {
   });
 });
 
+describe("decideStrategy — signal dedupe (复审 P2：跨语言表重复词只计一次)", () => {
+  it("'tutorial' (in both the en and ms tables) scores ONCE and appears once in matched", () => {
+    const d = decideStrategy({ text: "a tutorial video" });
+    expect(d.kind).toBe("route");
+    const r = d as Extract<typeof d, { kind: "route" }>;
+    expect(r.family).toBe("educational");
+    expect(r.matched.filter((m) => m === "tutorial")).toHaveLength(1);
+  });
+  it("no matched list ever contains duplicate surface forms", () => {
+    for (const text of ["tutorial", "belajar tutorial cara buat kuih"]) {
+      const d = decideStrategy({ text });
+      expect(d.kind, text).toBe("route");
+      const r = d as Extract<typeof d, { kind: "route" }>;
+      expect(new Set(r.matched).size, `text: ${text}`).toBe(r.matched.length);
+    }
+  });
+  it("double-counting no longer tips a tie: one 'tutorial' cannot outscore two distinct signals", () => {
+    // "iklan promosi" = 2 distinct ecommerce signals vs a single deduped "tutorial" (1).
+    const d = decideStrategy({ text: "iklan promosi tutorial" });
+    expect(d.kind).toBe("route");
+    expect((d as Extract<typeof d, { kind: "route" }>).family).toBe("ecommerce");
+  });
+});
+
 describe("decideStrategy — open-endedness guard (不预判商家)", () => {
   it("a personal request with no signals routes to generalCreative with NO questions", () => {
     const d = decideStrategy({ text: "a video for my grandma's 80th birthday" });

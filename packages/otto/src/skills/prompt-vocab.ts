@@ -25,6 +25,22 @@ export const PACING = ["slow-motion", "hard cut", "fast cut", "timelapse", "one 
 /** 纯：去掉词表条目末尾的中文括注，只留英文（喂给 skill description，模型只看英文）。 */
 export const enOnly = (list: readonly string[]) => list.map((s) => s.replace(/\s*\(.*\)$/, ""));
 
+// ---------------------------------------------------------------------------
+// 语言执法（#437 复审 P1-B）：按「主体文字系统」判定，不逐字符 ——
+// 中文正文里夹英文行业词（dolly in）合法；整段英文冒充中文正文非法。
+// 度量：CJK 按字计（一字≈一语素），拉丁按词计（一词≈一语素以上），谁多算谁。
+// ---------------------------------------------------------------------------
+const CJK_CHARS = /[㐀-鿿豈-﫿]/g;
+const LATIN_WORDS = /[a-zA-Z][a-zA-Z'’-]*/g;
+
+/** 纯：一段自由文本的主体文字系统。无任何文字（纯数字/标点）→ "neither"，不判罚。 */
+export function majorityScript(text: string): "cjk" | "latin" | "neither" {
+  const cjk = (text.match(CJK_CHARS) ?? []).length;
+  const latin = (text.match(LATIN_WORDS) ?? []).length;
+  if (cjk === 0 && latin === 0) return "neither";
+  return cjk >= latin ? "cjk" : "latin";
+}
+
 /** reference：像素不在这里（走 propose 的 entityIds → API 参数）。只承载织入措辞所需的 role + name。 */
 export const promptRef = z.object({
   role: z.enum(["character", "product", "location", "brandmark"]),
