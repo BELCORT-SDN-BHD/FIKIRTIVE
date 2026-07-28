@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
+import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import type { CardState } from "@/lib/otto-inject-helpers";
 import { packTotalCredits, canAffordPack } from "./pack-credit-math";
 
@@ -32,7 +33,10 @@ export interface PackCardProps {
   packTitle: string;
   cards: PackCardItem[];
   balanceUsd: number;
-  onApproved: () => void;
+  /** Called once the loop settles. When an ottoApprove resume parked AGAIN, the
+   *  chained outcome (ids still pending + server's localized receipt) rides along
+   *  so the parent can mark those cards pendingApproval (#498 round-4). */
+  onApproved: (chained?: ChainedApproval) => void;
 }
 
 /** Renders a group of GEN_CARD messages that share a packId as one unit.
@@ -50,6 +54,10 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
 
   // Track which cards finished in this session so we can show per-row feedback.
   const [doneCardIds, setDoneCardIds] = useState<Set<string>>(new Set());
+
+  /** #498 round-4: the SERVER's localized receipt when an approve in this pack's
+   *  loop parked again (chained needs_approval). Display copy only, verbatim. */
+  const [chainedReceipt, setChainedReceipt] = useState<string | null>(null);
 
   const parsedCards = cards.map((c) => {
     const p = (c.payload ?? {}) as SlimPayload;
@@ -79,6 +87,19 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
     setRunning(true);
     setError(null);
 
+    // #498 round-4: an ottoApprove resume mid-loop can park AGAIN (chained
+    // needs_approval). Collect the still-pending ids + the server's localized
+    // receipt across the loop; ids this same loop subsequently fires drop out.
+    const chainedIds = new Set<string>();
+    let chainedNotice: string | null = null;
+    const firedIds = new Set<string>();
+    const collectChained = (): ChainedApproval | undefined => {
+      firedIds.forEach((id) => chainedIds.delete(id));
+      return chainedIds.size > 0
+        ? { pendingCardIds: [...chainedIds], fallbackReply: chainedNotice }
+        : undefined;
+    };
+
     for (let i = 0; i < idleCards.length; i++) {
       const c = idleCards[i];
       setCurrentIdx(i);
@@ -97,22 +118,34 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           setCurrentIdx(null);
           // F11: earlier cards in this loop were already charged + started — poll them even
           // though a later card failed, so their paid results still surface (don't strand them).
-          if (i > 0) onApproved();
+          const chained = collectChained();
+          setChainedReceipt(chained?.fallbackReply ?? null);
+          if (i > 0 || chained) onApproved(chained);
           return;
         }
+        const chained = chainedApprovalOf(res);
+        if (chained) {
+          chained.pendingCardIds.forEach((id) => chainedIds.add(id));
+          if (chained.fallbackReply) chainedNotice = chained.fallbackReply;
+        }
+        firedIds.add(c.cardId);
         setDoneCardIds((prev) => new Set(prev).add(c.cardId));
       } catch {
         setError(`Card ${i + 1} of ${idleCards.length} failed — please try again.`);
         setRunning(false);
         setCurrentIdx(null);
-        if (i > 0) onApproved(); // F11: poll the earlier already-charged cards
+        const chained = collectChained();
+        setChainedReceipt(chained?.fallbackReply ?? null);
+        if (i > 0 || chained) onApproved(chained); // F11: poll the earlier already-charged cards
         return;
       }
     }
 
     setRunning(false);
     setCurrentIdx(null);
-    onApproved();
+    const chained = collectChained();
+    setChainedReceipt(chained?.fallbackReply ?? null);
+    onApproved(chained);
   }
 
   return (
@@ -221,6 +254,15 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
           {allSubmitted && !running && startedCount > 0 && (
             <div className="text-[0.875rem] font-semibold text-[var(--success)]">
               ✓ {startedCount === cards.length ? `All ${cards.length}` : `${startedCount} of ${cards.length}`} {cards.length === 1 ? "item" : "items"} started
+            </div>
+          )}
+
+          {/* #498 round-4: chained needs_approval observed in this loop — the SERVER's
+              localized receipt verbatim (the still-pending cards keep their own
+              approve gates; no spend logic here). */}
+          {chainedReceipt && (
+            <div className="mt-2 text-[0.75rem] text-muted-foreground">
+              {chainedReceipt}
             </div>
           )}
         </div>

@@ -631,14 +631,55 @@ export type FinalizeOttoRunResult =
 // "Accessed finalOutput before agent run is completed." warn is the only trace).
 // These strings are chat copy ONLY — the approval/spend machinery is untouched.
 // P2 honesty rules: the receipt follows the merchant's own message language
-// (CJK-majority → Chinese, else English), and its promise follows what confirming
-// actually does — only generate cards may say work starts right away.
+// (Han-majority → Chinese; Malay-indicative-token majority → Malay; else English),
+// and its promise follows what confirming actually does — only generate cards may
+// say work starts right away.
 // ---------------------------------------------------------------------------
 
-export type FallbackLang = "en" | "zh";
+export type FallbackLang = "en" | "zh" | "ms";
 
-/** Pick the synthesized receipt's language from the merchant's message this turn:
- *  CJK(Han)-majority text → Chinese, anything else (including empty) → English. */
+/** Malay-indicative tokens for the coarse ms/en vote below. Function words, polite
+ *  markers, and the make/confirm verbs merchants actually type at Otto. Malay and
+ *  Indonesian share most of these — both intentionally land on "ms". The list is a
+ *  heuristic, not a lexicon: unlisted Malay words simply don't vote. */
+const MS_TOKENS = new Set([
+  "sila", "tolong", "boleh", "buat", "buatkan", "jana", "janakan", "hasilkan",
+  "teruskan", "semua", "kesemua", "semuanya", "saya", "anda", "awak", "kami", "kita",
+  "ini", "itu", "yang", "dan", "dengan", "untuk", "dalam", "pada", "tak", "tidak",
+  "jangan", "sudah", "dah", "belum", "lagi", "sekarang", "nanti", "gambar", "okey",
+  "baiklah", "sahkan", "setuju", "mula", "mulakan", "terus", "cuba", "nak", "hendak",
+  "mahu", "satu", "dua", "tiga",
+]);
+
+/** Malay-looking word form: -kan / -lah / -nya suffix on a 5+ letter word. Prefix
+ *  tests (me-/ber-/ter-) are deliberately NOT used — too many English false
+ *  positives (member, mention, terrible). Rare English -lah/-nya endings can still
+ *  slip through; accepted as heuristic noise. */
+const MS_WORD_FORM = /^[a-z]{2,}(kan|lah|nya)$/;
+
+/** English-indicative tokens for the same vote. Shared en/ms words (e.g. "video")
+ *  sit on the English side so plain-English asks never flip to ms on one loanword. */
+const EN_TOKENS = new Set([
+  "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "it", "is", "are",
+  "was", "be", "i", "you", "we", "they", "my", "me", "this", "that", "these",
+  "those", "please", "pls", "make", "all", "them", "then", "now", "go", "ahead",
+  "yes", "yeah", "ok", "okay", "sure", "start", "generate", "create", "do", "does",
+  "can", "could", "will", "would", "just", "everything", "every", "each", "both",
+  "image", "images", "picture", "pictures", "video", "videos", "proceed", "confirm",
+  "with", "for", "from", "one", "two", "three",
+]);
+
+/** Pick the synthesized receipt's language from the merchant's message this turn.
+ *  Detection boundaries, honestly:
+ *   - Han-majority (vs latin letters) → zh, checked FIRST — a mixed CJK+Malay/English
+ *    message follows whichever side has more counted characters; kana/hangul are not
+ *    counted (not launch markets).
+ *   - Otherwise a coarse token vote: Malay-indicative tokens (MS_TOKENS + -kan/-lah/
+ *    -nya word forms) vs English-indicative tokens (EN_TOKENS). Strictly more Malay
+ *    votes → ms. Malay vs Indonesian is NOT distinguished (shared function words).
+ *   - Ties, no recognized tokens, and empty input default to "en" (the UI language).
+ *    Short or heavily code-mixed messages often land here; the receipt is then still
+ *    honest, just not localized. */
 export function fallbackLangOf(userText: string | null | undefined): FallbackLang {
   if (!userText) return "en";
   let cjk = 0;
@@ -647,7 +688,15 @@ export function fallbackLangOf(userText: string | null | undefined): FallbackLan
     if (/\p{Script=Han}/u.test(ch)) cjk += 1;
     else if (/[A-Za-z]/.test(ch)) latin += 1;
   }
-  return cjk > latin ? "zh" : "en";
+  if (cjk > latin) return "zh";
+  let ms = 0;
+  let en = 0;
+  for (const token of userText.toLowerCase().split(/[^a-z]+/)) {
+    if (!token) continue;
+    if (MS_TOKENS.has(token) || MS_WORD_FORM.test(token)) ms += 1;
+    else if (EN_TOKENS.has(token)) en += 1;
+  }
+  return ms > en ? "ms" : "en";
 }
 
 /** Reply persisted when a run pauses on approvable card(s) with no model narration.
@@ -668,6 +717,16 @@ export function approvalPointerText({ cardCount, allGenerate, lang }: {
       ? "光靠一句话不会执行任何操作——请查看并确认审批卡片，我才会继续。"
       : "光靠一句话不会执行任何操作——请逐张查看并确认审批卡片，我才会继续。";
   }
+  if (lang === "ms") {
+    if (allGenerate) {
+      return cardCount === 1
+        ? "Untuk menjaga kredit anda, tiada apa-apa dijana dengan kata-kata sahaja — sahkan pada kad di atas dan saya akan mula serta-merta."
+        : "Untuk menjaga kredit anda, tiada apa-apa dijana dengan kata-kata sahaja — sahkan setiap kad di atas dan saya akan mula serta-merta.";
+    }
+    return cardCount === 1
+      ? "Tiada apa-apa berlaku dengan kata-kata sahaja — semak dan sahkan kad kelulusan itu, kemudian saya akan teruskan."
+      : "Tiada apa-apa berlaku dengan kata-kata sahaja — semak dan sahkan setiap kad kelulusan, kemudian saya akan teruskan.";
+  }
   if (allGenerate) {
     return cardCount === 1
       ? "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away."
@@ -681,7 +740,9 @@ export function approvalPointerText({ cardCount, allGenerate, lang }: {
 /** Reply persisted when a run pauses with NOTHING approvable (malformed/unknown
  *  interruption) and no model narration — an honest dead-end instead of silence. */
 export function interruptedFallbackText(lang: FallbackLang): string {
-  return lang === "zh" ? "这一步我没能完成——请再试一次。" : "I couldn't finish that — please try again.";
+  if (lang === "zh") return "这一步我没能完成——请再试一次。";
+  if (lang === "ms") return "Saya tidak dapat menyelesaikan langkah ini — sila cuba lagi.";
+  return "I couldn't finish that — please try again.";
 }
 
 // ---------------------------------------------------------------------------
@@ -883,7 +944,8 @@ export async function finalizeOttoRun({
   result: any;
   seqAfterUser: number;
   /** The merchant's message this turn — picks the #498 fallback receipt's language
-   *  (CJK-majority → Chinese). Copy only; absent → English. */
+   *  (fallbackLangOf: Han-majority → zh, Malay-token majority → ms). Copy only;
+   *  absent → English. */
   userText?: string | null;
 }): Promise<FinalizeOttoRunResult> {
   const finalization = finalizeOttoTurn(result, ottoInteractiveRuntime);

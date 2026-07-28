@@ -346,6 +346,29 @@ describe("POST /api/otto/stream", () => {
     ]);
   });
 
+  // #498 round-4: textWasStreamed only counts NON-whitespace deltas. A model that
+  // emits a lone "\n" (or spaces) before parking showed the merchant nothing
+  // readable — the whitespace stream must not suppress the synthesized fallback.
+  it("#498 round-4: a whitespace-only streamed delta does NOT suppress the synthesized fallback", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("\n"), tokenEvent("  ")] }));
+    mocks.finalizeOttoRun.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_1"],
+      fallbackReply: "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away.",
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    const parts = (await res.json()) as Array<{ type: string; delta?: string }>;
+
+    expect(res.status).toBe(200);
+    expect(parts).toContainEqual({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1"] } });
+    // The whitespace deltas streamed as-is AND the fallback still rendered.
+    const deltas = parts.filter((p) => p.type === "text-delta").map((p) => p.delta);
+    expect(deltas).toContain(
+      "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away.",
+    );
+  });
+
   it("#498 P2: the merchant's message text reaches finalizeOttoRun so the receipt can follow its language", async () => {
     mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
     mocks.finalizeOttoRun.mockResolvedValue({ status: "needs_approval", pendingCardIds: [], fallbackReply: null });

@@ -251,7 +251,14 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                   const part = bridgeEvent(event);
                   if (!part) continue;
-                  if (part.type === "text-delta") { openText(); textWasStreamed = true; }
+                  if (part.type === "text-delta") {
+                    openText();
+                    // #498 round-4: only a NON-whitespace delta counts as "the merchant
+                    // saw text". Some models emit a lone "\n" (or spaces) before parking;
+                    // a whitespace-only stream shows nothing readable and must not
+                    // suppress the synthesized fallback below.
+                    if (part.delta.trim().length > 0) textWasStreamed = true;
+                  }
                   else if (part.type === "reasoning-delta") openReasoning();
                   writer.write(part);
                 }

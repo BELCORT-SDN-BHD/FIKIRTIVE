@@ -1290,6 +1290,25 @@ describe("finalizeOttoRun — #498 verbal approval must never be silent", () => 
     });
     expect(outZh).toMatchObject({ fallbackReply: interruptedFallbackText("zh") });
   });
+
+  // #498 round-4: Malay is the third receipt language.
+  it('language follow: a Malay turn ("tolong buat semua") gets the Malay receipt', async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4, userText: "tolong buat semua",
+    });
+    const ms = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "ms" });
+    expect(out).toEqual({ status: "needs_approval", pendingCardIds: ["card_verbal"], fallbackReply: ms });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: ms }) }),
+    );
+  });
 });
 
 // ── #498 P2: fallback copy stays honest per language and approval type ────────
@@ -1303,28 +1322,78 @@ describe("#498 fallback copy — language pick and type-honest wording", () => {
     expect(fallbackLangOf(null)).toBe("en");
   });
 
-  it('non-generate approvals never promise "I\'ll start right away" (both languages)', () => {
-    for (const cardCount of [1, 2]) {
-      const en = approvalPointerText({ cardCount, allGenerate: false, lang: "en" });
-      const zh = approvalPointerText({ cardCount, allGenerate: false, lang: "zh" });
-      expect(en).not.toMatch(/start right away/i);
-      expect(zh).not.toContain("马上开始");
-      expect(zh).not.toContain("开始生成");
-      // Still an actionable pointer, not silence.
-      expect(en).toMatch(/confirm/i);
-      expect(zh).toContain("确认");
+  // #498 round-4: Malay joins the receipt languages. Detection is a token vote —
+  // Malay-indicative words/word forms vs English-indicative words; ties → en.
+  it("fallbackLangOf: Malay-token-majority → ms; mixed English-majority stays en", () => {
+    expect(fallbackLangOf("tolong buat semua")).toBe("ms");
+    expect(fallbackLangOf("sahkan dan teruskan semuanya")).toBe("ms"); // list + -kan/-nya word forms
+    expect(fallbackLangOf("jana semua gambar sekarang")).toBe("ms");
+    expect(fallbackLangOf("please make semua")).toBe("en"); // 2 en votes > 1 ms vote
+    expect(fallbackLangOf("boleh")).toBe("ms"); // 1 ms vote > 0 en votes
+    // Han-majority wins BEFORE the token vote (documented order).
+    expect(fallbackLangOf("全部生成吧 ok")).toBe("zh");
+  });
+
+  // #498 round-4 (judge): locked THROUGH the real finalizer, not the template
+  // function alone — a run parked on non-generate approvals (approveScheduledPost)
+  // must persist + return the pointer WITHOUT the generate-only "start right away"
+  // promise, in the merchant's language. The mocks below only stub prisma; the
+  // wording choice (allGenerate=false) is made by finalizeOttoRun itself.
+  it('non-generate approvals never promise "I\'ll start right away" — through the real finalizer (en/zh/ms)', async () => {
+    async function finalizeNonGenerate(userText: string) {
+      mockChatMessageFindFirst.mockReset();
+      mockChatMessageFindFirst.mockResolvedValueOnce({ seq: 4 }); // max-seq read
+      mockChatMessageFindFirst.mockResolvedValue(null); // APPROVAL_CARD dedup: none exist
+      mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+      mockChatMessageCreate.mockReset();
+      mockChatMessageCreate.mockResolvedValue({});
+      mockScheduledPostFindFirst.mockResolvedValue(schedPostFixture());
+      const result = {
+        state: new MockRunState(),
+        interruptions: [makeSchedApprovalItem("post_a"), makeSchedApprovalItem("post_b")],
+        finalOutput: undefined,
+        newItems: [],
+      };
+      return await finalizeOttoRun({
+        ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+        result, seqAfterUser: 4, userText,
+      });
+    }
+
+    const cases = [
+      { userText: "please approve both posts", lang: "en" as const, promise: /start right away/i },
+      { userText: "帮我确认这两个排程", lang: "zh" as const, promise: /马上开始|开始生成/ },
+      { userText: "tolong sahkan semua", lang: "ms" as const, promise: /mula serta-merta/ },
+    ];
+    for (const { userText, lang, promise } of cases) {
+      const out = await finalizeNonGenerate(userText);
+      const receipt = approvalPointerText({ cardCount: 2, allGenerate: false, lang });
+      expect(receipt).not.toMatch(promise);
+      // The real finalizer picked the non-generate wording and returned it…
+      expect(out).toMatchObject({ status: "needs_approval", fallbackReply: receipt });
+      // …and persisted exactly that text as the visible reply.
+      expect(mockChatMessageCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: receipt }),
+        }),
+      );
+      // Money safety unchanged: chat copy only.
+      expect(mockStartGen).not.toHaveBeenCalled();
     }
   });
 
   it("generate approvals keep the start-right-away promise in the matching language", () => {
     expect(approvalPointerText({ cardCount: 3, allGenerate: true, lang: "en" })).toMatch(/start right away/);
     expect(approvalPointerText({ cardCount: 3, allGenerate: true, lang: "zh" })).toContain("马上开始");
+    expect(approvalPointerText({ cardCount: 3, allGenerate: true, lang: "ms" })).toContain("mula serta-merta");
   });
 
-  it("dead-end fallback has both language variants", () => {
+  it("dead-end fallback has all three language variants", () => {
     expect(interruptedFallbackText("en")).toContain("try again");
     expect(interruptedFallbackText("zh")).toContain("再试一次");
-    expect(interruptedFallbackText("en")).not.toBe(interruptedFallbackText("zh"));
+    expect(interruptedFallbackText("ms")).toContain("cuba lagi");
+    const variants = [interruptedFallbackText("en"), interruptedFallbackText("zh"), interruptedFallbackText("ms")];
+    expect(new Set(variants).size).toBe(3);
   });
 });
 

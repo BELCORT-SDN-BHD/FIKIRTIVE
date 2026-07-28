@@ -20,10 +20,10 @@ import {
   cardIdsOf,
   injectCardMessage,
   appendMissingCards,
-  appendDurableResults,
   appendResearchReports,
   syncCardJobIds,
 } from "@/lib/otto-inject-helpers";
+import { mergeDurableIntoLive, nextPendingApprovalCardIds, type ChainedApproval } from "./approval-chain";
 import { OttoPlanCard } from "./OttoPlanCard";
 import { OttoActionPlanCard } from "./OttoActionPlanCard";
 import { OttoApprovalCard } from "./OttoApprovalCard";
@@ -334,15 +334,18 @@ export function OttoChatStream({
   }
 
   // Refetch the durable thread and inject any new worker-output messages
-  // (GEN_RESULT / TURN_ERROR) into the useChat list, deduped by durableId. NEVER
-  // re-injects TEXT or GEN_CARD — those already arrived via the stream / card injection.
+  // (GEN_RESULT / TURN_ERROR) AND any card-kind durables missing from the list
+  // into the useChat list, deduped by durableId. NEVER re-injects TEXT — the
+  // streamed reply already rendered. Cards matter here (#498 round-4): a chained
+  // ottoApprove re-park persists NEW GEN_CARDs via a server action (no live
+  // stream part), so the post-approve poll is what makes them render.
   async function pollAndInjectResults() {
     const fresh = await getCoworkThreadClient(thread.id);
     if (!fresh) return;
     const prevResultCount = messages.filter(
       (m) => m.metadata?.kind === "GEN_RESULT" || m.metadata?.kind === "TURN_ERROR",
     ).length;
-    setMessages((cur) => appendDurableResults(syncCardJobIds(cur, fresh), fresh));
+    setMessages((cur) => mergeDurableIntoLive(cur, fresh));
     onThreadUpdate(fresh);
     // A new terminal result landed → a generation settled and credits were spent.
     const freshResultCount = fresh.messages.filter(
@@ -812,16 +815,23 @@ export function OttoChatStream({
                     pendingApproval: pendingApprovalCardIds.has(durableId),
                   };
                 });
-                const packApproved = () => {
-                  msgs.forEach((m) => {
-                    const durableId = m.metadata!.durableId;
-                    setSubmittedCardIds((cur) => new Set(cur).add(durableId));
-                    setPendingApprovalCardIds((cur) => {
-                      const next = new Set(cur);
-                      next.delete(durableId);
-                      return next;
-                    });
+                const packApproved = (chained?: ChainedApproval) => {
+                  const durableIds = msgs.map((m) => m.metadata!.durableId);
+                  const stillPending = new Set(chained?.pendingCardIds ?? []);
+                  // A card the server reports as STILL pending (chained) must not be
+                  // marked submitted — that would render it "working" and bury its
+                  // approve gate.
+                  setSubmittedCardIds((cur) => {
+                    const next = new Set(cur);
+                    durableIds.forEach((id) => { if (!stillPending.has(id)) next.add(id); });
+                    return next;
                   });
+                  // #498 round-4: drop the approved pack cards from pending; ADD any
+                  // chained ids so the re-park's cards render pendingApproval=true and
+                  // their clicks resume via ottoApprove (never coworkGenerate).
+                  setPendingApprovalCardIds((cur) =>
+                    nextPendingApprovalCardIds(cur, durableIds, chained?.pendingCardIds),
+                  );
                   rearmGenerationPoll();
                   void onBalanceRefresh?.();
                   void pollAndInjectResults();
@@ -872,16 +882,21 @@ export function OttoChatStream({
                       errors: jobsWithError,
                     })}
                     pendingApproval={pendingApprovalCardIds.has(durableId)}
-                    onApproved={() => {
-                      // Record submission so the card flips to "working" optimistically.
-                      setSubmittedCardIds((cur) => new Set(cur).add(durableId));
-                      // Drop from the pending set; re-arm the poll (a freshly-approved
-                      // card queues a new job even if a prior job hit the give-up cap).
-                      setPendingApprovalCardIds((cur) => {
-                        const next = new Set(cur);
-                        next.delete(durableId);
-                        return next;
-                      });
+                    onApproved={(chained) => {
+                      // Record submission so the card flips to "working" optimistically —
+                      // unless the server reports THIS card as still pending (chained).
+                      if (!chained?.pendingCardIds.includes(durableId)) {
+                        setSubmittedCardIds((cur) => new Set(cur).add(durableId));
+                      }
+                      // Drop from the pending set and ADD any chained ids (#498 round-4):
+                      // a re-park's new cards must render pendingApproval=true so their
+                      // clicks resume the RunState via ottoApprove, never coworkGenerate.
+                      // Re-arm the poll (a freshly-approved card queues a new job even if
+                      // a prior job hit the give-up cap; the poll also appends the
+                      // chained cards themselves — see pollAndInjectResults).
+                      setPendingApprovalCardIds((cur) =>
+                        nextPendingApprovalCardIds(cur, [durableId], chained?.pendingCardIds),
+                      );
                       rearmGenerationPoll();
                       // An approve reserves credits — refresh the nav balance immediately.
                       void onBalanceRefresh?.();
