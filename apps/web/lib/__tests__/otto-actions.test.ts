@@ -303,7 +303,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, INTERRUPTED_FALLBACK_TEXT } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
@@ -1106,6 +1106,144 @@ describe("finalizeOttoRun — assistant TEXT seq accounts for tool-persisted car
     expect(mockChatMessageCreate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ kind: "TEXT", seq: 4 }) }),
     );
+  });
+});
+
+// ── #498: a paused run is NEVER silent ───────────────────────────────────────
+// Repro (2026-07-29 lane-a walkthrough): storyboard → Otto mints plan cards and
+// invites "全部生成" → the merchant sends it → the model calls the gated `generate`
+// tool(s) with ZERO narration text → the run parks (needs_approval) and nothing
+// visible ever happens: no reply, no error, no card change, no charge. These tests
+// lock the fix: an interrupted run with no model text persists an honest reply and
+// returns it as fallbackReply; the spend gate (startGen) stays untouched.
+
+describe("finalizeOttoRun — #498 verbal approval must never be silent", () => {
+  function generateInterruption(cardId: string) {
+    return {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId }),
+      type: "tool_approval_item",
+    };
+  }
+
+  beforeEach(() => {
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 4 });
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+  });
+
+  it("repro: parked generate with no narration → persists the approval-pointer reply and returns it", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_verbal"],
+      fallbackReply: approvalPointerText(1),
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "AGENT", kind: "TEXT", seq: 5, text: approvalPointerText(1) }),
+      }),
+    );
+    // Money safety: the fallback is chat copy only — the spend gate is never touched.
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it('repro: "全部生成" parks THREE generate calls → one plural pointer reply, all card ids pending', async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_1"), generateInterruption("card_2"), generateInterruption("card_3")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_1", "card_2", "card_3"],
+      fallbackReply: approvalPointerText(3),
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: "TEXT", text: approvalPointerText(3) }),
+      }),
+    );
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it("model narrated before parking → its own text persists, NO synthesized fallback", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: "Your cards are ready — confirm to start.",
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_verbal"],
+      fallbackReply: null,
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: "TEXT", text: "Your cards are ready — confirm to start." }),
+      }),
+    );
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ text: approvalPointerText(1) }) }),
+    );
+  });
+
+  it("paused with NOTHING approvable and no narration → honest dead-end reply instead of silence", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [{ rawItem: { name: "not-a-gated-tool" }, arguments: "{}", type: "tool_approval_item" }],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: [],
+      fallbackReply: INTERRUPTED_FALLBACK_TEXT,
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: INTERRUPTED_FALLBACK_TEXT }),
+      }),
+    );
+  });
+
+  it("CAS miss on the interruption path stays stale and writes NO fallback message", async () => {
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 });
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({ status: "stale" });
+    expect(mockChatMessageCreate).not.toHaveBeenCalled();
   });
 });
 

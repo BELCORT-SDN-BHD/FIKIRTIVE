@@ -187,3 +187,19 @@ describe("ottoInstructions — storyboard routing", () => {
     expect(ottoInstructions).toMatch(/no credits|nothing is charged|does not spend|doesn.t spend/i);
   });
 });
+
+describe("ottoInstructions — #498 verbal approval honesty (generate)", () => {
+  it("states that calling generate only pauses for the card's confirmation, never starts work", () => {
+    expect(ottoInstructions).toMatch(/does NOT make anything by itself/);
+    expect(ottoInstructions).toMatch(/only after the user confirms on the card/i);
+  });
+  it("requires narrating the pending confirmation after calling generate", () => {
+    expect(ottoInstructions).toMatch(/ALWAYS say in your reply that the card is now waiting/);
+    expect(ottoInstructions).toMatch(/never leave the turn silent/i);
+  });
+  it("forbids inviting a words-only go-ahead it cannot honor (the walkthrough's exact broken promise)", () => {
+    expect(ottoInstructions).toMatch(/NEVER promise that saying a word will directly make things/);
+    expect(ottoInstructions).toMatch(/generate all/); // the literal invitation from the #498 repro
+    expect(ottoInstructions).toMatch(/you cannot keep that promise/i);
+  });
+});
