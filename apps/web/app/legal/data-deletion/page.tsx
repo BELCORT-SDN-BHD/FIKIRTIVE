@@ -40,7 +40,8 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *        宣告「complete」状态:如实说明本页介绍删除流程,确认码是收到请求的回执
  *        (路由行为改动归 #489,不在本页范围)。
  *   P1-3 整账户删除段收敛为「联系我们提出请求」,不承诺时限与流程。
- *   P1-4 快照句改滚动清理措辞(db-backup.ts:76/145/171)。
+ *   P1-4 快照句改滚动清理措辞(db-backup.ts 筛选 :147、删除 :148,清理调用 :173;
+ *        上一版误引 :171,那行只是上传)。
  *   P1-6 「because they are yours and are not held on Meta's behalf」归属断言删去,只述行为。
  *   P2-1 Privacy policy 链接文字 sentence case。
  *

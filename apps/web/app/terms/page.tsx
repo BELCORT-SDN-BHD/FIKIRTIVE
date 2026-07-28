@@ -21,7 +21,9 @@ export const metadata = { title: "Terms · Fikirtive" };
  *   邀请与撤销 tenant-actions.ts:88(upsert invited)、:97(status revoked);
  *   点数预留/结算/退回 packages/db/src/credits.ts:42、:77、:100、:124;
  *   审批过期不执行 otto-actions.ts:1205-1208、:1558-1561;
- *   Stripe 托管结账 billing-actions.ts:65(仅 customer_email :72 与所选价目 :67 出境);
+ *   Stripe 托管结账 billing-actions.ts:65(出境:customer_email :72、所选价目 :67、
+ *   client_reference_id=工作区 id :68、metadata{orgId, credits, priceId} :69——
+ *   上一版写「仅 email 与价目」,漏了 :68-69 两项,勿回退);
  *   审核通过前拒发 channels/meta-publish-adapter.ts:40-43(canPublish 由 Meta 实授权导出,
  *   meta-actions.ts:29-31);暂停广告写入 meta-write-actions.ts:25 + 按钮 OttoConnections.tsx:202-212;
  *   账号删除按钮只开邮件 components/otto/OttoAccount.tsx:51。

@@ -82,7 +82,8 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *   P0-3 新增 BM 版 privacy/bm/page.tsx,两页顶部互挂语言切换;译文待 Founder/法务确认。
  *   P1-2 发布失败两态如实:可重试→NEEDS_ATTENTION,硬失败→FAILED(publish.ts:623/635)。
  *   P1-3 访问/更正/删除收敛为「联系我们提出请求」,不承诺时限与流程(SOP 待建,见决定清单)。
- *   P1-4 快照按滚动方式清理:超约 30 天在后续备份运行时删除(db-backup.ts:76/145/171)。
+ *   P1-4 快照按滚动方式清理:超约 30 天在后续备份运行时删除(db-backup.ts 筛选 :147、
+ *        删除 :148,清理调用 :173;上一版误引 :171,那行只是上传)。
  *   P1-5 登录会话/IP/浏览器信息/审计记录列为服务运行必然产生;客户数据清单补一句结构概括。
  *   P1-6 「no relationship」类法律定性改事实措辞:商家控制其客户数据,客户请求向商家提出。
  *   P2-1 标题 sentence case。P2-2 联系/安全/跨境细节不发明,进 Founder/法务决定清单。
