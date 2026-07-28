@@ -62,6 +62,10 @@ export function OttoPlanCard({
   const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
   const [confirming, setConfirming] = useState(false);
+  /** #498: set when THIS approve's resume parked again on more approvals (chained
+   *  needs_approval) — the story didn't end with this card, and hiding that is the
+   *  same silent death one click deeper. null = no chained pause observed. */
+  const [chainedPendingCount, setChainedPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (cardState !== "working") {
@@ -148,6 +152,15 @@ export function OttoPlanCard({
         return;
       }
       setConfirming(false);
+      // #498 P1b: an ottoApprove resume can park AGAIN on further approval(s)
+      // (status "needs_approval" + pendingCardIds). Don't just flip this card to
+      // "working" and pretend everything runs — surface the chained state so the
+      // merchant knows the remaining cards still wait on them. (This card's own
+      // generation DID start; onApproved below stays correct.)
+      if (res && "status" in res && res.status === "needs_approval" && "pendingCardIds" in res) {
+        const ids = Array.isArray(res.pendingCardIds) ? res.pendingCardIds : [];
+        setChainedPendingCount(ids.length);
+      }
       onApproved();
     } catch {
       setError("Couldn't start that — please try again.");
@@ -321,6 +334,19 @@ export function OttoPlanCard({
             <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
               Change something
             </Button>
+          </div>
+        )}
+
+        {/* #498: chained needs_approval after THIS approve — the honest "not done yet"
+            state. The remaining parked cards keep their own approve gates; this line
+            only tells the merchant the story continues (no spend logic here). */}
+        {chainedPendingCount !== null && (
+          <div className="mt-2 text-[0.75rem] text-muted-foreground">
+            {chainedPendingCount === 1
+              ? "This one started — Otto still needs one more approval in this conversation before everything runs."
+              : chainedPendingCount > 1
+                ? `This one started — Otto still needs ${chainedPendingCount} more approvals in this conversation before everything runs.`
+                : "This one started — Otto paused for another approval in this conversation."}
           </div>
         )}
 

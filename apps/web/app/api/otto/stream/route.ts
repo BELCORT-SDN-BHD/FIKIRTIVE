@@ -217,6 +217,11 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Lazily open text/reasoning parts so we only frame what actually streams.
         let textOpen = false;
         let reasoningOpen = false;
+        // #498: sticky per-turn flag — true once ANY model text-delta reached the
+        // client. The synthesized fallback below keys off this, not off what the
+        // post-run extraction saw, so fallback text can never render on top of
+        // text the merchant already watched stream in.
+        let textWasStreamed = false;
         const openText = () => { if (!textOpen) { writer.write({ type: "text-start", id: OTTO_TEXT_ID }); textOpen = true; } };
         const openReasoning = () => { if (!reasoningOpen) { writer.write({ type: "reasoning-start", id: OTTO_REASONING_ID }); reasoningOpen = true; } };
         const closeOpenParts = () => {
@@ -246,7 +251,7 @@ export async function POST(req: NextRequest): Promise<Response> {
 
                   const part = bridgeEvent(event);
                   if (!part) continue;
-                  if (part.type === "text-delta") openText();
+                  if (part.type === "text-delta") { openText(); textWasStreamed = true; }
                   else if (part.type === "reasoning-delta") openReasoning();
                   writer.write(part);
                 }
@@ -319,7 +324,8 @@ export async function POST(req: NextRequest): Promise<Response> {
         closeOpenParts();
 
         // Persist the run (interruption / completed / stale) with the SAME CAS as ottoTurn.
-        const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result: agentResult, seqAfterUser });
+        // userText picks the #498 fallback receipt's language (copy only).
+        const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result: agentResult, seqAfterUser, userText: text });
 
         if (finalized.status === "stale") {
           writer.write({ type: "data-status", data: { kind: "stale", text: "This conversation moved on — reload to continue." } satisfies OttoStatusData });
@@ -327,9 +333,10 @@ export async function POST(req: NextRequest): Promise<Response> {
           // #498: a paused run must never be silent. When the model parked the gated
           // call(s) without narrating (the verbal-approval path), finalizeOttoRun
           // persisted a synthesized reply and returns it here — surface it live too.
-          // It is only set when NO model text streamed, so OTTO_TEXT_ID is unused and
-          // nothing renders twice.
-          if (finalized.fallbackReply) {
+          // `!textWasStreamed` makes "never renders twice" a checked invariant, not an
+          // assumption: even if the post-run text extraction missed streamed text and
+          // set fallbackReply anyway, nothing is written on top of what already streamed.
+          if (finalized.fallbackReply && !textWasStreamed) {
             writer.write({ type: "text-start", id: OTTO_TEXT_ID });
             writer.write({ type: "text-delta", delta: finalized.fallbackReply, id: OTTO_TEXT_ID });
             writer.write({ type: "text-end", id: OTTO_TEXT_ID });

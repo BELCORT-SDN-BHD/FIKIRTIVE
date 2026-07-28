@@ -324,6 +324,38 @@ describe("POST /api/otto/stream", () => {
     ]);
   });
 
+  // #498 round-3: "the fallback only exists when nothing streamed" is now a CHECKED
+  // invariant (textWasStreamed), not an assumption about the post-run text extraction.
+  it("#498 textWasStreamed guard: a fallbackReply arriving despite streamed model text is never rendered on top", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Streamed but missed by extraction.")] }));
+    // Adversarial finalize: extraction saw no text and synthesized a fallback anyway.
+    mocks.finalizeOttoRun.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_1"],
+      fallbackReply: "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away.",
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    const parts = (await res.json()) as Array<{ type: string; delta?: string }>;
+
+    expect(res.status).toBe(200);
+    // The pause still surfaces; the fallback text does NOT double the streamed text.
+    expect(parts).toContainEqual({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1"] } });
+    expect(parts.filter((p) => p.type === "text-delta")).toEqual([
+      { type: "text-delta", id: "otto-text", delta: "Streamed but missed by extraction." },
+    ]);
+  });
+
+  it("#498 P2: the merchant's message text reaches finalizeOttoRun so the receipt can follow its language", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+    mocks.finalizeOttoRun.mockResolvedValue({ status: "needs_approval", pendingCardIds: [], fallbackReply: null });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    await res.json();
+
+    expect(mocks.finalizeOttoRun).toHaveBeenCalledWith(expect.objectContaining({ userText: "全部生成" }));
+  });
+
   it("persists and surfaces a first-turn insufficient-credits failure without running Otto", async () => {
     mocks.withLlmBudget.mockRejectedValue(new mocks.MockInsufficientCredits());
 

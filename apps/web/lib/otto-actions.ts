@@ -630,18 +630,59 @@ export type FinalizeOttoRunResult =
 // turn ends in dead air: no message, no error, no visible state change (the SDK's
 // "Accessed finalOutput before agent run is completed." warn is the only trace).
 // These strings are chat copy ONLY — the approval/spend machinery is untouched.
+// P2 honesty rules: the receipt follows the merchant's own message language
+// (CJK-majority → Chinese, else English), and its promise follows what confirming
+// actually does — only generate cards may say work starts right away.
 // ---------------------------------------------------------------------------
 
-/** Reply persisted when a run pauses on approvable card(s) with no model narration. */
-export function approvalPointerText(cardCount: number): string {
+export type FallbackLang = "en" | "zh";
+
+/** Pick the synthesized receipt's language from the merchant's message this turn:
+ *  CJK(Han)-majority text → Chinese, anything else (including empty) → English. */
+export function fallbackLangOf(userText: string | null | undefined): FallbackLang {
+  if (!userText) return "en";
+  let cjk = 0;
+  let latin = 0;
+  for (const ch of userText) {
+    if (/\p{Script=Han}/u.test(ch)) cjk += 1;
+    else if (/[A-Za-z]/.test(ch)) latin += 1;
+  }
+  return cjk > latin ? "zh" : "en";
+}
+
+/** Reply persisted when a run pauses on approvable card(s) with no model narration.
+ *  `allGenerate` keeps the promise honest: only generate cards start work on confirm,
+ *  so any non-generate approval in the batch drops the "I'll start right away" line. */
+export function approvalPointerText({ cardCount, allGenerate, lang }: {
+  cardCount: number;
+  allGenerate: boolean;
+  lang: FallbackLang;
+}): string {
+  if (lang === "zh") {
+    if (allGenerate) {
+      return cardCount === 1
+        ? "为了守住你的积分，光靠一句话不会开始生成——请在上方卡片确认，我会马上开始。"
+        : "为了守住你的积分，光靠一句话不会开始生成——请逐张确认上方卡片，我会马上开始。";
+    }
+    return cardCount === 1
+      ? "光靠一句话不会执行任何操作——请查看并确认审批卡片，我才会继续。"
+      : "光靠一句话不会执行任何操作——请逐张查看并确认审批卡片，我才会继续。";
+  }
+  if (allGenerate) {
+    return cardCount === 1
+      ? "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away."
+      : "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.";
+  }
   return cardCount === 1
-    ? "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away."
-    : "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.";
+    ? "Nothing happens from words alone — review and confirm the approval card, and I'll take it from there."
+    : "Nothing happens from words alone — review and confirm each approval card, and I'll take it from there.";
 }
 
 /** Reply persisted when a run pauses with NOTHING approvable (malformed/unknown
  *  interruption) and no model narration — an honest dead-end instead of silence. */
-export const INTERRUPTED_FALLBACK_TEXT = "I couldn't finish that — please try again.";
+export function interruptedFallbackText(lang: FallbackLang): string {
+  return lang === "zh" ? "这一步我没能完成——请再试一次。" : "I couldn't finish that — please try again.";
+}
 
 // ---------------------------------------------------------------------------
 // Universal approval cards (B4 debt-70, spec §五 5.1·附 touchpoints ①/②) — the durable
@@ -832,6 +873,7 @@ export async function finalizeOttoRun({
   priorOttoState,
   result,
   seqAfterUser,
+  userText,
 }: {
   ownerId: string;
   threadId: string;
@@ -840,6 +882,9 @@ export async function finalizeOttoRun({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   result: any;
   seqAfterUser: number;
+  /** The merchant's message this turn — picks the #498 fallback receipt's language
+   *  (CJK-majority → Chinese). Copy only; absent → English. */
+  userText?: string | null;
 }): Promise<FinalizeOttoRunResult> {
   const finalization = finalizeOttoTurn(result, ottoInteractiveRuntime);
   const newOttoState = finalization.newOttoState;
@@ -885,11 +930,16 @@ export async function finalizeOttoRun({
     // can surface it too (model-authored text already streamed as deltas; the fallback is
     // only set when no model text exists, so nothing renders twice).
     const assistantText = finalization.text;
+    const lang = fallbackLangOf(userText);
     const fallbackReply = assistantText
       ? null
       : approvals.length > 0
-        ? approvalPointerText(approvals.length)
-        : INTERRUPTED_FALLBACK_TEXT;
+        ? approvalPointerText({
+            cardCount: approvals.length,
+            allGenerate: approvals.every((a) => a.toolName === "generate"),
+            lang,
+          })
+        : interruptedFallbackText(lang);
     const visibleText = assistantText || fallbackReply;
     if (visibleText) {
       await prisma.chatMessage.create({
@@ -1131,7 +1181,7 @@ export async function ottoTurn(raw: unknown): Promise<
 
     // Persist the run (interruption / completed / stale) with CAS — shared with the
     // streaming route handler via finalizeOttoRun (identical behavior).
-    const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result, seqAfterUser: seq });
+    const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result, seqAfterUser: seq, userText: text });
     revalidatePath("/", "layout");
     if (finalized.status === "stale") return { threadId, status: "stale" };
     if (finalized.status === "needs_approval") {
@@ -1153,7 +1203,7 @@ export async function ottoTurn(raw: unknown): Promise<
 
 export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "done"; reply: string; genJobId?: string }
-  | { ok: true; status: "needs_approval"; pendingCardIds: string[] }
+  | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null }
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
@@ -1441,9 +1491,30 @@ export async function ottoApprove(raw: unknown): Promise<
       });
       if (casInterrupt === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
 
-      // CAS won — persist any assistant text produced before the interruption
+      // CAS won — persist any assistant text produced before the interruption.
+      // #498 P1a: the RESUMED run can park again with ZERO narration — the exact
+      // main-path silence, one click deeper. Synthesize the same honest receipt:
+      // the language follows the merchant's latest message (an approve is a click,
+      // not a message), and the promise follows what confirming actually does.
       const assistantText = finalization.text;
-      if (assistantText) {
+      let fallbackReply: string | null = null;
+      if (!assistantText) {
+        const lastUserMsg = await prisma.chatMessage.findFirst({
+          where: { threadId, ownerId, role: "USER", kind: "TEXT", deletedAt: null },
+          orderBy: { seq: "desc" },
+          select: { text: true },
+        });
+        const lang = fallbackLangOf(lastUserMsg?.text);
+        fallbackReply = chainedApprovals.length > 0
+          ? approvalPointerText({
+              cardCount: chainedApprovals.length,
+              allGenerate: chainedApprovals.every((a) => a.toolName === "generate"),
+              lang,
+            })
+          : interruptedFallbackText(lang);
+      }
+      const visibleText = assistantText || fallbackReply;
+      if (visibleText) {
         const seq = await prisma.chatMessage.findFirst({
           where: { threadId, ownerId },
           orderBy: { seq: "desc" },
@@ -1457,7 +1528,7 @@ export async function ottoApprove(raw: unknown): Promise<
             role: "AGENT",
             kind: "TEXT",
             seq: (seq?.seq ?? 0) + 1,
-            text: assistantText,
+            text: visibleText,
           },
         });
       }
@@ -1479,7 +1550,7 @@ export async function ottoApprove(raw: unknown): Promise<
       }
 
       revalidatePath("/", "layout");
-      return { ok: true, status: "needs_approval", pendingCardIds };
+      return { ok: true, status: "needs_approval", pendingCardIds, fallbackReply };
     }
 
     // Completed — persist Otto's reply + updated ottoState (CAS guard)
