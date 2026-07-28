@@ -2,15 +2,17 @@ import Link from "next/link";
 
 export const metadata = { title: "Terms · Fikirtive" };
 
-/** 事实基线:每条运营性陈述均可在代码中核对(见 legal/requirements-and-audit.md)。
- *  本页故意不含适用法/管辖、保证免责、责任限制、赔偿、知识产权归属等条款 ——
- *  那些是律师起草范围,清单见 legal/files/FOUNDER-DECISIONS.md。免登录(proxy.ts 放行)。
+/** 事实基线:每条运营性陈述均可在代码中核对(核对记录见决定清单)。
+ *  「决定清单」= https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327
+ *  (持久决定清单以该 PR 评论为准,本注释所有清单引用均指它)。
+ *  本页除线上原有的适用法一句(第六轮按原文恢复,见下)外,不含管辖、保证免责、责任限制、
+ *  赔偿、知识产权归属等新增条款 —— 那些是律师起草范围,清单见决定清单。免登录(proxy.ts 放行)。
  *
- *  2026-07-28 真实性核验轮(legal/TRUTH-CHECK.md)后的修订:
+ *  2026-07-28 真实性核验轮(记录见决定清单)后的修订:
  *   B1 删掉「可暂停自然发布」—— 只有广告那一半有 setter(meta-write-actions.ts:21-27)与按钮
  *      (OttoConnections.tsx:206-210);`organicPublishPaused` 全仓无写入者。
- *   L1 适用法句搬出正文 → FOUNDER-DECISIONS L1。
- *   L2 「告知顾客的义务在商家」这条定性搬出正文 → FOUNDER-DECISIONS L2;
+ *   L1 适用法句搬出正文 → 决定清单(第六轮已按决定清单第 9 条恢复原句,见下)。
+ *   L2 「告知顾客的义务在商家」这条定性搬出正文 → 决定清单;
  *      正文只留能力事实(无收发通道:customer-inbox-service.ts:1243、
  *      customer-broadcast-service.ts:794;同意状态只是商家自述:crm-actions.ts:190)。
  *
@@ -48,7 +50,17 @@ export const metadata = { title: "Terms · Fikirtive" };
  *   P1-6 用户责任/第三方条款/单方变更三处措辞收敛为事实性;「过登录页即接受」保留最简式;
  *        四处均进 Founder/法务决定清单。
  *   P1-7 管辖法/责任/赔偿等结构性留白**保持留白**,不补写任何法律条款(律师范围)。
- *   P2-1 标题与 Privacy policy 链接文字 sentence case。*/
+ *   P2-1 标题与 Privacy policy 链接文字 sentence case。
+ *
+ *  2026-07-28 第六轮(二轮跨族复审 FAIL 0P0/4P1/2P2/1P3 后的三轮返工):
+ *   P1-7 恢复线上原句「These beta terms are governed by the laws of Malaysia.」——
+ *        判官裁定:删除现行法律条款同样是法律立场变更,工程侧不得默会执行。
+ *        逐字取自 d728e94b:apps/web/app/terms/page.tsx,最终处置见决定清单第 9 条。
+ *   P1-6a 「过登录页即接受」改为行为陈述:登录页链接两份文件(app/login/page.tsx:104-108),
+ *        请在使用前阅读;接受机制的法律效力见决定清单第 5 条,页面不作断言。
+ *   P1-6b 「We have no relationship with your customers」纯法律立场句删除;产品行为描述
+ *        (无收发通道、模拟发送)前句已含,不受影响。
+ *   注释引用可核验化:指向仓库外/不存在文件的引用统一改为上方决定清单 URL。*/
 export default function TermsPage() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
@@ -67,11 +79,13 @@ export default function TermsPage() {
 
         <section className="mt-8 space-y-4 text-[15px] leading-7 text-muted-foreground">
           <h2 className="text-lg font-semibold text-foreground">Getting access</h2>
+          {/* 接受机制(如何构成同意)的法律效力见决定清单第 5 条,页面正文不作断言:
+              https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327 */}
           <p>
             Access is by invitation. Sign-in is refused for any email address that is not on our invite list, whichever
-            sign-in method you use, and an invitation can be revoked. Continuing past the sign-in screen is how you
-            accept these terms and the{" "}
-            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link>.
+            sign-in method you use, and an invitation can be revoked. The sign-in page links to these terms and the{" "}
+            <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link> — read them before
+            using the service.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Using Fikirtive</h2>
@@ -92,8 +106,7 @@ export default function TermsPage() {
           </p>
           <p>
             Fikirtive does not send messages to your customers and does not receive messages from them. There is no live
-            sending or receiving path in the product today; the message workbench runs simulated sends only. We have no
-            relationship with your customers and no way to contact them, so we cannot notify them for you.
+            sending or receiving path in the product today; the message workbench runs simulated sends only.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Credits and paid actions</h2>
@@ -159,12 +172,12 @@ export default function TermsPage() {
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Who you are dealing with</h2>
-          {/* 现行线上页在这里有一句「These beta terms are governed by the laws of Malaysia.」——
-              适用法是已定的法律立场,按本轮约束不留在页面正文 → FOUNDER-DECISIONS.md L1
-              (逐字保留在那里,Founder/律师决定是否原样放回,并同批补齐争议解决条款)。
-              注意:这是对线上现状的改动,发布前需要 Founder 明确点头。*/}
+          {/* 「These beta terms are governed by the laws of Malaysia.」为线上原状逐字保留
+              (取自 d728e94b:apps/web/app/terms/page.tsx)——最终处置见决定清单第 9 条:
+              https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327 */}
           <p>
-            Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. Questions:{" "}
+            Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. These beta terms are governed
+            by the laws of Malaysia. Questions:{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
           </p>
           <p>
