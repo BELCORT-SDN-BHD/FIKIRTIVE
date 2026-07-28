@@ -619,9 +619,29 @@ export async function buildOttoContext({
 // ---------------------------------------------------------------------------
 
 export type FinalizeOttoRunResult =
-  | { status: "needs_approval"; pendingCardIds: string[] }
+  | { status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null }
   | { status: "done"; reply: string }
   | { status: "stale" };
+
+// ---------------------------------------------------------------------------
+// #498 never-silent fallbacks — a paused run must always leave something visible.
+// The verbal-approval path ("全部生成") parks the gated generate call(s) with, in
+// practice, ZERO narration text from the model, so without a synthesized reply the
+// turn ends in dead air: no message, no error, no visible state change (the SDK's
+// "Accessed finalOutput before agent run is completed." warn is the only trace).
+// These strings are chat copy ONLY — the approval/spend machinery is untouched.
+// ---------------------------------------------------------------------------
+
+/** Reply persisted when a run pauses on approvable card(s) with no model narration. */
+export function approvalPointerText(cardCount: number): string {
+  return cardCount === 1
+    ? "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away."
+    : "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.";
+}
+
+/** Reply persisted when a run pauses with NOTHING approvable (malformed/unknown
+ *  interruption) and no model narration — an honest dead-end instead of silence. */
+export const INTERRUPTED_FALLBACK_TEXT = "I couldn't finish that — please try again.";
 
 // ---------------------------------------------------------------------------
 // Universal approval cards (B4 debt-70, spec §五 5.1·附 touchpoints ①/②) — the durable
@@ -857,9 +877,21 @@ export async function finalizeOttoRun({
       });
     }
 
-    // CAS won (or new thread) — persist any assistant text produced before the interruption
+    // CAS won (or new thread) — persist any assistant text produced before the interruption.
+    // #498: when the model parked the gated call(s) with NO narration (the verbal-approval
+    // path), synthesize an honest reply so the turn is never silent: point at the card's
+    // confirmation step when something is approvable, or land an honest dead-end line when
+    // nothing is. The synthesized text is returned as `fallbackReply` so the live stream
+    // can surface it too (model-authored text already streamed as deltas; the fallback is
+    // only set when no model text exists, so nothing renders twice).
     const assistantText = finalization.text;
-    if (assistantText) {
+    const fallbackReply = assistantText
+      ? null
+      : approvals.length > 0
+        ? approvalPointerText(approvals.length)
+        : INTERRUPTED_FALLBACK_TEXT;
+    const visibleText = assistantText || fallbackReply;
+    if (visibleText) {
       await prisma.chatMessage.create({
         data: {
           id: newId(),
@@ -868,7 +900,7 @@ export async function finalizeOttoRun({
           role: "AGENT",
           kind: "TEXT",
           seq: ++seq,
-          text: assistantText,
+          text: visibleText,
         },
       });
     }
@@ -885,7 +917,7 @@ export async function finalizeOttoRun({
       pendingCardIds.push(...persisted.cardIds);
     }
 
-    return { status: "needs_approval", pendingCardIds };
+    return { status: "needs_approval", pendingCardIds, fallbackReply };
   }
 
   // Completed — persist Otto's final reply + ottoState
