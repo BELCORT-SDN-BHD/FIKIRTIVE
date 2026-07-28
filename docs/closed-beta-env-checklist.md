@@ -25,7 +25,7 @@ Smoke after flipping `AUTH_ENABLED` on (staging or a fresh prod session):
    writes a DB `AllowedEmail` row, LOWERCASED, revocable via `revokeTenantInvite`). The DB allowlist is the
    union with `AUTH_ALLOWED_EMAILS` env, so either works; prefer `inviteTenant` so it's revocable per-merchant.
 2. **She signs in** with that email → `requireOwner()` auto-bootstraps her own org (`org_<userId>`) +
-   grants **1000 displayed beta credits** (`BETA_INITIAL_GRANT_CREDITS`, `auth-guard.ts:87` / `spend.ts:93`).
+   grants **100 displayed beta credits** (`BETA_INITIAL_GRANT_CREDITS`, `auth-guard.ts:87` / `spend.ts:93`).
    Her data is isolated from the founder org (owner-scoped).
 3. **Point her at `/m`** — the Simple Mode surface: chat with Otto, upload a product photo, "make a video",
    get a cheap-model clip, then tap **I posted this / Didn't post** to log the performance signal.
