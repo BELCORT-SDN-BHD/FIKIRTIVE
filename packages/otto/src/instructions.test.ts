@@ -228,16 +228,30 @@ describe("ottoInstructions — strategy families, variants, and prompt language 
   });
   // R4：语言执法只剩写作端（schema 不再拦）—— 指令必须明说「归你」且说明 languageAdvice 的意思，
   // 否则语言要求在整条链路上无人负责。
+  // R5：同一条规则不再陈述两遍（Craft 一节只指路，规则实体在 Language 一节）。断言因此改为
+  // 「按章节定位 + 实质仍逐条证明」：规则必须真的写着，而且只写在一处 —— 复述回来测试会转红。
+  const sectionOf = (title: string): string => {
+    const start = ottoInstructions.indexOf(`## ${title}\n`);
+    expect(start, `section "## ${title}" must exist`).toBeGreaterThan(-1);
+    const body = ottoInstructions.slice(start);
+    const next = body.indexOf("\n## ", 1);
+    return next === -1 ? body : body.slice(0, next);
+  };
+
   it("puts prompt language on Otto and says plainly that nothing rejects a wrong-language prompt", () => {
-    expect(ottoInstructions).toMatch(/Prompt language is YOUR job/);
-    expect(ottoInstructions).toMatch(/VIDEO prompt body in CHINESE/);
-    expect(ottoInstructions).toMatch(/IMAGE prompt body in ENGLISH/);
-    expect(ottoInstructions).toMatch(/do NOT reject or translate a wrong-language prompt/);
+    expect(ottoInstructions).toMatch(/Prompt language is YOUR job/); // 责任归属仍明说
+    const language = sectionOf("Language");
+    expect(language).toMatch(/VIDEO prompt bodies[^.]*CHINESE/); // 视频正文中文
+    expect(language).toMatch(/IMAGE prompt bodies[^.]*ENGLISH/); // 图像正文英文
+    expect(language).toMatch(/(?:no|nothing|never)[^.]*reject a wrong-language prompt/i); // 没有闸门会拦
+    // 去重：per-engine 判定的规范表述（大写 CHINESE/ENGLISH）只许出现在 Language 一节。
+    expect(ottoInstructions.replace(language, "")).not.toMatch(/CHINESE|ENGLISH/);
   });
   it("teaches Otto what a languageAdvice note means: rewrite and re-call before proposing", () => {
-    expect(ottoInstructions).toMatch(/languageAdvice/);
-    expect(ottoInstructions).toMatch(/rewrite it .*call the skill again/);
-    expect(ottoInstructions).toMatch(/never pass an unchanged wrong-language prompt/);
+    const language = sectionOf("Language");
+    expect(language).toMatch(/languageAdvice/);
+    expect(language).toMatch(/rewrite[^.]*call the skill again/);
+    expect(language).toMatch(/never pass an unchanged wrong-language prompt/);
   });
   it("exposes the video edit mode to Otto", () => {
     expect(ottoInstructions).toMatch(/mode:'edit'/);

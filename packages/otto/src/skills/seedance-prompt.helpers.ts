@@ -45,16 +45,35 @@ export function normalizeSeparators(text: string): string {
 
 /** 半角时间戳前缀（时间戳分镜能力）：如 "0-2s: …" / "2.5-4s: …"（归一后匹配，破折号写法一并覆盖）。 */
 const TIMESTAMP_RE = /^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s\s*[:：]/;
-/** 形状信号（R3 P1-C）：action 任意位置出现时间范围 → 该输入自证在用时间戳分镜。 */
-const TIMESTAMP_ANY = /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*s/;
+/**
+ * 形状信号（R5-P2）：字段**以**时间区间开头。
+ * 旧的「任意位置出现两个数字夹一个横杠」把散文里的时长当成时间戳：
+ * "a 3-5s hold"、"a 3-5 second dolly" 都被判成时间戳清单然后因「缺前缀」拒掉 ——
+ * 后者从 R3 起就一直误拒。检出与执法现在用同一把尺：时间戳清单的形状是「行首区间」，
+ * 这是散文不会出现的写法，因此关掉的是「句中出现数字区间」一整类，而不是逐个词打补丁。
+ */
+const TIMESTAMP_LEAD = /^\s*\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*s\b/;
 /** 形状信号：一镜到底（扫哪些字段由能力表的 fields 决定，本处只管词面）。 */
 const SINGLE_TAKE_TEXT = /一镜到底|one[\s-]+(?:continuous[\s-]+)?take|single[\s-]+take/i;
 /**
  * 形状信号：文本自证在做节拍剪辑 → 必须给数值拍长。
- * R4-P2 词面收紧到「真的在说拍子」：「upbeat」（beat 前无词界）与「跟拍」（运镜术语）
- * 不再命中 —— 误拒合法 pacing 本身就是缺陷。
+ * R4-P2 词面收紧到「真的在说拍子」：「upbeat」（beat 前无词界）与「跟拍」（运镜术语）不再命中。
+ * R5-P2 再收一层：「beat」这个词本身不是节拍申报 —— "beats the drum"、"heart is beating"、
+ * "wings beat slowly" 都是普通动词，拒掉它们就是在拒合法输入。判定改为「节奏义必须先被确立」，
+ * 两条来源二选一：
+ *   ① 词形自证（本条）：卡点/每拍/拍点/踩拍/节拍、bpm、beat 与 sync/match/drop/cut 相邻、
+ *      on/to/per the beat —— 这些搭配没有第二种意思，出现在能力表的**任何**承载字段都算申报；
+ *   ② 字段职责（BEAT_WEAK_TEXT，见下）。
  */
-const BEAT_PACING_TEXT = /卡点|节拍|每拍|拍点|踩拍|\bbeat|\bbpm\b|hard[\s-]*cut/i;
+const BEAT_RHYTHM_TEXT =
+  /卡点|每拍|拍点|踩拍|节拍|\bbpm\b|\bbeat[\s-]*(?:sync\w*|match\w*|drop|cut)|\b(?:on|to|per|off)[\s-]+the[\s-]+beat\b|\bper[\s-]+beat\b/i;
+/**
+ * 歧义词面：只有写在「职责字段」里才算申报。职责字段不是手写的，是能力表 requires 指到的那格
+ * （beatSync.requires → pacing，「带时间单位的拍长就写在这里」）—— pacing 这一格的存在意义
+ * 就是节奏，写在这里的 beat / hard cut 只可能是拍子；写在 action / shotFraming / style 里的
+ * 同一个词则是普通动词或转场描述，不构成节拍申报。
+ */
+const BEAT_WEAK_TEXT = /\bbeat|hard[\s-]*cut|硬切/i;
 /**
  * R4-c：「数值拍长」= 数字紧邻时间单位（s/sec/ms/BPM/秒/毫秒/拍），不是「文本里有个数字」。
  * 旧的 /\d/ 会被 "beat 4K"、"hard cut 16:9" 这类分辨率/比例数字冒充过关。
@@ -111,6 +130,16 @@ function readPath(v: SeedanceInputShape, path: string): unknown[] {
 /** 某能力全部承载字段上的文本（归一后拼接）—— 形状信号只扫这里，扫哪些字段由能力表说了算。 */
 function carrierText(v: SeedanceInputShape, cap: VideoCapability): string {
   const parts = cap.fields.flatMap((p) => readPath(v, p)).filter((x): x is string => typeof x === "string");
+  return normalizeSeparators(parts.join(" "));
+}
+
+/**
+ * 「职责字段」上的文本：该能力 requires 指到的字段（beatSync → pacing）。
+ * 承载字段（fields）回答「这项能力可能被写在哪」，职责字段回答「哪一格的存在意义就是这项能力」——
+ * 歧义词面只在后者算申报。同样从表读，本文件不写死任何字段名。
+ */
+function roleText(v: SeedanceInputShape, cap: VideoCapability): string {
+  const parts = cap.requires.flatMap((r) => readPath(v, r.path)).filter((x): x is string => typeof x === "string");
   return normalizeSeparators(parts.join(" "));
 }
 
@@ -186,8 +215,13 @@ export const seedancePromptInput = seedanceInputObject
       }
       return undefined;
     };
-    const selfTimed = v.shots.some((s) => timedFields.some((f) => TIMESTAMP_ANY.test(shotText(s, f))));
-    if (caps.has(TIMESTAMPED.id) || selfTimed) {
+    // R5-P2 检出口径：时间戳清单的形状是「行首区间」，不是「句子里有两个数字夹横杠」。
+    // 规范形（区间+冒号）出现一处即成立；无冒号的写法要求**每个** shot 都以区间开头
+    // （多 shot 齐刷刷以区间开头是清单，散文里的一句时长不是）—— 随后仍按「每段都要前缀」执法。
+    const canonical = v.shots.some((s) => timestampOf(s) !== undefined);
+    const allLead = v.shots.length > 1
+      && v.shots.every((s) => timedFields.some((f) => TIMESTAMP_LEAD.test(shotText(s, f))));
+    if (caps.has(TIMESTAMPED.id) || canonical || allLead) {
       const reportField = timedFields[0] ?? "action";
       let prevEnd: number | null = null;
       v.shots.forEach((s, i) => {
@@ -214,10 +248,15 @@ export const seedancePromptInput = seedanceInputObject
       });
     }
 
-    // 音乐卡点：能力表列出的任一承载字段谈到卡点/节拍/hard cut（或已声明）→ 要求数值拍长。
+    // 音乐卡点：能力表列出的任一承载字段自证「节奏意图」（或已声明）→ 要求数值拍长。
     // R4-c：数值必须紧邻时间单位，"4K"/"16:9" 这类裸数字不算。
+    // R5-P2：节奏意图 = 无歧义词形（任何承载字段）∪ 歧义词形写在职责字段（pacing）里。
+    // 「beat 这个词出现过」不再等于申报 —— 鼓手打鼓、心跳、振翅都是合法输入。
     const beatText = carrierText(v, BEAT_SYNC);
-    if ((caps.has(BEAT_SYNC.id) || BEAT_PACING_TEXT.test(beatText)) && !BEAT_NUMBER.test(beatText)) {
+    const beatIntent = caps.has(BEAT_SYNC.id)
+      || BEAT_RHYTHM_TEXT.test(beatText)
+      || BEAT_WEAK_TEXT.test(roleText(v, BEAT_SYNC));
+    if (beatIntent && !BEAT_NUMBER.test(beatText)) {
       ctx.addIssue({ code: "custom", path: [primaryPath(BEAT_SYNC)],
         message: "beat-synced pacing requires a NUMERIC beat length (e.g. 每拍约 0.5s, hard cut) — the engine cannot hear music" });
     }

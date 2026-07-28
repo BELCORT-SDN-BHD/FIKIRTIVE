@@ -544,6 +544,56 @@ describe("seedancePromptInput — R5：承载字段按表闭合 + 写法归一�
   });
 });
 
+// R5-P2：承载字段扩到 shots.action / shotFraming 后，守卫开始误伤普通英文散文 ——
+// 「拒掉合法输入」和当初被撤掉的语言硬门是同一类缺陷，不因「正文本该写中文」而豁免。
+describe("seedancePromptInput — R5-P2：节拍守卫认节奏意图，不认 beat 这个词", () => {
+  const ok = (input: unknown) => seedancePromptInput.safeParse(input).success;
+  const shot = { subject: "一只猫", action: "跃起" };
+
+  it("ordinary English verbs are NOT beat declarations (drummer / heartbeat / wings)", () => {
+    for (const action of [
+      "pauses, her heart is beating fast",
+      "the drummer beats the drum",
+      "wings beat slowly",
+      "a hard cut to the logo",
+      "an upbeat stroll through the market",
+    ]) {
+      expect(ok({ shots: [{ subject: "主体", action }] }), action).toBe(true);
+    }
+    // 景别字段同理（同为承载字段，同一把尺）。
+    expect(ok({ shots: [{ ...shot, shotFraming: "close-up on the beating heart" }] })).toBe(true);
+  });
+
+  it("a duration phrase is not a timestamp list — en-dash and ASCII alike", () => {
+    // "a 3-5 second dolly" 从 R3 起就被误拒（旧检出器只看「两个数字夹横杠」），一并修好。
+    for (const action of ["a 3–5s hold", "a 3-5s hold", "a 3-5 second dolly", "holds for 2-3s then releases"]) {
+      expect(ok({ shots: [{ subject: "主体", action }] }), action).toBe(true);
+    }
+  });
+
+  it("still fires on real pacing intent — collocation, Chinese terms, or the pacing field's own role", () => {
+    // ① 词形自证：写在 action / shotFraming 这类内容字段里也拦（承载字段闭合不变）。
+    for (const action of ["freeze on the beat", "beat-synced freeze", "cut on the beat drop", "每拍定格"]) {
+      expect(ok({ shots: [{ subject: "球鞋", action }] }), action).toBe(false);
+      expect(ok({ shots: [{ subject: "球鞋", action }], pacing: "每拍约 0.5s" }), action).toBe(true);
+    }
+    // ② 字段职责：pacing 那一格里的 beat / hard cut 只可能是拍子。
+    expect(ok({ shots: [shot], pacing: "beat" })).toBe(false);
+    expect(ok({ shots: [shot], pacing: "hard cut" })).toBe(false);
+    // ③ 申报了就一律要求数值拍长。
+    expect(ok({ capabilities: ["beatSync"], shots: [{ subject: "球鞋", action: "the drummer beats the drum" }] })).toBe(false);
+  });
+
+  it("a timestamp list still fails closed when its ranges are only ranges (no colon) — all shots lead with one", () => {
+    expect(ok({
+      shots: [{ subject: "茶师", action: "0-2s 持杯" }, { subject: "茶汤", action: "2-4s 落杯" }],
+    })).toBe(false); // 缺前缀冒号：仍按「每段都要 '0-2s:' 前缀」拒
+    expect(ok({
+      shots: [{ subject: "茶师", action: "0-2s: 持杯" }, { subject: "茶汤", action: "2-4s: 落杯" }],
+    })).toBe(true);
+  });
+});
+
 describe("seedanceVariants — 负向清单永远收尾 (R3 P2)", () => {
   it("the variant treatment note sits BEFORE the negative-exclusion list; constraints stay the final line", () => {
     const i = seedancePromptInput.parse({
