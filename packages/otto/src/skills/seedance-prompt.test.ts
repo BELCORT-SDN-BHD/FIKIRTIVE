@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { assembleSeedance, seedancePromptInput, EDIT_PRESERVE_DEFAULT } from "./seedance-prompt.helpers.js";
+import { assembleSeedance, seedancePromptInput, seedanceVariants, EDIT_PRESERVE_DEFAULT } from "./seedance-prompt.helpers.js";
 import { seedancePromptSkill } from "./seedance-prompt.js";
 
 const CJK = /[一-鿿]/;
@@ -81,9 +81,9 @@ describe("assembleSeedance", () => {
     expect(out).toContain("Shot 1:");
     expect(out).toContain("Shot 2:");
   });
-  it("continuesFromPrev opens with the Chinese handoff phrase (视频延长：不重述场景)", () => {
+  it("continuesFromPrev opens with the Chinese handoff phrase (视频延长：不重述场景；R3 起续接必带 style)", () => {
     const out = assembleSeedance(seedancePromptInput.parse({
-      continuesFromPrev: true, shots: [{ subject: "剑客", action: "举起长剑" }],
+      continuesFromPrev: true, style: "武侠片质感，冷色调", shots: [{ subject: "剑客", action: "举起长剑" }],
     }));
     expect(out).toContain("承接上一段画面");
     expect(out).not.toContain("从给定的首帧画面开始");
@@ -243,7 +243,7 @@ describe("seedancePromptInput — language enforcement (复审 P1-B：声明变�
   });
   it("technical/dialogue fields stay exempt: English camera/framing/light/pacing and Malay dialogue pass", () => {
     const r = seedancePromptInput.safeParse({
-      pacing: "hard cut",
+      pacing: "slow-motion",
       shots: [{
         subject: "两位街坊", action: "相视大笑",
         camera: "fixed", shotFraming: "medium close-up", sceneLight: "golden hour",
@@ -255,6 +255,23 @@ describe("seedancePromptInput — language enforcement (复审 P1-B：声明变�
   it("REJECTS an English editInstruction in edit mode", () => {
     const r = seedancePromptInput.safeParse({ mode: "edit", editInstruction: "change the shirt to yellow" });
     expect(r.success).toBe(false);
+  });
+  it("R3 class closure: wholly-Cyrillic free text REJECTED (was 'neither' → passed both engines)", () => {
+    const r = seedancePromptInput.safeParse({
+      shots: [{ subject: "молодой человек", action: "идёт по улице и останавливается у двери" }],
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/CHINESE/);
+  });
+  it("R3 class closure: wholly-Arabic free text REJECTED", () => {
+    expect(seedancePromptInput.safeParse({
+      shots: [{ subject: "رجل شاب", action: "يمشي عبر الباب ويتوقف" }],
+    }).success).toBe(false);
+  });
+  it("purely numeric/ratio token fields are NOT punished ('16:9, 4K' —— R2 已确证纯数字不判罚)", () => {
+    expect(seedancePromptInput.safeParse({
+      shots: [{ subject: "一只猫", action: "跃起" }], constraints: "16:9, 4K",
+    }).success).toBe(true);
   });
 });
 
@@ -319,8 +336,77 @@ describe("seedancePromptInput — capability constraints machine-checked (复审
       capabilities: ["multiSegmentContinuation"], shots: [shot], continuesFromPrev: true, style: "纪实风，暖色调",
     }).success).toBe(true);
   });
-  it("no capabilities declared → none of the extra constraints fire (旧调用方兼容)", () => {
+  it("timestampedShots: a GAP between ranges is rejected — 段段连续无缝隙 (declared AND derived)", () => {
+    const gapped = {
+      shots: [{ subject: "茶师", action: "0-2s: 持杯高举" }, { subject: "茶汤", action: "3-5s: 拉出长弧线" }],
+    };
+    expect(seedancePromptInput.safeParse({ capabilities: ["timestampedShots"], ...gapped }).success).toBe(false);
+    expect(seedancePromptInput.safeParse(gapped).success).toBe(false); // no declaration — same verdict
+  });
+
+  // ── R3 P1-C：申报不再是唯一闸门 —— 形状自证的守卫无条件执行（旧的物理矛盾形状现在 fail closed）。
+  it("UNDECLARED overlapping timestamps fail closed (shape-derived guard)", () => {
+    expect(seedancePromptInput.safeParse({
+      shots: [{ subject: "茶师", action: "0-3s: 持杯高举" }, { subject: "茶汤", action: "2-4s: 拉出长弧线" }],
+    }).success).toBe(false);
+  });
+  it("UNDECLARED mixed timed/untimed shots fail closed (one timestamp anywhere → all shots must be timed)", () => {
+    expect(seedancePromptInput.safeParse({
+      shots: [{ subject: "茶师", action: "0-2s: 持杯高举" }, { subject: "茶汤", action: "拉出长弧线" }],
+    }).success).toBe(false);
+  });
+  it("UNDECLARED >5 negative terms in constraints fail closed", () => {
+    expect(seedancePromptInput.safeParse({
+      shots: [shot], constraints: "画面中不出现：多余手指、路人、杂物、反光、阴影、水印",
+    }).success).toBe(false);
+  });
+  it("UNDECLARED continuesFromPrev without style fails closed", () => {
+    expect(seedancePromptInput.safeParse({ shots: [shot], continuesFromPrev: true }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      shots: [shot], continuesFromPrev: true, style: "纪实风，暖色调",
+    }).success).toBe(true);
+  });
+  it("UNDECLARED beat/cut pacing without a numeric beat length fails closed; numeric passes", () => {
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "快节奏卡点, hard cut" }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({ shots: [shot], pacing: "每拍约 0.5s, hard cut" }).success).toBe(true);
+  });
+  it("UNDECLARED single-take text in style/pacing with >1 shot fails closed; with exactly 1 shot passes", () => {
+    expect(seedancePromptInput.safeParse({
+      style: "一镜到底的沉浸式跟随", shots: [shot, { subject: "一只狗", action: "追逐" }],
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      pacing: "one continuous take", shots: [shot, { subject: "一只狗", action: "追逐" }],
+    }).success).toBe(false);
+    expect(seedancePromptInput.safeParse({
+      style: "一镜到底的沉浸式跟随", shots: [{ ...shot, camera: "one continuous take" }],
+    }).success).toBe(true);
+  });
+  it("legacy VALID shapes still parse with no declaration (兼容口径：合法旧形状不受影响)", () => {
     expect(seedancePromptInput.safeParse({ shots: [shot, { subject: "一只狗", action: "追逐" }] }).success).toBe(true);
+    expect(seedancePromptInput.safeParse({
+      shots: [{ subject: "茶师", action: "0-2s: 持杯高举" }, { subject: "茶汤", action: "2-4s: 拉出长弧线" }],
+    }).success).toBe(true);
+  });
+});
+
+describe("seedanceVariants — 负向清单永远收尾 (R3 P2)", () => {
+  it("the variant treatment note sits BEFORE the negative-exclusion list; constraints stay the final line", () => {
+    const i = seedancePromptInput.parse({
+      shots: [{ subject: "一只猫", action: "跃起" }],
+      constraints: "画面中不出现：多余手指、路人",
+    });
+    for (const v of seedanceVariants(i, 3)) {
+      expect(v.prompt.trim().endsWith("画面中不出现：多余手指、路人")).toBe(true);
+      expect(v.prompt).toContain(v.note);
+      expect(v.prompt.indexOf(v.note)).toBeLessThan(v.prompt.indexOf("画面中不出现：多余手指"));
+    }
+  });
+  it("with no constraints, the cleanFootage ban is still the final line, after the note", () => {
+    const i = seedancePromptInput.parse({ shots: [{ subject: "一只猫", action: "跃起" }] });
+    for (const v of seedanceVariants(i, 2)) {
+      expect(v.prompt.trim().endsWith("画面中不出现文字、水印或 logo")).toBe(true);
+      expect(v.prompt.indexOf(v.note)).toBeLessThan(v.prompt.indexOf("画面中不出现文字、水印或 logo"));
+    }
   });
 });
 

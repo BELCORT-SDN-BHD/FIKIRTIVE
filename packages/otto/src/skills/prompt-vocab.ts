@@ -26,19 +26,33 @@ export const PACING = ["slow-motion", "hard cut", "fast cut", "timelapse", "one 
 export const enOnly = (list: readonly string[]) => list.map((s) => s.replace(/\s*\(.*\)$/, ""));
 
 // ---------------------------------------------------------------------------
-// 语言执法（#437 复审 P1-B）：按「主体文字系统」判定，不逐字符 ——
-// 中文正文里夹英文行业词（dolly in）合法；整段英文冒充中文正文非法。
-// 度量：CJK 按字计（一字≈一语素），拉丁按词计（一词≈一语素以上），谁多算谁。
+// 语言执法（#437 复审 P1-B；R3 收紧为类闭合的「必须」规则）：按「主体文字系统」判定，
+// 不逐字符 —— 中文正文里夹英文行业词（dolly in）合法；整段英文冒充中文正文非法；
+// 中英之外的主体文字（西里尔/阿拉伯等）判为 "other"，视频/图像两侧 schema 都不接受。
+// 度量：CJK 按字计（一字≈一语素），拉丁与其他文字按词计，谁多算谁。
 // ---------------------------------------------------------------------------
 const CJK_CHARS = /[㐀-鿿豈-﫿]/g;
 const LATIN_WORDS = /[a-zA-Z][a-zA-Z'’-]*/g;
 
-/** 纯：一段自由文本的主体文字系统。无任何文字（纯数字/标点）→ "neither"，不判罚。 */
-export function majorityScript(text: string): "cjk" | "latin" | "neither" {
+const ANY_LETTER_WORDS = /\p{L}+/gu;
+
+/** 纯：一段自由文本的主体文字系统。中英之外的字母文字（西里尔/阿拉伯等）→ "other"；完全无字母（纯数字/标点）→ "none"。 */
+export function majorityScript(text: string): "cjk" | "latin" | "other" | "none" {
   const cjk = (text.match(CJK_CHARS) ?? []).length;
   const latin = (text.match(LATIN_WORDS) ?? []).length;
-  if (cjk === 0 && latin === 0) return "neither";
-  return cjk >= latin ? "cjk" : "latin";
+  const other = (text.replace(CJK_CHARS, "").replace(LATIN_WORDS, "").match(ANY_LETTER_WORDS) ?? []).length;
+  if (cjk === 0 && latin === 0 && other === 0) return "none";
+  if (cjk >= latin && cjk >= other) return "cjk";
+  return latin >= other ? "latin" : "other";
+}
+
+/**
+ * 纯：纯数字/比例/度量 token 的字段值（"16:9, 4K"、"0.5s"、"50mm"）不是散文 ——
+ * 语言执法豁免（复审 R2 已确证纯数字不得判罚）。
+ * 规则：剥掉「数字开头、可带小数点/比号与字母后缀」的度量 token 后，不再含任何字母。
+ */
+export function isNumericTokenText(text: string): boolean {
+  return !/\p{L}/u.test(text.replace(/\d+(?:[.:]\d+)*\p{L}*/gu, ""));
 }
 
 /** reference：像素不在这里（走 propose 的 entityIds → API 参数）。只承载织入措辞所需的 role + name。 */

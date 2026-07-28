@@ -73,8 +73,8 @@ describe("each of the 13 capabilities is expressible through the assembler", () 
     expect(out).toContain("起点：");
     expect(out).toContain("最终");
   });
-  it("extension — continuation opener + carried lighting, no re-description", () => {
-    const out = shape({ continuesFromPrev: true, shots: [{ subject: "茶汤", action: "从高处拉出长弧线落入杯中", sceneLight: "延续上一段的光线与色调" }] });
+  it("extension — continuation opener + carried lighting, no re-description (R3：续接必带 style 供逐字复用)", () => {
+    const out = shape({ continuesFromPrev: true, style: "茶艺纪实风，暖色调", shots: [{ subject: "茶汤", action: "从高处拉出长弧线落入杯中", sceneLight: "延续上一段的光线与色调" }] });
     expect(out).toContain("承接上一段画面");
     expect(out).toContain("延续上一段的光线与色调");
   });

@@ -61,7 +61,7 @@ export const VIDEO_CAPABILITIES: readonly VideoCapability[] = [
     id: "singleTake",
     labelZh: "一镜到底",
     fields: ["shots.camera", "constraints"],
-    hintZh: "camera 用 one continuous take 且只用一个 shot；路径写起点→途经（≤3 个点名地标）→终点；constraints 注明全程无剪辑。",
+    hintZh: "camera 用 one continuous take 且只用一个 shot（schema 机检：声明 singleTake、或 style/pacing 出现一镜到底/one take，都强制恰好 1 个 shot）；路径写起点→途经（≤3 个点名地标）→终点；constraints 注明全程无剪辑。",
   },
   {
     id: "editInstruction",

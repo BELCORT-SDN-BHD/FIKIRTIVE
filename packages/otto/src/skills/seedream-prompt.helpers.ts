@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { promptRef, identityLockClause, majorityScript } from "./prompt-vocab.js";
+import { promptRef, identityLockClause, majorityScript, isNumericTokenText } from "./prompt-vocab.js";
 import { IMAGE_VARIANT_AXES, type PromptVariant } from "./variant-policy.js";
 
 /** 语言执法错误文案（中性）。textContent（画面内要渲染的文字）不受此限。 */
@@ -30,7 +30,8 @@ export const seedreamPromptInput = z
     directionPinned: z.boolean().default(false),
   })
   .superRefine((v, ctx) => {
-    // ── 语言执法（复审 P1-B 镜像）：图像 prompt 字段主体必须英文；
+    // ── 语言执法（复审 P1-B 镜像；R3 类闭合）：图像 prompt 字段主体必须英文（中文/
+    // 西里尔/阿拉伯等任何非英文主体一律拦）；纯数字/比例 token（"16:9, 4K"、"50mm"）豁免；
     // textContent（要画进图里的文字，用户语言自便）与 userIntent（用户原话）豁免。
     const enChecked: Array<[string, string | undefined]> = [
       ["subject", v.subject],
@@ -46,7 +47,7 @@ export const seedreamPromptInput = z
       ["preserve", v.preserve],
     ];
     for (const [path, val] of enChecked) {
-      if (val && majorityScript(val) === "cjk") {
+      if (val && !isNumericTokenText(val) && majorityScript(val) !== "latin") {
         ctx.addIssue({ code: "custom", message: EN_FIELD_ERROR, path: [path] });
       }
     }

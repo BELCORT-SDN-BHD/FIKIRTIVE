@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { identityLockClause, identityLockClauseZh, promptRef, CAMERA_MOVES, enOnly } from "./prompt-vocab.js";
+import {
+  identityLockClause, identityLockClauseZh, promptRef, CAMERA_MOVES, enOnly,
+  majorityScript, isNumericTokenText,
+} from "./prompt-vocab.js";
 
 describe("identityLockClause", () => {
   it("empty refs → empty string", () => {
@@ -76,6 +79,40 @@ describe("promptRef schema", () => {
 describe("vocab constants", () => {
   it("camera moves is a non-empty readonly list", () => {
     expect(CAMERA_MOVES.length).toBeGreaterThan(0);
+  });
+});
+
+describe("majorityScript (R3 类闭合：cjk/latin/other/none)", () => {
+  it("majority-CJK with embedded English industry terms → cjk", () => {
+    expect(majorityScript("档口的老板娘掀开蒸笼，镜头随蒸气 dolly in 推进")).toBe("cjk");
+  });
+  it("plain English prose → latin", () => {
+    expect(majorityScript("a young man walks through the door")).toBe("latin");
+  });
+  it("wholly-Cyrillic prose → other (no longer invisible to both engines)", () => {
+    expect(majorityScript("молодой человек идёт по улице")).toBe("other");
+  });
+  it("wholly-Arabic prose → other", () => {
+    expect(majorityScript("رجل شاب يمشي عبر الباب")).toBe("other");
+  });
+  it("digits and punctuation only → none", () => {
+    expect(majorityScript("16:9, 2024!")).toBe("none");
+  });
+  it("Cyrillic prose with a lone English word stays other (majority rules)", () => {
+    expect(majorityScript("молодой человек идёт мимо кафе okay")).toBe("other");
+  });
+});
+
+describe("isNumericTokenText (纯数字/比例/度量 token 豁免)", () => {
+  it("ratio + resolution tokens are numeric-only", () => {
+    expect(isNumericTokenText("16:9, 4K")).toBe(true);
+    expect(isNumericTokenText("0.5s")).toBe(true);
+    expect(isNumericTokenText("50mm")).toBe(true);
+  });
+  it("prose in any script is not numeric-only", () => {
+    expect(isNumericTokenText("close-up")).toBe(false);
+    expect(isNumericTokenText("在门口停下")).toBe(false);
+    expect(isNumericTokenText("идёт 4K")).toBe(false);
   });
 });
 

@@ -102,6 +102,16 @@ describe("seedreamPromptInput — language enforcement (复审 P1-B 镜像：声
       subject: "a red festive poster", textContent: "新年快乐",
     }).success).toBe(true);
   });
+  it("R3 class closure: wholly-Cyrillic subject REJECTED (was 'neither' → passed both engines)", () => {
+    const r = seedreamPromptInput.safeParse({ subject: "матовая чёрная бутылка на мраморной столешнице" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(JSON.stringify(r.error.issues)).toMatch(/ENGLISH/);
+  });
+  it("purely numeric/ratio token fields are NOT punished (cameraLens '50mm', detail '16:9, 4K')", () => {
+    expect(seedreamPromptInput.safeParse({
+      subject: "a red apple", cameraLens: "50mm", detail: "16:9, 4K",
+    }).success).toBe(true);
+  });
   it("REJECTS a Chinese editTarget in i2i mode", () => {
     expect(seedreamPromptInput.safeParse({
       mode: "i2i", subject: "the source image", editVerb: "Replace", editTarget: "背景换成海滩日落",

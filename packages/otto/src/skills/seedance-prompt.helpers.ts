@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { promptRef, identityLockClauseZh, majorityScript } from "./prompt-vocab.js";
+import { promptRef, identityLockClauseZh, majorityScript, isNumericTokenText } from "./prompt-vocab.js";
 import { VIDEO_CAPABILITIES } from "./video-capabilities.js";
 import { VIDEO_VARIANT_AXES, type PromptVariant } from "./variant-policy.js";
 
@@ -23,6 +23,12 @@ export const ZH_FIELD_ERROR =
 
 /** 半角时间戳前缀（时间戳分镜能力）：如 "0-2s: …" / "2.5-4s: …"。 */
 const TIMESTAMP_RE = /^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s\s*[:：]/;
+/** 形状信号（R3 P1-C）：action 任意位置出现时间范围 → 该输入自证在用时间戳分镜。 */
+const TIMESTAMP_ANY = /\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*s/;
+/** 形状信号：style/pacing 文本自证一镜到底。 */
+const SINGLE_TAKE_TEXT = /一镜到底|one\s+(?:continuous\s+)?take|single\s+take/i;
+/** 形状信号：pacing 谈到拍/卡点/切 → 自证在做节拍剪辑，必须给数值拍长。 */
+const BEAT_PACING_TEXT = /卡点|节拍|拍|beat|bpm|hard\s*cut/i;
 
 /** 纯：负向排除名词清单的项数（去掉「画面中不出现：」类引导语后按分隔符切）。 */
 export function negativeTermCount(constraints: string): number {
@@ -37,7 +43,8 @@ export function negativeTermCount(constraints: string): number {
 // 复审 R2 追加（全部 optional/default，旧形状兼容）：
 //   userIntent —— 用户原话（任意语言），策略路由与变体派生的输入；
 //   directionPinned —— 用户已钉死方向 → 变体出 2 个；
-//   capabilities —— 声明用到的能力 id，schema 机检其约束（声明即执法）。
+//   capabilities —— 声明用到的能力 id，schema 机检其约束；R3 P1-C 起声明只是附加
+//   严格化信号，形状可导出的守卫（时间戳/负向项数/续接需 style/节拍数值/一镜到底文本）无条件执行。
 export const seedancePromptInput = z
   .object({
     mode: z.enum(["i2v", "t2v", "edit"]).default("i2v"),
@@ -62,8 +69,9 @@ export const seedancePromptInput = z
       ctx.addIssue({ code: "custom", message: "at least one shot is required for i2v/t2v", path: ["shots"] });
     }
 
-    // ── 语言执法（复审 P1-B）：叙事字段主体必须中文；行业词字段（camera/shotFraming/
-    // sceneLight/pacing/style）与台词字段（audio —— 对白语言随用户）豁免。
+    // ── 语言执法（复审 P1-B；R3 类闭合）：叙事字段主体必须中文（夹英文行业词合法；
+    // 英文/西里尔/阿拉伯等任何非中文主体一律拦）；纯数字/比例 token（"16:9, 4K"）豁免；
+    // 行业词字段（camera/shotFraming/sceneLight/pacing/style）与台词字段（audio）豁免。
     const zhChecked: Array<[(string | number)[], string | undefined]> = [
       [["editInstruction"], v.editInstruction],
       [["preserve"], v.preserve],
@@ -73,24 +81,32 @@ export const seedancePromptInput = z
       zhChecked.push([["shots", i, "subject"], s.subject], [["shots", i, "action"], s.action], [["shots", i, "mood"], s.mood]);
     });
     for (const [path, val] of zhChecked) {
-      if (val && majorityScript(val) === "latin") {
+      if (val && !isNumericTokenText(val) && majorityScript(val) !== "cjk") {
         ctx.addIssue({ code: "custom", message: ZH_FIELD_ERROR, path });
       }
     }
 
-    // ── 能力约束机检（复审 craft 2）：声明了能力，schema 就验证其形状。
+    // ── 能力约束机检（复审 craft 2；R3 P1-C：凡能从输入形状导出的守卫无条件执行）。
+    // capabilities 声明只是「附加的严格化信号」（如 timestampedShots 声明后每个 shot 都必须
+    // 带前缀、negativeExclusion 声明后 constraints 必填）——它永远不是唯一闸门：
+    // 输入形状自证的物理矛盾，不声明也一律拦下。
     const caps = new Set(v.capabilities);
-    if (caps.has("singleTake") && v.shots.length !== 1) {
+
+    // 一镜到底：声明之外，style/pacing 文本提到一镜到底/one take 也触发（单 shot 无剪辑）。
+    if ((caps.has("singleTake") || SINGLE_TAKE_TEXT.test(`${v.style ?? ""} ${v.pacing ?? ""}`)) && v.shots.length !== 1) {
       ctx.addIssue({ code: "custom", path: ["shots"],
-        message: "capability singleTake requires exactly ONE shot (one continuous take has no cuts)" });
+        message: "a single continuous take requires exactly ONE shot (one continuous take has no cuts)" });
     }
-    if (caps.has("timestampedShots")) {
-      let prevEnd = -1;
+
+    // 时间戳分镜：任一 action 出现时间范围（或已声明）→ 无条件验：前缀齐全、start<end、
+    // 升序不重叠、段段连续无缝隙（与能力表「段段连续无缝隙」同文）。
+    if (caps.has("timestampedShots") || v.shots.some((s) => TIMESTAMP_ANY.test(s.action))) {
+      let prevEnd: number | null = null;
       v.shots.forEach((s, i) => {
         const m = TIMESTAMP_RE.exec(s.action);
         if (!m) {
           ctx.addIssue({ code: "custom", path: ["shots", i, "action"],
-            message: "capability timestampedShots requires every shot's action to start with a half-width time range like '0-2s:'" });
+            message: "timestamped shots require EVERY shot's action to start with a half-width time range like '0-2s:'" });
           return;
         }
         const start = Number(m[1]);
@@ -98,30 +114,38 @@ export const seedancePromptInput = z
         if (!(start < end)) {
           ctx.addIssue({ code: "custom", path: ["shots", i, "action"],
             message: "timestamp range must have start < end" });
+          return;
         }
-        if (start < prevEnd) {
+        if (prevEnd !== null && start !== prevEnd) {
           ctx.addIssue({ code: "custom", path: ["shots", i, "action"],
-            message: "timestamps must be ascending and non-overlapping across shots" });
+            message: start < prevEnd
+              ? "timestamps must be ascending and non-overlapping across shots"
+              : "timestamped shots must be continuous — each range starts exactly where the previous one ends (no gaps)" });
         }
-        prevEnd = Math.max(prevEnd, end);
+        prevEnd = end;
       });
     }
-    if (caps.has("beatSync") && !(v.pacing && /\d/.test(v.pacing))) {
+
+    // 音乐卡点：pacing 谈到拍/卡点/hard cut（或已声明）→ 无条件要求数值拍长。
+    if ((caps.has("beatSync") || (v.pacing && BEAT_PACING_TEXT.test(v.pacing))) && !(v.pacing && /\d/.test(v.pacing))) {
       ctx.addIssue({ code: "custom", path: ["pacing"],
-        message: "capability beatSync requires pacing with a NUMERIC beat length (e.g. 每拍约 0.5s, hard cut) — the engine cannot hear music" });
+        message: "beat-synced pacing requires a NUMERIC beat length (e.g. 每拍约 0.5s, hard cut) — the engine cannot hear music" });
     }
-    if (caps.has("negativeExclusion")) {
-      if (!v.constraints?.trim()) {
-        ctx.addIssue({ code: "custom", path: ["constraints"],
-          message: "capability negativeExclusion requires constraints (a short noun list of things to exclude)" });
-      } else if (negativeTermCount(v.constraints) > 5) {
-        ctx.addIssue({ code: "custom", path: ["constraints"],
-          message: "capability negativeExclusion allows at most 5 negative terms — keep the strongest 5" });
-      }
+
+    // 负向排除：项数上限从形状即可导出 —— 无条件 ≤5；声明能力额外要求 constraints 必填。
+    if (caps.has("negativeExclusion") && !v.constraints?.trim()) {
+      ctx.addIssue({ code: "custom", path: ["constraints"],
+        message: "capability negativeExclusion requires constraints (a short noun list of things to exclude)" });
     }
-    if (caps.has("multiSegmentContinuation") && !v.style?.trim()) {
+    if (v.constraints?.trim() && negativeTermCount(v.constraints) > 5) {
+      ctx.addIssue({ code: "custom", path: ["constraints"],
+        message: "constraints allows at most 5 negative terms — keep the strongest 5" });
+    }
+
+    // 多段续接：continuesFromPrev 本身就是形状信号 —— 无条件要求 style（逐字复用才接得上）。
+    if ((caps.has("multiSegmentContinuation") || v.continuesFromPrev) && !v.style?.trim()) {
       ctx.addIssue({ code: "custom", path: ["style"],
-        message: "capability multiSegmentContinuation requires style (reuse it word-for-word across segments)" });
+        message: "a continuation (continuesFromPrev) requires style — reuse it word-for-word across segments" });
     }
   });
 export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
@@ -133,7 +157,7 @@ export const EDIT_PRESERVE_DEFAULT = "其余画面、人物动作与运镜保持
  * 纯：结构化意图 → 视频引擎创作 prompt（正文中文 —— 实测中文提示词语义还原更优；
  * 运镜/景别等行业词保留英文；无技术 flag —— provider 追加 --resolution/--duration/--ratio）。
  */
-export function assembleSeedance(i: SeedancePromptInput): string {
+export function assembleSeedance(i: SeedancePromptInput, variantNote?: string): string {
   const locks = identityLockClauseZh(i.references);
 
   // edit：指令 + 身份锁 + 保持句 + 附加约束，一行输出（对已有片段的定向修改，不是重新生成）。
@@ -165,6 +189,7 @@ export function assembleSeedance(i: SeedancePromptInput): string {
   if (i.mode === "i2v") lines.push("主体与首帧画面保持一致");
   if (locks) lines.push(locks);
   if (i.pacing) lines.push(i.pacing);
+  if (variantNote) lines.push(variantNote); // 变体处理说明（R3 P2）：必须在负向清单之前 —— 负向清单永远收尾
   const hasLockedBrandmark = i.references.some((r) => r.role === "brandmark" && r.lock);
   if (i.cleanFootage && !hasLockedBrandmark) lines.push("画面中不出现文字、水印或 logo");
   if (i.constraints) lines.push(i.constraints);
@@ -207,6 +232,7 @@ export function seedanceVariants(i: SeedancePromptInput, count: 2 | 3): PromptVa
     const options = VIDEO_AXIS_TREATMENTS[axis];
     const t = options.find((o) => Object.values(o.shot).every((val) => !base.includes(String(val)))) ?? options[1]!;
     const patched: SeedancePromptInput = { ...i, shots: i.shots.map((s) => ({ ...s, ...t.shot })) };
-    return { axis, note: t.note, prompt: `${assembleSeedance(patched)}\n${t.note}` };
+    // R3 P2：处理说明经 assembleSeedance 织入负向清单之前，保住「负向清单收尾」的装配律。
+    return { axis, note: t.note, prompt: assembleSeedance(patched, t.note) };
   });
 }
