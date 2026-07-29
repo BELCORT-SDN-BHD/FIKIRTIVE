@@ -158,14 +158,14 @@ describe("account settings honesty", () => {
 });
 
 // Decision ① (issue #513 §C1, the P1 fix): a spend cap of 0 must always read as
-// "Unlimited" in words, never a bare 0 in an editable box, and reaching it is a
+// "No cap set" in words, never a bare 0 in an editable box, and reaching it is a
 // distinct, confirmed action — never a side effect of clearing the field.
 describe("spend cap honesty (decision ①)", () => {
-  it("renders a saved cap of 0 as the word Unlimited, not an editable 0", () => {
+  it("renders a saved cap of 0 as No cap set, not an editable 0", () => {
     const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 0 }), "otto", "cap");
     expect(cap).toMatchObject({ kind: "number", value: 0 });
     const markup = renderField("otto", cap);
-    expect(markup).toContain("Unlimited");
+    expect(markup).toContain("No cap set");
     expect(markup).toContain("Set a cap");
     expect(markup).not.toMatch(/<input[^>]*value="0"/);
   });

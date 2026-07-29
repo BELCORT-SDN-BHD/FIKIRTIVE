@@ -19,7 +19,7 @@ export function parseWholeCredits(draft: string): number | null {
 
 /** A saved-then-editable whole-number field with an explicit Save action (decision ①):
  *  - Empty / negative / non-integer input is NEVER saved (Save stays disabled).
- *  - 0 always means "no cap" and always renders as the word "Unlimited", never a bare 0 —
+ *  - 0 always means "no cap" and always renders as "No cap set", never a bare 0 —
  *    and setting it requires its own two-step confirmation ("Remove cap" → "Confirm"),
  *    never a side-effect of clearing the box.
  *  - A save always echoes back the server-confirmed final value once it resolves. */
@@ -72,11 +72,11 @@ function NumberField({ field }: { field: NumberFieldData }) {
     }
   }
 
-  // Saved state IS "no cap" — echo the word "Unlimited", never a bare 0 input.
+  // Saved state IS "no cap" — echo "No cap set", never a bare 0 input.
   if (!editing && savedValue === 0) {
     return (
       <span className="cv-set-num">
-        <strong>Unlimited</strong>
+        <strong>No cap set</strong>
         <button
           type="button"
           className="cv-set-btn"
@@ -93,7 +93,7 @@ function NumberField({ field }: { field: NumberFieldData }) {
   if (confirmRemove) {
     return (
       <span className="cv-set-num cv-set-num-confirm">
-        <span className="text-error">Remove the spend cap? Otto can then spend without limit.</span>
+        <span className="text-error">Remove the spend cap? There will be no budget target set.</span>
         <button type="button" className="cv-set-btn danger" disabled={status === "saving"} onClick={() => void commit(0)}>
           {status === "saving" ? "Removing…" : "Remove cap"}
         </button>
