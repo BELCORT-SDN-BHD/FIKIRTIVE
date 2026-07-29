@@ -11,7 +11,7 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *
  *  2026-07-28 真实性核验轮(记录见决定清单)后的修订,逐条对应:
  *   B1 删掉「可暂停自然发布」—— `organicPublishPaused` 全仓只有读、无写(唯一 setter 是广告那一半
- *      meta-write-actions.ts:21-27,唯一按钮 OttoConnections.tsx:322-326)。
+ *      meta-write-actions.ts:21-27,唯一按钮 OttoConnections.tsx:351-355)。
  *   B2 审计记录改成单向 —— 商家侧 ActionEvent 读取锁死 "generation.outcome"(data.ts:431-441、:445-456),
  *      宽口径审计只在 founder 邮箱门禁后的 /admin(admin/layout.tsx:19)。
  *   B3 备份期限不写成删除上限 —— 只有我们自己的夜间快照是 30 天(db-backup.ts:39、:83、:148);

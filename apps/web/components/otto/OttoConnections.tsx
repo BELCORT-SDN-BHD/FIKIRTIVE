@@ -34,6 +34,23 @@ const MESSAGING_CHANNELS: { id: string; label: string }[] = [
   { id: "whatsapp", label: "WhatsApp" },
 ];
 
+// Instagram and Facebook connect through the ONE Meta connection — same token, same
+// status. `meta` (loaded once, below) is the single source of truth for both; their
+// row status is derived from it, never read independently (#518 finding 2).
+const META_BACKED_CHANNEL_IDS = new Set(["instagram", "facebook"]);
+
+// X has no OAuth route yet — lib/channels/x.ts's connectUrl points at an unbuilt
+// /api/x/authorize, and its insight reads are still stubbed. Until that adapter is
+// real, X gets the same "soon" honesty as Messaging: no fake Connect/Reconnect/Manage
+// button (#518 finding 1).
+const UNAVAILABLE_PUBLISHING_CHANNEL_IDS = new Set(["x"]);
+
+function metaBackedChannelStatus(meta: MetaState): ChannelState["status"] {
+  if (meta.phase === "connected" || meta.phase === "unreachable") return "connected";
+  if (meta.phase === "reconnect") return "needs_reconnect";
+  return "not_connected";
+}
+
 function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
   // currentColor-driven inline glyphs — same brand marks as OttoSchedule's ChannelIcon,
   // kept local here since that one isn't exported for reuse outside the Schedule view.
@@ -125,35 +142,38 @@ export default function OttoConnections() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [channelsState, setChannelsState] = useState<ChannelsState>({ phase: "loading" });
 
-  async function loadMeta() {
-    await Promise.resolve();
+  // Single load for the whole page (#518 finding 2): the Meta ad-account panel and the
+  // Instagram/Facebook Publishing rows describe the SAME Meta connection, so they must
+  // never be fetched — or shown — as two independently-timed reads that could disagree.
+  // One `load()` kicks off both requests together; the UI (below) waits for both to
+  // settle before it renders any Meta-backed status.
+  async function load() {
     setMeta({ phase: "loading" });
-    try {
-      const res = await getMetaConnection();
-      if ("error" in res || !res.connected) return setMeta({ phase: "disconnected" });
-      if (res.transientError) return setMeta({ phase: "unreachable" });
-      if (res.needsReconnect) return setMeta({ phase: "reconnect" });
-      setMeta({
-        phase: "connected",
-        status: res.status,
-        accounts: res.accounts ?? [],
-        canWrite: res.canWrite ?? false,
-        adsAutonomy: res.adsAutonomy ?? "ASK",
-        adsWritesPaused: res.adsWritesPaused ?? false,
-      });
-    } catch {
-      setMeta({ phase: "unreachable" });
-    }
-  }
-
-  async function loadChannels() {
     setChannelsState({ phase: "loading" });
-    try {
-      const res = await getAccountViewData();
-      if ("error" in res) return setChannelsState({ phase: "error" });
-      setChannelsState({ phase: "loaded", channels: res.channels });
-    } catch {
+    const [metaResult, channelsResult] = await Promise.allSettled([getMetaConnection(), getAccountViewData()]);
+
+    if (metaResult.status === "rejected") {
+      setMeta({ phase: "unreachable" });
+    } else {
+      const res = metaResult.value;
+      if ("error" in res || !res.connected) setMeta({ phase: "disconnected" });
+      else if (res.transientError) setMeta({ phase: "unreachable" });
+      else if (res.needsReconnect) setMeta({ phase: "reconnect" });
+      else
+        setMeta({
+          phase: "connected",
+          status: res.status,
+          accounts: res.accounts ?? [],
+          canWrite: res.canWrite ?? false,
+          adsAutonomy: res.adsAutonomy ?? "ASK",
+          adsWritesPaused: res.adsWritesPaused ?? false,
+        });
+    }
+
+    if (channelsResult.status === "rejected" || "error" in channelsResult.value) {
       setChannelsState({ phase: "error" });
+    } else {
+      setChannelsState({ phase: "loaded", channels: channelsResult.value.channels });
     }
   }
 
@@ -188,10 +208,7 @@ export default function OttoConnections() {
   }
 
   useEffect(() => {
-    queueMicrotask(() => {
-      void loadMeta();
-      void loadChannels();
-    });
+    queueMicrotask(() => void load());
   }, []);
 
   useEffect(() => {
@@ -202,10 +219,12 @@ export default function OttoConnections() {
   }, [meta.phase]);
 
   // The Meta ad-account panel is supplementary detail on the SAME Meta connection that
-  // backs the Instagram/Facebook Publishing rows above (lib/channels/facebook.ts and
-  // instagram.ts both read metaStatus()) — it only makes sense to show once that
-  // connection is live (or briefly unreachable, since the token itself is still fine).
+  // backs the Instagram/Facebook Publishing rows above — `meta` (loaded once by load(),
+  // above) is the single source both read, so the panel and the rows can never disagree.
+  // It only makes sense to show once that connection is live (or briefly unreachable,
+  // since the token itself is still fine).
   const showAdsPanel = meta.phase === "connected" || meta.phase === "unreachable";
+  const publishingLoading = channelsState.phase === "loading" || meta.phase === "loading";
 
   return (
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
@@ -224,19 +243,29 @@ export default function OttoConnections() {
         <div>
           <h2 className="text-foreground font-semibold" style={{ fontSize: 15, margin: "0 0 0.25rem" }}>Publishing</h2>
           <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0 0 0.5rem" }}>
-            Instagram, Facebook, and X — Otto schedules posts and reads results here.
+            Instagram and Facebook — Otto schedules posts and reads results here. X is listed
+            below but not available yet.
           </p>
           <div className="bg-card border border-border rounded-[14px]" style={{ padding: "0 1rem" }}>
-            {channelsState.phase === "loading" && (
+            {publishingLoading && (
               <p className="text-muted-foreground text-[0.75rem]" style={{ padding: "0.75rem 0" }}>Checking…</p>
             )}
-            {channelsState.phase === "error" && (
+            {!publishingLoading && channelsState.phase === "error" && (
               <div style={{ padding: "0.75rem 0", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}>
                 <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>Could not load channels.</p>
-                <Button type="button" size="sm" variant="ghost" onClick={() => void loadChannels()}>Retry</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>Retry</Button>
               </div>
             )}
-            {channelsState.phase === "loaded" && channelsState.channels.map((c) => <ChannelRow key={c.id} channel={c} />)}
+            {!publishingLoading && channelsState.phase === "loaded" && channelsState.channels.map((c) =>
+              UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has(c.id) ? (
+                <MessagingRow key={c.id} label={c.label} />
+              ) : (
+                <ChannelRow
+                  key={c.id}
+                  channel={META_BACKED_CHANNEL_IDS.has(c.id) ? { ...c, status: metaBackedChannelStatus(meta) } : c}
+                />
+              ),
+            )}
           </div>
 
           {/* Meta ad accounts — detail on the connection above, once it's live. */}
@@ -249,7 +278,7 @@ export default function OttoConnections() {
                   <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>
                     Couldn&rsquo;t reach Meta just now — this is usually temporary. Your connection is fine.
                   </p>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => void loadMeta()}>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => void load()}>
                     Retry
                   </Button>
                 </div>
@@ -345,7 +374,7 @@ export default function OttoConnections() {
                     size="sm"
                     variant="ghost"
                     className="mt-3"
-                    onClick={async () => { await disconnectMeta(); void loadMeta(); void loadChannels(); }}
+                    onClick={async () => { await disconnectMeta(); void load(); }}
                   >
                     Disconnect
                   </Button>

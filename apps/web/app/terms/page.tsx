@@ -10,7 +10,7 @@ export const metadata = { title: "Terms · Fikirtive" };
  *
  *  2026-07-28 真实性核验轮(记录见决定清单)后的修订:
  *   B1 删掉「可暂停自然发布」—— 只有广告那一半有 setter(meta-write-actions.ts:21-27)与按钮
- *      (OttoConnections.tsx:322-326);`organicPublishPaused` 全仓无写入者。
+ *      (OttoConnections.tsx:351-355);`organicPublishPaused` 全仓无写入者。
  *   L1 适用法句搬出正文 → 决定清单(第六轮已按决定清单第 9 条恢复原句,见下)。
  *   L2 「告知顾客的义务在商家」这条定性搬出正文 → 决定清单;
  *      正文只留能力事实(无收发通道:customer-inbox-service.ts:1243、
@@ -25,7 +25,7 @@ export const metadata = { title: "Terms · Fikirtive" };
  *   client_reference_id=工作区 id :68、metadata{orgId, credits, priceId} :69——
  *   上一版写「仅 email 与价目」,漏了 :68-69 两项,勿回退);
  *   审核通过前拒发 channels/meta-publish-adapter.ts:40-43(canPublish 由 Meta 实授权导出,
- *   meta-actions.ts:29-31);暂停广告写入 meta-write-actions.ts:25 + 按钮 OttoConnections.tsx:318-328;
+ *   meta-actions.ts:29-31);暂停广告写入 meta-write-actions.ts:25 + 按钮 OttoConnections.tsx:347-357;
  *   账号删除按钮只开邮件 components/otto/OttoAccount.tsx:51。
  *  提醒:本页仍**没有**任何「暂停自然发布」措辞 —— 那一列至今零写入者(B1 已剪,勿回填)。
  *

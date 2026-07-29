@@ -186,7 +186,7 @@ export function buildSettingsSections(args: {
                 }}
               >
                 <div>
-                  <div className="cv-set-lbl">Publishing &amp; messaging channels</div>
+                  <div className="cv-set-lbl">Publishing channels</div>
                   <div className="cv-set-hint">
                     {connectedCount} of {channels.length} connected
                   </div>
