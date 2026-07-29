@@ -4,7 +4,7 @@ import { listChannelScopes, listTemplates } from "@/lib/customer-inbox-gateway";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Message templates · Fikirtive" };
 
-export default async function CrmInboxTemplatesRoute() {
+export default async function CrmTemplatesRoute() {
   const [initialState, initialScopes] = await Promise.all([listTemplates({}), listChannelScopes()]);
   return <InboxTemplatesPage initialState={initialState} initialScopes={initialScopes} />;
 }

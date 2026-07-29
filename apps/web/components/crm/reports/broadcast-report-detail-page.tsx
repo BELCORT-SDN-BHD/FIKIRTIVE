@@ -176,13 +176,19 @@ export default function BroadcastReportDetailPage({
             <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={loading}>
               {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh
             </Button>
-            <Button asChild variant="secondary"><Link href={`/crm/broadcasts/${run.id}`}>Open broadcast</Link></Button>
           </div>
         </header>
 
+        <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium text-muted-foreground">Broadcast</span>
+          <Link href={`/crm/broadcasts/${run.id}`} className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
+            <Badge variant="outline">Open broadcast</Badge>
+          </Link>
+        </div>
+
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />
-          <span><strong>Simulated workspace.</strong> Sending attempts are known from C5. Provider delivery, read, and failure receipts are not connected, so those outcomes remain <strong>Unknown</strong>.</span>
+          <span><strong>Simulated workspace.</strong> Sending attempts are recorded. Provider delivery, read, and failure receipts are not connected, so those outcomes remain <strong>Unknown</strong>.</span>
         </div>
 
         {transportError ? (
@@ -194,7 +200,7 @@ export default function BroadcastReportDetailPage({
         <section className="mt-7" aria-labelledby="report-overview-heading">
           <div className="mb-4">
             <h2 id="report-overview-heading" className="text-xl font-semibold tracking-tight">Report overview</h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">Each axis has its own authority and freshness. No combined success rate is shown.</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">Each part of this report has its own reliability and freshness. No combined success rate is shown.</p>
           </div>
           {state.report.ok ? (
             <ReportAxisGroups report={state.report.resource} showSkipReasons />

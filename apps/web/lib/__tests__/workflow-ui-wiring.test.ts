@@ -41,7 +41,7 @@ describe("workflow UI read wiring", () => {
     expect(archive).toContain("} while (cursor)");
     expect(archive).toContain("if (active === null) return");
     expect(archive).toContain("active === null ||");
-    expect(archive).toContain("Fail closed");
+    expect(archive).toContain("Archive blocked");
   });
 
   it("keeps every persisted Routine kill reachable and reads exact authorization details", () => {
@@ -61,7 +61,7 @@ describe("workflow UI read wiring", () => {
 
     expect(monitoring).toContain("listRoutineRuns");
     expect(monitoring).toContain("getContactJourneyStates");
-    expect(monitoring).toContain("No step status or C4/C5 send outcome is guessed");
+    expect(monitoring).toContain("No step-by-step send or delivery status is guessed");
     expect(monitoring).not.toContain("dispatchWorkflowStep");
     expect(recipes).toContain("listBusinessHoursPolicies");
     expect(recipes).toContain("getBusinessHoursPolicy");

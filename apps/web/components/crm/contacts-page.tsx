@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  ChevronDown,
   FileUp,
   LoaderCircle,
   Plus,
@@ -179,14 +180,64 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
               Records are the merchant&apos;s asset. Fikirtive records facts and reminders; it never merges, deletes, or decides for the merchant.
             </p>
           </div>
-          <Button asChild variant="secondary"><Link href="/crm/segments"><Users />Customer segments</Link></Button>
+          <Button asChild><Link href="#add-contact"><Plus />New contact</Link></Button>
         </header>
 
-        <div className="mt-6 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
-          Unknown consent stays included in the merchant&apos;s records and audience selection. It is not verified opt-in or permission to send, and it is never fabricated from an import or an existing contact.
-        </div>
+        <details className="group mt-6 rounded-xl border border-warning/25 bg-warning-soft text-sm text-warning-soft-foreground">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+            <span>Unknown consent stays included in your records and audience selection.</span>
+            <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+          </summary>
+          <p className="border-t border-warning/20 px-4 pb-3 pt-2 leading-6">
+            It is not verified opt-in or permission to send, and it is never fabricated from an import or an existing contact.
+          </p>
+        </details>
 
-        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+        <Card className="mt-6">
+          <CardHeader><CardTitle>Contact records</CardTitle><CardDescription>Search by name or a read-only identity, then filter by lifecycle stage.</CardDescription></CardHeader>
+          <CardContent>
+            <form className="grid gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={submitSearch}>
+              <Input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={200} placeholder="Search contacts" aria-label="Search contacts" />
+              <Select value={stage} onValueChange={(value) => setStage(value as StageFilter)}>
+                <SelectTrigger aria-label="Filter lifecycle"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="all">All lifecycle stages</SelectItem><SelectItem value="New">New</SelectItem><SelectItem value="Active">Active</SelectItem><SelectItem value="Dormant">Dormant</SelectItem></SelectContent>
+              </Select>
+              <Button type="submit" variant="secondary" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : <Search />}Search</Button>
+            </form>
+            {readError ? <p className="mt-3 text-sm text-destructive">{readError}</p> : null}
+          </CardContent>
+        </Card>
+
+        {contacts.length === 0 ? (
+          <section className="mt-5 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-6 py-14 text-center shadow-sm">
+            <Users className="mx-auto size-8 text-muted-foreground" />
+            <h2 className="mt-4 text-lg font-semibold">No contacts found</h2>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Add a contact, import a CSV, or change the current search and lifecycle filter.</p>
+          </section>
+        ) : (
+          <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {contacts.map((contact) => {
+              const consent = consentPresentation(contact.consentState.state);
+              return (
+                <Card key={contact.id} className="min-w-0">
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate">{contact.name}</CardTitle><CardDescription className="mt-1">{contact.lifecycleStage} · {contact.source}</CardDescription></div><Badge variant={consent.variant}>{consent.label}</Badge></div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-2 rounded-xl bg-muted/45 p-3 text-sm">
+                      <p className="truncate">{contact.identities[0]?.externalId ?? "No stored identity"}</p>
+                      <p className="text-xs text-muted-foreground">Last seen {dateLabel(contact.lastSeenAt)}</p>
+                      {contact.doNotDisturb ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive"><ShieldAlert className="size-3.5" />Do not disturb</span> : null}
+                    </div>
+                    <Button asChild className="mt-4 w-full" variant="secondary"><Link href={`/crm/contacts/${contact.id}`}>Open profile<ArrowRight /></Link></Button>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </section>
+        )}
+
+        <div id="add-contact" className="mt-10 grid scroll-mt-8 gap-5 border-t border-border pt-8 lg:grid-cols-2">
           <Card>
             <CardHeader><CardTitle>Add contact</CardTitle><CardDescription>Create a standard profile. Existing identities remain read-only.</CardDescription></CardHeader>
             <CardContent>
@@ -242,50 +293,6 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
             </CardContent>
           </Card>
         ) : null}
-
-        <Card className="mt-5">
-          <CardHeader><CardTitle>Contact records</CardTitle><CardDescription>Search by name or a read-only identity, then filter by lifecycle stage.</CardDescription></CardHeader>
-          <CardContent>
-            <form className="grid gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={submitSearch}>
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={200} placeholder="Search contacts" aria-label="Search contacts" />
-              <Select value={stage} onValueChange={(value) => setStage(value as StageFilter)}>
-                <SelectTrigger aria-label="Filter lifecycle"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="all">All lifecycle stages</SelectItem><SelectItem value="New">New</SelectItem><SelectItem value="Active">Active</SelectItem><SelectItem value="Dormant">Dormant</SelectItem></SelectContent>
-              </Select>
-              <Button type="submit" variant="secondary" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : <Search />}Search</Button>
-            </form>
-            {readError ? <p className="mt-3 text-sm text-destructive">{readError}</p> : null}
-          </CardContent>
-        </Card>
-
-        {contacts.length === 0 ? (
-          <section className="mt-5 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-6 py-14 text-center shadow-sm">
-            <Users className="mx-auto size-8 text-muted-foreground" />
-            <h2 className="mt-4 text-lg font-semibold">No contacts found</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Add a contact, import a CSV, or change the current search and lifecycle filter.</p>
-          </section>
-        ) : (
-          <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {contacts.map((contact) => {
-              const consent = consentPresentation(contact.consentState.state);
-              return (
-                <Card key={contact.id} className="min-w-0">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate">{contact.name}</CardTitle><CardDescription className="mt-1">{contact.lifecycleStage} · {contact.source}</CardDescription></div><Badge variant={consent.variant}>{consent.label}</Badge></div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-2 rounded-xl bg-muted/45 p-3 text-sm">
-                      <p className="truncate">{contact.identities[0]?.externalId ?? "No stored identity"}</p>
-                      <p className="text-xs text-muted-foreground">Last seen {dateLabel(contact.lastSeenAt)}</p>
-                      {contact.doNotDisturb ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive"><ShieldAlert className="size-3.5" />Do not disturb</span> : null}
-                    </div>
-                    <Button asChild className="mt-4 w-full" variant="secondary"><Link href={`/crm/contacts/${contact.id}`}>Open profile<ArrowRight /></Link></Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </section>
-        )}
       </div>
     </main>
   );
