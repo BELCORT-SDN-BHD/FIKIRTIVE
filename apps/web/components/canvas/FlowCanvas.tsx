@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ReactFlow, Background, Controls, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
+import { ReactFlow, Background, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { ImageNode } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
@@ -20,7 +20,7 @@ import DetailPanel from "@/components/asset/DetailPanel";
 import { MentionInput } from "@/components/MentionInput";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { X } from "lucide-react";
+import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
@@ -864,7 +864,6 @@ export default function FlowCanvas({
             fitViewOptions={{ padding: 0.22 }}
           >
             <Background />
-            <Controls />
           </ReactFlow>
         </div>
       )}
@@ -910,8 +909,38 @@ export default function FlowCanvas({
               </button>
             </form>
           )}
-          {/* Slim bottom toolbar — matches the approved canvas-home mockup. */}
+          {/* Slim bottom toolbar — the single operation center for the canvas: zoom,
+              fit, hand/select, image, video, text. No separate React Flow default
+              controls panel and no canvas-lock button. */}
           <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools">
+            <button
+              type="button"
+              className="cv-tb"
+              title="Zoom out"
+              aria-label="Zoom out"
+              onClick={() => void flowRef.current?.zoomOut({ duration: 150 })}
+            >
+              <ZoomOut size={18} strokeWidth={1.9} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="cv-tb"
+              title="Zoom in"
+              aria-label="Zoom in"
+              onClick={() => void flowRef.current?.zoomIn({ duration: 150 })}
+            >
+              <ZoomIn size={18} strokeWidth={1.9} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="cv-tb"
+              title="Fit to screen"
+              aria-label="Fit to screen"
+              onClick={() => void flowRef.current?.fitView({ padding: 0.22, duration: 220 })}
+            >
+              <Maximize2 size={18} strokeWidth={1.9} aria-hidden />
+            </button>
+            <span className="cv-tb-div" />
             <button
               type="button"
               className={panMode ? "cv-tb" : "cv-tb cv-tb-active"}

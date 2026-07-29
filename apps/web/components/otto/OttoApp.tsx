@@ -170,7 +170,6 @@ export function OttoApp({
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [newCampaignPending, setNewCampaignPending] = useState(false);
-  const [campaignNamingActive, setCampaignNamingActive] = useState(false);
   const [renameProjectTarget, setRenameProjectTarget] = useState<ProjectMeta | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectMeta | null>(null);
   const [renameThreadTarget, setRenameThreadTarget] = useState<ChatThreadDTO | null>(null);
@@ -321,22 +320,15 @@ export function OttoApp({
     pushViewHistory(projectHref(thread.projectId || curProjectId, thread.id));
   }, [curProjectId, handleThreadsChange, projectHref, pushViewHistory, threads]);
 
-  const handleCampaignNamingChange = useCallback((active: boolean) => {
-    setCampaignNamingActive(active);
-    if (active) setActionError(null);
-  }, []);
-
-  const handleNewCampaign = useCallback(async (name: string) => {
-    const clean = name.trim();
-    if (!clean || newCampaignPendingRef.current) return false;
+  const handleNewCampaign = useCallback(async () => {
+    if (newCampaignPendingRef.current) return false;
     newCampaignPendingRef.current = true;
     setNewCampaignPending(true);
     setActionError(null);
     const loginHref = `/login?from=${encodeURIComponent(projectHref(curProjectId))}`;
     try {
-      const res = await createProject(clean);
+      const res = await createProject("New campaign");
       if (res && "id" in res) {
-        setCampaignNamingActive(false);
         window.location.assign(projectHref(res.id));
         return true;
       }
@@ -592,7 +584,6 @@ export function OttoApp({
         onSetProjectPinned={handleSetProjectPinned}
         onDeleteProject={requestDeleteProject}
         onNewCampaign={handleNewCampaign}
-        onCampaignNamingChange={handleCampaignNamingChange}
         newCampaignPending={newCampaignPending}
         onRenameThread={requestRenameThread}
         onSetThreadPinned={handleSetThreadPinned}
@@ -673,7 +664,6 @@ export function OttoApp({
           seedText={seedText}
           onSeedConsumed={() => setSeedText("")}
           onUseInOtto={handleUseInOtto}
-          campaignNamingActive={campaignNamingActive}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
           skin={skin}
