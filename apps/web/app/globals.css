@@ -943,14 +943,22 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-switch:disabled { cursor: not-allowed; opacity: 1; background: var(--border); }
 .gb .cv-switch:disabled::after { background: var(--muted-foreground); opacity: 0.55; }
 
-/* ── Account / Settings page (Direction 1: one page + sticky left jump-nav). */
-.gb .cv-settings { display: flex; flex: 1; overflow: hidden; }
-.gb .cv-settings-nav { width: 210px; flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
+/* ── Account / Settings page (Direction 1: one page + sticky left jump-nav).
+   Sized off the panel's own container width (not the browser viewport) — this
+   sub-page can render next to a shell nav of varying width, so a viewport media
+   query alone can't tell how much room is actually left; container-query units
+   can. .cv-settings-frame (the account-view wrapper in OttoView.tsx) is a second,
+   outer container: an element can't query its own size, so the row/column switch
+   below — which restyles .cv-settings itself, not just its children — resolves
+   against this ancestor container instead of .cv-settings's own container-type. */
+.gb .cv-settings-frame { container-type: inline-size; }
+.gb .cv-settings { display: flex; flex: 1; overflow: hidden; container-type: inline-size; }
+.gb .cv-settings-nav { width: clamp(160px, 20cqi, 210px); flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
 .gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
 .gb .cv-settings-nav a { display: block; padding: 8px 11px; border-radius: 9px; font-size: 13.5px; color: var(--foreground); text-decoration: none; margin-bottom: 2px; }
 .gb .cv-settings-nav a.on { background: var(--secondary); color: var(--foreground); font-weight: 600; }
 .gb .cv-settings-nav a.danger { color: #B4321E; }
-.gb .cv-settings-body { flex: 1; overflow: auto; padding: 36px 44px; max-width: 760px; }
+.gb .cv-settings-body { flex: 1; min-width: 0; overflow: auto; padding: clamp(20px, 4cqi, 36px) clamp(20px, 4cqi, 44px); max-width: 760px; }
 .gb .cv-set-sec { margin-bottom: 34px; scroll-margin-top: 24px; }
 .gb .cv-set-sec h2 { font-size: 12px; font-weight: 600; }
 .gb .cv-set-sub { font-size: 12px; color: var(--muted-foreground); margin: 2px 0 12px; }
@@ -962,11 +970,14 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
 .gb .cv-set-hint { font-size: 12px; color: var(--muted-foreground); font-weight: 400; }
 .gb .cv-set-input { border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px; font: inherit; font-size: 13.5px; color: var(--foreground); background: var(--card); width: 240px; }
 .gb .cv-set-input-num { width: 90px; }
-.gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; }
+.gb .cv-set-num { display: inline-flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 12.5px; flex-wrap: wrap; }
 .gb .cv-set-btn { height: 34px; padding: 0 14px; border-radius: 10px; font-size: 14px; font-weight: 600; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
 .gb .cv-set-btn.danger { border-color: #E7B7AE; color: #B4321E; }
+/* The spend cap's Save/Remove-cap button is the first disabled use of .cv-set-btn — make
+   "can't save this" visibly obvious (decision ①), not just non-clickable. */
+.gb .cv-set-btn:disabled { opacity: 0.45; cursor: default; }
 
-@media (max-width: 680px) {
+@container (max-width: 680px) {
   .gb .cv-settings { flex-direction: column; overflow: auto; }
   .gb .cv-settings-nav {
     width: auto;

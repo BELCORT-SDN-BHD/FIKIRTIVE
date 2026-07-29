@@ -4,6 +4,7 @@ import type { AccountInfo } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
+import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 
@@ -24,7 +25,7 @@ export function buildSettingsSections(args: {
   canPublish: boolean;
   onDeleteAccountRequest: () => void;
 }): SettingsSection[] {
-  const { settings, channels, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
+  const { account, settings, channels, packs, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
   const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
   const connectedChannelIds = channels.filter((c) => c.status === "connected").map((c) => c.id);
   const autoPublishAvailable = canAutoPublish(connectedChannelIds, canPublish);
@@ -37,43 +38,126 @@ export function buildSettingsSections(args: {
     (k: keyof OwnerSettings) =>
     (v: number) => setOwnerSetting(k, v as never);
 
-  // "profile" and "billing" sections were removed here (#513 A组返工 item 2) — they
-  // duplicated the global nav's Profile page and Billing & credits destination
-  // (identity/email/workspace, credit balance + buy buttons, and their own Sign out).
+  // "profile" was removed here (#513 A组返工 item 2) — it duplicated the global
+  // nav's Profile page (identity/email/workspace, plus Sign out which now lives
+  // once in the nav's identity menu). "billing" is KEPT past the #520 merge with
+  // #516: its balance/Top-up field is still required by decision③'s own test
+  // (apps/web/lib/__tests__/account-settings.test.ts — "billing top-up (decision
+  // ③)"), and its ledger field is the ONLY place account.recent renders anywhere
+  // in the app (the standalone /billing page shows balance + packs only, no
+  // history) — so #516's real improvements here (explicit save+confirm lives in
+  // SettingsPage's NumberField, unaffected by this file; the honest spend-cap
+  // copy right below was already shared going into the merge; formatCredits'
+  // thousands formatting and the per-task detail/atLabel ledger rows below are
+  // this section's own content) would be silently deleted, not just de-duplicated,
+  // if this section were dropped too. Tradeoff recorded in PR #517's description.
   return [
+    {
+      id: "billing",
+      title: "Billing and credits",
+      subtitle: "Your balance and where credits went.",
+      fields: [
+        {
+          kind: "custom",
+          id: "balance",
+          render: () => (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                width: "100%",
+                gap: 16,
+              }}
+            >
+              <div>
+                <div className="cv-set-hint">Credit balance</div>
+                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-0.02em" }}>
+                  {creditsLabel(account.balance)}
+                </div>
+                {account.reserved > 0 ? (
+                  <div className="cv-set-hint">
+                    {creditsLabel(account.reserved)} on hold
+                  </div>
+                ) : null}
+              </div>
+              {/* Single top-up entry (decision ③): one button into the unified /billing
+                  page, which lists every pack with its credits AND price. No more than-one
+                  price-only "Buy" button per pack duplicated here. */}
+              {packs.length > 0 ? (
+                <a className="cv-set-btn" href="/billing">Top up</a>
+              ) : (
+                <span className="cv-set-hint">No credit packs available right now.</span>
+              )}
+            </div>
+          ),
+        },
+        {
+          kind: "custom",
+          id: "ledger",
+          render: () => (
+            <div style={{ width: "100%" }}>
+              {account.recent.slice(0, 8).map((a) => (
+                <div key={a.id} style={{ padding: "12px 15px", display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13.5 }}>
+                    <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{a.label}</span>
+                    <span
+                      style={{
+                        color: a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
+                        fontVariantNumeric: "tabular-nums",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 13,
+                      }}
+                    >
+                      {a.delta > 0 ? "+" : ""}
+                      {formatCredits(a.delta)}
+                    </span>
+                  </div>
+                  <div className="cv-set-hint" style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span>{a.detail ?? " "}</span>
+                    <span>{a.atLabel}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ),
+        },
+      ],
+    },
     {
       id: "connections",
       title: "Connections",
       subtitle:
-        "Connect Instagram and Facebook so Otto can schedule posts and read results — auto-publish unlocks once Meta approves publishing.",
-      fields: channels.map((c) => ({
-        kind: "custom" as const,
-        id: `conn-${c.id}`,
-        render: () => (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              width: "100%",
-            }}
-          >
-            <div>
-              <div className="cv-set-lbl">{c.label}</div>
-              <div className="cv-set-hint">
-                {c.status === "connected"
-                  ? c.targets.join(", ") || "Connected"
-                  : c.status === "needs_reconnect"
-                    ? "Reconnect needed"
-                    : "Not connected"}
+        "Instagram, Facebook, X, and messaging channels — one page for all of them.",
+      fields: [
+        {
+          kind: "custom",
+          id: "manage",
+          render: () => {
+            const connectedCount = channels.filter((c) => c.status === "connected").length;
+            return (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <div className="cv-set-lbl">Publishing channels</div>
+                  <div className="cv-set-hint">
+                    {connectedCount} of {channels.length} connected
+                  </div>
+                </div>
+                <a className="cv-set-btn" href="/otto?view=connections">
+                  Manage connections
+                </a>
               </div>
-            </div>
-            <a className="cv-set-btn" href={c.connectUrl}>
-              {c.status === "connected" ? "Manage" : c.status === "needs_reconnect" ? "Reconnect" : "Connect"}
-            </a>
-          </div>
-        ),
-      })),
+            );
+          },
+        },
+      ],
     },
     {
       id: "otto",
@@ -106,7 +190,7 @@ export function buildSettingsSections(args: {
           kind: "number",
           id: "cap",
           label: "Spend cap",
-          hint: "Otto pauses a task over this many credits (0 = no cap)",
+          hint: "A budget target you record for reference — Otto doesn't alert you or stop spending based on it yet (0 = no target set)",
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),

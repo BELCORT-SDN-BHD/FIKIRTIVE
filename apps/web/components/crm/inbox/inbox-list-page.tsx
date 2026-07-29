@@ -174,7 +174,6 @@ function InboxWorkspace({
               Every conversation your team and Otto have with a customer, in one place. Fikirtive shows what is stored; it never sends on your behalf.
             </p>
           </div>
-          <Button asChild variant="secondary"><Link href="/crm/inbox/templates">Message templates</Link></Button>
         </header>
 
         <div className="mt-6 flex flex-col gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground sm:flex-row sm:items-center sm:justify-between">

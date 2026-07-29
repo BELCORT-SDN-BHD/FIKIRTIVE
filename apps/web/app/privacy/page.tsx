@@ -11,7 +11,7 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *
  *  2026-07-28 真实性核验轮(记录见决定清单)后的修订,逐条对应:
  *   B1 删掉「可暂停自然发布」—— `organicPublishPaused` 全仓只有读、无写(唯一 setter 是广告那一半
- *      meta-write-actions.ts:21-27,唯一按钮 OttoConnections.tsx:206-210)。
+ *      meta-write-actions.ts:21-27,唯一按钮 OttoConnections.tsx:351-355)。
  *   B2 审计记录改成单向 —— 商家侧 ActionEvent 读取锁死 "generation.outcome"(data.ts:431-441、:445-456),
  *      宽口径审计只在 founder 邮箱门禁后的 /admin(admin/layout.tsx:19)。
  *   B3 备份期限不写成删除上限 —— 只有我们自己的夜间快照是 30 天(db-backup.ts:39、:83、:148);
@@ -93,7 +93,12 @@ export const metadata = { title: "Privacy · Fikirtive" };
  *        纯操作事实:联系人数据由该 workspace 的商家放入并管理,客户请求向商家提出,
  *        Fikirtive 对这些数据做什么以本页描述为准;BM 版同段同步。
  *   注释引用可核验化:指向仓库外/不存在文件的引用统一改为上方决定清单 URL;
- *   邮件供应商文件路径改为类别化描述(供应商保密,消灭字节级供应商名命中)。*/
+ *   邮件供应商文件路径改为类别化描述(供应商保密,消灭字节级供应商名命中)。
+ *
+ *  2026-07-29 第七轮(#518 Connections 单一真相 —— B1 行号同步):
+ *   OttoConnections.tsx 从「仅广告」单页重构为 Publishing/Messaging 分组的统一 Connections 页
+ *   (工单 #513 三、2)。kill-switch 机制本身未变(仍是唯一按钮、meta-write-actions.ts 唯一
+ *   setter),只是随页面重组挪了位置:上方 B1 引用的按钮行 :206-210 → :322-326。*/
 export default function PrivacyPage() {
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">

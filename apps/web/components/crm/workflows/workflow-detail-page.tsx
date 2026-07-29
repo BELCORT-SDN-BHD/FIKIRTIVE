@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Code2,
   FileCheck2,
@@ -41,6 +42,7 @@ import {
   definitionStatusPresentation,
   isDenialErrorCode,
   shortWorkflowId,
+  summarizeRuleSource,
   validationIssueCopy,
   validationIssues,
   validationStatusPresentation,
@@ -173,6 +175,16 @@ export default function WorkflowDetailPage({
     definition.currentRevision !== selectedRevision.revision &&
     !archived,
   );
+  const ruleSummary = summarizeRuleSource(selectedRevision?.rulesSource ?? rulesSource);
+  const statusSummary = archived
+    ? "Archived — this workflow cannot run."
+    : routineReadError
+      ? "Routine status could not load."
+      : activeRoutineCount > 0
+        ? `Published and active — ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"} may act on real conversations, but delivery remains simulated.`
+        : definition.status === "published"
+          ? "Published, but no Routine is authorized yet — nothing will send."
+          : "Draft — not yet published.";
 
   async function refresh() {
     setBusy("refresh");
@@ -302,7 +314,6 @@ export default function WorkflowDetailPage({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Contact journey" : "Rule"}</Badge>{routineReadError ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutineCount > 0 ? <Badge variant="brand">{activeRoutineCount} active {activeRoutineCount === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div>
             <h1 className="mt-3 truncate text-3xl font-semibold tracking-[-0.03em]">{definition.name}</h1>
-            <p className="mt-2 font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml · {shortWorkflowId(definition.id)}</p>
           </div>
           <div className="flex shrink-0 items-center gap-2"><Button type="button" variant="ghost" disabled={busy !== null} onClick={() => void refresh()}>{busy === "refresh" ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button><ArchiveWorkflowDialog definition={definition} onArchived={(archivedDefinition) => { setDefinition(archivedDefinition); void refreshRoutines(); }} /></div>
         </header>
@@ -316,46 +327,63 @@ export default function WorkflowDetailPage({
 
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />
-          <span><strong>Simulation only.</strong> A valid or published rule is not permission to contact customers. Activation needs a separate human authorization envelope, and real delivery remains disconnected.</span>
+          <span><strong>Simulation only.</strong> A valid or published rule is not permission to contact customers. Activation needs separate human authorization, and real delivery remains disconnected.</span>
         </div>
 
         {readError ? <div className="mt-4 rounded-xl border border-warning/30 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><p className="font-semibold">Some workflow data could not refresh</p><p className="mt-1">{readError === "NETWORK" ? "The request could not finish. Previously loaded data remains visible." : workflowErrorMessage(readError)}</p><p className="mt-1 font-mono text-xs">Error code: {readError}</p></div> : null}
         {actionError ? <div className="mt-4 rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive"><p className="font-semibold">The workflow action could not finish</p><p className="mt-1">{actionError === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(actionError)}</p><p className="mt-1 font-mono text-xs">Error code: {actionError}</p></div> : null}
 
         <section id="rule-file" className="scroll-mt-20 pt-8" aria-labelledby="rule-file-heading">
-          <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Define</p><h2 id="rule-file-heading" className="mt-2 text-2xl font-semibold tracking-tight">Readable rule file</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Edit the rule as constrained text. Every material save creates an immutable revision; no node canvas or runtime script is involved.</p></div><Badge variant={validation.variant}>{validation.label}</Badge></div>
+          <div className="flex items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">Define</p><h2 id="rule-file-heading" className="mt-2 text-2xl font-semibold tracking-tight">What this workflow does</h2><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">A plain-language summary of the current rule. Open Advanced details below to edit the underlying rule file.</p></div><Badge variant={validation.variant}>{validation.label}</Badge></div>
 
-          <div className="mt-5 grid grid-cols-[minmax(0,1fr)_340px] gap-5">
-            <Card className="overflow-hidden p-0">
-              <div className="flex items-center justify-between border-b border-border bg-secondary/35 px-5 py-3"><div className="flex items-center gap-2"><Code2 className="size-4 text-muted-foreground" /><span className="font-mono text-xs">{definition.slug}.workflow.yaml</span></div><span className="text-xs text-muted-foreground">Fikirtive workflow v1</span></div>
-              <CardContent className="p-5">
-                <Textarea aria-label="Workflow rule file" spellCheck={false} disabled={archived} value={rulesSource} onChange={(event) => { setRulesSource(event.target.value); setCompilation(null); }} className="min-h-[500px] resize-y rounded-xl bg-[#111114] p-5 font-mono text-[13px] leading-6 text-[#F4F4F5] shadow-inner selection:bg-brand/35" />
-                <div className="mt-4 flex items-center justify-between gap-4"><p className="text-xs leading-5 text-muted-foreground">Validate checks the text and exact references. Save keeps the result as a revision. Only a valid saved revision can be published.</p><div className="flex shrink-0 gap-2"><Button type="button" variant="secondary" disabled={busy !== null || archived} onClick={() => void validate()}>{busy === "validate" ? <LoaderCircle className="animate-spin" /> : <FileCheck2 />}Validate</Button><Button type="button" variant="secondary" disabled={busy !== null || archived} onClick={() => void save()}>{busy === "save" ? <LoaderCircle className="animate-spin" /> : <Save />}Save revision</Button><Button type="button" disabled={busy !== null || !canPublish} onClick={() => void publish()}>{busy === "publish" ? <LoaderCircle className="animate-spin" /> : <Send />}Publish revision</Button></div></div>
-              </CardContent>
-            </Card>
+          <dl className="mt-5 grid gap-4 rounded-[var(--radius-card)] border border-border bg-card p-5 sm:grid-cols-3">
+            <div><dt className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Trigger</dt><dd className="mt-1.5 text-sm font-medium leading-6">{ruleSummary.trigger}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Action</dt><dd className="mt-1.5 text-sm font-medium leading-6">{ruleSummary.actions}</dd></div>
+            <div><dt className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Status</dt><dd className="mt-1.5 text-sm font-medium leading-6">{statusSummary}</dd></div>
+          </dl>
+          {ruleSummary.condition ? <p className="mt-2 text-xs text-muted-foreground">Condition: {ruleSummary.condition}</p> : null}
 
-            <div className="grid content-start gap-4">
-              <Card className={compilation?.validationState === "invalid" ? "border-destructive/35" : compilation?.validationState === "unavailable" ? "border-warning/35" : ""}>
+          <details className="group mt-5 rounded-[var(--radius-card)] border border-border">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--radius-card)] px-5 py-4 text-sm font-semibold hover:bg-secondary/40 [&::-webkit-details-marker]:hidden">
+              <span>Advanced details</span>
+              <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" aria-hidden />
+            </summary>
+            <div className="border-t border-border p-5">
+              <p className="break-all font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml · {shortWorkflowId(definition.id)}</p>
+
+              <div className="mt-4 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+                <Card className="overflow-hidden p-0">
+                  <div className="flex items-center justify-between border-b border-border bg-secondary/35 px-5 py-3"><div className="flex min-w-0 items-center gap-2"><Code2 className="size-4 shrink-0 text-muted-foreground" /><span className="min-w-0 truncate font-mono text-xs" title={`${definition.slug}.workflow.yaml`}>{definition.slug}.workflow.yaml</span></div><span className="shrink-0 text-xs text-muted-foreground">Fikirtive workflow v1</span></div>
+                  <CardContent className="p-5">
+                    <Textarea aria-label="Workflow rule file" spellCheck={false} disabled={archived} value={rulesSource} onChange={(event) => { setRulesSource(event.target.value); setCompilation(null); }} className="min-h-[500px] resize-y rounded-xl bg-[#111114] p-5 font-mono text-[13px] leading-6 text-[#F4F4F5] shadow-inner selection:bg-brand/35" />
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-4"><p className="text-xs leading-5 text-muted-foreground">Validate checks the text and exact references. Save keeps the result as a revision. Only a valid saved revision can be published.</p><div className="flex flex-wrap gap-2"><Button type="button" variant="secondary" disabled={busy !== null || archived} onClick={() => void validate()}>{busy === "validate" ? <LoaderCircle className="animate-spin" /> : <FileCheck2 />}Validate</Button><Button type="button" variant="secondary" disabled={busy !== null || archived} onClick={() => void save()}>{busy === "save" ? <LoaderCircle className="animate-spin" /> : <Save />}Save revision</Button><Button type="button" disabled={busy !== null || !canPublish} onClick={() => void publish()}>{busy === "publish" ? <LoaderCircle className="animate-spin" /> : <Send />}Publish revision</Button></div></div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid content-start gap-4">
+                  <Card className={compilation?.validationState === "invalid" ? "border-destructive/35" : compilation?.validationState === "unavailable" ? "border-warning/35" : ""}>
+                    <CardContent>
+                      <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Validation</h3><Badge variant={validation.variant}>{validation.label}</Badge></div>
+                      {!compilation ? <p className="mt-3 text-sm leading-6 text-muted-foreground">Validate this edited text before publishing. An unvalidated edit cannot be published.</p> : compilation.validationState === "valid" ? <div className="mt-3 flex gap-3"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" /><div><p className="text-sm font-semibold">The rule is valid</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Its structure and exact dependencies compiled successfully. Saving or publishing still does not activate a Routine.</p></div></div> : (
+                        <div className="mt-3"><div className="flex gap-3"><ShieldAlert className={compilation.validationState === "invalid" ? "mt-0.5 size-4 shrink-0 text-destructive" : "mt-0.5 size-4 shrink-0 text-warning-soft-foreground"} /><div><p className="text-sm font-semibold">{compilation.validationState === "invalid" ? "This rule cannot be published" : "This rule is unavailable"}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{compilation.validationState === "invalid" ? "Fix every issue below, validate again, then save a new revision." : "A required exact dependency could not be verified. Nothing will run."}</p></div></div><div className="mt-4 grid gap-2">{issues.map((issue, index) => <div key={`${issue.code}-${issue.path}-${index}`} className="rounded-lg border border-border bg-secondary/30 px-3 py-2"><p className="text-xs leading-5">{validationIssueCopy(issue)}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{issue.path}{issue.line ? ` · line ${issue.line}${issue.column ? `, column ${issue.column}` : ""}` : ""} · {issue.code}</p></div>)}</div></div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardContent><h3 className="font-semibold">Publication</h3><div className="mt-3 grid gap-2 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Current revision</span><span className="font-semibold">{definition.currentRevision ? `Revision ${definition.currentRevision}` : "None"}</span></div><div className="flex items-center justify-between"><span className="text-muted-foreground">Open revision</span><span className="font-semibold">{selectedRevision ? `Revision ${selectedRevision.revision}` : "Unsaved text"}</span></div><div className="flex items-center justify-between"><span className="text-muted-foreground">Edited</span><span className="font-semibold">{dirty ? "Yes" : "No"}</span></div></div><p className="mt-4 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">Publishing moves the definition pointer only. Existing Routines stay pinned to their exact older revision until a person reauthorizes them.</p></CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              <Card className="mt-5">
                 <CardContent>
-                  <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Validation</h3><Badge variant={validation.variant}>{validation.label}</Badge></div>
-                  {!compilation ? <p className="mt-3 text-sm leading-6 text-muted-foreground">Validate this edited text before publishing. An unvalidated edit cannot be published.</p> : compilation.validationState === "valid" ? <div className="mt-3 flex gap-3"><CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" /><div><p className="text-sm font-semibold">The rule is valid</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Its structure and exact dependencies compiled successfully. Saving or publishing still does not activate a Routine.</p></div></div> : (
-                    <div className="mt-3"><div className="flex gap-3"><ShieldAlert className={compilation.validationState === "invalid" ? "mt-0.5 size-4 shrink-0 text-destructive" : "mt-0.5 size-4 shrink-0 text-warning-soft-foreground"} /><div><p className="text-sm font-semibold">{compilation.validationState === "invalid" ? "This rule cannot be published" : "This rule is unavailable"}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{compilation.validationState === "invalid" ? "Fix every issue below, validate again, then save a new revision." : "A required exact dependency could not be verified. Nothing will run."}</p></div></div><div className="mt-4 grid gap-2">{issues.map((issue, index) => <div key={`${issue.code}-${issue.path}-${index}`} className="rounded-lg border border-border bg-secondary/30 px-3 py-2"><p className="text-xs leading-5">{validationIssueCopy(issue)}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{issue.path}{issue.line ? ` · line ${issue.line}${issue.column ? `, column ${issue.column}` : ""}` : ""} · {issue.code}</p></div>)}</div></div>
-                  )}
+                  <div className="flex items-end justify-between gap-4"><div><div className="flex items-center gap-2"><History className="size-4 text-muted-foreground" /><h3 className="font-semibold">Revision history</h3></div><p className="mt-1 text-sm text-muted-foreground">Newest first. Opening history never edits that immutable revision.</p></div><p className="text-sm text-muted-foreground">{revisions.length} {revisions.length === 1 ? "revision" : "revisions"}</p></div>
+                  {revisions.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-border px-5 py-8 text-center text-sm text-muted-foreground">No revisions saved yet. Validate the starter rule, then save the first immutable revision.</p> : <div className="mt-4 grid grid-cols-2 gap-3">{revisions.map((revision) => { const revisionValidation = validationStatusPresentation(revision.validationState); const current = definition.currentRevision === revision.revision; const selected = selectedRevisionId === revision.id; return <button key={revision.id} type="button" onClick={() => openRevision(revision)} className={`rounded-xl border p-4 text-left transition-colors ${selected ? "border-brand bg-brand-soft/35" : "border-border hover:bg-secondary/35"}`}><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="font-semibold">Revision {revision.revision}</span>{current ? <Badge variant="brand">Published</Badge> : null}</div><Badge variant={revisionValidation.variant}>{revisionValidation.label}</Badge></div><p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="size-3.5" />{dateTimeLabel(revision.createdAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(revision.id)}</p></button>; })}</div>}
                 </CardContent>
               </Card>
-
-              <Card>
-                <CardContent><h3 className="font-semibold">Publication</h3><div className="mt-3 grid gap-2 text-sm"><div className="flex items-center justify-between"><span className="text-muted-foreground">Current revision</span><span className="font-semibold">{definition.currentRevision ? `Revision ${definition.currentRevision}` : "None"}</span></div><div className="flex items-center justify-between"><span className="text-muted-foreground">Open revision</span><span className="font-semibold">{selectedRevision ? `Revision ${selectedRevision.revision}` : "Unsaved text"}</span></div><div className="flex items-center justify-between"><span className="text-muted-foreground">Edited</span><span className="font-semibold">{dirty ? "Yes" : "No"}</span></div></div><p className="mt-4 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">Publishing moves the definition pointer only. Existing Routines stay pinned to their exact older revision until a person reauthorizes them.</p></CardContent>
-              </Card>
             </div>
-          </div>
-
-          <Card className="mt-5">
-            <CardContent>
-              <div className="flex items-end justify-between gap-4"><div><div className="flex items-center gap-2"><History className="size-4 text-muted-foreground" /><h3 className="font-semibold">Revision history</h3></div><p className="mt-1 text-sm text-muted-foreground">Newest first. Opening history never edits that immutable revision.</p></div><p className="text-sm text-muted-foreground">{revisions.length} {revisions.length === 1 ? "revision" : "revisions"}</p></div>
-              {revisions.length === 0 ? <p className="mt-4 rounded-xl border border-dashed border-border px-5 py-8 text-center text-sm text-muted-foreground">No revisions saved yet. Validate the starter rule, then save the first immutable revision.</p> : <div className="mt-4 grid grid-cols-2 gap-3">{revisions.map((revision) => { const revisionValidation = validationStatusPresentation(revision.validationState); const current = definition.currentRevision === revision.revision; const selected = selectedRevisionId === revision.id; return <button key={revision.id} type="button" onClick={() => openRevision(revision)} className={`rounded-xl border p-4 text-left transition-colors ${selected ? "border-brand bg-brand-soft/35" : "border-border hover:bg-secondary/35"}`}><div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="font-semibold">Revision {revision.revision}</span>{current ? <Badge variant="brand">Published</Badge> : null}</div><Badge variant={revisionValidation.variant}>{revisionValidation.label}</Badge></div><p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Clock3 className="size-3.5" />{dateTimeLabel(revision.createdAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(revision.id)}</p></button>; })}</div>}
-            </CardContent>
-          </Card>
+          </details>
         </section>
 
         <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel key={`routines-${readGeneration}`} workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>

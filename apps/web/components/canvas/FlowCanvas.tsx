@@ -885,7 +885,12 @@ export default function FlowCanvas({
             <form
               ref={composerFormRef}
               className="al-promptbar cv-composer-pop"
-              style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520 }}
+              // Fixed 520px used to get clipped by the host's overflow:hidden whenever
+              // the canvas pane shrank below that (narrow chat pane + nav rail at
+              // 1024–1279px, #513). maxWidth caps it to the host's own width minus a
+              // 16px gutter on each side, so it always stays inside — the fee note and
+              // close button are never cut off.
+              style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520, maxWidth: "calc(100% - 32px)" }}
               onSubmit={(e) => { e.preventDefault(); void handleGenerate(); }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>

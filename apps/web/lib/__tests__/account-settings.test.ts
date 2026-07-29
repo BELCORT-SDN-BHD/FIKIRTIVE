@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
+import type { CreditPack } from "@/lib/billing-actions";
 import type { SettingsField, SettingsSection } from "@/components/otto/settings/types";
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,7 @@ vi.mock("@/lib/otto-client-actions", () => ({ setAdsAutonomy: mocks.setAdsAutono
 
 const { buildSettingsSections } = await import("@/components/otto/settings/sections");
 const { SettingsPage } = await import("@/components/otto/settings/SettingsPage");
+const { parseWholeCredits } = await import("@/components/otto/settings/SettingsPage");
 
 const account: AccountInfo = {
   email: "owner@acme.test",
@@ -30,14 +32,18 @@ function sections({
   connected,
   canPublish,
   autoPublish = false,
+  spendCapCredits = DEFAULT_SETTINGS.spendCapCredits,
+  packs = [],
 }: {
   connected: boolean;
   canPublish: boolean;
   autoPublish?: boolean;
+  spendCapCredits?: number;
+  packs?: CreditPack[];
 }) {
   return buildSettingsSections({
     account,
-    settings: { ...DEFAULT_SETTINGS, autoPublish },
+    settings: { ...DEFAULT_SETTINGS, autoPublish, spendCapCredits },
     channels: [{
       id: "instagram",
       label: "Instagram",
@@ -45,11 +51,17 @@ function sections({
       targets: connected ? ["Acme"] : [],
       connectUrl: "/api/meta/authorize",
     }],
-    packs: [],
+    packs,
     adsAutonomy: "ASK",
     canPublish,
     onDeleteAccountRequest: vi.fn(),
   });
+}
+
+function renderField(sectionId: string, field: SettingsField): string {
+  return renderToStaticMarkup(
+    createElement(SettingsPage, { sections: [{ id: sectionId, title: sectionId, fields: [field] }] }),
+  );
 }
 
 function fieldById(items: SettingsSection[], sectionId: string, fieldId: string): SettingsField {
@@ -131,4 +143,64 @@ describe("account settings honesty", () => {
   // buildSettingsSections (#513 A组返工 item 2) — it duplicated the global nav's
   // Profile page (see apps/web/app/profile/page.tsx), so its former test case here
   // is gone too.
+});
+
+// Decision ① (issue #513 §C1, the P1 fix): a spend cap of 0 must always read as
+// "No cap set" in words, never a bare 0 in an editable box, and reaching it is a
+// distinct, confirmed action — never a side effect of clearing the field.
+describe("spend cap honesty (decision ①)", () => {
+  it("renders a saved cap of 0 as No cap set, not an editable 0", () => {
+    const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 0 }), "otto", "cap");
+    expect(cap).toMatchObject({ kind: "number", value: 0 });
+    const markup = renderField("otto", cap);
+    expect(markup).toContain("No cap set");
+    expect(markup).toContain("Set a cap");
+    expect(markup).not.toMatch(/<input[^>]*value="0"/);
+  });
+
+  it("renders a saved positive cap as an editable input with Save disabled until it changes", () => {
+    const cap = fieldById(sections({ connected: true, canPublish: true, spendCapCredits: 500 }), "otto", "cap");
+    const markup = renderField("otto", cap);
+    expect(markup).toContain('value="500"');
+    expect(markup).toContain("disabled"); // nothing typed yet — Save has nothing to do
+  });
+});
+
+describe("parseWholeCredits — the P1 fix's validation gate", () => {
+  it("rejects empty, negative, and non-integer drafts so nothing silently becomes 0", () => {
+    expect(parseWholeCredits("")).toBeNull();
+    expect(parseWholeCredits("   ")).toBeNull();
+    expect(parseWholeCredits("-1")).toBeNull();
+    expect(parseWholeCredits("12.5")).toBeNull();
+    expect(parseWholeCredits("abc")).toBeNull();
+  });
+
+  it("accepts 0 and any positive whole number", () => {
+    expect(parseWholeCredits("0")).toBe(0);
+    expect(parseWholeCredits("500")).toBe(500);
+    expect(parseWholeCredits("  20  ")).toBe(20);
+  });
+});
+
+// Decision ③ (issue #513 §C3): Settings shows exactly ONE Top up entry, not one
+// price-only Buy button per pack.
+describe("billing top-up (decision ③)", () => {
+  const packs: CreditPack[] = [
+    { priceId: "p1", credits: 100, amountCents: 500, currency: "usd", label: "Starter" },
+    { priceId: "p2", credits: 500, amountCents: 2000, currency: "usd", label: "Growth" },
+  ];
+
+  it("shows a single Top up entry when packs exist — not one button per pack", () => {
+    const balance = fieldById(sections({ connected: true, canPublish: true, packs }), "billing", "balance");
+    const markup = renderField("billing", balance);
+    expect(markup).toContain(">Top up<");
+    expect(markup).not.toContain("Buy ·");
+  });
+
+  it("shows a hint instead of a dead Top up link when no packs are configured", () => {
+    const balance = fieldById(sections({ connected: true, canPublish: true, packs: [] }), "billing", "balance");
+    const markup = renderField("billing", balance);
+    expect(markup).toContain("No credit packs available right now.");
+    expect(markup).not.toContain(">Top up<");
+  });
 });

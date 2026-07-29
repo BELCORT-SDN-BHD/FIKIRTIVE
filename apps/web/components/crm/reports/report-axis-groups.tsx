@@ -44,10 +44,9 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-brand bg-card p-4" aria-labelledby={`sending-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-brand-strong">Axis A</p>
-              <h3 id={`sending-${report.broadcastRunId}`} className="mt-1 font-semibold">Sending attempts</h3>
+              <h3 id={`sending-${report.broadcastRunId}`} className="font-semibold">Sending attempts</h3>
             </div>
-            <Badge variant="soft">Known from C5</Badge>
+            <Badge variant="soft">Known</Badge>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">What happened before provider receipts.</p>
           <dl className="mt-3 grid grid-cols-2 gap-2">
@@ -75,8 +74,7 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-muted-foreground/35 bg-card p-4" aria-labelledby={`delivery-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-muted-foreground">Axis B</p>
-              <h3 id={`delivery-${report.broadcastRunId}`} className="mt-1 font-semibold">Provider receipts</h3>
+              <h3 id={`delivery-${report.broadcastRunId}`} className="font-semibold">Provider receipts</h3>
             </div>
             <Badge variant="outline"><CircleHelp />Unknown</Badge>
           </div>
@@ -95,8 +93,7 @@ export default function ReportAxisGroups({
         <section className="rounded-[var(--radius-card)] border border-border border-l-4 border-l-warning/60 bg-card p-4" aria-labelledby={`reconciliation-${report.broadcastRunId}`}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold text-warning-soft-foreground">Axis C</p>
-              <h3 id={`reconciliation-${report.broadcastRunId}`} className="mt-1 font-semibold">Reconciliation</h3>
+              <h3 id={`reconciliation-${report.broadcastRunId}`} className="font-semibold">Reconciliation</h3>
             </div>
             <Badge variant="warning"><Scale />Separate</Badge>
           </div>

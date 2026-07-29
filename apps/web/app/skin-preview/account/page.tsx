@@ -13,9 +13,9 @@ export default function AccountPreview() {
   const account: AccountInfo = {
     email: "owner@bloomcoffee.my", organizationName: "Bloom Coffee", isFounder: false, balance: 842, reserved: 12, balanceUsd: 84.2,
     recent: [
-      { id: "a1", label: "Credits added", delta: 1000, at: new Date(0).toISOString() },
-      { id: "a2", label: "Generation", delta: -8, at: new Date(0).toISOString() },
-      { id: "a3", label: "Otto thinking", delta: -1.4, at: new Date(0).toISOString() },
+      { id: "a1", label: "Credits added", delta: 1000, at: new Date(0).toISOString(), atLabel: "Jan 1, 12:00 AM" },
+      { id: "a2", label: "Generation", delta: -8, at: new Date(0).toISOString(), atLabel: "Jan 1, 12:00 AM" },
+      { id: "a3", label: "Otto thinking", delta: -1.4, at: new Date(0).toISOString(), atLabel: "Jan 1, 12:00 AM", detail: "1.4 credits used · 0.6 refunded" },
     ],
   };
   const packs: CreditPack[] = [
@@ -29,7 +29,7 @@ export default function AccountPreview() {
   return (
     <div className="fk gb-skin" style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK", canPublish: false } satisfies AccountViewData} />
+        <OttoAccount account={account} previewData={{ settings: DEFAULT_SETTINGS, channels, packs, adsAutonomy: "ASK", canPublish: false, meta: { connected: false } } satisfies AccountViewData} />
       </div>
     </div>
   );

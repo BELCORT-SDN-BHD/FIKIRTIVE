@@ -10,6 +10,7 @@ import {
   Coins,
   Contact,
   CreditCard,
+  FileText,
   Inbox,
   LogOut,
   Megaphone,
@@ -37,17 +38,19 @@ type NavigationItem = {
   icon: NavigationIcon;
 };
 
-// Order matches the Founder-approved nav tree (#513 三.1). Templates is left out
-// here on purpose (#513 A组返工 item 4): work-order-group E owns promoting it to a
-// formal CRM entry at its new /crm/templates home, and A must not pre-write that
-// route or lock in the pre-"转正" /crm/inbox/templates path. Re-add it once E merges.
+// Order matches the Founder-approved nav tree (#513 三.1). Templates was left out
+// on purpose during A's rework (#513 A组返工 item 4) pending work-order-group E's
+// formal /crm/templates route; E has since merged (#515), so Templates is back in
+// here, ordered to match the routes as they actually exist on merged main (#520
+// conflict resolution — every href below was verified against apps/web/app/crm/*).
 const CRM_ITEMS: NavigationItem[] = [
+  { href: "/crm/inbox", label: "Inbox", icon: Inbox },
   { href: "/crm/contacts", label: "Contacts", icon: Contact },
   { href: "/crm/segments", label: "Segments", icon: UsersRound },
-  { href: "/crm/inbox", label: "Inbox", icon: Inbox },
+  { href: "/crm/templates", label: "Templates", icon: FileText },
   { href: "/crm/broadcasts", label: "Broadcasts", icon: Send },
-  { href: "/crm/reports", label: "Reports", icon: BarChart3 },
   { href: "/crm/workflows", label: "Workflows", icon: Sparkles },
+  { href: "/crm/reports", label: "Reports", icon: BarChart3 },
 ];
 
 // Connections points at Otto's already-shipped connections view (work-order-group

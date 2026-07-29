@@ -454,7 +454,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 
         <div className="mt-6 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           Last order recency and tags are not connected yet. Rules using either fact stay visible and
-          fail closed with zero matches; they never guess from last seen activity.
+          show zero matches instead of guessing from last seen activity.
         </div>
 
         <div className="mt-6 grid gap-5 lg:grid-cols-[0.82fr_1.18fr]">
@@ -509,7 +509,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                 </div>
               )}
               <div className="mt-3 rounded-xl bg-muted/60 px-4 py-3 text-xs leading-5 text-muted-foreground">
-                Built-in Hot right now, Win-back, and VIP segments remain a declared gap. No placeholder
+                Built-in Hot right now, Win-back, and VIP segments are not built yet. No placeholder
                 rows are counted as real segments.
               </div>
             </CardContent>

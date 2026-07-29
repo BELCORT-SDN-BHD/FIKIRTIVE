@@ -159,7 +159,7 @@ export default function ArchiveWorkflowDialog({
 
           {active === null ? (
             <div className="rounded-xl border border-border bg-secondary/25 p-4">
-              <div className="flex items-start gap-3"><Unplug className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div><div className="flex items-center gap-2"><p className="text-sm font-semibold">{busy === "read" ? "Loading every active Routine" : "Active Routine list unavailable"}</p><Badge variant="outline">Fail closed</Badge></div><p className="mt-2 text-sm leading-6 text-muted-foreground">{busy === "read" ? "Archive stays disabled until every page of active Routine references has loaded." : "The exact active Routine keys and IDs could not be verified. Archive remains disabled and nothing changes."}</p></div></div>
+              <div className="flex items-start gap-3"><Unplug className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><div><div className="flex items-center gap-2"><p className="text-sm font-semibold">{busy === "read" ? "Loading every active Routine" : "Active Routine list unavailable"}</p><Badge variant="outline">Archive blocked</Badge></div><p className="mt-2 text-sm leading-6 text-muted-foreground">{busy === "read" ? "Archive stays disabled until every page of active Routine references has loaded." : "The exact active Routine keys and IDs could not be verified. Archive remains disabled and nothing changes."}</p></div></div>
             </div>
           ) : active.length > 0 ? (
             <div>
