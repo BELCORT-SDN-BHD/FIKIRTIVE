@@ -210,7 +210,7 @@ export function buildSettingsSections(args: {
           kind: "number",
           id: "cap",
           label: "Spend cap",
-          hint: "A budget target for reminders only — it does not stop spending automatically (0 = no target set)",
+          hint: "A budget target you record for reference — Otto doesn't alert you or stop spending based on it yet (0 = no target set)",
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),

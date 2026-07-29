@@ -947,7 +947,11 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    Sized off the panel's own container width (not the browser viewport) — this
    sub-page can render next to a shell nav of varying width, so a viewport media
    query alone can't tell how much room is actually left; container-query units
-   can. */
+   can. .cv-settings-frame (the account-view wrapper in OttoView.tsx) is a second,
+   outer container: an element can't query its own size, so the row/column switch
+   below — which restyles .cv-settings itself, not just its children — resolves
+   against this ancestor container instead of .cv-settings's own container-type. */
+.gb .cv-settings-frame { container-type: inline-size; }
 .gb .cv-settings { display: flex; flex: 1; overflow: hidden; container-type: inline-size; }
 .gb .cv-settings-nav { width: clamp(160px, 20cqi, 210px); flex: none; border-right: 1px solid var(--border); padding: 30px 16px; position: sticky; top: 0; }
 .gb .cv-settings-nav h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; }
@@ -973,7 +977,7 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
    "can't save this" visibly obvious (decision ①), not just non-clickable. */
 .gb .cv-set-btn:disabled { opacity: 0.45; cursor: default; }
 
-@media (max-width: 680px) {
+@container (max-width: 680px) {
   .gb .cv-settings { flex-direction: column; overflow: auto; }
   .gb .cv-settings-nav {
     width: auto;
