@@ -3,6 +3,7 @@ import { listCreditPacks } from "@/lib/billing-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
 import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
+import { formatCredits } from "@/lib/credit-format";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Billing · Fikirtive" };
@@ -74,14 +75,14 @@ export default async function BillingPage({
           {account ? (
             <>
               <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: "-0.02em", marginTop: 6 }}>
-                {account.balance.toLocaleString()}{" "}
+                {formatCredits(account.balance)}{" "}
                 <span className="text-muted-foreground" style={{ fontSize: 18, fontWeight: 500 }}>
                   credits
                 </span>
               </div>
               {account.reserved > 0 ? (
                 <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 4 }}>
-                  {account.reserved.toLocaleString()} held for work in progress
+                  {formatCredits(account.reserved)} held for work in progress
                 </div>
               ) : null}
             </>
@@ -114,7 +115,7 @@ export default async function BillingPage({
                   <div>
                     <div style={{ fontWeight: 600, fontSize: 16 }}>{pack.label}</div>
                     <div className="text-muted-foreground" style={{ fontSize: 14, marginTop: 2 }}>
-                      {pack.credits.toLocaleString()} credits · {fmtPrice(pack.amountCents, pack.currency)}
+                      {formatCredits(pack.credits)} credits · {fmtPrice(pack.amountCents, pack.currency)}
                     </div>
                   </div>
                   <BuyPackButton
