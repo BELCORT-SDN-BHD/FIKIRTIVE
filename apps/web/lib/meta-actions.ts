@@ -67,10 +67,14 @@ async function getMyAdAccounts(
   }
 }
 
-export async function getMetaConnection(): Promise<
+// Exported so every reader of "the Meta connection" (account-view-data.ts, the channel
+// adapters' metaStatus()) shares one shape instead of each hand-rolling its own inline
+// type for the same getMetaConnection() result (#518 rework finding 2).
+export type MetaConnectionResult =
   | { connected: boolean; status?: string; adsAutonomy?: string; canWrite?: boolean; adsWritesPaused?: boolean; canManagePages?: boolean; canPublish?: boolean; defaultPageId?: string | null; accounts?: MetaAdAccount[]; needsReconnect?: boolean; transientError?: boolean }
-  | { error: string }
-> {
+  | { error: string };
+
+export async function getMetaConnection(): Promise<MetaConnectionResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const conn = await prisma.metaConnection.findUnique({
