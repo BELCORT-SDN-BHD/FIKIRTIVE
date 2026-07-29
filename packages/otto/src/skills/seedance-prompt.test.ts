@@ -594,6 +594,65 @@ describe("seedancePromptInput — R5-P2：节拍守卫认节奏意图，不认 b
   });
 });
 
+// R6（终审 P2 收口）：文本信号对否定语境全盲 ——「不要一镜到底，使用多镜头」被反向识别成
+// 一镜到底申报，「preserve …」保持条件被误算成负向清单。类修法：所有词面守卫与负向清单
+// 计数经同一个否定语境工具（hasAffirmativeSignal / negativeTermCount 共用一套子句切分与
+// 否定词表，单一实现），否定语境的命中不计入该能力信号。
+describe("seedancePromptInput — R6：否定语境的命中不计入能力信号", () => {
+  const ok = (input: unknown) => seedancePromptInput.safeParse(input).success;
+  const shot = { subject: "一只猫", action: "跃起" };
+  const dog = { subject: "一只狗", action: "追逐" };
+
+  // 判官误伤例一（拒→放）：否定的一镜到底不是一镜到底申报。
+  it("judge FP: '不要一镜到底，使用多镜头' with multiple shots is LEGAL (拒→放)", () => {
+    expect(ok({ shots: [shot, dog], constraints: "不要一镜到底，使用多镜头" })).toBe(true);
+    // 英文同治：not / avoid 同样是否定语境。
+    expect(ok({ shots: [shot, dog], style: "not a one-take, multi-shot montage" })).toBe(true);
+    expect(ok({ shots: [shot, dog], constraints: "avoid one continuous take" })).toBe(true);
+  });
+  // 对照（真要该能力仍拒）：肯定语境的一镜到底照拦；申报路径不受否定判定影响。
+  it("control: affirmative single-take text with multiple shots still fails closed", () => {
+    expect(ok({ shots: [shot, dog], constraints: "全程一镜到底，无剪辑" })).toBe(false);
+    expect(ok({ shots: [shot, dog], style: "one-take corridor run" })).toBe(false);
+    // 同一 constraints 里否定与肯定分属两个子句：肯定子句照常触发。
+    expect(ok({ shots: [shot, dog], constraints: "不要多余装饰，一镜到底完成" })).toBe(false);
+    // 声明了 singleTake 就按声明执法，词面否定不豁免。
+    expect(ok({ capabilities: ["singleTake"], shots: [shot, dog], constraints: "不要一镜到底" })).toBe(false);
+  });
+
+  // 判官误伤例二（拒→放）：保持条件不是负向清单。
+  it("judge FP: 'preserve face/wardrobe/…' keep-conditions are NOT a negative list (拒→放)", () => {
+    const keep = "preserve face/wardrobe/camera/lighting/color/motion/audio";
+    expect(negativeTermCount(keep)).toBe(0);
+    expect(ok({ shots: [shot], constraints: keep })).toBe(true);
+    // 中文保持条件同治。
+    expect(ok({ shots: [shot], constraints: "保持人物面部、服装、运镜、光线、色调、动作、声音一致" })).toBe(true);
+  });
+  // 对照：真负向清单照数照拦（>5 拒、≤5 放），中英引导语同治。
+  it("control: a REAL negative list still counts and rejects above 5 terms", () => {
+    expect(negativeTermCount("画面中不出现：文字/水印/logo/人群/雨水/车辆")).toBe(6);
+    expect(ok({ shots: [shot], constraints: "画面中不出现：文字/水印/logo/人群/雨水/车辆" })).toBe(false);
+    expect(negativeTermCount("no text: watermark, logo, people, rain, cars, fingers")).toBe(6);
+    expect(ok({ shots: [shot], constraints: "no text: watermark, logo, people, rain, cars, fingers" })).toBe(false);
+    expect(ok({ shots: [shot], constraints: "不要出现文字、水印、logo" })).toBe(true); // 3 项 ≤5 仍放行
+  });
+
+  // 同类词面守卫一并受治：否定的节拍词不再强索数值拍长（同一个工具，不是逐守卫打补丁）。
+  it("negated beat wording does not demand a numeric beat length; affirmative still does", () => {
+    expect(ok({ shots: [shot], pacing: "不要卡点，流畅连贯" })).toBe(true);
+    expect(ok({ shots: [shot], pacing: "no hard cuts, smooth continuous motion" })).toBe(true);
+    // 对照：肯定语境照旧强索数值；申报路径不受否定判定影响。
+    expect(ok({ shots: [shot], pacing: "快节奏卡点" })).toBe(false);
+    expect(ok({ shots: [shot], pacing: "hard cut" })).toBe(false);
+    expect(ok({ capabilities: ["beatSync"], shots: [shot], pacing: "不要卡点" })).toBe(false);
+  });
+
+  // 字段边界：承载字段以换行拼接、各成子句 —— 甲字段句尾的否定词管不到乙字段的信号。
+  it("negation in one carrier field does not leak into another field's signal", () => {
+    expect(ok({ shots: [shot, dog], style: "别的商品不要入镜", pacing: "one continuous take" })).toBe(false);
+  });
+});
+
 describe("seedanceVariants — 负向清单永远收尾 (R3 P2)", () => {
   it("the variant treatment note sits BEFORE the negative-exclusion list; constraints stay the final line", () => {
     const i = seedancePromptInput.parse({

@@ -43,6 +43,63 @@ export function normalizeSeparators(text: string): string {
   return text.replace(DASH_CHARS, "-");
 }
 
+/**
+ * R6（判官 P2 误伤收口）：文本信号必须尊重否定语境 ——「不要一镜到底，使用多镜头」是在
+ * 排除一镜到底，不是在申报它。单一实现：凡词面信号（一镜到底/节拍）与负向清单计数都从
+ * 这里走，任何守卫不得自抄子句切分或否定词表。
+ *
+ * 口径（中英同治）：
+ *   ① 子句边界 = 逗号/句号/分号/叹问号/换行/竖线；顿号与斜杠是并列分隔，不断句；
+ *      数字夹着的小数点（0.5s）不断句；
+ *   ② 命中所在子句内、命中位置**之前**出现否定词（不要/不用/无需/避免/…、
+ *      no/not/-n't/avoid/without/…）→ 该命中不计入能力信号；
+ *   ③ 单字 别/勿/莫 只在子句开头算否定（「特别流畅」「告别」不是否定，「别的」也不是）；
+ *   ④ 紧贴命中的 不/无/没/非（「不卡点」「非一镜到底」）也算否定。
+ * 否定误判的代价只是「少一个形状信号」—— capabilities 显式申报的执法路径不受影响。
+ */
+const CLAUSE_BOUNDARY_RE = /[，,;；!！?？\n|｜。]|(?<!\d)\.(?!\d)/gu;
+const NEG_PHRASE_RE =
+  /不要|不得|不能|不可|不用|不需|不必|无需|不许|不准|不出现|不再|不含|不带|没有|避免|禁止|杜绝|切勿|请勿|严禁|\b(?:no|not|never|avoid|without|exclude|excluding|omit|skip)\b|\b[a-z]+n['’]t\b/iu;
+const NEG_LEAD_RE = /^\s*(?:别(?!的)|勿|莫)/u;
+const NEG_ADJACENT_RE = /[不无没非]\s*$/u;
+
+/** 子句及其在全文中的起点（起点供 firstNegationEnd 定位否定词）。 */
+function clauseSpans(text: string): Array<{ clause: string; start: number }> {
+  const spans: Array<{ clause: string; start: number }> = [];
+  let start = 0;
+  for (const m of text.matchAll(CLAUSE_BOUNDARY_RE)) {
+    spans.push({ clause: text.slice(start, m.index!), start });
+    start = m.index! + m[0].length;
+  }
+  spans.push({ clause: text.slice(start), start });
+  return spans;
+}
+
+/**
+ * 纯：文本里是否存在**非否定语境**的信号命中。signal 不得带 g 标志（本文件的词面
+ * 信号都如此）。每个子句只看第一个命中 —— 同一子句「先否定后肯定」同一词面的写法
+ * 不构成自然语料。
+ */
+export function hasAffirmativeSignal(text: string, signal: RegExp): boolean {
+  return clauseSpans(normalizeSeparators(text)).some(({ clause }) => {
+    const hit = signal.exec(clause);
+    if (!hit) return false;
+    const before = clause.slice(0, hit.index);
+    return !(NEG_LEAD_RE.test(clause) || NEG_ADJACENT_RE.test(before) || NEG_PHRASE_RE.test(before));
+  });
+}
+
+/** 全文最早一个否定词的结束位置（无否定词 → -1）。负向清单计数用；词表与信号判定同源。 */
+function firstNegationEnd(text: string): number {
+  for (const { clause, start } of clauseSpans(text)) {
+    const hits = [NEG_LEAD_RE.exec(clause), NEG_PHRASE_RE.exec(clause)]
+      .filter((m): m is RegExpExecArray => m !== null)
+      .sort((a, b) => a.index - b.index);
+    if (hits[0]) return start + hits[0].index + hits[0][0].length;
+  }
+  return -1;
+}
+
 /** 半角时间戳前缀（时间戳分镜能力）：如 "0-2s: …" / "2.5-4s: …"（归一后匹配，破折号写法一并覆盖）。 */
 const TIMESTAMP_RE = /^\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*s\s*[:：]/;
 /**
@@ -81,16 +138,33 @@ const BEAT_WEAK_TEXT = /\bbeat|hard[\s-]*cut|硬切/i;
 const BEAT_NUMBER = /\d+(?:\.\d+)?\s*(?:s(?:ec(?:onds?)?)?\b|ms\b|bpm\b|秒|毫秒|拍)/i;
 
 /**
- * 纯：负向排除名词清单的项数（去掉「画面中不出现：」类引导语后按分隔符切）。
- * 分隔符：半角/全角逗号、顿号、分号、换行、竖线、斜杠（R5 补 / 与全角／）——
- * 少一种就能把六项写成一项混过去。
+ * 纯：负向排除名词清单的项数。
+ * R6：只统计**否定语境**覆盖的清单 ——「preserve face/wardrobe/…」是保持条件，不是
+ * 排除清单，计 0（旧口径把 constraints 里任何清单都当负向清单数，正是判官的误伤例）。
+ * 否定词表与 hasAffirmativeSignal 同源（单一实现）：
+ *   ① 无否定词 → 0；
+ *   ② 否定词后同子句内有冒号（「画面中不出现：」）→ 清单 = 冒号后的全部文本，
+ *      分隔符沿用旧口径：顿号、半/全角逗号、分号、换行、竖线、斜杠 ——
+ *      少一种就能把六项写成一项混过去；
+ *   ③ 无冒号 → 清单 = 否定词起到句末（句号/分号/换行/竖线），分隔符 、,，/／。
  */
 export function negativeTermCount(constraints: string): number {
   const text = normalizeSeparators(constraints);
-  const list = text.includes("：") ? text.slice(text.indexOf("：") + 1)
-    : text.includes(":") ? text.slice(text.indexOf(":") + 1)
-    : text;
-  return list.split(/[、,，;；\n|｜/／]/).map((t) => t.trim()).filter((t) => t.length > 0).length;
+  const negEnd = firstNegationEnd(text);
+  if (negEnd < 0) return 0;
+  const rest = text.slice(negEnd);
+  const colon = /^[^，,;；!！?？\n|｜。.]*[：:]/.exec(rest);
+  let list: string;
+  let splitter: RegExp;
+  if (colon) {
+    list = rest.slice(colon[0].length);
+    splitter = /[、,，;；\n|｜/／]/;
+  } else {
+    const end = rest.search(/[;；!！?？\n|｜。]|(?<!\d)\.(?!\d)/u);
+    list = end < 0 ? rest : rest.slice(0, end);
+    splitter = /[、,，/／]/;
+  }
+  return list.split(splitter).map((t) => t.trim()).filter((t) => t.length > 0).length;
 }
 
 // 追加式扩展（#437）：mode 增加 'edit'（定向修改已有片段），editInstruction/preserve 仅 edit 用；
@@ -127,10 +201,13 @@ function readPath(v: SeedanceInputShape, path: string): unknown[] {
   return Array.isArray(rootValue) ? rootValue.map((s) => (s as Record<string, unknown>)[sub]) : [];
 }
 
-/** 某能力全部承载字段上的文本（归一后拼接）—— 形状信号只扫这里，扫哪些字段由能力表说了算。 */
+/**
+ * 某能力全部承载字段上的文本（归一后拼接）—— 形状信号只扫这里，扫哪些字段由能力表说了算。
+ * R6：用换行拼接 —— 换行是子句边界，字段各成子句，甲字段句尾的否定词不会「管到」乙字段。
+ */
 function carrierText(v: SeedanceInputShape, cap: VideoCapability): string {
   const parts = cap.fields.flatMap((p) => readPath(v, p)).filter((x): x is string => typeof x === "string");
-  return normalizeSeparators(parts.join(" "));
+  return normalizeSeparators(parts.join("\n"));
 }
 
 /**
@@ -140,7 +217,7 @@ function carrierText(v: SeedanceInputShape, cap: VideoCapability): string {
  */
 function roleText(v: SeedanceInputShape, cap: VideoCapability): string {
   const parts = cap.requires.flatMap((r) => readPath(v, r.path)).filter((x): x is string => typeof x === "string");
-  return normalizeSeparators(parts.join(" "));
+  return normalizeSeparators(parts.join("\n")); // 换行拼接同 carrierText（R6）
 }
 
 /** 报错落在哪个字段上：该能力的第一个根级承载字段（同样从表读，不另写字面）。 */
@@ -196,8 +273,9 @@ export const seedancePromptInput = seedanceInputObject
 
     // 一镜到底：申报之外，能力表列出的任一承载字段自证一镜到底也触发（单 shot 无剪辑）。
     // edit 模式按设计就没有 shots，这条不适用。
+    // R6：否定语境的命中不算自证 ——「不要一镜到底，使用多镜头」是在排除这项能力。
     if (v.mode !== "edit"
-      && (caps.has(SINGLE_TAKE.id) || SINGLE_TAKE_TEXT.test(carrierText(v, SINGLE_TAKE)))
+      && (caps.has(SINGLE_TAKE.id) || hasAffirmativeSignal(carrierText(v, SINGLE_TAKE), SINGLE_TAKE_TEXT))
       && v.shots.length !== 1) {
       ctx.addIssue({ code: "custom", path: ["shots"],
         message: "a single continuous take requires exactly ONE shot (one continuous take has no cuts)" });
@@ -252,16 +330,18 @@ export const seedancePromptInput = seedanceInputObject
     // R4-c：数值必须紧邻时间单位，"4K"/"16:9" 这类裸数字不算。
     // R5-P2：节奏意图 = 无歧义词形（任何承载字段）∪ 歧义词形写在职责字段（pacing）里。
     // 「beat 这个词出现过」不再等于申报 —— 鼓手打鼓、心跳、振翅都是合法输入。
+    // R6：否定语境的命中不算意图 ——「不要卡点」「no hard cuts」是在排除这项能力。
     const beatText = carrierText(v, BEAT_SYNC);
     const beatIntent = caps.has(BEAT_SYNC.id)
-      || BEAT_RHYTHM_TEXT.test(beatText)
-      || BEAT_WEAK_TEXT.test(roleText(v, BEAT_SYNC));
+      || hasAffirmativeSignal(beatText, BEAT_RHYTHM_TEXT)
+      || hasAffirmativeSignal(roleText(v, BEAT_SYNC), BEAT_WEAK_TEXT);
     if (beatIntent && !BEAT_NUMBER.test(beatText)) {
       ctx.addIssue({ code: "custom", path: [primaryPath(BEAT_SYNC)],
         message: "beat-synced pacing requires a NUMERIC beat length (e.g. 每拍约 0.5s, hard cut) — the engine cannot hear music" });
     }
 
     // 负向排除：项数上限从形状即可导出 —— 无条件 ≤5（constraints 必填由表里的 requires 管）。
+    // R6：negativeTermCount 只数否定语境覆盖的清单 ——「preserve …」保持条件不再被误算。
     const negativeText = carrierText(v, NEGATIVE_EXCLUSION);
     if (negativeText.trim() && negativeTermCount(negativeText) > 5) {
       ctx.addIssue({ code: "custom", path: [primaryPath(NEGATIVE_EXCLUSION)],
