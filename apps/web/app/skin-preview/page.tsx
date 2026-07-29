@@ -106,7 +106,6 @@ export default async function SkinPreviewPage({
       balanceUsd={84}
       balanceCredits={840}
       userName="rosa"
-      userEmail="rosa@bloomcoffee.co"
       memory={memory}
       records={records}
       ads={[]}

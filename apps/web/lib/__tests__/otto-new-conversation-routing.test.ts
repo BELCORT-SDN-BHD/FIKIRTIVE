@@ -193,7 +193,6 @@ function baseProps(over: Partial<OttoAppProps> = {}): OttoAppProps {
     balanceUsd: 0,
     balanceCredits: 0,
     userName: "founder",
-    userEmail: "founder@example.com",
     memory: [],
     records: [],
     ads: [],

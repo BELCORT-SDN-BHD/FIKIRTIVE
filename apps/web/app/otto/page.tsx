@@ -98,7 +98,6 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       balanceUsd={balanceUsd}
       balanceCredits={balanceCredits}
       userName={userName}
-      userEmail={email}
       memory={memory}
       records={records}
       ads={ads}

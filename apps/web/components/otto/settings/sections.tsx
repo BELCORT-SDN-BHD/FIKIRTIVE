@@ -1,7 +1,6 @@
 "use client";
 import type { SettingsSection } from "./types";
 import type { AccountInfo } from "@/lib/account-actions";
-import { signOutAction } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
@@ -39,40 +38,20 @@ export function buildSettingsSections(args: {
     (k: keyof OwnerSettings) =>
     (v: number) => setOwnerSetting(k, v as never);
 
+  // "profile" was removed here (#513 A组返工 item 2) — it duplicated the global
+  // nav's Profile page (identity/email/workspace, plus Sign out which now lives
+  // once in the nav's identity menu). "billing" is KEPT past the #520 merge with
+  // #516: its balance/Top-up field is still required by decision③'s own test
+  // (apps/web/lib/__tests__/account-settings.test.ts — "billing top-up (decision
+  // ③)"), and its ledger field is the ONLY place account.recent renders anywhere
+  // in the app (the standalone /billing page shows balance + packs only, no
+  // history) — so #516's real improvements here (explicit save+confirm lives in
+  // SettingsPage's NumberField, unaffected by this file; the honest spend-cap
+  // copy right below was already shared going into the merge; formatCredits'
+  // thousands formatting and the per-task detail/atLabel ledger rows below are
+  // this section's own content) would be silently deleted, not just de-duplicated,
+  // if this section were dropped too. Tradeoff recorded in PR #517's description.
   return [
-    {
-      id: "profile",
-      title: "Profile",
-      subtitle: "Who you are on Fikirtive.",
-      fields: [
-        {
-          kind: "text",
-          id: "email",
-          label: "Email",
-          hint: "Used to sign in",
-          value: account.email,
-          readOnly: true,
-        },
-        {
-          kind: "text",
-          id: "workspace",
-          label: "Workspace",
-          value: account.organizationName,
-          readOnly: true,
-        },
-        {
-          kind: "custom",
-          id: "signout",
-          render: () => (
-            <form action={signOutAction} style={{ marginLeft: "auto" }}>
-              <button className="cv-set-btn" type="submit">
-                Sign out
-              </button>
-            </form>
-          ),
-        },
-      ],
-    },
     {
       id: "billing",
       title: "Billing and credits",

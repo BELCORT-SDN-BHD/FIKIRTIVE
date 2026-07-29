@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   setAdsAutonomy: vi.fn(),
 }));
 
-vi.mock("@/lib/account-actions", () => ({ signOutAction: vi.fn() }));
 vi.mock("@/lib/owner-settings-actions", () => ({ setOwnerSetting: mocks.setOwnerSetting }));
 vi.mock("@/lib/otto-client-actions", () => ({ setAdsAutonomy: mocks.setAdsAutonomy }));
 
@@ -140,21 +139,10 @@ describe("account settings honesty", () => {
     expect(mocks.setOwnerSetting).toHaveBeenCalledWith("autoPublish", false);
   });
 
-  it("renders the authenticated organization name in the Workspace field", () => {
-    const workspace = fieldById(
-      sections({ connected: true, canPublish: true }),
-      "profile",
-      "workspace",
-    );
-    expect(workspace).toMatchObject({ kind: "text", value: "Acme Studio", readOnly: true });
-    const markup = renderToStaticMarkup(
-      createElement(SettingsPage, {
-        sections: [{ id: "profile", title: "Profile", fields: [workspace] }],
-      }),
-    );
-    expect(markup).toContain("Workspace");
-    expect(markup).toContain('value="Acme Studio"');
-  });
+  // The "profile" section (Email/Workspace/Sign out) was removed from
+  // buildSettingsSections (#513 A组返工 item 2) — it duplicated the global nav's
+  // Profile page (see apps/web/app/profile/page.tsx), so its former test case here
+  // is gone too.
 });
 
 // Decision ① (issue #513 §C1, the P1 fix): a spend cap of 0 must always read as

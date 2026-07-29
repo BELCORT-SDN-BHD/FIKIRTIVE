@@ -102,7 +102,6 @@ export interface OttoAppProps {
   /** Spendable balance in DISPLAYED credits — shown in the nav (product uses credits, not $). */
   balanceCredits: number;
   userName: string;
-  userEmail: string;
   memory: MemoryRow[];
   records: BrandRecordRow[];
   ads: AdTile[];
@@ -141,7 +140,6 @@ export function OttoApp({
   balanceUsd,
   balanceCredits: initialBalanceCredits,
   userName,
-  userEmail,
   memory,
   records,
   ads,
@@ -166,7 +164,10 @@ export function OttoApp({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activity, setActivity] = useState<Set<string>>(new Set());
   const [seedText, setSeedText] = useState<string>("");
-  const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? false);
+  // #513 A组返工 item 1 — closed by default: OttoNav is a slide-over now (see
+  // OttoNav.tsx), so the campaign/tools rail must not appear unprompted next to
+  // the persistent global nav. The floating "Show sidebar" button below opens it.
+  const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? true);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [newCampaignPending, setNewCampaignPending] = useState(false);
@@ -554,19 +555,24 @@ export function OttoApp({
       <style>{`
         @media (max-width: ${MOBILE_BP}px) {
           .otto-mobile-topbar { display: flex !important; }
+          /* The mobile hamburger above already opens the same rail — the floating
+             desktop toggle would otherwise double up with it. */
+          .otto-show-sidebar-btn { display: none !important; }
         }
         @media (min-width: ${MOBILE_BP + 1}px) {
           .otto-mobile-topbar { display: none !important; }
         }
       `}</style>
 
-      {/* Show-sidebar button — visible only while the nav is collapsed */}
+      {/* Show-sidebar button — visible only while the nav is collapsed (desktop only;
+          mobile already has the hamburger above for the same rail). */}
       {navCollapsed && (
         <button
           type="button"
           onClick={() => setNavCollapsed(false)}
           title="Show sidebar"
           aria-label="Show sidebar"
+          className="otto-show-sidebar-btn"
           style={{
             position: "absolute",
             top: "0.75rem",
@@ -613,8 +619,6 @@ export function OttoApp({
         onSetThreadPinned={handleSetThreadPinned}
         onDeleteThread={requestDeleteThread}
         balanceCredits={balanceCredits}
-        userName={userName}
-        userEmail={userEmail}
         history={history}
         drawerOpen={drawerOpen}
         onDrawerClose={() => setDrawerOpen(false)}

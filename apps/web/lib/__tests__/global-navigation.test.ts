@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import {
   MerchantShellContent,
+  SectionTabs,
   nextCrmDisclosureOpen,
 } from "@/components/global-navigation";
 
@@ -58,10 +59,76 @@ describe("MerchantShellContent", () => {
     expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/reports"/);
   });
 
-  it("shows a visible Log out action", () => {
+  it("still lights up Inbox on its own Templates sub-route (no CRM_ITEMS entry there yet)", () => {
+    // Templates is deliberately absent from CRM_ITEMS until work-order-group E merges
+    // its formal /crm/templates entry (#513 A组返工 item 4). Until then, /crm/inbox is
+    // the only CRM_ITEMS candidate for the legacy /crm/inbox/templates sub-route.
+    const markup = renderShell("/crm/inbox/templates");
+
+    expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/inbox"/);
+  });
+
+  it("replaces the old Account box with a real avatar menu offering Profile and Sign out", () => {
     const markup = renderShell("/billing");
 
-    expect(markup).toContain("<span>Log out</span>");
+    expect(markup).not.toContain("<span>Log out</span>");
+    expect(markup).not.toContain('text-xs font-semibold text-muted-foreground">Account<');
+    expect(markup).toContain('role="menu"');
+    expect(markup).toContain('href="/profile"');
+    // Sign out stays a real form submit (signOutAction), not a bare link.
+    expect(markup).toMatch(/<form[^>]*>[\s\S]*?Sign out[\s\S]*?<\/form>/);
+  });
+
+  it("shows credits above the identity menu, linking through to Billing & credits", () => {
+    const markup = renderShell("/otto");
+
+    expect(markup).toMatch(/href="\/billing"[^>]*>[\s\S]{0,600}?Credits/);
+  });
+
+  it("nests Connections, Preferences, and Billing & credits under Workspace settings", () => {
+    const markup = renderShell("/billing");
+
+    expect(markup).toContain(">Workspace settings<");
+    // Points at Otto's already-shipped connections view, not the not-yet-built
+    // /connections page (#513 A组返工 item 4 — swap once group B merges its page).
+    expect(markup).toContain('href="/otto?view=connections"');
+    // Preferences (spend cap, notifications, schedule defaults, delete account)
+    // was an island with no clickable entry point anywhere (#513 A组返工·三轮 item 1).
+    expect(markup).toContain('href="/otto?view=account"');
+    expect(markup).toContain(">Preferences<");
+    expect(markup).toContain(">Billing &amp; credits<");
+  });
+
+  it("marks Connections active on /otto?view=connections, not on bare /otto (#513 三轮 item 2)", () => {
+    const bare = renderShell("/otto");
+    expect(bare).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
+
+    const withQuery = renderShell("/otto?view=connections");
+    expect(withQuery).toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
+    // The disclosure auto-expands (open="") once the group's own item is active.
+    expect(withQuery).toContain('<details class="group" open="">');
+  });
+
+  it("marks Preferences active on /otto?view=account without also lighting up Connections", () => {
+    const markup = renderShell("/otto?view=account");
+
+    expect(markup).toMatch(/aria-current="page"[^>]*href="\/otto\?view=account"/);
+    expect(markup).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
+  });
+
+  it("does not also highlight the top-level Otto link when Connections or Preferences is active (#520)", () => {
+    const connections = renderShell("/otto?view=connections");
+    expect(connections).toMatch(/aria-current="page" title="Connections"/);
+    expect(connections).not.toMatch(/aria-current="page" title="Otto"/);
+
+    const preferences = renderShell("/otto?view=account");
+    expect(preferences).toMatch(/aria-current="page" title="Preferences"/);
+    expect(preferences).not.toMatch(/aria-current="page" title="Otto"/);
+  });
+
+  it("keeps the top-level Otto link active on bare /otto and on an unrelated query (#520)", () => {
+    expect(renderShell("/otto")).toMatch(/aria-current="page" title="Otto"/);
+    expect(renderShell("/otto?foo=bar")).toMatch(/aria-current="page" title="Otto"/);
   });
 
   it("keeps the impersonation banner above the merchant sidebar", () => {
@@ -111,5 +178,44 @@ describe("nextCrmDisclosureOpen", () => {
 
     open = nextCrmDisclosureOpen({ type: "navigation", pathname: "/billing" });
     expect(open).toBe(false);
+  });
+});
+
+// #513 三.4 — at the 1024–1279px rail, a Settings-style group's children move here
+// instead of nesting under a 64px icon. MerchantShellContent renders this above
+// {children}, so it never touches a business page's own content.
+describe("SectionTabs", () => {
+  function renderTabs(pathname: string) {
+    return renderToStaticMarkup(createElement(SectionTabs, { pathname }));
+  }
+
+  it("renders nothing outside a sectioned group", () => {
+    expect(renderTabs("/otto")).toBe("");
+    expect(renderTabs("/campaign")).toBe("");
+  });
+
+  it("renders the CRM group's tabs on a CRM page", () => {
+    const markup = renderTabs("/crm/segments");
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toContain('href="/crm/contacts"');
+    expect(markup).toContain('href="/crm/workflows"');
+    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/crm\/segments"/);
+  });
+
+  it("renders the Workspace settings group's tabs on Billing", () => {
+    const markup = renderTabs("/billing");
+
+    expect(markup).toContain('href="/otto?view=connections"');
+    expect(markup).toContain('href="/otto?view=account"');
+    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/billing"/);
+  });
+
+  it("renders (not empty) and selects Connections on /otto?view=connections — the 1024–1279 tabs bar used to not render at all here (#513 三轮 item 2)", () => {
+    const markup = renderTabs("/otto?view=connections");
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/otto\?view=connections"/);
+    expect(markup).not.toMatch(/aria-selected="true"[^>]*href="\/otto\?view=account"/);
   });
 });
