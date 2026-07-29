@@ -37,7 +37,7 @@
   <!-- ===== LEFT NAV ===== -->
   <aside style="width:260px; flex:none; background:var(--surface-card); border-right:1px solid var(--border-subtle); display:flex; flex-direction:column; padding:20px 0;">
     <div style="display:flex; align-items:center; gap:10px; padding:0 22px 18px;">
-      <img src="assets/logo-mark.svg" height="30" alt="">
+      <img src="assets/logo-mark.svg" height="30" alt=""><!-- 已退役(#497):logo-mark.svg 为 legacy 旧标;现役见 apps/web/public/brand/f-mark-coral.svg(权威 Claude Design) -->
       <span style="font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:-0.02em; color:var(--text-strong);">FIKIRTIVE</span>
     </div>
 
@@ -109,7 +109,7 @@
                 <input value="{{ draft }}" onInput="{{ onDraft }}" onKeyDown="{{ onKeyFront }}" placeholder="Tell Otto what you need, like 'promote my new sourdough'…" style="width:100%; border:none; outline:none; background:transparent; font-family:var(--font-sans); font-size:18px; color:var(--text-strong); padding:4px 0;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px;">
                   <span style="display:flex; align-items:center; gap:7px; font-size:13px; color:var(--text-faint);">
-                    <img src="assets/otto.svg" width="22" height="22" alt="" style="flex:none;"> Otto plans &amp; makes it — you approve before anything costs money
+                    <img src="assets/otto.svg" width="22" height="22" alt="" style="flex:none;"><!-- 已退役(#497):otto.svg 为 legacy 旧机器人;现役见 apps/web/public/brand/otto-cloud.svg(权威 Claude Design) --> Otto plans &amp; makes it — you approve before anything costs money
                   </span>
                   <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Button" variant="primary" size="md" onClick="{{ onJustTell }}" right-icon="{{ icArrowUp }}" hint-size="auto,44px">Let's go</x-import>
                 </div>
@@ -151,7 +151,7 @@
               <sc-for list="{{ thread }}" as="m" hint-placeholder-count="2">
                 <sc-if value="{{ m.isOtto }}">
                   <div class="msg-in" style="display:flex; gap:12px; align-items:flex-end;">
-                    <span style="width:36px; height:36px; flex:none; border-radius:50%; background:var(--coral-50); display:flex; align-items:center; justify-content:center;"><img src="assets/otto.svg" width="26" height="26" alt=""></span>
+                    <span style="width:36px; height:36px; flex:none; border-radius:50%; background:var(--coral-50); display:flex; align-items:center; justify-content:center;"><img src="assets/otto.svg" width="26" height="26" alt=""><!-- 已退役(#497):otto.svg 为 legacy 旧机器人;现役见 apps/web/public/brand/otto-cloud.svg(权威 Claude Design) --></span>
                     <div style="background:var(--surface-card); border-radius:4px 20px 20px 20px; box-shadow:var(--shadow-sm); padding:14px 18px; font-size:16px; line-height:1.55; color:var(--text-body); max-width:560px;">{{ m.text }}</div>
                   </div>
                 </sc-if>
@@ -356,7 +356,7 @@
             <div style="margin-top:22px;">
               <x-import component-from-global-scope="FIKIRTIVEDesignSystem_2bb27e.Card" variant="tint" padding="md" hint-size="100%,auto">
                 <div style="display:flex; gap:13px; align-items:flex-start;">
-                  <img src="assets/otto.svg" width="40" height="40" alt="" style="flex:none;">
+                  <img src="assets/otto.svg" width="40" height="40" alt="" style="flex:none;"><!-- 已退役(#497):otto.svg 为 legacy 旧机器人;现役见 apps/web/public/brand/otto-cloud.svg(权威 Claude Design) -->
                   <div style="flex:1;">
                     <div style="font-weight:700; font-size:16px; color:var(--text-strong); margin-bottom:4px;">Tell me about your brand</div>
                     <p style="font-size:14px; color:var(--text-muted); margin:0 0 12px; line-height:1.5;">Paste a bit of your &ldquo;about&rdquo; page or anything you've written about your business. I'll read it and fill in your brand memory — you can fix anything after.</p>

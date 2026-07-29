@@ -253,7 +253,7 @@ Keep evidence roles explicit; do not promote a derived artifact into a competing
 | **Guideline cards** | `docs/design-system/cards/` | historical/task-linked demos; they do not prove live implementation |
 | **Build recipe + review** | `docs/review/EXPANSION-SEAMS.md` Seam 7 · `docs/review/REVIEWER-PLAYBOOK.md` | how new screens stay on-system; what reviewers check |
 | **Machine checks** | Current workflow/package scripts that actually exist | general gates only; there is no dedicated `check-design` gate, so design conformance still requires review |
-| **Mascot art** | `apps/web/components/otto-mark/*.svg` + `OttoAvatar.tsx` | Otto's face (mascot art colours are exempt from theming) |
+| **Mascot art** | `apps/web/public/brand/otto-cloud.svg` + `OttoAvatar.tsx` | Otto's face (mascot art colours are exempt from theming) |
 
 If code and this document disagree, record the drift and resolve it through the current task/authority chain. Do not silently make either artifact win, and do not mutate an external design project without explicit scope.
 

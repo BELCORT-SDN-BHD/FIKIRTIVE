@@ -641,8 +641,12 @@ export function OttoApp({
           >
             <IconMenu />
           </button>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/logo-wordmark.svg" alt="Fikirtive" height={22} style={{ display: "block" }} />
+          {/* Company wordmark: F lettermark (ink) + name, matching the sidebar treatment */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/brand/f-mark-ink.svg" alt="" width={19} height={24} style={{ display: "block" }} />
+            <span style={{ fontSize: "1.0625rem", fontWeight: 700, color: "var(--foreground)" }}>fikirtive</span>
+          </div>
         </div>
         <OttoView
           view={view}

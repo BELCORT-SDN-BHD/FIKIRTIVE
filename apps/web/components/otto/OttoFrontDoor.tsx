@@ -381,7 +381,7 @@ export function OttoFrontDoor({
         {/* Trust line */}
         <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
+          <img src="/brand/otto-cloud.svg" width={17} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
           Otto plans and makes it. Chatting uses a little credit; you approve before Otto makes anything.
         </p>
       </div>
