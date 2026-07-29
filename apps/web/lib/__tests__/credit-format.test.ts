@@ -14,15 +14,16 @@ describe("formatCredits", () => {
     expect(formatCredits(500)).toBe("500");
   });
 
-  it("denoises 1000+ balances to a whole credit — no decimal clutter (§C5/#15)", () => {
-    expect(formatCredits(1234567.3)).toBe("1,234,567");
-    expect(formatCredits(1000.1)).toBe("1,000");
-    expect(formatCredits(999.99)).toBe("1,000"); // sub-1000 branch rounds up to 1000 first (still whole)
+  it("keeps the same 1-decimal precision at 1000+ — grouping never changes the amount (#521)", () => {
+    expect(formatCredits(1234567.3)).toBe("1,234,567.3");
+    expect(formatCredits(1234.6)).toBe("1,234.6"); // used to silently become "1,235"
+    expect(formatCredits(1000.1)).toBe("1,000.1");
+    expect(formatCredits(999.99)).toBe("1,000"); // rounds to 1 decimal (1000.0) → integer branch
   });
 
   it("handles negative deltas (spend) with the same magnitude rule", () => {
     expect(formatCredits(-11.6)).toBe("-11.6");
-    expect(formatCredits(-1234.6)).toBe("-1,235");
+    expect(formatCredits(-1234.6)).toBe("-1,234.6"); // real amount preserved, not rounded to -1,235
   });
 
   it("uses a fixed locale so server and client never disagree", () => {
