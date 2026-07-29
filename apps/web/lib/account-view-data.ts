@@ -34,7 +34,7 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
       id: c.id,
       label: c.label,
       connectUrl: c.connectUrl(),
-      status: META_BACKED_CHANNEL_IDS.has(c.id)
+      status: META_BACKED_CHANNEL_IDS.includes(c.id)
         ? metaConnectionToStatus(await metaConnPromise)
         : await c.connectionStatus(ownerId).catch(() => "not_connected" as const),
       targets: await c.listTargets(ownerId).then((t) => t.map((x) => x.name)).catch(() => [] as string[]),

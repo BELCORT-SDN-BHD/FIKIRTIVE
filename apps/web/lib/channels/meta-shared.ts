@@ -5,7 +5,7 @@ import { getMetaConnection, type MetaConnectionResult } from "../meta-actions";
 // status. Anywhere that needs to know "is this channel id backed by the Meta
 // connection" reads this set, so it can't drift from the adapters registered below
 // (#518 rework finding 2).
-export const META_BACKED_CHANNEL_IDS = new Set(["instagram", "facebook"]);
+export const META_BACKED_CHANNEL_IDS = ["instagram", "facebook"];
 
 // Pure mapping from a single getMetaConnection() read to the channel-row status —
 // the ONLY place this logic lives, so a caller holding one already-fetched
