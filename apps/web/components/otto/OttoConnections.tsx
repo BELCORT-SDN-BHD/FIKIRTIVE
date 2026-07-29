@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { getMetaConnection, disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-actions";
+import { disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-actions";
 import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
@@ -34,22 +34,11 @@ const MESSAGING_CHANNELS: { id: string; label: string }[] = [
   { id: "whatsapp", label: "WhatsApp" },
 ];
 
-// Instagram and Facebook connect through the ONE Meta connection — same token, same
-// status. `meta` (loaded once, below) is the single source of truth for both; their
-// row status is derived from it, never read independently (#518 finding 2).
-const META_BACKED_CHANNEL_IDS = new Set(["instagram", "facebook"]);
-
 // X has no OAuth route yet — lib/channels/x.ts's connectUrl points at an unbuilt
 // /api/x/authorize, and its insight reads are still stubbed. Until that adapter is
 // real, X gets the same "soon" honesty as Messaging: no fake Connect/Reconnect/Manage
 // button (#518 finding 1).
 const UNAVAILABLE_PUBLISHING_CHANNEL_IDS = new Set(["x"]);
-
-function metaBackedChannelStatus(meta: MetaState): ChannelState["status"] {
-  if (meta.phase === "connected" || meta.phase === "unreachable") return "connected";
-  if (meta.phase === "reconnect") return "needs_reconnect";
-  return "not_connected";
-}
 
 function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
   // currentColor-driven inline glyphs — same brand marks as OttoSchedule's ChannelIcon,
@@ -142,39 +131,37 @@ export default function OttoConnections() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [channelsState, setChannelsState] = useState<ChannelsState>({ phase: "loading" });
 
-  // Single load for the whole page (#518 finding 2): the Meta ad-account panel and the
-  // Instagram/Facebook Publishing rows describe the SAME Meta connection, so they must
-  // never be fetched — or shown — as two independently-timed reads that could disagree.
-  // One `load()` kicks off both requests together; the UI (below) waits for both to
-  // settle before it renders any Meta-backed status.
+  // Single load for the whole page, single Meta read behind it (#518 rework finding 2):
+  // getAccountViewData() is the ONE call this page makes — it already did the ONE
+  // getMetaConnection() read server-side and used it both to compute the Instagram/
+  // Facebook row status below and to fill `meta` here. There is no second, independently-
+  // timed Meta read at this level to disagree with it.
   async function load() {
     setMeta({ phase: "loading" });
     setChannelsState({ phase: "loading" });
-    const [metaResult, channelsResult] = await Promise.allSettled([getMetaConnection(), getAccountViewData()]);
+    const result = await getAccountViewData().catch(() => ({ error: "load-failed" }) as const);
 
-    if (metaResult.status === "rejected") {
-      setMeta({ phase: "unreachable" });
-    } else {
-      const res = metaResult.value;
-      if ("error" in res || !res.connected) setMeta({ phase: "disconnected" });
-      else if (res.transientError) setMeta({ phase: "unreachable" });
-      else if (res.needsReconnect) setMeta({ phase: "reconnect" });
-      else
-        setMeta({
-          phase: "connected",
-          status: res.status,
-          accounts: res.accounts ?? [],
-          canWrite: res.canWrite ?? false,
-          adsAutonomy: res.adsAutonomy ?? "ASK",
-          adsWritesPaused: res.adsWritesPaused ?? false,
-        });
-    }
-
-    if (channelsResult.status === "rejected" || "error" in channelsResult.value) {
+    if ("error" in result) {
+      setMeta({ phase: "disconnected" });
       setChannelsState({ phase: "error" });
-    } else {
-      setChannelsState({ phase: "loaded", channels: channelsResult.value.channels });
+      return;
     }
+
+    const res = result.meta;
+    if ("error" in res || !res.connected) setMeta({ phase: "disconnected" });
+    else if (res.transientError) setMeta({ phase: "unreachable" });
+    else if (res.needsReconnect) setMeta({ phase: "reconnect" });
+    else
+      setMeta({
+        phase: "connected",
+        status: res.status,
+        accounts: res.accounts ?? [],
+        canWrite: res.canWrite ?? false,
+        adsAutonomy: res.adsAutonomy ?? "ASK",
+        adsWritesPaused: res.adsWritesPaused ?? false,
+      });
+
+    setChannelsState({ phase: "loaded", channels: result.channels });
   }
 
   async function handleAutonomy(mode: "ASK" | "AUTO") {
@@ -233,9 +220,9 @@ export default function OttoConnections() {
         <div>
           <h1 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h1>
           <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 0" }}>
-            Every channel Otto can post to or hear from your customers on, in one place. Otto never
-            changes an ad on its own — every change needs your approval, and the controls below stay
-            in your hands.
+            Every channel Otto can post to or hear from your customers on, in one place. By
+            default, Otto asks before every ad change — turn on Auto below to let it pause ads
+            and lower budgets on its own; anything that spends still asks you.
           </p>
         </div>
 
@@ -260,10 +247,9 @@ export default function OttoConnections() {
               UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has(c.id) ? (
                 <MessagingRow key={c.id} label={c.label} />
               ) : (
-                <ChannelRow
-                  key={c.id}
-                  channel={META_BACKED_CHANNEL_IDS.has(c.id) ? { ...c, status: metaBackedChannelStatus(meta) } : c}
-                />
+                // Status already comes from getAccountViewData()'s single Meta read for
+                // instagram/facebook (#518 rework finding 2) — no client-side override needed.
+                <ChannelRow key={c.id} channel={c} />
               ),
             )}
           </div>
