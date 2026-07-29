@@ -31,6 +31,7 @@ import { cancelScheduledPostSkill } from "./skills/cancel-scheduled-post.js";
 import { editScheduledPostSkill } from "./skills/edit-scheduled-post.js";
 import { listScheduledPostsSkill } from "./skills/list-scheduled-posts.js";
 import { listPublishTargetsSkill } from "./skills/list-publish-targets.js";
+import { listChannelScopesSkill } from "./skills/list-channel-scopes.js";
 import { suggestPostTimesSkill } from "./skills/suggest-post-times.js";
 import { sharePostPreviewSkill } from "./skills/share-post-preview.js";
 import { manageCanvasSkill } from "./skills/manage-canvas.js";
@@ -87,6 +88,7 @@ export const allSkills: OttoSkill[] = [
   editScheduledPostSkill,
   listScheduledPostsSkill,
   listPublishTargetsSkill,
+  listChannelScopesSkill,
   suggestPostTimesSkill,
   sharePostPreviewSkill,
   manageCanvasSkill,

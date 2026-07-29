@@ -116,6 +116,7 @@ import {
   updateContact,
 } from "./crm-actions";
 import { getContact, listContacts, searchContacts, type CrmContactRow } from "./crm-view-data";
+import { listChannelScopes } from "./customer-inbox-gateway";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -283,6 +284,19 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
     importCsv: (input) => importContacts(input),
     recordConsent: (input) => setContactConsent(input),
     setDnd: (input) => setContactDndFromOtto(input),
+  };
+}
+
+// #495/#500 read parity: the SAME owner-scoped customer-inbox gateway read the human
+// template picker uses (the broadcast composer reads the same owner-scoped rows through
+// its own broadcast gateway). The port never accepts owner identity.
+function makeOttoChannelScopesPort(): NonNullable<OttoContext["channelScopes"]> {
+  return {
+    list: async () => {
+      const result = await listChannelScopes();
+      if (!result.ok) return { error: result.error };
+      return { ok: true as const, scopes: result.resource };
+    },
   };
 }
 
@@ -508,6 +522,8 @@ export async function buildOttoContext({
     // B0-59/60/C1: owner-scoped Contact reads/writes re-enter the same authenticated actions.
     // Identity stays read-only; consent and DND mutations route through the closed runtime writers.
     contacts: makeOttoContactsPort(),
+    // #495/#500: connected channel-account list re-enters the same gateway read as the human pickers.
+    channelScopes: makeOttoChannelScopesPort(),
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
@@ -619,9 +635,172 @@ export async function buildOttoContext({
 // ---------------------------------------------------------------------------
 
 export type FinalizeOttoRunResult =
-  | { status: "needs_approval"; pendingCardIds: string[] }
+  | { status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null }
   | { status: "done"; reply: string }
   | { status: "stale" };
+
+// ---------------------------------------------------------------------------
+// #498 never-silent fallbacks — a paused run must always leave something visible.
+// The verbal-approval path ("全部生成") parks the gated generate call(s) with, in
+// practice, ZERO narration text from the model, so without a synthesized reply the
+// turn ends in dead air: no message, no error, no visible state change (the SDK's
+// "Accessed finalOutput before agent run is completed." warn is the only trace).
+// These strings are chat copy ONLY — the approval/spend machinery is untouched.
+// P2 honesty rules: the receipt follows the merchant's own message language
+// (Han-majority → Chinese; Malay-indicative-token majority → Malay; else English),
+// and its promise follows what confirming actually does — only generate cards may
+// say work starts right away.
+// ---------------------------------------------------------------------------
+
+export type FallbackLang = "en" | "zh" | "ms";
+
+/** Malay-indicative tokens for the coarse ms/en vote below. Function words, polite
+ *  markers, and the make/confirm verbs merchants actually type at Otto. Malay and
+ *  Indonesian share most of these — both intentionally land on "ms". The list is a
+ *  heuristic, not a lexicon: unlisted Malay words simply don't vote. */
+const MS_TOKENS = new Set([
+  "sila", "tolong", "boleh", "buat", "buatkan", "jana", "janakan", "hasilkan",
+  "teruskan", "semua", "kesemua", "semuanya", "saya", "anda", "awak", "kami", "kita",
+  "ini", "itu", "yang", "dan", "dengan", "untuk", "dalam", "pada", "tak", "tidak",
+  "jangan", "sudah", "dah", "belum", "lagi", "sekarang", "nanti", "gambar", "okey",
+  "baiklah", "sahkan", "setuju", "mula", "mulakan", "terus", "cuba", "nak", "hendak",
+  "mahu", "satu", "dua", "tiga",
+]);
+
+/** Malay-looking word form: -kan / -lah / -nya suffix on a 5+ letter word. Prefix
+ *  tests (me-/ber-/ter-) are deliberately NOT used — too many English false
+ *  positives (member, mention, terrible). Rare English -lah/-nya endings can still
+ *  slip through; accepted as heuristic noise. */
+const MS_WORD_FORM = /^[a-z]{2,}(kan|lah|nya)$/;
+
+/** English-indicative tokens for the same vote. Shared en/ms words (e.g. "video")
+ *  sit on the English side so plain-English asks never flip to ms on one loanword. */
+const EN_TOKENS = new Set([
+  "the", "a", "an", "and", "or", "of", "to", "in", "on", "at", "it", "is", "are",
+  "was", "be", "i", "you", "we", "they", "my", "me", "this", "that", "these",
+  "those", "please", "pls", "make", "all", "them", "then", "now", "go", "ahead",
+  "yes", "yeah", "ok", "okay", "sure", "start", "generate", "create", "do", "does",
+  "can", "could", "will", "would", "just", "everything", "every", "each", "both",
+  "image", "images", "picture", "pictures", "video", "videos", "proceed", "confirm",
+  "with", "for", "from", "one", "two", "three",
+]);
+
+/** Decide ONE message's language, honestly admitting when it can't.
+ *  Detection boundaries:
+ *   - Han-majority (vs latin letters) → zh, checked FIRST — a mixed CJK+Malay/English
+ *    message follows whichever side has more counted characters; kana/hangul are not
+ *    counted (not launch markets).
+ *   - Otherwise a coarse token vote: Malay-indicative tokens (MS_TOKENS + -kan/-lah/
+ *    -nya word forms) vs English-indicative tokens (EN_TOKENS). Strictly more Malay
+ *    votes → ms; strictly more English votes → en. Malay vs Indonesian is NOT
+ *    distinguished (shared function words).
+ *   - #498 round-5: a mixed-language TIE ("ok teruskan"), no recognized tokens, and
+ *    empty input return null — indecisive — instead of silently defaulting to en.
+ *    The caller falls back to the thread's most recent decisive merchant message
+ *    (resolveFallbackLang below); only a thread with no decisive history lands on
+ *    "en" (the UI language). */
+export function decideFallbackLang(userText: string | null | undefined): FallbackLang | null {
+  if (!userText) return null;
+  let cjk = 0;
+  let latin = 0;
+  for (const ch of userText) {
+    if (/\p{Script=Han}/u.test(ch)) cjk += 1;
+    else if (/[A-Za-z]/.test(ch)) latin += 1;
+  }
+  if (cjk > latin) return "zh";
+  let ms = 0;
+  let en = 0;
+  for (const token of userText.toLowerCase().split(/[^a-z]+/)) {
+    if (!token) continue;
+    if (MS_TOKENS.has(token) || MS_WORD_FORM.test(token)) ms += 1;
+    else if (EN_TOKENS.has(token)) en += 1;
+  }
+  if (ms > en) return "ms";
+  if (en > ms) return "en";
+  return null;
+}
+
+/** Single-message projection with the UI-language default (no thread history in
+ *  reach — pure). Production receipt paths use resolveFallbackLang instead. */
+export function fallbackLangOf(userText: string | null | undefined): FallbackLang {
+  return decideFallbackLang(userText) ?? "en";
+}
+
+/** How many recent merchant messages the tie fallback may consult. */
+const FALLBACK_LANG_HISTORY_WINDOW = 10;
+
+/** #498 round-5: resolve the receipt language for a thread. The merchant's message
+ *  this turn decides when it can; an indecisive one (mixed-language tie, no
+ *  recognized tokens, or a click with no message — ottoApprove) falls back through
+ *  the thread's recent merchant messages, newest first, to the first decisive one:
+ *  that IS the most recent message's adjudicated language, because a message that
+ *  was itself indecisive was adjudicated from ITS predecessors the same way. Only
+ *  a thread with no decisive history returns "en". Copy only — no spend logic. */
+async function resolveFallbackLang(
+  ownerId: string,
+  threadId: string,
+  userText?: string | null,
+): Promise<FallbackLang> {
+  const direct = decideFallbackLang(userText);
+  if (direct) return direct;
+  const history = await prisma.chatMessage.findMany({
+    where: { threadId, ownerId, role: "USER", kind: "TEXT", deletedAt: null },
+    orderBy: { seq: "desc" },
+    take: FALLBACK_LANG_HISTORY_WINDOW,
+    select: { text: true },
+  });
+  for (const m of history) {
+    const lang = decideFallbackLang(m.text);
+    if (lang) return lang;
+  }
+  return "en";
+}
+
+/** Reply persisted when a run pauses on approvable card(s) with no model narration.
+ *  `allGenerate` keeps the promise honest: only generate cards start work on confirm,
+ *  so any non-generate approval in the batch drops the "I'll start right away" line. */
+export function approvalPointerText({ cardCount, allGenerate, lang }: {
+  cardCount: number;
+  allGenerate: boolean;
+  lang: FallbackLang;
+}): string {
+  if (lang === "zh") {
+    if (allGenerate) {
+      return cardCount === 1
+        ? "为了守住你的积分，光靠一句话不会开始生成——请在上方卡片确认，我会马上开始。"
+        : "为了守住你的积分，光靠一句话不会开始生成——请逐张确认上方卡片，我会马上开始。";
+    }
+    return cardCount === 1
+      ? "光靠一句话不会执行任何操作——请查看并确认审批卡片，我才会继续。"
+      : "光靠一句话不会执行任何操作——请逐张查看并确认审批卡片，我才会继续。";
+  }
+  if (lang === "ms") {
+    if (allGenerate) {
+      return cardCount === 1
+        ? "Untuk menjaga kredit anda, tiada apa-apa dijana dengan kata-kata sahaja — sahkan pada kad di atas dan saya akan mula serta-merta."
+        : "Untuk menjaga kredit anda, tiada apa-apa dijana dengan kata-kata sahaja — sahkan setiap kad di atas dan saya akan mula serta-merta.";
+    }
+    return cardCount === 1
+      ? "Tiada apa-apa berlaku dengan kata-kata sahaja — semak dan sahkan kad kelulusan itu, kemudian saya akan teruskan."
+      : "Tiada apa-apa berlaku dengan kata-kata sahaja — semak dan sahkan setiap kad kelulusan, kemudian saya akan teruskan.";
+  }
+  if (allGenerate) {
+    return cardCount === 1
+      ? "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away."
+      : "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.";
+  }
+  return cardCount === 1
+    ? "Nothing happens from words alone — review and confirm the approval card, and I'll take it from there."
+    : "Nothing happens from words alone — review and confirm each approval card, and I'll take it from there.";
+}
+
+/** Reply persisted when a run pauses with NOTHING approvable (malformed/unknown
+ *  interruption) and no model narration — an honest dead-end instead of silence. */
+export function interruptedFallbackText(lang: FallbackLang): string {
+  if (lang === "zh") return "这一步我没能完成——请再试一次。";
+  if (lang === "ms") return "Saya tidak dapat menyelesaikan langkah ini — sila cuba lagi.";
+  return "I couldn't finish that — please try again.";
+}
 
 // ---------------------------------------------------------------------------
 // Universal approval cards (B4 debt-70, spec §五 5.1·附 touchpoints ①/②) — the durable
@@ -812,6 +991,7 @@ export async function finalizeOttoRun({
   priorOttoState,
   result,
   seqAfterUser,
+  userText,
 }: {
   ownerId: string;
   threadId: string;
@@ -820,6 +1000,11 @@ export async function finalizeOttoRun({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   result: any;
   seqAfterUser: number;
+  /** The merchant's message this turn — picks the #498 fallback receipt's language
+   *  (decideFallbackLang: Han-majority → zh, Malay-token majority → ms). Copy only;
+   *  indecisive or absent → the thread's recent merchant messages decide
+   *  (resolveFallbackLang), English only without decisive history. */
+  userText?: string | null;
 }): Promise<FinalizeOttoRunResult> {
   const finalization = finalizeOttoTurn(result, ottoInteractiveRuntime);
   const newOttoState = finalization.newOttoState;
@@ -839,6 +1024,9 @@ export async function finalizeOttoRun({
     // Closed set from the registry (collectApprovalInterruptions): generate keeps its existing
     // contract — pendingCardIds carries its pre-persisted GEN_CARD ids. Other gated tools
     // (approveScheduledPost) get a durable APPROVAL_CARD persisted below (B4 debt-70 5.1·附①).
+    // CONTRACT (#498 round-7): pendingCardIds is the COMPLETE current pending set of this
+    // thread's RunState, never a per-round increment — the single fact source both sides cite
+    // is the ChainedApproval.pendingCardIds comment in apps/web/components/otto/approval-chain.ts.
     const approvals = finalization.approvals;
     const pendingCardIds: string[] = approvals.filter((a) => a.toolName === "generate").map((a) => a.ref);
     const nonGenerateApprovals = approvals.filter((a) => a.toolName !== "generate");
@@ -857,9 +1045,29 @@ export async function finalizeOttoRun({
       });
     }
 
-    // CAS won (or new thread) — persist any assistant text produced before the interruption
+    // CAS won (or new thread) — persist any assistant text produced before the interruption.
+    // #498: when the model parked the gated call(s) with NO narration (the verbal-approval
+    // path), synthesize an honest reply so the turn is never silent: point at the card's
+    // confirmation step when something is approvable, or land an honest dead-end line when
+    // nothing is. The synthesized text is returned as `fallbackReply` so the live stream
+    // can surface it too (model-authored text already streamed as deltas; the fallback is
+    // only set when no model text exists, so nothing renders twice).
     const assistantText = finalization.text;
-    if (assistantText) {
+    let fallbackReply: string | null = null;
+    if (!assistantText) {
+      // #498 round-5: an indecisive message this turn (mixed-language tie) follows
+      // the thread's most recent decisive merchant message; en only without history.
+      const lang = await resolveFallbackLang(ownerId, threadId, userText);
+      fallbackReply = approvals.length > 0
+        ? approvalPointerText({
+            cardCount: approvals.length,
+            allGenerate: approvals.every((a) => a.toolName === "generate"),
+            lang,
+          })
+        : interruptedFallbackText(lang);
+    }
+    const visibleText = assistantText || fallbackReply;
+    if (visibleText) {
       await prisma.chatMessage.create({
         data: {
           id: newId(),
@@ -868,7 +1076,7 @@ export async function finalizeOttoRun({
           role: "AGENT",
           kind: "TEXT",
           seq: ++seq,
-          text: assistantText,
+          text: visibleText,
         },
       });
     }
@@ -885,7 +1093,7 @@ export async function finalizeOttoRun({
       pendingCardIds.push(...persisted.cardIds);
     }
 
-    return { status: "needs_approval", pendingCardIds };
+    return { status: "needs_approval", pendingCardIds, fallbackReply };
   }
 
   // Completed — persist Otto's final reply + ottoState
@@ -1099,7 +1307,7 @@ export async function ottoTurn(raw: unknown): Promise<
 
     // Persist the run (interruption / completed / stale) with CAS — shared with the
     // streaming route handler via finalizeOttoRun (identical behavior).
-    const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result, seqAfterUser: seq });
+    const finalized = await finalizeOttoRun({ ownerId, threadId, isNew, priorOttoState, result, seqAfterUser: seq, userText: text });
     revalidatePath("/", "layout");
     if (finalized.status === "stale") return { threadId, status: "stale" };
     if (finalized.status === "needs_approval") {
@@ -1121,7 +1329,7 @@ export async function ottoTurn(raw: unknown): Promise<
 
 export async function ottoApprove(raw: unknown): Promise<
   | { ok: true; status: "done"; reply: string; genJobId?: string }
-  | { ok: true; status: "needs_approval"; pendingCardIds: string[] }
+  | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }
   | { ok: true; status: "degraded" }
   | { ok: true; status: "stale" }
   | { ok: true; genJobId: string; status: string } // double-approve: existing job
@@ -1398,6 +1606,11 @@ export async function ottoApprove(raw: unknown): Promise<
     if (finalization.interrupted) {
       // Same closed-set collection as finalizeOttoRun: generate ids ride pendingCardIds; other
       // gated tools get durable APPROVAL_CARDs persisted after the CAS below.
+      // CONTRACT (#498 round-7): pendingCardIds is the COMPLETE current pending set of this
+      // thread's RunState (stable ids — a re-parked old dedupes to its existing card), never a
+      // per-round increment; a status:"done" return below implies the set is empty. The single
+      // fact source both sides cite is the ChainedApproval.pendingCardIds comment in
+      // apps/web/components/otto/approval-chain.ts.
       const chainedApprovals = finalization.approvals;
       const pendingCardIds: string[] = chainedApprovals.filter((a) => a.toolName === "generate").map((a) => a.ref);
       const chainedNonGenerate = chainedApprovals.filter((a) => a.toolName !== "generate");
@@ -1409,25 +1622,52 @@ export async function ottoApprove(raw: unknown): Promise<
       });
       if (casInterrupt === 0) { revalidatePath("/", "layout"); return { ok: true, status: "stale" }; }
 
-      // CAS won — persist any assistant text produced before the interruption
+      // CAS won — persist any assistant text produced before the interruption.
+      // #498 P1a: the RESUMED run can park again with ZERO narration — the exact
+      // main-path silence, one click deeper. Synthesize the same honest receipt:
+      // the language follows the merchant's recent messages (an approve is a click,
+      // not a message; #498 round-5: an indecisive latest message falls back through
+      // the thread history), and the promise follows what confirming actually does.
       const assistantText = finalization.text;
-      if (assistantText) {
+      let fallbackReply: string | null = null;
+      if (!assistantText) {
+        const lang = await resolveFallbackLang(ownerId, threadId, null);
+        fallbackReply = chainedApprovals.length > 0
+          ? approvalPointerText({
+              cardCount: chainedApprovals.length,
+              allGenerate: chainedApprovals.every((a) => a.toolName === "generate"),
+              lang,
+            })
+          : interruptedFallbackText(lang);
+      }
+      // #498 round-5 P2c: when the model DID narrate, the text used to land in the
+      // DB only — the approve response carried fallbackReply: null and the client
+      // showed nothing until a reload. Return the persisted narration's durable id
+      // so the post-approve poll can inject that exact TEXT message live (the
+      // approve path streams nothing, so injecting it can never double-render).
+      const visibleText = assistantText || fallbackReply;
+      let narrationMessageId: string | null = null;
+      if (visibleText) {
         const seq = await prisma.chatMessage.findFirst({
           where: { threadId, ownerId },
           orderBy: { seq: "desc" },
           select: { seq: true },
         });
+        const visibleTextId = newId();
         await prisma.chatMessage.create({
           data: {
-            id: newId(),
+            id: visibleTextId,
             threadId,
             ownerId,
             role: "AGENT",
             kind: "TEXT",
             seq: (seq?.seq ?? 0) + 1,
-            text: assistantText,
+            text: visibleText,
           },
         });
+        // fallbackReply keeps its round-4 display channel (the card's own receipt
+        // line); only model narration rides the id for live chat injection.
+        if (assistantText) narrationMessageId = visibleTextId;
       }
 
       // Durable approval cards for chained non-generate gated asks (B4 debt-70 5.1·附①).
@@ -1447,7 +1687,7 @@ export async function ottoApprove(raw: unknown): Promise<
       }
 
       revalidatePath("/", "layout");
-      return { ok: true, status: "needs_approval", pendingCardIds };
+      return { ok: true, status: "needs_approval", pendingCardIds, fallbackReply, narrationMessageId };
     }
 
     // Completed — persist Otto's reply + updated ottoState (CAS guard)

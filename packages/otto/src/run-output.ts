@@ -6,11 +6,17 @@
  * otto-resume). Pure — no DB, no SDK import; callers pass the RunResult-shaped
  * object. Prefers `finalOutput` when present, else concatenates the
  * message_output_item output_text chunks from `newItems`.
+ *
+ * #498 P2a: the result is TRIMMED — a whitespace-only model output IS no output.
+ * Every "did the model say anything?" decision downstream (finalizeOttoRun's
+ * fallback receipt, ottoApprove's chained receipt, worker otto-resume) keys off
+ * this one extraction, so trimming here keeps blank narration from suppressing
+ * the never-silent fallbacks without duplicating a trim at each decision site.
  */
-/** Extract plain-text output from a RunResult's newItems (best-effort). */
+/** Extract plain-text output from a RunResult's newItems (best-effort, trimmed). */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function extractText(r: any): string {
-  if (r.finalOutput != null) return String(r.finalOutput);
+  if (r.finalOutput != null) return String(r.finalOutput).trim();
   return (Array.isArray(r.newItems) ? (r.newItems as any[]) : [])
     .filter((it: any) => it.type === "message_output_item")
     .map((it: any) => {
@@ -20,5 +26,6 @@ export function extractText(r: any): string {
         .map((c: any) => c.text ?? "")
         .join("");
     })
-    .join("");
+    .join("")
+    .trim();
 }

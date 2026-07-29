@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
+import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
 
@@ -19,7 +20,10 @@ export interface OttoPlanCardProps {
   genJobId?: string | null;
   cardState: CardState;
   pendingApproval: boolean;
-  onApproved: () => void;
+  /** Called after a successful approve. When the ottoApprove resume parked AGAIN
+   *  (chained needs_approval), the chained outcome rides along so the parent can
+   *  mark the new card ids pendingApproval and render them (#498 round-4). */
+  onApproved: (chained?: ChainedApproval) => void;
   /** Called when the user clicks "Change something". Receives the current
    *  structuredPrompt as a seed so the caller can prefill the composer. */
   onChangeSomething: (seed: string) => void;
@@ -62,6 +66,13 @@ export function OttoPlanCard({
   const [expanded, setExpanded] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "no-api">("idle");
   const [confirming, setConfirming] = useState(false);
+  /** #498: set when THIS approve's resume parked again on more approvals (chained
+   *  needs_approval) — the story didn't end with this card, and hiding that is the
+   *  same silent death one click deeper. Holds the SERVER's localized receipt
+   *  (fallbackReply) verbatim; null when no chained pause was observed OR the model
+   *  narrated its own text (round-5: the parent injects that narration into the
+   *  chat live via its narrationMessageId — see pollAndInjectResults). */
+  const [chainedReceipt, setChainedReceipt] = useState<string | null>(null);
 
   useEffect(() => {
     if (cardState !== "working") {
@@ -148,7 +159,15 @@ export function OttoPlanCard({
         return;
       }
       setConfirming(false);
-      onApproved();
+      // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
+      // approval(s). Surface the server's localized receipt here, and hand the
+      // chained card ids UP via onApproved so the parent marks them
+      // pendingApproval and renders them — their clicks must resume the RunState
+      // (ottoApprove), never coworkGenerate. (This card's own generation DID
+      // start; onApproved stays correct either way.)
+      const chained = chainedApprovalOf(res);
+      if (chained) setChainedReceipt(chained.fallbackReply);
+      onApproved(chained ?? undefined);
     } catch {
       setError("Couldn't start that — please try again.");
     } finally {
@@ -321,6 +340,17 @@ export function OttoPlanCard({
             <Button variant="secondary" size="sm" className="rounded-[11px]" disabled={busy} onClick={handleChangeSomething}>
               Change something
             </Button>
+          </div>
+        )}
+
+        {/* #498 (round-4): chained needs_approval after THIS approve — the honest
+            "not done yet" state, shown as the SERVER's localized receipt verbatim
+            (no hardcoded-English copy; the same text is durable in the thread).
+            The remaining parked cards keep their own approve gates (no spend
+            logic here). */}
+        {chainedReceipt && (
+          <div className="mt-2 text-[0.75rem] text-muted-foreground">
+            {chainedReceipt}
           </div>
         )}
 

@@ -23,6 +23,7 @@ const {
   mockChatThreadUpdateMany,
   mockChatThreadDeleteMany,
   mockChatMessageFindFirst,
+  mockChatMessageFindMany,
   mockChatMessageCreate,
   mockChatMessageDeleteMany,
   mockChatMessageUpdateMany,
@@ -126,6 +127,7 @@ const {
     mockChatThreadUpdateMany: vi.fn(),
     mockChatThreadDeleteMany: vi.fn(),
     mockChatMessageFindFirst: vi.fn(),
+    mockChatMessageFindMany: vi.fn(),
     mockChatMessageCreate: vi.fn(),
     mockChatMessageDeleteMany: vi.fn(),
     mockChatMessageUpdateMany: vi.fn(),
@@ -236,6 +238,7 @@ vi.mock("@fikirtive/db", () => ({
     },
     chatMessage: {
       findFirst: mockChatMessageFindFirst,
+      findMany: mockChatMessageFindMany,
       create: mockChatMessageCreate,
       deleteMany: mockChatMessageDeleteMany,
       updateMany: mockChatMessageUpdateMany,
@@ -303,7 +306,7 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
 
 // ── Import SUT after mocks ───────────────────────────────────────────────────
 
-const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun } = await import("@/lib/otto-actions");
+const { ottoTurn, mapOttoUsage, buildOttoContext, ottoApprove, ottoReject, createEmptyCoworkThread, deleteCoworkThread, setCoworkThreadPinned, finalizeOttoRun, approvalPointerText, interruptedFallbackText, fallbackLangOf, decideFallbackLang } = await import("@/lib/otto-actions");
 const { computeApprovalContentHash, factoryBatchApprovalHashFromArgs } = await import("@/lib/approval-content-hash");
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
@@ -327,6 +330,7 @@ const transactionTx = {
   },
   chatMessage: {
     findFirst: mockChatMessageFindFirst,
+    findMany: mockChatMessageFindMany,
     create: mockChatMessageCreate,
     deleteMany: mockChatMessageDeleteMany,
   },
@@ -397,6 +401,9 @@ function setupHappyPath() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+  // #498 round-5: the tie-language fallback probes recent USER messages; default
+  // to an empty thread history (→ "en") unless a test scripts one.
+  mockChatMessageFindMany.mockResolvedValue([]);
   mockChatThreadDeleteMany.mockResolvedValue({ count: 1 });
   mockChatMessageDeleteMany.mockResolvedValue({ count: 1 });
   mockResearchJobFindFirst.mockResolvedValue(null);
@@ -1109,6 +1116,419 @@ describe("finalizeOttoRun — assistant TEXT seq accounts for tool-persisted car
   });
 });
 
+// ── #498: a paused run is NEVER silent ───────────────────────────────────────
+// Repro (2026-07-29 lane-a walkthrough): storyboard → Otto mints plan cards and
+// invites "全部生成" → the merchant sends it → the model calls the gated `generate`
+// tool(s) with ZERO narration text → the run parks (needs_approval) and nothing
+// visible ever happens: no reply, no error, no card change, no charge. These tests
+// lock the fix: an interrupted run with no model text persists an honest reply and
+// returns it as fallbackReply; the spend gate (startGen) stays untouched.
+
+describe("finalizeOttoRun — #498 verbal approval must never be silent", () => {
+  function generateInterruption(cardId: string) {
+    return {
+      rawItem: { name: "generate" },
+      arguments: JSON.stringify({ cardId }),
+      type: "tool_approval_item",
+    };
+  }
+
+  beforeEach(() => {
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 4 });
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+  });
+
+  it("repro: parked generate with no narration → persists the approval-pointer reply and returns it", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_verbal"],
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "AGENT", kind: "TEXT", seq: 5, text: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }) }),
+      }),
+    );
+    // Money safety: the fallback is chat copy only — the spend gate is never touched.
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it('repro: "全部生成" parks THREE generate calls → one plural pointer reply, all card ids pending', async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_1"), generateInterruption("card_2"), generateInterruption("card_3")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_1", "card_2", "card_3"],
+      fallbackReply: approvalPointerText({ cardCount: 3, allGenerate: true, lang: "en" }),
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: "TEXT", text: approvalPointerText({ cardCount: 3, allGenerate: true, lang: "en" }) }),
+      }),
+    );
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it("model narrated before parking → its own text persists, NO synthesized fallback", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: "Your cards are ready — confirm to start.",
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_verbal"],
+      fallbackReply: null,
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: "TEXT", text: "Your cards are ready — confirm to start." }),
+      }),
+    );
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ text: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }) }) }),
+    );
+  });
+
+  // #498 round-5 P2a: whitespace-only narration IS no narration. Locked through
+  // the REAL finalizer — finalizeOttoTurn/extractText run un-mocked over this
+  // scripted RunResult, so the trim happens at the single extraction source.
+  it("whitespace-only narration (finalOutput of blank deltas) → the receipt still fires — through the real finalizer", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: " \n\t  ",
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: ["card_verbal"],
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    });
+    // Exactly ONE visible reply: the receipt — never a whitespace-only TEXT row.
+    expect(mockChatMessageCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ kind: "TEXT", text: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }) }),
+      }),
+    );
+  });
+
+  it("whitespace-only message_output_item chunks (no finalOutput) → same receipt — through the real finalizer", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [
+        { type: "message_output_item", rawItem: { content: [{ type: "output_text", text: "  " }] } },
+        { type: "message_output_item", rawItem: { content: [{ type: "output_text", text: "\n" }] } },
+      ],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toMatchObject({
+      status: "needs_approval",
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    });
+  });
+
+  it("paused with NOTHING approvable and no narration → honest dead-end reply instead of silence", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [{ rawItem: { name: "not-a-gated-tool" }, arguments: "{}", type: "tool_approval_item" }],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({
+      status: "needs_approval",
+      pendingCardIds: [],
+      fallbackReply: interruptedFallbackText("en"),
+    });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: interruptedFallbackText("en") }),
+      }),
+    );
+  });
+
+  it("CAS miss on the interruption path stays stale and writes NO fallback message", async () => {
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 0 });
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4,
+    });
+    expect(out).toEqual({ status: "stale" });
+    expect(mockChatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  // ── #498 P2: the receipt follows the merchant's language ──────────────────
+  it('language follow: a CJK-majority turn ("全部生成") gets the Chinese receipt', async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4, userText: "全部生成",
+    });
+    const zh = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" });
+    expect(out).toEqual({ status: "needs_approval", pendingCardIds: ["card_verbal"], fallbackReply: zh });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: zh }) }),
+    );
+  });
+
+  it("language follow: an English turn keeps the English receipt; dead-end follows too", async () => {
+    const genResult = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const outEn = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result: genResult, seqAfterUser: 4, userText: "please make all of them",
+    });
+    expect(outEn).toMatchObject({ fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }) });
+
+    const deadEndResult = {
+      state: new MockRunState(),
+      interruptions: [{ rawItem: { name: "not-a-gated-tool" }, arguments: "{}", type: "tool_approval_item" }],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const outZh = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result: deadEndResult, seqAfterUser: 4, userText: "帮我继续做下去",
+    });
+    expect(outZh).toMatchObject({ fallbackReply: interruptedFallbackText("zh") });
+  });
+
+  // #498 round-4: Malay is the third receipt language.
+  it('language follow: a Malay turn ("tolong buat semua") gets the Malay receipt', async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4, userText: "tolong buat semua",
+    });
+    const ms = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "ms" });
+    expect(out).toEqual({ status: "needs_approval", pendingCardIds: ["card_verbal"], fallbackReply: ms });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: ms }) }),
+    );
+  });
+
+  // ── #498 round-5 P2b: a mixed-language TIE follows the thread history ───────
+  it('language tie ("ok teruskan") → falls back to the most recent DECISIVE merchant message in the thread', async () => {
+    // The thread's recent USER messages, newest first: the tie itself (already
+    // persisted), then a decisive Malay ask.
+    mockChatMessageFindMany.mockResolvedValue([
+      { text: "ok teruskan" },
+      { text: "tolong buat semua gambar" },
+    ]);
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4, userText: "ok teruskan",
+    });
+    expect(out).toMatchObject({
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "ms" }),
+    });
+    // The probe is owner+thread scoped and reads USER TEXT only, newest first.
+    expect(mockChatMessageFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ threadId: THREAD_ID, ownerId: OWNER_ID, role: "USER", kind: "TEXT" }),
+        orderBy: { seq: "desc" },
+      }),
+    );
+  });
+
+  it("language tie with NO decisive history → English; an indecisive history row is walked past", async () => {
+    mockChatMessageFindMany.mockResolvedValue([{ text: "ok teruskan" }, { text: "hmm" }]);
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    const out = await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4, userText: "ok teruskan",
+    });
+    expect(out).toMatchObject({
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    });
+  });
+
+  it("a DECISIVE message this turn never touches the history probe", async () => {
+    const result = {
+      state: new MockRunState(),
+      interruptions: [generateInterruption("card_verbal")],
+      finalOutput: undefined,
+      newItems: [],
+    };
+    await finalizeOttoRun({
+      ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+      result, seqAfterUser: 4, userText: "tolong buat semua",
+    });
+    expect(mockChatMessageFindMany).not.toHaveBeenCalled();
+  });
+});
+
+// ── #498 P2: fallback copy stays honest per language and approval type ────────
+describe("#498 fallback copy — language pick and type-honest wording", () => {
+  it("fallbackLangOf: CJK-majority → zh, latin-majority or empty → en", () => {
+    expect(fallbackLangOf("全部生成")).toBe("zh");
+    expect(fallbackLangOf("ok 全部生成吧")).toBe("zh"); // 4 Han > 2 latin
+    expect(fallbackLangOf("please make all of them")).toBe("en");
+    expect(fallbackLangOf("make 三张")).toBe("en"); // 4 latin > 2 Han
+    expect(fallbackLangOf("")).toBe("en");
+    expect(fallbackLangOf(null)).toBe("en");
+  });
+
+  // #498 round-4: Malay joins the receipt languages. Detection is a token vote —
+  // Malay-indicative words/word forms vs English-indicative words; ties → en
+  // (fallbackLangOf is the pure no-history projection).
+  it("fallbackLangOf: Malay-token-majority → ms; mixed English-majority stays en", () => {
+    expect(fallbackLangOf("tolong buat semua")).toBe("ms");
+    expect(fallbackLangOf("sahkan dan teruskan semuanya")).toBe("ms"); // list + -kan/-nya word forms
+    expect(fallbackLangOf("jana semua gambar sekarang")).toBe("ms");
+    expect(fallbackLangOf("please make semua")).toBe("en"); // 2 en votes > 1 ms vote
+    expect(fallbackLangOf("boleh")).toBe("ms"); // 1 ms vote > 0 en votes
+    // Han-majority wins BEFORE the token vote (documented order).
+    expect(fallbackLangOf("全部生成吧 ok")).toBe("zh");
+  });
+
+  // #498 round-5 P2b: decideFallbackLang admits indecision (null) instead of
+  // silently defaulting — that null is what triggers the thread-history fallback.
+  it("decideFallbackLang: short words decide when they can; mixed ties and unknowns return null", () => {
+    expect(decideFallbackLang("ok")).toBe("en"); // decisive: 1 en vote
+    expect(decideFallbackLang("teruskan")).toBe("ms"); // decisive: 1 ms vote
+    expect(decideFallbackLang("okey")).toBe("ms"); // Malay spelling votes ms
+    expect(decideFallbackLang("ok teruskan")).toBeNull(); // 1-1 mixed tie
+    expect(decideFallbackLang("sila proceed")).toBeNull(); // 1-1 mixed tie
+    expect(decideFallbackLang("hmm")).toBeNull(); // no recognized tokens
+    expect(decideFallbackLang("")).toBeNull();
+    expect(decideFallbackLang(null)).toBeNull();
+    // The pure projection still lands those on en (no history in reach).
+    expect(fallbackLangOf("ok teruskan")).toBe("en");
+  });
+
+  // #498 round-4 (judge): locked THROUGH the real finalizer, not the template
+  // function alone — a run parked on non-generate approvals (approveScheduledPost)
+  // must persist + return the pointer WITHOUT the generate-only "start right away"
+  // promise, in the merchant's language. The mocks below only stub prisma; the
+  // wording choice (allGenerate=false) is made by finalizeOttoRun itself.
+  it('non-generate approvals never promise "I\'ll start right away" — through the real finalizer (en/zh/ms)', async () => {
+    async function finalizeNonGenerate(userText: string) {
+      mockChatMessageFindFirst.mockReset();
+      mockChatMessageFindFirst.mockResolvedValueOnce({ seq: 4 }); // max-seq read
+      mockChatMessageFindFirst.mockResolvedValue(null); // APPROVAL_CARD dedup: none exist
+      mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+      mockChatMessageCreate.mockReset();
+      mockChatMessageCreate.mockResolvedValue({});
+      mockScheduledPostFindFirst.mockResolvedValue(schedPostFixture());
+      const result = {
+        state: new MockRunState(),
+        interruptions: [makeSchedApprovalItem("post_a"), makeSchedApprovalItem("post_b")],
+        finalOutput: undefined,
+        newItems: [],
+      };
+      return await finalizeOttoRun({
+        ownerId: OWNER_ID, threadId: THREAD_ID, isNew: false, priorOttoState: "s0",
+        result, seqAfterUser: 4, userText,
+      });
+    }
+
+    const cases = [
+      { userText: "please approve both posts", lang: "en" as const, promise: /start right away/i },
+      { userText: "帮我确认这两个排程", lang: "zh" as const, promise: /马上开始|开始生成/ },
+      { userText: "tolong sahkan semua", lang: "ms" as const, promise: /mula serta-merta/ },
+    ];
+    for (const { userText, lang, promise } of cases) {
+      const out = await finalizeNonGenerate(userText);
+      const receipt = approvalPointerText({ cardCount: 2, allGenerate: false, lang });
+      expect(receipt).not.toMatch(promise);
+      // The real finalizer picked the non-generate wording and returned it…
+      expect(out).toMatchObject({ status: "needs_approval", fallbackReply: receipt });
+      // …and persisted exactly that text as the visible reply.
+      expect(mockChatMessageCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: receipt }),
+        }),
+      );
+      // Money safety unchanged: chat copy only.
+      expect(mockStartGen).not.toHaveBeenCalled();
+    }
+  });
+
+  it("generate approvals keep the start-right-away promise in the matching language", () => {
+    expect(approvalPointerText({ cardCount: 3, allGenerate: true, lang: "en" })).toMatch(/start right away/);
+    expect(approvalPointerText({ cardCount: 3, allGenerate: true, lang: "zh" })).toContain("马上开始");
+    expect(approvalPointerText({ cardCount: 3, allGenerate: true, lang: "ms" })).toContain("mula serta-merta");
+  });
+
+  it("dead-end fallback has all three language variants", () => {
+    expect(interruptedFallbackText("en")).toContain("try again");
+    expect(interruptedFallbackText("zh")).toContain("再试一次");
+    expect(interruptedFallbackText("ms")).toContain("cuba lagi");
+    const variants = [interruptedFallbackText("en"), interruptedFallbackText("zh"), interruptedFallbackText("ms")];
+    expect(new Set(variants).size).toBe(3);
+  });
+});
+
 describe("mapOttoUsage", () => {
   it("maps state.usage to correct TokenUsage with cached tokens summed across requests", () => {
     const stateUsage = {
@@ -1460,6 +1880,124 @@ describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT messa
     // No AGENT message must have been written (the orphan guard)
     expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ role: "AGENT" }) }),
+    );
+  });
+});
+
+// ── #498 P1a: the CHAINED approval pause must never be silent either ──────────
+// ottoApprove resumes the run; the resume can park AGAIN on the next gated call.
+// Before this fix only the main turn path synthesized a receipt — the chained
+// branch dropped the turn silently when the model narrated nothing. These lock
+// parity with finalizeOttoRun: honest receipt persisted + returned, language
+// following the merchant's latest message (an approve is a click, not a message).
+describe("ottoApprove — chained interruption with zero narration synthesizes the receipt", () => {
+  const chainedInterruption = {
+    rawItem: { name: "generate" },
+    arguments: JSON.stringify({ cardId: "card_chained" }),
+    type: "tool_approval_item",
+  };
+
+  function setupChained({ finalOutput, userHistory }: { finalOutput: string | undefined; userHistory: string[] }) {
+    setupApproveHappyPath();
+    // Resume parks again (chained approval), CAS wins.
+    mockRun.mockResolvedValue({
+      state: new MockRunState(),
+      newItems: [],
+      finalOutput,
+      interruptions: [chainedInterruption],
+    });
+    mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
+    // findFirst serves the max-seq lookup; findMany serves the #498 round-5
+    // language probe (recent USER messages, newest first).
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
+    mockChatMessageFindMany.mockResolvedValue(userHistory.map((text) => ({ text })));
+  }
+
+  it('zero narration + CJK merchant ("全部生成") → persists and returns the Chinese pointer receipt', async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["全部生成"] });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    const zh = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" });
+    expect(res).toEqual({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"], fallbackReply: zh, narrationMessageId: null });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", seq: 6, text: zh }) }),
+    );
+    // Money safety: chat copy only — the spend gate is untouched by the synthesis.
+    expect(mockStartGen).not.toHaveBeenCalled();
+  });
+
+  it("zero narration + English merchant → the English pointer receipt", async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["make all of them please"] });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({
+      ok: true,
+      status: "needs_approval",
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    });
+  });
+
+  // #498 round-5 P2b: a mixed-language TIE in the latest message follows the
+  // thread's most recent DECISIVE merchant message instead of defaulting to en.
+  it('language tie in the latest message ("ok teruskan") → falls back to the previous decisive Malay message', async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["ok teruskan", "tolong buat semua gambar"] });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "ms" }),
+    });
+  });
+
+  it("language tie with NO decisive history → the English receipt", async () => {
+    setupChained({ finalOutput: undefined, userHistory: ["ok teruskan"] });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    expect(res).toMatchObject({
+      fallbackReply: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "en" }),
+    });
+  });
+
+  // #498 round-5 P2a: whitespace-only narration is NO narration — the receipt
+  // must fire. Locked through the REAL finalizer (finalizeOttoTurn/extractText
+  // run un-mocked on this scripted RunResult).
+  it("whitespace-only narration (blank deltas) still synthesizes the receipt — through the real finalizer", async () => {
+    setupChained({ finalOutput: "  \n\t ", userHistory: ["全部生成"] });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    const zh = approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" });
+    expect(res).toEqual({ ok: true, status: "needs_approval", pendingCardIds: ["card_chained"], fallbackReply: zh, narrationMessageId: null });
+    expect(mockChatMessageCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "AGENT", kind: "TEXT", text: zh }) }),
+    );
+  });
+
+  it("model narrated before the chained park → its own text persists AND its durable id returns for live injection (round-5 P2c)", async () => {
+    setupChained({ finalOutput: "One down — confirm the next card to continue.", userHistory: ["全部生成"] });
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    // The persisted narration TEXT's id is returned so the client can inject it
+    // without a reload — the exact id that was written, not a re-derivation.
+    const narrationCreate = mockChatMessageCreate.mock.calls
+      .map((c) => (c[0] as { data: { id: string; role?: string; kind?: string; text?: string } }).data)
+      .find((d) => d.role === "AGENT" && d.kind === "TEXT" && d.text === "One down — confirm the next card to continue.");
+    expect(narrationCreate).toBeDefined();
+    expect(res).toEqual({
+      ok: true,
+      status: "needs_approval",
+      pendingCardIds: ["card_chained"],
+      fallbackReply: null,
+      narrationMessageId: narrationCreate!.id,
+    });
+    expect(mockChatMessageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ text: approvalPointerText({ cardCount: 1, allGenerate: true, lang: "zh" }) }),
+      }),
     );
   });
 });

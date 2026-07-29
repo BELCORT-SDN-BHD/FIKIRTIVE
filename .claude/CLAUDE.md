@@ -97,3 +97,17 @@ When a task requires multi-agent orchestration, interrupted-task recovery, or pr
 architecture, design, or audit judgment, load the runtime-provided global `orchestration`
 skill and `.claude/skills/fikirtive-orchestration-overlay/SKILL.md`. Those skills organize
 work; they do not broaden this law or create project-wide authority.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues (`gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles use their default label strings. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

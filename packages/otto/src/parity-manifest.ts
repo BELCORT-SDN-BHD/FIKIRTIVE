@@ -72,6 +72,11 @@ export const PARITY_READ_SURFACES = [
     file: "apps/web/lib/data.ts",
     exportName: "getAllCoworkThreadMetas",
   },
+  {
+    key: "customer-inbox-gateway.listChannelScopes",
+    file: "apps/web/lib/customer-inbox-gateway.ts",
+    exportName: "listChannelScopes",
+  },
 ] as const;
 
 export const PARITY_MANIFEST = {
@@ -169,6 +174,7 @@ export const PARITY_MANIFEST = {
   "customer-inbox-ui-actions.requestAutomationResume": { todoSkill: true, reason: "C4b-M3 human-only Inbox UI (issue #378); Otto Inbox skill is staged for a later Founder-approved milestone per the C4a contract (spec §6/§10)." },
   "customer-inbox-ui-actions.createMessageTemplate": { todoSkill: true, reason: "C4b-M3 human-only Inbox UI (issue #378); Otto Inbox skill is staged for a later Founder-approved milestone per the C4a contract (spec §6/§10)." },
   "customer-inbox-ui-actions.createMessageTemplateVersion": { todoSkill: true, reason: "C4b-M3 human-only Inbox UI (issue #378); Otto Inbox skill is staged for a later Founder-approved milestone per the C4a contract (spec §6/§10)." },
+  "customer-inbox-gateway.listChannelScopes": { skill: "listChannelScopes", reason: "#495/#500 read parity: the templates page's channel-account dropdown read; Otto's listChannelScopes skill reaches the SAME owner-scoped gateway read via ctx.channelScopes (no new debt — the TODO_SKILL ratchet forbids it)." },
 
   "customer-broadcast-ui-actions.listBroadcastRuns": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },
   "customer-broadcast-ui-actions.getBroadcastRun": { todoSkill: true, reason: "C5-M3 human-only broadcast workbench UI (issue #388); Otto Broadcast skill is staged for a later Founder-approved milestone per the C5 contract (spec §6/§10)." },

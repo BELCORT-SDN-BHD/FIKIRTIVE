@@ -31,6 +31,7 @@ const {
   mockChatThreadUpdate,
   mockChatThreadUpdateMany,
   mockChatMessageFindFirst,
+  mockChatMessageFindMany,
   mockChatMessageCreate,
   mockChatMessageUpdateMany,
   mockGenJobFindFirst,
@@ -80,6 +81,7 @@ const {
     mockChatThreadUpdate: vi.fn(),
     mockChatThreadUpdateMany: vi.fn(),
     mockChatMessageFindFirst: vi.fn(),
+    mockChatMessageFindMany: vi.fn(),
     mockChatMessageCreate: vi.fn(),
     mockChatMessageUpdateMany: vi.fn(),
     mockGenJobFindFirst: vi.fn(),
@@ -121,6 +123,7 @@ vi.mock("@fikirtive/db", () => ({
     },
     chatMessage: {
       findFirst: mockChatMessageFindFirst,
+      findMany: mockChatMessageFindMany,
       create: mockChatMessageCreate,
       updateMany: mockChatMessageUpdateMany,
     },
@@ -240,6 +243,8 @@ beforeEach(() => {
   mockChatThreadUpdateMany.mockResolvedValue({ count: 1 });
   mockChatMessageCreate.mockResolvedValue({});
   mockChatMessageUpdateMany.mockResolvedValue({ count: 1 });
+  // #498 round-5: the tie-language fallback probes recent USER messages.
+  mockChatMessageFindMany.mockResolvedValue([]);
   mockActionEventCreate.mockResolvedValue({});
   mockExecuteRaw.mockResolvedValue(undefined);
   mockTransaction.mockImplementation(runTransaction);
