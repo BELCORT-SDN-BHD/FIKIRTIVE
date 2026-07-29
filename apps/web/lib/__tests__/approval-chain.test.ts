@@ -16,11 +16,19 @@
  *      (RunState resume), never coworkGenerate;
  *   4. the post-approve poll merge APPENDS the chained cards AND the server-named
  *      narration TEXT so both render without a reload (mergeDurableIntoLive),
- *      while never re-injecting any other TEXT.
+ *      while never re-injecting any other TEXT;
+ *   5. (#498 round-8) the STREAMED data-status needs_approval — the third call
+ *      site of the same contract — REPLACES the set wholesale, locked both
+ *      behaviorally and by a source seam guard on OttoChatStream's onData
+ *      (otto-card-seams precedent: the branch is inline in the component,
+ *      unreachable by the node harness).
  *
- * Pure helpers, no React, no I/O (mirrors otto-inject-helpers.test.ts).
+ * Pure helpers, no React, no I/O (mirrors otto-inject-helpers.test.ts) — except
+ * the round-8 seam guard, which fs-reads OttoChatStream.tsx as text.
  */
 import { describe, it, expect, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import {
   chainedApprovalOf,
   nextPendingApprovalCardIds,
@@ -426,5 +434,57 @@ describe("mergeDurableIntoLive", () => {
     expect(merged.filter((m) => m.metadata?.durableId === "res_a")).toHaveLength(1);
     // Idempotent: a second poll with the same thread adds nothing.
     expect(mergeDurableIntoLive(merged, fresh)).toBe(merged);
+  });
+});
+
+// ── streamed data-status needs_approval — 同契约的第三处调用点 (#498 round-8) ──
+// stream/route.ts 把 finalized.pendingCardIds 整个写进 data-status(COMPLETE 集,
+// 与 approve 响应同一 ChainedApproval.pendingCardIds 契约)。round-8 之前
+// OttoChatStream.onData 对它做增量并集(new Set(cur) + forEach add)——服务端已
+// 解决/取代的卡在客户端留成过期私账,继续渲染 pendingApproval=true,点击走
+// ottoApprove 去恢复一个已不存在的 park。
+
+describe("streamed needs_approval status → pending set (#498 round-8)", () => {
+  // 判别器 — 增量并集实现下转红:两轮流式 status,第二轮不再上报 card_old;按
+  // OttoChatStream.onData 的方式逐轮应用(流式 status 没有 fired 卡,approvedCardIds
+  // 恒为空)后,card_old 必须不再 pending。并集实现会把它留下。
+  it("两轮流式 status:第二轮不含的旧 id 不再 pending(整体替换,非增量合并)", () => {
+    let cur: ReadonlySet<string> = new Set<string>();
+    // 第一轮:运行驻留在 card_old + card_b 上。
+    cur = nextPendingApprovalCardIds(cur, [], ["card_old", "card_b"]);
+    expect(cur).toEqual(new Set(["card_old", "card_b"]));
+    // 第二轮(后续 resume 再次驻留):card_old 已在服务端解决——完整集不再含它。
+    cur = nextPendingApprovalCardIds(cur, [], ["card_b", "card_new"]);
+    expect(cur.has("card_old")).toBe(false);
+    expect(cur).toEqual(new Set(["card_b", "card_new"]));
+  });
+
+  it("畸形 status 部件缺 pendingCardIds 数组 = 无集信息,集不动", () => {
+    const cur = new Set(["card_a"]);
+    expect(nextPendingApprovalCardIds(cur, [], undefined)).toEqual(new Set(["card_a"]));
+  });
+
+  // 缝守卫(otto-card-seams 先例:分支内联在组件 onData 里,node harness 执行不到)
+  // ——流式 needs_approval 分支必须经 nextPendingApprovalCardIds 整体替换,不得
+  // 重建增量并集(第三份私账)。
+  it("OttoChatStream 的流式 needs_approval 分支经 nextPendingApprovalCardIds 替换(无并集合并)", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "../../components/otto/OttoChatStream.tsx"),
+      "utf8",
+    );
+    // 切出 onData 处理器:从 onData 到 onFinish(同一 useChat 调用的两个相邻
+    // option key;任一改名则切片为空,下面的断言会响亮地失败)。
+    const start = src.indexOf("onData");
+    const end = src.indexOf("onFinish");
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const onData = src.slice(start, end);
+    // 分支存在,且经契约工具整体替换(approvedCardIds 为空——流式 status 没有 fired 卡)…
+    expect(onData).toMatch(
+      /s\.kind === "needs_approval"[\s\S]{0,600}?nextPendingApprovalCardIds\(cur, \[\], s\.pendingCardIds\)/,
+    );
+    // …且 onData 里不残留对 pendingCardIds 的增量并集(round-8 之前的形状:
+    // `const next = new Set(cur); … next.add(id)`)。
+    expect(onData).not.toMatch(/pendingCardIds[\s\S]{0,200}?\.add\(/);
   });
 });

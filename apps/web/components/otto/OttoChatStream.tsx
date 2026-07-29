@@ -257,12 +257,16 @@ export function OttoChatStream({
         setLiveStatus(s);
         // A paused run reports the cards awaiting approval — track them so the plan
         // card uses the parked (ottoApprove) spend path instead of coworkGenerate.
-        if (s.kind === "needs_approval" && s.pendingCardIds?.length) {
-          setPendingApprovalCardIds((cur) => {
-            const next = new Set(cur);
-            s.pendingCardIds.forEach((id) => next.add(id));
-            return next;
-          });
+        // ChainedApproval.pendingCardIds contract (#498 round-7): the streamed
+        // needs_approval carries the COMPLETE set of the thread's parked calls
+        // (stream/route.ts passes finalized.pendingCardIds through whole), so it
+        // REPLACES the local set — an id the server no longer reports is
+        // resolved/expired/superseded, and keeping it would be a stale private
+        // ledger. No card fired here, hence the empty approvedCardIds; a
+        // malformed part without the array carries no set information and via
+        // the same helper leaves the set unchanged.
+        if (s.kind === "needs_approval") {
+          setPendingApprovalCardIds((cur) => nextPendingApprovalCardIds(cur, [], s.pendingCardIds));
         }
         return;
       }
