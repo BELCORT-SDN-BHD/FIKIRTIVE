@@ -9,9 +9,11 @@
  *      the loop, not a lexical proxy for it) — one authoritative pending set fed
  *      only by server responses, channel picked at call time, re-reported cards
  *      keep their approve gate;
- *   3. the chained ids ENTER the pendingApproval set (nextPendingApprovalCardIds) —
- *      that set is what renders a card with pendingApproval=true, which routes its
- *      click through ottoApprove (RunState resume), never coworkGenerate;
+ *   3. the pendingApproval set follows the ChainedApproval.pendingCardIds
+ *      contract (round-7: a chained response's COMPLETE set replaces the local
+ *      set; a completed resume empties it) — that set is what renders a card
+ *      with pendingApproval=true, which routes its click through ottoApprove
+ *      (RunState resume), never coworkGenerate;
  *   4. the post-approve poll merge APPENDS the chained cards AND the server-named
  *      narration TEXT so both render without a reload (mergeDurableIntoLive),
  *      while never re-injecting any other TEXT.
@@ -102,7 +104,7 @@ describe("chainedApprovalOf", () => {
 });
 
 describe("nextPendingApprovalCardIds", () => {
-  it("removes the approved card and ADDS the chained ids (they must render pendingApproval=true → ottoApprove channel)", () => {
+  it("removes the approved card and carries the chained ids (they must render pendingApproval=true → ottoApprove channel)", () => {
     const next = nextPendingApprovalCardIds(new Set(["card_a"]), ["card_a"], ["card_b", "card_c"]);
     expect(next).toEqual(new Set(["card_b", "card_c"]));
   });
@@ -114,6 +116,24 @@ describe("nextPendingApprovalCardIds", () => {
   it("a card the server reports as STILL pending stays pending even when it was just clicked", () => {
     const next = nextPendingApprovalCardIds(new Set(["card_a"]), ["card_a"], ["card_a"]);
     expect(next).toEqual(new Set(["card_a"]));
+  });
+
+  // Round-7 contract discriminator — RED under increment semantics: a chained
+  // response is the COMPLETE server set (ChainedApproval.pendingCardIds), so an
+  // id it no longer reports leaves; merging (`cur − fired + reported`) would
+  // keep card_stale as a private ledger the server already resolved.
+  it("a chained response REPLACES the set: an id the server no longer reports leaves with it", () => {
+    const next = nextPendingApprovalCardIds(new Set(["card_a", "card_stale"]), ["card_a"], ["card_b"]);
+    expect(next).toEqual(new Set(["card_b"]));
+  });
+
+  // Round-7 contract discriminator — RED under "the response is only the new
+  // increment" semantics: the server re-reports every still-parked OLD id, so a
+  // pending card the user never clicked must ride every chained response and
+  // survive the replacement (dropping it would bury its approve gate).
+  it("an unclicked old id the server re-reports survives the replacement", () => {
+    const next = nextPendingApprovalCardIds(new Set(["card_a", "card_old"]), ["card_a"], ["card_old", "card_new"]);
+    expect(next).toEqual(new Set(["card_old", "card_new"]));
   });
 
   it("never mutates the input set", () => {
@@ -154,10 +174,13 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
   it("routes by the authoritative set AT CALL TIME: a card an EARLIER response parked is approved, never re-generated", async () => {
     // Pack of three. A is parked (pendingApproval), B and C are plain proposals.
     // Approving A parks C (mid-loop!) and mints a new card X outside the pack.
+    // Round-7 contract note: C's approve re-reports the COMPLETE set — X is
+    // still parked, so C's resume CANNOT complete (a "done" here would
+    // contradict X's park) and must answer needs_approval with ["card_x"].
     const { fire, calls } = scriptedFire({
       card_a: [chainedRes({ pendingCardIds: ["card_c", "card_x"], fallbackReply: "sahkan kad di atas" })],
       card_b: [{ ok: true }],
-      card_c: [{ ok: true, status: "done", reply: "made it" }],
+      card_c: [chainedRes({ pendingCardIds: ["card_x"] })],
     });
     const outcome = await runPackApprovalLoop({
       cards: [
@@ -237,10 +260,88 @@ describe("runPackApprovalLoop (#498 round-5)", () => {
     expect(outcome).toEqual({
       firedCardIds: [],
       pendingCardIds: ["card_a"],
+      pendingFromServer: false,
       fallbackReply: null,
       narrationMessageIds: [],
       failure: { index: 0, message: null },
     });
+  });
+
+  // ── Round-7: the ChainedApproval.pendingCardIds COMPLETE-set contract ───────
+  // Each wrong semantics has a discriminator that turns RED under it:
+  //   - increment/merge (the pre-round-7 client): the two tests below fail —
+  //     a dropped id would linger and mis-route B to a doomed ottoApprove;
+  //   - "response carries only the new increment": the re-report tests above
+  //     (STILL-pending card keeps its gate) fail — olds ride every response.
+
+  it("契约:响应未再上报的旧待批卡即刻离集——后续卡按 call time 走 generate 通道", async () => {
+    // A and B both parked at render. Approving A answers with the COMPLETE set
+    // ["card_x"] — B is absent, so B's park is gone server-side (resolved /
+    // expired / superseded). B must therefore fire through coworkGenerate;
+    // an increment-merge client would keep B in its private ledger and route
+    // it into ottoApprove, which refuses a card that isn't awaiting approval.
+    const { fire, calls } = scriptedFire({
+      card_a: [chainedRes({ pendingCardIds: ["card_x"] })],
+      card_b: [{ id: "job_b" }],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [
+        { cardId: "card_a", pendingApproval: true },
+        { cardId: "card_b", pendingApproval: true },
+      ],
+      fire,
+    });
+    expect(calls).toEqual([
+      { cardId: "card_a", pendingApproval: true },
+      { cardId: "card_b", pendingApproval: false },
+    ]);
+    expect(outcome.pendingCardIds).toEqual(["card_x"]);
+    expect(outcome.pendingFromServer).toBe(true);
+    expect(outcome.failure).toBeNull();
+  });
+
+  it("契约:恢复运行 COMPLETED(status done)证明集为空——运行不可能越过未决 park 而完成", async () => {
+    // A and B both parked at render. A's approve completes ⇒ the RunState holds
+    // ZERO parks (B's park is gone), so B routes through coworkGenerate and the
+    // outcome's set is server-anchored empty.
+    const { fire, calls } = scriptedFire({
+      card_a: [{ ok: true, status: "done", reply: "made it" }],
+      card_b: [{ id: "job_b" }],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [
+        { cardId: "card_a", pendingApproval: true },
+        { cardId: "card_b", pendingApproval: true },
+      ],
+      fire,
+    });
+    expect(calls).toEqual([
+      { cardId: "card_a", pendingApproval: true },
+      { cardId: "card_b", pendingApproval: false },
+    ]);
+    expect(outcome.pendingCardIds).toEqual([]);
+    expect(outcome.pendingFromServer).toBe(true);
+  });
+
+  it("无 resume 响应发声时 pendingFromServer=false——集只是渲染期知识,父层不得用它整体替换线程集", async () => {
+    // Two plain proposals fire through coworkGenerate ({ id }) — no response
+    // carried thread-set information, so the outcome must say so: replacing the
+    // parent's thread-level set with this pack-scoped set would wrongly drop
+    // OTHER cards' pending flags.
+    const { fire } = scriptedFire({
+      card_a: [{ id: "job_a" }],
+      card_b: [{ id: "job_b" }],
+    });
+    const outcome = await runPackApprovalLoop({
+      cards: [
+        { cardId: "card_a", pendingApproval: false },
+        { cardId: "card_b", pendingApproval: false },
+      ],
+      fire,
+    });
+    expect(outcome.pendingCardIds).toEqual([]);
+    expect(outcome.pendingFromServer).toBe(false);
+    expect(outcome.failure).toBeNull();
   });
 
   it("collects EVERY chained narration id across the loop (round-5 P2c) and the LATEST receipt", async () => {

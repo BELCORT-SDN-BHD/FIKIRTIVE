@@ -1008,6 +1008,9 @@ export async function finalizeOttoRun({
     // Closed set from the registry (collectApprovalInterruptions): generate keeps its existing
     // contract — pendingCardIds carries its pre-persisted GEN_CARD ids. Other gated tools
     // (approveScheduledPost) get a durable APPROVAL_CARD persisted below (B4 debt-70 5.1·附①).
+    // CONTRACT (#498 round-7): pendingCardIds is the COMPLETE current pending set of this
+    // thread's RunState, never a per-round increment — the single fact source both sides cite
+    // is the ChainedApproval.pendingCardIds comment in apps/web/components/otto/approval-chain.ts.
     const approvals = finalization.approvals;
     const pendingCardIds: string[] = approvals.filter((a) => a.toolName === "generate").map((a) => a.ref);
     const nonGenerateApprovals = approvals.filter((a) => a.toolName !== "generate");
@@ -1587,6 +1590,11 @@ export async function ottoApprove(raw: unknown): Promise<
     if (finalization.interrupted) {
       // Same closed-set collection as finalizeOttoRun: generate ids ride pendingCardIds; other
       // gated tools get durable APPROVAL_CARDs persisted after the CAS below.
+      // CONTRACT (#498 round-7): pendingCardIds is the COMPLETE current pending set of this
+      // thread's RunState (stable ids — a re-parked old dedupes to its existing card), never a
+      // per-round increment; a status:"done" return below implies the set is empty. The single
+      // fact source both sides cite is the ChainedApproval.pendingCardIds comment in
+      // apps/web/components/otto/approval-chain.ts.
       const chainedApprovals = finalization.approvals;
       const pendingCardIds: string[] = chainedApprovals.filter((a) => a.toolName === "generate").map((a) => a.ref);
       const chainedNonGenerate = chainedApprovals.filter((a) => a.toolName !== "generate");

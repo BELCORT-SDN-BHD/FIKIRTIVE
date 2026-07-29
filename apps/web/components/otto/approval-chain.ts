@@ -12,8 +12,9 @@
  *     executable unit. ONE authoritative pending set, updated only from each
  *     server response's pendingCardIds; every card picks its channel
  *     (ottoApprove vs coworkGenerate) from that set AT CALL TIME.
- *   - nextPendingApprovalCardIds: drop the fired card(s) from the pending set
- *     and ADD the server-reported ids — a chained card MUST render with
+ *   - nextPendingApprovalCardIds: apply a server response to the pending set —
+ *     a chained response's COMPLETE set replaces it wholesale (round-7, see the
+ *     ChainedApproval.pendingCardIds contract); a chained card MUST render with
  *     pendingApproval=true so its click resumes the RunState via ottoApprove,
  *     never coworkGenerate (which would refuse a parked card).
  *   - mergeDurableIntoLive: the post-approve poll merge — results, any new
@@ -32,6 +33,23 @@ import { appendChainedNarrations, appendDurableResults, appendMissingCards, sync
  *  receipt (null when the model narrated its own text), and — when the model DID
  *  narrate — the persisted narration TEXT's durable id for live injection. */
 export type ChainedApproval = {
+  /**
+   * CONTRACT (#498 round-7) — the single fact source for BOTH sides of this
+   * seam; otto-actions.ts's needs_approval constructions cite this comment.
+   *
+   * `pendingCardIds` is the COMPLETE set of the thread's currently-parked
+   * approval-gated calls after this response — NOT a "new this round"
+   * increment. Every still-undecided park re-interrupts on every resume and is
+   * re-collected whole (finalizeOttoTurn → collectApprovalInterruptions), with
+   * STABLE ids across rounds: a generate park rides its pre-persisted GEN_CARD
+   * id; a non-generate re-park dedupes to its EXISTING APPROVAL_CARD id
+   * (persistPendingApprovalCards). Consequences consumers rely on:
+   *   - a needs_approval response REPLACES any client-held pending set — an id
+   *     absent from it is no longer pending (resolved / expired / superseded),
+   *     and keeping it would be a stale private ledger;
+   *   - a status:"done" resume response implies the set is EMPTY — a run
+   *     cannot complete past an undecided park.
+   */
   pendingCardIds: string[];
   fallbackReply: string | null;
   narrationMessageId: string | null;
@@ -53,17 +71,20 @@ export function chainedApprovalOf(res: unknown): ChainedApproval | null {
   };
 }
 
-/** Next pending-approval set after an approve: the fired ids leave, the server-
- *  reported ids join. Order matters — a card the server reports as STILL pending
- *  stays pending even if it was just clicked. Never mutates the input set. */
+/** Next pending-approval set after an approve. When the response parked again
+ *  (`chainedPendingCardIds` present) that array is the server's COMPLETE set
+ *  (ChainedApproval.pendingCardIds contract) and REPLACES the local set — an id
+ *  the server no longer reports leaves with it, and a just-clicked card stays
+ *  pending iff re-reported. Without a chained outcome the response carried no
+ *  set information, so only the fired ids leave. Never mutates the input set. */
 export function nextPendingApprovalCardIds(
   cur: ReadonlySet<string>,
   approvedCardIds: readonly string[],
   chainedPendingCardIds?: readonly string[],
 ): Set<string> {
+  if (chainedPendingCardIds) return new Set(chainedPendingCardIds);
   const next = new Set(cur);
   approvedCardIds.forEach((id) => next.delete(id));
-  (chainedPendingCardIds ?? []).forEach((id) => next.add(id));
   return next;
 }
 
@@ -77,8 +98,15 @@ export function nextPendingApprovalCardIds(
 export type PackApprovalOutcome = {
   /** Cards that received a successful server response, in firing order. */
   firedCardIds: string[];
-  /** The authoritative still-pending ids after the last server response. */
+  /** The still-pending ids after the last server response. Thread-authoritative
+   *  only when `pendingFromServer` is true. */
   pendingCardIds: string[];
+  /** True when a resume response anchored `pendingCardIds` to the server's
+   *  COMPLETE thread set (a needs_approval replaced it, or a completed resume
+   *  proved it empty). False ⇒ no resume response spoke: the set is only the
+   *  pack's render-time seed minus fired cards, and callers must NOT replace
+   *  thread-level state with it. */
+  pendingFromServer: boolean;
   /** The latest server-localized receipt observed (display copy, verbatim);
    *  meaningful only while pendingCardIds is non-empty. */
   fallbackReply: string | null;
@@ -93,9 +121,11 @@ export type PackApprovalOutcome = {
  *  pending set as the only routing state:
  *
  *   - seeded from each card's pendingApproval flag (the parent's render-time
- *     knowledge), then updated ONLY from server responses: a fired card leaves
- *     the set unless THAT response re-reports it, and every response's
- *     pendingCardIds are merged in on arrival (the single fact source);
+ *     knowledge), then updated ONLY from server responses (the single fact
+ *     source): a needs_approval response's COMPLETE set replaces the whole set
+ *     (ChainedApproval.pendingCardIds contract — a fired card survives iff
+ *     re-reported, a stale id leaves), a completed resume empties it, and any
+ *     other success consumes just the fired card;
  *   - each card picks ottoApprove vs coworkGenerate from the set AT CALL TIME —
  *     so a card an EARLIER response in this same loop parked is approved, never
  *     re-generated (render-time snapshots cannot see mid-loop parks);
@@ -119,10 +149,12 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
   const firedCardIds: string[] = [];
   const narrationMessageIds: string[] = [];
   let fallbackReply: string | null = null;
+  let pendingFromServer = false;
 
   const outcome = (failure: PackApprovalOutcome["failure"]): PackApprovalOutcome => ({
     firedCardIds,
     pendingCardIds: [...pending],
+    pendingFromServer,
     fallbackReply,
     narrationMessageIds,
     failure,
@@ -141,15 +173,30 @@ export async function runPackApprovalLoop<C extends { cardId: string; pendingApp
       const message = (res as { error?: unknown }).error;
       return outcome({ index: i, message: typeof message === "string" ? message : null });
     }
-    // Server response = the sole fact source for the pending set: the fired
-    // card's park is consumed unless THIS response re-reports it; the response's
-    // pendingCardIds merge in; narration ids and the latest receipt ride along.
-    pending.delete(card.cardId);
+    // Server response = the sole fact source for the pending set
+    // (ChainedApproval.pendingCardIds contract):
     const chained = chainedApprovalOf(res);
     if (chained) {
+      // needs_approval carries the COMPLETE thread set — replace wholesale. The
+      // fired card survives iff re-reported; an id the server dropped leaves
+      // (keeping it would be a stale private ledger). Narration ids and the
+      // latest receipt ride along.
+      pending.clear();
       chained.pendingCardIds.forEach((id) => pending.add(id));
+      pendingFromServer = true;
       if (chained.fallbackReply) fallbackReply = chained.fallbackReply;
       if (chained.narrationMessageId) narrationMessageIds.push(chained.narrationMessageId);
+    } else if (res && typeof res === "object" && (res as { status?: unknown }).status === "done") {
+      // A COMPLETED resume proves the RunState holds no parks at all (a run
+      // cannot complete past an undecided one — only ottoApprove returns the
+      // lowercase "done"; GenStatus strings are uppercase). Empty the set so
+      // later cards route to the generate channel, never a doomed ottoApprove.
+      pending.clear();
+      pendingFromServer = true;
+    } else {
+      // No set information (coworkGenerate ok / already-resolved / degraded /
+      // stale): the fired card's park is consumed; nothing else moves.
+      pending.delete(card.cardId);
     }
     firedCardIds.push(card.cardId);
     opts.onCardSettled?.(card.cardId, !pending.has(card.cardId));

@@ -831,11 +831,18 @@ export function OttoChatStream({
                     outcome.firedCardIds.forEach((id) => { if (!stillPending.has(id)) next.add(id); });
                     return next;
                   });
-                  // Drop the FIRED cards from pending; ADD the authoritative ids so a
-                  // re-park's cards render pendingApproval=true and their clicks
-                  // resume via ottoApprove (never coworkGenerate).
+                  // ChainedApproval.pendingCardIds contract (#498 round-7): a
+                  // server-anchored outcome carries the COMPLETE thread set and
+                  // REPLACES ours (stale ids leave; a re-park's cards render
+                  // pendingApproval=true so their clicks resume via ottoApprove,
+                  // never coworkGenerate). A pack-scoped outcome (no resume
+                  // response spoke) only clears the fired cards.
                   setPendingApprovalCardIds((cur) =>
-                    nextPendingApprovalCardIds(cur, outcome.firedCardIds, outcome.pendingCardIds),
+                    nextPendingApprovalCardIds(
+                      cur,
+                      outcome.firedCardIds,
+                      outcome.pendingFromServer ? outcome.pendingCardIds : undefined,
+                    ),
                   );
                   rearmGenerationPoll();
                   void onBalanceRefresh?.();
@@ -894,8 +901,9 @@ export function OttoChatStream({
                       if (!chained?.pendingCardIds.includes(durableId)) {
                         setSubmittedCardIds((cur) => new Set(cur).add(durableId));
                       }
-                      // Drop from the pending set and ADD any chained ids (#498 round-4):
-                      // a re-park's new cards must render pendingApproval=true so their
+                      // A chained response's COMPLETE set replaces ours; otherwise only
+                      // the fired card leaves (ChainedApproval.pendingCardIds contract).
+                      // A re-park's cards must render pendingApproval=true so their
                       // clicks resume the RunState via ottoApprove, never coworkGenerate.
                       // Re-arm the poll (a freshly-approved card queues a new job even if
                       // a prior job hit the give-up cap; the poll also appends the
