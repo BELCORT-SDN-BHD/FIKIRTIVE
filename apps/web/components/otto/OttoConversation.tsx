@@ -13,6 +13,7 @@ import { ResearchCard } from "./ResearchCard";
 import { ResearchReport } from "./ResearchReport";
 import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
+import { nextPendingApprovalCardIds } from "./approval-chain";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
@@ -114,12 +115,15 @@ export function OttoConversation({
         setError(res.error);
         return;
       }
-      if (res.status === "needs_approval" && res.pendingCardIds?.length) {
-        setPendingApprovalCardIds((cur) => {
-          const next = new Set(cur);
-          res.pendingCardIds!.forEach((id: string) => next.add(id));
-          return next;
-        });
+      if (res.status === "needs_approval") {
+        // ChainedApproval.pendingCardIds contract (#498 round-7; FOURTH call
+        // site, round-9): the non-streaming fallback's needs_approval carries
+        // the COMPLETE set of the thread's parked calls (the contract comment
+        // in approval-chain.ts, cited by otto-actions.ts too), so it REPLACES
+        // the local set — an id the server no longer reports is resolved/
+        // expired/superseded, and keeping it would be a stale private ledger.
+        // No card fired here, hence the empty approvedCardIds.
+        setPendingApprovalCardIds((cur) => nextPendingApprovalCardIds(cur, [], res.pendingCardIds));
       }
       setText("");
       setPickedMentions([]);
@@ -283,11 +287,10 @@ export function OttoConversation({
               onApproved={(cardId) => {
                 // Record submission so the card flips to "working" optimistically.
                 setSubmittedCardIds((cur) => new Set(cur).add(cardId));
-                setPendingApprovalCardIds((cur) => {
-                  const next = new Set(cur);
-                  next.delete(cardId);
-                  return next;
-                });
+                // ChainedApproval.pendingCardIds contract: this fallback's
+                // onApproved carries no chained set (no set information), so
+                // via the same helper only the fired card's park is consumed.
+                setPendingApprovalCardIds((cur) => nextPendingApprovalCardIds(cur, [cardId]));
                 // a freshly-approved card queues a new job — re-arm polling even if a
                 // prior job had already hit the give-up cap.
                 rearmGenerationPoll();

@@ -271,6 +271,114 @@ describe("POST /api/otto/stream", () => {
     }));
   });
 
+  // #498: the verbal-approval repro (storyboard → Otto invites "全部生成" → merchant sends
+  // it) parks the gated generate call(s) with zero model narration; before the fix the
+  // stream carried ONLY an invisible data-status part — total silence. These lock the fix.
+  it("#498 a run that pauses without narration streams the synthesized reply before needs_approval", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+    mocks.finalizeOttoRun.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_1", "card_2", "card_3"],
+      fallbackReply: "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.",
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    const parts = (await res.json()) as Array<{ type: string }>;
+
+    expect(res.status).toBe(200);
+    expect(parts).toEqual(
+      expect.arrayContaining([
+        { type: "text-start", id: "otto-text" },
+        {
+          type: "text-delta",
+          id: "otto-text",
+          delta: "To keep your credits safe, nothing is made from words alone — confirm each card above and I'll start right away.",
+        },
+        { type: "text-end", id: "otto-text" },
+        { type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1", "card_2", "card_3"] } },
+      ]),
+    );
+    // The reply renders BEFORE the status part (the status itself has no visible UI).
+    const textIdx = parts.findIndex((p) => p.type === "text-delta");
+    const statusIdx = parts.findIndex((p) => p.type === "data-status");
+    expect(textIdx).toBeGreaterThanOrEqual(0);
+    expect(textIdx).toBeLessThan(statusIdx);
+  });
+
+  it("#498 no synthesized reply when the model narrated itself (fallbackReply null → no extra text part)", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Confirm on the cards to start.")] }));
+    mocks.finalizeOttoRun.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_1"],
+      fallbackReply: null,
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    const parts = (await res.json()) as Array<{ type: string; delta?: string }>;
+
+    expect(res.status).toBe(200);
+    expect(parts).toContainEqual({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1"] } });
+    // Exactly the model's own streamed text — nothing synthesized on top.
+    expect(parts.filter((p) => p.type === "text-delta")).toEqual([
+      { type: "text-delta", id: "otto-text", delta: "Confirm on the cards to start." },
+    ]);
+  });
+
+  // #498 round-3: "the fallback only exists when nothing streamed" is now a CHECKED
+  // invariant (textWasStreamed), not an assumption about the post-run text extraction.
+  it("#498 textWasStreamed guard: a fallbackReply arriving despite streamed model text is never rendered on top", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Streamed but missed by extraction.")] }));
+    // Adversarial finalize: extraction saw no text and synthesized a fallback anyway.
+    mocks.finalizeOttoRun.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_1"],
+      fallbackReply: "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away.",
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    const parts = (await res.json()) as Array<{ type: string; delta?: string }>;
+
+    expect(res.status).toBe(200);
+    // The pause still surfaces; the fallback text does NOT double the streamed text.
+    expect(parts).toContainEqual({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1"] } });
+    expect(parts.filter((p) => p.type === "text-delta")).toEqual([
+      { type: "text-delta", id: "otto-text", delta: "Streamed but missed by extraction." },
+    ]);
+  });
+
+  // #498 round-4: textWasStreamed only counts NON-whitespace deltas. A model that
+  // emits a lone "\n" (or spaces) before parking showed the merchant nothing
+  // readable — the whitespace stream must not suppress the synthesized fallback.
+  it("#498 round-4: a whitespace-only streamed delta does NOT suppress the synthesized fallback", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("\n"), tokenEvent("  ")] }));
+    mocks.finalizeOttoRun.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_1"],
+      fallbackReply: "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away.",
+    });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    const parts = (await res.json()) as Array<{ type: string; delta?: string }>;
+
+    expect(res.status).toBe(200);
+    expect(parts).toContainEqual({ type: "data-status", data: { kind: "needs_approval", pendingCardIds: ["card_1"] } });
+    // The whitespace deltas streamed as-is AND the fallback still rendered.
+    const deltas = parts.filter((p) => p.type === "text-delta").map((p) => p.delta);
+    expect(deltas).toContain(
+      "To keep your credits safe, nothing is made from words alone — confirm on the card above and I'll start right away.",
+    );
+  });
+
+  it("#498 P2: the merchant's message text reaches finalizeOttoRun so the receipt can follow its language", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [] }));
+    mocks.finalizeOttoRun.mockResolvedValue({ status: "needs_approval", pendingCardIds: [], fallbackReply: null });
+
+    const res = await POST(req({ projectId: "proj_stream", text: "全部生成" }));
+    await res.json();
+
+    expect(mocks.finalizeOttoRun).toHaveBeenCalledWith(expect.objectContaining({ userText: "全部生成" }));
+  });
+
   it("persists and surfaces a first-turn insufficient-credits failure without running Otto", async () => {
     mocks.withLlmBudget.mockRejectedValue(new mocks.MockInsufficientCredits());
 
