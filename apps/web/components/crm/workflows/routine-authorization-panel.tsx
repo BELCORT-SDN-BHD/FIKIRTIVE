@@ -470,7 +470,7 @@ export default function RoutineAuthorizationPanel({
 
             <div className="mt-5 grid grid-cols-2 gap-5">
               <div><p className="text-sm font-semibold">Allowed channel</p><label className="mt-3 flex items-center justify-between rounded-xl border border-border bg-secondary/20 px-4 py-3"><span><span className="block text-sm font-semibold">WhatsApp</span><span className="mt-1 block text-xs text-muted-foreground">Provider connection is not pinned in this simulated authorization.</span></span><input className="size-4 accent-[var(--brand)]" type="checkbox" checked={whatsapp} onChange={(event) => setWhatsapp(event.target.checked)} /></label></div>
-              <div><p className="text-sm font-semibold">Budget</p><div className="mt-3 rounded-xl border border-border bg-secondary/20 px-4 py-3"><p className="text-sm font-semibold">No credit spend</p><p className="mt-1 text-xs leading-5 text-muted-foreground">0 credits per run and 0 credits per month. Zero is a hard stop, never unlimited.</p></div></div>
+              <div><p className="text-sm font-semibold">Budget</p><div className="mt-3 rounded-xl border border-border bg-secondary/20 px-4 py-3"><p className="text-sm font-semibold">No credit spend</p><p className="mt-1 text-xs leading-5 text-muted-foreground">0 credits per run and 0 credits per month. Zero is a hard stop with no way to exceed it.</p></div></div>
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-5">
