@@ -660,7 +660,7 @@ export function OttoApp({
           activity={activity}
           onActivityRefresh={refreshActivity}
           onDeleteThread={requestDeleteThread}
-          onNewConvo={() => setActiveThreadId(null)}
+          onNewConvo={() => handleNewChat(curProjectId)}
           seedText={seedText}
           onSeedConsumed={() => setSeedText("")}
           onUseInOtto={handleUseInOtto}
