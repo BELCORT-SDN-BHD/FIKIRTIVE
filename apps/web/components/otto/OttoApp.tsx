@@ -102,7 +102,6 @@ export interface OttoAppProps {
   /** Spendable balance in DISPLAYED credits — shown in the nav (product uses credits, not $). */
   balanceCredits: number;
   userName: string;
-  userEmail: string;
   memory: MemoryRow[];
   records: BrandRecordRow[];
   ads: AdTile[];
@@ -141,7 +140,6 @@ export function OttoApp({
   balanceUsd,
   balanceCredits: initialBalanceCredits,
   userName,
-  userEmail,
   memory,
   records,
   ads,
@@ -598,8 +596,6 @@ export function OttoApp({
         onSetThreadPinned={handleSetThreadPinned}
         onDeleteThread={requestDeleteThread}
         balanceCredits={balanceCredits}
-        userName={userName}
-        userEmail={userEmail}
         history={history}
         drawerOpen={drawerOpen}
         onDrawerClose={() => setDrawerOpen(false)}

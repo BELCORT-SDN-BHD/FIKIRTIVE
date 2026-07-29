@@ -2,7 +2,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2, X } from "lucide-react";
 import { creditsLabel } from "@/lib/credit-format";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
@@ -80,22 +79,6 @@ function IconChart() {
     </svg>
   );
 }
-/** OTTO — the coral cloud mark (coral is OTTO's colour only). */
-function OttoCloud({ size = 26 }: { size?: number }) {
-  return (
-    <svg width={size} height={Math.round((size * 24) / 26)} viewBox="0 0 120 110" aria-hidden style={{ flexShrink: 0 }}>
-      <g fill="var(--brand)">
-        <ellipse cx="60" cy="64" rx="43" ry="22" />
-        <circle cx="37" cy="52" r="18" />
-        <circle cx="61" cy="40" r="24" />
-        <circle cx="85" cy="53" r="17" />
-      </g>
-      <rect x="51" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
-      <rect x="66" y="48" width="7" height="13" rx="3.5" fill="#2B1308" />
-    </svg>
-  );
-}
-
 const TOOL_ITEMS: NavItem[] = [
   { key: "library", label: "Library", icon: <IconFolderHeart /> },
   { key: "memory", label: "Brand memory", icon: <IconBrain /> },
@@ -104,6 +87,9 @@ const TOOL_ITEMS: NavItem[] = [
   { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
   { key: "analytics", label: "Analytics", icon: <IconChart /> },
   { key: "connections", label: "Connections", icon: <IconLink /> },
+  // Otto's full settings dashboard (billing, notifications, spend cap, danger zone) —
+  // distinct from the global identity menu's minimal Profile page; not a duplicate,
+  // so it keeps its own entry point (#513 四.1 scopes A to shell chrome only).
   { key: "account", label: "Account", icon: <IconCircleUser /> },
 ];
 
@@ -165,8 +151,6 @@ export interface OttoNavProps {
   onDeleteThread: (id: string) => void;
   /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
   balanceCredits: number;
-  userName: string;
-  userEmail: string;
   /** Deprecated display-only prop. Media now lives under Workspace/Library to keep this rail focused on campaigns. */
   history?: HistoryThumb[];
   /** Mobile: whether the drawer is open (controlled by OttoApp). */
@@ -198,14 +182,11 @@ export function OttoNav({
   onSetThreadPinned,
   onDeleteThread,
   balanceCredits,
-  userName,
-  userEmail,
   drawerOpen = false,
   onDrawerClose,
   collapsed = false,
   onToggleCollapse,
 }: OttoNavProps) {
-  const initial = userName.slice(0, 1).toUpperCase();
   const balanceLabel = creditsLabel(balanceCredits);
   const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
@@ -423,14 +404,9 @@ export function OttoNav({
         transition: "width 220ms cubic-bezier(0.22,1,0.36,1)",
       }}
     >
-      {/* Logo + collapse toggle */}
-      <div className="flex items-center gap-2 pr-3 pb-4 pl-4 border-b border-border">
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <OttoCloud size={26} />
-          <span className="text-[1.0625rem] font-bold text-foreground">
-            fikirtive
-          </span>
-        </div>
+      {/* Collapse toggle — the FIKIRTIVE brand mark lives once, in the persistent
+          global nav; this rail no longer repeats it (#513 三.1, "双壳合一"). */}
+      <div className="flex items-center justify-end gap-2 pr-3 pb-4 pl-4 border-b border-border">
         <button
           type="button"
           onClick={handleCollapseAction}
@@ -795,21 +771,8 @@ export function OttoNav({
           {balanceLabel}
         </span>
       </div>
-
-      {/* User */}
-      <div className="flex items-center gap-3 px-4 py-3">
-        <Avatar className="size-8">
-          <AvatarFallback className="bg-accent text-accent-foreground text-[0.65625rem] font-semibold">{initial}</AvatarFallback>
-        </Avatar>
-        <div className="min-w-0">
-          <div className="text-[0.8125rem] font-medium text-foreground truncate">
-            {userName}
-          </div>
-          <div className="text-[0.75rem] text-muted-foreground/70 truncate">
-            {userEmail}
-          </div>
-        </div>
-      </div>
+      {/* Identity (avatar, name, email, sign out) now lives once, in the persistent
+          global nav's avatar menu — this rail no longer repeats it (#513 三.1). */}
     </nav>
     </>
   );

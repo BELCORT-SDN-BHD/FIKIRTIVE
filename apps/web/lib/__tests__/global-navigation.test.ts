@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ImpersonationBanner } from "@/components/admin/ImpersonationBanner";
 import {
   MerchantShellContent,
+  SectionTabs,
   nextCrmDisclosureOpen,
 } from "@/components/global-navigation";
 
@@ -58,10 +59,38 @@ describe("MerchantShellContent", () => {
     expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/reports"/);
   });
 
-  it("shows a visible Log out action", () => {
+  it("does not also light up Inbox when the current page is its Templates sub-route", () => {
+    // /crm/inbox/templates starts with /crm/inbox, so a naive prefix match would mark
+    // both items active. Only the longest (most specific) match should win.
+    const markup = renderShell("/crm/inbox/templates");
+
+    expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/inbox\/templates"/);
+    expect(markup).not.toMatch(/aria-current="page"[^>]*href="\/crm\/inbox"[^/]/);
+  });
+
+  it("replaces the old Account box with a real avatar menu offering Profile and Sign out", () => {
     const markup = renderShell("/billing");
 
-    expect(markup).toContain("<span>Log out</span>");
+    expect(markup).not.toContain("<span>Log out</span>");
+    expect(markup).not.toContain('text-xs font-semibold text-muted-foreground">Account<');
+    expect(markup).toContain('role="menu"');
+    expect(markup).toContain('href="/profile"');
+    // Sign out stays a real form submit (signOutAction), not a bare link.
+    expect(markup).toMatch(/<form[^>]*>[\s\S]*?Sign out[\s\S]*?<\/form>/);
+  });
+
+  it("shows credits above the identity menu, linking through to Billing & credits", () => {
+    const markup = renderShell("/otto");
+
+    expect(markup).toMatch(/href="\/billing"[^>]*>[\s\S]{0,600}?Credits/);
+  });
+
+  it("nests Connections and Billing & credits under Workspace settings", () => {
+    const markup = renderShell("/billing");
+
+    expect(markup).toContain(">Workspace settings<");
+    expect(markup).toContain('href="/connections"');
+    expect(markup).toContain(">Billing &amp; credits<");
   });
 
   it("keeps the impersonation banner above the merchant sidebar", () => {
@@ -111,5 +140,35 @@ describe("nextCrmDisclosureOpen", () => {
 
     open = nextCrmDisclosureOpen({ type: "navigation", pathname: "/billing" });
     expect(open).toBe(false);
+  });
+});
+
+// #513 三.4 — at the 1024–1279px rail, a Settings-style group's children move here
+// instead of nesting under a 64px icon. MerchantShellContent renders this above
+// {children}, so it never touches a business page's own content.
+describe("SectionTabs", () => {
+  function renderTabs(pathname: string) {
+    return renderToStaticMarkup(createElement(SectionTabs, { pathname }));
+  }
+
+  it("renders nothing outside a sectioned group", () => {
+    expect(renderTabs("/otto")).toBe("");
+    expect(renderTabs("/campaign")).toBe("");
+  });
+
+  it("renders the CRM group's tabs on a CRM page", () => {
+    const markup = renderTabs("/crm/segments");
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toContain('href="/crm/contacts"');
+    expect(markup).toContain('href="/crm/workflows"');
+    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/crm\/segments"/);
+  });
+
+  it("renders the Workspace settings group's tabs on Billing", () => {
+    const markup = renderTabs("/billing");
+
+    expect(markup).toContain('href="/connections"');
+    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/billing"/);
   });
 });
