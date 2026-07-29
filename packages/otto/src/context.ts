@@ -394,7 +394,8 @@ export interface OttoContext {
     setDnd(input: { contactId: string; enabled: boolean; requestId: string }): Promise<unknown>;
   };
   /** Connected channel-account port (#495/#500 read parity, $0). The web caller injects the SAME
-   * owner-scoped customer-inbox gateway read the human template/broadcast channel pickers use.
+   * owner-scoped customer-inbox gateway read the human template picker uses (the broadcast
+   * composer reads the same owner-scoped rows through its own broadcast gateway).
    * The port never accepts owner identity; it returns only { id, channel, scopeKey } rows. */
   channelScopes?: {
     list(): Promise<

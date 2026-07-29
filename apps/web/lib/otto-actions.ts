@@ -288,7 +288,8 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
 }
 
 // #495/#500 read parity: the SAME owner-scoped customer-inbox gateway read the human
-// template/broadcast channel pickers use. The port never accepts owner identity.
+// template picker uses (the broadcast composer reads the same owner-scoped rows through
+// its own broadcast gateway). The port never accepts owner identity.
 function makeOttoChannelScopesPort(): NonNullable<OttoContext["channelScopes"]> {
   return {
     list: async () => {
