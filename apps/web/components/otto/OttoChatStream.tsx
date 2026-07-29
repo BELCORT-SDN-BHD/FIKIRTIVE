@@ -8,7 +8,7 @@ import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { Button } from "@/components/ui/button";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { threadToUiMessages, type OttoUiMessage } from "@/lib/otto-ui-messages";
-import { ImageIcon } from "lucide-react";
+import { ImageIcon, MessageSquarePlus } from "lucide-react";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_SIDE, FRAME_JPEG_QUALITY, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS, isRefVideoDurationOk } from "@/lib/video-frame";
@@ -65,6 +65,9 @@ export interface OttoChatStreamProps {
   entities: EntityDTO[];
   thread: ChatThreadDTO;
   balanceUsd: number;
+  /** Starts a new conversation in this campaign. Rendered as a persistent button
+   *  in the chat header, so it's always reachable — not only via a sidebar hover. */
+  onNewConversation?: () => void;
   onRefresh: () => Promise<void>;
   onThreadUpdate: (thread: ChatThreadDTO) => void;
   /** Re-reads the account balance and updates the nav display after a spend event. */
@@ -110,6 +113,7 @@ export function OttoChatStream({
   entities,
   thread,
   balanceUsd,
+  onNewConversation,
   onThreadUpdate,
   onBalanceRefresh,
   pendingFirst,
@@ -730,9 +734,10 @@ export function OttoChatStream({
           .otto-chat-scroll { padding: 1rem 0.75rem !important; }
           .otto-chat-composer { padding: 0.75rem 0.75rem !important; }
           .otto-chat-header { padding: 0.75rem 1rem !important; }
+          .otto-send-hint { display: none; }
         }
       `}</style>
-      {/* Header */}
+      {/* Header — New conversation is always visible here, not only on a sidebar hover. */}
       <div
         className="otto-chat-header flex items-center gap-[9px] border-b border-border bg-card px-4 py-[13px]"
       >
@@ -740,6 +745,18 @@ export function OttoChatStream({
         <div className="flex-1 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[0.90625rem] font-semibold text-foreground">
           {thread.title}
         </div>
+        {onNewConversation && (
+          <button
+            type="button"
+            onClick={onNewConversation}
+            title="Start a new conversation in this campaign"
+            aria-label="New conversation"
+            className="inline-flex shrink-0 items-center gap-[6px] rounded-[9px] border border-border bg-transparent px-[10px] py-[6px] text-[0.8125rem] font-medium text-foreground cursor-pointer transition-colors hover:bg-secondary"
+          >
+            <MessageSquarePlus size={14} aria-hidden />
+            New conversation
+          </button>
+        )}
       </div>
 
       {/* Messages (stick-to-bottom scroll region) */}
@@ -1391,9 +1408,17 @@ export function OttoChatStream({
               >
                 <ImageIcon size={18} className={attachedRefs.length ? "text-primary" : "text-muted-foreground"} />
               </button>
-              <Button variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
-                {isBusy ? "Sending…" : "Send"}
-              </Button>
+              <div className="flex items-center gap-2">
+                <span
+                  className="otto-send-hint text-[0.75rem] text-muted-foreground"
+                  title="Shift+Enter sends. Enter starts a new line."
+                >
+                  Shift+Enter to send
+                </span>
+                <Button variant="default" size="sm" disabled={isBusy || !text.trim()} onClick={submit}>
+                  {isBusy ? "Sending…" : "Send"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

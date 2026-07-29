@@ -171,7 +171,6 @@ export function OttoApp({
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [newCampaignPending, setNewCampaignPending] = useState(false);
-  const [campaignNamingActive, setCampaignNamingActive] = useState(false);
   const [renameProjectTarget, setRenameProjectTarget] = useState<ProjectMeta | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectMeta | null>(null);
   const [renameThreadTarget, setRenameThreadTarget] = useState<ChatThreadDTO | null>(null);
@@ -196,13 +195,37 @@ export function OttoApp({
   }, []);
 
   useEffect(() => {
-    function syncViewFromLocation() {
-      setView(parseViewParam(new URLSearchParams(window.location.search).get("view")));
+    function syncFromLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const nextView = parseViewParam(params.get("view"));
+      setView(nextView);
       setActionError(null);
+      // The "otto" view's URL always fully encodes the active thread (see projectHref /
+      // viewHref below) — including handleThreadStarted and handleNewChat's same-project
+      // branch, which push their URL via raw history.pushState with no Next.js navigation,
+      // to avoid remounting the stream mid-turn. Restore activeThreadId from that URL on
+      // Back/Forward so the SPA doesn't keep showing a thread the address bar no longer
+      // names. Non-"otto" views never touch activeThreadId when pushed, so leave it alone.
+      //
+      // A bare "otto" URL with neither ?thread= nor ?new=1 (e.g. handleUseInOtto's push,
+      // or landing straight on /otto?project=P) carries no explicit thread/new signal —
+      // mirror the server's own default for that exact address (app/otto/page.tsx: no
+      // thread + no new=1 opens the most recent thread), so Back/Forward never disagrees
+      // with what reloading the same URL would show.
+      if (nextView === "otto") {
+        const threadParam = params.get("thread");
+        if (threadParam) {
+          setActiveThreadId(threadParam);
+        } else if (params.get("new") === "1") {
+          setActiveThreadId(null);
+        } else {
+          setActiveThreadId(threads[0]?.id ?? null);
+        }
+      }
     }
-    window.addEventListener("popstate", syncViewFromLocation);
-    return () => window.removeEventListener("popstate", syncViewFromLocation);
-  }, []);
+    window.addEventListener("popstate", syncFromLocation);
+    return () => window.removeEventListener("popstate", syncFromLocation);
+  }, [threads]);
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -322,22 +345,15 @@ export function OttoApp({
     pushViewHistory(projectHref(thread.projectId || curProjectId, thread.id));
   }, [curProjectId, handleThreadsChange, projectHref, pushViewHistory, threads]);
 
-  const handleCampaignNamingChange = useCallback((active: boolean) => {
-    setCampaignNamingActive(active);
-    if (active) setActionError(null);
-  }, []);
-
-  const handleNewCampaign = useCallback(async (name: string) => {
-    const clean = name.trim();
-    if (!clean || newCampaignPendingRef.current) return false;
+  const handleNewCampaign = useCallback(async () => {
+    if (newCampaignPendingRef.current) return false;
     newCampaignPendingRef.current = true;
     setNewCampaignPending(true);
     setActionError(null);
     const loginHref = `/login?from=${encodeURIComponent(projectHref(curProjectId))}`;
     try {
-      const res = await createProject(clean);
+      const res = await createProject("New campaign");
       if (res && "id" in res) {
-        setCampaignNamingActive(false);
         window.location.assign(projectHref(res.id));
         return true;
       }
@@ -598,7 +614,6 @@ export function OttoApp({
         onSetProjectPinned={handleSetProjectPinned}
         onDeleteProject={requestDeleteProject}
         onNewCampaign={handleNewCampaign}
-        onCampaignNamingChange={handleCampaignNamingChange}
         newCampaignPending={newCampaignPending}
         onRenameThread={requestRenameThread}
         onSetThreadPinned={handleSetThreadPinned}
@@ -673,11 +688,10 @@ export function OttoApp({
           activity={activity}
           onActivityRefresh={refreshActivity}
           onDeleteThread={requestDeleteThread}
-          onNewConvo={() => setActiveThreadId(null)}
+          onNewConvo={() => handleNewChat(curProjectId)}
           seedText={seedText}
           onSeedConsumed={() => setSeedText("")}
           onUseInOtto={handleUseInOtto}
-          campaignNamingActive={campaignNamingActive}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
           skin={skin}
