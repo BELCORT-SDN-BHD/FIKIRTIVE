@@ -8,6 +8,11 @@
  * 持有的 Meta 侧凭据即刻清除)+ 每个受影响 org 记一条 ActionEvent 审计,并按
  * Meta 规范返回 { url, confirmation_code }(用户可凭 code 在状态页核对)。
  * 找不到匹配也返回 200 + code —— "无可删"是合法结果,Meta 只要求可追溯。
+ *
+ * #489 语义收口:响应 url 带 outcome=deleted|none,状态页据此如实区分
+ * 「已删除连接」与「未找到关联数据」,不再对无匹配给出与删除相同的确认语义。
+ * metaUserId 为 NULL 的存量行按精确匹配永远不命中 → 归入 none,绝不谎报已删;
+ * 写入侧已同步收口(completeMetaConnect 拒绝存无 metaUserId 的连接)。
  */
 import { prisma } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
@@ -72,8 +77,11 @@ async function handleDataDeletion(req: NextRequest | Request): Promise<Response>
   }
 
   const origin = process.env.APP_ORIGIN ?? new URL(req.url).origin;
+  // outcome 是唯一的真实语义载体:deleted = 真删了 ≥1 条连接;none = 没有任何
+  // 数据被删除(包括 metaUserId 为 NULL 而永远匹配不到的存量行)。
+  const outcome = matches.length > 0 ? "deleted" : "none";
   return Response.json({
-    url: `${origin}/legal/data-deletion?code=${confirmationCode}`,
+    url: `${origin}/legal/data-deletion?code=${confirmationCode}&outcome=${outcome}`,
     confirmation_code: confirmationCode,
   });
 }
