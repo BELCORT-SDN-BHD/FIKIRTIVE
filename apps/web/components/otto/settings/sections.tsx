@@ -169,35 +169,36 @@ export function buildSettingsSections(args: {
       id: "connections",
       title: "Connections",
       subtitle:
-        "Connect Instagram and Facebook so Otto can schedule posts and read results — auto-publish unlocks once Meta approves publishing.",
-      fields: channels.map((c) => ({
-        kind: "custom" as const,
-        id: `conn-${c.id}`,
-        render: () => (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              width: "100%",
-            }}
-          >
-            <div>
-              <div className="cv-set-lbl">{c.label}</div>
-              <div className="cv-set-hint">
-                {c.status === "connected"
-                  ? c.targets.join(", ") || "Connected"
-                  : c.status === "needs_reconnect"
-                    ? "Reconnect needed"
-                    : "Not connected"}
+        "Instagram, Facebook, X, and messaging channels — one page for all of them.",
+      fields: [
+        {
+          kind: "custom",
+          id: "manage",
+          render: () => {
+            const connectedCount = channels.filter((c) => c.status === "connected").length;
+            return (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  width: "100%",
+                }}
+              >
+                <div>
+                  <div className="cv-set-lbl">Publishing &amp; messaging channels</div>
+                  <div className="cv-set-hint">
+                    {connectedCount} of {channels.length} connected
+                  </div>
+                </div>
+                <a className="cv-set-btn" href="/otto?view=connections">
+                  Manage connections
+                </a>
               </div>
-            </div>
-            <a className="cv-set-btn" href={c.connectUrl}>
-              {c.status === "connected" ? "Manage" : c.status === "needs_reconnect" ? "Reconnect" : "Connect"}
-            </a>
-          </div>
-        ),
-      })),
+            );
+          },
+        },
+      ],
     },
     {
       id: "otto",
