@@ -111,6 +111,66 @@ describe("getMyAccount", () => {
     expect(res.balanceUsd).toBe(0);
     expect(res.recent).toEqual([]);
   });
+
+  // Decision ④ (issue #513 §C9): a hold + its settle/refund merge into ONE task row —
+  // a merchant reads "what happened", not the RESERVE/SETTLE/REFUND ledger mechanics.
+  it("merges an Otto turn's RESERVE + partial-refund SETTLE into one row with a used/refunded detail", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "a@test", ownerId: "orgA" });
+    findUnique.mockResolvedValue({ balance: 1000, reserved: 0 });
+    creditLedgerFindMany.mockResolvedValue([
+      // RESERVE held 12.0 displayed credits (120 internal); SETTLE later refunds the
+      // unspent 0.4 (4 internal) — actual usage was 11.6. Same refId ⇒ one task.
+      { id: "settle1", kind: "SETTLE", reason: "", refId: "otto-turn:t1:1", balanceDelta: 4, createdAt: new Date("2026-07-28T10:05:00Z") },
+      { id: "reserve1", kind: "RESERVE", reason: "", refId: "otto-turn:t1:1", balanceDelta: -120, createdAt: new Date("2026-07-28T10:00:00Z") },
+    ]);
+    const res = await getMyAccount();
+    if ("error" in res) throw new Error("unexpected error");
+    expect(res.recent).toHaveLength(1);
+    expect(res.recent[0]).toMatchObject({
+      id: "settle1", // the later (settling) row anchors the merged entry
+      label: "Otto thinking",
+      delta: -11.6, // net: -12 + 0.4
+      detail: "11.6 credits used · 0.4 refunded",
+    });
+    expect(res.recent[0].at).toBe("2026-07-28T10:05:00.000Z"); // latest event in the task
+    expect(res.recent[0].atLabel).toMatch(/^Jul 28, \d{1,2}:\d{2} [AP]M$/); // fixed-locale, hydration-safe
+  });
+
+  it("merges a failed job's RESERVE + full REFUND into one net-zero row (not two confusing lines)", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "a@test", ownerId: "orgA" });
+    findUnique.mockResolvedValue({ balance: 1000, reserved: 0 });
+    creditLedgerFindMany.mockResolvedValue([
+      { id: "refund1", kind: "REFUND", reason: "", refId: "genjob_failed", balanceDelta: 20, createdAt: new Date("2026-07-28T11:01:00Z") },
+      { id: "reserve2", kind: "RESERVE", reason: "", refId: "genjob_failed", balanceDelta: -20, createdAt: new Date("2026-07-28T11:00:00Z") },
+    ]);
+    genJobFindMany.mockResolvedValue([{ id: "genjob_failed", kind: "IMAGE", count: 2, videoOptions: null }]);
+    const res = await getMyAccount();
+    if ("error" in res) throw new Error("unexpected error");
+    expect(res.recent).toHaveLength(1);
+    expect(res.recent[0]).toMatchObject({
+      label: "Image generation - 2 images",
+      delta: 0,
+      detail: "Held, then refunded in full",
+    });
+  });
+
+  it("never merges rows across different refIds, or a null-refId GRANT with anything", async () => {
+    mockRequireOwner.mockResolvedValue({ email: "a@test", ownerId: "orgA" });
+    findUnique.mockResolvedValue({ balance: 1000, reserved: 0 });
+    creditLedgerFindMany.mockResolvedValue([
+      { id: "g1", kind: "GRANT", reason: "beta grant", refId: null, balanceDelta: 500, createdAt: new Date("2026-07-28T09:00:00Z") },
+      { id: "r1", kind: "RESERVE", reason: "", refId: "genjob_1", balanceDelta: -5, createdAt: new Date("2026-07-28T09:01:00Z") },
+      { id: "r2", kind: "RESERVE", reason: "", refId: "genjob_2", balanceDelta: -8, createdAt: new Date("2026-07-28T09:02:00Z") },
+    ]);
+    genJobFindMany.mockResolvedValue([
+      { id: "genjob_1", kind: "IMAGE", count: 1, videoOptions: null },
+      { id: "genjob_2", kind: "IMAGE", count: 1, videoOptions: null },
+    ]);
+    const res = await getMyAccount();
+    if ("error" in res) throw new Error("unexpected error");
+    expect(res.recent.map((r) => r.id)).toEqual(["g1", "r1", "r2"]);
+    expect(res.recent.every((r) => r.detail === undefined)).toBe(true);
+  });
 });
 
 describe("signOutAction", () => {
