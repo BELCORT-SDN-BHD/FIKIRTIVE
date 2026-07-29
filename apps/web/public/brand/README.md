@@ -26,9 +26,9 @@
 | `f-tile-coral.svg` | `brand-assets/f-tile-coral.svg` | 满幅方 tile;apple-touch-icon 源 |
 | `otto-cloud.svg` | 设计系统 `brand/brand-marks-audit.card.html` 中的 marketing OTTO cloud(与 `components/otto/OttoAvatar.tsx` 内联云朵同源) | Otto 产品标(珊瑚云朵) |
 
-`apps/web/app/favicon.ico`(16/32/48)、`apps/web/app/icon.svg`、
-`apps/web/app/apple-icon.png`(180×180)均由上表的 app icon / tile 源文件栅格化生成;
-换标时需一并重新生成。
+`apps/web/app/icon.svg` 与 `f-app-icon-coral.svg` 直接同步(字节相同);
+`apps/web/app/favicon.ico`(16/32/48)与 `apps/web/app/apple-icon.png`(180×180)
+由上表的 app icon / tile 源文件栅格化生成;换标时需一并重新生成/重新同步。
 
 历史:旧机器人三件套(logo-mark / logo-wordmark / otto)已于 2026-07 降级为 legacy
 并从本目录删除(issue #497),需要时从 git 历史取。

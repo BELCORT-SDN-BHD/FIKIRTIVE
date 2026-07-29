@@ -17,7 +17,7 @@ No external codebase, Figma file, or brand kit was provided. This system is an *
 
 - **Fonts:** loaded from Google Fonts CDN (Hanken Grotesk for display + body, JetBrains Mono for code). These are the *chosen brand typefaces*, not stand-ins for an unknown brand font. Swap to self-hosted binaries if licensing requires.
 - **Iconography:** Lucide (CDN) — see ICONOGRAPHY.
-- **OTTO mascot & logos:** original marks in `assets/` (`otto.svg`, `logo-mark.svg`, `logo-wordmark.svg`). Production source of truth is `apps/web/components/otto/OttoAvatar.tsx`; see `docs/design/2026-07-06-otto-mascot-reactions.md` for the current no-mouth reaction spec.
+- **OTTO mascot & logos:** original marks in `assets/` (`otto.svg`, `logo-mark.svg`, `logo-wordmark.svg`). Production source of truth is `apps/web/components/otto/OttoAvatar.tsx`; see `docs/design/2026-07-06-otto-mascot-reactions.md` for the current no-mouth reaction spec. *(注,#497:上述 `assets/` 三件旧标已退役,现役见 `apps/web/public/brand/`,权威 Claude Design。)*
 
 ---
 
@@ -117,7 +117,7 @@ Load Lucide in a card/kit:
 
 **`tokens/`** — `fonts.css`, `colors.css`, `typography.css`, `spacing.css`, `radius.css`, `shadows.css`, `motion.css`
 
-**`assets/`** — `otto.svg` (mascot), `logo-mark.svg`, `logo-wordmark.svg`
+**`assets/`** — `otto.svg` (mascot), `logo-mark.svg`, `logo-wordmark.svg` *(已退役,#497;现役见 `apps/web/public/brand/`,权威 Claude Design)*
 
 **`guidelines/`** — foundation specimen cards (Type, Colors, Spacing, Brand) shown in the Design System tab.
 
