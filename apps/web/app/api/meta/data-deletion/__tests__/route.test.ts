@@ -47,6 +47,8 @@ describe("POST /api/meta/data-deletion", () => {
     expect(typeof body.confirmation_code).toBe("string");
     expect(body.confirmation_code.length).toBeGreaterThan(5);
     expect(body.url).toContain("/legal/data-deletion?code=");
+    // #489: 真删了 → url 声明 deleted
+    expect(body.url).toContain("outcome=deleted");
 
     // token 真的没了
     expect(await prisma.metaConnection.findFirst({ where: { ownerId: ORG } })).toBeNull();
@@ -55,10 +57,32 @@ describe("POST /api/meta/data-deletion", () => {
     expect(ev).not.toBeNull();
   });
 
-  it("unknown meta user → still 200 with confirmation (nothing to delete is a valid outcome)", async () => {
+  it("unknown meta user → still 200 with a receipt, but the url says outcome=none, NOT deleted (#489)", async () => {
     const res = await POST(post(`signed_request=${encodeURIComponent(signedRequest("999-no-such-user"))}`));
     expect(res.status).toBe(200);
-    expect((await res.json()).confirmation_code).toBeTruthy();
+    const body = await res.json();
+    expect(body.confirmation_code).toBeTruthy();
+    expect(body.url).toContain("outcome=none");
+    expect(body.url).not.toContain("outcome=deleted");
+  });
+
+  it("#489 回归:metaUserId 为 NULL 的行 + 有效签名 → 不得返回「已删除」语义,行保持原样", async () => {
+    // NULL 行按精确匹配永远不命中;此前无匹配也返回与删除无差别的 200+code(虚假删除确认)。
+    await prisma.metaConnection.create({
+      data: { id: "mc-dd-null", ownerId: ORG, metaUserId: null, accessTokenEnc: "enc", scope: "ads_read" },
+    });
+
+    const res = await POST(post(`signed_request=${encodeURIComponent(signedRequest("777003"))}`));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // url 语义必须是「未找到关联数据」,与「已删除」可区分
+    expect(body.url).toContain("outcome=none");
+    expect(body.url).not.toContain("outcome=deleted");
+    // 什么都没删:NULL 行仍在,token 仍被持有
+    expect(await prisma.metaConnection.findUnique({ where: { id: "mc-dd-null" } })).not.toBeNull();
+    // 也没有留下「已删除」的审计事件
+    const ev = await prisma.actionEvent.findFirst({ where: { ownerId: ORG, type: "meta.data_deletion" } });
+    expect(ev).toBeNull();
   });
 
   it("bad signature → 400, deletes nothing", async () => {

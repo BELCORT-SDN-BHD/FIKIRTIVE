@@ -46,13 +46,18 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *   P2-1 Privacy policy 链接文字 sentence case。
  *
  *  2026-07-28 第六轮(三轮返工):注释引用可核验化 —— 指向仓库外/不存在文件的引用
- *  统一改为上方决定清单 URL;本页正文无改动。*/
+ *  统一改为上方决定清单 URL;本页正文无改动。
+ *
+ *  2026-07-29 #489 收口(P1-8 的路由侧承诺兑现):回调 url 现携带 outcome=deleted|none
+ *  (route.ts 生成),本页据此如实区分「连接已删除」与「未找到关联数据」两种结果;
+ *  outcome 与 code 一样只是链接携带的陈述 —— 页面仍不查库、不验证,措辞保持「链接
+ *  记录的结果」而非「本页确认」。旧链接(无 outcome)走原有的通用说明分支。*/
 export default async function DataDeletionPage({
   searchParams,
 }: {
-  searchParams: Promise<{ code?: string }>;
+  searchParams: Promise<{ code?: string; outcome?: string }>;
 }) {
-  const { code } = await searchParams;
+  const { code, outcome } = await searchParams;
   return (
     <main className="gb min-h-[100dvh] bg-background px-6 py-10 text-foreground">
       <article className="mx-auto max-w-[720px]">
@@ -76,12 +81,30 @@ export default async function DataDeletionPage({
                 This code is the receipt Fikirtive returned to Meta for a deletion request it received. This page
                 explains what such a request does; it does not look the code up or verify it.
               </p>
-              <p>
-                When Meta sends us a deletion request, we delete the stored Meta connection for that Meta user ID,
-                including its access token. Some records are not deleted by this request: scheduled posts keep the Meta
-                account and post identifiers in their publish history, publish attempts keep their post and media
-                identifiers, and audit records — including the record of the deletion request itself — are kept.
-              </p>
+              {outcome === "deleted" ? (
+                <p>
+                  This link records the outcome the callback reported for this request: a stored Meta connection
+                  matching the Meta user ID was found and deleted, together with the access token we held for it. Some
+                  records are not deleted by such a request: scheduled posts keep the Meta account and post identifiers
+                  in their publish history, publish attempts keep their post and media identifiers, and audit records —
+                  including the record of the deletion request itself — are kept.
+                </p>
+              ) : outcome === "none" ? (
+                <p>
+                  This link records the outcome the callback reported for this request: no stored Meta connection
+                  matched the Meta user ID, so no associated data was found and nothing was deleted. This code is the
+                  receipt for a request we received — it is not a confirmation that any data was deleted. If you
+                  believe we do hold a Meta connection for you, email us with the code so we can check.
+                </p>
+              ) : (
+                <p>
+                  When Meta sends us a deletion request, we delete the stored Meta connection for that Meta user ID,
+                  including its access token; if no stored connection matches, nothing is deleted and the link we
+                  return to Meta says so. Some records are not deleted by this request: scheduled posts keep the Meta
+                  account and post identifiers in their publish history, publish attempts keep their post and media
+                  identifiers, and audit records — including the record of the deletion request itself — are kept.
+                </p>
+              )}
               <p>
                 To have us check a specific request, or to ask about anything beyond the Meta connection, email{" "}
                 <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> quoting
@@ -94,8 +117,9 @@ export default async function DataDeletionPage({
               <p>
                 When you remove Fikirtive from your Facebook settings, Meta sends us a signed deletion request. We
                 delete the Meta connection stored against your Meta user ID, together with the access token we held for
-                it, and return a confirmation code to Meta along with a link back to this page that carries the code.
-                The code is the receipt for a request we received.
+                it, and return a confirmation code to Meta along with a link back to this page that carries the code
+                and the outcome of the request. If no stored connection matches your Meta user ID, nothing is deleted
+                and the link says so. The code is the receipt for a request we received.
               </p>
               <p>
                 Some records are not deleted by this request: scheduled posts keep the Meta account and post

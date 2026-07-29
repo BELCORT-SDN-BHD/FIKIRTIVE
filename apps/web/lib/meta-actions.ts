@@ -21,6 +21,13 @@ export async function completeMetaConnect(
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to connect Meta." };
   const ex = await exchangeCodeForToken(code, redirectUri);
   if ("error" in ex) return ex;
+  // #489: a connection stored WITHOUT metaUserId can never be matched by Meta's
+  // data-deletion callback (/api/meta/data-deletion matches on metaUserId), i.e. we
+  // would hold an encrypted token we cannot delete on the user's request. Fail-closed:
+  // refuse to store the connection at all rather than create an undeletable row.
+  // (debug_token returns user_id for user access tokens; missing it means the
+  // debug_token call itself failed — reconnecting retries the whole exchange.)
+  if (!ex.metaUserId) return { error: "no_meta_user_id" };
   const enc = encryptToken(ex.token);
   const canWrite = ex.grantedScopes.includes("ads_management");
   const canManagePages = ex.grantedScopes.includes("pages_show_list");
