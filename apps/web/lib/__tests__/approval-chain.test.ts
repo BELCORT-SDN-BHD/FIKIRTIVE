@@ -17,14 +17,16 @@
  *   4. the post-approve poll merge APPENDS the chained cards AND the server-named
  *      narration TEXT so both render without a reload (mergeDurableIntoLive),
  *      while never re-injecting any other TEXT;
- *   5. (#498 round-8) the STREAMED data-status needs_approval — the third call
- *      site of the same contract — REPLACES the set wholesale, locked both
- *      behaviorally and by a source seam guard on OttoChatStream's onData
- *      (otto-card-seams precedent: the branch is inline in the component,
- *      unreachable by the node harness).
+ *   5. (#498 round-8, widened to the CLASS in round-9) every client write of
+ *      the pending set — the streamed onData branch (third call site), the
+ *      non-streaming fallback's turn branch (fourth call site) and its approve
+ *      handler alike — goes through nextPendingApprovalCardIds; any union/
+ *      incremental rebuild anywhere in apps/web/components/otto/*.tsx is a
+ *      violation reported file:line (otto-card-seams precedent: the branches
+ *      are inline in components, unreachable by the node harness).
  *
  * Pure helpers, no React, no I/O (mirrors otto-inject-helpers.test.ts) — except
- * the round-8 seam guard, which fs-reads OttoChatStream.tsx as text.
+ * the seam guard, which fs-reads the otto component sources as text.
  */
 import { describe, it, expect, vi } from "vitest";
 import fs from "node:fs";
@@ -464,27 +466,72 @@ describe("streamed needs_approval status → pending set (#498 round-8)", () => 
     expect(nextPendingApprovalCardIds(cur, [], undefined)).toEqual(new Set(["card_a"]));
   });
 
-  // 缝守卫(otto-card-seams 先例:分支内联在组件 onData 里,node harness 执行不到)
-  // ——流式 needs_approval 分支必须经 nextPendingApprovalCardIds 整体替换,不得
-  // 重建增量并集(第三份私账)。
-  it("OttoChatStream 的流式 needs_approval 分支经 nextPendingApprovalCardIds 替换(无并集合并)", () => {
-    const src = fs.readFileSync(
+  // ── 类级缝守卫(#498 round-9;otto-card-seams 先例:写点内联在组件里,node
+  // harness 执行不到)。round-8 只查 OttoChatStream 的 onData;round-9 收口第四处
+  // 调用点(OttoConversation 非流式回退)后升级为类级:扫描 otto 组件目录全部
+  // .tsx,凡 setPendingApprovalCardIds 写入,其调用表达式(括号配平切片)必须经
+  // nextPendingApprovalCardIds,且不得含 .add(/forEach(/...cur 等并集/增量形状
+  // ——任何一处重建私账即红,并打印 文件:行 与违规切片首行。
+  it("类级守卫:otto 组件全部 .tsx 的 pendingApprovalCardIds 写入都经契约工具(无并集/增量)", () => {
+    const ottoDir = path.resolve(__dirname, "../../components/otto");
+    const files = fs
+      .readdirSync(ottoDir)
+      .filter((f) => f.endsWith(".tsx"))
+      .sort();
+    expect(files.length).toBeGreaterThan(0);
+    // 括号配平切出整个调用表达式;配不平时截到文件尾——只会更严,fail-closed。
+    const callSlice = (src: string, open: number): string => {
+      let depth = 0;
+      for (let i = open; i < src.length; i += 1) {
+        if (src[i] === "(") depth += 1;
+        else if (src[i] === ")") {
+          depth -= 1;
+          if (depth === 0) return src.slice(open, i + 1);
+        }
+      }
+      return src.slice(open);
+    };
+    const violations: string[] = [];
+    let writeSites = 0;
+    for (const file of files) {
+      const src = fs.readFileSync(path.join(ottoDir, file), "utf8");
+      const re = /setPendingApprovalCardIds\s*\(/g;
+      for (let m = re.exec(src); m; m = re.exec(src)) {
+        writeSites += 1;
+        const line = src.slice(0, m.index).split("\n").length;
+        const slice = callSlice(src, m.index + m[0].length - 1);
+        const incremental = /\.add\s*\(|forEach\s*\(|\.\.\.\s*(cur|prev)/.test(slice);
+        const viaContract = /nextPendingApprovalCardIds\s*\(/.test(slice);
+        if (incremental || !viaContract) {
+          violations.push(
+            `${file}:${line} ${incremental ? "并集/增量写法" : "未经 nextPendingApprovalCardIds"} — ${slice.split("\n")[0].trim()}`,
+          );
+        }
+      }
+    }
+    // 写点全体消失(setter 改名/搬家)同样响亮失败——守卫不许静默失去对象。
+    expect(writeSites).toBeGreaterThan(0);
+    expect(violations, `\n${violations.join("\n")}`).toEqual([]);
+  });
+
+  // 存在性钉:类级扫描只约束「已有写点」的形状;这里钉死两个契约分支本身还在——
+  // 流式 onData 的 needs_approval 分支(第三处)与非流式回退 send 的
+  // needs_approval 分支(第四处)都仍经契约工具整体替换(approvedCardIds 恒空,
+  // 两处都没有 fired 卡)。
+  it("存在性钉:流式与非流式 needs_approval 分支都在且经契约工具整体替换", () => {
+    const chatStream = fs.readFileSync(
       path.resolve(__dirname, "../../components/otto/OttoChatStream.tsx"),
       "utf8",
     );
-    // 切出 onData 处理器:从 onData 到 onFinish(同一 useChat 调用的两个相邻
-    // option key;任一改名则切片为空,下面的断言会响亮地失败)。
-    const start = src.indexOf("onData");
-    const end = src.indexOf("onFinish");
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    const onData = src.slice(start, end);
-    // 分支存在,且经契约工具整体替换(approvedCardIds 为空——流式 status 没有 fired 卡)…
-    expect(onData).toMatch(
+    expect(chatStream).toMatch(
       /s\.kind === "needs_approval"[\s\S]{0,600}?nextPendingApprovalCardIds\(cur, \[\], s\.pendingCardIds\)/,
     );
-    // …且 onData 里不残留对 pendingCardIds 的增量并集(round-8 之前的形状:
-    // `const next = new Set(cur); … next.add(id)`)。
-    expect(onData).not.toMatch(/pendingCardIds[\s\S]{0,200}?\.add\(/);
+    const conversation = fs.readFileSync(
+      path.resolve(__dirname, "../../components/otto/OttoConversation.tsx"),
+      "utf8",
+    );
+    expect(conversation).toMatch(
+      /res\.status === "needs_approval"[\s\S]{0,600}?nextPendingApprovalCardIds\(cur, \[\], res\.pendingCardIds\)/,
+    );
   });
 });
