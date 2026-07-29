@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, FileText, LoaderCircle, Plus, RefreshCw, ShieldAlert } from "lucide-react";
+import { AlertCircle, ArrowLeft, FileText, LoaderCircle, Plus, RefreshCw, ShieldAlert, Unplug } from "lucide-react";
 import {
   createMessageTemplate,
   createMessageTemplateVersion,
   listTemplates,
 } from "@/lib/customer-inbox-ui-actions";
+import type { listChannelScopes } from "@/lib/customer-inbox-gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +20,12 @@ type ListResult = Awaited<ReturnType<typeof listTemplates>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
 type TemplateRow = ListSuccess["resource"][number];
 type VersionRow = TemplateRow["versions"][number];
+type ScopesResult = Awaited<ReturnType<typeof listChannelScopes>>;
+type ScopesSuccess = Extract<ScopesResult, { ok: true }>;
+type ChannelScopeRow = ScopesSuccess["resource"][number];
+
+const selectClass =
+  "min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm text-foreground shadow-[var(--shadow-xs)] focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
 
 function submissionReason(state: string): string {
   if (state === "draft") return "Not yet submitted to a provider.";
@@ -61,7 +68,13 @@ function DeniedState({ message }: { message: string }) {
   );
 }
 
-export default function InboxTemplatesPage({ initialState }: { initialState: ListResult }) {
+export default function InboxTemplatesPage({
+  initialState,
+  initialScopes,
+}: {
+  initialState: ListResult;
+  initialScopes: ScopesResult;
+}) {
   if (!initialState.ok && isDenialErrorCode(initialState.error)) {
     return <DeniedState message={errorMessage(initialState.error)} />;
   }
@@ -69,6 +82,8 @@ export default function InboxTemplatesPage({ initialState }: { initialState: Lis
     <TemplatesWorkspace
       initialTemplates={initialState.ok ? initialState.resource : []}
       initialErrorCode={initialState.ok ? null : initialState.error}
+      scopes={initialScopes.ok ? initialScopes.resource : []}
+      scopesErrorCode={initialScopes.ok ? null : initialScopes.error}
     />
   );
 }
@@ -84,9 +99,13 @@ function readErrorMessage(error: ReadError): string {
 function TemplatesWorkspace({
   initialTemplates,
   initialErrorCode,
+  scopes,
+  scopesErrorCode,
 }: {
   initialTemplates: TemplateRow[];
   initialErrorCode: string | null;
+  scopes: ChannelScopeRow[];
+  scopesErrorCode: string | null;
 }) {
   const [templates, setTemplates] = useState<TemplateRow[]>(initialTemplates);
   const [scopeFilter, setScopeFilter] = useState("");
@@ -96,12 +115,15 @@ function TemplatesWorkspace({
   );
 
   const [channelScopeId, setChannelScopeId] = useState("");
-  const [channel, setChannel] = useState("whatsapp");
   const [name, setName] = useState("");
   const [locale, setLocale] = useState("en_MY");
   const [creating, setCreating] = useState(false);
   const [createNotice, setCreateNotice] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // #495 — the displayed selection IS the submitted value: both the channelScopeId and the
+  // channel come from the one workspace row the merchant picked, never from free text.
+  const selectedScope = scopes.find((scope) => scope.id === channelScopeId) ?? null;
 
   async function refresh(nextScope = scopeFilter) {
     setLoading(true);
@@ -124,14 +146,14 @@ function TemplatesWorkspace({
 
   async function submitTemplate(event: FormEvent) {
     event.preventDefault();
-    if (!channelScopeId.trim() || !channel.trim() || !name.trim() || !locale.trim()) return;
+    if (!selectedScope || !name.trim() || !locale.trim()) return;
     setCreating(true);
     setCreateError(null);
     setCreateNotice(null);
     try {
       const result = await createMessageTemplate({
-        channelScopeId: channelScopeId.trim(),
-        channel: channel.trim(),
+        channelScopeId: selectedScope.id,
+        channel: selectedScope.channel,
         name: name.trim(),
         locale: locale.trim(),
       });
@@ -167,24 +189,57 @@ function TemplatesWorkspace({
           <span>Submission, review, and availability below reflect what Fikirtive has stored, never a live provider decision.</span>
         </div>
 
-        <Card className="mt-6">
-          <CardHeader><CardTitle>New template</CardTitle><CardDescription>Team-member and channel-scope lookup isn&apos;t available yet — enter the exact channel scope ID.</CardDescription></CardHeader>
-          <CardContent>
-            <form className="grid gap-3 sm:grid-cols-2" onSubmit={submitTemplate}>
-              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Channel scope ID<Input value={channelScopeId} onChange={(event) => setChannelScopeId(event.target.value)} maxLength={256} aria-label="Channel scope ID" /></label>
-              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Channel<Input value={channel} onChange={(event) => setChannel(event.target.value)} maxLength={64} aria-label="Channel" /></label>
-              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Template name<Input value={name} onChange={(event) => setName(event.target.value)} maxLength={128} aria-label="Template name" /></label>
-              <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Locale<Input value={locale} onChange={(event) => setLocale(event.target.value)} maxLength={32} aria-label="Locale" /></label>
-              <div className="sm:col-span-2">
-                <Button type="submit" disabled={creating || !channelScopeId.trim() || !channel.trim() || !name.trim() || !locale.trim()}>
-                  {creating ? <LoaderCircle className="animate-spin" /> : <Plus />}Create template
+        {scopesErrorCode ? (
+          <Card className="mt-6">
+            <CardHeader><CardTitle>New template</CardTitle><CardDescription>Every template belongs to one of this workspace&apos;s channel accounts.</CardDescription></CardHeader>
+            <CardContent>
+              <p className="text-sm text-destructive">
+                The channel account list could not load ({scopesErrorCode}). Refresh the page to retry.
+              </p>
+            </CardContent>
+          </Card>
+        ) : scopes.length === 0 ? (
+          <Card className="mt-6">
+            <CardHeader><CardTitle>New template</CardTitle><CardDescription>Every template belongs to one of this workspace&apos;s channel accounts.</CardDescription></CardHeader>
+            <CardContent>
+              <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
+                <Unplug className="mx-auto size-6 text-muted-foreground" />
+                <p className="mt-3 text-sm font-semibold">No messaging channel is connected in this workspace yet</p>
+                <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
+                  Connect a channel first — then come back here to create templates for it.
+                </p>
+                <Button asChild size="sm" variant="secondary" className="mt-4">
+                  <Link href="/otto?view=connections">Connect a channel</Link>
                 </Button>
               </div>
-            </form>
-            {createError ? <p className="mt-3 text-sm text-destructive">{createError}</p> : null}
-            {createNotice ? <p className="mt-3 text-sm text-success">{createNotice}</p> : null}
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className="mt-6">
+            <CardHeader><CardTitle>New template</CardTitle><CardDescription>Pick the channel account the template belongs to — the selected account is exactly what is submitted.</CardDescription></CardHeader>
+            <CardContent>
+              <form className="grid gap-3 sm:grid-cols-2" onSubmit={submitTemplate}>
+                <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Channel account
+                  <select className={selectClass} value={channelScopeId} onChange={(event) => setChannelScopeId(event.target.value)} disabled={creating} aria-label="Channel account">
+                    <option value="">Select a channel account…</option>
+                    {scopes.map((scope) => (
+                      <option key={scope.id} value={scope.id}>{scope.channel} · {scope.scopeKey}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Template name<Input value={name} onChange={(event) => setName(event.target.value)} maxLength={128} aria-label="Template name" /></label>
+                <label className="grid gap-1.5 text-xs font-semibold text-muted-foreground">Locale<Input value={locale} onChange={(event) => setLocale(event.target.value)} maxLength={32} aria-label="Locale" /></label>
+                <div className="sm:col-span-2">
+                  <Button type="submit" disabled={creating || !selectedScope || !name.trim() || !locale.trim()}>
+                    {creating ? <LoaderCircle className="animate-spin" /> : <Plus />}Create template
+                  </Button>
+                </div>
+              </form>
+              {createError ? <p className="mt-3 text-sm text-destructive">{createError}</p> : null}
+              {createNotice ? <p className="mt-3 text-sm text-success">{createNotice}</p> : null}
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="mt-5">
           <CardContent>
@@ -215,7 +270,11 @@ function TemplatesWorkspace({
           <section className="mt-5 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-6 py-14 text-center shadow-sm">
             <FileText className="mx-auto size-8 text-muted-foreground" />
             <h2 className="mt-4 text-lg font-semibold">No templates recorded yet</h2>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Create one above, or clear the channel scope filter.</p>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+              {scopes.length === 0
+                ? "Templates appear here once a channel is connected and the first template is created."
+                : "Create one above, or clear the channel scope filter."}
+            </p>
           </section>
         ) : (
           <section className="mt-5 grid gap-4">

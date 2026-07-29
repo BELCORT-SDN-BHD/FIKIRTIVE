@@ -740,6 +740,18 @@ export function createCustomerInboxService(
     });
   }
 
+  // #495 — the template create form offers the workspace's connected channel accounts as a
+  // dropdown, so the scope is picked from real tenant rows instead of typed by hand.
+  // Read-only; same membership gate and owner filter as every other read here.
+  async function listChannelScopes(principal: CustomerInboxPrincipal) {
+    await requireReadMembership(principal, "listChannelScopes");
+    return db.channelScope.findMany({
+      where: { ownerId: principal.ownerId },
+      orderBy: [{ channel: "asc" }, { scopeKey: "asc" }],
+      select: { id: true, channel: true, scopeKey: true },
+    });
+  }
+
   async function saveConversationDraft(
     principal: CustomerInboxPrincipal,
     input: SaveConversationDraftInput,
@@ -1267,6 +1279,7 @@ export function createCustomerInboxService(
     getHistory,
     getConversationPreflight,
     listTemplates,
+    listChannelScopes,
     saveConversationDraft,
     assignConversation,
     takeOverConversation,

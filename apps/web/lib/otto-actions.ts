@@ -116,6 +116,7 @@ import {
   updateContact,
 } from "./crm-actions";
 import { getContact, listContacts, searchContacts, type CrmContactRow } from "./crm-view-data";
+import { listChannelScopes } from "./customer-inbox-gateway";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -283,6 +284,19 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
     importCsv: (input) => importContacts(input),
     recordConsent: (input) => setContactConsent(input),
     setDnd: (input) => setContactDndFromOtto(input),
+  };
+}
+
+// #495/#500 read parity: the SAME owner-scoped customer-inbox gateway read the human
+// template picker uses (the broadcast composer reads the same owner-scoped rows through
+// its own broadcast gateway). The port never accepts owner identity.
+function makeOttoChannelScopesPort(): NonNullable<OttoContext["channelScopes"]> {
+  return {
+    list: async () => {
+      const result = await listChannelScopes();
+      if (!result.ok) return { error: result.error };
+      return { ok: true as const, scopes: result.resource };
+    },
   };
 }
 
@@ -508,6 +522,8 @@ export async function buildOttoContext({
     // B0-59/60/C1: owner-scoped Contact reads/writes re-enter the same authenticated actions.
     // Identity stays read-only; consent and DND mutations route through the closed runtime writers.
     contacts: makeOttoContactsPort(),
+    // #495/#500: connected channel-account list re-enters the same gateway read as the human pickers.
+    channelScopes: makeOttoChannelScopesPort(),
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
     metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
