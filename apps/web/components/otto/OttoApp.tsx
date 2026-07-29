@@ -194,12 +194,23 @@ export function OttoApp({
   }, []);
 
   useEffect(() => {
-    function syncViewFromLocation() {
-      setView(parseViewParam(new URLSearchParams(window.location.search).get("view")));
+    function syncFromLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const nextView = parseViewParam(params.get("view"));
+      setView(nextView);
       setActionError(null);
+      // The "otto" view's URL always fully encodes the active thread (see projectHref /
+      // viewHref below) — including handleThreadStarted and handleNewChat's same-project
+      // branch, which push their URL via raw history.pushState with no Next.js navigation,
+      // to avoid remounting the stream mid-turn. Restore activeThreadId from that URL on
+      // Back/Forward so the SPA doesn't keep showing a thread the address bar no longer
+      // names. Non-"otto" views never touch activeThreadId when pushed, so leave it alone.
+      if (nextView === "otto") {
+        setActiveThreadId(params.get("thread") || null);
+      }
     }
-    window.addEventListener("popstate", syncViewFromLocation);
-    return () => window.removeEventListener("popstate", syncViewFromLocation);
+    window.addEventListener("popstate", syncFromLocation);
+    return () => window.removeEventListener("popstate", syncFromLocation);
   }, []);
 
   useEffect(() => {
