@@ -176,9 +176,15 @@ export default function BroadcastReportDetailPage({
             <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={loading}>
               {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh
             </Button>
-            <Button asChild variant="secondary"><Link href={`/crm/broadcasts/${run.id}`}>Open broadcast</Link></Button>
           </div>
         </header>
+
+        <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium text-muted-foreground">Broadcast</span>
+          <Link href={`/crm/broadcasts/${run.id}`} className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
+            <Badge variant="outline">Open broadcast</Badge>
+          </Link>
+        </div>
 
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />

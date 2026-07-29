@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button";
 
 export default function CrmTemplatesError({
   error,
-  unstable_retry,
+  reset,
 }: {
   error: Error & { digest?: string };
-  unstable_retry: () => void;
+  reset: () => void;
 }) {
   return (
     <main className="min-h-dvh bg-background px-4 py-10 text-foreground sm:px-6">
@@ -22,13 +22,13 @@ export default function CrmTemplatesError({
         </p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Templates could not load</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Nothing was changed. Retry the owner-scoped read, or return to Otto.
+          Nothing was changed. Try again, or return to Otto.
         </p>
         {error.digest ? (
           <p className="mt-3 font-mono text-xs text-muted-foreground">Error reference: {error.digest}</p>
         ) : null}
         <div className="mt-6 flex flex-wrap gap-3">
-          <Button type="button" onClick={unstable_retry}>
+          <Button type="button" onClick={reset}>
             <RefreshCw />
             Retry
           </Button>

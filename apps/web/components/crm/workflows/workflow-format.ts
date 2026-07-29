@@ -59,7 +59,17 @@ export function summarizeRuleSource(rulesSource: string): RuleSummary {
   const triggerType = triggerMatch?.[1];
   const trigger = (triggerType && TRIGGER_LABELS[triggerType]) || "Custom trigger";
 
-  const actionTypes = [...rulesSource.matchAll(/action:\s*\n\s*type:\s*(\S+)/g)].map((match) => match[1]);
+  // Each step's fields (and each action's fields within it) may appear in any order — the
+  // workflow grammar does not fix key order within a mapping. Scope the search to each step's
+  // own slice of the source (bounded by the next "- key:" step marker) so a rule that writes
+  // templateVersionRef before type still surfaces its action, instead of silently dropping it.
+  const stepBlocks = rulesSource.split(/\n(?=[ \t]*-[ \t]+key:\s)/);
+  const actionTypes = stepBlocks.flatMap((block) => {
+    const actionSection = /action:\s*\n([\s\S]*)/.exec(block)?.[1];
+    if (!actionSection) return [];
+    const typeMatch = /(?:^|\n)[ \t]*type:\s*(\S+)/.exec(actionSection);
+    return typeMatch ? [typeMatch[1]] : [];
+  });
   const actionPhrases = actionTypes.map((type) => ACTION_LABELS[type] ?? humanizeCode(type));
   const actions = actionPhrases.length > 0
     ? actionPhrases[0].charAt(0).toUpperCase() + actionPhrases[0].slice(1) + actionPhrases.slice(1).map((phrase) => `, then ${phrase}`).join("")

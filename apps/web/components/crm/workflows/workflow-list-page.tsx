@@ -194,7 +194,7 @@ export default function WorkflowListPage({
 
         <section className="mt-7" aria-labelledby="workflow-list-heading">
           <div className="flex items-end justify-between gap-4">
-            <div><h2 id="workflow-list-heading" className="text-xl font-semibold tracking-tight">Rule definitions</h2><p className="mt-1 text-sm text-muted-foreground">Definition status and execution authority stay separate.</p></div>
+            <div><h2 id="workflow-list-heading" className="text-xl font-semibold tracking-tight">Workflow rules</h2><p className="mt-1 text-sm text-muted-foreground">Whether a rule is published and whether a Routine is authorized to run it are tracked separately.</p></div>
             <p className="text-sm text-muted-foreground">{definitions.length} {definitions.length === 1 ? "workflow" : "workflows"}</p>
           </div>
 
@@ -202,7 +202,7 @@ export default function WorkflowListPage({
             <div className="mt-4 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-8 py-16 text-center shadow-sm">
               <FileCode2 className="mx-auto size-9 text-muted-foreground" />
               <h3 className="mt-4 text-lg font-semibold">No workflows yet</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Create a readable rule file, validate it, and publish an immutable revision. Routine authorization happens separately.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Create a readable rule file, validate it, and publish a revision that can&apos;t be changed afterward. Routine authorization happens separately.</p>
               <Button className="mt-5" type="button" onClick={() => setDialogOpen(true)}><Plus />New workflow</Button>
             </div>
           ) : (

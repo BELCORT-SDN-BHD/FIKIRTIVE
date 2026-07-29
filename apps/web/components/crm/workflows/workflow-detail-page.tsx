@@ -181,7 +181,7 @@ export default function WorkflowDetailPage({
     : routineReadError
       ? "Routine status could not load."
       : activeRoutineCount > 0
-        ? `Published and active — ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"} may act on real conversations.`
+        ? `Published and active — ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"} may act on real conversations, but delivery remains simulated.`
         : definition.status === "published"
           ? "Published, but no Routine is authorized yet — nothing will send."
           : "Draft — not yet published.";

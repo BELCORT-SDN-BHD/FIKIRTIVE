@@ -123,7 +123,6 @@ export default function BroadcastReportListPage({
             <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={loading}>
               {loading ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh
             </Button>
-            <Button asChild variant="secondary"><Link href="/crm/broadcasts">Open broadcasts</Link></Button>
           </div>
         </header>
 

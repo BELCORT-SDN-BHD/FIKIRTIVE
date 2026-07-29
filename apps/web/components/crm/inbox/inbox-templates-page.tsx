@@ -244,7 +244,7 @@ function TemplatesWorkspace({
         <Card className="mt-5">
           <CardContent>
             <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={submitFilter}>
-              <Input value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)} maxLength={256} placeholder="Filter by channel scope ID (optional)" aria-label="Filter by channel scope ID" />
+              <Input value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)} maxLength={256} placeholder="Filter by channel account ID (optional)" aria-label="Filter by channel account ID" />
               <Button type="submit" variant="secondary" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : null}Apply filter</Button>
             </form>
             {readError ? (
