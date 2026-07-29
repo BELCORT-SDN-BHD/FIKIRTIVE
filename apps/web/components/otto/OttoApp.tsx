@@ -205,13 +205,26 @@ export function OttoApp({
       // to avoid remounting the stream mid-turn. Restore activeThreadId from that URL on
       // Back/Forward so the SPA doesn't keep showing a thread the address bar no longer
       // names. Non-"otto" views never touch activeThreadId when pushed, so leave it alone.
+      //
+      // A bare "otto" URL with neither ?thread= nor ?new=1 (e.g. handleUseInOtto's push,
+      // or landing straight on /otto?project=P) carries no explicit thread/new signal —
+      // mirror the server's own default for that exact address (app/otto/page.tsx: no
+      // thread + no new=1 opens the most recent thread), so Back/Forward never disagrees
+      // with what reloading the same URL would show.
       if (nextView === "otto") {
-        setActiveThreadId(params.get("thread") || null);
+        const threadParam = params.get("thread");
+        if (threadParam) {
+          setActiveThreadId(threadParam);
+        } else if (params.get("new") === "1") {
+          setActiveThreadId(null);
+        } else {
+          setActiveThreadId(threads[0]?.id ?? null);
+        }
       }
     }
     window.addEventListener("popstate", syncFromLocation);
     return () => window.removeEventListener("popstate", syncFromLocation);
-  }, []);
+  }, [threads]);
 
   useEffect(() => {
     queueMicrotask(() => {

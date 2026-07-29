@@ -298,4 +298,23 @@ describe("Otto popstate restores the active thread, not only the view (#522 roun
     // other half, so this must not regress to activeThreadId=null.
     expect(activeThreadText(dom)).toBe("thr_existing");
   });
+
+  it("Back/Forward onto a bare project URL (no ?thread=, no ?new=1) opens the most recent thread — matching the server's own default for that same address (app/otto/page.tsx), not a forced blank state", async () => {
+    const threads = [
+      { id: "thr_recent", projectId: "proj_1", title: "Recent", updatedAt: "2026-07-29T00:00:00.000Z", messages: [] },
+      { id: "thr_older", projectId: "proj_1", title: "Older", updatedAt: "2026-07-01T00:00:00.000Z", messages: [] },
+    ];
+    window.history.pushState(null, "", "/otto?project=proj_1&thread=thr_older");
+    const dom = await render(createElement(OttoApp, baseProps({ initialActiveThreadId: "thr_older", threads })));
+    expect(activeThreadText(dom)).toBe("thr_older");
+
+    // A bare project URL — e.g. reached via handleUseInOtto's push, or Back past a
+    // ?thread= entry into one with neither ?thread= nor ?new=1. app/otto/page.tsx
+    // resolves this exact address to the most recent thread, not an empty compose
+    // box; the popstate handler used to force activeThreadId to null here instead,
+    // disagreeing with what reloading this same URL would actually show (#522).
+    await popTo("/otto?project=proj_1");
+
+    expect(activeThreadText(dom)).toBe("thr_recent");
+  });
 });
