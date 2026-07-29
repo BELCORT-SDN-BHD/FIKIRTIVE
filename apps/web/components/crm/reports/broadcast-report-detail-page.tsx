@@ -182,7 +182,7 @@ export default function BroadcastReportDetailPage({
 
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />
-          <span><strong>Simulated workspace.</strong> Sending attempts are known from C5. Provider delivery, read, and failure receipts are not connected, so those outcomes remain <strong>Unknown</strong>.</span>
+          <span><strong>Simulated workspace.</strong> Sending attempts are recorded. Provider delivery, read, and failure receipts are not connected, so those outcomes remain <strong>Unknown</strong>.</span>
         </div>
 
         {transportError ? (
@@ -194,7 +194,7 @@ export default function BroadcastReportDetailPage({
         <section className="mt-7" aria-labelledby="report-overview-heading">
           <div className="mb-4">
             <h2 id="report-overview-heading" className="text-xl font-semibold tracking-tight">Report overview</h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">Each axis has its own authority and freshness. No combined success rate is shown.</p>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">Each part of this report has its own reliability and freshness. No combined success rate is shown.</p>
           </div>
           {state.report.ok ? (
             <ReportAxisGroups report={state.report.resource} showSkipReasons />
