@@ -7,12 +7,18 @@
  * exact token cost); per-action generation charges are whole credits.
  */
 
-/** Format a displayed-credit amount: thousands-separated, at most 1 decimal. */
+/** Format a displayed-credit amount: thousands-separated, rounded to at most 1 decimal —
+ *  fractional credits are real signal at any magnitude (an Otto-turn settle can land a
+ *  real balance on 1,234.6; this helper backs real balances/ledger/confirm copy, so it
+ *  must never change the amount, only how it's grouped). The same 1-decimal rule applies
+ *  regardless of size — no separate "round to whole credit at 1000+" branch (that used to
+ *  silently turn 1,234.6 into 1,235). Locale is fixed ("en-US", never the browser/Node
+ *  default) so server and client render byte-identical text. */
 export function formatCredits(n: number): string {
   const rounded = Math.round(n * 10) / 10;
   return Number.isInteger(rounded)
-    ? rounded.toLocaleString()
-    : rounded.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    ? rounded.toLocaleString("en-US")
+    : rounded.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
 /** "1 credit" / "20 credits" — singular only for exactly 1. */

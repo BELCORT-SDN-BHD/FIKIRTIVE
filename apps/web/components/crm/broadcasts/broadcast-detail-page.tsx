@@ -249,20 +249,27 @@ export default function BroadcastDetailPage({
             <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={busy !== null}>
               <RefreshCw className={busy === "refresh" ? "animate-spin" : undefined} />Refresh
             </Button>
-            {reportAvailable ? (
-              <Button asChild variant="secondary">
-                <Link href={`/crm/reports/${run.id}`}>View report</Link>
-              </Button>
-            ) : null}
           </div>
         </header>
 
-        {campaign ? (
-          <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-medium text-muted-foreground">Campaign</span>
-            <Link href={`/campaign/${campaign.id}`} className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
-              <Badge variant="outline">{campaign.name}</Badge>
-            </Link>
+        {campaign || reportAvailable ? (
+          <div className="mt-5 flex flex-wrap items-center gap-4 text-sm">
+            {campaign ? (
+              <span className="flex items-center gap-2">
+                <span className="font-medium text-muted-foreground">Campaign</span>
+                <Link href={`/campaign/${campaign.id}`} className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
+                  <Badge variant="outline">{campaign.name}</Badge>
+                </Link>
+              </span>
+            ) : null}
+            {reportAvailable ? (
+              <span className="flex items-center gap-2">
+                <span className="font-medium text-muted-foreground">Report</span>
+                <Link href={`/crm/reports/${run.id}`} className="rounded-full outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40">
+                  <Badge variant="outline">View report</Badge>
+                </Link>
+              </span>
+            ) : null}
           </div>
         ) : null}
 

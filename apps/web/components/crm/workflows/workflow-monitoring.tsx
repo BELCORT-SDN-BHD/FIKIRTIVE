@@ -148,7 +148,7 @@ export default function WorkflowMonitoring({
 
         <div>
           <h3 className="text-lg font-semibold">Step ledger</h3>
-          <div className="mt-3"><UnavailablePanel icon={ShieldAlert} title="Step ledger" copy="Per-step execution rows are not exposed by the current read surface. No step status or C4/C5 send outcome is guessed." /></div>
+          <div className="mt-3"><UnavailablePanel icon={ShieldAlert} title="Step ledger" copy="Per-step execution rows are not available yet. No step-by-step send or delivery status is guessed." /></div>
         </div>
 
         <div>

@@ -174,7 +174,7 @@ export function OttoView({
   }
   if (view === "account") {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="cv-settings-frame" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <OttoAccount account={account} />
       </div>
     );

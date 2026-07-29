@@ -30,6 +30,58 @@ export function shortWorkflowId(id: string): string {
   return id.length > 18 ? `${id.slice(0, 9)}…${id.slice(-5)}` : id;
 }
 
+const TRIGGER_LABELS: Record<string, string> = {
+  manual: "Run manually",
+  schedule: "On a schedule",
+  customer_message: "When a customer messages",
+  journey_due: "When a contact reaches this step",
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  conversation_reply: "reply in the conversation",
+  broadcast_run: "send a broadcast",
+  wait: "wait",
+  complete: "mark the journey complete",
+};
+
+export type RuleSummary = {
+  trigger: string;
+  actions: string;
+  condition: string | null;
+};
+
+/** A best-effort, display-only summary of the plain-text rule file. This never validates the
+ *  rule — validateWorkflowRules is the source of truth — it only extracts a human-readable
+ *  headline so the default view is three lines, not raw YAML. An unrecognized shape falls back
+ *  to a generic label rather than guessing. */
+export function summarizeRuleSource(rulesSource: string): RuleSummary {
+  const triggerMatch = /trigger:\s*\n\s*type:\s*(\S+)/.exec(rulesSource);
+  const triggerType = triggerMatch?.[1];
+  const trigger = (triggerType && TRIGGER_LABELS[triggerType]) || "Custom trigger";
+
+  // Each step's fields (and each action's fields within it) may appear in any order — the
+  // workflow grammar does not fix key order within a mapping. Scope the search to each step's
+  // own slice of the source (bounded by the next "- key:" step marker) so a rule that writes
+  // templateVersionRef before type still surfaces its action, instead of silently dropping it.
+  const stepBlocks = rulesSource.split(/\n(?=[ \t]*-[ \t]+key:\s)/);
+  const actionTypes = stepBlocks.flatMap((block) => {
+    const actionSection = /action:\s*\n([\s\S]*)/.exec(block)?.[1];
+    if (!actionSection) return [];
+    const typeMatch = /(?:^|\n)[ \t]*type:\s*(\S+)/.exec(actionSection);
+    return typeMatch ? [typeMatch[1]] : [];
+  });
+  const actionPhrases = actionTypes.map((type) => ACTION_LABELS[type] ?? humanizeCode(type));
+  const actions = actionPhrases.length > 0
+    ? actionPhrases[0].charAt(0).toUpperCase() + actionPhrases[0].slice(1) + actionPhrases.slice(1).map((phrase) => `, then ${phrase}`).join("")
+    : "No steps defined yet";
+
+  const condition = /type:\s*outside_business_hours/.test(rulesSource)
+    ? "Only outside business hours"
+    : null;
+
+  return { trigger, actions, condition };
+}
+
 export function definitionStatusPresentation(status: string): WorkflowPresentation {
   switch (status) {
     case "draft":
@@ -182,7 +234,7 @@ const REASON_COPY: Record<string, string> = {
   routine_authority_status: "The Routine is not active, so this action was stopped.",
   routine_authority_expired: "The Routine authorization expired before this action could start.",
   routine_authority_hash_drift:
-    "The rule, dependencies, scope, or authorization no longer match the approved envelope.",
+    "The rule, dependencies, scope, or authorization no longer match what was approved.",
   routine_authority_budget_unavailable:
     "The approved budget could not be verified, so this action was stopped.",
   workflow_dependency_unavailable:

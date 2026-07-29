@@ -59,7 +59,7 @@ function DeniedState({ message }: { message: string }) {
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground">
           <AlertCircle className="size-5" />
         </span>
-        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Inbox</p>
+        <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This workspace is not available</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">{message}</p>
         <Button asChild className="mt-6" variant="secondary"><Link href="/otto"><ArrowLeft />Return to Otto</Link></Button>
@@ -171,12 +171,12 @@ function TemplatesWorkspace({
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
       <div className="mx-auto max-w-6xl">
-        <Link href="/crm/inbox" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
-          <ArrowLeft className="size-4" />Back to Inbox
+        <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground">
+          <ArrowLeft className="size-4" />Return to Otto
         </Link>
 
         <header className="mt-4 border-b border-border pb-7">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Inbox</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Message templates</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
             A logical template groups immutable versions. Every state shown here is a local Fikirtive record — not Meta or
@@ -244,7 +244,7 @@ function TemplatesWorkspace({
         <Card className="mt-5">
           <CardContent>
             <form className="grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={submitFilter}>
-              <Input value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)} maxLength={256} placeholder="Filter by channel scope ID (optional)" aria-label="Filter by channel scope ID" />
+              <Input value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)} maxLength={256} placeholder="Filter by channel account ID (optional)" aria-label="Filter by channel account ID" />
               <Button type="submit" variant="secondary" disabled={loading}>{loading ? <LoaderCircle className="animate-spin" /> : null}Apply filter</Button>
             </form>
             {readError ? (

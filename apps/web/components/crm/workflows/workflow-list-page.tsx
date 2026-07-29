@@ -194,7 +194,7 @@ export default function WorkflowListPage({
 
         <section className="mt-7" aria-labelledby="workflow-list-heading">
           <div className="flex items-end justify-between gap-4">
-            <div><h2 id="workflow-list-heading" className="text-xl font-semibold tracking-tight">Rule definitions</h2><p className="mt-1 text-sm text-muted-foreground">Definition status and execution authority stay separate.</p></div>
+            <div><h2 id="workflow-list-heading" className="text-xl font-semibold tracking-tight">Workflow rules</h2><p className="mt-1 text-sm text-muted-foreground">Whether a rule is published and whether a Routine is authorized to run it are tracked separately.</p></div>
             <p className="text-sm text-muted-foreground">{definitions.length} {definitions.length === 1 ? "workflow" : "workflows"}</p>
           </div>
 
@@ -202,7 +202,7 @@ export default function WorkflowListPage({
             <div className="mt-4 rounded-[var(--radius-card)] border border-dashed border-border bg-card px-8 py-16 text-center shadow-sm">
               <FileCode2 className="mx-auto size-9 text-muted-foreground" />
               <h3 className="mt-4 text-lg font-semibold">No workflows yet</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Create a readable rule file, validate it, and publish an immutable revision. Routine authorization happens separately.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Create a readable rule file, validate it, and publish a revision that can&apos;t be changed afterward. Routine authorization happens separately.</p>
               <Button className="mt-5" type="button" onClick={() => setDialogOpen(true)}><Plus />New workflow</Button>
             </div>
           ) : (
@@ -220,7 +220,7 @@ export default function WorkflowListPage({
                     <Card className="transition-[border-color,transform,box-shadow] group-hover:-translate-y-0.5 group-hover:border-foreground/20 group-hover:shadow-md">
                       <CardContent className="grid grid-cols-[minmax(0,1fr)_220px_auto] items-center gap-6">
                         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Journey" : "Rule"}</Badge>{definition.originKind === "inbox_recipe" ? <Badge variant="outline">Recipe</Badge> : null}</div><h3 className="mt-3 truncate text-lg font-semibold">{definition.name}</h3><p className="mt-1 truncate font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml</p></div>
-                        <div className="border-l border-border pl-6"><div className="flex items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="brand">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} authorization ${definitionRoutines.length === 1 ? "envelope" : "envelopes"}. Published never implies active.`}</p></div>
+                        <div className="border-l border-border pl-6"><div className="flex items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="brand">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} saved ${definitionRoutines.length === 1 ? "authorization" : "authorizations"}. Published never implies active.`}</p></div>
                         <div className="text-right"><p className="text-xs text-muted-foreground">Updated {dateTimeLabel(definition.updatedAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(definition.id)}</p><ArrowRight className="ml-auto mt-3 size-4 text-muted-foreground transition-transform group-hover:translate-x-1" /></div>
                       </CardContent>
                     </Card>
