@@ -27,6 +27,15 @@ export async function setOwnerSetting<K extends keyof OwnerSettings>(
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their settings." };
   if (!(key in DEFAULT_SETTINGS)) return { error: "Unknown setting." };
   if (typeof value !== typeof DEFAULT_SETTINGS[key]) return { error: "Bad value." };
+  // Decision ① (issue #513 §C1): the spend cap is a whole number of credits, 0 or more —
+  // reject a negative or fractional cap server-side too, not just in the UI (the UI's own
+  // Save button already gates this, but this is the authoritative write path).
+  if (key === "spendCapCredits") {
+    const capValue = value as number;
+    if (!Number.isInteger(capValue) || capValue < 0) {
+      return { error: "Spend cap must be a whole number of credits, 0 or more." };
+    }
+  }
   const org = await prisma.organization.findUnique({
     where: { id: gate.ownerId },
     select: { settings: true },

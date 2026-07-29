@@ -5,8 +5,7 @@ import { signOutAction } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
-import { BuyPackButton } from "@/components/billing/BuyPackButton";
-import { creditsLabel } from "@/lib/credit-format";
+import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 
@@ -17,13 +16,6 @@ export type ChannelState = {
   targets: string[];
   connectUrl: string;
 };
-
-function fmtPrice(amountCents: number, currency: string): string {
-  return (amountCents / 100).toLocaleString(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  });
-}
 
 export function buildSettingsSections(args: {
   account: AccountInfo;
@@ -110,23 +102,14 @@ export function buildSettingsSections(args: {
                   </div>
                 ) : null}
               </div>
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: 8 }}
-              >
-                {packs.length > 0 ? (
-                  packs.map((pack) => (
-                    <BuyPackButton
-                      key={pack.priceId}
-                      priceId={pack.priceId}
-                      label={`Buy · ${fmtPrice(pack.amountCents, pack.currency)}`}
-                    />
-                  ))
-                ) : (
-                  <span className="cv-set-hint">
-                    No credit packs available right now.
-                  </span>
-                )}
-              </div>
+              {/* Single top-up entry (decision ③): one button into the unified /billing
+                  page, which lists every pack with its credits AND price. No more than-one
+                  price-only "Buy" button per pack duplicated here. */}
+              {packs.length > 0 ? (
+                <a className="cv-set-btn" href="/billing">Top up</a>
+              ) : (
+                <span className="cv-set-hint">No credit packs available right now.</span>
+              )}
             </div>
           ),
         },
@@ -136,28 +119,25 @@ export function buildSettingsSections(args: {
           render: () => (
             <div style={{ width: "100%" }}>
               {account.recent.slice(0, 8).map((a) => (
-                <div
-                  key={a.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 15px",
-                    fontSize: 13.5,
-                  }}
-                >
-                  <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{a.label}</span>
-                  <span
-                    style={{
-                      color:
-                        a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
-                      fontVariantNumeric: "tabular-nums",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 13,
-                    }}
-                  >
-                    {a.delta > 0 ? "+" : ""}
-                    {a.delta}
-                  </span>
+                <div key={a.id} style={{ padding: "12px 15px", display: "flex", flexDirection: "column", gap: 2 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13.5 }}>
+                    <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{a.label}</span>
+                    <span
+                      style={{
+                        color: a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
+                        fontVariantNumeric: "tabular-nums",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 13,
+                      }}
+                    >
+                      {a.delta > 0 ? "+" : ""}
+                      {formatCredits(a.delta)}
+                    </span>
+                  </div>
+                  <div className="cv-set-hint" style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                    <span>{a.detail ?? " "}</span>
+                    <span>{a.atLabel}</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -230,7 +210,7 @@ export function buildSettingsSections(args: {
           kind: "number",
           id: "cap",
           label: "Spend cap",
-          hint: "Otto pauses a task over this many credits (0 = no cap)",
+          hint: "A budget target you record for reference — Otto doesn't alert you or stop spending based on it yet (0 = no target set)",
           value: settings.spendCapCredits,
           unit: "credits",
           onSave: num("spendCapCredits"),
