@@ -52,6 +52,7 @@ type ContactRow = {
   marketingConsent: string;
   doNotDisturb: boolean;
   identities: Array<{ channel: string }>;
+  consentEvents: Array<{ action: string }>;
 };
 
 type SegmentRow = {
@@ -68,6 +69,7 @@ type EvaluatedContact = {
   name: string;
   channels: string[];
   contactable: boolean;
+  assertedOptOut: boolean;
   facts: SegmentContactFacts;
 };
 
@@ -156,12 +158,18 @@ function evaluateContact(row: ContactRow): EvaluatedContact {
   // selected audience, and DND is enforced later by B7. Only a known opt-out is excluded
   // from this estimate.
   const contactable = marketingConsent !== "opt_out";
+  // Display honesty only (#496): a merchant-reported (asserted) opt-out never gains
+  // exclusion or send authority — R-010 keeps the verified state unknown, so the contact
+  // stays selected. It is surfaced so previews and counts stop presenting the contact as
+  // plainly reachable while the merchant has declared the opposite.
+  const assertedOptOut = marketingConsent === "unknown" && row.consentEvents[0]?.action === "revoke";
 
   return {
     id: row.id,
     name: row.name,
     channels,
     contactable,
+    assertedOptOut,
     facts: {
       lifetimeSpendMyr: asLifetimeSpend(row.totalOrdersMyr),
       channels,
@@ -180,6 +188,15 @@ async function readContacts(ownerId: string): Promise<EvaluatedContact[]> {
       identities: {
         where: { ownerId, deletedAt: null },
         select: { channel: true },
+      },
+      // #496: the latest merchant-asserted marketing consent declaration. The R-010 fold
+      // keeps asserted evidence out of the projection state, so this event read is the only
+      // honest source for "the merchant reported an opt-out" while the state stays unknown.
+      consentEvents: {
+        where: { ownerId, channel: "whatsapp", purpose: "marketing", evidenceStatus: "asserted" },
+        orderBy: [{ receivedAt: "desc" as const }, { id: "desc" as const }],
+        select: { action: true },
+        take: 1,
       },
     },
   });
@@ -208,11 +225,12 @@ function matches(
 }
 
 function publicContacts(contacts: EvaluatedContact[]) {
-  return contacts.slice(0, 10).map(({ id, name, channels, contactable }) => ({
+  return contacts.slice(0, 10).map(({ id, name, channels, contactable, assertedOptOut }) => ({
     id,
     name,
     channels,
     contactable,
+    assertedOptOut,
   }));
 }
 
@@ -258,6 +276,7 @@ function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluat
       matchedCount: 0,
       contactableCount: 0,
       knownOptOutCount: 0,
+      assertedOptOutCount: 0,
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -269,6 +288,7 @@ function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluat
     matchedCount: matched.length,
     contactableCount,
     knownOptOutCount: matched.length - contactableCount,
+    assertedOptOutCount: matched.filter((contact) => contact.assertedOptOut).length,
   };
 }
 
@@ -333,6 +353,7 @@ export async function previewSegment(rawRules: unknown) {
     matchedCount: matched.length,
     contactableCount,
     knownOptOutCount: matched.length - contactableCount,
+    assertedOptOutCount: matched.filter((contact) => contact.assertedOptOut).length,
     contacts: publicContacts(matched),
     unavailableFacts: UNAVAILABLE_FACTS,
   };

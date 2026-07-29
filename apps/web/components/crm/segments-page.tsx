@@ -14,6 +14,11 @@ import {
   Users,
 } from "lucide-react";
 import { buildSegment, listSegments, previewSegment } from "@/lib/segment-actions";
+import {
+  contactStatusBadge,
+  reportedOptOutLine,
+  segmentCountsLine,
+} from "@/lib/segment-preview-copy";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -359,6 +364,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         matchedCount: preview.matchedCount,
         contactableCount: preview.contactableCount,
         knownOptOutCount: preview.knownOptOutCount,
+        assertedOptOutCount: preview.assertedOptOutCount,
       };
       setSegments((current) =>
         attempt.operation === "update"
@@ -755,11 +761,15 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
-      <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
-        {preview.matchedCount} matched · {preview.contactableCount} contactable · {preview.knownOptOutCount} known opt-out excluded
-      </p>
+      <div className="rounded-xl border border-border bg-card px-4 py-3 tabular-nums">
+        <p className="text-sm font-semibold">{segmentCountsLine(preview)}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{reportedOptOutLine(preview)}</p>
+      </div>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        Unknown consent stays included. Do not disturb is checked at send time and does not filter this segment.
+        Unknown consent stays included. A reported opt-out is a merchant statement without
+        verified evidence: it stays included here, is never counted as excluded, and sending
+        still requires verified consent. Do not disturb is checked at send time and does not
+        filter this segment.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}
@@ -770,19 +780,20 @@ function ContactPreview({ preview }: { preview: PreviewSuccess }) {
         </p>
       ) : (
         <ul className="mt-4 grid gap-2">
-          {preview.contacts.map((contact) => (
-            <li key={contact.id} className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{contact.name}</p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">
-                  {contact.channels.length > 0 ? contact.channels.join(" · ") : "No live identity"}
-                </p>
-              </div>
-              <Badge variant={contact.contactable ? "success" : "warning"}>
-                {contact.contactable ? "Included" : "Known opt-out excluded"}
-              </Badge>
-            </li>
-          ))}
+          {preview.contacts.map((contact) => {
+            const status = contactStatusBadge(contact);
+            return (
+              <li key={contact.id} className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{contact.name}</p>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {contact.channels.length > 0 ? contact.channels.join(" · ") : "No live identity"}
+                  </p>
+                </div>
+                <Badge variant={status.variant}>{status.label}</Badge>
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>

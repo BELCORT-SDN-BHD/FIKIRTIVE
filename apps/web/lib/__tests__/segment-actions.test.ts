@@ -76,6 +76,7 @@ const contacts = [
     marketingConsent: "opt_in",
     doNotDisturb: false,
     identities: [{ channel: "whatsapp" }, { channel: "email" }],
+    consentEvents: [],
   },
   {
     id: "contact-2",
@@ -84,6 +85,7 @@ const contacts = [
     marketingConsent: "opt_out",
     doNotDisturb: false,
     identities: [{ channel: "email" }],
+    consentEvents: [],
   },
 ];
 
@@ -158,6 +160,17 @@ describe("previewSegment", () => {
           where: { ownerId: "owner-1", deletedAt: null },
           select: { channel: true },
         },
+        consentEvents: {
+          where: {
+            ownerId: "owner-1",
+            channel: "whatsapp",
+            purpose: "marketing",
+            evidenceStatus: "asserted",
+          },
+          orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
+          select: { action: true },
+          take: 1,
+        },
       },
     });
     expect(JSON.stringify(mockContactFindMany.mock.calls[0])).not.toContain("lastSeenAt");
@@ -168,12 +181,14 @@ describe("previewSegment", () => {
       matchedCount: 1,
       contactableCount: 1,
       knownOptOutCount: 0,
+      assertedOptOutCount: 0,
       contacts: [
         {
           id: "contact-1",
           name: "Amina",
           channels: ["email", "whatsapp"],
           contactable: true,
+          assertedOptOut: false,
         },
       ],
       unavailableFacts: { lastOrderAt: true, tags: true },
@@ -217,6 +232,7 @@ describe("previewSegment", () => {
         marketingConsent: "unknown",
         doNotDisturb: false,
         identities: [{ channel: "whatsapp" }],
+        consentEvents: [],
       },
       {
         id: "contact-4",
@@ -225,6 +241,7 @@ describe("previewSegment", () => {
         marketingConsent: "opt_in",
         doNotDisturb: true,
         identities: [{ channel: "whatsapp" }],
+        consentEvents: [],
       },
     ]);
 
@@ -323,6 +340,7 @@ describe("listSegments", () => {
           matchedCount: 1,
           contactableCount: 1,
           knownOptOutCount: 0,
+          assertedOptOutCount: 0,
           createdAt: "2026-07-14T00:00:00.000Z",
         },
       ],
@@ -354,6 +372,7 @@ describe("listSegments", () => {
           matchedCount: 0,
           contactableCount: 0,
           knownOptOutCount: 0,
+          assertedOptOutCount: 0,
         },
       ],
     });
@@ -781,7 +800,116 @@ describe("segment page ambiguous-save retry fence", () => {
     expect(source).toContain("Retry exact ${retryFence.operation}");
     expect(source).toContain("Use a fresh draft");
     expect(source).toContain("Refresh latest");
-    expect(source).toContain("known opt-out excluded");
-    expect(source).toContain("Do not disturb is checked at send time and does not filter this segment.");
+    expect(source).toContain("segmentCountsLine(preview)");
+    expect(source).toContain("reportedOptOutLine(preview)");
+    expect(source).toContain("contactStatusBadge(contact)");
+    expect(source).toContain("assertedOptOutCount: preview.assertedOptOutCount");
+    expect(source).toContain("filter this segment.");
+  });
+});
+
+describe("reported opt-out display honesty (#496)", () => {
+  const reportedOptOutContact = {
+    id: "contact-5",
+    name: "Farah",
+    totalOrdersMyr: "600",
+    marketingConsent: "unknown",
+    doNotDisturb: false,
+    identities: [{ channel: "whatsapp" }],
+    consentEvents: [{ action: "revoke" }],
+  };
+  const everyoneRules = {
+    match: "all" as const,
+    rules: [{ kind: "lifetime_spend" as const, comparison: "at_least" as const, amountMyr: 0 }],
+  };
+
+  it("annotates a merchant-reported opt-out as included and counts it separately from verified exclusion", async () => {
+    mockContactFindMany.mockResolvedValue([contacts[0], contacts[1], reportedOptOutContact]);
+
+    const result = await previewSegment(everyoneRules);
+
+    expect(result).toMatchObject({
+      ok: true,
+      matchedCount: 3,
+      contactableCount: 2,
+      knownOptOutCount: 1,
+      assertedOptOutCount: 1,
+      contacts: expect.arrayContaining([
+        expect.objectContaining({ id: "contact-1", contactable: true, assertedOptOut: false }),
+        expect.objectContaining({ id: "contact-2", contactable: false, assertedOptOut: false }),
+        expect.objectContaining({ id: "contact-5", contactable: true, assertedOptOut: true }),
+      ]),
+    });
+  });
+
+  it("keeps selection semantics unchanged: a reported opt-out still matches the contactable rule", async () => {
+    mockContactFindMany.mockResolvedValue([contacts[1], reportedOptOutContact]);
+
+    const contactableOnly = await previewSegment({
+      match: "all",
+      rules: [{ kind: "contactability", value: "contactable" }],
+    });
+
+    expect(contactableOnly).toMatchObject({
+      ok: true,
+      matchedCount: 1,
+      contactableCount: 1,
+      knownOptOutCount: 0,
+      assertedOptOutCount: 1,
+      contacts: [expect.objectContaining({ id: "contact-5", contactable: true, assertedOptOut: true })],
+    });
+  });
+
+  it("does not flag a contact whose latest asserted declaration is a grant", async () => {
+    mockContactFindMany.mockResolvedValue([
+      { ...reportedOptOutContact, consentEvents: [{ action: "grant" }] },
+    ]);
+
+    await expect(previewSegment(everyoneRules)).resolves.toMatchObject({
+      ok: true,
+      matchedCount: 1,
+      assertedOptOutCount: 0,
+      contacts: [expect.objectContaining({ id: "contact-5", assertedOptOut: false })],
+    });
+  });
+
+  it("never double-counts: a verified opt-out stays excluded and outranks a stray asserted revoke", async () => {
+    mockContactFindMany.mockResolvedValue([
+      { ...reportedOptOutContact, marketingConsent: "opt_out" },
+    ]);
+
+    await expect(previewSegment(everyoneRules)).resolves.toMatchObject({
+      ok: true,
+      matchedCount: 1,
+      contactableCount: 0,
+      knownOptOutCount: 1,
+      assertedOptOutCount: 0,
+      contacts: [expect.objectContaining({ id: "contact-5", contactable: false, assertedOptOut: false })],
+    });
+  });
+
+  it("carries the reported count into saved-segment listings", async () => {
+    mockContactFindMany.mockResolvedValue([contacts[0], reportedOptOutContact]);
+    mockSegmentFindMany.mockResolvedValue([
+      {
+        id: SEGMENT_ID,
+        name: "Everyone",
+        phrase: "stored phrase",
+        rulesJson: everyoneRules,
+        createdAt: new Date("2026-07-14T00:00:00.000Z"),
+      },
+    ]);
+
+    await expect(listSegments()).resolves.toMatchObject({
+      ok: true,
+      segments: [
+        expect.objectContaining({
+          matchedCount: 2,
+          contactableCount: 2,
+          knownOptOutCount: 0,
+          assertedOptOutCount: 1,
+        }),
+      ],
+    });
   });
 });
