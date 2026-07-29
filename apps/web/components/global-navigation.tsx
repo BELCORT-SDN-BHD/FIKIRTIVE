@@ -102,6 +102,18 @@ function activeItemHref(pathname: string, items: NavigationItem[]): string | nul
   return matches.reduce((longest, item) => (item.href.length > longest.href.length ? item : longest)).href;
 }
 
+/** True when `pathname`'s query exactly matches a query-qualified sibling item on
+ *  `basePath` (e.g. Connections at "/otto?view=connections"). A bare href sharing
+ *  that base path (e.g. the top-level Otto link) must not also count as active in
+ *  that case — otherwise both light up together (#520). An unrelated or absent
+ *  query on `pathname` leaves the bare href active, per pathMatches' own rule. */
+function queryClaimedBySibling(pathname: string, basePath: string): boolean {
+  return WORKSPACE_SETTINGS_ITEMS.some((item) => {
+    const target = splitLocation(item.href);
+    return target.path === basePath && [...target.query.keys()].length > 0 && pathMatches(pathname, item.href);
+  });
+}
+
 type DisclosureUpdate =
   | { type: "navigation"; pathname: string }
   | { type: "toggle"; open: boolean };
@@ -289,7 +301,7 @@ export function GlobalNavigation({
           <div className="space-y-1">
             <NavigationLink
               item={{ href: "/otto", label: "Otto", icon: Bot }}
-              active={pathMatches(pathname, "/otto")}
+              active={pathMatches(pathname, "/otto") && !queryClaimedBySibling(pathname, "/otto")}
             />
             <NavigationLink
               item={{ href: "/campaign", label: "Campaign", icon: Megaphone }}

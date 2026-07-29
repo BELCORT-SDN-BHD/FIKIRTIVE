@@ -116,6 +116,21 @@ describe("MerchantShellContent", () => {
     expect(markup).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
   });
 
+  it("does not also highlight the top-level Otto link when Connections or Preferences is active (#520)", () => {
+    const connections = renderShell("/otto?view=connections");
+    expect(connections).toMatch(/aria-current="page" title="Connections"/);
+    expect(connections).not.toMatch(/aria-current="page" title="Otto"/);
+
+    const preferences = renderShell("/otto?view=account");
+    expect(preferences).toMatch(/aria-current="page" title="Preferences"/);
+    expect(preferences).not.toMatch(/aria-current="page" title="Otto"/);
+  });
+
+  it("keeps the top-level Otto link active on bare /otto and on an unrelated query (#520)", () => {
+    expect(renderShell("/otto")).toMatch(/aria-current="page" title="Otto"/);
+    expect(renderShell("/otto?foo=bar")).toMatch(/aria-current="page" title="Otto"/);
+  });
+
   it("keeps the impersonation banner above the merchant sidebar", () => {
     const markup = renderToStaticMarkup(
       createElement(
