@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth-guard";
-import { getMyAccount, signOutAction } from "@/lib/account-actions";
+import { getMyAccount } from "@/lib/account-actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Profile · Fikirtive" };
@@ -40,25 +40,8 @@ export default async function ProfilePage() {
             </div>
           )}
         </div>
-
-        <form action={signOutAction} style={{ marginTop: 32 }}>
-          <button
-            type="submit"
-            style={{
-              height: 40,
-              padding: "0 16px",
-              borderRadius: "var(--radius-card, 10px)",
-              border: "1px solid var(--border)",
-              background: "var(--card)",
-              color: "var(--foreground)",
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Sign out
-          </button>
-        </form>
+        {/* Sign out lives once, in the global nav's identity menu right next to this
+            page's own link (#513 A组返工 item 2) — not duplicated again here. */}
       </div>
     </div>
   );

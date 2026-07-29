@@ -1,7 +1,6 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { Check, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2, X } from "lucide-react";
-import { creditsLabel } from "@/lib/credit-format";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
@@ -36,15 +35,6 @@ function IconBrain() {
       <path d="M19.938 10.5a4 4 0 0 1 .585.396" />
       <path d="M6 18a4 4 0 0 1-1.967-.516" />
       <path d="M19.967 17.484A4 4 0 0 1 18 18" />
-    </svg>
-  );
-}
-function IconCircleUser() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="12" r="10" />
-      <circle cx="12" cy="10" r="3" />
-      <path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662" />
     </svg>
   );
 }
@@ -87,10 +77,9 @@ const TOOL_ITEMS: NavItem[] = [
   { key: "schedule", label: "Schedule", icon: <IconCalendar /> },
   { key: "analytics", label: "Analytics", icon: <IconChart /> },
   { key: "connections", label: "Connections", icon: <IconLink /> },
-  // Otto's full settings dashboard (billing, notifications, spend cap, danger zone) —
-  // distinct from the global identity menu's minimal Profile page; not a duplicate,
-  // so it keeps its own entry point (#513 四.1 scopes A to shell chrome only).
-  { key: "account", label: "Account", icon: <IconCircleUser /> },
+  // "Account" was removed here (#513 A组返工 item 2) — it duplicated the global
+  // identity menu's Profile destination. Its remaining settings (notifications,
+  // spend cap, danger zone) still live in OttoAccount; only the nav entry is gone.
 ];
 
 const PROJECT_LIMIT = 6;
@@ -181,13 +170,14 @@ export function OttoNav({
   onRenameThread,
   onSetThreadPinned,
   onDeleteThread,
-  balanceCredits,
   drawerOpen = false,
   onDrawerClose,
   collapsed = false,
   onToggleCollapse,
 }: OttoNavProps) {
-  const balanceLabel = creditsLabel(balanceCredits);
+  // #513 A组返工 item 1 — the rail is a slide-over at every width now (never a
+  // second persistent column beside the global nav); open = either trigger.
+  const isOpen = drawerOpen || !collapsed;
   const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
   // Keep history scannable: current campaign open, older campaigns compact until expanded.
@@ -349,45 +339,45 @@ export function OttoNav({
   return (
     <>
       <style>{`
-        @media (max-width: ${MOBILE_BP}px) {
-          .otto-nav {
-            position: fixed !important;
-            top: 0;
-            left: 0;
-            bottom: 0;
-            z-index: 200;
-            transform: translateX(-100%);
-            visibility: hidden;
-            pointer-events: none;
-            transition: transform 0.22s ease;
-            box-shadow: var(--shadow-xl, 0 8px 32px rgba(0,0,0,.18));
-            width: 280px !important;
-          }
-          .otto-nav.otto-nav--open {
-            transform: translateX(0);
-            visibility: visible;
-            pointer-events: auto;
-          }
-          .otto-nav-backdrop {
-            display: block !important;
-          }
+        /* #513 A组返工 item 1 — this rail is a slide-over overlay at every width now,
+           not just on mobile. It used to push a second permanent 240px column next
+           to the global nav at every desktop tier (≥1280 → 240+240, 1024–1279 →
+           64+240); as position:fixed it never reserves layout width, open or not. */
+        .otto-nav {
+          position: fixed;
+          top: 0;
+          left: 0;
+          bottom: 0;
+          z-index: 200;
+          transform: translateX(-100%);
+          visibility: hidden;
+          pointer-events: none;
+          transition: transform 0.22s ease;
+          box-shadow: var(--shadow-xl, 0 8px 32px rgba(0,0,0,.18));
         }
-        @media (min-width: ${MOBILE_BP + 1}px) {
-          .otto-nav-backdrop { display: none !important; }
+        .otto-nav.otto-nav--open {
+          transform: translateX(0);
+          visibility: visible;
+          pointer-events: auto;
+        }
+        @media (max-width: ${MOBILE_BP}px) {
+          .otto-nav { width: 280px !important; }
+          .otto-nav-backdrop { display: block !important; }
         }
       `}</style>
-      {/* Backdrop — only rendered/visible on mobile when drawer is open */}
+      {/* Backdrop — only rendered/visible on mobile when the rail is open (desktop
+          closes it via the collapse button in the rail header instead). */}
       <div
         className="otto-nav-backdrop"
-        onClick={onDrawerClose}
+        onClick={handleCollapseAction}
         style={{
           display: "none",
           position: "fixed",
           inset: 0,
           zIndex: 199,
           background: "rgba(0,0,0,.35)",
-          opacity: drawerOpen ? 1 : 0,
-          pointerEvents: drawerOpen ? "auto" : "none",
+          opacity: isOpen ? 1 : 0,
+          pointerEvents: isOpen ? "auto" : "none",
           transition: "opacity 0.22s ease",
         }}
         aria-hidden
@@ -395,13 +385,11 @@ export function OttoNav({
     {/* line-height: normal on the rail — matches the design system (its .rail/.it set no
         line-height, so single-line nav text renders at the browser default ~1.2, not 1.5). */}
     <nav
-      className={`otto-nav gb flex flex-col overflow-hidden bg-card leading-[normal]${drawerOpen ? " otto-nav--open" : ""}`}
+      className={`otto-nav gb flex flex-col overflow-hidden bg-card leading-[normal]${isOpen ? " otto-nav--open" : ""}`}
       style={{
-        width: collapsed ? 0 : 240,
-        flexShrink: 0,
-        borderRight: collapsed ? "none" : "1px solid var(--border)",
-        padding: collapsed ? 0 : "16px 0",
-        transition: "width 220ms cubic-bezier(0.22,1,0.36,1)",
+        width: 240,
+        borderRight: "1px solid var(--border)",
+        padding: "16px 0",
       }}
     >
       {/* Collapse toggle — the FIKIRTIVE brand mark lives once, in the persistent
@@ -759,20 +747,9 @@ export function OttoNav({
 
       <div style={{ flex: hasSidebar ? 0 : 1 }} />
 
-      {/* Balance — compact credit line (Grok-style: subtle, not a big card) */}
-      <div
-        title="Your balance"
-        className="flex items-center gap-2 px-4 py-2 text-[0.75rem] text-muted-foreground border-t border-border"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" strokeWidth="2" aria-hidden>
-          <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9 9.5h4a1.5 1.5 0 0 1 0 3h-2a1.5 1.5 0 0 0 0 3h4" />
-        </svg>
-        <span className="font-semibold text-foreground truncate">
-          {balanceLabel}
-        </span>
-      </div>
-      {/* Identity (avatar, name, email, sign out) now lives once, in the persistent
-          global nav's avatar menu — this rail no longer repeats it (#513 三.1). */}
+      {/* Credits balance and identity (avatar, name, email, sign out) now live once,
+          in the persistent global nav — this rail no longer repeats either
+          (#513 三.1, A组返工 item 3). */}
     </nav>
     </>
   );

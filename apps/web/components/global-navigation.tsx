@@ -11,7 +11,6 @@ import {
   Contact,
   CreditCard,
   Inbox,
-  LayoutTemplate,
   LogOut,
   Megaphone,
   Menu,
@@ -37,21 +36,26 @@ type NavigationItem = {
   icon: NavigationIcon;
 };
 
-// Order matches the Founder-approved nav tree (#513 三.1).
+// Order matches the Founder-approved nav tree (#513 三.1). Templates is left out
+// here on purpose (#513 A组返工 item 4): work-order-group E owns promoting it to a
+// formal CRM entry at its new /crm/templates home, and A must not pre-write that
+// route or lock in the pre-"转正" /crm/inbox/templates path. Re-add it once E merges.
 const CRM_ITEMS: NavigationItem[] = [
   { href: "/crm/contacts", label: "Contacts", icon: Contact },
   { href: "/crm/segments", label: "Segments", icon: UsersRound },
   { href: "/crm/inbox", label: "Inbox", icon: Inbox },
-  { href: "/crm/inbox/templates", label: "Templates", icon: LayoutTemplate },
   { href: "/crm/broadcasts", label: "Broadcasts", icon: Send },
   { href: "/crm/reports", label: "Reports", icon: BarChart3 },
   { href: "/crm/workflows", label: "Workflows", icon: Sparkles },
 ];
 
-// "Connections" is the menu slot for work-order-group B's unified Connections page
-// (#513 四.2 — that group depends on this slot existing and does not touch this file).
+// Connections points at Otto's already-shipped connections view (work-order-group
+// B's real current entry point) rather than the not-yet-built /connections page,
+// so this link works today instead of 404ing (#513 A组返工 item 4). Swap it to the
+// standalone /connections page once B merges its unified Connections surface
+// (#513 四.2).
 const WORKSPACE_SETTINGS_ITEMS: NavigationItem[] = [
-  { href: "/connections", label: "Connections", icon: Plug },
+  { href: "/otto?view=connections", label: "Connections", icon: Plug },
   { href: "/billing", label: "Billing & credits", icon: CreditCard },
 ];
 

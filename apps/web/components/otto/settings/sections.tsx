@@ -1,12 +1,9 @@
 "use client";
 import type { SettingsSection } from "./types";
 import type { AccountInfo } from "@/lib/account-actions";
-import { signOutAction } from "@/lib/account-actions";
 import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
-import { BuyPackButton } from "@/components/billing/BuyPackButton";
-import { creditsLabel } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 
@@ -18,13 +15,6 @@ export type ChannelState = {
   connectUrl: string;
 };
 
-function fmtPrice(amountCents: number, currency: string): string {
-  return (amountCents / 100).toLocaleString(undefined, {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  });
-}
-
 export function buildSettingsSections(args: {
   account: AccountInfo;
   settings: OwnerSettings;
@@ -34,7 +24,7 @@ export function buildSettingsSections(args: {
   canPublish: boolean;
   onDeleteAccountRequest: () => void;
 }): SettingsSection[] {
-  const { account, settings, channels, packs, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
+  const { settings, channels, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
   const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
   const connectedChannelIds = channels.filter((c) => c.status === "connected").map((c) => c.id);
   const autoPublishAvailable = canAutoPublish(connectedChannelIds, canPublish);
@@ -47,124 +37,10 @@ export function buildSettingsSections(args: {
     (k: keyof OwnerSettings) =>
     (v: number) => setOwnerSetting(k, v as never);
 
+  // "profile" and "billing" sections were removed here (#513 A组返工 item 2) — they
+  // duplicated the global nav's Profile page and Billing & credits destination
+  // (identity/email/workspace, credit balance + buy buttons, and their own Sign out).
   return [
-    {
-      id: "profile",
-      title: "Profile",
-      subtitle: "Who you are on Fikirtive.",
-      fields: [
-        {
-          kind: "text",
-          id: "email",
-          label: "Email",
-          hint: "Used to sign in",
-          value: account.email,
-          readOnly: true,
-        },
-        {
-          kind: "text",
-          id: "workspace",
-          label: "Workspace",
-          value: account.organizationName,
-          readOnly: true,
-        },
-        {
-          kind: "custom",
-          id: "signout",
-          render: () => (
-            <form action={signOutAction} style={{ marginLeft: "auto" }}>
-              <button className="cv-set-btn" type="submit">
-                Sign out
-              </button>
-            </form>
-          ),
-        },
-      ],
-    },
-    {
-      id: "billing",
-      title: "Billing and credits",
-      subtitle: "Your balance and where credits went.",
-      fields: [
-        {
-          kind: "custom",
-          id: "balance",
-          render: () => (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                width: "100%",
-                gap: 16,
-              }}
-            >
-              <div>
-                <div className="cv-set-hint">Credit balance</div>
-                <div style={{ fontSize: 38, fontWeight: 700, letterSpacing: "-0.02em" }}>
-                  {creditsLabel(account.balance)}
-                </div>
-                {account.reserved > 0 ? (
-                  <div className="cv-set-hint">
-                    {creditsLabel(account.reserved)} on hold
-                  </div>
-                ) : null}
-              </div>
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: 8 }}
-              >
-                {packs.length > 0 ? (
-                  packs.map((pack) => (
-                    <BuyPackButton
-                      key={pack.priceId}
-                      priceId={pack.priceId}
-                      label={`Buy · ${fmtPrice(pack.amountCents, pack.currency)}`}
-                    />
-                  ))
-                ) : (
-                  <span className="cv-set-hint">
-                    No credit packs available right now.
-                  </span>
-                )}
-              </div>
-            </div>
-          ),
-        },
-        {
-          kind: "custom",
-          id: "ledger",
-          render: () => (
-            <div style={{ width: "100%" }}>
-              {account.recent.slice(0, 8).map((a) => (
-                <div
-                  key={a.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    padding: "12px 15px",
-                    fontSize: 13.5,
-                  }}
-                >
-                  <span style={{ color: "var(--foreground)", fontWeight: 500 }}>{a.label}</span>
-                  <span
-                    style={{
-                      color:
-                        a.delta > 0 ? "#15803D" : "var(--muted-foreground)",
-                      fontVariantNumeric: "tabular-nums",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 13,
-                    }}
-                  >
-                    {a.delta > 0 ? "+" : ""}
-                    {a.delta}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ),
-        },
-      ],
-    },
     {
       id: "connections",
       title: "Connections",

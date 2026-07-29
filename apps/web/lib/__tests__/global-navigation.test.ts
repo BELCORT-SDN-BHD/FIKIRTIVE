@@ -59,13 +59,13 @@ describe("MerchantShellContent", () => {
     expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/reports"/);
   });
 
-  it("does not also light up Inbox when the current page is its Templates sub-route", () => {
-    // /crm/inbox/templates starts with /crm/inbox, so a naive prefix match would mark
-    // both items active. Only the longest (most specific) match should win.
+  it("still lights up Inbox on its own Templates sub-route (no CRM_ITEMS entry there yet)", () => {
+    // Templates is deliberately absent from CRM_ITEMS until work-order-group E merges
+    // its formal /crm/templates entry (#513 A组返工 item 4). Until then, /crm/inbox is
+    // the only CRM_ITEMS candidate for the legacy /crm/inbox/templates sub-route.
     const markup = renderShell("/crm/inbox/templates");
 
-    expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/inbox\/templates"/);
-    expect(markup).not.toMatch(/aria-current="page"[^>]*href="\/crm\/inbox"[^/]/);
+    expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/inbox"/);
   });
 
   it("replaces the old Account box with a real avatar menu offering Profile and Sign out", () => {
@@ -89,7 +89,9 @@ describe("MerchantShellContent", () => {
     const markup = renderShell("/billing");
 
     expect(markup).toContain(">Workspace settings<");
-    expect(markup).toContain('href="/connections"');
+    // Points at Otto's already-shipped connections view, not the not-yet-built
+    // /connections page (#513 A组返工 item 4 — swap once group B merges its page).
+    expect(markup).toContain('href="/otto?view=connections"');
     expect(markup).toContain(">Billing &amp; credits<");
   });
 
@@ -168,7 +170,7 @@ describe("SectionTabs", () => {
   it("renders the Workspace settings group's tabs on Billing", () => {
     const markup = renderTabs("/billing");
 
-    expect(markup).toContain('href="/connections"');
+    expect(markup).toContain('href="/otto?view=connections"');
     expect(markup).toMatch(/aria-selected="true"[^>]*href="\/billing"/);
   });
 });
