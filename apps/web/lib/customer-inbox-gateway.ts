@@ -121,6 +121,12 @@ export async function listTemplates(input: ListTemplatesInput = {}) {
   return runRead((principal) => customerInboxService.listTemplates(principal, input));
 }
 
+// #495 — server-side read for the templates page, so its create form can offer the
+// workspace's connected channel accounts instead of a free-text scope id.
+export async function listChannelScopes() {
+  return runRead((principal) => customerInboxService.listChannelScopes(principal));
+}
+
 export async function saveConversationDraft(input: SaveConversationDraftInput) {
   return runMutation((principal) =>
     customerInboxService.saveConversationDraft(principal, input),
