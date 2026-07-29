@@ -78,8 +78,10 @@ const TOOL_ITEMS: NavItem[] = [
   { key: "analytics", label: "Analytics", icon: <IconChart /> },
   { key: "connections", label: "Connections", icon: <IconLink /> },
   // "Account" was removed here (#513 A组返工 item 2) — it duplicated the global
-  // identity menu's Profile destination. Its remaining settings (notifications,
-  // spend cap, danger zone) still live in OttoAccount; only the nav entry is gone.
+  // identity menu's Profile destination. Its remaining settings (spend cap,
+  // notifications, schedule defaults, danger zone) still live in OttoAccount;
+  // the entry point is now "Preferences" under the global nav's Workspace
+  // settings group (#513 A组返工·三轮 item 1), not here.
 ];
 
 const PROJECT_LIMIT = 6;

@@ -85,14 +85,35 @@ describe("MerchantShellContent", () => {
     expect(markup).toMatch(/href="\/billing"[^>]*>[\s\S]{0,600}?Credits/);
   });
 
-  it("nests Connections and Billing & credits under Workspace settings", () => {
+  it("nests Connections, Preferences, and Billing & credits under Workspace settings", () => {
     const markup = renderShell("/billing");
 
     expect(markup).toContain(">Workspace settings<");
     // Points at Otto's already-shipped connections view, not the not-yet-built
     // /connections page (#513 A组返工 item 4 — swap once group B merges its page).
     expect(markup).toContain('href="/otto?view=connections"');
+    // Preferences (spend cap, notifications, schedule defaults, delete account)
+    // was an island with no clickable entry point anywhere (#513 A组返工·三轮 item 1).
+    expect(markup).toContain('href="/otto?view=account"');
+    expect(markup).toContain(">Preferences<");
     expect(markup).toContain(">Billing &amp; credits<");
+  });
+
+  it("marks Connections active on /otto?view=connections, not on bare /otto (#513 三轮 item 2)", () => {
+    const bare = renderShell("/otto");
+    expect(bare).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
+
+    const withQuery = renderShell("/otto?view=connections");
+    expect(withQuery).toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
+    // The disclosure auto-expands (open="") once the group's own item is active.
+    expect(withQuery).toContain('<details class="group" open="">');
+  });
+
+  it("marks Preferences active on /otto?view=account without also lighting up Connections", () => {
+    const markup = renderShell("/otto?view=account");
+
+    expect(markup).toMatch(/aria-current="page"[^>]*href="\/otto\?view=account"/);
+    expect(markup).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
   });
 
   it("keeps the impersonation banner above the merchant sidebar", () => {
@@ -171,6 +192,15 @@ describe("SectionTabs", () => {
     const markup = renderTabs("/billing");
 
     expect(markup).toContain('href="/otto?view=connections"');
+    expect(markup).toContain('href="/otto?view=account"');
     expect(markup).toMatch(/aria-selected="true"[^>]*href="\/billing"/);
+  });
+
+  it("renders (not empty) and selects Connections on /otto?view=connections — the 1024–1279 tabs bar used to not render at all here (#513 三轮 item 2)", () => {
+    const markup = renderTabs("/otto?view=connections");
+
+    expect(markup).toContain('role="tablist"');
+    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/otto\?view=connections"/);
+    expect(markup).not.toMatch(/aria-selected="true"[^>]*href="\/otto\?view=account"/);
   });
 });

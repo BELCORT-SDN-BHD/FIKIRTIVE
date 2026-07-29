@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
   Bot,
@@ -17,6 +17,7 @@ import {
   Plug,
   Send,
   Settings,
+  SlidersHorizontal,
   Sparkles,
   User,
   Users,
@@ -54,8 +55,16 @@ const CRM_ITEMS: NavigationItem[] = [
 // so this link works today instead of 404ing (#513 A组返工 item 4). Swap it to the
 // standalone /connections page once B merges its unified Connections surface
 // (#513 四.2).
+//
+// Preferences points at OttoAccount (?view=account) — spend cap, notifications,
+// schedule defaults, and Delete account had no clickable entry point anywhere
+// after OttoNav's "Account" item was removed (#513 A组返工·三轮 item 1: the page
+// itself never moved, it was an island). Named "Preferences" rather than "Account"
+// so it doesn't re-create the identity-menu/Profile ambiguity that got the old
+// OttoNav entry pulled — see the comment on OttoNav's TOOL_ITEMS.
 const WORKSPACE_SETTINGS_ITEMS: NavigationItem[] = [
   { href: "/otto?view=connections", label: "Connections", icon: Plug },
+  { href: "/otto?view=account", label: "Preferences", icon: SlidersHorizontal },
   { href: "/billing", label: "Billing & credits", icon: CreditCard },
 ];
 
@@ -63,8 +72,26 @@ const navigationLinkClass =
   "flex h-11 items-center gap-3 rounded-[10px] text-sm transition-colors outline-none " +
   "focus-visible:ring-[3px] focus-visible:ring-ring/40 px-3 lg:justify-center lg:px-0 xl:justify-start xl:px-3";
 
+/** Splits "/otto?view=connections" into its path and query. */
+function splitLocation(value: string): { path: string; query: URLSearchParams } {
+  const [path, query = ""] = value.split("?");
+  return { path, query: new URLSearchParams(query) };
+}
+
+/** Query-aware: an href with no query (e.g. "/billing") matches on path alone, same
+ *  as before. An href that pins a query (e.g. "/otto?view=connections") additionally
+ *  requires that exact query on the current location — otherwise bare "/otto" would
+ *  also light up Connections (#513 A组返工·三轮 item 2 — pathname carries the query
+ *  via MerchantAppShell now, see its useSearchParams comment). */
 function pathMatches(pathname: string, href: string): boolean {
-  return pathname === href || pathname.startsWith(`${href}/`);
+  const current = splitLocation(pathname);
+  const target = splitLocation(href);
+  const pathOk = current.path === target.path || current.path.startsWith(`${target.path}/`);
+  if (!pathOk) return false;
+  for (const [key, value] of target.query) {
+    if (current.query.get(key) !== value) return false;
+  }
+  return true;
 }
 
 /** The longest-href item matching pathname wins — a nested route like
@@ -466,9 +493,17 @@ export function MerchantAppShell({
   signOutAction: () => Promise<void>;
 }) {
   const pathname = usePathname();
+  // Query-qualified nav items (e.g. "/otto?view=connections" for Connections under
+  // Workspace settings) need the query on the location string to match against
+  // (#513 A组返工·三轮 item 2 — see pathMatches). Safe without a <Suspense>
+  // boundary: app/layout.tsx already calls headers() in isImpersonating() before
+  // rendering this shell, which forces the whole tree to render dynamically per
+  // request — there is no static shell for useSearchParams to bail out of.
+  const query = useSearchParams().toString();
+  const pathWithQuery = query ? `${pathname}?${query}` : pathname;
 
   return (
-    <MerchantShellContent pathname={pathname} signOutAction={signOutAction}>
+    <MerchantShellContent pathname={pathWithQuery} signOutAction={signOutAction}>
       {children}
     </MerchantShellContent>
   );
