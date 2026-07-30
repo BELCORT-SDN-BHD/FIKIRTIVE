@@ -7,12 +7,13 @@ export async function GET(req: NextRequest) {
   const gate = await requireOwner();
   if ("error" in gate) return NextResponse.redirect(new URL("/login", base));
   const appId = process.env.META_APP_ID;
-  if (!appId)
+  const configId = process.env.META_LOGIN_CONFIG_ID;
+  if (!appId || !configId)
     return NextResponse.redirect(
       new URL("/otto?view=connections&error=not_configured", base),
     );
   const redirectUri = new URL("/api/meta/callback", base).href;
   return NextResponse.redirect(
-    buildAuthorizeUrl(appId, redirectUri, signState(gate.ownerId)),
+    buildAuthorizeUrl(appId, redirectUri, signState(gate.ownerId), configId),
   );
 }

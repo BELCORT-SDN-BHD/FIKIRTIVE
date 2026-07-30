@@ -30,31 +30,18 @@ describe("OAuth state (HMAC, CSRF)", () => {
 });
 
 describe("buildAuthorizeUrl", () => {
-  it("requests ads_read with the redirect + state", () => {
-    const u = new URL(buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE"));
+  it("passes the login config id with the redirect + state", () => {
+    const u = new URL(buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE", "CONFIGID"));
     expect(u.hostname).toBe("www.facebook.com");
     expect(u.pathname).toContain(META_GRAPH_VERSION);
     expect(u.searchParams.get("client_id")).toBe("APPID");
     expect(u.searchParams.get("redirect_uri")).toBe("https://app/api/meta/callback");
-    expect(u.searchParams.get("scope")).toContain("ads_read");
+    expect(u.searchParams.get("config_id")).toBe("CONFIGID");
     expect(u.searchParams.get("state")).toBe("STATE");
     expect(u.searchParams.get("response_type")).toBe("code");
   });
-  it("authorize url requests ads_management + ads_read", () => {
-    const url = buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE");
-    expect(url).toContain("ads_management");
-    expect(url).toContain("ads_read");
-  });
-  it("authorize url requests pages_show_list and business_management", () => {
-    const url = buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE");
-    expect(url).toContain("pages_show_list");
-    expect(url).toContain("business_management");
-  });
-  it("authorize url requests the L1 organic-publish scopes (App-Review gated)", () => {
-    const scope = new URL(buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE"))
-      .searchParams.get("scope") ?? "";
-    for (const s of ["instagram_content_publish", "pages_manage_posts", "instagram_basic", "pages_read_engagement"]) {
-      expect(scope.split(",")).toContain(s);
-    }
+  it("sends no scope parameter (business login rejects a loose scope list)", () => {
+    const u = new URL(buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE", "CONFIGID"));
+    expect(u.searchParams.has("scope")).toBe(false);
   });
 });
