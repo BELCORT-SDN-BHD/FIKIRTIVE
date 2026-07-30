@@ -231,6 +231,30 @@ describe("Connections page explains a failed Meta connect (#511)", () => {
     expect(window.location.search).toContain("connected=meta");
   });
 
+  it("leaves the other params' encoding, the hash and the history entry exactly as they were", async () => {
+    mockDisconnected();
+    const onPopstate = vi.fn();
+    window.addEventListener("popstate", onPopstate);
+    try {
+      window.history.pushState({ marker: "otto" }, "", "/otto?view=connections&other=a%20b&error=state#frag");
+      const stateBefore = window.history.state;
+
+      await renderConnections();
+
+      // Byte-for-byte. Round-tripping the query through URLSearchParams would re-encode
+      // `a%20b` as `a+b` — a param this page was never asked to touch, quietly rewritten.
+      expect(window.location.search).toBe("?view=connections&other=a%20b");
+      // Stripping the code must not drop the fragment or the entry's state...
+      expect(window.location.hash).toBe("#frag");
+      expect(window.history.state).toEqual(stateBefore);
+      // ...and it must be a replace, never a navigation: OttoApp's syncFromLocation
+      // listens on popstate, and firing one here would make it re-read the view.
+      expect(onPopstate).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("popstate", onPopstate);
+    }
+  });
+
   it("tells the truth about an unknown code instead of guessing, and shows the code", async () => {
     mockDisconnected();
     window.history.pushState(null, "", "/otto?view=connections&error=some_future_code");
@@ -256,6 +280,23 @@ describe("Connections page explains a failed Meta connect (#511)", () => {
     expect(alert!.textContent).toContain("Contact support");
     // A Try again button here would just fail the same way — the merchant isn't the blocker.
     expect(alert!.querySelector("a, button")).toBeNull();
+  });
+
+  it("does not mistake a code that merely mentions impersonation for the guard's sentence", async () => {
+    mockDisconnected();
+    window.history.pushState(null, "", "/otto?view=connections&error=impersonation_failed");
+
+    const dom = await renderConnections();
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert).toBeTruthy();
+    // An unknown code is an unknown code: no invented cause, the raw code shown for support,
+    // and the retry left available — this merchant is not necessarily impersonating anyone.
+    expect(alert!.textContent).toContain("Meta couldn’t be connected.");
+    expect(alert!.textContent).toContain("Details: impersonation_failed");
+    const retry = alert!.querySelector<HTMLAnchorElement>('a[href="/api/meta/authorize"]');
+    expect(retry).toBeTruthy();
+    expect(retry!.textContent).toBe("Try again");
   });
 
   it("shows a server-sent sentence verbatim, with no retry (impersonation guard)", async () => {

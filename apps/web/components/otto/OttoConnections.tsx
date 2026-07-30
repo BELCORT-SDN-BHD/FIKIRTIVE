@@ -51,14 +51,26 @@ type ConnectErrorCopy = { message: string; retry: boolean; rawCode?: string };
 
 function describeConnectError(code: string): ConnectErrorCopy {
   // completeMetaConnect can hand back a whole sentence instead of a code — the
-  // impersonation guard does. Show it verbatim; retrying cannot clear it. Matched on a
-  // substring because that sentence lives in lib/meta-actions.ts and isn't exported.
-  if (code.includes("impersonat")) return { message: code, retry: false };
+  // impersonation guard does (lib/meta-actions.ts:21). Show it verbatim; retrying cannot
+  // clear it. Matched on the EXACT sentence, not a substring: a code like
+  // `impersonation_failed` is not this guard, and treating it as one would both print a
+  // bare code as if it were prose and wrongly refuse the merchant a retry. That sentence
+  // isn't exported, so if it ever changes over there this stops matching and the code
+  // falls through to the generic branch below — which still tells the truth (says only
+  // that Meta couldn't be connected, shows the raw text, offers a retry). That is the
+  // intended failure mode, chosen deliberately over a fuzzy match that can misfire.
+  if (code === "Paused while impersonating a customer — exit impersonation to connect Meta.")
+    return { message: code, retry: false };
   switch (code) {
     case "missing":
       return { message: "Meta sent you back before the connection finished.", retry: true };
     case "state":
-      return { message: "This connect link has expired, or it was started in a different browser.", retry: true };
+      // Exactly three things make the callback reject the state (lib/meta-oauth.ts
+      // verifyState + app/api/meta/callback/route.ts:24): a signature that doesn't verify,
+      // the 10-minute TTL, or a state minted for a different ownerId than the one now
+      // signed in. Nothing binds it to a browser, so the copy must not claim that. A fresh
+      // connect clears all three.
+      return { message: "This connect link couldn’t be verified — these links expire, and they only work for the account that started them.", retry: true };
     case "not_configured":
       // Nothing the merchant can retry their way out of — the server is missing its Meta keys.
       return { message: "Meta connections aren’t switched on for this server yet. Contact support and we’ll enable it.", retry: false };
@@ -240,12 +252,23 @@ export default function OttoConnections() {
     // Deferred with queueMicrotask for the same reason load() above is: setting state
     // synchronously in an effect body trips react-hooks/set-state-in-effect.
     queueMicrotask(() => {
-      const url = new URL(window.location.href);
-      const code = url.searchParams.get("error");
+      const rawSearch = window.location.search;
+      // Decoding is fine for the value we're about to display; it's re-encoding the OTHERS
+      // that isn't.
+      const code = new URLSearchParams(rawSearch).get("error");
       if (!code) return;
       setConnectErrorCode(code);
-      url.searchParams.delete("error");
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      // Surgery on the raw query string rather than serializing URLSearchParams back out:
+      // a round-trip rewrites every other param's encoding (`a%20b` becomes `a+b`), which
+      // silently changes params we were only ever asked to leave alone. Drop just the
+      // error entries; the rest survive byte-for-byte, in their original order. pathname
+      // and hash are never touched.
+      const kept = rawSearch
+        .replace(/^\?/, "")
+        .split("&")
+        .filter((part) => part !== "error" && !part.startsWith("error="));
+      const nextSearch = kept.length > 0 ? `?${kept.join("&")}` : "";
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${nextSearch}${window.location.hash}`);
     });
   }, []);
 
