@@ -84,7 +84,7 @@ describe("requireOwner — fail-closed", () => {
     const mem = await prisma.membership.findUnique({ where: { userId_orgId: { userId, orgId: r.ownerId } } });
     expect(mem?.role).toBe("owner");
     const acct = await prisma.creditAccount.findUnique({ where: { orgId: r.ownerId } });
-    expect(acct?.balance).toBe(100 * 10); // BETA_INITIAL_GRANT_CREDITS
+    expect(acct?.balance).toBe(20 * 10); // SIGNUP_GRANT_CREDITS
   });
 
   it("is idempotent — a second call returns the same org and does not re-grant", async () => {
@@ -96,7 +96,7 @@ describe("requireOwner — fail-closed", () => {
     if ("error" in second) throw new Error(second.error);
     expect(second.ownerId).toBe(first.ownerId);
     const acct = await prisma.creditAccount.findUnique({ where: { orgId: first.ownerId } });
-    expect(acct?.balance).toBe(100 * 10); // BETA_INITIAL_GRANT_CREDITS (cut 1000→100 in #66)
+    expect(acct?.balance).toBe(20 * 10); // SIGNUP_GRANT_CREDITS (1000→100 in #66, →20 in #543)
     const grants = await prisma.creditLedger.count({ where: { orgId: first.ownerId, idempotencyKey: `signup:${first.ownerId}` } });
     expect(grants).toBe(1);
   });

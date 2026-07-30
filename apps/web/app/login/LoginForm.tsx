@@ -195,6 +195,13 @@ export function LoginForm({ from }: { from: string }) {
           </div>
         </div>
 
+        <a
+          href="/forgot-password"
+          className="-mt-1 self-start text-[12.5px] font-semibold text-muted-foreground underline underline-offset-4 hover:text-foreground"
+        >
+          Forgot your password?
+        </a>
+
         <Button type="submit" disabled={!!busy} className="mt-0.5 w-full">
           {busy === "password" ? "Signing in…" : "Sign in"}
         </Button>

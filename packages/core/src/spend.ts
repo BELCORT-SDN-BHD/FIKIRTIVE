@@ -111,8 +111,15 @@ export function displayCredits(internal: number): number {
   return internal / INTERNAL_PER_DISPLAY;
 }
 
-/** Beta: a new org's one-time CreditAccount seed (internal credits, 1 = $0.01).
- *  100 DISPLAYED credits = 100 × INTERNAL_PER_DISPLAY internal (≈ 4–5 complete campaigns
- *  at BytePlus costs). Granted idempotently in the org-bootstrap path (requireOwner +
- *  events.signIn) under key "signup:<orgId>". */
-export const BETA_INITIAL_GRANT_CREDITS = 100 * INTERNAL_PER_DISPLAY;
+/** A new org's one-time welcome grant (internal credits, 1 = $0.01).
+ *
+ *  20 DISPLAYED credits = 20 × INTERNAL_PER_DISPLAY internal — the #543 Founder decision
+ *  (2026-07-31): enough for one complete Otto experience (a full conversation + image +
+ *  critique ≈ 9.5 displayed, one 5s video = 8 displayed), and it lands only AFTER the
+ *  merchant verifies their email.
+ *
+ *  Supersedes the closed-beta seed (1000 → 100 in #66 → 20 here). It is granted
+ *  idempotently in the org-bootstrap path under the stable key "signup:<orgId>"; the key
+ *  is deliberately UNCHANGED, because a new key would re-grant to every org that already
+ *  received the old amount. */
+export const SIGNUP_GRANT_CREDITS = 20 * INTERNAL_PER_DISPLAY;

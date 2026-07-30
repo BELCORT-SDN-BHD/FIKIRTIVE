@@ -10,7 +10,16 @@ import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
-import { isAllowedEmail } from "@/lib/allowlist";
+import { isAllowedEmail, isRevokedEmail } from "@/lib/allowlist";
+import { admitSelfSignup, signupsPaused, SIGNUPS_PAUSED_MESSAGE } from "@/lib/signup-gate";
+
+/** #543 — the one Better Auth path that self-service registration owns. Anything that is not
+ *  EXACTLY this path keeps the deny-by-default allowlist gate; an absent/unknown path (the
+ *  database hooks receive a nullable endpoint context) therefore fails closed. */
+const SELF_SIGNUP_PATH = "/sign-up/email";
+function isSelfSignupPath(path: string | undefined | null): boolean {
+  return path === SELF_SIGNUP_PATH;
+}
 
 // Secret guard — BUILD-SAFE. Do NOT hard-throw at module top level (that can break `next build`
 // before env is wired). better-auth already fails closed without a valid secret; this just warns
@@ -56,15 +65,46 @@ export const auth = betterAuth({
     sendVerificationEmail: async ({ user, url }) => {
       await sendAuthEmail({ to: user.email, subject: "Verify your Fikirtive email", url, intro: "Verify your email" });
     },
+    // #543 — verifying is the last step the merchant should have to take; the link drops
+    // them straight into their new workspace. The token is single-use and short-lived, and
+    // the session it mints still passes through the fail-closed session.create.before gate.
+    autoSignInAfterVerification: true,
+    // #543/#544 — the ONE place that turns "email proven" into a tenant + the welcome grant.
+    // convergeIdentity is idempotent and never throws: a second verification, a re-login or
+    // a racing tab all converge on the same org and the same single GRANT row (the grant
+    // dedupes on the (orgId, idempotencyKey) unique). Before this, an unverified account had
+    // no User row at all, so nothing could be granted — which is exactly the rule the spec
+    // wants: unverified means zero balance, with no extra lock needed.
+    afterEmailVerification: async (user) => {
+      await convergeIdentity({ email: user.email, name: user.name, image: user.image, emailVerified: true });
+    },
   },
   socialProviders: {
     google: { clientId: process.env.GOOGLE_CLIENT_ID ?? "", clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "" },
+  },
+  // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
+  // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
+  // (5 per address per hour) still caps mail volume per victim address on top of this.
+  rateLimit: {
+    customRules: {
+      "/sign-up/email": { window: 60 * 60, max: 5 },
+      "/request-password-reset": { window: 60 * 60, max: 5 },
+      "/send-verification-email": { window: 60 * 60, max: 5 },
+    },
   },
   // Deny-by-default allowlist across EVERY method (before any session is issued).
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
       const email: string | undefined = (ctx.body as Record<string, unknown> | undefined)?.email as string | undefined;
       if (!email) return;
+      if (isSelfSignupPath(ctx.path)) {
+        // #543 — the ONE open door: self-service registration with email + password. The
+        // allowlist is NOT the gate here (that is the whole point of the ticket); the pause
+        // switch and the revocation check in databaseHooks.user.create.before are. Nothing
+        // else opens: magic link, Google and password sign-in keep their existing gates.
+        if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
+        return;
+      }
       if (ctx.path === "/sign-in/magic-link") {
         if (!(await isAllowedEmail(email))) {
           // Enumeration-safe parity: the public endpoint returns the same success body without
@@ -91,10 +131,25 @@ export const auth = betterAuth({
     user: {
       create: {
         // Gate 1: prevents any non-allowlisted email from getting a ba_user row (first sign-up, any method).
-        before: async (user) => {
+        // #543 carves out EXACTLY one path — self-service `/sign-up/email` — where the allowlist is
+        // no longer the gate. That path is still fail-closed on the two things that must hold:
+        // signups must be open, and a REVOKED address can never re-register its way back in. Every
+        // other method (magic link, Google, and a null endpoint context) keeps the allowlist gate.
+        before: async (user, ctx) => {
+          if (isSelfSignupPath(ctx?.path)) {
+            if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
+            if (await isRevokedEmail(user.email)) {
+              throw new APIError("FORBIDDEN", { message: "This email can't be used to create an account." });
+            }
+            return;
+          }
           await assertAllowedEmail(user.email);
         },
-        after: async (u) => {
+        after: async (u, ctx) => {
+          // Registration IS the invite — but only once the account actually exists. Writing this
+          // from the request body instead would let a refused or abandoned signup pre-stock an
+          // address that could still walk in later (e.g. after signups are paused).
+          if (isSelfSignupPath(ctx?.path)) await admitSelfSignup(u.email);
           await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified });
         },
       },

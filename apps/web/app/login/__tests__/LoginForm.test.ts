@@ -24,8 +24,14 @@ describe("LoginForm", () => {
     expect(markup).toContain('type="email"');
     expect(markup).toContain("required");
     expect(markup).toContain("Email me a sign-in link");
-    expect(markup).not.toContain("Forgot?");
     expect(markup).not.toContain("Email me a magic link");
+  });
+
+  it("offers password recovery only because the reset flow now exists (#543)", () => {
+    const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/" }));
+
+    expect(markup).toContain("Forgot your password?");
+    expect(markup).toContain('href="/forgot-password"');
   });
 
   it("wires Use a different email to clear the address and focus the remounted input", async () => {

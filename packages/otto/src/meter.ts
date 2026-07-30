@@ -119,6 +119,13 @@ export async function withLlmBudget<T>(
      *  manifest (runtime.ts ottoBudgetArgsFor — the single billing source, PH1-A1).
      *  Omitted → llmPricesFor(model), the fail-closed lookup (unknown → sonnet, never free). */
     prices?: LlmPrices;
+    /** #543 — an upper bound on the HOLD, in INTERNAL credits. Server-owned composition
+     *  data only (runtime.ts ottoBudgetArgsFor); never request/client supplied. It can only
+     *  LOWER the hold, never raise it, and a malformed value (0, negative, fractional,
+     *  NaN, Infinity) is ignored so the derived worst-case budget stays in force —
+     *  fail-closed in the direction that holds MORE. Reserve/settle/refund semantics are
+     *  unchanged: settleCredits still clamps the charge to the held amount. */
+    reserveCapInternal?: number;
     usageOnError?: (e: unknown) => TokenUsage | null;
   },
   fn: () => Promise<{ result: T; usage?: TokenUsage }>,
@@ -146,7 +153,12 @@ export async function withLlmBudget<T>(
 
   // Reserve the worst-case budget BEFORE calling the model.
   // turnBudgetInternal(prices, margin, 1) === oneStepFloorInternal(prices, margin).
-  const reserve = turnBudgetInternal(prices, margin, maxSteps);
+  const worstCase = turnBudgetInternal(prices, margin, maxSteps);
+  // #543: a composition-supplied cap may only LOWER the hold. Anything that is not a
+  // positive integer is ignored, so a malformed cap can never open a metering hole.
+  const cap = args.reserveCapInternal;
+  const reserve =
+    typeof cap === "number" && Number.isInteger(cap) && cap >= 1 ? Math.min(worstCase, cap) : worstCase;
 
   // Invariant #1: reserve first. InsufficientCredits propagates; fn never called.
   await prisma.$transaction((tx) =>

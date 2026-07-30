@@ -487,3 +487,76 @@ describe("Test #8 — bypass audit: no unmetered LLM entry points in cowork-acti
     expect(src).not.toContain("getTransport");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test #9 (#543) — reserveCapInternal caps the HOLD only. RESERVE→SETTLE/REFUND
+// semantics are untouched: reserve still happens before fn, settle still clamps the
+// charge to the held amount, a throw still refunds the whole hold.
+// ---------------------------------------------------------------------------
+describe("Test #9 — reserveCapInternal (#543 conversation-turn hold cap)", () => {
+  it("holds the cap instead of the worst case when the cap is lower", async () => {
+    const prices = llmPricesFor(MODEL);
+    const worstCase = turnBudgetInternal(prices, MARGIN, 10);
+    expect(worstCase).toBeGreaterThan(40);
+
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: { inputTokens: 10, outputTokens: 5 } }),
+    );
+
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost: 40 }),
+    );
+  });
+
+  it("never RAISES the hold — a cap above the worst case leaves the derived budget intact", async () => {
+    const prices = llmPricesFor(MODEL);
+    const worstCase = turnBudgetInternal(prices, MARGIN, 1);
+
+    await withLlmBudget(
+      makeArgs({ maxSteps: 1, reserveCapInternal: 9_999 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+
+    expect(mocks.reserveCredits).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ cost: worstCase }),
+    );
+  });
+
+  it("fails closed on a malformed cap — 0, negative, fractional and NaN fall back to the worst case", async () => {
+    const prices = llmPricesFor(MODEL);
+    const worstCase = turnBudgetInternal(prices, MARGIN, 10);
+
+    for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      vi.clearAllMocks();
+      await withLlmBudget(
+        makeArgs({ maxSteps: 10, reserveCapInternal: bad }),
+        vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+      );
+      expect(mocks.reserveCredits).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ cost: worstCase }),
+      );
+    }
+  });
+
+  it("no-usage settle charges the CAPPED hold, never the uncapped worst case", async () => {
+    await withLlmBudget(
+      makeArgs({ maxSteps: 10, reserveCapInternal: 40 }),
+      vi.fn().mockResolvedValue({ result: "ok", usage: undefined }),
+    );
+    const settleCall = mocks.settleCredits.mock.calls[0] as [unknown, { actualInternal: number }];
+    expect(settleCall[1].actualInternal).toBe(40);
+  });
+
+  it("a throwing call still refunds the whole capped hold (invariant #3 unchanged)", async () => {
+    const boom = new Error("model exploded");
+    await expect(
+      withLlmBudget(makeArgs({ maxSteps: 10, reserveCapInternal: 40 }), vi.fn().mockRejectedValue(boom)),
+    ).rejects.toBe(boom);
+    expect(mocks.refundReservation).toHaveBeenCalledTimes(1);
+    expect(mocks.settleCredits).not.toHaveBeenCalled();
+  });
+});

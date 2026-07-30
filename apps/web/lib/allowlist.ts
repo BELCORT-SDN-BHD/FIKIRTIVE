@@ -28,6 +28,21 @@ export async function allowed(email: string | null | undefined): Promise<boolean
   return isAllowedEmail(email);
 }
 
+/** #543 — is this address explicitly REVOKED? Distinct from `!isAllowedEmail(email)`, which
+ *  is also false for an address nobody has ever heard of. Self-service signup admits unknown
+ *  addresses but must never let a revoked one re-register its way back in, so it needs the
+ *  narrower question. Fail-closed: a blank address or a DB outage reads as revoked. */
+export async function isRevokedEmail(email: string | null | undefined): Promise<boolean> {
+  const e = (email ?? "").trim().toLowerCase();
+  if (!e) return true;
+  try {
+    const row = await prisma.allowedEmail.findUnique({ where: { email: e }, select: { status: true } });
+    return row?.status === "revoked";
+  } catch {
+    return true;
+  }
+}
+
 /** Dedicated founder list (OPT-6 P1b) — distinct from AUTH_ALLOWED_EMAILS. Founders
  *  are seeded to super-admin on sign-in. next-auth-free so both auth stacks share it. */
 export function isFounderAdmin(email: string | null | undefined): boolean {
