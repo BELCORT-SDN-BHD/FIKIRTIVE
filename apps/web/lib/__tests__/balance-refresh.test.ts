@@ -8,7 +8,11 @@
  * 不新增轮询(#544 已批评现存的 4s thread-activity 轮询)。
  */
 import { describe, expect, it, vi } from "vitest";
-import { notifyBalanceRefresh, subscribeBalanceRefresh } from "../balance-refresh";
+import {
+  createLatestReadGate,
+  notifyBalanceRefresh,
+  subscribeBalanceRefresh,
+} from "../balance-refresh";
 
 describe("balance refresh signal", () => {
   it("delivers a spend event to every live subscriber", () => {
@@ -80,5 +84,55 @@ describe("balance refresh signal", () => {
       unsubscribeEarly();
       unsubscribeLate();
     }
+  });
+});
+
+/**
+ * createLatestReadGate — 第一轮跨族复审 P1① 的对策。
+ *
+ * 一次结算会连着触发多次余额重读(冻结一次、结算一次),而 getMyAccount 的响应不保证
+ * 按发出顺序回来。没有这道闸,一个慢的旧请求可以后到并覆盖新余额 —— 商家点了「刷新」
+ * 反而看到更旧的数字,比不刷新更伤信任。
+ */
+describe("createLatestReadGate", () => {
+  it("keeps a lone read authoritative", () => {
+    const begin = createLatestReadGate();
+    const isLatest = begin();
+
+    expect(isLatest()).toBe(true);
+  });
+
+  it("invalidates an earlier read as soon as a newer one begins", () => {
+    const begin = createLatestReadGate();
+    const first = begin();
+    const second = begin();
+
+    // The slow first response must be dropped; only the newest read may repaint.
+    expect(first()).toBe(false);
+    expect(second()).toBe(true);
+  });
+
+  it("keeps only the newest of many overlapping reads", () => {
+    const begin = createLatestReadGate();
+    const tokens = [begin(), begin(), begin(), begin()];
+
+    expect(tokens.map((isLatest) => isLatest())).toEqual([false, false, false, true]);
+  });
+
+  it("stays latest across repeated checks (a token is not consumed by reading it)", () => {
+    const begin = createLatestReadGate();
+    const only = begin();
+
+    expect(only()).toBe(true);
+    expect(only()).toBe(true);
+  });
+
+  it("gives each gate its own sequence (two navs never invalidate each other)", () => {
+    const beginA = createLatestReadGate();
+    const beginB = createLatestReadGate();
+    const a = beginA();
+    beginB();
+
+    expect(a()).toBe(true);
   });
 });

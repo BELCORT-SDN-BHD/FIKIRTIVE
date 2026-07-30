@@ -113,16 +113,17 @@ export function AddAssetDialog({
         setSaving(false);
         return;
       }
-      // A reference generation reserves credits the moment startRefGen accepts — tell the
-      // global nav so its credits figure moves with the money (#550). This dialog is the
-      // last client-triggered spend path that had no balance-refresh signal at all.
-      notifyBalanceRefresh();
       setDone(true);
       setSaving(false);
       onDone();
     } catch {
       setError("Couldn't generate this. Please try again.");
       setSaving(false);
+    } finally {
+      // A reference generation reserves credits the moment startRefGen accepts — tell the
+      // global nav so its credits figure moves with the money. In a finally so a refused or
+      // failed start, which can still have reserved and refunded, announces too (#550).
+      notifyBalanceRefresh();
     }
   }
 

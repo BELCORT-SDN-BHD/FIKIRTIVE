@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
-import { subscribeBalanceRefresh } from "@/lib/balance-refresh";
+import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-refresh";
 
 type NavigationIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 
@@ -246,19 +246,35 @@ export function GlobalNavigation({
   // signal (rather than adding a timer) keeps the number honest within a click of the
   // charge and adds no polling (#550: it used to sit on the mount value until a full
   // page reload, lagging the database by 84s+).
+  //
+  // A settle fires several reads back to back, so every response passes the latest-read
+  // gate first: a slow earlier read must be discarded rather than repaint an older
+  // balance over a newer one.
+  //
+  // Returning to the tab also re-reads. That is the backstop for charges started on
+  // surfaces that do not announce yet (see UNANNOUNCED_BLOCKED in
+  // lib/__tests__/spend-visibility-seams.test.ts) and for money the worker settles while
+  // the tab is in the background. It is event-driven, not a timer.
   useEffect(() => {
     let alive = true;
+    const beginRead = createLatestReadGate();
     const load = () => {
+      const isLatest = beginRead();
       getMyAccount().then((result) => {
-        if (!alive || "error" in result) return;
+        if (!alive || !isLatest() || "error" in result) return;
         setAccount({ email: result.email, balance: result.balance });
       }).catch(() => {});
     };
+    const loadIfVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
     load();
     const unsubscribe = subscribeBalanceRefresh(load);
+    document.addEventListener("visibilitychange", loadIfVisible);
     return () => {
       alive = false;
       unsubscribe();
+      document.removeEventListener("visibilitychange", loadIfVisible);
     };
   }, []);
 

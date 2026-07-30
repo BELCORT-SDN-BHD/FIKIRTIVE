@@ -79,7 +79,6 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;
-  const balanceCredits = account?.balance ?? 0; // DISPLAYED credits — the nav shows credits, not $
   const userName = email.split("@")[0];
 
   // Streaming chat is the single Otto surface for all users (reference-vision rollout, 2026-07-01).
@@ -96,7 +95,6 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       entities={entities.map(toEntityDTO)}
       threads={threads}
       balanceUsd={balanceUsd}
-      balanceCredits={balanceCredits}
       userName={userName}
       memory={memory}
       records={records}

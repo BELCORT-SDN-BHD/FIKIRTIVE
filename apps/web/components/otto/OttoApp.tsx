@@ -13,7 +13,6 @@ import type { BrandRecordRow } from "@/lib/brand-record-actions";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import type { HistoryThumb } from "@/lib/data";
-import { getMyAccount } from "@/lib/account-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
@@ -100,8 +99,6 @@ export interface OttoAppProps {
   entities: EntityDTO[];
   threads: ChatThreadDTO[];
   balanceUsd: number;
-  /** Spendable balance in DISPLAYED credits — shown in the nav (product uses credits, not $). */
-  balanceCredits: number;
   userName: string;
   memory: MemoryRow[];
   records: BrandRecordRow[];
@@ -139,7 +136,6 @@ export function OttoApp({
   entities,
   threads: initialThreads,
   balanceUsd,
-  balanceCredits: initialBalanceCredits,
   userName,
   memory,
   records,
@@ -161,7 +157,6 @@ export function OttoApp({
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     initialActiveThreadId === undefined ? (initialThreads[0]?.id ?? null) : initialActiveThreadId,
   );
-  const [balanceCredits, setBalanceCredits] = useState(initialBalanceCredits);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activity, setActivity] = useState<Set<string>>(new Set());
   const [seedText, setSeedText] = useState<string>("");
@@ -272,12 +267,14 @@ export function OttoApp({
   }, [view, projectId, threads.length, applyActivity]);
 
   // Every settle in this tree (canvas generations, Otto turns, plan/pack/research cards)
-  // already funnels into here via onBalanceRefresh. Announce it too, so the persistent
-  // global nav — which holds the only credits figure a merchant actually sees, and lives
-  // outside this tree — re-reads the balance at the same moment (#550).
+  // funnels into here via onBalanceRefresh. Its only job is to announce: the persistent
+  // global nav owns the credits figure and does the read itself.
+  //
+  // Deliberately nothing but the announcement (round-1 review P1②/P2①). This used to
+  // await its own account read first, to keep a local credits figure that nothing has
+  // rendered since #513 A组 moved credits into the global nav — which both doubled every
+  // fetch and let a failing read swallow the whole event before it was ever published.
   const refreshBalance = useCallback(async () => {
-    const a = await getMyAccount();
-    if (a && !("error" in a)) setBalanceCredits(a.balance);
     notifyBalanceRefresh();
   }, []);
 
@@ -624,7 +621,6 @@ export function OttoApp({
         onRenameThread={requestRenameThread}
         onSetThreadPinned={handleSetThreadPinned}
         onDeleteThread={requestDeleteThread}
-        balanceCredits={balanceCredits}
         history={history}
         drawerOpen={drawerOpen}
         onDrawerClose={() => setDrawerOpen(false)}

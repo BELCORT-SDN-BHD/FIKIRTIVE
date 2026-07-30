@@ -30,6 +30,25 @@ export function subscribeBalanceRefresh(listener: BalanceRefreshListener): () =>
   };
 }
 
+/** Guard a repeatedly-issued async read against out-of-order responses.
+ *
+ *  Call the returned `begin()` when a read starts; it hands back an `isLatest()` that is
+ *  false once a newer read has begun. A settle fires several refreshes in quick
+ *  succession (the hold, then the settle/refund), and `getMyAccount` responses are not
+ *  guaranteed to come back in the order they were sent — without this, a slow earlier
+ *  response can land last and repaint an OLDER balance. That makes a "refresh" actively
+ *  worse than not refreshing, which is the opposite of what #550 is trying to buy.
+ *
+ *  Each gate has its own sequence, so two independent displays never invalidate each
+ *  other's reads. */
+export function createLatestReadGate(): () => () => boolean {
+  let issued = 0;
+  return () => {
+    const mine = ++issued;
+    return () => mine === issued;
+  };
+}
+
 /** Announce that a charge settled and any displayed balance is now stale. Iterates a
  *  snapshot so a listener that subscribes/unsubscribes during delivery cannot change
  *  who this round reaches, and one throwing listener cannot swallow the rest — a
