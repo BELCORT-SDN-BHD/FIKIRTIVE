@@ -935,8 +935,10 @@ export function OttoChatStream({
                         nextPendingApprovalCardIds(cur, [durableId], chained?.pendingCardIds),
                       );
                       rearmGenerationPoll();
-                      // An approve reserves credits — refresh the nav balance immediately.
-                      void onBalanceRefresh?.();
+                      // No balance announcement here: OttoPlanCard.approve() already makes it
+                      // in its own finally, which fires on the failure paths too. Announcing
+                      // again from this success-only callback just double-read the balance
+                      // (round-2 review P2) — one action, one announcement.
                       // #498 round-5 P2c: inject the chained park's model narration live.
                       void pollAndInjectResults(
                         chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
@@ -962,7 +964,7 @@ export function OttoChatStream({
                     }}
                     onCancelled={() => {
                       if (genJobId) setCancelledJobIds((cur) => new Set(cur).add(genJobId));
-                      void onBalanceRefresh?.();
+                      // Same as onApproved above: the card's own cancel() finally announces.
                       void pollAndInjectResults();
                     }}
                   />

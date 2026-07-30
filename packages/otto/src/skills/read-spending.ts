@@ -32,11 +32,16 @@ export type SpendingEntry = {
 };
 
 export type SpendingTotals = {
-  /** Positive total CHARGED across the window. */
+  /** Positive total actually SPENT across the window — settled charges only. */
   charged: number;
+  /** Positive total still only HELD across the window (unsettled reservations). Kept out of
+   *  `charged` and `byCategory`: a hold is not a charge, and the final amount is not known
+   *  yet. Round-2 review P1②: folding it in made Otto report money as spent that had not
+   *  been, and the instructions tell the model to quote totals verbatim. */
+  onHold: number;
   /** Positive total ADDED across the window (top-ups, grants, refunds). */
   added: number;
-  /** Positive charged amount per category, e.g. { chat: 7.8, review: 0.7, image: 1 }. */
+  /** Positive SETTLED charge per category, e.g. { chat: 7.8, review: 0.7, image: 1 }. */
   byCategory: Record<string, number>;
 };
 
@@ -50,14 +55,24 @@ function round1(n: number): number {
  * Add up a window of history. PURE — no I/O. Charges are reported as positive numbers under
  * `charged`/`byCategory` (a merchant asks "how much did I spend", not "what was the delta"),
  * while credits added stay separate so the two are never netted into one confusing figure.
+ *
+ * A `pending` entry is a HOLD, not a charge: its amount is the reservation ceiling and the
+ * real cost is only known when it settles. It is totalled separately under `onHold` and left
+ * out of `charged`/`byCategory`, so "what have I spent" can never be answered with money the
+ * merchant has not actually spent (round-2 review P1②).
  */
 export function summariseSpending(entries: readonly SpendingEntry[]): SpendingTotals {
   let charged = 0;
+  let onHold = 0;
   let added = 0;
   const byCategory: Record<string, number> = {};
   for (const entry of entries) {
     if (entry.credits < 0) {
       const amount = -entry.credits;
+      if (entry.pending) {
+        onHold += amount;
+        continue;
+      }
       charged += amount;
       byCategory[entry.category] = (byCategory[entry.category] ?? 0) + amount;
     } else {
@@ -65,7 +80,7 @@ export function summariseSpending(entries: readonly SpendingEntry[]): SpendingTo
     }
   }
   for (const key of Object.keys(byCategory)) byCategory[key] = round1(byCategory[key]!);
-  return { charged: round1(charged), added: round1(added), byCategory };
+  return { charged: round1(charged), onHold: round1(onHold), added: round1(added), byCategory };
 }
 
 export async function executeReadSpending(
@@ -96,13 +111,16 @@ export const readSpendingSkill = defineOttoSkill({
     "sees under Billing & credits → Spend history. $0 and read-only: it can never top up, charge, " +
     "or refund. Use it whenever they ask what they have left, what they have spent, or what " +
     "something cost. Returns: balance and reserved (credits held for work in flight); totals " +
-    "(charged / added / per category) already added up for you — do not re-add them; entries, " +
-    "newest first, each with a plain category (Chat = one conversation turn with you, Review = " +
-    "the automatic check after a generation, Image, Video, Research, Top-up), a signed credits " +
-    "amount (negative = charged), the time, and pending:true when a hold has not settled yet. " +
+    "already added up for you — do not re-add them — where totals.charged is money actually " +
+    "SPENT (settled only), totals.onHold is money merely HELD by unfinished work (never add it " +
+    "to the spent figure; mention it as not settled yet), totals.added is credits added, and " +
+    "totals.byCategory breaks the SETTLED spend down; entries, newest first, each with a plain " +
+    "category (Chat = one conversation turn with you, Review = the automatic check after a " +
+    "generation, Image, Video, Research, Top-up), a signed credits amount (negative = charged), " +
+    "the time, and pending:true when that one is a hold rather than a settled charge. " +
     "IMPORTANT: `window` says how far back this reaches — it covers the most recent " +
     "window.taskLimit items only. If window.hasMore is true there are OLDER charges not included, " +
-    "so say your figures cover the recent history, never 'everything you have ever spent'.",
+    "so say your figures cover their recent charges, never 'everything you have ever spent'.",
   parameters: params,
   execute: executeReadSpending,
 });

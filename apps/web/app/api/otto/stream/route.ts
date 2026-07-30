@@ -71,19 +71,28 @@ function errSummary(e: unknown): string {
 /** What this turn actually cost, in DISPLAYED credits, read from the ledger after the turn
  *  settled (#555 — the merchant used to be charged for every turn with no number anywhere).
  *
- *  READ-ONLY: it sums the turn's own ledger rows (RESERVE + SETTLE/REFUND for this refId) and
- *  reports the net. It never reserves, settles, refunds, or changes any amount — withLlmBudget
- *  has already committed the money by the time this runs. A zero or negative net means the
- *  merchant was not charged (a free/mock turn, or a failure that refunded the hold), and a
- *  failed read means we simply don't claim a number: returns null and the UI shows nothing
- *  rather than an amount we can't stand behind. */
+ *  READ-ONLY: it reads the turn's own ledger rows and reports their net. It never reserves,
+ *  settles, refunds, or changes any amount — withLlmBudget has already committed the money by
+ *  the time this runs.
+ *
+ *  A FINALIZER ROW IS REQUIRED (round-2 review P1③). An outstanding RESERVE with no SETTLE or
+ *  REFUND is a hold, not a cost: its amount is the worst-case turn budget, so showing it would
+ *  quote the merchant a number they were never charged. That is not hypothetical — if the
+ *  settle transaction itself fails, the run throws and the route takes its generic-error path
+ *  with a bare RESERVE still on the ledger. So: no finalizer → no number.
+ *
+ *  Returns null (and the UI shows nothing) whenever we cannot stand behind a figure: no
+ *  finalizer yet, a non-positive net (a free/mock turn, or a failure that refunded the hold),
+ *  or a failed read. */
 async function settledTurnCost(orgId: string, refId: string): Promise<number | null> {
   try {
-    const sum = await prisma.creditLedger.aggregate({
+    const rows = await prisma.creditLedger.findMany({
       where: { orgId, refId },
-      _sum: { balanceDelta: true },
+      select: { kind: true, balanceDelta: true },
     });
-    const chargedInternal = -(sum._sum.balanceDelta ?? 0);
+    const finalized = rows.some((row) => row.kind === "SETTLE" || row.kind === "REFUND");
+    if (!finalized) return null;
+    const chargedInternal = -rows.reduce((sum, row) => sum + row.balanceDelta, 0);
     if (!Number.isFinite(chargedInternal) || chargedInternal <= 0) return null;
     return displayCredits(chargedInternal);
   } catch (e) {

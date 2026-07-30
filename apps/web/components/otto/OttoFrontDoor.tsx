@@ -169,6 +169,11 @@ export function OttoFrontDoor({
     setBusy(true);
     setError(null);
     const entityIds = resolveSentEntityIds(msgText, pickedMentions);
+    // Only the non-streaming fallback below meters credits from HERE. The streaming branch
+    // hands the first message to OttoChatStream and returns having spent nothing, so it must
+    // not announce a balance change (round-2 review P2 — a "refresh" that follows no charge
+    // is noise that makes the real ones less trustworthy).
+    let metered = false;
     try {
       // Streaming front door: create an empty thread (no first turn, no spend), then
       // hand the first message to OttoChatStream which streams it in on mount. The
@@ -195,6 +200,9 @@ export function OttoFrontDoor({
         return;
       }
 
+      // Past this point the turn can reserve credits — even a thrown transport error cannot
+      // prove it did not, so the finally must announce.
+      metered = true;
       const res = await ottoTurn({
         projectId,
         text: msgText,
@@ -217,11 +225,10 @@ export function OttoFrontDoor({
     } finally {
       setBusy(false);
       startingRef.current = false;
-      // In a finally on purpose (#550): the non-streaming fallback runs a metered ottoTurn,
-      // and a transport failure cannot prove the turn didn't reserve — so the balance is
-      // re-read on every exit. The streaming branch returns early having spent nothing here
-      // (OttoChatStream announces its own turn), and a redundant refresh is harmless.
-      notifyBalanceRefresh();
+      // In a finally on purpose (#550): once the metered call has been entered, no exit path
+      // proves zero spend — success, handled error, and thrown transport failure all have to
+      // re-read the balance.
+      if (metered) notifyBalanceRefresh();
     }
   }
 
