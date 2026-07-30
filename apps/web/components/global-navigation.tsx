@@ -251,10 +251,11 @@ export function GlobalNavigation({
   // gate first: a slow earlier read must be discarded rather than repaint an older
   // balance over a newer one.
   //
-  // Returning to the tab also re-reads. That is the backstop for charges started on
-  // surfaces that do not announce yet (see UNANNOUNCED_BLOCKED in
-  // lib/__tests__/spend-visibility-seams.test.ts) and for money the worker settles while
-  // the tab is in the background. It is event-driven, not a timer.
+  // Returning to the tab also re-reads. Every client spend entry now announces (the
+  // enumeration in lib/__tests__/spend-visibility-seams.test.ts fences that with no
+  // exemptions), so this is no longer covering for unwired surfaces — it catches the money
+  // a WORKER settles while the tab sits in the background, where there is no click to hang
+  // an announcement off. It is event-driven, not a timer.
   useEffect(() => {
     let alive = true;
     const beginRead = createLatestReadGate();

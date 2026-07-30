@@ -237,9 +237,64 @@ describe("ottoInstructions — #555 credits and spending", () => {
   // instructions admitted `hasMore` on one line and called the same list "the complete
   // record" two lines later. The guard is now a family ban on completeness claims, and no
   // positive assertion locks any of them in.
+  //
+  // Round-3 review: four EXACT phrases is still a phrase list, not a family — "the entire
+  // history" or "every transaction" would have walked through it. These are patterns over
+  // (completeness adjective x record noun) and (universal quantifier x charge noun).
+  //
+  // Deliberately NOT banned as bare words: "full" and "every" appear all over the
+  // instructions legitimately ("fetch full text sparingly", "every call pauses…"), and the
+  // instructions QUOTE `never "everything you've ever spent"` in order to forbid it — a
+  // ban on that literal string would red-line the very sentence doing the forbidding.
+  const COMPLETENESS_OVERCLAIMS = [
+    /\b(complete|full|entire|whole)\s+(spending\s+|billing\s+|payment\s+|charge\s+)?(record|history|list|ledger|picture|breakdown)\b/i,
+    /\bevery\s+(charge|transaction|payment|purchase)\b/i,
+    /\ball\s+(of\s+)?your\s+(charges|transactions|payments|spending|credits\s+spent)\b/i,
+  ];
+
   it("bans every completeness claim about a list that is a bounded window", () => {
-    for (const overclaim of [/complete record/i, /full record/i, /every charge/i, /all of your charges/i]) {
-      expect(ottoInstructions).not.toMatch(overclaim);
+    for (const overclaim of COMPLETENESS_OVERCLAIMS) {
+      expect(ottoInstructions, `completeness overclaim ${overclaim} must not appear`).not.toMatch(
+        overclaim,
+      );
+    }
+  });
+
+  // Positive control: a banned family nobody has tested is a banned family that may match
+  // nothing at all. These are the rewrites the round-3 review said would escape a phrase list.
+  it("the completeness ban actually catches the rewrites, not just the original wording", () => {
+    const escapes = [
+      "this is the complete record of your spending",
+      "here is your full history",
+      "that is the entire billing history",
+      "the whole ledger is below",
+      "this covers every transaction",
+      "you can see every charge here",
+      "that is all your charges",
+      "this is all of your spending",
+    ];
+    for (const sentence of escapes) {
+      expect(
+        COMPLETENESS_OVERCLAIMS.some((pattern) => pattern.test(sentence)),
+        `"${sentence}" must be caught by the completeness ban`,
+      ).toBe(true);
+    }
+  });
+
+  // …and does not fire on the legitimate uses, so the guard cannot be "fixed" by deleting it.
+  it("the completeness ban leaves honest wording alone", () => {
+    const allowed = [
+      "fetch full text sparingly",
+      "every call pauses as a confirmation step on that card",
+      "say your figures cover their recent charges",
+      "reorderShots re-sequences with the FULL new order",
+      "propose the full two-step plan and total",
+    ];
+    for (const sentence of allowed) {
+      expect(
+        COMPLETENESS_OVERCLAIMS.some((pattern) => pattern.test(sentence)),
+        `"${sentence}" is honest wording and must NOT be caught`,
+      ).toBe(false);
     }
   });
   it("says plainly what to do when the read fails, instead of guessing", () => {

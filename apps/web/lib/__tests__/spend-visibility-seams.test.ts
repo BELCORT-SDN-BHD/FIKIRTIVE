@@ -64,22 +64,12 @@ const SPEND_ACTIONS = [
 /** A file "announces" if it publishes the signal itself or calls a wired-in callback. */
 const ANNOUNCES = /notifyBalanceRefresh\(\)|onBalanceRefresh(?:\?\.)?\(\)/;
 
-/** Spend entries that legitimately do NOT announce yet, each with its reason. All three
- *  are held by another session's ACTIVE task-ownership claim (issue-555-billing-visibility),
- *  so this task physically cannot write them — the fence fails closed on out-of-scope
- *  paths. Recorded on PR #557 as explicit follow-up rather than silently dropped.
- *
- *  This list is deliberately self-invalidating: a NEW unannounced spend entry turns the
- *  suite red, and so does a listed file that has since been wired. It is a bounded,
- *  justified exemption — not a place to park future misses. */
-const UNANNOUNCED_BLOCKED: Record<string, string> = {
-  "components/otto/OttoFrontDoor.tsx":
-    "ottoTurn non-streaming fallback — file held by ACTIVE claim issue-555-billing-visibility",
-  "components/otto/OttoMemory.tsx":
-    "brand-memory ottoTurn — file held by ACTIVE claim issue-555-billing-visibility",
-  "components/otto/OttoPlanCard.tsx":
-    "approve / vary / generate — file held by ACTIVE claim issue-555-billing-visibility",
-};
+// There is no exemption list. There was one for exactly as long as three spend entries
+// (OttoFrontDoor / OttoMemory / OttoPlanCard) sat inside another session's ACTIVE
+// task-ownership claim and this task physically could not write them; #555 wired all three
+// and merged them to main (92aedcae), and the list's own self-invalidating assertion is what
+// went red to say so. The fence now applies to every spend entry with no escape hatch —
+// re-introducing one should take a deliberate, argued change to this file.
 
 function walkSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -133,27 +123,12 @@ describe("spend entry enumeration (#550 — round-1 review P1③ / P2②)", () =
     expect(files).toContain("components/otto/OttoApprovalCard.tsx");
   });
 
-  it("every client surface that can charge announces the balance change", () => {
+  it("every client surface that can charge announces the balance change — no exemptions", () => {
     const unannounced = spendEntries()
       .filter((entry) => !entry.announces)
-      .map((entry) => entry.file)
-      .filter((file) => !(file in UNANNOUNCED_BLOCKED));
+      .map((entry) => entry.file);
 
     expect(unannounced, "a paid entry point with no balance signal re-opens #550").toEqual([]);
-  });
-
-  it("the blocked list has no stale entries (a wired file must leave it)", () => {
-    const byFile = new Map(spendEntries().map((entry) => [entry.file, entry]));
-
-    for (const [file, reason] of Object.entries(UNANNOUNCED_BLOCKED)) {
-      const entry = byFile.get(file);
-      expect(entry, `${file} is no longer a spend entry — drop it from UNANNOUNCED_BLOCKED`).toBeDefined();
-      expect(
-        entry!.announces,
-        `${file} now announces — drop it from UNANNOUNCED_BLOCKED (${reason})`,
-      ).toBe(false);
-      expect(reason.length, `${file} needs a real reason, not a placeholder`).toBeGreaterThan(20);
-    }
   });
 });
 
