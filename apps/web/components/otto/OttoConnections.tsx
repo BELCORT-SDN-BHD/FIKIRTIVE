@@ -40,6 +40,37 @@ const MESSAGING_CHANNELS: { id: string; label: string }[] = [
 // button (#518 finding 1).
 const UNAVAILABLE_PUBLISHING_CHANNEL_IDS = new Set(["x"]);
 
+// #511 — a failed Meta connect comes back here as /otto?view=connections&error=<code>:
+// "missing" or "state" from app/api/meta/callback/route.ts, "not_configured" from
+// app/api/meta/authorize/route.ts, and whatever completeMetaConnect returned otherwise
+// ("not_configured"/"exchange" from lib/meta-graph.ts). Nothing in the app read that
+// param before, so a merchant whose connect failed landed on an unchanged Connections
+// page with no idea why. New codes will appear, so the unknown branch must still say
+// something true rather than guess a cause.
+type ConnectErrorCopy = { message: string; retry: boolean; rawCode?: string };
+
+function describeConnectError(code: string): ConnectErrorCopy {
+  // completeMetaConnect can hand back a whole sentence instead of a code — the
+  // impersonation guard does. Show it verbatim; retrying cannot clear it. Matched on a
+  // substring because that sentence lives in lib/meta-actions.ts and isn't exported.
+  if (code.includes("impersonat")) return { message: code, retry: false };
+  switch (code) {
+    case "missing":
+      return { message: "Meta sent you back before the connection finished.", retry: true };
+    case "state":
+      return { message: "This connect link has expired, or it was started in a different browser.", retry: true };
+    case "not_configured":
+      // Nothing the merchant can retry their way out of — the server is missing its Meta keys.
+      return { message: "Meta connections aren’t switched on for this server yet. Contact support and we’ll enable it.", retry: false };
+    case "exchange":
+      return { message: "Meta didn’t finish the sign-in handshake.", retry: true };
+    default:
+      // Don't invent a cause — say only what's true, and show the code we were actually
+      // given so the merchant can quote it to support.
+      return { message: "Meta couldn’t be connected.", retry: true, rawCode: code };
+  }
+}
+
 function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
   // currentColor-driven inline glyphs — same brand marks as OttoSchedule's ChannelIcon,
   // kept local here since that one isn't exported for reuse outside the Schedule view.
@@ -130,6 +161,10 @@ export default function OttoConnections() {
   const [saving, setSaving] = useState<null | "autonomy" | "paused">(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [channelsState, setChannelsState] = useState<ChannelsState>({ phase: "loading" });
+  // #511 — the ?error=<code> the OAuth routes redirect back with. Read in an effect, not
+  // during render: this is a client component but Next still renders it on the server,
+  // where `window` doesn't exist.
+  const [connectErrorCode, setConnectErrorCode] = useState<string | null>(null);
 
   // Single load for the whole page, single Meta read behind it (#518 rework finding 2):
   // getAccountViewData() is the ONE call this page makes — it already did the ONE
@@ -198,6 +233,22 @@ export default function OttoConnections() {
     queueMicrotask(() => void load());
   }, []);
 
+  // #511 — take the failure code off the URL once, then strip just that one param with
+  // replaceState (no popstate, so OttoApp's syncFromLocation stays out of this) so a
+  // refresh doesn't resurrect a stale error. `connected` and every other param survive.
+  useEffect(() => {
+    // Deferred with queueMicrotask for the same reason load() above is: setting state
+    // synchronously in an effect body trips react-hooks/set-state-in-effect.
+    queueMicrotask(() => {
+      const url = new URL(window.location.href);
+      const code = url.searchParams.get("error");
+      if (!code) return;
+      setConnectErrorCode(code);
+      url.searchParams.delete("error");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    });
+  }, []);
+
   useEffect(() => {
     if (meta.phase !== "connected") return;
     void getMetaInsights("last_30d").then((res) => {
@@ -212,6 +263,7 @@ export default function OttoConnections() {
   // since the token itself is still fine).
   const showAdsPanel = meta.phase === "connected" || meta.phase === "unreachable";
   const publishingLoading = channelsState.phase === "loading" || meta.phase === "loading";
+  const connectError = connectErrorCode ? describeConnectError(connectErrorCode) : null;
 
   return (
     // leading-[1.5] — design-baseline body line-height (Analytics standard)
@@ -225,6 +277,30 @@ export default function OttoConnections() {
             and lower budgets on its own; anything that spends still asks you.
           </p>
         </div>
+
+        {/* #511 — the connect attempt that just failed, explained before anything else on
+            the page: it's the reason the merchant is looking at this view. */}
+        {connectError && (
+          <div
+            role="alert"
+            className="bg-error-soft rounded-[14px]"
+            style={{ padding: "0.875rem 1rem", display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.5rem" }}
+          >
+            <p className="text-[var(--error-soft-foreground)] text-[0.8125rem]" style={{ margin: 0 }}>
+              {connectError.message}
+            </p>
+            {connectError.rawCode && (
+              <p className="text-muted-foreground text-[0.75rem]" style={{ margin: 0 }}>
+                Details: {connectError.rawCode}
+              </p>
+            )}
+            {connectError.retry && (
+              <Button asChild size="sm" variant="brand">
+                <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Try again</a>
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* Publishing — where Otto posts on your behalf. */}
         <div>

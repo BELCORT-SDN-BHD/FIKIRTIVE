@@ -177,3 +177,105 @@ describe("Connections page groups by merchant task (#518)", () => {
     expect(mocks.setAdsWritesPaused).toHaveBeenCalledWith(true);
   });
 });
+
+// #511 — /api/meta/callback and /api/meta/authorize redirect a failed connect back to
+// /otto?view=connections&error=<code>. Nothing in the app read that param, so the merchant
+// was bounced to an unchanged Connections page with no explanation. The page must explain
+// the failure, offer a retry where retrying can actually help, and strip the code from the
+// URL so a later refresh doesn't resurrect a stale error.
+describe("Connections page explains a failed Meta connect (#511)", () => {
+  // Keep the address bar out of the other tests in this file — several of them count the
+  // /api/meta/authorize anchors, and the error card adds one.
+  afterEach(() => {
+    window.history.pushState(null, "", "/");
+  });
+
+  function mockDisconnected() {
+    mocks.getAccountViewData.mockResolvedValue({
+      settings: {},
+      channels: DISCONNECTED_CHANNELS,
+      packs: [],
+      adsAutonomy: "ASK",
+      canPublish: false,
+      meta: { connected: false },
+    });
+  }
+
+  it("shows a known failure code as a sentence with a retry, and strips it from the URL", async () => {
+    mockDisconnected();
+    window.history.pushState(null, "", "/otto?view=connections&error=exchange");
+
+    const dom = await renderConnections();
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert, "a failed connect must be explained, not silent").toBeTruthy();
+    expect(alert!.textContent).toContain("handshake");
+
+    // Retrying an exchange failure can genuinely work, so the card offers it.
+    const retry = alert!.querySelector<HTMLAnchorElement>('a[href="/api/meta/authorize"]');
+    expect(retry).toBeTruthy();
+    expect(retry!.textContent).toBe("Try again");
+
+    // The code is consumed once: a refresh must not re-show an error that already happened.
+    expect(window.location.search).toBe("?view=connections");
+  });
+
+  it("keeps the other query params when it strips the error code", async () => {
+    mockDisconnected();
+    window.history.pushState(null, "", "/otto?view=connections&connected=meta&error=state");
+
+    await renderConnections();
+
+    expect(window.location.search).not.toContain("error");
+    expect(window.location.search).toContain("view=connections");
+    expect(window.location.search).toContain("connected=meta");
+  });
+
+  it("tells the truth about an unknown code instead of guessing, and shows the code", async () => {
+    mockDisconnected();
+    window.history.pushState(null, "", "/otto?view=connections&error=some_future_code");
+
+    const dom = await renderConnections();
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert).toBeTruthy();
+    expect(alert!.textContent).toContain("be connected");
+    // Shown verbatim so the merchant can quote it to support.
+    expect(alert!.textContent).toContain("some_future_code");
+    expect(alert!.querySelector('a[href="/api/meta/authorize"]')).toBeTruthy();
+  });
+
+  it("offers no retry when retrying cannot help (server not configured)", async () => {
+    mockDisconnected();
+    window.history.pushState(null, "", "/otto?view=connections&error=not_configured");
+
+    const dom = await renderConnections();
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert).toBeTruthy();
+    expect(alert!.textContent).toContain("Contact support");
+    // A Try again button here would just fail the same way — the merchant isn't the blocker.
+    expect(alert!.querySelector("a, button")).toBeNull();
+  });
+
+  it("shows a server-sent sentence verbatim, with no retry (impersonation guard)", async () => {
+    mockDisconnected();
+    const sentence = "Paused while impersonating a customer — exit impersonation to connect Meta.";
+    window.history.pushState(null, "", `/otto?view=connections&error=${encodeURIComponent(sentence)}`);
+
+    const dom = await renderConnections();
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert).toBeTruthy();
+    expect(alert!.textContent).toContain(sentence);
+    expect(alert!.querySelector("a, button")).toBeNull();
+  });
+
+  it("renders no error card when the connect did not fail", async () => {
+    mockDisconnected();
+
+    const dom = await renderConnections();
+
+    expect(dom.querySelector('[role="alert"]')).toBeNull();
+  });
+});
