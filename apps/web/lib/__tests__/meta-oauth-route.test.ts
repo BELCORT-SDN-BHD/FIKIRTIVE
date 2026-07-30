@@ -30,6 +30,7 @@ beforeEach(() => {
   process.env.BETTER_AUTH_SECRET = "meta-route-test-secret";
   process.env.BETTER_AUTH_URL = "https://app.test";
   process.env.META_APP_ID = "meta-app-id";
+  process.env.META_LOGIN_CONFIG_ID = "meta-login-config-id";
   mocks.requireOwner.mockResolvedValue({ ownerId: "org_meta", email: "owner@example.com" });
   mocks.completeMetaConnect.mockResolvedValue({ ok: true });
 });
@@ -55,6 +56,19 @@ describe("GET /api/meta/authorize", () => {
     expect(location.searchParams.get("error")).toBe("not_configured");
   });
 
+  it("redirects to Connections with not_configured when META_LOGIN_CONFIG_ID is absent", async () => {
+    delete process.env.META_LOGIN_CONFIG_ID;
+
+    const res = await authorizeGET(req("https://app.test/api/meta/authorize"));
+    const location = new URL(res.headers.get("location")!);
+
+    expect(location.origin).toBe("https://app.test");
+    expect(location.pathname).toBe("/otto");
+    expect(location.searchParams.get("view")).toBe("connections");
+    expect(location.searchParams.get("error")).toBe("not_configured");
+    expect(res.headers.get("location")).not.toContain("facebook.com");
+  });
+
   it("builds a Meta OAuth URL with a signed state for the resolved owner", async () => {
     const res = await authorizeGET(req("https://app.test/api/meta/authorize"));
     const location = new URL(res.headers.get("location")!);
@@ -63,8 +77,8 @@ describe("GET /api/meta/authorize", () => {
     expect(location.pathname).toBe(`/${META_GRAPH_VERSION}/dialog/oauth`);
     expect(location.searchParams.get("client_id")).toBe("meta-app-id");
     expect(location.searchParams.get("redirect_uri")).toBe("https://app.test/api/meta/callback");
-    expect(location.searchParams.get("scope")).toContain("ads_management");
-    expect(location.searchParams.get("scope")).toContain("pages_show_list");
+    expect(location.searchParams.get("config_id")).toBe("meta-login-config-id");
+    expect(location.searchParams.has("scope")).toBe(false);
     expect(verifyState(location.searchParams.get("state")!)).toEqual({ ownerId: "org_meta" });
   });
 });
