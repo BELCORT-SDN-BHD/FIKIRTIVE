@@ -203,3 +203,21 @@ describe("ottoInstructions — #498 verbal approval honesty (generate)", () => {
     expect(ottoInstructions).toMatch(/you cannot keep that promise/i);
   });
 });
+
+describe("ottoInstructions — #555 credits and spending", () => {
+  it("forbids inventing a balance or a spent total Otto cannot see", () => {
+    expect(ottoInstructions).toMatch(/never state, estimate, or guess a balance/i);
+  });
+  it("sends spending questions to Billing's spend history — the page that can now answer them", () => {
+    expect(ottoInstructions).toMatch(/Billing & credits/);
+    expect(ottoInstructions).toMatch(/spend history/i);
+  });
+  it("names the categories the merchant will actually see there", () => {
+    expect(ottoInstructions).toMatch(/\(Chat\)/);
+    expect(ottoInstructions).toMatch(/\(Review\)/);
+  });
+  it("states plainly that talking to Otto costs credits and each reply shows its cost", () => {
+    expect(ottoInstructions).toMatch(/Talking to you costs credits/i);
+    expect(ottoInstructions).toMatch(/each reply shows what that reply cost/i);
+  });
+});

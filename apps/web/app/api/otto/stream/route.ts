@@ -30,6 +30,7 @@ import { prisma, InsufficientCredits } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
+  displayCredits,
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
@@ -55,7 +56,7 @@ import {
   validateOttoTurnReferences,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
-import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -65,6 +66,30 @@ function errSummary(e: unknown): string {
   return [x.name, x.message, x.statusCode != null ? `status=${x.statusCode}` : null]
     .filter(Boolean)
     .join(" | ") || String(e);
+}
+
+/** What this turn actually cost, in DISPLAYED credits, read from the ledger after the turn
+ *  settled (#555 — the merchant used to be charged for every turn with no number anywhere).
+ *
+ *  READ-ONLY: it sums the turn's own ledger rows (RESERVE + SETTLE/REFUND for this refId) and
+ *  reports the net. It never reserves, settles, refunds, or changes any amount — withLlmBudget
+ *  has already committed the money by the time this runs. A zero or negative net means the
+ *  merchant was not charged (a free/mock turn, or a failure that refunded the hold), and a
+ *  failed read means we simply don't claim a number: returns null and the UI shows nothing
+ *  rather than an amount we can't stand behind. */
+async function settledTurnCost(orgId: string, refId: string): Promise<number | null> {
+  try {
+    const sum = await prisma.creditLedger.aggregate({
+      where: { orgId, refId },
+      _sum: { balanceDelta: true },
+    });
+    const chargedInternal = -(sum._sum.balanceDelta ?? 0);
+    if (!Number.isFinite(chargedInternal) || chargedInternal <= 0) return null;
+    return displayCredits(chargedInternal);
+  } catch (e) {
+    console.error("[otto/stream] could not read the turn cost:", { refId, error: errSummary(e) });
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -329,6 +354,14 @@ export async function POST(req: NextRequest): Promise<Response> {
 
         // Close any open text/reasoning parts before the final data parts.
         closeOpenParts();
+
+        // #555: the turn has settled by now (withLlmBudget settles before runOttoTurn
+        // returns), so the ledger already knows what it cost. Say so in the conversation
+        // instead of leaving the merchant to discover the charge in the balance.
+        const turnCost = await settledTurnCost(ownerId, refId);
+        if (turnCost !== null) {
+          writer.write({ type: "data-cost", data: { credits: turnCost } satisfies OttoCostData });
+        }
 
         // Persist the run (interruption / completed / stale) with the SAME CAS as ottoTurn.
         // userText picks the #498 fallback receipt's language (copy only).

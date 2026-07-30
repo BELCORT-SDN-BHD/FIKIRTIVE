@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     chatMessageFindFirst: vi.fn(),
     generationFindFirst: vi.fn(),
     genJobFindFirst: vi.fn(),
+    creditLedgerAggregate: vi.fn(),
     entityFindMany: vi.fn(),
     memoryFindMany: vi.fn(),
     buildOttoContext: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock("@fikirtive/db", () => ({
     },
     generation: { findFirst: mocks.generationFindFirst },
     genJob: { findFirst: mocks.genJobFindFirst },
+    creditLedger: { aggregate: mocks.creditLedgerAggregate },
     entity: { findMany: mocks.entityFindMany },
     memory: { findMany: mocks.memoryFindMany },
   },
@@ -133,6 +135,8 @@ beforeEach(() => {
   mocks.chatThreadCreate.mockResolvedValue({});
   mocks.chatMessageCreate.mockResolvedValue({});
   mocks.chatMessageFindFirst.mockResolvedValue(null);
+  // #555: the turn's settled net (RESERVE -120 + SETTLE +87 = -33 internal = 3.3 credits).
+  mocks.creditLedgerAggregate.mockResolvedValue({ _sum: { balanceDelta: -33 } });
   mocks.buildOttoContext.mockResolvedValue({
     orgId: "org_stream",
     userId: "org_stream",
@@ -543,5 +547,43 @@ describe("POST /api/otto/stream — #464 B1 ambient user frame", () => {
 
     expect(res.status).toBe(401);
     expect(mocks.projectFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
+  it("streams the SETTLED cost of the turn (not the hold) after the run finishes", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "What should I post?" }));
+    const parts = await res.json();
+
+    expect(mocks.creditLedgerAggregate).toHaveBeenCalledWith({
+      where: { orgId: "org_stream", refId: expect.stringMatching(/^otto-stream:/) },
+      _sum: { balanceDelta: true },
+    });
+    expect(parts).toEqual(
+      expect.arrayContaining([{ type: "data-cost", data: { credits: 3.3 } }]),
+    );
+  });
+
+  it("says nothing when the turn was not charged (free/mock turn or a refunded failure)", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+    mocks.creditLedgerAggregate.mockResolvedValue({ _sum: { balanceDelta: 0 } });
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+  });
+
+  it("never fabricates a number, and never breaks the turn, when the ledger read fails", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+    mocks.creditLedgerAggregate.mockRejectedValue(new Error("db down"));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "hi" }));
+    const parts = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+    expect(parts.some((p: { type: string; data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
   });
 });

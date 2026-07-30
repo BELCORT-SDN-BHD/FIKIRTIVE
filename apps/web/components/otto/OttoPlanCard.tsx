@@ -5,7 +5,7 @@ import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
-import { creditsLabel } from "@/lib/credit-format";
+import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
 import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -360,7 +360,7 @@ export function OttoPlanCard({
           </div>
         ) : (
           <div className="mt-3 flex items-center gap-[6px] text-[0.75rem] text-muted-foreground/70">
-            <ShieldCheck size={15} /> Otto only makes this after you approve. (Chatting with Otto uses a little credit.)
+            <ShieldCheck size={15} /> Otto only makes this after you approve. {CHAT_SPEND_NOTE}
           </div>
         )}
       </div>

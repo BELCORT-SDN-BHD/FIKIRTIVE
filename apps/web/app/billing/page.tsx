@@ -1,6 +1,8 @@
 import { getMyAccount } from "@/lib/account-actions";
+import { getSpendHistory } from "@/lib/spend-history-data";
 import { listCreditPacks } from "@/lib/billing-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
+import { SpendHistory } from "@/components/billing/SpendHistory";
 import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
 import { formatCredits } from "@/lib/credit-format";
@@ -23,8 +25,13 @@ export default async function BillingPage({
   searchParams: Promise<{ status?: string }>;
 }) {
   const { status } = await searchParams;
-  const [accountResult, packs] = await Promise.all([getMyAccount(), listCreditPacks()]);
+  const [accountResult, packs, spendResult] = await Promise.all([
+    getMyAccount(),
+    listCreditPacks(),
+    getSpendHistory(),
+  ]);
   const account = "error" in accountResult ? null : accountResult;
+  const spend = Array.isArray(spendResult) ? spendResult : null;
 
   return (
     <div className="gb" style={{ flex: 1, overflow: "auto", minHeight: "100dvh", padding: 24 }}>
@@ -126,6 +133,19 @@ export default async function BillingPage({
               </Card>
             ))}
           </div>
+        )}
+
+        {/* #555: where the credits went. Conversation turns (Chat / Review) are listed
+            here like any other charge — before this, the page showed only a balance. */}
+        {spend ? (
+          <SpendHistory entries={spend} />
+        ) : (
+          <section style={{ marginTop: 28 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Spend history</h2>
+            <div className="text-muted-foreground" style={{ fontSize: 14 }}>
+              Could not load your spend history. Please refresh.
+            </div>
+          </section>
         )}
       </div>
     </div>

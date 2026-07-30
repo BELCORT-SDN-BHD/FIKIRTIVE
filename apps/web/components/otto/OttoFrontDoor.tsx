@@ -8,6 +8,7 @@ import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreetingName } from "@/lib/otto-greeting";
+import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 
 interface GoalTile {
   label: string;
@@ -382,7 +383,7 @@ export function OttoFrontDoor({
         <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
-          Otto plans and makes it. Chatting uses a little credit; you approve before Otto makes anything.
+          Otto plans and makes it — you approve before Otto makes anything. {CHAT_SPEND_NOTE}
         </p>
       </div>
     </div>
