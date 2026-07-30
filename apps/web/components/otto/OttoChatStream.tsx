@@ -47,7 +47,9 @@ import {
   deriveTraceSteps,
   persistedStreamErrorOf,
   persistedStreamErrorUserMessageId,
+  turnCostOf,
 } from "@/lib/otto-status-helpers";
+import { creditsLabel } from "@/lib/credit-format";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { OttoErrorData, OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 import type { ReasoningUIPart } from "ai";
@@ -933,8 +935,10 @@ export function OttoChatStream({
                         nextPendingApprovalCardIds(cur, [durableId], chained?.pendingCardIds),
                       );
                       rearmGenerationPoll();
-                      // An approve reserves credits — refresh the nav balance immediately.
-                      void onBalanceRefresh?.();
+                      // No balance announcement here: OttoPlanCard.approve() already makes it
+                      // in its own finally, which fires on the failure paths too. Announcing
+                      // again from this success-only callback just double-read the balance
+                      // (round-2 review P2) — one action, one announcement.
                       // #498 round-5 P2c: inject the chained park's model narration live.
                       void pollAndInjectResults(
                         chained?.narrationMessageId ? [chained.narrationMessageId] : undefined,
@@ -960,7 +964,7 @@ export function OttoChatStream({
                     }}
                     onCancelled={() => {
                       if (genJobId) setCancelledJobIds((cur) => new Set(cur).add(genJobId));
-                      void onBalanceRefresh?.();
+                      // Same as onApproved above: the card's own cancel() finally announces.
                       void pollAndInjectResults();
                     }}
                   />
@@ -1111,6 +1115,12 @@ export function OttoChatStream({
             // if that ephemeral state was ever missed. Gated on `!streamError` so it never
             // doubles the live alert; appended AFTER any partial text the turn produced.
             const partError = dataErrorOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
+            // #555: every Otto turn is charged. Once it has settled, the route streams a
+            // durable `data-cost` part — show the number here, next to the reply it paid
+            // for, instead of leaving the merchant to infer it from a moving balance.
+            const turnCost = m.role === "user"
+              ? null
+              : turnCostOf(m.parts as ReadonlyArray<{ type: string; data?: unknown }>);
             return [
               ...textParts.map((p, pi) => {
                 const isLastTextPart = pi === textParts.length - 1;
@@ -1130,6 +1140,16 @@ export function OttoChatStream({
                 // Graceful: only rendered when reasoning arrives; most models omit it.
                 <ReasoningPart key={`${m.id}:r${ri}`} part={p} />
               )),
+              ...(turnCost !== null
+                ? [
+                    <div
+                      key={`${m.id}:cost`}
+                      className="pl-[44px] text-[0.6875rem] text-muted-foreground/70"
+                    >
+                      This reply used {creditsLabel(turnCost)}.
+                    </div>,
+                  ]
+                : []),
               ...(partError && !streamError
                 ? [
                     <OttoStreamErrorNotice

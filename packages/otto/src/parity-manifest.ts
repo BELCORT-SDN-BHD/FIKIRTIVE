@@ -77,6 +77,13 @@ export const PARITY_READ_SURFACES = [
     file: "apps/web/lib/customer-inbox-gateway.ts",
     exportName: "listChannelScopes",
   },
+  {
+    // #555: the Billing spend-history read. Declared here rather than left off the list —
+    // round-1 review P1③ — and it is real parity, not debt: readSpending serves it to Otto.
+    key: "spend-history-data.getSpendOverview",
+    file: "apps/web/lib/spend-history-data.ts",
+    exportName: "getSpendOverview",
+  },
 ] as const;
 
 export const PARITY_MANIFEST = {
@@ -311,6 +318,7 @@ export const PARITY_MANIFEST = {
   "segment-actions.getSegment": { skill: "readSegments", reason: "B0-61/C3 read parity: reads one exact owner-scoped CRM Segment and its live counts through the same authenticated action." },
   "segment-actions.previewSegment": { skill: "readSegments", reason: "B0-61/C3 preview parity: evaluates the same structured rule object through the shared deterministic validator and owner-scoped contact reader." },
   "segment-actions.buildSegment": { skill: "buildSegment", reason: "B0-61/C3 act parity: create/update both use the same authenticated validator; create keeps the server-issued signed ULID retry fence and update is owner-scoped." },
+  "spend-history-data.getSpendOverview": { skill: "readSpending", reason: "#555 read parity: readSpending reads the merchant's balance and credit history through ctx.spending → this SAME owner-scoped read the Billing page renders. Read-only — money-in (top-up) and every credit write stay exempt below." },
   "trend-actions.listTrendSnapshots": { skill: "readCampaigns", reason: "B0-58/C2a read parity: source-labelled owner-scoped Trend conclusions through the same archive action." },
   "trend-actions.saveTrendSnapshot": { skill: "planCampaign", reason: "B0-58/C2a act parity: server-issued retry-safe Trend snapshot write; optional Campaign link is validated against the same authenticated owner." },
   "schedule-service.draftScheduledPost": { skill: "schedulePosts", reason: "Internal shared draft write authority used by both the human action and Otto schedule skill." },

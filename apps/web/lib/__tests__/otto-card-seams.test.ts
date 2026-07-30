@@ -34,6 +34,22 @@ const WEB_LIB_DIR = path.join(REPO_ROOT, "apps/web/lib");
 const OTTO_CHAT_STREAM = path.join(REPO_ROOT, "apps/web/components/otto/OttoChatStream.tsx");
 const OTTO_CONVERSATION = path.join(REPO_ROOT, "apps/web/components/otto/OttoConversation.tsx");
 
+/** The source text of ONE `<Name … />` JSX element, braces balanced so nested handlers are
+ *  included and the next sibling is not. Returns "" when the element isn't rendered here.
+ *  Lexical like the rest of this file — good enough to pin a prop that must not come back. */
+function jsxElementSource(src: string, name: string): string {
+  const start = src.indexOf(`<${name}`);
+  if (start === -1) return "";
+  let depth = 0;
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    else if (depth === 0 && ch === "/" && src[i + 1] === ">") return src.slice(start, i + 2);
+  }
+  return "";
+}
+
 /** 端口持久化的卡片:kind → 提出它的 skill 工具名(跨包,无法从源码推断,手工登记)。 */
 const PORT_CARD_TOOLS: Record<string, string> = {
   ACTION_CARD: "propose-meta-action", // persists in apps/web/lib/meta-propose.ts
@@ -191,7 +207,41 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
         "the bounded-poll effect (let pollCount = 0) must list pollNonce in its deps, or the bump won't restart the window",
       ).toContain("pollNonce");
       expect((src.match(/rearmGenerationPoll\(\);/g) ?? []).length).toBeGreaterThanOrEqual(4);
-      expect(src).toMatch(/onCancelled=\{[\s\S]*setCancelledJobIds[\s\S]*onBalanceRefresh\?\.\(\)[\s\S]*(pollAndInjectResults|refreshAndUpdate)/);
+      expect(src).toMatch(/onCancelled=\{[\s\S]*setCancelledJobIds[\s\S]*(pollAndInjectResults|refreshAndUpdate)/);
+    }
+  });
+
+  // The balance half of the cancel/approve seam MOVED (#555 round-2 review P2). It used to be
+  // asserted on the two parents as `onBalanceRefresh?.()` inside onCancelled — but the card
+  // itself now announces in a `finally`, so keeping the parent call meant one user action
+  // broadcasting twice, and (post-#550) two balance reads. The guarantee is unchanged and the
+  // assertion follows it to its new home, where it is strictly stronger: it covers approve as
+  // well as cancel, and it fires on the FAILURE paths too — a transport error never proves the
+  // reservation didn't happen.
+  it("the spend card announces the balance change itself, on every exit of every spend path", () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, "apps/web/components/otto/OttoPlanCard.tsx"), "utf8");
+    for (const handler of ["approve", "cancel", "retry"]) {
+      const body = src.match(new RegExp(`async function ${handler}\\(\\) \\{([\\s\\S]*?)\\n  \\}`))?.[1] ?? "";
+      expect(body, `OttoPlanCard.${handler}() must exist for this seam to mean anything`).not.toBe("");
+      expect(
+        body,
+        `OttoPlanCard.${handler}() must announce the balance change in a finally — not on the ` +
+          `success path only, and not by delegating to a parent callback that never runs when it throws.`,
+      ).toMatch(/finally \{[\s\S]*notifyBalanceRefresh\(\)/);
+    }
+  });
+
+  it("no parent re-announces what the card already announced (one action, one broadcast)", () => {
+    for (const component of [OTTO_CHAT_STREAM, OTTO_CONVERSATION]) {
+      const src = fs.readFileSync(component, "utf8");
+      const element = jsxElementSource(src, "OttoPlanCard");
+      expect(element, `${path.basename(component)} should render <OttoPlanCard …>`).not.toBe("");
+      expect(
+        element,
+        `${path.basename(component)}'s <OttoPlanCard> props must not call onBalanceRefresh — ` +
+          `the card's own finally already announced, and a second call means a second balance read. ` +
+          `Scoped to this element on purpose: PackCard and the other spend surfaces keep their own wiring.`,
+      ).not.toMatch(/onBalanceRefresh\?\.\(\)/);
     }
   });
 });
