@@ -49,6 +49,42 @@ export async function POST(req: NextRequest): Promise<Response> {
         await prisma.actionEvent.create({ data: { id: newId(), ownerId: orgId, type: "credits.purchase", payload: { credits, amountTotal: session.amount_total ?? null, paymentIntentId: session.payment_intent ?? null, sessionId: session.id ?? null, eventId: event.id, duplicate: "duplicate" in res } } }).catch(() => {});
       }
     }
+    // #552: async_payment_failed is the other half of F01 — the delayed-notification payment
+    // (FPX/GrabPay) never settled after the session completed 'unpaid'. It used to fall through
+    // to a bare 200: no audit, no alert, and a merchant left waiting for credits that will never
+    // arrive. This branch NEVER grants and never touches the ledger — no money came in, so there
+    // is nothing to issue and nothing to claw back. The ActionEvent id is derived from the
+    // Checkout SESSION id — same family as the stripe:<session.id> ledger key on the grant side —
+    // so a Stripe redelivery collides on the primary key and the audit row stays exactly-once
+    // without a race-prone check-then-act read. The alert stays at-least-once on purpose: a DB
+    // fault must not be able to silence it.
+    if (event.type === "checkout.session.async_payment_failed") {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const session = event.data.object as any;
+      const sessionId = typeof session.id === "string" && session.id ? session.id : "";
+      const orgId = typeof session.metadata?.orgId === "string" ? session.metadata.orgId : "";
+      Sentry.captureMessage(`[stripe] ${event.type} — a delayed payment never settled; the buyer received NO credits`, "warning");
+      await prisma.actionEvent
+        .create({
+          data: {
+            // No sessionId (shouldn't happen) → a fresh ULID, so an unkeyable failure is still
+            // recorded rather than colliding with every other unkeyable one.
+            id: sessionId ? `stripe_failed:${sessionId}` : newId(),
+            ownerId: orgId || "founder",
+            type: "credits.purchase.failed",
+            payload: {
+              eventId: event.id,
+              sessionId: sessionId || null,
+              paymentIntentId: session.payment_intent ?? null,
+              paymentStatus: session.payment_status ?? null,
+              credits: session.metadata?.credits ?? null,
+              amountTotal: session.amount_total ?? null,
+              orgId: orgId || null,
+            },
+          },
+        })
+        .catch(() => {}); // best-effort audit; a redelivery hits the PK and is correctly dropped
+    }
     // 2026-07-04 盲区修复:争议/退款 = 真钱被拉回,而系统此前对这些事件完全静默
     // (credits 已发、钱没了、没人知道)。这里是 ALERT-ONLY:记审计 + 叫人,绝不
     // 自动 clawback —— 扣回用户额度是 founder 的钱决定(设计上 deferred 到 Phase 3b),

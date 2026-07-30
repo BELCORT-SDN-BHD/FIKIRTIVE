@@ -23,7 +23,10 @@ function checkoutEvent({
   paymentStatus,
 }: {
   eventId: string;
-  type: "checkout.session.completed" | "checkout.session.async_payment_succeeded";
+  type:
+    | "checkout.session.completed"
+    | "checkout.session.async_payment_succeeded"
+    | "checkout.session.async_payment_failed";
   sessionId: string;
   orgId: string;
   credits: string;
@@ -120,5 +123,79 @@ describe("stripe webhook money-in integration", () => {
     });
     expect(purchaseEvents).toHaveLength(2);
     expect(purchaseEvents[1]?.payload).toMatchObject({ duplicate: true, sessionId });
+  });
+
+  // #552: the other half of the delayed-payment story — the payment never settles.
+  it("records a delayed-payment failure exactly once and never grants credits", async () => {
+    const sessionId = `cs_${randomUUID()}`;
+
+    constructEvent.mockReturnValueOnce(checkoutEvent({
+      eventId: "evt_completed_unpaid_f",
+      type: "checkout.session.completed",
+      sessionId,
+      orgId,
+      credits: "220",
+      paymentStatus: "unpaid",
+    }));
+    expect((await POST(req())).status).toBe(200);
+
+    for (const eventId of ["evt_async_failed", "evt_async_failed_redelivery"]) {
+      constructEvent.mockReturnValueOnce(checkoutEvent({
+        eventId,
+        type: "checkout.session.async_payment_failed",
+        sessionId,
+        orgId,
+        credits: "220",
+        paymentStatus: "unpaid",
+      }));
+      expect((await POST(req())).status).toBe(200);
+    }
+
+    // Zero money moved: no ledger row, no account, nothing to reconcile.
+    expect(await prisma.creditLedger.count({ where: { orgId } })).toBe(0);
+    expect(await prisma.creditAccount.findUnique({ where: { orgId } })).toBeNull();
+
+    // Exactly one audit row survives the redelivery — the session-derived primary key,
+    // not a check-then-act read, is what enforces it.
+    const failures = await prisma.actionEvent.findMany({
+      where: { ownerId: orgId, type: "credits.purchase.failed" },
+    });
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.id).toBe(`stripe_failed:${sessionId}`);
+    expect(failures[0]?.payload).toMatchObject({ sessionId, eventId: "evt_async_failed" });
+  });
+
+  it("a later successful settlement still grants exactly once after a failure was recorded", async () => {
+    const sessionId = `cs_${randomUUID()}`;
+
+    constructEvent.mockReturnValueOnce(checkoutEvent({
+      eventId: "evt_failed_first",
+      type: "checkout.session.async_payment_failed",
+      sessionId,
+      orgId,
+      credits: "50",
+      paymentStatus: "unpaid",
+    }));
+    expect((await POST(req())).status).toBe(200);
+    expect(await prisma.creditLedger.count({ where: { orgId } })).toBe(0);
+
+    // The failure branch must not have poisoned the grant path's own idempotency key.
+    for (const eventId of ["evt_succeeded_after", "evt_succeeded_after_replay"]) {
+      constructEvent.mockReturnValueOnce(checkoutEvent({
+        eventId,
+        type: "checkout.session.async_payment_succeeded",
+        sessionId,
+        orgId,
+        credits: "50",
+        paymentStatus: "paid",
+      }));
+      expect((await POST(req())).status).toBe(200);
+    }
+
+    const rows = await prisma.creditLedger.findMany({ where: { orgId } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ idempotencyKey: `stripe:${sessionId}`, balanceDelta: 50 * INTERNAL_PER_DISPLAY });
+    const account = await prisma.creditAccount.findUniqueOrThrow({ where: { orgId } });
+    expect(account.balance).toBe(50 * INTERNAL_PER_DISPLAY);
   });
 });

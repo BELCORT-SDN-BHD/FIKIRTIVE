@@ -52,6 +52,63 @@ describe("stripe webhook", () => {
     }));
   });
 
+  // ── #552:延迟到账失败(FPX/GrabPay)不再被裸 200 吞掉 ─────────────────────────
+  it("checkout.session.async_payment_failed → audit row + Sentry alert, ZERO grant, 200", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f1", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f1", payment_status: "unpaid", metadata: { orgId: "org_7", credits: "220" }, payment_intent: "pi_f1", amount_total: 10000 } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled(); // no money arrived → nothing may be issued
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("checkout.session.async_payment_failed"), "warning");
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ id: "stripe_failed:cs_f1", ownerId: "org_7", type: "credits.purchase.failed" }),
+      }),
+    );
+  });
+
+  it("async_payment_failed keys the audit row on the SESSION, so a redelivery hits the same PK", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f2", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f2", payment_status: "unpaid", metadata: { orgId: "org_7", credits: "220" } } },
+    });
+    expect((await POST(req())).status).toBe(200);
+    // Stripe redelivers the SAME event, or a second failure event for the same session.
+    expect((await POST(req())).status).toBe(200);
+    const ids = actionEventCreate.mock.calls.map((c) => c[0].data.id);
+    expect(ids).toEqual(["stripe_failed:cs_f2", "stripe_failed:cs_f2"]);
+    expect(grantCredits).not.toHaveBeenCalled();
+  });
+
+  it("async_payment_failed with no orgId metadata still audits (owner falls back to founder), 200, no grant", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f3", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f3", payment_status: "unpaid", metadata: {} } },
+    });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(grantCredits).not.toHaveBeenCalled();
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ id: "stripe_failed:cs_f3", ownerId: "founder", type: "credits.purchase.failed" }),
+      }),
+    );
+  });
+
+  it("async_payment_failed still 200s when the audit write throws (Stripe must not retry-storm)", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f4", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f4", payment_status: "unpaid", metadata: { orgId: "org_7" } } },
+    });
+    actionEventCreate.mockRejectedValueOnce(new Error("unique constraint"));
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(captureMessage).toHaveBeenCalled(); // alert is at-least-once: a DB fault can't silence it
+    expect(grantCredits).not.toHaveBeenCalled();
+  });
+
   it("200 + no grant when metadata is missing/invalid (no retry storm)", async () => {
     constructEvent.mockReturnValue({ id: "evt_2", type: "checkout.session.completed", data: { object: { payment_status: "paid", metadata: {} } } });
     const res = await POST(req());
