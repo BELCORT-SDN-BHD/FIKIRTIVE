@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ReactFlow, Background, type Edge, type Node, type NodeChange, applyNodeChanges, type ReactFlowInstance } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ImageNode } from "./nodes/ImageNode";
+import { ImageNode, imageNodeActionable } from "./nodes/ImageNode";
 import { VideoNode } from "./nodes/VideoNode";
 import { TextNode } from "./nodes/TextNode";
 import {
@@ -24,7 +24,7 @@ import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
-import { CANVAS_IMAGE_DEFAULT_COUNT, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
+import { CANVAS_IMAGE_DEFAULT_COUNT, genCostHint, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import {
@@ -632,9 +632,15 @@ export default function FlowCanvas({
   // must be loaded while the composer is visible — its cost label sits next to the
   // Generate button. Video/t2v quotes still load when their confirm dialogs open.
   const composerVisible = skin === "gb" ? composerOpen : !directToolsLocked;
+  // Same rule for a selected image card's Evolve bar: it now shows the exact video price
+  // before submit (#550 ②), so the quote has to be loaded while that bar is on screen.
+  // ensureModels caches after the first call, so re-selecting cards costs no round trips.
+  const evolveBarVisible = !directToolsLocked && nodes.some(
+    (n) => n.type === "image" && n.selected === true && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
+  );
   useEffect(() => {
-    if (composerVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
-  }, [composerVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
+    if (composerVisible || evolveBarVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
+  }, [composerVisible, evolveBarVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
@@ -808,12 +814,15 @@ export default function FlowCanvas({
   const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
   // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
   // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
-  const imageCostHint = costQuote ? `Cost: ${creditsLabel(costQuote.imageCredits)}` : "Checking cost…";
+  const imageCostHint = genCostHint(costQuote?.imageCredits);
+  // Evolve seeds the image→video confirm, so it is priced by the SAME video quote that
+  // confirm charges — one source, no second price for the same action (#550 ②).
+  const evolveCostHint = genCostHint(costQuote?.videoCredits);
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
     ...n,
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve }
+      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve, evolveCostHint }
       : withNodeActionLock(n.data),
   }));
 

@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
+import { subscribeBalanceRefresh } from "@/lib/balance-refresh";
 
 type NavigationIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 
@@ -240,14 +241,24 @@ export function GlobalNavigation({
     setMobileOpen(false);
   }, [pathname]);
 
+  // This rail holds the only credits figure in the product, so it must re-read the
+  // balance whenever a charge settles — not only at mount. Subscribing to the spend
+  // signal (rather than adding a timer) keeps the number honest within a click of the
+  // charge and adds no polling (#550: it used to sit on the mount value until a full
+  // page reload, lagging the database by 84s+).
   useEffect(() => {
     let alive = true;
-    getMyAccount().then((result) => {
-      if (!alive || "error" in result) return;
-      setAccount({ email: result.email, balance: result.balance });
-    }).catch(() => {});
+    const load = () => {
+      getMyAccount().then((result) => {
+        if (!alive || "error" in result) return;
+        setAccount({ email: result.email, balance: result.balance });
+      }).catch(() => {});
+    };
+    load();
+    const unsubscribe = subscribeBalanceRefresh(load);
     return () => {
       alive = false;
+      unsubscribe();
     };
   }, []);
 

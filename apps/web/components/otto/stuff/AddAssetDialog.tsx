@@ -13,6 +13,7 @@ import {
 import { REFERENCE_FORMATS, type ReferenceFormat } from "@/lib/reference-formats";
 import { createEntity } from "@/lib/actions";
 import { startRefGen } from "@/lib/refgen-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 
@@ -112,6 +113,10 @@ export function AddAssetDialog({
         setSaving(false);
         return;
       }
+      // A reference generation reserves credits the moment startRefGen accepts — tell the
+      // global nav so its credits figure moves with the money (#550). This dialog is the
+      // last client-triggered spend path that had no balance-refresh signal at all.
+      notifyBalanceRefresh();
       setDone(true);
       setSaving(false);
       onDone();

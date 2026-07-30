@@ -14,6 +14,7 @@ import type { AccountInfo } from "@/lib/account-actions";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import type { HistoryThumb } from "@/lib/data";
 import { getMyAccount } from "@/lib/account-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
 
@@ -270,9 +271,14 @@ export function OttoApp({
     return () => { alive = false; clearInterval(h); };
   }, [view, projectId, threads.length, applyActivity]);
 
+  // Every settle in this tree (canvas generations, Otto turns, plan/pack/research cards)
+  // already funnels into here via onBalanceRefresh. Announce it too, so the persistent
+  // global nav — which holds the only credits figure a merchant actually sees, and lives
+  // outside this tree — re-reads the balance at the same moment (#550).
   const refreshBalance = useCallback(async () => {
     const a = await getMyAccount();
     if (a && !("error" in a)) setBalanceCredits(a.balance);
+    notifyBalanceRefresh();
   }, []);
 
   const projectHref = useCallback((projId: string, threadId?: string, opts?: { newChat?: boolean }) => {
