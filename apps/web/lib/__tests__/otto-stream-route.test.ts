@@ -87,6 +87,10 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
   };
 });
 
+// The route decides "this was a MaxTurns degrade" with `instanceof MaxTurnsExceededError`,
+// so the test throws the REAL class the runtime is wired with — a look-alike would take the
+// generic-error branch and silently prove nothing.
+const { MaxTurnsExceededError } = await import("@fikirtive/otto");
 const { POST } = await import("@/app/api/otto/stream/route");
 
 function req(body: unknown) {
@@ -585,5 +589,36 @@ describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
     expect(res.status).toBe(200);
     expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
     expect(parts.some((p: { type: string; data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
+  });
+
+  // Round-1 review P2: a tangled run still burns tokens, and withLlmBudget settles them.
+  // The merchant paid, so the degrade must carry the same cost line as a normal turn.
+  it("shows the cost of a MaxTurns turn — it was charged like any other", async () => {
+    mocks.run.mockRejectedValue(new MaxTurnsExceededError("too many turns"));
+    mocks.chatMessageFindFirst.mockResolvedValue({ seq: 3 });
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "go round in circles" }))).json();
+
+    expect(parts).toEqual(expect.arrayContaining([{ type: "data-cost", data: { credits: 3.3 } }]));
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "degraded")).toBe(true);
+  });
+
+  it("charges nothing and says nothing when the reserve itself failed", async () => {
+    mocks.run.mockRejectedValue(new mocks.MockInsufficientCredits());
+    mocks.creditLedgerAggregate.mockResolvedValue({ _sum: { balanceDelta: 0 } });
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "insufficient_credits")).toBe(true);
+  });
+
+  it("reports a real charge on a failed run that still settled usage", async () => {
+    mocks.run.mockRejectedValue(new Error("provider exploded"));
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts).toEqual(expect.arrayContaining([{ type: "data-cost", data: { credits: 3.3 } }]));
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "error")).toBe(true);
   });
 });

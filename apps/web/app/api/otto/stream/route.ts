@@ -256,6 +256,17 @@ export async function POST(req: NextRequest): Promise<Response> {
           reasoningOpen = false;
         };
 
+        // #555: report what THIS turn cost, once the ledger has settled it. Called on every
+        // path that can leave a charge behind — including the MaxTurns degrade, which really
+        // does bill the tokens it burned (round-1 review P2). Emits nothing when the net is
+        // zero (a refunded failure) or unreadable, so the line never claims a phantom charge.
+        const emitTurnCost = async () => {
+          const credits = await settledTurnCost(ownerId, refId);
+          if (credits !== null) {
+            writer.write({ type: "data-cost", data: { credits } satisfies OttoCostData });
+          }
+        };
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let agentResult: any;
         try {
@@ -326,6 +337,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             await prisma.chatMessage.create({
               data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: Math.max(seqAfterUser, lastMsg?.seq ?? 0) + 1, text: degradeText },
             });
+            // A tangled run still burned tokens and withLlmBudget already settled them —
+            // the merchant paid for this turn, so it must show a cost like any other.
+            await emitTurnCost();
             writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
             return;
           }
@@ -348,6 +362,9 @@ export async function POST(req: NextRequest): Promise<Response> {
           } catch (persistError) {
             console.error("[otto/stream] failed to persist TURN_ERROR:", { errorId, error: errSummary(persistError) });
           }
+          // Normally the whole reservation was refunded here (net 0 → nothing is shown), but
+          // a provider error that still reported usage settles a real charge — report it.
+          await emitTurnCost();
           writer.write({ type: "data-error", data: error });
           return;
         }
@@ -355,13 +372,10 @@ export async function POST(req: NextRequest): Promise<Response> {
         // Close any open text/reasoning parts before the final data parts.
         closeOpenParts();
 
-        // #555: the turn has settled by now (withLlmBudget settles before runOttoTurn
-        // returns), so the ledger already knows what it cost. Say so in the conversation
-        // instead of leaving the merchant to discover the charge in the balance.
-        const turnCost = await settledTurnCost(ownerId, refId);
-        if (turnCost !== null) {
-          writer.write({ type: "data-cost", data: { credits: turnCost } satisfies OttoCostData });
-        }
+        // The turn has settled by now (withLlmBudget settles before runOttoTurn returns), so
+        // the ledger already knows what it cost. Say so in the conversation instead of leaving
+        // the merchant to discover the charge in a moving balance.
+        await emitTurnCost();
 
         // Persist the run (interruption / completed / stale) with the SAME CAS as ottoTurn.
         // userText picks the #498 fallback receipt's language (copy only).

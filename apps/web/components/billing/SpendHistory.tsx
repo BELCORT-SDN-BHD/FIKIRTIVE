@@ -1,20 +1,35 @@
 import { formatCredits } from "@/lib/credit-format";
 import type { SpendEntry } from "@/lib/spend-history";
+import type { SpendWindow } from "@/lib/spend-history-data";
+
+/** Say what this list covers. The truncated case names the cut instead of implying "all" —
+ *  round-1 review P1①: a PR that fixes "the product says one thing and does another" must not
+ *  ship its own version of it. Pure, so the wording is unit-tested without a render. */
+export function windowSummary(window: SpendWindow): string {
+  if (window.hasMore) {
+    return `Showing the last ${window.returned} charges, newest first — older activity isn’t listed here yet.`;
+  }
+  return window.returned === 1
+    ? "Your 1 credit charge so far."
+    : `All ${window.returned} credit charges on this workspace, newest first.`;
+}
 
 /**
  * Spend history on /billing (#555) — where the credits went.
  *
  * Presentational and server-rendered: it takes the already-shaped entries (see
  * lib/spend-history.ts) and lists them newest-first. It reads nothing and writes nothing.
- * An unsettled hold is labelled as such rather than shown as a final charge.
+ * An unsettled hold is labelled as such rather than shown as a final charge, and the list
+ * states how far back it reaches (see windowSummary above).
  */
-export function SpendHistory({ entries }: { entries: SpendEntry[] }) {
+export function SpendHistory({ entries, window }: { entries: SpendEntry[]; window: SpendWindow }) {
   return (
     <section style={{ marginTop: 28 }}>
       <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Spend history</h2>
       <p className="text-muted-foreground" style={{ fontSize: 14, margin: "0 0 12px" }}>
-        Every credit charge on this workspace, newest first. Chat and Review are Otto&rsquo;s
-        conversation turns.
+        {entries.length === 0
+          ? "Chat and Review are Otto’s conversation turns; they show up here as soon as you use them."
+          : `${windowSummary(window)} Chat and Review are Otto’s conversation turns.`}
       </p>
 
       {entries.length === 0 ? (

@@ -32,6 +32,10 @@ export function creditsLabel(n: number): string {
  *  measured session put 89% of its credits on conversation turns, one turn costing as much
  *  as three images — "a little" was not true, and there was nowhere to check. This single
  *  constant keeps the three surfaces from drifting again, and points at the place that can
- *  now answer the question (Billing's spend history). */
+ *  now answer the question (Billing's spend history).
+ *
+ *  Deliberately says "your charges are listed", NOT "every charge": the history is a window
+ *  over the most recent items and names its own cut (round-1 review P1① — the copy must not
+ *  promise more than the page delivers). */
 export const CHAT_SPEND_NOTE =
-  "Chatting with Otto uses credits — every charge is listed in Billing.";
+  "Chatting with Otto uses credits — your charges are listed in Billing.";

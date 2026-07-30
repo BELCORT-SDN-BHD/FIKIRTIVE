@@ -1,23 +1,47 @@
 /**
- * otto-turn-cost.test.ts — #555: a charged Otto turn must show what it cost.
+ * otto-turn-cost.test.ts — #555: a charged Otto turn must show what it cost, and the three
+ * surfaces that disclose the conversation charge must all tell the same true story.
  *
- * Covers the read seam (turnCostOf over the durable `data-cost` part) and the plan card's
- * disclosure copy. Display only — no test here touches the reserve/settle path.
+ * Covers the read seam (turnCostOf over the durable `data-cost` part) and renders ALL THREE
+ * copy surfaces (round-1 review P3: only one of them was actually rendered before).
+ * Display only — no test here touches the reserve/settle path.
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/otto-client-actions", () => ({ ottoApprove: vi.fn() }));
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/otto-client-actions", () => ({
+  ottoApprove: vi.fn(),
+  ottoTurn: vi.fn(),
+  createEmptyCoworkThread: vi.fn(),
+  setAdsAutonomy: vi.fn(),
+}));
 vi.mock("@/lib/cowork-actions", () => ({
   coworkGenerate: vi.fn(),
   coworkVaryCard: vi.fn(),
   cancelGenJob: vi.fn(),
 }));
+vi.mock("@/lib/cowork-fetch", () => ({ getCoworkThreadClient: vi.fn() }));
+vi.mock("@/lib/memory-actions", () => ({
+  addMemory: vi.fn(), updateMemory: vi.fn(), deleteMemory: vi.fn(), listMyMemory: vi.fn(),
+}));
+vi.mock("@/lib/brand-record-actions", () => ({
+  saveBrandRecord: vi.fn(), deleteBrandRecord: vi.fn(), restoreBrandRecord: vi.fn(),
+  listMyBrandRecords: vi.fn(),
+}));
+vi.mock("@/lib/product-ingest-actions", () => ({ ingestProductFromUrl: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/otto",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 import { turnCostOf } from "@/lib/otto-status-helpers";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 import { OttoPlanCard } from "@/components/otto/OttoPlanCard";
+import { OttoFrontDoor } from "@/components/otto/OttoFrontDoor";
+import { OttoMemory } from "@/components/otto/OttoMemory";
 
 describe("turnCostOf", () => {
   it("reads the settled cost off the turn's durable cost part", () => {
@@ -40,30 +64,65 @@ describe("turnCostOf", () => {
   });
 });
 
-describe("plan card spend disclosure", () => {
-  function renderCard(): string {
+describe("the conversation-charge disclosure is one sentence in three places", () => {
+  // `cardState` is a real CardState value ("idle" is the pre-approval state whose footer
+  // carries this copy) — round-1 review P3 flagged the earlier `"open" as never`, which
+  // typechecked while naming a state the union does not have.
+  function renderPlanCard(): string {
     return renderToStaticMarkup(createElement(OttoPlanCard, {
       cardId: "card_1",
       payload: { kind: "image", structuredPrompt: "a plate of nasi lemak", estimatedCredits: 1 },
       entities: [],
       threadId: "thread_1",
       projectId: "proj_1",
-      cardState: "open" as never,
+      cardState: "idle",
       pendingApproval: false,
       onApproved: vi.fn(),
       onChangeSomething: vi.fn(),
     }));
   }
 
-  it("no longer calls a conversation turn 'a little credit'", () => {
-    expect(renderCard()).not.toMatch(/a little credit/i);
-  });
+  function renderFrontDoor(): string {
+    return renderToStaticMarkup(createElement(OttoFrontDoor, {
+      projectId: "proj_1",
+      entities: [],
+      userName: "Siti",
+      onThreadStarted: vi.fn(),
+      ottoStreamEnabled: true,
+      onStreamStart: vi.fn(),
+    }));
+  }
 
-  it("tells the merchant chatting costs credits and where every charge is listed", () => {
-    const markup = renderCard();
-    expect(markup).toContain("Chatting with Otto uses credits");
-    expect(markup).toContain("Billing");
-    // one shared constant, so the three surfaces cannot drift apart again
-    expect(CHAT_SPEND_NOTE).toBe("Chatting with Otto uses credits — every charge is listed in Billing.");
+  function renderMemory(): string {
+    return renderToStaticMarkup(createElement(OttoMemory, {
+      initialMemory: [],
+      initialRecords: [],
+      projectId: "proj_1",
+    }));
+  }
+
+  const surfaces: Array<[string, () => string]> = [
+    ["plan card", renderPlanCard],
+    ["front door", renderFrontDoor],
+    ["brand memory", renderMemory],
+  ];
+
+  for (const [name, render] of surfaces) {
+    it(`${name}: no longer calls a conversation turn "a little credit"`, () => {
+      expect(render()).not.toMatch(/a little credit/i);
+    });
+
+    it(`${name}: says chatting costs credits and where the charges are listed`, () => {
+      const markup = render();
+      expect(markup).toContain("Chatting with Otto uses credits");
+      expect(markup).toContain("Billing");
+    });
+  }
+
+  it("comes from ONE constant, so the three surfaces cannot drift apart again", () => {
+    expect(CHAT_SPEND_NOTE).toBe("Chatting with Otto uses credits — your charges are listed in Billing.");
+    for (const [, render] of surfaces) {
+      expect(render()).toContain("your charges are listed in Billing");
+    }
   });
 });

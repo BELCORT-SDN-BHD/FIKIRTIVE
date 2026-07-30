@@ -9,6 +9,7 @@ import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreetingName } from "@/lib/otto-greeting";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
 interface GoalTile {
   label: string;
@@ -216,6 +217,11 @@ export function OttoFrontDoor({
     } finally {
       setBusy(false);
       startingRef.current = false;
+      // In a finally on purpose (#550): the non-streaming fallback runs a metered ottoTurn,
+      // and a transport failure cannot prove the turn didn't reserve — so the balance is
+      // re-read on every exit. The streaming branch returns early having spent nothing here
+      // (OttoChatStream announces its own turn), and a redundant refresh is harmless.
+      notifyBalanceRefresh();
     }
   }
 

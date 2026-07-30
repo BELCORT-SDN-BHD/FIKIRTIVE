@@ -16,7 +16,7 @@ import {
   spendCategoryOf,
   type SpendLedgerRow,
 } from "@/lib/spend-history";
-import { SpendHistory } from "@/components/billing/SpendHistory";
+import { SpendHistory, windowSummary } from "@/components/billing/SpendHistory";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 
 const TZ = "UTC";
@@ -189,9 +189,10 @@ describe("Billing spend history section", () => {
     new Map(),
     TZ,
   );
+  const fullWindow = { taskLimit: 50, returned: entries.length, hasMore: false };
 
-  it("lists every charge with its category, amount, and time", () => {
-    const markup = renderToStaticMarkup(createElement(SpendHistory, { entries }));
+  it("lists each charge with its category, amount, and time", () => {
+    const markup = renderToStaticMarkup(createElement(SpendHistory, { entries, window: fullWindow }));
 
     expect(markup).toContain("Spend history");
     expect(markup).toContain("Chat");
@@ -202,17 +203,60 @@ describe("Billing spend history section", () => {
   });
 
   it("says the history is empty instead of rendering a blank panel", () => {
-    const markup = renderToStaticMarkup(createElement(SpendHistory, { entries: [] }));
+    const markup = renderToStaticMarkup(createElement(SpendHistory, {
+      entries: [],
+      window: { taskLimit: 50, returned: 0, hasMore: false },
+    }));
 
     expect(markup).toContain("Spend history");
     expect(markup).toMatch(/No credit activity yet/i);
+    // An empty workspace must not be told "All 0 credit charges".
+    expect(markup).not.toMatch(/All 0/);
+  });
+});
+
+// Round-1 review P1①: this PR exists because the product said one thing and did another.
+// The list is a 50-task window, so the page has to name its own cut.
+describe("the spend-history window is described honestly", () => {
+  it("admits the truncation when older activity exists", () => {
+    const summary = windowSummary({ taskLimit: 50, returned: 50, hasMore: true });
+
+    expect(summary).toContain("Showing the last 50 charges");
+    expect(summary).toMatch(/older activity isn’t listed here yet/i);
+    expect(summary).not.toMatch(/\ball\b/i);
+  });
+
+  it("claims completeness only when the window really holds everything", () => {
+    expect(windowSummary({ taskLimit: 50, returned: 12, hasMore: false })).toBe(
+      "All 12 credit charges on this workspace, newest first.",
+    );
+    expect(windowSummary({ taskLimit: 50, returned: 1, hasMore: false })).toBe(
+      "Your 1 credit charge so far.",
+    );
+  });
+
+  it("renders the truncation notice on the page, not just in the helper", () => {
+    const markup = renderToStaticMarkup(createElement(SpendHistory, {
+      entries: buildSpendHistory(
+        [row({ id: "r1", kind: "RESERVE", refId: "otto-stream:m1", balanceDelta: -120, reservedDelta: 120 })],
+        new Map(),
+        TZ,
+      ),
+      window: { taskLimit: 50, returned: 50, hasMore: true },
+    }));
+
+    expect(markup).toContain("Showing the last 50 charges");
   });
 });
 
 describe("honest conversation-spend copy", () => {
-  it("no longer calls a chat turn 'a little credit' and points at the spend history", () => {
+  it("no longer calls a chat turn 'a little credit' and points at Billing", () => {
     expect(CHAT_SPEND_NOTE).not.toMatch(/a little/i);
     expect(CHAT_SPEND_NOTE).toMatch(/credits/i);
     expect(CHAT_SPEND_NOTE).toMatch(/Billing/);
+  });
+
+  it("does not promise a complete record the window cannot deliver (round-1 P1①)", () => {
+    expect(CHAT_SPEND_NOTE).not.toMatch(/every charge/i);
   });
 });

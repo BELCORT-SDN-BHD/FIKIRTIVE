@@ -1,5 +1,5 @@
 import { getMyAccount } from "@/lib/account-actions";
-import { getSpendHistory } from "@/lib/spend-history-data";
+import { getSpendOverview } from "@/lib/spend-history-data";
 import { listCreditPacks } from "@/lib/billing-actions";
 import { BuyPackButton } from "@/components/billing/BuyPackButton";
 import { SpendHistory } from "@/components/billing/SpendHistory";
@@ -28,10 +28,10 @@ export default async function BillingPage({
   const [accountResult, packs, spendResult] = await Promise.all([
     getMyAccount(),
     listCreditPacks(),
-    getSpendHistory(),
+    getSpendOverview(),
   ]);
   const account = "error" in accountResult ? null : accountResult;
-  const spend = Array.isArray(spendResult) ? spendResult : null;
+  const spend = "error" in spendResult ? null : spendResult;
 
   return (
     <div className="gb" style={{ flex: 1, overflow: "auto", minHeight: "100dvh", padding: 24 }}>
@@ -138,7 +138,7 @@ export default async function BillingPage({
         {/* #555: where the credits went. Conversation turns (Chat / Review) are listed
             here like any other charge — before this, the page showed only a balance. */}
         {spend ? (
-          <SpendHistory entries={spend} />
+          <SpendHistory entries={spend.entries} window={spend.window} />
         ) : (
           <section style={{ marginTop: 28 }}>
             <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>Spend history</h2>

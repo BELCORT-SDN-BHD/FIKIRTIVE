@@ -205,19 +205,32 @@ describe("ottoInstructions — #498 verbal approval honesty (generate)", () => {
 });
 
 describe("ottoInstructions — #555 credits and spending", () => {
-  it("forbids inventing a balance or a spent total Otto cannot see", () => {
+  it("routes every money question to the readSpending skill", () => {
+    expect(ottoInstructions).toMatch(/readSpending/);
+    expect(ottoInstructions).toMatch(/how much do I have left/i);
+  });
+  it("forbids answering from memory when the skill has not been called", () => {
     expect(ottoInstructions).toMatch(/never state, estimate, or guess a balance/i);
+    expect(ottoInstructions).toMatch(/you do not know the numbers/i);
   });
-  it("sends spending questions to Billing's spend history — the page that can now answer them", () => {
-    expect(ottoInstructions).toMatch(/Billing & credits/);
-    expect(ottoInstructions).toMatch(/spend history/i);
+  it("names the categories the merchant will actually see", () => {
+    expect(ottoInstructions).toMatch(/\*\*Chat\*\* = one conversation turn/);
+    expect(ottoInstructions).toMatch(/\*\*Review\*\* = the automatic check/);
   });
-  it("names the categories the merchant will actually see there", () => {
-    expect(ottoInstructions).toMatch(/\(Chat\)/);
-    expect(ottoInstructions).toMatch(/\(Review\)/);
+  it("requires admitting the window instead of claiming all-time coverage", () => {
+    expect(ottoInstructions).toMatch(/window\.hasMore/);
+    expect(ottoInstructions).toMatch(/never "everything you've ever spent"/i);
   });
-  it("states plainly that talking to Otto costs credits and each reply shows its cost", () => {
+  it("keeps the per-reply cost promise to what actually happens — live, under that reply", () => {
     expect(ottoInstructions).toMatch(/Talking to you costs credits/i);
-    expect(ottoInstructions).toMatch(/each reply shows what that reply cost/i);
+    // Round-1 review P1②: the old wording ("each reply shows what it cost") over-promised —
+    // it is not true after a reload, so the promise is now scoped to the live turn and the
+    // durable record is named separately.
+    expect(ottoInstructions).toMatch(/While you are replying, the cost of that reply appears underneath it/);
+    expect(ottoInstructions).toMatch(/the full record is always in Billing & credits/);
+    expect(ottoInstructions).not.toMatch(/Each reply shows what that reply cost/);
+  });
+  it("says plainly what to do when the read fails, instead of guessing", () => {
+    expect(ottoInstructions).toMatch(/Never fill the gap with a guess/i);
   });
 });
