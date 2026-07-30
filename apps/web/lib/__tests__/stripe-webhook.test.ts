@@ -4,12 +4,18 @@ const constructEvent = vi.fn();
 vi.mock("@/lib/stripe", () => ({ stripe: { webhooks: { constructEvent } } }));
 const grantCredits = vi.fn();
 const actionEventCreate = vi.fn();
-vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate } } }));
+const creditLedgerFindUnique = vi.fn();
+vi.mock("@fikirtive/db", () => ({ grantCredits, prisma: { actionEvent: { create: actionEventCreate }, creditLedger: { findUnique: creditLedgerFindUnique } } }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "evt_id", INTERNAL_PER_DISPLAY: 10 }));
 const captureMessage = vi.fn();
 vi.mock("@sentry/node", () => ({ captureMessage }));
 
-beforeEach(() => { vi.clearAllMocks(); process.env.STRIPE_WEBHOOK_SECRET = "whsec_test"; actionEventCreate.mockResolvedValue({}); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  process.env.STRIPE_WEBHOOK_SECRET = "whsec_test";
+  actionEventCreate.mockResolvedValue({});
+  creditLedgerFindUnique.mockResolvedValue(null); // default: this session was never granted
+});
 
 const { POST } = await import("@/app/api/stripe/webhook/route");
 function req(body = "{}") { return { text: async () => body, headers: { get: () => "sig_x" } } as never; }
@@ -62,11 +68,75 @@ describe("stripe webhook", () => {
     expect(res.status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled(); // no money arrived → nothing may be issued
     expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("checkout.session.async_payment_failed"), "warning");
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("received NO credits"), "warning");
+    // The grant side is consulted READ-ONLY, tenant-scoped on the compound unique key.
+    expect(creditLedgerFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId_idempotencyKey: { orgId: "org_7", idempotencyKey: "stripe:cs_f1" } } }),
+    );
     expect(actionEventCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ id: "stripe_failed:cs_f1", ownerId: "org_7", type: "credits.purchase.failed" }),
+        data: expect.objectContaining({
+          id: "stripe_failed:cs_f1", ownerId: "org_7", type: "credits.purchase.failed",
+          payload: expect.objectContaining({ alreadyGranted: false }),
+        }),
       }),
     );
+  });
+
+  // P1(复审第一轮):告警调用同步抛错不得穿透成非 2xx —— 那会让 Stripe 无限重投一个钱事件。
+  it("async_payment_failed still 200s + still audits when the ALERT throws", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f5", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f5", payment_status: "unpaid", metadata: { orgId: "org_7", credits: "220" } } },
+    });
+    captureMessage.mockImplementationOnce(() => { throw new Error("sentry transport exploded"); });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(req());
+      expect(res.status).toBe(200); // the 2xx contract survives a broken alerting backend
+      expect(consoleError).toHaveBeenCalled(); // degraded to a structured log, not swallowed
+      expect(actionEventCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ id: "stripe_failed:cs_f5" }) }),
+      );
+      expect(grantCredits).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  // P2(复审第一轮):completed(paid) 先到、failed 后到时,不得对运营说「没发过积分」。
+  it("async_payment_failed on an ALREADY-GRANTED session tells the truth (no clawback, no re-grant)", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f6", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f6", payment_status: "unpaid", metadata: { orgId: "org_7", credits: "220" } } },
+    });
+    creditLedgerFindUnique.mockResolvedValue({ id: "led_1" });
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("ALREADY granted"), "warning");
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ payload: expect.objectContaining({ alreadyGranted: true }) }),
+      }),
+    );
+    expect(grantCredits).not.toHaveBeenCalled(); // never re-grant …
+  });
+
+  it("async_payment_failed reports UNKNOWN (not 'no credits') when the ledger lookup itself fails", async () => {
+    constructEvent.mockReturnValue({
+      id: "evt_f7", type: "checkout.session.async_payment_failed",
+      data: { object: { id: "cs_f7", payment_status: "unpaid", metadata: { orgId: "org_7", credits: "220" } } },
+    });
+    creditLedgerFindUnique.mockRejectedValue(new Error("db down"));
+    const res = await POST(req());
+    expect(res.status).toBe(200);
+    expect(captureMessage).toHaveBeenCalledWith(expect.stringContaining("UNKNOWN"), "warning");
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ payload: expect.objectContaining({ alreadyGranted: null }) }),
+      }),
+    );
+    expect(grantCredits).not.toHaveBeenCalled();
   });
 
   it("async_payment_failed keys the audit row on the SESSION, so a redelivery hits the same PK", async () => {
@@ -90,9 +160,15 @@ describe("stripe webhook", () => {
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(grantCredits).not.toHaveBeenCalled();
+    // No orgId → the grant branch above can never have run for this session, so "not granted"
+    // is provable without a lookup; spending a query on it would be theatre.
+    expect(creditLedgerFindUnique).not.toHaveBeenCalled();
     expect(actionEventCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ id: "stripe_failed:cs_f3", ownerId: "founder", type: "credits.purchase.failed" }),
+        data: expect.objectContaining({
+          id: "stripe_failed:cs_f3", ownerId: "founder", type: "credits.purchase.failed",
+          payload: expect.objectContaining({ alreadyGranted: false }),
+        }),
       }),
     );
   });
@@ -106,6 +182,13 @@ describe("stripe webhook", () => {
     const res = await POST(req());
     expect(res.status).toBe(200);
     expect(captureMessage).toHaveBeenCalled(); // alert is at-least-once: a DB fault can't silence it
+    // …and the audit write was genuinely attempted — otherwise this test would pass on an
+    // implementation that never writes at all.
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ id: "stripe_failed:cs_f4", type: "credits.purchase.failed" }),
+      }),
+    );
     expect(grantCredits).not.toHaveBeenCalled();
   });
 

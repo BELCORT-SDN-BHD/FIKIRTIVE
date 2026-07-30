@@ -52,18 +52,49 @@ export async function POST(req: NextRequest): Promise<Response> {
     // #552: async_payment_failed is the other half of F01 — the delayed-notification payment
     // (FPX/GrabPay) never settled after the session completed 'unpaid'. It used to fall through
     // to a bare 200: no audit, no alert, and a merchant left waiting for credits that will never
-    // arrive. This branch NEVER grants and never touches the ledger — no money came in, so there
-    // is nothing to issue and nothing to claw back. The ActionEvent id is derived from the
+    // arrive. This branch NEVER grants and never WRITES the ledger — no money came in, so there
+    // is nothing to issue and nothing to claw back (it only READS the ledger, to keep the audit
+    // honest when a paid 'completed' arrived first). The ActionEvent id is derived from the
     // Checkout SESSION id — same family as the stripe:<session.id> ledger key on the grant side —
     // so a Stripe redelivery collides on the primary key and the audit row stays exactly-once
-    // without a race-prone check-then-act read. The alert stays at-least-once on purpose: a DB
-    // fault must not be able to silence it.
+    // through a DB constraint, not a race-prone check-then-act. The alert stays at-least-once on
+    // purpose: a DB fault must not be able to silence it.
     if (event.type === "checkout.session.async_payment_failed") {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const session = event.data.object as any;
       const sessionId = typeof session.id === "string" && session.id ? session.id : "";
       const orgId = typeof session.metadata?.orgId === "string" ? session.metadata.orgId : "";
-      Sentry.captureMessage(`[stripe] ${event.type} — a delayed payment never settled; the buyer received NO credits`, "warning");
+      // A paid 'completed' can land before a late failure event for the same session. Telling
+      // operations "the buyer received NO credits" there would send them hunting for a payment
+      // that was in fact already honoured — so ask the grant side, READ ONLY, tenant-scoped on
+      // the (orgId, idempotencyKey) unique key. Nothing here writes or reverses a ledger row:
+      // clawback stays a founder decision, exactly as in the dispute branch below. Without an
+      // orgId the grant branch above can never have run, so "not granted" is provable and the
+      // query would be theatre; a lookup that itself fails is reported as unknown, not guessed.
+      let alreadyGranted: boolean | null = false;
+      if (orgId && sessionId) {
+        try {
+          alreadyGranted = !!(await prisma.creditLedger.findUnique({
+            where: { orgId_idempotencyKey: { orgId, idempotencyKey: `stripe:${sessionId}` } },
+            select: { id: true },
+          }));
+        } catch {
+          alreadyGranted = null;
+        }
+      }
+      const outcome = alreadyGranted === null
+        ? "grant status UNKNOWN (ledger lookup failed) — check the credits ledger before replying to the buyer"
+        : alreadyGranted
+          ? "credits for this session were ALREADY granted — a late failure contradicts the ledger; reconcile in Stripe (no automatic clawback)"
+          : "the buyer received NO credits";
+      // Alerting must never decide the response code. A throwing alert transport would reject
+      // this handler, return non-2xx, and put Stripe into an unbounded retry storm on a money
+      // event — so the alert degrades to a log and the 2xx contract holds either way.
+      try {
+        Sentry.captureMessage(`[stripe] ${event.type} — a delayed payment never settled; ${outcome}`, "warning");
+      } catch (e) {
+        console.error(`[stripe] ${event.type} alert failed (${outcome}); session=${sessionId || "unknown"}:`, e);
+      }
       await prisma.actionEvent
         .create({
           data: {
@@ -80,6 +111,7 @@ export async function POST(req: NextRequest): Promise<Response> {
               credits: session.metadata?.credits ?? null,
               amountTotal: session.amount_total ?? null,
               orgId: orgId || null,
+              alreadyGranted, // true | false | null(=lookup failed, status unknown)
             },
           },
         })
