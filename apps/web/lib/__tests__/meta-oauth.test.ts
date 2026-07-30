@@ -40,7 +40,7 @@ describe("buildAuthorizeUrl", () => {
     expect(u.searchParams.get("state")).toBe("STATE");
     expect(u.searchParams.get("response_type")).toBe("code");
   });
-  it("sends no scope parameter (business login rejects a loose scope list)", () => {
+  it("carries config_id and no scope param (Meta recommends config_id alone for business login)", () => {
     const u = new URL(buildAuthorizeUrl("APPID", "https://app/api/meta/callback", "STATE", "CONFIGID"));
     expect(u.searchParams.has("scope")).toBe(false);
   });
