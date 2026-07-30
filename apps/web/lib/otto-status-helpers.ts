@@ -4,7 +4,7 @@
  *
  * Pure (no React, no I/O) so they are unit-testable in the node harness.
  */
-import type { OttoStatusData, OttoErrorData, OttoStepData } from "./otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData, OttoStepData, OttoCostData } from "./otto-stream-bridge";
 
 /** Minimal shape of what a data-* part looks like at runtime. */
 interface RawDataPart {
@@ -91,6 +91,24 @@ export function persistedStreamErrorUserMessageId(payload: unknown): string | nu
   if (!payload || typeof payload !== "object") return null;
   const userMessageId = (payload as { userMessageId?: unknown }).userMessageId;
   return typeof userMessageId === "string" ? userMessageId : null;
+}
+
+/**
+ * Return the settled cost of a turn from its assistant message's parts, or null when the
+ * turn carried no cost part (a free/mock turn, a refunded failure, or an older message
+ * predating #555). Read off the DURABLE part for the same reason as dataErrorOf: what a
+ * merchant was charged must not depend on catching one ephemeral callback.
+ *
+ * A non-positive or non-finite number is treated as "no cost to report" — the line must
+ * never claim a charge that did not happen. Pure + unit-tested.
+ */
+export function turnCostOf(parts: readonly RawDataPart[]): number | null {
+  for (const part of parts) {
+    if (part.type !== "data-cost") continue;
+    const credits = (part.data as OttoCostData | undefined)?.credits;
+    if (typeof credits === "number" && Number.isFinite(credits) && credits > 0) return credits;
+  }
+  return null;
 }
 
 /** Narrow a raw part to `OttoStepData` if its type is "data-step", else null. */

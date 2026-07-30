@@ -402,6 +402,32 @@ export interface OttoContext {
       { ok: true; scopes: { id: string; channel: string; scopeKey: string }[] } | { error: string }
     >;
   };
+  /** Spend-visibility port (#555, $0 READ). The web caller injects the SAME owner-scoped read the
+   * Billing page renders (spend-history-data.getSpendOverview), so Otto answers "how much have I
+   * spent?" from the merchant's real ledger instead of pointing at a page. The port never accepts
+   * owner identity and can only read: no reserve, settle, refund, grant, adjust, or top-up.
+   * `window` is returned so the answer can say how far back it reaches — the history is the most
+   * recent `taskLimit` items, not all time. Amounts are DISPLAYED credits; `credits` is signed
+   * (negative = charged, positive = added). */
+  spending?: {
+    overview(): Promise<
+      | {
+          ok: true;
+          balance: number;
+          reserved: number;
+          window: { taskLimit: number; returned: number; hasMore: boolean };
+          entries: {
+            category: string;
+            label: string;
+            credits: number;
+            at: string;
+            pending: boolean;
+            detail?: string;
+          }[];
+        }
+      | { error: string }
+    >;
+  };
   /** Campaign planner port (B0-51..58/C2a, $0). Every method delegates to the SAME authenticated
    * Campaign/Trend action used by the manual surface. The model cannot supply identity, mint ids,
    * write legacy UTM, dispatch generation, touch credits, or authorize publishing. */

@@ -30,6 +30,7 @@ import { prisma, InsufficientCredits } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
+  displayCredits,
   GOAL_PRESETS,
   isGoalKey,
 } from "@fikirtive/core";
@@ -55,7 +56,7 @@ import {
   validateOttoTurnReferences,
 } from "@/lib/otto-actions";
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
-import type { OttoStatusData, OttoErrorData } from "@/lib/otto-stream-bridge";
+import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
@@ -65,6 +66,39 @@ function errSummary(e: unknown): string {
   return [x.name, x.message, x.statusCode != null ? `status=${x.statusCode}` : null]
     .filter(Boolean)
     .join(" | ") || String(e);
+}
+
+/** What this turn actually cost, in DISPLAYED credits, read from the ledger after the turn
+ *  settled (#555 — the merchant used to be charged for every turn with no number anywhere).
+ *
+ *  READ-ONLY: it reads the turn's own ledger rows and reports their net. It never reserves,
+ *  settles, refunds, or changes any amount — withLlmBudget has already committed the money by
+ *  the time this runs.
+ *
+ *  A FINALIZER ROW IS REQUIRED (round-2 review P1③). An outstanding RESERVE with no SETTLE or
+ *  REFUND is a hold, not a cost: its amount is the worst-case turn budget, so showing it would
+ *  quote the merchant a number they were never charged. That is not hypothetical — if the
+ *  settle transaction itself fails, the run throws and the route takes its generic-error path
+ *  with a bare RESERVE still on the ledger. So: no finalizer → no number.
+ *
+ *  Returns null (and the UI shows nothing) whenever we cannot stand behind a figure: no
+ *  finalizer yet, a non-positive net (a free/mock turn, or a failure that refunded the hold),
+ *  or a failed read. */
+async function settledTurnCost(orgId: string, refId: string): Promise<number | null> {
+  try {
+    const rows = await prisma.creditLedger.findMany({
+      where: { orgId, refId },
+      select: { kind: true, balanceDelta: true },
+    });
+    const finalized = rows.some((row) => row.kind === "SETTLE" || row.kind === "REFUND");
+    if (!finalized) return null;
+    const chargedInternal = -rows.reduce((sum, row) => sum + row.balanceDelta, 0);
+    if (!Number.isFinite(chargedInternal) || chargedInternal <= 0) return null;
+    return displayCredits(chargedInternal);
+  } catch (e) {
+    console.error("[otto/stream] could not read the turn cost:", { refId, error: errSummary(e) });
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -231,6 +265,17 @@ export async function POST(req: NextRequest): Promise<Response> {
           reasoningOpen = false;
         };
 
+        // #555: report what THIS turn cost, once the ledger has settled it. Called on every
+        // path that can leave a charge behind — including the MaxTurns degrade, which really
+        // does bill the tokens it burned (round-1 review P2). Emits nothing when the net is
+        // zero (a refunded failure) or unreadable, so the line never claims a phantom charge.
+        const emitTurnCost = async () => {
+          const credits = await settledTurnCost(ownerId, refId);
+          if (credits !== null) {
+            writer.write({ type: "data-cost", data: { credits } satisfies OttoCostData });
+          }
+        };
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let agentResult: any;
         try {
@@ -301,6 +346,9 @@ export async function POST(req: NextRequest): Promise<Response> {
             await prisma.chatMessage.create({
               data: { id: newId(), threadId, ownerId, role: "AGENT", kind: "TEXT", seq: Math.max(seqAfterUser, lastMsg?.seq ?? 0) + 1, text: degradeText },
             });
+            // A tangled run still burned tokens and withLlmBudget already settled them —
+            // the merchant paid for this turn, so it must show a cost like any other.
+            await emitTurnCost();
             writer.write({ type: "data-status", data: { kind: "degraded", text: degradeText } satisfies OttoStatusData });
             return;
           }
@@ -323,12 +371,20 @@ export async function POST(req: NextRequest): Promise<Response> {
           } catch (persistError) {
             console.error("[otto/stream] failed to persist TURN_ERROR:", { errorId, error: errSummary(persistError) });
           }
+          // Normally the whole reservation was refunded here (net 0 → nothing is shown), but
+          // a provider error that still reported usage settles a real charge — report it.
+          await emitTurnCost();
           writer.write({ type: "data-error", data: error });
           return;
         }
 
         // Close any open text/reasoning parts before the final data parts.
         closeOpenParts();
+
+        // The turn has settled by now (withLlmBudget settles before runOttoTurn returns), so
+        // the ledger already knows what it cost. Say so in the conversation instead of leaving
+        // the merchant to discover the charge in a moving balance.
+        await emitTurnCost();
 
         // Persist the run (interruption / completed / stale) with the SAME CAS as ottoTurn.
         // userText picks the #498 fallback receipt's language (copy only).

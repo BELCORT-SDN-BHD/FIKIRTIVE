@@ -294,8 +294,9 @@ export function OttoConversation({
                 // a freshly-approved card queues a new job — re-arm polling even if a
                 // prior job had already hit the give-up cap.
                 rearmGenerationPoll();
-                // An approve reserves credits — refresh the nav balance immediately.
-                void onBalanceRefresh?.();
+                // No balance announcement here: OttoPlanCard.approve() already makes it in its
+                // own finally, which fires on the failure paths too. Announcing again from
+                // this success-only callback just double-read the balance (#555 round-2 P2).
                 refreshAndUpdate();
               }}
               onChangeRequest={(seed) => {
@@ -318,7 +319,7 @@ export function OttoConversation({
               }}
               onCancelled={(genJobId) => {
                 if (genJobId) setCancelledJobIds((cur) => new Set(cur).add(genJobId));
-                void onBalanceRefresh?.();
+                // Same as onApproved above: the card's own cancel() finally announces.
                 void refreshAndUpdate();
               }}
               onMakeAnother={() => {

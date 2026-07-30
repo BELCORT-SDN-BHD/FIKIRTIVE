@@ -16,6 +16,8 @@ import {
   sectionForCategory, diffRows, FACT_SECTION_KEYS, SECTIONS, sectionsTouched,
   type RowDiff, type SectionKey,
 } from "@fikirtive/core/memory-sections";
+import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { ottoTurn } from "@/lib/otto-client-actions";
 import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { FactSection } from "./memory/FactSection";
@@ -153,6 +155,10 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
       setChatError("Couldn't reach Otto — please try again.");
     } finally {
       setSending(false);
+      // In a finally on purpose (#550): every exit here has run a metered ottoTurn, and a
+      // transport failure cannot prove the turn didn't reserve — the balance shown in the
+      // global nav must be re-read either way.
+      notifyBalanceRefresh();
       requestAnimationFrame(() => {
         if (transcriptRef.current) {
           transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
@@ -344,7 +350,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
             </Button>
           </div>
           <p className="text-[0.75rem] text-muted-foreground/70 mt-2 mb-0">
-            Chatting uses a little credit. Otto edits the memory below live — you can undo.
+            {CHAT_SPEND_NOTE} Otto edits the memory below live — you can undo.
           </p>
         </div>
 

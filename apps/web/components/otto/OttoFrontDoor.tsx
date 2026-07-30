@@ -8,6 +8,8 @@ import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreetingName } from "@/lib/otto-greeting";
+import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
 interface GoalTile {
   label: string;
@@ -167,6 +169,11 @@ export function OttoFrontDoor({
     setBusy(true);
     setError(null);
     const entityIds = resolveSentEntityIds(msgText, pickedMentions);
+    // Only the non-streaming fallback below meters credits from HERE. The streaming branch
+    // hands the first message to OttoChatStream and returns having spent nothing, so it must
+    // not announce a balance change (round-2 review P2 — a "refresh" that follows no charge
+    // is noise that makes the real ones less trustworthy).
+    let metered = false;
     try {
       // Streaming front door: create an empty thread (no first turn, no spend), then
       // hand the first message to OttoChatStream which streams it in on mount. The
@@ -193,6 +200,9 @@ export function OttoFrontDoor({
         return;
       }
 
+      // Past this point the turn can reserve credits — even a thrown transport error cannot
+      // prove it did not, so the finally must announce.
+      metered = true;
       const res = await ottoTurn({
         projectId,
         text: msgText,
@@ -215,6 +225,10 @@ export function OttoFrontDoor({
     } finally {
       setBusy(false);
       startingRef.current = false;
+      // In a finally on purpose (#550): once the metered call has been entered, no exit path
+      // proves zero spend — success, handled error, and thrown transport failure all have to
+      // re-read the balance.
+      if (metered) notifyBalanceRefresh();
     }
   }
 
@@ -382,7 +396,7 @@ export function OttoFrontDoor({
         <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
-          Otto plans and makes it. Chatting uses a little credit; you approve before Otto makes anything.
+          Otto plans and makes it — you approve before Otto makes anything. {CHAT_SPEND_NOTE}
         </p>
       </div>
     </div>

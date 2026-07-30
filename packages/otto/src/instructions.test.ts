@@ -203,3 +203,46 @@ describe("ottoInstructions — #498 verbal approval honesty (generate)", () => {
     expect(ottoInstructions).toMatch(/you cannot keep that promise/i);
   });
 });
+
+describe("ottoInstructions — #555 credits and spending", () => {
+  it("routes every money question to the readSpending skill", () => {
+    expect(ottoInstructions).toMatch(/readSpending/);
+    expect(ottoInstructions).toMatch(/how much do I have left/i);
+  });
+  it("forbids answering from memory when the skill has not been called", () => {
+    expect(ottoInstructions).toMatch(/never state, estimate, or guess a balance/i);
+    expect(ottoInstructions).toMatch(/you do not know the numbers/i);
+  });
+  it("names the categories the merchant will actually see", () => {
+    expect(ottoInstructions).toMatch(/\*\*Chat\*\* = one conversation turn/);
+    expect(ottoInstructions).toMatch(/\*\*Review\*\* = the automatic check/);
+  });
+  it("requires admitting the window instead of claiming all-time coverage", () => {
+    expect(ottoInstructions).toMatch(/window\.hasMore/);
+    expect(ottoInstructions).toMatch(/never "everything you've ever spent"/i);
+  });
+  it("keeps a hold separate from money actually spent", () => {
+    expect(ottoInstructions).toMatch(/totals\.charged` is money already SPENT/);
+    expect(ottoInstructions).toMatch(/totals\.onHold` is money only HELD/);
+    expect(ottoInstructions).toMatch(/never add it to the spent figure/i);
+  });
+  it("keeps the per-reply cost promise to what actually happens — live, under that reply", () => {
+    expect(ottoInstructions).toMatch(/Talking to you costs credits/i);
+    // Round-1 review P1②: the old wording ("each reply shows what it cost") over-promised —
+    // it is not true after a reload, so the promise is now scoped to the live turn.
+    expect(ottoInstructions).toMatch(/While you are replying, the cost of that reply appears underneath it/);
+    expect(ottoInstructions).not.toMatch(/Each reply shows what that reply cost/);
+  });
+  // Round-2 review P1①: pinning one exact wrong sentence let its SYNONYMS survive — the
+  // instructions admitted `hasMore` on one line and called the same list "the complete
+  // record" two lines later. The guard is now a family ban on completeness claims, and no
+  // positive assertion locks any of them in.
+  it("bans every completeness claim about a list that is a bounded window", () => {
+    for (const overclaim of [/complete record/i, /full record/i, /every charge/i, /all of your charges/i]) {
+      expect(ottoInstructions).not.toMatch(overclaim);
+    }
+  });
+  it("says plainly what to do when the read fails, instead of guessing", () => {
+    expect(ottoInstructions).toMatch(/Never fill the gap with a guess/i);
+  });
+});
