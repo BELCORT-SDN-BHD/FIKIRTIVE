@@ -11,6 +11,7 @@ import { ingestProductSkill } from "./ingest-product.js";
 import { researchWebSkill } from "./research-web.js";
 import { readSegmentsSkill } from "./read-segments.js";
 import { buildSegmentSkill } from "./build-segment.js";
+import { readSpendingSkill } from "./read-spending.js";
 
 describe("migrated trivial skills carry the right gate", () => {
   it("setTitle: free/write/internal → not gated", () => {
@@ -90,5 +91,18 @@ describe("CRM Segment skills gate (B0-61/C3)", () => {
     expect(buildSegmentSkill.effect).toBe("write");
     expect(buildSegmentSkill.reach).toBe("internal");
     expect(buildSegmentSkill.needsApproval).toBe(false);
+  });
+});
+
+describe("spend-visibility skill gate (#555)", () => {
+  it("readSpending: free/read/internal → not gated", () => {
+    // The 3-field declaration has to describe what execute ACTUALLY does: it calls one
+    // ctx.spending.overview() read and writes nothing, so read/internal is honest and the
+    // derived gate is false. If this skill ever grew a write (a top-up, an adjustment), the
+    // declaration would have to change with it and this assertion would fail first.
+    expect(readSpendingSkill.cost).toBe("free");
+    expect(readSpendingSkill.effect).toBe("read");
+    expect(readSpendingSkill.reach).toBe("internal");
+    expect(readSpendingSkill.needsApproval).toBe(false);
   });
 });

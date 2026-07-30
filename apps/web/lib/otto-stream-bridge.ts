@@ -51,6 +51,12 @@ export type OttoProposeData = unknown;
 /** Payload for the `data-step` stream part — one agent step (a tool call), display-only. */
 export type OttoStepData = { id: string; label: string; phase: "start" | "done" };
 
+/** Payload for the `data-cost` stream part — what THIS turn actually cost, in DISPLAYED
+ *  credits, read from the ledger AFTER the turn settled (#555). Display-only: the number is
+ *  reported, never used to charge. The settled net, not the hold — the hold is a worst-case
+ *  budget and quoting it would overstate what the merchant paid. */
+export type OttoCostData = { credits: number };
+
 // ---------------------------------------------------------------------------
 // Minimal structural type for the parts this bridge emits, plus the route's
 // data parts. Intentionally avoids importing `ai` so this module stays pure
@@ -62,6 +68,7 @@ export type OttoStreamPart =
   | { type: "data-status"; data: OttoStatusData }
   | { type: "data-tool-propose"; data: OttoProposeData }
   | { type: "data-step"; data: OttoStepData }
+  | { type: "data-cost"; data: OttoCostData }
   | { type: "data-error"; data: OttoErrorData };
 
 // Stable ids so all deltas of one turn coalesce into a single text / reasoning part.

@@ -5,7 +5,8 @@ import { ClipboardList, Film, Image as ImageIcon, ShieldCheck } from "lucide-rea
 import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actions";
-import { creditsLabel } from "@/lib/credit-format";
+import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -119,6 +120,10 @@ export function OttoPlanCard({
       setError("Couldn't cancel — please try again.");
     } finally {
       setBusy(false);
+      // In a finally on purpose (#550): a successful cancel REFUNDS the hold, and an
+      // "already started" or transport failure leaves the outcome unknown — either way the
+      // displayed balance can no longer be trusted.
+      notifyBalanceRefresh();
     }
   }
 
@@ -134,6 +139,9 @@ export function OttoPlanCard({
       setError("Couldn't queue a retry — please try again.");
     } finally {
       setBusy(false);
+      // coworkVaryCard queues a NEW paid generation; a transport failure cannot prove it
+      // didn't reserve, so announce on every exit (#550).
+      notifyBalanceRefresh();
     }
   }
 
@@ -172,6 +180,10 @@ export function OttoPlanCard({
       setError("Couldn't start that — please try again.");
     } finally {
       setBusy(false);
+      // The charge moment: both branches reserve credits (ottoApprove resumes a parked paid
+      // generation, coworkGenerate dispatches a fresh one). Announced in a finally because a
+      // failed response never proves zero spend (#550).
+      notifyBalanceRefresh();
     }
   }
 
@@ -360,7 +372,7 @@ export function OttoPlanCard({
           </div>
         ) : (
           <div className="mt-3 flex items-center gap-[6px] text-[0.75rem] text-muted-foreground/70">
-            <ShieldCheck size={15} /> Otto only makes this after you approve. (Chatting with Otto uses a little credit.)
+            <ShieldCheck size={15} /> Otto only makes this after you approve. {CHAT_SPEND_NOTE}
           </div>
         )}
       </div>

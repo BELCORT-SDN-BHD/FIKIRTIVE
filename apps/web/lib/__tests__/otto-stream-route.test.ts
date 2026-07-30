@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     chatMessageFindFirst: vi.fn(),
     generationFindFirst: vi.fn(),
     genJobFindFirst: vi.fn(),
+    creditLedgerFindMany: vi.fn(),
     entityFindMany: vi.fn(),
     memoryFindMany: vi.fn(),
     buildOttoContext: vi.fn(),
@@ -71,6 +72,7 @@ vi.mock("@fikirtive/db", () => ({
     },
     generation: { findFirst: mocks.generationFindFirst },
     genJob: { findFirst: mocks.genJobFindFirst },
+    creditLedger: { findMany: mocks.creditLedgerFindMany },
     entity: { findMany: mocks.entityFindMany },
     memory: { findMany: mocks.memoryFindMany },
   },
@@ -85,6 +87,10 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
   };
 });
 
+// The route decides "this was a MaxTurns degrade" with `instanceof MaxTurnsExceededError`,
+// so the test throws the REAL class the runtime is wired with — a look-alike would take the
+// generic-error branch and silently prove nothing.
+const { MaxTurnsExceededError } = await import("@fikirtive/otto");
 const { POST } = await import("@/app/api/otto/stream/route");
 
 function req(body: unknown) {
@@ -133,6 +139,12 @@ beforeEach(() => {
   mocks.chatThreadCreate.mockResolvedValue({});
   mocks.chatMessageCreate.mockResolvedValue({});
   mocks.chatMessageFindFirst.mockResolvedValue(null);
+  // #555: the turn's SETTLED rows (RESERVE -120 + SETTLE +87 = -33 internal = 3.3 credits).
+  // A SETTLE row must be present — a bare RESERVE is a hold, never a cost (round-2 P1③).
+  mocks.creditLedgerFindMany.mockResolvedValue([
+    { kind: "RESERVE", balanceDelta: -120 },
+    { kind: "SETTLE", balanceDelta: 87 },
+  ]);
   mocks.buildOttoContext.mockResolvedValue({
     orgId: "org_stream",
     userId: "org_stream",
@@ -543,5 +555,100 @@ describe("POST /api/otto/stream — #464 B1 ambient user frame", () => {
 
     expect(res.status).toBe(401);
     expect(mocks.projectFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
+  it("streams the SETTLED cost of the turn (not the hold) after the run finishes", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "What should I post?" }));
+    const parts = await res.json();
+
+    expect(mocks.creditLedgerFindMany).toHaveBeenCalledWith({
+      where: { orgId: "org_stream", refId: expect.stringMatching(/^otto-stream:/) },
+      select: { kind: true, balanceDelta: true },
+    });
+    expect(parts).toEqual(
+      expect.arrayContaining([{ type: "data-cost", data: { credits: 3.3 } }]),
+    );
+  });
+
+  it("says nothing when the turn was not charged (free/mock turn or a refunded failure)", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+    mocks.creditLedgerFindMany.mockResolvedValue([
+      { kind: "RESERVE", balanceDelta: -120 },
+      { kind: "REFUND", balanceDelta: 120 },
+    ]);
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+  });
+
+  it("never fabricates a number, and never breaks the turn, when the ledger read fails", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+    mocks.creditLedgerFindMany.mockRejectedValue(new Error("db down"));
+
+    const res = await POST(req({ projectId: "proj_stream", text: "hi" }));
+    const parts = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+    expect(parts.some((p: { type: string; data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
+  });
+
+  // Round-1 review P2: a tangled run still burns tokens, and withLlmBudget settles them.
+  // The merchant paid, so the degrade must carry the same cost line as a normal turn.
+  it("shows the cost of a MaxTurns turn — it was charged like any other", async () => {
+    mocks.run.mockRejectedValue(new MaxTurnsExceededError("too many turns"));
+    mocks.chatMessageFindFirst.mockResolvedValue({ seq: 3 });
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "go round in circles" }))).json();
+
+    expect(parts).toEqual(expect.arrayContaining([{ type: "data-cost", data: { credits: 3.3 } }]));
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "degraded")).toBe(true);
+  });
+
+  it("charges nothing and says nothing when the reserve itself failed", async () => {
+    mocks.run.mockRejectedValue(new mocks.MockInsufficientCredits());
+    mocks.creditLedgerFindMany.mockResolvedValue([]);
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "insufficient_credits")).toBe(true);
+  });
+
+  it("reports a real charge on a failed run that still settled usage", async () => {
+    mocks.run.mockRejectedValue(new Error("provider exploded"));
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts).toEqual(expect.arrayContaining([{ type: "data-cost", data: { credits: 3.3 } }]));
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "error")).toBe(true);
+  });
+
+  // Round-2 review P1③: a hold is not a cost. If the settle/refund transaction itself fails,
+  // the run throws with a bare RESERVE still on the ledger — quoting it would show the
+  // merchant the worst-case turn budget as if they had been charged it.
+  it("shows NOTHING when only an outstanding hold exists — a reserve is not a charge", async () => {
+    mocks.run.mockRejectedValue(new Error("settle transaction failed"));
+    mocks.creditLedgerFindMany.mockResolvedValue([{ kind: "RESERVE", balanceDelta: -120 }]);
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "error")).toBe(true);
+  });
+
+  it("shows nothing on a completed turn whose hold has not been finalized yet", async () => {
+    mocks.run.mockResolvedValue(streamedRunResult({ events: [tokenEvent("Done")] }));
+    mocks.creditLedgerFindMany.mockResolvedValue([{ kind: "RESERVE", balanceDelta: -120 }]);
+
+    const parts = await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json();
+
+    expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
+    expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
   });
 });
