@@ -78,9 +78,11 @@ export async function listTenants(): Promise<{ tenants: TenantRow[]; invited: In
     };
   });
 
-  // Once a merchant signs in they own a tenant org (above). Their AllowedEmail row stays
-  // 'invited' (sign-in doesn't flip it), so drop already-active emails from the invite list
-  // — otherwise a signed-in merchant lingers under "Invited (not yet signed in)".
+  // Once a merchant signs in they own a tenant org (above). Since #538 provisioning flips
+  // their AllowedEmail row to 'active' as the membership is created, so they normally drop
+  // out of this list on status alone. This filter still matters for rows written BEFORE that
+  // protocol landed, which are stuck at 'invited' — without it a signed-in merchant would
+  // linger forever under "Invited (not yet signed in)".
   const activeEmails = new Set(tenants.map((t) => t.ownerEmail.toLowerCase()).filter(Boolean));
   const invited: InvitedRow[] = invitedRows
     .filter((r) => !activeEmails.has(r.email.toLowerCase()))

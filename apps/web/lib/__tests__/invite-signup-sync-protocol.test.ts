@@ -72,8 +72,8 @@ describe("#538 invite/signup sync protocol — registration side", () => {
     expect(await statusOf(user.email)).toBe("active");
   });
 
-  it("matches the invited row case-insensitively", async () => {
-    const email = `Sync-${randomUUID()}@Fikirtive.test`.toLowerCase();
+  it("normalizes a mixed-case login address onto the canonical lowercase row", async () => {
+    const email = `sync-${randomUUID()}@fikirtive.test`;
     await prisma.allowedEmail.create({ data: { email, status: "invited", invitedBy: "operator@fikirtive.test" } });
     // The login address is stored as typed, in a different case than AllowedEmail.
     const user = await prisma.user.create({
@@ -86,15 +86,57 @@ describe("#538 invite/signup sync protocol — registration side", () => {
     expect(await statusOf(email)).toBe("active");
   });
 
+  // #538 round 4 (P1) — AllowedEmail.email is a plain TEXT primary key, so `a@b.com` and
+  // `A@b.com` CAN coexist. If provisioning matched case-insensitively while revoke matched
+  // lowercase-exact, the two sides would arbitrate over DIFFERENT physical rows and the split
+  // state would return. Both sides now name the canonical lowercase row only; a case-variant
+  // row is inert. (The durable fix, a lower(email) unique constraint, is #578.)
+  it("touches ONLY the canonical lowercase row, never a case-variant one", async () => {
+    const lower = `variant-${randomUUID()}@fikirtive.test`;
+    const variant = lower.toUpperCase();
+    await prisma.allowedEmail.create({ data: { email: lower, status: "invited", invitedBy: "operator@fikirtive.test" } });
+    await prisma.allowedEmail.create({ data: { email: variant, status: "invited", invitedBy: "operator@fikirtive.test" } });
+    const user = await prisma.user.create({
+      data: { id: `usr_${randomUUID()}`, email: lower },
+      select: { id: true, email: true },
+    });
+
+    await bootstrapPersonalOrg(user.id, user.email);
+
+    expect(await statusOf(lower)).toBe("active");
+    // The case-variant row must be untouched — provisioning must not flip it to active.
+    expect(await statusOf(variant)).toBe("invited");
+  });
+
+  // The reviewer's exact counter-example: revoke flips the canonical row, and provisioning
+  // must NOT then activate itself off a case-variant row.
+  it("still aborts when the canonical row is revoked even if a case-variant row says invited", async () => {
+    const lower = `ce-${randomUUID()}@fikirtive.test`;
+    const variant = lower.toUpperCase();
+    await prisma.allowedEmail.create({ data: { email: lower, status: "revoked", invitedBy: "operator@fikirtive.test" } });
+    await prisma.allowedEmail.create({ data: { email: variant, status: "invited", invitedBy: "operator@fikirtive.test" } });
+    const user = await prisma.user.create({
+      data: { id: `usr_${randomUUID()}`, email: variant },
+      select: { id: true, email: true },
+    });
+
+    await expect(bootstrapPersonalOrg(user.id, user.email)).rejects.toThrow(/revoked/i);
+
+    expect(await prisma.membership.findFirst({ where: { userId: user.id } })).toBeNull();
+    expect(await statusOf(lower)).toBe("revoked");
+    // Deterministic half of this test. A case-INSENSITIVE update would have flipped the
+    // variant row to 'active' here; only the abort itself was ever order-dependent, because
+    // an unordered insensitive findFirst may or may not return the revoked row.
+    expect(await statusOf(variant)).toBe("invited");
+  });
+
   // The fail-closed half. Revoke won the row; provisioning must abort ENTIRELY rather than
   // leave a live membership owned by a revoked address.
   it("aborts provisioning and rolls back org, membership AND the welcome grant when revoked", async () => {
     const user = await freshInvited();
     await prisma.allowedEmail.update({ where: { email: user.email }, data: { status: "revoked" } });
 
-    const orgId = await bootstrapPersonalOrg(user.id, user.email);
-
-    expect(orgId).toBeNull();
+    await expect(bootstrapPersonalOrg(user.id, user.email)).rejects.toThrow(/revoked/i);
     const expectedOrgId = `org_${user.id}`;
     expect(await prisma.organization.findUnique({ where: { id: expectedOrgId } })).toBeNull();
     expect(await prisma.membership.findFirst({ where: { userId: user.id } })).toBeNull();
@@ -158,10 +200,57 @@ describe("#538 invite/signup sync protocol — the two sides serialize", () => {
     expect(res).toEqual({ ok: true });
     expect(await statusOf(user.email)).toBe("revoked");
 
-    const orgId = await bootstrapPersonalOrg(user.id, user.email);
+    await expect(bootstrapPersonalOrg(user.id, user.email)).rejects.toThrow(/revoked/i);
 
-    expect(orgId).toBeNull();
     expect(await prisma.membership.findFirst({ where: { userId: user.id } })).toBeNull();
+    expect(await statusOf(user.email)).toBe("revoked");
+  });
+
+  // #538 round 4 (P2) — the tests above drive the two sides SERIALLY, which cannot demonstrate
+  // the claim the protocol actually rests on: that a competing UPDATE blocks on the row lock
+  // and then re-evaluates its WHERE against the newly committed version. This one creates real
+  // lock contention. Interactive transactions each hold their own pooled connection, so the
+  // outer statement genuinely waits on the open transaction rather than on JS scheduling.
+  it("makes a competing UPDATE block on the row lock, then match 0 rows after the winner commits", async () => {
+    const user = await freshInvited();
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    let releaseWinner!: () => void;
+    const winnerMayCommit = new Promise<void>((resolve) => { releaseWinner = resolve; });
+
+    // A = revoke side: take the row lock and hold the transaction open.
+    let lockTaken!: () => void;
+    const lockIsHeld = new Promise<void>((resolve) => { lockTaken = resolve; });
+    const sideA = prisma.$transaction(
+      async (tx) => {
+        const r = await tx.allowedEmail.updateMany({
+          where: { email: user.email, status: "invited" },
+          data: { status: "revoked" },
+        });
+        lockTaken();
+        await winnerMayCommit;
+        return r.count;
+      },
+      { timeout: 20_000, maxWait: 10_000 },
+    );
+    await lockIsHeld;
+
+    // B = registration side, on a different connection. It must BLOCK, not return.
+    let sideBSettled = false;
+    const sideB = prisma.allowedEmail
+      .updateMany({ where: { email: user.email, status: "invited" }, data: { status: "active" } })
+      .then((r) => { sideBSettled = true; return r; });
+
+    await sleep(600);
+    expect(sideBSettled, "the competing UPDATE should still be waiting on the row lock").toBe(false);
+
+    releaseWinner();
+    expect(await sideA).toBe(1);
+
+    // After the winner commits, the blocked UPDATE re-evaluates `status='invited'` against the
+    // committed row (now 'revoked') and matches nothing. This is the serialization the whole
+    // protocol depends on, measured rather than asserted from the docs.
+    expect((await sideB).count).toBe(0);
     expect(await statusOf(user.email)).toBe("revoked");
   });
 
@@ -174,7 +263,9 @@ describe("#538 invite/signup sync protocol — the two sides serialize", () => {
         await revokeTenantInvite(user.email);
       } else {
         await revokeTenantInvite(user.email);
-        await bootstrapPersonalOrg(user.id, user.email);
+        // Provisioning now REFUSES loudly for a revoked address. Swallow it here: this test
+        // is about the END STATE the two orders can produce, not about how the loser reports.
+        await bootstrapPersonalOrg(user.id, user.email).catch(() => null);
       }
       const status = await statusOf(user.email);
       const membership = await prisma.membership.findFirst({ where: { userId: user.id, deletedAt: null } });

@@ -129,15 +129,18 @@ export async function inviteTenant(
   return { ok: true, result: "invited" };
 }
 
-/** Revoke a PENDING invite. Two preconditions, checked together in one transaction (#538
- *  round 2): the row must still be `invited`, AND the address must not already belong to a
- *  live member of a merchant org.
+/** Revoke a PENDING invite. Two preconditions, checked together in one transaction (#538):
+ *  the row must still be `invited`, AND the address must not already belong to a live member
+ *  of a merchant org.
  *
- *  The second one is not redundant. Self-signup does not touch an operator's existing row
- *  (signup-gate.ts uses skipDuplicates), so a merchant who signs up keeps a stale `invited`
- *  AllowedEmail row while becoming a real tenant owner. The admin list is rendered once and
- *  can go stale; without this check, clicking Revoke on that stale row would lock out a
- *  merchant who is already inside. */
+ *  `status: "invited"` is the load-bearing half — it is one side of the two-conditional-update
+ *  protocol that serializes this against signup provisioning (see bootstrapPersonalOrg).
+ *  Since round 3, provisioning flips the row to `active` as it creates the membership, so a
+ *  signed-up merchant no longer leaves a stale `invited` row behind.
+ *
+ *  The membership check remains as defence in depth for rows written BEFORE that protocol
+ *  existed (an already-inside merchant whose row is still `invited`), where the status
+ *  predicate alone would happily revoke. It is a best-effort guard, not the serializer. */
 export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
@@ -146,6 +149,10 @@ export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true 
     // case-insensitively — the same both-sides-lowercase rule orgMemberBaUserIds documents.
     const users = await tx.user.findMany({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } });
     if (users.length > 0) {
+      // Deliberately NOT filtered by Membership.status: a suspended or revoked member is
+      // still a real member, and revoking their invite is not the tool for managing them.
+      // The refusal message below is worded to match this predicate exactly — "belongs to a
+      // merchant workspace", not "is an active merchant".
       const live = await tx.membership.findFirst({
         where: { userId: { in: users.map((u) => u.id) }, deletedAt: null, orgId: { not: FOUNDER_OWNER_ID } },
         select: { id: true },
@@ -155,7 +162,7 @@ export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true 
     const { count } = await tx.allowedEmail.updateMany({ where: { email, status: "invited" }, data: { status: "revoked" } });
     return count === 0 ? ("none" as const) : ("revoked" as const);
   });
-  if (outcome === "member") return { error: "That address already belongs to an active merchant. Suspend their tenant instead." };
+  if (outcome === "member") return { error: "That address already belongs to a merchant workspace. Manage their access from that tenant instead." };
   if (outcome === "none") return { error: "No pending invite for that address." };
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email } } }).catch(() => {});
   revalidatePath("/admin/tenants");

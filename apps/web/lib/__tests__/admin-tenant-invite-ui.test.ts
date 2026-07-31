@@ -211,14 +211,14 @@ describe("admin tenants invite UI (#538)", () => {
   // meantime, the operator must see that refusal, not a success line.
   it("surfaces the server's refusal when the invite was already activated", async () => {
     mocks.revokeTenantInvite.mockResolvedValue({
-      error: "That address already belongs to an active merchant. Suspend their tenant instead.",
+      error: "That address already belongs to a merchant workspace. Manage their access from that tenant instead.",
     });
     vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
     const dom = await renderTenants();
 
     await click(revokeButton(dom));
 
-    expect(dom.textContent).toContain("already belongs to an active merchant");
+    expect(dom.textContent).toContain("already belongs to a merchant workspace");
     expect(dom.textContent).not.toContain(`Revoked ${PENDING_EMAIL}`);
   });
 

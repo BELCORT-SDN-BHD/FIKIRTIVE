@@ -96,6 +96,47 @@ describe("convergeIdentity", () => {
     expect(db.actionEvent.create).not.toHaveBeenCalled();
     expect(mockBootstrap).not.toHaveBeenCalled();
   });
+  // #538 round 4 (P2) — a provisioning refusal used to be swallowed here as a "non-fatal"
+  // bootstrap hiccup: convergence reported success and the refusal left no server-side trace.
+  // It must now propagate, and be logged as a fixed category with NO user content (#575).
+  it("propagates a provisioning refusal instead of degrading it to a non-fatal warning", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    const refusal = new Error("provisioning refused: address revoked during signup");
+    refusal.name = "RevokedDuringProvisioning";
+    mockBootstrap.mockRejectedValue(refusal);
+    db.user.findUnique.mockResolvedValue({ id: "usr_rev", email: "revoked@x.test", emailVerified: new Date() });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(convergeIdentity({ email: "revoked@x.test", emailVerified: true })).rejects.toThrow(/revoked/i);
+
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[better-auth] converge: provisioning refused — address revoked during signup",
+      );
+      // Not downgraded to the generic non-fatal warning.
+      expect(warnSpy).not.toHaveBeenCalled();
+      // #575 log discipline: the address must never appear in any log argument.
+      const logged = [...errorSpy.mock.calls, ...warnSpy.mock.calls].flat().map(String).join(" ");
+      expect(logged).not.toContain("revoked@x.test");
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("still treats an ordinary bootstrap failure as non-fatal", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    mockBootstrap.mockRejectedValue(new Error("connection reset"));
+    db.user.findUnique.mockResolvedValue({ id: "usr_ok", email: "blip@x.test", emailVerified: new Date() });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(convergeIdentity({ email: "blip@x.test", emailVerified: true })).resolves.toBeUndefined();
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("performs NO writes when emailVerified is omitted (undefined ⇒ falsy)", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     await convergeIdentity({ email: "missing-flag@x.test" });

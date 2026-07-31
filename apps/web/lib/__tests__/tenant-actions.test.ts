@@ -457,7 +457,7 @@ describe("revokeTenantInvite", () => {
     membershipFindFirst.mockResolvedValue({ id: "mem-1" });
     const res = await revokeTenantInvite("justsignedup@merchant.com");
     expect(res).toEqual({
-      error: "That address already belongs to an active merchant. Suspend their tenant instead.",
+      error: "That address already belongs to a merchant workspace. Manage their access from that tenant instead.",
     });
     expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();

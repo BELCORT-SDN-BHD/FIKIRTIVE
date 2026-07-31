@@ -70,7 +70,15 @@ export async function requireOwner(): Promise<{ email: string; ownerId: string }
   if (existing && (existing.status === "suspended" || existing.status === "revoked")) return { error: "Your access is suspended." };
   if (existing && !existing.deletedAt) return { email, ownerId: existing.orgId };
   // none, or a soft-deleted non-suspended membership (account reopening) → bootstrap
-  const ownerId = await bootstrapPersonalOrg(user.id, email);
+  let ownerId: string | null;
+  try {
+    ownerId = await bootstrapPersonalOrg(user.id, email);
+  } catch (e) {
+    // #538 — a revoke landed mid-provisioning. Deny, and say so distinctly instead of
+    // inviting the merchant to retry something that will never succeed.
+    if (e instanceof RevokedDuringProvisioning) return { error: "Your access has been revoked." };
+    throw e;
+  }
   if (!ownerId) return { error: "Could not set up your workspace — please retry." };
   return { email, ownerId };
 }
@@ -131,10 +139,17 @@ export async function resolveUserPrincipal(
 
 /** #538 — thrown to abort provisioning when the operator's revoke won the AllowedEmail row.
  *  A dedicated type so the catch below can tell a DELIBERATE fail-closed abort apart from the
- *  concurrent-creator P2002 it is allowed to recover from. */
-class RevokedDuringProvisioning extends Error {
-  constructor(email: string) {
-    super(`provisioning refused: ${email} was revoked`);
+ *  concurrent-creator P2002 it is allowed to recover from.
+ *
+ *  It ESCAPES bootstrapPersonalOrg rather than collapsing into its `null` return: `null` also
+ *  means "transient failure, retry later", and callers must not confuse a security refusal
+ *  with a blip. Both production callers handle it explicitly (requireOwner below, and
+ *  convergeIdentity). Carries no email — the type is the whole message. */
+export class RevokedDuringProvisioning extends Error {
+  constructor() {
+    // No email in the message: generic handlers log `e.message`, and #575 log discipline
+    // keeps user content out of logs. The type carries the whole meaning.
+    super("provisioning refused: address revoked during signup");
     this.name = "RevokedDuringProvisioning";
   }
 }
@@ -179,23 +194,32 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       // Postgres takes a row lock per UPDATE and re-evaluates the WHERE against the
       // newly committed version, so whichever commits first flips the row out of
       // 'invited' and the loser matches 0 rows — then sees the winner's state below.
-      // This also fixes a real display bug: self-signup never touched an operator's
-      // existing 'invited' row (signup-gate.ts uses skipDuplicates), so an invited
-      // merchant stayed "pending" in /admin/tenants forever, masked only by a
-      // read-time filter. Now activation is recorded where it happens.
+      //
+      // BOTH SIDES MUST NAME THE SAME SINGLE ROW, or there is nothing to serialize on.
+      // AllowedEmail.email is a plain TEXT primary key: nothing in the database forbids
+      // `a@b.com` and `A@b.com` coexisting. A case-INSENSITIVE predicate here against a
+      // lowercase-exact predicate in revokeTenantInvite would let the two sides update
+      // DIFFERENT physical rows — revoke flips the canonical row while provisioning flips
+      // a case-variant one, and the split state comes back. So this side uses the exact
+      // same lowercase-exact predicate revoke uses: every writer normalizes before
+      // writing, the lowercase row is the only one the allowlist ever reads
+      // (allowlist.ts findUnique is exact), and a stray case-variant row is inert here.
+      // The durable fix — a lower(email) unique constraint — needs a migration and is
+      // tracked in #578; this keeps the protocol sound in the meantime.
+      const admissionEmail = email.trim().toLowerCase();
       await tx.allowedEmail.updateMany({
-        where: { email: { equals: email, mode: "insensitive" }, status: "invited" },
+        where: { email: admissionEmail, status: "invited" },
         data: { status: "active" },
       });
-      const admission = await tx.allowedEmail.findFirst({
-        where: { email: { equals: email, mode: "insensitive" } },
+      const admission = await tx.allowedEmail.findUnique({
+        where: { email: admissionEmail },
         select: { status: true },
       });
       // Revoke won the row. Fail CLOSED: abort the whole provisioning tx rather than
       // leave the split state the reviewer flagged — a live membership owned by an
       // address the operator just locked out. Rolling back here also unwinds the
       // welcome grant below, so a revoked address is never granted credits.
-      if (admission?.status === "revoked") throw new RevokedDuringProvisioning(email);
+      if (admission?.status === "revoked") throw new RevokedDuringProvisioning();
       const owner = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
       const workspaceName = (owner?.name ?? "").trim() || email;
       await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: workspaceName }, update: {} });
@@ -242,8 +266,10 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
     // concurrent-creator recovery below: that recovery returns any pre-existing membership,
     // which for a revoked address is exactly the split state this abort exists to prevent.
     if (e instanceof RevokedDuringProvisioning) {
-      console.error("bootstrapPersonalOrg refused: address is revoked");
-      return null;
+      // Fixed-category log, no user content (#575 discipline). Rethrown rather than folded
+      // into `null` so callers can tell a refusal from a retryable failure.
+      console.error("auth-guard: provisioning refused — address revoked during signup");
+      throw e;
     }
     // A concurrent creator may have won the org pk / membership upsert mid-tx (P2002), aborting
     // this tx. Re-read the deterministic org; if it now exists, use it. Otherwise fail closed.
