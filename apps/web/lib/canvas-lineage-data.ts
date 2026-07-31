@@ -146,11 +146,20 @@ export async function withCanvasLineage<T extends LineageLookupNode>(
   projectId: string,
   nodes: T[],
 ): Promise<Array<T & { lineage: CanvasNodeLineage | null }>> {
-  const organization = await prisma.organization.findFirst({
-    where: { id: ownerId, deletedAt: null },
-    select: { settings: true },
-  });
-  const timezone = mergeSettings(organization?.settings).timezone;
-  const lineages = await loadCanvasNodeLineages(ownerId, projectId, nodes, timezone);
+  let lineages: Record<string, CanvasNodeLineage> = {};
+  try {
+    const organization = await prisma.organization.findFirst({
+      where: { id: ownerId, deletedAt: null },
+      select: { settings: true },
+    });
+    const timezone = mergeSettings(organization?.settings).timezone;
+    lineages = await loadCanvasNodeLineages(ownerId, projectId, nodes, timezone);
+  } catch (error) {
+    // The board is the merchant's paid work; a traceability lookup is not. A failure here
+    // costs an Info panel, so it must never blank the canvas — degrade to "no record" and
+    // leave a server-side trace instead of throwing the whole read away.
+    console.warn("[canvas] lineage lookup failed; cards render without their record:", error);
+    lineages = {};
+  }
   return nodes.map((node) => ({ ...node, lineage: lineages[node.id] ?? null }));
 }

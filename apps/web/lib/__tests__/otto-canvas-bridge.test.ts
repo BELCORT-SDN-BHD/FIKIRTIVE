@@ -12,6 +12,9 @@ const {
   mockGetGenerationThumbs,
   mockPlaceCanvasJobNode,
   mockNewId,
+  mockGenerationFindMany,
+  mockLedgerFindMany,
+  mockOrganizationFindFirst,
 } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockProjectFindFirst: vi.fn(),
@@ -24,6 +27,9 @@ const {
   mockGetGenerationThumbs: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
   mockNewId: vi.fn(),
+  mockGenerationFindMany: vi.fn(),
+  mockLedgerFindMany: vi.fn(),
+  mockOrganizationFindFirst: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
@@ -35,7 +41,11 @@ vi.mock("../canvas-node-placement", () => ({
     `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`,
   placeCanvasJobNode: mockPlaceCanvasJobNode,
 }));
-vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
+// Only newId is stubbed — the credit conversion the lineage read uses stays REAL (#547 B4).
+vi.mock("@fikirtive/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fikirtive/core")>()),
+  newId: mockNewId,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     project: { findFirst: mockProjectFindFirst },
@@ -46,6 +56,10 @@ vi.mock("@fikirtive/db", () => ({
     },
     chatThread: { findMany: mockChatThreadFindMany },
     genJob: { findMany: mockGenJobFindMany },
+    // #547 B4: the bridge's board read now also carries each card's lineage.
+    generation: { findMany: mockGenerationFindMany },
+    creditLedger: { findMany: mockLedgerFindMany },
+    organization: { findFirst: mockOrganizationFindFirst },
     $executeRaw: mockExecuteRaw,
   },
 }));
@@ -60,6 +74,9 @@ beforeEach(() => {
   mockCanvasUpdateMany.mockResolvedValue({ count: 1 });
   mockChatThreadFindMany.mockResolvedValue([]);
   mockGenJobFindMany.mockResolvedValue([]);
+  mockGenerationFindMany.mockResolvedValue([]);
+  mockLedgerFindMany.mockResolvedValue([]);
+  mockOrganizationFindFirst.mockResolvedValue({ settings: {} });
   mockExecuteRaw.mockResolvedValue(1);
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
