@@ -49,6 +49,7 @@ const {
   mockExecuteRaw,
   mockRun,
   mockRunStateFromString,
+  mockRestoreWithContext,
   mockWithLlmBudget,
   MockRunState,
   MockMaxTurnsExceededError,
@@ -58,6 +59,8 @@ const {
   const mockApprove = vi.fn();
   const mockGetInterruptions = vi.fn(() => [] as unknown[]);
   const mockRunStateFromString = vi.fn();
+  /** Records (agent, serialized, context) for the resume-side restore (#566). */
+  const mockRestoreWithContext = vi.fn();
 
   class MockRunState {
     usage = { inputTokens: 10, outputTokens: 5, requestUsageEntries: [] as unknown[] };
@@ -99,6 +102,7 @@ const {
     mockExecuteRaw: vi.fn(),
     mockRun: vi.fn(),
     mockRunStateFromString,
+    mockRestoreWithContext,
     mockWithLlmBudget,
     MockRunState,
     MockMaxTurnsExceededError,
@@ -152,6 +156,16 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     RunState: MockRunState,
     tryRestoreRunState: async (_agent: unknown, str: string) => {
       try { return await MockRunState.fromString(_agent, str); } catch { return null; }
+    },
+    // #566: the resume-side restore takes the LIVE context (built before the rehydrate) and — like
+    // the real SDK — installs it on the state, which runOttoTurn's fail-closed guard verifies.
+    tryRestoreRunStateWithContext: async (_agent: unknown, str: string, context: unknown) => {
+      mockRestoreWithContext(_agent, str, context);
+      try {
+        const state = await MockRunState.fromString(_agent, str);
+        if (state) (state as { _context?: unknown })._context = { context };
+        return state;
+      } catch { return null; }
     },
     MaxTurnsExceededError: MockMaxTurnsExceededError,
   };

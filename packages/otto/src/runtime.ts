@@ -233,6 +233,45 @@ export function ottoBudgetArgsFor(
 }
 
 /**
+ * Fail-closed guard for the resume leg (#566). The SDK IGNORES options.context when the input is a
+ * RunState — the state's OWN context wins — so a state restored with RunState.fromString resumes
+ * with a JSON-rebuilt context that has lost every function port (ctx.startGen, ctx.schedule.*, …).
+ * That failure was silent in production for five weeks. Restoring through
+ * tryRestoreRunStateWithContext(agent, serialized, ctx) is the fix; this guard is what stops the
+ * mistake from ever being made again quietly: a resumed state whose context is not the live one
+ * throws HERE, before any model call and before any reservation, instead of re-entering the tool
+ * port-less.
+ *
+ * FAIL-CLOSED (#566 R2 review). The classification is positive, not duck-typed: a fresh run is a
+ * string or an item array — everything else IS the resume leg and MUST present a comparable
+ * context. So a missing `_context`, an SDK internal reshape, or a test double that never installed
+ * one now THROWS instead of waving the run through into metering. Reading `_context` optionally
+ * (the earlier shape) meant exactly those cases resumed unguarded; billing must never be entered on
+ * a state we cannot vouch for.
+ */
+function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], context: OttoContext): void {
+  if (typeof input === "string" || Array.isArray(input)) return; // fresh run — the SDK honours options.context
+  const wrapper = (input as { _context?: unknown } | null | undefined)?._context;
+  const stateContext =
+    wrapper !== null && typeof wrapper === "object" && "context" in wrapper
+      ? (wrapper as { context: unknown }).context
+      : undefined;
+  if (stateContext === undefined) {
+    throw new Error(
+      "[otto] resume input is not a fresh string/array and exposes no comparable RunState context — " +
+        "refusing to run it (an unverifiable state could re-enter a tool with its ports stripped). " +
+        "Restore with tryRestoreRunStateWithContext(agent, serialized, ctx) (#566).",
+    );
+  }
+  if (stateContext !== context) {
+    throw new Error(
+      "[otto] resumed RunState carries a different context object than the one passed to runOttoTurn — " +
+        "its injected ports would be missing. Restore it with tryRestoreRunStateWithContext(agent, serialized, ctx) (#566).",
+    );
+  }
+}
+
+/**
  * The ONE metered agent-loop path every entry runs through: reserve → run →
  * usage → settle/refund, with the profile's step cap on both sides. Streaming
  * differs ONLY in draining events through `onStream` and awaiting `completed`
@@ -245,6 +284,7 @@ export async function runOttoTurn(
   execution: OttoRuntimeExecution = defaultRuntimeExecution,
 ): Promise<OttoTurnRunResult> {
   const mr = runtime.modelRuntime;
+  assertResumedStateCarriesLiveContext(request.input, context);
   return execution.meter(
     ottoBudgetArgsFor(runtime, request, execution.maxTurnsExceededError),
     async () => {
