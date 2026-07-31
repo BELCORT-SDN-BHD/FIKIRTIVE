@@ -305,6 +305,14 @@ export const PARITY_MANIFEST = {
   "owner-settings-actions.getOwnerSettings": { todoSkill: true, reason: "Owner Otto behavior settings need read parity or account-security split." },
   "owner-settings-actions.setOwnerSetting": { todoSkill: true, reason: "Owner Otto behavior setting mutations need skill parity or account-security split." },
 
+  // #542 — self-service rename. Classified 人亲自来: these two writes change WHO the merchant
+  // is (their display name) and WHAT their business is called (the workspace name), which is
+  // account identity, not an operation Otto runs on the merchant's behalf. Same ruling as
+  // account-actions.signOutAction. FOUNDER CALL: if Otto should be able to rename a merchant's
+  // shop on request, this becomes a real skill instead of an exemption — flagged in PR #574.
+  "profile-actions.updateDisplayName": { exempt: "ACCOUNT_SECURITY", reason: "Changing the merchant's own display name is account identity; the human does it personally." },
+  "profile-actions.updateWorkspaceName": { exempt: "ACCOUNT_SECURITY", reason: "Renaming the merchant's own workspace is account identity; the human does it personally." },
+
   "refgen-actions.startRefGen": { skill: "generateReferences", reason: "debt-68 (B3 §5.2 W-B3-G-P): real refgen spend skill — cost:spend ⇒ needsApproval machine-derived literal true; goes through the SAME owner-scoped startRefGen authority via ctx.refgen (server-priced, per-entity dedup). Zero second spend source; supersedes the prior fake describeRefs mapping." },
   "refgen-actions.setBaseAsset": { skill: "describeRefs" },
   "refgen-actions.createVariant": { skill: "describeRefs" },

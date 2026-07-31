@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { requireOwner } from "@/lib/auth-guard";
-import { getMyProfileNames } from "@/lib/profile-actions";
+import { getMyProfileNames } from "@/lib/profile-names";
 import { ProfileNames } from "./ProfileNames";
 
 export const dynamic = "force-dynamic";

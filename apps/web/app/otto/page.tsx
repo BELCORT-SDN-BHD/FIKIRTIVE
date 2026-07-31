@@ -4,7 +4,7 @@ import { getOrCreateDefaultProject } from "@/lib/actions";
 import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs, getProjects, getAllCoworkThreadMetas } from "@/lib/data";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
-import { getMyProfileNames } from "@/lib/profile-actions";
+import { getMyProfileNames } from "@/lib/profile-names";
 import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { getAnalytics } from "@/lib/analytics-actions";

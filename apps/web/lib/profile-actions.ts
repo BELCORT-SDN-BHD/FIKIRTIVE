@@ -21,6 +21,10 @@
  * the row through `Membership` — scoped by the authenticated `ownerId` and narrowed to the
  * authenticated email — keeps the write inside the tenant the session actually resolved to,
  * and lets the machine prove it instead of adding a reviewed exemption.
+ *
+ * Only the two WRITES live here, because only they are called from the browser. The matching
+ * read is `getMyProfileNames` in `profile-names.ts` — a plain `server-only` module, since no
+ * client calls it.
  */
 import { prisma } from "@fikirtive/db";
 import { revalidatePath } from "next/cache";
@@ -35,36 +39,8 @@ import { isImpersonating } from "@/lib/better-auth/compat";
  *  AUTHORITATIVE cap — the input's own maxLength is a convenience that this re-imposes. */
 const MAX_NAME_LENGTH = 80;
 
-export type ProfileNames = {
-  /** The merchant's own display name. "" when never set — the caller decides the fallback. */
-  displayName: string;
-  /** The workspace/shop name. Pre-#543 accounts have the merchant's email address here. */
-  workspaceName: string;
-  email: string;
-};
-
 function clean(raw: string): string {
   return raw.trim().slice(0, MAX_NAME_LENGTH);
-}
-
-/** Read the signed-in merchant's own two names. Fail-closed: an unauthenticated or
- *  unresolvable session gets {error} and never another org's row. */
-export async function getMyProfileNames(): Promise<ProfileNames | { error: string }> {
-  const gate = await requireOwner();
-  if ("error" in gate) return gate;
-  const { ownerId } = gate;
-  const [membership, organization] = await Promise.all([
-    prisma.membership.findFirst({
-      where: { orgId: ownerId, user: { email: gate.email } },
-      select: { user: { select: { name: true } } },
-    }),
-    prisma.organization.findFirst({ where: { id: ownerId, deletedAt: null }, select: { name: true } }),
-  ]);
-  return {
-    displayName: membership?.user.name?.trim() ?? "",
-    workspaceName: organization?.name ?? "",
-    email: gate.email,
-  };
 }
 
 /** Rename YOURSELF. The row is resolved through the caller's own membership in the org that

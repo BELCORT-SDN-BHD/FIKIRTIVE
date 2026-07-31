@@ -49,7 +49,10 @@ beforeAll(() => {
 
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
-const { getMyProfileNames, updateDisplayName, updateWorkspaceName } = await import("@/lib/profile-actions");
+const { updateDisplayName, updateWorkspaceName } = await import("@/lib/profile-actions");
+// The read is a plain server-only module, not a server action (nothing in the browser calls
+// it) — but it is the same authority story, so it is proven in the same suite.
+const { getMyProfileNames } = await import("@/lib/profile-names");
 
 async function asUser(email: string | null) {
   mockAuth.mockResolvedValue(email ? { user: { email } } : null);
