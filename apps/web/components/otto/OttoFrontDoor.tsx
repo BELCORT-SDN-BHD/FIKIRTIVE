@@ -7,7 +7,7 @@ import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
-import { ottoGreetingName } from "@/lib/otto-greeting";
+import { ottoGreeting } from "@/lib/otto-greeting";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
@@ -133,7 +133,9 @@ export function OttoFrontDoor({
   // OttoConversation.send()'s busyRef guard so the front door can't duplicate campaigns.
   const startingRef = useRef(false);
 
-  const greeting = `Hi ${ottoGreetingName(userName)} — what should we make today?`;
+  // #542 — the sentence itself lives in lib/otto-greeting.ts so the tests assert against the
+  // SAME string this renders, not a re-typed copy of it (round-2 review P2).
+  const greeting = ottoGreeting(userName);
 
   const mentionSuggestions = mentionQuery !== null
     ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)
@@ -269,14 +271,17 @@ export function OttoFrontDoor({
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
-    <div className="otto-front-door gb flex flex-1 flex-col items-center justify-center overflow-auto px-6 py-8 leading-[1.5]">
+    <div className="otto-front-door gb flex flex-1 flex-col items-center justify-start overflow-auto px-6 py-8 leading-[1.5]">
       <style>{`
         @media (max-width: 480px) {
           .otto-goal-grid { grid-template-columns: 1fr !important; }
           .otto-front-door-inner { padding: 1rem 1rem !important; }
         }
       `}</style>
-      <div className="otto-front-door-inner flex w-full max-w-[560px] flex-col items-center gap-6">
+      {/* my-auto (not the container's justify-center) — safe centering inside a scroll
+          container: auto main-axis margins take the free space when the content fits, and
+          collapse to 0 when it overflows, so the top never lands above scrollTop 0. */}
+      <div className="otto-front-door-inner my-auto flex w-full max-w-[560px] flex-col items-center gap-6">
         {/* Otto avatar + greeting */}
         <div className="flex flex-col items-center gap-4 text-center">
           <OttoAvatar size={64} state={busy ? "thinking" : "idle"} />

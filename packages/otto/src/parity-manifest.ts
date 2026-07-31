@@ -84,6 +84,14 @@ export const PARITY_READ_SURFACES = [
     file: "apps/web/lib/spend-history-data.ts",
     exportName: "getSpendOverview",
   },
+  {
+    // #542: the /profile and /otto page read of the merchant's own two names. Declared here
+    // because the checker can only verify surfaces that are listed — an unlisted page read is
+    // invisible to it, not exempt from it (harmony-02 §四).
+    key: "profile-names.getMyProfileNames",
+    file: "apps/web/lib/profile-names.ts",
+    exportName: "getMyProfileNames",
+  },
 ] as const;
 
 export const PARITY_MANIFEST = {
@@ -304,6 +312,17 @@ export const PARITY_MANIFEST = {
   "otto-client-actions.setAdsWritesPaused": { skill: "propose-meta-action" },
   "owner-settings-actions.getOwnerSettings": { todoSkill: true, reason: "Owner Otto behavior settings need read parity or account-security split." },
   "owner-settings-actions.setOwnerSetting": { todoSkill: true, reason: "Owner Otto behavior setting mutations need skill parity or account-security split." },
+
+  // #542 — the merchant's own two names: one page read plus the two self-service renames.
+  // Classified 人亲自来 as one surface: these change (and expose) WHO the merchant is — their
+  // display name — and WHAT their business is called, which is account identity, not an
+  // operation Otto runs on their behalf. Same ruling as account-actions.signOutAction; if Otto
+  // must not rename you, it has no operational need to read the name either.
+  // FOUNDER CALL: if Otto should be able to rename a merchant's shop on request, these become
+  // real skills instead of exemptions — flagged at the top of PR #574.
+  "profile-names.getMyProfileNames": { exempt: "ACCOUNT_SECURITY", reason: "Reads the merchant's own account-identity names; the same human-only surface as the two renames below." },
+  "profile-actions.updateDisplayName": { exempt: "ACCOUNT_SECURITY", reason: "Changing the merchant's own display name is account identity; the human does it personally." },
+  "profile-actions.updateWorkspaceName": { exempt: "ACCOUNT_SECURITY", reason: "Renaming the merchant's own workspace is account identity; the human does it personally." },
 
   "refgen-actions.startRefGen": { skill: "generateReferences", reason: "debt-68 (B3 §5.2 W-B3-G-P): real refgen spend skill — cost:spend ⇒ needsApproval machine-derived literal true; goes through the SAME owner-scoped startRefGen authority via ctx.refgen (server-priced, per-entity dedup). Zero second spend source; supersedes the prior fake describeRefs mapping." },
   "refgen-actions.setBaseAsset": { skill: "describeRefs" },

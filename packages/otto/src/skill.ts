@@ -67,6 +67,48 @@ export function deriveNeedsApproval(cost: Cost, effect: Effect, reach: Reach): b
   return cost === "spend" || (effect === "write" && reach === "external");
 }
 
+/**
+ * The ONLY strings this module may write into a log line as a category. Every entry is a source
+ * literal in this file; none is ever read off the failure value. Built-in error classes only — a
+ * custom subclass is deliberately absent and collapses to the generic "Error" (#566 R3 review).
+ */
+const ERROR_CATEGORIES: ReadonlyArray<readonly [abstract new (...args: never[]) => Error, string]> = [
+  [TypeError, "TypeError"],
+  [RangeError, "RangeError"],
+  [SyntaxError, "SyntaxError"],
+  [ReferenceError, "ReferenceError"],
+  [EvalError, "EvalError"],
+  [URIError, "URIError"],
+];
+
+/**
+ * Reduce ANY failure value to a fixed, content-free category token for the server log (#566 R2/R3).
+ *
+ * Skill failure messages routinely carry merchant-controlled text: assertPublicHttpUrl throws
+ * `Invalid URL: "<the whole submitted URL>"` and `URL hostname "<host>" is not allowed`, so a
+ * private customer domain, an internal service name, or a secret encoded in a subdomain / query
+ * string would land in the logs verbatim.
+ *
+ * R3 review corrected the mechanism, and the correction matters: the previous version READ the
+ * instance's `.name` and accepted it if a regex liked its shape. `Error.name` is writable, so
+ * `err.name = "TenantSecret123"` passed that regex and was logged verbatim — a regex validates
+ * SHAPE, never PROVENANCE. This version reads NOTHING off the value. It tests class membership with
+ * `instanceof` and returns a literal defined above, so no string originating from the instance —
+ * including one a getter could synthesize on access — can reach the log. `instanceof` triggers no
+ * user code beyond a `Symbol.hasInstance` on the built-in classes, which cannot be redefined here.
+ *
+ * The merchant-facing reason still reaches the merchant: it is the tool's return value, which the
+ * model reads and answers with. This function governs the LOG, not the conversation.
+ */
+export function skillErrorCategory(value: unknown): string {
+  if (value instanceof Error) {
+    for (const [cls, category] of ERROR_CATEGORIES) if (value instanceof cls) return category;
+    return "Error"; // includes every custom subclass and any spoofed `.name`
+  }
+  if (value === null) return "null";
+  return typeof value; // "string" | "object" | "number" | "undefined" | …
+}
+
 /** 纯：返回 input 中缺失（undefined/null/空串）的必要字段。空 requires → []。 */
 export function missingRequired(
   requires: { field: string; question: string }[],
@@ -146,7 +188,25 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
         const missing = missingRequired(requires, input as Record<string, unknown>);
         if (missing.length > 0) return { needMoreInfo: missing };
       }
-      return spec.execute(input as z.infer<P>, runContext);
+      // #566: a skill failure is INVISIBLE server-side by default — the SDK folds a thrown error
+      // into the tool's return value the model reads, and a returned { error } never leaves the
+      // conversation either. That is why a broken spend gate ran silently in production for five
+      // weeks. One line per failure, here in our own wrapper, so every skill is covered at once.
+      //
+      // The line carries ONLY the skill name and a fixed category (#566 R2 review): failure
+      // messages routinely embed merchant-controlled text (submitted URLs, private hostnames),
+      // so no message, no thrown value, and no field of either is ever interpolated here. What
+      // this buys is the signal that was missing — WHICH skill is failing, and how often.
+      try {
+        const out = await spec.execute(input as z.infer<P>, runContext);
+        if (out && typeof out === "object" && "error" in out) {
+          console.warn(`[otto:skill] ${spec.name} refused (category=${skillErrorCategory((out as { error: unknown }).error)})`);
+        }
+        return out;
+      } catch (e) {
+        console.error(`[otto:skill] ${spec.name} threw (category=${skillErrorCategory(e)})`);
+        throw e;
+      }
     },
   });
 
