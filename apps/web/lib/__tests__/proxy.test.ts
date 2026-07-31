@@ -98,3 +98,33 @@ describe("proxy — public signed media route (/api/media/pub)", () => {
     expect(mockGetSession).toHaveBeenCalledOnce();
   });
 });
+
+// #563: /legal/data-deletion is the URL filed with Meta as the app's Data deletion URL
+// (app/api/meta/data-deletion/route.ts:76 returns `${origin}/legal/data-deletion?code=…`).
+// Meta's reviewer opens it with NO session, so it must render outside the auth wall — if it
+// ever redirected to /login, App Review would fail the Data deletion requirement. The wall
+// itself is what these assertions pin: the page's own reachability, and the fact that the
+// exemption did not quietly widen into the authenticated app.
+describe("proxy — public data-deletion page (/legal/data-deletion)", () => {
+  it("the matcher does NOT run the auth wall for /legal/data-deletion (Meta's reviewer has no session)", () => {
+    expect(matcherRuns("/legal/data-deletion")).toBe(false);
+  });
+
+  it("does not open the authenticated app: the walled routes around it stay walled", () => {
+    // Scope check. /legal is the ONLY public prefix this page needs; the product's own
+    // surfaces — including the ones that perform the self-service deletions the page
+    // describes — must still require a session.
+    expect(matcherRuns("/otto")).toBe(true); // campaigns, conversations, Connections → Disconnect
+    expect(matcherRuns("/library")).toBe(true); // library asset deletion
+    expect(matcherRuns("/crm/contacts")).toBe(true);
+    expect(matcherRuns("/billing")).toBe(true);
+  });
+
+  it("a session-less request to a walled route still redirects to /login", async () => {
+    // Proves the wall is live in this test's env, so the `false` assertions above mean
+    // "exempted", not "wall switched off".
+    const res = await proxy(req("/crm/contacts"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+});
