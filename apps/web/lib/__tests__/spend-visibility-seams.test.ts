@@ -36,6 +36,7 @@ const DETAIL_PANEL = "components/asset/DetailPanel.tsx";
 const ADD_ASSET_DIALOG = "components/otto/stuff/AddAssetDialog.tsx";
 const RESEARCH_CARD = "components/otto/ResearchCard.tsx";
 const IMAGE_NODE = "components/canvas/nodes/ImageNode.tsx";
+const VIDEO_NODE = "components/canvas/nodes/VideoNode.tsx";
 const FLOW_CANVAS = "components/canvas/FlowCanvas.tsx";
 
 /** A user-facing credit price written as a literal, e.g. "8 credits" / "1 credit".
@@ -199,35 +200,67 @@ describe("balance freshness seam (#550 ①)", () => {
   });
 });
 
-describe("Evolve price tag seam (#550 ②)", () => {
-  it("the Evolve bar renders a cost hint before the merchant can trigger it", () => {
-    const src = read(IMAGE_NODE);
+/**
+ * The bar attached to a selected card (#550 ② · #547 A4).
+ *
+ * #550 ② found it saying three different things at once: the title said image, the
+ * placeholder said video, and it charged the video price with no price shown. #547 A4
+ * settled which one it is — an IMAGE card's bar makes another IMAGE from that card, and a
+ * VIDEO card's bar seeds the video confirm. These assertions hold the three sides together:
+ * what the bar SAYS, what it MAKES, and which quote it is PRICED from must be the same thing
+ * on each card type — that is the "说的与做的失同步" failure this repo keeps re-learning.
+ */
+describe("Card prompt-bar price tag seam (#550 ② · #547 A4)", () => {
+  it("each card's bar renders a cost hint before the merchant can trigger it", () => {
+    const image = read(IMAGE_NODE);
+    expect(image).toMatch(/evolveCostHint\?:\s*string/);
+    expect(image).toMatch(/\{d\.evolveCostHint\}/);
 
-    expect(src).toMatch(/evolveCostHint\?:\s*string/);
-    expect(src).toMatch(/\{d\.evolveCostHint\}/);
+    const video = read(VIDEO_NODE);
+    expect(video).toMatch(/remakeCostHint\?:\s*string/);
+    expect(video).toMatch(/\{d\.remakeCostHint\}/);
   });
 
-  it("the Evolve bar no longer contradicts itself about what it produces", () => {
+  it("an image card's bar says image, and never video", () => {
     const src = read(IMAGE_NODE);
     const ariaLabels = [...src.matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1]!);
-    const evolveLabel = ariaLabels.find((label) => /evolve|imagine|make a video|video/i.test(label));
+    const barLabel = ariaLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
 
-    expect(evolveLabel).toBeDefined();
-    expect(evolveLabel).toMatch(/video/i);
+    expect(barLabel).toBeDefined();
+    expect(barLabel).toMatch(/image/i);
+    // The old contradiction, in both of its spellings.
     expect(ariaLabels).not.toContain("Evolve this image");
+    expect(ariaLabels.filter((label) => /video/i.test(label))).toEqual([]);
   });
 
-  it("FlowCanvas prices Evolve from the same server quote as the video confirm", () => {
+  it("a video card's bar says video and keeps the no-charge-until-you-confirm promise", () => {
+    const src = read(VIDEO_NODE);
+    const ariaLabels = [...src.matchAll(/aria-label="([^"]*)"/g)].map((m) => m[1]!);
+    const barLabel = ariaLabels.find((label) => /prompt/i.test(label) && /make/i.test(label));
+
+    expect(barLabel).toBeDefined();
+    expect(barLabel).toMatch(/video/i);
+    expect(src).toMatch(/No charge until you confirm\./);
+  });
+
+  it("FlowCanvas prices each bar from the quote that action actually charges", () => {
     const src = read(FLOW_CANVAS);
 
     expect(src).toMatch(/import\s*\{[\s\S]*?\bgenCostHint\b[\s\S]*?\}\s*from\s*["']@\/lib\/canvas-gen-costs["']/);
-    expect(src).toMatch(/evolveCostHint\s*=\s*genCostHint\(costQuote\?\.videoCredits\)/);
-    expect(src).toMatch(/evolveBarVisible/);
-    expect(src).toMatch(/if \(composerVisible \|\| evolveBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen\) refreshCostQuote\(\)/);
+    // An image card's bar makes one image → the single-image quote.
+    expect(src).toMatch(/evolveCostHint\s*=\s*genCostHint\(costQuote\?\.imageCredits\)/);
+    // A video card's bar seeds the video confirm → the video quote.
+    expect(src).toMatch(/remakeCostHint\s*=\s*genCostHint\(costQuote\?\.videoCredits\)/);
+    // The composer's price follows the chosen batch size through the same clamp the paid
+    // call applies, so the label and the charge cannot drift apart (#547 A2).
+    expect(src).toMatch(/canvasGenCostQuote\(costQuote,\s*imageCount\)\.imageCredits/);
+    // A price can never be on screen without its quote having been loaded.
+    expect(src).toMatch(/cardBarVisible/);
+    expect(src).toMatch(/if \(composerVisible \|\| cardBarVisible \|\| pendingAnimateId !== null \|\| t2vOpen\) refreshCostQuote\(\)/);
   });
 
   it("no canvas price is written as a literal in the UI", () => {
-    for (const file of [IMAGE_NODE, FLOW_CANVAS]) {
+    for (const file of [IMAGE_NODE, VIDEO_NODE, FLOW_CANVAS]) {
       expect(read(file), `${file} must render prices from the server quote only`).not.toMatch(
         CREDIT_PRICE_LITERAL,
       );
