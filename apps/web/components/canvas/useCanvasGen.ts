@@ -12,6 +12,7 @@ import {
   canvasGenCostQuote,
   clampImageVariantCount,
 } from "@/lib/canvas-gen-costs";
+import { canvasBatchSlotOffset } from "@/lib/canvas-batch-layout";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: {
@@ -530,8 +531,11 @@ export function useCanvasGen(
       // is a plain canvas-node placement of an already-generated (already-charged)
       // Generation — createCanvasNode is not a spend path.
       for (let i = 1; i < urls.length; i++) {
-        const sx = createdPos.x + (i % 2) * (createdPos.w + 20);
-        const sy = createdPos.y + Math.floor(i / 2) * (createdPos.h + 20);
+        // Shared grid (canvas-batch-layout) so every card of one batch is separately visible,
+        // and so server-side recovery re-places a lost sibling in the same slot.
+        const slot = canvasBatchSlotOffset(i, { w: createdPos.w, h: createdPos.h });
+        const sx = createdPos.x + slot.dx;
+        const sy = createdPos.y + slot.dy;
         const generationId = generationIds[i];
         if (!generationId) continue;
         const sib = await createCanvasNode({
