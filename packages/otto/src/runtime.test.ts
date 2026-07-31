@@ -791,15 +791,36 @@ describe("#566 — resume carries the live context", () => {
     expect(log).toEqual([`sp_1:{"id":"job_1","disposition":"fresh"}:2026-07-31T00:00:00.000Z`]);
   });
 
+  /** A BILLABLE resume runtime. The $0 fixture manifest short-circuits withLlmBudget entirely
+   *  (`paid:false` ⇒ no reserve, no settle), which would make "reserveCredits was not called" true
+   *  no matter what the guard did. Billing must be genuinely reachable for that assertion to mean
+   *  anything, so the guard tests below run on a paid manifest and prove reachability first. */
+  function paidResumeRuntime(log: string[]) {
+    const deps: OttoRuntimeDeps = {
+      modelRuntime: paidFixtureModelRuntime(
+        fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_1" }, "Done!"),
+      ),
+      skills: [makePortGatedSkill(log)],
+      traceSink: noopTraceSink,
+    };
+    return createOttoRuntime(deps, "approval-resume");
+  }
+
   it("the shared runner REFUSES a resumed state whose context is not the live one (fail-closed, no reservation)", async () => {
     const log: string[] = [];
-    const { serialized, resume } = await parkGatedCall(log);
-    const restored = await RunState.fromString(resume.agent, serialized);
+    const { serialized } = await parkGatedCall(log);
+    const paidResume = paidResumeRuntime(log);
+    const restored = await RunState.fromString(paidResume.agent, serialized);
     restored.approve(restored.getInterruptions()[0]!);
-    meterMocks.reserveCredits.mockClear();
 
+    // Control: on this very runtime a fresh run DOES reserve — so the assertion below is real.
+    meterMocks.reserveCredits.mockClear();
+    await runOttoTurn({ orgId: "org_t", refId: "fixture:566-control", input: "hi" }, liveCtx(), paidResume);
+    expect(meterMocks.reserveCredits).toHaveBeenCalled();
+
+    meterMocks.reserveCredits.mockClear();
     await expect(
-      runOttoTurn({ orgId: "org_t", refId: "fixture:566-guard", input: restored }, liveCtx(), resume),
+      runOttoTurn({ orgId: "org_t", refId: "fixture:566-guard", input: restored }, liveCtx(), paidResume),
     ).rejects.toThrow(/tryRestoreRunStateWithContext/);
 
     expect(log).toEqual([]);
@@ -810,20 +831,26 @@ describe("#566 — resume carries the live context", () => {
   // happened to be readable, so a missing field — an SDK internal reshape, a second incompatible
   // SDK copy, or a test double — waved the run straight through into metering. The classification
   // is now positive: string/array = fresh, anything else = resume and must prove its context.
-  it("refuses a resume-shaped input that exposes NO comparable context, instead of waving it through", async () => {
-    const { resume } = await parkGatedCall([]);
+  it("refuses a resume-shaped input that exposes NO comparable context, instead of waving it into billing", async () => {
+    const paidResume = paidResumeRuntime([]);
     meterMocks.reserveCredits.mockClear();
 
+    const outcomes: string[] = [];
     for (const shapeless of [{}, { _context: null }, { _context: {} }, { _context: { context: undefined } }]) {
-      await expect(
-        runOttoTurn(
-          { orgId: "org_t", refId: "fixture:566-shapeless", input: shapeless as never },
-          liveCtx(),
-          resume,
-        ),
-      ).rejects.toThrow(/exposes no comparable RunState context/);
+      await runOttoTurn(
+        { orgId: "org_t", refId: "fixture:566-shapeless", input: shapeless as never },
+        liveCtx(),
+        paidResume,
+      ).then(
+        () => outcomes.push("RESOLVED — the runner accepted an unverifiable state"),
+        (e: unknown) => outcomes.push(e instanceof Error ? e.message : String(e)),
+      );
     }
-    expect(meterMocks.reserveCredits).not.toHaveBeenCalled(); // fail-closed BEFORE any reservation
+
+    // The load-bearing consequence of failing OPEN is that billing is entered at all — assert that
+    // first, so a regression reads as a money finding rather than a message mismatch.
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
+    for (const outcome of outcomes) expect(outcome).toMatch(/exposes no comparable RunState context/);
   });
 
   it("still lets the two fresh-input shapes through untouched (string and item array)", async () => {
