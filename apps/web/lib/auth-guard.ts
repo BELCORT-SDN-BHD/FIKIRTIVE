@@ -129,6 +129,16 @@ export async function resolveUserPrincipal(
   };
 }
 
+/** #538 — thrown to abort provisioning when the operator's revoke won the AllowedEmail row.
+ *  A dedicated type so the catch below can tell a DELIBERATE fail-closed abort apart from the
+ *  concurrent-creator P2002 it is allowed to recover from. */
+class RevokedDuringProvisioning extends Error {
+  constructor(email: string) {
+    super(`provisioning refused: ${email} was revoked`);
+    this.name = "RevokedDuringProvisioning";
+  }
+}
+
 /** Create (idempotently) a personal Organization + Membership(owner) + CreditAccount with the
  *  one-time welcome grant. Returns the org id, or null if it can't complete (NEVER "founder").
  *
@@ -158,6 +168,34 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
   const orgId = `org_${userId}`; // deterministic → concurrent callers converge on ONE org
   try {
     await runAsSystem("auth:bootstrap-personal-org", () => prisma.$transaction(async (tx) => {
+      // ── #538 — registration half of the invite sync protocol ──────────────────────
+      // Provisioning and admin revocation are two transactions that must never both
+      // "win". They are serialized on ONE row (this address's AllowedEmail) by two
+      // CONDITIONAL updates, so correctness does not depend on the isolation level:
+      //
+      //   here   UPDATE … SET status='active'  WHERE email=… AND status='invited'
+      //   revoke UPDATE … SET status='revoked' WHERE email=… AND status='invited'
+      //
+      // Postgres takes a row lock per UPDATE and re-evaluates the WHERE against the
+      // newly committed version, so whichever commits first flips the row out of
+      // 'invited' and the loser matches 0 rows — then sees the winner's state below.
+      // This also fixes a real display bug: self-signup never touched an operator's
+      // existing 'invited' row (signup-gate.ts uses skipDuplicates), so an invited
+      // merchant stayed "pending" in /admin/tenants forever, masked only by a
+      // read-time filter. Now activation is recorded where it happens.
+      await tx.allowedEmail.updateMany({
+        where: { email: { equals: email, mode: "insensitive" }, status: "invited" },
+        data: { status: "active" },
+      });
+      const admission = await tx.allowedEmail.findFirst({
+        where: { email: { equals: email, mode: "insensitive" } },
+        select: { status: true },
+      });
+      // Revoke won the row. Fail CLOSED: abort the whole provisioning tx rather than
+      // leave the split state the reviewer flagged — a live membership owned by an
+      // address the operator just locked out. Rolling back here also unwinds the
+      // welcome grant below, so a revoked address is never granted credits.
+      if (admission?.status === "revoked") throw new RevokedDuringProvisioning(email);
       const owner = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
       const workspaceName = (owner?.name ?? "").trim() || email;
       await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: workspaceName }, update: {} });
@@ -200,6 +238,13 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
     }));
     return orgId;
   } catch (e) {
+    // #538 — a deliberate fail-closed abort must NOT be laundered into success by the
+    // concurrent-creator recovery below: that recovery returns any pre-existing membership,
+    // which for a revoked address is exactly the split state this abort exists to prevent.
+    if (e instanceof RevokedDuringProvisioning) {
+      console.error("bootstrapPersonalOrg refused: address is revoked");
+      return null;
+    }
     // A concurrent creator may have won the org pk / membership upsert mid-tx (P2002), aborting
     // this tx. Re-read the deterministic org; if it now exists, use it. Otherwise fail closed.
     const m = await prisma.membership

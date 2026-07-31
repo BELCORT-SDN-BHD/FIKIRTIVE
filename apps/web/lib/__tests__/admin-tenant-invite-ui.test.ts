@@ -191,7 +191,7 @@ describe("admin tenants invite UI (#538)", () => {
     await typeInto(input, "live@merchant.com");
     await submitForm(input.closest("form")!);
 
-    expect(dom.textContent).toContain("live@merchant.com is already an active merchant. Nothing changed.");
+    expect(dom.textContent).toContain("live@merchant.com has already signed up. Nothing changed.");
     expect(dom.textContent).not.toContain("Admitted live@merchant.com");
   });
 

@@ -379,10 +379,25 @@ describe("inviteTenant", () => {
   it("does not overwrite a row created concurrently after the read said 'missing'", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     allowedEmailFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ status: "active" });
-    allowedEmailCreate.mockRejectedValue(new Error("Unique constraint failed on the fields: (`email`)"));
+    allowedEmailCreate.mockRejectedValue(Object.assign(new Error("Unique constraint failed"), { code: "P2002" }));
     const res = await inviteTenant("collide@merchant.com");
     expect(res).toEqual({ ok: true, result: "already_member" });
     expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #538 round 3 (P2) — the catch used to swallow EVERY error and report "already invited".
+  // A dead connection would have been reported to the operator as a successful-ish no-op.
+  it("re-throws a non-P2002 database error instead of faking 'already invited'", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    const boom = Object.assign(new Error("connection terminated"), { code: "P1001" });
+    allowedEmailCreate.mockRejectedValue(boom);
+    await expect(inviteTenant("broken@merchant.com")).rejects.toThrow("connection terminated");
+  });
+
+  it("re-throws an error carrying no Prisma code at all", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    allowedEmailCreate.mockRejectedValue(new Error("something else entirely"));
+    await expect(inviteTenant("weird@merchant.com")).rejects.toThrow("something else entirely");
   });
 });
 

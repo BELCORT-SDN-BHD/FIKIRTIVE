@@ -620,7 +620,9 @@ const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 // rather than reporting "Admitted" for all of them — an operator re-typing an address that is
 // already inside deserves to know nothing changed.
 function inviteFeedback(result: "invited" | "already_invited" | "already_member", email: string): string {
-  if (result === "already_member") return `${email} is already an active merchant. Nothing changed.`;
+  // The server's predicate here is AllowedEmail.status === "active", i.e. this address has
+  // completed signup — NOT a membership lookup. Say what was actually checked.
+  if (result === "already_member") return `${email} has already signed up. Nothing changed.`;
   if (result === "already_invited") return `${email} was already invited. Nothing changed, and no email was sent.`;
   return `Admitted ${email}. No email was sent — tell them to sign in with that address.`;
 }

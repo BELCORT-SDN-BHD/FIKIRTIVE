@@ -76,6 +76,11 @@ export async function cutTenantSessions(orgId: string): Promise<{ ok: true; cut:
   return { ok: true, cut: count };
 }
 
+/** Prisma's unique-constraint code. Narrow on the code, never on the message. */
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
+}
+
 function normEmail(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const e = raw.trim().toLowerCase();
@@ -89,7 +94,10 @@ function normEmail(raw: unknown): string | null {
  *    already_member  — the address already signed up (`active`); nothing written
  *  The last one is the point: self-signup writes status "active" (signup-gate.ts), and the
  *  old blanket upsert rewrote that to "invited", demoting a live merchant to pending. An
- *  address that is already in must never be downgraded by an operator re-typing it. */
+ *  address that is already in must never be downgraded by an operator re-typing it.
+ *
+ *  `already_member` names the AllowedEmail row being "active" — i.e. this address completed
+ *  signup. It is NOT a Membership lookup; only revokeTenantInvite queries memberships. */
 export async function inviteTenant(
   emailRaw: unknown,
 ): Promise<{ ok: true; result: "invited" | "already_invited" | "already_member" } | { error: string }> {
@@ -107,9 +115,11 @@ export async function inviteTenant(
   } else {
     try {
       await prisma.allowedEmail.create({ data: { email, status: "invited", invitedBy: gate.email } });
-    } catch {
-      // The email PK collided: a concurrent signup or invite created the row first. Report
-      // what that row actually says instead of overwriting a state we did not observe.
+    } catch (e) {
+      // ONLY a unique-constraint collision means "someone created this row first". Any other
+      // database failure is a real failure and must surface as one — swallowing it here would
+      // report a comforting "already invited" for an invite that never happened.
+      if (!isUniqueViolation(e)) throw e;
       const row = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
       return { ok: true, result: row?.status === "active" ? "already_member" : "already_invited" };
     }
