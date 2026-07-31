@@ -77,6 +77,17 @@ export type TenantHealthRow = {
   risk: "healthy" | "watch" | "blocked";
 };
 
+/** #538 — an operator-issued invite (AllowedEmail status "invited") whose address has not
+ *  become a tenant owner yet. Self-signup rows ("active") and revoked rows are not pending,
+ *  so they never appear here. Bounded so a long invite history can't bloat the page payload. */
+export type PendingInviteRow = {
+  email: string;
+  invitedBy: string;
+  createdAt: string;
+};
+
+const PENDING_INVITE_LIMIT = 50;
+
 export type CaseRow = {
   id: string;
   source: "guardian" | "otto" | "queue" | "media";
@@ -182,6 +193,7 @@ export type AdminV2Data = {
   approvalQueue: ApprovalItem[];
   tenants: TenantHealthRow[];
   invitedCount: number;
+  pendingInvites: PendingInviteRow[];
   cases: CaseRow[];
   systemIncidents: SystemIncident[];
   audit: AuditPreview[];
@@ -440,6 +452,8 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       const rank = { blocked: 0, watch: 1, healthy: 2 };
       return rank[a.risk] - rank[b.risk] || a.balance - b.balance;
     });
+
+  const pendingInviteRows = tenantResult.invited.filter((row) => row.status === "invited");
 
   const moneyJobs: Array<MoneyJobRow & { internalModel: string }> = [
     ...genJobs.map((job) => ({
@@ -768,7 +782,12 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     ],
     approvalQueue,
     tenants,
-    invitedCount: tenantResult.invited.filter((row) => row.status === "invited").length,
+    invitedCount: pendingInviteRows.length,
+    pendingInvites: pendingInviteRows.slice(0, PENDING_INVITE_LIMIT).map((row) => ({
+      email: row.email,
+      invitedBy: row.invitedBy,
+      createdAt: row.createdAt,
+    })),
     cases,
     systemIncidents,
     audit,
