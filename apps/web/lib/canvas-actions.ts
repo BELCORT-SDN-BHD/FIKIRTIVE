@@ -3,6 +3,8 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { withCanvasLineage } from "./canvas-lineage-data";
+import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
@@ -13,6 +15,8 @@ export type CanvasNodeDTO = {
   genJobId: string | null; status: string; sourceNodeId: string | null;
   threadId: string | null; url?: string | null; mediaWidth?: number | null; mediaHeight?: number | null;
   origin?: "otto" | null;
+  /** When it was made, with what settings, at what cost (#547 B4). Null for text cards. */
+  lineage?: CanvasNodeLineage | null;
 };
 export type CreateNodeInput = {
   projectId: string; type: "image" | "video" | "text";
@@ -129,7 +133,8 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
       origin: canvasNodeOrigin(jobById.get(plan.genJobId)?.idempotencyKey),
     });
   }
-  return [...resolved, ...recoveredSiblings];
+
+  return withCanvasLineage(gate.ownerId, projectId, [...resolved, ...recoveredSiblings]);
 }
 
 export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedCanvasNode | { error: string }> {

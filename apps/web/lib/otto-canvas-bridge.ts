@@ -3,6 +3,7 @@
 import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
+import { withCanvasLineage } from "./canvas-lineage-data";
 import { canvasJobPlacementLockKey, placeCanvasJobNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
@@ -300,5 +301,5 @@ export async function syncOttoCanvasNodes(
       origin: canvasNodeOrigin(jobById.get(plan.genJobId)?.idempotencyKey),
     });
   }
-  return [...resolved, ...recoveredSiblings];
+  return withCanvasLineage(ownerId, projectId, [...resolved, ...recoveredSiblings]);
 }

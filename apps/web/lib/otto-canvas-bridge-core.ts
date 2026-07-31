@@ -1,6 +1,8 @@
 // Pure core of the chat→canvas bridge — no DB, no I/O, so it is unit-testable.
 // (Kept out of the "use server" action file, whose exports must all be async.)
 
+import { canvasBatchSlotOffset } from "./canvas-batch-layout";
+
 export type GenResultMsg = {
   seq: number;
   genJobId: string | null;
@@ -169,10 +171,13 @@ export function planSettledCanvasJobSiblingNodes(
       const url = thumbs[generationId]?.src;
       if (!url || generationId === primaryGenerationId || have.has(generationId)) continue;
       have.add(generationId);
+      // Same grid the browser used when it placed this batch (canvas-batch-layout), so a
+      // recovered card lands where its sibling would have — not on top of another card.
+      const slot = canvasBatchSlotOffset(i, { w: node.w, h: node.h });
       planned.push({
         type: node.type === "video" ? "video" : "image",
-        x: node.x + (i % 2) * (node.w + 20),
-        y: node.y + Math.floor(i / 2) * (node.h + 20),
+        x: node.x + slot.dx,
+        y: node.y + slot.dy,
         w: node.w,
         h: node.h,
         prompt: node.prompt,
