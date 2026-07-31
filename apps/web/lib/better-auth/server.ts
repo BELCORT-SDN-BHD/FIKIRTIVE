@@ -70,9 +70,12 @@ export const auth = betterAuth({
     // the session it mints still passes through the fail-closed session.create.before gate.
     autoSignInAfterVerification: true,
     // #543/#544 — the ONE place that turns "email proven" into a tenant + the welcome grant.
-    // convergeIdentity is idempotent and never throws: a second verification, a re-login or
+    // convergeIdentity is idempotent: a second verification, a re-login or
     // a racing tab all converge on the same org and the same single GRANT row (the grant
-    // dedupes on the (orgId, idempotencyKey) unique). Before this, an unverified account had
+    // dedupes on the (orgId, idempotencyKey) unique). #538 — it now throws for exactly one
+    // reason: the operator revoked this address mid-provisioning, which is a security refusal
+    // and must not surface as a completed verification. Every other failure stays non-fatal.
+    // Before this, an unverified account had
     // no User row at all, so nothing could be granted — which is exactly the rule the spec
     // wants: unverified means zero balance, with no extra lock needed.
     afterEmailVerification: async (user) => {

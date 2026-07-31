@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowUpRight,
+  Ban,
   Bot,
   Building2,
   Eye,
@@ -12,6 +13,7 @@ import {
   Gauge,
   History,
   Lock,
+  MailPlus,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
@@ -23,6 +25,7 @@ import {
   seedResearchDirectives,
 } from "@/lib/admin-actions";
 import { grantCreditsAction } from "@/lib/credit-actions";
+import { inviteTenant, revokeTenantInvite } from "@/lib/tenant-actions";
 import type {
   AdminV2Data,
   AdminV2Section,
@@ -30,6 +33,7 @@ import type {
   AuditPreview,
   CaseRow,
   MoneyLedgerRow,
+  PendingInviteRow,
   StaffRowV2,
   SystemIncident,
   TenantHealthRow,
@@ -566,6 +570,8 @@ function TenantsSection({ data }: { data: AdminV2Data }) {
         <MetricCard label="Blocked" value={String(data.tenants.filter((row) => row.risk === "blocked").length)} detail="Suspended or revoked tenants." tone="danger" />
       </div>
 
+      <TenantInvitePanel invites={data.pendingInvites} invitedCount={data.invitedCount} />
+
       <Panel
         title="Tenant operations"
         subtitle="Balance, spend proxy, lifecycle status, and last activity."
@@ -603,6 +609,143 @@ function TenantsSection({ data }: { data: AdminV2Data }) {
         </div>
       </Panel>
     </div>
+  );
+}
+
+// Same shape the server action's normEmail enforces — the client check only spares the user a
+// round trip; inviteTenant/revokeTenantInvite stay the authority on what is accepted.
+const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+// inviteTenant reports whether it actually wrote anything. Say which of the three happened
+// rather than reporting "Admitted" for all of them — an operator re-typing an address that is
+// already inside deserves to know nothing changed.
+function inviteFeedback(result: "invited" | "already_invited" | "already_member", email: string): string {
+  // The server's predicate here is AllowedEmail.status === "active", i.e. this address has
+  // completed signup — NOT a membership lookup. Say what was actually checked.
+  if (result === "already_member") return `${email} has already signed up. Nothing changed.`;
+  if (result === "already_invited") return `${email} was already invited. Nothing changed, and no email was sent.`;
+  return `Admitted ${email}. No email was sent — tell them to sign in with that address.`;
+}
+
+// #538 — the invite backend (inviteTenant/revokeTenantInvite, both super-admin gated and
+// audited) had no UI at all, so no merchant could be let in from inside the product. This is
+// the wiring: it adds no server logic and no second path into AllowedEmail.
+function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRow[]; invitedCount: number }) {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function submitInvite(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inviting) return;
+    const candidate = email.trim().toLowerCase();
+    if (candidate.length > 254 || !EMAIL_SHAPE.test(candidate)) {
+      setMessage({ ok: false, text: "Enter a valid email." });
+      return;
+    }
+    setInviting(true);
+    setMessage(null);
+    const result = await inviteTenant(candidate).catch(() => null);
+    setInviting(false);
+    if (!result) {
+      setMessage({ ok: false, text: "Invite failed." });
+      return;
+    }
+    if ("error" in result) {
+      setMessage({ ok: false, text: result.error });
+      return;
+    }
+    setMessage({ ok: true, text: inviteFeedback(result.result, candidate) });
+    setEmail("");
+    router.refresh();
+  }
+
+  async function revokeInvite(target: string) {
+    if (revoking) return;
+    // Confirm first: a stray click on the wrong row is not harmless. Scoped to what revoking
+    // actually does — it blocks future self-signup with this address. It does NOT guarantee
+    // the address cannot sign in: FOUNDER_ADMIN_EMAILS / AUTH_ALLOWED_EMAILS are checked
+    // before the DB row and win over it (allowlist.ts).
+    if (!window.confirm(`Revoke the invite for ${target}? This blocks future self-signup with this address.`)) return;
+    setRevoking(target);
+    setMessage(null);
+    const result = await revokeTenantInvite(target).catch(() => null);
+    setRevoking(null);
+    if (!result) {
+      setMessage({ ok: false, text: "Revoke failed." });
+      return;
+    }
+    if ("error" in result) {
+      setMessage({ ok: false, text: result.error });
+      return;
+    }
+    setMessage({ ok: true, text: `Revoked ${target}.` });
+    router.refresh();
+  }
+
+  return (
+    <Panel
+      title="Invite a merchant"
+      subtitle="Admits an email address so it can sign in. Nothing is emailed from here — tell the merchant yourself. The row leaves this list once they sign in and their workspace exists."
+    >
+      <form onSubmit={submitInvite} className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+        <label className="grid gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Merchant email</span>
+          <Input
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            maxLength={254}
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="owner@merchant.com"
+            required
+            className="h-10 text-sm"
+          />
+        </label>
+        {/* Not "Send invite": inviteTenant writes the AllowedEmail row and nothing else — no
+            mail is sent anywhere in this path, so the label must not promise one. */}
+        <Button type="submit" disabled={inviting}>
+          <MailPlus className="size-4" />
+          {inviting ? "Inviting" : "Invite"}
+        </Button>
+      </form>
+
+      {message ? (
+        <p className={cn("mt-3 text-xs", message.ok ? "text-success" : "text-destructive")}>{message.text}</p>
+      ) : null}
+
+      <div className="mt-4 grid gap-2">
+        <p className="text-xs font-medium text-muted-foreground">
+          Invited and not signed in ({invitedCount})
+          {invites.length < invitedCount ? ` — showing the ${invites.length} most recent` : ""}
+        </p>
+        {invites.length === 0 ? <EmptyState label="No pending invites." /> : null}
+        {invites.map((row) => (
+          <div
+            key={row.email}
+            className="grid gap-2 rounded-xl border border-border bg-background p-3 sm:grid-cols-[1.6fr_1fr_120px_auto] sm:items-center"
+          >
+            <span className="truncate text-sm font-medium text-foreground">{row.email}</span>
+            <span className="truncate text-xs text-muted-foreground">Invited by {row.invitedBy || "unknown"}</span>
+            <span className="font-mono text-xs text-muted-foreground">{fmtDate(row.createdAt)}</span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={revoking === row.email}
+              aria-label={`Revoke invite for ${row.email}`}
+              onClick={() => revokeInvite(row.email)}
+            >
+              <Ban className="size-4" />
+              {revoking === row.email ? "Revoking" : "Revoke"}
+            </Button>
+          </div>
+        ))}
+      </div>
+    </Panel>
   );
 }
 
