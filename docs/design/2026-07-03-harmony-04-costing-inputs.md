@@ -142,7 +142,7 @@ internal_credits = ceil( [ (input−cached)×inputPerToken
 
 | 项 | 数值 | 出处 |
 |---|---|---|
-| 新 org 一次性赠送 | **100 显示 cr**(= 1,000 internal = $10 名义)(`BETA_INITIAL_GRANT_CREDITS = 100 × INTERNAL_PER_DISPLAY`;幂等 key `signup:<orgId>`) | `packages/core/src/spend.ts:102-106`;发放点 `apps/web/lib/auth-guard.ts:111` |
+| 新 org 一次性赠送 | **20 显示 cr**(= 200 internal = $2 名义)(`SIGNUP_GRANT_CREDITS = 20 × INTERNAL_PER_DISPLAY`;幂等 key `signup:<orgId>`;#543 从旧 100 下调为验证后入账的欢迎赠金) | `packages/core/src/spend.ts`;发放点 `apps/web/lib/auth-guard.ts` |
 | MYR credit 包(live Stripe) | **Starter RM25 → 50cr(RM0.50/cr)· Standard RM100 → 220cr(RM0.4545/cr,+10%)· Pro RM250 → 600cr(RM0.4167/cr,+20%)** | `docs/superpowers/plans/2026-06-29-monetization-phase1-stripe-packs.md:17,50`;`docs/review/LIVE-SURFACE-2026-07-02.md:102`;`docs/review/DECISION-INVENTORY-2026-07-02.md:126` |
 | 包的实现位置 | 包 = Stripe 上带 `metadata.credits` 的 active Price,代码只读不存(改包不用重新部署);**live priceIds 只存在于 Stripe 后台,repo 里没有** | `apps/web/lib/billing-actions.ts:5-30`;缺口 §4-9 |
 | 包毛利底线(设计值) | 全图 ≈3×;最差全 1080p 视频 ≈ **1.56×**(基于估算成本) | `docs/superpowers/specs/2026-06-29-monetization-credit-packs-byteplus-design.md:37` |

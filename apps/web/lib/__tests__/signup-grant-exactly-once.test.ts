@@ -94,6 +94,20 @@ describe("#543 signup grant — exactly-once", () => {
     expect(await prisma.organization.count({ where: { name: "Not Verified Yet" } })).toBe(0);
   });
 
+  it("#544 — a verified convergence stamps the canonical User.emailVerified, and is set-once", async () => {
+    const email = `verify-stamp-${randomUUID()}@fikirtive.test`;
+    await convergeIdentity({ email, name: "Verified Shop", emailVerified: true });
+
+    const user = await prisma.user.findUnique({ where: { email }, select: { emailVerified: true } });
+    expect(user?.emailVerified).toBeInstanceOf(Date);
+
+    // Set-once: a later convergence never re-stamps a fresh timestamp over the original.
+    const firstStamp = user!.emailVerified!;
+    await convergeIdentity({ email, name: "Verified Shop", emailVerified: true });
+    const again = await prisma.user.findUnique({ where: { email }, select: { emailVerified: true } });
+    expect(again?.emailVerified?.getTime()).toBe(firstStamp.getTime());
+  });
+
   it("names the workspace after the shop, and falls back to the email when there is no name", async () => {
     const named = await freshUser("Kedai Kopi Aman");
     const namedOrg = (await bootstrapPersonalOrg(named.id, named.email))!;

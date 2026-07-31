@@ -107,6 +107,11 @@ describe("#543 · the door opens — a stranger can register with email + passwo
 
     const user = await prisma.user.findUnique({ where: { email } });
     expect(user).not.toBeNull();
+    // #544 — the CANONICAL User row must also record the verification, not just the ba_user
+    // mirror. The canonical column is a DateTime? (next-auth convention): "verified" = a
+    // non-null timestamp, null = never verified. A null here would leave the tenant graph
+    // unable to tell a verified merchant from an unverified one.
+    expect(user!.emailVerified).toBeInstanceOf(Date);
     const orgId = `org_${user!.id}`;
 
     const org = await prisma.organization.findUnique({ where: { id: orgId } });
@@ -228,6 +233,18 @@ describe("#543 · the signup pages are reachable without a session", () => {
     for (const walled of ["/", "/otto", "/settings"]) expect(matcher.test(walled)).toBe(true);
     for (const open of ["/signup", "/forgot-password", "/reset-password", "/login"]) {
       expect(matcher.test(open)).toBe(false);
+    }
+  });
+});
+
+describe("#543 · the newly public endpoints carry a rate-limit fail-safe", () => {
+  it("signup, password-reset and verification-email requests all have a bounded per-window rule", async () => {
+    const ctx = await auth.$context;
+    const rules = (ctx.options.rateLimit?.customRules ?? {}) as Record<string, { window: number; max: number } | undefined>;
+    for (const path of ["/sign-up/email", "/request-password-reset", "/send-verification-email"]) {
+      const rule = rules[path];
+      expect(rule?.window).toBeGreaterThan(0);
+      expect(rule?.max).toBeGreaterThan(0);
     }
   });
 });
