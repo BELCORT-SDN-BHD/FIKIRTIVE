@@ -5,6 +5,7 @@ import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { getMyProfileNames } from "@/lib/profile-names";
+import { resolveOttoGreetingName } from "@/lib/otto-greeting";
 import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { getAnalytics } from "@/lib/analytics-actions";
@@ -27,7 +28,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
-  const { email, ownerId } = owner;
+  const { ownerId } = owner;
 
   // Multi-project (campaign = project): ensure at least one project exists, then
   // pick the active one from ?project= (must be owned) or default to the oldest.
@@ -57,8 +58,8 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     // Analytics view payload for the Analytics screen (read-only Meta reads; default 30d range).
     // Refined in Task 5; provided here so the required OttoApp `analytics` prop typechecks.
     getAnalytics({}).catch(() => ({ state: "notConnected" as const })),
-    // #542 — the greeting's name. Read here (not derived from the email) so that the moment a
-    // merchant sets their display name on /profile, "Hi <email local part>" becomes "Hi <them>".
+    // #542 — the two names the greeting is built from. Both are read here so that the moment a
+    // merchant sets either one on /profile, the greeting starts using it.
     getMyProfileNames(),
   ]);
 
@@ -83,10 +84,12 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;
-  // #542 (F-07) — the merchant's own display name when they have set one; the email's local
-  // part only as the last-resort fallback, exactly as before, for accounts that never set it.
-  const displayName = "error" in profileNames ? "" : profileNames.displayName;
-  const userName = displayName || email.split("@")[0];
+  // #542 (F-07) — display name → shop name → "there". The email is NOT in this chain at all:
+  // greeting a merchant by their address's local part ("Hi tools") is the exact defect this
+  // ticket exists to remove, and a pre-#543 workspace name IS the full address, so the
+  // resolver rejects any candidate containing "@" rather than passing it on. A failed profile
+  // read is treated like any other miss — the generic greeting, never a guessed name.
+  const userName = resolveOttoGreetingName("error" in profileNames ? null : profileNames);
 
   // Streaming chat is the single Otto surface for all users (reference-vision rollout, 2026-07-01).
   const ottoStreamEnabled = true;
