@@ -7,8 +7,15 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *  所以码随链接进来 —— 页面只需读 searchParams 并陈述状态,无需输入框、无需按码
  *  查库(Meta 的回调规范只要求「链接 + 确认码」合起来给出人类可读的状态说明)。
  *
- *  真实性约束:码是在删除事务成功之后、随 200 响应一起发出的(route.ts:51-78),
- *  因此「持有码」本身就等于「那次请求已处理完毕」。文案不得超出这一点。
+ *  真实性约束(2026-07-31 r4 修正):本注释原写「码总是在删除事务成功之后发出,所以持有码
+ *  ≈ 那次请求已处理完毕」—— **不成立**,有两个例外,文案不得再依赖这条:
+ *   ① 零匹配时根本没有删除事务,route.ts:65-72 走的是 best-effort 痕迹(失败被 catch 吞掉),
+ *     :74-78 照样返回码;
+ *   ② 本页对 URL 上的 ?code= 不做任何查库或验签(本文件里就一句
+ *     `const { code } = await searchParams` —— 故意不写行号:自引用行号会被本注释自身的
+ *     增删推移,r4 初稿写的 :180 当场就漂成了 :215),所以 ?code=made-up 也会渲染同一段文案。
+ *  因此正文改为「不认领、不背书」:把回执的主语还给 Meta 的确认流程,页面只承认自己在
+ *  显示链接里带来的字符串。
  *  免登录(proxy.ts 放行 /legal)。
  *  「决定清单」= https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327
  *  (持久决定清单以该 PR 评论为准,本注释所有清单引用均指它)。
@@ -145,7 +152,8 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     brand-record-actions.ts:113 deleteBrandRecord(:130 还能 restore)。
  *     改为**精确枚举**三项,逐项已核无任何删除路径:contact(crm-actions.ts 无任何删除
  *     action,且 Contact 挂 org 不挂 project,不随 campaign 走)、credit ledger
- *     (schema.prisma:756 CreditLedger,全 apps/web + apps/worker 无 delete/deleteMany)、
+ *     (schema.prisma:756 CreditLedger,生产自助路径无 delete/deleteMany —— r3 写成
+ *     「全 apps/web + apps/worker 无」,字面不准:测试清理代码里有这些调用,r4 收窄口径)、
  *     不属于 campaign 的 actionEvent(唯一删除点是 actions.ts:243,按 projectId 限定)。
  *     ⚠️ 初稿这里写了「四项」,把 publishAttempt 也算进去 —— **是错的**:
  *     schema.prisma:2170 `post ScheduledPost @relation(..., onDelete: Cascade)`,
@@ -171,7 +179,35 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     :411 是 confirmLabel);零匹配仍返回码的证据范围应从 route.ts:65 起(:74-78 只能证明
  *     无条件返回)。ConvoTabs 的引用随上面第一条一并删除。
  *   · 判官另指出 DetailPanel.tsx:407 的确认框文案(仍说 removes from "canvas views")与本页
- *     新文案相反 —— 该矛盾归 #541 话语族处理,**本 PR 不动那个文件**。*/
+ *     新文案相反 —— 该矛盾归 #541 话语族处理,**本 PR 不动那个文件**。
+ *
+ *  2026-07-31 r4(判官第三份 FAIL:七项销项五项过,余下全是措辞级):
+ *   · 【P1】?code= 不再被背书为真实回执 —— 本页只读 searchParams 的任意非空值,不查库、
+ *     不验签,所以 ?code=made-up 也会渲染同一段。改法是把「回执」的主语还给 Meta 的确认
+ *     流程,页面只承认自己在显示链接里带来的字符串;小标题也由「Your deletion request」
+ *     (预设请求真实存在)改为「About this confirmation code」。详见上方「真实性约束」段。
+ *   · 【P1】Disconnect 对比段的审计承诺补限定「when a connection matches」—— 匹配时写在
+ *     route.ts:53-60 的同一事务内,可靠;零匹配走 :65-72 的 best-effort(catch 吞掉)。
+ *     两个主段 r3 已改成 normally kept,这一段是漏网。
+ *   · 【P1】「Your records are yours」是无范围的法律归属断言,改为与 Terms 对齐的有界表述:
+ *     terms/page.tsx:101 只承诺「prompts / uploaded files / brand material / contacts /
+ *     campaign decisions / external account connections … come from you and stay under your
+ *     control」,正文照此枚举。Founder 的「商家数据商家权利」是产品方向,不等于本页可以写
+ *     无界所有权句 —— 归属定界属法务,不在本 PR。
+ *   · 【P2】总览段的 Meta disconnect 补「when you are signed in as yourself」,与明细段
+ *     (meta-actions.ts:106 冒充即返回 error)一致。
+ *   · 【P2】saved reference 的「until you edit them」收窄 —— 重建引用发生在
+ *     saveShotPrompt(actions.ts:534)的事务里::564 先 deleteMany 再 createMany;
+ *     改标题/状态不走这条路径,故正文写明「renaming a shot or changing its status leaves
+ *     the link in place」。
+ *   · 【P3】上面两条注释口径已改:①「码总在删除事务成功后发出」补零匹配例外;
+ *     ②「全 apps/web + apps/worker 无 delete/deleteMany」收窄为「生产自助路径无」——
+ *     就地复核:creditLedger.deleteMany 只出现在 lib/__tests__/(stripe-webhook-integration、
+ *     cross-tenant-write、principal-context)与 packages/db 生成客户端的 docstring 里,
+ *     生产代码确无。
+ *   · 【记账口径】r2/r3 汇报里写的「40+/65 条引用全部命中」没有可复现的计数口径(注释含
+ *     重复引用与「旧错示例」)。此后只说「引用已逐条核对」,或附口径;判官机械扫描的口径是
+ *     127 个行号 token / 34 个来源文件。*/
 export default async function DataDeletionPage({
   searchParams,
 }: {
@@ -192,14 +228,16 @@ export default async function DataDeletionPage({
         <section className="mt-8 space-y-4 text-[15px] leading-7 text-muted-foreground">
           {code ? (
             <>
-              <h2 className="text-lg font-semibold text-foreground">Your deletion request</h2>
+              <h2 className="text-lg font-semibold text-foreground">About this confirmation code</h2>
               <p>
-                Confirmation code:{" "}
+                Code in the link you followed:{" "}
                 <code className="rounded bg-muted px-1.5 py-0.5 text-[13px] text-foreground">{code}</code>
               </p>
               <p>
-                This code is the receipt Fikirtive returned to Meta for a deletion request it received. This page
-                explains what such a request does; it does not look the code up or verify it.
+                If you arrived here from Meta&apos;s confirmation flow, Meta shows you a confirmation code for your
+                request. This page simply displays whatever code the link carries: it does not look the code up, check
+                it against our records, or confirm that it came from us. What it can tell you is what a deletion
+                request does, which is set out below.
               </p>
               <p>
                 When Meta sends us a deletion request, we delete every stored Meta connection whose recorded Meta user
@@ -246,10 +284,11 @@ export default async function DataDeletionPage({
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">What you can delete yourself</h2>
           <p>
-            Your records are yours. These deletions are in the product today: you run them yourself and you do not
+            The prompts, uploads, brand material, contacts and campaign decisions in your workspace come from you and
+            stay under your control. These deletions are in the product today: you run them yourself and you do not
             have to ask us. They do not all ask the same before acting — a campaign and a conversation make you type
-            the name, a generated asset asks a plain yes, and a saved reference or a Meta disconnect runs straight
-            away. Each entry below says which, and what is left behind.
+            the name, a generated asset asks a plain yes, and a saved reference runs straight away; so does a Meta
+            disconnect when you are signed in as yourself. Each entry below says which, and what is left behind.
           </p>
           <ul className="list-disc space-y-2 pl-5">
             <li>
@@ -283,8 +322,9 @@ export default async function DataDeletionPage({
               <span className="text-foreground">A saved reference.</span> Library also lists the products, characters,
               locations and brand marks you have saved. Their{" "}
               <span className="text-foreground">Delete</span> button runs straight away, with no confirmation step. The
-              reference is removed from your library; shots that already used it keep their link to it until you edit
-              them.
+              reference is removed from your library; shots that already used it keep their link to it until you next
+              save that shot&apos;s prompt and reference chips. Renaming a shot or changing its status leaves the link
+              in place.
             </li>
             <li>
               <span className="text-foreground">A connected Meta account.</span> In Fikirtive, open{" "}
@@ -294,8 +334,8 @@ export default async function DataDeletionPage({
               the encrypted access token, the granted scope and the default page we had recorded. A deletion request sent
               by Meta removes the same kind of stored connection, but the two are not identical. That request is
               matched by Meta user ID, so it reaches every workspace whose stored connection carries that ID — and a
-              connection saved without one is not matched at all — and it also writes an audit record of the request,
-              which Disconnect does not. Either way the same records survive: scheduled posts keep the Meta account and
+              connection saved without one is not matched at all — and, when a connection matches, it also writes an
+              audit record of the request, which Disconnect does not. Either way the same records survive: scheduled posts keep the Meta account and
               post identifiers in their publish history, publish attempts keep their post and media identifiers, and
               audit records are kept. Nothing else in your workspace is deleted.
             </li>
