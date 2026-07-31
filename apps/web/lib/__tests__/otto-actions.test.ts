@@ -42,6 +42,7 @@ const {
   mockTransaction,
   mockRun,
   mockRunStateFromString,
+  mockRestoreWithContext,
   mockWithLlmBudget,
   MockRunState,
   MockMaxTurnsExceededError,
@@ -78,6 +79,8 @@ const {
 } = vi.hoisted(() => {
   const mockRunStateToString = vi.fn(() => '{"mocked":"state"}');
   const mockRunStateFromString = vi.fn();
+  /** Records (agent, serialized, context) for the resume-side restore (#566). */
+  const mockRestoreWithContext = vi.fn();
   const mockApprove = vi.fn();
   const mockReject = vi.fn();
   const mockGetInterruptions = vi.fn(() => [] as unknown[]);
@@ -146,6 +149,7 @@ const {
     mockTransaction: vi.fn(),
     mockRun: vi.fn(),
     mockRunStateFromString,
+    mockRestoreWithContext,
     mockWithLlmBudget,
     MockRunState,
     MockMaxTurnsExceededError,
@@ -296,6 +300,21 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     tryRestoreRunState: async (_agent: unknown, str: string) => {
       try {
         return await MockRunState.fromString(_agent, str);
+      } catch {
+        return null;
+      }
+    },
+    // #566: the resume-side restore takes the LIVE context. Record it so tests can assert the
+    // ports were already built when the state was rehydrated (that ordering IS the bug fix).
+    // The real SDK INSTALLS that context on the returned state (RunState._context.context), and
+    // runOttoTurn's fail-closed guard checks exactly that field before entering metering — so the
+    // double has to install it too, or it models a state the production code would refuse.
+    tryRestoreRunStateWithContext: async (_agent: unknown, str: string, context: unknown) => {
+      mockRestoreWithContext(_agent, str, context);
+      try {
+        const state = await MockRunState.fromString(_agent, str);
+        if (state) (state as { _context?: unknown })._context = { context };
+        return state;
       } catch {
         return null;
       }
@@ -1658,6 +1677,45 @@ describe("ottoApprove — happy path (approve → resume → spend via startGen)
     // ottoState persisted via CAS updateMany
     expect(mockChatThreadUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ ottoState: expect.any(String) }) }),
+    );
+  });
+});
+
+// #566 (挡上线): "talk to Otto first, then press confirm" never produced anything. The approve path
+// rehydrated the parked RunState BEFORE building the context, so the state resumed with a
+// JSON-rebuilt context that had lost ctx.startGen — and the SDK ignores options.context on a
+// resumed state, so the context built afterwards was never consulted. Production: 3 clicks, 0 jobs.
+// The contract these assertions pin: the live context exists BEFORE the restore, rides INTO it, and
+// is the very same object the resume runs on.
+describe("ottoApprove — #566 the resumed state carries the live context (startGen survives)", () => {
+  it("restores WITH the context, and that context is the port-carrying object run() resumes on", async () => {
+    setupApproveHappyPath();
+
+    const res = await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+    expect(res).toMatchObject({ ok: true, status: "done" });
+
+    // The restore took a context (the context-less helper must not be what resumes a run).
+    expect(mockRestoreWithContext).toHaveBeenCalledTimes(1);
+    const [, serialized, restoreCtx] = mockRestoreWithContext.mock.calls[0] as [unknown, string, { startGen?: unknown }];
+    expect(serialized).toBe('{"paused":"state"}');
+
+    // The spend port was ALREADY injected at restore time — this is what was missing in production.
+    expect(restoreCtx.startGen).toBe(mockStartGen);
+
+    // …and it is the SAME object the resume runs on (identity, not a look-alike copy): the state
+    // holds it by reference, which is also how the late-bound consent fields reach the skills.
+    const runCtx = (mockRun.mock.calls[0]![2] as { context: unknown }).context;
+    expect(runCtx).toBe(restoreCtx);
+  });
+
+  it("builds the context BEFORE the restore (ordering is the fix, not an accident)", async () => {
+    setupApproveHappyPath();
+
+    await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID });
+
+    // resolveDisabledModels is buildOttoContext's first await; it must have run before the restore.
+    expect(mockResolveDisabledModels.mock.invocationCallOrder[0]!).toBeLessThan(
+      mockRestoreWithContext.mock.invocationCallOrder[0]!,
     );
   });
 });

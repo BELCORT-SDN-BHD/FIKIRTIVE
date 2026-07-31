@@ -37,7 +37,7 @@ export { updateBrief } from "./skills/update-brief.js";
 export { describeRefs, sanitizeRefDescription } from "./skills/describe-refs.js";
 export { setTitle } from "./skills/set-title.js";
 export type { OttoContext, EntityType, LibraryItemView, LibraryHistoryView } from "./context.js";
-export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState } from "./run-input.js";
+export { buildUserTurn, stripHistoryImages, sanitizeHistory, tryRestoreRunState, tryRestoreRunStateWithContext } from "./run-input.js";
 export type { RefImage } from "./run-input.js";
 export { extractText } from "./run-output.js";
 export { withLlmBudget, actualCostInternal, mapOttoUsage } from "./meter.js";

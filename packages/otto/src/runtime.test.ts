@@ -64,6 +64,7 @@ import { ottoModel, ottoModelRuntime, OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL, O
 import { otto, ottoVerdict, ottoInteractiveRuntime, ottoApprovalResumeRuntime, ottoWorkerVerdictRuntime } from "./otto.js";
 import { actualCostInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
+import { tryRestoreRunStateWithContext } from "./run-input.js";
 import { allSkills } from "./registry.js";
 import { ottoInstructions } from "./instructions.js";
 import type { OttoContext } from "./context.js";
@@ -569,8 +570,9 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     ]);
     expect(log).toEqual([]); // parked, not executed
 
-    // The production DB round-trip: serialize, restore against the approval-resume agent.
-    const restored = await RunState.fromString(resume.agent, fin1.newOttoState);
+    // The production DB round-trip: serialize, restore against the approval-resume agent, carrying
+    // the live context (#566 — a fromString restore would resume with the ports stripped).
+    const restored = (await tryRestoreRunStateWithContext(resume.agent, fin1.newOttoState, baseCtx))!;
     const parked = restored.getInterruptions();
     expect(parked.length).toBe(1);
     restored.approve(parked[0]!);
@@ -610,7 +612,7 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     );
     const serialized = finalizeOttoTurn(parkedResult, legacyRuntime).newOttoState;
 
-    const restored = await RunState.fromString(ottoApprovalResumeRuntime.agent, serialized);
+    const restored = (await tryRestoreRunStateWithContext(ottoApprovalResumeRuntime.agent, serialized, baseCtx))!;
     expect(restored.currentAgent).toBe(ottoApprovalResumeRuntime.agent);
     expect(restored.currentAgent).not.toBe(legacyRuntime.agent);
     const [interruption] = restored.getInterruptions();
@@ -665,5 +667,204 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     expect(model.calls()).toBe(1); // exactly one step
     expect(fin.interrupted).toBe(false);
     expect(fin.text).toBe("Does this look right?");
+  });
+});
+
+// ── #566: a resumed run must carry the LIVE context (injected ports survive) ──
+//
+// Production bug (5 weeks, 3 clicks, 0 generations, 0 log lines): the approve path restored the
+// parked RunState with RunState.fromString and only THEN built the context. The serialized state is
+// JSON, so the restored context had lost every function field, and run() ignores options.context for
+// a resumed state — so the rebuilt one was never consulted. `generate` hit its fail-closed
+// `if (!ctx.startGen) throw` guard, the SDK folded that throw into the tool's return value, and the
+// merchant was told to press the button they had just pressed.
+//
+// These tests run the REAL SDK serialize→restore→approve→resume cycle (a fake model at the provider
+// edge only). No RunState double: a mock is exactly what let CI stay green through this bug.
+describe("#566 — resume carries the live context", () => {
+  /** Test-only gated skill shaped like the real spend gate: its work is reachable ONLY through an
+   *  injected function port, and it runs the same fail-closed guard as
+   *  packages/otto/src/skills/generate.ts ("startGen port required"). */
+  function makePortGatedSkill(log: string[]) {
+    return defineOttoSkill({
+      name: "approveScheduledPost", // a registry approval name, so the park is a real gated park
+      cost: "free",
+      effect: "write",
+      reach: "external",
+      description: "Test-only gated skill that can only work through an injected port.",
+      parameters: z.object({ scheduledPostId: z.string() }),
+      execute: async (input, runContext) => {
+        const ctx = runContext.context as OttoContext;
+        if (!ctx.startGen) throw new Error("startGen port required");
+        const port = await ctx.startGen({ id: input.scheduledPostId } as never);
+        log.push(`${input.scheduledPostId}:${JSON.stringify(port)}:${ctx.approvalConsent?.expectedUpdatedAt ?? "-"}`);
+        return { ok: true };
+      },
+    });
+  }
+
+  /** A live context: the scalars survive JSON, the port does not. */
+  function liveCtx(): OttoContext {
+    return {
+      ...baseCtx,
+      startGen: async () => ({ id: "job_1", disposition: "fresh" as const }),
+    };
+  }
+
+  /** Park the gated call and return the serialized state + the two runtimes, exactly as production
+   *  persists it on ChatThread.ottoState. */
+  async function parkGatedCall(log: string[]) {
+    const deps: OttoRuntimeDeps = {
+      modelRuntime: fixtureModelRuntime(
+        fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_1" }, "Done!"),
+      ),
+      skills: [makePortGatedSkill(log)],
+      traceSink: noopTraceSink,
+    };
+    const interactive = createOttoRuntime(deps, "interactive");
+    const resume = createOttoRuntime(deps, "approval-resume");
+    const parked = await runOttoTurn(
+      { orgId: "org_t", refId: "fixture:566-park", input: "do it" },
+      liveCtx(),
+      interactive,
+    );
+    const fin = finalizeOttoTurn(parked, interactive);
+    expect(fin.interrupted).toBe(true);
+    expect(log).toEqual([]);
+    return { serialized: fin.newOttoState, resume };
+  }
+
+  it("SDK truth: fromString drops the ports and run() IGNORES options.context on a resumed state", async () => {
+    const log: string[] = [];
+    const { serialized, resume } = await parkGatedCall(log);
+
+    // The exact pre-fix production sequence: restore without a context, then hand the freshly built
+    // live context to run() as an option.
+    const restored = await RunState.fromString(resume.agent, serialized);
+    expect((restored as unknown as { _context: { context: OttoContext } })._context.context.startGen)
+      .toBeUndefined(); // JSON kept the scalars, dropped the port
+    restored.approve(restored.getInterruptions()[0]!);
+
+    const ctx = liveCtx();
+    const resumed = await sdkRun(resume.agent, restored, { context: ctx, maxTurns: OTTO_MAX_STEPS });
+
+    expect(log).toEqual([]); // the port was NEVER reached — this is #566
+    // …and the failure is invisible: the throw came back as the tool's own result text.
+    expect(resumed.state.toString()).toContain("startGen port required");
+  });
+
+  it("tryRestoreRunStateWithContext re-attaches the live ports, so the approved tool reaches them", async () => {
+    const log: string[] = [];
+    const { serialized, resume } = await parkGatedCall(log);
+    const ctx = liveCtx();
+
+    const restored = await tryRestoreRunStateWithContext(resume.agent, serialized, ctx);
+    expect(restored).not.toBeNull();
+    restored!.approve(restored!.getInterruptions()[0]!);
+
+    const resumed = await runOttoTurn(
+      { orgId: "org_t", refId: "fixture:566-resume", input: restored! },
+      ctx,
+      resume,
+    );
+    const fin = finalizeOttoTurn(resumed, resume);
+
+    expect(log).toEqual([`sp_1:{"id":"job_1","disposition":"fresh"}:-`]); // port called exactly once
+    expect(fin.interrupted).toBe(false);
+    expect(fin.text).toBe("Done!");
+  });
+
+  it("fields assigned to the context AFTER the restore still reach the tool (late-bound consent)", async () => {
+    // ottoApprove can only compute the hash-time consent snapshot and the factory attemptId once it
+    // has inspected the restored interruptions, so it assigns them onto the already-restored
+    // context. That works only because the state holds the context BY REFERENCE — assert it does.
+    const log: string[] = [];
+    const { serialized, resume } = await parkGatedCall(log);
+    const ctx = liveCtx();
+
+    const restored = (await tryRestoreRunStateWithContext(resume.agent, serialized, ctx))!;
+    restored.approve(restored.getInterruptions()[0]!);
+    ctx.approvalConsent = { scheduledPostId: "sp_1", expectedUpdatedAt: "2026-07-31T00:00:00.000Z" };
+
+    await runOttoTurn({ orgId: "org_t", refId: "fixture:566-late", input: restored }, ctx, resume);
+
+    expect(log).toEqual([`sp_1:{"id":"job_1","disposition":"fresh"}:2026-07-31T00:00:00.000Z`]);
+  });
+
+  /** A BILLABLE resume runtime. The $0 fixture manifest short-circuits withLlmBudget entirely
+   *  (`paid:false` ⇒ no reserve, no settle), which would make "reserveCredits was not called" true
+   *  no matter what the guard did. Billing must be genuinely reachable for that assertion to mean
+   *  anything, so the guard tests below run on a paid manifest and prove reachability first. */
+  function paidResumeRuntime(log: string[]) {
+    const deps: OttoRuntimeDeps = {
+      modelRuntime: paidFixtureModelRuntime(
+        fakeToolCallingModel("approveScheduledPost", { scheduledPostId: "sp_1" }, "Done!"),
+      ),
+      skills: [makePortGatedSkill(log)],
+      traceSink: noopTraceSink,
+    };
+    return createOttoRuntime(deps, "approval-resume");
+  }
+
+  it("the shared runner REFUSES a resumed state whose context is not the live one (fail-closed, no reservation)", async () => {
+    const log: string[] = [];
+    const { serialized } = await parkGatedCall(log);
+    const paidResume = paidResumeRuntime(log);
+    const restored = await RunState.fromString(paidResume.agent, serialized);
+    restored.approve(restored.getInterruptions()[0]!);
+
+    // Control: on this very runtime a fresh run DOES reserve — so the assertion below is real.
+    meterMocks.reserveCredits.mockClear();
+    await runOttoTurn({ orgId: "org_t", refId: "fixture:566-control", input: "hi" }, liveCtx(), paidResume);
+    expect(meterMocks.reserveCredits).toHaveBeenCalled();
+
+    meterMocks.reserveCredits.mockClear();
+    await expect(
+      runOttoTurn({ orgId: "org_t", refId: "fixture:566-guard", input: restored }, liveCtx(), paidResume),
+    ).rejects.toThrow(/tryRestoreRunStateWithContext/);
+
+    expect(log).toEqual([]);
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled(); // refused before any spend or model call
+  });
+
+  // #566 R2 review: the first version of the guard only compared identity when `_context.context`
+  // happened to be readable, so a missing field — an SDK internal reshape, a second incompatible
+  // SDK copy, or a test double — waved the run straight through into metering. The classification
+  // is now positive: string/array = fresh, anything else = resume and must prove its context.
+  it("refuses a resume-shaped input that exposes NO comparable context, instead of waving it into billing", async () => {
+    const paidResume = paidResumeRuntime([]);
+    meterMocks.reserveCredits.mockClear();
+
+    const outcomes: string[] = [];
+    for (const shapeless of [{}, { _context: null }, { _context: {} }, { _context: { context: undefined } }]) {
+      await runOttoTurn(
+        { orgId: "org_t", refId: "fixture:566-shapeless", input: shapeless as never },
+        liveCtx(),
+        paidResume,
+      ).then(
+        () => outcomes.push("RESOLVED — the runner accepted an unverifiable state"),
+        (e: unknown) => outcomes.push(e instanceof Error ? e.message : String(e)),
+      );
+    }
+
+    // The load-bearing consequence of failing OPEN is that billing is entered at all — assert that
+    // first, so a regression reads as a money finding rather than a message mismatch.
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled();
+    for (const outcome of outcomes) expect(outcome).toMatch(/exposes no comparable RunState context/);
+  });
+
+  it("still lets the two fresh-input shapes through untouched (string and item array)", async () => {
+    const { resume } = await parkGatedCall([]);
+    // A fresh run legitimately has no RunState context — the SDK honours options.context there.
+    await expect(
+      runOttoTurn({ orgId: "org_t", refId: "fixture:566-fresh-string", input: "hello" }, liveCtx(), resume),
+    ).resolves.toBeDefined();
+    await expect(
+      runOttoTurn(
+        { orgId: "org_t", refId: "fixture:566-fresh-array", input: [{ role: "user", content: "hello" }] as never },
+        liveCtx(),
+        resume,
+      ),
+    ).resolves.toBeDefined();
   });
 });

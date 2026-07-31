@@ -1,4 +1,4 @@
-import { RunState, type Agent, type AgentInputItem } from "@openai/agents";
+import { RunContext, RunState, type Agent, type AgentInputItem } from "@openai/agents";
 
 export type RefImage = { label: string; dataUrl: string };
 
@@ -56,12 +56,17 @@ export function sanitizeHistory(history: AgentInputItem[]): AgentInputItem[] {
 }
 
 /**
- * Restore a persisted RunState, returning null instead of throwing on a corrupt or
- * schema-version-incompatible serialized state (F24). RunState.fromString throws on an
+ * Restore a persisted RunState for READING ONLY (history extraction, or a deterministic
+ * mutate-and-reserialize such as ottoReject's park hygiene), returning null instead of throwing on
+ * a corrupt or schema-version-incompatible serialized state (F24). RunState.fromString throws on an
  * @openai/agents schema bump or a truncated/garbled ottoState; unguarded, that bricks EVERY
  * existing thread forever. Callers treat null as "no prior state": turn paths start a fresh
  * run (dropping history, which self-heals ottoState on the next write); resume paths (approve /
  * worker verdict) surface a clean error / skip rather than resume an unrecoverable state.
+ *
+ * NEVER run the state this returns (#566). The context it carries was rebuilt from JSON, so every
+ * function-valued port is gone — use tryRestoreRunStateWithContext for any restore that will be fed
+ * back into run().
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors RunState.fromString's own `Agent<any, any>` constraint; Agent is invariant in its context param, so `Agent<unknown>` would reject the concrete `Agent<OttoContext>`.
 export async function tryRestoreRunState<TAgent extends Agent<any, any>>(
@@ -72,6 +77,40 @@ export async function tryRestoreRunState<TAgent extends Agent<any, any>>(
     return await RunState.fromString<unknown, TAgent>(agent, serialized);
   } catch (e) {
     console.warn("[otto] could not restore prior run state — starting fresh:", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
+/**
+ * Restore a persisted RunState for a RESUME-AND-RUN path, re-attaching the LIVE context (#566).
+ *
+ * Why this exists next to tryRestoreRunState: the serialized state is JSON, so restoring it rebuilds
+ * the context WITHOUT any of its function fields — ctx.startGen, ctx.schedule.*, ctx.runFactoryBatch
+ * and every other injected port are simply gone, leaving only the scalars. Rebuilding a full context
+ * afterwards does not help either: run(agent, state, { context }) SILENTLY IGNORES options.context
+ * whenever the input is a RunState (the resumed state's own context wins). So an approve that
+ * restored with fromString re-entered the parked tool port-less, the tool's fail-closed guard threw,
+ * and the SDK folded that throw into the tool's return value — invisible in the logs. Production
+ * evidence on #566: 3 "confirm" clicks over five weeks, 0 generations, 0 log lines.
+ *
+ * The context is passed BY REFERENCE: fields assigned after this call are still visible to the tools
+ * (ottoApprove late-binds the consent snapshot it can only compute after inspecting the restored
+ * interruptions). The SDK's default 'merge' strategy re-merges the serialized approvals onto the
+ * live context, so approvals already recorded in the state survive the swap.
+ *
+ * Null (unrestorable state) has the same meaning as in tryRestoreRunState — the caller surfaces a
+ * clean error instead of resuming something it cannot honour.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- same `Agent<any, any>` constraint as above.
+export async function tryRestoreRunStateWithContext<TContext, TAgent extends Agent<any, any>>(
+  agent: TAgent,
+  serialized: string,
+  context: TContext,
+): Promise<RunState<TContext, TAgent> | null> {
+  try {
+    return await RunState.fromStringWithContext<TContext, TAgent>(agent, serialized, new RunContext(context));
+  } catch (e) {
+    console.warn("[otto] could not restore prior run state for resume:", e instanceof Error ? e.message : e);
     return null;
   }
 }
