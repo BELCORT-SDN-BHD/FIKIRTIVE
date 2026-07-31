@@ -191,7 +191,6 @@ function baseProps(over: Partial<OttoAppProps> = {}): OttoAppProps {
     entities: [],
     threads: [],
     balanceUsd: 0,
-    balanceCredits: 0,
     userName: "founder",
     memory: [],
     records: [],

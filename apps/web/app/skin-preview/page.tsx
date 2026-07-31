@@ -104,7 +104,6 @@ export default async function SkinPreviewPage({
       entities={entities}
       threads={[]}
       balanceUsd={84}
-      balanceCredits={840}
       userName="rosa"
       memory={memory}
       records={records}

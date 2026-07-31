@@ -4,6 +4,7 @@ import { Search, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { parseResearchCardPayload, RESEARCH_TIER_LABELS, type ResearchStatusView } from "@/lib/research-card";
 import { approveResearch, getResearchCard } from "@/lib/research-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
 import { canAffordPack } from "./pack-credit-math";
 
@@ -70,9 +71,16 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
       if (next === "done") {
         // The RESEARCH_REPORT is a separate durable message — refetch the thread so it renders.
         void onRefresh?.();
+        // Approve returns a jobId BEFORE the worker spends, so the approve-time callback
+        // always reports a pre-charge balance. THIS is where the money actually landed (#550).
+        notifyBalanceRefresh();
         return false;
       }
-      if (next === "failed") return false;
+      if (next === "failed") {
+        // A failed research run is refunded — the merchant should see it come back.
+        notifyBalanceRefresh();
+        return false;
+      }
       return true; // still planned/running → keep polling
     } catch {
       return false;

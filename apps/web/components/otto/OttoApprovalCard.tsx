@@ -14,6 +14,7 @@ import React, { useState } from "react";
 import { ShieldCheck, CheckCircle2, Loader2, CalendarCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { asApprovalCardPayload, approvalCardView } from "@/lib/approval-card-view";
 
 export interface OttoApprovalCardProps {
@@ -63,6 +64,10 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
     } catch {
       setErrorMsg("Couldn't submit — please try again.");
       setLocal("idle");
+    } finally {
+      // Approving resumes a PARKED PAID generation, so this is a real charge moment —
+      // and an already-resolved/errored outcome can still have spent (#550).
+      notifyBalanceRefresh();
     }
   }
 

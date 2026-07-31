@@ -4,6 +4,7 @@ import {
   CANVAS_IMAGE_MAX_VARIANT_COUNT,
   canvasGenCostQuote,
   clampImageVariantCount,
+  genCostHint,
 } from "../canvas-gen-costs";
 
 describe("canvasGenCostQuote", () => {
@@ -20,6 +21,20 @@ describe("canvasGenCostQuote", () => {
     const serverQuote = { imageCredits: 2, videoCredits: 9 };
     expect(canvasGenCostQuote(serverQuote, 3)).toEqual({ imageCredits: 6, videoCredits: 9 });
     expect(canvasGenCostQuote(serverQuote, 99)).toEqual({ imageCredits: 8, videoCredits: 9 });
+  });
+});
+
+describe("genCostHint", () => {
+  it("prices a pre-flight canvas action from the server quote alone (#550 ②)", () => {
+    expect(genCostHint(8)).toBe("Cost: 8 credits");
+    expect(genCostHint(1)).toBe("Cost: 1 credit");
+    expect(genCostHint(11.6)).toBe("Cost: 11.6 credits");
+    expect(genCostHint(1200)).toBe("Cost: 1,200 credits");
+  });
+
+  it("says it is still checking rather than inventing a price before the quote lands", () => {
+    expect(genCostHint(undefined)).toBe("Checking cost…");
+    expect(genCostHint(null)).toBe("Checking cost…");
   });
 });
 

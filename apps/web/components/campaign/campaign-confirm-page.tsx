@@ -23,6 +23,7 @@ import {
   type ConfirmCampaignGenerationResult,
 } from "@/lib/campaign-generation-confirm";
 import type { BatchInterruption } from "@/lib/factory-batch";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { getCampaign } from "@/lib/campaign-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -141,6 +142,10 @@ function ConfirmWorkspace({
       setError("We couldn't confirm the result. Some items may have started; retry to reconcile them safely.");
     } finally {
       setBusy(false);
+      // In a finally on purpose: every exit here can have moved money. A partial batch
+      // dispatched some cells before stopping, and a transport failure cannot prove zero
+      // dispatch (see the catch above) — so the balance must be re-read either way (#550).
+      notifyBalanceRefresh();
     }
   }
 

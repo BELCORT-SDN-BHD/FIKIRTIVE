@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import DetailPanel from "@/components/asset/DetailPanel";
 import { startGen, getGenJob, getActiveGenModels } from "@/lib/gen-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { uploadFilesDirect } from "@/lib/direct-upload";
 import { finalizeCandidateUploads } from "@/lib/upload-actions";
 import type { EntityDTO } from "@/lib/types";
@@ -235,6 +236,9 @@ export default function TemplateModal({
         count: 1,
         idempotencyKey: templateRunKey(),
       });
+      // Announce before branching: an "unknown" start is outcome-unknown, not proven-free
+      // — the job may already be reserved (#550).
+      notifyBalanceRefresh();
       if (cancelledRef.current) return;
       if (started.kind === "unknown") {
         dispatchRun({ type: "unknown" });
@@ -255,6 +259,8 @@ export default function TemplateModal({
       }
     } finally {
       inFlightRef.current = false;
+      // …and again once the run leaves, so the settle/refund shows too.
+      notifyBalanceRefresh();
     }
   }
 

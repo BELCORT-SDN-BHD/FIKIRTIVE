@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { bustUrl } from "@/lib/media-retry";
 import { readPick, writePick } from "@/lib/result-pick";
 import { coworkVaryCard } from "@/lib/cowork-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
 
 export interface OttoResultProps {
@@ -226,6 +227,8 @@ export function OttoResult({ payload, onTweak, sourceCardId, onMakeAnother }: Ot
       setMakeAnotherError("Couldn't queue another — please try again.");
     } finally {
       setMakingAnother(false);
+      // "Make another" queues a fresh paid variant (#550).
+      notifyBalanceRefresh();
     }
   }
 
