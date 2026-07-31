@@ -194,6 +194,10 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     campaign decisions / external account connections … come from you and stay under your
  *     control」,正文照此枚举。Founder 的「商家数据商家权利」是产品方向,不等于本页可以写
  *     无界所有权句 —— 归属定界属法务,不在本 PR。
+ *     ⚠️ r5 更正:r4 自称「照此枚举」但并未逐词照抄 —— 把 `uploaded files` 写成了 `uploads`,
+ *     并整项漏掉 `external account connections`。r5 已把该句逐词对齐 terms/page.tsx:101
+ *     的完整清单(六项俱全、用词一致)。教训同「自引用行号」那条:声称「照抄」时要真的
+ *     逐词比对,不能凭印象转述。
  *   · 【P2】总览段的 Meta disconnect 补「when you are signed in as yourself」,与明细段
  *     (meta-actions.ts:106 冒充即返回 error)一致。
  *   · 【P2】saved reference 的「until you edit them」收窄 —— 重建引用发生在
@@ -284,11 +288,12 @@ export default async function DataDeletionPage({
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">What you can delete yourself</h2>
           <p>
-            The prompts, uploads, brand material, contacts and campaign decisions in your workspace come from you and
-            stay under your control. These deletions are in the product today: you run them yourself and you do not
-            have to ask us. They do not all ask the same before acting — a campaign and a conversation make you type
-            the name, a generated asset asks a plain yes, and a saved reference runs straight away; so does a Meta
-            disconnect when you are signed in as yourself. Each entry below says which, and what is left behind.
+            The prompts, uploaded files, brand material, contacts, campaign decisions and external account connections
+            in your workspace come from you and stay under your control. These deletions are in the product today: you
+            run them yourself and you do not have to ask us. They do not all ask the same before acting — a campaign
+            and a conversation make you type the name, a generated asset asks a plain yes, and a saved reference runs
+            straight away; so does a Meta disconnect when you are signed in as yourself. Each entry below says which,
+            and what is left behind.
           </p>
           <ul className="list-disc space-y-2 pl-5">
             <li>
