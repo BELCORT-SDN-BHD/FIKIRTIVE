@@ -201,8 +201,9 @@ describe("skill failure logging carries no merchant content (#566 R2)", () => {
   it("a THROWN error: the log names the skill and a category, never the message", async () => {
     const tool = invokerFor(async () => { throw new Error(LEAKY); });
     const cap = captureConsole();
+    let out: unknown;
     try {
-      await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+      out = await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
     } finally {
       cap.restore();
     }
@@ -211,6 +212,55 @@ describe("skill failure logging carries no merchant content (#566 R2)", () => {
     expect(log).toContain("category=Error");
     for (const secret of SECRETS) expect(log).not.toContain(secret);
     expect(log).not.toContain("Invalid URL");
+    // Both halves of the contract, not just the log half: the merchant's reason is untouched —
+    // the SDK folds the throw into the tool result the model reads and answers from.
+    expect(String(out)).toContain("SHHH-9f2a");
+  });
+
+  // #566 R3 review: the earlier spoof case used LEAKY as the fake `name`, which carries punctuation
+  // and so was rejected by the (now removed) shape regex — it never exercised a name that PASSED
+  // validation. This is that case: a plausible identifier-shaped secret. The category must come from
+  // the hardcoded class table, so a settable `.name` cannot smuggle anything into the log.
+  it("a THROWN error with an identifier-shaped spoofed name: still logs the fixed category", async () => {
+    const smuggled = "TenantSecret123";
+    const tool = invokerFor(async () => {
+      const e = new Error("harmless");
+      e.name = smuggled; // Error.name is writable — shape validation would have accepted this
+      throw e;
+    });
+    const cap = captureConsole();
+    let out: unknown;
+    try {
+      out = await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+    } finally {
+      cap.restore();
+    }
+    const log = cap.lines.join("\n");
+    expect(log).toContain("leakProbe");
+    expect(log).toContain("category=Error");
+    expect(log).not.toContain(smuggled);
+    // The SDK does surface the spoofed name to the MODEL (observed: "Error: TenantSecret123:
+    // harmless"). That is the conversation channel, which this change deliberately leaves alone;
+    // the assertion above is that the LOG channel stays clean.
+    expect(String(out)).toContain(smuggled);
+  });
+
+  it("a getter-supplied name is never invoked into the log either", async () => {
+    const smuggled = "GetterLeak456";
+    const tool = invokerFor(async () => {
+      const e = new Error("harmless");
+      Object.defineProperty(e, "name", { get: () => smuggled });
+      throw e;
+    });
+    const cap = captureConsole();
+    try {
+      await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+    } finally {
+      cap.restore();
+    }
+    const log = cap.lines.join("\n");
+    expect(log).toContain("category=Error");
+    expect(log).not.toContain(smuggled);
   });
 
   it("a RETURNED { error }: same — the merchant still gets the reason, the log does not", async () => {
@@ -233,26 +283,50 @@ describe("skill failure logging carries no merchant content (#566 R2)", () => {
   it("a non-Error throw: the whole object is never stringified into the log", async () => {
     const tool = invokerFor(async () => { throw { hostname: "tenant-acme.internal.example.com", token: "SHHH-9f2a" }; });
     const cap = captureConsole();
+    let out: unknown;
     try {
-      await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+      out = await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
     } finally {
       cap.restore();
     }
     const log = cap.lines.join("\n");
     expect(log).toContain("category=object");
     for (const secret of SECRETS) expect(log).not.toContain(secret);
+    // Return-value half, recorded honestly: for a NON-Error throw the SDK's own default error
+    // function stringifies the value, so the payload becomes "[object Object]" and never reaches
+    // the model either. That is upstream SDK behaviour on a shape no production skill uses (they
+    // all throw Errors or return { error }) — pinned here so a future SDK change is visible, NOT
+    // presented as this change preserving the merchant's reason on this path.
+    expect(String(out)).toContain("[object Object]");
+    for (const secret of SECRETS) expect(String(out)).not.toContain(secret);
   });
 
-  it("skillErrorCategory never returns anything derived from the value's contents", () => {
+  it("skillErrorCategory returns only hardcoded literals, never anything read off the value", () => {
     expect(skillErrorCategory(new Error(LEAKY))).toBe("Error");
     expect(skillErrorCategory(new TypeError(LEAKY))).toBe("TypeError");
+    expect(skillErrorCategory(new RangeError(LEAKY))).toBe("RangeError");
     expect(skillErrorCategory(LEAKY)).toBe("string");
     expect(skillErrorCategory({ msg: LEAKY })).toBe("object");
     expect(skillErrorCategory(null)).toBe("null");
     expect(skillErrorCategory(undefined)).toBe("undefined");
-    // A hostile `name` (writable on Error) cannot smuggle content through the allowlist.
-    const spoofed = new Error("x");
-    spoofed.name = LEAKY;
-    expect(skillErrorCategory(spoofed)).toBe("Error");
+    // A settable `.name` cannot smuggle content — not with punctuation…
+    const punctuated = new Error("x");
+    punctuated.name = LEAKY;
+    expect(skillErrorCategory(punctuated)).toBe("Error");
+    // …and not with an identifier shape that any regex would have waved through (R3 review).
+    const identifierShaped = new Error("x");
+    identifierShaped.name = "TenantSecret123";
+    expect(skillErrorCategory(identifierShaped)).toBe("Error");
+    // A getter is never invoked either.
+    const viaGetter = new Error("x");
+    Object.defineProperty(viaGetter, "name", { get: () => "GetterLeak456" });
+    expect(skillErrorCategory(viaGetter)).toBe("Error");
+    // A custom subclass collapses to the generic token rather than exposing its author-chosen name.
+    class TenantScopedFailure extends Error {}
+    expect(skillErrorCategory(new TenantScopedFailure("x"))).toBe("Error");
+    // A spoofed name on a REAL built-in subclass still reports the built-in, from the table.
+    const spoofedType = new TypeError("x");
+    spoofedType.name = "TenantSecret123";
+    expect(skillErrorCategory(spoofedType)).toBe("TypeError");
   });
 });
