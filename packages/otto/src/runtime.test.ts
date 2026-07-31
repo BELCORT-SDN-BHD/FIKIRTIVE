@@ -43,7 +43,14 @@ vi.mock("@fikirtive/db", async (importOriginal) => ({
 import { z } from "zod";
 import { Agent, RunState, Usage, MaxTurnsExceededError, run as sdkRun } from "@openai/agents";
 import type { Model, ModelRequest, ModelResponse, StreamEvent } from "@openai/agents";
-import { OTTO_MAX_STEPS, OTTO_OUTPUT_CAP_TOKENS, llmPricesFor, ottoLlmMargin } from "@fikirtive/core";
+import {
+  OTTO_MAX_STEPS,
+  OTTO_OUTPUT_CAP_TOKENS,
+  OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
+  llmPricesFor,
+  ottoLlmMargin,
+  turnBudgetInternal,
+} from "@fikirtive/core";
 import {
   createOttoRuntime,
   runOttoTurn,
@@ -273,6 +280,19 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.usageOnError?.(truncated)).toMatchObject({ inputTokens: 7, outputTokens: 3 });
     expect(args.usageOnError?.(new MaxTurnsExceededError("no state"))).toBeNull();
     expect(args.usageOnError?.(new Error("boom"))).toBeNull();
+  });
+
+  it("#543: the conversation turn carries the 40-internal hold cap (was a 120-internal hold)", () => {
+    const args = ottoBudgetArgsFor(ottoInteractiveRuntime, { orgId: "org_1", refId: "otto-turn:m1", input: "x" });
+    expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
+    expect(args.reserveCapInternal).toBe(40);
+    // The worst case it caps, at the live prices/margin/steps.
+    expect(turnBudgetInternal(llmPricesFor("claude-sonnet-4-6"), ottoLlmMargin(), OTTO_MAX_STEPS)).toBe(120);
+  });
+
+  it("#543: the approval-resume turn carries the same cap (same conversation, same hold)", () => {
+    const args = ottoBudgetArgsFor(ottoApprovalResumeRuntime, { orgId: "o", refId: "otto-turn:m2", input: "x" });
+    expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
   });
 
   it("production worker-verdict: single-step reserve (maxSteps 1)", () => {

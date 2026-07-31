@@ -3,7 +3,7 @@ import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
 import { runAsSystem, type UserPrincipal } from "@fikirtive/db/principal";
-import { newId, FOUNDER_OWNER_ID, BETA_INITIAL_GRANT_CREDITS, roleAllows, isRole, isOrgRole, type Section, type Action, type Role } from "@fikirtive/core";
+import { newId, FOUNDER_OWNER_ID, SIGNUP_GRANT_CREDITS, roleAllows, isRole, isOrgRole, type Section, type Action, type Role } from "@fikirtive/core";
 
 /** In-handler auth (R7): re-assert auth()+allowlist INSIDE every action, not just
  *  at the opt-in proxy wall. Returns the email or an {error} the caller returns
@@ -130,7 +130,14 @@ export async function resolveUserPrincipal(
 }
 
 /** Create (idempotently) a personal Organization + Membership(owner) + CreditAccount with the
- *  one-time beta grant. Returns the org id, or null if it can't complete (NEVER "founder").
+ *  one-time welcome grant. Returns the org id, or null if it can't complete (NEVER "founder").
+ *
+ *  #543 — the workspace is named after the merchant's own shop. The signup form's third field
+ *  is the shop name; it travels as the account name and lands here, so the first screen shows
+ *  the merchant their own shop instead of their email address. The org name is set at CREATE
+ *  only (`update: {}`) — a later bootstrap never renames a workspace the merchant may have
+ *  already renamed themselves. No shop name (magic-link/OAuth identities) → the email, exactly
+ *  as before.
  *
  *  CONCURRENCY-IDEMPOTENT: the org id is DETERMINISTIC (`org_<userId>`), so two simultaneous
  *  callers (two tabs, or events.signIn racing the first request) converge on the SAME org
@@ -151,7 +158,9 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
   const orgId = `org_${userId}`; // deterministic → concurrent callers converge on ONE org
   try {
     await runAsSystem("auth:bootstrap-personal-org", () => prisma.$transaction(async (tx) => {
-      await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: email }, update: {} });
+      const owner = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
+      const workspaceName = (owner?.name ?? "").trim() || email;
+      await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: workspaceName }, update: {} });
       await tx.membership.upsert({
         where: { userId_orgId: { userId, orgId } },
         create: { id: newId(), userId, orgId, role: "owner" },
@@ -164,15 +173,24 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       });
       // carry the active org so a future multi-org switcher needs no auth-table migration
       await tx.user.update({ where: { id: userId }, data: { activeOrgId: orgId } });
-      // Beta grant ATOMIC with the org/membership writes (grantCreditsTx runs in THIS tx): if it
-      // fails the whole tx rolls back — no "org exists but 0 credits" limbo — and the next request
-      // re-runs bootstrap cleanly. Idempotent on "signup:<orgId>" (createMany skipDuplicates), so a
-      // replay or concurrent winner no-ops. Credit writes stay inside the credit service.
+      // Welcome grant ATOMIC with the org/membership writes (grantCreditsTx runs in THIS tx): if
+      // it fails the whole tx rolls back — no "org exists but 0 credits" limbo — and the next
+      // request re-runs bootstrap cleanly. Idempotent on "signup:<orgId>" (createMany
+      // skipDuplicates), so a replay or concurrent winner no-ops. Credit writes stay inside the
+      // credit service.
+      //
+      // #543 — the AMOUNT changed (100 → 20 displayed credits, the Founder's signup grant) and
+      // NOTHING else. The idempotency key stays "signup:<orgId>" deliberately: a new key would
+      // not dedupe against the rows already written, so every existing org would be granted a
+      // SECOND time on its next sign-in. `orgId` is `org_<userId>` and a User row is unique per
+      // email forever, so this key is already once-per-merchant-for-life.
       await grantCreditsTx(tx, {
         orgId,
-        amount: BETA_INITIAL_GRANT_CREDITS,
+        amount: SIGNUP_GRANT_CREDITS,
         source: "BETA",
-        reason: "beta signup grant",
+        // Merchant-visible ledger label (account-actions surfaces `reason`). Honest now that
+        // the closed beta isn't the reason anyone gets these credits.
+        reason: "signup welcome grant",
         // #463: name the writer. The ledger's createdBy defaulted to "" here — the one place
         // the beta grant was unattributable. Same value as the system reason above; amount,
         // source, idempotencyKey and the dedup semantics are untouched.

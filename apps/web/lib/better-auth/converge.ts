@@ -21,12 +21,20 @@ export async function convergeIdentity(input: { email: string; name?: string | n
   await runAsSystem("auth:converge-identity", async () => {
     try {
       // 1. Ensure the canonical User row exists (BA identities reconnect to the tenant graph by email).
-      let user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+      //    #544 — mirror emailVerified onto the canonical row. We only reach here when
+      //    input.emailVerified is true (the early return above), so a create stamps the
+      //    verification and an existing row is stamped ONCE if it is still null. The canonical
+      //    column is a DateTime? (next-auth convention): a timestamp means verified. Set-once —
+      //    a later convergence never overwrites an earlier stamp (the `emailVerified: null`
+      //    filter no-ops once set), so the moment-of-verification is preserved.
+      let user = await prisma.user.findUnique({ where: { email }, select: { id: true, emailVerified: true } });
       if (!user) {
         user = await prisma.user.create({
-          data: { email, name: input.name ?? null, image: input.image ?? null },
-          select: { id: true },
+          data: { email, name: input.name ?? null, image: input.image ?? null, emailVerified: new Date() },
+          select: { id: true, emailVerified: true },
         });
+      } else if (!user.emailVerified) {
+        await prisma.user.updateMany({ where: { email, emailVerified: null }, data: { emailVerified: new Date() } });
       }
       // 2. Founder super-admin self-heal (promote-only, idempotent).
       if (isFounderAdmin(email)) {

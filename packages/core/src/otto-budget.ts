@@ -43,3 +43,27 @@ export function turnBudgetInternal(
 ): number {
   return oneStepFloorInternal(prices, margin) * maxSteps;
 }
+
+/**
+ * The HOLD a single Otto CONVERSATION turn places on the balance, in INTERNAL credits.
+ * 40 internal = 4 displayed credits.
+ *
+ * #543 Founder decision (2026-07-31). The derived worst case above assumes every one of
+ * OTTO_MAX_STEPS steps burns the full context and output cap, which at live sonnet prices
+ * and the 2.0× margin is 120 internal — 12 displayed credits held on every turn. With a
+ * 20-credit welcome grant that hold is the thing that strands the last credits: a merchant
+ * with 11 credits left cannot start a turn at all. 40 internal is still comfortably above
+ * the measured single-turn peak (33 internal / 3.3 displayed), so it is a cap on the HOLD,
+ * not a change to what a turn costs.
+ *
+ * Scope: the conversation turn only (runtime.ts ottoBudgetArgsFor). Research jobs and
+ * single-call helpers keep the derived worst-case budget.
+ *
+ * RESERVE/SETTLE semantics are untouched. settleCredits still clamps the charge to
+ * A = min(actual, held) and refunds the remainder, balance still cannot go negative, and
+ * the finalizer indexes still make settle/refund exactly-once. The only behaviour that
+ * moves is the direction of the residual on a pathological turn: instead of over-holding,
+ * a turn whose ACTUAL cost exceeds the cap is charged the cap — a bounded, per-turn
+ * under-charge (never an over-charge, never a merchant-visible loss).
+ */
+export const OTTO_CONVERSATION_TURN_RESERVE_INTERNAL = 40;

@@ -101,7 +101,14 @@ export default async function LoginPage({
 
           <LoginForm from={from ?? "/"} />
 
-          <p className="mt-6 text-center text-[12px] leading-[1.6] text-muted-foreground">
+          <p className="mt-6 text-center text-[13px] text-muted-foreground">
+            New here?{" "}
+            <a href="/signup" className="font-semibold text-foreground underline underline-offset-4">
+              Create an account
+            </a>
+          </p>
+
+          <p className="mt-4 text-center text-[12px] leading-[1.6] text-muted-foreground">
             By continuing you agree to our{" "}
             <a href="/terms" className="underline">Terms</a> and{" "}
             <a href="/privacy" className="underline">Privacy Policy</a>.
