@@ -233,6 +233,28 @@ export function ottoBudgetArgsFor(
 }
 
 /**
+ * Fail-closed guard for the resume leg (#566). The SDK IGNORES options.context when the input is a
+ * RunState — the state's OWN context wins — so a state restored with RunState.fromString resumes
+ * with a JSON-rebuilt context that has lost every function port (ctx.startGen, ctx.schedule.*, …).
+ * That failure was silent in production for five weeks. Restoring through
+ * tryRestoreRunStateWithContext(agent, serialized, ctx) is the fix; this guard is what stops the
+ * mistake from ever being made again quietly: a resumed state whose context is not the live one
+ * throws HERE, before any model call, instead of re-entering the tool port-less.
+ *
+ * Read duck-typed rather than via `instanceof RunState` so a second copy of @openai/agents in the
+ * tree (or a test double) can never make the guard silently fail open.
+ */
+function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], context: OttoContext): void {
+  const stateContext = (input as { _context?: { context?: unknown } } | null | undefined)?._context?.context;
+  if (stateContext !== undefined && stateContext !== context) {
+    throw new Error(
+      "[otto] resumed RunState carries a different context object than the one passed to runOttoTurn — " +
+        "its injected ports would be missing. Restore it with tryRestoreRunStateWithContext(agent, serialized, ctx) (#566).",
+    );
+  }
+}
+
+/**
  * The ONE metered agent-loop path every entry runs through: reserve → run →
  * usage → settle/refund, with the profile's step cap on both sides. Streaming
  * differs ONLY in draining events through `onStream` and awaiting `completed`
@@ -245,6 +267,7 @@ export async function runOttoTurn(
   execution: OttoRuntimeExecution = defaultRuntimeExecution,
 ): Promise<OttoTurnRunResult> {
   const mr = runtime.modelRuntime;
+  assertResumedStateCarriesLiveContext(request.input, context);
   return execution.meter(
     ottoBudgetArgsFor(runtime, request, execution.maxTurnsExceededError),
     async () => {

@@ -51,6 +51,7 @@ import {
   buildUserTurn,
   sanitizeHistory,
   tryRestoreRunState,
+  tryRestoreRunStateWithContext,
   approvalRefOf,
 } from "@fikirtive/otto";
 import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirtive/otto";
@@ -454,6 +455,21 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
 // buildOttoContext — exported for 1.8b reuse
 // ---------------------------------------------------------------------------
 
+/** W-B3-F-P factory batch port. Kept as its own factory because ottoApprove can only learn the
+ *  attemptId AFTER it has inspected the restored interruptions, so it rebuilds this ONE port on the
+ *  already-built context (#566) instead of building a second context. The attemptId still never
+ *  comes from model args — only from a hash-verified, CAS-consumed APPROVAL_CARD.id. */
+function makeFactoryBatchPort(factoryAttemptId?: string): NonNullable<OttoContext["runFactoryBatch"]> {
+  return {
+    variant: (input) => factoryAttemptId
+      ? runVariantBatch({ ...input, attemptId: factoryAttemptId })
+      : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
+    bulk: (input) => factoryAttemptId
+      ? runBulkGrid({ ...input, attemptId: factoryAttemptId })
+      : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
+  };
+}
+
 export async function buildOttoContext({
   ownerId,
   projectId,
@@ -527,14 +543,7 @@ export async function buildOttoContext({
     startGen: startCoworkGen,
     // W-B3-F-P: factory batch port — routes to the SAME owner-scoped server actions. The model
     // never receives an attemptId; only ottoApprove can inject the verified + consumed card id.
-    runFactoryBatch: {
-      variant: (input) => factoryAttemptId
-        ? runVariantBatch({ ...input, attemptId: factoryAttemptId })
-        : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
-      bulk: (input) => factoryAttemptId
-        ? runBulkGrid({ ...input, attemptId: factoryAttemptId })
-        : Promise.resolve({ error: "That batch approval attempt is missing — ask Otto to propose it again." }),
-    },
+    runFactoryBatch: makeFactoryBatchPort(factoryAttemptId),
     brandContext,
     availableRefs,
     simpleMode: simpleMode ?? false,
@@ -1399,10 +1408,23 @@ export async function ottoApprove(raw: unknown): Promise<
     if (!thread.ottoState) return { error: "Nothing to approve." };
     const priorOttoState = thread.ottoState;
 
-    // Rehydrate the paused RunState. On an unrestorable state (schema bump / corruption, F24)
-    // we can't resume the interruption this approval refers to — surface a clean error instead
-    // of throwing (which would 500 every approve on a stale thread).
-    const state = await tryRestoreRunState(ottoApprovalResumeRuntime.agent, priorOttoState);
+    // Build the LIVE context BEFORE rehydrating (#566). The serialized RunState carries only JSON,
+    // so restoring it rebuilds a context with every injected port erased — and run() ignores
+    // options.context for a resumed state, so the ports cannot be re-attached afterwards. The
+    // context therefore has to exist first and ride INTO the restore. Card-derived fields
+    // (approvalConsent / the factory attemptId) can only be computed after the interruptions are
+    // known, so they are late-bound onto this SAME object below — the state holds it by reference.
+    const ctx = await buildOttoContext({
+      ownerId,
+      projectId: thread.projectId,
+      threadId,
+      sourceGenerationId: null,
+    });
+
+    // Rehydrate the paused RunState with that live context. On an unrestorable state (schema bump /
+    // corruption, F24) we can't resume the interruption this approval refers to — surface a clean
+    // error instead of throwing (which would 500 every approve on a stale thread).
+    const state = await tryRestoreRunStateWithContext(ottoApprovalResumeRuntime.agent, priorOttoState, ctx);
     if (!state) return { error: "This conversation's approval state couldn't be restored — please ask Otto to propose it again." };
 
     // Find the matching generate interruption (cardId binding)
@@ -1568,16 +1590,16 @@ export async function ottoApprove(raw: unknown): Promise<
       state.approve(matchingInterruption as any);
     }
 
-    // Build context — injects the real startGen port (spend path) and, for a universal card,
-    // the hash-time consent snapshot (AR2 处方1) the approve skill threads to the server action.
-    const ctx = await buildOttoContext({
-      ownerId,
-      projectId: thread.projectId,
-      threadId,
-      sourceGenerationId: null,
-      approvalConsent,
-      factoryAttemptId,
-    });
+    // Late-bind the card-derived fields onto the context the restored state already holds (#566).
+    // They could not be passed to buildOttoContext above because they are only knowable once the
+    // interruptions have been matched and the card hash-verified + CAS-consumed. Assigning them
+    // here reaches the skills because the RunState holds this exact object by reference:
+    //  - approvalConsent: the hash-time snapshot (AR2 处方1) approveScheduledPost threads to the
+    //    server action's CAS; absent ⇒ that skill fails closed, exactly as before.
+    //  - runFactoryBatch: rebuilt so its closure carries the consumed APPROVAL_CARD.id. Still never
+    //    from model args; a non-factory approve keeps the attemptId-less (refusing) port.
+    ctx.approvalConsent = approvalConsent;
+    if (factoryAttemptId) ctx.runFactoryBatch = makeFactoryBatchPort(factoryAttemptId);
 
     // Resume the run, metered (LLM cost of this resume turn)
     const refId = `otto-approve:${threadId}:${cardId}`;

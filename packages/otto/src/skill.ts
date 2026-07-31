@@ -146,7 +146,20 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
         const missing = missingRequired(requires, input as Record<string, unknown>);
         if (missing.length > 0) return { needMoreInfo: missing };
       }
-      return spec.execute(input as z.infer<P>, runContext);
+      // #566: a skill failure is INVISIBLE server-side by default — the SDK folds a thrown error
+      // into the tool's return value the model reads, and a returned { error } never leaves the
+      // conversation either. That is why a broken spend gate ran silently in production for five
+      // weeks. One line per failure, here in our own wrapper, so every skill is covered at once.
+      try {
+        const out = await spec.execute(input as z.infer<P>, runContext);
+        if (out && typeof out === "object" && "error" in out) {
+          console.warn(`[otto:skill] ${spec.name} refused: ${String((out as { error: unknown }).error)}`);
+        }
+        return out;
+      } catch (e) {
+        console.error(`[otto:skill] ${spec.name} threw:`, e instanceof Error ? e.message : e);
+        throw e;
+      }
     },
   });
 
