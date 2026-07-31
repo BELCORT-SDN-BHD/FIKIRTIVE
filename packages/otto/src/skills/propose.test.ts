@@ -438,3 +438,124 @@ describe("propose requires-gate + goal", () => {
     expect(createArg.data.payload["goal"]).toBe("launch teaser");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #580 §2 — the card must be able to show the FULL spec without ever naming the
+// engine, and a downgrade must never be silent.
+// ---------------------------------------------------------------------------
+
+describe("#580 card spec summary — engine-free by construction", () => {
+  const ENGINE_WORDS = /seedance|seedream|veo|kling|ltx|pixverse|grok|wan|hailuo/i;
+
+  it("video: specSummary carries shape, length, quality and sound — and no engine name", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a 5s clip", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.specSummary).toBe("16:9 · 5s · 720p · With sound");
+    expect(cardPayload.specSummary).not.toMatch(ENGINE_WORDS);
+  });
+
+  it("image: specSummary says how many, and no engine name", () => {
+    const one = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    ).cardPayload;
+    expect(one.specSummary).toBe("1 image");
+
+    const pack = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, count: 3 },
+      makeCtx(),
+      [],
+    ).cardPayload;
+    expect(pack.specSummary).toBe("3 images");
+    expect(pack.specSummary).not.toMatch(ENGINE_WORDS);
+  });
+
+  // This is exactly WHY specSummary exists: `reason` is the audit note and it DOES
+  // name the engine, so a card that rendered `reason` would leak it. If this ever
+  // stops holding, the sanitized field can be revisited — but never the other way.
+  it("reason still names the engine (audit-only) — which is why the card renders specSummary", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.reason).toMatch(ENGINE_WORDS);
+    expect(cardPayload.specSummary).not.toMatch(ENGINE_WORDS);
+  });
+
+  it("no engine name reaches any merchant-facing field of the payload", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredDuration: 7, desiredAspect: "1:1" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.specSummary).not.toMatch(ENGINE_WORDS);
+    expect(cardPayload.downgradeNote).not.toMatch(ENGINE_WORDS);
+  });
+});
+
+describe("#580 downgrade disclosure — never silent", () => {
+  it("a length we can't do is stated in the merchant's own terms", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a 7s clip", entityIds: [], variantSel: {}, desiredDuration: 7 },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toBe("You asked for 7s — this will be 5s.");
+  });
+
+  it("a shape we can't do is stated too", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a square clip", entityIds: [], variantSel: {}, desiredAspect: "1:1" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toBe("You asked for 1:1 — this will be 16:9.");
+  });
+
+  it("both at once read as one sentence", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a square 7s clip", entityIds: [], variantSel: {}, desiredDuration: 7, desiredAspect: "1:1" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgradeNote).toBe("You asked for 7s and 1:1 — this will be 5s and 16:9.");
+  });
+
+  it("a plan that honours the request carries no note at all", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a 10s clip", entityIds: [], variantSel: {}, desiredDuration: 10, desiredAspect: "9:16" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
+    expect(cardPayload.params.durationSeconds).toBe(10);
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+  });
+
+  it("a reference-video plan that silently clamps the length says so", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "move like this", entityIds: [], variantSel: {}, desiredDuration: 10 },
+      makeCtx({ referenceVideoGenerationId: "gen_vid" }),
+      [],
+    );
+    expect(cardPayload.params.durationSeconds).toBe(5);
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toBe("You asked for 10s — this will be 5s.");
+  });
+
+  it("downgraded is never flagged without a sentence to explain it", async () => {
+    const { buildDowngradeNote } = await import("./propose.helpers.js");
+    // No identifiable mismatch (the honest fallback) — still a sentence, never silence.
+    expect(buildDowngradeNote({}, { count: 1 }, false)).toBe(
+      "Some of what you asked for isn't available here — the details above are what you'll get.",
+    );
+  });
+});

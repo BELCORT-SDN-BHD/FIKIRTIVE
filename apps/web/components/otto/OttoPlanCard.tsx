@@ -8,6 +8,7 @@ import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actio
 import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+import { notifyPlanApproved } from "./OttoTrace";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
 
@@ -34,17 +35,67 @@ export interface OttoPlanCardProps {
   onCancelled?: () => void;
 }
 
-type CardPayload = {
+/** The GEN_CARD payload as the card reads it. Mirrors the SERVER contract
+ *  (`CardPayload` in @fikirtive/otto) field for field — every field optional here
+ *  because a durable card written before a field existed must still render.
+ *  otto-plan-card-detail.test.ts is the machine gate that keeps the two in step
+ *  (#580: the card used to declare 7 of the server's fields and silently drop
+ *  every spec the merchant was paying for). */
+export type OttoPlanCardPayload = {
   kind?: string;
+  /** Routing / re-quoting id only. NEVER rendered — the engine stays confidential. */
+  model?: string;
+  params?: {
+    aspectRatio?: string;
+    resolution?: string;
+    durationSeconds?: number;
+    audio?: boolean;
+    count?: number;
+  };
+  /** Server-side audit note. Carries the engine name, so it is NEVER rendered —
+   *  `specSummary` is the sanitized line meant for the card. */
+  reason?: string;
+  /** Engine-free spec summary built server-side. Safe to render. */
+  specSummary?: string;
+  /** True when the plan could not honour part of what the merchant asked for. */
+  downgraded?: boolean;
+  /** The explicit "you asked for X — this will be Y" line for a downgraded plan. */
+  downgradeNote?: string;
   structuredPrompt?: string;
+  entityIds?: string[];
+  variantSel?: Record<string, string>;
   estimatedPriceUsd?: number;
   /** The real charge in credits (= what startGen reserves). Shown on the card. */
   estimatedCredits?: number;
   /** Present only when this image card is step 1 of a two-step video plan. Display only. */
   videoStep?: { estimatedCredits?: number };
-  entityIds?: string[];
-  variantSel?: Record<string, string>;
+  sourceGenerationId?: string;
+  /** What this creative is for (the propose information gate). */
+  goal?: string;
+  referenceVideoGenerationId?: string;
 };
+
+/** Fallback disclosure for a card that is flagged downgraded but predates the
+ *  server-built note — silence is the one thing this state may never be. */
+export const DOWNGRADE_FALLBACK_NOTE =
+  "Some of what you asked for isn't available here — the details above are what you'll get.";
+
+/** The card's spec chips, in the order the merchant reads them:
+ *  length / shape / how many / sound / quality. Only fields that apply to the
+ *  kind AND that the server actually sent are shown, and nothing here can carry
+ *  the engine name (it is read off `params`, never off `model`/`reason`). */
+export function specChipsOf(p: OttoPlanCardPayload): string[] {
+  const params = p.params;
+  if (!params) return [];
+  const isVideo = p.kind === "video";
+  const chips: string[] = [];
+  if (isVideo && typeof params.durationSeconds === "number") chips.push(`${params.durationSeconds}s`);
+  if (params.aspectRatio) chips.push(params.aspectRatio);
+  if (typeof params.count === "number" && params.count > 1) chips.push(`${params.count} images`);
+  if (isVideo && typeof params.audio === "boolean") chips.push(params.audio ? "With sound" : "No sound");
+  if (isVideo && params.resolution) chips.push(params.resolution);
+  return chips;
+}
 
 /** The plan card — Otto's "Here's what I'll make" with the one total and the approve gate.
  *  Approve resumes the parked generate via ottoApprove (the metered spend path). */
@@ -60,7 +111,7 @@ export function OttoPlanCard({
   onRetry,
   onCancelled,
 }: OttoPlanCardProps) {
-  const p = (payload ?? {}) as CardPayload;
+  const p = (payload ?? {}) as OttoPlanCardPayload;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -100,6 +151,7 @@ export function OttoPlanCard({
       : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
   const videoCredits = isTwoStep ? (p.videoStep!.estimatedCredits as number) : 0;
   const desc = p.structuredPrompt || (isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image");
+  const specChips = specChipsOf(p);
 
   const [cancelled, setCancelled] = useState(false);
 
@@ -167,6 +219,10 @@ export function OttoPlanCard({
         return;
       }
       setConfirming(false);
+      // #591: the click landed, so the parked step-trace above must stop telling the
+      // merchant that nothing is running and to confirm on the card. Display only —
+      // no spend, no run state.
+      notifyPlanApproved();
       // #498 P1b (round-4): an ottoApprove resume can park AGAIN on further
       // approval(s). Surface the server's localized receipt here, and hand the
       // chained card ids UP via onApproved so the parent marks them
@@ -264,6 +320,32 @@ export function OttoPlanCard({
             )}
           </div>
         </div>
+
+        {/* #580 — the full spec, in the merchant's words. Read off params only, so the
+            engine name can never ride along; `specSummary` is the server's sanitized
+            fallback for cards whose params predate this row. */}
+        {specChips.length > 0 ? (
+          <div className="mt-[9px] flex flex-wrap gap-[6px]">
+            {specChips.map((chip) => (
+              <span
+                key={chip}
+                className="rounded-[7px] border border-border bg-card px-[7px] py-[2px] font-mono text-[11px] text-muted-foreground"
+              >
+                {chip}
+              </span>
+            ))}
+          </div>
+        ) : p.specSummary ? (
+          <div className="mt-[9px] font-mono text-[11px] text-muted-foreground">{p.specSummary}</div>
+        ) : null}
+
+        {/* #580 — a downgrade is never silent. If the plan couldn't honour what was
+            asked for, the card says so before the merchant spends. */}
+        {p.downgraded && (
+          <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
+            {p.downgradeNote || DOWNGRADE_FALLBACK_NOTE}
+          </div>
+        )}
 
         <div className="mt-4 border-t border-border pt-4">
           {isTwoStep ? (

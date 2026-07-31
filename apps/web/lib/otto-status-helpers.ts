@@ -120,14 +120,20 @@ export function asStepData(part: RawDataPart): OttoStepData | null {
 /** A step as the trace UI consumes it. */
 export interface TraceStepView {
   label: string;
-  status: "done" | "active" | "pending";
+  status: "done" | "active" | "pending" | "waiting";
 }
 
 /**
  * Fold the ordered `data-step` events of a turn into a display step list:
  * first-seen order; a step stays "active" until its `done` event arrives. When the
  * run reports `done`, every step is marked done. We never invent "pending" steps —
- * the agent only narrates tools as it calls them. Pure + unit-tested.
+ * the agent only narrates tools as it calls them.
+ *
+ * #591 (state honesty, 宪法 11): a run PARKED on approval is doing nothing. Its
+ * unfinished steps become "waiting", never "active" — otherwise the panel shows a
+ * running progress bar while the same screen says nothing has started, and the
+ * merchant waits forever for work that will only begin when they confirm on the
+ * card. Pure + unit-tested.
  */
 export function deriveTraceSteps(
   events: OttoStepData[],
@@ -146,5 +152,10 @@ export function deriveTraceSteps(
   }
   const steps = order.map((id) => ({ ...byId.get(id)! }));
   if (liveStatus?.kind === "done") steps.forEach((s) => (s.status = "done"));
+  else if (liveStatus?.kind === "needs_approval") {
+    steps.forEach((s) => {
+      if (s.status !== "done") s.status = "waiting";
+    });
+  }
   return steps;
 }

@@ -127,4 +127,24 @@ describe("deriveTraceSteps", () => {
   it("empty events → empty list", () => {
     expect(deriveTraceSteps([], null)).toEqual([]);
   });
+
+  // #591: the merchant typed "make it", the run PARKED on approval, and the trace kept
+  // showing an active step with a rolling progress bar — while the same screen said
+  // nothing had started. An unfinished step under needs_approval is waiting, not running.
+  it("a run parked on approval leaves nothing running — unfinished steps go to waiting", () => {
+    const steps = deriveTraceSteps(
+      [startStep("a", "Planning the campaign"), doneStep("a", "Planning the campaign"), startStep("b", "Making a visual")],
+      { kind: "needs_approval", pendingCardIds: ["card_1"] },
+    );
+    expect(steps).toEqual([
+      { label: "Planning the campaign", status: "done" },
+      { label: "Making a visual", status: "waiting" },
+    ]);
+    expect(steps.some((s) => s.status === "active")).toBe(false);
+  });
+
+  it("a completed run is still done, not waiting", () => {
+    const steps = deriveTraceSteps([startStep("a", "A")], { kind: "done", threadId: "t" });
+    expect(steps.map((s) => s.status)).toEqual(["done"]);
+  });
 });

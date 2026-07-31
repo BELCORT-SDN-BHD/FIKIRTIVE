@@ -58,8 +58,16 @@ export type CardPayload = {
     audio?: boolean;
     count: number;
   };
+  /** 内部/审计用的路由说明。**含引擎名**（`GEN_VIDEO_MODEL_INFO[…].label`），
+   *  因此永远不得渲染到 UI。卡面渲染 `specSummary`。 */
   reason: string;
+  /** `reason` 的脱敏版：同样的事实，去掉引擎名（引擎保密裁定）。
+   *  这是卡面唯一可渲染的整句规格摘要。 */
+  specSummary: string;
   downgraded: boolean;
+  /** 仅当 `downgraded` 为 true 时存在：卡面必须显式展示的一行人话披露
+   *  （"You asked for X — this will be Y."）。降级不得静默。 */
+  downgradeNote?: string;
   structuredPrompt: string;
   entityIds: string[];
   variantSel: Record<string, string>;
@@ -81,6 +89,60 @@ export type ProposeCardResult = {
   cardPayload: CardPayload;
   shownPriceDisplay: number;
 };
+
+// ---------------------------------------------------------------------------
+// Card copy helpers — pure, engine-free by construction
+// ---------------------------------------------------------------------------
+
+/**
+ * 卡面规格摘要（脱敏）。与 `reason` 同源同事实，但只从 `params` 取值，
+ * 因此结构上不可能带出引擎名。UI 只渲染这一版。
+ */
+export function buildSpecSummary(
+  kind: "image" | "video",
+  params: CardPayload["params"],
+  hasSourceImage: boolean,
+): string {
+  const parts: string[] = [];
+  if (kind === "video") {
+    if (params.aspectRatio) parts.push(params.aspectRatio);
+    else parts.push(hasSourceImage ? "Same shape as your reference" : "Default shape");
+    if (typeof params.durationSeconds === "number") parts.push(`${params.durationSeconds}s`);
+    if (params.resolution) parts.push(params.resolution);
+    parts.push(params.audio ? "With sound" : "No sound");
+  } else {
+    if (params.aspectRatio) parts.push(params.aspectRatio);
+    parts.push(params.count === 1 ? "1 image" : `${params.count} images`);
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * 降级披露。只在 `downgraded` 为 true 时调用：把「商家要的」与「实际会做的」
+ * 并排说清楚。任何说不清具体项的降级也必须给出一句不撒谎的兜底，绝不静默。
+ */
+export function buildDowngradeNote(
+  requested: { aspect?: string; duration?: number },
+  params: CardPayload["params"],
+  hasSourceImage: boolean,
+): string {
+  const asked: string[] = [];
+  const instead: string[] = [];
+  if (typeof requested.duration === "number" && requested.duration !== params.durationSeconds) {
+    asked.push(`${requested.duration}s`);
+    instead.push(
+      typeof params.durationSeconds === "number" ? `${params.durationSeconds}s` : "a different length",
+    );
+  }
+  if (requested.aspect && requested.aspect !== params.aspectRatio) {
+    asked.push(requested.aspect);
+    instead.push(params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"));
+  }
+  if (asked.length === 0) {
+    return "Some of what you asked for isn't available here — the details above are what you'll get.";
+  }
+  return `You asked for ${asked.join(" and ")} — this will be ${instead.join(" and ")}.`;
+}
 
 // ---------------------------------------------------------------------------
 // Pure helper — no DB, no SDK
@@ -227,7 +289,11 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
+    specSummary: buildSpecSummary(kind, sm.params, hasSourceImage),
     downgraded: sm.downgraded,
+    ...(sm.downgraded
+      ? { downgradeNote: buildDowngradeNote(sm.requested, sm.params, hasSourceImage) }
+      : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,
     variantSel,
