@@ -4,6 +4,7 @@ import { getOrCreateDefaultProject } from "@/lib/actions";
 import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls, getMyAds, getMyAdJobs, getRecentGenerationThumbs, getProjects, getAllCoworkThreadMetas } from "@/lib/data";
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
+import { getMyProfileNames } from "@/lib/profile-actions";
 import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { getAnalytics } from "@/lib/analytics-actions";
@@ -43,7 +44,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     redirect(`/otto?${next.toString()}`);
   }
 
-  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics, profileNames] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
@@ -56,6 +57,9 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     // Analytics view payload for the Analytics screen (read-only Meta reads; default 30d range).
     // Refined in Task 5; provided here so the required OttoApp `analytics` prop typechecks.
     getAnalytics({}).catch(() => ({ state: "notConnected" as const })),
+    // #542 — the greeting's name. Read here (not derived from the email) so that the moment a
+    // merchant sets their display name on /profile, "Hi <email local part>" becomes "Hi <them>".
+    getMyProfileNames(),
   ]);
 
   // Open the requested thread (?thread=, if it's in this project) or the most recent.
@@ -79,7 +83,10 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;
-  const userName = email.split("@")[0];
+  // #542 (F-07) — the merchant's own display name when they have set one; the email's local
+  // part only as the last-resort fallback, exactly as before, for accounts that never set it.
+  const displayName = "error" in profileNames ? "" : profileNames.displayName;
+  const userName = displayName || email.split("@")[0];
 
   // Streaming chat is the single Otto surface for all users (reference-vision rollout, 2026-07-01).
   const ottoStreamEnabled = true;
