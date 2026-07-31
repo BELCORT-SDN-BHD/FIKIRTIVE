@@ -306,10 +306,15 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     },
     // #566: the resume-side restore takes the LIVE context. Record it so tests can assert the
     // ports were already built when the state was rehydrated (that ordering IS the bug fix).
+    // The real SDK INSTALLS that context on the returned state (RunState._context.context), and
+    // runOttoTurn's fail-closed guard checks exactly that field before entering metering — so the
+    // double has to install it too, or it models a state the production code would refuse.
     tryRestoreRunStateWithContext: async (_agent: unknown, str: string, context: unknown) => {
       mockRestoreWithContext(_agent, str, context);
       try {
-        return await MockRunState.fromString(_agent, str);
+        const state = await MockRunState.fromString(_agent, str);
+        if (state) (state as { _context?: unknown })._context = { context };
+        return state;
       } catch {
         return null;
       }

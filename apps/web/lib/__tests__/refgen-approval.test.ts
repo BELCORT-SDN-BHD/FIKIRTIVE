@@ -138,10 +138,15 @@ vi.mock("@fikirtive/otto", async (importOriginal) => {
     tryRestoreRunState: async (_agent: unknown, str: string) => {
       try { return await MockRunState.fromString(_agent, str); } catch { return null; }
     },
-    // #566: the resume-side restore takes the LIVE context (built before the rehydrate).
+    // #566: the resume-side restore takes the LIVE context (built before the rehydrate) and — like
+    // the real SDK — installs it on the state, which runOttoTurn's fail-closed guard verifies.
     tryRestoreRunStateWithContext: async (_agent: unknown, str: string, context: unknown) => {
       mockRestoreWithContext(_agent, str, context);
-      try { return await MockRunState.fromString(_agent, str); } catch { return null; }
+      try {
+        const state = await MockRunState.fromString(_agent, str);
+        if (state) (state as { _context?: unknown })._context = { context };
+        return state;
+      } catch { return null; }
     },
     MaxTurnsExceededError: MockMaxTurnsExceededError,
   };

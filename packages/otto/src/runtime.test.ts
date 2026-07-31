@@ -805,4 +805,39 @@ describe("#566 — resume carries the live context", () => {
     expect(log).toEqual([]);
     expect(meterMocks.reserveCredits).not.toHaveBeenCalled(); // refused before any spend or model call
   });
+
+  // #566 R2 review: the first version of the guard only compared identity when `_context.context`
+  // happened to be readable, so a missing field — an SDK internal reshape, a second incompatible
+  // SDK copy, or a test double — waved the run straight through into metering. The classification
+  // is now positive: string/array = fresh, anything else = resume and must prove its context.
+  it("refuses a resume-shaped input that exposes NO comparable context, instead of waving it through", async () => {
+    const { resume } = await parkGatedCall([]);
+    meterMocks.reserveCredits.mockClear();
+
+    for (const shapeless of [{}, { _context: null }, { _context: {} }, { _context: { context: undefined } }]) {
+      await expect(
+        runOttoTurn(
+          { orgId: "org_t", refId: "fixture:566-shapeless", input: shapeless as never },
+          liveCtx(),
+          resume,
+        ),
+      ).rejects.toThrow(/exposes no comparable RunState context/);
+    }
+    expect(meterMocks.reserveCredits).not.toHaveBeenCalled(); // fail-closed BEFORE any reservation
+  });
+
+  it("still lets the two fresh-input shapes through untouched (string and item array)", async () => {
+    const { resume } = await parkGatedCall([]);
+    // A fresh run legitimately has no RunState context — the SDK honours options.context there.
+    await expect(
+      runOttoTurn({ orgId: "org_t", refId: "fixture:566-fresh-string", input: "hello" }, liveCtx(), resume),
+    ).resolves.toBeDefined();
+    await expect(
+      runOttoTurn(
+        { orgId: "org_t", refId: "fixture:566-fresh-array", input: [{ role: "user", content: "hello" }] as never },
+        liveCtx(),
+        resume,
+      ),
+    ).resolves.toBeDefined();
+  });
 });

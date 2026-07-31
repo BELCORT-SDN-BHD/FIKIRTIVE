@@ -239,14 +239,31 @@ export function ottoBudgetArgsFor(
  * That failure was silent in production for five weeks. Restoring through
  * tryRestoreRunStateWithContext(agent, serialized, ctx) is the fix; this guard is what stops the
  * mistake from ever being made again quietly: a resumed state whose context is not the live one
- * throws HERE, before any model call, instead of re-entering the tool port-less.
+ * throws HERE, before any model call and before any reservation, instead of re-entering the tool
+ * port-less.
  *
- * Read duck-typed rather than via `instanceof RunState` so a second copy of @openai/agents in the
- * tree (or a test double) can never make the guard silently fail open.
+ * FAIL-CLOSED (#566 R2 review). The classification is positive, not duck-typed: a fresh run is a
+ * string or an item array — everything else IS the resume leg and MUST present a comparable
+ * context. So a missing `_context`, an SDK internal reshape, or a test double that never installed
+ * one now THROWS instead of waving the run through into metering. Reading `_context` optionally
+ * (the earlier shape) meant exactly those cases resumed unguarded; billing must never be entered on
+ * a state we cannot vouch for.
  */
 function assertResumedStateCarriesLiveContext(input: OttoTurnRequest["input"], context: OttoContext): void {
-  const stateContext = (input as { _context?: { context?: unknown } } | null | undefined)?._context?.context;
-  if (stateContext !== undefined && stateContext !== context) {
+  if (typeof input === "string" || Array.isArray(input)) return; // fresh run — the SDK honours options.context
+  const wrapper = (input as { _context?: unknown } | null | undefined)?._context;
+  const stateContext =
+    wrapper !== null && typeof wrapper === "object" && "context" in wrapper
+      ? (wrapper as { context: unknown }).context
+      : undefined;
+  if (stateContext === undefined) {
+    throw new Error(
+      "[otto] resume input is not a fresh string/array and exposes no comparable RunState context — " +
+        "refusing to run it (an unverifiable state could re-enter a tool with its ports stripped). " +
+        "Restore with tryRestoreRunStateWithContext(agent, serialized, ctx) (#566).",
+    );
+  }
+  if (stateContext !== context) {
     throw new Error(
       "[otto] resumed RunState carries a different context object than the one passed to runOttoTurn — " +
         "its injected ports would be missing. Restore it with tryRestoreRunStateWithContext(agent, serialized, ctx) (#566).",

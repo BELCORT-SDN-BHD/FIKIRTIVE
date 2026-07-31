@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { z } from "zod";
-import { defineOttoSkill, deriveNeedsApproval, missingRequired } from "./skill.js";
+import { defineOttoSkill, deriveNeedsApproval, missingRequired, skillErrorCategory } from "./skill.js";
 
 const noop = async () => ({ ok: true });
 const base = {
@@ -160,5 +160,99 @@ describe("missingRequired — preflight logic", () => {
   it("non-string falsy values (0, false) count as present, not missing", () => {
     expect(missingRequired([{ field: "n", question: "?" }], { n: 0 })).toEqual([]);
     expect(missingRequired([{ field: "n", question: "?" }], { n: false })).toEqual([]);
+  });
+});
+
+// ── #566 R2: the server log must never carry merchant content ────────────────
+//
+// The wrapper logs every skill failure so a broken gate can't run silently again (#566 ran five
+// weeks with zero log lines). But skill failure messages routinely embed merchant-controlled text:
+// packages/core/src/url-safety.ts throws `Invalid URL: "<the whole submitted URL>"` and
+// `URL hostname "<host>" is not allowed`, and research-web puts the underlying exception message
+// straight into its { error }. So a private customer domain, an internal service name, or a secret
+// encoded in a subdomain or query string would otherwise be written to the log verbatim.
+describe("skill failure logging carries no merchant content (#566 R2)", () => {
+  /** A message shaped exactly like the reachable leak: real url-safety wording, secret payload. */
+  const LEAKY = 'Invalid URL: "https://tenant-acme.internal.example.com/callback?token=SHHH-9f2a"';
+  const SECRETS = ["tenant-acme", "internal.example.com", "SHHH-9f2a", "/callback", "token="];
+
+  function captureConsole() {
+    const lines: string[] = [];
+    const record = (...args: unknown[]) => { lines.push(args.map((a) => String(a)).join(" ")); };
+    const warn = console.warn;
+    const error = console.error;
+    console.warn = record;
+    console.error = record;
+    return { lines, restore: () => { console.warn = warn; console.error = error; } };
+  }
+
+  function invokerFor(execute: (input: { x: string }, rc: unknown) => Promise<unknown>) {
+    const s = defineOttoSkill({
+      ...base,
+      name: "leakProbe",
+      cost: "free",
+      effect: "read",
+      reach: "external",
+      execute: execute as never,
+    });
+    return (s.tool as unknown as { invoke: (rc: unknown, args: string) => Promise<unknown> });
+  }
+
+  it("a THROWN error: the log names the skill and a category, never the message", async () => {
+    const tool = invokerFor(async () => { throw new Error(LEAKY); });
+    const cap = captureConsole();
+    try {
+      await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+    } finally {
+      cap.restore();
+    }
+    const log = cap.lines.join("\n");
+    expect(log).toContain("leakProbe");
+    expect(log).toContain("category=Error");
+    for (const secret of SECRETS) expect(log).not.toContain(secret);
+    expect(log).not.toContain("Invalid URL");
+  });
+
+  it("a RETURNED { error }: same — the merchant still gets the reason, the log does not", async () => {
+    const tool = invokerFor(async () => ({ error: LEAKY }));
+    const cap = captureConsole();
+    let out: unknown;
+    try {
+      out = await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+    } finally {
+      cap.restore();
+    }
+    const log = cap.lines.join("\n");
+    expect(log).toContain("leakProbe");
+    expect(log).toContain("category=string");
+    for (const secret of SECRETS) expect(log).not.toContain(secret);
+    // The reason is NOT suppressed — it still rides the tool result the model answers from.
+    expect(JSON.stringify(out)).toContain("SHHH-9f2a");
+  });
+
+  it("a non-Error throw: the whole object is never stringified into the log", async () => {
+    const tool = invokerFor(async () => { throw { hostname: "tenant-acme.internal.example.com", token: "SHHH-9f2a" }; });
+    const cap = captureConsole();
+    try {
+      await tool.invoke({ context: {} }, JSON.stringify({ x: "go" }));
+    } finally {
+      cap.restore();
+    }
+    const log = cap.lines.join("\n");
+    expect(log).toContain("category=object");
+    for (const secret of SECRETS) expect(log).not.toContain(secret);
+  });
+
+  it("skillErrorCategory never returns anything derived from the value's contents", () => {
+    expect(skillErrorCategory(new Error(LEAKY))).toBe("Error");
+    expect(skillErrorCategory(new TypeError(LEAKY))).toBe("TypeError");
+    expect(skillErrorCategory(LEAKY)).toBe("string");
+    expect(skillErrorCategory({ msg: LEAKY })).toBe("object");
+    expect(skillErrorCategory(null)).toBe("null");
+    expect(skillErrorCategory(undefined)).toBe("undefined");
+    // A hostile `name` (writable on Error) cannot smuggle content through the allowlist.
+    const spoofed = new Error("x");
+    spoofed.name = LEAKY;
+    expect(skillErrorCategory(spoofed)).toBe("Error");
   });
 });

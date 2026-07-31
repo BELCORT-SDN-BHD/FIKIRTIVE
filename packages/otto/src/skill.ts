@@ -67,6 +67,30 @@ export function deriveNeedsApproval(cost: Cost, effect: Effect, reach: Reach): b
   return cost === "spend" || (effect === "write" && reach === "external");
 }
 
+/**
+ * Reduce ANY failure value to a fixed, content-free category token for the server log (#566 R2).
+ *
+ * Skill failure messages routinely carry merchant-controlled text: assertPublicHttpUrl throws
+ * `Invalid URL: "<the whole submitted URL>"` and `URL hostname "<host>" is not allowed`, so a
+ * private customer domain, an internal service name, or a secret encoded in a subdomain / query
+ * string would land in the logs verbatim. Nothing derived from the message, the value's own
+ * `toString`, or its properties may ever reach the log line — only the class name (author-written,
+ * shape-checked) or the JS type.
+ *
+ * The merchant-facing reason still reaches the merchant: it is the tool's return value, which the
+ * model reads and answers with. This function governs the LOG, not the conversation.
+ */
+export function skillErrorCategory(value: unknown): string {
+  if (value instanceof Error) {
+    const name = (value as { name?: unknown }).name;
+    // `name` is author-written (class name), but it is writable, so allowlist the shape rather
+    // than trust it — anything unexpected collapses to the generic token.
+    return typeof name === "string" && /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(name) ? name : "Error";
+  }
+  if (value === null) return "null";
+  return typeof value; // "string" | "object" | "number" | "undefined" | …
+}
+
 /** 纯：返回 input 中缺失（undefined/null/空串）的必要字段。空 requires → []。 */
 export function missingRequired(
   requires: { field: string; question: string }[],
@@ -150,14 +174,19 @@ export function defineOttoSkill<P extends z.ZodObject<any>>(spec: OttoSkillSpec<
       // into the tool's return value the model reads, and a returned { error } never leaves the
       // conversation either. That is why a broken spend gate ran silently in production for five
       // weeks. One line per failure, here in our own wrapper, so every skill is covered at once.
+      //
+      // The line carries ONLY the skill name and a fixed category (#566 R2 review): failure
+      // messages routinely embed merchant-controlled text (submitted URLs, private hostnames),
+      // so no message, no thrown value, and no field of either is ever interpolated here. What
+      // this buys is the signal that was missing — WHICH skill is failing, and how often.
       try {
         const out = await spec.execute(input as z.infer<P>, runContext);
         if (out && typeof out === "object" && "error" in out) {
-          console.warn(`[otto:skill] ${spec.name} refused: ${String((out as { error: unknown }).error)}`);
+          console.warn(`[otto:skill] ${spec.name} refused (category=${skillErrorCategory((out as { error: unknown }).error)})`);
         }
         return out;
       } catch (e) {
-        console.error(`[otto:skill] ${spec.name} threw:`, e instanceof Error ? e.message : e);
+        console.error(`[otto:skill] ${spec.name} threw (category=${skillErrorCategory(e)})`);
         throw e;
       }
     },
