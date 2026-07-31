@@ -447,10 +447,11 @@ describe("revokeTenantInvite", () => {
     );
   });
 
-  // #538 round 2 (P1) — THE activation race. Self-signup leaves an operator's `invited` row
-  // untouched (signup-gate.ts skipDuplicates), so a merchant who signs up after the admin
-  // page rendered still shows as pending. Revoking that stale row would lock out a merchant
-  // who is already inside, so a live membership must veto the write entirely.
+  // #538 — the membership veto. Since round 3, provisioning flips the AllowedEmail row to
+  // `active` as it creates the membership, so a merchant who signs up NO LONGER leaves a
+  // stale `invited` row behind and the `status: "invited"` predicate alone would already
+  // refuse. This veto remains as defence in depth for rows written BEFORE that protocol
+  // landed, which are still stuck at `invited` while their owner is already inside.
   it("refuses to revoke an address that already owns a live membership", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     userFindMany.mockResolvedValue([{ id: "user-1" }]);

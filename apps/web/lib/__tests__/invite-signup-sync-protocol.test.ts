@@ -163,6 +163,47 @@ describe("#538 invite/signup sync protocol — registration side", () => {
   });
 });
 
+// #538 round 5 (P2) — the converge-layer log test in better-auth-converge.test.ts mocks
+// bootstrapPersonalOrg away and hand-rolls the Error, so it never exercises the real
+// RevokedDuringProvisioning constructor nor auth-guard's own log line. This drives the WHOLE
+// chain against the real database: real revoked row → real bootstrap → real sentinel →
+// convergeIdentity → both production log lines.
+describe("#538 provisioning refusal — real chain, real logs", () => {
+  it("emits both production log lines and never puts the address in any of them", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    const email = `chain-${randomUUID()}@fikirtive.test`;
+    await prisma.allowedEmail.create({ data: { email, status: "revoked", invitedBy: "operator@fikirtive.test" } });
+    await prisma.user.create({ data: { id: `usr_${randomUUID()}`, email } });
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // The refusal propagates all the way out of convergeIdentity, not swallowed as non-fatal.
+      await expect(convergeIdentity({ email, name: "Chain Co", emailVerified: true })).rejects.toThrow(/revoked/i);
+
+      const errors = errorSpy.mock.calls.map((c) => c.map(String).join(" "));
+      // Line 1 — auth-guard, at the point the transaction is aborted.
+      expect(errors).toContain("auth-guard: provisioning refused — address revoked during signup");
+      // Line 2 — converge, refusing to degrade it into a non-fatal hiccup.
+      expect(errors).toContain("[better-auth] converge: provisioning refused — address revoked during signup");
+      // Not downgraded to the generic non-fatal warning anywhere along the chain.
+      const warnings = warnSpy.mock.calls.map((c) => c.map(String).join(" "));
+      expect(warnings.join(" ")).not.toMatch(/converge bootstrap failed|convergeIdentity failed/);
+      // #575 log discipline — the address is user content and must appear in NO log argument,
+      // including via any Error.message that a generic handler might interpolate.
+      expect([...errors, ...warnings].join(" ")).not.toContain(email);
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+
+    // And the refusal really was fail-closed: nothing was provisioned.
+    const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    expect(await prisma.membership.findFirst({ where: { userId: user!.id } })).toBeNull();
+    expect(await statusOf(email)).toBe("revoked");
+  });
+});
+
 describe("#538 invite/signup sync protocol — the two sides serialize", () => {
   // The interleaving the reviewer said was never actually tested: signup commits first, THEN
   // the admin clicks Revoke on a row the page still shows as pending.
@@ -212,45 +253,76 @@ describe("#538 invite/signup sync protocol — the two sides serialize", () => {
   // lock contention. Interactive transactions each hold their own pooled connection, so the
   // outer statement genuinely waits on the open transaction rather than on JS scheduling.
   it("makes a competing UPDATE block on the row lock, then match 0 rows after the winner commits", async () => {
+    // Guard against a false green on a single-connection pool: if only ONE connection were
+    // available, side B would be queued waiting for a POOL SLOT, not for the row lock, and the
+    // "still pending" assertion below would pass while proving nothing.
+    const poolMax = Number(process.env.DB_POOL_MAX) || 10; // packages/db/src/index.ts default
+    expect(poolMax, "this test needs at least 2 pooled connections to be meaningful").toBeGreaterThanOrEqual(2);
+
     const user = await freshInvited();
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const deferred = () => { let go!: () => void; const p = new Promise<void>((r) => (go = r)); return { p, go }; };
 
-    let releaseWinner!: () => void;
-    const winnerMayCommit = new Promise<void>((resolve) => { releaseWinner = resolve; });
+    const aHasConnection = deferred();
+    const bHasConnection = deferred();
+    const aMayTakeLock = deferred();
+    const aMayCommit = deferred();
+    const bMayUpdate = deferred();
+    const lockIsHeld = deferred();
 
-    // A = revoke side: take the row lock and hold the transaction open.
-    let lockTaken!: () => void;
-    const lockIsHeld = new Promise<void>((resolve) => { lockTaken = resolve; });
+    // Both sides run in EXPLICIT interactive transactions, and each one first performs a
+    // trivial read and awaits it. Once both of those have returned, both transactions
+    // demonstrably hold their own connection — so anything B waits for afterwards can only be
+    // the row lock, never pool acquisition. That barrier is the whole point of this test.
     const sideA = prisma.$transaction(
       async (tx) => {
+        await tx.allowedEmail.count({ where: { email: `barrier-a-${randomUUID()}@none.test` } });
+        aHasConnection.go();
+        await aMayTakeLock.p;
         const r = await tx.allowedEmail.updateMany({
           where: { email: user.email, status: "invited" },
           data: { status: "revoked" },
         });
-        lockTaken();
-        await winnerMayCommit;
+        lockIsHeld.go();
+        await aMayCommit.p;
         return r.count;
       },
-      { timeout: 20_000, maxWait: 10_000 },
+      { timeout: 30_000, maxWait: 15_000 },
     );
-    await lockIsHeld;
 
-    // B = registration side, on a different connection. It must BLOCK, not return.
     let sideBSettled = false;
-    const sideB = prisma.allowedEmail
-      .updateMany({ where: { email: user.email, status: "invited" }, data: { status: "active" } })
-      .then((r) => { sideBSettled = true; return r; });
+    const sideB = prisma.$transaction(
+      async (tx) => {
+        await tx.allowedEmail.count({ where: { email: `barrier-b-${randomUUID()}@none.test` } });
+        bHasConnection.go();
+        await bMayUpdate.p;
+        const r = await tx.allowedEmail.updateMany({
+          where: { email: user.email, status: "invited" },
+          data: { status: "active" },
+        });
+        sideBSettled = true;
+        return r.count;
+      },
+      { timeout: 30_000, maxWait: 15_000 },
+    );
+
+    // BARRIER: neither side has touched the contended row yet, and both hold a connection.
+    await Promise.all([aHasConnection.p, bHasConnection.p]);
+
+    aMayTakeLock.go();
+    await lockIsHeld.p; // A now holds the row lock inside an uncommitted transaction
+    bMayUpdate.go();
 
     await sleep(600);
     expect(sideBSettled, "the competing UPDATE should still be waiting on the row lock").toBe(false);
 
-    releaseWinner();
+    aMayCommit.go();
     expect(await sideA).toBe(1);
 
     // After the winner commits, the blocked UPDATE re-evaluates `status='invited'` against the
     // committed row (now 'revoked') and matches nothing. This is the serialization the whole
     // protocol depends on, measured rather than asserted from the docs.
-    expect((await sideB).count).toBe(0);
+    expect(await sideB).toBe(0);
     expect(await statusOf(user.email)).toBe("revoked");
   });
 

@@ -28,8 +28,9 @@ function isProvisioningRefusal(e: unknown): boolean {
  *  null and no user principal can exist here by construction. Rather than re-order writes
  *  that cannot be re-ordered, the whole body runs under the named identity
  *  "auth:converge-identity". The emailVerified gate stays FIRST (outside the wrapper, so an
- *  unverified identity still performs zero work), and the never-throw / idempotency /
- *  founder-atomicity / allowlist-ordering constraints are all unchanged. */
+ *  unverified identity still performs zero work), and the idempotency / founder-atomicity /
+ *  allowlist-ordering constraints are all unchanged. (#538 narrowed never-throw to the single
+ *  carve-out documented above; every other failure is still swallowed as non-fatal.) */
 export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean }): Promise<void> {
   if (!input.emailVerified) return; // never converge (esp. founder super-admin promote) on an unverified identity
   const email = input.email.toLowerCase();
