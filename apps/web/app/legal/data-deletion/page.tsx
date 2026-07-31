@@ -50,27 +50,37 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *
  *  2026-07-31 #563(Meta App Publish 的 Data deletion URL 前置):本页就是回填给 Meta 的
  *  那个 URL —— app/api/meta/data-deletion/route.ts:76 返回的 `${origin}/legal/data-deletion`,
- *  免登录靠 proxy.ts:73 matcher 的 `legal` 前缀(本轮未改 matcher,一个字符都没加)。
+ *  免登录靠 proxy.ts:77 matcher 的 `legal` 前缀(本轮未改 matcher,一个字符都没加)。
+ *  (r1 写成 :73 —— 那是 #543 合并前的行号,#543 在 matcher 上方加了 4 行注释;r2 就地重核改正。)
  *  新增「What you can delete yourself」一节,补上此前整页缺失的自助路径。逐条只写代码里
  *  真有的能力,就地核验:
  *   · 删 campaign —— lib/actions.ts:179 `deleteProject`,事务内 :232-244 依次删 canvasNode /
  *     renderJob / captionJob / scheduledPost / generationBatch / genJob / generation /
  *     shotEntityRef / shot / 本项目的 actionEvent / project 本体;:213-223 删本项目的
  *     researchJob·chatMessage·chatThread;删完 :245 起补写一条 projectId:null 的
- *     ActionEvent(所以「保留一条删除记录」是实的)。UI:components/otto/OttoApp.tsx:423,
- *     确认框 :755-772(逐字抄它的 impacts,含「Global library assets and credit ledger rows
- *     are not deleted here」)。另:删除会被在跑的任务拒绝而非删一半 —— actions.ts:195 /
- *     :220 抛错、:257-265 转成人话回执,页面首段那句「refused until that finishes」即指此;
- *     conversation 侧同理(otto-actions.ts:2005 抛、:2016 回执)。
+ *     ActionEvent(所以「保留一条删除记录」是实的)。UI:components/otto/OttoApp.tsx:426,
+ *     确认框 :760 起(逐字抄它的 impacts,含「Global library assets and credit ledger rows
+ *     are not deleted here」)。另:campaign 的删除会被在跑的任务拒绝而非删一半 ——
+ *     actions.ts:195(genJob)/ :220(researchJob)抛错、:257-265 转成人话回执,campaign 那条
+ *     bullet 里「refused until it finishes」即指此。⚠️ 这条**只对 campaign 成立**,
+ *     conversation 不同 —— 详见下方 r2 的 P0-2。
  *   · 删 conversation —— lib/otto-actions.ts:1982 `deleteCoworkThread`,:2006-2011 删
  *     researchJob·chatMessage·chatThread,而 canvasNode/generation/genJob 是 threadId 置 null
- *     (:2007-2009)—— 所以写「detached rather than deleted」。UI:OttoApp.tsx:519,
- *     确认框 :788-800。
+ *     (:2007-2009)—— 所以写「detached rather than deleted」。UI:OttoApp.tsx:522,
+ *     确认框 :793 起。
  *   · 删 library asset —— lib/actions.ts:813 `deleteGeneration`,:823 只写 deletedAt(软删)。
- *     全仓 storage.deleteObject 的唯一调用点是 lib/upload-actions.ts:170(上传失败清理),
- *     删素材不走它 —— 所以「stored file 尚未被自动清理」照 privacy/page.tsx:361 的既有口径写。
- *     UI:components/asset/DetailPanel.tsx:358,确认框文案 :400-402。
- *   · 断开 Meta —— lib/meta-actions.ts:104 `disconnectMeta`,:107 删整行 MetaConnection;
+ *     storage.deleteObject 的调用点是 lib/upload-actions.ts:170(上传失败清理)与
+ *     apps/worker/src/jobs/ingest.ts:120(ingest 清理),删素材两条都不走 —— 所以
+ *     「stored file 尚未被自动清理」照 privacy/page.tsx:362 的既有口径写。
+ *     (r1 把它写成「全仓唯一调用点」,漏了 worker 那处;结论不变,但绝对断言错了,r2 改正。)
+ *     UI:Library(components/otto/OttoStuff.tsx mode="library" :246,详情面板 :342)→ 打开素材 →
+ *     Delete 按钮 components/asset/DetailPanel.tsx:750 → 确认框文案 :409 → handleDelete :365。
+ *     ⚠️ r2 P0 修正:删素材**不会**把画布上的卡片清掉。deleteGeneration 只软删 Generation,
+ *     完全不碰 CanvasNode;listCanvasNodes 仍返回该节点(canvas-actions.ts:43),但缩略图查询
+ *     getGenerationThumbs 过滤 deletedAt(lib/data.ts:20)取不到 url,于是 canvas-actions.ts:75
+ *     把状态判为 "missing",ImageNode.tsx:171 渲染 FailedBody,GeneratingBody.tsx:60 显示
+ *     "Preview missing"。r1 写「removes it from your library and canvas views」是失实的,已改。
+ *   · 断开 Meta —— lib/meta-actions.ts:103 `disconnectMeta`,:107 删整行 MetaConnection;
  *     该表字段见 prisma/schema.prisma:1122-1142(metaUserId / accessTokenEnc / scope /
  *     defaultPageId 等),故列举到字段一级。UI:components/otto/OttoConnections.tsx:462,
  *     入口名 components/otto/OttoNav.tsx:79「Connections」。保留范围与上方 Meta 回调分支同源
@@ -85,9 +95,41 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *   · X 渠道故意没写:lib/channels/x.ts 有 disconnect(:27-32),但 :26 的 connectUrl 指向尚未
  *     落地的 /api/x/authorize(OttoConnections.tsx:37 也这么注),连都连不上,不承诺。
  *  同时修掉一处已过期的导航指路:整账户删除入口不再是「Account →」—— #513 A 组把 Account 从
- *  工具栏撤了(OttoNav.tsx:81-85),现入口是 components/global-navigation.tsx:70 的
+ *  工具栏撤了(OttoNav.tsx:81-85),现入口是 components/global-navigation.tsx:71 的
  *  「Preferences」→ settings/sections.tsx:242-253 的 Danger zone → Delete account,
- *  按钮仍只开 mailto(OttoAccount.tsx:51),该句不变。*/
+ *  按钮仍只开 mailto(OttoAccount.tsx:51),该句不变。(r1 写 :70,是注释行;r2 改正为 :71。)
+ *
+ *  2026-07-31 r2(跨族判官对 PR #570 判 FAIL 后的返工;判定书在 #570 评论区):
+ *  失实全部出在「承诺 vs 真实行为」,逐条就地重核后改文案,一行产品代码未动。
+ *   · P0-1 素材删除与画布 —— 见上「⚠️ r2 P0 修正」段。
+ *   · P0-2 运行中拒删只对 campaign 成立 —— deleteProject 确实拦 genJob(actions.ts:195 抛、
+ *     :257 回执)与 researchJob(:220 抛、:263 回执);但 deleteCoworkThread **只**查
+ *     researchJob(otto-actions.ts:2001-2005,回执 :2016),genJob 一律 :2009 解绑 threadId
+ *     后照删。r1 把两者合成一句「a generation or a research run … is refused」是错的,
+ *     已按 campaign / conversation 分开写。
+ *   · P0-3 「every workspace」过度承诺 —— metaUserId 可为 null:debug_token 缺 user_id 时
+ *     meta-graph.ts:325-326 返回 null,connectMeta 仍照落库(meta-actions.ts:33)并返回 ok,
+ *     schema.prisma:1128 允许空值;而回调只做精确匹配 `where: { metaUserId }`(route.ts:48),
+ *     故这类连接永远删不到。措辞收敛为「recorded Meta user ID 匹配的连接」。另:零匹配时
+ *     route.ts:74-78 仍返回 confirmation code,两个分支都已写明「码≠连接曾存在」。
+ *     ⚠️ 底层产品缺口(允许 metaUserId:null 落库)不在本页范围,已另立 issue #573,本轮只改文案。
+ *   · P1-1 「differs only in reach」不成立 —— 回调每 org 另写一条 meta.data_deletion
+ *     ActionEvent(route.ts:59),自助 Disconnect 不写(meta-actions.ts:103-108);已去掉 only。
+ *   · P1-2 「确认后生效」对 Disconnect 不成立 —— 该按钮无确认框、onClick 直接执行
+ *     (OttoConnections.tsx:462);已把它与前三项分开陈述。
+ *   · P1-3 补入口路径,均在本 worktree 就地核实(⚠️ r1 有一处行号取自主检出而非本 worktree,
+ *     两棵树行号不同 —— 本轮所有引用一律以本 worktree 为准):campaign = 侧栏行上
+ *     「Campaign controls」⋯ 按钮(OttoNav.tsx:451)→ 菜单项「Delete project」(:482,
+ *     注意菜单仍用旧词 project)→ 输入名字确认(OttoApp.tsx:767);conversation = 侧栏行的
+ *     bin 图标(OttoNav.tsx:289)或标签页上的 ×(ConvoTabs.tsx:53)→ 输入会话名确认
+ *     (OttoApp.tsx:800);asset 见上。确认方式也就地核实过:OttoPromptDialog.tsx:48
+ *     `canConfirm = !confirmText || typed.trim() === confirmText`、:102「Type X to continue」
+ *     —— 所以 campaign / conversation 是**打字确认**,而 asset 只是普通确认框
+ *     (DetailPanel.tsx:409 那组 title/confirmLabel,无 confirmText),Disconnect 无确认。
+ *     页面首段按这三档分别写,不再一句话盖全。
+ *   · P2 日期改 31 July;「Two things」改为不绝对的表述(credit ledger / publish history /
+ *     audit 同样无自助删除)。
+ *   · P3 见上两处行号与 deleteObject 调用点更正。*/
 export default async function DataDeletionPage({
   searchParams,
 }: {
@@ -102,7 +144,7 @@ export default async function DataDeletionPage({
         </Link>
         <h1 className="mt-8 text-[34px] font-bold tracking-[-0.02em]">Data deletion</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Effective 28 July 2026 · Last updated 28 July 2026
+          Effective 28 July 2026 · Last updated 31 July 2026
         </p>
 
         <section className="mt-8 space-y-4 text-[15px] leading-7 text-muted-foreground">
@@ -118,10 +160,12 @@ export default async function DataDeletionPage({
                 explains what such a request does; it does not look the code up or verify it.
               </p>
               <p>
-                When Meta sends us a deletion request, we delete the stored Meta connection for that Meta user ID,
-                including its access token. Some records are not deleted by this request: scheduled posts keep the Meta
-                account and post identifiers in their publish history, publish attempts keep their post and media
-                identifiers, and audit records — including the record of the deletion request itself — are kept.
+                When Meta sends us a deletion request, we delete every stored Meta connection whose recorded Meta user
+                ID matches the one in the request, including its access token. If no stored connection carries that ID,
+                there is nothing for the request to delete and we still return a code. Some records are not deleted by
+                this request: scheduled posts keep the Meta account and post identifiers in their publish history,
+                publish attempts keep their post and media identifiers, and audit records — including the record of the
+                deletion request itself — are kept.
               </p>
               <p>
                 To have us check a specific request, or to ask about anything beyond the Meta connection, email{" "}
@@ -134,9 +178,11 @@ export default async function DataDeletionPage({
               <h2 className="text-lg font-semibold text-foreground">How Meta deletion requests work here</h2>
               <p>
                 When you remove Fikirtive from your Facebook settings, Meta sends us a signed deletion request. We
-                delete the Meta connection stored against your Meta user ID, together with the access token we held for
-                it, and return a confirmation code to Meta along with a link back to this page that carries the code.
-                The code is the receipt for a request we received.
+                delete every stored Meta connection whose recorded Meta user ID matches the one in the request,
+                together with the access token we held for it, and return a confirmation code to Meta along with a link
+                back to this page that carries the code. If no stored connection carries that ID, there is nothing for
+                the request to delete and we still return a code — so the code is the receipt for a request we
+                received, not proof that a connection existed.
               </p>
               <p>
                 Some records are not deleted by this request: scheduled posts keep the Meta account and post
@@ -158,45 +204,59 @@ export default async function DataDeletionPage({
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">What you can delete yourself</h2>
           <p>
-            Your records are yours. These deletions are in the product today: you run them yourself and they take
-            effect when you confirm them — you do not have to ask us. If a generation or a research run is still
-            working inside a campaign or conversation, deleting it is refused until that finishes, and Fikirtive tells
-            you so rather than deleting part of it.
+            Your records are yours. These deletions are in the product today: you run them yourself and you do not
+            have to ask us. Deleting a campaign, a conversation or an asset asks you to confirm first — for a campaign
+            or a conversation you have to type its name. Disconnecting Meta asks nothing: it takes effect the moment
+            you click it.
           </p>
           <ul className="list-disc space-y-2 pl-5">
             <li>
-              <span className="text-foreground">A campaign.</span> Deleting a campaign permanently deletes the campaign
-              record, its conversations and their messages, its canvas nodes, its generation and render jobs, its
-              scheduled posts and shots, and the campaign-scoped audit records — then keeps one audit record noting
-              that the campaign was deleted. Library assets held outside the campaign and credit ledger rows are not
-              deleted by it.
+              <span className="text-foreground">A campaign.</span> In the sidebar, open the campaign&apos;s controls
+              (the <span className="text-foreground">⋯</span> button on its row) and choose{" "}
+              <span className="text-foreground">Delete project</span>, then type the campaign name to confirm.
+              Deleting a campaign permanently deletes the campaign record, its conversations and their messages, its
+              canvas nodes, its generation and render jobs, its scheduled posts and shots, and the campaign-scoped
+              audit records — then keeps one audit record noting that the campaign was deleted. Library assets held
+              outside the campaign and credit ledger rows are not deleted by it. If a generation or a research run is
+              still working in that campaign, the deletion is refused until it finishes, and Fikirtive says so rather
+              than deleting part of it.
             </li>
             <li>
-              <span className="text-foreground">A conversation.</span> Deleting a conversation permanently deletes it
-              and its messages. Canvas nodes and generated media are detached from it rather than deleted, so they stay
-              in your library.
+              <span className="text-foreground">A conversation.</span> In the sidebar, use the bin icon on the
+              conversation&apos;s row, or the <span className="text-foreground">×</span> on its tab, then type the
+              conversation name to confirm. Deleting a conversation permanently deletes it and its messages. Canvas nodes and generated media are
+              detached from it rather than deleted, so they stay in your library. A research run still in progress
+              blocks the deletion until it finishes; a generation still in progress does not — it is detached and
+              carries on, and the conversation is deleted anyway.
             </li>
             <li>
-              <span className="text-foreground">An asset in your library.</span> Deleting an asset removes it from your
-              library and canvas views and cannot be undone. The stored file behind it is not yet removed by an
-              automatic clean-up job.
+              <span className="text-foreground">An asset in your library.</span> Open{" "}
+              <span className="text-foreground">Library</span>, open the asset, and choose{" "}
+              <span className="text-foreground">Delete</span>, then confirm. This removes the asset from your library
+              and cannot be undone. It does not clear the asset off a campaign canvas: any canvas card showing it stays
+              where it is and reads <span className="text-foreground">Preview missing</span>. The stored file behind it
+              is not yet removed by an automatic clean-up job.
             </li>
             <li>
               <span className="text-foreground">A connected Meta account.</span> In Fikirtive, open{" "}
               <span className="text-foreground">Connections</span> and choose{" "}
-              <span className="text-foreground">Disconnect</span>. That deletes the stored Meta connection for your
-              workspace — the Meta user ID, the encrypted access token, the granted scope and the default page we had
-              recorded. It removes the same stored connection a Meta deletion request removes, and differs only in
-              reach: Disconnect affects the workspace you are in, while a request from Meta removes that connection
-              from every workspace the Meta account was connected to. Either way the same records survive: scheduled
-              posts keep the Meta account and post identifiers in their publish history, publish attempts keep their
-              post and media identifiers, and audit records are kept. Nothing else in your workspace is deleted.
+              <span className="text-foreground">Disconnect</span>. There is no confirmation step — it runs the moment
+              you click it. It deletes the stored Meta connection for the workspace you are in: the Meta user ID, the
+              encrypted access token, the granted scope and the default page we had recorded. A deletion request sent
+              by Meta removes the same kind of stored connection, but the two are not identical. That request is
+              matched by Meta user ID, so it reaches every workspace whose stored connection carries that ID — and a
+              connection saved without one is not matched at all — and it also writes an audit record of the request,
+              which Disconnect does not. Either way the same records survive: scheduled posts keep the Meta account and
+              post identifiers in their publish history, publish attempts keep their post and media identifiers, and
+              audit records are kept. Nothing else in your workspace is deleted.
             </li>
           </ul>
           <p>
-            Two things have no self-service delete today. Contact records cannot be deleted from the interface, and
-            there is no automated flow for your whole account. Both go through the email route below, and we do not
-            delete a contact record on our own initiative.
+            Everything else has no self-service delete today. Contact records cannot be deleted from the interface, and
+            there is no automated flow for your whole account — both go through the email route below, and we do not
+            delete a contact record on our own initiative. Credit ledger rows, publish history and audit records have
+            no delete control either: they are the record of what was spent and what was sent, and the sections above
+            say where each of them is kept.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Deleting your whole account</h2>
