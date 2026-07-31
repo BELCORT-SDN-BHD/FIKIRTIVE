@@ -13,6 +13,7 @@ import {
 import { REFERENCE_FORMATS, type ReferenceFormat } from "@/lib/reference-formats";
 import { createEntity } from "@/lib/actions";
 import { startRefGen } from "@/lib/refgen-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { displayCredits, pricedRefgenCredits } from "@fikirtive/core/spend";
 import { creditsLabel } from "@/lib/credit-format";
 
@@ -118,6 +119,11 @@ export function AddAssetDialog({
     } catch {
       setError("Couldn't generate this. Please try again.");
       setSaving(false);
+    } finally {
+      // A reference generation reserves credits the moment startRefGen accepts — tell the
+      // global nav so its credits figure moves with the money. In a finally so a refused or
+      // failed start, which can still have reserved and refunded, announces too (#550).
+      notifyBalanceRefresh();
     }
   }
 

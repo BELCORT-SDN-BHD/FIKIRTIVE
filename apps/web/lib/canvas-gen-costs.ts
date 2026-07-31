@@ -1,3 +1,5 @@
+import { creditsLabel } from "@/lib/credit-format";
+
 /** Founder decision (2026-07-06): one image per canvas generation by default; the
  *  owner requests more variants explicitly, up to the max. */
 export const CANVAS_IMAGE_DEFAULT_COUNT = 1;
@@ -25,4 +27,13 @@ export function canvasGenCostQuote(
     imageCredits: unitQuote.imageCredits * clampImageVariantCount(imageCount),
     videoCredits: unitQuote.videoCredits,
   };
+}
+
+/** Pre-flight price label for a paid canvas action, e.g. "Cost: 8 credits". The amount
+ *  is only ever the server-resolved quote (getActiveGenModels → packages/core pricing);
+ *  an absent quote says so rather than guessing, so no price literal ever has to be
+ *  written into a component. One spelling of this label for every canvas entry point —
+ *  Evolve was the only paid one with no price at all before #550. */
+export function genCostHint(credits: number | null | undefined): string {
+  return typeof credits === "number" ? `Cost: ${creditsLabel(credits)}` : "Checking cost…";
 }

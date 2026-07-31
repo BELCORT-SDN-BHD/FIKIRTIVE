@@ -142,8 +142,6 @@ export interface OttoNavProps {
   onRenameThread: (id: string) => void;
   onSetThreadPinned: (id: string, pinned: boolean) => void;
   onDeleteThread: (id: string) => void;
-  /** Spendable balance in DISPLAYED credits (the product shows credits, never dollars). */
-  balanceCredits: number;
   /** Deprecated display-only prop. Media now lives under Workspace/Library to keep this rail focused on campaigns. */
   history?: HistoryThumb[];
   /** Mobile: whether the drawer is open (controlled by OttoApp). */

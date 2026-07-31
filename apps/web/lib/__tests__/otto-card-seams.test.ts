@@ -232,16 +232,35 @@ describe("card seams — CARD_TOOL_NAMES (seam 5) and CARD_KINDS (seam 4) stay i
   });
 
   it("no parent re-announces what the card already announced (one action, one broadcast)", () => {
-    for (const component of [OTTO_CHAT_STREAM, OTTO_CONVERSATION]) {
+    // Round-3 review: fencing only <OttoPlanCard> was too narrow. OttoChatStream writes the
+    // approval callback inline in the card's own props, so there the element IS the whole
+    // callback layer — but OttoConversation renders the card inside <MessageRow> and passes
+    // the real approval handler as a prop of THAT element (`onApproved={(cardId) => {…}}`,
+    // where the "No balance announcement here" comment lives). A re-added announcement in
+    // that handler would have sailed straight past the old assertion.
+    //
+    // Scoped to these ELEMENTS, never to MessageRow's function body: that body legitimately
+    // wires ResearchCard/StoryboardCard with `onBalanceRefresh={() => void onBalanceRefresh?.()}`,
+    // and those cards do need it. PackCard and the other spend surfaces keep their own wiring too.
+    const PLAN_CARD_CALLBACK_LAYERS: Record<string, string[]> = {
+      [OTTO_CHAT_STREAM]: ["OttoPlanCard"],
+      [OTTO_CONVERSATION]: ["OttoPlanCard", "MessageRow"],
+    };
+    // A CALL, not a prop forward — `onBalanceRefresh={onBalanceRefresh}` passes the callback
+    // down to sibling cards and must stay legal.
+    const ANNOUNCEMENT = /notifyBalanceRefresh\(\)|onBalanceRefresh(?:\?\.)?\(\)/;
+
+    for (const [component, elements] of Object.entries(PLAN_CARD_CALLBACK_LAYERS)) {
       const src = fs.readFileSync(component, "utf8");
-      const element = jsxElementSource(src, "OttoPlanCard");
-      expect(element, `${path.basename(component)} should render <OttoPlanCard …>`).not.toBe("");
-      expect(
-        element,
-        `${path.basename(component)}'s <OttoPlanCard> props must not call onBalanceRefresh — ` +
-          `the card's own finally already announced, and a second call means a second balance read. ` +
-          `Scoped to this element on purpose: PackCard and the other spend surfaces keep their own wiring.`,
-      ).not.toMatch(/onBalanceRefresh\?\.\(\)/);
+      for (const name of elements) {
+        const element = jsxElementSource(src, name);
+        expect(element, `${path.basename(component)} should render <${name} …>`).not.toBe("");
+        expect(
+          element,
+          `${path.basename(component)}'s <${name}> props must not announce the balance change — ` +
+            `OttoPlanCard's own finally already did, and a second call means a second balance read.`,
+        ).not.toMatch(ANNOUNCEMENT);
+      }
     }
   });
 });

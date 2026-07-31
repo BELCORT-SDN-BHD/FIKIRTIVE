@@ -19,6 +19,7 @@ import {
   type ActiveGenModels,
 } from "@/lib/gen-actions";
 import { readPick, writePick } from "@/lib/result-pick";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button as UiButton } from "@/components/ui/button";
@@ -281,7 +282,13 @@ export default function DetailPanel({
         setRegenStatus("failed");
         return;
       }
+      // The hold is on the ledger the moment startGen accepts, and the settle/refund
+      // lands when the job resolves — announce both so the global nav's credits figure
+      // moves with the money instead of waiting for a page reload (#550). Same two-point
+      // pattern the canvas generations already use (useCanvasGen's onBalanceRefresh).
+      notifyBalanceRefresh();
       const status = await pollJob(result.id);
+      notifyBalanceRefresh();
       if (!cancelledRef.current) {
         setRegenStatus(status);
         // A timeout means the paid job is STILL RUNNING (the worker settles it late) — keep the
@@ -326,7 +333,9 @@ export default function DetailPanel({
         if (!cancelledRef.current) setAnimStatus("failed");
         return;
       }
+      notifyBalanceRefresh();
       const status = await pollJob(result.id);
+      notifyBalanceRefresh();
       if (!cancelledRef.current) {
         setAnimStatus(status);
         // Timeout ⇒ the paid video job is still running (worker settles late ones) — stay in
@@ -440,7 +449,9 @@ export default function DetailPanel({
         if (!cancelledRef.current) setEditStatus("failed");
         return;
       }
+      notifyBalanceRefresh();
       const status = await pollJob(result.id);
+      notifyBalanceRefresh();
       if (!cancelledRef.current) {
         setEditStatus(status);
         // Timeout ⇒ the paid edit job is still running — stay in "still processing" so a re-click

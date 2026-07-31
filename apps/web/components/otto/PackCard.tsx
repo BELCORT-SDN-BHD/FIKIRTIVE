@@ -4,6 +4,7 @@ import { ClipboardList, Film, Image as ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
+import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
 import { runPackApprovalLoop, type PackApprovalOutcome } from "./approval-chain";
 import type { CardState } from "@/lib/otto-inject-helpers";
@@ -109,11 +110,15 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
       onCardSettled: (cardId, cleared) => {
         // A re-reported-pending card gets no ✓ — it still needs its approval.
         if (cleared) setDoneCardIds((prev) => new Set(prev).add(cardId));
+        // Per card, not just per pack: a ten-card pack should show the balance draining
+        // as it goes rather than jumping once at the end (#550).
+        notifyBalanceRefresh();
       },
     });
 
     setRunning(false);
     setCurrentIdx(null);
+    notifyBalanceRefresh();
     if (outcome.failure) {
       const { index, message } = outcome.failure;
       setError(

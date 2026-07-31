@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
+import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-refresh";
 
 type NavigationIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 
@@ -240,14 +241,41 @@ export function GlobalNavigation({
     setMobileOpen(false);
   }, [pathname]);
 
+  // This rail holds the only credits figure in the product, so it must re-read the
+  // balance whenever a charge settles — not only at mount. Subscribing to the spend
+  // signal (rather than adding a timer) keeps the number honest within a click of the
+  // charge and adds no polling (#550: it used to sit on the mount value until a full
+  // page reload, lagging the database by 84s+).
+  //
+  // A settle fires several reads back to back, so every response passes the latest-read
+  // gate first: a slow earlier read must be discarded rather than repaint an older
+  // balance over a newer one.
+  //
+  // Returning to the tab also re-reads. Every client spend entry now announces (the
+  // enumeration in lib/__tests__/spend-visibility-seams.test.ts fences that with no
+  // exemptions), so this is no longer covering for unwired surfaces — it catches the money
+  // a WORKER settles while the tab sits in the background, where there is no click to hang
+  // an announcement off. It is event-driven, not a timer.
   useEffect(() => {
     let alive = true;
-    getMyAccount().then((result) => {
-      if (!alive || "error" in result) return;
-      setAccount({ email: result.email, balance: result.balance });
-    }).catch(() => {});
+    const beginRead = createLatestReadGate();
+    const load = () => {
+      const isLatest = beginRead();
+      getMyAccount().then((result) => {
+        if (!alive || !isLatest() || "error" in result) return;
+        setAccount({ email: result.email, balance: result.balance });
+      }).catch(() => {});
+    };
+    const loadIfVisible = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    load();
+    const unsubscribe = subscribeBalanceRefresh(load);
+    document.addEventListener("visibilitychange", loadIfVisible);
     return () => {
       alive = false;
+      unsubscribe();
+      document.removeEventListener("visibilitychange", loadIfVisible);
     };
   }, []);
 
