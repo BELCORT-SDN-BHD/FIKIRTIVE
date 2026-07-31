@@ -82,20 +82,71 @@ function normEmail(raw: unknown): string | null {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && e.length <= 254 ? e : null;
 }
 
-export async function inviteTenant(emailRaw: unknown): Promise<{ ok: true } | { error: string }> {
+/** Admit an address to the closed door. Three outcomes, because "invite" is not always a
+ *  write (#538 round 2):
+ *    invited         — a missing or previously revoked row is now `invited`
+ *    already_invited — the row was already `invited`; nothing written
+ *    already_member  — the address already signed up (`active`); nothing written
+ *  The last one is the point: self-signup writes status "active" (signup-gate.ts), and the
+ *  old blanket upsert rewrote that to "invited", demoting a live merchant to pending. An
+ *  address that is already in must never be downgraded by an operator re-typing it. */
+export async function inviteTenant(
+  emailRaw: unknown,
+): Promise<{ ok: true; result: "invited" | "already_invited" | "already_member" } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   const email = normEmail(emailRaw); if (!email) return { error: "Enter a valid email." };
-  await prisma.allowedEmail.upsert({ where: { email }, create: { email, status: "invited", invitedBy: gate.email }, update: { status: "invited" } });
+  const existing = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
+  if (existing?.status === "active") return { ok: true, result: "already_member" };
+  if (existing?.status === "invited") return { ok: true, result: "already_invited" };
+  if (existing) {
+    // Only a `revoked` row is left to re-invite. `status: { not: "active" }` keeps the
+    // never-downgrade rule atomic: a signup landing between the read above and this write
+    // flips the row to `active` and must win, so the update then matches nothing.
+    const { count } = await prisma.allowedEmail.updateMany({ where: { email, status: { not: "active" } }, data: { status: "invited" } });
+    if (count === 0) return { ok: true, result: "already_member" };
+  } else {
+    try {
+      await prisma.allowedEmail.create({ data: { email, status: "invited", invitedBy: gate.email } });
+    } catch {
+      // The email PK collided: a concurrent signup or invite created the row first. Report
+      // what that row actually says instead of overwriting a state we did not observe.
+      const row = await prisma.allowedEmail.findUnique({ where: { email }, select: { status: true } });
+      return { ok: true, result: row?.status === "active" ? "already_member" : "already_invited" };
+    }
+  }
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.invite", payload: { email, via: gate.email } } }).catch(() => {});
   revalidatePath("/admin/tenants");
-  return { ok: true };
+  return { ok: true, result: "invited" };
 }
 
+/** Revoke a PENDING invite. Two preconditions, checked together in one transaction (#538
+ *  round 2): the row must still be `invited`, AND the address must not already belong to a
+ *  live member of a merchant org.
+ *
+ *  The second one is not redundant. Self-signup does not touch an operator's existing row
+ *  (signup-gate.ts uses skipDuplicates), so a merchant who signs up keeps a stale `invited`
+ *  AllowedEmail row while becoming a real tenant owner. The admin list is rendered once and
+ *  can go stale; without this check, clicking Revoke on that stale row would lock out a
+ *  merchant who is already inside. */
 export async function revokeTenantInvite(emailRaw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("tenants", "mutate"); if ("error" in gate) return gate;
   const email = normEmail(emailRaw); if (!email) return { error: "Invalid email." };
-  const { count } = await prisma.allowedEmail.updateMany({ where: { email }, data: { status: "revoked" } });
-  if (count === 0) return { error: "No such invite." };
+  const outcome = await prisma.$transaction(async (tx) => {
+    // User.email is stored as typed (not normalized like AllowedEmail.email), so compare
+    // case-insensitively — the same both-sides-lowercase rule orgMemberBaUserIds documents.
+    const users = await tx.user.findMany({ where: { email: { equals: email, mode: "insensitive" } }, select: { id: true } });
+    if (users.length > 0) {
+      const live = await tx.membership.findFirst({
+        where: { userId: { in: users.map((u) => u.id) }, deletedAt: null, orgId: { not: FOUNDER_OWNER_ID } },
+        select: { id: true },
+      });
+      if (live) return "member" as const;
+    }
+    const { count } = await tx.allowedEmail.updateMany({ where: { email, status: "invited" }, data: { status: "revoked" } });
+    return count === 0 ? ("none" as const) : ("revoked" as const);
+  });
+  if (outcome === "member") return { error: "That address already belongs to an active merchant. Suspend their tenant instead." };
+  if (outcome === "none") return { error: "No pending invite for that address." };
   await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "tenant.revoke", payload: { email, via: gate.email } } }).catch(() => {});
   revalidatePath("/admin/tenants");
   return { ok: true };

@@ -54,7 +54,7 @@ let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
 beforeEach(() => {
-  mocks.inviteTenant.mockResolvedValue({ ok: true });
+  mocks.inviteTenant.mockResolvedValue({ ok: true, result: "invited" });
   mocks.revokeTenantInvite.mockResolvedValue({ ok: true });
 });
 
@@ -178,6 +178,62 @@ describe("admin tenants invite UI (#538)", () => {
     expect(mocks.inviteTenant).toHaveBeenCalledWith("blocked@merchant.com");
     expect(dom.textContent).toContain("Forbidden.");
     expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  // #538 round 2 (P2) — re-inviting an address that is already inside used to report
+  // "Admitted", which is a lie: the server writes nothing. Each of the three server outcomes
+  // gets its own honest sentence.
+  it("reports an already-active address as unchanged, not as newly admitted", async () => {
+    mocks.inviteTenant.mockResolvedValue({ ok: true, result: "already_member" });
+    const dom = await renderTenants();
+    const input = emailInput(dom);
+
+    await typeInto(input, "live@merchant.com");
+    await submitForm(input.closest("form")!);
+
+    expect(dom.textContent).toContain("live@merchant.com is already an active merchant. Nothing changed.");
+    expect(dom.textContent).not.toContain("Admitted live@merchant.com");
+  });
+
+  it("reports an already-pending address as unchanged", async () => {
+    mocks.inviteTenant.mockResolvedValue({ ok: true, result: "already_invited" });
+    const dom = await renderTenants();
+    const input = emailInput(dom);
+
+    await typeInto(input, "pending@merchant.com");
+    await submitForm(input.closest("form")!);
+
+    expect(dom.textContent).toContain("pending@merchant.com was already invited. Nothing changed");
+    expect(dom.textContent).not.toContain("Admitted pending@merchant.com");
+  });
+
+  // #538 round 2 (P1) — when the server refuses because the merchant activated in the
+  // meantime, the operator must see that refusal, not a success line.
+  it("surfaces the server's refusal when the invite was already activated", async () => {
+    mocks.revokeTenantInvite.mockResolvedValue({
+      error: "That address already belongs to an active merchant. Suspend their tenant instead.",
+    });
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(true));
+    const dom = await renderTenants();
+
+    await click(revokeButton(dom));
+
+    expect(dom.textContent).toContain("already belongs to an active merchant");
+    expect(dom.textContent).not.toContain(`Revoked ${PENDING_EMAIL}`);
+  });
+
+  // #538 round 2 (P2) — the old wording promised the address could not sign in at all, but
+  // FOUNDER_ADMIN_EMAILS / AUTH_ALLOWED_EMAILS outrank the DB row (allowlist.ts).
+  it("scopes the confirmation wording to what revoking actually blocks", async () => {
+    const confirmSpy = vi.fn().mockReturnValue(false);
+    vi.stubGlobal("confirm", confirmSpy);
+    const dom = await renderTenants();
+
+    await click(revokeButton(dom));
+
+    const prompt = confirmSpy.mock.calls[0][0] as string;
+    expect(prompt).toContain("blocks future self-signup");
+    expect(prompt).not.toContain("sign in");
   });
 
   it("does not revoke when the confirmation is declined", async () => {

@@ -27,6 +27,9 @@ const baUserUpdateMany = vi.fn();
 const baSessionDeleteMany = vi.fn();
 const allowedEmailUpsert = vi.fn();
 const allowedEmailUpdateMany = vi.fn();
+const allowedEmailFindUnique = vi.fn();
+const allowedEmailCreate = vi.fn();
+const membershipFindFirst = vi.fn();
 const actionEventCreate = vi.fn();
 const organizationFindFirst = vi.fn();
 
@@ -40,17 +43,24 @@ class MockInsufficientCredits extends Error {
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany },
+    membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany, findFirst: membershipFindFirst },
     user: { findMany: userFindMany },
     betterAuthUser: { findMany: baUserFindMany, updateMany: baUserUpdateMany },
     betterAuthSession: { deleteMany: baSessionDeleteMany },
-    allowedEmail: { upsert: allowedEmailUpsert, updateMany: allowedEmailUpdateMany },
+    allowedEmail: {
+      upsert: allowedEmailUpsert,
+      updateMany: allowedEmailUpdateMany,
+      findUnique: allowedEmailFindUnique,
+      create: allowedEmailCreate,
+    },
     actionEvent: { create: actionEventCreate },
     organization: { findFirst: organizationFindFirst },
     // run the callback against a tx wired to the same mocks, so existing setMembershipStatus assertions hold
     $transaction: async (fn: (tx: unknown) => unknown) =>
       fn({
-        membership: { updateMany: membershipUpdateMany },
+        membership: { updateMany: membershipUpdateMany, findFirst: membershipFindFirst },
+        user: { findMany: userFindMany },
+        allowedEmail: { updateMany: allowedEmailUpdateMany },
         betterAuthUser: { updateMany: baUserUpdateMany },
         betterAuthSession: { deleteMany: baSessionDeleteMany },
       }),
@@ -80,11 +90,20 @@ beforeEach(() => {
   baSessionDeleteMany.mockReset();
   allowedEmailUpsert.mockReset();
   allowedEmailUpdateMany.mockReset();
+  allowedEmailFindUnique.mockReset();
+  allowedEmailCreate.mockReset();
+  membershipFindFirst.mockReset();
   actionEventCreate.mockReset();
   organizationFindFirst.mockReset();
   mockGrantCredits.mockReset();
   // audit writes are best-effort; default to a resolved promise so .catch(() => {}) works
   actionEventCreate.mockResolvedValue({});
+  // Default: the address is nobody's login yet and owns nothing — the plain "still pending"
+  // world. Tests that exercise the activation race override these.
+  allowedEmailFindUnique.mockResolvedValue(null);
+  allowedEmailCreate.mockResolvedValue({});
+  userFindMany.mockResolvedValue([]);
+  membershipFindFirst.mockResolvedValue(null);
   organizationFindFirst.mockResolvedValue({ id: "orgX" });
   (isFounderAdmin as Mock).mockReset();
   authApi.impersonateUser.mockReset();
@@ -283,38 +302,87 @@ describe("inviteTenant", () => {
     mockRequireRole.mockResolvedValue(GATE);
     const res = await inviteTenant(42);
     expect(res).toEqual({ error: "Enter a valid email." });
-    expect(allowedEmailUpsert).not.toHaveBeenCalled();
+    expect(allowedEmailCreate).not.toHaveBeenCalled();
   });
 
   it("rejects a malformed email string", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     const res = await inviteTenant("not-an-email");
     expect(res).toEqual({ error: "Enter a valid email." });
-    expect(allowedEmailUpsert).not.toHaveBeenCalled();
+    expect(allowedEmailCreate).not.toHaveBeenCalled();
   });
 
-  it("lowercases and trims the email before upserting", async () => {
+  it("lowercases and trims the email before writing", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    allowedEmailUpsert.mockResolvedValue({});
     const res = await inviteTenant("  USER@Example.COM  ");
-    expect(res).toEqual({ ok: true });
-    expect(allowedEmailUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { email: "user@example.com" },
-        create: expect.objectContaining({ email: "user@example.com", status: "invited", invitedBy: GATE.email }),
-        update: { status: "invited" },
-      })
+    expect(res).toEqual({ ok: true, result: "invited" });
+    expect(allowedEmailCreate).toHaveBeenCalledWith({
+      data: { email: "user@example.com", status: "invited", invitedBy: GATE.email },
+    });
+  });
+
+  it("creates a row for an unknown email and returns result 'invited'", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    const res = await inviteTenant("beta@test.com");
+    expect(res).toEqual({ ok: true, result: "invited" });
+    expect(allowedEmailCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ email: "beta@test.com", status: "invited" }) })
     );
   });
 
-  it("upserts a valid email and returns ok", async () => {
+  // #538 round 2 (P2) — the old blanket upsert rewrote ANY row to "invited". Self-signup
+  // writes status "active", so re-inviting a merchant who is already inside demoted them
+  // back to pending. Re-inviting must now be a no-op that says so.
+  it("never downgrades an already-active address, and writes nothing", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    allowedEmailUpsert.mockResolvedValue({});
-    const res = await inviteTenant("beta@test.com");
-    expect(res).toEqual({ ok: true });
-    expect(allowedEmailUpsert).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { email: "beta@test.com" } })
-    );
+    allowedEmailFindUnique.mockResolvedValue({ status: "active" });
+    const res = await inviteTenant("live@merchant.com");
+    expect(res).toEqual({ ok: true, result: "already_member" });
+    expect(allowedEmailCreate).not.toHaveBeenCalled();
+    expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
+    expect(allowedEmailUpsert).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("reports an already-pending address without rewriting it", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    allowedEmailFindUnique.mockResolvedValue({ status: "invited" });
+    const res = await inviteTenant("pending@merchant.com");
+    expect(res).toEqual({ ok: true, result: "already_invited" });
+    expect(allowedEmailCreate).not.toHaveBeenCalled();
+    expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("re-invites a revoked address under a not-active precondition", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    allowedEmailFindUnique.mockResolvedValue({ status: "revoked" });
+    allowedEmailUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await inviteTenant("back@merchant.com");
+    expect(res).toEqual({ ok: true, result: "invited" });
+    // The precondition rides in the WHERE, so a signup racing this write wins.
+    expect(allowedEmailUpdateMany).toHaveBeenCalledWith({
+      where: { email: "back@merchant.com", status: { not: "active" } },
+      data: { status: "invited" },
+    });
+  });
+
+  it("yields to a signup that activates the row mid-flight (update matches nothing)", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    allowedEmailFindUnique.mockResolvedValue({ status: "revoked" });
+    allowedEmailUpdateMany.mockResolvedValue({ count: 0 });
+    const res = await inviteTenant("racing@merchant.com");
+    expect(res).toEqual({ ok: true, result: "already_member" });
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a row created concurrently after the read said 'missing'", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    allowedEmailFindUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ status: "active" });
+    allowedEmailCreate.mockRejectedValue(new Error("Unique constraint failed on the fields: (`email`)"));
+    const res = await inviteTenant("collide@merchant.com");
+    expect(res).toEqual({ ok: true, result: "already_member" });
+    expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -335,11 +403,11 @@ describe("revokeTenantInvite", () => {
     expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("returns error when count is 0 (no such invite)", async () => {
+  it("returns error when no PENDING row matched", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     allowedEmailUpdateMany.mockResolvedValue({ count: 0 });
     const res = await revokeTenantInvite("missing@example.com");
-    expect(res).toEqual({ error: "No such invite." });
+    expect(res).toEqual({ error: "No pending invite for that address." });
   });
 
   it("sets status to revoked and returns ok", async () => {
@@ -347,8 +415,10 @@ describe("revokeTenantInvite", () => {
     allowedEmailUpdateMany.mockResolvedValue({ count: 1 });
     const res = await revokeTenantInvite("beta@test.com");
     expect(res).toEqual({ ok: true });
+    // "still invited" rides in the WHERE — a row already flipped to active/revoked is
+    // never rewritten by a stale admin click.
     expect(allowedEmailUpdateMany).toHaveBeenCalledWith({
-      where: { email: "beta@test.com" },
+      where: { email: "beta@test.com", status: "invited" },
       data: { status: "revoked" },
     });
   });
@@ -358,8 +428,49 @@ describe("revokeTenantInvite", () => {
     allowedEmailUpdateMany.mockResolvedValue({ count: 1 });
     await revokeTenantInvite("BETA@TEST.COM");
     expect(allowedEmailUpdateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { email: "beta@test.com" } })
+      expect.objectContaining({ where: expect.objectContaining({ email: "beta@test.com" }) })
     );
+  });
+
+  // #538 round 2 (P1) — THE activation race. Self-signup leaves an operator's `invited` row
+  // untouched (signup-gate.ts skipDuplicates), so a merchant who signs up after the admin
+  // page rendered still shows as pending. Revoking that stale row would lock out a merchant
+  // who is already inside, so a live membership must veto the write entirely.
+  it("refuses to revoke an address that already owns a live membership", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindMany.mockResolvedValue([{ id: "user-1" }]);
+    membershipFindFirst.mockResolvedValue({ id: "mem-1" });
+    const res = await revokeTenantInvite("justsignedup@merchant.com");
+    expect(res).toEqual({
+      error: "That address already belongs to an active merchant. Suspend their tenant instead.",
+    });
+    expect(allowedEmailUpdateMany).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("matches the login address case-insensitively and ignores the founder org", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindMany.mockResolvedValue([{ id: "user-1" }]);
+    allowedEmailUpdateMany.mockResolvedValue({ count: 1 });
+    await revokeTenantInvite("Mixed@Case.com");
+    // User.email is stored as typed, so the lookup must not be case-sensitive.
+    expect(userFindMany).toHaveBeenCalledWith({
+      where: { email: { equals: "mixed@case.com", mode: "insensitive" } },
+      select: { id: true },
+    });
+    expect(membershipFindFirst).toHaveBeenCalledWith({
+      where: { userId: { in: ["user-1"] }, deletedAt: null, orgId: { not: FOUNDER_OWNER_ID } },
+      select: { id: true },
+    });
+  });
+
+  it("still revokes when the address has a user row but no live membership", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindMany.mockResolvedValue([{ id: "user-1" }]);
+    membershipFindFirst.mockResolvedValue(null);
+    allowedEmailUpdateMany.mockResolvedValue({ count: 1 });
+    const res = await revokeTenantInvite("nomembership@merchant.com");
+    expect(res).toEqual({ ok: true });
   });
 });
 

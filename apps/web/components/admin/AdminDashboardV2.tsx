@@ -616,6 +616,15 @@ function TenantsSection({ data }: { data: AdminV2Data }) {
 // round trip; inviteTenant/revokeTenantInvite stay the authority on what is accepted.
 const EMAIL_SHAPE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
+// inviteTenant reports whether it actually wrote anything. Say which of the three happened
+// rather than reporting "Admitted" for all of them — an operator re-typing an address that is
+// already inside deserves to know nothing changed.
+function inviteFeedback(result: "invited" | "already_invited" | "already_member", email: string): string {
+  if (result === "already_member") return `${email} is already an active merchant. Nothing changed.`;
+  if (result === "already_invited") return `${email} was already invited. Nothing changed, and no email was sent.`;
+  return `Admitted ${email}. No email was sent — tell them to sign in with that address.`;
+}
+
 // #538 — the invite backend (inviteTenant/revokeTenantInvite, both super-admin gated and
 // audited) had no UI at all, so no merchant could be let in from inside the product. This is
 // the wiring: it adds no server logic and no second path into AllowedEmail.
@@ -646,16 +655,18 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
       setMessage({ ok: false, text: result.error });
       return;
     }
-    setMessage({ ok: true, text: `Admitted ${candidate}. No email was sent — tell them to sign in with that address.` });
+    setMessage({ ok: true, text: inviteFeedback(result.result, candidate) });
     setEmail("");
     router.refresh();
   }
 
   async function revokeInvite(target: string) {
     if (revoking) return;
-    // Confirm first: revoking also blocks that address from signing up later, so a stray click
-    // on the wrong row is not a harmless mistake.
-    if (!window.confirm(`Revoke the invite for ${target}? That address will not be able to sign in or sign up.`)) return;
+    // Confirm first: a stray click on the wrong row is not harmless. Scoped to what revoking
+    // actually does — it blocks future self-signup with this address. It does NOT guarantee
+    // the address cannot sign in: FOUNDER_ADMIN_EMAILS / AUTH_ALLOWED_EMAILS are checked
+    // before the DB row and win over it (allowlist.ts).
+    if (!window.confirm(`Revoke the invite for ${target}? This blocks future self-signup with this address.`)) return;
     setRevoking(target);
     setMessage(null);
     const result = await revokeTenantInvite(target).catch(() => null);
