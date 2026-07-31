@@ -33,7 +33,20 @@ beforeEach(async () => {
   await prisma.metaConnection.deleteMany({ where: { ownerId: ORG } });
   await prisma.organization.deleteMany({ where: { id: ORG } });
   await prisma.organization.create({ data: { id: ORG } });
+  // The zero-match trail is platform-level, so it hangs off the seed "founder" org
+  // (route.ts's meta.data_deletion.nomatch create). Ensure it exists — that write is
+  // best-effort and would silently vanish without the org, which is exactly the honesty
+  // gap #573 is closing. Never deleted here: it is the real seed org, not a fixture.
+  await prisma.organization.upsert({ where: { id: "founder" }, create: { id: "founder" }, update: {} });
 });
+
+/** The nomatch audit row for one specific callback, found by its confirmation code. */
+async function findNoMatchEvent(confirmationCode: string) {
+  const rows = await prisma.actionEvent.findMany({
+    where: { ownerId: "founder", type: "meta.data_deletion.nomatch" },
+  });
+  return rows.find((r) => (r.payload as { confirmationCode?: string } | null)?.confirmationCode === confirmationCode) ?? null;
+}
 
 describe("POST /api/meta/data-deletion", () => {
   it("valid signed_request → deletes the matching connection, logs the event, returns url+code", async () => {
@@ -53,12 +66,44 @@ describe("POST /api/meta/data-deletion", () => {
     // 审计有痕
     const ev = await prisma.actionEvent.findFirst({ where: { ownerId: ORG, type: "meta.data_deletion" } });
     expect(ev).not.toBeNull();
+    // #573: a real deletion is NOT logged as a no-match — the two trails stay distinct.
+    expect(await findNoMatchEvent(body.confirmation_code)).toBeNull();
   });
 
   it("unknown meta user → still 200 with confirmation (nothing to delete is a valid outcome)", async () => {
     const res = await POST(post(`signed_request=${encodeURIComponent(signedRequest("999-no-such-user"))}`));
     expect(res.status).toBe(200);
     expect((await res.json()).confirmation_code).toBeTruthy();
+  });
+
+  it("#573: zero matches still returns a code, but the audit row says matched:0", async () => {
+    // Meta's spec wants the callback idempotent, so "nothing to delete" must still answer
+    // with a confirmation code. What must never happen is a code with no honest trail: the
+    // platform-level row has to state, in the payload, that this confirmation covers zero
+    // deleted connections rather than leaving that to be inferred from the event type.
+    const res = await POST(post(`signed_request=${encodeURIComponent(signedRequest("999-nobody-573"))}`));
+    expect(res.status).toBe(200);
+    const { confirmation_code: code } = await res.json();
+    expect(code).toBeTruthy();
+
+    const ev = await findNoMatchEvent(code);
+    expect(ev).not.toBeNull();
+    expect(ev!.payload).toMatchObject({ metaUserId: "999-nobody-573", confirmationCode: code, matched: 0 });
+  });
+
+  it("#573: a legacy connection with metaUserId=null is not matched and is not deleted", async () => {
+    // Rows like this can no longer be created (lib/meta-actions.ts refuses to store a
+    // connection without the id), but any that predate the fix stay invisible to this exact
+    // match. The callback must then report matched:0 rather than imply it cleaned up.
+    await prisma.metaConnection.create({
+      data: { id: "mc-dd-null", ownerId: ORG, metaUserId: null, accessTokenEnc: "enc", scope: "ads_read" },
+    });
+    const res = await POST(post(`signed_request=${encodeURIComponent(signedRequest("777003"))}`));
+    expect(res.status).toBe(200);
+    const { confirmation_code: code } = await res.json();
+
+    expect(await prisma.metaConnection.findUnique({ where: { id: "mc-dd-null" } })).not.toBeNull();
+    expect((await findNoMatchEvent(code))!.payload).toMatchObject({ matched: 0 });
   });
 
   it("bad signature → 400, deletes nothing", async () => {

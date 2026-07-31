@@ -64,9 +64,12 @@ async function handleDataDeletion(req: NextRequest | Request): Promise<Response>
   }
   if (matches.length === 0) {
     // 无匹配也留一条平台级痕迹(best-effort,founder org 缺失时不 500)。
+    // #573:确认码照发(Meta 规范要求幂等,「无可删」是合法结果),但审计行必须
+    // 如实说明发码时**一行都没删** —— matched: 0 显式写进 payload,而不是让审计
+    // 读者从 type 后缀去推断。匹配>0 的事务内审计原样不动。
     await prisma.actionEvent
       .create({
-        data: { id: newId(), ownerId: "founder", type: "meta.data_deletion.nomatch", payload: { metaUserId: parsed.userId, confirmationCode } },
+        data: { id: newId(), ownerId: "founder", type: "meta.data_deletion.nomatch", payload: { metaUserId: parsed.userId, confirmationCode, matched: 0 } },
       })
       .catch(() => {});
   }
