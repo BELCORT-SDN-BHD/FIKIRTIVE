@@ -74,7 +74,8 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     「stored file 尚未被自动清理」照 privacy/page.tsx:362 的既有口径写。
  *     (r1 把它写成「全仓唯一调用点」,漏了 worker 那处;结论不变,但绝对断言错了,r2 改正。)
  *     UI:Library(components/otto/OttoStuff.tsx mode="library" :246,详情面板 :342)→ 打开素材 →
- *     Delete 按钮 components/asset/DetailPanel.tsx:750 → 确认框文案 :409 → handleDelete :365。
+ *     Delete 按钮 components/asset/DetailPanel.tsx:750 → 确认框 :407-413(:409 title、
+ *     :411 confirmLabel、整段无 confirmText)→ handleDelete :365。
  *     ⚠️ r2 P0 修正:删素材**不会**把画布上的卡片清掉。deleteGeneration 只软删 Generation,
  *     完全不碰 CanvasNode;listCanvasNodes 仍返回该节点(canvas-actions.ts:43),但缩略图查询
  *     getGenerationThumbs 过滤 deletedAt(lib/data.ts:20)取不到 url,于是 canvas-actions.ts:75
@@ -111,7 +112,7 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     meta-graph.ts:325-326 返回 null,connectMeta 仍照落库(meta-actions.ts:33)并返回 ok,
  *     schema.prisma:1128 允许空值;而回调只做精确匹配 `where: { metaUserId }`(route.ts:48),
  *     故这类连接永远删不到。措辞收敛为「recorded Meta user ID 匹配的连接」。另:零匹配时
- *     route.ts:74-78 仍返回 confirmation code,两个分支都已写明「码≠连接曾存在」。
+ *     route.ts:65-78 仍返回 confirmation code,两个分支都已写明「码≠连接曾存在」。
  *     ⚠️ 底层产品缺口(允许 metaUserId:null 落库)不在本页范围,已另立 issue #573,本轮只改文案。
  *   · P1-1 「differs only in reach」不成立 —— 回调每 org 另写一条 meta.data_deletion
  *     ActionEvent(route.ts:59),自助 Disconnect 不写(meta-actions.ts:103-108);已去掉 only。
@@ -121,15 +122,56 @@ export const metadata = { title: "Data deletion · Fikirtive" };
  *     两棵树行号不同 —— 本轮所有引用一律以本 worktree 为准):campaign = 侧栏行上
  *     「Campaign controls」⋯ 按钮(OttoNav.tsx:451)→ 菜单项「Delete project」(:482,
  *     注意菜单仍用旧词 project)→ 输入名字确认(OttoApp.tsx:767);conversation = 侧栏行的
- *     bin 图标(OttoNav.tsx:289)或标签页上的 ×(ConvoTabs.tsx:53)→ 输入会话名确认
- *     (OttoApp.tsx:800);asset 见上。确认方式也就地核实过:OttoPromptDialog.tsx:48
+ *     bin 图标 → 输入会话名确认(OttoApp.tsx:800);asset 见上。
+ *     (⚠️ r2 在此还写了「标签页 ×」入口,是错的 —— 见下方 r3 第一条。)
+ *     确认方式也就地核实过:OttoPromptDialog.tsx:48
  *     `canConfirm = !confirmText || typed.trim() === confirmText`、:102「Type X to continue」
- *     —— 所以 campaign / conversation 是**打字确认**,而 asset 只是普通确认框
- *     (DetailPanel.tsx:409 那组 title/confirmLabel,无 confirmText),Disconnect 无确认。
- *     页面首段按这三档分别写,不再一句话盖全。
+ *     —— 所以 campaign / conversation 是**打字确认**,而 generated asset 只是普通确认框
+ *     (DetailPanel.tsx:407-413,无 confirmText),Disconnect 与 entity 删除无确认。
  *   · P2 日期改 31 July;「Two things」改为不绝对的表述(credit ledger / publish history /
  *     audit 同样无自助删除)。
- *   · P3 见上两处行号与 deleteObject 调用点更正。*/
+ *   · P3 见上两处行号与 deleteObject 调用点更正。
+ *
+ *  2026-07-31 r3(判官第二份 FAIL:r2 十条中八条确认已修,两条改错方向,另有新失实):
+ *   · 【r2 改错·P1】会话删除的「标签页 ×」入口是假的 —— 组件存在但**永不渲染**:
+ *     app/otto/page.tsx:24-25 把 skin 硬编码为 "gb"(注释原文:唯一皮肤、无回滚参数),
+ *     而 OttoView.tsx:301 的渲染条件是 `skin !== "gb" && <ConvoTabs …>`。已删掉该入口,
+ *     只留侧栏 bin(OttoNav.tsx:292 才是图标本体,r2 引的 :289 是按钮 title)。
+ *     ⚠️ 教训写在这:**入口必须核当前渲染路径,组件存在 ≠ 商家看得到**。
+ *   · 【r2 改错·P2】「Everything else has no self-service delete」比 r1 的「Two things」
+ *     更绝对,且被真实自助删除反证:canvas-actions.ts:277 deleteCanvasNode、
+ *     memory-actions.ts:83 deleteMemory、actions.ts:481 softDeleteEntity、
+ *     actions.ts:599 softDeleteShot、refgen-actions.ts:388 deleteVariant、
+ *     brand-record-actions.ts:113 deleteBrandRecord(:130 还能 restore)。
+ *     改为**精确枚举**三项,逐项已核无任何删除路径:contact(crm-actions.ts 无任何删除
+ *     action,且 Contact 挂 org 不挂 project,不随 campaign 走)、credit ledger
+ *     (schema.prisma:756 CreditLedger,全 apps/web + apps/worker 无 delete/deleteMany)、
+ *     不属于 campaign 的 actionEvent(唯一删除点是 actions.ts:243,按 projectId 限定)。
+ *     ⚠️ 初稿这里写了「四项」,把 publishAttempt 也算进去 —— **是错的**:
+ *     schema.prisma:2170 `post ScheduledPost @relation(..., onDelete: Cascade)`,
+ *     而 deleteProject 删 scheduledPost(actions.ts:235),所以 publish attempt 会随
+ *     campaign 级联删除。第三轮内部自查时逮到并改成三项 + 单写一句 publish history 的真实行为。
+ *     ⚠️ 同一处连栽两轮全称量词,故本轮对正文做了 every/only/always/never/nothing 全量筛查;
+ *     留下的每个全称词都有代码支撑并带限定语(如「every stored connection **whose recorded
+ *     Meta user ID matches**」对应 route.ts:47-51 的 findMany+逐条删)。
+ *   · 【新·P1】零匹配时那条审计是 best-effort:route.ts:65-72 的 `.catch(() => {})` 吞掉
+ *     失败后照样返回码(匹配到连接时则不同 —— 审计写在 :53-60 的同一事务里,是可靠的)。
+ *     故正文由「记录一定保留」降为「normally kept」。
+ *   · 【新·P1】确认框范围要限定:Library 同时列 generation 与 entity,entity 的 Delete
+ *     (StuffLibrary.tsx:252-262)经 OttoStuff.tsx:182 handleDelete 直接调 softDeleteEntity,
+ *     **无确认框**。已把原 bullet 限定为 generated asset,并新增一条「saved reference」
+ *     如实写明无确认;其 EntityType 四值见 schema.prisma:22-27(CHARACTER/LOCATION/
+ *     PRODUCT/BRANDMARK),且 softDeleteEntity 不删 shotEntityRef(只 count),
+ *     所以写「shots 仍留着它的链接直到你去改」。
+ *   · 【新·P2】Disconnect 并非无条件即时:meta-actions.ts:106 冒充模式直接返回 error,
+ *     而 OttoConnections.tsx:462 忽略返回值(错误被 UI 吞掉)。措辞限定为「for your own login」。
+ *   · 【新·P2】整账户删除漏了真实存在的确认步骤:OttoAccount.tsx:47 confirmText={account.email}
+ *     —— 要打自己的登录邮箱才能继续,已补进正文。
+ *   · 【新·P3】指针更正:DetailPanel 的「无 confirmText」要看 :407-413 整段(:409 只是 title、
+ *     :411 是 confirmLabel);零匹配仍返回码的证据范围应从 route.ts:65 起(:74-78 只能证明
+ *     无条件返回)。ConvoTabs 的引用随上面第一条一并删除。
+ *   · 判官另指出 DetailPanel.tsx:407 的确认框文案(仍说 removes from "canvas views")与本页
+ *     新文案相反 —— 该矛盾归 #541 话语族处理,**本 PR 不动那个文件**。*/
 export default async function DataDeletionPage({
   searchParams,
 }: {
@@ -164,8 +206,8 @@ export default async function DataDeletionPage({
                 ID matches the one in the request, including its access token. If no stored connection carries that ID,
                 there is nothing for the request to delete and we still return a code. Some records are not deleted by
                 this request: scheduled posts keep the Meta account and post identifiers in their publish history,
-                publish attempts keep their post and media identifiers, and audit records — including the record of the
-                deletion request itself — are kept.
+                publish attempts keep their post and media identifiers, and audit records are kept. A record of the
+                request itself is normally kept too.
               </p>
               <p>
                 To have us check a specific request, or to ask about anything beyond the Meta connection, email{" "}
@@ -187,7 +229,7 @@ export default async function DataDeletionPage({
               <p>
                 Some records are not deleted by this request: scheduled posts keep the Meta account and post
                 identifiers in their publish history, publish attempts keep their post and media identifiers, and audit
-                records — including the record of the deletion request itself — are kept.
+                records are kept. A record of the request itself is normally kept too.
               </p>
               <p>
                 This page has no lookup form and does not verify codes. To have us check a specific request, email{" "}
@@ -205,9 +247,9 @@ export default async function DataDeletionPage({
           <h2 className="pt-4 text-lg font-semibold text-foreground">What you can delete yourself</h2>
           <p>
             Your records are yours. These deletions are in the product today: you run them yourself and you do not
-            have to ask us. Deleting a campaign, a conversation or an asset asks you to confirm first — for a campaign
-            or a conversation you have to type its name. Disconnecting Meta asks nothing: it takes effect the moment
-            you click it.
+            have to ask us. They do not all ask the same before acting — a campaign and a conversation make you type
+            the name, a generated asset asks a plain yes, and a saved reference or a Meta disconnect runs straight
+            away. Each entry below says which, and what is left behind.
           </p>
           <ul className="list-disc space-y-2 pl-5">
             <li>
@@ -223,14 +265,14 @@ export default async function DataDeletionPage({
             </li>
             <li>
               <span className="text-foreground">A conversation.</span> In the sidebar, use the bin icon on the
-              conversation&apos;s row, or the <span className="text-foreground">×</span> on its tab, then type the
-              conversation name to confirm. Deleting a conversation permanently deletes it and its messages. Canvas nodes and generated media are
+              conversation&apos;s row, then type the conversation name to confirm. Deleting a conversation permanently
+              deletes it and its messages. Canvas nodes and generated media are
               detached from it rather than deleted, so they stay in your library. A research run still in progress
               blocks the deletion until it finishes; a generation still in progress does not — it is detached and
               carries on, and the conversation is deleted anyway.
             </li>
             <li>
-              <span className="text-foreground">An asset in your library.</span> Open{" "}
+              <span className="text-foreground">A generated asset in your library.</span> Open{" "}
               <span className="text-foreground">Library</span>, open the asset, and choose{" "}
               <span className="text-foreground">Delete</span>, then confirm. This removes the asset from your library
               and cannot be undone. It does not clear the asset off a campaign canvas: any canvas card showing it stays
@@ -238,11 +280,18 @@ export default async function DataDeletionPage({
               is not yet removed by an automatic clean-up job.
             </li>
             <li>
+              <span className="text-foreground">A saved reference.</span> Library also lists the products, characters,
+              locations and brand marks you have saved. Their{" "}
+              <span className="text-foreground">Delete</span> button runs straight away, with no confirmation step. The
+              reference is removed from your library; shots that already used it keep their link to it until you edit
+              them.
+            </li>
+            <li>
               <span className="text-foreground">A connected Meta account.</span> In Fikirtive, open{" "}
               <span className="text-foreground">Connections</span> and choose{" "}
-              <span className="text-foreground">Disconnect</span>. There is no confirmation step — it runs the moment
-              you click it. It deletes the stored Meta connection for the workspace you are in: the Meta user ID, the
-              encrypted access token, the granted scope and the default page we had recorded. A deletion request sent
+              <span className="text-foreground">Disconnect</span>. For your own login it runs immediately, with no
+              confirmation step. It deletes the stored Meta connection for the workspace you are in: the Meta user ID,
+              the encrypted access token, the granted scope and the default page we had recorded. A deletion request sent
               by Meta removes the same kind of stored connection, but the two are not identical. That request is
               matched by Meta user ID, so it reaches every workspace whose stored connection carries that ID — and a
               connection saved without one is not matched at all — and it also writes an audit record of the request,
@@ -252,11 +301,11 @@ export default async function DataDeletionPage({
             </li>
           </ul>
           <p>
-            Everything else has no self-service delete today. Contact records cannot be deleted from the interface, and
-            there is no automated flow for your whole account — both go through the email route below, and we do not
-            delete a contact record on our own initiative. Credit ledger rows, publish history and audit records have
-            no delete control either: they are the record of what was spent and what was sent, and the sections above
-            say where each of them is kept.
+            Three things have no delete control of their own today: contact records, credit ledger rows, and audit
+            records that do not belong to a campaign. Contacts, and anything else you want removed, go through the
+            email route below — we do not delete a contact record on our own initiative. The ledger and those audit
+            records are the account of what was spent and what was done, so they stay. Publish history behaves
+            differently: a scheduled post and its publish attempts go when you delete the campaign they belong to.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Deleting your whole account</h2>
@@ -264,9 +313,9 @@ export default async function DataDeletionPage({
             To request deletion of your whole account, contact us: email{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> from the
             address you sign in with, or use{" "}
-            <span className="text-foreground">Preferences → Danger zone → Delete account</span> inside Fikirtive, which
-            opens the same email. There is no automated deletion flow, and the button does not delete anything by
-            itself.
+            <span className="text-foreground">Preferences → Danger zone → Delete account</span> inside Fikirtive, where
+            you type your sign-in email to confirm and Fikirtive then opens the same email for you. There is no
+            automated deletion flow, and the button does not delete anything by itself.
           </p>
           <p>
             Deleted records can persist for a period in database backups and in our database provider&apos;s
