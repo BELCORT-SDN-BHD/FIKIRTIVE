@@ -1002,3 +1002,112 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   .gb .cv-set-num { width: 100%; justify-content: flex-start; }
   .gb .cv-set-num .cv-set-input { width: 110px; }
 }
+
+/* ---------- #586 · Otto prose (markdown-rendered agent replies) ----------
+   One class for every Otto-authored text surface: the streaming bubble (TextPart),
+   the classic bubble (OttoConversation), the memory transcript (OttoMemory) and the
+   research synthesis (ResearchReport). It inherits font-family / font-size / color
+   from whatever bubble or card wraps it — there is NO second type system here, only
+   the weight + rhythm the design system already specifies (§3 type, §4 8pt grid).
+   Renderer + XSS boundary: components/otto/parts/OttoMarkdown.tsx. */
+.otto-prose { font: inherit; color: inherit; }
+
+/* Vertical rhythm: 8px between blocks (§4 base rhythm), zero at the seams so a bubble
+   with one paragraph is pixel-identical to the old pre-wrap bubble. */
+.otto-prose > :first-child { margin-top: 0; }
+.otto-prose > :last-child { margin-bottom: 0; }
+.otto-prose p,
+.otto-prose ul,
+.otto-prose ol,
+.otto-prose blockquote,
+.otto-prose pre { margin: 8px 0; }
+/* Tables carry no margin of their own — their .otto-prose-scroll wrapper does (that
+   wrapper is an overflow container, so the two would NOT collapse into one gap). */
+
+/* §3: hierarchy from size + weight only, max two weights per component (400 body /
+   600 emphasis). Headings stay at reading sizes — a markdown `#` inside a chat bubble
+   is a paragraph lead, not a page title. */
+.otto-prose h1,
+.otto-prose h2,
+.otto-prose h3,
+.otto-prose h4,
+.otto-prose h5,
+.otto-prose h6 { margin: 12px 0 4px; font-weight: 600; line-height: 1.3; }
+.otto-prose h1,
+.otto-prose h2 { font-size: 0.9375rem; letter-spacing: -0.011em; }
+.otto-prose strong { font-weight: 600; }
+.otto-prose em { font-style: italic; }
+.otto-prose del { text-decoration: line-through; color: var(--muted-foreground); }
+
+/* Lists: 20px indent (§4 allowed step), 4px between items. */
+.otto-prose ul,
+.otto-prose ol { padding-left: 20px; }
+.otto-prose ul { list-style: disc; }
+.otto-prose ol { list-style: decimal; }
+.otto-prose li { margin: 4px 0; }
+.otto-prose li > ul,
+.otto-prose li > ol { margin: 4px 0; }
+/* GFM task lists render their own checkbox — drop the bullet, keep the box inert. */
+.otto-prose li:has(> input[type="checkbox"]) { list-style: none; margin-left: -20px; }
+.otto-prose li > input[type="checkbox"] { margin-right: 8px; pointer-events: none; }
+
+.otto-prose blockquote {
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+
+/* Code: the ONE place JetBrains Mono is legal in prose (§3 — mono for data/IDs). */
+.otto-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  background: var(--secondary);
+  border-radius: 8px;
+  padding: 1px 5px;
+}
+.otto-prose pre {
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px;
+  overflow-x: auto;
+}
+.otto-prose pre code { background: none; border-radius: 0; padding: 0; }
+
+/* Wide content scrolls inside its own box; the bubble never widens. */
+.otto-prose-scroll { overflow-x: auto; margin: 8px 0; }
+.otto-prose table { border-collapse: collapse; width: 100%; font-size: 0.8125rem; }
+.otto-prose th,
+.otto-prose td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.otto-prose th { font-weight: 600; background: var(--secondary); }
+
+.otto-prose a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.otto-prose hr { margin: 12px 0; border: 0; border-top: 1px solid var(--border); }
+/* Markdown images are never fetched (OttoMarkdown boundary 3) — this is the alt-text stand-in. */
+.otto-prose-noimg { color: var(--muted-foreground); font-style: italic; }
+
+/* Streaming caret. Rendered as ::after on the LAST block so it sits at the end of the
+   last line instead of dropping to a line of its own (which would visually split the
+   final paragraph). `otto-caret-blink` is injected once by OttoChatStream's root
+   <style> block — the only surface that streams — the same coupling StatusLine already
+   has with `otto-shimmer`. */
+.otto-prose[data-streaming="true"] > :last-child:not(ul):not(ol)::after,
+.otto-prose[data-streaming="true"] > ul:last-child > li:last-child::after,
+.otto-prose[data-streaming="true"] > ol:last-child > li:last-child::after {
+  content: "▋";
+  display: inline-block;
+  width: 0.5em;
+  margin-left: 1px;
+  color: var(--muted-foreground);
+  animation: otto-caret-blink 1s steps(1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .otto-prose[data-streaming="true"] > :last-child:not(ul):not(ol)::after,
+  .otto-prose[data-streaming="true"] > ul:last-child > li:last-child::after,
+  .otto-prose[data-streaming="true"] > ol:last-child > li:last-child::after { animation: none; }
+}

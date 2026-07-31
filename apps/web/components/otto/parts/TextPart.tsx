@@ -1,6 +1,7 @@
 "use client";
 import React from "react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
+import { OttoMarkdown } from "./OttoMarkdown";
 import { MSG_ENTER_STYLE } from "./motion";
 
 export interface TextPartProps {
@@ -18,6 +19,10 @@ export interface TextPartProps {
  * One text bubble in the Otto stream. The bubble styles are reused VERBATIM from
  * OttoConversation (user bubble + Otto bubble) so the streaming chat looks identical
  * to the classic chat. While `streaming`, an assistant bubble shows a blinking caret.
+ *
+ * #586: the ASSISTANT bubble renders markdown (OttoMarkdown). The USER bubble stays
+ * literal pre-wrap text — the merchant typed those characters and is entitled to see
+ * them back unchanged, and their own text is never run through a parser.
  */
 export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
   const enterStyle = animateIn ? MSG_ENTER_STYLE : undefined;
@@ -56,32 +61,12 @@ export function TextPart({ role, text, streaming, animateIn }: TextPartProps) {
           fontSize: "0.875rem",
           lineHeight: "1.5",
           color: "var(--foreground)",
-          whiteSpace: "pre-wrap",
           wordBreak: "break-word",
         }}
       >
-        {text}
-        {streaming && <BlinkingCaret />}
+        <OttoMarkdown text={text} streaming={streaming} />
       </div>
     </div>
-  );
-}
-
-/** A small blinking text caret appended to streaming assistant text. */
-function BlinkingCaret() {
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        display: "inline-block",
-        width: "0.5em",
-        marginLeft: "1px",
-        color: "var(--muted-foreground)",
-        animation: "otto-caret-blink 1s steps(1) infinite",
-      }}
-    >
-      ▋
-    </span>
   );
 }
 
