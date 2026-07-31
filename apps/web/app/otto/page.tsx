@@ -5,7 +5,7 @@ import { getEntities, getCoworkThreads, getCoworkThread, resolveCoworkResultUrls
 import { toEntityDTO, toChatThreadDTO, toChatThreadMetaDTO } from "@/lib/dto";
 import { getMyAccount } from "@/lib/account-actions";
 import { getMyProfileNames } from "@/lib/profile-names";
-import { resolveOttoGreetingName } from "@/lib/otto-greeting";
+import { ottoGreetingNameFromProfile } from "@/lib/otto-greeting";
 import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { getAnalytics } from "@/lib/analytics-actions";
@@ -45,7 +45,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     redirect(`/otto?${next.toString()}`);
   }
 
-  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics, profileNames] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics, userName] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
@@ -58,9 +58,11 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     // Analytics view payload for the Analytics screen (read-only Meta reads; default 30d range).
     // Refined in Task 5; provided here so the required OttoApp `analytics` prop typechecks.
     getAnalytics({}).catch(() => ({ state: "notConnected" as const })),
-    // #542 — the two names the greeting is built from. Both are read here so that the moment a
-    // merchant sets either one on /profile, the greeting starts using it.
-    getMyProfileNames(),
+    // #542 — the greeting's name, resolved from the merchant's own two names so that the moment
+    // they set either one on /profile the greeting starts using it. The helper owns the whole
+    // step including the `.catch`: a Prisma fault REJECTS rather than returning {error}, and an
+    // un-caught rejection in this Promise.all would take the entire page down (round-2 P2).
+    ottoGreetingNameFromProfile(getMyProfileNames),
   ]);
 
   // Open the requested thread (?thread=, if it's in this project) or the most recent.
@@ -84,12 +86,11 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
 
   const account = "error" in accountResult ? null : accountResult;
   const balanceUsd = account?.balanceUsd ?? 0;
-  // #542 (F-07) — display name → shop name → "there". The email is NOT in this chain at all:
-  // greeting a merchant by their address's local part ("Hi tools") is the exact defect this
-  // ticket exists to remove, and a pre-#543 workspace name IS the full address, so the
-  // resolver rejects any candidate containing "@" rather than passing it on. A failed profile
-  // read is treated like any other miss — the generic greeting, never a guessed name.
-  const userName = resolveOttoGreetingName("error" in profileNames ? null : profileNames);
+  // #542 (F-07) — `userName` above is already the resolved greeting name: display name → shop
+  // name → "there". The email is NOT in that chain at all. Greeting a merchant by their
+  // address's local part ("Hi tools") is the exact defect this ticket exists to remove, and a
+  // pre-#543 workspace name IS the full address, so any candidate containing "@" is refused
+  // rather than passed on. See lib/otto-greeting.ts.
 
   // Streaming chat is the single Otto surface for all users (reference-vision rollout, 2026-07-01).
   const ottoStreamEnabled = true;

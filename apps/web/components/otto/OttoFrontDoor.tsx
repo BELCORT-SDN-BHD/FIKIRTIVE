@@ -7,7 +7,7 @@ import { getCoworkThreadClient } from "@/lib/cowork-fetch";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
-import { ottoGreetingName } from "@/lib/otto-greeting";
+import { ottoGreeting } from "@/lib/otto-greeting";
 import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
@@ -133,7 +133,9 @@ export function OttoFrontDoor({
   // OttoConversation.send()'s busyRef guard so the front door can't duplicate campaigns.
   const startingRef = useRef(false);
 
-  const greeting = `Hi ${ottoGreetingName(userName)} — what should we make today?`;
+  // #542 — the sentence itself lives in lib/otto-greeting.ts so the tests assert against the
+  // SAME string this renders, not a re-typed copy of it (round-2 review P2).
+  const greeting = ottoGreeting(userName);
 
   const mentionSuggestions = mentionQuery !== null
     ? (entities ?? []).filter(e => e.name.toLowerCase().includes(mentionQuery.toLowerCase())).slice(0, 6)

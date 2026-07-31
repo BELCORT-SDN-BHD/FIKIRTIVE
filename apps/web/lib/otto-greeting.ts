@@ -34,12 +34,44 @@ function usableGreetingName(candidate: string | null | undefined): string | null
  *  what `otto-greeting.test.ts` pins. The caller passes the result to {@link ottoGreetingName},
  *  which shortens a multi-word name to its first word ("Aisha Rahman" → "Aisha", "Kopi
  *  Corner" → "Kopi"); that shortening is pre-existing and unchanged. */
-export function resolveOttoGreetingName(
-  names: { displayName?: string | null; workspaceName?: string | null } | null | undefined,
-): string {
+export type ProfileNamesRead =
+  | { displayName?: string | null; workspaceName?: string | null }
+  | { error: string }
+  | null
+  | undefined;
+
+export function resolveOttoGreetingName(names: ProfileNamesRead): string {
+  if (!names || "error" in names) return OTTO_GENERIC_GREETING_NAME;
   return (
-    usableGreetingName(names?.displayName) ??
-    usableGreetingName(names?.workspaceName) ??
+    usableGreetingName(names.displayName) ??
+    usableGreetingName(names.workspaceName) ??
     OTTO_GENERIC_GREETING_NAME
   );
+}
+
+/** The page's ENTIRE greeting-name step, in one testable place: run the profile read, survive
+ *  it however it ends, and pick the name.
+ *
+ *  THE `.catch` IS THE POINT. `getMyProfileNames` fails in two different ways and only one of
+ *  them is a value: a refused session returns `{error}`, but a Prisma/connection fault REJECTS.
+ *  An un-caught rejection inside the page's `Promise.all` takes the whole page down — so
+ *  "a failed read falls back to the generic greeting" was only true for the first kind until
+ *  this wrapper existed. Both kinds now land on {@link resolveOttoGreetingName}'s miss path.
+ *
+ *  Takes the reader as a function rather than a promise so a test can hand it a rejecting stub
+ *  and exercise the real catch, instead of re-implementing it. */
+export async function ottoGreetingNameFromProfile(
+  read: () => Promise<ProfileNamesRead>,
+): Promise<string> {
+  const names = await read().catch(() => null);
+  return resolveOttoGreetingName(names);
+}
+
+/** THE greeting sentence — the single source of the words a merchant reads on the front door.
+ *
+ *  Lives here, not inline in OttoFrontDoor, so that the component and its tests consume the
+ *  SAME string. A test that re-typed this template would stay green while production regressed
+ *  (round-2 review P2): it would be asserting against its own copy, not against the product. */
+export function ottoGreeting(userName: string): string {
+  return `Hi ${ottoGreetingName(userName)} — what should we make today?`;
 }
