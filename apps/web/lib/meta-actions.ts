@@ -21,6 +21,17 @@ export async function completeMetaConnect(
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to connect Meta." };
   const ex = await exchangeCodeForToken(code, redirectUri);
   if ("error" in ex) return ex;
+  // #573 fail-closed: metaUserId is the ONLY key Meta's data-deletion callback has to find
+  // this row (app/api/meta/data-deletion/route.ts matches `where: { metaUserId }`). Storing a
+  // connection without it creates a row that callback can never delete — we would hand Meta a
+  // confirmation code having deleted nothing. So we refuse to store it at all: no null-id row
+  // can be created, and the callback's exact match is enough by construction.
+  // Refusing here also costs the merchant nothing real: metaUserId and grantedScopes come from
+  // the SAME debug_token response (lib/meta-graph.ts), so a missing id means that whole step
+  // failed — the connection would have landed with scope:"" and canWrite/canPublish false, i.e.
+  // dead on arrival. One failed connect they can retry beats a silently useless one.
+  const metaUserId = ex.metaUserId;
+  if (!metaUserId) return { error: "incomplete" };
   const enc = encryptToken(ex.token);
   const canWrite = ex.grantedScopes.includes("ads_management");
   const canManagePages = ex.grantedScopes.includes("pages_show_list");
@@ -30,7 +41,7 @@ export async function completeMetaConnect(
   const canPublish =
     ex.grantedScopes.includes("instagram_content_publish") && ex.grantedScopes.includes("pages_manage_posts");
   const scope = ex.grantedScopes.length > 0 ? ex.grantedScopes.join(",") : "";
-  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, canPublish, status: "active" as const, metaUserId: ex.metaUserId };
+  const data = { accessTokenEnc: enc, tokenExpiresAt: ex.expiresAt, scope, canWrite, canManagePages, canPublish, status: "active" as const, metaUserId };
   await prisma.metaConnection.upsert({
     where: { ownerId: gate.ownerId },
     update: data,

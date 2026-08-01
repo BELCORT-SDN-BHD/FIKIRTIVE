@@ -40,7 +40,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))               // short-lived
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 })) // long-lived
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"] } }));     // debug_token
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: "1784512" } })); // debug_token
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
     expect(res).toEqual({ ok: true });
@@ -71,7 +71,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
@@ -82,7 +82,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
@@ -100,23 +100,71 @@ describe("completeMetaConnect", () => {
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockUpsert).not.toHaveBeenCalled();
   });
-  it("sets canWrite:false and scope:'' when debug_token fetch fails", async () => {
+  // #573 fail-closed. Until this ticket a failed debug_token still produced a stored
+  // connection (scope:"", canWrite:false, metaUserId:null). That row was invisible to
+  // /api/meta/data-deletion — it matches on metaUserId — so a merchant's Meta-side deletion
+  // request would have been answered with a confirmation code while the encrypted token
+  // stayed in our database. Now the connect fails instead, and nothing is written.
+  it("#573: refuses to store the connection when debug_token fails (no un-deletable row)", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
       .mockResolvedValueOnce(jsonRes({ error: { message: "invalid" } }, false)); // debug_token fails
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    expect(res).toEqual({ error: "incomplete" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+  it("#573: refuses to store the connection when debug_token answers without a user_id", async () => {
+    // The narrower half of the same guard: debug_token responded 200 with real scopes but no
+    // user_id at all. Scopes alone are not enough — without the id the data-deletion callback
+    // can never find this row, so the connect fails rather than storing it.
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management"] } }));
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    expect(res).toEqual({ error: "incomplete" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+  it("#573: accepts a numeric user_id (Meta returns it unquoted on some responses)", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: 1784512 } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
     expect(res).toEqual({ ok: true });
-    const call = mockUpsert.mock.calls[0][0];
-    expect(call.create.canWrite).toBe(false);
-    expect(call.create.scope).toBe("");
+    expect(mockUpsert.mock.calls[0][0].create.metaUserId).toBe("1784512");
+  });
+  it("#573: refuses a numeric user_id too large for JS to carry exactly", async () => {
+    // Meta's app-scoped ids sit right up against JS's safe-integer ceiling (2^53-1). An
+    // unquoted one past it is already wrong by the time we see it — JSON.parse rounds
+    // 9007199254740993 to ...992 — so String() would store an id that no data-deletion
+    // callback can ever match, i.e. exactly the un-deletable row this ticket exists to
+    // prevent. A silently-wrong id is worse than no id: fail the connect instead.
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: 9007199254740993 } }));
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    expect(res).toEqual({ error: "incomplete" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+  it("#573: refuses a non-positive numeric user_id", async () => {
+    // No real app-scoped id is 0 or negative, so this is a malformed/placeholder response.
+    // Storing "0" would look like a valid id while matching nobody.
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: 0 } }));
+    expect(await completeMetaConnect("the-code", "https://app/api/meta/callback")).toEqual({ error: "incomplete" });
+    expect(mockUpsert).not.toHaveBeenCalled();
   });
   it("sets canManagePages:true when Meta grants pages_show_list", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management", "pages_show_list", "business_management"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management", "pages_show_list", "business_management"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
@@ -127,7 +175,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
@@ -138,7 +186,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["pages_show_list", "instagram_content_publish", "pages_manage_posts"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["pages_show_list", "instagram_content_publish", "pages_manage_posts"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
@@ -150,7 +198,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "instagram_content_publish"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "instagram_content_publish"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
@@ -160,7 +208,7 @@ describe("completeMetaConnect", () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
       .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
-      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management", "pages_show_list", "business_management"] } }));
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read", "ads_management", "pages_show_list", "business_management"], user_id: "1784512" } }));
     mockUpsert.mockResolvedValue({ id: "mc-1" });
     await completeMetaConnect("the-code", "https://app/api/meta/callback");
     const call = mockUpsert.mock.calls[0][0];
