@@ -10,7 +10,7 @@
  *  - ApprovalRequest 一个原语两个表面 —— 此页与 dock / 聊天卡共用同一队列(pendingApprovals),
  *    从任一处批,live reflection 同步全城(团队审批工作台 / 首页「awaiting approval」同源缩短)。
  *  - Otto 动作时间线 = D2 单流(streamFor 的 otto 消息),与 dock 同源;点一行深链回现场,
- *    不发明独立通知系统。「Open Otto」→ /otto 全屏读这条流。
+ *    不发明独立通知系统。「Open Otto」→ 真 Otto 对话(#609:壳内假 Otto 全屏面已退场)。
  *  - coral 预算:唯一 brand 按钮 = 待批生成卡的 Approve(§O4);排期确认走 INK。零后台 import。
  */
 
@@ -123,7 +123,7 @@ export function ImmersiveNotifications() {
         {/* 不确定先动哪个?让 Otto 带上下文帮你分诊(§O7,零打字意图 chip 在 dock) */}
         <OttoAssist zone="Inbox" label="Ask Otto" intents={assistIntents} />
         <Button variant="ghost" size="sm" asChild>
-          <Link href={`${BASE}/otto`}>
+          <Link href="/otto">
             <Sparkles strokeWidth={2} />
             Open Otto
           </Link>
@@ -178,7 +178,7 @@ export function ImmersiveNotifications() {
             <React.Fragment key={m.id}>
               {i > 0 && <div className="mx-3 border-t border-border" />}
               <Link
-                href={m.context.href ? immersiveHref(m.context.href) : `${BASE}/otto`}
+                href={m.context.href ? immersiveHref(m.context.href) : "/otto"}
                 className="flex items-baseline gap-3 rounded-[10px] px-3 py-3 transition-colors duration-[120ms] hover:bg-accent"
               >
                 <span className="min-w-0 flex-1 truncate text-sm text-foreground">{m.text}</span>

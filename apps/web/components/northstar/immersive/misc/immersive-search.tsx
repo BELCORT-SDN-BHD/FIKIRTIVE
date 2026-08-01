@@ -35,7 +35,8 @@ import { OttoAssist } from "@/components/northstar/immersive/otto-assist";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
-const OTTO_HREF = "/northstar-immersive/otto";
+// #609:壳内那个假 Otto 全屏面已退场,任何 Otto 目的地都落到真对话。
+const OTTO_HREF = "/otto";
 
 /** 把画廊语料的 `/northstar/*` 目标改写成沉浸式路由(其余原样)。 */
 function immersiveHref(href: string): string {
