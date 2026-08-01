@@ -20,6 +20,7 @@
  */
 import { describe, it, expect, afterEach, beforeAll, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
+import { CANVAS_JOB_KEY_PREFIX } from "@fikirtive/core";
 import { prisma } from "../index.js";
 import { canvasJobPlacementLockKey, settleCanvasCardsForGenJob } from "../canvas-settlement.js";
 import { seedOrg } from "../../test/setup.js";
@@ -80,6 +81,9 @@ async function seedJob(input: {
   threadId?: string | null;
   kind?: "IMAGE" | "VIDEO";
   sourceGenerationId?: string | null;
+  /** The server-minted key. A `canvas:` one is the durable proof the Canvas UI bought this job. */
+  idempotencyKey?: string | null;
+  finishedAt?: Date | null;
 }): Promise<{ jobId: string; generationIds: string[] }> {
   const generationIds: string[] = [];
   for (let i = 0; i < (input.outputs ?? 0); i += 1) generationIds.push(await seedGeneration());
@@ -91,11 +95,20 @@ async function seedJob(input: {
       status: input.status, generationIds,
       threadId: input.threadId ?? null,
       sourceGenerationId: input.sourceGenerationId ?? null,
+      idempotencyKey: input.idempotencyKey ?? null,
       spent: input.status === "DONE", spentUsd: input.status === "DONE" ? 0.12 : null,
-      startedAt: new Date(), finishedAt: input.status === "GENERATING" ? null : new Date(),
+      startedAt: new Date(),
+      finishedAt: input.status === "GENERATING"
+        ? null
+        : input.finishedAt ?? new Date(),
     },
   });
   return { jobId, generationIds };
+}
+
+/** A key of the shape startCanvasGen mints server-side for a Canvas press. */
+function canvasKey(): string {
+  return `${CANVAS_JOB_KEY_PREFIX}${randomUUID().replace(/-/g, "").repeat(2)}`;
 }
 
 async function seedCard(input: {
@@ -178,6 +191,48 @@ describe("coming back to a board nobody was watching", () => {
     expect(cards[0]!.sourceNodeId).toBe(sourceCardId);
     // …and clear of the card that was already on the board.
     expect(cards.map((card) => [card.x, card.y])).not.toContainEqual([80, 80]);
+  });
+});
+
+describe("a board bought without ever opening a chat", () => {
+  // The Canvas promptbar does not need a thread: a merchant can press Make on a bare board. The
+  // job's own server-minted `canvas:` key says so — nothing on the board has to be inspected.
+  it("writes the batch for a canvas job with no chat and no card at all", async () => {
+    const { jobId, generationIds } = await seedJob({
+      status: "DONE", outputs: 2, threadId: null, idempotencyKey: canvasKey(),
+    });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("settled");
+    expect(outcome.created).toBe(2);
+    const cards = await cardsForJob(jobId);
+    expect(cards.map((card) => card.generationId)).toEqual(generationIds);
+    expect(cards.every((card) => card.status === "done")).toBe(true);
+  });
+
+  it("still places the surviving output when the first card was deleted and there is no chat", async () => {
+    const { jobId, generationIds } = await seedJob({
+      status: "DONE", outputs: 2, threadId: null, idempotencyKey: canvasKey(),
+    });
+    // The merchant deleted the first output's card. That is an instruction about THAT output —
+    // the second one is paid for and must still arrive.
+    await seedCard({ jobId, x: 0, y: 0, status: "deleted", generationId: generationIds[0] });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("settled");
+    const live = (await cardsForJob(jobId)).filter((card) => card.status !== "deleted");
+    expect(live.map((card) => card.generationId)).toEqual([generationIds[1]]);
+  });
+
+  it("still leaves a storyboard job alone — it has no board, no chat and no key", async () => {
+    const { jobId } = await seedJob({ status: "DONE", outputs: 2, threadId: null, idempotencyKey: null });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("not-a-canvas-job");
+    expect(await cardsForJob(jobId)).toHaveLength(0);
   });
 });
 

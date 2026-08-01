@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CANVAS_JOB_KEY_PREFIX } from "@fikirtive/core";
 import {
   canvasActionKey,
   factoryAttemptKey,
@@ -20,6 +21,15 @@ describe("canvas action keys", () => {
     expect(parseCanvasActionKey(first.key)).toEqual(first);
     expect(first).not.toEqual(other);
     expect(parseCanvasActionKey("canvas:caller-controlled")).toBeNull();
+  });
+
+  it("keeps the prefix the settlement reads as 'this job was bought from the board'", () => {
+    // The canvas settlement decides whether a delivered job belongs on a board by reading this
+    // key's prefix (packages/core, CANVAS_JOB_KEY_PREFIX). The two live in different packages, so
+    // pin them together here: renaming the prefix on one side without the other would silently
+    // stop paid canvas work from ever reaching the board.
+    expect(canvasActionKey("canvas-action-123").key.startsWith(CANVAS_JOB_KEY_PREFIX)).toBe(true);
+    expect(CANVAS_JOB_KEY_PREFIX).toBe("canvas:");
   });
 });
 

@@ -8,9 +8,11 @@
  *
  * WHAT THIS IS NOT — read this before touching it:
  *   - It NEVER creates or enqueues a GenJob, never calls a generation provider, never touches the
- *     credit ledger, and never reads or writes `spent` / `spentUsd` / `idempotencyKey` / the job's
- *     status. It is not a spend path. It runs strictly AFTER the job is terminal and its charge is
- *     settled, and its own failure leaves both untouched.
+ *     credit ledger, and never writes `spent` / `spentUsd` / `idempotencyKey` / the job's status.
+ *     It is not a spend path. It runs strictly AFTER the job is terminal and its charge is
+ *     settled, and its own failure leaves both untouched. It READS the idempotency key for one
+ *     thing only — the `canvas:` prefix, which records which surface bought the job — and never
+ *     derives, compares or writes a key.
  *   - It never resurrects a card the merchant deleted: tombstones are honoured by the projection,
  *     and every write happens under the same per-job advisory lock the browser-side placement
  *     takes, so the two writers converge instead of racing.
@@ -22,7 +24,15 @@
  * SCOPE (#601 T2b): the delivered (DONE) path only. Projecting failed / cancelled / timed-out
  * terminals onto a card is T2c and lands with the code that writes them.
  */
-import { newId, planCanvasSettlement, type CanvasRect, type SettlementCard } from "@fikirtive/core";
+import {
+  CANVAS_JOB_KEY_PREFIX,
+  canvasBoardNeedsSettlement,
+  canvasJobOrigin,
+  newId,
+  planCanvasSettlement,
+  type CanvasRect,
+  type SettlementCard,
+} from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./index.js";
 
@@ -63,6 +73,9 @@ export async function settleCanvasCardsForGenJob(
     select: {
       id: true, ownerId: true, projectId: true, threadId: true, status: true,
       kind: true, prompt: true, generationIds: true, sourceGenerationId: true,
+      // READ-ONLY, and never as money: the key's PREFIX is the durable record of which surface
+      // bought this job. Nothing here derives, compares or writes an idempotency key.
+      idempotencyKey: true,
     },
   });
   if (!job) return { status: "job-missing", ...nothing };
@@ -72,14 +85,17 @@ export async function settleCanvasCardsForGenJob(
   if (job.status !== "DONE") return { status: "not-settled", ...nothing };
 
   return prisma.$transaction(async (tx) => {
-    const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    // Every owner-scoped query below is pinned to the ownerId the CALLER authenticated, never to
+    // the value read back off the job row. They are equal by construction (the job was found by
+    // that ownerId) — using the authenticated one keeps the rule un-arguable at every line.
+    const lockKey = canvasJobPlacementLockKey(ownerId, job.projectId, job.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
 
     // Read the board INSIDE the lock: the job's own cards (tombstones included — deletion is a
     // durable instruction the projection must see) plus every live rectangle, so a batch nobody
     // ever placed can be given a free spot.
     const boardCards = await tx.canvasNode.findMany({
-      where: { ownerId: job.ownerId, projectId: job.projectId },
+      where: { ownerId, projectId: job.projectId },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       select: CARD_SELECT,
     });
@@ -94,20 +110,22 @@ export async function settleCanvasCardsForGenJob(
       .filter((node) => node.status !== "deleted")
       .map((node) => ({ x: node.x, y: node.y, w: node.w, h: node.h }));
 
+    // One lookup, used for both questions it answers: which chat the cards are attributed to, and
+    // (with the job's own key) whether this job belongs on a board at all.
+    const threadId = await liveThreadId(tx, ownerId, job);
     const plan = planCanvasSettlement({
       job: {
         status: job.status,
         generationIds: job.generationIds,
         kind: job.kind === "VIDEO" ? "VIDEO" : "IMAGE",
         prompt: job.prompt,
-        hasLiveThread: (await liveThreadId(tx, job)) !== null,
+        origin: canvasJobOrigin({ idempotencyKey: job.idempotencyKey, hasLiveThread: threadId !== null }),
       },
       cards: ownCards,
       occupied,
     });
     if (plan.kind === "skip") return { status: plan.reason, ...nothing };
 
-    const threadId = await liveThreadId(tx, job);
     const nodeIds: string[] = [];
     let created = 0;
     let updated = 0;
@@ -121,7 +139,10 @@ export async function settleCanvasCardsForGenJob(
         continue;
       }
       if (entry.action === "update") {
-        await tx.canvasNode.update({ where: { id: entry.id }, data: entry.patch });
+        await tx.canvasNode.updateMany({
+          where: { id: entry.id, ownerId, projectId: job.projectId },
+          data: entry.patch,
+        });
         nodeIds.push(entry.id);
         if (entry.role === "anchor") anchorNodeId = entry.id;
         updated += 1;
@@ -131,12 +152,12 @@ export async function settleCanvasCardsForGenJob(
       // job that was conditioned on an earlier output points at that output's card. A sibling
       // points at its batch anchor, which is layout, not lineage.
       const sourceNodeId = entry.role === "anchor"
-        ? await sourceCardForJob(tx, job)
+        ? await sourceCardForJob(tx, ownerId, job)
         : entry.layoutSourceNodeId ?? anchorNodeId;
       const node = await tx.canvasNode.create({
         data: {
           id: newId(),
-          ownerId: job.ownerId,
+          ownerId,
           projectId: job.projectId,
           type: entry.type,
           x: entry.x,
@@ -162,24 +183,82 @@ export async function settleCanvasCardsForGenJob(
   });
 }
 
-type JobFacts = { ownerId: string; projectId: string; threadId: string | null; sourceGenerationId: string | null };
+export type CanvasSettlementBacklogJob = { id: string; ownerId: string };
+
+/**
+ * Delivered jobs whose board is still missing something — the worklist for the worker's canvas
+ * backfill sweep (apps/worker/src/jobs/canvas-backfill.ts).
+ *
+ * READ-ONLY, and money-free by construction: it selects finished jobs and their cards, and writes
+ * nothing at all. It is also deliberately only a CANDIDATE list — `canvasBoardNeedsSettlement` is
+ * the cheap shared pre-check, and `settleCanvasCardsForGenJob` re-decides everything inside the
+ * lock. A candidate that turns out to need nothing costs one no-op transaction, never a wrong card.
+ *
+ * Two filters keep the sweep bounded rather than exhaustive:
+ *   - the time window, so a permanently unplaceable job cannot be retried until the end of time;
+ *   - the origin approximation (a live-thread id, or a server-minted `canvas:` key), so storyboard
+ *     and Gen-space jobs — which have no board — are never candidates. A job whose CHAT was later
+ *     deleted can still slip in and settle to "not-a-canvas-job"; that is a no-op, and the window
+ *     ends it.
+ */
+export async function findCanvasSettlementBacklog(options: {
+  finishedAfter: Date;
+  finishedBefore: Date;
+  limit: number;
+}): Promise<CanvasSettlementBacklogJob[]> {
+  // Cross-tenant scan (#463 phase one): the caller re-enters as each row's own tenant to repair it.
+  const jobs = await prisma.genJob.findMany({
+    where: {
+      ownerId: { not: "" },
+      status: "DONE",
+      finishedAt: { gte: options.finishedAfter, lt: options.finishedBefore },
+      NOT: { generationIds: { isEmpty: true } },
+      OR: [{ threadId: { not: null } }, { idempotencyKey: { startsWith: CANVAS_JOB_KEY_PREFIX } }],
+    },
+    orderBy: [{ finishedAt: "asc" }, { id: "asc" }],
+    take: Math.max(1, Math.floor(options.limit)),
+    select: { id: true, ownerId: true, generationIds: true },
+  });
+  if (!jobs.length) return [];
+
+  const cards = await prisma.canvasNode.findMany({
+    where: {
+      ownerId: { in: [...new Set(jobs.map((job) => job.ownerId))] },
+      genJobId: { in: jobs.map((job) => job.id) },
+    },
+    select: { genJobId: true, generationId: true, status: true },
+  });
+  const byJob = new Map<string, { generationId: string | null; status: string }[]>();
+  for (const card of cards) {
+    if (!card.genJobId) continue;
+    const group = byJob.get(card.genJobId) ?? [];
+    group.push({ generationId: card.generationId, status: card.status });
+    byJob.set(card.genJobId, group);
+  }
+
+  return jobs
+    .filter((job) => canvasBoardNeedsSettlement(job.generationIds, byJob.get(job.id) ?? []))
+    .map((job) => ({ id: job.id, ownerId: job.ownerId }));
+}
+
+type JobFacts = { projectId: string; threadId: string | null; sourceGenerationId: string | null };
 
 /** The thread a card is attributed to — only when it is still live in this owner+project. A
  *  chat/canvas job has one; a storyboard/Gen-space job has none, and never sprouts a card. */
-async function liveThreadId(tx: Tx, job: JobFacts): Promise<string | null> {
+async function liveThreadId(tx: Tx, ownerId: string, job: JobFacts): Promise<string | null> {
   if (!job.threadId) return null;
   const thread = await tx.chatThread.findFirst({
-    where: { id: job.threadId, ownerId: job.ownerId, projectId: job.projectId, deletedAt: null },
+    where: { id: job.threadId, ownerId, projectId: job.projectId, deletedAt: null },
     select: { id: true },
   });
   return thread?.id ?? null;
 }
 
 /** For a job made FROM an earlier output (an edit, or animating a still), that output's card. */
-async function sourceCardForJob(tx: Tx, job: JobFacts): Promise<string | null> {
+async function sourceCardForJob(tx: Tx, ownerId: string, job: JobFacts): Promise<string | null> {
   if (!job.sourceGenerationId) return null;
   const source = await tx.canvasNode.findFirst({
-    where: { ownerId: job.ownerId, projectId: job.projectId, generationId: job.sourceGenerationId },
+    where: { ownerId, projectId: job.projectId, generationId: job.sourceGenerationId },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: { id: true },
   });

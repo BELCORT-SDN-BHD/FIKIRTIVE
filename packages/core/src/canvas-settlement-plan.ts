@@ -21,6 +21,43 @@ import { canvasBatchFootprint, canvasBatchSlotOffset, nextCanvasSpawnOrigin, typ
 /** Default card size — what the canvas promptbar and the chat→canvas bridge both place. */
 export const CANVAS_SETTLEMENT_CARD = { w: 320, h: 320 } as const;
 
+/**
+ * Prefix of the idempotency key the SERVER mints for a Canvas press (`startCanvasGen`).
+ *
+ * It is the durable proof that a paid job was bought from the board — the browser cannot supply
+ * it (startGen refuses a caller-supplied member of this family), it is written once at enqueue,
+ * and it survives everything that happens afterwards: closing the tab, deleting the chat, the
+ * card never being placed. `apps/web/lib/__tests__/batch-idempotency.test.ts` pins the minting
+ * side to this constant so the two cannot drift.
+ */
+export const CANVAS_JOB_KEY_PREFIX = "canvas:";
+
+/**
+ * Where a paid job came from — and therefore whether its outputs belong on a board.
+ *
+ * Read off durable facts, never guessed from the state of the board itself: a job that has no
+ * card yet is not evidence of anything, because "no card" is exactly the situation settlement
+ * exists to repair.
+ */
+export type CanvasJobOrigin =
+  /** Bought from the board (server-minted `canvas:` key). Belongs on the board, full stop. */
+  | "canvas"
+  /** Bought in a chat that is still live. Its results are shown on the board too. */
+  | "chat"
+  /** Storyboard / Gen space / a chat that was deleted: it has no board of its own. */
+  | "elsewhere";
+
+/** The two durable facts that decide a job's origin. Both are read from the job's own row. */
+export function canvasJobOrigin(facts: {
+  /** GenJob.idempotencyKey, exactly as stored. */
+  idempotencyKey: string | null | undefined;
+  /** Does GenJob.threadId still name a live thread in this owner+project? */
+  hasLiveThread: boolean;
+}): CanvasJobOrigin {
+  if (facts.idempotencyKey?.startsWith(CANVAS_JOB_KEY_PREFIX)) return "canvas";
+  return facts.hasLiveThread ? "chat" : "elsewhere";
+}
+
 /** A card that already exists for the job being settled (tombstones included — they matter). */
 export type SettlementCard = {
   id: string;
@@ -42,8 +79,8 @@ export type SettlementJob = {
   generationIds: readonly string[];
   kind: "IMAGE" | "VIDEO";
   prompt: string;
-  /** A chat/canvas job carries a thread; a storyboard/Gen-space job does not. */
-  hasLiveThread: boolean;
+  /** Where the job was bought — a durable fact from its own row, via `canvasJobOrigin`. */
+  origin: CanvasJobOrigin;
 };
 
 type PlannedCardShape = {
@@ -111,6 +148,30 @@ export type CanvasSettlementPlan =
         | "nothing-to-place";
     };
 
+/**
+ * Cheap "is this board possibly unfinished?" — the ONE test every caller uses before paying for a
+ * settlement transaction.
+ *
+ * It is deliberately conservative in one direction only: `false` means the projection provably has
+ * nothing to do (every output already has a row, every row of this job is finished, or the whole
+ * job was suppressed), so skipping is safe. `true` only means "worth projecting" — the projection
+ * above is still the sole authority on what actually happens. Callers must never grow their own
+ * variant of this rule: a board reader that decided differently from the reaper is exactly how the
+ * two writers drifted apart in the first place.
+ *
+ * `cards` must include tombstones — a deleted card is a row that exists on purpose.
+ */
+export function canvasBoardNeedsSettlement(
+  generationIds: readonly string[],
+  cards: readonly Pick<SettlementCard, "generationId" | "status">[],
+): boolean {
+  if (!generationIds.length) return false;
+  // The merchant deleted the in-flight card: the projection skips the whole job forever.
+  if (cards.some((card) => card.status === "deleted" && card.generationId === null)) return false;
+  if (cards.length < generationIds.length) return true;
+  return cards.some((card) => card.status !== "deleted" && (card.status !== "done" || card.generationId === null));
+}
+
 export type CanvasSettlementInput = {
   job: SettlementJob;
   /** Every card already linked to this job, tombstones included. */
@@ -165,9 +226,13 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
   if (suppressesJob) return { kind: "skip", reason: "suppressed" };
 
   const live = cards.filter((card) => card.status !== "deleted");
-  // A job with no card of its own only belongs on the board if it is a chat/canvas job. A
-  // storyboard job has neither, and must not sprout a card it never had.
-  if (!live.length && !job.hasLiveThread) return { kind: "skip", reason: "not-a-canvas-job" };
+  // Does this job belong on a board at all? Decided by WHERE IT WAS BOUGHT, never by what the
+  // board happens to look like: a canvas job whose card was never placed (tab closed before the
+  // browser wrote it) and a canvas job whose first output the merchant deleted both arrive here
+  // with no live card, and both are paid work the merchant must get. A storyboard/Gen-space job
+  // has no board of its own and must not sprout a card it never had. A card that IS already
+  // there settles the question by itself — whatever made it, it is on a board now.
+  if (!live.length && job.origin === "elsewhere") return { kind: "skip", reason: "not-a-canvas-job" };
 
   const outputs = job.generationIds.filter((id): id is string => !!id);
   if (!outputs.length) return { kind: "skip", reason: "nothing-to-place" };

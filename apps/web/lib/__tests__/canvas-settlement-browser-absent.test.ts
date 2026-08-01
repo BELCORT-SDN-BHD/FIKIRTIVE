@@ -100,12 +100,59 @@ async function seedPendingAnchor(jobId: string): Promise<string> {
   return id;
 }
 
+async function seedCard(input: {
+  jobId: string | null;
+  x: number;
+  y: number;
+  status?: string;
+  generationId?: string | null;
+}): Promise<string> {
+  const id = `cnd_${randomUUID()}`;
+  await prisma.canvasNode.create({
+    data: {
+      id, ownerId, projectId, type: "image", x: input.x, y: input.y, w: 320, h: 320,
+      prompt: "a cup steaming", genJobId: input.jobId, generationId: input.generationId ?? null,
+      status: input.status ?? "pending",
+    },
+  });
+  return id;
+}
+
+/**
+ * What a board LOOKS like, free of the ids that differ between two runs of the same scenario:
+ * each card is described by where it sits, what state it is in, WHICH output of the batch it
+ * carries, and which card it points at. Two boards that are the same board have the same shape.
+ */
+function shape(
+  rows: Array<{ x: number; y: number; status: string; generationId: string | null; sourceNodeId: string | null }>,
+  context: { anchorId?: string; outputs?: string[] } = {},
+) {
+  const outputs = context.outputs ?? [];
+  return rows
+    .map((row) => {
+      const index = row.generationId ? outputs.indexOf(row.generationId) : -1;
+      return {
+        x: row.x, y: row.y, status: row.status,
+        carries: row.generationId === null ? "nothing" : index >= 0 ? `output-${index}` : "another-job",
+        sourceNodeId: row.sourceNodeId === null ? null : row.sourceNodeId === context.anchorId ? "the-anchor" : "elsewhere",
+      };
+    })
+    .sort((a, b) => a.y - b.y || a.x - b.x || a.carries.localeCompare(b.carries));
+}
+
 /** Every stored fact about this board, including updatedAt — so "a read wrote nothing" is provable. */
-async function boardRows() {
+async function boardRows(pid: string = projectId) {
   return prisma.canvasNode.findMany({
-    where: { ownerId, projectId },
+    where: { ownerId, projectId: pid },
     orderBy: [{ y: "asc" }, { x: "asc" }],
   });
+}
+
+/** A second board, so the same scenario can be run twice — once per writer. */
+async function freshProject(): Promise<string> {
+  const id = `prj_${randomUUID()}`;
+  await prisma.project.create({ data: { id, ownerId, name: "Comeback board" } });
+  return id;
 }
 
 describe("coming back to a board nobody was watching", () => {
@@ -153,5 +200,104 @@ describe("coming back to a board nobody was watching", () => {
     expect((synced as unknown[]).length).toBe(2);
     expect(after).toEqual(before);
     expect(before.map((row) => row.generationId).sort()).toEqual([...generationIds].sort());
+  });
+});
+
+/**
+ * Two writers, one board. The worker writes a delivered job's cards; opening the board writes
+ * whatever it finds missing. They take turns (one lock), but taking turns only stops them
+ * corrupting each other — it does not make them AGREE. These cases run the identical scenario
+ * twice, once per writer, and require the resulting board to be the same either way. A merchant
+ * must not get a different board because a tab happened to be open.
+ */
+describe("the board is the same whichever writer got there first", () => {
+  it("puts the missing card of a half-deleted batch in the same place either way", async () => {
+    // A batch of two where only the SECOND card is still on the board.
+    async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {
+      projectId = await freshProject();
+      const { jobId, generationIds } = await seedDoneJob(2);
+      const anchorId = await seedCard({ jobId, x: 500, y: 200, status: "done", generationId: generationIds[1] });
+      return { pid: projectId, jobId, anchorId, outputs: generationIds };
+    }
+
+    const server = await scenario();
+    await settleCanvasCardsForGenJob(server.jobId, ownerId);
+
+    const browser = await scenario();
+    await listCanvasNodes(browser.pid);
+
+    expect(shape(await boardRows(browser.pid), browser))
+      .toEqual(shape(await boardRows(server.pid), server));
+  });
+
+  it("gives a batch made FROM an earlier card the same cards either way", async () => {
+    async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {
+      projectId = await freshProject();
+      const sourceGenerationId = await seedStoredGeneration();
+      await seedCard({ jobId: null, x: 80, y: 80, status: "done", generationId: sourceGenerationId });
+      const { jobId, generationIds } = await seedDoneJob(2);
+      await prisma.genJob.update({ where: { id: jobId }, data: { sourceGenerationId } });
+      const anchorId = await seedCard({ jobId, x: 500, y: 500, status: "pending" });
+      return { pid: projectId, jobId, anchorId, outputs: generationIds };
+    }
+
+    const server = await scenario();
+    await settleCanvasCardsForGenJob(server.jobId, ownerId);
+
+    const browser = await scenario();
+    await listCanvasNodes(browser.pid);
+
+    expect(shape(await boardRows(browser.pid), browser))
+      .toEqual(shape(await boardRows(server.pid), server));
+  });
+
+  it("ends up in one state when both writers run at the same moment", async () => {
+    const { jobId, generationIds } = await seedDoneJob(4);
+    const anchorId = await seedPendingAnchor(jobId);
+
+    // Both writers race for the same job. Whoever loses the lock must find the board already
+    // right and add nothing of its own.
+    await Promise.all([
+      settleCanvasCardsForGenJob(jobId, ownerId),
+      listCanvasNodes(projectId),
+      syncOttoCanvasNodes(projectId),
+    ]);
+    const raced = await boardRows();
+
+    // The same scenario settled by the server alone — the reference the race must reproduce.
+    const alone = await freshProject();
+    const previous = projectId;
+    projectId = alone;
+    const { jobId: aloneJob, generationIds: aloneOutputs } = await seedDoneJob(4);
+    const aloneAnchor = await seedPendingAnchor(aloneJob);
+    await settleCanvasCardsForGenJob(aloneJob, ownerId);
+    projectId = previous;
+
+    expect(raced).toHaveLength(4);
+    expect(shape(raced, { anchorId, outputs: generationIds }))
+      .toEqual(shape(await boardRows(alone), { anchorId: aloneAnchor, outputs: aloneOutputs }));
+  });
+});
+
+describe("the chat-side board reader agrees too", () => {
+  it("places a half-deleted batch's missing card exactly where the server would", async () => {
+    async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {
+      projectId = await freshProject();
+      const threadId = `thr_${randomUUID()}`;
+      await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
+      const { jobId, generationIds } = await seedDoneJob(2);
+      await prisma.genJob.update({ where: { id: jobId }, data: { threadId } });
+      const anchorId = await seedCard({ jobId, x: 500, y: 200, status: "done", generationId: generationIds[1] });
+      return { pid: projectId, jobId, anchorId, outputs: generationIds };
+    }
+
+    const server = await scenario();
+    await settleCanvasCardsForGenJob(server.jobId, ownerId);
+
+    const chat = await scenario();
+    await syncOttoCanvasNodes(chat.pid);
+
+    expect(shape(await boardRows(chat.pid), chat))
+      .toEqual(shape(await boardRows(server.pid), server));
   });
 });

@@ -9,14 +9,18 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  CANVAS_JOB_KEY_PREFIX,
   CANVAS_SETTLEMENT_CARD,
+  canvasJobOrigin,
+  canvasBoardNeedsSettlement,
   planCanvasSettlement,
+  type CanvasJobOrigin,
   type CanvasSettlementPlan,
   type PlannedCard,
   type SettlementCard,
   type SettlementJob,
 } from "./canvas-settlement-plan.js";
-import { canvasBatchSlotOffset } from "./canvas-layout.js";
+import { canvasBatchSlotOffset, canvasRectsOverlap, type CanvasRect } from "./canvas-layout.js";
 
 const OUTPUTS = ["gen-1", "gen-2", "gen-3", "gen-4"];
 
@@ -26,7 +30,9 @@ function job(overrides: Partial<SettlementJob> = {}): SettlementJob {
     generationIds: OUTPUTS.slice(0, 1),
     kind: "IMAGE",
     prompt: "a cup steaming",
-    hasLiveThread: false,
+    // The ordinary case: a merchant pressed Make on the board. No chat is involved, and the job
+    // still belongs on the board — which is exactly what the origin fact carries.
+    origin: "canvas",
     ...overrides,
   };
 }
@@ -150,7 +156,7 @@ describe("where each card of a batch sits", () => {
 
   it("starts a never-placed batch at the top-left of an empty board", () => {
     const planned = place(planCanvasSettlement({
-      job: job({ generationIds: OUTPUTS.slice(0, 2), hasLiveThread: true }),
+      job: job({ generationIds: OUTPUTS.slice(0, 2) }),
       cards: [],
       occupied: [],
     }));
@@ -161,7 +167,7 @@ describe("where each card of a batch sits", () => {
 
   it("keeps a never-placed batch off work that is already on the board", () => {
     const planned = place(planCanvasSettlement({
-      job: job({ generationIds: OUTPUTS.slice(0, 1), hasLiveThread: true }),
+      job: job({ generationIds: OUTPUTS.slice(0, 1) }),
       cards: [],
       occupied: [{ x: 80, y: 80, w: 320, h: 320 }],
     }));
@@ -188,7 +194,7 @@ describe("where each card of a batch sits", () => {
 
   it("tells the caller to use the plan's own anchor when that anchor is brand new", () => {
     const planned = place(planCanvasSettlement({
-      job: job({ generationIds: OUTPUTS.slice(0, 2), hasLiveThread: true }),
+      job: job({ generationIds: OUTPUTS.slice(0, 2) }),
       cards: [],
       occupied: [],
     }));
@@ -203,7 +209,7 @@ describe("what kind of card it is", () => {
     ["VIDEO", "video"],
   ] as const)("projects a %s job onto a %s card", (kind, expected) => {
     const planned = place(planCanvasSettlement({
-      job: job({ kind, hasLiveThread: true }),
+      job: job({ kind }),
       cards: [],
       occupied: [],
     }));
@@ -213,7 +219,7 @@ describe("what kind of card it is", () => {
 
   it("carries the job's own words onto a card nobody placed", () => {
     const planned = place(planCanvasSettlement({
-      job: job({ prompt: "a red bicycle", hasLiveThread: true }),
+      job: job({ prompt: "a red bicycle" }),
       cards: [],
       occupied: [],
     }));
@@ -249,7 +255,7 @@ describe("when the board must be left alone", () => {
 
   it("does nothing for a storyboard job that has no card and no chat", () => {
     expect(skipReason(planCanvasSettlement({
-      job: job({ generationIds: OUTPUTS.slice(0, 2), hasLiveThread: false }),
+      job: job({ generationIds: OUTPUTS.slice(0, 2), origin: "elsewhere" }),
       cards: [],
       occupied: [],
     }))).toBe("not-a-canvas-job");
@@ -257,7 +263,7 @@ describe("when the board must be left alone", () => {
 
   it("does nothing for a delivered job that recorded no output", () => {
     expect(skipReason(planCanvasSettlement({
-      job: job({ generationIds: [], hasLiveThread: true }),
+      job: job({ generationIds: [] }),
       cards: [],
       occupied: [],
     }))).toBe("nothing-to-place");
@@ -308,7 +314,7 @@ describe("when the board must be left alone", () => {
     // The one card this job had was deleted after it was delivered. A redelivery or the reaper
     // settling the same job again must not put the merchant's deleted work back on the board.
     expect(skipReason(planCanvasSettlement({
-      job: job({ generationIds: OUTPUTS.slice(0, 1), hasLiveThread: true }),
+      job: job({ generationIds: OUTPUTS.slice(0, 1) }),
       cards: [card({ id: "gone", generationId: "gen-1", status: "deleted" })],
       occupied: [],
     }))).toBe("suppressed");
@@ -334,7 +340,7 @@ describe("when the board must be left alone", () => {
 
   it("still places the outputs that survive when an earlier one was deleted", () => {
     const planned = place(planCanvasSettlement({
-      job: job({ generationIds: OUTPUTS.slice(0, 3), hasLiveThread: true }),
+      job: job({ generationIds: OUTPUTS.slice(0, 3) }),
       cards: [card({ id: "gone", generationId: "gen-1", status: "deleted" })],
       occupied: [],
     }));
@@ -343,6 +349,242 @@ describe("when the board must be left alone", () => {
     expect(planned[0]).toMatchObject({ action: "create", role: "anchor" });
   });
 });
+
+describe("where the job was bought", () => {
+  it("reads a server-minted canvas key as a board job, whatever happened to the chat", () => {
+    expect(canvasJobOrigin({ idempotencyKey: `${CANVAS_JOB_KEY_PREFIX}abc`, hasLiveThread: false })).toBe("canvas");
+    expect(canvasJobOrigin({ idempotencyKey: `${CANVAS_JOB_KEY_PREFIX}abc`, hasLiveThread: true })).toBe("canvas");
+  });
+
+  it("reads a live chat as a chat job, and everything else as neither", () => {
+    expect(canvasJobOrigin({ idempotencyKey: "cowork:card-1", hasLiveThread: true })).toBe("chat");
+    expect(canvasJobOrigin({ idempotencyKey: "cowork:card-1", hasLiveThread: false })).toBe("elsewhere");
+    expect(canvasJobOrigin({ idempotencyKey: null, hasLiveThread: true })).toBe("chat");
+    expect(canvasJobOrigin({ idempotencyKey: null, hasLiveThread: false })).toBe("elsewhere");
+    expect(canvasJobOrigin({ idempotencyKey: "batch:b1", hasLiveThread: false })).toBe("elsewhere");
+    // Not a prefix match anywhere but the front — a key that merely CONTAINS the word is not one.
+    expect(canvasJobOrigin({ idempotencyKey: "batch:canvas:x", hasLiveThread: false })).toBe("elsewhere");
+  });
+
+  it("puts a board job's cards on the board even though nobody ever opened a chat for it", () => {
+    // The bug this replaced: with no chat and no card yet, the job was called "not a canvas job"
+    // and its paid outputs never appeared — on any reload, forever.
+    const planned = place(planCanvasSettlement({
+      job: job({ generationIds: OUTPUTS.slice(0, 2), origin: "canvas" }),
+      cards: [],
+      occupied: [],
+    }));
+
+    expect(planned.map((entry) => (entry as { generationId?: string }).generationId)).toEqual(["gen-1", "gen-2"]);
+  });
+
+  it("still places the survivors of a board job whose first output was deleted, with no chat", () => {
+    const planned = place(planCanvasSettlement({
+      job: job({ generationIds: OUTPUTS.slice(0, 2), origin: "canvas" }),
+      cards: [card({ id: "gone", generationId: "gen-1", status: "deleted" })],
+      occupied: [],
+    }));
+
+    expect(planned.map((entry) => (entry as { generationId?: string }).generationId)).toEqual(["gen-2"]);
+  });
+});
+
+describe("deciding whether a settlement is worth running at all", () => {
+  const done = (generationId: string) => ({ generationId, status: "done" });
+
+  it("says no when nothing could possibly change", () => {
+    expect(canvasBoardNeedsSettlement([], [])).toBe(false);
+    expect(canvasBoardNeedsSettlement(["gen-1"], [done("gen-1")])).toBe(false);
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [done("gen-1"), done("gen-2")])).toBe(false);
+    // A deleted card is still a row: a two-output job with one deleted card is complete.
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [done("gen-1"), { generationId: "gen-2", status: "deleted" }])).toBe(false);
+    // The whole job was suppressed while it was in flight — the projection will never touch it.
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [{ generationId: null, status: "deleted" }])).toBe(false);
+  });
+
+  it("says yes for every board the projection would actually change", () => {
+    expect(canvasBoardNeedsSettlement(["gen-1"], [])).toBe(true); // nobody placed anything
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [done("gen-1")])).toBe(true); // sibling missing
+    expect(canvasBoardNeedsSettlement(["gen-1"], [{ generationId: null, status: "pending" }])).toBe(true); // still waiting
+    expect(canvasBoardNeedsSettlement(["gen-1"], [{ generationId: null, status: "done" }])).toBe(true); // finished but unbound
+  });
+
+  it("never says no to a board the projection would change — checked over the whole matrix", () => {
+    for (const scenario of MATRIX) {
+      const input = scenarioInput(scenario);
+      const plan = planCanvasSettlement(input);
+      const changes = plan.kind === "place" && plan.cards.some((entry) => entry.action !== "keep");
+      if (changes) {
+        expect({ scenario: scenario.name, needs: canvasBoardNeedsSettlement(input.job.generationIds, input.cards) })
+          .toEqual({ scenario: scenario.name, needs: true });
+      }
+    }
+  });
+});
+
+// ── the systematic matrix ────────────────────────────────────────────────────────────────────
+// Every combination of the four things that vary in real life: how many outputs the job produced,
+// what (if anything) is on the board for it, what the merchant deleted, and where the job was
+// bought. The cases above document individual behaviours in words; this one exists so a case
+// nobody thought to write down cannot hide — it is generated, not chosen.
+
+type AnchorState = "none" | "waiting" | "bound" | "deleted-in-flight";
+type TombstoneState = "none" | "first-output" | "last-output";
+
+type Scenario = {
+  name: string;
+  outputs: string[];
+  anchor: AnchorState;
+  tombstone: TombstoneState;
+  origin: CanvasJobOrigin;
+};
+
+const ANCHOR_STATES: AnchorState[] = ["none", "waiting", "bound", "deleted-in-flight"];
+const TOMBSTONE_STATES: TombstoneState[] = ["none", "first-output", "last-output"];
+const ORIGINS: CanvasJobOrigin[] = ["canvas", "chat", "elsewhere"];
+
+const MATRIX: Scenario[] = [];
+for (const size of [1, 2, 3, 4]) {
+  for (const anchor of ANCHOR_STATES) {
+    for (const tombstone of TOMBSTONE_STATES) {
+      for (const origin of ORIGINS) {
+        const outputs = OUTPUTS.slice(0, size);
+        // A live card carrying an output AND a tombstone for that same output is not a board any
+        // writer can produce (deletion tombstones the row itself). Excluded on purpose, not missed.
+        if (anchor === "bound" && tombstone === "first-output") continue;
+        if (anchor === "bound" && tombstone === "last-output" && size === 1) continue;
+        MATRIX.push({
+          name: `${size} output(s) · anchor:${anchor} · deleted:${tombstone} · from:${origin}`,
+          outputs, anchor, tombstone, origin,
+        });
+      }
+    }
+  }
+}
+
+function scenarioInput(scenario: Scenario) {
+  const cards: SettlementCard[] = [];
+  if (scenario.anchor === "waiting") cards.push(card({ id: "anchor", generationId: null, status: "pending" }));
+  if (scenario.anchor === "bound") cards.push(card({ id: "anchor", generationId: scenario.outputs[0]!, status: "done" }));
+  if (scenario.anchor === "deleted-in-flight") cards.push(card({ id: "anchor", generationId: null, status: "deleted" }));
+  if (scenario.tombstone !== "none") {
+    const gone = scenario.tombstone === "first-output" ? scenario.outputs[0]! : scenario.outputs.at(-1)!;
+    cards.push(card({ id: `gone-${gone}`, generationId: gone, status: "deleted", x: 900, y: 900 }));
+  }
+  return {
+    job: job({ generationIds: scenario.outputs, origin: scenario.origin }),
+    cards,
+    occupied: cards.filter((entry) => entry.status !== "deleted").map((entry) => rectOf(entry)),
+  };
+}
+
+function rectOf(entry: { x: number; y: number; w: number; h: number }): CanvasRect {
+  return { x: entry.x, y: entry.y, w: entry.w, h: entry.h };
+}
+
+/** The documented rules, in the documented order — written out independently of the code. */
+function expectedSkip(scenario: Scenario): string | null {
+  if (scenario.anchor === "deleted-in-flight") return "suppressed";
+  const hasLiveCard = scenario.anchor === "waiting" || scenario.anchor === "bound";
+  if (!hasLiveCard && scenario.origin === "elsewhere") return "not-a-canvas-job";
+  const surviving = survivingOutputs(scenario);
+  if (!surviving.length) return "suppressed";
+  return null;
+}
+
+function survivingOutputs(scenario: Scenario): string[] {
+  if (scenario.tombstone === "none") return [...scenario.outputs];
+  const gone = scenario.tombstone === "first-output" ? scenario.outputs[0]! : scenario.outputs.at(-1)!;
+  return scenario.outputs.filter((id) => id !== gone);
+}
+
+/** Apply a plan the way a caller does, so the result can be re-projected. */
+function applyPlan(before: readonly SettlementCard[], plan: CanvasSettlementPlan): SettlementCard[] {
+  if (plan.kind !== "place") return [...before];
+  const byId = new Map(before.map((entry) => [entry.id, { ...entry }]));
+  let anchorId: string | null = null;
+  const after: SettlementCard[] = [];
+  for (const entry of plan.cards) {
+    if (entry.action === "keep") {
+      if (entry.role === "anchor") anchorId = entry.id;
+      continue;
+    }
+    if (entry.action === "update") {
+      const existing = byId.get(entry.id)!;
+      if (entry.patch.status) existing.status = entry.patch.status;
+      if (entry.patch.generationId) existing.generationId = entry.patch.generationId;
+      if (entry.role === "anchor") anchorId = entry.id;
+      continue;
+    }
+    const id = `made-${entry.generationId}`;
+    after.push(card({
+      id, x: entry.x, y: entry.y, w: entry.w, h: entry.h, prompt: entry.prompt,
+      generationId: entry.generationId, status: "done",
+      sourceNodeId: entry.role === "anchor" ? null : entry.layoutSourceNodeId ?? anchorId,
+    }));
+    if (entry.role === "anchor") anchorId = id;
+  }
+  return [...byId.values(), ...after];
+}
+
+describe("every board a job can come back to", () => {
+  it.each(MATRIX.map((scenario) => [scenario.name, scenario] as const))("%s", (_name, scenario) => {
+    const input = scenarioInput(scenario);
+    const plan = planCanvasSettlement(input);
+    const expected = expectedSkip(scenario);
+
+    if (expected) {
+      expect(plan.kind === "skip" ? plan.reason : `placed ${plan.cards.length}`).toBe(expected);
+      return;
+    }
+
+    const planned = place(plan);
+    const surviving = survivingOutputs(scenario);
+    const deleted = scenario.outputs.filter((id) => !surviving.includes(id));
+
+    // 1. One entry per surviving output — no output planned twice, none of them missing.
+    expect(planned).toHaveLength(surviving.length);
+    // 2. Deletion is honoured: nothing the merchant removed is planned back onto the board.
+    const carried = planned.map((entry) => carriedOutput(entry, input.cards, scenario));
+    expect(carried.filter((id) => deleted.includes(id!))).toEqual([]);
+    expect(new Set(carried).size).toBe(carried.length);
+    // 3. Exactly one anchor, and it comes first so the caller knows its id before any sibling.
+    expect(planned.filter((entry) => entry.role === "anchor")).toHaveLength(1);
+    expect(planned[0]!.role).toBe("anchor");
+    // 4. Batch positions are the output's own place in what the job recorded.
+    for (const [index, entry] of planned.entries()) {
+      expect({ at: index, batchIndex: entry.batchIndex })
+        .toEqual({ at: index, batchIndex: scenario.outputs.indexOf(carried[index]!) });
+    }
+    // 5. No card is planned on top of another — an overlapped card is one the merchant paid for
+    //    and cannot see.
+    const rects = planned
+      .filter((entry): entry is Extract<PlannedCard, { action: "create" }> => entry.action === "create")
+      .map((entry) => rectOf(entry))
+      .concat(input.cards.filter((entry) => entry.status !== "deleted").map((entry) => rectOf(entry)));
+    for (let i = 0; i < rects.length; i += 1) {
+      for (let j = i + 1; j < rects.length; j += 1) {
+        expect({ pair: [i, j], overlap: canvasRectsOverlap(rects[i]!, rects[j]!) })
+          .toEqual({ pair: [i, j], overlap: false });
+      }
+    }
+    // 6. Running it again asks for nothing: applying a plan twice writes once.
+    const second = planCanvasSettlement({ ...input, cards: applyPlan(input.cards, plan) });
+    expect(second.kind === "place" && second.cards.every((entry) => entry.action === "keep")).toBe(true);
+  });
+});
+
+/** Which output an entry ends up carrying — creates say so, keeps/updates point at a row. */
+function carriedOutput(
+  entry: PlannedCard,
+  cards: readonly SettlementCard[],
+  scenario: Scenario,
+): string | null {
+  if (entry.action === "create") return entry.generationId;
+  const existing = cards.find((row) => row.id === entry.id);
+  if (entry.action === "update" && entry.patch.generationId) return entry.patch.generationId;
+  return existing?.generationId ?? scenario.outputs[0] ?? null;
+}
 
 describe("running it twice", () => {
   it("asks for no change at all the second time", () => {

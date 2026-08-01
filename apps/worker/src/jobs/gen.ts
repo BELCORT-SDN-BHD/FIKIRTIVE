@@ -162,8 +162,11 @@ async function appendCoworkResult(
 // appendCoworkResult above and deliberately placed next to it at both call sites: it runs ONLY
 // after the job row is DONE and its charge is settled, it reads/writes no money column, no
 // ledger, no provider, and it can never throw into the completion path. A failure is swallowed —
-// a card can be written again by the next delivery pass (redelivery or the reaper's resume); a
-// charge cannot be taken back. Idempotent: settleCanvasCardsForGenJob no-ops on a settled board.
+// a charge cannot be taken back, a card can be written again. What writes it again is NOT this
+// path: once the job is DONE no redelivery and no stale-job scan will ever look at it, so the
+// retry is the worker's canvas backfill sweep (apps/worker/src/jobs/canvas-backfill.ts), which
+// finds delivered jobs whose board is still incomplete and re-runs this same shell.
+// Idempotent: settleCanvasCardsForGenJob no-ops on a settled board.
 // Failure/cancelled/timeout terminals are NOT wired here — that projection is T2c.
 async function settleCanvasBoard(job: { id: string; ownerId: string }): Promise<void> {
   try {

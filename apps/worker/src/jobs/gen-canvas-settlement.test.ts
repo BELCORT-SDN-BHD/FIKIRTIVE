@@ -205,7 +205,12 @@ describe("the reaper", () => {
     expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledWith("g-committed", "o1");
   });
 
-  it("keeps sweeping when one job's board write fails", async () => {
+  it("recovers the MONEY when a job's board write fails — and does not claim the board was written", async () => {
+    // The honest split: this sweep's job is to get a committed-but-stuck job to DONE with its
+    // charge settled, and it does that even when the board write throws. It does NOT retry the
+    // board — a DONE job is invisible to all three scans here. The retry that actually happens is
+    // the canvas backfill sweep (apps/worker/src/jobs/canvas-backfill.ts + its own suite); this
+    // case exists to pin that the money path finishes without borrowing that sweep's credit.
     const committed = { ...baseJob, id: "g-committed", status: "GENERATING", generationIds: ["gen1"] };
     m.genJobFindMany
       .mockResolvedValueOnce([])
@@ -214,8 +219,20 @@ describe("the reaper", () => {
     m.genJobUpdateMany.mockResolvedValue({ count: 1 });
     m.settleCanvasCardsForGenJob.mockRejectedValue(new Error("canvas write blew up"));
 
-    await expect(reapStaleGenJobs()).resolves.toBe(1);
+    await expect(reapStaleGenJobs()).resolves.toBe(1); // 1 = money recovered, not 1 board written
     expect(m.settleCredits).toHaveBeenCalledTimes(1);
     expect(m.refundReservation).not.toHaveBeenCalled();
+
+    // Proof of the claim above: the job is DONE now, so running the whole sweep again writes no
+    // board at all. Nothing in THIS file's three scans is the retry.
+    m.settleCanvasCardsForGenJob.mockClear();
+    m.genJobFindMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await reapStaleGenJobs();
+
+    expect(m.settleCanvasCardsForGenJob).not.toHaveBeenCalled();
   });
 });
