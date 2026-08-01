@@ -8,8 +8,23 @@ import { coworkGenerate, coworkVaryCard, cancelGenJob } from "@/lib/cowork-actio
 import { CHAT_SPEND_NOTE, creditsLabel } from "@/lib/credit-format";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
+import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
+// The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
+// gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
+import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
+
+/** What a successful approve hands up. Carries the EXACT card it happened on plus the
+ *  SERVER's own result — the parent never has to infer either from a closure or from a
+ *  module-level broadcast (#580 复审 r1 P1-4). */
+export interface PlanApproveOutcome {
+  /** The card the merchant actually clicked. */
+  cardId: string;
+  /** The resume parked again (chained needs_approval) and this is the server's COMPLETE
+   *  still-pending set; null when this resume ran to completion. */
+  chained: ChainedApproval | null;
+}
 
 export interface OttoPlanCardProps {
   cardId: string;
@@ -21,10 +36,10 @@ export interface OttoPlanCardProps {
   genJobId?: string | null;
   cardState: CardState;
   pendingApproval: boolean;
-  /** Called after a successful approve. When the ottoApprove resume parked AGAIN
-   *  (chained needs_approval), the chained outcome rides along so the parent can
-   *  mark the new card ids pendingApproval and render them (#498 round-4). */
-  onApproved: (chained?: ChainedApproval) => void;
+  /** Called after a successful approve, with the exact card id and the server's result
+   *  (#498 round-4 chained needs_approval rides along so the parent can mark the new
+   *  card ids pendingApproval and render them). */
+  onApproved: (outcome: PlanApproveOutcome) => void;
   /** Called when the user clicks "Change something". Receives the current
    *  structuredPrompt as a seed so the caller can prefill the composer. */
   onChangeSomething: (seed: string) => void;
@@ -34,17 +49,22 @@ export interface OttoPlanCardProps {
   onCancelled?: () => void;
 }
 
-type CardPayload = {
-  kind?: string;
-  structuredPrompt?: string;
-  estimatedPriceUsd?: number;
-  /** The real charge in credits (= what startGen reserves). Shown on the card. */
-  estimatedCredits?: number;
-  /** Present only when this image card is step 1 of a two-step video plan. Display only. */
-  videoStep?: { estimatedCredits?: number };
-  entityIds?: string[];
-  variantSel?: Record<string, string>;
-};
+/** Fallback disclosure for a card that is flagged downgraded but predates the
+ *  server-built note — silence is the one thing this state may never be. */
+export const DOWNGRADE_FALLBACK_NOTE =
+  "Some of what you asked for isn't available here — the details above are what you'll get.";
+
+/** Shown instead of a plan when the durable payload can't be read as one, or carries no
+ *  price we can vouch for. Never a blank card and never a guessed price: a plan with no
+ *  guaranteed price is not approvable. */
+export const UNREADABLE_PLAN_NOTE =
+  "I can't read this plan any more — ask me to put it together again and I'll make a fresh one.";
+
+/** Shown when SOME fields of an otherwise readable plan were malformed. The card is
+ *  incomplete, so it is disclosed AND withheld from approval — a card that admits it
+ *  didn't read itself fully must not be the one the merchant pays on (r2 P1-2). */
+export const PARTIAL_PLAN_NOTE =
+  "Some details of this plan didn't come through, so I won't run it as it stands — ask me to put it together again and I'll make a fresh one.";
 
 /** The plan card — Otto's "Here's what I'll make" with the one total and the approve gate.
  *  Approve resumes the parked generate via ottoApprove (the metered spend path). */
@@ -60,7 +80,12 @@ export function OttoPlanCard({
   onRetry,
   onCancelled,
 }: OttoPlanCardProps) {
-  const p = (payload ?? {}) as CardPayload;
+  // ONE gate for this card: runtime parse at the DTO boundary (no `as` cast) plus the
+  // ONE price-guarantee predicate. Everything below — what renders, and whether approve()
+  // may spend — reads this same object, so the display and the spend can't disagree
+  // (#580 复审 r1 P1-1 / r2 P1-1).
+  const gate = planCardGate(payload);
+  const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -90,16 +115,24 @@ export function OttoPlanCard({
   }, [cardState]);
 
   const isVideo = p.kind === "video";
-  const isTwoStep = !isVideo && typeof p.videoStep?.estimatedCredits === "number";
-  // Show the real charge in CREDITS (= what startGen reserves). New cards carry
-  // estimatedCredits; for older cards fall back to the displayed-credit equivalent
-  // of the (record-only) USD estimate so nothing renders "$0.00".
-  const credits =
-    typeof p.estimatedCredits === "number"
-      ? p.estimatedCredits
-      : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
-  const videoCredits = isTwoStep ? (p.videoStep!.estimatedCredits as number) : 0;
+  // The one number the merchant decides on — the real charge in CREDITS (= what startGen
+  // reserves). There is no USD→credits fallback any more: the record-only fal cost divided
+  // by $0.10 was never a quote, and guessing one is how an unpriced card got an approve
+  // button (#580 复审 r2 P1-1). Guaranteed or absent, nothing in between.
+  const credits = gate.credits;
+  // The follow-on video estimate rides the SAME predicate — an estimate we can't vouch
+  // for is not shown as a number, so the two-step total is never half-guessed.
+  const videoCredits = guaranteedCredits({ estimatedCredits: p.videoStep?.estimatedCredits });
+  const isTwoStep = !isVideo && videoCredits !== null;
   const desc = p.structuredPrompt || (isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image");
+  // The spec the merchant reads, built server-side from what execution really honours.
+  // The card renders it VERBATIM — it derives no spec of its own any more, because two
+  // derivations of one fact is exactly how the card came to promise things the
+  // generator never received (#580 复审 r1 P1-2).
+  const specChips = p.specChips ?? [];
+  // The card's honest run state. `working` maps to "queued": the card knows a job was
+  // created, not that it started — so it must not say "making this now" (P1-3).
+  const runState = runStateOfCard(cardState);
 
   const [cancelled, setCancelled] = useState(false);
 
@@ -146,7 +179,10 @@ export function OttoPlanCard({
   }
 
   async function approve() {
-    if (busy || cardState !== "idle") return;
+    // Fail closed on the SAME gate the render used: a plan we couldn't read, couldn't
+    // price, or couldn't read in full renders no approve button — and may not start a
+    // spend either, whatever path got here.
+    if (busy || cardState !== "idle" || !gate.approvable) return;
     setBusy(true);
     setError(null);
     try {
@@ -173,9 +209,14 @@ export function OttoPlanCard({
       // pendingApproval and renders them — their clicks must resume the RunState
       // (ottoApprove), never coworkGenerate. (This card's own generation DID
       // start; onApproved stays correct either way.)
+      //
+      // #591 / P1-4: the parked step-trace above also has to stop asking for a click
+      // that already happened — but it learns that from the parent's NEW pending set
+      // (derived from `chained` right here), not from a module-level broadcast that
+      // hid every waiting panel on the page.
       const chained = chainedApprovalOf(res);
       if (chained) setChainedReceipt(chained.fallbackReply);
-      onApproved(chained ?? undefined);
+      onApproved({ cardId, chained });
     } catch {
       setError("Couldn't start that — please try again.");
     } finally {
@@ -207,6 +248,30 @@ export function OttoPlanCard({
   function handleChangeSomething() {
     setConfirming(false);
     onChangeSomething(p.structuredPrompt ?? "");
+  }
+
+  // A payload we can't read (or can't price) is disclosed as such. It never renders as a
+  // plan with a guessed price and an approve button next to it.
+  // `credits === null` is redundant with `!gate.readable` at run time — it is spelled out
+  // so the compiler narrows `credits` to a number for the whole render below, instead of
+  // being talked past with a `!`.
+  if (!gate.readable || credits === null) {
+    return (
+      <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
+        <div className="rounded-[14px] border border-border bg-secondary p-[13px]">
+          <div className="mb-[9px] flex items-center gap-[7px]">
+            <ClipboardList size={15} className="text-muted-foreground" />
+            <span className="text-[0.8125rem] font-bold text-foreground">A plan I can&rsquo;t read</span>
+          </div>
+          <div className="text-[0.8125rem] text-muted-foreground">{UNREADABLE_PLAN_NOTE}</div>
+          <div className="mt-3">
+            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleChangeSomething}>
+              Ask again
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -265,8 +330,41 @@ export function OttoPlanCard({
           </div>
         </div>
 
+        {/* #580 — the full spec, in the merchant's words, exactly as the server built it
+            from what execution really honours. Rendered verbatim: the card adds nothing
+            and drops nothing, so it cannot promise what the generator won't receive.
+            An older card with no specChips shows no spec rather than a guessed one. */}
+        {specChips.length > 0 && (
+          <div className="mt-[9px] flex flex-wrap gap-[6px]">
+            {specChips.map((chip) => (
+              <span
+                key={chip}
+                className="rounded-[7px] border border-border bg-card px-[7px] py-[2px] font-mono text-[11px] text-muted-foreground"
+              >
+                {chip}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* A payload that carried malformed fields is disclosed, not quietly patched —
+            and, since r2 P1-2, not approvable either (see the button block below). */}
+        {gate.malformedFields.length > 0 && (
+          <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
+            {PARTIAL_PLAN_NOTE}
+          </div>
+        )}
+
+        {/* #580 — a downgrade is never silent. If the plan couldn't honour what was
+            asked for, the card says so before the merchant spends. */}
+        {p.downgraded && (
+          <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
+            {p.downgradeNote || DOWNGRADE_FALLBACK_NOTE}
+          </div>
+        )}
+
         <div className="mt-4 border-t border-border pt-4">
-          {isTwoStep ? (
+          {isTwoStep && videoCredits !== null ? (
             <div>
               <div className="mb-1 text-[0.75rem] text-muted-foreground">
                 Two-step plan
@@ -285,7 +383,7 @@ export function OttoPlanCard({
           )}
         </div>
 
-        {cardState === "failed" ? (
+        {runState === "failed" ? (
           <div className="mt-4">
             <div className="text-[0.875rem] font-semibold text-foreground">
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
@@ -303,7 +401,7 @@ export function OttoPlanCard({
           <div className="mt-4 text-[0.875rem] text-muted-foreground">
             Cancelled — you weren&rsquo;t charged.
           </div>
-        ) : cardState === "done" ? (
+        ) : runState === "done" ? (
           <div className="mt-4">
             <div className="text-[0.875rem] font-semibold text-[var(--success-soft-foreground)]">
               ✓ Done
@@ -313,11 +411,14 @@ export function OttoPlanCard({
               ✓ You approved this — it used {creditsLabel(credits)}.
             </div>
           </div>
-        ) : cardState === "working" ? (
+        ) : runState === "queued" ? (
           <div className="mt-4">
             <div className="flex items-center gap-3">
+              {/* P1-3: the card knows a job exists, not that it started (the thread DTO
+                  folds QUEUED and GENERATING into one "working"). So it says queued —
+                  the one thing that is true either way — instead of "making this now". */}
               <span className="text-[0.875rem] font-semibold text-[var(--success-soft-foreground)]">
-                ✓ On it — making this now · {formatElapsed(elapsed)} · usually ~{usualSeconds(isVideo)}s
+                ✓ Approved — in the queue · {formatElapsed(elapsed)} · usually ~{usualSeconds(isVideo)}s
               </span>
               {genJobId && (
                 <Button variant="ghost" size="sm" disabled={busy} onClick={cancel}>
@@ -329,6 +430,15 @@ export function OttoPlanCard({
             <div className="mt-2 text-[0.75rem] text-muted-foreground/70">
               ✓ You approved this — it used {creditsLabel(credits)}.
             </div>
+          </div>
+        ) : !gate.approvable ? (
+          // r2 P1-2: the card read itself only partially. It still shows what it managed
+          // to read (above) and says so (PARTIAL_PLAN_NOTE), but the path to spending on
+          // it does not exist — no confirm step, no approve button, and approve() refuses.
+          <div className="mt-4 flex gap-3">
+            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleChangeSomething}>
+              Ask again
+            </Button>
           </div>
         ) : confirming ? (
           <div className="mt-4 flex flex-col gap-3">

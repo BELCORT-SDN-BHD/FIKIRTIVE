@@ -9,6 +9,11 @@ import { creditsLabel } from "@/lib/credit-format";
 import { runPackApprovalLoop, type PackApprovalOutcome } from "./approval-chain";
 import type { CardState } from "@/lib/otto-inject-helpers";
 import { packTotalCredits, canAffordPack } from "./pack-credit-math";
+// r2 P1-3: the pack reads its cards through the SAME contract parser and the SAME price
+// predicate as the single card. It used to hand-roll a `SlimPayload` cast and guess a
+// price from the record-only USD estimate, so a pack could offer "Make all" on a total
+// the server never quoted.
+import { planCardGate } from "./plan-card-contract";
 
 /** The per-card shape PackCard receives from OttoChatStream. */
 export interface PackCardItem {
@@ -20,15 +25,14 @@ export interface PackCardItem {
   pendingApproval: boolean;
 }
 
-/** Payload fields PackCard reads from each card's payload (same shape as OttoPlanCard). */
-type SlimPayload = {
-  kind?: string;
-  structuredPrompt?: string;
-  estimatedCredits?: number;
-  estimatedPriceUsd?: number;
-  entityIds?: string[];
-  variantSel?: Record<string, string>;
-};
+/** Shown in a row whose card carries no price we can vouch for — never a guessed number. */
+export const PACK_UNPRICED_ROW = "price unavailable";
+
+/** Shown instead of the pack total + "Make all" when any card in the pack has no
+ *  guaranteed price (or didn't read in full). Batch approval is all-or-nothing, so one
+ *  unpriceable card takes the whole batch button with it. */
+export const PACK_UNPRICED_NOTE =
+  "I can't put a firm price on every item here, so I won't run them as a batch — ask me to put this together again and I'll make a fresh set.";
 
 export interface PackCardProps {
   packTitle: string;
@@ -62,18 +66,17 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
    *  loop parked again (chained needs_approval). Display copy only, verbatim. */
   const [chainedReceipt, setChainedReceipt] = useState<string | null>(null);
 
+  // One gate per card — the same one OttoPlanCard uses. `p` is the PARSED payload
+  // (malformed fields dropped and accounted for), `credits` is guaranteed or null.
   const parsedCards = cards.map((c) => {
-    const p = (c.payload ?? {}) as SlimPayload;
-    // Inline credit calculation for each card: match payloadCredits logic
-    const credits =
-      typeof p.estimatedCredits === "number"
-        ? p.estimatedCredits
-        : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
-    return { ...c, p, credits };
+    const gate = planCardGate(c.payload);
+    return { ...c, p: gate.value, credits: gate.credits };
   });
 
+  // null ⇒ at least one card has no price we can vouch for, so this pack has no total
+  // and no batch approval (see the footer).
   const totalCredits = packTotalCredits(cards);
-  const canAfford = canAffordPack(totalCredits, balanceUsd);
+  const canAfford = totalCredits !== null && canAffordPack(totalCredits, balanceUsd);
 
   // Only idle (not yet submitted / not already working/done) cards need firing.
   const idleCards = parsedCards.filter((c) => c.cardState === "idle");
@@ -85,7 +88,9 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
   const startedCount = parsedCards.filter((c) => c.cardState !== "failed").length;
 
   async function makeAll() {
-    if (running) return;
+    // Fail closed on the same gate the footer renders from: no guaranteed pack total ⇒
+    // no batch spend, whatever path got here.
+    if (running || totalCredits === null) return;
     setConfirming(false);
     setRunning(true);
     setError(null);
@@ -176,7 +181,7 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                     {desc}
                   </div>
                   <div className="text-[0.75rem] text-muted-foreground">
-                    {creditsLabel(c.credits)}
+                    {c.credits === null ? PACK_UNPRICED_ROW : creditsLabel(c.credits)}
                   </div>
                 </div>
                 <div className="shrink-0 text-[0.75rem]">
@@ -200,7 +205,13 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
 
         {/* Pack footer */}
         <div className="mt-4 border-t border-border pt-4">
-          {!allSubmitted && (
+          {!allSubmitted && totalCredits === null && (
+            <div role="alert" className="text-[0.875rem] text-[var(--warning-soft-foreground)]">
+              {PACK_UNPRICED_NOTE}
+            </div>
+          )}
+
+          {!allSubmitted && totalCredits !== null && (
             <>
               <div className="mb-3 text-[1.375rem] font-bold text-foreground">
                 Total {creditsLabel(totalCredits)}
