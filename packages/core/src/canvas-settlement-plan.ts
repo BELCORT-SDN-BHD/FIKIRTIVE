@@ -33,6 +33,23 @@ export const CANVAS_SETTLEMENT_CARD = { w: 320, h: 320 } as const;
 export const CANVAS_JOB_KEY_PREFIX = "canvas:";
 
 /**
+ * The WHOLE shape of a server-minted Canvas key, not just its first seven characters.
+ *
+ * `apps/web/lib/batch-idempotency.ts` mints `canvas:` + a full SHA-256 digest and refuses to
+ * recognise anything else, so reading the family by prefix alone was a weaker rule than the one
+ * that creates it: any key merely STARTING with `canvas:` would have been read as "this job was
+ * bought from the board" (#601 r2 judge P2①). Both sides now answer the same question the same
+ * way, and `apps/web/lib/__tests__/batch-idempotency.test.ts` pins the minted key to this pattern
+ * so the two cannot drift.
+ */
+export const CANVAS_JOB_KEY_PATTERN = /^canvas:[0-9a-f]{64}$/;
+
+/** Is this exactly a key the server minted for a Canvas press? */
+export function isCanvasJobKey(idempotencyKey: string | null | undefined): boolean {
+  return typeof idempotencyKey === "string" && CANVAS_JOB_KEY_PATTERN.test(idempotencyKey);
+}
+
+/**
  * Where a paid job came from — and therefore whether its outputs belong on a board.
  *
  * Read off durable facts, never guessed from the state of the board itself: a job that has no
@@ -54,7 +71,7 @@ export function canvasJobOrigin(facts: {
   /** Does GenJob.threadId still name a live thread in this owner+project? */
   hasLiveThread: boolean;
 }): CanvasJobOrigin {
-  if (facts.idempotencyKey?.startsWith(CANVAS_JOB_KEY_PREFIX)) return "canvas";
+  if (isCanvasJobKey(facts.idempotencyKey)) return "canvas";
   return facts.hasLiveThread ? "chat" : "elsewhere";
 }
 
@@ -168,7 +185,13 @@ export function canvasBoardNeedsSettlement(
   if (!generationIds.length) return false;
   // The merchant deleted the in-flight card: the projection skips the whole job forever.
   if (cards.some((card) => card.status === "deleted" && card.generationId === null)) return false;
-  if (cards.length < generationIds.length) return true;
+  // Ask about EACH paid output by name, never about how many rows happen to be here (#601 r2
+  // judge P1③). Counting says "four rows for four outputs, so this board is finished" — which is
+  // wrong the moment two rows carry the same output, and was wrong in a worse way upstream, where
+  // a row that named this job from ANOTHER workspace could be counted into the total and quietly
+  // retire a merchant's unrepaired board.
+  const placed = new Set(cards.map((card) => card.generationId).filter((id): id is string => !!id));
+  if (generationIds.some((id) => !!id && !placed.has(id))) return true;
   return cards.some((card) => card.status !== "deleted" && (card.status !== "done" || card.generationId === null));
 }
 
@@ -264,15 +287,28 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     // batch in the first free slot rather than on top of work that is already there (#547 A2).
     const footprint = canvasBatchFootprint(outputs.length, CANVAS_SETTLEMENT_CARD);
     const origin = nextCanvasSpawnOrigin(occupied, footprint);
-    anchorRect = { x: origin.x, y: origin.y, ...CANVAS_SETTLEMENT_CARD };
+    anchorGenerationId = primaryGenerationId;
+    const anchorBatchIndex = outputs.indexOf(anchorGenerationId);
+    // `origin` is the free spot for the WHOLE batch, measured from its slot 0 — and the anchor is
+    // not always slot 0: when the merchant deleted the first output, the batch is led by a later
+    // one. Every sibling below is placed relative to the anchor's OWN slot, so seating the anchor
+    // directly on `origin` slid the entire batch up and to the left of the rectangle that was
+    // actually checked, straight over cards already on the board (#601 r2 judge P1②). Seat the
+    // anchor in its own slot instead: the siblings then land exactly inside the checked spot, and
+    // each card keeps its true batch position (#599 D5).
+    const anchorSlotOffset = canvasBatchSlotOffset(anchorBatchIndex, CANVAS_SETTLEMENT_CARD);
+    anchorRect = {
+      x: origin.x + anchorSlotOffset.dx,
+      y: origin.y + anchorSlotOffset.dy,
+      ...CANVAS_SETTLEMENT_CARD,
+    };
     anchorId = null;
     anchorPrompt = job.prompt || null;
     anchorSourceNodeId = null;
-    anchorGenerationId = primaryGenerationId;
     planned.push({
       action: "create",
       role: "anchor",
-      batchIndex: outputs.indexOf(anchorGenerationId),
+      batchIndex: anchorBatchIndex,
       generationId: anchorGenerationId,
       type,
       ...anchorRect,

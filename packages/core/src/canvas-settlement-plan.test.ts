@@ -13,6 +13,7 @@ import {
   CANVAS_SETTLEMENT_CARD,
   canvasJobOrigin,
   canvasBoardNeedsSettlement,
+  isCanvasJobKey,
   planCanvasSettlement,
   type CanvasJobOrigin,
   type CanvasSettlementPlan,
@@ -23,6 +24,8 @@ import {
 import { canvasBatchSlotOffset, canvasRectsOverlap, type CanvasRect } from "./canvas-layout.js";
 
 const OUTPUTS = ["gen-1", "gen-2", "gen-3", "gen-4"];
+/** `canvas:` plus a full SHA-256 digest — the exact shape startCanvasGen mints server-side. */
+const SERVER_MINTED_CANVAS_KEY = `${CANVAS_JOB_KEY_PREFIX}${"0123456789abcdef".repeat(4)}`;
 
 function job(overrides: Partial<SettlementJob> = {}): SettlementJob {
   return {
@@ -174,6 +177,31 @@ describe("where each card of a batch sits", () => {
 
     expect(planned[0]).toMatchObject({ action: "create" });
     expect([(planned[0] as { x: number }).x, (planned[0] as { y: number }).y]).not.toEqual([80, 80]);
+  });
+
+  it("keeps a never-placed batch off existing work even when its FIRST output was deleted", () => {
+    // The reproduction (#601 r2 judge P1②): 3 outputs, the merchant deleted the first, and one
+    // card is already at (420,420). The free spot is found for the whole batch — but the batch is
+    // measured from its own slot 0, and the card leading it here is slot 1. Seating that card ON
+    // the free spot slid the batch a whole column and row up and left of the rectangle that was
+    // checked, and the surviving sibling landed exactly on the card that was already there:
+    // invisible work the merchant had paid for, on a board with plenty of room.
+    const existing: CanvasRect = { x: 420, y: 420, w: 320, h: 320 };
+    const planned = place(planCanvasSettlement({
+      job: job({ generationIds: OUTPUTS.slice(0, 3), origin: "canvas" }),
+      cards: [card({ id: "gone", generationId: "gen-1", status: "deleted", x: 0, y: 0 })],
+      occupied: [existing],
+    }));
+
+    expect(planned.map((entry) => (entry as { generationId?: string }).generationId)).toEqual(["gen-2", "gen-3"]);
+    for (const entry of planned) {
+      const rect = rectOf(entry as Extract<PlannedCard, { action: "create" }>);
+      expect({ card: (entry as { generationId?: string }).generationId, at: [rect.x, rect.y], onTopOfExistingWork: canvasRectsOverlap(rect, existing) })
+        .toEqual({ card: (entry as { generationId?: string }).generationId, at: [rect.x, rect.y], onTopOfExistingWork: false });
+    }
+    // …and the surviving cards keep their true place in the batch (#599 D5), so the fix is the
+    // geometry, not a renumbering that would make "the second output" a lie.
+    expect(planned.map((entry) => entry.batchIndex)).toEqual([1, 2]);
   });
 
   it("hangs siblings off the batch anchor, and off the anchor's own source when it has one", () => {
@@ -352,8 +380,30 @@ describe("when the board must be left alone", () => {
 
 describe("where the job was bought", () => {
   it("reads a server-minted canvas key as a board job, whatever happened to the chat", () => {
-    expect(canvasJobOrigin({ idempotencyKey: `${CANVAS_JOB_KEY_PREFIX}abc`, hasLiveThread: false })).toBe("canvas");
-    expect(canvasJobOrigin({ idempotencyKey: `${CANVAS_JOB_KEY_PREFIX}abc`, hasLiveThread: true })).toBe("canvas");
+    expect(canvasJobOrigin({ idempotencyKey: SERVER_MINTED_CANVAS_KEY, hasLiveThread: false })).toBe("canvas");
+    expect(canvasJobOrigin({ idempotencyKey: SERVER_MINTED_CANVAS_KEY, hasLiveThread: true })).toBe("canvas");
+  });
+
+  it("only accepts the WHOLE shape the server mints, not anything starting with the word", () => {
+    // The minting side (apps/web/lib/batch-idempotency.ts) refuses everything but `canvas:` plus a
+    // full SHA-256 digest, and startGen refuses a caller-supplied member of the family. Reading it
+    // back by prefix alone was the looser of the two rules (#601 r2 judge P2①): it made "bought
+    // from the board" — which is what puts paid outputs onto a board — a claim a shorter, invented
+    // key could have made too.
+    expect(isCanvasJobKey(SERVER_MINTED_CANVAS_KEY)).toBe(true);
+    for (const forged of [
+      `${CANVAS_JOB_KEY_PREFIX}abc`,
+      `${CANVAS_JOB_KEY_PREFIX}${"a".repeat(63)}`,
+      `${CANVAS_JOB_KEY_PREFIX}${"a".repeat(65)}`,
+      `${CANVAS_JOB_KEY_PREFIX}${"A".repeat(64)}`,
+      `${CANVAS_JOB_KEY_PREFIX}${"z".repeat(64)}`,
+      `${SERVER_MINTED_CANVAS_KEY} `,
+      `x${SERVER_MINTED_CANVAS_KEY}`,
+    ]) {
+      expect({ forged, isCanvasKey: isCanvasJobKey(forged) }).toEqual({ forged, isCanvasKey: false });
+      expect({ forged, origin: canvasJobOrigin({ idempotencyKey: forged, hasLiveThread: false }) })
+        .toEqual({ forged, origin: "elsewhere" });
+    }
   });
 
   it("reads a live chat as a chat job, and everything else as neither", () => {
@@ -409,6 +459,17 @@ describe("deciding whether a settlement is worth running at all", () => {
     expect(canvasBoardNeedsSettlement(["gen-1"], [{ generationId: null, status: "done" }])).toBe(true); // finished but unbound
   });
 
+  it("asks about each output by name, not about how many rows turned up", () => {
+    // Counting rows is a different question from "is every paid output on this board?", and the
+    // two part company as soon as a row is not the one it was assumed to be (#601 r2 judge P1③).
+    // The same output twice: two rows for a two-output job, and half the batch still missing.
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [done("gen-1"), done("gen-1")])).toBe(true);
+    // A row that names an output this job never produced does not stand in for one that is missing.
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [done("gen-1"), done("gen-from-another-job")])).toBe(true);
+    // …and a tombstone still counts as the output being accounted for: the merchant removed it.
+    expect(canvasBoardNeedsSettlement(["gen-1", "gen-2"], [done("gen-1"), { generationId: "gen-2", status: "deleted" }])).toBe(false);
+  });
+
   it("never says no to a board the projection would change — checked over the whole matrix", () => {
     for (const scenario of MATRIX) {
       const input = scenarioInput(scenario);
@@ -437,26 +498,39 @@ type Scenario = {
   anchor: AnchorState;
   tombstone: TombstoneState;
   origin: CanvasJobOrigin;
+  /** Is there work from OTHER jobs already on this board? */
+  externalWork: boolean;
 };
 
 const ANCHOR_STATES: AnchorState[] = ["none", "waiting", "bound", "deleted-in-flight"];
 const TOMBSTONE_STATES: TombstoneState[] = ["none", "first-output", "last-output"];
 const ORIGINS: CanvasJobOrigin[] = ["canvas", "chat", "elsewhere"];
+/**
+ * A card from an EARLIER job, sitting where a fresh batch would like to go.
+ *
+ * The dimension the matrix was missing (#601 r2 judge P1②): every scenario used to build
+ * `occupied` out of this job's own cards, so the branch that hunts for a free spot was only ever
+ * asked to avoid cards it had planned itself. A real board is full of other people's work, and
+ * that is the only state in which the bug could appear.
+ */
+const EXTERNAL_WORK: CanvasRect = { x: 420, y: 420, w: 320, h: 320 };
 
 const MATRIX: Scenario[] = [];
 for (const size of [1, 2, 3, 4]) {
   for (const anchor of ANCHOR_STATES) {
     for (const tombstone of TOMBSTONE_STATES) {
       for (const origin of ORIGINS) {
-        const outputs = OUTPUTS.slice(0, size);
-        // A live card carrying an output AND a tombstone for that same output is not a board any
-        // writer can produce (deletion tombstones the row itself). Excluded on purpose, not missed.
-        if (anchor === "bound" && tombstone === "first-output") continue;
-        if (anchor === "bound" && tombstone === "last-output" && size === 1) continue;
-        MATRIX.push({
-          name: `${size} output(s) · anchor:${anchor} · deleted:${tombstone} · from:${origin}`,
-          outputs, anchor, tombstone, origin,
-        });
+        for (const externalWork of [false, true]) {
+          const outputs = OUTPUTS.slice(0, size);
+          // A live card carrying an output AND a tombstone for that same output is not a board any
+          // writer can produce (deletion tombstones the row itself). Excluded on purpose, not missed.
+          if (anchor === "bound" && tombstone === "first-output") continue;
+          if (anchor === "bound" && tombstone === "last-output" && size === 1) continue;
+          MATRIX.push({
+            name: `${size} output(s) · anchor:${anchor} · deleted:${tombstone} · from:${origin} · board:${externalWork ? "busy" : "empty"}`,
+            outputs, anchor, tombstone, origin, externalWork,
+          });
+        }
       }
     }
   }
@@ -474,7 +548,10 @@ function scenarioInput(scenario: Scenario) {
   return {
     job: job({ generationIds: scenario.outputs, origin: scenario.origin }),
     cards,
-    occupied: cards.filter((entry) => entry.status !== "deleted").map((entry) => rectOf(entry)),
+    occupied: [
+      ...cards.filter((entry) => entry.status !== "deleted").map((entry) => rectOf(entry)),
+      ...(scenario.externalWork ? [EXTERNAL_WORK] : []),
+    ],
   };
 }
 
@@ -558,14 +635,25 @@ describe("every board a job can come back to", () => {
     }
     // 5. No card is planned on top of another — an overlapped card is one the merchant paid for
     //    and cannot see.
-    const rects = planned
+    const created = planned
       .filter((entry): entry is Extract<PlannedCard, { action: "create" }> => entry.action === "create")
-      .map((entry) => rectOf(entry))
+      .map((entry) => rectOf(entry));
+    const rects = created
       .concat(input.cards.filter((entry) => entry.status !== "deleted").map((entry) => rectOf(entry)));
     for (let i = 0; i < rects.length; i += 1) {
       for (let j = i + 1; j < rects.length; j += 1) {
         expect({ pair: [i, j], overlap: canvasRectsOverlap(rects[i]!, rects[j]!) })
           .toEqual({ pair: [i, j], overlap: false });
+      }
+    }
+    // 5b. …and when nobody had placed anything for this job, the batch also clears the work that
+    //     was already on the board. (Once a card IS there, the batch is laid out around it by
+    //     design; where THAT card sits is whoever put it there's business, not the projection's.)
+    const nothingWasPlaced = !input.cards.some((entry) => entry.status !== "deleted");
+    if (nothingWasPlaced && scenario.externalWork) {
+      for (const rect of created) {
+        expect({ at: [rect.x, rect.y], onTopOfExistingWork: canvasRectsOverlap(rect, EXTERNAL_WORK) })
+          .toEqual({ at: [rect.x, rect.y], onTopOfExistingWork: false });
       }
     }
     // 6. Running it again asks for nothing: applying a plan twice writes once.

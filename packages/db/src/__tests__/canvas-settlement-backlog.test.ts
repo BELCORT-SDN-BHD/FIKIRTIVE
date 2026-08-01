@@ -30,6 +30,8 @@ const HOUR = 60 * 60_000;
 
 let orgId: string;
 let projectId: string;
+/** Every workspace this test touched — CanvasNode has no organization FK, so we clear them all. */
+let touchedOrgs: string[] = [];
 
 beforeAll(async () => {
   await prisma.$queryRaw`SELECT 1`;
@@ -38,14 +40,25 @@ beforeAll(async () => {
 beforeEach(async () => {
   orgId = `org_${randomUUID()}`;
   await seedOrg(orgId, 100_000);
+  touchedOrgs = [orgId];
   projectId = `prj_${randomUUID()}`;
   await prisma.project.create({ data: { id: projectId, ownerId: orgId, name: "Backlog board" } });
 });
 
 afterEach(async () => {
-  if (!orgId) return;
-  await prisma.canvasNode.deleteMany({ where: { ownerId: orgId } });
+  if (!touchedOrgs.length) return;
+  await prisma.canvasNode.deleteMany({ where: { ownerId: { in: touchedOrgs } } });
 });
+
+/** A second workspace, with a board of its own. */
+async function seedNeighbourWorkspace(): Promise<{ ownerId: string; projectId: string }> {
+  const ownerId = `org_${randomUUID()}`;
+  await seedOrg(ownerId, 1_000);
+  touchedOrgs.push(ownerId);
+  const pid = `prj_${randomUUID()}`;
+  await prisma.project.create({ data: { id: pid, ownerId, name: "Neighbour board" } });
+  return { ownerId, projectId: pid };
+}
 
 /** The window a sweep uses: everything delivered in the last day, bar the last two minutes. */
 function sweepWindow(now = Date.now()) {
@@ -82,11 +95,22 @@ async function seedDeliveredJob(input: {
       id: jobId, ownerId: orgId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
       count: input.outputs, status: "DONE", generationIds,
       threadId: input.threadId ?? null,
-      idempotencyKey: input.canvasKey === false ? null : `${CANVAS_JOB_KEY_PREFIX}${randomUUID().replace(/-/g, "")}`,
+      idempotencyKey: input.canvasKey === false ? null : canvasKey(),
       spent: true, spentUsd: 0.12, startedAt: new Date(Date.now() - HOUR), finishedAt,
     },
   });
   return { jobId, generationIds };
+}
+
+/**
+ * A key of the exact shape startCanvasGen mints: `canvas:` plus a full SHA-256 digest.
+ *
+ * This used to be half that long. The settlement read the family by prefix alone, so the short
+ * key passed — which quietly made the test claim that anything beginning with `canvas:` is proof
+ * a job was bought from the board (#601 r2 judge P2①). Both sides now require the whole shape.
+ */
+function canvasKey(): string {
+  return `${CANVAS_JOB_KEY_PREFIX}${randomUUID().replace(/-/g, "").repeat(2)}`;
 }
 
 async function seedCard(input: { jobId: string | null; x: number; status?: string; generationId?: string | null }): Promise<string> {
@@ -211,5 +235,97 @@ describe("one workspace's backlog is never another's", () => {
 
     expect((await settleCanvasCardsForGenJob(jobId, otherOrg)).status).toBe("job-missing");
     expect(await cardsForJob(jobId)).toHaveLength(0);
+  });
+
+  it("does not let a neighbouring workspace's card retire this workspace's unfinished board", async () => {
+    // The merchant paid for two outputs and has NO cards: their board must be repaired.
+    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2 });
+    // A second workspace, with a finished job of its own so its rows are inside the sweep's read…
+    const neighbour = await seedNeighbourWorkspace();
+    await prisma.genJob.create({
+      data: {
+        id: `gjb_${randomUUID()}`, ownerId: neighbour.ownerId, projectId: neighbour.projectId,
+        prompt: "their own work", kind: "IMAGE", model: "seedream", count: 1, status: "DONE",
+        generationIds: [`gen_${randomUUID()}`], idempotencyKey: canvasKey(),
+        spent: true, spentUsd: 0.12,
+        startedAt: new Date(Date.now() - HOUR), finishedAt: new Date(Date.now() - 30 * 60_000),
+      },
+    });
+    // …and two cards of THEIR OWN that name THIS workspace's job. `CanvasNode.genJobId` carries no
+    // foreign key, so nothing at the database level stops such a row existing.
+    for (const generationId of generationIds) {
+      await prisma.canvasNode.create({
+        data: {
+          id: `cnd_${randomUUID()}`, ownerId: neighbour.ownerId, projectId: neighbour.projectId,
+          type: "image", x: 0, y: 0, w: CARD.w, h: CARD.h,
+          genJobId: jobId, generationId, status: "done",
+        },
+      });
+    }
+
+    // Matching owner and job separately counted those rows towards this board and called it
+    // finished — one tenant deciding whether another tenant's paid work ever gets repaired.
+    expect((await findCanvasSettlementBacklog(sweepWindow())).map((job) => job.id)).toContain(jobId);
+  });
+
+  it("does not call a board finished because two of its rows carry the same output", async () => {
+    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2 });
+    await seedCard({ jobId, x: 0, status: "done", generationId: generationIds[0] });
+    await seedCard({ jobId, x: 340, status: "done", generationId: generationIds[0] });
+
+    expect((await findCanvasSettlementBacklog(sweepWindow())).map((job) => job.id)).toContain(jobId);
+  });
+});
+
+describe("a board that is not at the front of the queue", () => {
+  /** A whole page of jobs whose boards are already complete — the sweep's own limit is 200. */
+  async function seedFinishedBoards(count: number, minutesAgo: number): Promise<void> {
+    const jobs = Array.from({ length: count }, () => ({
+      id: `gjb_${randomUUID()}`,
+      generationId: `gen_${randomUUID()}`,
+    }));
+    await prisma.genJob.createMany({
+      data: jobs.map((job) => ({
+        id: job.id, ownerId: orgId, projectId, prompt: "already on the board", kind: "IMAGE" as const,
+        model: "seedream", count: 1, status: "DONE" as const, generationIds: [job.generationId],
+        idempotencyKey: canvasKey(), spent: true, spentUsd: 0.12,
+        startedAt: new Date(Date.now() - HOUR),
+        finishedAt: new Date(Date.now() - minutesAgo * 60_000),
+      })),
+    });
+    await prisma.canvasNode.createMany({
+      data: jobs.map((job) => ({
+        id: `cnd_${randomUUID()}`, ownerId: orgId, projectId, type: "image",
+        x: 0, y: 0, w: CARD.w, h: CARD.h,
+        genJobId: job.id, generationId: job.generationId, status: "done",
+      })),
+    });
+  }
+
+  it("is still reached when a full page of finished boards sits in front of it", async () => {
+    // Oldest first is the sweep's order, so these 200 are read before anything else…
+    await seedFinishedBoards(200, 120);
+    // …and this is the merchant whose cards were never written, delivered later.
+    const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
+
+    // One slice of 200 taken BEFORE asking "is this board unfinished?" came back entirely full of
+    // boards that needed nothing, and this job was never returned — not on this sweep or any
+    // later one, because the window it sits in never changes.
+    expect((await findCanvasSettlementBacklog(sweepWindow())).map((job) => job.id)).toContain(jobId);
+  });
+
+  it("stops looking at a job whose chat was deleted — that board can never be repaired", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Otto" } });
+    const { jobId } = await seedDeliveredJob({ outputs: 2, threadId, canvasKey: false });
+
+    expect((await findCanvasSettlementBacklog(sweepWindow())).map((job) => job.id)).toContain(jobId);
+
+    await prisma.chatThread.update({ where: { id: threadId }, data: { deletedAt: new Date() } });
+
+    // With the chat gone the settlement can only answer "not a canvas job", forever. Leaving it in
+    // the worklist cost a wasted transaction every five minutes AND a slot that a board which
+    // could actually be repaired needed.
+    expect((await findCanvasSettlementBacklog(sweepWindow())).map((job) => job.id)).not.toContain(jobId);
   });
 });

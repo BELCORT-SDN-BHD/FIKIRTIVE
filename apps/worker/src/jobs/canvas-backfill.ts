@@ -34,11 +34,22 @@ export const CANVAS_BACKFILL_LIMIT = 200;
  * re-enters as its own tenant (#463 two-phase: cross-tenant scan, per-owner write).
  */
 export async function backfillCanvasBoards(now: Date = new Date()): Promise<number> {
-  const backlog = await findCanvasSettlementBacklog({
-    finishedAfter: new Date(now.getTime() - CANVAS_BACKFILL_LOOKBACK_MS),
-    finishedBefore: new Date(now.getTime() - CANVAS_BACKFILL_GRACE_MS),
-    limit: CANVAS_BACKFILL_LIMIT,
-  });
+  // The SCAN is inside the guard too, not just the per-job repair. This sweep shares one reaper
+  // tick with the refgen, LLM-reservation, research, publish and ingest recoveries, and they run
+  // in sequence: a throw from the scan escaped into the tick and skipped every one of them (#601
+  // r2 judge P2③) — so a bad canvas query would have stopped credits being given back. Nothing to
+  // repair this tick is the worst this may cost.
+  let backlog;
+  try {
+    backlog = await findCanvasSettlementBacklog({
+      finishedAfter: new Date(now.getTime() - CANVAS_BACKFILL_LOOKBACK_MS),
+      finishedBefore: new Date(now.getTime() - CANVAS_BACKFILL_GRACE_MS),
+      limit: CANVAS_BACKFILL_LIMIT,
+    });
+  } catch (e) {
+    console.error("[canvas-backfill] backlog scan failed (retries next sweep):", e instanceof Error ? e.message : e);
+    return 0;
+  }
 
   let repaired = 0;
   for (const job of backlog) {

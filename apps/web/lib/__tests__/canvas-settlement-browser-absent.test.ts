@@ -279,6 +279,77 @@ describe("the board is the same whichever writer got there first", () => {
   });
 });
 
+/**
+ * The chat bridge's OWN writer, which the cases above never reached: a GEN_RESULT message.
+ *
+ * Until #601 r3 that message made the bridge place the batch itself, one card per output in a
+ * left-to-right line, and its own writes then made the shared pre-check report the board as
+ * finished — so the settlement never got to correct it. Which board a merchant ended up with
+ * depended on whether a chat happened to be open, and on who reached the job lock first.
+ */
+describe("a batch that arrived as a chat result", () => {
+  async function seedChatResultJob(outputs: number): Promise<{ jobId: string; generationIds: string[]; threadId: string }> {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
+    const { jobId, generationIds } = await seedDoneJob(outputs);
+    await prisma.genJob.update({ where: { id: jobId }, data: { threadId } });
+    await prisma.chatMessage.create({
+      data: {
+        id: `msg_${randomUUID()}`, threadId, ownerId, role: "AGENT", kind: "GEN_RESULT", seq: 1,
+        text: "a cup steaming", genJobId: jobId,
+        payload: { kind: "image", model: "seedream", generationIds },
+      },
+    });
+    return { jobId, generationIds, threadId };
+  }
+
+  it("gets the same board from the chat reader as from the server, card for card", async () => {
+    const server = await (async () => {
+      projectId = await freshProject();
+      const seeded = await seedChatResultJob(4);
+      await settleCanvasCardsForGenJob(seeded.jobId, ownerId);
+      return { pid: projectId, outputs: seeded.generationIds };
+    })();
+
+    const chat = await (async () => {
+      projectId = await freshProject();
+      const seeded = await seedChatResultJob(4);
+      await syncOttoCanvasNodes(projectId);
+      return { pid: projectId, outputs: seeded.generationIds };
+    })();
+
+    expect(await boardRows(chat.pid)).toHaveLength(4);
+    expect(shape(await boardRows(chat.pid), chat)).toEqual(shape(await boardRows(server.pid), server));
+  });
+
+  it("ends up in one state when the chat reader and the server settle at the same moment", async () => {
+    projectId = await freshProject();
+    const raced = await seedChatResultJob(4);
+    // The chat reader is dispatched FIRST on purpose — it is the writer that used to place this
+    // batch itself, so this is the ordering that gives it the best chance at the lock. HONEST
+    // LIMIT: which writer actually reaches the lock first is not under this test's control (the
+    // settlement won every observed run, before and after the fix), so this case proves
+    // CONVERGENCE, not the defect. The red for the defect is the deterministic parity case above.
+    await Promise.all([
+      syncOttoCanvasNodes(projectId),
+      settleCanvasCardsForGenJob(raced.jobId, ownerId),
+      listCanvasNodes(projectId),
+    ]);
+    const racedRows = await boardRows(projectId);
+    const racedPid = projectId;
+
+    // The same scenario settled by the server alone — the reference the race must reproduce.
+    projectId = await freshProject();
+    const alone = await seedChatResultJob(4);
+    await settleCanvasCardsForGenJob(alone.jobId, ownerId);
+
+    expect(racedRows).toHaveLength(4);
+    expect(shape(racedRows, { outputs: raced.generationIds }))
+      .toEqual(shape(await boardRows(projectId), { outputs: alone.generationIds }));
+    expect(racedPid).not.toBe(projectId);
+  });
+});
+
 describe("the chat-side board reader agrees too", () => {
   it("places a half-deleted batch's missing card exactly where the server would", async () => {
     async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {

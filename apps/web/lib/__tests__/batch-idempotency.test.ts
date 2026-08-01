@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANVAS_JOB_KEY_PREFIX } from "@fikirtive/core";
+import { CANVAS_JOB_KEY_PREFIX, isCanvasJobKey } from "@fikirtive/core";
 import {
   canvasActionKey,
   factoryAttemptKey,
@@ -23,13 +23,22 @@ describe("canvas action keys", () => {
     expect(parseCanvasActionKey("canvas:caller-controlled")).toBeNull();
   });
 
-  it("keeps the prefix the settlement reads as 'this job was bought from the board'", () => {
+  it("keeps the WHOLE key shape the settlement reads as 'this job was bought from the board'", () => {
     // The canvas settlement decides whether a delivered job belongs on a board by reading this
-    // key's prefix (packages/core, CANVAS_JOB_KEY_PREFIX). The two live in different packages, so
-    // pin them together here: renaming the prefix on one side without the other would silently
-    // stop paid canvas work from ever reaching the board.
-    expect(canvasActionKey("canvas-action-123").key.startsWith(CANVAS_JOB_KEY_PREFIX)).toBe(true);
+    // key (packages/core, isCanvasJobKey). The two live in different packages, so pin them
+    // together here: changing the shape on one side without the other would silently stop paid
+    // canvas work from ever reaching the board.
+    const minted = canvasActionKey("canvas-action-123").key;
+    expect(minted.startsWith(CANVAS_JOB_KEY_PREFIX)).toBe(true);
     expect(CANVAS_JOB_KEY_PREFIX).toBe("canvas:");
+    expect(isCanvasJobKey(minted)).toBe(true);
+
+    // …and the reading side is no looser than the minting side (#601 r2 judge P2①). Anything the
+    // reserved-family parser refuses must not be read back as a board purchase either.
+    for (const forged of ["canvas:caller-controlled", `${CANVAS_JOB_KEY_PREFIX}abc`, `${CANVAS_JOB_KEY_PREFIX}${"a".repeat(32)}`]) {
+      expect({ forged, parsed: parseCanvasActionKey(forged), read: isCanvasJobKey(forged) })
+        .toEqual({ forged, parsed: null, read: false });
+    }
   });
 });
 

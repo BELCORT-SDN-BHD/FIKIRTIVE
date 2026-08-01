@@ -160,7 +160,11 @@ describe("syncOttoCanvasNodes project scoping", () => {
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
-  it("bridges GEN_RESULT generations from every live thread in the project", async () => {
+  it("hands every live thread's GEN_RESULT job to the one settlement, and places nothing itself", async () => {
+    // #601 r3 (judge P2②): this reader used to write a delivered batch itself — one card per
+    // output, left to right — and its own writes then told the shared pre-check the board was
+    // finished, so the settlement never saw the job. A merchant got a 1×4 row with a chat open
+    // and the settlement's 2×2 grid without one.
     mockChatThreadFindMany.mockResolvedValue([
       {
         id: "thread-1",
@@ -179,29 +183,14 @@ describe("syncOttoCanvasNodes project scoping", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     mockGenJobFindMany.mockResolvedValueOnce([
-      { id: "job-1", generationIds: ["gen-1"] },
-      { id: "job-2", generationIds: ["gen-2"] },
+      { id: "job-1", status: "DONE", generationIds: ["gen-1"] },
+      { id: "job-2", status: "DONE", generationIds: ["gen-2"] },
     ]);
 
     await syncOttoCanvasNodes("p1");
 
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(2);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      ownerId: "u1",
-      projectId: "p1",
-      generationId: "gen-1",
-      genJobId: "job-1",
-      threadId: "thread-1",
-      type: "image",
-    }));
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      ownerId: "u1",
-      projectId: "p1",
-      generationId: "gen-2",
-      genJobId: "job-2",
-      threadId: "thread-2",
-      type: "video",
-    }));
+    expect(mockSettleCanvasCards.mock.calls).toEqual([["job-1", "u1"], ["job-2", "u1"]]);
+    expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
   it("never recreates a job after its in-flight Canvas anchor was deleted", async () => {
@@ -219,10 +208,11 @@ describe("syncOttoCanvasNodes project scoping", () => {
       ])
       .mockResolvedValueOnce([]);
     mockGenJobFindMany.mockResolvedValueOnce([
-      { id: "job-1", generationIds: ["gen-1"] },
+      { id: "job-1", status: "DONE", generationIds: ["gen-1"] },
     ]);
 
     await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([]);
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 

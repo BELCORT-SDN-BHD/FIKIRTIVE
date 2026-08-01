@@ -4,11 +4,11 @@ import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
-import { canvasJobPlacementLockKey, placeCanvasJobNode } from "./canvas-node-placement";
+import { canvasJobPlacementLockKey } from "./canvas-node-placement";
 import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planPendingJobNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -119,11 +119,11 @@ export async function syncOttoCanvasNodes(
       },
     },
   });
-  const existing = await prisma.canvasNode.findMany({
+  // Tombstones included — a deleted card is a durable instruction the settlement below must see.
+  const cardsBeforeSettlement = await prisma.canvasNode.findMany({
     where: { ownerId, projectId },
     select: { generationId: true, genJobId: true, status: true },
   });
-  let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
   const jobIds = [...new Set(messages.map((m) => m.genJobId).filter((id): id is string => !!id))];
   const cardJobKeys = [...new Set(messages
@@ -134,7 +134,7 @@ export async function syncOttoCanvasNodes(
     ...(cardJobKeys.length ? [{ idempotencyKey: { in: cardJobKeys } }] : []),
   ];
   const bridgeJobs = jobWhere.length
-    ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, generationIds: true } })
+    ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, status: true, generationIds: true } })
     : [];
   const bridgeJobById = new Map(bridgeJobs.map((j) => [j.id, j]));
   const bridgeJobByCardId = new Map(
@@ -142,39 +142,33 @@ export async function syncOttoCanvasNodes(
       .filter((j) => j.idempotencyKey?.startsWith("cowork:"))
       .map((j) => [j.idempotencyKey!.slice("cowork:".length), j]),
   );
-  const jobGenIds = new Map(bridgeJobs.map((j) => [j.id, j.generationIds]));
+
+  // A DELIVERED job's cards belong to the ONE settlement, here as everywhere else (#601 r2 judge
+  // P2②). This used to place them itself, one card per output, left to right — so the board a
+  // merchant got depended on whether a chat happened to be open when the batch landed: this
+  // writer produced a 1×4 row and the settlement a 2×2 grid, and whichever reached the job lock
+  // first decided. Worse, its own writes made the shared pre-check say "the board is finished",
+  // so the settlement never got to correct it.
+  const resultJobIds = new Set(messages
+    .filter((m) => m.kind === "GEN_RESULT")
+    .map((m) => m.genJobId)
+    .filter((id): id is string => !!id));
+  const settlementWrote = await reconcileSettledCanvasJobs({
+    ownerId,
+    cards: cardsBeforeSettlement,
+    jobs: bridgeJobs.filter((job) => resultJobIds.has(job.id)),
+  });
+  const existing = settlementWrote
+    ? await prisma.canvasNode.findMany({
+      where: { ownerId, projectId },
+      select: { generationId: true, genJobId: true, status: true },
+    })
+    : cardsBeforeSettlement;
+
+  let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
   const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
-  const suppressedJobs = new Set(existing
-    .filter((n) => n.status === "deleted" && n.generationId === null)
-    .map((n) => n.genJobId)
-    .filter((id): id is string => !!id));
   for (const thread of threads) {
-    const resultMessages = thread.messages.filter((m) => m.kind === "GEN_RESULT");
-    const toCreate = planBridgeNodes(resultMessages, jobGenIds, have)
-      .filter((node) => !suppressedJobs.has(node.genJobId));
-    for (const node of toCreate) {
-      // Job-wide placement reuses the pending primary for generationIds[0] and
-      // deduplicates every later generation against client/reload writers.
-      const placement = await placeCanvasJobNode({
-        ownerId,
-        projectId,
-        type: node.kind,
-        x: 80 + placed * NODE.step,
-        y: NODE.y,
-        w: NODE.w,
-        h: NODE.h,
-        generationId: node.generationId,
-        genJobId: node.genJobId,
-        threadId: thread.id,
-        status: "done",
-        prompt: node.prompt ?? undefined,
-      });
-      if ("error" in placement || "suppressed" in placement) continue;
-      have.add(node.generationId);
-      haveJobs.add(node.genJobId);
-      if (placement.inserted) placed += 1;
-    }
     const cardMessages = (thread.messages as BridgeMessage[])
       .filter((m) => m.kind === "GEN_CARD")
       .map((m) => ({ ...m, genJobId: m.genJobId ?? bridgeJobByCardId.get(m.id)?.id ?? null }));
