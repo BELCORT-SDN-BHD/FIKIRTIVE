@@ -32,7 +32,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     onVariant?: (id: string) => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
-    onReferenceInChat?: () => void;
+    /** Hands the whole picked set to Otto as references — an explicit press, never a click on
+     *  the picture itself (#604 · spec #599 D6). */
+    onSendToOtto?: () => void;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
@@ -63,7 +65,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   const actionable = imageNodeActionable(d);
   const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
   const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
-  const referenceable = actionable && !!d.onReferenceInChat && !d.directToolsLocked;
+  const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
   const writeLock = getCanvasNodeWriteLock(d);
   return (
     <>
@@ -89,6 +91,20 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
+          </button>
+        )}
+        {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
+            silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
+        {canSendToOtto && (
+          <button
+            type="button"
+            aria-label="Send the picked cards to Otto"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="Hand this to Otto as a reference"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
+          >
+            Send to Otto
           </button>
         )}
         {/* A3: one click makes another take of THIS image from its own prompt — the old path
@@ -217,19 +233,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
         Image
       </span>
+    {/* The picture is a picture, not a button: clicking it picks the card up and nothing else
+        (#604 · spec #599 D6). Everything the card can DO lives on its toolbar above. */}
     <div
       className="al-panel"
-      role={referenceable ? "button" : undefined}
-      tabIndex={referenceable ? 0 : undefined}
-      aria-label={referenceable ? "Use image as Otto reference" : undefined}
-      title={referenceable ? "Use as Otto reference" : undefined}
-      onClick={referenceable ? () => d.onReferenceInChat?.() : undefined}
-      onKeyDown={referenceable ? (e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        d.onReferenceInChat?.();
-      } : undefined}
-      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14, cursor: referenceable ? "pointer" : undefined }}
+      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
       {terminal ? (
         <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />

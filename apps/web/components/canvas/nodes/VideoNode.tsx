@@ -1,11 +1,10 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
-import { shouldIgnoreCanvasVideoReferenceClick } from "@/lib/canvas-chat-reference";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 
 export function VideoNode({ data, id, selected }: NodeProps) {
@@ -19,7 +18,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     sourceNodeId?: string | null;
     onDelete?: () => void;
     onOpenDetail?: () => void;
-    onReferenceInChat?: () => void;
+    /** Hands the whole picked set to Otto as references — an explicit press, never a click on
+     *  the video itself (#604 · spec #599 D6). */
+    onSendToOtto?: () => void;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     /** Opens the video confirm dialog seeded with this prompt — the paid video path keeps
@@ -35,7 +36,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
-  const referenceable = actionable && !!d.onReferenceInChat && !d.directToolsLocked;
+  const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
   const originalPrompt = (d.prompt ?? "").trim();
   const canRemake = actionable && !!d.onRemake && !d.directToolsLocked && !writeLock.locked;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -58,17 +59,6 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   }
   const reportMediaSize = (el: HTMLVideoElement) => {
     d.onMediaSize?.({ width: el.videoWidth, height: el.videoHeight });
-  };
-  const handleReferenceClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (
-      shouldIgnoreCanvasVideoReferenceClick({
-        targetTagName: e.target instanceof HTMLElement ? e.target.tagName : null,
-        controlsVisible: !gb || playing,
-      })
-    ) {
-      return;
-    }
-    d.onReferenceInChat?.();
   };
   return (
     <>
@@ -94,6 +84,20 @@ export function VideoNode({ data, id, selected }: NodeProps) {
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
+          </button>
+        )}
+        {/* D6: the one and only way a card reaches Otto. Clicking the video used to do it
+            silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
+        {canSendToOtto && (
+          <button
+            type="button"
+            aria-label="Send the picked cards to Otto"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="Hand this to Otto as a reference"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
+          >
+            Send to Otto
           </button>
         )}
         {canRemake && !!originalPrompt && (
@@ -203,19 +207,11 @@ export function VideoNode({ data, id, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
       </span>
+    {/* The video is a video, not a button: clicking it picks the card up (and the play control
+        still just plays it). Everything the card can DO lives on its toolbar above (#604 · D6). */}
     <div
       className="al-panel"
-      role={referenceable ? "button" : undefined}
-      tabIndex={referenceable ? 0 : undefined}
-      aria-label={referenceable ? "Use video as Otto reference" : undefined}
-      title={referenceable ? "Use as Otto reference" : undefined}
-      onClick={referenceable ? handleReferenceClick : undefined}
-      onKeyDown={referenceable ? (e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        d.onReferenceInChat?.();
-      } : undefined}
-      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14, cursor: referenceable ? "pointer" : undefined }}
+      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
       {terminal ? (
         <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />

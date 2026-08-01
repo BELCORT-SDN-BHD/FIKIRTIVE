@@ -84,10 +84,3 @@ export function canvasComposerReferenceForNode(input: {
   }
   return null;
 }
-
-export function shouldIgnoreCanvasVideoReferenceClick(input: {
-  targetTagName: string | null | undefined;
-  controlsVisible: boolean;
-}): boolean {
-  return input.controlsVisible && input.targetTagName?.toLowerCase() === "video";
-}

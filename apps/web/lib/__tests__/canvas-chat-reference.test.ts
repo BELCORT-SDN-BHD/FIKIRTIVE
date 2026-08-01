@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canvasComposerReferenceForNode, composerReferencePayload, composerReferencesPlaceholder, shouldIgnoreCanvasVideoReferenceClick, upsertComposerReferences } from "../canvas-chat-reference";
+import { canvasComposerReferenceForNode, composerReferencePayload, composerReferencesPlaceholder, upsertComposerReferences } from "../canvas-chat-reference";
 
 describe("canvasComposerReferenceForNode", () => {
   it("maps image canvas nodes to image references for Otto", () => {
@@ -26,13 +26,6 @@ describe("canvasComposerReferenceForNode", () => {
     expect(canvasComposerReferenceForNode({ type: "text", generationId: "gen_text", src: "/files/nope" })).toBeNull();
     expect(canvasComposerReferenceForNode({ type: "image", generationId: null, src: "/files/img.png" })).toBeNull();
     expect(canvasComposerReferenceForNode({ type: "video", generationId: "gen_vid", src: null })).toBeNull();
-  });
-
-  it("ignores native video-control clicks when controls are visible", () => {
-    expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "video", controlsVisible: true })).toBe(true);
-    expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "VIDEO", controlsVisible: true })).toBe(true);
-    expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "video", controlsVisible: false })).toBe(false);
-    expect(shouldIgnoreCanvasVideoReferenceClick({ targetTagName: "button", controlsVisible: true })).toBe(false);
   });
 
   it("appends multiple canvas references without losing earlier selections", () => {
