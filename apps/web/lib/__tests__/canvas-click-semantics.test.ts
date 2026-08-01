@@ -362,6 +362,29 @@ describe("the bars along the bottom stay out of each other's way (#604 r2 P2①)
     expect(composer!.style.position).toBe("");
     expect(stack.children).toHaveLength(3);
   });
+
+  /**
+   * 判官 r2 P2:同一根纵列在短视口(手机横屏、分屏、矮笔电)会长得比画布还高,而画布
+   * `overflow:hidden`,顶上的 composer 就被裁掉且滚不回来。真浏览器实测 844×390:纵列
+   * 要 347px、画布只有 338px,composer 顶部越界 29px。
+   *
+   * 这条**不是几何断言** —— jsdom 没有排版引擎,量不出任何矩形。它只是一道防删护栏:
+   * 确认样式表里那两条规则还在(纵列有高度上限、工具行是唯一不让位的一行)。修好之后的
+   * 真几何读数在走查证据里,`docs/evidence/t5/05|06-short-viewport-*.png` 是同视口对比。
+   */
+  it("caps the column's height in the stylesheet, and keeps the tool row the one row that never gives way", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    // cwd is apps/web (vitest's config root) — same route better-auth-sender.test.ts uses.
+    // `import.meta.url` is not a file URL under the jsdom environment.
+    const css = readFileSync(join(process.cwd(), "app", "globals.css"), "utf8");
+    const stackRule = css.slice(css.indexOf(".gb .cv-bottom-stack {"));
+    expect(stackRule).toContain("max-height: calc(100% - 40px)");
+    expect(css).toContain(".gb .cv-bottom-stack > .cv-toolbar { flex: 0 0 auto; }");
+    expect(css).toMatch(
+      /\.gb \.cv-bottom-stack > \.cv-composer-pop,\s*\.gb \.cv-bottom-stack > \.cv-batchbar \{[^}]*flex: 0 1 auto;[^}]*overflow-y: auto;/,
+    );
+  });
 });
 
 /**

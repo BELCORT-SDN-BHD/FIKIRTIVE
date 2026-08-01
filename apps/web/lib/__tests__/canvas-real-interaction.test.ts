@@ -6,8 +6,16 @@
  * 这件事其实没验过 —— 假件里怎么写都是绿的。这份文件让真 React Flow v12 自己处理事件:
  *
  *   ① 真 pointer + click 打在卡片身体上 → 卡片被选中,Otto 什么也没收到;
- *   ② 键盘路径:Tab 到卡片、Enter 选中、再 Tab 到工具条按 Enter 送出 —— 全程没有鼠标;
+ *   ② 键盘路径:发真 Tab 键走到卡片、Enter 选中、继续 Tab 走进这张卡自己的工具条、
+ *      在「Send to Otto」上按 Enter 送出 —— 全程没有鼠标;
  *   ③ 视频播起来之后点原生 <video>(不是外层面板)→ 依旧不产生任何引用。
+ *
+ * 键盘那一段的边界写在 `pressTab` / `pressEnterOnFocused` 上,不含糊:jsdom 会派发按键,
+ * 但没有焦点导航引擎、也不跑浏览器默认动作,所以两个 helper 先发真按键(应用可以
+ * preventDefault 拦下),没被拦下才补上浏览器那一步(移到文档序下一个可 Tab 元素 /
+ * 让 <button> 激活)。断言看的是**应用自己决定的 tab 序与响应**,不是 helper 的动作。
+ * r2 的版本没走这条路 —— 它直接 `card.focus()` / `send.click()`,Tab 序与 Enter 激活
+ * 一条都没验过(判官 r2 P3),头注却写着「Tab+Enter 走完全程」。
  *
  * jsdom 没有排版引擎,所以两条工具条「矩形不相交」的几何断言只能在真浏览器里做,
  * 走查证据里有原始读数;这里只验交互与结构,不谎称验了几何。
@@ -184,6 +192,76 @@ function tabbables(): HTMLElement[] {
     .filter((el) => el.getAttribute("tabindex") !== "-1" && !(el as HTMLButtonElement).disabled);
 }
 
+/**
+ * A real Tab press.
+ *
+ * jsdom delivers key events but ships no focus-navigation engine and runs no browser
+ * default action, so a Tab keydown alone moves nothing — which is exactly how #604 r2's
+ * "keyboard" test ended up calling `focus()` by hand and proving nothing about the tab
+ * order. This sends the real `Tab` keydown first (any handler on the focused element
+ * sees it and may call preventDefault), and only if nothing swallowed it performs the
+ * move the browser itself would have performed: focus to the next tabbable element in
+ * document order. Same split `@testing-library/user-event`'s `tab()` uses.
+ *
+ * What the assertions therefore verify is the app's own doing — which elements are in
+ * the tab run and in what order — not the helper's.
+ */
+async function pressTab(): Promise<HTMLElement | null> {
+  const from = (document.activeElement as HTMLElement | null) ?? document.body;
+  let defaultAllowed = true;
+  await act(async () => {
+    defaultAllowed = from.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }),
+    );
+  });
+  if (defaultAllowed) {
+    const order = tabbables();
+    const next = order[order.indexOf(from) + 1] ?? order[0] ?? null;
+    await act(async () => { next?.focus(); });
+  }
+  const landed = document.activeElement as HTMLElement | null;
+  await act(async () => {
+    (landed ?? from).dispatchEvent(new KeyboardEvent("keyup", { key: "Tab", bubbles: true, cancelable: true }));
+  });
+  return landed;
+}
+
+/**
+ * A real Enter press on whatever currently has focus. jsdom does not run a `<button>`'s
+ * activation behaviour on Enter either, so — again, only when nothing called
+ * preventDefault — this performs that one browser step.
+ */
+async function pressEnterOnFocused(): Promise<void> {
+  const el = document.activeElement as HTMLElement | null;
+  expect(el, "nothing has focus — Enter has nowhere to land").not.toBeNull();
+  let defaultAllowed = true;
+  await act(async () => {
+    defaultAllowed = el!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  });
+  if (defaultAllowed && el instanceof HTMLButtonElement) {
+    await act(async () => { el.click(); });
+  }
+  await act(async () => {
+    el!.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+}
+
+/** Tab forward until `hit` matches, recording what focus passed through on the way. */
+async function tabUntil(
+  hit: (el: HTMLElement) => boolean,
+  limit: number,
+): Promise<{ path: string[] }> {
+  const path: string[] = [];
+  for (let i = 0; i < limit; i++) {
+    const el = await pressTab();
+    path.push(el?.getAttribute("aria-label") ?? el?.textContent?.trim() ?? "(nothing)");
+    if (el && hit(el)) return { path };
+  }
+  throw new Error(`Tab never reached the target in ${limit} presses; it went: ${path.join(" → ")}`);
+}
+
 const SEND_TO_OTTO = "Send to Otto";
 
 describe("a real click on a card (real React Flow, real pointer events) — #604 r2 P3", () => {
@@ -218,60 +296,74 @@ describe("a real click on a card (real React Flow, real pointer events) — #604
   });
 });
 
-describe("the same job with the keyboard only — #604 r2 P3", () => {
-  it("Tab reaches the card and Enter picks it up", async () => {
+describe("the same job with the keyboard only — #604 r3", () => {
+  it("Tab lands on the card — and landing on it does not pick it up", async () => {
     const onReferenceInChat = vi.fn();
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderBoard({ onReferenceInChat });
 
     const card = nodeWrapper("n1");
-    // Reachable by Tab at all — a card nobody can focus has no keyboard path.
-    expect(card.tabIndex).toBe(0);
-    expect(tabbables()).toContain(card);
-    // And it says what it is when it gets focus, instead of announcing an unnamed group.
+    expect(document.activeElement).not.toBe(card);
+
+    const landed = await pressTab();
+
+    // Tab — not a hand-written focus() — is what put the merchant on the card.
+    expect(landed).toBe(card);
+    // And it says what it is on arrival, instead of announcing an unnamed group.
     expect(card.getAttribute("aria-label")).toBeTruthy();
+    // Arriving is not choosing: nothing is picked and Otto has heard nothing yet.
+    expect(isSelected("n1")).toBe(false);
+    expect(onReferenceInChat).not.toHaveBeenCalled();
+  });
 
-    await act(async () => { card.focus(); });
-    expect(document.activeElement).toBe(card);
+  it("Enter on the card picks it up", async () => {
+    const onReferenceInChat = vi.fn();
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard({ onReferenceInChat });
 
-    await pressKey(card, "Enter");
+    await pressTab();
+    await pressEnterOnFocused();
 
     expect(isSelected("n1")).toBe(true);
     expect(onReferenceInChat).not.toHaveBeenCalled();
   });
 
-  it("and Enter on the toolbar button is what finally sends it to Otto", async () => {
+  it("Tab carries on into that card's own toolbar, and Enter there is what sends it", async () => {
     const onReferenceInChat = vi.fn();
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderBoard({ onReferenceInChat });
 
-    const card = nodeWrapper("n1");
-    await act(async () => { card.focus(); });
-    await pressKey(card, "Enter");
+    await pressTab();
+    await pressEnterOnFocused();
+    expect(isSelected("n1")).toBe(true);
 
-    const send = buttonsLabelled(SEND_TO_OTTO)[0]!;
-    // The button the card just revealed is in the tab order, not stranded off it.
-    expect(tabbables()).toContain(send);
+    // Where Tab goes next, step by step. The buttons the card just revealed have to be
+    // the card's own next-door neighbours — a toolbar that renders somewhere else in the
+    // document is reachable on paper and lost in practice.
+    const walk = await tabUntil((el) => el.textContent?.trim() === SEND_TO_OTTO, 8);
+    expect(walk.path).toEqual([
+      "Show how this image was made",
+      "Send the picked cards to Otto",
+    ]);
+    expect(document.activeElement).toBe(buttonsLabelled(SEND_TO_OTTO)[0]);
+    // Tabbing onto the button is still not pressing it.
+    expect(onReferenceInChat).not.toHaveBeenCalled();
 
-    await act(async () => { send.focus(); });
-    expect(document.activeElement).toBe(send);
-    // A native <button> fires click on Enter; jsdom does not simulate that, so the
-    // assertion is that Enter's activation behaviour has a real button to land on.
-    await act(async () => { send.click(); });
+    await pressEnterOnFocused();
 
     expect(onReferenceInChat).toHaveBeenCalledTimes(1);
+    expect(onReferenceInChat.mock.calls[0]![0]).toHaveLength(1);
   });
 
   it("Escape lets go of the card again", async () => {
     mocks.boardRead.mockResolvedValue([boardRow("n1")]);
     await renderBoard({ onReferenceInChat: vi.fn() });
 
-    const card = nodeWrapper("n1");
-    await act(async () => { card.focus(); });
-    await pressKey(card, "Enter");
+    await pressTab();
+    await pressEnterOnFocused();
     expect(isSelected("n1")).toBe(true);
 
-    await pressKey(card, "Escape");
+    await pressKey(nodeWrapper("n1"), "Escape");
     expect(isSelected("n1")).toBe(false);
   });
 });
