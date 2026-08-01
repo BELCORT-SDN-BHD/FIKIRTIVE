@@ -3,13 +3,16 @@
 /**
  * 北极星 · 沉浸式产品外壳(the one persistent product shell)
  *
- * 一个常驻壳:persistent nav(左)+ 内容 pane(唯一滚动所有者,§L1)+ 常驻 Otto dock。
+ * 一个常驻壳:六扇门导航(左)+ 内容 pane(唯一滚动所有者,§L1)+ 一颗真 Otto 按钮。
  * 页面之间平滑流转:内容 pane 按 pathname 换 key,做一次极轻的 fade-in(§8b 落地税则;
- * prefers-reduced-motion 下不动)。没有画廊顶栏「北极星原型 · 设计稿」水印、没有三态切换器、
- * 没有 57 项目录轨 —— 那些是设计稿 chrome,产品里不出现。
+ * prefers-reduced-motion 下不动)。
+ *
+ * #609(2026-08-02 Founder 裁决):右下那个**假 Otto 小窗**被砍除 —— 它会用样板数据编造
+ * 经营事实,是最恶劣的一类假物。取而代之的是一颗按钮,跳**真对话**(线上 Otto `/otto`)。
+ * 画布页自带真输入框,所以那一页不重复挂这颗按钮。
  *
  * 提供 ImmersiveProvider:insideImmersive=true 让复用的页面内容自动隐藏画廊角标;
- * openOtto(prompt?) 让任意页面「问 Otto」都能带一句预填展开常驻 dock 聊天面板。
+ * openOtto() 让任意页面的「问 Otto」都落到同一条真对话上。
  */
 
 import * as React from "react";
@@ -18,19 +21,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { ImmersiveProvider } from "./_context";
-import { ImmersiveNav } from "./immersive-nav";
-import { ImmersiveDock, type ImmersiveDockHandle } from "./immersive-dock";
-import {
-  currentEscort,
-  escortActedId,
-  markEscortActed,
-  setOttoContext,
-  useOttoWorking,
-  type NsOttoContext,
-} from "./_store";
+import { ImmersiveNav, type ShellIdentity } from "./immersive-nav";
 
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
+
+/** 真 Otto 对话的家(线上产品本体);壳里任何一个 Otto 入口都落到这里。 */
+const REAL_OTTO_HREF = "/otto";
 
 /**
  * 沉浸式内保持流转:复用的画廊页里硬编码着 `/northstar/*` 交叉链接。
@@ -75,15 +72,14 @@ function useReducedMotion(): boolean {
 const FADE_KF_ID = "ns-immersive-fade-kf";
 const FADE_KF = `@keyframes ns-immersive-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }`;
 
-/* §L4 移动抽屉开合态 —— 模块级 mini 外部 store(pattern precedent:_store.ts 的
- * useSyncExternalStore 订阅)。为什么不是组件内 useState:换路由要自动收抽屉,而
- * 「pathname 一变就 setState」是 set-state-in-effect 禁的级联渲染;「adjust-during-render」
- * 被 set-state-in-render 禁;key-reset(React 官方首选)要求抽屉状态 owner 的子树整体
- * remount,但 mobileOpen 的消费者 ImmersiveNav 是滚动持久的常驻栏(remount = 桌面导航
- * 每次换页丢滚动位)。外部 store + useSyncExternalStore 是规则背书的第三形态:effect 只
- * 向外部系统写「关」,组件经订阅读回,无级联 setState。
+/* §L4 移动抽屉开合态 —— 模块级 mini 外部 store。为什么不是组件内 useState:换路由要自动
+ * 收抽屉,而「pathname 一变就 setState」是 set-state-in-effect 禁的级联渲染;
+ * 「adjust-during-render」被 set-state-in-render 禁;key-reset(React 官方首选)要求抽屉
+ * 状态 owner 的子树整体 remount,但 mobileOpen 的消费者 ImmersiveNav 是滚动持久的常驻栏
+ * (remount = 桌面导航每次换页丢滚动位)。外部 store + useSyncExternalStore 是规则背书的
+ * 第三形态:effect 只向外部系统写「关」,组件经订阅读回,无级联 setState。
  * 语义与旧 `useEffect(() => setDrawerOpen(false), [pathname])` 全等:任何 pathname 变化
- * (点导航 / 程序化 escort / 浏览器后退前进)都收抽屉。开态不派生自 pathname,故
+ * (点导航 / 浏览器后退前进)都收抽屉。开态不派生自 pathname,故
  * 「A 开抽屉 → 去 B → 后退回 A」不复活(B→A 这次变化本身已写「关」)。 */
 let mobileDrawerOpen = false;
 const mobileDrawerListeners = new Set<() => void>();
@@ -97,27 +93,19 @@ function subscribeMobileDrawer(cb: () => void): () => void {
   return () => mobileDrawerListeners.delete(cb);
 }
 
-export function ImmersiveShell({ children }: { children: React.ReactNode }) {
+export function ImmersiveShell({
+  children,
+  identity,
+}: {
+  children: React.ReactNode;
+  /** 登录进来的这个人(外壳入口从认证会话解析后注入);未登录为 null。 */
+  identity: ShellIdentity | null;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const reduced = useReducedMotion();
-  const dockRef = React.useRef<ImmersiveDockHandle>(null);
   const rootRef = React.useRef<HTMLDivElement>(null);
   useKeepInsideImmersive(rootRef);
-
-  // §8e 首次直播 escort 导航器。每个新鲜前台指示(escortTo)的 id 只导航一次;离开不拉回
-  // (不产生新 id 就不再 push);返回续播是结构性的(store 是源)。已导航高水位线存在模块级
-  // (escortActedId),不存组件 ref —— 外壳在 SPA 离开/回到路由组时会卸载重挂,ref 会归零
-  // 让陈旧 escort 被当新指示重放;模块级高水位与 escortRequest 同寿命,remount 后不再拉回。
-  const escort = currentEscort();
-  React.useEffect(() => {
-    if (!escort || escort.id <= escortActedId()) return;
-    markEscortActed(escort.id);
-    const surface = escort.surface.startsWith(GALLERY_PREFIX)
-      ? IMMERSIVE_PREFIX + escort.surface.slice(GALLERY_PREFIX.length)
-      : escort.surface;
-    router.push(surface);
-  }, [escort, router]);
 
   React.useEffect(() => {
     if (document.getElementById(FADE_KF_ID)) return;
@@ -129,15 +117,12 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
 
   // §L4 移动抽屉:≤680 侧栏脱离流成抽屉,由顶栏汉堡开合。换路由自动收起(点导航即跳即关),
   // Esc 也收。桌面(>680)常驻栏不受此 state 影响(纯 CSS 断点决定形态)。
-  // 开合态在模块级 mini 外部 store(见文件顶部注释:为什么不是 useState / 不是派生 / 不是 key-reset)。
   const drawerOpen = React.useSyncExternalStore(
     subscribeMobileDrawer,
     () => mobileDrawerOpen,
     () => false,
   );
   const closeDrawer = React.useCallback(() => writeMobileDrawer(false), []);
-  // 换路由收抽屉:向外部 store 写「关」(effect 同步 React 状态→外部系统,规则背书方向);
-  // 关着时是纯 no-op(store 写同值不 notify)。
   React.useEffect(() => {
     writeMobileDrawer(false);
   }, [pathname]);
@@ -150,32 +135,22 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
-  const openOtto = React.useCallback((prompt?: string, context?: NsOttoContext) => {
-    // 上下文桥:带 context 就先落进共享 store(dock chip / 回复前缀读它),再展开面板。
-    if (context !== undefined) setOttoContext(context);
-    dockRef.current?.open(prompt);
-  }, []);
+  // 页面上的「问 Otto」落到真对话。旧实现是展开假小窗并预填一句话;那个小窗已被砍除,
+  // 所以这里只做一件不撒谎的事:把商家送到真的 Otto 面前。
+  const openOtto = React.useCallback(() => {
+    router.push(REAL_OTTO_HREF);
+  }, [router]);
 
-  // Otto 工作态来自共享 store(otto_working / otto_idle 事件),不再硬编码 false。
-  const { working: ottoWorking } = useOttoWorking();
+  const ctx = React.useMemo(() => ({ insideImmersive: true, openOtto }), [openOtto]);
 
-  const ctx = React.useMemo(
-    () => ({ insideImmersive: true, ottoWorking, openOtto }),
-    [openOtto, ottoWorking],
-  );
-
-  const fullHref = "/northstar-immersive/otto";
-
-  // dock 不出现的两类面:
-  //  ① §O3 Otto 自己的全屏面(/otto + /global/otto-chat)—— 否则两个 Otto 同屏;
-  //  ② 宪法 7 市政厅(/cityhall/admin)—— Otto 永久豁免,内部运维台不得出现 coral/dock。
-  const hideDock =
-    pathname === "/northstar-immersive/otto" ||
-    pathname === "/northstar-immersive/global/otto-chat" ||
+  // 画布页自带真输入框(#600 合体内核),再挂一颗按钮就是两个 Otto 同屏;
+  // 市政厅是内部运维台(宪法 7 Otto 永久豁免)。这两处不出现这颗按钮。
+  const hideOttoButton =
+    pathname === "/northstar-immersive/create/canvas" ||
     pathname === "/northstar-immersive/cityhall/admin";
 
   // 登录闸(global gap#1):未登录的 /onboarding/login 是干净的未登录态 —— 不渲染
-  // nav 的身份栏/余额/历史,也不挂常驻 Otto dock。登录提交后才进完整壳。
+  // 导航与身份栏,也不挂 Otto 按钮。登录后才进完整壳。
   const bareLayout = pathname === "/northstar-immersive/onboarding/login";
   if (bareLayout) {
     return (
@@ -220,7 +195,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
               className="fixed inset-0 z-[75] bg-foreground/40 min-[681px]:hidden"
             />
           )}
-          <ImmersiveNav mobileOpen={drawerOpen} onCloseMobile={closeDrawer} />
+          <ImmersiveNav identity={identity} mobileOpen={drawerOpen} onCloseMobile={closeDrawer} />
           {/* 内容 pane:唯一滚动所有者;换路由 = 换 key 做一次轻 fade */}
           <main
             key={pathname}
@@ -230,11 +205,16 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
             {children}
           </main>
         </div>
-        {/* dock 常驻挂载:在 hideDock 的 3 条路由上只做视觉隐藏(display:none),
-            不卸载 —— 保住聊天草稿 / 已发消息等 dock 内部 state(§状态不因换页丢失)。 */}
-        <div className={hideDock ? "hidden" : undefined}>
-          <ImmersiveDock ref={dockRef} fullHref={fullHref} />
-        </div>
+        {/* 一颗真 Otto 按钮:跳真对话。没有小窗、没有编造的经营事实、没有假消息流。 */}
+        {!hideOttoButton && (
+          <Link
+            href={REAL_OTTO_HREF}
+            aria-label="Ask Otto"
+            className="fixed right-4 bottom-4 z-[70] flex size-12 items-center justify-center rounded-full border border-border bg-card shadow-[var(--shadow-md)] transition-colors duration-[120ms] hover:bg-accent active:scale-[0.96]"
+          >
+            <OttoAvatar size={26} mood="idle" />
+          </Link>
+        )}
       </div>
     </ImmersiveProvider>
   );
