@@ -26,6 +26,7 @@ import { ProductShowcase } from "./memory/ProductShowcase";
 import { OfferList } from "./memory/OfferList";
 import { UndoBar } from "./memory/UndoBar";
 import { StuffLibrary } from "./stuff/StuffLibrary";
+import { OttoMarkdown } from "./parts/OttoMarkdown";
 import type { StuffItem } from "@/lib/stuff-items";
 
 type Bubble = { role: "you" | "otto"; text: string };
@@ -300,12 +301,13 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
                   className={`flex ${b.role === "you" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[78%] px-3.5 py-2 text-[0.875rem] leading-[1.5] whitespace-pre-wrap break-words ${b.role === "you" ? "bg-primary text-primary-foreground" : "bg-card text-foreground"}`}
+                    className={`max-w-[78%] px-3.5 py-2 text-[0.875rem] leading-[1.5] break-words ${b.role === "you" ? "whitespace-pre-wrap bg-primary text-primary-foreground" : "bg-card text-foreground"}`}
                     style={{
                       borderRadius: b.role === "you" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
                     }}
                   >
-                    {b.text}
+                    {/* #586: Otto's side renders markdown; the merchant's own text stays literal. */}
+                    {b.role === "you" ? b.text : <OttoMarkdown text={b.text} />}
                   </div>
                 </div>
               ))}

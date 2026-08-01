@@ -43,10 +43,10 @@ const UNAVAILABLE_PUBLISHING_CHANNEL_IDS = new Set(["x"]);
 // #511 — a failed Meta connect comes back here as /otto?view=connections&error=<code>:
 // "missing" or "state" from app/api/meta/callback/route.ts, "not_configured" from
 // app/api/meta/authorize/route.ts, and whatever completeMetaConnect returned otherwise
-// ("not_configured"/"exchange" from lib/meta-graph.ts). Nothing in the app read that
-// param before, so a merchant whose connect failed landed on an unchanged Connections
-// page with no idea why. New codes will appear, so the unknown branch must still say
-// something true rather than guess a cause.
+// ("not_configured"/"exchange" from lib/meta-graph.ts, "incomplete" from lib/meta-actions.ts's
+// #573 fail-closed guard). Nothing in the app read that param before, so a merchant whose
+// connect failed landed on an unchanged Connections page with no idea why. New codes will
+// appear, so the unknown branch must still say something true rather than guess a cause.
 type ConnectErrorCopy = { message: string; retry: boolean; rawCode?: string };
 
 function describeConnectError(code: string): ConnectErrorCopy {
@@ -76,6 +76,11 @@ function describeConnectError(code: string): ConnectErrorCopy {
       return { message: "Meta connections aren’t switched on for this server yet. Contact support and we’ll enable it.", retry: false };
     case "exchange":
       return { message: "Meta didn’t finish the sign-in handshake.", retry: true };
+    case "incomplete":
+      // #573 — Meta's token check came back without the account id, so lib/meta-actions.ts
+      // refused to save a half-built connection rather than keep one we could never delete
+      // on request. Nothing is stored; a fresh connect normally succeeds.
+      return { message: "Meta didn’t confirm which account you connected, so nothing was saved. Try connecting again.", retry: true };
     default:
       // Don't invent a cause — say only what's true, and show the code we were actually
       // given so the merchant can quote it to support.

@@ -8,6 +8,7 @@
  * 持有的 Meta 侧凭据即刻清除)+ 每个受影响 org 记一条 ActionEvent 审计,并按
  * Meta 规范返回 { url, confirmation_code }(用户可凭 code 在状态页核对)。
  * 找不到匹配也返回 200 + code —— "无可删"是合法结果,Meta 只要求可追溯。
+ * 反过来说:可追溯是发码的前提,审计写不进去就不发码(5xx,Meta 重试)。
  */
 import { prisma } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
@@ -63,12 +64,20 @@ async function handleDataDeletion(req: NextRequest | Request): Promise<Response>
     }));
   }
   if (matches.length === 0) {
-    // 无匹配也留一条平台级痕迹(best-effort,founder org 缺失时不 500)。
-    await prisma.actionEvent
-      .create({
-        data: { id: newId(), ownerId: "founder", type: "meta.data_deletion.nomatch", payload: { metaUserId: parsed.userId, confirmationCode } },
-      })
-      .catch(() => {});
+    // 无匹配也留一条平台级痕迹。
+    // #573:确认码照发(Meta 规范要求幂等,「无可删」是合法结果),但审计行必须
+    // 如实说明发码时**一行都没删** —— matched: 0 显式写进 payload,而不是让审计
+    // 读者从 type 后缀去推断。匹配>0 的事务内审计原样不动。
+    // #573 复审:这条写入不是 best-effort。确认码是「本次回调已入账、日后可查」的
+    // 凭据,痕迹落不了盘(founder org 缺失、库故障)就不能发码 —— 吞掉失败等于发一张
+    // 背后什么都没有的码。改为 fail-closed 回 5xx,Meta 会按规范重试。
+    try {
+      await prisma.actionEvent.create({
+        data: { id: newId(), ownerId: "founder", type: "meta.data_deletion.nomatch", payload: { metaUserId: parsed.userId, confirmationCode, matched: 0 } },
+      });
+    } catch {
+      return Response.json({ error: "audit unavailable" }, { status: 503 });
+    }
   }
 
   const origin = process.env.APP_ORIGIN ?? new URL(req.url).origin;

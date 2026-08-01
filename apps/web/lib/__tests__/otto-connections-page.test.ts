@@ -269,6 +269,28 @@ describe("Connections page explains a failed Meta connect (#511)", () => {
     expect(alert!.querySelector('a[href="/api/meta/authorize"]')).toBeTruthy();
   });
 
+  it("#573: explains a connect Meta never identified, and never shows the bare code", async () => {
+    // lib/meta-actions.ts now refuses to store a connection whose Meta account id is missing
+    // or unusable, and sends the merchant back with error=incomplete. Landing on the generic
+    // fallback here would tell them "Meta couldn't be connected. Details: incomplete" — a
+    // code, not an explanation, for a case we understand exactly: nothing was saved, and
+    // trying again normally works.
+    mockDisconnected();
+    window.history.pushState(null, "", "/otto?view=connections&error=incomplete");
+
+    const dom = await renderConnections();
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert).toBeTruthy();
+    expect(alert!.textContent).toContain(
+      "Meta didn’t confirm which account you connected, so nothing was saved.",
+    );
+    expect(alert!.textContent).not.toContain("Details: incomplete");
+    const retry = alert!.querySelector<HTMLAnchorElement>('a[href="/api/meta/authorize"]');
+    expect(retry, "a fresh connect normally succeeds, so the retry must be offered").toBeTruthy();
+    expect(retry!.textContent).toBe("Try again");
+  });
+
   it("offers no retry when retrying cannot help (server not configured)", async () => {
     mockDisconnected();
     window.history.pushState(null, "", "/otto?view=connections&error=not_configured");

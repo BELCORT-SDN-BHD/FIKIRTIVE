@@ -13,6 +13,7 @@ import { ResearchCard } from "./ResearchCard";
 import { ResearchReport } from "./ResearchReport";
 import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
+import { OttoMarkdown } from "./parts/OttoMarkdown";
 import { nextPendingApprovalCardIds } from "./approval-chain";
 import { deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
@@ -494,8 +495,9 @@ function MessageRow({
     return (
       <div className="flex items-start gap-[9px]">
         <OttoAvatar size={26} state="idle" />
-        <div className="max-w-[80%] px-[13px] py-[10px] bg-card border border-border rounded-[5px_14px_14px_14px] text-[0.875rem] leading-[1.5] text-foreground whitespace-pre-wrap break-words">
-          {m.text}
+        {/* #586: Otto's own reply is markdown; the user bubble above stays literal. */}
+        <div className="max-w-[80%] px-[13px] py-[10px] bg-card border border-border rounded-[5px_14px_14px_14px] text-[0.875rem] leading-[1.5] text-foreground break-words">
+          <OttoMarkdown text={m.text} />
         </div>
       </div>
     );

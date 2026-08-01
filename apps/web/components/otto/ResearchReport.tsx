@@ -2,6 +2,7 @@
 import React from "react";
 import { FileText } from "lucide-react";
 import { parseResearchReportPayload, type ResearchSourceView } from "@/lib/research-report";
+import { OttoMarkdown } from "./parts/OttoMarkdown";
 
 export interface ResearchReportProps {
   /** The durable RESEARCH_REPORT message id (kept for parity with sibling widgets; unused). */
@@ -24,7 +25,7 @@ function dedupeByUrl(sources: ResearchSourceView[]): ResearchSourceView[] {
 /** Otto 的深度研究报告卡(RESEARCH_REPORT)。样式镜像 OttoActionPlanCard 的审批卡外观。
  *  纯渲染,$0 —— 只消费 worker 落盘的 payload({topic, synthesis, sources}),无任何 spend/action。
  *  - header:FileText 图标 + "Research: {topic}"(topic 缺失 → "Research report")。
- *  - synthesis:whitespace-pre-wrap 保留换行,不引 markdown 库。
+ *  - synthesis:markdown 渲染(#586,OttoMarkdown)—— 研究综述是 markdown 密度最高的一段。
  *  - Sources:去重后逐条列 title + 可点 url(外链安全 rel/target);空则整段省略。 */
 export function ResearchReport({ payload }: ResearchReportProps) {
   const view = parseResearchReportPayload(payload);
@@ -41,10 +42,10 @@ export function ResearchReport({ payload }: ResearchReportProps) {
           <span className="font-bold text-[0.8125rem] text-foreground">{heading}</span>
         </div>
 
-        {/* Synthesis body — plain text, line breaks preserved (no markdown lib) */}
+        {/* Synthesis body — markdown-rendered (#586) */}
         {view.synthesis && (
-          <div className="text-[0.875rem] text-foreground whitespace-pre-wrap break-words mb-4">
-            {view.synthesis}
+          <div className="text-[0.875rem] text-foreground break-words mb-4">
+            <OttoMarkdown text={view.synthesis} />
           </div>
         )}
 
