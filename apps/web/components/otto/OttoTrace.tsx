@@ -1,16 +1,21 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React from "react";
 
 /**
  * OTTO's live step-trace — the agent narrating what it's doing, Grok-style but in
  * OTTO's voice. Purely presentational: it renders a `steps[]` derived elsewhere from
  * the signals the agent already emits (stream status / message kinds). No data, no
  * spend — display only. Tokens are .gb (shadcn) vars; coral = OTTO (var(--brand)).
+ *
+ * 本组件不持有任何运行状态，也不监听任何全局事件：面板出不出现由父层按
+ * `shouldShowTracePanel({ steps, pendingCardIds })` 决定（#580 复审 r1 P1-4 —— 旧的
+ * 模块级广播会让任意一张卡的成功隐藏掉所有等待面板，且通用批准卡根本不发信号）。
  */
 
 /** "waiting" = the run is PARKED on the merchant's approval (#591). Nothing is
- *  running; the step is stalled on a click that hasn't happened yet. */
-export type TraceStepStatus = "done" | "active" | "pending" | "waiting";
+ *  running; the step is stalled on a click that hasn't happened yet.
+ *  "stopped" = 这一轮以终态收尾（降级 / 被取代 / 出错）而这一步没跑完 —— 不会再动。 */
+export type TraceStepStatus = "done" | "active" | "pending" | "waiting" | "stopped";
 export interface TraceStep {
   /** Sentence-case, e.g. "Making image 1 of 3". */
   label: string;
@@ -26,46 +31,8 @@ const CORAL_INK = "#9A3A1A"; // OTTO's dark-coral text — reads on coral-soft i
 export const TRACE_WAITING_TITLE = "Waiting for your go-ahead";
 export const TRACE_WAITING_HINT = "Nothing is running yet — confirm on the card to start.";
 
-// ---------------------------------------------------------------------------
-// Go-ahead signal (#591)
-// ---------------------------------------------------------------------------
-// The parked panel is honest only until the merchant clicks Confirm on the card.
-// After that the step list still describes the PARKED turn — the stream sent its
-// last status before the click and sends nothing after it — so "nothing is running
-// yet" would become exactly the kind of lie this fix exists to remove, only pointed
-// the other way. A plan card announces the click; a panel still drawn in the parked
-// form stops making any claim at all and steps aside for the card's own live state.
-// Module-scoped emitter, same idiom as lib/balance-refresh.ts. Browser-only by
-// construction — the listener set is module state inside the client bundle.
-
-type GoAheadListener = () => void;
-const goAheadListeners = new Set<GoAheadListener>();
-
-/** Called by a plan card the moment its approve succeeds. */
-export function notifyPlanApproved(): void {
-  for (const listener of [...goAheadListeners]) {
-    try {
-      listener();
-    } catch (error) {
-      console.warn("plan-approved listener failed (non-fatal):", error);
-    }
-  }
-}
-
-/** True once a plan card reported a successful approve during this panel's life.
- *  A fresh turn clears `stepEvents`, which unmounts the panel, so the next turn
- *  starts from false without needing its own reset. */
-function useWentAhead(): boolean {
-  const [wentAhead, setWentAhead] = useState(false);
-  useEffect(() => {
-    const listener = () => setWentAhead(true);
-    goAheadListeners.add(listener);
-    return () => {
-      goAheadListeners.delete(listener);
-    };
-  }, []);
-  return wentAhead;
-}
+/** 一轮以终态收尾但步骤没跑完时的面板措辞 —— 停了就说停了，不再转圈假装在跑。 */
+export const TRACE_STOPPED_TITLE = "Otto stopped partway";
 
 function OttoGlyph({ size = 17 }: { size?: number }) {
   const h = Math.round((size * 22) / 24);
@@ -86,6 +53,7 @@ function StepRow({ step }: { step: TraceStep }) {
   const isActive = status === "active";
   const isDone = status === "done";
   const isWaiting = status === "waiting";
+  const isStopped = status === "stopped";
   return (
     <div
       style={{
@@ -116,12 +84,18 @@ function StepRow({ step }: { step: TraceStep }) {
           justifyContent: "center",
           background: isDone ? "var(--success-soft)" : isActive ? "var(--brand)" : "transparent",
           border:
-            status === "pending"
+            status === "pending" || isStopped
               ? "1.6px solid var(--border)"
               : isWaiting
               ? "1.6px solid var(--warning-soft-foreground)"
               : "none",
-          color: isDone ? "var(--success-soft-foreground)" : isWaiting ? "var(--warning-soft-foreground)" : "#fff",
+          color: isDone
+            ? "var(--success-soft-foreground)"
+            : isWaiting
+            ? "var(--warning-soft-foreground)"
+            : isStopped
+            ? "var(--muted-foreground)"
+            : "#fff",
         }}
       >
         {isDone && (
@@ -148,6 +122,13 @@ function StepRow({ step }: { step: TraceStep }) {
             <rect x="14" y="4" width="4" height="16" rx="1" />
           </svg>
         )}
+        {/* Terminal, unfinished — a still stop glyph. Never an animation: this step
+            will not move again, and a spinner here is the forever-spinner bug. */}
+        {isStopped && (
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <rect x="5" y="5" width="14" height="14" rx="2" />
+          </svg>
+        )}
       </span>
       <span style={{ flex: 1, fontWeight: isActive || isWaiting ? 600 : 400 }}>
         {label}
@@ -160,6 +141,10 @@ function StepRow({ step }: { step: TraceStep }) {
         <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--warning-soft-foreground)" }}>
           Needs your OK
         </span>
+      ) : isStopped ? (
+        <span style={{ fontSize: "0.75rem", color: "var(--muted-foreground)" }}>
+          Stopped
+        </span>
       ) : detail ? (
         <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--muted-foreground)" }}>{detail}</span>
       ) : null}
@@ -168,23 +153,22 @@ function StepRow({ step }: { step: TraceStep }) {
 }
 
 export function OttoTrace({ steps, title }: { steps: TraceStep[]; title?: string }) {
-  const wentAhead = useWentAhead();
   // #591: one waiting step means the whole run is parked on the merchant. The panel
   // must then read as "waiting for you" — a running header over a stalled run is the
   // lie that made merchants sit and wait for work that had not started.
   const awaiting = steps.some((s) => s.status === "waiting");
+  // A terminal run left steps unfinished: say so once and stand still.
+  const stopped = !awaiting && steps.some((s) => s.status === "stopped");
   if (!steps.length) return null;
-  // Parked, but the merchant has already confirmed: these steps describe a turn that
-  // is over, and the card next to this panel now carries the live state. Say nothing
-  // rather than keep asking for a click that already happened.
-  if (awaiting && wentAhead) return null;
   const total = steps.length;
   const activeIdx = steps.findIndex((s) => s.status === "active");
   const doneCount = steps.filter((s) => s.status === "done").length;
   const allDone = doneCount === total;
-  const heading = title ?? (awaiting ? TRACE_WAITING_TITLE : "Otto is making it");
+  const heading = title ?? (awaiting ? TRACE_WAITING_TITLE : stopped ? TRACE_STOPPED_TITLE : "Otto is making it");
   const counter = awaiting
     ? "waiting for you"
+    : stopped
+    ? "stopped"
     : activeIdx >= 0
     ? `step ${activeIdx + 1} of ${total}`
     : allDone
@@ -196,7 +180,7 @@ export function OttoTrace({ steps, title }: { steps: TraceStep[]; title?: string
     <div
       className="gb leading-[1.5]"
       style={{
-        border: `1px solid var(${awaiting ? "--warning-soft" : "--brand-soft"})`,
+        border: `1px solid var(${awaiting || stopped ? "--warning-soft" : "--brand-soft"})`,
         borderRadius: "var(--radius-card)",
         overflow: "hidden",
         boxShadow: "var(--shadow-sm)",
@@ -218,7 +202,7 @@ export function OttoTrace({ steps, title }: { steps: TraceStep[]; title?: string
           alignItems: "center",
           gap: "0.5rem",
           padding: "11px 0.75rem",
-          background: `var(${awaiting ? "--warning-soft" : "--brand-soft"})`,
+          background: `var(${awaiting || stopped ? "--warning-soft" : "--brand-soft"})`,
         }}
       >
         <OttoGlyph size={17} />
@@ -227,7 +211,7 @@ export function OttoTrace({ steps, title }: { steps: TraceStep[]; title?: string
             flex: 1,
             fontSize: "0.875rem",
             fontWeight: 700,
-            color: awaiting ? "var(--warning-soft-foreground)" : CORAL_INK,
+            color: awaiting || stopped ? "var(--warning-soft-foreground)" : CORAL_INK,
           }}
         >
           {heading}
@@ -236,7 +220,7 @@ export function OttoTrace({ steps, title }: { steps: TraceStep[]; title?: string
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: "0.75rem",
-            color: awaiting ? "var(--warning-soft-foreground)" : "var(--brand-strong)",
+            color: awaiting || stopped ? "var(--warning-soft-foreground)" : "var(--brand-strong)",
           }}
         >
           {counter}

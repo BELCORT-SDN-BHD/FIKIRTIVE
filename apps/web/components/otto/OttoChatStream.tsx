@@ -47,6 +47,7 @@ import {
   deriveTraceSteps,
   persistedStreamErrorOf,
   persistedStreamErrorUserMessageId,
+  shouldShowTracePanel,
   turnCostOf,
 } from "@/lib/otto-status-helpers";
 import { creditsLabel } from "@/lib/credit-format";
@@ -326,9 +327,17 @@ export function OttoChatStream({
     lastMsg.role === "assistant" &&
     lastMsg.parts.some((p): p is { type: "text"; text: string } => p.type === "text" && p.text.length > 0);
 
+  // The turn's step trace. The stream error is passed in so a turn that ended on a
+  // data-error stops its unfinished steps instead of spinning forever (P1-3).
+  const traceSteps = deriveTraceSteps(
+    stepEvents,
+    liveStatus,
+    streamErrorKind ? { kind: streamErrorKind, text: streamError ?? "" } : null,
+  );
+
   // Derived from the rendered messages (which carry durable metadata): which jobs
-  // already have a result (so the card shows "making this now" not a dupe result),
-  // and whether any approved job is still working (drives the poll + working state).
+  // already have a result (so the card doesn't also render a dupe result), and
+  // whether any approved job is still working (drives the poll + queued state).
   const jobsWithResult = resultJobIds(messages);
   const jobsWithError = errorJobIds(messages);
   const hasWorkingJob = computeHasWorkingJob(messages, cancelledJobIds);
@@ -918,21 +927,26 @@ export function OttoChatStream({
                       errors: jobsWithError,
                     })}
                     pendingApproval={pendingApprovalCardIds.has(durableId)}
-                    onApproved={(chained) => {
-                      // Record submission so the card flips to "working" optimistically —
+                    onApproved={({ cardId: approvedCardId, chained }) => {
+                      // The card hands up WHICH card this was and the SERVER's result —
+                      // both facts come from the response, not from this closure (P1-4).
+                      // Record submission so the card flips to queued optimistically —
                       // unless the server reports THIS card as still pending (chained).
-                      if (!chained?.pendingCardIds.includes(durableId)) {
-                        setSubmittedCardIds((cur) => new Set(cur).add(durableId));
+                      if (!chained?.pendingCardIds.includes(approvedCardId)) {
+                        setSubmittedCardIds((cur) => new Set(cur).add(approvedCardId));
                       }
                       // A chained response's COMPLETE set replaces ours; otherwise only
                       // the fired card leaves (ChainedApproval.pendingCardIds contract).
                       // A re-park's cards must render pendingApproval=true so their
                       // clicks resume the RunState via ottoApprove, never coworkGenerate.
+                      // The waiting panel's visibility falls out of THIS set, so the new
+                      // set is taken from the server response first and the panel decides
+                      // afterwards — never hidden ahead of the answer (P1-4).
                       // Re-arm the poll (a freshly-approved card queues a new job even if
                       // a prior job hit the give-up cap; the poll also appends the
                       // chained cards themselves — see pollAndInjectResults).
                       setPendingApprovalCardIds((cur) =>
-                        nextPendingApprovalCardIds(cur, [durableId], chained?.pendingCardIds),
+                        nextPendingApprovalCardIds(cur, [approvedCardId], chained?.pendingCardIds),
                       );
                       rearmGenerationPoll();
                       // No balance announcement here: OttoPlanCard.approve() already makes it
@@ -1000,7 +1014,15 @@ export function OttoChatStream({
                     cardId={m.metadata!.durableId}
                     threadId={thread.id}
                     payload={m.metadata?.payload}
-                    onResolved={() => void refetchAndAppendCards()}
+                    onResolved={({ cardId: resolvedCardId, pendingCardIds }) => {
+                      // A universal approval settles a parked call too, so it must move
+                      // this thread's pending set — otherwise the waiting panel keeps
+                      // asking for a go-ahead that was already given (P1-4).
+                      setPendingApprovalCardIds((cur) =>
+                        nextPendingApprovalCardIds(cur, [resolvedCardId], pendingCardIds ?? undefined),
+                      );
+                      void refetchAndAppendCards();
+                    }}
                   />
                 </WidgetRow>
               );
@@ -1165,10 +1187,15 @@ export function OttoChatStream({
             }); // end renderItems.map
           })()} {/* end IIFE */}
 
-          {/* OTTO's live step-trace — the agent narrating its tool calls (display-only). */}
-          {stepEvents.length > 0 && (
+          {/* OTTO's live step-trace — the agent narrating its tool calls (display-only).
+              Visibility is decided HERE, from this thread's still-pending approvals
+              (#580 复审 r1 P1-4): a parked panel with nothing left to approve describes
+              a click that already happened, so it steps aside for the card's own state.
+              The old module-level broadcast hid every waiting panel on any card's
+              success and was never sent by the universal approval card at all. */}
+          {shouldShowTracePanel({ steps: traceSteps, pendingCardIds: pendingApprovalCardIds }) && (
             <div className="my-2 mb-3">
-              <OttoTrace steps={deriveTraceSteps(stepEvents, liveStatus)} />
+              <OttoTrace steps={traceSteps} />
             </div>
           )}
 

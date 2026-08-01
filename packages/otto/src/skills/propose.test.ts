@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
-import { buildProposeCard } from "./propose.helpers.js";
+import { buildProposeCard, EXECUTED_SPEC } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
 import type { OttoContext } from "../context.js";
@@ -444,47 +446,47 @@ describe("propose requires-gate + goal", () => {
 // engine, and a downgrade must never be silent.
 // ---------------------------------------------------------------------------
 
-describe("#580 card spec summary — engine-free by construction", () => {
+describe("#580 card spec chips — engine-free by construction", () => {
   const ENGINE_WORDS = /seedance|seedream|veo|kling|ltx|pixverse|grok|wan|hailuo/i;
 
-  it("video: specSummary carries shape, length, quality and sound — and no engine name", () => {
+  it("video: specChips carry shape, length and quality — and no engine name", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a 5s clip", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     );
-    expect(cardPayload.specSummary).toBe("16:9 · 5s · 720p · With sound");
-    expect(cardPayload.specSummary).not.toMatch(ENGINE_WORDS);
+    expect(cardPayload.specChips).toEqual(["16:9", "5s", "720p"]);
+    expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 
-  it("image: specSummary says how many, and no engine name", () => {
+  it("image: specChips report the size execution really produces, plus how many", () => {
     const one = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     ).cardPayload;
-    expect(one.specSummary).toBe("1 image");
+    expect(one.specChips).toEqual(["2048 × 2048", "1 image"]);
 
     const pack = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, count: 3 },
       makeCtx(),
       [],
     ).cardPayload;
-    expect(pack.specSummary).toBe("3 images");
-    expect(pack.specSummary).not.toMatch(ENGINE_WORDS);
+    expect(pack.specChips).toEqual(["2048 × 2048", "3 images"]);
+    expect(pack.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 
-  // This is exactly WHY specSummary exists: `reason` is the audit note and it DOES
+  // This is exactly WHY specChips exist: `reason` is the audit note and it DOES
   // name the engine, so a card that rendered `reason` would leak it. If this ever
   // stops holding, the sanitized field can be revisited — but never the other way.
-  it("reason still names the engine (audit-only) — which is why the card renders specSummary", () => {
+  it("reason still names the engine (audit-only) — which is why the card renders specChips", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     );
     expect(cardPayload.reason).toMatch(ENGINE_WORDS);
-    expect(cardPayload.specSummary).not.toMatch(ENGINE_WORDS);
+    expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 
   it("no engine name reaches any merchant-facing field of the payload", () => {
@@ -493,8 +495,119 @@ describe("#580 card spec summary — engine-free by construction", () => {
       makeCtx(),
       [],
     );
-    expect(cardPayload.specSummary).not.toMatch(ENGINE_WORDS);
+    expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
     expect(cardPayload.downgradeNote).not.toMatch(ENGINE_WORDS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #580 复审 r1 P1-2 —— 卡面必须从执行层真会用的规格派生。
+//
+// 下面这组不是「再断言一遍文案」，而是把卡面和执行层放在同一条链上跑：
+//   真 buildProposeCard → 真 buildGenRequestFromCard（执行层拿到的请求体）
+//                       → provider 源码（真正发出去的东西）
+// 任何一环开始各说各话，这里就红。
+// ---------------------------------------------------------------------------
+
+describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
+  const REQ = { projectId: "proj-test", threadId: "thread-test", cardId: "card_1", prompt: "a poster" };
+
+  function genRequestFor(cardPayload: unknown): Record<string, unknown> {
+    const built = buildGenRequestFromCard({ cardPayload, ...REQ, entityIds: [], variantSel: {} });
+    expect(built.ok, "the execution builder must accept the card this proposal just froze").toBe(true);
+    return (built as { ok: true; req: Record<string, unknown> }).req;
+  }
+
+  it("图片：画幅根本进不了执行层，所以卡面一个比例都不许承诺", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
+      makeCtx(),
+      [],
+    );
+    // 执行层拿到的请求体里没有画幅 —— 这就是「做的」。
+    const req = genRequestFor(cardPayload);
+    expect(req).not.toHaveProperty("aspectRatio");
+    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(false);
+    // 于是「说的」也不许出现比例。
+    expect(cardPayload.specChips.some((chip) => /\d+\s*:\s*\d+/.test(chip))).toBe(false);
+    expect(cardPayload.specChips).toContain("2048 × 2048");
+  });
+
+  it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toBe(
+      "You asked for 9:16 — this will be a square 2048 × 2048 image.",
+    );
+  });
+
+  it("图片：没提画幅就不是降级 —— 不许无中生有地报警", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
+  });
+
+  it("视频：声音开关没接到执行层，卡面既不说 With sound 也不说 No sound", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredAudio: false },
+      makeCtx(),
+      [],
+    );
+    expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
+    expect(cardPayload.specChips.join(" ")).not.toMatch(/sound/i);
+    // 商家明确提了声音，而这个开关到不了执行层 —— 是降级，必须说出口。
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toMatch(/Sound isn't something I can set here yet/);
+  });
+
+  it("视频：时长/画幅/清晰度是真的会传到执行层的，所以卡面照旧承诺", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    const req = genRequestFor(cardPayload);
+    expect(req.aspectRatio).toBe(cardPayload.params.aspectRatio);
+    expect(req.durationSeconds).toBe(cardPayload.params.durationSeconds);
+    expect(req.resolution).toBe(cardPayload.params.resolution);
+    expect(cardPayload.specChips).toEqual([
+      cardPayload.params.aspectRatio,
+      `${cardPayload.params.durationSeconds}s`,
+      cardPayload.params.resolution,
+    ]);
+  });
+
+  // 最后一环:provider 真正发出去的请求体。这一条是文本比对,因为 provider 调用不能在
+  // 测试里发起(也不许 skills/ 引入 @fikirtive/generation)。它的作用是:执行层哪天改了
+  // 尺寸或接上了声音,这里立刻红,提醒把 EXECUTED_SPEC 一起改 —— 而不是让卡面继续说旧话。
+  describe("provider 请求体 lockstep", () => {
+    const providerSrc = readFileSync(
+      fileURLToPath(new URL("../../../generation/src/byteplus.ts", import.meta.url)),
+      "utf8",
+    );
+
+    it("图片尺寸与 EXECUTED_SPEC 逐字一致", () => {
+      const { width, height } = EXECUTED_SPEC.image.outputSize;
+      expect(
+        providerSrc,
+        `EXECUTED_SPEC.image.outputSize 说 ${width}x${height};provider 请求体必须一致，否则卡面在撒谎`,
+      ).toContain(`size: "${width}x${height}"`);
+    });
+
+    it("视频请求体确实没有把声音开关发出去", () => {
+      const videoBody = providerSrc.slice(providerSrc.indexOf("async generateVideo"));
+      expect(videoBody).not.toMatch(/--audio/);
+      expect(videoBody).not.toMatch(/audio:\s*req\.audio/);
+      expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
+    });
   });
 });
 
@@ -554,7 +667,7 @@ describe("#580 downgrade disclosure — never silent", () => {
   it("downgraded is never flagged without a sentence to explain it", async () => {
     const { buildDowngradeNote } = await import("./propose.helpers.js");
     // No identifiable mismatch (the honest fallback) — still a sentence, never silence.
-    expect(buildDowngradeNote({}, { count: 1 }, false)).toBe(
+    expect(buildDowngradeNote("video", {}, { count: 1 }, false)).toBe(
       "Some of what you asked for isn't available here — the details above are what you'll get.",
     );
   });

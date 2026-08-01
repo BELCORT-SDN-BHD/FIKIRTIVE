@@ -1,19 +1,21 @@
 // @vitest-environment jsdom
 /**
- * otto-plan-card-detail.test.ts — #580 (detail card T1) + #591 (parked-run honesty).
+ * otto-plan-card-detail.test.ts — #580 (detail card T1) + #591 (parked-run honesty),
+ * reworked for the cross-family review r1 findings.
  *
- * Three things are nailed down here:
- *  1. TYPE ALIGNMENT (the machine gate). The card's local payload type used to declare
- *     7 of the server's fields and silently drop the rest — every spec the merchant was
- *     paying for. The gate below fails at BOTH tsc time and test time if the server
- *     contract grows a field the card doesn't know about.
- *  2. The card shows the full spec and NEVER the engine name, and a downgrade is
- *     disclosed in words rather than swallowed.
- *  3. A run parked on approval renders as "waiting for you", not as work in progress.
+ * 这一组测试守的是同一条根因:**卡面「说的」必须从执行「做的」同一数据源派生**。
+ * 四件事,每件都要求「删掉生产接线就必须红」:
+ *  1. 类型不是抄的,是从服务端契约派生的;而且 DTO 边界上有真的运行时解析,
+ *     畸形 payload 显式降级,不是静默糊过去。
+ *  2. 卡面显示的规格来自真 builder,一路走到卡面渲染值;引擎名全程不出现。
+ *  3. 状态代数:终态不转圈;排队不许说成正在制作。
+ *  4. 挂起面板由「这条会话还剩哪些卡等批准」驱动,不是模块级全局广播。
  *
  * Display only — nothing here touches the reserve/settle path.
  */
 import { act, createElement } from "react";
+import fs from "node:fs";
+import path from "node:path";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,14 +25,16 @@ import type { CardPayload as ServerCardPayload } from "@fikirtive/otto";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("server-only", () => ({}));
+const ottoApproveMock = vi.fn();
+const coworkGenerateMock = vi.fn();
 vi.mock("@/lib/otto-client-actions", () => ({
-  ottoApprove: vi.fn(),
+  ottoApprove: (...args: unknown[]) => ottoApproveMock(...args),
   ottoTurn: vi.fn(),
   createEmptyCoworkThread: vi.fn(),
   setAdsAutonomy: vi.fn(),
 }));
 vi.mock("@/lib/cowork-actions", () => ({
-  coworkGenerate: vi.fn(),
+  coworkGenerate: (...args: unknown[]) => coworkGenerateMock(...args),
   coworkVaryCard: vi.fn(),
   cancelGenJob: vi.fn(),
 }));
@@ -42,19 +46,28 @@ vi.mock("next/navigation", () => ({
 
 import {
   OttoPlanCard,
-  specChipsOf,
+  parsePlanCardPayload,
   DOWNGRADE_FALLBACK_NOTE,
+  PARTIAL_PLAN_NOTE,
+  UNREADABLE_PLAN_NOTE,
   type OttoPlanCardPayload,
 } from "@/components/otto/OttoPlanCard";
 import {
   OttoTrace,
+  TRACE_STOPPED_TITLE,
   TRACE_WAITING_TITLE,
   TRACE_WAITING_HINT,
-  notifyPlanApproved,
 } from "@/components/otto/OttoTrace";
+import {
+  deriveTraceSteps,
+  isTerminalRunState,
+  runStateOfCard,
+  runStateSpins,
+  shouldShowTracePanel,
+} from "@/lib/otto-status-helpers";
 
 // ---------------------------------------------------------------------------
-// 1. Type alignment — server payload keys ⊆ card payload keys
+// 1. 类型对齐 —— 卡面类型是从契约派生的,不是抄的
 // ---------------------------------------------------------------------------
 
 // `Record<keyof Required<T>, true>` is exhaustive in BOTH directions: a missing key is a
@@ -65,7 +78,7 @@ const SERVER_PAYLOAD_KEYS = {
   model: true,
   params: true,
   reason: true,
-  specSummary: true,
+  specChips: true,
   downgraded: true,
   downgradeNote: true,
   structuredPrompt: true,
@@ -84,7 +97,7 @@ const CARD_PAYLOAD_KEYS = {
   model: true,
   params: true,
   reason: true,
-  specSummary: true,
+  specChips: true,
   downgraded: true,
   downgradeNote: true,
   structuredPrompt: true,
@@ -98,7 +111,7 @@ const CARD_PAYLOAD_KEYS = {
   referenceVideoGenerationId: true,
 } satisfies Record<keyof Required<OttoPlanCardPayload>, true>;
 
-describe("#580 the card's payload type is aligned with the server contract", () => {
+describe("#580 P1-1 卡面 payload 类型 = 服务端契约", () => {
   it("declares every field the server sends — no silent dropping", () => {
     const missing = Object.keys(SERVER_PAYLOAD_KEYS).filter((k) => !(k in CARD_PAYLOAD_KEYS));
     expect(missing).toEqual([]);
@@ -113,27 +126,8 @@ describe("#580 the card's payload type is aligned with the server contract", () 
   // and reads the keys it actually emits, so a field added on the server fails here
   // even before anyone looks at the types.
   it("every field the live builder emits is one the card knows about", async () => {
-    const { buildProposeCard } = await import("@fikirtive/otto");
-    const ctx = {
-      orgId: "org_1",
-      userId: "user_1",
-      projectId: "proj_1",
-      threadId: "thread_1",
-      disabledModels: [],
-      sourceGenerationId: null,
-    } as never;
-    const base = { structuredPrompt: "a bowl of laksa", entityIds: [], variantSel: {} };
     const emitted = new Set<string>();
-    const cards = [
-      // plain video, downgraded video, image ad pack, two-step image, i2v, reference video
-      buildProposeCard({ kind: "video", ...base }, ctx, []),
-      buildProposeCard({ kind: "video", ...base, desiredDuration: 7, desiredAspect: "1:1" }, ctx, []),
-      buildProposeCard({ kind: "image", ...base, count: 3 }, ctx, []),
-      buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
-      buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
-      buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
-    ];
-    for (const { cardPayload } of cards) {
+    for (const cardPayload of await builtCards()) {
       for (const key of Object.keys(cardPayload)) emitted.add(key);
     }
     // The branch coverage above must actually reach the optional fields, or this
@@ -145,13 +139,99 @@ describe("#580 the card's payload type is aligned with the server contract", () 
   });
 });
 
+/** Six real cards straight from the live server builder: plain video, downgraded video,
+ *  image ad pack, two-step image, i2v, reference video. */
+async function builtCards(): Promise<ServerCardPayload[]> {
+  const { buildProposeCard } = await import("@fikirtive/otto");
+  const ctx = {
+    orgId: "org_1",
+    userId: "user_1",
+    projectId: "proj_1",
+    threadId: "thread_1",
+    disabledModels: [],
+    sourceGenerationId: null,
+  } as never;
+  const base = { structuredPrompt: "a bowl of laksa", entityIds: [], variantSel: {} };
+  return [
+    buildProposeCard({ kind: "video", ...base }, ctx, []),
+    buildProposeCard({ kind: "video", ...base, desiredDuration: 7, desiredAspect: "1:1" }, ctx, []),
+    buildProposeCard({ kind: "image", ...base, count: 3 }, ctx, []),
+    buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
+    buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
+    buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), referenceVideoGenerationId: "gen_vid" } as never, []),
+  ].map((r) => r.cardPayload);
+}
+
 // ---------------------------------------------------------------------------
-// 2. Card face — full spec, no engine name, explicit downgrade
+// 2. 运行时解析 —— 契约怎么变,解析就得跟着;畸形 payload 显式降级
+// ---------------------------------------------------------------------------
+
+describe("#580 P1-1 DTO 边界的运行时解析", () => {
+  it("真 builder 造出来的每一张卡都能被完整解析,一个字段都不掉", async () => {
+    for (const cardPayload of await builtCards()) {
+      const parsed = parsePlanCardPayload(cardPayload);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.malformedFields).toEqual([]);
+      // 双向:服务端发出的键全部到得了卡面;卡面也没有凭空多出键。
+      expect(Object.keys(parsed!.value).sort()).toEqual(Object.keys(cardPayload).sort());
+      for (const [key, value] of Object.entries(cardPayload)) {
+        expect(parsed!.value[key as keyof OttoPlanCardPayload]).toEqual(value);
+      }
+    }
+  });
+
+  it("嵌套字段也是真解析的,不是整块 as 过去的", () => {
+    const parsed = parsePlanCardPayload({
+      kind: "video",
+      params: { aspectRatio: "9:16", resolution: "720p", durationSeconds: 5, audio: true, count: 1 },
+      videoStep: { estimatedCredits: 12 },
+      estimatedCredits: 8,
+    });
+    expect(parsed!.value.params).toEqual({
+      aspectRatio: "9:16",
+      resolution: "720p",
+      durationSeconds: 5,
+      audio: true,
+      count: 1,
+    });
+    expect(parsed!.value.videoStep).toEqual({ estimatedCredits: 12 });
+  });
+
+  it("嵌套字段类型不对就丢掉并记账,不许当成读懂了", () => {
+    const parsed = parsePlanCardPayload({
+      kind: "image",
+      estimatedCredits: 4,
+      params: "16:9",
+      videoStep: { estimatedCredits: "twelve" },
+      specChips: ["1024 × 1024", 5],
+    });
+    expect(parsed!.malformedFields.sort()).toEqual(["params", "specChips", "videoStep"]);
+    expect(parsed!.value.params).toBeUndefined();
+    expect(parsed!.value.videoStep).toBeUndefined();
+    expect(parsed!.value.specChips).toBeUndefined();
+  });
+
+  it("根本不是一个 payload 的东西 → 没有可展示的方案", () => {
+    expect(parsePlanCardPayload(null)).toBeNull();
+    expect(parsePlanCardPayload("card")).toBeNull();
+    expect(parsePlanCardPayload([1, 2])).toBeNull();
+  });
+
+  it("老卡少几个字段照样能读 —— 向后兼容", () => {
+    const parsed = parsePlanCardPayload({ kind: "image", structuredPrompt: "a poster", estimatedPriceUsd: 0.1 });
+    expect(parsed!.malformedFields).toEqual([]);
+    expect(parsed!.value.kind).toBe("image");
+    expect(parsed!.value.specChips).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. 卡面 —— 规格从真 builder 一路走到渲染值
 // ---------------------------------------------------------------------------
 
 const ENGINE_WORDS = /seedance|seedream|byteplus|veo|kling|ltx|pixverse|grok imagine|hailuo/i;
 
-function renderCard(payload: OttoPlanCardPayload): string {
+function renderCard(payload: unknown, over: { cardState?: "idle" | "working" | "done" | "failed" } = {}): string {
   const markup = renderToStaticMarkup(
     createElement(OttoPlanCard, {
       cardId: "card_1",
@@ -159,7 +239,8 @@ function renderCard(payload: OttoPlanCardPayload): string {
       entities: [],
       threadId: "thread_1",
       projectId: "proj_1",
-      cardState: "idle" as const,
+      genJobId: over.cardState === "working" ? "job_1" : null,
+      cardState: over.cardState ?? "idle",
       pendingApproval: false,
       onApproved: vi.fn(),
       onChangeSomething: vi.fn(),
@@ -176,7 +257,7 @@ const VIDEO_PAYLOAD: OttoPlanCardPayload = {
   model: "seedance-2-fast",
   params: { aspectRatio: "9:16", resolution: "720p", durationSeconds: 5, audio: true, count: 1 },
   reason: "Seedance 2.0 Fast — 9:16, 5s",
-  specSummary: "9:16 · 5s · 720p · With sound",
+  specChips: ["9:16", "5s", "720p"],
   downgraded: true,
   downgradeNote: "You asked for 10s — this will be 5s.",
   structuredPrompt: "A steaming bowl of laksa, close up",
@@ -187,41 +268,39 @@ const VIDEO_PAYLOAD: OttoPlanCardPayload = {
   goal: "an ad to drive weekend footfall",
 };
 
-describe("#580 specChipsOf — the spec the merchant reads", () => {
-  it("video: length, shape, sound, quality — in that order", () => {
-    expect(specChipsOf(VIDEO_PAYLOAD)).toEqual(["5s", "9:16", "With sound", "720p"]);
+describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () => {
+  it("视频卡:builder 给几条 chip,卡面就显示哪几条,一条不多一条不少", async () => {
+    const { buildProposeCard } = await import("@fikirtive/otto");
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {} },
+      { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+      [],
+    );
+    const markup = renderCard(cardPayload);
+    expect(cardPayload.specChips.length).toBeGreaterThan(0);
+    for (const chip of cardPayload.specChips) expect(markup).toContain(chip);
+    // 「说的」不许超出 builder 给的那几条 —— 声音就是被这一条挡住的。
+    expect(markup).not.toMatch(/With sound|No sound/);
   });
 
-  it("image pack: how many, and none of the video-only controls", () => {
-    expect(
-      specChipsOf({ kind: "image", params: { count: 3 } }),
-    ).toEqual(["3 images"]);
-  });
-
-  it("a single image needs no count chip — the card already says what it is", () => {
-    expect(specChipsOf({ kind: "image", params: { count: 1 } })).toEqual([]);
-  });
-
-  it("an old card with no params produces no chips instead of guessing", () => {
-    expect(specChipsOf({ kind: "video" })).toEqual([]);
-  });
-
-  it("never reads the engine off model/reason", () => {
-    expect(specChipsOf(VIDEO_PAYLOAD).join(" ")).not.toMatch(ENGINE_WORDS);
-  });
-});
-
-describe("#580 the card face", () => {
-  it("shows every spec chip", () => {
-    const markup = renderCard(VIDEO_PAYLOAD);
-    for (const chip of ["5s", "9:16", "With sound", "720p"]) {
-      expect(markup).toContain(chip);
-    }
+  it("图片卡:如实报执行层真会产出的尺寸,不承诺任何比例", async () => {
+    const { buildProposeCard } = await import("@fikirtive/otto");
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16", count: 3 },
+      { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+      [],
+    );
+    const markup = renderCard(cardPayload);
+    expect(cardPayload.specChips).toEqual(["2048 × 2048", "3 images"]);
+    for (const chip of cardPayload.specChips) expect(markup).toContain(chip);
+    // 商家要的 9:16 到不了执行层,所以规格里不许出现任何比例 —— 它只可以出现在
+    // 「你要的是 X,实际会是 Y」这句披露里。
+    expect(cardPayload.specChips.some((chip) => /\d+\s*:\s*\d+/.test(chip))).toBe(false);
+    expect(markup).toContain("You asked for 9:16 — this will be a square 2048 × 2048 image.");
   });
 
   it("never renders the engine name, even though the payload carries it", () => {
-    const markup = renderCard(VIDEO_PAYLOAD);
-    expect(markup).not.toMatch(ENGINE_WORDS);
+    expect(renderCard(VIDEO_PAYLOAD)).not.toMatch(ENGINE_WORDS);
   });
 
   it("states the downgrade out loud instead of quietly shipping something smaller", () => {
@@ -239,19 +318,98 @@ describe("#580 the card face", () => {
     expect(markup).not.toContain(DOWNGRADE_FALLBACK_NOTE);
   });
 
-  it("falls back to the server's sanitized summary when a card predates params", () => {
-    const markup = renderCard({
-      kind: "video",
-      specSummary: "Same shape as your reference · 5s · 720p · With sound",
-      estimatedCredits: 8,
-    });
-    expect(markup).toContain("Same shape as your reference");
+  it("老卡没有 specChips 就不显示规格 —— 宁可不说,不许猜", () => {
+    const markup = renderCard({ kind: "video", params: { aspectRatio: "9:16", count: 1 }, estimatedCredits: 8 });
+    expect(markup).not.toContain("9:16");
     expect(markup).not.toMatch(ENGINE_WORDS);
   });
 });
 
+describe("#580 P1-1 读不懂的方案不许当方案渲染", () => {
+  it("payload 根本读不出来 → 明说读不懂,且没有付费按钮", () => {
+    const markup = renderCard("not a card");
+    expect(markup).toContain(UNREADABLE_PLAN_NOTE);
+    expect(markup).not.toContain("Review cost");
+  });
+
+  it("读得出来但没有价格 → 同样不给付费按钮,不许编一个 1 credit 出来", () => {
+    const markup = renderCard({ kind: "image", structuredPrompt: "a poster" });
+    expect(markup).toContain(UNREADABLE_PLAN_NOTE);
+    expect(markup).not.toContain("Review cost");
+  });
+
+  it("部分字段畸形 → 卡面显式说明它不完整", () => {
+    const markup = renderCard({ ...VIDEO_PAYLOAD, params: "16:9" });
+    expect(markup).toContain(PARTIAL_PLAN_NOTE);
+    expect(markup).toContain("Review cost");
+  });
+
+  it("畸形的规格数组整条丢掉 —— 半条规格比没有规格更危险", () => {
+    const markup = renderCard({ ...VIDEO_PAYLOAD, specChips: ["9:16", 5] });
+    expect(markup).toContain(PARTIAL_PLAN_NOTE);
+    for (const chip of VIDEO_PAYLOAD.specChips!) expect(markup).not.toContain(`>${chip}<`);
+  });
+});
+
 // ---------------------------------------------------------------------------
-// 3. #591 — a parked run must not pretend to be a running one
+// 4. 状态代数 —— 终态不转圈;排队不许说成正在做
+// ---------------------------------------------------------------------------
+
+describe("#580 P1-3 状态代数", () => {
+  it("终态就是终态,只有真的在跑才允许动画", () => {
+    for (const state of ["done", "failed", "stale", "degraded", "data-error"] as const) {
+      expect(isTerminalRunState(state)).toBe(true);
+      expect(runStateSpins(state)).toBe(false);
+    }
+    for (const state of ["queued", "waiting"] as const) {
+      expect(isTerminalRunState(state)).toBe(false);
+      expect(runStateSpins(state)).toBe(false);
+    }
+    expect(runStateSpins("running")).toBe(true);
+  });
+
+  it("卡片只知道任务建立了,不知道它开跑了 —— 所以是 queued", () => {
+    expect(runStateOfCard("working")).toBe("queued");
+    expect(runStateOfCard("idle")).toBe("waiting");
+    expect(runStateOfCard("done")).toBe("done");
+    expect(runStateOfCard("failed")).toBe("failed");
+  });
+
+  it("已批准但结果没落地时,卡面说排队,绝不说正在制作", () => {
+    const markup = renderCard(VIDEO_PAYLOAD, { cardState: "working" });
+    expect(markup).toContain("in the queue");
+    expect(markup).not.toContain("making this now");
+    expect(markup).not.toContain("On it");
+  });
+
+  it("一轮以降级 / 被取代 / 出错收尾,没跑完的步骤停下,不再转圈", () => {
+    const events = [
+      { id: "a", label: "Planning the campaign", phase: "start" as const },
+      { id: "a", label: "Planning the campaign", phase: "done" as const },
+      { id: "b", label: "Making a visual", phase: "start" as const },
+    ];
+    const degraded = deriveTraceSteps(events, { kind: "degraded", text: "…" });
+    const stale = deriveTraceSteps(events, { kind: "stale", text: "…" });
+    const errored = deriveTraceSteps(events, null, { kind: "error", text: "…" });
+    for (const steps of [degraded, stale, errored]) {
+      expect(steps.map((s) => s.status)).toEqual(["done", "stopped"]);
+      expect(steps.some((s) => s.status === "active")).toBe(false);
+    }
+    const markup = renderToStaticMarkup(createElement(OttoTrace, { steps: degraded }));
+    expect(markup).not.toContain('class="otto-trace-spin"');
+    expect(markup).not.toContain('class="otto-trace-bar"');
+    expect(markup).toContain(TRACE_STOPPED_TITLE);
+    expect(markup).not.toContain("Otto is making it");
+  });
+
+  it("排队中的一轮(还没有任何结论信号)照旧显示在跑", () => {
+    const steps = deriveTraceSteps([{ id: "a", label: "Making a visual", phase: "start" }], null);
+    expect(steps.map((s) => s.status)).toEqual(["active"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. #591 / P1-4 —— 挂起面板:该出现时出现,该退场时由「还剩谁等批准」说了算
 // ---------------------------------------------------------------------------
 
 describe("#591 the trace panel while the run is parked on approval", () => {
@@ -259,14 +417,6 @@ describe("#591 the trace panel while the run is parked on approval", () => {
     { label: "Planning the campaign", status: "done" as const },
     { label: "Making a visual", status: "waiting" as const },
   ];
-
-  const roots: Array<[ReturnType<typeof createRoot>, HTMLElement]> = [];
-  afterEach(() => {
-    for (const [root, host] of roots.splice(0)) {
-      act(() => root.unmount());
-      host.remove();
-    }
-  });
 
   it("does not claim Otto is making it", () => {
     const markup = renderToStaticMarkup(createElement(OttoTrace, { steps: parked }));
@@ -308,39 +458,161 @@ describe("#591 the trace panel while the run is parked on approval", () => {
   });
 
   // The other half of the honesty: the panel must not keep asking for a click that
-  // already happened. The stream sends no status after the merchant confirms, so the
-  // card announces it and the parked panel steps aside.
-  it("stops asking for a confirmation the merchant has already given", () => {
-    const host = document.createElement("div");
-    document.body.appendChild(host);
-    const root = createRoot(host);
-    roots.push([root, host]);
-
-    act(() => {
-      root.render(createElement(OttoTrace, { steps: parked }));
-    });
-    expect(host.textContent).toContain(TRACE_WAITING_TITLE);
-    expect(host.textContent).toContain(TRACE_WAITING_HINT);
-
-    act(() => {
-      notifyPlanApproved();
-    });
-    expect(host.textContent).toBe("");
+  // already happened. 判定权在「这条会话还剩哪些卡等批准」,不在任何全局广播 ——
+  // 所以别的会话、别的卡的成功都动不了它。
+  it("还有卡在等批准 → 面板留着", () => {
+    expect(shouldShowTracePanel({ steps: parked, pendingCardIds: new Set(["card_1"]) })).toBe(true);
   });
 
-  it("a running panel is unaffected by a go-ahead from some other card", () => {
+  it("这条会话已经没有卡在等批准 → 面板退场,让位给卡自己的状态", () => {
+    expect(shouldShowTracePanel({ steps: parked, pendingCardIds: new Set() })).toBe(false);
+  });
+
+  it("正在跑的面板不受待批集合影响 —— 没有全局开关能把它关掉", () => {
+    const running = [{ label: "Making a visual", status: "active" as const }];
+    expect(shouldShowTracePanel({ steps: running, pendingCardIds: new Set() })).toBe(true);
+    expect(shouldShowTracePanel({ steps: running, pendingCardIds: new Set(["other_card"]) })).toBe(true);
+  });
+
+  it("没有步骤就没有面板", () => {
+    expect(shouldShowTracePanel({ steps: [], pendingCardIds: new Set(["card_1"]) })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. 真点卡 —— 生产接线本身必须被测到(复审 r1 P2)
+// ---------------------------------------------------------------------------
+
+describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端结果", () => {
+  const roots: Array<[ReturnType<typeof createRoot>, HTMLElement]> = [];
+  afterEach(() => {
+    for (const [root, host] of roots.splice(0)) {
+      act(() => root.unmount());
+      host.remove();
+    }
+    ottoApproveMock.mockReset();
+    coworkGenerateMock.mockReset();
+  });
+
+  function mountCard(props: { pendingApproval: boolean; onApproved: (o: unknown) => void }): HTMLElement {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
     roots.push([root, host]);
+    act(() => {
+      root.render(
+        createElement(OttoPlanCard, {
+          cardId: "card_1",
+          payload: VIDEO_PAYLOAD,
+          entities: [],
+          threadId: "thread_1",
+          projectId: "proj_1",
+          cardState: "idle" as const,
+          pendingApproval: props.pendingApproval,
+          onApproved: props.onApproved,
+          onChangeSomething: vi.fn(),
+        }),
+      );
+    });
+    return host;
+  }
 
-    const running = [{ label: "Making a visual", status: "active" as const }];
+  function clickButton(host: HTMLElement, text: string): void {
+    const button = [...host.querySelectorAll("button")].find((b) => (b.textContent ?? "").includes(text));
+    expect(button, `the card must render a "${text}" button for this seam to mean anything`).toBeTruthy();
     act(() => {
-      root.render(createElement(OttoTrace, { steps: running }));
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    act(() => {
-      notifyPlanApproved();
+  }
+
+  async function approveThroughTheUi(host: HTMLElement): Promise<void> {
+    clickButton(host, "Review cost");
+    const confirm = [...host.querySelectorAll("button")].find((b) =>
+      (b.textContent ?? "").includes("Confirm generate"),
+    );
+    expect(confirm, "confirming must offer a real confirm button").toBeTruthy();
+    await act(async () => {
+      confirm!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    expect(host.textContent).toContain("Otto is making it");
+  }
+
+  it("刚提议的卡:走 coworkGenerate,回调带这张卡的 id,chained 为 null", async () => {
+    coworkGenerateMock.mockResolvedValue({ ok: true });
+    const onApproved = vi.fn();
+    const host = mountCard({ pendingApproval: false, onApproved });
+    await approveThroughTheUi(host);
+
+    expect(coworkGenerateMock).toHaveBeenCalledTimes(1);
+    expect(ottoApproveMock).not.toHaveBeenCalled();
+    expect(onApproved).toHaveBeenCalledWith({ cardId: "card_1", chained: null });
+  });
+
+  it("挂起的卡:走 ottoApprove,再次挂起时把服务端的完整待批集合原样带上去", async () => {
+    ottoApproveMock.mockResolvedValue({
+      status: "needs_approval",
+      pendingCardIds: ["card_2", "card_3"],
+      fallbackReply: "One more to confirm.",
+      narrationMessageId: "msg_9",
+    });
+    const onApproved = vi.fn();
+    const host = mountCard({ pendingApproval: true, onApproved });
+    await approveThroughTheUi(host);
+
+    expect(ottoApproveMock).toHaveBeenCalledWith({ threadId: "thread_1", cardId: "card_1" });
+    expect(coworkGenerateMock).not.toHaveBeenCalled();
+    expect(onApproved).toHaveBeenCalledWith({
+      cardId: "card_1",
+      chained: {
+        pendingCardIds: ["card_2", "card_3"],
+        fallbackReply: "One more to confirm.",
+        narrationMessageId: "msg_9",
+      },
+    });
+    // 服务端的收据是原样显示的,不是本地编的英文。
+    expect(host.textContent).toContain("One more to confirm.");
+  });
+
+  it("服务端报错就不回调 —— 没成功的事不许当成功", async () => {
+    coworkGenerateMock.mockResolvedValue({ error: "Not enough credits." });
+    const onApproved = vi.fn();
+    const host = mountCard({ pendingApproval: false, onApproved });
+    await approveThroughTheUi(host);
+
+    expect(onApproved).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Not enough credits.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. 生产接线的删除必须红 —— 面板可见性是父层按待批集合算的
+// ---------------------------------------------------------------------------
+
+describe("#580 P1-4 挂起面板的判定确实接在 OttoChatStream 上", () => {
+  // 与 otto-card-seams.test.ts 同一套 idiom:纯函数测得再多,也证明不了组件真的调了它。
+  // 这条断言的唯一作用是:谁把这段接线删了或换回全局广播,这里立刻红。
+  const src = fs.readFileSync(
+    path.join(process.cwd(), "components/otto/OttoChatStream.tsx"),
+    "utf8",
+  );
+
+  it("面板可见性由 shouldShowTracePanel + 本会话的待批集合决定", () => {
+    expect(src).toMatch(
+      /shouldShowTracePanel\(\{\s*steps:\s*traceSteps,\s*pendingCardIds:\s*pendingApprovalCardIds\s*\}\)/,
+    );
+  });
+
+  it("步骤列表把流错误也喂进去,终态才停得下来", () => {
+    expect(src).toMatch(/deriveTraceSteps\(\s*stepEvents,\s*liveStatus,/);
+  });
+
+  it("模块级的批准广播已经彻底移除", () => {
+    const traceSrc = fs.readFileSync(path.join(process.cwd(), "components/otto/OttoTrace.tsx"), "utf8");
+    expect(traceSrc).not.toContain("notifyPlanApproved");
+    expect(traceSrc).not.toContain("goAheadListeners");
+    expect(src).not.toContain("notifyPlanApproved");
+  });
+
+  it("通用批准卡把它自己的 card id 交回给父层的待批集合", () => {
+    expect(src).toMatch(/onResolved=\{\(\{\s*cardId:[^}]*pendingCardIds\s*\}\)\s*=>\s*\{[\s\S]*?nextPendingApprovalCardIds/);
   });
 });

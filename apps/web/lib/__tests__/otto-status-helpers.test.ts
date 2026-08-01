@@ -4,7 +4,21 @@
  * SDK construction, runs in the node harness.
  */
 import { describe, it, expect } from "vitest";
-import { pickLiveStatusText, asStatusData, asErrorData, dataErrorOf, asStepData, deriveTraceSteps } from "@/lib/otto-status-helpers";
+import {
+  pickLiveStatusText,
+  asStatusData,
+  asErrorData,
+  dataErrorOf,
+  asStepData,
+  deriveTraceSteps,
+  isTerminalRunState,
+  runStateOfCard,
+  runStateOfStream,
+  runStateSpins,
+  shouldShowTracePanel,
+  TERMINAL_RUN_STATES,
+  type OttoRunState,
+} from "@/lib/otto-status-helpers";
 import type { OttoStatusData, OttoStepData } from "@/lib/otto-stream-bridge";
 
 const startStep = (id: string, label: string): OttoStepData => ({ id, label, phase: "start" });
@@ -146,5 +160,101 @@ describe("deriveTraceSteps", () => {
   it("a completed run is still done, not waiting", () => {
     const steps = deriveTraceSteps([startStep("a", "A")], { kind: "done", threadId: "t" });
     expect(steps.map((s) => s.status)).toEqual(["done"]);
+  });
+
+  // #580 复审 r1 P1-3: a turn that ended abnormally used to leave its last step "active"
+  // forever, so the spinner spun on a run that would never move again.
+  it.each([
+    ["degraded", { kind: "degraded", text: "…" } as OttoStatusData, null],
+    ["stale", { kind: "stale", text: "…" } as OttoStatusData, null],
+    ["data-error", null, { kind: "error" as const, text: "…" }],
+    ["insufficient credits", null, { kind: "insufficient_credits" as const, text: "…" }],
+  ])("a run that ended on %s stops its unfinished steps instead of spinning", (_name, status, error) => {
+    const steps = deriveTraceSteps(
+      [startStep("a", "A"), doneStep("a", "A"), startStep("b", "B")],
+      status,
+      error,
+    );
+    expect(steps).toEqual([
+      { label: "A", status: "done" },
+      { label: "B", status: "stopped" },
+    ]);
+  });
+
+  it("a stream error is the turn's verdict — it outranks whatever status arrived first", () => {
+    const steps = deriveTraceSteps([startStep("a", "A")], { kind: "planning", text: "…" }, { kind: "error", text: "…" });
+    expect(steps.map((s) => s.status)).toEqual(["stopped"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #580 复审 r1 P1-3 —— 显式状态代数
+// ---------------------------------------------------------------------------
+
+describe("run-state algebra", () => {
+  const ALL: OttoRunState[] = [
+    "queued",
+    "running",
+    "waiting",
+    "done",
+    "failed",
+    "stale",
+    "degraded",
+    "data-error",
+  ];
+
+  it("terminal states are exactly the five that can never move again", () => {
+    expect([...TERMINAL_RUN_STATES].sort()).toEqual(["data-error", "degraded", "done", "failed", "stale"]);
+    for (const state of ALL) {
+      expect(isTerminalRunState(state)).toBe(TERMINAL_RUN_STATES.has(state));
+    }
+  });
+
+  it("only a genuinely running turn may animate", () => {
+    for (const state of ALL) expect(runStateSpins(state)).toBe(state === "running");
+  });
+
+  it("every stream signal maps to exactly one state", () => {
+    expect(runStateOfStream({ kind: "planning", text: "…" }, null)).toBe("running");
+    expect(runStateOfStream({ kind: "needs_approval", pendingCardIds: [] }, null)).toBe("waiting");
+    expect(runStateOfStream({ kind: "degraded", text: "…" }, null)).toBe("degraded");
+    expect(runStateOfStream({ kind: "stale", text: "…" }, null)).toBe("stale");
+    expect(runStateOfStream({ kind: "done", threadId: "t" }, null)).toBe("done");
+    expect(runStateOfStream(null, { kind: "error", text: "…" })).toBe("data-error");
+    // An error is the turn's verdict even when a live status arrived before it.
+    expect(runStateOfStream({ kind: "planning", text: "…" }, { kind: "error", text: "…" })).toBe("data-error");
+    expect(runStateOfStream(null, null)).toBeNull();
+  });
+
+  it("a card with a job id is QUEUED, not running — the client cannot prove it started", () => {
+    expect(runStateOfCard("working")).toBe("queued");
+    expect(runStateSpins(runStateOfCard("working"))).toBe(false);
+    expect(runStateOfCard("idle")).toBe("waiting");
+    expect(runStateOfCard("done")).toBe("done");
+    expect(runStateOfCard("failed")).toBe("failed");
+  });
+});
+
+describe("shouldShowTracePanel", () => {
+  const parked = [
+    { label: "A", status: "done" as const },
+    { label: "B", status: "waiting" as const },
+  ];
+
+  it("keeps a parked panel while this thread still has a card awaiting approval", () => {
+    expect(shouldShowTracePanel({ steps: parked, pendingCardIds: new Set(["card_1"]) })).toBe(true);
+  });
+
+  it("retires a parked panel once nothing is awaiting approval", () => {
+    expect(shouldShowTracePanel({ steps: parked, pendingCardIds: new Set() })).toBe(false);
+  });
+
+  it("never retires a running panel, whatever the pending set says", () => {
+    const running = [{ label: "B", status: "active" as const }];
+    expect(shouldShowTracePanel({ steps: running, pendingCardIds: new Set() })).toBe(true);
+  });
+
+  it("no steps, no panel", () => {
+    expect(shouldShowTracePanel({ steps: [], pendingCardIds: new Set(["card_1"]) })).toBe(false);
   });
 });
