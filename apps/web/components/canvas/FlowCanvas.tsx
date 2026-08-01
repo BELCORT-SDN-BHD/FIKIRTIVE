@@ -74,6 +74,13 @@ type FlowCanvasProps = {
   onReferenceInChat?: (refs: Omit<OttoComposerReference, "requestId">[]) => void;
   directToolsLocked?: boolean;
   directToolsLockedReason?: string;
+  /**
+   * Whether the gb composer starts open. Otto's canvas keeps the Grok pattern — revealed by the
+   * image tool, default false. The north-star canvas page shows the prompt box as part of the
+   * page itself, so it opens with the board (#600 · spec #599 D2). Display state only: the
+   * merchant can still close it, and nothing about the paid path changes either way.
+   */
+  defaultComposerOpen?: boolean;
 };
 
 // Must be stable (defined outside component) per ReactFlow requirements
@@ -91,6 +98,7 @@ export default function FlowCanvas({
   onReferenceInChat,
   directToolsLocked = false,
   directToolsLockedReason = DEFAULT_CANVAS_NODE_LOCK_REASON,
+  defaultComposerOpen = false,
 }: FlowCanvasProps) {
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const [prompt, setPrompt] = useState("");
@@ -101,7 +109,8 @@ export default function FlowCanvas({
   const [filterToConvo, setFilterToConvo] = useState(false);
   // gb toolbar: the prompt composer is hidden behind the Generate button (Grok
   // pattern) instead of sitting persistently on the canvas. Display state only.
-  const [composerOpen, setComposerOpen] = useState(false);
+  // The north-star canvas page opts into starting it open (`defaultComposerOpen`).
+  const [composerOpen, setComposerOpen] = useState(defaultComposerOpen);
   // Canvas tool: pan (grab hand, drag pans the board) vs select (arrow cursor,
   // drag box-selects). The toolbar's cursor button toggles this. Display-only.
   const [panMode, setPanMode] = useState(true);

@@ -1,11 +1,12 @@
 import "server-only";
 
 import { notFound, redirect } from "next/navigation";
-import { CanvasPage } from "@/components/northstar/create/canvas-page";
+import { NorthstarCanvasWorkspace } from "@/components/canvas/NorthstarCanvasWorkspace";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
-import { getCoworkThreads, getProjects } from "@/lib/data";
+import { getCoworkThreads, getEntities, getProjects } from "@/lib/data";
+import { toEntityDTO } from "@/lib/dto";
 import type { ImmersiveCanvasRuntimeContext } from "./immersive-canvas-runtime";
 
 export type ImmersiveCanvasSearchParams = Record<
@@ -99,9 +100,12 @@ export async function ImmersiveCanvasEntry({
     ensured.id,
     firstSearchParam(sp.project),
   );
-  const [threadRows, accountResult] = await Promise.all([
+  const [threadRows, accountResult, entityRows] = await Promise.all([
     getCoworkThreads(owner.ownerId, projectSelection.activeProjectId),
     getMyAccount(),
+    // The board's prompt box references the merchant's own saved things with @ — without
+    // them the mention list is empty and "@ to reference your stuff" promises nothing.
+    getEntities(owner.ownerId),
   ]);
   const threadSelection = selectImmersiveThread(
     threadRows,
@@ -132,10 +136,14 @@ export async function ImmersiveCanvasEntry({
     initialBalance: "error" in accountResult ? 0 : accountResult.balance,
   };
 
+  // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)
+  // wearing the north-star skin. The hand-rolled north-star board is no longer rendered here;
+  // its file stays in the tree until the whole rollout is accepted (D7 · T7).
   return (
-    <CanvasPage
+    <NorthstarCanvasWorkspace
       key={`${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? ""}`}
       runtimeContext={runtimeContext}
+      entities={entityRows.map(toEntityDTO)}
     />
   );
 }
