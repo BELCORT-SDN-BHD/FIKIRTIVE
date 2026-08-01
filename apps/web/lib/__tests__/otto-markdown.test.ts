@@ -5,8 +5,10 @@
  *  ① 渲染:`**bold**` 出 <strong> 而不是字面星号,列表出 <ul>/<li>,表格出 <table>,代码出 <pre>。
  *  ② 边界:raw HTML 不成 DOM、javascript:/相对链接不成锚、外链带安全属性、markdown 图片不发请求。
  *
- * 并且**逐个渲染出口**各有一条断言(TextPart / OttoConversation / OttoMemory / ResearchReport),
- * 这样以后任何一个出口被改回裸文本,这里就红 —— 「漏一个出口就是半修」的机器防线。
+ * 并且四个渲染出口各有一条守卫,但**强度分两档,别当成同一件事**:
+ *  · TextPart 与 ResearchReport 是真渲染断言 —— 出口被改回裸文本就红。
+ *  · OttoConversation 与 OttoMemory 是**接线检查(wiring check)**:读源码字符串,只证明这两个
+ *    文件仍然引用 OttoMarkdown,**不验证渲染行为**(它们牵入 server actions,整树渲染不动)。
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -169,6 +171,28 @@ describe("OttoMarkdown — XSS / prompt-injection boundary", () => {
     expect(markup).toContain("open settings");
   });
 
+  it("blocks same-scheme-relative links — `https:/settings` is an IN-APP path, not an external URL", () => {
+    // 复审 r1 P2-1:只比对冒号前的 scheme 会放行这些形式。在 HTTPS 页面上浏览器把
+    // `https:/settings`、`https:settings`、`https:?confirm=1` 解析成本站路径 / 当前页,
+    // 所以它们和 `/settings/danger` 属于同一类「指向本站作用路由的诱导链接」,必须同样不成锚。
+    // `//evil.example` 是协议相对形式,同理:它跟着当前页的协议走。
+    for (const bad of [
+      "https:/settings",
+      "https:settings",
+      "https:?confirm=1",
+      "HTTPS:/settings",
+      "https:\\settings",
+      "//evil.example",
+    ]) {
+      expect(safeHref(bad)).toBe("");
+
+      const markup = md(`[click me](${bad})`);
+      expect(markup).not.toContain("<a ");
+      expect(markup).not.toContain("href=");
+      expect(markup).toContain("click me");
+    }
+  });
+
   it("gives allowed external links target=_blank and the full rel guard", () => {
     const markup = md("[Meta docs](https://developers.facebook.com/docs)");
 
@@ -180,7 +204,8 @@ describe("OttoMarkdown — XSS / prompt-injection boundary", () => {
   it("allows mailto: (support links) and nothing else with a colon", () => {
     expect(md("[mail us](mailto:hi@fikirtive.com)")).toContain('href="mailto:hi@fikirtive.com"');
     expect(safeHref("https://a.test/x")).toBe("https://a.test/x");
-    expect(safeHref("HTTP://a.test/x")).toBe("HTTP://a.test/x");
+    // 大写 scheme 仍然放行,但 `new URL()` 会规范化它 —— href 属性与浏览器真正会去的地址一致。
+    expect(safeHref("HTTP://a.test/x")).toBe("http://a.test/x");
     expect(safeHref("mailto:a@b.test")).toBe("mailto:a@b.test");
     expect(safeHref("javascript:alert(1)")).toBe("");
     expect(safeHref("  javascript:alert(1)")).toBe("");
@@ -226,7 +251,7 @@ describe("render exits — every surface that shows Otto prose (#586 acceptance)
     expect(markup).toContain("pre-wrap");
   });
 
-  it("exit 2/4 · OttoConversation's assistant bubble is wired to OttoMarkdown", async () => {
+  it("exit 2/4 · OttoConversation — wiring check on the SOURCE text, NOT a render assertion", async () => {
     // OttoConversation pulls in server actions, so assert on the source wiring rather
     // than rendering the whole tree: the assistant branch must use OttoMarkdown and must
     // no longer carry the pre-wrap class that produced the literal asterisks.
@@ -242,7 +267,7 @@ describe("render exits — every surface that shows Otto prose (#586 acceptance)
     expect(source.match(/whitespace-pre-wrap/g)?.length).toBe(1);
   });
 
-  it("exit 3/4 · OttoMemory's Otto bubble is wired to OttoMarkdown, user bubble is not", async () => {
+  it("exit 3/4 · OttoMemory — wiring check on the SOURCE text, NOT a render assertion", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(
       new URL("../../components/otto/OttoMemory.tsx", import.meta.url),

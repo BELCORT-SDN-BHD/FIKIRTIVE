@@ -38,14 +38,28 @@ import remarkBreaks from "remark-breaks";
  * (不破段)—— 见 apps/web/app/globals.css。
  */
 
-/** http / https / mailto only. Everything else (javascript:, data:, vbscript:, and any
- *  relative in-app path) returns "" → the `a` component below renders plain text. */
+/** http / https / mailto only. Everything else (javascript:, data:, vbscript:, any
+ *  relative in-app path, and any **same-scheme-relative** form) returns "" → the `a`
+ *  component below renders plain text.
+ *
+ *  只比对冒号前的 scheme 不够:`https:/settings`、`https:settings`、`https:?confirm=1`
+ *  的 scheme 确实是 https,但它们是**同 scheme 相对**引用 —— HTTPS 页面上浏览器把它们解析成
+ *  本站路径 / 当前页,等价于边界 2 要挡的 `[点这里](/settings/…)`。所以 http/https 必须有字面的
+ *  `//`,再交给 URL 解析器确认它真解析得出一个绝对 URL;解析成功返回规范化结果(浏览器实际会去的
+ *  地址与 href 属性一致),解析失败一律不成锚。mailto 的既有行为不变。 */
 export function safeHref(url: string): string {
   const value = url.trim();
   const colon = value.indexOf(":");
   if (colon === -1) return "";
   const scheme = value.slice(0, colon).toLowerCase();
-  return scheme === "http" || scheme === "https" || scheme === "mailto" ? value : "";
+  if (scheme === "mailto") return value;
+  if (scheme !== "http" && scheme !== "https") return "";
+  if (!/^https?:\/\//i.test(value)) return "";
+  try {
+    return new URL(value).href;
+  } catch {
+    return "";
+  }
 }
 
 /** `remark-breaks` 不是装饰,是防回归:markdown 默认把单个换行折成空格,
