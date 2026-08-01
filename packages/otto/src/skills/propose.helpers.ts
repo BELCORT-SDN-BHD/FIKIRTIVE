@@ -17,6 +17,7 @@ import {
   MAX_GEN_COUNT,
   displayCredits,
   pricedGenCredits,
+  EXECUTED_SPEC,
   type GenVideoModel,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
@@ -58,8 +59,19 @@ export type CardPayload = {
     audio?: boolean;
     count: number;
   };
+  /** 内部/审计用的路由说明。**含引擎名**（`GEN_VIDEO_MODEL_INFO[…].label`），
+   *  因此永远不得渲染到 UI。卡面渲染 `specChips`。 */
   reason: string;
+  /** 卡面要显示的规格条目，**服务端唯一一次派生**（`buildSpecChips`）。
+   *  前端只按顺序渲染这个数组，自己不再从 `params` 二次推导 —— 两处推导正是
+   *  「说的」与「做的」失同步的来源（#580 复审 r1 P1-1/P1-2）。
+   *  每一条都只可能来自 `EXECUTED_SPEC` 认定执行层真会采纳的控制项，
+   *  且结构上不可能带出引擎名（只读 `params`，从不读 `model`/`reason`）。 */
+  specChips: string[];
   downgraded: boolean;
+  /** 仅当 `downgraded` 为 true 时存在：卡面必须显式展示的一行人话披露
+   *  （"You asked for X — this will be Y."）。降级不得静默。 */
+  downgradeNote?: string;
   structuredPrompt: string;
   entityIds: string[];
   variantSel: Record<string, string>;
@@ -81,6 +93,107 @@ export type ProposeCardResult = {
   cardPayload: CardPayload;
   shownPriceDisplay: number;
 };
+
+// ---------------------------------------------------------------------------
+// 有效规格 —— 卡面文案的唯一真相来源
+// ---------------------------------------------------------------------------
+
+/**
+ * 执行层**真正会做的事**。卡面显示的每一条规格都从这里派生。
+ *
+ * 声明本身住在 `@fikirtive/core`（`executed-spec.ts`），因为它有两个必须钉在一起的读者：
+ * 这里的卡面文案（「说的」），和 `@fikirtive/generation` 里对现役图像适配器请求体的
+ * 整体断言（「做的」）。适配器一改，那条断言立刻红，逼着这份声明一起改，卡面于是自动
+ * 开始说新话 —— 这就是 #580 复审 r2 P2 要的那道真闸（上一版是扫源码字符串，扫不出行为）。
+ *
+ * 本模块只改**展示**：这份声明不参与选型、报价、预扣或任何 provider 调用。
+ */
+export { EXECUTED_SPEC } from "@fikirtive/core";
+
+// ---------------------------------------------------------------------------
+// Card copy helpers — pure, engine-free by construction
+// ---------------------------------------------------------------------------
+
+/**
+ * 卡面规格条目（脱敏）。与 `reason` 同事实，但只从 `params` 取值，
+ * 因此结构上不可能带出引擎名；并且只输出 `EXECUTED_SPEC` 认定执行层真会采纳的控制项，
+ * 因此不可能承诺一件执行层做不到的事。这是卡面规格的**唯一一次**派生。
+ */
+export function buildSpecChips(
+  kind: "image" | "video",
+  params: CardPayload["params"],
+  hasSourceImage: boolean,
+): string[] {
+  const chips: string[] = [];
+  if (kind === "video") {
+    if (EXECUTED_SPEC.video.aspectHonoured) {
+      chips.push(params.aspectRatio ?? (hasSourceImage ? "Same shape as your reference" : "Default shape"));
+    }
+    if (EXECUTED_SPEC.video.durationHonoured && typeof params.durationSeconds === "number") {
+      chips.push(`${params.durationSeconds}s`);
+    }
+    if (EXECUTED_SPEC.video.resolutionHonoured && params.resolution) chips.push(params.resolution);
+    // 声音：audioHonoured 为 false 时这一条不出现 —— 没接通就不承诺。接通那天改
+    // EXECUTED_SPEC 一处，卡面自动开始说真话。
+    if (EXECUTED_SPEC.video.audioHonoured) chips.push(params.audio ? "With sound" : "No sound");
+  } else {
+    // 图片：执行层固定输出方图，所以卡面报的就是它真会产出的尺寸，而不是商家要的画幅。
+    const { width, height } = EXECUTED_SPEC.image.outputSize;
+    chips.push(`${width} × ${height}`);
+    if (EXECUTED_SPEC.image.aspectHonoured && params.aspectRatio) chips.push(params.aspectRatio);
+    chips.push(params.count === 1 ? "1 image" : `${params.count} images`);
+  }
+  return chips;
+}
+
+/** 商家提出的、可能被执行层打折的诉求。 */
+export type RequestedSpec = { aspect?: string; duration?: number; audio?: boolean };
+
+/**
+ * 降级披露。只在 `downgraded` 为 true 时调用：把「商家要的」与「实际会做的」
+ * 并排说清楚。任何说不清具体项的降级也必须给出一句不撒谎的兜底，绝不静默。
+ *
+ * 「实际会做的」一律取自 `EXECUTED_SPEC`：图片的画幅到不了执行层，就说方图尺寸；
+ * 声音控制没接通，就直说控制不了，而不是承诺一个静音结果。
+ */
+export function buildDowngradeNote(
+  kind: "image" | "video",
+  requested: RequestedSpec,
+  params: CardPayload["params"],
+  hasSourceImage: boolean,
+): string {
+  const asked: string[] = [];
+  const instead: string[] = [];
+  const notes: string[] = [];
+
+  if (typeof requested.duration === "number" && requested.duration !== params.durationSeconds) {
+    asked.push(`${requested.duration}s`);
+    instead.push(
+      typeof params.durationSeconds === "number" ? `${params.durationSeconds}s` : "a different length",
+    );
+  }
+  if (requested.aspect && !(kind === "video" && requested.aspect === params.aspectRatio)) {
+    asked.push(requested.aspect);
+    if (kind === "image") {
+      // 执行层不接受图片画幅：如实说出它真会产出的方图尺寸。
+      const { width, height } = EXECUTED_SPEC.image.outputSize;
+      instead.push(`a square ${width} × ${height} image`);
+    } else {
+      instead.push(params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"));
+    }
+  }
+  if (asked.length > 0) {
+    notes.push(`You asked for ${asked.join(" and ")} — this will be ${instead.join(" and ")}.`);
+  }
+  if (kind === "video" && typeof requested.audio === "boolean" && !EXECUTED_SPEC.video.audioHonoured) {
+    // 不承诺静音，也不承诺有声 —— 只如实说这个开关还没接到执行层。
+    notes.push("Sound isn't something I can set here yet, so the clip comes as it comes.");
+  }
+  if (notes.length === 0) {
+    return "Some of what you asked for isn't available here — the details above are what you'll get.";
+  }
+  return notes.join(" ");
+}
 
 // ---------------------------------------------------------------------------
 // Pure helper — no DB, no SDK
@@ -221,13 +334,32 @@ export function buildProposeCard(
     }
   }
 
+  // Step 4.7: 执行层收不下的诉求也是降级 —— 必须显式披露，不得静默。
+  // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以这两项
+  // 在这里按 EXECUTED_SPEC 补齐：图片的画幅根本到不了执行层；声音开关没接通。
+  // 纯展示：不改 params、不改选型、不改报价。
+  const imageAspectDropped =
+    kind === "image" && !!input.desiredAspect && !EXECUTED_SPEC.image.aspectHonoured;
+  const audioNotHonoured =
+    kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
+  const requested: RequestedSpec = {
+    ...sm.requested,
+    ...(imageAspectDropped ? { aspect: input.desiredAspect } : {}),
+    ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
+  };
+  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
+
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
     kind,
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    downgraded: sm.downgraded,
+    specChips: buildSpecChips(kind, sm.params, hasSourceImage),
+    downgraded,
+    ...(downgraded
+      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, hasSourceImage) }
+      : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,
     variantSel,

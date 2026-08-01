@@ -16,13 +16,27 @@ import { Button } from "@/components/ui/button";
 import { ottoApprove, ottoReject } from "@/lib/otto-client-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { asApprovalCardPayload, approvalCardView } from "@/lib/approval-card-view";
+import { chainedApprovalOf } from "./approval-chain";
+
+/** What a resolved approval hands up: the EXACT card, what it resolved to, and the
+ *  server's own still-pending set when the resume parked again. The universal approval
+ *  path used to report nothing at all, so a thread parked on it kept a stale
+ *  "waiting for your go-ahead" panel forever (#580 复审 r1 P1-4). */
+export interface ApprovalResolvedOutcome {
+  cardId: string;
+  resolution: "approved" | "rejected" | "expired";
+  /** The server's COMPLETE still-pending set when the resume parked again; null when
+   *  the response carried no set information. */
+  pendingCardIds: string[] | null;
+}
 
 export interface OttoApprovalCardProps {
   cardId: string;
   threadId: string;
   payload: unknown;
-  /** Called after a confirm/decline resolves so the host refetches the thread (Otto's reply). */
-  onResolved?: () => void | Promise<void>;
+  /** Called after a confirm/decline resolves so the host refetches the thread (Otto's
+   *  reply) and updates its pending-approval set from the outcome. */
+  onResolved?: (outcome: ApprovalResolvedOutcome) => void | Promise<void>;
 }
 
 type LocalState = "idle" | "approving" | "declining" | "approved" | "rejected" | "expired";
@@ -55,12 +69,15 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
         setLocal("idle");
         return;
       }
-      if ("alreadyResolved" in res) {
-        setLocal(res.resolution);
-      } else {
-        setLocal("approved");
-      }
-      await onResolved?.();
+      const resolution = "alreadyResolved" in res ? res.resolution : "approved";
+      setLocal(resolution);
+      // Hand up the exact card and the server's own pending set — the host's waiting
+      // panel is driven by that set, so it can only be dismissed by an answer.
+      await onResolved?.({
+        cardId,
+        resolution,
+        pendingCardIds: chainedApprovalOf(res)?.pendingCardIds ?? null,
+      });
     } catch {
       setErrorMsg("Couldn't submit — please try again.");
       setLocal("idle");
@@ -82,12 +99,11 @@ export function OttoApprovalCard({ cardId, threadId, payload, onResolved }: Otto
         setLocal("idle");
         return;
       }
-      if ("alreadyResolved" in res) {
-        setLocal(res.resolution);
-      } else {
-        setLocal("rejected");
-      }
-      await onResolved?.();
+      const resolution = "alreadyResolved" in res ? res.resolution : "rejected";
+      setLocal(resolution);
+      // A decline never resumes the run, so it carries no server pending set — but it
+      // still settles THIS card, and the host must hear which one.
+      await onResolved?.({ cardId, resolution, pendingCardIds: null });
     } catch {
       setErrorMsg("Couldn't submit — please try again.");
       setLocal("idle");
