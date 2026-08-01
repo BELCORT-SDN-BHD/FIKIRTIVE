@@ -322,8 +322,18 @@ export async function exchangeCodeForToken(
   const grantedScopes: string[] = Array.isArray(dj?.data?.scopes) ? dj.data.scopes : [];
   // debug_token also returns the app-scoped Meta user id — store it so the Meta
   // data-deletion callback (/api/meta/data-deletion) can match this connection.
+  // #573:数字型 id 只在 JS 能精确表示时才收。Meta 的 app-scoped id 已逼近 2^53-1,
+  // 超界的未加引号整数在 JSON.parse 那一步就被悄悄取整(…993 → …992),String() 存下的
+  // 是一个 data-deletion 回调永远匹配不到的假 id —— 正是本票要消灭的「删不掉的连接」。
+  // 存错比不存更坏:这里 fail-closed 返回 null,上游 meta-actions 退回 "incomplete",
+  // 一行都不写。字符串 id(Meta 的常规形态)原样保留,不做长度判断。
   const uid = dj?.data?.user_id;
-  const metaUserId = typeof uid === "string" ? uid : typeof uid === "number" ? String(uid) : null;
+  const metaUserId =
+    typeof uid === "string"
+      ? uid
+      : typeof uid === "number" && Number.isSafeInteger(uid) && uid > 0
+        ? String(uid)
+        : null;
 
   return { token: lj.access_token, expiresAt, grantedScopes, metaUserId };
 }

@@ -136,6 +136,30 @@ describe("completeMetaConnect", () => {
     expect(res).toEqual({ ok: true });
     expect(mockUpsert.mock.calls[0][0].create.metaUserId).toBe("1784512");
   });
+  it("#573: refuses a numeric user_id too large for JS to carry exactly", async () => {
+    // Meta's app-scoped ids sit right up against JS's safe-integer ceiling (2^53-1). An
+    // unquoted one past it is already wrong by the time we see it — JSON.parse rounds
+    // 9007199254740993 to ...992 — so String() would store an id that no data-deletion
+    // callback can ever match, i.e. exactly the un-deletable row this ticket exists to
+    // prevent. A silently-wrong id is worse than no id: fail the connect instead.
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: 9007199254740993 } }));
+    const res = await completeMetaConnect("the-code", "https://app/api/meta/callback");
+    expect(res).toEqual({ error: "incomplete" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+  it("#573: refuses a non-positive numeric user_id", async () => {
+    // No real app-scoped id is 0 or negative, so this is a malformed/placeholder response.
+    // Storing "0" would look like a valid id while matching nobody.
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
+      .mockResolvedValueOnce(jsonRes({ access_token: "LONGTOKEN", expires_in: 5184000 }))
+      .mockResolvedValueOnce(jsonRes({ data: { scopes: ["ads_read"], user_id: 0 } }));
+    expect(await completeMetaConnect("the-code", "https://app/api/meta/callback")).toEqual({ error: "incomplete" });
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
   it("sets canManagePages:true when Meta grants pages_show_list", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonRes({ access_token: "short" }))
