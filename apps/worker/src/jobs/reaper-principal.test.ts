@@ -75,6 +75,9 @@ vi.mock("@fikirtive/db", () => ({
   prisma: db.prisma,
   refundReservation: db.refundReservation,
   settleCredits: db.settleCredits,
+  // #601: the delivery path ends by writing the job's canvas cards. Stubbed so this suite
+  // exercises the tenant framing it is about, not a swallowed canvas error.
+  settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
 }));
 // import-time deps these reapers never exercise
 vi.mock("../storage.js", () => ({ storage: {} }));

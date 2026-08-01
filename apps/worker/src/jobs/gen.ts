@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation, type GenJob } from "@fikirtive/db";
+import { prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -157,6 +157,22 @@ async function appendCoworkResult(
   }
 }
 
+// #601 T2b: the LAST step of a DELIVERED job — put that job's cards on the canvas board, so a
+// merchant who closed the tab still comes back to every output they paid for. Same contract as
+// appendCoworkResult above and deliberately placed next to it at both call sites: it runs ONLY
+// after the job row is DONE and its charge is settled, it reads/writes no money column, no
+// ledger, no provider, and it can never throw into the completion path. A failure is swallowed —
+// a card can be written again by the next delivery pass (redelivery or the reaper's resume); a
+// charge cannot be taken back. Idempotent: settleCanvasCardsForGenJob no-ops on a settled board.
+// Failure/cancelled/timeout terminals are NOT wired here — that projection is T2c.
+async function settleCanvasBoard(job: { id: string; ownerId: string }): Promise<void> {
+  try {
+    await settleCanvasCardsForGenJob(job.id, job.ownerId);
+  } catch (e) {
+    console.warn(`[gen] ${job.id}: canvas settlement failed (non-fatal):`, e instanceof Error ? e.message : e);
+  }
+}
+
 /** Finish a job whose outputs are already COMMITTED (generationIds recorded — and the commit
  *  tx settles atomically with that write, so committed ⟹ charged-and-settled): idempotent
  *  attach → DONE + settle (no-op if already) → GEN_RESULT → otto resume. Shared by handleGen's
@@ -206,6 +222,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
     await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
   });
   await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
+  await settleCanvasBoard(job);
   await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
 }
 
@@ -748,6 +765,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
       console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
       await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
+      await settleCanvasBoard(job);
       await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
     } catch (err) {
       // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a

@@ -123,6 +123,12 @@ export {
   type PublishJobData,
 } from "./publish.js";
 export * from "./segment-rules.js";
+// Canvas board geometry — WHERE a card lands. Pure (no Prisma, no server-only), so the three
+// runtimes that place cards can share ONE grid: the browser, the web server, and the worker
+// that writes a finished job's whole batch (#601).
+export * from "./canvas-layout.js";
+// The single projection from a finished job's result to the cards that should exist for it (#601).
+export * from "./canvas-settlement-plan.js";
 // 执行层真会做什么 —— 卡面文案(otto)与现役适配器请求体断言(generation)钉在同一份声明上。
 // 纯数据,无 node/network 依赖,可留在主 barrel。
 export { EXECUTED_SPEC } from "./executed-spec.js";

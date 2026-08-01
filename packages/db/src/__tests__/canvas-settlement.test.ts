@@ -1,0 +1,256 @@
+/**
+ * #601 T2b — settling a delivered job's canvas cards against a REAL database.
+ *
+ * The merchant behaviour under test: start a batch, close the tab, come back later and find every
+ * paid output on the board. No browser participates in any of these cases — the only writer is
+ * the completion path the worker runs.
+ *
+ * Division of labour with `packages/core/src/canvas-settlement-plan.test.ts`: the projection there
+ * owns the state space (how many cards, which status, which batch slot) and needs no database.
+ * This file owns what only a database can show — that the lock, the tombstone read, the thread and
+ * source-card lookups and the writes themselves are wired to that projection correctly. Each case
+ * here costs a full-schema TRUNCATE, so cases that a pure test can carry belong over there.
+ *
+ * Money is deliberately part of the assertions: the job's spend columns and the credit ledger are
+ * snapshotted before settlement and compared after, so a future edit that quietly gives this path
+ * a money side effect fails here rather than in production.
+ *
+ * SCOPE: the delivered (DONE) path. Failed / cancelled / timed-out terminals are T2c — pinned
+ * below as "left alone", so this slice cannot half-project them.
+ */
+import { describe, it, expect, afterEach, beforeAll, beforeEach } from "vitest";
+import { randomUUID } from "node:crypto";
+import { prisma } from "../index.js";
+import { canvasJobPlacementLockKey, settleCanvasCardsForGenJob } from "../canvas-settlement.js";
+import { seedOrg } from "../../test/setup.js";
+
+const CARD = { w: 320, h: 320 };
+
+let orgId: string;
+let projectId: string;
+
+// Pay the pool + query-engine start-up here rather than inside the first timed hook. The shared
+// per-test TRUNCATE already takes seconds on a full schema; adding a cold connect on top of it
+// tips the first test past vitest's hook limit for reasons unrelated to what it checks.
+beforeAll(async () => {
+  await prisma.$queryRaw`SELECT 1`;
+});
+
+beforeEach(async () => {
+  orgId = `org_${randomUUID()}`;
+  await seedOrg(orgId, 100_000);
+  projectId = `prj_${randomUUID()}`;
+  await prisma.project.create({ data: { id: projectId, ownerId: orgId, name: "Settlement board" } });
+});
+
+// CanvasNode has no organization FK, so the suite-wide TRUNCATE does not reach it. Clear this
+// workspace's cards ourselves rather than leaving orphans behind in a shared local test DB.
+afterEach(async () => {
+  if (!orgId) return;
+  await prisma.canvasNode.deleteMany({ where: { ownerId: orgId } });
+});
+
+async function seedThread(): Promise<string> {
+  const id = `thr_${randomUUID()}`;
+  await prisma.chatThread.create({ data: { id, ownerId: orgId, projectId, title: "Otto" } });
+  return id;
+}
+
+/** One paid output: an Asset + the Generation row the worker's commit transaction writes. */
+async function seedGeneration(): Promise<string> {
+  const contentHash = randomUUID().replace(/-/g, "").repeat(2);
+  const asset = await prisma.asset.create({
+    data: {
+      id: `ast_${randomUUID()}`, ownerId: orgId, contentHash, ext: "png",
+      mime: "image/png", sizeBytes: BigInt(64), source: "GENERATED",
+    },
+  });
+  const generation = await prisma.generation.create({
+    data: {
+      id: `gen_${randomUUID()}`, ownerId: orgId, projectId, assetId: asset.id,
+      source: "GENERATED", entitySnapshot: {},
+    },
+  });
+  return generation.id;
+}
+
+async function seedJob(input: {
+  status: "DONE" | "FAILED" | "GENERATING";
+  outputs?: number;
+  threadId?: string | null;
+  kind?: "IMAGE" | "VIDEO";
+  sourceGenerationId?: string | null;
+}): Promise<{ jobId: string; generationIds: string[] }> {
+  const generationIds: string[] = [];
+  for (let i = 0; i < (input.outputs ?? 0); i += 1) generationIds.push(await seedGeneration());
+  const jobId = `gjb_${randomUUID()}`;
+  await prisma.genJob.create({
+    data: {
+      id: jobId, ownerId: orgId, projectId, prompt: "a cup steaming",
+      kind: input.kind ?? "IMAGE", model: "seedream", count: Math.max(1, input.outputs ?? 1),
+      status: input.status, generationIds,
+      threadId: input.threadId ?? null,
+      sourceGenerationId: input.sourceGenerationId ?? null,
+      spent: input.status === "DONE", spentUsd: input.status === "DONE" ? 0.12 : null,
+      startedAt: new Date(), finishedAt: input.status === "GENERATING" ? null : new Date(),
+    },
+  });
+  return { jobId, generationIds };
+}
+
+async function seedCard(input: {
+  jobId: string | null;
+  x: number;
+  y: number;
+  status?: string;
+  generationId?: string | null;
+}): Promise<string> {
+  const id = `cnd_${randomUUID()}`;
+  await prisma.canvasNode.create({
+    data: {
+      id, ownerId: orgId, projectId, type: "image", x: input.x, y: input.y, w: CARD.w, h: CARD.h,
+      prompt: "a cup steaming", genJobId: input.jobId, generationId: input.generationId ?? null,
+      status: input.status ?? "pending",
+    },
+  });
+  return id;
+}
+
+async function cardsForJob(jobId: string) {
+  return prisma.canvasNode.findMany({
+    where: { ownerId: orgId, projectId, genJobId: jobId },
+    orderBy: [{ y: "asc" }, { x: "asc" }],
+    select: { id: true, x: true, y: true, status: true, generationId: true, sourceNodeId: true, threadId: true, type: true },
+  });
+}
+
+/** Everything about this job that a money reviewer cares about, plus the workspace's balance. */
+async function moneySnapshot(jobId: string) {
+  const job = await prisma.genJob.findFirstOrThrow({
+    where: { id: jobId, ownerId: orgId },
+    select: { status: true, spent: true, spentUsd: true, generationIds: true, idempotencyKey: true, finishedAt: true },
+  });
+  const ledger = await prisma.creditLedger.findMany({
+    where: { orgId, refId: jobId },
+    orderBy: { id: "asc" },
+    select: { kind: true, balanceDelta: true, reservedDelta: true },
+  });
+  const account = await prisma.creditAccount.findFirstOrThrow({ where: { orgId }, select: { balance: true, reserved: true } });
+  return { job, ledger, account };
+}
+
+describe("coming back to a board nobody was watching", () => {
+  it("writes the whole batch when the tab closed right after the merchant pressed Make", async () => {
+    const { jobId, generationIds } = await seedJob({ status: "DONE", outputs: 4 });
+    // The browser placed the in-flight card and then went away: nothing else was ever written.
+    const anchorId = await seedCard({ jobId, x: 100, y: 50, status: "pending" });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("settled");
+    expect(outcome.created).toBe(3);
+    const cards = await cardsForJob(jobId);
+    expect(cards).toHaveLength(4);
+    expect(cards.map((card) => [card.x, card.y])).toEqual([[100, 50], [440, 50], [100, 390], [440, 390]]);
+    expect(cards.map((card) => card.status)).toEqual(["done", "done", "done", "done"]);
+    expect(cards.map((card) => card.generationId)).toEqual(generationIds);
+    expect(cards[0]!.id).toBe(anchorId);
+    // Siblings hang off the batch ANCHOR for layout; none of them claims the anchor made it.
+    expect(cards.slice(1).map((card) => card.sourceNodeId)).toEqual([anchorId, anchorId, anchorId]);
+  });
+
+  it("creates the cards too when no browser ever opened the board — clear of existing work, attributed, and linked to what they were made from", async () => {
+    const threadId = await seedThread();
+    const sourceGenerationId = await seedGeneration();
+    const sourceCardId = await seedCard({ jobId: null, x: 80, y: 80, status: "done", generationId: sourceGenerationId });
+    const { jobId, generationIds } = await seedJob({ status: "DONE", outputs: 2, threadId, sourceGenerationId });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("settled");
+    expect(outcome.created).toBe(2);
+    const cards = await cardsForJob(jobId);
+    expect(cards.map((card) => card.generationId)).toEqual(generationIds);
+    expect(cards.every((card) => card.status === "done")).toBe(true);
+    // Attributed to the chat that asked for it…
+    expect(cards.every((card) => card.threadId === threadId)).toBe(true);
+    // …linked to the card it was made from (a fact of the paid job, not of a neighbour)…
+    expect(cards[0]!.sourceNodeId).toBe(sourceCardId);
+    // …and clear of the card that was already on the board.
+    expect(cards.map((card) => [card.x, card.y])).not.toContainEqual([80, 80]);
+  });
+});
+
+describe("what it must refuse to do", () => {
+  it("runs twice without duplicating a single card", async () => {
+    const { jobId } = await seedJob({ status: "DONE", outputs: 3 });
+    await seedCard({ jobId, x: 0, y: 0, status: "pending" });
+
+    const first = await settleCanvasCardsForGenJob(jobId, orgId);
+    const second = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(first.created).toBe(2);
+    expect(second).toMatchObject({ status: "settled", created: 0, updated: 0 });
+    expect(await cardsForJob(jobId)).toHaveLength(3);
+
+    // Two writers place a job's cards: this one and the browser-side placement in
+    // apps/web/lib/canvas-node-placement.ts. They only take turns if they ask for the SAME lock,
+    // and the lock is named by a hand-written string in each file. Pin the exact shape here so a
+    // rename on either side fails a test instead of quietly letting both writers run at once.
+    // (Converging the two onto one exported helper belongs to the read-path slice, T2d.)
+    expect(canvasJobPlacementLockKey("owner-1", "project-1", "job-1"))
+      .toBe("canvas-job-placement:owner-1:project-1:job-1");
+  });
+
+  it("does not bring back a batch the merchant deleted while it was still running", async () => {
+    const { jobId } = await seedJob({ status: "DONE", outputs: 4 });
+    // Deleting the in-flight card is a job-wide instruction: none of its outputs may return.
+    await seedCard({ jobId, x: 0, y: 0, status: "deleted", generationId: null });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("suppressed");
+    expect((await cardsForJob(jobId)).filter((card) => card.status !== "deleted")).toHaveLength(0);
+  });
+
+  // The T2c boundary: a job that ended badly must be left exactly as found, not half-projected.
+  // Which statuses count as "not delivered" is settled exhaustively in the projection's own suite.
+  it("leaves a failed job's card alone — that projection is a later slice", async () => {
+    const { jobId } = await seedJob({ status: "FAILED", outputs: 0 });
+    await seedCard({ jobId, x: 0, y: 0, status: "pending" });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome.status).toBe("not-settled");
+    const cards = await cardsForJob(jobId);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.status).toBe("pending");
+  });
+
+  it("refuses a job that belongs to another workspace", async () => {
+    const otherOrg = `org_${randomUUID()}`;
+    await seedOrg(otherOrg, 1_000);
+    const { jobId } = await seedJob({ status: "DONE", outputs: 2 });
+    await seedCard({ jobId, x: 0, y: 0, status: "pending" });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, otherOrg);
+
+    expect(outcome.status).toBe("job-missing");
+    expect((await cardsForJob(jobId)).every((card) => card.status === "pending")).toBe(true);
+  });
+});
+
+describe("money stays exactly where it was", () => {
+  it("changes no spend column, no ledger row and no balance", async () => {
+    const threadId = await seedThread();
+    const { jobId } = await seedJob({ status: "DONE", outputs: 4, threadId });
+    const before = await moneySnapshot(jobId);
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+    await settleCanvasCardsForGenJob(jobId, orgId); // a redelivery runs it again
+
+    expect(outcome.status).toBe("settled");
+    expect(await cardsForJob(jobId)).toHaveLength(4);
+    expect(await moneySnapshot(jobId)).toEqual(before);
+  });
+});

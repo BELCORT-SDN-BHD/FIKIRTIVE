@@ -28,7 +28,9 @@ const m = vi.hoisted(() => {
   return { prisma, genJobFindMany, genJobUpdate, genJobUpdateMany, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, refundReservation, settleCredits, queryRaw };
 });
 
-vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
+vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, // #601: the delivery path ends by writing the job's canvas cards. Stubbed so these suites
+  // exercise the money path they are about, not a swallowed canvas error.
+  settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })) }));
 // import-time deps the reaper does not exercise:
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
