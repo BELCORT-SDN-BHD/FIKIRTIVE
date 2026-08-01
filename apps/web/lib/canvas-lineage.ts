@@ -120,6 +120,11 @@ export type CanvasLineageEdge = { id: string; source: string; target: string };
 export type CanvasNodeSourceFacts = {
   /** CanvasNode.sourceNodeId — the card this one was made from, OR its batch's layout anchor. */
   sourceNodeId?: string | null;
+  /**
+   * The server's answer, and the DIFFERENCE between "not asked" and "asked, nothing there":
+   * absent (`undefined`) = a card this browser just placed, with no server row to read yet;
+   * `null` = the server answered and had no record — including when the lineage read failed.
+   */
   lineage?: Pick<CanvasNodeLineage, "madeFromSource"> | null;
 };
 
@@ -134,13 +139,20 @@ export type CanvasLineageNode = CanvasNodeSourceFacts & { id: string };
  * each other's parent. The paid job settles it — the server record says whether the job was
  * conditioned on another card's output at all.
  *
- * A card the browser placed moments ago has no server record yet. There, this session's own
- * action is the proof: the browser sets `sourceNodeId` only for "Make video" / "More like this"
- * / an edited prompt, each of which sent that card's generation to the paid call.
+ * A card the browser placed moments ago has no server record yet — no `lineage` FIELD at all.
+ * There, this session's own action is the proof: the browser sets `sourceNodeId` only for
+ * "Make video" / "More like this" / an edited prompt, each of which sent that card's generation
+ * to the paid call.
+ *
+ * A `lineage` of `null` is a different thing entirely: the server answered and had nothing —
+ * no record, or a lineage read that came back empty. Absent proof is not proof, and this one
+ * column is also every batch sibling's layout anchor, so being optimistic there turns a single
+ * failed read into a whole batch drawn as a family tree. Say no (r3 review P2-2).
  */
 export function canvasNodeHasSource(node: CanvasNodeSourceFacts): boolean {
   if (!node.sourceNodeId) return false;
-  return node.lineage ? node.lineage.madeFromSource : true;
+  if (node.lineage === undefined) return true;
+  return node.lineage === null ? false : node.lineage.madeFromSource;
 }
 
 /**

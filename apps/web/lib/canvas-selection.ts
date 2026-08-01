@@ -90,9 +90,12 @@ export type CanvasMergeNode = {
  *
  * Two things must survive a reload, and they used to be one line apart:
  *
- *   1. A card still generating in THIS browser keeps its local copy — the server may not have
- *      its media yet, and replacing it would restart the "generating…" card the merchant is
- *      watching.
+ *   1. A card the server has not caught up with keeps its local copy. A row that still says
+ *      "pending" and carries no media is BEHIND the screen, never ahead of it — the card is
+ *      either still generating in this browser (replacing it restarts the "generating…" the
+ *      merchant is watching) or has already finished here, and the read simply left the server
+ *      before it settled. Reads do not come back in the order they were sent, so that older
+ *      answer used to land last and put a finished card back to "generating" (r3 review P2-1).
  *   2. Whatever the merchant has SELECTED stays selected. The server row carries no selection,
  *      so taking it wholesale silently deselected everything — and the board reloads on a timer
  *      while anything is generating, so a multi-card selection could disappear between picking
@@ -108,7 +111,9 @@ export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
   const merged = incoming.map((node) => {
     const old = previousById.get(node.id);
     if (!old) return node;
-    if (old.data.status === "pending" && node.data.status === "pending" && !node.data.url) return old;
+    const serverBehind = node.data.status === "pending" && !node.data.url;
+    const knownHere = old.data.status === "pending" || old.data.status === "done" || !!old.data.url;
+    if (serverBehind && knownHere) return old;
     return old.selected === node.selected ? node : { ...node, selected: old.selected };
   });
   const mergedIds = new Set(merged.map((node) => node.id));

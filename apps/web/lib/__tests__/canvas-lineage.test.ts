@@ -117,9 +117,17 @@ describe("canvasNodeHasSource", () => {
   });
 
   it("trusts this session's own source action before the server record arrives", () => {
-    // A just-placed 'Make video' card has no server record yet, but the browser only sets
+    // A just-placed 'Make video' card has no record FIELD at all, and the browser only sets
     // sourceNodeId when it passed that card's generation to the paid call.
-    expect(canvasNodeHasSource({ sourceNodeId: "img", lineage: null })).toBe(true);
+    expect(canvasNodeHasSource({ sourceNodeId: "img" })).toBe(true);
+    expect(canvasNodeHasSource({ sourceNodeId: "img", lineage: undefined })).toBe(true);
+  });
+
+  it("claims no parent when the server answered and had no record to give", () => {
+    // An explicit null is the SERVER speaking: no record, or a lineage read that failed. Since
+    // sourceNodeId doubles as a batch's layout anchor, believing it here turns one bad read into
+    // a whole batch of parentage the merchant never created. Say nothing instead.
+    expect(canvasNodeHasSource({ sourceNodeId: "primary", lineage: null })).toBe(false);
   });
 });
 
@@ -187,6 +195,24 @@ describe("buildCanvasLineageEdges", () => {
     }));
 
     expect(buildCanvasLineageEdges([{ id: "a", sourceNodeId: null }, ...batch])).toEqual([]);
+  });
+
+  it("draws nothing at all when the batch's records could not be read", () => {
+    // Same four images from one press, but the server's lineage read came back empty for every
+    // row. Each row still carries the batch's layout anchor in sourceNodeId, so an optimistic
+    // reading of a null record invents a family tree out of one failed read (r2 review P2-2).
+    const batch = ["b", "c", "d"].map((id) => ({ id, sourceNodeId: "a", lineage: null }));
+
+    expect(buildCanvasLineageEdges([{ id: "a", sourceNodeId: null }, ...batch])).toEqual([]);
+  });
+
+  it("still joins a card this browser just made, before any record exists", () => {
+    // "Make video" places the new card with no lineage FIELD; the line has to appear now, not
+    // after the next board read (r2 review: 完成即见谱系).
+    expect(buildCanvasLineageEdges([
+      { id: "img", sourceNodeId: null },
+      { id: "vid", sourceNodeId: "img" },
+    ])).toEqual([{ id: "lineage-img-vid", source: "img", target: "vid" }]);
   });
 
   it("never draws a line to a card that is not on the board", () => {

@@ -53,10 +53,13 @@ import {
 type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
 const CANVAS_CARD_SIDE = 320;
 /**
- * How long a finished card waits before the board is re-read for its traceability record.
+ * How long a finished JOB waits before the board is re-read for its traceability record.
  *
- * A batch settles card by card (the browser places each sibling in turn), so each completion
- * restarts this timer and the whole batch costs ONE server read instead of one per card.
+ * The card's record is written server-side while the card is being placed, so this short wait
+ * lets that settle. It also coalesces two jobs finishing together into one read. It is NOT what
+ * makes a batch cost one read — that is the job-level signal (`onBatchSettled`) this timer hangs
+ * off; a batch places its cards a server round trip apart, which is longer than any window worth
+ * waiting, so per-card triggering read the board once per card (r3 review P2-1).
  */
 const LINEAGE_RELOAD_COALESCE_MS = 600;
 type CanvasMediaSize = Required<Pick<CanvasMediaDimensions, "width" | "height">>;
@@ -136,6 +139,8 @@ export default function FlowCanvas({
   const referenceHandlerRef = useRef<typeof onReferenceInChat>(onReferenceInChat);
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
+  // Counts board reads so a late answer from an overtaken read can be recognised and dropped.
+  const reloadSeqRef = useRef(0);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
@@ -236,7 +241,7 @@ export default function FlowCanvas({
   }, []);
 
   /**
-   * A card just finished in this browser — read the board once so it carries its record.
+   * A paid job just finished in this browser — read the board once so its cards carry their record.
    *
    * The client poll knows the media URL, and nothing else: when it was made, what it cost, what
    * settings produced it and what it was made from all live on the server. Until this ran, a
@@ -244,8 +249,8 @@ export default function FlowCanvas({
    * record for this card", and stayed that way — the only thing that reloaded the board was the
    * in-flight poller, and finishing is exactly what stops it (#547 B4 review P1-2).
    *
-   * Coalesced (see LINEAGE_RELOAD_COALESCE_MS): a batch of four reads the board once, after its
-   * last card lands.
+   * Driven by the JOB, not by each card: `useCanvasGen` calls this once, after the last sibling
+   * of a batch is placed, so a batch of four costs one read no matter how slow the placement was.
    */
   const scheduleLineageReload = useCallback(() => {
     if (lineageReloadTimerRef.current) window.clearTimeout(lineageReloadTimerRef.current);
@@ -478,9 +483,6 @@ export default function FlowCanvas({
 
   // onResolve: store generationId in nodeDataRef AND in node.data
   const onResolve = useCallback((id: string, url: string | null, status: string, generationId?: string) => {
-    // A finished card's record only exists server-side, so fetch it now rather than leaving the
-    // merchant with an empty Info panel on the card they just watched appear.
-    if (status === "done" && url) scheduleLineageReload();
     if (generationId) {
       nodeDataRef.current[id] = { ...nodeDataRef.current[id], generationId, pos: nodeDataRef.current[id]?.pos ?? { x: 0, y: 0 } };
     }
@@ -503,7 +505,7 @@ export default function FlowCanvas({
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, scheduleLineageReload]);
+  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat]);
 
   const onNewNode = useCallback(
     (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string; sourceNodeId?: string }) => {
@@ -540,7 +542,16 @@ export default function FlowCanvas({
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError, onBalanceRefresh);
+  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(
+    projectId,
+    onNewNode,
+    onResolve,
+    activeThreadId,
+    onGenError,
+    onBalanceRefresh,
+    undefined,
+    scheduleLineageReload,
+  );
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
   }, [quoteCosts]);
@@ -848,9 +859,15 @@ export default function FlowCanvas({
   // for the active thread's results (display-only, no spend). The default path is
   // the original listCanvasNodes (URLs stay client-resolved via generation polls).
   const reload = useCallback(async () => {
+    // Which read this is. Two things ask for the board — a job finishing and the 5-second
+    // in-flight poller — and neither waits for the other, so answers can arrive out of order.
+    // A read that a NEWER read has already overtaken describes the board as it was before that
+    // newer read: applying it puts back what the newer answer just corrected (r3 review P2-1).
+    const seq = ++reloadSeqRef.current;
     const rows = skin === "gb"
       ? await syncOttoCanvasNodes(projectId)
       : await listCanvasNodes(projectId);
+    if (seq !== reloadSeqRef.current) return;
     if ("error" in (rows as object)) return;
     const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
@@ -1031,11 +1048,15 @@ export default function FlowCanvas({
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
   // evolved from, are joined by a line instead of sitting next to each other unexplained.
   // A batch's cards are NOT joined: they share a layout anchor, not a parent (review P2-2).
+  // `lineage` is passed through EXACTLY as it is: a card the board read carries an explicit null
+  // when the server had no record (say nothing), while a card this browser just placed has no
+  // lineage field at all (this session's own action vouches for it). Flattening the two — which
+  // `?? null` did — is the difference between drawing nothing and drawing a whole false batch.
   const lineageEdges: Edge[] = buildCanvasLineageEdges(
     visibleNodes.map((n) => ({
       id: n.id,
       sourceNodeId: (n.sourceNodeId ?? (n.data as { sourceNodeId?: string | null })?.sourceNodeId) ?? null,
-      lineage: (n.data as { lineage?: CanvasNodeLineage | null })?.lineage ?? null,
+      lineage: (n.data as { lineage?: CanvasNodeLineage | null })?.lineage,
     })),
   ).map((edge) => ({
     ...edge,

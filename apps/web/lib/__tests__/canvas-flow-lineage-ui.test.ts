@@ -25,10 +25,19 @@ import type { CanvasNodeLineage } from "@/lib/canvas-lineage";
 
 type FlowProps = {
   nodes: Array<{ id: string; type?: string; selected?: boolean; data: Record<string, unknown> }>;
-  edges: Array<{ id: string }>;
+  edges: Array<{ id: string; source: string; target: string }>;
   nodeTypes: Record<string, (props: Record<string, unknown>) => ReactElement | null>;
   onNodesChange: (changes: unknown[]) => void;
   onInit?: (instance: Record<string, unknown>) => void;
+};
+
+type NewNode = {
+  id: string;
+  type: "image" | "video";
+  pos: { x: number; y: number; w: number; h: number };
+  status: string;
+  prompt: string;
+  sourceNodeId?: string;
 };
 
 const mocks = vi.hoisted(() => ({
@@ -40,7 +49,9 @@ const mocks = vi.hoisted(() => ({
   updateTextNode: vi.fn(),
   uploadReference: vi.fn(),
   quoteCosts: vi.fn(),
+  onNewNode: { current: null as null | ((node: NewNode) => void) },
   onResolve: { current: null as null | ((id: string, url: string | null, status: string, generationId?: string) => void) },
+  onBatchSettled: { current: null as null | (() => void) },
   flow: { current: null as null | FlowProps },
 }));
 
@@ -64,10 +75,17 @@ vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }))
 vi.mock("@/components/canvas/useCanvasGen", () => ({
   useCanvasGen: (
     _projectId: string,
-    _onNode: unknown,
+    onNode: (node: NewNode) => void,
     onResolve: (id: string, url: string | null, status: string, generationId?: string) => void,
+    _activeThreadId?: string | null,
+    _onError?: unknown,
+    _onBalanceRefresh?: unknown,
+    _onProgress?: unknown,
+    onBatchSettled?: () => void,
   ) => {
+    mocks.onNewNode.current = onNode;
     mocks.onResolve.current = onResolve;
+    mocks.onBatchSettled.current = onBatchSettled ?? null;
     return {
       generateImage: vi.fn(),
       animate: vi.fn(),
@@ -178,7 +196,9 @@ afterEach(async () => {
   container?.remove();
   root = null;
   container = null;
+  mocks.onNewNode.current = null;
   mocks.onResolve.current = null;
+  mocks.onBatchSettled.current = null;
   mocks.flow.current = null;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -224,6 +244,7 @@ describe("a card that finishes in front of the merchant (review P1-2)", () => {
     mocks.boardRead.mockResolvedValue([settledRow("n1")]);
     await act(async () => {
       mocks.onResolve.current!("n1", "https://cdn.example/1.png", "done", "gen-1");
+      mocks.onBatchSettled.current!();
     });
     await settleBoard();
 
@@ -238,18 +259,27 @@ describe("a card that finishes in front of the merchant (review P1-2)", () => {
     expect(panel).not.toContain("No generation record for this card");
   });
 
-  it("reads the board once for a whole batch, not once per card", async () => {
+  it("reads the board once for a whole batch, however slowly the cards land", async () => {
     mocks.boardRead.mockResolvedValue([pendingRow("n1")]);
     await renderBoard();
     mocks.boardRead.mockResolvedValue([settledRow("n1"), settledRow("n2", 1)]);
 
-    // Four siblings land one after another as the browser places them.
+    // Four siblings are placed one at a time, each behind its own server round trip. Real trips
+    // are slower than the coalescing window, so a per-card trigger restarted its timer too late
+    // to coalesce anything and read the whole board once per card (r3 review P2-1).
     await act(async () => {
       for (const [index, id] of ["n1", "n2", "n3", "n4"].entries()) {
         mocks.onResolve.current!(id, `https://cdn.example/${index + 1}.png`, "done", `gen-${index + 1}`);
-        vi.advanceTimersByTime(120);
+        vi.advanceTimersByTime(700);
+        await Promise.resolve();
       }
     });
+    await act(async () => { await Promise.resolve(); });
+
+    // Cards landing is not what asks for the record — the BATCH being finished is.
+    expect(mocks.boardRead).toHaveBeenCalledTimes(1);
+
+    await act(async () => { mocks.onBatchSettled.current!(); });
     await settleBoard();
 
     expect(mocks.boardRead).toHaveBeenCalledTimes(2);
@@ -266,6 +296,87 @@ describe("a card that finishes in front of the merchant (review P1-2)", () => {
   });
 });
 
+/**
+ * The board is read from two places at once — a batch finishing, and the 5-second in-flight
+ * poller — and neither waited for the other. Server reads do not come back in the order they
+ * were sent, so a read that LEFT before a card settled could land after it and describe the
+ * board as it was BEFORE: a finished card back to "generating", a card's record back to
+ * "No generation record for this card" (r3 review P2-1).
+ */
+describe("two board reads racing each other (review P2-1 · r3)", () => {
+  type Deferred = { promise: Promise<unknown>; settle: (rows: unknown) => void };
+  const deferred = (): Deferred => {
+    let settle!: (rows: unknown) => void;
+    const promise = new Promise<unknown>((resolve) => { settle = resolve; });
+    return { promise, settle };
+  };
+
+  it("keeps the newer answer when the older one comes back last", async () => {
+    // One card still generating, so the in-flight poller is running.
+    mocks.boardRead.mockResolvedValue([pendingRow("n1")]);
+    await renderBoard();
+
+    const older = deferred();
+    const newer = deferred();
+    mocks.boardRead.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    expect(mocks.boardRead).toHaveBeenCalledTimes(3);
+
+    // The newer read answers first, with the finished card and its record. The older read
+    // answers afterwards, still carrying the row from before the record was written.
+    await act(async () => { newer.settle([settledRow("n1")]); await Promise.resolve(); });
+    await act(async () => { older.settle([{ ...settledRow("n1"), lineage: null }]); await Promise.resolve(); });
+    await settleBoard();
+
+    select(["n1"]);
+    await act(async () => { infoButtons()[0]!.click(); });
+
+    const panel = container!.textContent ?? "";
+    expect(panel).toContain("Jul 30, 2:15 PM");
+    expect(panel).not.toContain("No generation record for this card");
+  });
+});
+
+/**
+ * The lines between cards, when the server's record is missing rather than absent.
+ *
+ * CanvasNode.sourceNodeId is also a batch's LAYOUT ANCHOR, so it can never be believed on its
+ * own. A card the browser placed a moment ago has no record field at all and this session's own
+ * action vouches for it; a server row that came back with a null record is the server saying
+ * nothing, and one failed lineage read must not turn an ordinary batch into a family tree.
+ */
+describe("lines between cards when a record is missing (review P2-2 · r3)", () => {
+  it("draws no parentage for a batch whose records the server did not return", async () => {
+    mocks.boardRead.mockResolvedValue([
+      settledRow("anchor"),
+      { ...settledRow("sib", 1), sourceNodeId: "anchor", lineage: null },
+    ]);
+    await renderBoard();
+
+    expect(mocks.flow.current!.edges).toEqual([]);
+  });
+
+  it("still joins a card this browser just made from another one", async () => {
+    mocks.boardRead.mockResolvedValue([settledRow("src")]);
+    await renderBoard();
+
+    await act(async () => {
+      mocks.onNewNode.current!({
+        id: "vid",
+        type: "video",
+        pos: { x: 400, y: 0, w: 320, h: 320 },
+        status: "pending",
+        prompt: "make it move",
+        sourceNodeId: "src",
+      });
+    });
+
+    expect(mocks.flow.current!.edges.map((edge) => [edge.source, edge.target])).toEqual([["src", "vid"]]);
+  });
+});
+
 describe("a board reload under the merchant's hands (review P2-1)", () => {
   it("keeps every card they had selected selected", async () => {
     mocks.boardRead.mockResolvedValue([settledRow("n1"), settledRow("n2", 1)]);
@@ -274,9 +385,10 @@ describe("a board reload under the merchant's hands (review P2-1)", () => {
     select(["n1", "n2"]);
     expect(mocks.flow.current!.nodes.filter((n) => n.selected).map((n) => n.id)).toEqual(["n1", "n2"]);
 
-    // Anything finishing re-reads the board; so does the in-flight poller, on a timer.
+    // A job finishing re-reads the board; so does the in-flight poller, on a timer.
     await act(async () => {
       mocks.onResolve.current!("n1", "https://cdn.example/1.png", "done", "gen-1");
+      mocks.onBatchSettled.current!();
     });
     await settleBoard();
 

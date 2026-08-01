@@ -136,6 +136,18 @@ describe("mergeReloadedCanvasNodes", () => {
     expect(merged[0]).toBe(local);
   });
 
+  it("never drags a finished card back to 'generating' on an older read", () => {
+    // The board is read on a timer. A read that LEFT the server before the card settled still
+    // describes it as pending with no media, and it can land after the browser's own poll has
+    // already put the finished image on screen. Taking that row wholesale made a card the
+    // merchant had just watched appear start spinning again (r3 review P2-1).
+    const finishedHere = { ...server("a"), selected: true };
+
+    const merged = mergeReloadedCanvasNodes([finishedHere], [server("a", { status: "pending", url: null })]);
+
+    expect(merged[0]).toBe(finishedHere);
+  });
+
   it("keeps a card the server read has not caught up with yet", () => {
     const merged = mergeReloadedCanvasNodes([server("local-only")], [server("a")]);
 
