@@ -21,6 +21,8 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
      *  the video itself (#604 · spec #599 D6). */
     onSendToOtto?: () => void;
+    /** How many cards are picked on the board right now (#604 r2 P2②). Supplied by FlowCanvas. */
+    selectedCount?: number;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     /** Opens the video confirm dialog seeded with this prompt — the paid video path keeps
@@ -46,16 +48,20 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   // starting text, not an empty box the merchant has to retype.
   const [remakePrompt, setRemakePrompt] = useState(originalPrompt);
   const [promptSeed, setPromptSeed] = useState(originalPrompt);
-  const [wasSelected, setWasSelected] = useState(selected);
+  // Same rule as the image card: a card's own bar is on screen only while that card is the
+  // only one picked, so neighbouring cards' bars can never land on top of each other and the
+  // merchant is never left guessing which card a button acts on (#604 r2 P2②).
+  const soloSelected = selected && (d.selectedCount ?? 1) === 1;
+  const [wasSolo, setWasSolo] = useState(soloSelected);
   if (promptSeed !== originalPrompt) {
     setPromptSeed(originalPrompt);
     setRemakePrompt(originalPrompt);
   }
-  // The info panel belongs to the selected card; deselecting closes it. Render-phase
+  // The info panel belongs to the single picked card; anything else closes it. Render-phase
   // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
-  if (wasSelected !== selected) {
-    setWasSelected(selected);
-    if (!selected) setInfoOpen(false);
+  if (wasSolo !== soloSelected) {
+    setWasSolo(soloSelected);
+    if (!soloSelected) setInfoOpen(false);
   }
   const reportMediaSize = (el: HTMLVideoElement) => {
     d.onMediaSize?.({ width: el.videoWidth, height: el.videoHeight });
@@ -65,7 +71,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       <NodeResize gb={gb} selected={selected} locked={writeLock.locked} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
-        isVisible={selected}
+        isVisible={soloSelected}
         position={Position.Top}
         align="start"
         offset={22}
@@ -137,7 +143,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       {infoOpen && (
         <NodeToolbar
           className="nodrag nopan"
-          isVisible={selected}
+          isVisible={soloSelected}
           position={Position.Right}
           align="start"
           offset={12}
@@ -151,7 +157,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       {canRemake && (
         <NodeToolbar
           className="nodrag nopan"
-          isVisible={selected}
+          isVisible={soloSelected}
           position={Position.Bottom}
           align="center"
           offset={12}

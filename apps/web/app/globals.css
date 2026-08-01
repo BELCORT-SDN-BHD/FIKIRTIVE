@@ -697,12 +697,27 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
  * Replaces the legacy persistent promptbar: the prompt composer is revealed
  * only when Generate is clicked (.cv-composer-pop, which reuses .al-promptbar
  * styling). Generate is INK — coral stays agent-only. */
-.gb .cv-toolbar {
+/* One bottom-anchored column, not three things competing for the same corner: the
+ * prompt composer on top, the "N selected" bar in its own row, the tool row at the
+ * bottom. They are normal flow inside this column, so no combination of them can
+ * cover another — before #604 r2 the selection bar shared `bottom: 20px` with the
+ * tool row and simply sat on top of it, and the tools underneath stopped being
+ * clickable. Transparent between the rows so the board itself stays reachable. */
+.gb .cv-bottom-stack {
   position: absolute;
   left: 50%;
   bottom: 20px;
   transform: translateX(-50%);
   z-index: 5;
+  width: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.gb .cv-bottom-stack > * { pointer-events: auto; }
+.gb .cv-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -711,6 +726,21 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
   padding: 6px;
+}
+/* What a multi-card pick can do (#547 B6) — its own row above the tool row (#604 r2). */
+.gb .cv-batchbar {
+  align-self: flex-end;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
 }
 .gb .cv-tb {
   width: 36px;

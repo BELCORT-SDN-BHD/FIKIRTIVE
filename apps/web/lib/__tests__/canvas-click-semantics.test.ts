@@ -105,8 +105,8 @@ vi.mock("@xyflow/react", async (importOriginal) => {
     ReactFlow: FakeReactFlow,
     Background: () => null,
     Handle: () => null,
-    NodeToolbar: ({ isVisible, children }: { isVisible?: boolean; children?: unknown }) =>
-      isVisible === false ? null : createElement("div", null, children as ReactElement),
+    NodeToolbar: ({ isVisible, className, children }: { isVisible?: boolean; className?: string; children?: unknown }) =>
+      isVisible === false ? null : createElement("div", { className }, children as ReactElement),
     NodeResizer: () => null,
   };
 });
@@ -179,6 +179,10 @@ async function renderBoard(props: Record<string, unknown> = {}): Promise<void> {
 
 function select(ids: string[]): void {
   act(() => mocks.flow.current!.onNodesChange(ids.map((id) => ({ id, type: "select" as const, selected: true }))));
+}
+
+function deselect(ids: string[]): void {
+  act(() => mocks.flow.current!.onNodesChange(ids.map((id) => ({ id, type: "select" as const, selected: false }))));
 }
 
 /** The card's body — the picture itself, which is what a merchant clicks on. */
@@ -305,5 +309,96 @@ describe("sending cards to Otto is its own button (#604 · D6)", () => {
     expect(mocks.toastError).not.toHaveBeenCalled();
     expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
     expect(String(mocks.toastMessage.mock.calls[0]![0])).toContain("Otto");
+  });
+});
+
+/**
+ * 判官 r1 P2①:多选时那条「2 selected」的条压在画布工具条上,右侧的缩放/适配/手型/框选点不到。
+ * 两者原来共用同一个 `bottom: 20px`,靠 z-index 分胜负 —— 谁更宽谁就盖住谁。
+ *
+ * jsdom 没有排版引擎,量不出矩形,所以这里验的是「为什么不可能再压上」:两条都是同一根纵向
+ * 栈里的兄弟行,浏览器按正常流一上一下排,宽度、换行、z-index 都改变不了这一点。真几何断言
+ * (两矩形不相交)在走查里对真浏览器做,读数写进证据。
+ */
+describe("the bars along the bottom stay out of each other's way (#604 r2 P2①)", () => {
+  it("gives the multi-card bar its own row above the tools instead of the same slot", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1"), boardRow("n2", { x: 360 })]);
+    await renderBoard({ onReferenceInChat: vi.fn() });
+
+    select(["n1", "n2"]);
+    const batchBar = container!.querySelector<HTMLElement>('[aria-label="Selected cards"]');
+    const tools = container!.querySelector<HTMLElement>('[aria-label="Canvas tools"]');
+    expect(batchBar).not.toBeNull();
+    expect(tools).not.toBeNull();
+
+    // Same parent, and that parent is the bottom column.
+    const stack = tools!.parentElement!;
+    expect(stack.className).toContain("cv-bottom-stack");
+    expect(batchBar!.parentElement).toBe(stack);
+    // Order in the column: the selection bar sits above the tool row.
+    const rows = [...stack.children];
+    expect(rows.indexOf(batchBar!)).toBeLessThan(rows.indexOf(tools!));
+    // And neither one pins itself to the board's bottom edge any more, so neither can
+    // be dragged back on top of the other by a wider label or a higher z-index.
+    expect(batchBar!.style.position).toBe("");
+    expect(batchBar!.style.bottom).toBe("");
+    expect(batchBar!.style.zIndex).toBe("");
+  });
+
+  it("keeps the composer in the same column, so three open bars still cannot overlap", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1"), boardRow("n2", { x: 360 })]);
+    await renderBoard({ onReferenceInChat: vi.fn() });
+
+    select(["n1", "n2"]);
+    // The tool row's image button opens the prompt composer.
+    const openComposer = container!.querySelector<HTMLButtonElement>('button[aria-label="Generate image"]');
+    expect(openComposer).not.toBeNull();
+    await act(async () => { openComposer!.click(); });
+
+    const stack = container!.querySelector<HTMLElement>(".cv-bottom-stack")!;
+    const composer = stack.querySelector<HTMLElement>(".cv-composer-pop");
+    expect(composer).not.toBeNull();
+    expect(composer!.parentElement).toBe(stack);
+    expect(composer!.style.position).toBe("");
+    expect(stack.children).toHaveLength(3);
+  });
+});
+
+/**
+ * 判官 r1 P2②:多选相邻两卡时,两张卡各自的工具条重叠在一起,商家分不清按钮属于哪张卡 ——
+ * 而且每颗「Send to Otto」按下去交的都是整个选中集,不是那一张。
+ *
+ * 现在的规矩只有一条:卡片自己的工具条只在「只选中它一张」时出现;选了好几张,批量条就是
+ * 唯一的操作台。相邻卡的工具条因此不可能再重叠。
+ */
+describe("with several cards picked, only the batch bar acts on them (#604 r2 P2②)", () => {
+  it("takes the per-card toolbars off the board, so neighbours cannot overlap", async () => {
+    mocks.boardRead.mockResolvedValue([
+      boardRow("n1"),
+      boardRow("n2", { x: 360 }),
+      boardRow("v1", { type: "video", x: 720, url: "https://cdn.example/v1.mp4" }),
+    ]);
+    await renderBoard({ onReferenceInChat: vi.fn() });
+
+    select(["n1", "n2", "v1"]);
+
+    expect(container!.querySelectorAll(".cv-node-toolbar")).toHaveLength(0);
+    const send = buttonsLabelled(SEND_TO_OTTO);
+    expect(send).toHaveLength(1);
+    expect(send[0]!.closest('[aria-label="Selected cards"]')).not.toBeNull();
+  });
+
+  it("hands the card its own toolbar back the moment it is the only one picked", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1"), boardRow("n2", { x: 360 })]);
+    await renderBoard({ onReferenceInChat: vi.fn() });
+
+    select(["n1", "n2"]);
+    expect(container!.querySelectorAll(".cv-node-toolbar")).toHaveLength(0);
+
+    deselect(["n2"]);
+    const toolbars = container!.querySelectorAll(".cv-node-toolbar");
+    expect(toolbars).toHaveLength(1);
+    expect(toolbars[0]!.closest("[data-node]")!.getAttribute("data-node")).toBe("n1");
+    expect(buttonsLabelled(SEND_TO_OTTO)).toHaveLength(1);
   });
 });

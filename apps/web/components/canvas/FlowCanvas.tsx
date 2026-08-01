@@ -52,6 +52,14 @@ import {
 
 type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
 const CANVAS_CARD_SIDE = 320;
+/** What a card calls itself when it takes keyboard focus (#604 r2 P3). */
+function canvasNodeAriaLabel(n: { type?: string; data?: unknown }): string {
+  const kind = n.type === "video" ? "Video card" : n.type === "text" ? "Text card" : "Image card";
+  const d = n.data as { prompt?: string | null; text?: string | null } | undefined;
+  const said = (d?.prompt ?? d?.text ?? "").trim();
+  if (!said) return kind;
+  return `${kind}: ${said.length > 60 ? `${said.slice(0, 60)}…` : said}`;
+}
 /**
  * How long a finished JOB waits before the board is re-read for its traceability record.
  *
@@ -1054,12 +1062,22 @@ export default function FlowCanvas({
   const evolveCostHint = genCostHint(costQuote?.imageCredits);
   const remakeCostHint = genCostHint(costQuote?.videoCredits);
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
-  const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
+  const nodesOnBoard = filterNodesByConvo(nodes, activeThreadId, filterToConvo);
+  // How many cards are picked right now. A card's own toolbar is about THAT card, so it only
+  // appears while exactly one is picked: with several picked, neighbouring cards' toolbars
+  // landed on top of each other and there was no telling which card a button would act on
+  // (#604 r2 P2②). For a multi-card pick the batch bar below is the one place to act.
+  const selectedCount = nodesOnBoard.filter((n) => n.selected === true).length;
+  const visibleNodes: CanvasFlowNode[] = nodesOnBoard.map((n) => ({
     ...n,
+    // React Flow already puts every card in the tab order and picks it up on Enter, but with
+    // no name a card announced itself as an unnamed group — the merchant heard nothing about
+    // WHICH card had focus (#604 r2 P3). Says what it is, and what it was asked for.
+    ariaLabel: canvasNodeAriaLabel(n),
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
+      ? { ...withNodeActionLock(n.data), selectedCount, onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), onRemake: handleVideoRemake, remakeCostHint }
+        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint }
         : withNodeActionLock(n.data),
   }));
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
@@ -1179,19 +1197,22 @@ export default function FlowCanvas({
         />
       )}
       {skin === "gb" ? (
-        <>
+        // Every bottom-anchored control lives in ONE column (#604 r2): composer, then the
+        // multi-card bar, then the tool row. Stacked rows cannot cover each other, which
+        // is exactly what the old "two bars, same bottom: 20px" pair did.
+        <div className="cv-bottom-stack">
           {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
-              existing handleGenerate spend path unchanged; positioned above the bar. */}
+              existing handleGenerate spend path unchanged; sits on top of the stack. */}
           {composerOpen && !directToolsLocked && (
             <form
               ref={composerFormRef}
               className="al-promptbar cv-composer-pop"
               // Fixed 520px used to get clipped by the host's overflow:hidden whenever
               // the canvas pane shrank below that (narrow chat pane + nav rail at
-              // 1024–1279px, #513). maxWidth caps it to the host's own width minus a
-              // 16px gutter on each side, so it always stays inside — the fee note and
-              // close button are never cut off.
-              style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520, maxWidth: "calc(100% - 32px)" }}
+              // 1024–1279px, #513). maxWidth caps it to the stack's own width, which is
+              // already inset from the host, so the fee note and close button are never
+              // cut off.
+              style={{ width: 520, maxWidth: "100%" }}
               onSubmit={(e) => { e.preventDefault(); void handleGenerate(); }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
@@ -1241,30 +1262,11 @@ export default function FlowCanvas({
           {/* B6: what to do with several cards at once. Appears only when more than one card
               is selected, so the single-card toolbar is untouched. */}
           {selection.count > 1 && !directToolsLocked && (
-            <div
-              role="toolbar"
-              aria-label="Selected cards"
-              style={{
-                position: "absolute",
-                right: 20,
-                bottom: 20,
-                zIndex: 6,
-                display: "flex",
-                alignItems: "center",
-                // Same cap the tool row already carries (#513): the canvas pane can shrink below
-                // this bar's natural width, and without a cap the host's overflow:hidden simply
-                // cuts the last button off. Added here because "Send to Otto" widened the bar.
-                flexWrap: "wrap",
-                justifyContent: "flex-end",
-                maxWidth: "calc(100% - 40px)",
-                gap: 8,
-                padding: "8px 12px",
-                borderRadius: 14,
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                boxShadow: "0 8px 24px rgba(20, 20, 24, 0.12)",
-              }}
-            >
+            // Its own row in the stack. It used to be pinned to the same bottom edge as the
+            // tool row with a higher z-index, so as soon as it grew it covered the zoom/fit/
+            // hand/select tools and they stopped being clickable (#604 r2 P2①). The row still
+            // wraps rather than getting clipped when the pane is narrow (#513).
+            <div className="cv-batchbar" role="toolbar" aria-label="Selected cards">
               <span className="text-[0.8125rem]" style={{ whiteSpace: "nowrap" }}>{selection.count} selected</span>
               {/* D6: the whole picked set goes over to Otto together, one reference each, when
                   the merchant asks for it — never as a side effect of clicking a card (#604). */}
@@ -1305,8 +1307,9 @@ export default function FlowCanvas({
               can shrink below its natural row width (narrow chat pane + nav rail at
               1024–1279px, #513/#522) — without a cap it just grows past the host and
               gets clipped by the host's overflow:hidden. maxWidth + flexWrap here wrap
-              it to a second row instead of clipping it. */}
-          <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools" style={{ flexWrap: "wrap", justifyContent: "center", maxWidth: "calc(100% - 24px)" }}>
+              it to a second row instead of clipping it; the cap is the stack's width,
+              which is already inset from the host. */}
+          <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools" style={{ flexWrap: "wrap", justifyContent: "center", maxWidth: "100%" }}>
             <button
               type="button"
               className="cv-tb"
@@ -1385,7 +1388,7 @@ export default function FlowCanvas({
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
             </button>
           </div>
-        </>
+        </div>
       ) : directToolsLocked ? (
         <div
           className="al-promptbar"

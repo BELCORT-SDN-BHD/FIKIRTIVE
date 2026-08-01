@@ -35,6 +35,8 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
      *  the picture itself (#604 · spec #599 D6). */
     onSendToOtto?: () => void;
+    /** How many cards are picked on the board right now (#604 r2 P2②). Supplied by FlowCanvas. */
+    selectedCount?: number;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
@@ -50,16 +52,21 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   const [evolvePrompt, setEvolvePrompt] = useState(originalPrompt);
   const [promptSeed, setPromptSeed] = useState(originalPrompt);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [wasSelected, setWasSelected] = useState(selected);
+  // This card's own bar belongs to THIS card, so it is only on screen while this card is the
+  // only one picked. With two neighbouring cards picked, the two bars used to overlap and the
+  // merchant could not tell which card a button belonged to (#604 r2 P2②) — with several
+  // picked, the board's "N selected" bar is the one place to act on them.
+  const soloSelected = selected && (d.selectedCount ?? 1) === 1;
+  const [wasSolo, setWasSolo] = useState(soloSelected);
   if (promptSeed !== originalPrompt) {
     setPromptSeed(originalPrompt);
     setEvolvePrompt(originalPrompt);
   }
-  // The info panel belongs to the selected card; deselecting closes it. Render-phase
+  // The info panel belongs to the single picked card; anything else closes it. Render-phase
   // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
-  if (wasSelected !== selected) {
-    setWasSelected(selected);
-    if (!selected) setInfoOpen(false);
+  if (wasSolo !== soloSelected) {
+    setWasSolo(soloSelected);
+    if (!soloSelected) setInfoOpen(false);
   }
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const actionable = imageNodeActionable(d);
@@ -72,7 +79,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       <NodeResize gb={d.skin === "gb"} selected={selected} locked={writeLock.locked} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
-        isVisible={selected}
+        isVisible={soloSelected}
         position={Position.Top}
         align="start"
         offset={22}
@@ -159,7 +166,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       {infoOpen && (
         <NodeToolbar
           className="nodrag nopan"
-          isVisible={selected}
+          isVisible={soloSelected}
           position={Position.Right}
           align="start"
           offset={12}
@@ -173,7 +180,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       {canEvolve && (
         <NodeToolbar
           className="nodrag nopan"
-          isVisible={selected}
+          isVisible={soloSelected}
           position={Position.Bottom}
           align="center"
           offset={12}
