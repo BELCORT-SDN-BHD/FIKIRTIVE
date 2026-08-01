@@ -123,3 +123,6 @@ export {
   type PublishJobData,
 } from "./publish.js";
 export * from "./segment-rules.js";
+// 执行层真会做什么 —— 卡面文案(otto)与现役适配器请求体断言(generation)钉在同一份声明上。
+// 纯数据,无 node/network 依赖,可留在主 barrel。
+export { EXECUTED_SPEC } from "./executed-spec.js";

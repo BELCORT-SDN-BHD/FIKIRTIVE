@@ -11,9 +11,9 @@ import { chainedApprovalOf, type ChainedApproval } from "./approval-chain";
 import { runStateOfCard } from "@/lib/otto-status-helpers";
 import type { EntityDTO } from "@/lib/types";
 import type { CardState } from "@/lib/otto-inject-helpers";
-// The authoritative card contract, straight from the server package. Type-only, so it
-// is erased at build time and drags no server code into the client bundle.
-import type { CardPayload as ServerCardPayload } from "@fikirtive/otto";
+// The ONE contract layer: runtime parse + the ONE price-guarantee predicate. The render
+// gate and approve() both read this — they cannot disagree any more (#580 复审 r2 P1-1).
+import { guaranteedCredits, planCardGate, type OttoPlanCardPayload } from "./plan-card-contract";
 
 /** What a successful approve hands up. Carries the EXACT card it happened on plus the
  *  SERVER's own result — the parent never has to infer either from a closure or from a
@@ -49,120 +49,22 @@ export interface OttoPlanCardProps {
   onCancelled?: () => void;
 }
 
-/**
- * The GEN_CARD payload as the card reads it — **derived from the server contract, not
- * re-declared beside it** (#580 复审 r1 P1-1: a hand-kept copy plus an `as` cast let a
- * drifting contract and a malformed payload both sail past tsc and the tests).
- *
- * `import type` is erased at build time, so this costs the client bundle nothing.
- * Every field is optional because a durable card written before a field existed must
- * still render — but the field NAMES and their TYPES now come from `CardPayload`
- * itself, so the two cannot drift apart.
- */
-export type OttoPlanCardPayload = Partial<ServerCardPayload>;
-
 /** Fallback disclosure for a card that is flagged downgraded but predates the
  *  server-built note — silence is the one thing this state may never be. */
 export const DOWNGRADE_FALLBACK_NOTE =
   "Some of what you asked for isn't available here — the details above are what you'll get.";
 
-/** Shown instead of a plan when the durable payload can't be read as one. Never a
- *  blank card and never a guessed price: an unreadable plan is not approvable. */
+/** Shown instead of a plan when the durable payload can't be read as one, or carries no
+ *  price we can vouch for. Never a blank card and never a guessed price: a plan with no
+ *  guaranteed price is not approvable. */
 export const UNREADABLE_PLAN_NOTE =
   "I can't read this plan any more — ask me to put it together again and I'll make a fresh one.";
 
-/** Shown when SOME fields of an otherwise readable plan were malformed. The merchant
- *  is told the card is incomplete rather than being shown a confident half-truth. */
+/** Shown when SOME fields of an otherwise readable plan were malformed. The card is
+ *  incomplete, so it is disclosed AND withheld from approval — a card that admits it
+ *  didn't read itself fully must not be the one the merchant pays on (r2 P1-2). */
 export const PARTIAL_PLAN_NOTE =
-  "Some details of this plan didn't come through — what you see below is all I can vouch for.";
-
-/** A durable payload after runtime parsing at the DTO boundary. */
-export interface ParsedPlanCardPayload {
-  value: OttoPlanCardPayload;
-  /** Contract fields this card carried with the WRONG type — dropped rather than
-   *  rendered, and surfaced on the card. A silent drop is what #580 is about. */
-  malformedFields: string[];
-}
-
-function str(v: unknown): v is string {
-  return typeof v === "string";
-}
-function num(v: unknown): v is number {
-  return typeof v === "number" && Number.isFinite(v);
-}
-
-/**
- * Parse an unknown durable payload into the card's view of it — the runtime half of
- * the type alignment. The static type says what the server MAY send; this says what
- * this particular durable row ACTUALLY carries. Anything typed wrong is dropped into
- * `malformedFields` so the card can disclose it, never silently rendered.
- *
- * Returns null when the payload isn't an object at all — there is no plan to show.
- * Same structural-parse idiom as `asApprovalCardPayload` (no new dependency).
- */
-export function parsePlanCardPayload(raw: unknown): ParsedPlanCardPayload | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const p = raw as Record<string, unknown>;
-  const value: OttoPlanCardPayload = {};
-  const malformedFields: string[] = [];
-
-  /** Take `key` only when the durable value passes `ok`; otherwise record it. */
-  function take<K extends keyof OttoPlanCardPayload>(
-    key: K,
-    ok: (v: unknown) => boolean,
-    read: (v: unknown) => OttoPlanCardPayload[K],
-  ): void {
-    const v = p[key as string];
-    if (v === undefined || v === null) return;
-    if (!ok(v)) {
-      malformedFields.push(key as string);
-      return;
-    }
-    value[key] = read(v);
-  }
-
-  take("kind", (v) => v === "image" || v === "video", (v) => v as "image" | "video");
-  take("model", str, (v) => v as string);
-  take("reason", str, (v) => v as string);
-  take("structuredPrompt", str, (v) => v as string);
-  take("goal", str, (v) => v as string);
-  take("sourceGenerationId", str, (v) => v as string);
-  take("referenceVideoGenerationId", str, (v) => v as string);
-  take("downgradeNote", str, (v) => v as string);
-  take("downgraded", (v) => typeof v === "boolean", (v) => v as boolean);
-  take("estimatedPriceUsd", num, (v) => v as number);
-  take("estimatedCredits", num, (v) => v as number);
-  take("entityIds", (v) => Array.isArray(v) && v.every(str), (v) => v as string[]);
-  take(
-    "variantSel",
-    (v) => !!v && typeof v === "object" && !Array.isArray(v) && Object.values(v).every(str),
-    (v) => v as Record<string, string>,
-  );
-  // The spec line the merchant reads. Built ONCE, server-side, from what execution
-  // really honours — the card renders it verbatim and derives no spec of its own.
-  take("specChips", (v) => Array.isArray(v) && v.every(str), (v) => v as string[]);
-  take(
-    "params",
-    (v) => !!v && typeof v === "object" && !Array.isArray(v),
-    (v) => {
-      const q = v as Record<string, unknown>;
-      return {
-        ...(str(q.aspectRatio) ? { aspectRatio: q.aspectRatio } : {}),
-        ...(str(q.resolution) ? { resolution: q.resolution } : {}),
-        ...(num(q.durationSeconds) ? { durationSeconds: q.durationSeconds } : {}),
-        ...(typeof q.audio === "boolean" ? { audio: q.audio } : {}),
-        count: num(q.count) ? q.count : 1,
-      };
-    },
-  );
-  take(
-    "videoStep",
-    (v) => !!v && typeof v === "object" && num((v as Record<string, unknown>).estimatedCredits),
-    (v) => ({ estimatedCredits: (v as { estimatedCredits: number }).estimatedCredits }),
-  );
-
-  return { value, malformedFields };
-}
+  "Some details of this plan didn't come through, so I won't run it as it stands — ask me to put it together again and I'll make a fresh one.";
 
 /** The plan card — Otto's "Here's what I'll make" with the one total and the approve gate.
  *  Approve resumes the parked generate via ottoApprove (the metered spend path). */
@@ -178,10 +80,12 @@ export function OttoPlanCard({
   onRetry,
   onCancelled,
 }: OttoPlanCardProps) {
-  // Runtime parse at the DTO boundary — no `as` cast. A payload we can't read is shown
-  // as unreadable, never rendered as a confident plan (#580 复审 r1 P1-1).
-  const parsed = parsePlanCardPayload(payload);
-  const p: OttoPlanCardPayload = parsed?.value ?? {};
+  // ONE gate for this card: runtime parse at the DTO boundary (no `as` cast) plus the
+  // ONE price-guarantee predicate. Everything below — what renders, and whether approve()
+  // may spend — reads this same object, so the display and the spend can't disagree
+  // (#580 复审 r1 P1-1 / r2 P1-1).
+  const gate = planCardGate(payload);
+  const p: OttoPlanCardPayload = gate.value;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -211,19 +115,15 @@ export function OttoPlanCard({
   }, [cardState]);
 
   const isVideo = p.kind === "video";
-  const isTwoStep = !isVideo && typeof p.videoStep?.estimatedCredits === "number";
-  // The one number the merchant decides on. A card that carries NEITHER credits nor a
-  // USD estimate has no price we can vouch for, so it is not approvable (below) — the
-  // old code quietly rendered "1 credit" for it.
-  const priceKnown = typeof p.estimatedCredits === "number" || typeof p.estimatedPriceUsd === "number";
-  // Show the real charge in CREDITS (= what startGen reserves). New cards carry
-  // estimatedCredits; for older cards fall back to the displayed-credit equivalent
-  // of the (record-only) USD estimate so nothing renders "$0.00".
-  const credits =
-    typeof p.estimatedCredits === "number"
-      ? p.estimatedCredits
-      : Math.max(1, Math.ceil((typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : 0) / 0.1));
-  const videoCredits = isTwoStep ? (p.videoStep!.estimatedCredits as number) : 0;
+  // The one number the merchant decides on — the real charge in CREDITS (= what startGen
+  // reserves). There is no USD→credits fallback any more: the record-only fal cost divided
+  // by $0.10 was never a quote, and guessing one is how an unpriced card got an approve
+  // button (#580 复审 r2 P1-1). Guaranteed or absent, nothing in between.
+  const credits = gate.credits;
+  // The follow-on video estimate rides the SAME predicate — an estimate we can't vouch
+  // for is not shown as a number, so the two-step total is never half-guessed.
+  const videoCredits = guaranteedCredits({ estimatedCredits: p.videoStep?.estimatedCredits });
+  const isTwoStep = !isVideo && videoCredits !== null;
   const desc = p.structuredPrompt || (isVideo ? "A short video" : isTwoStep ? "Starting picture for your video" : "An image");
   // The spec the merchant reads, built server-side from what execution really honours.
   // The card renders it VERBATIM — it derives no spec of its own any more, because two
@@ -233,8 +133,6 @@ export function OttoPlanCard({
   // The card's honest run state. `working` maps to "queued": the card knows a job was
   // created, not that it started — so it must not say "making this now" (P1-3).
   const runState = runStateOfCard(cardState);
-  /** A plan we can read AND price. Anything less is disclosed, not approved. */
-  const readable = parsed !== null && priceKnown;
 
   const [cancelled, setCancelled] = useState(false);
 
@@ -281,9 +179,10 @@ export function OttoPlanCard({
   }
 
   async function approve() {
-    // Fail closed on a plan we could not read or price: no button renders in that state,
-    // and no spend may start from it either.
-    if (busy || cardState !== "idle" || !readable) return;
+    // Fail closed on the SAME gate the render used: a plan we couldn't read, couldn't
+    // price, or couldn't read in full renders no approve button — and may not start a
+    // spend either, whatever path got here.
+    if (busy || cardState !== "idle" || !gate.approvable) return;
     setBusy(true);
     setError(null);
     try {
@@ -353,7 +252,10 @@ export function OttoPlanCard({
 
   // A payload we can't read (or can't price) is disclosed as such. It never renders as a
   // plan with a guessed price and an approve button next to it.
-  if (!readable) {
+  // `credits === null` is redundant with `!gate.readable` at run time — it is spelled out
+  // so the compiler narrows `credits` to a number for the whole render below, instead of
+  // being talked past with a `!`.
+  if (!gate.readable || credits === null) {
     return (
       <div className="gb leading-[1.5]" style={{ maxWidth: 480 }}>
         <div className="rounded-[14px] border border-border bg-secondary p-[13px]">
@@ -445,8 +347,9 @@ export function OttoPlanCard({
           </div>
         )}
 
-        {/* A payload that carried malformed fields is disclosed, not quietly patched. */}
-        {parsed.malformedFields.length > 0 && (
+        {/* A payload that carried malformed fields is disclosed, not quietly patched —
+            and, since r2 P1-2, not approvable either (see the button block below). */}
+        {gate.malformedFields.length > 0 && (
           <div className="mt-[9px] text-[0.75rem] text-[var(--warning-soft-foreground)]">
             {PARTIAL_PLAN_NOTE}
           </div>
@@ -461,7 +364,7 @@ export function OttoPlanCard({
         )}
 
         <div className="mt-4 border-t border-border pt-4">
-          {isTwoStep ? (
+          {isTwoStep && videoCredits !== null ? (
             <div>
               <div className="mb-1 text-[0.75rem] text-muted-foreground">
                 Two-step plan
@@ -527,6 +430,15 @@ export function OttoPlanCard({
             <div className="mt-2 text-[0.75rem] text-muted-foreground/70">
               ✓ You approved this — it used {creditsLabel(credits)}.
             </div>
+          </div>
+        ) : !gate.approvable ? (
+          // r2 P1-2: the card read itself only partially. It still shows what it managed
+          // to read (above) and says so (PARTIAL_PLAN_NOTE), but the path to spending on
+          // it does not exist — no confirm step, no approve button, and approve() refuses.
+          <div className="mt-4 flex gap-3">
+            <Button variant="secondary" size="sm" className="rounded-[11px]" onClick={handleChangeSomething}>
+              Ask again
+            </Button>
           </div>
         ) : confirming ? (
           <div className="mt-4 flex flex-col gap-3">

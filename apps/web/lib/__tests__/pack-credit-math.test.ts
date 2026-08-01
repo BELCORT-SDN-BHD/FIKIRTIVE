@@ -2,49 +2,50 @@ import { describe, it, expect } from "vitest";
 import { packTotalCredits, canAffordPack } from "../../components/otto/pack-credit-math";
 
 describe("packTotalCredits", () => {
-  it("sums multiple cards correctly", () => {
+  it("sums the guaranteed per-card credits", () => {
     const cards = [
-      { payload: { estimatedPriceUsd: 0.5 } },
-      { payload: { estimatedPriceUsd: 0.3 } },
-      { payload: { estimatedPriceUsd: 0.2 } },
+      { payload: { estimatedCredits: 5 } },
+      { payload: { estimatedCredits: 3 } },
+      { payload: { estimatedCredits: 2 } },
     ];
-    // 0.5/0.1 = 5, 0.3/0.1 = 3, 0.2/0.1 = 2 → 5+3+2 = 10
     expect(packTotalCredits(cards)).toBe(10);
   });
 
-  it("converts USD to credits at 0.1 rate with ceiling", () => {
-    const cards = [{ payload: { estimatedPriceUsd: 0.15 } }];
-    // 0.15/0.1 = 1.5 → ceil = 2
-    expect(packTotalCredits(cards)).toBe(2);
-  });
-
-  it("uses estimatedCredits when present (overrides USD conversion)", () => {
-    const cards = [{ payload: { estimatedCredits: 5, estimatedPriceUsd: 0.5 } }];
-    // Should use estimatedCredits (5), not convert 0.5
-    expect(packTotalCredits(cards)).toBe(5);
-  });
-
-  it("returns 0 for empty pack", () => {
+  it("returns 0 for an empty pack", () => {
     expect(packTotalCredits([])).toBe(0);
   });
 
-  it("treats missing estimatedPriceUsd as 0", () => {
-    const cards = [{ payload: {} }];
-    // Math.max(1, ceil(0/0.1)) = max(1, 0) = 1 (minimum 1 credit per card)
-    expect(packTotalCredits(cards)).toBe(1);
+  // #580 复审 r2 P1-3 —— 以下每一条,修复前都会得到一个猜出来的数字。
+  it("只有记账用的 USD → 没有可担保的总价(不再除以 0.1 猜)", () => {
+    expect(packTotalCredits([{ payload: { estimatedPriceUsd: 0.5 } }])).toBeNull();
+    expect(packTotalCredits([{ payload: { estimatedPriceUsd: 0.15 } }])).toBeNull();
   });
 
-  it("enforces minimum 1 credit per card", () => {
-    const cards = [{ payload: { estimatedPriceUsd: 0 } }];
-    expect(packTotalCredits(cards)).toBe(1);
+  it("空 payload 不再被当成 1 credit", () => {
+    expect(packTotalCredits([{ payload: {} }])).toBeNull();
   });
 
-  it("handles rounding for fractional USD values", () => {
-    const cards = [
-      { payload: { estimatedPriceUsd: 0.05 } }, // 0.05/0.1 = 0.5 → ceil = 1
-      { payload: { estimatedPriceUsd: 0.11 } }, // 0.11/0.1 = 1.1 → ceil = 2
-    ];
-    expect(packTotalCredits(cards)).toBe(1 + 2); // 3
+  it("一张卡担保不住,整包就没有总价 —— 漏算等于低报花费", () => {
+    expect(
+      packTotalCredits([{ payload: { estimatedCredits: 5 } }, { payload: { estimatedPriceUsd: 0.3 } }]),
+    ).toBeNull();
+  });
+
+  it("0 / 负数 / 小数 credits 都不是可担保价格", () => {
+    expect(packTotalCredits([{ payload: { estimatedCredits: 0 } }])).toBeNull();
+    expect(packTotalCredits([{ payload: { estimatedCredits: -2 } }])).toBeNull();
+    expect(packTotalCredits([{ payload: { estimatedCredits: 2.5 } }])).toBeNull();
+  });
+
+  it("字段读不全的卡也拖住整包 —— 单卡不许批准,整包更不许", () => {
+    expect(
+      packTotalCredits([{ payload: { estimatedCredits: 5, params: "16:9" } }]),
+    ).toBeNull();
+  });
+
+  it("根本不是 payload 的东西没有价格", () => {
+    expect(packTotalCredits([{ payload: null }])).toBeNull();
+    expect(packTotalCredits([{ payload: "card" }])).toBeNull();
   });
 });
 

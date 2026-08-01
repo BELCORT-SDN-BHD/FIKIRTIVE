@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { EXECUTED_SPEC } from "@fikirtive/core";
 import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.js";
 
 describe("BytePlusProvider — wiring", () => {
@@ -208,5 +209,80 @@ describe("generate (Seedream image, sync)", () => {
       await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 2, model: "seedream" });
     } catch (e) { err = e; }
     expect((err as any).charged).toBe(true); // one image billed → retrying would re-bill it
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #580 复审 r2 P2 —— 卡面「说的」↔ 适配器「发的」lockstep(真闸)
+//
+// 上一版这道闸开在 packages/otto 的测试里,做法是把这个文件当字符串读进去、grep
+// `size: "2048x2048"`。那只证明源码里有那几个字,不证明适配器真发了什么 —— 换个写法、
+// 换个变量名就能骗过它,而卡面会继续按一份不成立的规格向商家收钱。
+//
+// 这里改成:stub 掉 fetch、调**真**适配器、把它真正发出去的 JSON **整体**断言一遍,
+// 并逐字比对 `EXECUTED_SPEC`(住在 @fikirtive/core,卡面文案读的是同一份声明)。
+// 请求体多一个字段、少一个字段、改一个值,这里都红;红了就必须同步改 EXECUTED_SPEC,
+// 卡面于是自动开始说新话。
+//
+// **闸的范围**:只保障**现役**适配器 —— 图像 `BytePlusProvider.generate` 与视频
+// `BytePlusProvider.generateVideo`。同包里的 MockProvider(离线 $0)与 FalProvider
+// (legacy fallback)不在闸内:它们不是生产创作路径,卡面文案也不按它们派生。哪天换了
+// 现役适配器,这一节必须跟着换到新适配器上,否则闸就空了。
+// ---------------------------------------------------------------------------
+describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
+  it("图像:整条请求体逐字段断言,尺寸与 EXECUTED_SPEC.image.outputSize 一致", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    // 商家要的画幅不在 GenerationRequest 里 —— 它在 gen-from-card 那一层就被丢掉了,
+    // 所以适配器根本无从发送。这正是 aspectHonoured=false 的依据。
+    await new BytePlusProvider("ark-test").generate({
+      prompt: "a poster", inputImageUrls: [], count: 1, model: "seedream",
+    });
+    const { width, height } = EXECUTED_SPEC.image.outputSize;
+    expect(body).toEqual({
+      model: "seedream-5-0-260128",
+      prompt: "a poster",
+      size: `${width}x${height}`,
+      response_format: "url",
+      watermark: false,
+    });
+    // 整体断言已经证明请求体里没有任何画幅字段 —— 卡面因此不得承诺画幅。
+    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(false);
+  });
+
+  it("视频:整条请求体逐字段断言 —— 时长/清晰度/画幅发得出去,声音发不出去", async () => {
+    vi.useFakeTimers();
+    try {
+      let submitBody: any;
+      stubFetch((url, init) => {
+        if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+          submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-lockstep" });
+        }
+        if (url.includes("/tasks/cgt-lockstep")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+        return bytesRes();
+      });
+      // audio:true 明确传进来 —— 如果适配器把它发出去了,下面的整体断言就红。
+      const promise = new BytePlusProvider("ark-test").generateVideo({
+        prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast",
+        resolution: "720p", aspectRatio: "16:9", audio: true,
+      });
+      await vi.runAllTimersAsync();
+      await promise;
+      expect(submitBody).toEqual({
+        model: "dreamina-seedance-2-0-fast-260128",
+        content: [{ type: "text", text: "a clip --resolution 720p --duration 5 --ratio 16:9" }],
+      });
+      // 上面这一条整体断言就是这三行的依据:三个控制项真的编进了发出去的文本,
+      // 而 audio 一个字都没出现。
+      expect(EXECUTED_SPEC.video.durationHonoured).toBe(true);
+      expect(EXECUTED_SPEC.video.resolutionHonoured).toBe(true);
+      expect(EXECUTED_SPEC.video.aspectHonoured).toBe(true);
+      expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

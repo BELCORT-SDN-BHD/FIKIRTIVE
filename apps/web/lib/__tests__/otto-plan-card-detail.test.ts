@@ -46,12 +46,22 @@ vi.mock("next/navigation", () => ({
 
 import {
   OttoPlanCard,
-  parsePlanCardPayload,
   DOWNGRADE_FALLBACK_NOTE,
   PARTIAL_PLAN_NOTE,
   UNREADABLE_PLAN_NOTE,
-  type OttoPlanCardPayload,
 } from "@/components/otto/OttoPlanCard";
+import {
+  guaranteedCredits,
+  parsePlanCardPayload,
+  planCardGate,
+  type OttoPlanCardPayload,
+} from "@/components/otto/plan-card-contract";
+import {
+  PackCard,
+  PACK_UNPRICED_NOTE,
+  PACK_UNPRICED_ROW,
+} from "@/components/otto/PackCard";
+import { packTotalCredits } from "@/components/otto/pack-credit-math";
 import {
   OttoTrace,
   TRACE_STOPPED_TITLE,
@@ -338,10 +348,12 @@ describe("#580 P1-1 读不懂的方案不许当方案渲染", () => {
     expect(markup).not.toContain("Review cost");
   });
 
-  it("部分字段畸形 → 卡面显式说明它不完整", () => {
+  it("部分字段畸形 → 卡面显式说明它不完整,而且不给批准按钮", () => {
     const markup = renderCard({ ...VIDEO_PAYLOAD, params: "16:9" });
     expect(markup).toContain(PARTIAL_PLAN_NOTE);
-    expect(markup).toContain("Review cost");
+    // r2 P1-2:读不全的卡不许批准。上一轮这里断言的是「照样出 Review cost」——
+    // 那正是把一张自己都承认读不全的卡送去花钱。
+    expect(markup).not.toContain("Review cost");
   });
 
   it("畸形的规格数组整条丢掉 —— 半条规格比没有规格更危险", () => {
@@ -585,6 +597,182 @@ describe("#580 P1-4 点真卡:批准回调必须带确切 card id 与服务端�
 
 // ---------------------------------------------------------------------------
 // 7. 生产接线的删除必须红 —— 面板可见性是父层按待批集合算的
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 8. 价格担保门(复审 r2 P1)—— 一个谓词,渲染与批准共用
+//
+// 根因:卡面「显示多少钱」和 approve「准不准花钱」原本各判各的,中间还垫了一层
+// USD→credits 的猜算。于是一张只有记账用 USD、没有真实 credits 的老卡,会被猜出一个
+// 数字、配上批准按钮送去花钱。这一节把两处收敛成 guaranteedCredits 一个谓词:
+// 担保不了的价格 = 没有价格 = 不许批准。
+// ---------------------------------------------------------------------------
+
+describe("#580 r2 P1-1 价格担保谓词", () => {
+  it("只有安全整数且为正的 credits 才算担保得住", () => {
+    expect(guaranteedCredits({ estimatedCredits: 8 })).toBe(8);
+    expect(guaranteedCredits({ estimatedCredits: 1 })).toBe(1);
+  });
+
+  it("0 / 负数 / 小数 / 越界整数 / 缺失,一律不算价格", () => {
+    expect(guaranteedCredits({ estimatedCredits: 0 })).toBeNull();
+    expect(guaranteedCredits({ estimatedCredits: -3 })).toBeNull();
+    expect(guaranteedCredits({ estimatedCredits: 2.5 })).toBeNull();
+    expect(guaranteedCredits({ estimatedCredits: Number.MAX_SAFE_INTEGER + 2 })).toBeNull();
+    expect(guaranteedCredits({})).toBeNull();
+  });
+
+  it("USD 估价永远换不出 credits —— 猜算回退已经删除", () => {
+    // 0.39 USD 曾被猜成 ceil(0.39/0.1) = 4 credits。记账用的 fal 成本不是商家的报价。
+    expect(guaranteedCredits({ estimatedPriceUsd: 0.39 })).toBeNull();
+    expect(guaranteedCredits({ estimatedPriceUsd: 100 })).toBeNull();
+  });
+});
+
+describe("#580 r2 P1-1 渲染门与批准门是同一道门", () => {
+  it("只有 USD、没有 credits 的老卡:不猜价,也不给批准按钮", () => {
+    const markup = renderCard({ ...VIDEO_PAYLOAD, estimatedCredits: undefined });
+    expect(markup).toContain(UNREADABLE_PLAN_NOTE);
+    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain("4 credits");
+  });
+
+  for (const bad of [0, -3, 2.5, Number.MAX_SAFE_INTEGER + 2]) {
+    it(`estimatedCredits=${bad} 不是可担保价格 → 当读不懂处理`, () => {
+      const markup = renderCard({ ...VIDEO_PAYLOAD, estimatedCredits: bad });
+      expect(markup).toContain(UNREADABLE_PLAN_NOTE);
+      expect(markup).not.toContain("Review cost");
+    });
+  }
+
+  it("价格担保得住 → 照旧显示这一个数字并给批准按钮", () => {
+    const markup = renderCard(VIDEO_PAYLOAD);
+    expect(markup).toContain("Review cost");
+    expect(markup).toContain("8 credits");
+  });
+
+  it("两步计划的第二步价格同样受门管 —— 担保不住就不承诺", () => {
+    const twoStep = { ...VIDEO_PAYLOAD, kind: "image" as const, videoStep: { estimatedCredits: 12 } };
+    expect(renderCard(twoStep)).toContain("Two-step plan");
+    // 第二步的估价担保不住,就不许把它说成一个具体数字。
+    const broken = renderCard({ ...twoStep, videoStep: { estimatedCredits: 0 } });
+    expect(broken).not.toContain("Two-step plan");
+    expect(broken).not.toContain("Then the video");
+  });
+});
+
+describe("#580 r2 P1-2 畸形字段 = 不许批准", () => {
+  it("畸形卡照旧显式披露,但批准按钮整条不存在", () => {
+    const markup = renderCard({ ...VIDEO_PAYLOAD, params: "16:9" });
+    expect(markup).toContain(PARTIAL_PLAN_NOTE);
+    expect(markup).not.toContain("Review cost");
+    expect(markup).not.toContain("Confirm generate");
+  });
+
+  it("畸形卡上点得到的每一个按钮都不会启动花费", async () => {
+    coworkGenerateMock.mockResolvedValue({ ok: true });
+    ottoApproveMock.mockResolvedValue({ ok: true });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => {
+      root.render(
+        createElement(OttoPlanCard, {
+          cardId: "card_1",
+          payload: { ...VIDEO_PAYLOAD, params: "16:9" },
+          entities: [],
+          threadId: "thread_1",
+          projectId: "proj_1",
+          cardState: "idle" as const,
+          pendingApproval: true,
+          onApproved: vi.fn(),
+          onChangeSomething: vi.fn(),
+        }),
+      );
+    });
+    const buttons = [...host.querySelectorAll("button")];
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      await act(async () => {
+        button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+    expect(coworkGenerateMock).not.toHaveBeenCalled();
+    expect(ottoApproveMock).not.toHaveBeenCalled();
+    act(() => root.unmount());
+    host.remove();
+    coworkGenerateMock.mockReset();
+    ottoApproveMock.mockReset();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. PackCard 归队(复审 r2 P1-3)—— 整包与单卡走同一道门
+// ---------------------------------------------------------------------------
+
+describe("#580 r2 P1-3 PackCard 与单卡共用契约与价格门", () => {
+  function renderPack(payloads: unknown[]): string {
+    return renderToStaticMarkup(
+      createElement(PackCard, {
+        packTitle: "Three posters",
+        cards: payloads.map((payload, i) => ({
+          cardId: `card_${i}`,
+          payload,
+          threadId: "thread_1",
+          genJobId: null,
+          cardState: "idle" as const,
+          pendingApproval: false,
+        })),
+        balanceUsd: 100,
+        onApproved: vi.fn(),
+      }),
+    ).replaceAll("&#x27;", "'").replaceAll("&#39;", "'");
+  }
+
+  const PRICED = { kind: "image", structuredPrompt: "a poster", estimatedCredits: 4 };
+
+  it("每张卡都有可担保价格 → 正常出总价与 Make all", () => {
+    const markup = renderPack([PRICED, { ...PRICED, estimatedCredits: 6 }]);
+    expect(markup).toContain("Total 10 credits");
+    expect(markup).toContain("Make all");
+  });
+
+  it("包里混进一张只有 USD 的卡 → 总价与 Make all 一起消失", () => {
+    const markup = renderPack([PRICED, { kind: "image", estimatedPriceUsd: 0.39 }]);
+    expect(markup).not.toContain("Make all");
+    expect(markup).not.toContain("Total");
+    expect(markup).toContain(PACK_UNPRICED_NOTE);
+  });
+
+  it("包里混进一张畸形卡 → 同样不给整包批准", () => {
+    const markup = renderPack([PRICED, { ...PRICED, params: "16:9" }]);
+    expect(markup).not.toContain("Make all");
+    expect(markup).toContain(PACK_UNPRICED_NOTE);
+  });
+
+  it("单卡行不许猜价 —— 担保不住就直说价格不明", () => {
+    const markup = renderPack([PRICED, { kind: "image", estimatedPriceUsd: 0.39 }]);
+    // 有价的那一行照旧报价,只有一次 —— 0.39 USD 不许被算成第二个「4 credits」。
+    expect(markup.match(/4 credits/g)).toHaveLength(1);
+    expect(markup).toContain(PACK_UNPRICED_ROW);
+  });
+
+  it("整包的门与单卡的门是同一个 —— 两边判定必然一致", () => {
+    for (const payload of [
+      PRICED,
+      { kind: "image", estimatedPriceUsd: 0.39 },
+      { ...PRICED, params: "16:9" },
+      { ...PRICED, estimatedCredits: 0 },
+      "not a card",
+    ]) {
+      const gate = planCardGate(payload);
+      expect(packTotalCredits([{ payload }])).toBe(gate.approvable ? gate.credits : null);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. 生产接线 —— 挂起面板判定
 // ---------------------------------------------------------------------------
 
 describe("#580 P1-4 挂起面板的判定确实接在 OttoChatStream 上", () => {

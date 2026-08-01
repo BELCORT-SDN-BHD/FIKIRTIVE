@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GEN_PRICE_USD_PER_IMAGE, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
@@ -585,30 +583,11 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     ]);
   });
 
-  // 最后一环:provider 真正发出去的请求体。这一条是文本比对,因为 provider 调用不能在
-  // 测试里发起(也不许 skills/ 引入 @fikirtive/generation)。它的作用是:执行层哪天改了
-  // 尺寸或接上了声音,这里立刻红,提醒把 EXECUTED_SPEC 一起改 —— 而不是让卡面继续说旧话。
-  describe("provider 请求体 lockstep", () => {
-    const providerSrc = readFileSync(
-      fileURLToPath(new URL("../../../generation/src/byteplus.ts", import.meta.url)),
-      "utf8",
-    );
-
-    it("图片尺寸与 EXECUTED_SPEC 逐字一致", () => {
-      const { width, height } = EXECUTED_SPEC.image.outputSize;
-      expect(
-        providerSrc,
-        `EXECUTED_SPEC.image.outputSize 说 ${width}x${height};provider 请求体必须一致，否则卡面在撒谎`,
-      ).toContain(`size: "${width}x${height}"`);
-    });
-
-    it("视频请求体确实没有把声音开关发出去", () => {
-      const videoBody = providerSrc.slice(providerSrc.indexOf("async generateVideo"));
-      expect(videoBody).not.toMatch(/--audio/);
-      expect(videoBody).not.toMatch(/audio:\s*req\.audio/);
-      expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
-    });
-  });
+  // 最后一环 —— provider 真正发出去的请求体 —— 不在这个包里断言。
+  // 上一版在这里扫 `packages/generation` 的源码字符串,那只证明源码里有那几个字,不证明
+  // 适配器真发了什么(改个变量名就能骗过它)。真闸在
+  // `packages/generation/src/byteplus.test.ts`:stub 掉 fetch、调真适配器、把它真正发出去
+  // 的 JSON 整体断言,并逐字比对 `EXECUTED_SPEC`(现住 @fikirtive/core,两边同一份声明)。
 });
 
 describe("#580 downgrade disclosure — never silent", () => {

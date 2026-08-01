@@ -17,6 +17,7 @@ import {
   MAX_GEN_COUNT,
   displayCredits,
   pricedGenCredits,
+  EXECUTED_SPEC,
   type GenVideoModel,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
@@ -100,44 +101,14 @@ export type ProposeCardResult = {
 /**
  * 执行层**真正会做的事**。卡面显示的每一条规格都从这里派生。
  *
- * 根因（#580 复审 r1 P1-2）：卡面「说的」不是从执行「做的」同一数据源来的，于是
- * 商家会按一份执行层根本不会采纳的规格确认并付费。这里把执行层的实际行为逐条写成
- * 数据，`buildSpecChips` / `buildDowngradeNote` 只读这份数据，谁都不再自己猜。
- *
- * 真相位置（propose.test.ts 里有机器闸逐条比对，漂移即红）：
- *   - `packages/core/src/gen-from-card.ts` —— 卡 → genRequest 的组装。
- *     `durationSeconds` / `resolution` / `aspectRatio` **只在 video 分支**传出；
- *     图片分支一个都不传，所以图片的画幅根本到不了执行层。
- *   - `packages/generation/src/byteplus.ts` —— provider 请求体。
- *     图片固定 `size: "2048x2048"`（方图，与商家要的画幅无关）；
- *     视频把 resolution / duration / ratio 编成 prompt flags 发出去，
- *     但 `req.audio` 明写「not wired」—— 声音控制没有接到执行层。
+ * 声明本身住在 `@fikirtive/core`（`executed-spec.ts`），因为它有两个必须钉在一起的读者：
+ * 这里的卡面文案（「说的」），和 `@fikirtive/generation` 里对现役图像适配器请求体的
+ * 整体断言（「做的」）。适配器一改，那条断言立刻红，逼着这份声明一起改，卡面于是自动
+ * 开始说新话 —— 这就是 #580 复审 r2 P2 要的那道真闸（上一版是扫源码字符串，扫不出行为）。
  *
  * 本模块只改**展示**：这份声明不参与选型、报价、预扣或任何 provider 调用。
  */
-export const EXECUTED_SPEC: {
-  image: { outputSize: { width: number; height: number }; aspectHonoured: boolean };
-  video: {
-    aspectHonoured: boolean;
-    durationHonoured: boolean;
-    resolutionHonoured: boolean;
-    audioHonoured: boolean;
-  };
-} = {
-  image: {
-    /** 执行层固定输出的像素尺寸（方图）。 */
-    outputSize: { width: 2048, height: 2048 },
-    /** 画幅请求会不会被执行层采纳。false ⇒ 卡面不得承诺画幅；商家提了就是一次降级。 */
-    aspectHonoured: false,
-  },
-  video: {
-    aspectHonoured: true,
-    durationHonoured: true,
-    resolutionHonoured: true,
-    /** 声音控制未接通执行层 ⇒ 卡面既不得说 “With sound”，也不得说 “No sound”。 */
-    audioHonoured: false,
-  },
-};
+export { EXECUTED_SPEC } from "@fikirtive/core";
 
 // ---------------------------------------------------------------------------
 // Card copy helpers — pure, engine-free by construction
