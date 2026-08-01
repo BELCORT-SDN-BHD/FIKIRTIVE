@@ -12,6 +12,7 @@ import {
   canvasGenCostQuote,
   clampImageVariantCount,
 } from "@/lib/canvas-gen-costs";
+import { canvasBatchSlotOffset } from "@/lib/canvas-batch-layout";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: {
@@ -357,6 +358,15 @@ export function useCanvasGen(
   onError?: (msg: string) => void,
   onBalanceRefresh?: () => void | Promise<void>,
   onProgress?: (progress: CanvasGenProgress) => void,
+  /**
+   * One paid job is FINISHED and every card it produced is on the board — fired once per job,
+   * after the last sibling is placed, and never for a job that produced no media.
+   *
+   * `onResolve` fires per CARD, which is the wrong unit for anything that reads the whole board:
+   * a batch places its siblings one server round trip apart, so a per-card trigger read the
+   * board once per card (r3 review P2-1). Nothing here spends: it reports that a job settled.
+   */
+  onBatchSettled?: () => void,
 ) {
   const cancelledRef = useRef(false);
   const resumedReceiptIdsRef = useRef(new Set<string>());
@@ -530,10 +540,20 @@ export function useCanvasGen(
       // is a plain canvas-node placement of an already-generated (already-charged)
       // Generation — createCanvasNode is not a spend path.
       for (let i = 1; i < urls.length; i++) {
-        const sx = createdPos.x + (i % 2) * (createdPos.w + 20);
-        const sy = createdPos.y + Math.floor(i / 2) * (createdPos.h + 20);
+        // Shared grid (canvas-batch-layout) so every card of one batch is separately visible,
+        // and so server-side recovery re-places a lost sibling in the same slot.
+        const slot = canvasBatchSlotOffset(i, { w: createdPos.w, h: createdPos.h });
+        const sx = createdPos.x + slot.dx;
+        const sy = createdPos.y + slot.dy;
         const generationId = generationIds[i];
         if (!generationId) continue;
+        // TWO different facts used to share one name. The BATCH ANCHOR is the card this sibling
+        // is laid out around; the placement path stores it in CanvasNode.sourceNodeId and
+        // derives it itself, so it is passed here only to match what the server would compute.
+        // The SOURCE is what this card was made FROM — a plain batch has none, its cards came
+        // out of one press together. Sending the anchor on as a source drew every batch as a
+        // family tree and told the merchant "Made from" about a card that made nothing.
+        const batchAnchorNodeId = options.sourceNodeId ?? created.id;
         const sib = await createCanvasNode({
           projectId,
           type: "image",
@@ -545,7 +565,7 @@ export function useCanvasGen(
           generationId,
           genJobId: started.id,
           status: "done",
-          sourceNodeId: options.sourceNodeId ?? created.id,
+          sourceNodeId: batchAnchorNodeId,
           ...(requestThreadId ? { threadId: requestThreadId } : {}),
         });
         if ("error" in sib) continue;
@@ -565,10 +585,12 @@ export function useCanvasGen(
           genJobId: started.id,
           variantIndex: i,
           variantCount: generationIds.length,
-          sourceNodeId: options.sourceNodeId ?? created.id,
+          ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
         });
         onResolve(sib.id, urls[i], "done", generationId);
       }
+      // Every card of this job is placed. Only now is there a whole batch to read.
+      onBatchSettled?.();
     }, cancelledRef, {
       projectId,
       onProgress: (progress, status) => onProgress?.({
@@ -579,7 +601,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
 
   const animate = useCallback(async (
     sourceGenerationId: string,
@@ -665,6 +687,8 @@ export function useCanvasGen(
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
       void resolveCanvasNode(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
+      // A video job is a batch of one: it has settled the moment its card carries media.
+      if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
     }, cancelledRef, {
       projectId,
       onProgress: (progress, status) => onProgress?.({
@@ -675,7 +699,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
   // source frame — the gate allows video without sourceGenerationId (it's the
@@ -759,6 +783,8 @@ export function useCanvasGen(
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
       void resolveCanvasNode(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
+      // A video job is a batch of one: it has settled the moment its card carries media.
+      if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
     }, cancelledRef, {
       projectId,
       onProgress: (progress, status) => onProgress?.({
@@ -769,7 +795,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
 
   useEffect(() => {
     let stopped = false;

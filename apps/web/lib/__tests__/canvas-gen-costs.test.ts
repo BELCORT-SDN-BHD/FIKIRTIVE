@@ -22,6 +22,17 @@ describe("canvasGenCostQuote", () => {
     expect(canvasGenCostQuote(serverQuote, 3)).toEqual({ imageCredits: 6, videoCredits: 9 });
     expect(canvasGenCostQuote(serverQuote, 99)).toEqual({ imageCredits: 8, videoCredits: 9 });
   });
+
+  it("prices every batch size the composer offers at exactly what the paid call approves", () => {
+    // #547 A2: the composer can now ask for up to four images. The label beside Generate and
+    // the credits the paid call approves are both `unit x clamp(count)`, so a merchant can
+    // never be shown one price and charged another.
+    const serverQuote = { imageCredits: 1, videoCredits: 8 };
+    for (let count = 1; count <= CANVAS_IMAGE_MAX_VARIANT_COUNT; count += 1) {
+      expect(canvasGenCostQuote(serverQuote, count).imageCredits)
+        .toBe(serverQuote.imageCredits * clampImageVariantCount(count));
+    }
+  });
 });
 
 describe("genCostHint", () => {

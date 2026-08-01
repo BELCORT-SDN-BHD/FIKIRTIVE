@@ -24,7 +24,23 @@ import { X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
 import type { EntityDTO } from "@/lib/types";
 import { filterNodesByConvo, convoColor } from "@/lib/convo-canvas";
 import { creditsLabel } from "@/lib/credit-format";
-import { CANVAS_IMAGE_DEFAULT_COUNT, genCostHint, type CanvasGenCostQuote } from "@/lib/canvas-gen-costs";
+import {
+  CANVAS_IMAGE_DEFAULT_COUNT,
+  CANVAS_IMAGE_MAX_VARIANT_COUNT,
+  canvasGenCostQuote,
+  clampImageVariantCount,
+  genCostHint,
+  type CanvasGenCostQuote,
+} from "@/lib/canvas-gen-costs";
+import {
+  CANVAS_CARD_GAP,
+  canvasBatchFootprint,
+  nearestFreeCanvasSlot,
+  nextCanvasSpawnOrigin,
+  type CanvasRect,
+} from "@/lib/canvas-batch-layout";
+import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import {
@@ -34,7 +50,18 @@ import {
   type CanvasMediaDimensions,
 } from "@/lib/canvas-node-size";
 
-type CanvasFlowNode = Node & { threadId: string | null };
+type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
+const CANVAS_CARD_SIDE = 320;
+/**
+ * How long a finished JOB waits before the board is re-read for its traceability record.
+ *
+ * The card's record is written server-side while the card is being placed, so this short wait
+ * lets that settle. It also coalesces two jobs finishing together into one read. It is NOT what
+ * makes a batch cost one read — that is the job-level signal (`onBatchSettled`) this timer hangs
+ * off; a batch places its cards a server round trip apart, which is longer than any window worth
+ * waiting, so per-card triggering read the board once per card (r3 review P2-1).
+ */
+const LINEAGE_RELOAD_COALESCE_MS = 600;
 type CanvasMediaSize = Required<Pick<CanvasMediaDimensions, "width" | "height">>;
 type FlowCanvasProps = {
   projectId: string;
@@ -81,6 +108,12 @@ export default function FlowCanvas({
   // Deleting a canvas card asks for confirmation first (they were too easy to
   // remove by accident). Holds the node id awaiting confirm; null = no dialog.
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  // Same confirm, for a whole multi-card selection (#547 B6). Holds the ids awaiting
+  // confirm; null = no dialog.
+  const [pendingBatchDeleteIds, setPendingBatchDeleteIds] = useState<string[] | null>(null);
+  // How many images one Generate makes. Founder default is still 1; the merchant can ask
+  // for up to the cap and the price shown next to Generate follows the choice (#547 A2).
+  const [imageCount, setImageCount] = useState<number>(CANVAS_IMAGE_DEFAULT_COUNT);
   // Making a video costs credits — clicking "Make video" opens a confirm first.
   // Holds the source image node id awaiting confirm; null = no dialog.
   const [pendingAnimateId, setPendingAnimateId] = useState<string | null>(null);
@@ -90,8 +123,6 @@ export default function FlowCanvas({
   const [customMotion, setCustomMotion] = useState("");
   // Dragging an image file over the canvas (drop = upload it as an image node).
   const [dragOver, setDragOver] = useState(false);
-  // track node count to offset new node positions
-  const nodeCountRef = useRef(0);
   // bumped on successful generation submit to remount MentionInput cleared
   const [composerKey, setComposerKey] = useState(0);
   // double-submit guard
@@ -108,10 +139,13 @@ export default function FlowCanvas({
   const referenceHandlerRef = useRef<typeof onReferenceInChat>(onReferenceInChat);
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
+  // Counts board reads so a late answer from an overtaken read can be recognised and dropped.
+  const reloadSeqRef = useRef(0);
   const canvasHostRef = useRef<HTMLDivElement | null>(null);
   const composerFormRef = useRef<HTMLFormElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
+  const lineageReloadTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const closeComposer = useCallback((clearPrompt = false) => {
@@ -134,6 +168,41 @@ export default function FlowCanvas({
     directToolsLocked,
     directToolsLockedReason,
   }), [directToolsLocked, directToolsLockedReason]);
+
+  /**
+   * Where a new card goes.
+   *
+   * The old rule counted cards (`80 + n * 340`), so a new card landed on top of an existing
+   * one the moment anything was deleted or a batch put more than one card on the board — and
+   * a covered card is an invisible card the merchant already paid for. This asks the board for
+   * its first genuinely free slot, sized for the WHOLE batch so all of its images land side by
+   * side and stay visible (#547 A2).
+   *
+   * A card made FROM another card (Make video, More like this, an edited prompt) passes that
+   * card as `anchorNodeId` and lands next to it instead: a board-wide scan sent it to the first
+   * hole anywhere, so on a busy board the merchant had to go looking for what they just paid
+   * for, and the line joining the two ran across the whole canvas (review P2-3).
+   */
+  const spawnRect = useCallback((
+    count = 1,
+    anchorNodeId?: string | null,
+  ): { x: number; y: number; w: number; h: number } => {
+    const rectOf = (n: CanvasFlowNode): CanvasRect => ({
+      x: n.position.x,
+      y: n.position.y,
+      w: Number(n.style?.width ?? CANVAS_CARD_SIDE),
+      h: Number(n.style?.height ?? CANVAS_CARD_SIDE),
+    });
+    const occupied: CanvasRect[] = nodesRef.current.map(rectOf);
+    const card = { w: CANVAS_CARD_SIDE, h: CANVAS_CARD_SIDE };
+    const footprint = canvasBatchFootprint(count, card);
+    const anchorNode = anchorNodeId ? nodesRef.current.find((n) => n.id === anchorNodeId) : undefined;
+    const beside = anchorNode ? nearestFreeCanvasSlot(occupied, rectOf(anchorNode), footprint) : null;
+    const origin = beside ?? nextCanvasSpawnOrigin(occupied, footprint, {
+      step: { x: card.w + CANVAS_CARD_GAP, y: card.h + CANVAS_CARD_GAP },
+    });
+    return { ...origin, ...card };
+  }, []);
 
   useEffect(() => {
     if (!composerOpen || directToolsLocked) return;
@@ -168,6 +237,27 @@ export default function FlowCanvas({
 
   useEffect(() => () => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+    if (lineageReloadTimerRef.current) window.clearTimeout(lineageReloadTimerRef.current);
+  }, []);
+
+  /**
+   * A paid job just finished in this browser — read the board once so its cards carry their record.
+   *
+   * The client poll knows the media URL, and nothing else: when it was made, what it cost, what
+   * settings produced it and what it was made from all live on the server. Until this ran, a
+   * card the merchant had just watched finish opened an Info panel that said "No generation
+   * record for this card", and stayed that way — the only thing that reloaded the board was the
+   * in-flight poller, and finishing is exactly what stops it (#547 B4 review P1-2).
+   *
+   * Driven by the JOB, not by each card: `useCanvasGen` calls this once, after the last sibling
+   * of a batch is placed, so a batch of four costs one read no matter how slow the placement was.
+   */
+  const scheduleLineageReload = useCallback(() => {
+    if (lineageReloadTimerRef.current) window.clearTimeout(lineageReloadTimerRef.current);
+    lineageReloadTimerRef.current = window.setTimeout(() => {
+      lineageReloadTimerRef.current = null;
+      void reloadRef.current?.();
+    }, LINEAGE_RELOAD_COALESCE_MS);
   }, []);
 
   useEffect(() => {
@@ -234,7 +324,6 @@ export default function FlowCanvas({
     }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
-    const { x, y } = entry.pos;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
@@ -255,7 +344,8 @@ export default function FlowCanvas({
         entry.generationId,
         id,
         motionPrompt,
-        { x: x + 340, y, w: 320, h: 320 },
+        // The video belongs beside the image it was made from.
+        spawnRect(1, id),
         actionId,
       );
       if (
@@ -269,23 +359,7 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, projectId]);
-
-  // Attached "Type to imagine" bar on a selected image card. Image→image editing
-  // (conditioning a new image on THIS generation) isn't in the spend path yet, so the
-  // typed prompt seeds the existing image→video (i2v) confirm — a real, source-bound
-  // evolution that keeps the video cost gate and lineage (sourceNodeId, set by animate()).
-  // One stable handler (the node passes its own id) — no per-id ref, so it's safe to read
-  // during render in the visibleNodes map.
-  const handleEvolve = useCallback((id: string, prompt: string) => {
-    if (directToolsLockedRef.current) return;
-    const text = prompt.trim();
-    if (!text) return;
-    setCostQuote(null);
-    setCustomMotion(text);
-    setMotion("custom");
-    setPendingAnimateId(id);
-  }, []);
+  }, [activeThreadId, costQuote, projectId, spawnRect]);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
   const onOpenDetailByNode = useRef<Record<string, () => void>>({});
@@ -373,6 +447,35 @@ export default function FlowCanvas({
     void deleteCanvasNode(projectId, id);
   }, [projectId]);
 
+  // Remove a whole selection (#547 B6). Same per-card server action as the single ✕ —
+  // batching is a UI convenience, not a new deletion path.
+  const deleteNodes = useCallback((ids: string[]) => {
+    if (directToolsLockedRef.current || ids.length === 0) return;
+    const removing = new Set(ids);
+    setNodes((ns) => ns.filter((n) => !removing.has(n.id)));
+    for (const id of ids) void deleteCanvasNode(projectId, id);
+  }, [projectId]);
+
+  const clearSelection = useCallback(() => {
+    setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
+  }, []);
+
+  /** Save every selected card that has media. Uses the same `<a download>` the Detail panel
+   *  already uses, once per card — no new transfer path, nothing leaves the browser. */
+  const downloadSelection = useCallback((downloads: Array<{ url: string; fileName: string }>) => {
+    if (downloads.length === 0) return;
+    for (const item of downloads) {
+      const link = document.createElement("a");
+      link.href = item.url;
+      link.download = item.fileName;
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    toast.success(downloads.length === 1 ? "Saving 1 file." : `Saving ${downloads.length} files.`);
+  }, []);
+
   // stable text-change
   const onTextChange = useCallback((id: string, text: string) => {
     void updateTextNode(projectId, id, text);
@@ -405,8 +508,7 @@ export default function FlowCanvas({
   }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat]);
 
   const onNewNode = useCallback(
-    (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string }) => {
-      nodeCountRef.current += 1;
+    (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string; sourceNodeId?: string }) => {
       nodeDataRef.current[n.id] = { pos: { x: n.pos.x, y: n.pos.y } };
       setNodes((ns) => [
         ...ns,
@@ -419,6 +521,9 @@ export default function FlowCanvas({
               status: n.status,
               prompt: n.prompt,
               skin,
+              // The card it came from, so the lineage line can be drawn straight away
+              // instead of only after the next board reload (#547 B4).
+              sourceNodeId: n.sourceNodeId ?? null,
               onDelete: () => setPendingDeleteId(n.id),
               onRefresh: requestReload,
               onMediaSize: getOnMediaSize(n.id),
@@ -428,6 +533,7 @@ export default function FlowCanvas({
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
+          sourceNodeId: n.sourceNodeId ?? null,
         },
       ]);
       scheduleFitView();
@@ -436,7 +542,16 @@ export default function FlowCanvas({
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(projectId, onNewNode, onResolve, activeThreadId, onGenError, onBalanceRefresh);
+  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(
+    projectId,
+    onNewNode,
+    onResolve,
+    activeThreadId,
+    onGenError,
+    onBalanceRefresh,
+    undefined,
+    scheduleLineageReload,
+  );
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
   }, [quoteCosts]);
@@ -455,7 +570,10 @@ export default function FlowCanvas({
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const x = 80 + nodeCountRef.current * 340;
+      // The number of images is part of what the merchant authorized (it multiplies the
+      // charge), so it is part of the action's material — asking for 4 after asking for 1 is
+      // a different action, not a retry of the same one.
+      const count = clampImageVariantCount(imageCount);
       const material = JSON.stringify({
         projectId,
         threadId: activeThreadId ?? null,
@@ -465,17 +583,17 @@ export default function FlowCanvas({
         variantSel: Object.fromEntries(
           Object.entries(variantSel).sort(([left], [right]) => left.localeCompare(right)),
         ),
-        count: CANVAS_IMAGE_DEFAULT_COUNT,
+        count,
       });
       if (imageActionRef.current?.material !== material) {
         imageActionRef.current = { material, actionId: freshCanvasActionId() };
       }
       const accepted = await generateImage(
         prompt.trim(),
-        { x, y: 80, w: 320, h: 320 },
+        spawnRect(count),
         promptIds,
         variantSel,
-        CANVAS_IMAGE_DEFAULT_COUNT,
+        count,
         { actionId: imageActionRef.current.actionId },
       );
       if (accepted) {
@@ -491,22 +609,96 @@ export default function FlowCanvas({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, projectId, prompt, promptIds, variantSel]);
+  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCount, projectId, prompt, promptIds, spawnRect, variantSel]);
+
+  /**
+   * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
+   *
+   * ONE paid image generation conditioned on THIS card's own image — the same
+   * `generateImage` spend path the composer uses, with the source image added, and the same
+   * per-action identity rule (same card + same words = a retry of that one action; different
+   * words = a new authorized action). Images charge on submit with the price shown on the
+   * card (constitutional exception ① "balance is the gate"); video keeps its confirm dialog.
+   */
+  const evolveActionRef = useRef<{ material: string; actionId: string } | null>(null);
+  const evolveBusyRef = useRef(false);
+  const runImageEvolve = useCallback(async (id: string, rawPrompt: string): Promise<boolean> => {
+    if (directToolsLockedRef.current) return false;
+    const text = rawPrompt.trim();
+    if (!text) return false;
+    if (!costQuote) {
+      toast.error("Wait for the exact image cost before making another one.");
+      return false;
+    }
+    if (evolveBusyRef.current) return false;
+    const entry = nodeDataRef.current[id];
+    if (!entry?.generationId) {
+      toast.error("This image is not ready to build on yet.");
+      return false;
+    }
+    evolveBusyRef.current = true;
+    const material = JSON.stringify({
+      projectId,
+      threadId: activeThreadId ?? null,
+      kind: "image",
+      sourceNodeId: id,
+      sourceGenerationId: entry.generationId,
+      prompt: text,
+      count: 1,
+    });
+    if (evolveActionRef.current?.material !== material) {
+      evolveActionRef.current = { material, actionId: freshCanvasActionId() };
+    }
+    const actionId = evolveActionRef.current.actionId;
+    try {
+      const accepted = await generateImage(
+        text,
+        // The new take belongs beside the card it was built on.
+        spawnRect(1, id),
+        [],
+        {},
+        1,
+        { actionId, sourceGenerationId: entry.generationId, sourceNodeId: id },
+      );
+      if (
+        accepted
+        || !loadCanvasActionReceipts(projectId).some((receipt) => receipt.actionId === actionId)
+      ) {
+        evolveActionRef.current = null;
+      }
+      return accepted;
+    } finally {
+      evolveBusyRef.current = false;
+    }
+  }, [activeThreadId, costQuote, generateImage, projectId, spawnRect]);
+
+  const handleEvolve = useCallback((id: string, text: string) => {
+    void runImageEvolve(id, text);
+  }, [runImageEvolve]);
+
+  const handleVariant = useCallback((id: string) => {
+    const node = nodesRef.current.find((n) => n.id === id);
+    const prompt = typeof node?.data?.prompt === "string" ? node.data.prompt : "";
+    if (!prompt.trim()) {
+      toast.error("This image has no saved description to build on.");
+      return;
+    }
+    void runImageEvolve(id, prompt);
+  }, [runImageEvolve]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
     if (directToolsLocked) return;
     closeComposer(false);
-    const x = 80 + nodeCountRef.current * 340;
-    const result = await createCanvasNode({ projectId, type: "text", x, y: 80, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+    const { x, y } = spawnRect();
+    const result = await createCanvasNode({ projectId, type: "text", x, y, w: 240, h: 120, text: "", status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
     if ("id" in result) {
-      nodeCountRef.current += 1;
       setNodes((ns) => [
         ...ns,
         {
           id: result.id,
           type: "text",
-          position: { x, y: 80 },
+          position: { x, y },
           data: withNodeActionLock({ text: "", status: "done", skin, onChange: (t: string) => onTextChange(result.id, t), onDelete: () => setPendingDeleteId(result.id) }),
           style: { width: 240, height: 120, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
@@ -516,7 +708,7 @@ export default function FlowCanvas({
     } else {
       console.warn("Failed to create text node:", result.error);
     }
-  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView, closeComposer, withNodeActionLock]);
+  }, [projectId, activeThreadId, onTextChange, skin, directToolsLocked, scheduleFitView, closeComposer, spawnRect, withNodeActionLock]);
 
   // Drag-and-drop an image file from anywhere onto the canvas → upload it as an
   // image node. Upload-only (uploadReference creates an UPLOAD Generation); it
@@ -545,29 +737,34 @@ export default function FlowCanvas({
         console.warn("[canvas drop] upload failed:", res);
         continue;
       }
-      const x = 80 + nodeCountRef.current * 340;
-      const created = await createCanvasNode({ projectId, type: "image", x, y: 80, w: 320, h: 320, generationId: res.id, status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
+      const { x, y } = spawnRect();
+      const created = await createCanvasNode({ projectId, type: "image", x, y, w: 320, h: 320, generationId: res.id, status: "done", ...(activeThreadId ? { threadId: activeThreadId } : {}) });
       if (!("id" in created)) {
         toast.error(created.error || "Upload succeeded, but the canvas card did not appear.");
         console.warn("[canvas drop] node create failed:", created);
         continue;
       }
-      nodeDataRef.current[created.id] = { generationId: res.id, pos: { x, y: 80 } };
-      nodeCountRef.current += 1;
-      setNodes((ns) => [
-        ...ns,
-        {
-          id: created.id,
-          type: "image",
-          position: { x, y: 80 },
-          data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onReferenceInChat: getOnReferenceInChat(created.id), onMediaSize: getOnMediaSize(created.id) }),
-          style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
-          threadId: activeThreadId ?? null,
-        },
-      ]);
+      nodeDataRef.current[created.id] = { generationId: res.id, pos: { x, y } };
+      setNodes((ns) => {
+        const next: CanvasFlowNode[] = [
+          ...ns,
+          {
+            id: created.id,
+            type: "image",
+            position: { x, y },
+            data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onReferenceInChat: getOnReferenceInChat(created.id), onMediaSize: getOnMediaSize(created.id) }),
+            style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
+            threadId: activeThreadId ?? null,
+          },
+        ];
+        // Dropping several files at once places them in one pass, so each drop has to see the
+        // previous one before it asks for the next free slot.
+        nodesRef.current = next;
+        return next;
+      });
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, skin, scheduleFitView, withNodeActionLock]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, skin, scheduleFitView, spawnRect, withNodeActionLock]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -581,7 +778,6 @@ export default function FlowCanvas({
     }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
-    const x = 80 + nodeCountRef.current * 340;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
@@ -595,7 +791,7 @@ export default function FlowCanvas({
     try {
       const accepted = await generateVideoFromText(
         prompt,
-        { x, y: 80, w: 320, h: 320 },
+        spawnRect(),
         actionId,
       );
       if (
@@ -609,7 +805,19 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId]);
+  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect]);
+
+  /** "More like this" / an edited prompt on a VIDEO card. Video always keeps its explicit
+   *  cost confirm (founder rule), so this seeds the same dialog instead of spending. */
+  const handleVideoRemake = useCallback((_id: string, text: string) => {
+    if (directToolsLockedRef.current) return;
+    const prompt = text.trim();
+    if (!prompt) return;
+    closeComposer(false);
+    setCostQuote(null);
+    setT2vPrompt(prompt);
+    setT2vOpen(true);
+  }, [closeComposer]);
 
   useEffect(() => {
     directToolsLockedRef.current = directToolsLocked;
@@ -622,6 +830,7 @@ export default function FlowCanvas({
     if (directToolsLocked) {
       closeComposer(true);
       setPendingDeleteId(null);
+      setPendingBatchDeleteIds(null);
       setPendingAnimateId(null);
       setT2vOpen(false);
       setT2vPrompt("");
@@ -632,24 +841,33 @@ export default function FlowCanvas({
   // must be loaded while the composer is visible — its cost label sits next to the
   // Generate button. Video/t2v quotes still load when their confirm dialogs open.
   const composerVisible = skin === "gb" ? composerOpen : !directToolsLocked;
-  // Same rule for a selected image card's Evolve bar: it now shows the exact video price
-  // before submit (#550 ②), so the quote has to be loaded while that bar is on screen.
-  // ensureModels caches after the first call, so re-selecting cards costs no round trips.
-  const evolveBarVisible = !directToolsLocked && nodes.some(
-    (n) => n.type === "image" && n.selected === true && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
+  // Same rule for a selected card's attached bar and its "More like this" button: both show
+  // the exact price before submit (#550 ②, #547 A3/A4), so the quote has to be loaded while
+  // a card is selected. ensureModels caches after the first call, so re-selecting cards
+  // costs no round trips.
+  const cardBarVisible = !directToolsLocked && nodes.some(
+    (n) => (n.type === "image" || n.type === "video")
+      && n.selected === true
+      && imageNodeActionable(n.data as { status?: string; url?: string; generationId?: string }),
   );
   useEffect(() => {
-    if (composerVisible || evolveBarVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
-  }, [composerVisible, evolveBarVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
+    if (composerVisible || cardBarVisible || pendingAnimateId !== null || t2vOpen) refreshCostQuote();
+  }, [composerVisible, cardBarVisible, pendingAnimateId, t2vOpen, refreshCostQuote]);
 
   // Load (and, under the Grok-bright skin, bridge OTTO's chat results onto) the
   // canvas. The gb path resolves each node's media URL and ensures a node exists
   // for the active thread's results (display-only, no spend). The default path is
   // the original listCanvasNodes (URLs stay client-resolved via generation polls).
   const reload = useCallback(async () => {
+    // Which read this is. Two things ask for the board — a job finishing and the 5-second
+    // in-flight poller — and neither waits for the other, so answers can arrive out of order.
+    // A read that a NEWER read has already overtaken describes the board as it was before that
+    // newer read: applying it puts back what the newer answer just corrected (r3 review P2-1).
+    const seq = ++reloadSeqRef.current;
     const rows = skin === "gb"
       ? await syncOttoCanvasNodes(projectId)
       : await listCanvasNodes(projectId);
+    if (seq !== reloadSeqRef.current) return;
     if ("error" in (rows as object)) return;
     const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
@@ -671,6 +889,9 @@ export default function FlowCanvas({
           prompt: r.prompt,
           text: r.text,
           skin,
+          // Traceability the card carries with it: when, with what, at what cost, from what.
+          lineage: r.lineage ?? null,
+          sourceNodeId: r.sourceNodeId ?? null,
           onDelete: () => setPendingDeleteId(r.id),
           onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
@@ -681,22 +902,14 @@ export default function FlowCanvas({
         }),
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
+        sourceNodeId: r.sourceNodeId ?? null,
       } as CanvasFlowNode;
     });
-    // Merge, not replace: keep any node that's still generating locally (server may
-    // not have its URL yet) so a reload never clobbers an in-flight promptbar gen.
-    setNodes((prev) => {
-      const prevById = new Map(prev.map((n) => [n.id, n]));
-      const merged = mapped.map((m) => {
-        const old = prevById.get(m.id);
-        return old && old.data.status === "pending" && m.data.status === "pending" && !m.data.url ? old : m;
-      });
-      const mergedIds = new Set(merged.map((n) => n.id));
-      const extras = prev.filter((n) => !mergedIds.has(n.id));
-      const all = [...merged, ...extras];
-      nodeCountRef.current = all.length;
-      return all;
-    });
+    // Merge, not replace: keep any node that's still generating locally (server may not have
+    // its URL yet) so a reload never clobbers an in-flight promptbar gen, and keep whatever the
+    // merchant has selected — the board reloads on a timer, and a selection that vanishes
+    // mid-action is the board undoing their work (review P2-1).
+    setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped));
   }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
@@ -814,17 +1027,73 @@ export default function FlowCanvas({
   const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
   // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
   // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
-  const imageCostHint = genCostHint(costQuote?.imageCredits);
-  // Evolve seeds the image→video confirm, so it is priced by the SAME video quote that
-  // confirm charges — one source, no second price for the same action (#550 ②).
-  const evolveCostHint = genCostHint(costQuote?.videoCredits);
+  // The composer's price follows the chosen number of images, from the same clamp the paid
+  // call applies — the label and the charge can never disagree (#547 A2).
+  const composerCostHint = genCostHint(
+    costQuote ? canvasGenCostQuote(costQuote, imageCount).imageCredits : undefined,
+  );
+  // A card's own bar makes ONE image built on that card, so it is priced by the single-image
+  // quote — one source, no second price for the same action (#550 ②, #547 A4).
+  const evolveCostHint = genCostHint(costQuote?.imageCredits);
+  const remakeCostHint = genCostHint(costQuote?.videoCredits);
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
     ...n,
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve, evolveCostHint }
-      : withNodeActionLock(n.data),
+      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
+      : n.type === "video"
+        ? { ...withNodeActionLock(n.data), onRemake: handleVideoRemake, remakeCostHint }
+        : withNodeActionLock(n.data),
   }));
+  // B4: draw the trail. A video and the image it came from, or an image and the image it was
+  // evolved from, are joined by a line instead of sitting next to each other unexplained.
+  // A batch's cards are NOT joined: they share a layout anchor, not a parent (review P2-2).
+  // `lineage` is passed through EXACTLY as it is: a card the board read carries an explicit null
+  // when the server had no record (say nothing), while a card this browser just placed has no
+  // lineage field at all (this session's own action vouches for it). Flattening the two — which
+  // `?? null` did — is the difference between drawing nothing and drawing a whole false batch.
+  const lineageEdges: Edge[] = buildCanvasLineageEdges(
+    visibleNodes.map((n) => ({
+      id: n.id,
+      sourceNodeId: (n.sourceNodeId ?? (n.data as { sourceNodeId?: string | null })?.sourceNodeId) ?? null,
+      lineage: (n.data as { lineage?: CanvasNodeLineage | null })?.lineage,
+    })),
+  ).map((edge) => ({
+    ...edge,
+    selectable: false,
+    deletable: false,
+    focusable: false,
+    style: { stroke: "var(--muted-foreground)", strokeWidth: 1.5, opacity: 0.55 },
+  }));
+
+  // B6: what a multi-card selection can do. React Flow owns the selection itself; this is
+  // only what the batch bar needs to offer.
+  const selection = canvasBatchSelection(
+    visibleNodes
+      .filter((n) => n.selected === true)
+      .map((n) => ({
+        id: n.id,
+        type: n.type ?? null,
+        url: (n.data as { url?: string | null })?.url ?? null,
+        prompt: (n.data as { prompt?: string | null })?.prompt ?? null,
+        inFlightPaid: isInFlightPaidGen({
+          type: n.type ?? "",
+          status: (n.data as { status?: string })?.status,
+          url: (n.data as { url?: string | null })?.url,
+        }),
+      })),
+  );
+  const batchDeleteCopy = canvasBatchDeleteCopy({
+    count: pendingBatchDeleteIds?.length ?? 0,
+    inFlightPaidCount: (pendingBatchDeleteIds ?? []).filter((id) => {
+      const node = nodes.find((n) => n.id === id);
+      return !!node && isInFlightPaidGen({
+        type: node.type ?? "",
+        status: node.data?.status as string | undefined,
+        url: node.data?.url as string | undefined,
+      });
+    }).length,
+  });
 
   return (
     <div
@@ -861,11 +1130,18 @@ export default function FlowCanvas({
             style={{ width: "100%", height: "100%", minHeight: 0 }}
             onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
             nodes={visibleNodes}
+            edges={lineageEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             nodesDraggable={!directToolsLocked}
             panOnDrag={panMode}
             selectionOnDrag={!panMode}
+            // B6: picking several cards at once. React Flow's default only accepts the
+            // platform's command key, so shift-click — the thing every merchant tries first —
+            // silently replaced the selection instead of adding to it. Shift also drags a
+            // selection box over the board without leaving the hand tool.
+            multiSelectionKeyCode={["Shift", "Meta", "Control"]}
+            selectionKeyCode="Shift"
             deleteKeyCode={null}
             proOptions={{ hideAttribution: true }}
             minZoom={0.1}
@@ -910,7 +1186,29 @@ export default function FlowCanvas({
                   onSubmit={() => void handleGenerate()}
                 />
               </div>
-              <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{imageCostHint}</span>
+              {/* A2: how many images this one Generate makes. The price beside it follows the
+                  choice, so the merchant sees the real total before pressing anything. */}
+              <div
+                role="group"
+                aria-label="How many images to make"
+                style={{ display: "flex", gap: 2, alignItems: "center" }}
+              >
+                {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className={imageCount === n ? "al-btn al-btn-sm al-btn-primary" : "al-btn al-btn-sm"}
+                    aria-pressed={imageCount === n}
+                    aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
+                    title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
+                    style={{ minWidth: 30, paddingInline: 8 }}
+                    onClick={() => setImageCount(n)}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
               <button
                 className="al-btn al-btn-sm"
@@ -922,6 +1220,50 @@ export default function FlowCanvas({
                 <X size={15} strokeWidth={2.2} aria-hidden />
               </button>
             </form>
+          )}
+          {/* B6: what to do with several cards at once. Appears only when more than one card
+              is selected, so the single-card toolbar is untouched. */}
+          {selection.count > 1 && !directToolsLocked && (
+            <div
+              role="toolbar"
+              aria-label="Selected cards"
+              style={{
+                position: "absolute",
+                right: 20,
+                bottom: 20,
+                zIndex: 6,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 12px",
+                borderRadius: 14,
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                boxShadow: "0 8px 24px rgba(20, 20, 24, 0.12)",
+              }}
+            >
+              <span className="text-[0.8125rem]" style={{ whiteSpace: "nowrap" }}>{selection.count} selected</span>
+              <button
+                type="button"
+                className="al-btn al-btn-sm"
+                disabled={selection.downloads.length === 0}
+                title={selection.downloads.length === 0 ? "None of these are finished yet" : "Save these to your computer"}
+                onClick={() => downloadSelection(selection.downloads)}
+              >
+                Download {selection.downloads.length > 0 ? selection.downloads.length : ""}
+              </button>
+              <button
+                type="button"
+                className="al-btn al-btn-sm"
+                title="Take these cards off the board"
+                onClick={() => setPendingBatchDeleteIds(selection.ids)}
+              >
+                Remove
+              </button>
+              <button type="button" className="al-btn al-btn-sm" title="Deselect" onClick={clearSelection}>
+                Clear
+              </button>
+            </div>
           )}
           {/* Slim bottom toolbar — the single operation center for the canvas: zoom,
               fit, hand/select, image, video, text. No separate React Flow default
@@ -960,19 +1302,29 @@ export default function FlowCanvas({
               <Maximize2 size={18} strokeWidth={1.9} aria-hidden />
             </button>
             <span className="cv-tb-div" />
+            {/* B6: two tools instead of one toggle. As a toggle, both modes shared a button
+                whose pressed state read the same after two clicks — the merchant could not
+                tell which tool was live, and the box-select mode was effectively unreachable.
+                Each tool now shows its own on/off state and needs exactly one click. */}
+            <button
+              type="button"
+              className={panMode ? "cv-tb cv-tb-active" : "cv-tb"}
+              title="Hand tool — drag the board to move around"
+              aria-label="Hand tool"
+              aria-pressed={panMode}
+              onClick={() => setPanMode(true)}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0" /><path d="M14 10V4a2 2 0 0 0-4 0v2" /><path d="M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>
+            </button>
             <button
               type="button"
               className={panMode ? "cv-tb" : "cv-tb cv-tb-active"}
-              title={panMode ? "Hand tool — drag to pan. Click to switch to select." : "Select tool — drag to box-select. Click to switch to hand."}
-              aria-label={panMode ? "Hand tool active" : "Select tool active"}
+              title="Select tool — drag a box to pick several cards"
+              aria-label="Select tool"
               aria-pressed={!panMode}
-              onClick={() => setPanMode((v) => !v)}
+              onClick={() => setPanMode(false)}
             >
-              {panMode ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0" /><path d="M14 10V4a2 2 0 0 0-4 0v2" /><path d="M10 10.5V6a2 2 0 0 0-4 0v8" /><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" /></svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
-              )}
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="m3 3 7.5 18 2.5-7.5L20.5 11 3 3z" /></svg>
             </button>
             <span className="cv-tb-div" />
             <button
@@ -1023,7 +1375,7 @@ export default function FlowCanvas({
               onSubmit={handleGenerate}
             />
           </div>
-          <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{imageCostHint}</span>
+          <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
           <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
           {activeThreadId && (
             <button
@@ -1054,6 +1406,27 @@ export default function FlowCanvas({
               variant="destructive"
               disabled={directToolsLocked}
               onClick={() => { if (pendingDeleteId) deleteNode(pendingDeleteId); setPendingDeleteId(null); }}
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={pendingBatchDeleteIds !== null} onOpenChange={(open) => { if (!open) setPendingBatchDeleteIds(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{batchDeleteCopy.title}</DialogTitle>
+            <DialogDescription>{batchDeleteCopy.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setPendingBatchDeleteIds(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={directToolsLocked}
+              onClick={() => {
+                if (pendingBatchDeleteIds) deleteNodes(pendingBatchDeleteIds);
+                setPendingBatchDeleteIds(null);
+              }}
             >
               Remove
             </Button>

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
+const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -9,9 +9,12 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockProjectFindFirst: vi.fn(),
   mockThreadFindFirst: vi.fn(),
   mockGenerationFindFirst: vi.fn(),
+  mockGenerationFindMany: vi.fn(),
   mockCanvasNodeFindFirst: vi.fn(),
   mockGenJobFindFirst: vi.fn(),
   mockGenJobFindMany: vi.fn(),
+  mockLedgerFindMany: vi.fn(),
+  mockOrganizationFindFirst: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockNewId: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
@@ -29,18 +32,42 @@ vi.mock("@fikirtive/db", () => ({
     canvasNode: { findMany: mockFindMany, create: mockCreate, updateMany: mockUpdateMany, deleteMany: mockDeleteMany, findFirst: mockCanvasNodeFindFirst },
     project: { findFirst: mockProjectFindFirst },
     chatThread: { findFirst: mockThreadFindFirst },
-    generation: { findFirst: mockGenerationFindFirst },
+    generation: { findFirst: mockGenerationFindFirst, findMany: mockGenerationFindMany },
     genJob: { findFirst: mockGenJobFindFirst, findMany: mockGenJobFindMany },
+    // #547 B4: the board read now also carries each card's lineage (time / settings / cost).
+    creditLedger: { findMany: mockLedgerFindMany },
+    organization: { findFirst: mockOrganizationFindFirst },
   },
 }));
-vi.mock("@fikirtive/core", () => ({ newId: mockNewId }));
+// Only newId is stubbed. The credit conversion stays REAL: a test that hand-rolls
+// internal→displayed would happily agree with a broken conversion (#547 B4 reads the ledger).
+vi.mock("@fikirtive/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@fikirtive/core")>()),
+  newId: mockNewId,
+}));
 
 import { createCanvasNode, deleteCanvasNode, listCanvasNodes, moveCanvasNode, resolveCanvasNode } from "../canvas-actions";
+import { normalizeFactoryMaterial } from "../batch-idempotency";
+
+/** The EXACT blob a paid video job persists — built by the function startGen itself uses, so
+ *  this fixture cannot drift into a shape production never writes (round-1 review P1-1). */
+const STORED_VIDEO_OPTIONS = normalizeFactoryMaterial({
+  prompt: "a cup steaming",
+  model: "seedance-2-fast",
+  kind: "video",
+  count: 1,
+  durationSeconds: 5,
+  resolution: "720p",
+  aspectRatio: "16:9",
+}).videoOptions;
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockOwner.mockResolvedValue({ ownerId: "u1", email: "a@b.c" });
   mockGenJobFindMany.mockResolvedValue([]);
+  mockGenerationFindMany.mockResolvedValue([]);
+  mockLedgerFindMany.mockResolvedValue([]);
+  mockOrganizationFindFirst.mockResolvedValue({ settings: {} });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
@@ -73,6 +100,142 @@ describe("listCanvasNodes", () => {
     mockProjectFindFirst.mockResolvedValue(null);
     expect(await listCanvasNodes("pX")).toEqual({ error: "Project not found." });
   });
+
+  it("carries each card's traceability record — time, settings, cost, batch (#547 B4)", async () => {
+    mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+    mockFindMany.mockResolvedValue([
+      {
+        id: "node-1", type: "video", x: 0, y: 0, w: 320, h: 320, text: null,
+        prompt: "a cup steaming", generationId: "gen-1", genJobId: "job-1",
+        status: "done", sourceNodeId: "node-0", threadId: null,
+      },
+    ]);
+    mockGenJobFindMany.mockResolvedValue([
+      {
+        id: "job-1", status: "DONE", generationIds: ["gen-1"], idempotencyKey: null,
+        // A video made FROM an image: the paid job recorded the generation it was conditioned
+        // on. That, not the CanvasNode column, is what "Made from" is allowed to rely on.
+        sourceGenerationId: "gen-0",
+        videoOptions: STORED_VIDEO_OPTIONS,
+        createdAt: new Date("2026-07-30T06:00:00Z"), finishedAt: new Date("2026-07-30T06:02:00Z"),
+      },
+    ]);
+    mockGenerationFindMany.mockResolvedValue([
+      { id: "gen-1", createdAt: new Date("2026-07-30T06:02:00Z"), source: "RENDER" },
+    ]);
+    // A settled video job: RESERVE holds 80 internal credits, SETTLE closes it at the same
+    // amount (balanceDelta 0). Net charged = 80 internal = 8 displayed.
+    mockLedgerFindMany.mockResolvedValue([
+      { refId: "job-1", balanceDelta: -80 },
+      { refId: "job-1", balanceDelta: 0 },
+    ]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/h.mp4", kind: "video" } });
+
+    const rows = await listCanvasNodes("p1");
+
+    expect(Array.isArray(rows)).toBe(true);
+    const card = (rows as Array<{ id: string; lineage?: unknown }>)[0]!;
+    expect(card.lineage).toEqual({
+      madeAtLabel: expect.stringMatching(/Jul 30/),
+      settings: { durationSeconds: 5, resolution: "720p", aspectRatio: "16:9" },
+      costCredits: 8,
+      batchSize: 1,
+      batchPosition: 1,
+      madeFromSource: true,
+    });
+    // Owner-scoped, every table: a merchant can only ever read their own workspace's record.
+    expect(mockLedgerFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId: "u1", refId: { in: ["job-1"] } } }),
+    );
+    expect(mockGenerationFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ["gen-1"] }, ownerId: "u1", projectId: "p1", deletedAt: null },
+      }),
+    );
+  });
+  it("tells a batch's cards apart from a card made from another card (review P2-2)", async () => {
+    // Two cards of ONE "make 2 images" press. Both store the batch's first card in
+    // sourceNodeId as their layout anchor, and neither was made FROM the other — the paid job
+    // recorded no source generation at all.
+    mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+    mockFindMany.mockResolvedValue([
+      {
+        id: "node-primary", type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
+        prompt: "two takes", generationId: "gen-1", genJobId: "job-1",
+        status: "done", sourceNodeId: null, threadId: null,
+      },
+      {
+        id: "node-sibling", type: "image", x: 340, y: 0, w: 320, h: 320, text: null,
+        prompt: "two takes", generationId: "gen-2", genJobId: "job-1",
+        status: "done", sourceNodeId: "node-primary", threadId: null,
+      },
+    ]);
+    mockGenJobFindMany.mockResolvedValue([
+      {
+        id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2"], idempotencyKey: null,
+        sourceGenerationId: null, videoOptions: null,
+        createdAt: new Date("2026-07-30T06:00:00Z"), finishedAt: new Date("2026-07-30T06:01:00Z"),
+      },
+    ]);
+    mockGetGenerationThumbs.mockResolvedValue({
+      "gen-1": { src: "/files/u1/one.png", kind: "image" },
+      "gen-2": { src: "/files/u1/two.png", kind: "image" },
+    });
+
+    const rows = await listCanvasNodes("p1") as Array<{ id: string; lineage: { madeFromSource: boolean; batchSize: number; batchPosition: number | null } | null }>;
+
+    expect(rows.map((row) => row.lineage?.madeFromSource)).toEqual([false, false]);
+    // What they ARE is same-batch cards, and the record still says which is which.
+    expect(rows.map((row) => [row.lineage?.batchPosition, row.lineage?.batchSize])).toEqual([[1, 2], [2, 2]]);
+  });
+
+  /**
+   * A card is the merchant's paid work; its record is a nicety. If the record lookup falls over
+   * — the ledger read times out, the workspace row is briefly unreadable — the board must still
+   * come back. Losing the whole canvas because a caption could not be looked up would read as
+   * "my work is gone" for something that was never load-bearing.
+   */
+  describe("when the traceability lookup fails", () => {
+    const board = [{
+      id: "node-1", type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
+      prompt: "a cup steaming", generationId: "gen-1", genJobId: "job-1",
+      status: "done", sourceNodeId: null, threadId: null,
+    }];
+    /** The board's OWN job read stays healthy; only the lineage-shaped one is broken. */
+    const breakLineageJobRead = () => {
+      mockGenJobFindMany.mockImplementation(async (args: { select?: Record<string, unknown> }) => {
+        if (args.select?.videoOptions) throw new Error("lineage job read failed");
+        return [{ id: "job-1", status: "DONE", generationIds: ["gen-1"], idempotencyKey: null }];
+      });
+    };
+
+    beforeEach(() => {
+      mockProjectFindFirst.mockResolvedValue({ id: "p1" });
+      mockFindMany.mockResolvedValue(board);
+      mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/one.png", kind: "image" } });
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    });
+
+    const cases: Array<[string, () => void]> = [
+      ["the workspace row", () => mockOrganizationFindFirst.mockRejectedValue(new Error("organization read failed"))],
+      ["the paid job", breakLineageJobRead],
+      ["the generations", () => mockGenerationFindMany.mockRejectedValue(new Error("generation read failed"))],
+      ["the credit ledger", () => mockLedgerFindMany.mockRejectedValue(new Error("ledger read failed"))],
+    ];
+
+    for (const [what, breakIt] of cases) {
+      it(`still returns the cards when ${what} cannot be read`, async () => {
+        breakIt();
+
+        const rows = await listCanvasNodes("p1");
+
+        expect(rows).toEqual([
+          expect.objectContaining({ id: "node-1", url: "/files/u1/one.png", status: "done", lineage: null }),
+        ]);
+      });
+    }
+  });
+
   it("recovers DONE job media from genJobId when the canvas row is stale", async () => {
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
     mockFindMany.mockResolvedValue([
