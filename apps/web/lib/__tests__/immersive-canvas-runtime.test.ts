@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCoworkThreads: vi.fn(),
+  getEntities: vi.fn(),
   getMyAccount: vi.fn(),
   getOrCreateDefaultProject: vi.fn(),
   getProjects: vi.fn(),
@@ -15,12 +16,13 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
 vi.mock("@/lib/auth-guard", async () => ({ requireOwner: mocks.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("@/lib/actions", () => ({ getOrCreateDefaultProject: mocks.getOrCreateDefaultProject }));
-vi.mock("@/lib/data", () => ({ getCoworkThreads: mocks.getCoworkThreads, getProjects: mocks.getProjects }));
+vi.mock("@/lib/data", () => ({ getCoworkThreads: mocks.getCoworkThreads, getEntities: mocks.getEntities, getProjects: mocks.getProjects }));
+vi.mock("@/lib/dto", () => ({ toEntityDTO: (entity: { id: string }) => entity }));
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
 vi.mock("@/lib/canvas-actions", () => ({ deleteCanvasNode: vi.fn(), moveCanvasNode: vi.fn() }));
 vi.mock("@/lib/otto-canvas-bridge", () => ({ syncOttoCanvasNodes: mocks.syncOttoCanvasNodes }));
 vi.mock("@/components/canvas/useCanvasGen", () => ({ useCanvasGen: mocks.useCanvasGen }));
-vi.mock("@/components/northstar/create/canvas-page", () => ({ CanvasPage: vi.fn() }));
+vi.mock("@/components/canvas/NorthstarCanvasWorkspace", () => ({ NorthstarCanvasWorkspace: vi.fn() }));
 
 const {
   ImmersiveCanvasEntry,
@@ -41,6 +43,7 @@ beforeEach(() => {
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });
   mocks.getOrCreateDefaultProject.mockResolvedValue({ id: "p-oldest" });
   mocks.getMyAccount.mockResolvedValue({ balance: 42 });
+  mocks.getEntities.mockResolvedValue([]);
 });
 
 afterEach(() => {
