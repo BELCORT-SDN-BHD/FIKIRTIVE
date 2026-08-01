@@ -35,11 +35,12 @@ import {
 import {
   CANVAS_CARD_GAP,
   canvasBatchFootprint,
+  nearestFreeCanvasSlot,
   nextCanvasSpawnOrigin,
   type CanvasRect,
 } from "@/lib/canvas-batch-layout";
-import { buildCanvasLineageEdges } from "@/lib/canvas-lineage";
-import { canvasBatchDeleteCopy, canvasBatchSelection } from "@/lib/canvas-selection";
+import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
 import {
@@ -51,6 +52,13 @@ import {
 
 type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
 const CANVAS_CARD_SIDE = 320;
+/**
+ * How long a finished card waits before the board is re-read for its traceability record.
+ *
+ * A batch settles card by card (the browser places each sibling in turn), so each completion
+ * restarts this timer and the whole batch costs ONE server read instead of one per card.
+ */
+const LINEAGE_RELOAD_COALESCE_MS = 600;
 type CanvasMediaSize = Required<Pick<CanvasMediaDimensions, "width" | "height">>;
 type FlowCanvasProps = {
   projectId: string;
@@ -132,6 +140,7 @@ export default function FlowCanvas({
   const composerFormRef = useRef<HTMLFormElement | null>(null);
   const fittedScopeRef = useRef<string | null>(null);
   const fitTimerRef = useRef<number | null>(null);
+  const lineageReloadTimerRef = useRef<number | null>(null);
   const [flowReady, setFlowReady] = useState(false);
   const [canvasReady, setCanvasReady] = useState(false);
   const closeComposer = useCallback((clearPrompt = false) => {
@@ -163,16 +172,28 @@ export default function FlowCanvas({
    * a covered card is an invisible card the merchant already paid for. This asks the board for
    * its first genuinely free slot, sized for the WHOLE batch so all of its images land side by
    * side and stay visible (#547 A2).
+   *
+   * A card made FROM another card (Make video, More like this, an edited prompt) passes that
+   * card as `anchorNodeId` and lands next to it instead: a board-wide scan sent it to the first
+   * hole anywhere, so on a busy board the merchant had to go looking for what they just paid
+   * for, and the line joining the two ran across the whole canvas (review P2-3).
    */
-  const spawnRect = useCallback((count = 1): { x: number; y: number; w: number; h: number } => {
-    const occupied: CanvasRect[] = nodesRef.current.map((n) => ({
+  const spawnRect = useCallback((
+    count = 1,
+    anchorNodeId?: string | null,
+  ): { x: number; y: number; w: number; h: number } => {
+    const rectOf = (n: CanvasFlowNode): CanvasRect => ({
       x: n.position.x,
       y: n.position.y,
       w: Number(n.style?.width ?? CANVAS_CARD_SIDE),
       h: Number(n.style?.height ?? CANVAS_CARD_SIDE),
-    }));
+    });
+    const occupied: CanvasRect[] = nodesRef.current.map(rectOf);
     const card = { w: CANVAS_CARD_SIDE, h: CANVAS_CARD_SIDE };
-    const origin = nextCanvasSpawnOrigin(occupied, canvasBatchFootprint(count, card), {
+    const footprint = canvasBatchFootprint(count, card);
+    const anchorNode = anchorNodeId ? nodesRef.current.find((n) => n.id === anchorNodeId) : undefined;
+    const beside = anchorNode ? nearestFreeCanvasSlot(occupied, rectOf(anchorNode), footprint) : null;
+    const origin = beside ?? nextCanvasSpawnOrigin(occupied, footprint, {
       step: { x: card.w + CANVAS_CARD_GAP, y: card.h + CANVAS_CARD_GAP },
     });
     return { ...origin, ...card };
@@ -211,6 +232,27 @@ export default function FlowCanvas({
 
   useEffect(() => () => {
     if (fitTimerRef.current) window.clearTimeout(fitTimerRef.current);
+    if (lineageReloadTimerRef.current) window.clearTimeout(lineageReloadTimerRef.current);
+  }, []);
+
+  /**
+   * A card just finished in this browser — read the board once so it carries its record.
+   *
+   * The client poll knows the media URL, and nothing else: when it was made, what it cost, what
+   * settings produced it and what it was made from all live on the server. Until this ran, a
+   * card the merchant had just watched finish opened an Info panel that said "No generation
+   * record for this card", and stayed that way — the only thing that reloaded the board was the
+   * in-flight poller, and finishing is exactly what stops it (#547 B4 review P1-2).
+   *
+   * Coalesced (see LINEAGE_RELOAD_COALESCE_MS): a batch of four reads the board once, after its
+   * last card lands.
+   */
+  const scheduleLineageReload = useCallback(() => {
+    if (lineageReloadTimerRef.current) window.clearTimeout(lineageReloadTimerRef.current);
+    lineageReloadTimerRef.current = window.setTimeout(() => {
+      lineageReloadTimerRef.current = null;
+      void reloadRef.current?.();
+    }, LINEAGE_RELOAD_COALESCE_MS);
   }, []);
 
   useEffect(() => {
@@ -297,7 +339,8 @@ export default function FlowCanvas({
         entry.generationId,
         id,
         motionPrompt,
-        spawnRect(),
+        // The video belongs beside the image it was made from.
+        spawnRect(1, id),
         actionId,
       );
       if (
@@ -435,6 +478,9 @@ export default function FlowCanvas({
 
   // onResolve: store generationId in nodeDataRef AND in node.data
   const onResolve = useCallback((id: string, url: string | null, status: string, generationId?: string) => {
+    // A finished card's record only exists server-side, so fetch it now rather than leaving the
+    // merchant with an empty Info panel on the card they just watched appear.
+    if (status === "done" && url) scheduleLineageReload();
     if (generationId) {
       nodeDataRef.current[id] = { ...nodeDataRef.current[id], generationId, pos: nodeDataRef.current[id]?.pos ?? { x: 0, y: 0 } };
     }
@@ -457,7 +503,7 @@ export default function FlowCanvas({
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat]);
+  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, scheduleLineageReload]);
 
   const onNewNode = useCallback(
     (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string; sourceNodeId?: string }) => {
@@ -596,7 +642,8 @@ export default function FlowCanvas({
     try {
       const accepted = await generateImage(
         text,
-        spawnRect(),
+        // The new take belongs beside the card it was built on.
+        spawnRect(1, id),
         [],
         {},
         1,
@@ -841,18 +888,11 @@ export default function FlowCanvas({
         sourceNodeId: r.sourceNodeId ?? null,
       } as CanvasFlowNode;
     });
-    // Merge, not replace: keep any node that's still generating locally (server may
-    // not have its URL yet) so a reload never clobbers an in-flight promptbar gen.
-    setNodes((prev) => {
-      const prevById = new Map(prev.map((n) => [n.id, n]));
-      const merged = mapped.map((m) => {
-        const old = prevById.get(m.id);
-        return old && old.data.status === "pending" && m.data.status === "pending" && !m.data.url ? old : m;
-      });
-      const mergedIds = new Set(merged.map((n) => n.id));
-      const extras = prev.filter((n) => !mergedIds.has(n.id));
-      return [...merged, ...extras];
-    });
+    // Merge, not replace: keep any node that's still generating locally (server may not have
+    // its URL yet) so a reload never clobbers an in-flight promptbar gen, and keep whatever the
+    // merchant has selected — the board reloads on a timer, and a selection that vanishes
+    // mid-action is the board undoing their work (review P2-1).
+    setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped));
   }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
@@ -990,10 +1030,12 @@ export default function FlowCanvas({
   }));
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
   // evolved from, are joined by a line instead of sitting next to each other unexplained.
+  // A batch's cards are NOT joined: they share a layout anchor, not a parent (review P2-2).
   const lineageEdges: Edge[] = buildCanvasLineageEdges(
     visibleNodes.map((n) => ({
       id: n.id,
       sourceNodeId: (n.sourceNodeId ?? (n.data as { sourceNodeId?: string | null })?.sourceNodeId) ?? null,
+      lineage: (n.data as { lineage?: CanvasNodeLineage | null })?.lineage ?? null,
     })),
   ).map((edge) => ({
     ...edge,

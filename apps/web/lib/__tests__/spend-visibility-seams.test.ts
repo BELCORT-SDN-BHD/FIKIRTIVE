@@ -51,13 +51,19 @@ const CREDIT_PRICE_LITERAL = /\d[\d,.]*\s*credits?\b/i;
  *  lib/gen-actions.ts + lib/refgen-actions.ts call reserveCredits directly; the Otto
  *  metered paths (ottoTurn / ottoApprove / coworkGenerate / coworkVaryCard) and the
  *  campaign batch (confirmCampaignGeneration → factory-batch → startGen) reserve
- *  downstream. Importing one of these into a client surface = that surface can charge. */
+ *  downstream. Importing one of these into a client surface = that surface can charge.
+ *
+ *  startCanvasGen was missing from this list for as long as it has existed (round-1 review
+ *  P3). It is the canvas's own paid entry — the one every Generate / Make video / More like
+ *  this press goes through — and it reserves through the same startGen authority. The net
+ *  enumerated every OTHER way to spend money and left the busiest one outside the fence. */
 const SPEND_ACTIONS = [
   "confirmCampaignGeneration",
   "coworkGenerate",
   "coworkVaryCard",
   "ottoApprove",
   "ottoTurn",
+  "startCanvasGen",
   "startGen",
   "startRefGen",
 ];
@@ -122,6 +128,8 @@ describe("spend entry enumeration (#550 — round-1 review P1③ / P2②)", () =
     expect(files).toContain("components/otto/TemplateModal.tsx");
     expect(files).toContain("components/campaign/campaign-confirm-page.tsx");
     expect(files).toContain("components/otto/OttoApprovalCard.tsx");
+    // The canvas's own paid entry — every Generate / Make video / More like this goes here.
+    expect(files).toContain("components/canvas/useCanvasGen.ts");
   });
 
   it("every client surface that can charge announces the balance change — no exemptions", () => {

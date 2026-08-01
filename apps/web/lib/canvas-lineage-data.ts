@@ -36,6 +36,7 @@ export const UNKNOWN_CANVAS_LINEAGE: CanvasNodeLineage = {
   costCredits: null,
   batchSize: 1,
   batchPosition: null,
+  madeFromSource: false,
 };
 
 /**
@@ -71,7 +72,16 @@ export async function loadCanvasNodeLineages(
     jobIds.length
       ? prisma.genJob.findMany({
         where: { id: { in: jobIds }, ownerId, projectId },
-        select: { id: true, generationIds: true, videoOptions: true, createdAt: true, finishedAt: true },
+        select: {
+          id: true,
+          generationIds: true,
+          videoOptions: true,
+          createdAt: true,
+          finishedAt: true,
+          // The only proof of parentage. CanvasNode.sourceNodeId also carries a batch's layout
+          // anchor, so it cannot tell "made from" apart from "made alongside" on its own.
+          sourceGenerationId: true,
+        },
       })
       : Promise.resolve([]),
     generationIds.length
@@ -128,6 +138,7 @@ export async function loadCanvasNodeLineages(
         : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId) ? 0 : null),
       batchSize,
       batchPosition: index >= 0 ? index + 1 : null,
+      madeFromSource: !!job?.sourceGenerationId,
     };
   }
   return out;

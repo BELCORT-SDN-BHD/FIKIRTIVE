@@ -5,6 +5,7 @@ import {
   canvasDownloadFileName,
   canvasFileExtension,
   canvasFileStem,
+  mergeReloadedCanvasNodes,
 } from "../canvas-selection";
 
 describe("canvasFileStem", () => {
@@ -80,5 +81,64 @@ describe("canvasBatchDeleteCopy", () => {
     expect(copy.title).toBe("Still generating — remove anyway?");
     expect(copy.description).toContain("won't refund");
     expect(copy.description).toContain("charge you a second time");
+  });
+});
+
+/**
+ * What survives a board reload (round-1 review P2-1).
+ *
+ * The canvas re-reads the board on a timer while anything is generating, and again whenever a
+ * card finishes. The server row knows nothing about what the merchant has picked, so every one
+ * of those reloads used to wipe a multi-card selection — the merchant would shift-click four
+ * cards, the board would refresh under them, and the batch bar would vanish mid-action.
+ */
+describe("mergeReloadedCanvasNodes", () => {
+  type BoardNode = {
+    id: string;
+    selected?: boolean;
+    local?: boolean;
+    data: { status: string; url: string | null | undefined };
+  };
+  const server = (id: string, extra: { status?: string; url?: string | null } = {}): BoardNode => ({
+    id,
+    data: {
+      status: extra.status ?? "done",
+      url: "url" in extra ? extra.url : "https://cdn.example/a.png",
+    },
+  });
+
+  it("keeps every card the merchant had picked selected", () => {
+    const previous = [
+      { ...server("a"), selected: true },
+      { ...server("b"), selected: true },
+      { ...server("c"), selected: false },
+    ];
+
+    const merged = mergeReloadedCanvasNodes(previous, [server("a"), server("b"), server("c")]);
+
+    expect(merged.filter((node) => node.selected).map((node) => node.id)).toEqual(["a", "b"]);
+  });
+
+  it("still takes the server's fresh media for a selected card", () => {
+    const previous = [{ ...server("a", { status: "pending", url: null }), selected: true }];
+
+    const merged = mergeReloadedCanvasNodes(previous, [server("a", { url: "https://cdn.example/new.png" })]);
+
+    expect(merged[0]!.data).toEqual({ status: "done", url: "https://cdn.example/new.png" });
+    expect(merged[0]!.selected).toBe(true);
+  });
+
+  it("does not clobber a card that is still generating locally", () => {
+    const local = { ...server("a", { status: "pending", url: null }), selected: false, local: true };
+
+    const merged = mergeReloadedCanvasNodes([local], [server("a", { status: "pending", url: null })]);
+
+    expect(merged[0]).toBe(local);
+  });
+
+  it("keeps a card the server read has not caught up with yet", () => {
+    const merged = mergeReloadedCanvasNodes([server("local-only")], [server("a")]);
+
+    expect(merged.map((node) => node.id)).toEqual(["a", "local-only"]);
   });
 });

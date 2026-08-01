@@ -6,7 +6,7 @@ import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { shouldIgnoreCanvasVideoReferenceClick } from "@/lib/canvas-chat-reference";
-import type { CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 
 export function VideoNode({ data, id, selected }: NodeProps) {
   const d = data as {
@@ -141,7 +141,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <NodeLineagePanel lineage={d.lineage} prompt={d.prompt} hasSource={!!d.sourceNodeId} />
+          <NodeLineagePanel lineage={d.lineage} prompt={d.prompt} hasSource={canvasNodeHasSource(d)} />
         </NodeToolbar>
       )}
       {canRemake && (

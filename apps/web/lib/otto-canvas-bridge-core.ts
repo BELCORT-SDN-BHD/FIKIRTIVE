@@ -183,6 +183,9 @@ export function planSettledCanvasJobSiblingNodes(
         prompt: node.prompt,
         generationId,
         genJobId: job.id,
+        // The batch's ANCHOR card, not a parent: these came out of one press together. The
+        // placement path stores it in the same column either way, and the displayed lineage
+        // asks the paid job (GenJob.sourceGenerationId) which of the two it is.
         sourceNodeId: node.sourceNodeId ?? node.id,
         threadId: node.threadId,
         url,

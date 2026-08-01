@@ -538,6 +538,13 @@ export function useCanvasGen(
         const sy = createdPos.y + slot.dy;
         const generationId = generationIds[i];
         if (!generationId) continue;
+        // TWO different facts used to share one name. The BATCH ANCHOR is the card this sibling
+        // is laid out around; the placement path stores it in CanvasNode.sourceNodeId and
+        // derives it itself, so it is passed here only to match what the server would compute.
+        // The SOURCE is what this card was made FROM — a plain batch has none, its cards came
+        // out of one press together. Sending the anchor on as a source drew every batch as a
+        // family tree and told the merchant "Made from" about a card that made nothing.
+        const batchAnchorNodeId = options.sourceNodeId ?? created.id;
         const sib = await createCanvasNode({
           projectId,
           type: "image",
@@ -549,7 +556,7 @@ export function useCanvasGen(
           generationId,
           genJobId: started.id,
           status: "done",
-          sourceNodeId: options.sourceNodeId ?? created.id,
+          sourceNodeId: batchAnchorNodeId,
           ...(requestThreadId ? { threadId: requestThreadId } : {}),
         });
         if ("error" in sib) continue;
@@ -569,7 +576,7 @@ export function useCanvasGen(
           genJobId: started.id,
           variantIndex: i,
           variantCount: generationIds.length,
-          sourceNodeId: options.sourceNodeId ?? created.id,
+          ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
         });
         onResolve(sib.id, urls[i], "done", generationId);
       }

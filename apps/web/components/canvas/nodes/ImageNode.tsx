@@ -5,7 +5,7 @@ import { GeneratingBody, FailedBody } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
-import type { CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -151,7 +151,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <NodeLineagePanel lineage={d.lineage} prompt={d.prompt} hasSource={!!d.sourceNodeId} />
+          <NodeLineagePanel lineage={d.lineage} prompt={d.prompt} hasSource={canvasNodeHasSource(d)} />
         </NodeToolbar>
       )}
       {canEvolve && (

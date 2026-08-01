@@ -34,14 +34,30 @@ export type CanvasNodeLineage = {
   batchSize: number;
   /** 1-based position of this card inside its batch; null when it can't be determined. */
   batchPosition: number | null;
+  /**
+   * Was this card's paid job actually conditioned on another card's output?
+   *
+   * True only when the job recorded a source generation (image → video, "More like this", an
+   * edited prompt). A batch's cards all store the batch's first card in the same database
+   * column, but as a LAYOUT ANCHOR — they came out of the same press, not out of each other.
+   */
+  madeFromSource: boolean;
 };
 
-/** Read a GenJob.videoOptions JSON blob defensively — it is untyped at the database edge. */
+/**
+ * Read a GenJob.videoOptions JSON blob defensively — it is untyped at the database edge.
+ *
+ * The stored key is `seconds` (see `normalizeFactoryMaterial`, which is what startGen persists,
+ * and the worker, which prices and renders from the same key). This module originally read
+ * `durationSeconds`, a name that exists only on the REQUEST — so every real video card silently
+ * lost its length and showed "720p · 16:9" with no duration at all. `durationSeconds` is still
+ * accepted second so nothing that ever did store it loses its record.
+ */
 export function canvasVideoSettings(videoOptions: unknown): CanvasNodeSettings {
   const empty: CanvasNodeSettings = { durationSeconds: null, resolution: null, aspectRatio: null };
   if (videoOptions === null || typeof videoOptions !== "object" || Array.isArray(videoOptions)) return empty;
   const record = videoOptions as Record<string, unknown>;
-  const duration = record.durationSeconds;
+  const duration = typeof record.seconds === "number" ? record.seconds : record.durationSeconds;
   const resolution = record.resolution;
   const aspectRatio = record.aspectRatio;
   return {
@@ -100,20 +116,49 @@ export function canvasLineageRows(
 
 export type CanvasLineageEdge = { id: string; source: string; target: string };
 
+/** Everything needed to answer "was this card made from another one?". */
+export type CanvasNodeSourceFacts = {
+  /** CanvasNode.sourceNodeId — the card this one was made from, OR its batch's layout anchor. */
+  sourceNodeId?: string | null;
+  lineage?: Pick<CanvasNodeLineage, "madeFromSource"> | null;
+};
+
+/** A board card, as far as its parentage is concerned. */
+export type CanvasLineageNode = CanvasNodeSourceFacts & { id: string };
+
+/**
+ * Was this card MADE FROM the card it points at — or does it just sit with it?
+ *
+ * `sourceNodeId` alone cannot answer that: the placement path stores a batch's first card there
+ * as the anchor its siblings are laid out around, so four images from one press all pointed at
+ * each other's parent. The paid job settles it — the server record says whether the job was
+ * conditioned on another card's output at all.
+ *
+ * A card the browser placed moments ago has no server record yet. There, this session's own
+ * action is the proof: the browser sets `sourceNodeId` only for "Make video" / "More like this"
+ * / an edited prompt, each of which sent that card's generation to the paid call.
+ */
+export function canvasNodeHasSource(node: CanvasNodeSourceFacts): boolean {
+  if (!node.sourceNodeId) return false;
+  return node.lineage ? node.lineage.madeFromSource : true;
+}
+
 /**
  * One line per "this card came from that card" link, for every pair still on the board.
  *
  * A video made from an image, and an image evolved from an image, both record the card they
- * came from — but nothing drew it, so the trail was invisible (#547 B4). Self-links and links
- * to cards that are filtered out or deleted are dropped rather than rendered as dangling.
+ * came from — but nothing drew it, so the trail was invisible (#547 B4). Self-links, links to
+ * cards that are filtered out or deleted, and same-batch siblings are dropped rather than
+ * rendered as a parentage the merchant never created.
  */
 export function buildCanvasLineageEdges(
-  nodes: ReadonlyArray<{ id: string; sourceNodeId?: string | null }>,
+  nodes: ReadonlyArray<CanvasLineageNode>,
 ): CanvasLineageEdge[] {
   const present = new Set(nodes.map((node) => node.id));
   const seen = new Set<string>();
   const edges: CanvasLineageEdge[] = [];
   for (const node of nodes) {
+    if (!canvasNodeHasSource(node)) continue;
     const source = node.sourceNodeId;
     if (!source || source === node.id || !present.has(source)) continue;
     const id = `lineage-${source}-${node.id}`;

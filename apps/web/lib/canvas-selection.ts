@@ -79,6 +79,42 @@ export function canvasBatchSelection(nodes: readonly CanvasSelectionNode[]): Can
   };
 }
 
+export type CanvasMergeNode = {
+  id: string;
+  selected?: boolean;
+  data: { status?: unknown; url?: unknown };
+};
+
+/**
+ * Fold a fresh server read of the board into what is already on screen.
+ *
+ * Two things must survive a reload, and they used to be one line apart:
+ *
+ *   1. A card still generating in THIS browser keeps its local copy — the server may not have
+ *      its media yet, and replacing it would restart the "generating…" card the merchant is
+ *      watching.
+ *   2. Whatever the merchant has SELECTED stays selected. The server row carries no selection,
+ *      so taking it wholesale silently deselected everything — and the board reloads on a timer
+ *      while anything is generating, so a multi-card selection could disappear between picking
+ *      the cards and pressing Download.
+ *
+ * Cards the server read does not know about yet (just placed locally) are kept at the end.
+ */
+export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
+  previous: readonly T[],
+  incoming: readonly T[],
+): T[] {
+  const previousById = new Map(previous.map((node) => [node.id, node]));
+  const merged = incoming.map((node) => {
+    const old = previousById.get(node.id);
+    if (!old) return node;
+    if (old.data.status === "pending" && node.data.status === "pending" && !node.data.url) return old;
+    return old.selected === node.selected ? node : { ...node, selected: old.selected };
+  });
+  const mergedIds = new Set(merged.map((node) => node.id));
+  return [...merged, ...previous.filter((node) => !mergedIds.has(node.id))];
+}
+
 /** Plain-language confirm copy for removing a whole selection. */
 export function canvasBatchDeleteCopy(selection: Pick<CanvasBatchSelection, "count" | "inFlightPaidCount">): {
   title: string;

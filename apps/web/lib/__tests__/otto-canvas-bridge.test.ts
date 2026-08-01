@@ -441,3 +441,61 @@ describe("syncOttoCanvasNodes project scoping", () => {
     }));
   });
 });
+
+/**
+ * The bridge is the OTHER board reader (#547 B4 loads the same record through both). A card is
+ * the merchant's paid work; its record is a nicety — if the record lookup falls over, the board
+ * must still come back, or a failed caption reads as "my work is gone". Round-1 review P3: the
+ * degrade was written but never proven, on either reader.
+ */
+describe("syncOttoCanvasNodes when the traceability lookup fails", () => {
+  const board = [{
+    id: "node-1",
+    type: "image",
+    x: 0,
+    y: 0,
+    w: 320,
+    h: 320,
+    text: null,
+    prompt: "a cup steaming",
+    generationId: "gen-1",
+    genJobId: "job-1",
+    status: "done",
+    sourceNodeId: null,
+    threadId: null,
+  }];
+
+  /** The bridge's OWN job reads stay healthy; only the lineage-shaped one is broken. */
+  const breakLineageJobRead = () => {
+    mockGenJobFindMany.mockImplementation(async (args: { select?: Record<string, unknown> }) => {
+      if (args.select?.videoOptions) throw new Error("lineage job read failed");
+      return [{ id: "job-1", status: "DONE", generationIds: ["gen-1"], idempotencyKey: null }];
+    });
+  };
+
+  beforeEach(() => {
+    mockCanvasFindMany.mockResolvedValue(board);
+    mockGenJobFindMany.mockResolvedValue([
+      { id: "job-1", status: "DONE", generationIds: ["gen-1"], idempotencyKey: null },
+    ]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/one.png", kind: "image" } });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  const cases: Array<[string, () => void]> = [
+    ["the workspace row", () => mockOrganizationFindFirst.mockRejectedValue(new Error("organization read failed"))],
+    ["the paid job", breakLineageJobRead],
+    ["the generations", () => mockGenerationFindMany.mockRejectedValue(new Error("generation read failed"))],
+    ["the credit ledger", () => mockLedgerFindMany.mockRejectedValue(new Error("ledger read failed"))],
+  ];
+
+  for (const [what, breakIt] of cases) {
+    it(`still returns the cards when ${what} cannot be read`, async () => {
+      breakIt();
+
+      await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([
+        expect.objectContaining({ id: "node-1", url: "/files/u1/one.png", status: "done", lineage: null }),
+      ]);
+    });
+  }
+});

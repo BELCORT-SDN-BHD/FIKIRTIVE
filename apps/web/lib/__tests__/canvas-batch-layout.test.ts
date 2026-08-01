@@ -6,6 +6,7 @@ import {
   canvasBatchRects,
   canvasBatchSlotOffset,
   canvasRectsOverlap,
+  nearestFreeCanvasSlot,
   nextCanvasSpawnOrigin,
 } from "../canvas-batch-layout";
 
@@ -101,5 +102,75 @@ describe("nextCanvasSpawnOrigin", () => {
     const spot = nextCanvasSpawnOrigin(board, CARD, { columns: 4, rows: 1 });
 
     expect(board.some((rect) => canvasRectsOverlap({ ...spot, ...CARD }, rect))).toBe(false);
+  });
+});
+
+/**
+ * Where a card made FROM another card lands (round-1 review P2-3).
+ *
+ * "Make video from this image", "More like this" and an edited prompt all produce a card that
+ * belongs beside the card it came from. They used to take the same first-free-slot-on-the-board
+ * scan as a brand-new generation, so on a busy board the new card appeared far away — the
+ * merchant had to hunt for the thing they just paid for, and the line joining them ran across
+ * the whole canvas.
+ */
+describe("nearestFreeCanvasSlot", () => {
+  const SOURCE = { x: 1400, y: 1400, ...CARD };
+
+  it("puts a derived card beside its source, not back at the board origin", () => {
+    // The origin end of the board is wide open — a global scan would send this card to (80, 80).
+    const board = [SOURCE];
+
+    const spot = nearestFreeCanvasSlot(board, SOURCE, CARD);
+
+    expect(spot).toEqual({ x: 1740, y: 1400 });
+    expect(nextCanvasSpawnOrigin(board, CARD)).toEqual({ x: 80, y: 80 });
+  });
+
+  it("steps out to the next-closest free spot when the neighbours are taken", () => {
+    const board = [
+      SOURCE,
+      { x: 1740, y: 1400, ...CARD }, // right
+      { x: 1400, y: 1740, ...CARD }, // below
+      { x: 1400, y: 1060, ...CARD }, // above
+    ];
+
+    const spot = nearestFreeCanvasSlot(board, SOURCE, CARD);
+
+    expect(spot).toEqual({ x: 1060, y: 1400 });
+    expect(board.some((rect) => canvasRectsOverlap({ ...spot!, ...CARD }, rect))).toBe(false);
+  });
+
+  it("never overlaps the source card or anything else, whatever the ring", () => {
+    const board = [SOURCE, ...canvasBatchRects({ x: 1060, y: 1060, ...CARD }, 4)];
+
+    const spot = nearestFreeCanvasSlot(board, SOURCE, CARD);
+
+    expect(spot).not.toBeNull();
+    expect(board.some((rect) => canvasRectsOverlap({ ...spot!, ...CARD }, rect))).toBe(false);
+  });
+
+  it("reserves room for a whole batch, not just one card", () => {
+    const board = [SOURCE];
+    const footprint = canvasBatchFootprint(4, CARD);
+
+    const spot = nearestFreeCanvasSlot(board, SOURCE, footprint);
+
+    expect(spot).not.toBeNull();
+    for (const rect of canvasBatchRects({ ...spot!, ...CARD }, 4)) {
+      expect(board.some((existing) => canvasRectsOverlap(rect, existing))).toBe(false);
+    }
+  });
+
+  it("gives up rather than guessing when everything nearby is full", () => {
+    // A completely packed neighbourhood: the caller falls back to the board-wide scan.
+    const board = [];
+    for (let dx = -2; dx <= 2; dx += 1) {
+      for (let dy = -2; dy <= 2; dy += 1) {
+        board.push({ x: SOURCE.x + dx * 340, y: SOURCE.y + dy * 340, ...CARD });
+      }
+    }
+
+    expect(nearestFreeCanvasSlot(board, SOURCE, CARD, { rings: 2 })).toBeNull();
   });
 });
