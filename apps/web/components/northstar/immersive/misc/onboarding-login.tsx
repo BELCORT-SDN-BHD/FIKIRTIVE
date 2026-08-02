@@ -7,7 +7,7 @@
  * 一个居中 420 表单列(§L3 width ladder),email + 邮件魔链(演示,不发真请求)、社交入口占位、
  * 登录/注册两态井切换(§N4 segmented)。无 Otto、无 coral(继续按钮走 INK)、零后台。
  *
- * 走完 CTA 进产品流:注册 → onboarding/checklist(首跑引导),登录 → create/home。
+ * 走完 CTA 进产品流:注册 → onboarding/checklist(首跑引导),登录 → 画布(#609 后 create/home 已退场)。
  */
 
 import * as React from "react";
@@ -47,8 +47,9 @@ export function OnboardingLogin() {
     modeRefs.current[next]?.focus();
   };
 
-  // 演示:无真 auth。提交 → 进度指示 → 进产品流(注册去引导清单,登录去 create/home)。
-  const nextHref = mode === "signup" ? `${BASE}/onboarding/checklist` : `${BASE}/create/home`;
+  // 演示:无真 auth。提交 → 进度指示 → 进产品流(注册去引导清单,登录去画布)。
+  // #609:create/home 已退场,登录后的落点改成唯一的画布。
+  const nextHref = mode === "signup" ? `${BASE}/onboarding/checklist` : `${BASE}/create/canvas`;
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();

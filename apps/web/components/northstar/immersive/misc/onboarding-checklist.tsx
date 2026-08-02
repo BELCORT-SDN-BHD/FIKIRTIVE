@@ -167,14 +167,14 @@ export function OnboardingChecklist() {
       <div className="mt-8 flex flex-wrap items-center gap-3">
         {allDone ? (
           <Button asChild>
-            <Link href={`${BASE}/create/home`}>
+            <Link href={`${BASE}/create/canvas`}>
               Start creating
               <ArrowRight strokeWidth={2} />
             </Link>
           </Button>
         ) : (
           <Button variant="secondary" asChild>
-            <Link href={`${BASE}/create/home`}>Skip for now</Link>
+            <Link href={`${BASE}/create/canvas`}>Skip for now</Link>
           </Button>
         )}
         <p className="text-xs text-muted-foreground">You can come back to this anytime from Account.</p>
