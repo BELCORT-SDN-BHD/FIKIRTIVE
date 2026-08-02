@@ -858,6 +858,74 @@ describe("a board whose repair failed", () => {
     expect(await sweepIds({ now: start })).toEqual(expect.arrayContaining([invalidNextAt, oldTerminalAt]));
   });
 
+  it("does not let a complete-looking record for the wrong job or a wait beyond the cadence cap hide a board", async () => {
+    const start = new Date();
+    const { jobId: wrongJob } = await seedDeliveredJob({ outputs: 2, minutesAgo: 40 });
+    const { jobId: waitBeyondCap } = await seedDeliveredJob({ outputs: 2, minutesAgo: 30 });
+    await prisma.genJob.update({
+      where: { id: wrongJob },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: "gjb_wrong_job",
+            attempts: 1,
+            nextAt: "9999-12-31T23:59:59.999Z",
+            reason: "complete-looking but foreign",
+            videoOptionsWasNull: true,
+          },
+        },
+      },
+    });
+    await prisma.genJob.update({
+      where: { id: waitBeyondCap },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: waitBeyondCap,
+            attempts: 1,
+            nextAt: new Date(start.getTime() + CANVAS_REPAIR_WAIT_MAX_MS + 1).toISOString(),
+            reason: "wait beyond the writer's ceiling",
+            videoOptionsWasNull: true,
+          },
+        },
+      },
+    });
+
+    expect(await sweepIds({ now: start })).toEqual(expect.arrayContaining([wrongJob, waitBeyondCap]));
+  });
+
+  it("defers only a complete writer-shaped repair record", async () => {
+    const start = new Date();
+    const malformed = await Promise.all([
+      seedDeliveredJob({ outputs: 2, minutesAgo: 50 }),
+      seedDeliveredJob({ outputs: 2, minutesAgo: 40 }),
+      seedDeliveredJob({ outputs: 2, minutesAgo: 30 }),
+      seedDeliveredJob({ outputs: 2, minutesAgo: 20 }),
+    ]);
+    const records = [
+      { attempts: 0, reason: "invalid attempt", videoOptionsWasNull: true },
+      { attempts: 1.5, reason: "fractional attempt", videoOptionsWasNull: true },
+      { attempts: 1, reason: "x".repeat(201), videoOptionsWasNull: true },
+      { attempts: 1, reason: "invalid boolean", videoOptionsWasNull: "true" },
+    ];
+    await Promise.all(malformed.map(({ jobId }, index) => prisma.genJob.update({
+      where: { id: jobId },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: jobId,
+            nextAt: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS).toISOString(),
+            ...records[index],
+          },
+        },
+      },
+    })));
+
+    expect(await sweepIds({ now: start })).toEqual(
+      expect.arrayContaining(malformed.map(({ jobId }) => jobId)),
+    );
+  });
+
   it("offers a stale repair record again when the board is complete but cleanup did not stick", async () => {
     const start = new Date();
     const { jobId } = await seedDeliveredJob({ outputs: 1 });
@@ -869,6 +937,24 @@ describe("a board whose repair failed", () => {
     expect(await cardsForJob(jobId)).toHaveLength(1);
 
     expect(await sweepIds({ now: start })).toContain(jobId);
+  });
+
+  it("removes a stale repair record when a pending tombstone makes suppression durable", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    await noteCanvasRepairFailure(boardOf(jobId), {
+      now: new Date(start.getTime() - CANVAS_REPAIR_WAIT_BASE_MS),
+      reason: "first repair failed",
+    });
+    await seedCard({ jobId, x: 0, status: "deleted", generationId: null });
+
+    expect(await repairRecord(jobId)).not.toBeNull();
+    expect((await settleCanvasCardsForGenJob(jobId, orgId)).status).toBe("suppressed");
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+
+    expect(await repairRecord(jobId)).toBeNull();
+    expect(await sweepIds({ now: start })).not.toContain(jobId);
   });
 
   it("does not let an unrecordable oldest row starve a valid later paid board across ticks", async () => {
@@ -1027,7 +1113,11 @@ describe("a queue longer than one tick's budget", () => {
     for (let tick = 0; tick < ticksNeeded && reached < 0; tick += 1) {
       const due = await sweep({ now: start, limit });
       if (due.some((job) => job.id === last)) reached = tick;
-      await Promise.all(due.map((job) => noteCanvasRepairFailure(job, { now: start, reason: "board write blew up" })));
+      // Production processes the bounded batch serially. Opening 200 Prisma transactions at once
+      // made this proof intermittently exhaust the CI pool before it could even begin a transaction.
+      for (const job of due) {
+        await noteCanvasRepairFailure(job, { now: start, reason: "board write blew up" });
+      }
     }
 
     expect(reached).toBeGreaterThanOrEqual(0);

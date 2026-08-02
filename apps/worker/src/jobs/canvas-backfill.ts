@@ -48,6 +48,13 @@ export const CANVAS_BACKFILL_LIMIT = 200;
  * long enough for several ordinary board transactions but short beside the five-minute cadence.
  */
 export const CANVAS_BACKFILL_WALL_BUDGET_MS = 10_000;
+/** Database bounds apply only to retry work, never normal delivery or a merchant opening a board. */
+export const CANVAS_BACKFILL_DB_TIMEOUTS = {
+  statementTimeoutMs: 2_000,
+  advisoryLockTimeoutMs: 500,
+  transactionMaxWaitMs: 1_000,
+  transactionTimeoutMs: 4_000,
+} as const;
 
 /**
  * Finish every delivered job whose board is still incomplete. Returns how many boards this sweep
@@ -90,7 +97,7 @@ export async function backfillCanvasBoards(
       await runAsTenant(job.ownerId, async () => {
         const recordFailure = async (reason: string) => {
           try {
-            await noteCanvasRepairFailure(job, { now, reason });
+            await noteCanvasRepairFailure(job, { now, reason }, CANVAS_BACKFILL_DB_TIMEOUTS);
           } catch (bookkeeping) {
             console.error(
               `[canvas-backfill] ${job.id}: could not record the failed repair:`,
@@ -101,7 +108,11 @@ export async function backfillCanvasBoards(
 
         let outcome: CanvasSettlementOutcome;
         try {
-          outcome = await settleCanvasCardsForGenJob(job.id, job.ownerId);
+          outcome = await settleCanvasCardsForGenJob(
+            job.id,
+            job.ownerId,
+            CANVAS_BACKFILL_DB_TIMEOUTS,
+          );
         } catch (e) {
           const reason = sanitizeError(e, 200);
           console.error(`[canvas-backfill] ${job.id} failed (retries after a wait):`, reason);
@@ -109,18 +120,19 @@ export async function backfillCanvasBoards(
           return;
         }
 
-        if (outcome.status === "settled") {
-          // Cleanup is not settlement. If this write fails, the stale record makes the idempotent
-          // board eligible again next tick; never turn a completed board into a failed repair.
+        if (outcome.status === "settled" || outcome.status === "suppressed") {
+          // Both outcomes are durable: cards were placed, or the merchant's pending tombstone says
+          // this job must never be placed. A stale failure note may retry cleanup, but it is not a
+          // new repair failure and must not keep a suppressed board in the queue forever.
           try {
-            await clearCanvasRepairRecord(job);
+            await clearCanvasRepairRecord(job, CANVAS_BACKFILL_DB_TIMEOUTS);
           } catch (cleanup) {
             console.error(
-              `[canvas-backfill] ${job.id}: could not clear the completed repair record:`,
+              `[canvas-backfill] ${job.id}: could not clear the durable repair record:`,
               sanitizeError(cleanup),
             );
           }
-          if (outcome.created + outcome.updated > 0) {
+          if (outcome.status === "settled" && outcome.created + outcome.updated > 0) {
             console.log(`[canvas-backfill] ${job.id}: wrote ${outcome.created} card(s), fixed ${outcome.updated}`);
             repaired += 1;
           }

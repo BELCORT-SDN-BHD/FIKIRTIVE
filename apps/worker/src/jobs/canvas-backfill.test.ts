@@ -48,6 +48,7 @@ const {
   CANVAS_BACKFILL_GRACE_MS,
   CANVAS_BACKFILL_LIMIT,
   CANVAS_BACKFILL_WALL_BUDGET_MS,
+  CANVAS_BACKFILL_DB_TIMEOUTS,
 } = await import("./canvas-backfill.js");
 
 const settled = { status: "settled", nodeIds: ["n1"], created: 1, updated: 0 };
@@ -75,7 +76,10 @@ describe("the canvas backfill sweep", () => {
 
     await expect(backfillCanvasBoards()).resolves.toBe(2);
 
-    expect(m.settleCanvasCardsForGenJob.mock.calls).toEqual([["g1", "o1"], ["g2", "o2"]]);
+    expect(m.settleCanvasCardsForGenJob.mock.calls).toEqual([
+      ["g1", "o1", CANVAS_BACKFILL_DB_TIMEOUTS],
+      ["g2", "o2", CANVAS_BACKFILL_DB_TIMEOUTS],
+    ]);
     expect(m.tenants).toEqual(["o1", "o2"]);
   });
 
@@ -93,6 +97,30 @@ describe("the canvas backfill sweep", () => {
       limit: CANVAS_BACKFILL_LIMIT,
     });
     expect(CANVAS_BACKFILL_GRACE_MS).toBeGreaterThan(0);
+  });
+
+  it("opts only retry-row settle, failure-note and cleanup into bounded database waits", async () => {
+    const now = new Date("2026-08-01T12:00:00.000Z");
+    m.findCanvasSettlementBacklog.mockResolvedValue([board("g-settled"), board("g-failed")]);
+    m.settleCanvasCardsForGenJob
+      .mockResolvedValueOnce(settled)
+      .mockRejectedValueOnce(new Error("board write failed"));
+
+    await backfillCanvasBoards(now);
+
+    expect(m.settleCanvasCardsForGenJob.mock.calls).toEqual([
+      ["g-settled", "o1", CANVAS_BACKFILL_DB_TIMEOUTS],
+      ["g-failed", "o1", CANVAS_BACKFILL_DB_TIMEOUTS],
+    ]);
+    expect(m.clearCanvasRepairRecord).toHaveBeenCalledWith(
+      board("g-settled"),
+      CANVAS_BACKFILL_DB_TIMEOUTS,
+    );
+    expect(m.noteCanvasRepairFailure).toHaveBeenCalledWith(
+      board("g-failed"),
+      { now, reason: "board write failed" },
+      CANVAS_BACKFILL_DB_TIMEOUTS,
+    );
   });
 
   it("reports nothing repaired when every board already matched its job", async () => {
@@ -142,7 +170,9 @@ describe("the canvas backfill sweep", () => {
     };
 
     await expect(tick()).resolves.toBeUndefined();
-    expect(m.settleCanvasCardsForGenJob.mock.calls).toEqual([["g1", "o1"]]);
+    expect(m.settleCanvasCardsForGenJob.mock.calls).toEqual([
+      ["g1", "o1", CANVAS_BACKFILL_DB_TIMEOUTS],
+    ]);
     expect(afterwards).toEqual(["refgen", "llm-reservations", "research", "publish", "ingest"]);
   });
 
@@ -184,20 +214,21 @@ describe("what the sweep records about a repair", () => {
     expect(m.noteCanvasRepairFailure).toHaveBeenCalledWith(board("g-broken"), {
       now,
       reason: "board write blew up",
-    });
+    }, CANVAS_BACKFILL_DB_TIMEOUTS);
   });
 
-  it("records a repair the projection declined too — 'no' once is not 'never'", async () => {
+  it("clears a stale repair record after durable tombstone suppression", async () => {
     const now = new Date("2026-08-01T12:00:00.000Z");
     m.findCanvasSettlementBacklog.mockResolvedValue([board("g-raced")]);
     m.settleCanvasCardsForGenJob.mockResolvedValue({ status: "suppressed", nodeIds: [], created: 0, updated: 0 });
 
     await backfillCanvasBoards(now);
 
-    // Left unrecorded, a board the scan offers and the projection declines is handed out again on
-    // every single tick — a slot of the budget spent for ever on a board nothing will change.
-    expect(m.noteCanvasRepairFailure).toHaveBeenCalledWith(board("g-raced"), { now, reason: "suppressed" });
-    expect(m.clearCanvasRepairRecord).not.toHaveBeenCalled();
+    expect(m.clearCanvasRepairRecord).toHaveBeenCalledWith(
+      board("g-raced"),
+      CANVAS_BACKFILL_DB_TIMEOUTS,
+    );
+    expect(m.noteCanvasRepairFailure).not.toHaveBeenCalled();
   });
 
   it("clears the record once the board is finished, so a row means a board still in trouble", async () => {
@@ -205,7 +236,10 @@ describe("what the sweep records about a repair", () => {
 
     await backfillCanvasBoards();
 
-    expect(m.clearCanvasRepairRecord).toHaveBeenCalledWith(board("g1"));
+    expect(m.clearCanvasRepairRecord).toHaveBeenCalledWith(
+      board("g1"),
+      CANVAS_BACKFILL_DB_TIMEOUTS,
+    );
     expect(m.noteCanvasRepairFailure).not.toHaveBeenCalled();
   });
 

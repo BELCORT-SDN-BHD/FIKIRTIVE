@@ -33,6 +33,12 @@ import {
 import { seedOrg } from "../../test/setup.js";
 
 const CARD = { w: 320, h: 320 };
+const TEST_BACKFILL_TIMEOUTS = {
+  statementTimeoutMs: 250,
+  advisoryLockTimeoutMs: CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS,
+  transactionMaxWaitMs: 500,
+  transactionTimeoutMs: 1_000,
+} as const;
 
 let orgId: string;
 let projectId: string;
@@ -341,9 +347,13 @@ describe("a contended board cannot hold the maintenance worker", () => {
     }, 2_500);
 
     const operations = [
-      () => settleCanvasCardsForGenJob(jobId, orgId),
-      () => noteCanvasRepairFailure(board, { now: new Date(), reason: "board write failed" }),
-      () => clearCanvasRepairRecord(board),
+      () => settleCanvasCardsForGenJob(jobId, orgId, TEST_BACKFILL_TIMEOUTS),
+      () => noteCanvasRepairFailure(
+        board,
+        { now: new Date(), reason: "board write failed" },
+        TEST_BACKFILL_TIMEOUTS,
+      ),
+      () => clearCanvasRepairRecord(board, TEST_BACKFILL_TIMEOUTS),
     ];
 
     try {
@@ -360,6 +370,37 @@ describe("a contended board cannot hold the maintenance worker", () => {
           .query("SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))", [lockKey])
           .catch(() => undefined);
       }
+      await blocker.end();
+    }
+  }, 10_000);
+
+  it("bounds the job pre-read before a backfill settlement reaches its board lock", async () => {
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const { jobId } = await seedJob({
+      status: "DONE",
+      outputs: 1,
+      idempotencyKey: canvasKey(),
+    });
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("BEGIN");
+    await blocker.query('LOCK TABLE "GenJob" IN ACCESS EXCLUSIVE MODE');
+    let fallbackRelease: Promise<unknown> | undefined;
+    const release = setTimeout(() => {
+      fallbackRelease = blocker.query("ROLLBACK");
+    }, 1_500);
+    const startedAt = Date.now();
+
+    try {
+      await expect(
+        settleCanvasCardsForGenJob(jobId, orgId, TEST_BACKFILL_TIMEOUTS),
+      ).rejects.toThrow(/statement timeout|canceling statement/i);
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+    } finally {
+      clearTimeout(release);
+      if (fallbackRelease) await fallbackRelease.catch(() => undefined);
+      else await blocker.query("ROLLBACK").catch(() => undefined);
       await blocker.end();
     }
   }, 10_000);

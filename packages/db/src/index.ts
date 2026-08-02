@@ -26,6 +26,7 @@ export {
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
   type CanvasSettlementOutcome,
+  type CanvasSettlementTimeoutOptions,
   type CanvasSettlementBacklogJob,
   type CanvasRepairRecord,
 } from "./canvas-settlement.js";
