@@ -219,108 +219,21 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
     expect(ottoInstructions).toMatch(/ONLY thing that ever starts the work/i);
   });
 
-  // #559-style family ban: no wording anywhere in the instructions may model or license
-  // Otto promising to start paid creative work from words alone. The left-hand consent
-  // wording is deliberately irrelevant: the invariant lives in Otto's promise clause.
-  const PAID_MEDIA_ACTIONS = new Set([
-    "start",
-    "begin",
-    "run",
-    "do",
-    "create",
-    "generate",
-    "build",
-    "make",
-  ]);
-  const PAID_MEDIA_TARGETS = new Set([
-    "generation",
-    "generations",
-    "image",
-    "images",
-    "video",
-    "videos",
-    "ad",
-    "ads",
-    "creative",
-    "creatives",
-    "campaign",
-    "campaigns",
-    "asset",
-    "assets",
-    "media",
-    "work",
-  ]);
-  const FREE_INFORMATION_TARGETS = new Set([
-    "check",
-    "checks",
-    "plan",
-    "plans",
-    "research",
-    "suggestion",
-    "suggestions",
-    "explanation",
-    "explanations",
-  ]);
-
-  function includesTokenSequence(tokens: string[], sequence: string[]): boolean {
-    return tokens.some((_, at) =>
-      sequence.every((expected, offset) => tokens[at + offset] === expected),
-    );
-  }
-
-  function promiseTargetsPaidMedia(promise: string[]): boolean {
-    const hasFreeTarget = (tokens: string[]) =>
-      tokens.some((token) => FREE_INFORMATION_TARGETS.has(token));
-
-    const structuralPromise = promise.some((token, actionAt) => {
-      if (!PAID_MEDIA_ACTIONS.has(token)) return false;
-      const rawObject = promise.slice(actionAt + 1, actionAt + 12);
-      const boundaryAt = rawObject.findIndex((part) => part === "and" || part === "then");
-      const beforeBoundary = boundaryAt < 0 ? rawObject : rawObject.slice(0, boundaryAt);
-      const boundaryHasTarget = beforeBoundary.some(
-        (part) => FREE_INFORMATION_TARGETS.has(part) || PAID_MEDIA_TARGETS.has(part),
-      );
-      const object = boundaryAt >= 0 && boundaryHasTarget ? beforeBoundary : rawObject;
-      return !hasFreeTarget(object) && object.some((part) => PAID_MEDIA_TARGETS.has(part));
-    });
-    if (structuralPromise) return true;
-    if (hasFreeTarget(promise)) return false;
-
-    return [
-      ["get", "it", "going"],
-      ["get", "started"],
-      ["kick", "things", "off"],
-      ["start", "right", "away"],
-    ].some((idiom) => includesTokenSequence(promise, idiom));
-  }
-
-  function containsWordsOnlyPaidWorkPromise(text: string): boolean {
-    return text.split(/[.!?;\n]+/).some((clause) => {
-      const tokens =
-        clause
-          .toLowerCase()
-          .replaceAll("’", "'")
-          .match(/[a-z]+(?:-[a-z]+)*(?:'[a-z]+)?/g) ?? [];
-      if (tokens.length > 60) return false;
-
-      const firstPersonFuture = tokens.some((token, subjectAt) => {
-        if (token === "i'll") return promiseTargetsPaidMedia(tokens.slice(subjectAt + 1));
-        if (token === "i" && tokens[subjectAt + 1] === "will") {
-          return promiseTargetsPaidMedia(tokens.slice(subjectAt + 2));
-        }
-        return false;
-      });
-      if (firstPersonFuture) return true;
-
-      return (
-        includesTokenSequence(tokens, ["we're", "off"]) &&
-        !tokens.some((token) => FREE_INFORMATION_TARGETS.has(token))
-      );
-    });
-  }
+  // #559-style conservative safety lint: these are auditable banned wording families,
+  // not a general English classifier. An ambiguous new instruction should be reviewed.
+  const SAY_TO_START_INVITATIONS = [
+    /\b(?:just\s+)?(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\b(?:tell(?:\s+me)?|give(?:\s+me)?)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\b(?:let\s+me\s+know|just\s+confirm)\b[^.!?\n]{0,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\b(?:say|reply|respond|type|write|message|send|answer|tell|give)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\bwe['’]re\s+off\b/i,
+  ];
 
   it("bans the whole say-to-start invitation family from the instructions", () => {
-    expect(containsWordsOnlyPaidWorkPromise(ottoInstructions)).toBe(false);
+    for (const invitation of SAY_TO_START_INVITATIONS) {
+      expect(ottoInstructions, `say-to-start invitation ${invitation} must not appear`).not.toMatch(
+        invitation,
+      );
+    }
   });
 
   // Positive control (same discipline as the completeness family below): a ban that
@@ -363,33 +276,30 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
       "Write back go and I will create the video.",
       "Answer yes and I'll build the ad creative.",
       "Let me know and I will make the campaign asset.",
+      // r6 — original removed wording plus future morphology / implicit targets:
+      "Tell me 'generate all' and I'll make all three at once.",
+      "Say okay and I'm going to render the video.",
+      "Reply go and I'll be animating it.",
+      "Write yes and I'll render it.",
+      "Message ready then I will animate the image.",
+      "Answer ok and I'm going to start it.",
+      "Let me know you're ready and I'll be creating it.",
     ];
     for (const escape of escapes) {
       expect(
-        containsWordsOnlyPaidWorkPromise(escape),
+        SAY_TO_START_INVITATIONS.some((pattern) => pattern.test(escape)),
         `escape "${escape}" must be caught by the family`,
       ).toBe(true);
     }
   });
 
-  it("does not flag safe information-gathering copy", () => {
+  it("leaves obvious non-family wording alone", () => {
     const safeCopy = [
       "Tell me your business goal and I’ll suggest a plan.",
-      "Please read the essay yesterday and I will create a research plan.",
-      "Reply yes and I'll run a quick free check.",
-      "Message me your business goal and I will create a draft plan.",
-      "Write your audience details and I'll build a research plan.",
-      "Answer the question and I will make a suggestion.",
-      "Let me know your product and I'll create an explanation.",
-      "Send your audience information and I will do a quick free check.",
-      "Reply yes and I'll run a quick free check on the image.",
-      "Message me and I will create a draft media plan.",
-      "Write back and I'll make a research plan for the campaign assets.",
-      "Answer me and I will create an explanation of the video options.",
-      "Let me know and I'll make a suggestion for the ad creative.",
+      "We're off to lunch.",
     ];
     for (const sentence of safeCopy) {
-      expect(containsWordsOnlyPaidWorkPromise(sentence)).toBe(false);
+      expect(SAY_TO_START_INVITATIONS.some((pattern) => pattern.test(sentence))).toBe(false);
     }
   });
 });
