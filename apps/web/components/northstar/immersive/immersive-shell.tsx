@@ -143,27 +143,9 @@ export function ImmersiveShell({
 
   const ctx = React.useMemo(() => ({ insideImmersive: true, openOtto }), [openOtto]);
 
-  // 画布页自带真输入框(#600 合体内核),再挂一颗按钮就是两个 Otto 同屏;
-  // 市政厅是内部运维台(宪法 7 Otto 永久豁免)。这两处不出现这颗按钮。
-  const hideOttoButton =
-    pathname === "/northstar-immersive/create/canvas" ||
-    pathname === "/northstar-immersive/cityhall/admin";
-
-  // 登录闸(global gap#1):未登录的 /onboarding/login 是干净的未登录态 —— 不渲染
-  // 导航与身份栏,也不挂 Otto 按钮。登录后才进完整壳。
-  const bareLayout = pathname === "/northstar-immersive/onboarding/login";
-  if (bareLayout) {
-    return (
-      <div className="gb ns-immersive flex h-dvh flex-col bg-background text-foreground">
-        <main
-          className="min-h-0 flex-1 overflow-y-auto"
-          style={reduced ? undefined : { animation: "ns-immersive-fade 220ms ease-out" }}
-        >
-          {children}
-        </main>
-      </div>
-    );
-  }
+  // 画布页自带真输入框(#600 合体内核),再挂一颗按钮就是两个 Otto 同屏;那一页不出现这颗按钮。
+  // (#615:市政厅 /admin 与 /onboarding/login 两条路线已退场,各自的特判随之删除。)
+  const hideOttoButton = pathname === "/northstar-immersive/create/canvas";
 
   return (
     <ImmersiveProvider value={ctx}>
@@ -196,10 +178,11 @@ export function ImmersiveShell({
             />
           )}
           <ImmersiveNav identity={identity} mobileOpen={drawerOpen} onCloseMobile={closeDrawer} />
-          {/* 内容 pane:唯一滚动所有者;换路由 = 换 key 做一次轻 fade */}
+          {/* 内容 pane:唯一滚动所有者;换路由 = 换 key 做一次轻 fade。
+              挂 Otto 球时底部让位 72px(#615:壳层通用让位,球不再压住任何页面的底部正文)。 */}
           <main
             key={pathname}
-            className="min-w-0 flex-1 overflow-y-auto"
+            className={hideOttoButton ? "min-w-0 flex-1 overflow-y-auto" : "min-w-0 flex-1 overflow-y-auto pb-[72px]"}
             style={reduced ? undefined : { animation: "ns-immersive-fade 220ms ease-out" }}
           >
             {children}

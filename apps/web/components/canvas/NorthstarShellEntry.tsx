@@ -11,7 +11,7 @@ import { getMyProfileNames } from "@/lib/profile-names";
  * 位置在 fenced tree 之外(与 ImmersiveCanvasEntry 同一处受控 adapter),所以可以直接读
  * 认证会话;北极星路由与组件仍然一行后端都不 import(scripts/check-northstar-imports.sh)。
  *
- * 未登录不是错误态:`/northstar-immersive/onboarding/login` 本来就要能在未登录下打开。
+ * 未登录不是错误态:预览壳允许未登录浏览(#615 后壳内假登录页已退场,真登录在 /login)。
  * 所以这里**不重定向**,只把身份解析成 null,导航据此显示 Sign in —— 壳不冒充任何人。
  */
 
