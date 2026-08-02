@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: bash scripts/ci/run-job.sh {check|test|web-build|lint}" >&2
+  echo "usage: bash scripts/ci/run-job.sh {check|test|web-build|lint|money-path-review}" >&2
 }
 
 if [[ $# -ne 1 ]]; then
@@ -13,7 +13,7 @@ fi
 
 job="$1"
 case "$job" in
-  check|test|web-build|lint) ;;
+  check|test|web-build|lint|money-path-review) ;;
   *)
     usage
     exit 64
@@ -66,7 +66,8 @@ case "$job" in
     node --test \
       scripts/__tests__/task-ownership-check.test.mjs \
       scripts/__tests__/ci-job-parity.test.mjs \
-      scripts/__tests__/check-project-authority.test.mjs
+      scripts/__tests__/check-project-authority.test.mjs \
+      scripts/__tests__/check-money-path-review.test.mjs
     node scripts/check-project-authority.mjs
     ;;
   test)
@@ -91,5 +92,10 @@ case "$job" in
   lint)
     prepare_workspace
     pnpm lint
+    ;;
+  # No prepare_workspace: the gate imports nothing from the workspace (node:child_process +
+  # node:fs only), so skipping install/build keeps this job's feedback fast.
+  money-path-review)
+    node scripts/ci/check-money-path-review.mjs
     ;;
 esac

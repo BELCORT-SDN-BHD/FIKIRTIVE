@@ -1,10 +1,25 @@
-# The four CI jobs and the local fallback share scripts/ci/run-job.sh as their only command
+# The five CI jobs and the local fallback share scripts/ci/run-job.sh as their only command
 # source. Deployment is Founder-only; external source triggers and the deployed commit must be
 # queried live rather than inferred from this workflow.
 name: CI
 
 on:
   pull_request:
+    # `edited` re-runs this job (and the other four) on a title/body/base edit too, which is
+    # useful general responsiveness but is NOT load-bearing for scripts/ci/check-money-path-
+    # review.mjs specifically (#480 round 3): the review token now lives in a PR COMMENT, verified
+    # with a LIVE GitHub API call on every run, not read out of the cached event payload — so an
+    # ordinary re-run (a new push, or a plain "Re-run jobs" click that replays the old payload)
+    # already picks up a comment posted at any point before that run, no special trigger needed.
+    #
+    # What `edited` still costs, stated in full:
+    #   * GitHub fires `edited` for a TITLE or BASE-BRANCH change too, not only the body, so all
+    #     five jobs re-run on edits that cannot possibly affect the build.
+    #   * `concurrency.cancel-in-progress` below groups by github.ref, so an edit shortly after a
+    #     push CANCELS the push-triggered run. A cancelled run is not green, and project law
+    #     clause 2 requires every current-head check to be green — read the LATEST run for the
+    #     head SHA, and re-run the cancelled one if a reviewer needs it green too.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
@@ -87,3 +102,32 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: bash scripts/ci/run-job.sh lint
+
+  # Lock 3 (#480, extracted from the #471 archive) — a diff that can move money does not merge
+  # without a named review. Fail-closed on a pull_request event with an unstamped money-path
+  # file; advisory (never blocks) on `push` to main or any run without PR context, since the
+  # skill's Step-1 catch-all and the human `git diff` at review time still cover that case.
+  # This job is NOT wired into required-status-check settings here — that is a repository
+  # setting change and stays Founder-only (project law clause 6 / issue #480's own gate).
+  #
+  # GITHUB_TOKEN (#480 round 3, sealed cross-family judge P1 "凭证署名不认证可伪造"): the
+  # review token must now come from a PR COMMENT authored by someone other than the PR author,
+  # verified with a live call to the GitHub REST API — a PR-body self-declaration is no longer
+  # accepted at all. This is NOT a new credential grant: GITHUB_TOKEN is the ephemeral,
+  # automatically-issued per-run token every Actions job already has; passing it through as an
+  # env var only lets the script make the SAME read-only issues-comments call `gh`/`actions/
+  # github-script` could already make with this job's existing default permissions. No
+  # `permissions:` block is added here — whatever the repo's default token scope is (a repo
+  # setting, Founder-only to change) already covers a read call on issue comments.
+  money-path-review:
+    name: money-path review (spend-path gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bash scripts/ci/run-job.sh money-path-review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
