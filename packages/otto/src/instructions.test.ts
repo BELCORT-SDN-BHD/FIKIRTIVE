@@ -220,27 +220,70 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
   });
 
   // #559-style family ban: no wording anywhere in the instructions may model or license
-  // the say-X-and-I'll-start invitation template — not even quoted as a bad example
-  // (r2, judge P2: a verbatim negative example still teaches the model the template).
-  //
-  // r2 also replaced the quoted-verb-whitelist patterns: the old family required quotes
-  // around the go-word and whitelisted trailing verbs (start|get|go|kick|run), which let
-  // unquoted, reply/type/tell-me-led, curly-quoted, and "make"-verb variants walk
-  // through — the judge's four escapes below proved it. The middle pattern now bans ANY
-  // say/reply/type/tell-me lead followed by "and I'll" in the same sentence, whatever
-  // the verb or quoting.
-  const SAY_TO_START_INVITATIONS = [
-    /\bjust say\b/i,
-    /\b(say|reply|type|tell me)\b[^.!?\n]{0,40}\band I['’]ll\b/i,
-    /\bsay the word\b/i,
+  // a words-only consent followed by Otto promising to start paid creative work. Keep
+  // the two semantic halves explicit so ordinary information gathering stays legal.
+  const WORDS_ONLY_CONSENT_LEADS = [
+    "reply yes",
+    "reply with yes",
+    "say yes",
+    "type yes",
+    "tell me yes",
+    "tell me to proceed",
+    "tell me ready",
+    "send go-ahead",
+    "send the go-ahead",
+    "say go",
+    "say make it",
+    "say the word",
   ];
+  const PAID_WORK_PROMISE_VERBS = new Set([
+    "start",
+    "begin",
+    "run",
+    "do",
+    "create",
+    "generate",
+    "build",
+    "make",
+  ]);
+
+  function containsWordsOnlyPaidWorkPromise(text: string): boolean {
+    return text.split(/[.!?\n]+/).some((sentence) => {
+      const tokens =
+        sentence
+          .toLowerCase()
+          .replaceAll("’", "'")
+          .match(/[a-z]+(?:-[a-z]+)*(?:'[a-z]+)?/g) ?? [];
+      if (tokens.length > 60) return false;
+
+      return tokens.some((connector, connectorAt) => {
+        if (connector !== "and" && connector !== "then") return false;
+        const lead = tokens.slice(Math.max(0, connectorAt - 12), connectorAt).join(" ");
+        if (!WORDS_ONLY_CONSENT_LEADS.some((phrase) => lead.includes(phrase))) return false;
+
+        const promise = tokens.slice(connectorAt + 1, connectorAt + 14);
+        const subjectAt = promise.findIndex(
+          (token, index) =>
+            token === "i'll" ||
+            (token === "i" && promise[index + 1] === "will") ||
+            token === "we're",
+        );
+        if (subjectAt < 0) return false;
+
+        const predicate = promise.slice(subjectAt + 1, subjectAt + 10);
+        return (
+          predicate.some((token) => PAID_WORK_PROMISE_VERBS.has(token)) ||
+          (predicate.includes("get") &&
+            (predicate.includes("started") || predicate.includes("going"))) ||
+          (predicate.includes("kick") && predicate.includes("off")) ||
+          (promise[subjectAt] === "we're" && predicate.includes("off"))
+        );
+      });
+    });
+  }
 
   it("bans the whole say-to-start invitation family from the instructions", () => {
-    for (const invitation of SAY_TO_START_INVITATIONS) {
-      expect(ottoInstructions, `say-to-start invitation ${invitation} must not appear`).not.toMatch(
-        invitation,
-      );
-    }
+    expect(containsWordsOnlyPaidWorkPromise(ottoInstructions)).toBe(false);
   });
 
   // Positive control (same discipline as the completeness family below): a ban that
@@ -259,13 +302,29 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
       "Reply yes and I'll start right away.",
       "Tell me yes and I'll get started.",
       "Say ‘go’ and I’ll start right away.",
+      // r3 — words-only consent + connector + paid-work promise variants:
+      "Reply yes, then I’ll begin the video.",
+      "Say yes and I will generate the images.",
+      "Tell me to proceed, then I'll build the campaign assets.",
+      "Send go-ahead and I will create the ad.",
+      "Reply yes and I'll start the paid work.",
+      "Say yes then I will run the generation.",
+      "Tell me to proceed and I’ll do the image work.",
+      "Send go-ahead then I will make the video.",
+      "Reply with yes and I'll generate the image.",
+      "Send the go-ahead, then I will build the assets.",
     ];
     for (const escape of escapes) {
       expect(
-        SAY_TO_START_INVITATIONS.some((pattern) => pattern.test(escape)),
+        containsWordsOnlyPaidWorkPromise(escape),
         `escape "${escape}" must be caught by the family`,
       ).toBe(true);
     }
+  });
+
+  it("does not flag safe information-gathering copy", () => {
+    const safeCopy = "Tell me your business goal and I’ll suggest a plan.";
+    expect(containsWordsOnlyPaidWorkPromise(safeCopy)).toBe(false);
   });
 });
 
