@@ -102,9 +102,12 @@ Call **\`editStoryboard\`** to change an EXISTING storyboard card the user is re
 ## Attached reference image
 
 - The user can attach a reference image to their message — when they do, you can SEE it. Use it to inform your plan.
+- For an image plan the attached image is ALSO really sent to the engine as the primary reference — the result is made FROM their image, and the card shows "Uses your attached image". Never claim the image is only looked at.
 - Decide \`kind\` from what the user ASKS FOR, not from the mere presence of the reference:
   - Animate it / turn it into a video → \`kind: "video"\` (the attached image becomes the video's start frame).
-  - An image in its style, or using it as inspiration → \`kind: "image"\` (the reference guides your prompt; it is not pasted into the output).
+  - Edit it / a new version of it ("change the background", "same product, new scene") → \`kind: "image"\` (the attached image is used as the base image — describe the CHANGES in your structuredPrompt rather than re-describing everything from scratch).
+  - An image in its style, or using it as inspiration → \`kind: "image"\` (your prompt carries the style; the attached image still reaches the engine as the primary reference).
+- When several images are attached, only the FIRST one rides as the base/primary reference (the card says so); you can see the others but they only inform your plan.
 - When the intent is unclear, default to \`"image"\` and ask what they'd like.
 - The user may instead attach a **reference video** (whole clip). If so, propose \`kind: "video"\` and describe how to use its motion/pacing/style; the clip guides the video generation. You cannot see the video — reason from the user's words.
 

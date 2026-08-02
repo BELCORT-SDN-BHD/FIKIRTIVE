@@ -65,16 +65,20 @@ export async function checkCast(req: {
       findings.push(...castFindings({ requestedEntityIds: req.entityIds, entities: mapped, castRule }));
     }
 
-    // i2v start/end frame must be an owned, same-project, live image — but check
-    // ONLY where the worker actually consumes them: source is video-only, and tail
-    // only alongside a source (apps/worker/src/jobs/gen.ts). Checking an inert ID
-    // the render path would ignore (e.g. a stray sourceGenerationId on an image
-    // request) would WRONGLY block a working generation — a never-loosen violation
-    // — so we mirror the worker's semantics exactly.
-    if (req.kind === "video") {
+    // source/tail frame must be an owned, same-project, live image — checked exactly
+    // where the worker actually consumes them (apps/worker/src/jobs/gen.ts): a
+    // sourceGenerationId is consumed by BOTH kinds — the i2v start frame on a video
+    // job, and the edit/base image on an IMAGE job (F09: the worker conditions the
+    // gen on it and fail-closes with a refund when it can't resolve) — so pre-checking
+    // it for either kind only ever ADDS a friendlier pre-spend block; a generation it
+    // blocks would have been refused and refunded by the worker anyway (never-loosen
+    // holds). tailGenerationId stays video-only and only alongside a source, mirroring
+    // the worker. (#619 E-7 — the older comment here claimed source was video-only and
+    // an image-side sourceGenerationId was inert; F09 made that false.)
+    {
       const frames: Array<[string, string]> = [];
-      if (req.sourceGenerationId) frames.push([req.sourceGenerationId, "start frame"]);
-      if (req.sourceGenerationId && req.tailGenerationId) frames.push([req.tailGenerationId, "end frame"]);
+      if (req.sourceGenerationId) frames.push([req.sourceGenerationId, req.kind === "video" ? "start frame" : "base"]);
+      if (req.kind === "video" && req.sourceGenerationId && req.tailGenerationId) frames.push([req.tailGenerationId, "end frame"]);
       for (const [id, label] of frames) {
         const gen = await prisma.generation.findFirst({
           where: { id, ownerId: req.ownerId, projectId: req.projectId, deletedAt: null, asset: { ext: { in: IMG_EXTS } } },

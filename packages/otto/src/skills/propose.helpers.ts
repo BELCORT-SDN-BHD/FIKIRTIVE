@@ -15,6 +15,7 @@ import {
   REFERENCE_VIDEO_MODEL,
   MAX_GEN_PROMPT,
   MAX_GEN_COUNT,
+  MAX_CONDITIONING_IMAGES,
   displayCredits,
   pricedGenCredits,
   EXECUTED_SPEC,
@@ -142,6 +143,10 @@ export function buildSpecChips(
     chips.push(`${width} × ${height}`);
     if (EXECUTED_SPEC.image.aspectHonoured && params.aspectRatio) chips.push(params.aspectRatio);
     chips.push(params.count === 1 ? "1 image" : `${params.count} images`);
+    // #619 E-4: the attached image really is sent to the engine as the primary
+    // reference (worker F09 unshifts it to slot 0) — the card must say so BEFORE
+    // approval. Absent a source, the chip never appears: the disclosure cannot lie.
+    if (hasSourceImage) chips.push("Uses your attached image");
   }
   return chips;
 }
@@ -196,6 +201,47 @@ export function buildDowngradeNote(
 }
 
 // ---------------------------------------------------------------------------
+// #619 F6 — identity-lock ↔ entityIds binding check (pure)
+// ---------------------------------------------------------------------------
+
+/** The four fixed identity-lock templates `identityLockClause` (prompt-vocab.ts) weaves.
+ *  Style-borrow ("draw stylistic inspiration from …") deliberately absent — it locks no
+ *  identity, so it demands no pixels. */
+const LOCK_CLAUSE_PATTERNS = [
+  /keep\s+(.+?)\s+identical to the reference/gi,
+  /feature\s+(.+?)\s+exactly as in the reference/gi,
+  /match the setting of\s+(.+?)\s+to the reference environment/gi,
+  /reproduce the\s+(.+?)\s+logo exactly as in the reference/gi,
+];
+
+/**
+ * 出卡前的反向核对(#619 F6):structuredPrompt 里被身份锁定句点名的元素,若能对上
+ * 商家已有的元素(availableRefs 里按名字、大小写不敏感),它的 id 就必须真的在
+ * entityIds 里 —— 否则锁的只是「词」,参考像素根本到不了模型(instructions.ts:72
+ * 自认 without entityIds the character will drift)。对不上任何已知元素的名字不报
+ * (它可能描述的是挂图本身);返回未绑定元素的**原始名字**列表,空数组=通过。
+ */
+export function unboundLockedNames(
+  structuredPrompt: string,
+  boundEntityIds: readonly string[],
+  availableRefs: readonly { id: string; name: string }[],
+): string[] {
+  if (availableRefs.length === 0) return [];
+  const bound = new Set(boundEntityIds);
+  const norm = (s: string) => s.trim().replace(/^@/, "").toLowerCase();
+  const byName = new Map(availableRefs.map((r) => [norm(r.name), r]));
+  const unbound: string[] = [];
+  for (const pattern of LOCK_CLAUSE_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of structuredPrompt.matchAll(pattern)) {
+      const ref = byName.get(norm(match[1] ?? ""));
+      if (ref && !bound.has(ref.id) && !unbound.includes(ref.name)) unbound.push(ref.name);
+    }
+  }
+  return unbound;
+}
+
+// ---------------------------------------------------------------------------
 // Pure helper — no DB, no SDK
 // ---------------------------------------------------------------------------
 
@@ -211,17 +257,26 @@ export function buildProposeCard(
   input: Pick<ProposeInput, "kind" | "structuredPrompt" | "entityIds" | "variantSel" | "desiredAspect" | "desiredDuration" | "desiredAudio" | "count" | "forVideo">,
   ctx: OttoContext,
   ownedEntityIds: string[],
+  /** #619 E-5 (optional): total live reference photos the worker would aggregate for THIS
+   *  card's entity mentions (variant-selected → that variant's live refs, bare → base refs).
+   *  Supplied by executePropose from owner-scoped counts; when it exceeds the worker cap
+   *  the card discloses the truncation BEFORE the merchant pays. Display-only. */
+  opts?: { entityRefImageCount?: number },
 ): ProposeCardResult {
   // Step 1: kind is the PLANNER'S decision — an attached reference no longer forces video.
-  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame ONLY for a video plan;
-  // for an image plan it is a vision reference the planner already SAW (buildOttoContext)
-  // and is NOT threaded into the gen request (no silent image-to-image).
+  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame for a video plan; for an
+  // image plan it now RIDES ON THE CARD too (#619): approval threads it into the gen request
+  // and the worker (F09) sends it to the engine as the PRIMARY reference, so "attach + ask
+  // for an image" really conditions on the merchant's image instead of repainting from words.
   let kind = input.kind;
   let entityIds = input.entityIds;
   let variantSel = input.variantSel;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
   const hasSourceImage = isI2V;
+  // #619: an IMAGE plan with an attached reference — the source rides on the card (and is
+  // disclosed on the card face). Model selection/pricing stay on the image tier untouched.
+  const isImageEdit = kind === "image" && !!ctx.sourceGenerationId;
 
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
@@ -347,7 +402,34 @@ export function buildProposeCard(
     ...(imageAspectDropped ? { aspect: input.desiredAspect } : {}),
     ...(audioNotHonoured ? { audio: input.desiredAudio } : {}),
   };
-  const downgraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
+
+  // #619 E-4/E-5:两类「收下了但只能用一部分」也必须在付费前说出口,不得静默。
+  // ① 挂了多张图:付费请求的底图字段是单值,只有第一张真正作为底图/第一参考;
+  // ② @元素活图总数超过 worker 的聚合上限(MAX_CONDITIONING_IMAGES):只会实发前十张。
+  // 两者均为纯展示 —— 不改 params、不改选型、不改报价。
+  const attachedImageCount = isImageEdit ? Math.max(ctx.sourceGenerationIds?.length ?? 1, 1) : 0;
+  const multiImageBase = attachedImageCount > 1;
+  const refTotal = opts?.entityRefImageCount;
+  const refsTruncated =
+    kind === "image" &&
+    entityIds.length > 0 &&
+    typeof refTotal === "number" &&
+    refTotal > MAX_CONDITIONING_IMAGES;
+
+  const baseDowngraded = sm.downgraded || imageAspectDropped || audioNotHonoured;
+  const downgraded = baseDowngraded || multiImageBase || refsTruncated;
+  const downgradeNoteParts: string[] = [];
+  if (baseDowngraded) downgradeNoteParts.push(buildDowngradeNote(kind, requested, sm.params, hasSourceImage));
+  if (multiImageBase) {
+    downgradeNoteParts.push(
+      `You attached ${attachedImageCount} images — the first one is used as the base image; the others only guided this plan.`,
+    );
+  }
+  if (refsTruncated) {
+    downgradeNoteParts.push(
+      `This run will use ${MAX_CONDITIONING_IMAGES} of your ${refTotal} reference photos — remove some references to choose which.`,
+    );
+  }
 
   // Step 5: cardPayload (mirror coworkTurn 401–406)
   const cardPayload: CardPayload = {
@@ -355,19 +437,19 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    specChips: buildSpecChips(kind, sm.params, hasSourceImage),
+    specChips: buildSpecChips(kind, sm.params, hasSourceImage || isImageEdit),
     downgraded,
-    ...(downgraded
-      ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, hasSourceImage) }
-      : {}),
+    ...(downgraded ? { downgradeNote: downgradeNoteParts.join(" ") } : {}),
     structuredPrompt: input.structuredPrompt,
     entityIds,
     variantSel,
     estimatedPriceUsd: price,
     estimatedCredits,
     ...(videoStep ? { videoStep } : {}),
-    // isI2V ⇒ kind==="video" && !!ctx.sourceGenerationId, so the non-null assertion is sound.
-    ...(isI2V ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
+    // (isI2V || isImageEdit) ⇒ !!ctx.sourceGenerationId, so the non-null assertion is sound.
+    // #619: an image plan now carries the attached reference too — approval threads it into
+    // the paid request (gen-from-card passes it through; worker F09 sends it to the engine).
+    ...(isI2V || isImageEdit ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
   };

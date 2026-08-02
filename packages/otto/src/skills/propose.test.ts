@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_PRICE_USD_PER_IMAGE, buildGenRequestFromCard } from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE, MAX_CONDITIONING_IMAGES, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
-import { buildProposeCard, EXECUTED_SPEC } from "./propose.helpers.js";
+import { buildProposeCard, unboundLockedNames, EXECUTED_SPEC } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
 import type { OttoContext } from "../context.js";
@@ -12,6 +12,10 @@ import type { OttoContext } from "../context.js";
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     entity: {
+      findMany: vi.fn(),
+    },
+    // #619 E-5: executePropose counts a selected variant's live refs for the truncation notice
+    entityVariant: {
       findMany: vi.fn(),
     },
     chatMessage: {
@@ -171,12 +175,16 @@ describe("buildProposeCard — pure helper", () => {
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
   });
 
-  // Test 4b: DECOUPLE — an IMAGE plan + reference stays an image (NOT forced to video),
-  // keeps its owned entity refs, and does NOT thread sourceGenerationId into the gen request.
-  it("decouple: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId NOT in payload", () => {
+  // Test 4b (#619 F0 flip + F1 + F2): an IMAGE plan + attached reference stays an image
+  // (NOT forced to video), keeps its owned entity refs, and DOES carry sourceGenerationId
+  // on the card — approval threads it into the gen request as the primary reference (the
+  // worker F09 path consumes it), so "attach + ask for an image" really edits/conditions
+  // on the merchant's image. This REVERSES the old "NOT in payload" lock, which locked
+  // the #619 defect itself (the promised image never reached the paid request).
+  it("#619: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId IS in payload and reaches the gen request", () => {
     const ctx = makeCtx({ sourceGenerationId: "gen-abc123" });
     const input = {
-      kind: "image" as const, // user wants an image in the reference's style
+      kind: "image" as const, // user wants an image made from / in the style of the reference
       structuredPrompt: "A product shot in this style",
       entityIds: ["entity-1"],
       variantSel: { "entity-1": "variant-1" },
@@ -186,9 +194,68 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.entityIds).toEqual(["entity-1"]);
     expect(cardPayload.variantSel).toEqual({ "entity-1": "variant-1" });
-    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBeUndefined();
-    // image tier pricing (1 credit/image), not video
+    // F1 (card layer): the attached image rides on the frozen card
+    expect(cardPayload.sourceGenerationId).toBe("gen-abc123");
+    // card-face disclosure (E-4): the merchant sees the image is really used, pre-approval
+    expect(cardPayload.specChips).toContain("Uses your attached image");
+    // image tier pricing (1 credit/image), not video — carrying the source must not reprice
     expect(cardPayload.estimatedCredits).toBe(1);
+
+    // F2 (request layer): the execution builder threads it through unchanged
+    const built = buildGenRequestFromCard({
+      cardPayload,
+      projectId: "proj-test",
+      threadId: "thread-test",
+      cardId: "card_619",
+      prompt: cardPayload.structuredPrompt,
+      entityIds: cardPayload.entityIds,
+      variantSel: cardPayload.variantSel,
+    });
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(built.req.sourceGenerationId).toBe("gen-abc123");
+    expect(built.req.kind).toBe("image");
+  });
+
+  // #619: no attached reference → no chip, no source (the disclosure never lies)
+  it("#619: kind=image without a reference → no sourceGenerationId, no attached-image chip", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.sourceGenerationId).toBeUndefined();
+    expect(cardPayload.specChips).not.toContain("Uses your attached image");
+  });
+
+  // #619 E-4: several attached images — only the FIRST can ride as the base (the paid
+  // request's base-image field is single-valued); the card must say so, never silently.
+  it("#619: multiple attached images → first is the base, card discloses which", () => {
+    const ctx = makeCtx({
+      sourceGenerationId: "gen-1",
+      sourceGenerationIds: ["gen-1", "gen-2", "gen-3"],
+    });
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "same product, new scene", entityIds: [], variantSel: {} },
+      ctx,
+      [],
+    );
+    expect(cardPayload.sourceGenerationId).toBe("gen-1");
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toContain("You attached 3 images");
+    expect(cardPayload.downgradeNote).toContain("first");
+  });
+
+  // #619: ONE attached image → no multi-image note (no invented warnings)
+  it("#619: a single attached image carries no multi-image note", () => {
+    const ctx = makeCtx({ sourceGenerationId: "gen-1", sourceGenerationIds: ["gen-1"] });
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "same product, new scene", entityIds: [], variantSel: {} },
+      ctx,
+      [],
+    );
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
   });
 
   it("reference video: kind=video + referenceVideoGenerationId → present in payload, image tier untouched", () => {
@@ -347,7 +414,9 @@ describe("executePropose — mock DB", () => {
     expect(createArg.data["role"]).toBe("AGENT");
     expect(createArg.data["seq"]).toBe(6); // last=5 → 6
 
-    // return value has the right shape
+    // return value has the right shape (#619 widened the type with an {error} branch —
+    // a plain proposal must still take the success branch)
+    if ("error" in result) throw new Error(`unexpected propose error: ${result.error}`);
     expect(result).toHaveProperty("cardId");
     expect(typeof result.cardId).toBe("string");
     expect(result.cardId.length).toBeGreaterThan(0);
@@ -649,5 +718,225 @@ describe("#580 downgrade disclosure — never silent", () => {
     expect(buildDowngradeNote("video", {}, { count: 1 }, false)).toBe(
       "Some of what you asked for isn't available here — the details above are what you'll get.",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #619 F7 — truncation notice: the worker can only send MAX_CONDITIONING_IMAGES
+// entity reference photos; more than that must be said on the card BEFORE the
+// merchant pays, never discovered after.
+// ---------------------------------------------------------------------------
+
+describe("#619 F7 truncation notice (pure)", () => {
+  const input = {
+    kind: "image" as const,
+    structuredPrompt: "group shot of the cast",
+    entityIds: ["e1", "e2"],
+    variantSel: {},
+  };
+
+  it("17 live reference photos → card says it will use 10 of 17, pre-approval", () => {
+    const { cardPayload } = buildProposeCard(input, makeCtx(), ["e1", "e2"], {
+      entityRefImageCount: 17,
+    });
+    expect(MAX_CONDITIONING_IMAGES).toBe(10);
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toContain("will use 10 of your 17 reference photos");
+  });
+
+  it("10 or fewer live reference photos → no truncation note (no invented warnings)", () => {
+    const { cardPayload } = buildProposeCard(input, makeCtx(), ["e1", "e2"], {
+      entityRefImageCount: 10,
+    });
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
+  });
+
+  it("video plans carry no truncation note — entity refs feed image jobs only", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: ["e1"], variantSel: {} },
+      makeCtx(),
+      ["e1"],
+      { entityRefImageCount: 17 },
+    );
+    expect(cardPayload.downgradeNote ?? "").not.toContain("reference photos");
+  });
+
+  it("truncation joins other downgrade notes as one honest disclosure", () => {
+    const { cardPayload } = buildProposeCard(
+      { ...input, desiredAspect: "9:16" },
+      makeCtx(),
+      ["e1", "e2"],
+      { entityRefImageCount: 12 },
+    );
+    expect(cardPayload.downgraded).toBe(true);
+    expect(cardPayload.downgradeNote).toContain("You asked for 9:16");
+    expect(cardPayload.downgradeNote).toContain("will use 10 of your 12 reference photos");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #619 F6 — identity-lock ↔ entityIds binding: a prompt that promises "keep X
+// identical to the reference" without X's entity id would lock the WORDS while
+// the reference pixels never reach the model (instructions.ts:72 admits the
+// character drifts). The card must be refused so Otto re-reports the ids.
+// ---------------------------------------------------------------------------
+
+describe("#619 F6 identity-lock binding (pure helper)", () => {
+  const refs = [
+    { id: "ent-rosa", name: "Rosa", type: "CHARACTER" },
+    { id: "ent-shoe", name: "Cloud Runner", type: "PRODUCT" },
+  ];
+
+  it("locked name whose id is missing from entityIds → reported unbound", () => {
+    expect(
+      unboundLockedNames(
+        "Rosa at the beach; keep Rosa identical to the reference, same face, hairstyle, and build",
+        [],
+        refs,
+      ),
+    ).toEqual(["Rosa"]);
+  });
+
+  it("locked name whose id IS in entityIds → bound (no finding)", () => {
+    expect(
+      unboundLockedNames(
+        "keep Rosa identical to the reference, same face, hairstyle, and build",
+        ["ent-rosa"],
+        refs,
+      ),
+    ).toEqual([]);
+  });
+
+  it("matches every lock template (product/location/brandmark), case-insensitively", () => {
+    const prompt =
+      "feature cloud runner exactly as in the reference, same shape, color, and label";
+    expect(unboundLockedNames(prompt, [], refs)).toEqual(["Cloud Runner"]);
+    expect(unboundLockedNames(prompt, ["ent-shoe"], refs)).toEqual([]);
+  });
+
+  it("a locked name that matches NO known entity is ignored (it may describe the attached image)", () => {
+    expect(
+      unboundLockedNames("keep the mascot identical to the reference", [], refs),
+    ).toEqual([]);
+  });
+
+  it("style-borrow phrasing does not require binding", () => {
+    expect(unboundLockedNames("draw stylistic inspiration from Rosa", [], refs)).toEqual([]);
+  });
+});
+
+describe("#619 F6/F7 — executePropose wiring (mock DB)", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    entityVariant: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    genJob: { create: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    mockPrisma.entity.findMany.mockResolvedValue([]);
+    mockPrisma.entityVariant.findMany.mockResolvedValue([]);
+    mockPrisma.chatMessage.findFirst.mockResolvedValue({ seq: 1 });
+    mockPrisma.chatMessage.create.mockResolvedValue({});
+  });
+
+  it("F6: locked Rosa without her entity id → card refused, nothing persisted", async () => {
+    const ctx = makeCtx({
+      availableRefs: [{ id: "ent-rosa", name: "Rosa", type: "CHARACTER" }],
+    });
+    const result = await executePropose(
+      {
+        kind: "image",
+        structuredPrompt:
+          "Rosa drinking coffee by the sea; keep Rosa identical to the reference, same face, hairstyle, and build",
+        entityIds: [],
+        variantSel: {},
+      },
+      { context: ctx },
+    );
+    expect(result).toHaveProperty("error");
+    expect((result as { error: string }).error).toContain("Rosa");
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("F6: locked Rosa WITH her entity id → card persists normally", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([
+      { id: "ent-rosa", _count: { referenceImages: 2 } },
+    ]);
+    const ctx = makeCtx({
+      availableRefs: [{ id: "ent-rosa", name: "Rosa", type: "CHARACTER" }],
+    });
+    const result = await executePropose(
+      {
+        kind: "image",
+        structuredPrompt: "keep Rosa identical to the reference, same face, hairstyle, and build",
+        entityIds: ["ent-rosa"],
+        variantSel: {},
+      },
+      { context: ctx },
+    );
+    expect(result).toHaveProperty("cardId");
+    expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("F7: bare mentions totalling 17 live base refs → persisted card carries the 10-of-17 note", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([
+      { id: "e1", _count: { referenceImages: 9 } },
+      { id: "e2", _count: { referenceImages: 8 } },
+    ]);
+    const result = await executePropose(
+      { kind: "image", structuredPrompt: "group shot", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx() },
+    );
+    expect(result).toHaveProperty("cardId");
+    const createArg = mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    };
+    expect(String(createArg.data.payload["downgradeNote"])).toContain(
+      "will use 10 of your 17 reference photos",
+    );
+  });
+
+  it("F7: a selected variant counts ITS live refs (12 → 10-of-12 note)", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1", _count: { referenceImages: 0 } }]);
+    mockPrisma.entityVariant.findMany.mockResolvedValue([
+      { id: "var-a", entityId: "e1", _count: { referenceImages: 12 } },
+    ]);
+    const result = await executePropose(
+      {
+        kind: "image",
+        structuredPrompt: "hero shot",
+        entityIds: ["e1"],
+        variantSel: { e1: "var-a" },
+      },
+      { context: makeCtx() },
+    );
+    expect(result).toHaveProperty("cardId");
+    const createArg = mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    };
+    expect(String(createArg.data.payload["downgradeNote"])).toContain(
+      "will use 10 of your 12 reference photos",
+    );
+  });
+
+  it("F7: totals at or under the cap leave the payload note-free", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([
+      { id: "e1", _count: { referenceImages: 5 } },
+      { id: "e2", _count: { referenceImages: 5 } },
+    ]);
+    const result = await executePropose(
+      { kind: "image", structuredPrompt: "group shot", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx() },
+    );
+    expect(result).toHaveProperty("cardId");
+    const createArg = mockPrisma.chatMessage.create.mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    };
+    expect(createArg.data.payload["downgradeNote"]).toBeUndefined();
   });
 });
