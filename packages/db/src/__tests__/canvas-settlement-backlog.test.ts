@@ -32,10 +32,9 @@ import {
 import { prisma } from "../index.js";
 import {
   CANVAS_REPAIR_MAX_ATTEMPTS,
-  CANVAS_REPAIR_RECORD_TYPE,
+  CANVAS_REPAIR_JSON_KEY,
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
-  canvasRepairRecordId,
   clearCanvasRepairRecord,
   findCanvasSettlementBacklog,
   noteCanvasRepairFailure,
@@ -186,9 +185,8 @@ async function moneySnapshot(jobId: string) {
     where: { id: jobId, ownerId: orgId },
     select: {
       status: true, spent: true, spentUsd: true, generationIds: true, finishedAt: true,
-      // The two JSON columns the repair layer deliberately does NOT touch: both are read as money
-      // identity by factoryMaterialMatches, which decides whether a repeated press is the same
-      // paid request or a different one.
+      // Settlement itself must not touch the paid material or job row. Retry bookkeeping is tested
+      // separately and lives only under videoOptions.__canvasRepair.
       idempotencyKey: true, videoOptions: true, variantSel: true, updatedAt: true,
     },
   });
@@ -202,15 +200,15 @@ async function moneySnapshot(jobId: string) {
 
 /** The board's repair record, read straight from the database — never from this process. */
 async function repairRecord(jobId: string): Promise<CanvasRepairRecord | null> {
-  const row = await prisma.actionEvent.findUnique({
-    where: { id: canvasRepairRecordId(jobId) },
-    select: { type: true, ownerId: true, projectId: true, payload: true },
+  const row = await prisma.genJob.findFirstOrThrow({
+    where: { id: jobId, ownerId: orgId, projectId },
+    select: { videoOptions: true },
   });
-  if (!row) return null;
-  expect(row.type).toBe(CANVAS_REPAIR_RECORD_TYPE);
-  expect(row.ownerId).toBe(orgId);
-  expect(row.projectId).toBe(projectId);
-  return row.payload as unknown as CanvasRepairRecord;
+  if (!row.videoOptions || typeof row.videoOptions !== "object" || Array.isArray(row.videoOptions)) return null;
+  const record = (row.videoOptions as Record<string, unknown>)[CANVAS_REPAIR_JSON_KEY];
+  return record && typeof record === "object" && !Array.isArray(record)
+    ? record as unknown as CanvasRepairRecord
+    : null;
 }
 
 /** The board as the sweep sees it, so a test can say "this one failed" the way production does. */
@@ -305,6 +303,13 @@ describe("what the sweep must leave alone", () => {
   it("ignores a job that is not delivered", async () => {
     const { jobId } = await seedDeliveredJob({ outputs: 2 });
     await prisma.genJob.update({ where: { id: jobId }, data: { status: "FAILED" } });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("ignores a DONE job whose paid provider call was never recorded", async () => {
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    await prisma.genJob.update({ where: { id: jobId }, data: { spent: false, spentUsd: null } });
 
     expect(await sweepIds()).not.toContain(jobId);
   });
@@ -709,6 +714,38 @@ describe("a board whose repair failed", () => {
     expect(await sweepIds({ now: start })).toContain(jobId);
   });
 
+  it("preserves every paid video option while adding and removing its reserved record", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+    const material = {
+      seconds: 10,
+      resolution: "720p",
+      nested: { merchantChoice: true },
+    };
+    await prisma.genJob.update({ where: { id: jobId }, data: { videoOptions: material } });
+
+    await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+    const whileWaiting = await prisma.genJob.findUniqueOrThrow({
+      where: { id: jobId },
+      select: { videoOptions: true },
+    });
+    expect(whileWaiting.videoOptions).toMatchObject({
+      ...material,
+      [CANVAS_REPAIR_JSON_KEY]: {
+        genJobId: jobId,
+        attempts: 1,
+        terminalAt: null,
+      },
+    });
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+    const repaired = await prisma.genJob.findUniqueOrThrow({
+      where: { id: jobId },
+      select: { videoOptions: true },
+    });
+    expect(repaired.videoOptions).toEqual(material);
+  });
+
   it("keeps the wait across a restart, because the wait is a row and not a process", async () => {
     const start = new Date();
     const { jobId } = await seedDeliveredJob({ outputs: 2 });
@@ -769,9 +806,9 @@ describe("a board whose repair failed", () => {
     await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
     // Something wrote a record this module did not: no wait, no verdict. A predicate that read it
     // as "not due" would drop the board out of every future sweep without a word.
-    await prisma.actionEvent.update({
-      where: { id: canvasRepairRecordId(jobId) },
-      data: { payload: { genJobId: jobId } },
+    await prisma.genJob.update({
+      where: { id: jobId },
+      data: { videoOptions: { [CANVAS_REPAIR_JSON_KEY]: { genJobId: jobId } } },
     });
 
     expect(await sweepIds({ now: start })).toContain(jobId);
@@ -823,24 +860,23 @@ describe("a queue longer than one tick's budget", () => {
     const ids = await seedUnfinishedBoards(4801, minutesAgo(600));
     const last = ids.at(-1) as string;
     const limit = 200;
-    // Every one of them has already failed once, a second apart and a day ago, so the whole queue
+    // Every one of them has already failed once, a second apart and hours ago, so the whole queue
     // is due and strictly ordered — the exact shape that closed the old loop.
-    const failedAt = start.getTime() - 24 * HOUR;
-    await prisma.actionEvent.createMany({
-      data: ids.map((id, index) => ({
-        id: canvasRepairRecordId(id),
-        ownerId: orgId,
-        projectId,
-        type: CANVAS_REPAIR_RECORD_TYPE,
-        payload: {
-          genJobId: id,
-          attempts: 1,
-          nextAt: new Date(failedAt + index * 1_000).toISOString(),
-          terminalAt: null,
-          reason: "board write blew up",
-        } satisfies CanvasRepairRecord,
-      })),
-    });
+    await prisma.$executeRaw`
+      UPDATE "GenJob"
+      SET "videoOptions" = COALESCE("videoOptions", '{}'::jsonb) || jsonb_build_object(
+        ${CANVAS_REPAIR_JSON_KEY}::text,
+        jsonb_build_object(
+          'genJobId', id,
+          'attempts', 1,
+          'nextAt', to_char("finishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'terminalAt', NULL,
+          'reason', 'board write blew up',
+          'videoOptionsWasNull', TRUE
+        )
+      )
+      WHERE "ownerId" = ${orgId} AND "projectId" = ${projectId}
+    `;
 
     const ticksNeeded = Math.ceil(ids.length / limit);
     let reached = -1;

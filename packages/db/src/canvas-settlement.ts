@@ -196,21 +196,13 @@ export type CanvasSettlementBacklogJob = { id: string; ownerId: string; projectI
  * The Founder's ruling (2026-08-02) is this file: the sweep asks the database what to repair, and
  * the only durable thing it writes is HOW A BOARD'S REPAIR IS GOING.
  *
- * WHERE IT LIVES, and why not on the job row. `GenJob` has exactly two JSON columns —
- * `videoOptions` and `variantSel` — and BOTH are read as money identity: `factoryMaterialMatches`
- * (apps/web/lib/batch-idempotency.ts) compares them field for field to decide whether a repeated
- * press is the SAME paid request (reuse the job) or a different one (refuse it). Stamping a repair
- * counter into either column flips that comparison on exactly the jobs this sweep touches: a
- * Canvas press retried after delivery would answer "already in use for different content" instead
- * of handing back the job the merchant already paid for. So the record is its own row in the
- * existing `ActionEvent` audit table — no migration, no money column, and one row per troubled
- * board rather than one per attempt. Its id is derived from the job id, so the scan below finds it
- * by primary key, and a row exists only while a board is still troubled: a repair that works
- * deletes it, a board written off keeps it for ever as the record of why.
+ * WHERE IT LIVES. The Founder's zero-migration Design A reserves `GenJob.videoOptions` key
+ * `__canvasRepair` for this bookkeeping. Every other key remains paid request material;
+ * `factoryMaterialMatches` ignores this key alone. A repair that works removes only the reserved
+ * key and restores an originally-null value to null. A board written off keeps the record, with
+ * `terminalAt`, so retirement is visible and reversible rather than silent loss.
  */
-export const CANVAS_REPAIR_RECORD_TYPE = "canvas.repair";
-/** Derives the record's primary key from the job's, so the scan joins on an indexed equality. */
-export const CANVAS_REPAIR_RECORD_PREFIX = "canvas-repair:";
+export const CANVAS_REPAIR_JSON_KEY = "__canvasRepair";
 /** How long a board waits after its first failed repair; it doubles per consecutive failure. */
 export const CANVAS_REPAIR_WAIT_BASE_MS = 15 * 60_000;
 /** …up to this, so a board that will never write still gets a look a few times a day. */
@@ -236,12 +228,9 @@ export type CanvasRepairRecord = {
   terminalAt: string | null;
   /** Why the last attempt did not finish the board — for the human who reads this row. */
   reason: string;
+  /** Restores the paid material exactly when the reserved record is removed. */
+  videoOptionsWasNull: boolean;
 };
-
-/** The record's primary key, derived from the job's id: the scan joins on it, so it must match. */
-export function canvasRepairRecordId(genJobId: string): string {
-  return `${CANVAS_REPAIR_RECORD_PREFIX}${genJobId}`;
-}
 
 /** The wait after the Nth consecutive failure: doubling, capped. */
 export function canvasRepairWaitMs(attempts: number): number {
@@ -315,11 +304,9 @@ export async function findCanvasSettlementBacklog(options: {
   const rows = await prisma.$queryRaw<CanvasSettlementBacklogJob[]>`
     SELECT j.id, j."ownerId", j."projectId"
     FROM "GenJob" j
-    -- The board's repair record, by primary key. Absent = this board has never been tried.
-    LEFT JOIN "ActionEvent" r
-      ON r.id = ${CANVAS_REPAIR_RECORD_PREFIX} || j.id
-     AND r.type = ${CANVAS_REPAIR_RECORD_TYPE}
     WHERE j.status = 'DONE'
+      -- A DONE row is not proof of a paid provider call. Only settled paid outputs are repairable.
+      AND j.spent = TRUE
       AND j."finishedAt" IS NOT NULL
       AND j."finishedAt" < ${finishedBeforeIso}::timestamp
       AND COALESCE(array_length(j."generationIds", 1), 0) > 0
@@ -327,8 +314,11 @@ export async function findCanvasSettlementBacklog(options: {
       -- is missing a field is read as DUE, never as absent: a malformed row must cost an extra
       -- attempt, never a merchant's board.
       AND (
-        r.id IS NULL
-        OR (r.payload ->> 'terminalAt' IS NULL AND COALESCE(r.payload ->> 'nextAt', '') <= ${nowIso})
+        j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} IS NULL
+        OR (
+          j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'terminalAt' IS NULL
+          AND COALESCE(j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt', '') <= ${nowIso}
+        )
       )
       -- canvasJobBelongsOnBoard: bought from the board, bought in a live chat, or already showing
       -- a card. "No card yet" is exactly the state this sweep repairs, so it never means "no board".
@@ -378,7 +368,7 @@ export async function findCanvasSettlementBacklog(options: {
     -- through a timestamptz would print it in the SESSION's zone and order the queue by whatever
     -- timezone the connection happened to have.
     ORDER BY COALESCE(
-      r.payload ->> 'nextAt',
+      j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt',
       to_char(j."finishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
     ) ASC, j.id ASC
     LIMIT ${limit * BACKLOG_FAIRNESS_OVERSCAN}
@@ -391,52 +381,88 @@ export async function findCanvasSettlementBacklog(options: {
  * Record that a board's repair did not finish it: wait longer next time, and write it off at the
  * cap.
  *
- * This is the ONLY thing the sweep writes about a job, and it is not on the job: it is the job's
- * own row in the audit table (see the record's docblock above). No money column, no job status, no
- * ledger, no provider — a repair that fails must leave the charge and the delivery exactly as they
- * were, because a card can be written again later and a charge cannot be taken back.
- *
- * Two workers that pick the same board in the same tick can both read the same attempt count and
- * both write the same next one, so a doubling can be missed. The cost of that is one extra attempt
- * at the shorter wait; the alternative — a lock, or a counter in SQL — buys nothing a merchant can
- * see. What CANNOT be lost is the board itself: it stays in the scan until it is repaired or
- * written off.
+ * This is the ONLY thing the sweep writes about a job: one reserved JSON key. No money column, no
+ * job status, no ledger, no provider. It shares the settlement lock so two workers cannot lose an
+ * attempt or overwrite each other's bookkeeping.
  */
 export async function noteCanvasRepairFailure(
   job: CanvasSettlementBacklogJob,
   input: { now: Date; reason: string },
 ): Promise<CanvasRepairRecord> {
-  const id = canvasRepairRecordId(job.id);
-  const prior = await prisma.actionEvent.findUnique({ where: { id }, select: { payload: true } });
-  const attempts = priorAttempts(prior?.payload) + 1;
-  const record: CanvasRepairRecord = {
-    genJobId: job.id,
-    attempts,
-    nextAt: new Date(input.now.getTime() + canvasRepairWaitMs(attempts)).toISOString(),
-    terminalAt: attempts >= CANVAS_REPAIR_MAX_ATTEMPTS ? input.now.toISOString() : null,
-    // Bounded: this row is a note for a human, never a log of the failure.
-    reason: input.reason.slice(0, 200),
-  };
-  await prisma.actionEvent.upsert({
-    where: { id },
-    create: {
-      id,
-      ownerId: job.ownerId,
-      projectId: job.projectId,
-      type: CANVAS_REPAIR_RECORD_TYPE,
-      payload: record,
-    },
-    update: { payload: record },
+  return prisma.$transaction(async (tx) => {
+    const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+    const current = await tx.genJob.findFirst({
+      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
+      select: { videoOptions: true },
+    });
+    if (!current) throw new Error(`paid DONE canvas job not found: ${job.id}`);
+
+    const videoOptions = editableVideoOptions(current.videoOptions, job.id);
+    const prior = videoOptions[CANVAS_REPAIR_JSON_KEY];
+    const attempts = priorAttempts(prior) + 1;
+    const record: CanvasRepairRecord = {
+      genJobId: job.id,
+      attempts,
+      nextAt: new Date(input.now.getTime() + canvasRepairWaitMs(attempts)).toISOString(),
+      terminalAt: attempts >= CANVAS_REPAIR_MAX_ATTEMPTS ? input.now.toISOString() : null,
+      // Bounded: this record is a note for a human, never a log of the failure.
+      reason: input.reason.slice(0, 200),
+      videoOptionsWasNull: priorVideoOptionsWereNull(prior, current.videoOptions),
+    };
+    const updated = await tx.genJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
+      data: {
+        videoOptions: { ...videoOptions, [CANVAS_REPAIR_JSON_KEY]: record } as Prisma.InputJsonValue,
+      },
+    });
+    if (updated.count !== 1) throw new Error(`paid DONE canvas job changed while recording repair: ${job.id}`);
+    return record;
   });
-  return record;
 }
 
-/** The board is finished: its record has nothing left to say, so a row exists only while a board
- *  is still troubled. */
+/** The board is finished: remove only the reserved record and restore its original JSON shape. */
 export async function clearCanvasRepairRecord(job: CanvasSettlementBacklogJob): Promise<void> {
-  await prisma.actionEvent.deleteMany({
-    where: { id: canvasRepairRecordId(job.id), ownerId: job.ownerId, type: CANVAS_REPAIR_RECORD_TYPE },
+  await prisma.$transaction(async (tx) => {
+    const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+    const current = await tx.genJob.findFirst({
+      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
+      select: { videoOptions: true },
+    });
+    if (!current || !isJsonObject(current.videoOptions)) return;
+    const record = current.videoOptions[CANVAS_REPAIR_JSON_KEY];
+    if (record === undefined) return;
+    const videoOptions = { ...current.videoOptions };
+    delete videoOptions[CANVAS_REPAIR_JSON_KEY];
+    const restoreNull = isJsonObject(record) && record.videoOptionsWasNull === true;
+    await tx.genJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
+      data: {
+        videoOptions: restoreNull && Object.keys(videoOptions).length === 0
+          ? Prisma.DbNull
+          : videoOptions as Prisma.InputJsonValue,
+      },
+    });
   });
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Refuse to replace unexpected paid material with bookkeeping. */
+function editableVideoOptions(value: unknown, jobId: string): Record<string, unknown> {
+  if (value === null) return {};
+  if (isJsonObject(value)) return { ...value };
+  throw new Error(`canvas repair cannot edit non-object videoOptions: ${jobId}`);
+}
+
+function priorVideoOptionsWereNull(prior: unknown, current: unknown): boolean {
+  if (isJsonObject(prior) && typeof prior.videoOptionsWasNull === "boolean") {
+    return prior.videoOptionsWasNull;
+  }
+  return current === null;
 }
 
 /** A record written by anything other than the function above is read as "never tried". */

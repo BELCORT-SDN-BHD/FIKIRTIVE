@@ -63,6 +63,9 @@ export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "vari
   threadId?: string | null;
 };
 
+/** Reserved GenJob.videoOptions key used only by the post-delivery canvas repair sweep. */
+export const CANVAS_REPAIR_JSON_KEY = "__canvasRepair";
+
 function shortHash(scope: string, value: string): string {
   return createHash("sha256")
     .update(scope)
@@ -157,6 +160,15 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Post-delivery repair scheduling is bookkeeping, never part of the paid request identity. */
+function materialVideoOptions(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value ?? null;
+  const material = { ...value as Record<string, unknown> };
+  if (!Object.hasOwn(material, CANVAS_REPAIR_JSON_KEY)) return material;
+  delete material[CANVAS_REPAIR_JSON_KEY];
+  return Object.keys(material).length === 0 ? null : material;
+}
+
 /** Full material binding. FAILED rows are deliberately not special: status never weakens content
  *  identity. entityIds are order-sensitive and preserve duplicates because the worker consumes
  *  them in order; JSON object key order is irrelevant. */
@@ -173,6 +185,7 @@ export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: F
     prior.referenceVideoGenerationId === expected.referenceVideoGenerationId &&
     prior.shotId === expected.shotId &&
     (prior.threadId ?? null) === expected.threadId &&
-    canonicalJson(prior.videoOptions ?? null) === canonicalJson(expected.videoOptions)
+    canonicalJson(materialVideoOptions(prior.videoOptions)) ===
+      canonicalJson(materialVideoOptions(expected.videoOptions))
   );
 }

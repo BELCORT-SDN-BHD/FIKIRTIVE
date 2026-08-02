@@ -136,4 +136,38 @@ describe("factory material binding", () => {
       threadId: "thread-expected",
     })).toBe(false);
   });
+
+  it("ignores only reserved canvas-repair bookkeeping when comparing paid material", () => {
+    const userOptions = {
+      seconds: 10,
+      resolution: "720p",
+      aspectRatio: "16:9",
+      fps: 24,
+      audio: false,
+      merchantChoice: "cinematic",
+    };
+    expect(factoryMaterialMatches({
+      ...expected,
+      videoOptions: {
+        ...userOptions,
+        __canvasRepair: {
+          attempts: 3,
+          nextAt: "2026-08-03T01:00:00.000Z",
+          terminalAt: null,
+          reason: "board write failed",
+        },
+      },
+    }, { ...expected, videoOptions: userOptions })).toBe(true);
+
+    expect(factoryMaterialMatches({
+      ...expected,
+      videoOptions: {
+        ...userOptions,
+        merchantChoice: "documentary",
+        __canvasRepair: { attempts: 3 },
+      },
+    }, { ...expected, videoOptions: userOptions })).toBe(false);
+
+    expect(factoryMaterialMatches({ ...expected, videoOptions: {} }, expected)).toBe(false);
+  });
 });
