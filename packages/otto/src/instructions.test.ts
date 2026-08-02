@@ -222,20 +222,8 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
   // #559-style family ban: no wording anywhere in the instructions may model or license
   // a words-only consent followed by Otto promising to start paid creative work. Keep
   // the two semantic halves explicit so ordinary information gathering stays legal.
-  const WORDS_ONLY_CONSENT_LEADS = [
-    "reply yes",
-    "reply with yes",
-    "say yes",
-    "type yes",
-    "tell me yes",
-    "tell me to proceed",
-    "tell me ready",
-    "send go-ahead",
-    "send the go-ahead",
-    "say go",
-    "say make it",
-    "say the word",
-  ];
+  const DIRECT_CONSENT_COMMANDS = new Set(["reply", "respond", "say", "type"]);
+  const DIRECT_CONSENT_WORDS = new Set(["yes", "go", "proceed", "ready"]);
   const PAID_WORK_PROMISE_VERBS = new Set([
     "start",
     "begin",
@@ -246,6 +234,32 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
     "build",
     "make",
   ]);
+
+  function includesTokenSequence(tokens: string[], sequence: string[]): boolean {
+    return tokens.some((_, at) =>
+      sequence.every((expected, offset) => tokens[at + offset] === expected),
+    );
+  }
+
+  function hasWordsOnlyConsentCue(tokens: string[]): boolean {
+    return tokens.some((command, commandAt) => {
+      const cue = tokens.slice(commandAt + 1, commandAt + 7);
+      if (DIRECT_CONSENT_COMMANDS.has(command)) {
+        return (
+          cue.some((token) => DIRECT_CONSENT_WORDS.has(token)) ||
+          includesTokenSequence(cue, ["make", "it"]) ||
+          includesTokenSequence(cue, ["the", "word"])
+        );
+      }
+      if (command === "tell" && cue[0] === "me") {
+        return cue.some((token) => DIRECT_CONSENT_WORDS.has(token));
+      }
+      if (command === "send" || command === "give") {
+        return cue.includes("go-ahead") || includesTokenSequence(cue, ["go", "ahead"]);
+      }
+      return command === "confirm";
+    });
+  }
 
   function containsWordsOnlyPaidWorkPromise(text: string): boolean {
     return text.split(/[.!?\n]+/).some((sentence) => {
@@ -258,8 +272,8 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
 
       return tokens.some((connector, connectorAt) => {
         if (connector !== "and" && connector !== "then") return false;
-        const lead = tokens.slice(Math.max(0, connectorAt - 12), connectorAt).join(" ");
-        if (!WORDS_ONLY_CONSENT_LEADS.some((phrase) => lead.includes(phrase))) return false;
+        const lead = tokens.slice(Math.max(0, connectorAt - 12), connectorAt);
+        if (!hasWordsOnlyConsentCue(lead)) return false;
 
         const promise = tokens.slice(connectorAt + 1, connectorAt + 14);
         const subjectAt = promise.findIndex(
@@ -313,6 +327,14 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
       "Send go-ahead then I will make the video.",
       "Reply with yes and I'll generate the image.",
       "Send the go-ahead, then I will build the assets.",
+      // r4 — token-level rewrites found by the sealed precheck:
+      "Reply go and I'll create the image.",
+      "Say proceed and I will generate the video.",
+      "Type go ahead, then I'll make the ad.",
+      "Respond yes and I will build the campaign assets.",
+      "Tell me you're ready and I'll start the paid work.",
+      "Give me the go-ahead, then I will run the generation.",
+      "Just confirm and I'll do the image work.",
     ];
     for (const escape of escapes) {
       expect(
@@ -323,8 +345,13 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
   });
 
   it("does not flag safe information-gathering copy", () => {
-    const safeCopy = "Tell me your business goal and I’ll suggest a plan.";
-    expect(containsWordsOnlyPaidWorkPromise(safeCopy)).toBe(false);
+    const safeCopy = [
+      "Tell me your business goal and I’ll suggest a plan.",
+      "Please read the essay yesterday and I will create a research plan.",
+    ];
+    for (const sentence of safeCopy) {
+      expect(containsWordsOnlyPaidWorkPromise(sentence)).toBe(false);
+    }
   });
 });
 
