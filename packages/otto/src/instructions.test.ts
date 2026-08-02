@@ -204,6 +204,53 @@ describe("ottoInstructions — #498 verbal approval honesty (generate)", () => {
   });
 });
 
+describe("ottoInstructions — #541 confirming is a button press, never a word", () => {
+  // Founder production repro (2026-07-31): despite the #498 rule, Otto still said
+  // 'Just say "make it" and I\'ll get it going!' — the runtime then correctly refused the
+  // words. Ruling: the only next-step instruction Otto may give for a pending card is to
+  // press the Confirm button on the card.
+  it("names pressing the Confirm button on the card as the only way work starts", () => {
+    expect(ottoInstructions).toMatch(/press the Confirm button on the card/);
+    expect(ottoInstructions).toMatch(/ONLY thing that ever starts the work/i);
+  });
+
+  // #559-style family ban: no wording anywhere in the instructions may model or license
+  // the say-X-and-I'll-start invitation template.
+  const SAY_TO_START_INVITATIONS = [
+    /\bjust say\b/i,
+    /\bsay ["'“][^"'”\n]{1,30}["'”] and I['’]ll\b/i,
+    /\bsay the word\b/i,
+    /\btell me ["'“][^"'”\n]{1,30}["'”] and I['’]ll (start|get|go|kick|run)\b/i,
+  ];
+
+  it("bans the whole say-to-start invitation family from the instructions", () => {
+    for (const invitation of SAY_TO_START_INVITATIONS) {
+      expect(ottoInstructions, `say-to-start invitation ${invitation} must not appear`).not.toMatch(
+        invitation,
+      );
+    }
+  });
+
+  // Positive control (same discipline as the completeness family below): a ban that
+  // matches nothing proves nothing. Every known rewrite of the broken promise must be
+  // caught by at least one family pattern.
+  it("the invitation ban actually catches the production repro and its rewrites", () => {
+    const escapes = [
+      'Just say "make it" and I\'ll get it going!',
+      "just say yes and we're off",
+      'say "go" and I\'ll start right away',
+      "say the word and I'll kick things off",
+      'tell me "ready" and I\'ll get started',
+    ];
+    for (const escape of escapes) {
+      expect(
+        SAY_TO_START_INVITATIONS.some((pattern) => pattern.test(escape)),
+        `escape "${escape}" must be caught by the family`,
+      ).toBe(true);
+    }
+  });
+});
+
 describe("ottoInstructions — #555 credits and spending", () => {
   it("routes every money question to the readSpending skill", () => {
     expect(ottoInstructions).toMatch(/readSpending/);

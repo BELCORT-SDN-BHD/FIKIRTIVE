@@ -169,8 +169,8 @@ export function buildSettingsSections(args: {
           id: "ads",
           label: "Ask before ad spend",
           hint: canChangeAdsAutonomy
-            ? "Otto checks with you before spending on ads"
-            : "Connect Meta before changing ad-spend autonomy",
+            ? "When on, Otto checks with you before every ad change. When off (Auto), Otto may pause ads, lower budgets, and create paused draft campaigns in your ad account on its own — anything that spends or goes live still asks you first."
+            : "Connect Instagram or Facebook before changing ad-spend autonomy",
           value: adsAutonomy === "ASK",
           disabled: !canChangeAdsAutonomy,
           onToggle: (v) => setAdsAutonomy(v ? "ASK" : "AUTO"),

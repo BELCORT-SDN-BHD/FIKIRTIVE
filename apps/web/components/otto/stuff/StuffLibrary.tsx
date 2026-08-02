@@ -286,7 +286,7 @@ export function StuffLibrary({
         open={!!renameTarget}
         onOpenChange={(open) => { if (!open) setRenameTarget(null); }}
         title="Rename item"
-        description="This changes the label you see in Library and My Stuff. It does not edit the original media."
+        description="This changes the label you see in Library. It does not edit the original media."
         label="Item name"
         initialValue={renameTarget?.label ?? ""}
         onSubmit={async (name) => {

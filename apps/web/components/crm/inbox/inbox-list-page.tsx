@@ -176,14 +176,11 @@ function InboxWorkspace({
           </div>
         </header>
 
-        <div className="mt-6 flex flex-col gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <Unplug className="mt-0.5 size-4 shrink-0" />
-            <span>No messaging channel is connected in this workspace yet. Conversations shown here are internal records — none reflect live customer traffic until a channel is connected.</span>
-          </div>
-          <Button asChild size="sm" variant="secondary" className="shrink-0">
-            <Link href="/otto?view=connections">Connect a channel</Link>
-          </Button>
+        {/* #541 — no CTA into Connections here: Messaging has no connect button there yet,
+            so a "Connect a channel" button would point at a dead end. Say the truth instead. */}
+        <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+          <Unplug className="mt-0.5 size-4 shrink-0" />
+          <span>No messaging channel is connected in this workspace yet. Conversations shown here are internal records — none reflect live customer traffic. Messaging channels are not available to connect yet.</span>
         </div>
 
         <Card className="mt-6">

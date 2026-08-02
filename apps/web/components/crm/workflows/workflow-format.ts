@@ -274,7 +274,7 @@ const ERROR_COPY: Record<string, string> = {
   NOT_AUTHORIZED: "You need to sign in again to use workflows.",
   ACTION_DENIED: "Only the workspace owner can use this workflow action.",
   RESOURCE_NOT_FOUND: "This workflow is not available. It may not exist, or you may not have access.",
-  INVALID_ARGUMENT: "Some workflow details are not valid. Review the highlighted fields and try again.",
+  INVALID_ARGUMENT: "Some workflow details are missing or not valid. Check the form fields and try again.",
   CAS_CONFLICT: "This workflow changed in another session. Refresh before trying again.",
   IDEMPOTENCY_CONFLICT:
     "This operation conflicts with an earlier workflow action. Nothing was repeated.",

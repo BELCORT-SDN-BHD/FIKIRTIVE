@@ -87,7 +87,7 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Meta first — auto-publish unlocks once Meta approves publishing.",
+      hint: "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing.",
     });
   });
 
@@ -118,7 +118,7 @@ describe("account settings honesty", () => {
       kind: "toggle",
       value: false,
       disabled: true,
-      hint: "Connect Meta first — auto-publish unlocks once Meta approves publishing.",
+      hint: "Connect Instagram or Facebook first — auto-publish unlocks once Meta approves publishing.",
     });
   });
 

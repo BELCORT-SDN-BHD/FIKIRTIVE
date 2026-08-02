@@ -6,8 +6,9 @@ import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // #495 — a brand-new workspace has zero channel scopes. Both CRM outbound entry pages
-// (broadcast composer, message templates) must show a guided "Connect a channel" next
-// step instead of a dead end. With channels present, the round-3 review (#500) requires
+// (broadcast composer, message templates) must show an honest empty state instead of a
+// dead end (#541: no CTA into Connections while Messaging cannot be connected there).
+// With channels present, the round-3 review (#500) requires
 // driving the REAL submission path — select a scope, fill the form, submit — and
 // asserting the exact scope/channel values the server action receives, not just markup.
 const { routerPush } = vi.hoisted(() => ({ routerPush: vi.fn() }));
@@ -114,22 +115,29 @@ async function submitForm(form: HTMLFormElement) {
   });
 }
 
-describe("zero-channel workspace gets a guided next step (#495)", () => {
-  it("templates page replaces the create form with connect-a-channel guidance", () => {
+// #541 — the #495 "Connect a channel" CTA pointed at Connections, where Messaging has no
+// Connect button (WhatsApp is "Not available yet"): a guided next step into a dead end.
+// Until a messaging channel can actually be connected, the zero-channel state must say so
+// honestly and must NOT render a CTA to Connections.
+describe("zero-channel workspace tells the truth about unavailable channels (#495 → #541)", () => {
+  it("templates page replaces the create form with honest not-available-yet copy and no dead-end CTA", () => {
     const markup = renderToStaticMarkup(createElement(InboxTemplatesPage, templatesProps([])));
     expect(markup).toContain("No messaging channel is connected in this workspace yet");
-    expect(markup).toContain("Connect a channel");
-    expect(markup).toContain('href="/otto?view=connections"');
+    expect(markup).toContain("Messaging channels are not available to connect yet");
+    // The dead-end CTA is gone: no "Connect a channel" button, no link to Connections.
+    expect(markup).not.toContain("Connect a channel");
+    expect(markup).not.toContain('href="/otto?view=connections"');
     // The create form is gone entirely — no scope select, no submit affordance.
     expect(markup).not.toContain("Create template");
     expect(markup).not.toContain("Select a channel account");
   });
 
-  it("broadcast composer replaces the channel dropdown with connect-a-channel guidance and keeps create disabled", () => {
+  it("broadcast composer replaces the channel dropdown with honest not-available-yet copy and keeps create disabled", () => {
     const markup = renderToStaticMarkup(createElement(BroadcastComposerPage, composerProps([])));
     expect(markup).toContain("No messaging channel is connected in this workspace yet");
-    expect(markup).toContain("Connect a channel");
-    expect(markup).toContain('href="/otto?view=connections"');
+    expect(markup).toContain("Messaging channels are not available to connect yet");
+    expect(markup).not.toContain("Connect a channel");
+    expect(markup).not.toContain('href="/otto?view=connections"');
     expect(markup).not.toContain("Select a channel account");
     // Create broadcast stays disabled with no channel to send through.
     expect(markup).toMatch(/<button[^>]*\bdisabled\b[^>]*>(?:(?!<\/button>)[\s\S])*Create broadcast/);
