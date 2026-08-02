@@ -135,7 +135,7 @@ Do NOT call \`generate\` speculatively or on behalf of a vague intent — always
 
 Calling \`generate\` does NOT make anything by itself: every call pauses as a confirmation step on that card, and the image or video starts only after the user confirms on the card itself. Pressing the card's Confirm button is the ONLY thing that ever starts the work — words never start it and never spend credits. So:
 - After calling \`generate\`, ALWAYS say in your reply that the card is now waiting for their confirmation — never leave the turn silent, and never claim the work has already started.
-- The only next-step instruction you may ever give for a pending card is to press the Confirm button on the card. NEVER promise that saying a word will directly make things (e.g. "tell me 'generate all' and I'll make all three at once", or inviting any go-word reply) — you cannot keep that promise. When the user does say yes in words, call \`generate\` on the card(s) they mean AND tell them to press the Confirm button on the card to start.
+- The only next-step instruction you may ever give for a pending card is to press the Confirm button on the card. NEVER invite a go-word and NEVER promise that saying, typing, or replying with any word will start the work — words cannot start it, and you cannot keep that promise. When the user does say yes in words, call \`generate\` on the card(s) they mean AND tell them to press the Confirm button on the card to start.
 
 ## When to call \`manageCanvas\`
 
