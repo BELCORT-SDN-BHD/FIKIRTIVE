@@ -52,6 +52,14 @@ import {
 
 type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
 const CANVAS_CARD_SIDE = 320;
+/** What a card calls itself when it takes keyboard focus (#604 r2 P3). */
+function canvasNodeAriaLabel(n: { type?: string; data?: unknown }): string {
+  const kind = n.type === "video" ? "Video card" : n.type === "text" ? "Text card" : "Image card";
+  const d = n.data as { prompt?: string | null; text?: string | null } | undefined;
+  const said = (d?.prompt ?? d?.text ?? "").trim();
+  if (!said) return kind;
+  return `${kind}: ${said.length > 60 ? `${said.slice(0, 60)}…` : said}`;
+}
 /**
  * How long a finished JOB waits before the board is re-read for its traceability record.
  *
@@ -386,40 +394,48 @@ export default function FlowCanvas({
     return onOpenDetailByNode.current[id]!;
   }, []);
 
-  const onReferenceInChatByNode = useRef<Record<string, () => void>>({});
-  const getOnReferenceInChat = useCallback((id: string): (() => void) => {
-    if (!onReferenceInChatByNode.current[id]) {
-      onReferenceInChatByNode.current[id] = () => {
-        if (directToolsLockedRef.current || !referenceHandlerRef.current) {
-          toast.error("Open an Otto chat first.");
-          return;
-        }
-        const refForNode = (node: CanvasFlowNode | undefined) => {
-          const data = node?.data as { generationId?: unknown; url?: unknown } | undefined;
-          return canvasComposerReferenceForNode({
-            type: typeof node?.type === "string" ? node.type : null,
-            generationId: typeof data?.generationId === "string" ? data.generationId : node?.id ? nodeDataRef.current[node.id]?.generationId ?? null : null,
-            src: typeof data?.url === "string" ? data.url : null,
-          });
-        };
-        const node = nodesRef.current.find((n) => n.id === id);
-        const ref = refForNode(node);
-        if (!ref) {
-          toast.error("This asset is not ready for Otto yet.");
-          return;
-        }
-        const selectedRefs = nodesRef.current
-          .filter((n) => n.selected && (n.type === "image" || n.type === "video"))
-          .map((n) => refForNode(n))
-          .filter((item): item is Omit<OttoComposerReference, "requestId"> => !!item);
-        const refs = selectedRefs.length > 1 && selectedRefs.some((item) => item.generationId === ref.generationId)
-          ? selectedRefs
-          : [ref];
-        referenceHandlerRef.current(refs);
-        toast.success(refs.length === 1 ? `${ref.label} added to Otto chat.` : `${refs.length} references added to Otto chat.`);
-      };
+  /**
+   * "Send to Otto" — the explicit action (#604 · spec #599 D6, 体检 Q5=C).
+   *
+   * Clicking a card used to BE this: the whole picture was a button, so simply looking at the
+   * board pushed references into Otto's box, scolded the merchant with a red error when no
+   * conversation was open, and — once several cards were picked — turned one click into a pile
+   * of references. Picking a card is now just picking it up; handing anything to Otto happens
+   * only when the merchant presses this.
+   *
+   * It reads the CURRENT SELECTION, so several picked cards go over together, one reference
+   * each, in one hand-off. Nothing here spends: a reference is text the composer carries until
+   * the merchant sends their own message.
+   */
+  const sendSelectionToOtto = useCallback(() => {
+    if (directToolsLockedRef.current) return;
+    const refs = nodesRef.current
+      .filter((n) => n.selected === true && (n.type === "image" || n.type === "video"))
+      .map((node) => {
+        const data = node.data as { generationId?: unknown; url?: unknown } | undefined;
+        return canvasComposerReferenceForNode({
+          type: typeof node.type === "string" ? node.type : null,
+          generationId: typeof data?.generationId === "string"
+            ? data.generationId
+            : nodeDataRef.current[node.id]?.generationId ?? null,
+          src: typeof data?.url === "string" ? data.url : null,
+        });
+      })
+      .filter((item): item is Omit<OttoComposerReference, "requestId"> => !!item);
+    if (refs.length === 0) {
+      toast.message("Pick a finished image or video first, then send it to Otto.");
+      return;
     }
-    return onReferenceInChatByNode.current[id]!;
+    // No conversation open is not a mistake the merchant made — it is a next step. Said plainly,
+    // in a plain note rather than an error (#604).
+    if (!referenceHandlerRef.current) {
+      toast.message("Start a conversation with Otto first, then send these over.");
+      return;
+    }
+    referenceHandlerRef.current(refs);
+    toast.success(
+      refs.length === 1 ? `${refs[0]!.label} added to Otto chat.` : `${refs.length} references added to Otto chat.`,
+    );
   }, []);
 
   const fitMediaNodeToSize = useCallback((id: string, media: CanvasMediaSize) => {
@@ -506,7 +522,7 @@ export default function FlowCanvas({
           updated.data = {
             ...updated.data,
             ...(!updated.data.onOpenDetail ? { onOpenDetail: getOnOpenDetail(id) } : {}),
-            ...(!updated.data.onReferenceInChat ? { onReferenceInChat: getOnReferenceInChat(id) } : {}),
+            ...(!updated.data.onSendToOtto ? { onSendToOtto: sendSelectionToOtto } : {}),
             ...(n.type === "image" && !updated.data.onAnimate ? { onAnimate: getOnAnimate(id) } : {}),
             ...(!updated.data.onMediaSize ? { onMediaSize: getOnMediaSize(id) } : {}),
           };
@@ -514,7 +530,7 @@ export default function FlowCanvas({
         return updated;
       }),
     );
-  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat]);
+  }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
 
   const onNewNode = useCallback(
     (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string; sourceNodeId?: string }) => {
@@ -536,7 +552,7 @@ export default function FlowCanvas({
               onDelete: () => setPendingDeleteId(n.id),
               onRefresh: requestReload,
               onMediaSize: getOnMediaSize(n.id),
-              onReferenceInChat: getOnReferenceInChat(n.id),
+              onSendToOtto: sendSelectionToOtto,
               // onAnimate added after generationId arrives via onResolve
             }),
           },
@@ -547,7 +563,7 @@ export default function FlowCanvas({
       ]);
       scheduleFitView();
     },
-    [activeThreadId, getOnMediaSize, getOnReferenceInChat, requestReload, skin, scheduleFitView, withNodeActionLock],
+    [activeThreadId, getOnMediaSize, sendSelectionToOtto, requestReload, skin, scheduleFitView, withNodeActionLock],
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
@@ -761,7 +777,7 @@ export default function FlowCanvas({
             id: created.id,
             type: "image",
             position: { x, y },
-            data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onReferenceInChat: getOnReferenceInChat(created.id), onMediaSize: getOnMediaSize(created.id) }),
+            data: withNodeActionLock({ status: "done", url: res.src, generationId: res.id, skin, onDelete: () => setPendingDeleteId(created.id), onRefresh: requestReload, onAnimate: getOnAnimate(created.id), onOpenDetail: getOnOpenDetail(created.id), onSendToOtto: sendSelectionToOtto, onMediaSize: getOnMediaSize(created.id) }),
             style: { width: 320, height: 320, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
             threadId: activeThreadId ?? null,
           },
@@ -773,7 +789,7 @@ export default function FlowCanvas({
       });
       scheduleFitView();
     }
-  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, skin, scheduleFitView, spawnRect, withNodeActionLock]);
+  }, [projectId, activeThreadId, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, skin, scheduleFitView, spawnRect, withNodeActionLock]);
 
   // Phase 3: text-to-video — the bottom video tool always opens a prompt dialog;
   // image cards own the explicit "Make video" image-to-video path.
@@ -906,7 +922,7 @@ export default function FlowCanvas({
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
           onAnimate: r.type === "image" ? getOnAnimate(r.id) : undefined,
           onOpenDetail: r.type === "image" || r.type === "video" ? getOnOpenDetail(r.id) : undefined,
-          onReferenceInChat: r.type === "image" || r.type === "video" ? getOnReferenceInChat(r.id) : undefined,
+          onSendToOtto: r.type === "image" || r.type === "video" ? sendSelectionToOtto : undefined,
           onMediaSize: r.type === "image" || r.type === "video" ? getOnMediaSize(r.id) : undefined,
         }),
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
@@ -919,7 +935,7 @@ export default function FlowCanvas({
     // merchant has selected — the board reloads on a timer, and a selection that vanishes
     // mid-action is the board undoing their work (review P2-1).
     setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped));
-  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, getOnReferenceInChat, requestReload, withNodeActionLock]);
+  }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, withNodeActionLock]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
   useEffect(() => { reloadRef.current = reload; }, [reload]);
@@ -1046,12 +1062,22 @@ export default function FlowCanvas({
   const evolveCostHint = genCostHint(costQuote?.imageCredits);
   const remakeCostHint = genCostHint(costQuote?.videoCredits);
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
-  const visibleNodes: CanvasFlowNode[] = filterNodesByConvo(nodes, activeThreadId, filterToConvo).map((n) => ({
+  const nodesOnBoard = filterNodesByConvo(nodes, activeThreadId, filterToConvo);
+  // How many cards are picked right now. A card's own toolbar is about THAT card, so it only
+  // appears while exactly one is picked: with several picked, neighbouring cards' toolbars
+  // landed on top of each other and there was no telling which card a button would act on
+  // (#604 r2 P2②). For a multi-card pick the batch bar below is the one place to act.
+  const selectedCount = nodesOnBoard.filter((n) => n.selected === true).length;
+  const visibleNodes: CanvasFlowNode[] = nodesOnBoard.map((n) => ({
     ...n,
+    // React Flow already puts every card in the tab order and picks it up on Enter, but with
+    // no name a card announced itself as an unnamed group — the merchant heard nothing about
+    // WHICH card had focus (#604 r2 P3). Says what it is, and what it was asked for.
+    ariaLabel: canvasNodeAriaLabel(n),
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
+      ? { ...withNodeActionLock(n.data), selectedCount, onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), onRemake: handleVideoRemake, remakeCostHint }
+        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint }
         : withNodeActionLock(n.data),
   }));
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
@@ -1171,19 +1197,22 @@ export default function FlowCanvas({
         />
       )}
       {skin === "gb" ? (
-        <>
+        // Every bottom-anchored control lives in ONE column (#604 r2): composer, then the
+        // multi-card bar, then the tool row. Stacked rows cannot cover each other, which
+        // is exactly what the old "two bars, same bottom: 20px" pair did.
+        <div className="cv-bottom-stack">
           {/* Composer — hidden until Generate is clicked (Grok pattern). Reuses the
-              existing handleGenerate spend path unchanged; positioned above the bar. */}
+              existing handleGenerate spend path unchanged; sits on top of the stack. */}
           {composerOpen && !directToolsLocked && (
             <form
               ref={composerFormRef}
               className="al-promptbar cv-composer-pop"
               // Fixed 520px used to get clipped by the host's overflow:hidden whenever
               // the canvas pane shrank below that (narrow chat pane + nav rail at
-              // 1024–1279px, #513). maxWidth caps it to the host's own width minus a
-              // 16px gutter on each side, so it always stays inside — the fee note and
-              // close button are never cut off.
-              style={{ position: "absolute", bottom: 76, left: "50%", transform: "translateX(-50%)", width: 520, maxWidth: "calc(100% - 32px)" }}
+              // 1024–1279px, #513). maxWidth caps it to the stack's own width, which is
+              // already inset from the host, so the fee note and close button are never
+              // cut off.
+              style={{ width: 520, maxWidth: "100%" }}
               onSubmit={(e) => { e.preventDefault(); void handleGenerate(); }}
             >
               <div className="al-input-wrap" style={{ flex: 1, minWidth: 0, border: "none", background: "none", padding: 0 }}>
@@ -1233,25 +1262,22 @@ export default function FlowCanvas({
           {/* B6: what to do with several cards at once. Appears only when more than one card
               is selected, so the single-card toolbar is untouched. */}
           {selection.count > 1 && !directToolsLocked && (
-            <div
-              role="toolbar"
-              aria-label="Selected cards"
-              style={{
-                position: "absolute",
-                right: 20,
-                bottom: 20,
-                zIndex: 6,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 12px",
-                borderRadius: 14,
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                boxShadow: "0 8px 24px rgba(20, 20, 24, 0.12)",
-              }}
-            >
+            // Its own row in the stack. It used to be pinned to the same bottom edge as the
+            // tool row with a higher z-index, so as soon as it grew it covered the zoom/fit/
+            // hand/select tools and they stopped being clickable (#604 r2 P2①). The row still
+            // wraps rather than getting clipped when the pane is narrow (#513).
+            <div className="cv-batchbar" role="toolbar" aria-label="Selected cards">
               <span className="text-[0.8125rem]" style={{ whiteSpace: "nowrap" }}>{selection.count} selected</span>
+              {/* D6: the whole picked set goes over to Otto together, one reference each, when
+                  the merchant asks for it — never as a side effect of clicking a card (#604). */}
+              <button
+                type="button"
+                className="al-btn al-btn-sm"
+                title="Hand these to Otto as references"
+                onClick={sendSelectionToOtto}
+              >
+                Send to Otto
+              </button>
               <button
                 type="button"
                 className="al-btn al-btn-sm"
@@ -1281,8 +1307,9 @@ export default function FlowCanvas({
               can shrink below its natural row width (narrow chat pane + nav rail at
               1024–1279px, #513/#522) — without a cap it just grows past the host and
               gets clipped by the host's overflow:hidden. maxWidth + flexWrap here wrap
-              it to a second row instead of clipping it. */}
-          <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools" style={{ flexWrap: "wrap", justifyContent: "center", maxWidth: "calc(100% - 24px)" }}>
+              it to a second row instead of clipping it; the cap is the stack's width,
+              which is already inset from the host. */}
+          <div className="cv-toolbar" role="toolbar" aria-label="Canvas tools" style={{ flexWrap: "wrap", justifyContent: "center", maxWidth: "100%" }}>
             <button
               type="button"
               className="cv-tb"
@@ -1361,7 +1388,7 @@ export default function FlowCanvas({
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M4 7V4h16v3M9 20h6M12 4v16" /></svg>
             </button>
           </div>
-        </>
+        </div>
       ) : directToolsLocked ? (
         <div
           className="al-promptbar"

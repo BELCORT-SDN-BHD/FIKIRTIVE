@@ -697,12 +697,46 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
  * Replaces the legacy persistent promptbar: the prompt composer is revealed
  * only when Generate is clicked (.cv-composer-pop, which reuses .al-promptbar
  * styling). Generate is INK — coral stays agent-only. */
-.gb .cv-toolbar {
+/* One bottom-anchored column, not three things competing for the same corner: the
+ * prompt composer on top, the "N selected" bar in its own row, the tool row at the
+ * bottom. They are normal flow inside this column, so no combination of them can
+ * cover another — before #604 r2 the selection bar shared `bottom: 20px` with the
+ * tool row and simply sat on top of it, and the tools underneath stopped being
+ * clickable. Transparent between the rows so the board itself stays reachable. */
+.gb .cv-bottom-stack {
   position: absolute;
   left: 50%;
   bottom: 20px;
   transform: translateX(-50%);
   z-index: 5;
+  width: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  /* The column may never grow taller than the board it sits in. The board hides its
+   * overflow, so before #604 r3 a short window (phone landscape, a split screen, a
+   * short laptop lid) let the column's top — the prompt composer — run off the top of
+   * the board and get cut, with no way to scroll it back. Measured at 844×390: the
+   * column wanted 347px inside a 338px board and the composer lost 29px off its top.
+   * 40px = the 20px it is inset from the bottom, mirrored at the top. */
+  max-height: calc(100% - 40px);
+  min-height: 0;
+}
+.gb .cv-bottom-stack > * { pointer-events: auto; }
+/* Who gives way when the board is too short. The tool row never does — it is the one
+ * bar that must stay pressable at every window size (#604 r2 P2①), so it keeps its
+ * full height and its place at the bottom. The two rows above it shrink and scroll
+ * inside themselves instead of being cut off. */
+.gb .cv-bottom-stack > .cv-toolbar { flex: 0 0 auto; }
+.gb .cv-bottom-stack > .cv-composer-pop,
+.gb .cv-bottom-stack > .cv-batchbar {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.gb .cv-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -711,6 +745,21 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   border-radius: 14px;
   box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
   padding: 6px;
+}
+/* What a multi-card pick can do (#547 B6) — its own row above the tool row (#604 r2). */
+.gb .cv-batchbar {
+  align-self: flex-end;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 8px 24px rgba(20, 20, 24, 0.12);
 }
 .gb .cv-tb {
   width: 36px;

@@ -32,7 +32,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     onVariant?: (id: string) => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
-    onReferenceInChat?: () => void;
+    /** Hands the whole picked set to Otto as references — an explicit press, never a click on
+     *  the picture itself (#604 · spec #599 D6). */
+    onSendToOtto?: () => void;
+    /** How many cards are picked on the board right now (#604 r2 P2②). Supplied by FlowCanvas. */
+    selectedCount?: number;
     onRefresh?: () => void;
     onMediaSize?: (size: { width: number; height: number }) => void;
     directToolsLocked?: boolean;
@@ -48,29 +52,34 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   const [evolvePrompt, setEvolvePrompt] = useState(originalPrompt);
   const [promptSeed, setPromptSeed] = useState(originalPrompt);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [wasSelected, setWasSelected] = useState(selected);
+  // This card's own bar belongs to THIS card, so it is only on screen while this card is the
+  // only one picked. With two neighbouring cards picked, the two bars used to overlap and the
+  // merchant could not tell which card a button belonged to (#604 r2 P2②) — with several
+  // picked, the board's "N selected" bar is the one place to act on them.
+  const soloSelected = selected && (d.selectedCount ?? 1) === 1;
+  const [wasSolo, setWasSolo] = useState(soloSelected);
   if (promptSeed !== originalPrompt) {
     setPromptSeed(originalPrompt);
     setEvolvePrompt(originalPrompt);
   }
-  // The info panel belongs to the selected card; deselecting closes it. Render-phase
+  // The info panel belongs to the single picked card; anything else closes it. Render-phase
   // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
-  if (wasSelected !== selected) {
-    setWasSelected(selected);
-    if (!selected) setInfoOpen(false);
+  if (wasSolo !== soloSelected) {
+    setWasSolo(soloSelected);
+    if (!soloSelected) setInfoOpen(false);
   }
   const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
   const actionable = imageNodeActionable(d);
   const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
   const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
-  const referenceable = actionable && !!d.onReferenceInChat && !d.directToolsLocked;
+  const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
   const writeLock = getCanvasNodeWriteLock(d);
   return (
     <>
       <NodeResize gb={d.skin === "gb"} selected={selected} locked={writeLock.locked} />
       <NodeToolbar
         className="cv-node-toolbar nodrag nopan"
-        isVisible={selected}
+        isVisible={soloSelected}
         position={Position.Top}
         align="start"
         offset={22}
@@ -89,6 +98,20 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
+          </button>
+        )}
+        {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
+            silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
+        {canSendToOtto && (
+          <button
+            type="button"
+            aria-label="Send the picked cards to Otto"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="Hand this to Otto as a reference"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onSendToOtto?.(); }}
+          >
+            Send to Otto
           </button>
         )}
         {/* A3: one click makes another take of THIS image from its own prompt — the old path
@@ -143,7 +166,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       {infoOpen && (
         <NodeToolbar
           className="nodrag nopan"
-          isVisible={selected}
+          isVisible={soloSelected}
           position={Position.Right}
           align="start"
           offset={12}
@@ -157,7 +180,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       {canEvolve && (
         <NodeToolbar
           className="nodrag nopan"
-          isVisible={selected}
+          isVisible={soloSelected}
           position={Position.Bottom}
           align="center"
           offset={12}
@@ -217,19 +240,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
         Image
       </span>
+    {/* The picture is a picture, not a button: clicking it picks the card up and nothing else
+        (#604 · spec #599 D6). Everything the card can DO lives on its toolbar above. */}
     <div
       className="al-panel"
-      role={referenceable ? "button" : undefined}
-      tabIndex={referenceable ? 0 : undefined}
-      aria-label={referenceable ? "Use image as Otto reference" : undefined}
-      title={referenceable ? "Use as Otto reference" : undefined}
-      onClick={referenceable ? () => d.onReferenceInChat?.() : undefined}
-      onKeyDown={referenceable ? (e) => {
-        if (e.key !== "Enter" && e.key !== " ") return;
-        e.preventDefault();
-        d.onReferenceInChat?.();
-      } : undefined}
-      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14, cursor: referenceable ? "pointer" : undefined }}
+      style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
       {terminal ? (
         <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
