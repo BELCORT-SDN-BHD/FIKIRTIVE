@@ -1,5 +1,5 @@
 /**
- * #601 T2b r2 — what happens after the board write FAILS.
+ * #601 T2b — what happens after the board write FAILS.
  *
  * Writing a delivered job's cards is best-effort on purpose: it runs after the merchant has been
  * charged and the job says DONE, and it must never be able to undo either. The cost of that choice
@@ -14,15 +14,35 @@
  *   3. Repairing lands EXACTLY once — a second sweep finds nothing left to do.
  *   4. Boards that are already right, jobs the merchant suppressed, and jobs that have no board
  *      at all are never in the worklist, so the sweep cannot churn or resurrect anything.
+ *   5. Every board eventually gets its turn, whatever is in front of it, and a board that stops
+ *      being swept leaves a record saying so (#601 r7 — the retry layer is a database query now,
+ *      not a book in the worker's memory).
  *
  * The failed write is reproduced by its OBSERVABLE result — the cards were not written — which is
  * exactly the state `settleCanvasBoard`'s swallowed exception leaves behind in production.
  */
-import { describe, it, expect, afterEach, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { CANVAS_JOB_KEY_PREFIX } from "@fikirtive/core";
+import {
+  CANVAS_JOB_KEY_PREFIX,
+  canvasBoardNeedsSettlement,
+  canvasJobBelongsOnBoard,
+  canvasJobOrigin,
+} from "@fikirtive/core";
 import { prisma } from "../index.js";
-import { findCanvasSettlementBacklog, settleCanvasCardsForGenJob } from "../canvas-settlement.js";
+import {
+  CANVAS_REPAIR_MAX_ATTEMPTS,
+  CANVAS_REPAIR_RECORD_TYPE,
+  CANVAS_REPAIR_WAIT_BASE_MS,
+  CANVAS_REPAIR_WAIT_MAX_MS,
+  canvasRepairRecordId,
+  clearCanvasRepairRecord,
+  findCanvasSettlementBacklog,
+  noteCanvasRepairFailure,
+  settleCanvasCardsForGenJob,
+  type CanvasRepairRecord,
+  type CanvasSettlementBacklogJob,
+} from "../canvas-settlement.js";
 import { seedOrg } from "../../test/setup.js";
 
 const CARD = { w: 320, h: 320 };
@@ -60,21 +80,17 @@ async function seedNeighbourWorkspace(): Promise<{ ownerId: string; projectId: s
   return { ownerId, projectId: pid };
 }
 
-/** The sweep's own settings: everything delivered in the last day, bar the last two minutes. */
-const SWEEP = { lookbackMs: 24 * HOUR, graceMs: 2 * 60_000, limit: 200 };
-
-type SweepPage = Awaited<ReturnType<typeof findCanvasSettlementBacklog>>;
+/** The sweep's own settings: everything delivered up to two minutes ago. */
+const SWEEP = { graceMs: 2 * 60_000, limit: 200 };
 
 /** One tick, at a moment of the test's choosing — the clock is the only thing the sweep reads. */
-function sweep(
-  overrides: { now?: Date; limit?: number; cursor?: SweepPage["cursor"] } = {},
-): Promise<SweepPage> {
+function sweep(overrides: { now?: Date; limit?: number } = {}): Promise<CanvasSettlementBacklogJob[]> {
   return findCanvasSettlementBacklog({ ...SWEEP, now: new Date(), ...overrides });
 }
 
-/** One tick's worklist, read from the front of the window as a freshly started worker would. */
-async function sweepJobs(overrides: { limit?: number } = {}) {
-  return (await sweep(overrides)).jobs;
+/** The ids one tick would hand out, in the order it hands them out. */
+async function sweepIds(overrides: { now?: Date; limit?: number } = {}): Promise<string[]> {
+  return (await sweep(overrides)).map((job) => job.id);
 }
 
 async function seedGeneration(): Promise<string> {
@@ -95,7 +111,7 @@ async function seedGeneration(): Promise<string> {
 async function seedDeliveredJob(input: {
   outputs: number;
   minutesAgo?: number;
-  /** An exact delivery moment, for the cases that place a board relative to a window edge. */
+  /** An exact delivery moment, for the cases that care about the order of the queue. */
   finishedAt?: Date;
   threadId?: string | null;
   canvasKey?: boolean;
@@ -138,7 +154,8 @@ async function seedUnfinishedBoardFor(
  *
  * This used to be half that long. The settlement read the family by prefix alone, so the short
  * key passed — which quietly made the test claim that anything beginning with `canvas:` is proof
- * a job was bought from the board (#601 r2 judge P2①). Both sides now require the whole shape.
+ * a job was bought from the board (#601 r2 judge P2①). Both sides now require the whole shape, and
+ * the scan applies that shape in SQL from the very same pattern the minting side uses.
  */
 function canvasKey(): string {
   return `${CANVAS_JOB_KEY_PREFIX}${randomUUID().replace(/-/g, "").repeat(2)}`;
@@ -167,7 +184,13 @@ async function cardsForJob(jobId: string) {
 async function moneySnapshot(jobId: string) {
   const job = await prisma.genJob.findFirstOrThrow({
     where: { id: jobId, ownerId: orgId },
-    select: { status: true, spent: true, spentUsd: true, generationIds: true, finishedAt: true },
+    select: {
+      status: true, spent: true, spentUsd: true, generationIds: true, finishedAt: true,
+      // The two JSON columns the repair layer deliberately does NOT touch: both are read as money
+      // identity by factoryMaterialMatches, which decides whether a repeated press is the same
+      // paid request or a different one.
+      idempotencyKey: true, videoOptions: true, variantSel: true, updatedAt: true,
+    },
   });
   const ledger = await prisma.creditLedger.findMany({
     where: { orgId, refId: jobId }, orderBy: { id: "asc" },
@@ -175,6 +198,24 @@ async function moneySnapshot(jobId: string) {
   });
   const account = await prisma.creditAccount.findFirstOrThrow({ where: { orgId }, select: { balance: true, reserved: true } });
   return { job, ledger, account };
+}
+
+/** The board's repair record, read straight from the database — never from this process. */
+async function repairRecord(jobId: string): Promise<CanvasRepairRecord | null> {
+  const row = await prisma.actionEvent.findUnique({
+    where: { id: canvasRepairRecordId(jobId) },
+    select: { type: true, ownerId: true, projectId: true, payload: true },
+  });
+  if (!row) return null;
+  expect(row.type).toBe(CANVAS_REPAIR_RECORD_TYPE);
+  expect(row.ownerId).toBe(orgId);
+  expect(row.projectId).toBe(projectId);
+  return row.payload as unknown as CanvasRepairRecord;
+}
+
+/** The board as the sweep sees it, so a test can say "this one failed" the way production does. */
+function boardOf(jobId: string): CanvasSettlementBacklogJob {
+  return { id: jobId, ownerId: orgId, projectId };
 }
 
 describe("a delivered job whose board write fell over", () => {
@@ -185,7 +226,7 @@ describe("a delivered job whose board write fell over", () => {
     const money = await moneySnapshot(jobId);
     expect((await cardsForJob(jobId)).filter((card) => card.status === "done")).toHaveLength(0);
 
-    const first = await sweepJobs();
+    const first = await sweep();
     expect(first.map((job) => job.id)).toContain(jobId);
     for (const job of first) await settleCanvasCardsForGenJob(job.id, job.ownerId);
 
@@ -195,21 +236,26 @@ describe("a delivered job whose board write fell over", () => {
     expect(cards.every((card) => card.status === "done")).toBe(true);
 
     // The next sweep has nothing left to do — the repair is once, not once per tick.
-    const second = await sweepJobs();
+    const second = await sweep();
     expect(second.map((job) => job.id)).not.toContain(jobId);
     for (const job of second) await settleCanvasCardsForGenJob(job.id, job.ownerId);
     expect(await cardsForJob(jobId)).toEqual(cards);
 
-    // …and none of it was money. The charge, the job row and the balance are untouched throughout.
+    // …and none of it was money. The charge, the job row and the balance are untouched throughout —
+    // including both JSON columns, which are money identity to the idempotency comparison.
     expect(await moneySnapshot(jobId)).toEqual(money);
   });
 
   it("finds a job whose cards were never placed at all", async () => {
     const { jobId } = await seedDeliveredJob({ outputs: 2 });
 
-    const backlog = await sweepJobs();
+    expect(await sweepIds()).toContain(jobId);
+  });
 
-    expect(backlog.map((job) => job.id)).toContain(jobId);
+  it("reports the board with the owner AND project a repair record needs", async () => {
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+
+    expect((await sweep()).find((job) => job.id === jobId)).toEqual({ id: jobId, ownerId: orgId, projectId });
   });
 });
 
@@ -219,39 +265,73 @@ describe("what the sweep must leave alone", () => {
     await seedCard({ jobId, x: 0, status: "done", generationId: generationIds[0] });
     await seedCard({ jobId, x: 340, status: "done", generationId: generationIds[1] });
 
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
+    expect(await sweepIds()).not.toContain(jobId);
   });
 
   it("ignores a batch the merchant deleted while it was still running", async () => {
     const { jobId } = await seedDeliveredJob({ outputs: 4 });
     await seedCard({ jobId, x: 0, status: "deleted", generationId: null });
 
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("ignores a batch whose every output the merchant deleted", async () => {
+    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2 });
+    await seedCard({ jobId, x: 0, status: "deleted", generationId: generationIds[0] });
+    await seedCard({ jobId, x: 340, status: "deleted", generationId: generationIds[1] });
+
+    expect(await sweepIds()).not.toContain(jobId);
   });
 
   it("ignores a storyboard job — no board, no chat, no canvas key", async () => {
     const { jobId } = await seedDeliveredJob({ outputs: 2, canvasKey: false });
 
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("ignores a job whose key merely starts with the canvas prefix", async () => {
+    const { jobId } = await seedDeliveredJob({ outputs: 2, canvasKey: false });
+    await prisma.genJob.update({ where: { id: jobId }, data: { idempotencyKey: `${CANVAS_JOB_KEY_PREFIX}not-a-digest` } });
+
+    expect(await sweepIds()).not.toContain(jobId);
   });
 
   it("ignores a job that has only just been delivered — its own completion path is still running", async () => {
     const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 0 });
 
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
-  });
-
-  it("ignores a job older than the sweep's window", async () => {
-    const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 60 * 25 });
-
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
+    expect(await sweepIds()).not.toContain(jobId);
   });
 
   it("ignores a job that is not delivered", async () => {
     const { jobId } = await seedDeliveredJob({ outputs: 2 });
     await prisma.genJob.update({ where: { id: jobId }, data: { status: "FAILED" } });
 
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+});
+
+/**
+ * #601 r4 / r5 — the sweep used to look back exactly one day, and that window was the thing every
+ * loss went through: a board could be ahead of the cursor and behind a freshly measured bound at
+ * the same instant (r4), or leave the window while it served a backoff the process was holding for
+ * it (r5). There is no window any more. A board that was never repaired is a candidate for as long
+ * as it is unrepaired, whether that is ten minutes or ten weeks.
+ */
+describe("a board is never aged out of the sweep", () => {
+  it("still offers a board delivered long before any lookback window would have reached", async () => {
+    const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 60 * 24 * 40 });
+
+    expect(await sweepIds()).toContain(jobId);
+  });
+
+  it("still offers a board whose wait ran out long after it was delivered", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2, finishedAt: new Date(start.getTime() - 23 * HOUR) });
+    await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+
+    // A day later the board is far outside every window the old design ever used, and its wait is
+    // long over. The record is the only thing that decides, and it says "try again".
+    expect(await sweepIds({ now: new Date(start.getTime() + 24 * HOUR) })).toContain(jobId);
   });
 });
 
@@ -261,8 +341,8 @@ describe("one workspace's backlog is never another's", () => {
     const otherOrg = `org_${randomUUID()}`;
     await seedOrg(otherOrg, 1_000);
 
-    const entry = (await sweepJobs()).find((job) => job.id === jobId);
-    expect(entry).toEqual({ id: jobId, ownerId: orgId });
+    const entry = (await sweep()).find((job) => job.id === jobId);
+    expect(entry).toEqual({ id: jobId, ownerId: orgId, projectId });
 
     expect((await settleCanvasCardsForGenJob(jobId, otherOrg)).status).toBe("job-missing");
     expect(await cardsForJob(jobId)).toHaveLength(0);
@@ -273,15 +353,7 @@ describe("one workspace's backlog is never another's", () => {
     const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2 });
     // A second workspace, with a finished job of its own so its rows are inside the sweep's read…
     const neighbour = await seedNeighbourWorkspace();
-    await prisma.genJob.create({
-      data: {
-        id: `gjb_${randomUUID()}`, ownerId: neighbour.ownerId, projectId: neighbour.projectId,
-        prompt: "their own work", kind: "IMAGE", model: "seedream", count: 1, status: "DONE",
-        generationIds: [`gen_${randomUUID()}`], idempotencyKey: canvasKey(),
-        spent: true, spentUsd: 0.12,
-        startedAt: new Date(Date.now() - HOUR), finishedAt: new Date(Date.now() - 30 * 60_000),
-      },
-    });
+    await seedUnfinishedBoardFor(neighbour, new Date(Date.now() - 30 * 60_000));
     // …and two cards of THEIR OWN that name THIS workspace's job. `CanvasNode.genJobId` carries no
     // foreign key, so nothing at the database level stops such a row existing.
     for (const generationId of generationIds) {
@@ -296,7 +368,7 @@ describe("one workspace's backlog is never another's", () => {
 
     // Matching owner and job separately counted those rows towards this board and called it
     // finished — one tenant deciding whether another tenant's paid work ever gets repaired.
-    expect((await sweepJobs()).map((job) => job.id)).toContain(jobId);
+    expect(await sweepIds()).toContain(jobId);
   });
 
   it("does not call a board finished because two of its rows carry the same output", async () => {
@@ -304,11 +376,168 @@ describe("one workspace's backlog is never another's", () => {
     await seedCard({ jobId, x: 0, status: "done", generationId: generationIds[0] });
     await seedCard({ jobId, x: 340, status: "done", generationId: generationIds[0] });
 
-    expect((await sweepJobs()).map((job) => job.id)).toContain(jobId);
+    expect(await sweepIds()).toContain(jobId);
+  });
+
+  it("still repairs a board whose missing output only exists on the merchant's other board", async () => {
+    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2 });
+    await seedCard({ jobId, x: 0, status: "done", generationId: generationIds[0] });
+    // A second project of the SAME merchant, carrying a row that names this project's job.
+    const otherProjectId = `prj_${randomUUID()}`;
+    await prisma.project.create({ data: { id: otherProjectId, ownerId: orgId, name: "Another board" } });
+    await prisma.canvasNode.create({
+      data: {
+        id: `cnd_${randomUUID()}`, ownerId: orgId, projectId: otherProjectId, type: "image",
+        x: 0, y: 0, w: CARD.w, h: CARD.h,
+        genJobId: jobId, generationId: generationIds[1], status: "done",
+      },
+    });
+
+    expect(await sweepIds()).toContain(jobId);
   });
 });
 
-/** How long ago, as a moment — the sweep orders by when a job was delivered. */
+/**
+ * #601 r3 judge, new P1 — the sweep and the projection must answer the SAME question.
+ *
+ * The sweep dropped every job whose chat had been deleted. The projection only drops those that
+ * have no card either: a card that is already on the board settles the question of whether the job
+ * belongs on one, whatever made it.
+ */
+describe("a board with a live card the merchant can still see", () => {
+  it("is repaired even though its chat has since been deleted", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Otto" } });
+    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2, threadId, canvasKey: false });
+    // The card the chat placed while the batch was running — still there, still unfinished.
+    await seedCard({ jobId, x: 100, status: "pending" });
+    await prisma.chatThread.update({ where: { id: threadId }, data: { deletedAt: new Date() } });
+
+    expect(await sweepIds()).toContain(jobId);
+
+    // …and the projection does finish it, which is what makes the exclusion a real loss.
+    expect((await settleCanvasCardsForGenJob(jobId, orgId)).status).toBe("settled");
+    const cards = await cardsForJob(jobId);
+    expect(cards.map((card) => card.generationId)).toEqual(generationIds);
+    expect(cards.every((card) => card.status === "done")).toBe(true);
+  });
+
+  it("stops looking at a job whose chat was deleted and left no card behind", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Otto" } });
+    const { jobId } = await seedDeliveredJob({ outputs: 2, threadId, canvasKey: false });
+
+    expect(await sweepIds()).toContain(jobId);
+
+    await prisma.chatThread.update({ where: { id: threadId }, data: { deletedAt: new Date() } });
+
+    // With the chat gone the settlement can only answer "not a canvas job", forever.
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("does not let another workspace's chat of the same id keep a board alive", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    const neighbour = await seedNeighbourWorkspace();
+    // A live chat with this id exists — but it is the NEIGHBOUR's, in the neighbour's project.
+    await prisma.chatThread.create({
+      data: { id: threadId, ownerId: neighbour.ownerId, projectId: neighbour.projectId, title: "Otto" },
+    });
+    const { jobId } = await seedDeliveredJob({ outputs: 2, threadId, canvasKey: false });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+});
+
+/**
+ * #601 r7 — the SQL the scan applies and the rules in `@fikirtive/core` must answer the same
+ * question about the same board.
+ *
+ * The scan asks the database "is this board a candidate?", and the projection asks the same thing
+ * again inside the lock from `canvasJobBelongsOnBoard` + `canvasBoardNeedsSettlement`. Two versions
+ * of one rule is exactly how the sweep and the projection drifted apart before (#601 r3 judge, new
+ * P1), and the two are now written in different languages, so nothing but a test can hold them
+ * together. Every shape below is run through BOTH and the answers compared.
+ */
+describe("the scan and the shared rules agree about every board shape", () => {
+  type Shape = {
+    name: string;
+    outputs: number;
+    canvasKey: boolean;
+    /** "live" | "deleted" | "none" */
+    chat: "live" | "deleted" | "none";
+    /** Cards to place: one entry per card, naming which output it carries (null = in-flight). */
+    cards: { status: string; output: number | null }[];
+  };
+
+  const shapes: Shape[] = [
+    { name: "canvas job, nothing placed", outputs: 2, canvasKey: true, chat: "none", cards: [] },
+    { name: "canvas job, in-flight card only", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "pending", output: null }] },
+    { name: "canvas job, fully placed", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "done", output: 0 }, { status: "done", output: 1 }] },
+    { name: "canvas job, half placed", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "done", output: 0 }] },
+    { name: "canvas job, placed but not finished", outputs: 1, canvasKey: true, chat: "none", cards: [{ status: "pending", output: 0 }] },
+    { name: "canvas job, legacy timeout card", outputs: 1, canvasKey: true, chat: "none", cards: [{ status: "timeout", output: 0 }] },
+    { name: "canvas job, in-flight card deleted", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "deleted", output: null }] },
+    { name: "canvas job, one output deleted, one placed", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "deleted", output: 0 }, { status: "done", output: 1 }] },
+    { name: "canvas job, one output deleted, one missing", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "deleted", output: 0 }] },
+    { name: "canvas job, every output deleted", outputs: 2, canvasKey: true, chat: "none", cards: [{ status: "deleted", output: 0 }, { status: "deleted", output: 1 }] },
+    { name: "chat job, live chat, nothing placed", outputs: 2, canvasKey: false, chat: "live", cards: [] },
+    { name: "chat job, deleted chat, nothing placed", outputs: 2, canvasKey: false, chat: "deleted", cards: [] },
+    { name: "chat job, deleted chat, live card", outputs: 2, canvasKey: false, chat: "deleted", cards: [{ status: "done", output: 0 }] },
+    { name: "chat job, deleted chat, only a tombstone", outputs: 2, canvasKey: false, chat: "deleted", cards: [{ status: "deleted", output: 0 }] },
+    { name: "gen-space job, nothing placed", outputs: 2, canvasKey: false, chat: "none", cards: [] },
+    { name: "gen-space job, hand-placed card", outputs: 2, canvasKey: false, chat: "none", cards: [{ status: "done", output: 0 }] },
+  ];
+
+  it("returns exactly the boards the core rules call unfinished", async () => {
+    const expected: string[] = [];
+    const seeded: { name: string; jobId: string }[] = [];
+
+    for (const shape of shapes) {
+      let threadId: string | null = null;
+      if (shape.chat !== "none") {
+        threadId = `thr_${randomUUID()}`;
+        await prisma.chatThread.create({
+          data: {
+            id: threadId, ownerId: orgId, projectId, title: "Otto",
+            deletedAt: shape.chat === "deleted" ? new Date() : null,
+          },
+        });
+      }
+      const { jobId, generationIds } = await seedDeliveredJob({
+        outputs: shape.outputs, threadId, canvasKey: shape.canvasKey,
+      });
+      const cards = shape.cards.map((card, index) => ({
+        status: card.status,
+        generationId: card.output === null ? null : (generationIds[card.output] as string),
+        x: index * 340,
+      }));
+      for (const card of cards) {
+        await seedCard({ jobId, x: card.x, status: card.status, generationId: card.generationId });
+      }
+
+      // The same answer, from the rules the projection itself uses.
+      const origin = canvasJobOrigin({
+        idempotencyKey: shape.canvasKey ? canvasKey() : null,
+        hasLiveThread: shape.chat === "live",
+      });
+      const belongs = canvasJobBelongsOnBoard({
+        origin,
+        hasLiveCard: cards.some((card) => card.status !== "deleted"),
+      });
+      if (belongs && canvasBoardNeedsSettlement(generationIds, cards)) expected.push(shape.name);
+      seeded.push({ name: shape.name, jobId });
+    }
+
+    const found = new Set(await sweepIds({ limit: shapes.length * 2 }));
+    const actual = seeded.filter((entry) => found.has(entry.jobId)).map((entry) => entry.name);
+
+    expect(actual.sort()).toEqual(expected.sort());
+    // A rule that excluded everything would pass the comparison above and mean nothing.
+    expect(expected.length).toBeGreaterThan(4);
+  });
+});
+
+/** How long ago, as a moment — a never-tried board's turn comes at its delivery time. */
 function minutesAgo(minutes: number): Date {
   return new Date(Date.now() - minutes * 60_000);
 }
@@ -359,215 +588,269 @@ async function seedPermanentNoOps(count: number, finishedAt: Date): Promise<void
   });
 }
 
+/** Unfinished boards of one workspace, delivered at a chosen moment — the queue's raw material. */
+async function seedUnfinishedBoards(count: number, finishedAt: Date): Promise<string[]> {
+  const ids = Array.from({ length: count }, () => `gjb_${randomUUID()}`);
+  await prisma.genJob.createMany({
+    data: ids.map((id, index) => ({
+      id, ownerId: orgId, projectId, prompt: "never written", kind: "IMAGE" as const,
+      model: "seedream", count: 1, status: "DONE" as const, generationIds: [`gen_${randomUUID()}`],
+      idempotencyKey: canvasKey(), spent: true, spentUsd: 0.12,
+      startedAt: new Date(finishedAt.getTime() - HOUR),
+      // A second apart, so "oldest turn first" has a definite answer for every one of them.
+      finishedAt: new Date(finishedAt.getTime() + index * 1_000),
+    })),
+  });
+  return ids;
+}
+
 describe("a board that is not at the front of the queue", () => {
-  it("is still reached when a full page of finished boards sits in front of it", async () => {
-    // Oldest first is the sweep's order, so these 200 are read before anything else…
+  it("is offered even when a full budget of finished boards was delivered before it", async () => {
+    // These 200 were delivered first, so they would be read first — and none of them is a
+    // candidate, so the merchant's board is in this tick's page, not behind them.
     await seedFinishedBoards(200, minutesAgo(120));
-    // …and this is the merchant whose cards were never written, delivered later.
     const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
 
-    // One slice of 200 taken BEFORE asking "is this board unfinished?" came back entirely full of
-    // boards that needed nothing, and this job was never returned — not on this sweep or any
-    // later one, because the window it sits in never changes.
-    expect((await sweepJobs()).map((job) => job.id)).toContain(jobId);
+    expect(await sweepIds()).toContain(jobId);
   });
 
-  it("stops looking at a job whose chat was deleted — that board can never be repaired", async () => {
-    const threadId = `thr_${randomUUID()}`;
-    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Otto" } });
-    const { jobId } = await seedDeliveredJob({ outputs: 2, threadId, canvasKey: false });
-
-    expect((await sweepJobs()).map((job) => job.id)).toContain(jobId);
-
-    await prisma.chatThread.update({ where: { id: threadId }, data: { deletedAt: new Date() } });
-
-    // With the chat gone the settlement can only answer "not a canvas job", forever. Leaving it in
-    // the worklist cost a wasted transaction every five minutes AND a slot that a board which
-    // could actually be repaired needed.
-    expect((await sweepJobs()).map((job) => job.id)).not.toContain(jobId);
-  });
-});
-
-/**
- * #601 r3 judge P1① — the sweep must MAKE PROGRESS, tick after tick.
- *
- * One sweep can only read so many rows. Reading always starts at the oldest row of the window, so
- * whatever sits in front — finished boards, boards that can never be repaired, boards whose repair
- * keeps failing — is read again on every single tick, and a merchant behind them is never reached
- * at all. And since the sweep is one global queue, the rows in front belong to other workspaces.
- *
- * These cases are the real thing scaled down: the read ceiling is 25 pages of `limit` rows, so a
- * limit of 2 makes it 50 rows and 51 rows in front reproduce what 5 001 do in production.
- */
-describe("the sweep gets through the queue instead of restarting at the front", () => {
-  const SMALL = { limit: 2 };
-  /** Five consecutive ticks, exactly as the reaper runs them. */
-  const TICKS = 5;
-
-  /** Consecutive ticks of the same worker: each one resumes where the last stopped reading. */
-  async function jobsSeenAcrossTicks(): Promise<Set<string>> {
-    const seen = new Set<string>();
-    let cursor: SweepPage["cursor"] = null;
-    for (let tick = 0; tick < TICKS; tick += 1) {
-      const page = await sweep({ ...SMALL, cursor });
-      cursor = page.cursor;
-      for (const job of page.jobs) seen.add(job.id);
-    }
-    return seen;
-  }
-
-  it("reaches a merchant sitting behind more finished boards than one tick can read", async () => {
-    // 51 boards that need nothing, all delivered before the merchant's — one more than the 50 rows
-    // a tick with this limit can read, so the read ceiling is reached before the merchant's row.
-    await seedFinishedBoards(51, minutesAgo(120));
+  it("is offered even when boards that can never be repaired were delivered before it", async () => {
+    await seedPermanentNoOps(200, minutesAgo(120));
     const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
 
-    expect([...await jobsSeenAcrossTicks()]).toContain(jobId);
-  });
-
-  it("reaches a merchant sitting behind boards that can never be repaired", async () => {
-    await seedPermanentNoOps(51, minutesAgo(120));
-    const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
-
-    expect([...await jobsSeenAcrossTicks()]).toContain(jobId);
+    expect(await sweepIds()).toContain(jobId);
   });
 
   it("does not let one workspace's backlog take the whole tick from another's", async () => {
     // One workspace with a run of unrepaired boards, delivered first…
-    for (let i = 0; i < 3; i += 1) await seedDeliveredJob({ outputs: 2, minutesAgo: 120 });
+    await seedUnfinishedBoards(3, minutesAgo(120));
     // …and a second workspace with a single unrepaired board behind them.
     const neighbour = await seedNeighbourWorkspace();
-    const neighbourJobId = `gjb_${randomUUID()}`;
-    await prisma.genJob.create({
-      data: {
-        id: neighbourJobId, ownerId: neighbour.ownerId, projectId: neighbour.projectId,
-        prompt: "their own unfinished board", kind: "IMAGE", model: "seedream", count: 2, status: "DONE",
-        generationIds: [`gen_${randomUUID()}`, `gen_${randomUUID()}`], idempotencyKey: canvasKey(),
-        spent: true, spentUsd: 0.12,
-        startedAt: new Date(Date.now() - HOUR), finishedAt: new Date(Date.now() - 60 * 60_000),
-      },
-    });
+    const neighbourJobId = await seedUnfinishedBoardFor(neighbour, minutesAgo(60));
 
     // A budget of two, taken strictly oldest-first, went entirely to the first workspace.
-    expect((await sweepJobs(SMALL)).map((job) => job.id))
-      .toContain(neighbourJobId);
+    expect(await sweepIds({ limit: 2 })).toContain(neighbourJobId);
+  });
+
+  it("serves whose turn has waited longest, not whoever was delivered longest ago", async () => {
+    const now = new Date();
+    // Delivered ten hours ago, tried twenty minutes ago: its wait ran out five minutes ago.
+    const { jobId: oldAndTried } = await seedDeliveredJob({ outputs: 1, minutesAgo: 600 });
+    await noteCanvasRepairFailure(boardOf(oldAndTried), {
+      now: new Date(now.getTime() - 20 * 60_000),
+      reason: "board write blew up",
+    });
+    // Delivered ten minutes ago and never tried: its turn came ten minutes ago.
+    const { jobId: newAndUntried } = await seedDeliveredJob({ outputs: 1, minutesAgo: 10 });
+
+    // Both are due. Ordering by DELIVERY would put the ten-hour-old board first and make a
+    // merchant's untouched board queue behind a board that has already had its go; ordering by
+    // TURN puts the one that has been waiting since before the other's last attempt first.
+    expect(await sweepIds({ now, limit: 1 })).toEqual([newAndUntried]);
+  });
+
+  it("keeps its turn when this tick's budget could not take it", async () => {
+    const mine = await seedUnfinishedBoards(3, minutesAgo(120));
+
+    const first = await sweepIds({ limit: 1 });
+    expect(first).toEqual([mine[0]]);
+
+    // Nothing was written about the two the budget passed over, so their turn has not moved: the
+    // next tick starts with them. Being passed over is a wait, never a place in the queue lost.
+    await noteCanvasRepairFailure(boardOf(mine[0] as string), { now: new Date(), reason: "board write blew up" });
+    expect(await sweepIds({ limit: 1 })).toEqual([mine[1]]);
   });
 });
 
 /**
- * #601 r3 judge, new P1 — the sweep and the projection must answer the SAME question.
- *
- * The sweep dropped every job whose chat had been deleted. The projection only drops those that
- * have no card either: a card that is already on the board settles the question of whether the job
- * belongs on one, whatever made it. So a merchant who generated in a chat, got a card, and later
- * deleted the chat had a board the projection would have finished and the sweep never offered.
+ * #601 r7 — the retry record is the ONLY thing this sweep remembers, and it is in the database.
  */
-describe("a board with a live card the merchant can still see", () => {
-  it("is repaired even though its chat has since been deleted", async () => {
-    const threadId = `thr_${randomUUID()}`;
-    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "Otto" } });
-    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2, threadId, canvasKey: false });
-    // The card the chat placed while the batch was running — still there, still unfinished.
-    await seedCard({ jobId, x: 100, status: "pending" });
-    await prisma.chatThread.update({ where: { id: threadId }, data: { deletedAt: new Date() } });
+describe("a board whose repair failed", () => {
+  it("waits before it is offered again, and comes back when the wait is over", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    expect(await sweepIds({ now: start })).toContain(jobId);
 
-    const backlog = await sweepJobs();
-    expect(backlog.map((job) => job.id)).toContain(jobId);
+    await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
 
-    // …and the projection does finish it, which is what makes the exclusion a real loss.
-    expect((await settleCanvasCardsForGenJob(jobId, orgId)).status).toBe("settled");
-    const cards = await cardsForJob(jobId);
-    expect(cards.map((card) => card.generationId)).toEqual(generationIds);
-    expect(cards.every((card) => card.status === "done")).toBe(true);
+    expect(await sweepIds({ now: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS - 1) })).not.toContain(jobId);
+    expect(await sweepIds({ now: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS) })).toContain(jobId);
   });
-});
 
-/**
- * #601 r3 judge, new P2 — one workspace, two projects.
- *
- * `CanvasNode.genJobId` carries no foreign key, so a row on the merchant's OTHER board can name a
- * job from this one. Asking "does this board have every output?" with only owner and job pinned
- * counted that row in, and a board that is missing work was retired as finished.
- */
-describe("one project's board is never answered for by another project's cards", () => {
-  it("still repairs a board whose missing output only exists on the merchant's other board", async () => {
-    const { jobId, generationIds } = await seedDeliveredJob({ outputs: 2 });
-    await seedCard({ jobId, x: 0, status: "done", generationId: generationIds[0] });
-    // A second project of the SAME merchant, carrying a row that names this project's job.
-    const otherProjectId = `prj_${randomUUID()}`;
-    await prisma.project.create({ data: { id: otherProjectId, ownerId: orgId, name: "Another board" } });
-    await prisma.canvasNode.create({
-      data: {
-        id: `cnd_${randomUUID()}`, ownerId: orgId, projectId: otherProjectId, type: "image",
-        x: 0, y: 0, w: CARD.w, h: CARD.h,
-        genJobId: jobId, generationId: generationIds[1], status: "done",
-      },
+  it("waits longer after each consecutive failure, up to a ceiling", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    const waits: number[] = [];
+    for (let attempt = 1; attempt <= 8; attempt += 1) {
+      const record = await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+      expect(record.attempts).toBe(attempt);
+      waits.push(Date.parse(record.nextAt) - start.getTime());
+    }
+
+    expect(waits.slice(0, 5)).toEqual([
+      CANVAS_REPAIR_WAIT_BASE_MS,
+      CANVAS_REPAIR_WAIT_BASE_MS * 2,
+      CANVAS_REPAIR_WAIT_BASE_MS * 4,
+      CANVAS_REPAIR_WAIT_BASE_MS * 8,
+      CANVAS_REPAIR_WAIT_MAX_MS,
+    ]);
+    expect(waits.every((wait) => wait <= CANVAS_REPAIR_WAIT_MAX_MS)).toBe(true);
+  });
+
+  it("forgets the wait once the board is repaired", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+    expect(await repairRecord(jobId)).not.toBeNull();
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+
+    expect(await repairRecord(jobId)).toBeNull();
+    expect(await sweepIds({ now: start })).toContain(jobId);
+  });
+
+  it("keeps the wait across a restart, because the wait is a row and not a process", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+
+    // A worker that boots now knows nothing this one knew — the retry book used to be a Map in its
+    // memory, so a restart offered every waiting board again on the very next tick. Loading the
+    // module afresh reproduces that boot: a NEW module instance, a NEW client, no shared state.
+    vi.resetModules();
+    const freshIndex = await import("../index.js");
+    const freshSettlement = await import("../canvas-settlement.js");
+    try {
+      const before = await freshSettlement.findCanvasSettlementBacklog({
+        ...SWEEP, now: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS - 1),
+      });
+      const after = await freshSettlement.findCanvasSettlementBacklog({
+        ...SWEEP, now: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS),
+      });
+      expect(before.map((job) => job.id)).not.toContain(jobId);
+      expect(after.map((job) => job.id)).toContain(jobId);
+    } finally {
+      await freshIndex.prisma.$disconnect();
+    }
+  });
+
+  it("is written off after enough failures — and the record says so, on file, for ever", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    let record: CanvasRepairRecord | null = null;
+    for (let attempt = 1; attempt <= CANVAS_REPAIR_MAX_ATTEMPTS; attempt += 1) {
+      record = await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: `attempt ${attempt} blew up` });
+      // Not written off one attempt early: the cap is the cap.
+      if (attempt < CANVAS_REPAIR_MAX_ATTEMPTS) expect(record.terminalAt).toBeNull();
+    }
+
+    expect(record?.terminalAt).toBe(start.toISOString());
+
+    // It leaves the sweep — however long you wait, it is not offered again…
+    const muchLater = new Date(start.getTime() + 365 * 24 * HOUR);
+    expect(await sweepIds({ now: muchLater })).not.toContain(jobId);
+
+    // …but it is not gone. The row is still there, with the count, the moment and the reason, and
+    // clearing it puts the board straight back in the queue. Written off is not thrown away.
+    const onFile = await repairRecord(jobId);
+    expect(onFile).toMatchObject({
+      genJobId: jobId,
+      attempts: CANVAS_REPAIR_MAX_ATTEMPTS,
+      terminalAt: start.toISOString(),
+      reason: `attempt ${CANVAS_REPAIR_MAX_ATTEMPTS} blew up`,
+    });
+    await clearCanvasRepairRecord(boardOf(jobId));
+    expect(await sweepIds({ now: muchLater })).toContain(jobId);
+  });
+
+  it("is offered rather than lost when its record makes no sense", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+    // Something wrote a record this module did not: no wait, no verdict. A predicate that read it
+    // as "not due" would drop the board out of every future sweep without a word.
+    await prisma.actionEvent.update({
+      where: { id: canvasRepairRecordId(jobId) },
+      data: { payload: { genJobId: jobId } },
     });
 
-    expect((await sweepJobs()).map((job) => job.id)).toContain(jobId);
+    expect(await sweepIds({ now: start })).toContain(jobId);
   });
 });
 
 /**
- * #601 r4 judge P1 — the window must not slide out from under the pass that is walking it.
+ * #601 r5 judge P1 — every board in the book gets its turn, however many there are.
  *
- * The sweep resumes where it stopped reading, and it only looks back a day. Those two were decided
- * independently: the cursor was carried from tick to tick, the day was measured again from a fresh
- * clock every tick. So a board could be AHEAD of the cursor (not read yet) and BEHIND the new
- * lower bound (no longer eligible) at the same instant, and from then on nothing could reach it —
- * the merchant paid, the job says delivered, and the cards never appear on the board.
- *
- * Both cases below are the production shape scaled down: a tick reads at most 25 pages, so a limit
- * of two makes the read ceiling 50 rows, and time is moved on by hand between ticks.
+ * The book used to hold 1 000 boards at most and admit a new failure by evicting its oldest, which
+ * was exactly the board most likely to have outlived its place in the window. Evicted, it was
+ * nowhere, and the merchant's paid outputs were silently gone. There is no book now: a board's
+ * turn is a row, and rows are not evicted.
  */
-describe("a pass keeps the window it started with", () => {
-  const SMALL = { limit: 2 };
-  const DAY = 24 * HOUR;
-
-  it("still reaches a board that was one tick away from falling out of the window", async () => {
+describe("a backlog larger than any book the sweep used to keep", () => {
+  it("attempts every one of 1 001 failing boards", async () => {
     const start = new Date();
-    const windowStart = start.getTime() - DAY;
-    // 51 boards that need nothing, right at the oldest edge — one more than the 50 rows this tick
-    // can read, so the reading stops short of the merchant's row…
-    await seedFinishedBoards(51, new Date(windowStart + 60_000));
-    // …and the merchant's unfinished board, with ten minutes of window left.
-    const { jobId } = await seedDeliveredJob({ outputs: 2, finishedAt: new Date(windowStart + 10 * 60_000) });
+    const ids = await seedUnfinishedBoards(1001, minutesAgo(600));
+    const attempted = new Set<string>();
 
-    const first = await sweep({ ...SMALL, now: start });
-    expect(first.jobs.map((job) => job.id)).not.toContain(jobId);
-
-    // Twelve minutes later that board is older than a freshly measured day. A tick that worked its
-    // lower bound out again here skipped straight past it — the cursor pointed at a row the new
-    // window no longer contained, and no later tick could ever go back for it.
-    const second = await sweep({ ...SMALL, now: new Date(start.getTime() + 12 * 60_000), cursor: first.cursor });
-
-    expect(second.jobs.map((job) => job.id)).toContain(jobId);
-  });
-
-  it("still reaches a board this tick's budget could not take", async () => {
-    const start = new Date();
-    const windowStart = start.getTime() - DAY;
-    // Three unfinished boards of one workspace at the oldest edge of the window…
-    const mine: string[] = [];
-    for (const minute of [1, 2, 3]) {
-      const { jobId } = await seedDeliveredJob({ outputs: 2, finishedAt: new Date(windowStart + minute * 60_000) });
-      mine.push(jobId);
+    // Six ticks at ONE moment in time: a board that was tried is pushed behind everything still
+    // due, so each tick hands out boards the last one did not.
+    for (let tick = 0; tick < 6; tick += 1) {
+      const due = await sweep({ now: start, limit: 200 });
+      for (const job of due) attempted.add(job.id);
+      await Promise.all(due.map((job) => noteCanvasRepairFailure(job, { now: start, reason: "board write blew up" })));
     }
-    // …and one of a second workspace behind them.
-    const neighbour = await seedNeighbourWorkspace();
-    const theirs = await seedUnfinishedBoardFor(neighbour, new Date(windowStart + 4 * 60_000));
 
-    // A budget of two: this workspace's oldest board and the neighbour's. The other two are passed
-    // over — which is only "later" if the sweep can still come back to them.
-    const first = await sweep({ ...SMALL, now: start });
-    expect(first.jobs.map((job) => job.id)).toEqual([mine[0], theirs]);
+    expect(attempted.size).toBe(ids.length);
+    expect([...ids].every((id) => attempted.has(id))).toBe(true);
+  }, 120_000);
+});
 
-    // Five and ten minutes on. Both boards the budget passed over are by now older than a freshly
-    // measured day, so this pass is their only remaining chance.
-    const second = await sweep({ ...SMALL, now: new Date(start.getTime() + 5 * 60_000), cursor: first.cursor });
-    const third = await sweep({ ...SMALL, now: new Date(start.getTime() + 10 * 60_000), cursor: second.cursor });
+/**
+ * #601 r6 judge P1① — retry starvation, the defect this whole round exists to remove.
+ *
+ * The old sweep gave retries at most half its budget per tick and capped the backoff at four hours,
+ * so 4 800 permanently failing boards formed a closed loop: from the 4 801st onwards a board could
+ * be due for ever and never be picked. Measured on the old code: 1 000 ticks, 100 300 boards in the
+ * book, 95 500 of them never retried once.
+ *
+ * The order is now "whose turn has been waiting longest", so being tried is the only thing that
+ * moves a board back — and the last board in a queue of 4 801 is reached in as many ticks as the
+ * budget needs to walk the queue, not never.
+ */
+describe("a queue longer than one tick's budget", () => {
+  it("reaches the board with the longest wait behind 4 800 others", async () => {
+    const start = new Date();
+    const ids = await seedUnfinishedBoards(4801, minutesAgo(600));
+    const last = ids.at(-1) as string;
+    const limit = 200;
+    // Every one of them has already failed once, a second apart and a day ago, so the whole queue
+    // is due and strictly ordered — the exact shape that closed the old loop.
+    const failedAt = start.getTime() - 24 * HOUR;
+    await prisma.actionEvent.createMany({
+      data: ids.map((id, index) => ({
+        id: canvasRepairRecordId(id),
+        ownerId: orgId,
+        projectId,
+        type: CANVAS_REPAIR_RECORD_TYPE,
+        payload: {
+          genJobId: id,
+          attempts: 1,
+          nextAt: new Date(failedAt + index * 1_000).toISOString(),
+          terminalAt: null,
+          reason: "board write blew up",
+        } satisfies CanvasRepairRecord,
+      })),
+    });
 
-    expect([...second.jobs, ...third.jobs].map((job) => job.id))
-      .toEqual(expect.arrayContaining([mine[1], mine[2]]));
-  });
+    const ticksNeeded = Math.ceil(ids.length / limit);
+    let reached = -1;
+    for (let tick = 0; tick < ticksNeeded && reached < 0; tick += 1) {
+      const due = await sweep({ now: start, limit });
+      if (due.some((job) => job.id === last)) reached = tick;
+      await Promise.all(due.map((job) => noteCanvasRepairFailure(job, { now: start, reason: "board write blew up" })));
+    }
+
+    expect(reached).toBeGreaterThanOrEqual(0);
+    expect(reached).toBeLessThan(ticksNeeded);
+  }, 300_000);
 });

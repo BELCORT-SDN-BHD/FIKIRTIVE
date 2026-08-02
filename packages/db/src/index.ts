@@ -18,11 +18,19 @@ export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCr
 export {
   settleCanvasCardsForGenJob,
   findCanvasSettlementBacklog,
+  noteCanvasRepairFailure,
+  clearCanvasRepairRecord,
   canvasJobPlacementLockKey,
+  canvasRepairRecordId,
+  canvasRepairWaitMs,
+  CANVAS_REPAIR_RECORD_TYPE,
+  CANVAS_REPAIR_RECORD_PREFIX,
+  CANVAS_REPAIR_WAIT_BASE_MS,
+  CANVAS_REPAIR_WAIT_MAX_MS,
+  CANVAS_REPAIR_MAX_ATTEMPTS,
   type CanvasSettlementOutcome,
   type CanvasSettlementBacklogJob,
-  type CanvasSettlementBacklogCursor,
-  type CanvasSettlementBacklogPage,
+  type CanvasRepairRecord,
 } from "./canvas-settlement.js";
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";

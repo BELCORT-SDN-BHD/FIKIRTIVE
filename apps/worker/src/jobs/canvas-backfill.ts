@@ -8,87 +8,40 @@
  * board that stays half-empty forever: the job is DONE, so no redelivery and no stale-job reaper
  * ever looks at it again. This sweep is what "it can be written again later" actually means.
  *
+ * WHERE THE WORKLIST LIVES (#601 r7, Founder ruling 2026-08-02). This file used to keep two
+ * things in the worker's memory: how far the last tick got through a 24-hour window, and a book
+ * of boards serving a backoff. Three review rounds killed that design one symptom at a time — a
+ * board slipping out of the window during its wait (r4), being evicted when the book filled (r5),
+ * and never being reached at all behind more failing boards than one tick's share (r6) — and they
+ * were one root cause with three faces: the to-do list was in this process while the truth was in
+ * the database. There is now NOTHING here that outlives a call. Every tick asks the database which
+ * boards are due, oldest turn first, and the only durable thing this sweep writes is how a board's
+ * repair is going (`noteCanvasRepairFailure`). A restart costs nothing, and nothing can be lost in
+ * a process that no longer remembers anything.
+ *
  * WHAT IT IS NOT — read this before touching it:
  *   - It NEVER touches money. No ledger, no `spent`/`spentUsd`, no reservation, no refund, no
- *     provider call, no GenJob status write. It reads finished jobs and calls ONE idempotent
- *     card-writing shell. A job it cannot repair is simply left for the next sweep.
+ *     provider call, no GenJob write of any kind. It reads finished jobs and calls ONE idempotent
+ *     card-writing shell. A job it cannot repair is left for a later sweep, and after roughly three
+ *     days of failures it is written off — which means its record stays on file, not that it is
+ *     forgotten (see `CANVAS_REPAIR_MAX_ATTEMPTS`).
  *   - It never decides what a board should contain: `settleCanvasCardsForGenJob` runs the same
  *     single projection the delivery path runs, under the same per-job lock, and honours the
  *     merchant's deletions.
  */
 import {
+  clearCanvasRepairRecord,
   findCanvasSettlementBacklog,
+  noteCanvasRepairFailure,
   settleCanvasCardsForGenJob,
-  type CanvasSettlementBacklogCursor,
+  type CanvasSettlementBacklogJob,
 } from "@fikirtive/db";
 import { runAsTenant } from "@fikirtive/db/principal";
 
 /** Leave a just-delivered job alone: its own completion path is probably still writing the cards. */
 export const CANVAS_BACKFILL_GRACE_MS = 2 * 60_000;
-/**
- * How far back a NEW pass looks. A board nobody repaired in a day is an ops question, not a loop.
- * A pass already under way keeps the bound it opened with — the scan owns that, not this tick.
- */
-export const CANVAS_BACKFILL_LOOKBACK_MS = 24 * 60 * 60_000;
 /** Ceiling per sweep, so one bad day cannot turn a 5-minute tick into an unbounded job. */
 export const CANVAS_BACKFILL_LIMIT = 200;
-/** How long a board waits after its first failed repair; it doubles per consecutive failure. */
-export const CANVAS_BACKFILL_RETRY_BASE_MS = 15 * 60_000;
-/** …up to this, so a board that will never write still gets a look a few times a day. */
-export const CANVAS_BACKFILL_RETRY_MAX_MS = 4 * 60 * 60_000;
-/**
- * The most of one tick's budget the backoff book may take back.
- *
- * Boards that keep failing are the sweep's own worklist now, not the scan's, so they compete with
- * freshly found ones for the tick. Half the budget at most: a run of boards that will not write
- * must not retake the whole tick from merchants waiting for a first attempt (#601 r3 judge P1①).
- */
-const RETRY_SHARE = Math.max(1, Math.floor(CANVAS_BACKFILL_LIMIT / 2));
-
-/**
- * WHERE THIS SWEEP GOT TO, and which boards are serving a backoff.
- *
- * Both are per worker process on purpose — this is scheduling, not truth, and nothing here is
- * owner data. Losing it on a restart costs one thing only: the next sweep opens a new pass at the
- * front of a fresh window, exactly as every sweep used to. What the pass guarantees survives that,
- * because it is a property of one pass, not of the process: a row is READ before it can leave the
- * window, since the pass's lower bound is frozen (#601 r4 judge P1) and a job's `finishedAt` never
- * moves. How long a pass takes depends on how much there is to repair — see the backlog scan.
- */
-let sweepCursor: CanvasSettlementBacklogCursor | null = null;
-const retryAfter = new Map<string, { at: number; attempts: number; ownerId: string }>();
-
-/** Test seam: the two above live for the life of the process, not the life of a call. */
-export function resetCanvasBackfillSweepState(): void {
-  sweepCursor = null;
-  retryAfter.clear();
-}
-
-/**
- * Put a board that would not write to the back of the queue for a while — and KEEP it, as this
- * sweep's own to-do rather than something to go looking for again.
- *
- * Two reasons, and both are load-bearing. Without the wait, boards whose repair throws are still
- * boards the backlog reports: the same handful at the front took the whole budget every tick and
- * the merchant behind them was never even attempted (#601 r3 judge P1①). And without keeping the
- * board here — leaving the next scan to find it again — a board whose first failure came near the
- * end of its 24 hours simply left the window during its own wait, and no later scan could offer
- * it (#601 r4 judge P1). Held here, the wait is a wait whatever the window is doing.
- *
- * An entry leaves ONLY by being repaired. There is deliberately no cap and no eviction: the book
- * used to hold 1,000 at most and admit a new failure by dropping its oldest — which is exactly the
- * board most likely to have outlived its place in the window, the book being the one place it was
- * still offered from. Dropped there, it was nowhere, and the merchant's paid outputs were silently
- * gone (#601 r5 judge P1). The book stays bounded without a cap: it admits at most one scan budget
- * per tick, every entry is a real delivered job whose board write keeps failing — a state worth an
- * ops alarm long before its few dozen bytes strain a process — and however large it grows,
- * `RETRY_SHARE` still caps what any one tick spends on it.
- */
-function deferAfterFailure(jobId: string, ownerId: string, nowMs: number): void {
-  const attempts = (retryAfter.get(jobId)?.attempts ?? 0) + 1;
-  const wait = Math.min(CANVAS_BACKFILL_RETRY_BASE_MS * 2 ** (attempts - 1), CANVAS_BACKFILL_RETRY_MAX_MS);
-  retryAfter.set(jobId, { at: nowMs + wait, attempts, ownerId });
-}
 
 /**
  * Finish every delivered job whose board is still incomplete. Returns how many boards this sweep
@@ -98,55 +51,54 @@ function deferAfterFailure(jobId: string, ownerId: string, nowMs: number): void 
  * re-enters as its own tenant (#463 two-phase: cross-tenant scan, per-owner write).
  */
 export async function backfillCanvasBoards(now: Date = new Date()): Promise<number> {
-  const nowMs = now.getTime();
-  // Boards whose wait is over, taken straight from the book: this sweep already knows about them,
-  // so whether the scan could still find them does not come into it.
-  const dueAgain = [...retryAfter]
-    .filter(([, entry]) => entry.at <= nowMs)
-    .slice(0, RETRY_SHARE)
-    .map(([id, entry]) => ({ id, ownerId: entry.ownerId }));
-  // Every board in the book — waiting or due — is excluded from the scan: the book is now the one
-  // place they are offered from, so the scan must neither offer them twice nor spend a row on them.
-  const deferredJobIds = [...retryAfter.keys()];
-
-  // The SCAN is inside the guard too, not just the per-job repair. This sweep shares one reaper
-  // tick with the refgen, LLM-reservation, research, publish and ingest recoveries, and they run
-  // in sequence: a throw from the scan escaped into the tick and skipped every one of them (#601
-  // r2 judge P2③) — so a bad canvas query would have stopped credits being given back. Nothing to
+  // The SCAN is inside the guard, not just the per-job repair. This sweep shares one reaper tick
+  // with the refgen, LLM-reservation, research, publish and ingest recoveries, and they run in
+  // sequence: a throw from the scan escaped into the tick and skipped every one of them (#601 r2
+  // judge P2③) — so a bad canvas query would have stopped credits being given back. Nothing to
   // repair this tick is the worst this may cost.
-  let scanned: { id: string; ownerId: string }[] = [];
+  let due: CanvasSettlementBacklogJob[] = [];
   try {
-    const backlog = await findCanvasSettlementBacklog({
+    due = await findCanvasSettlementBacklog({
       now,
-      lookbackMs: CANVAS_BACKFILL_LOOKBACK_MS,
       graceMs: CANVAS_BACKFILL_GRACE_MS,
-      // Whatever the retries did not take. `RETRY_SHARE` is half the budget, so there is always
-      // room here for merchants still waiting on a first attempt.
-      limit: CANVAS_BACKFILL_LIMIT - dueAgain.length,
-      cursor: sweepCursor,
-      deferredJobIds,
+      limit: CANVAS_BACKFILL_LIMIT,
     });
-    // Carry on where this tick's pass stopped — cursor AND the window that pass is walking.
-    // `null` means the pass is finished, so the next tick opens a new one at a newer window.
-    sweepCursor = backlog.cursor;
-    scanned = backlog.jobs;
   } catch (e) {
     console.error("[canvas-backfill] backlog scan failed (retries next sweep):", e instanceof Error ? e.message : e);
+    return 0;
   }
 
   let repaired = 0;
-  for (const job of [...dueAgain, ...scanned]) {
-    // Per-job try/catch: one unrepairable board must not stop the sweep — it retries after a wait.
+  for (const job of due) {
+    // Per-job try/catch: one unrepairable board must not stop the sweep — it waits, then retries.
     try {
       const outcome = await runAsTenant(job.ownerId, () => settleCanvasCardsForGenJob(job.id, job.ownerId));
-      retryAfter.delete(job.id);
-      if (outcome.created + outcome.updated > 0) {
-        console.log(`[canvas-backfill] ${job.id}: wrote ${outcome.created} card(s), fixed ${outcome.updated}`);
-        repaired += 1;
+      if (outcome.status === "settled") {
+        await clearCanvasRepairRecord(job);
+        if (outcome.created + outcome.updated > 0) {
+          console.log(`[canvas-backfill] ${job.id}: wrote ${outcome.created} card(s), fixed ${outcome.updated}`);
+          repaired += 1;
+        }
+        continue;
       }
+      // The scan said this board was missing something and the projection disagreed — a card
+      // written between the two, or a state the scan reads more loosely than the projection does.
+      // Treated exactly like a failure: wait, then look again. Never dropped on the spot, because
+      // "the projection said no once" is not the same as "this board can never need repair".
+      await noteCanvasRepairFailure(job, { now, reason: outcome.status });
     } catch (e) {
-      deferAfterFailure(job.id, job.ownerId, nowMs);
-      console.error(`[canvas-backfill] ${job.id} failed (retries after a wait):`, e instanceof Error ? e.message : e);
+      const reason = e instanceof Error ? e.message : String(e);
+      console.error(`[canvas-backfill] ${job.id} failed (retries after a wait):`, reason);
+      // The record is the whole reason this board keeps its turn in the queue, so a failure to
+      // write it must not take the sweep down with it — the board simply stays due.
+      try {
+        await noteCanvasRepairFailure(job, { now, reason });
+      } catch (bookkeeping) {
+        console.error(
+          `[canvas-backfill] ${job.id}: could not record the failed repair:`,
+          bookkeeping instanceof Error ? bookkeeping.message : bookkeeping,
+        );
+      }
     }
   }
   return repaired;
