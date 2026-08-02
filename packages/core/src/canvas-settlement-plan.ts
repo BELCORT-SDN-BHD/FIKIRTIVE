@@ -66,12 +66,45 @@ export type CanvasRepairWriterRecord = {
   originalVideoOptions?: unknown;
 };
 
+const CANVAS_REPAIR_REQUIRED_KEYS = [
+  "genJobId",
+  "attempts",
+  "nextAt",
+  "reason",
+  "videoOptionsWasNull",
+] as const;
+const CANVAS_REPAIR_ALLOWED_KEYS = new Set<string>([
+  ...CANVAS_REPAIR_REQUIRED_KEYS,
+  "originalVideoOptions",
+]);
+
+/** Keep the human repair note JSON-safe and bounded without splitting an emoji surrogate pair. */
+export function normalizeCanvasRepairReason(reason: string): string {
+  let normalized = "";
+  let codePoints = 0;
+  for (const character of reason) {
+    if (codePoints >= 200) break;
+    const value = character.codePointAt(0);
+    normalized += value !== undefined && value >= 0xd800 && value <= 0xdfff
+      ? "\ufffd"
+      : character;
+    codePoints += 1;
+  }
+  return normalized;
+}
+
 /** Only this exact writer shape, bound to the row being read, may restore paid request material. */
 export function isTrustedCanvasRepairRecord(
   value: unknown,
   expectedJobId: string,
+  hasSiblingMaterial: boolean,
 ): value is CanvasRepairWriterRecord {
   if (!isJsonObject(value)) return false;
+  const keys = Object.keys(value);
+  if (
+    CANVAS_REPAIR_REQUIRED_KEYS.some((key) => !Object.hasOwn(value, key))
+    || keys.some((key) => !CANVAS_REPAIR_ALLOWED_KEYS.has(key))
+  ) return false;
   const hasOriginal = Object.hasOwn(value, "originalVideoOptions");
   const original = value.originalVideoOptions;
   const originalIsWrappedLegacyMaterial = original !== null
@@ -82,8 +115,9 @@ export function isTrustedCanvasRepairRecord(
     && value.genJobId === expectedJobId
     && Number.isSafeInteger(value.attempts) && (value.attempts as number) > 0
     && isIsoTimestamp(value.nextAt)
-    && typeof value.reason === "string" && value.reason.length <= 200
+    && typeof value.reason === "string" && normalizeCanvasRepairReason(value.reason) === value.reason
     && typeof value.videoOptionsWasNull === "boolean"
+    && !(hasSiblingMaterial && (value.videoOptionsWasNull || hasOriginal))
     && (value.videoOptionsWasNull
       ? !hasOriginal
       : !hasOriginal || originalIsWrappedLegacyMaterial)
@@ -102,9 +136,9 @@ export function canvasMaterialWithoutRepair(value: unknown, expectedJobId: strin
   const material = { ...value };
   if (!Object.hasOwn(material, CANVAS_REPAIR_JSON_KEY)) return material;
 
-  const repair = material[CANVAS_REPAIR_JSON_KEY];
-  const trusted = isTrustedCanvasRepairRecord(repair, expectedJobId);
   const hasSiblingMaterial = Object.keys(material).some((key) => key !== CANVAS_REPAIR_JSON_KEY);
+  const repair = material[CANVAS_REPAIR_JSON_KEY];
+  const trusted = isTrustedCanvasRepairRecord(repair, expectedJobId, hasSiblingMaterial);
   const original = trusted ? repair.originalVideoOptions : undefined;
   const isLegacyWrapper = (
     !hasSiblingMaterial

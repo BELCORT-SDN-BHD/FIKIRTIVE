@@ -31,6 +31,7 @@ import {
   canvasJobOrigin,
   isTrustedCanvasRepairRecord,
   newId,
+  normalizeCanvasRepairReason,
   planCanvasSettlement,
   type CanvasRect,
   type SettlementCard,
@@ -332,7 +333,7 @@ export async function findCanvasSettlementBacklog(options: {
     );
     return tx.$queryRaw<CanvasSettlementBacklogJob[]>`
       WITH candidates AS (
-      SELECT j.id, j."ownerId", j."projectId", j."finishedAt",
+      SELECT j.id, j."ownerId", j."projectId", j."finishedAt", j."videoOptions" AS material,
         j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} AS repair
       FROM "GenJob" j
     WHERE j.status = 'DONE'
@@ -394,6 +395,13 @@ export async function findCanvasSettlementBacklog(options: {
         -- Only the exact record this writer can mint may defer a paid board. Any foreign,
         -- partial or corrupt JSON fails open and is offered for another idempotent attempt.
         WHEN jsonb_typeof(repair) IS DISTINCT FROM 'object' THEN NULL
+        WHEN EXISTS (
+          SELECT 1 FROM jsonb_object_keys(repair) AS repair_key(key)
+          WHERE repair_key.key NOT IN (
+            'genJobId', 'attempts', 'nextAt', 'reason', 'videoOptionsWasNull',
+            'originalVideoOptions'
+          )
+        ) THEN NULL
         WHEN repair ->> 'genJobId' IS DISTINCT FROM id THEN NULL
         WHEN NOT CASE
           WHEN jsonb_typeof(repair -> 'attempts') = 'number'
@@ -405,6 +413,17 @@ export async function findCanvasSettlementBacklog(options: {
         WHEN jsonb_typeof(repair -> 'reason') IS DISTINCT FROM 'string'
           OR length(repair ->> 'reason') > 200 THEN NULL
         WHEN jsonb_typeof(repair -> 'videoOptionsWasNull') IS DISTINCT FROM 'boolean' THEN NULL
+        -- A scalar/array/null wrapper occupies the whole outer value. Real sibling material makes
+        -- that provenance contradictory; ordinary object retries (false + no original) may coexist.
+        WHEN (
+          repair ->> 'videoOptionsWasNull' = 'true'
+          OR repair ? 'originalVideoOptions'
+        ) AND EXISTS (
+          SELECT 1 FROM jsonb_object_keys(
+            CASE WHEN jsonb_typeof(material) = 'object' THEN material ELSE '{}'::jsonb END
+          ) AS material_key(key)
+          WHERE material_key.key <> ${CANVAS_REPAIR_JSON_KEY}
+        ) THEN NULL
         -- originalVideoOptions exists only for a wrapped legacy scalar/array. Null is carried by
         -- videoOptionsWasNull, while ordinary object material stays beside the repair key.
         WHEN repair ? 'originalVideoOptions' AND (
@@ -481,7 +500,9 @@ export async function noteCanvasRepairFailure(
     const prior = isJsonObject(current.videoOptions)
       ? current.videoOptions[CANVAS_REPAIR_JSON_KEY]
       : undefined;
-    const trustedPrior = isTrustedCanvasRepairRecord(prior, job.id) ? prior : null;
+    const hasSiblingMaterial = isJsonObject(current.videoOptions)
+      && Object.keys(current.videoOptions).some((key) => key !== CANVAS_REPAIR_JSON_KEY);
+    const trustedPrior = isTrustedCanvasRepairRecord(prior, job.id, hasSiblingMaterial) ? prior : null;
     const attempts = Math.min((trustedPrior?.attempts ?? 0) + 1, Number.MAX_SAFE_INTEGER);
     const originalVideoOptions = trustedPrior && Object.hasOwn(trustedPrior, "originalVideoOptions")
       ? trustedPrior.originalVideoOptions
@@ -491,7 +512,7 @@ export async function noteCanvasRepairFailure(
       attempts,
       nextAt: new Date(input.now.getTime() + canvasRepairWaitMs(attempts)).toISOString(),
       // Bounded: this record is a note for a human, never a log of the failure.
-      reason: input.reason.slice(0, 200),
+      reason: normalizeCanvasRepairReason(input.reason),
       videoOptionsWasNull: trustedPrior?.videoOptionsWasNull ?? currentMaterial === null,
       ...(originalVideoOptions !== undefined ? { originalVideoOptions } : {}),
     };

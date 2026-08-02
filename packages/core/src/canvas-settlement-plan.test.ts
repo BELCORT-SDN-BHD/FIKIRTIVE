@@ -17,6 +17,7 @@ import {
   canvasMaterialWithoutRepair,
   isTrustedCanvasRepairRecord,
   isCanvasJobKey,
+  normalizeCanvasRepairReason,
   planCanvasSettlement,
   type CanvasJobOrigin,
   type CanvasSettlementPlan,
@@ -40,7 +41,7 @@ describe("paid material beside canvas repair bookkeeping", () => {
   };
 
   it("trusts only the complete bounded writer shape for the expected job", () => {
-    expect(isTrustedCanvasRepairRecord(trusted, "gjb-1")).toBe(true);
+    expect(isTrustedCanvasRepairRecord(trusted, "gjb-1", false)).toBe(true);
     for (const repair of [
       { ...trusted, genJobId: "gjb-other" },
       { ...trusted, attempts: 0 },
@@ -56,13 +57,13 @@ describe("paid material beside canvas repair bookkeeping", () => {
       { ...trusted, originalVideoOptions: { seconds: 5 } },
       { attempts: 1, nextAt: trusted.nextAt, reason: "failed", videoOptionsWasNull: false },
     ]) {
-      expect(isTrustedCanvasRepairRecord(repair, "gjb-1")).toBe(false);
+      expect(isTrustedCanvasRepairRecord(repair, "gjb-1", false)).toBe(false);
     }
-    expect(isTrustedCanvasRepairRecord({ ...trusted, originalVideoOptions: "legacy" }, "gjb-1"))
+    expect(isTrustedCanvasRepairRecord({ ...trusted, originalVideoOptions: "legacy" }, "gjb-1", false))
       .toBe(true);
-    expect(isTrustedCanvasRepairRecord({ ...trusted, originalVideoOptions: ["legacy"] }, "gjb-1"))
+    expect(isTrustedCanvasRepairRecord({ ...trusted, originalVideoOptions: ["legacy"] }, "gjb-1", false))
       .toBe(true);
-    expect(isTrustedCanvasRepairRecord({ ...trusted, videoOptionsWasNull: true }, "gjb-1"))
+    expect(isTrustedCanvasRepairRecord({ ...trusted, videoOptionsWasNull: true }, "gjb-1", false))
       .toBe(true);
   });
 
@@ -82,6 +83,42 @@ describe("paid material beside canvas repair bookkeeping", () => {
     expect(canvasMaterialWithoutRepair({
       __canvasRepair: { ...trusted, videoOptionsWasNull: true },
     }, "gjb-1")).toBeNull();
+  });
+
+  it.each([
+    { ...trusted, originalVideoOptions: "legacy", unexpected: "field" },
+    { ...trusted, originalVideoOptions: ["legacy"], unexpected: "field" },
+    { ...trusted, videoOptionsWasNull: true, unexpected: "field" },
+  ])("does not trust or restore provenance carrying an unknown key", (repair) => {
+    expect(isTrustedCanvasRepairRecord(repair, "gjb-1", false)).toBe(false);
+    expect(canvasMaterialWithoutRepair({ __canvasRepair: repair }, "gjb-1")).toEqual({});
+  });
+
+  it.each([
+    { ...trusted, originalVideoOptions: "legacy" },
+    { ...trusted, originalVideoOptions: ["legacy"] },
+    { ...trusted, videoOptionsWasNull: true },
+  ])("does not trust wrapped provenance when the outer material has siblings", (repair) => {
+    expect(isTrustedCanvasRepairRecord(repair, "gjb-1", true)).toBe(false);
+    expect(canvasMaterialWithoutRepair({ seconds: 5, __canvasRepair: repair }, "gjb-1"))
+      .toEqual({ seconds: 5 });
+  });
+
+  it("allows an ordinary object-material retry record beside outer siblings", () => {
+    expect(isTrustedCanvasRepairRecord(trusted, "gjb-1", true)).toBe(true);
+  });
+
+  it("bounds repair reasons by Unicode code point and replaces lone surrogates", () => {
+    const twoHundredCodePoints = `${"x".repeat(199)}🚀`;
+    expect(normalizeCanvasRepairReason(twoHundredCodePoints)).toBe(twoHundredCodePoints);
+    expect([...normalizeCanvasRepairReason(twoHundredCodePoints)]).toHaveLength(200);
+    expect(normalizeCanvasRepairReason(`${"x".repeat(200)}🚀`)).toBe("x".repeat(200));
+    expect(normalizeCanvasRepairReason(`before\ud800after`)).toBe("before�after");
+
+    expect(isTrustedCanvasRepairRecord({ ...trusted, reason: twoHundredCodePoints }, "gjb-1", false))
+      .toBe(true);
+    expect(isTrustedCanvasRepairRecord({ ...trusted, reason: `before\ud800after` }, "gjb-1", false))
+      .toBe(false);
   });
 
   it.each([
