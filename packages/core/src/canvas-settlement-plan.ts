@@ -75,6 +75,29 @@ export function canvasJobOrigin(facts: {
   return facts.hasLiveThread ? "chat" : "elsewhere";
 }
 
+/**
+ * Does a delivered job belong on a board at all? The ONE admission rule.
+ *
+ * Where the job was bought decides it — except that a card which is ALREADY on the board settles
+ * the question by itself, whatever made it. Both halves matter and they are not interchangeable:
+ *   - a Canvas or live-chat job with no card yet is exactly the state settlement exists to repair,
+ *     so "no card" can never be read as "no board";
+ *   - a merchant who generated in a chat, got a card, and later deleted the chat still owns that
+ *     card, so the rest of that paid batch must still be finished around it.
+ *
+ * The projection below and the worker's backlog sweep (`findCanvasSettlementBacklog`) both call
+ * this. They used to hold two versions of it, and the sweep's was the stricter one: it dropped
+ * every job whose chat had gone, including the ones the projection would have repaired, so those
+ * boards were never even offered for repair (#601 r3 judge). One rule, one answer.
+ */
+export function canvasJobBelongsOnBoard(facts: {
+  origin: CanvasJobOrigin;
+  /** Does this job have at least one card that is not a tombstone? */
+  hasLiveCard: boolean;
+}): boolean {
+  return facts.hasLiveCard || facts.origin !== "elsewhere";
+}
+
 /** A card that already exists for the job being settled (tombstones included — they matter). */
 export type SettlementCard = {
   id: string;
@@ -249,13 +272,11 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
   if (suppressesJob) return { kind: "skip", reason: "suppressed" };
 
   const live = cards.filter((card) => card.status !== "deleted");
-  // Does this job belong on a board at all? Decided by WHERE IT WAS BOUGHT, never by what the
-  // board happens to look like: a canvas job whose card was never placed (tab closed before the
-  // browser wrote it) and a canvas job whose first output the merchant deleted both arrive here
-  // with no live card, and both are paid work the merchant must get. A storyboard/Gen-space job
-  // has no board of its own and must not sprout a card it never had. A card that IS already
-  // there settles the question by itself — whatever made it, it is on a board now.
-  if (!live.length && job.origin === "elsewhere") return { kind: "skip", reason: "not-a-canvas-job" };
+  // Does this job belong on a board at all? The shared admission rule above — never a variant of
+  // it written here, and never guessed from what the board happens to look like.
+  if (!canvasJobBelongsOnBoard({ origin: job.origin, hasLiveCard: live.length > 0 })) {
+    return { kind: "skip", reason: "not-a-canvas-job" };
+  }
 
   const outputs = job.generationIds.filter((id): id is string => !!id);
   if (!outputs.length) return { kind: "skip", reason: "nothing-to-place" };

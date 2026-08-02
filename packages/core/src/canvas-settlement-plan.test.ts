@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   CANVAS_JOB_KEY_PREFIX,
   CANVAS_SETTLEMENT_CARD,
+  canvasJobBelongsOnBoard,
   canvasJobOrigin,
   canvasBoardNeedsSettlement,
   isCanvasJobKey,
@@ -404,6 +405,33 @@ describe("where the job was bought", () => {
       expect({ forged, origin: canvasJobOrigin({ idempotencyKey: forged, hasLiveThread: false }) })
         .toEqual({ forged, origin: "elsewhere" });
     }
+  });
+
+  it("admits every job the same way for the sweep and the projection", () => {
+    // ONE rule, called by both `planCanvasSettlement` and the worker's backlog sweep. The sweep
+    // used to hold its own, stricter copy — it dropped every job whose chat had gone, including
+    // the ones with a card still on the board, which the projection repairs (#601 r3 judge).
+    for (const origin of ["canvas", "chat"] as const) {
+      expect(canvasJobBelongsOnBoard({ origin, hasLiveCard: false })).toBe(true);
+      expect(canvasJobBelongsOnBoard({ origin, hasLiveCard: true })).toBe(true);
+    }
+    // Nothing to hang a board on: a storyboard/Gen-space job, or a chat that is gone with no card.
+    expect(canvasJobBelongsOnBoard({ origin: "elsewhere", hasLiveCard: false })).toBe(false);
+    // …but a card the merchant can still see settles it, whatever made the job.
+    expect(canvasJobBelongsOnBoard({ origin: "elsewhere", hasLiveCard: true })).toBe(true);
+  });
+
+  it("finishes a batch around the card of a chat that has since been deleted", () => {
+    // The merchant generated in a chat, got the first card, deleted the chat. The rest of that
+    // paid batch is still theirs and the card is still on the board.
+    const plan = planCanvasSettlement({
+      job: { status: "DONE", generationIds: ["gen-1", "gen-2"], kind: "IMAGE", prompt: "p", origin: "elsewhere" },
+      cards: [{ id: "card-1", x: 0, y: 0, w: 320, h: 320, prompt: "p", generationId: "gen-1", status: "done", sourceNodeId: null }],
+      occupied: [],
+    });
+
+    expect(plan.kind).toBe("place");
+    expect(plan.kind === "place" && plan.cards.map((entry) => entry.action)).toEqual(["keep", "create"]);
   });
 
   it("reads a live chat as a chat job, and everything else as neither", () => {

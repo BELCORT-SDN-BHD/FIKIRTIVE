@@ -21,6 +21,8 @@ export {
   canvasJobPlacementLockKey,
   type CanvasSettlementOutcome,
   type CanvasSettlementBacklogJob,
+  type CanvasSettlementBacklogCursor,
+  type CanvasSettlementBacklogPage,
 } from "./canvas-settlement.js";
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
