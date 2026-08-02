@@ -220,11 +220,9 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
   });
 
   // #559-style family ban: no wording anywhere in the instructions may model or license
-  // a words-only consent followed by Otto promising to start paid creative work. Keep
-  // the two semantic halves explicit so ordinary information gathering stays legal.
-  const DIRECT_CONSENT_COMMANDS = new Set(["reply", "respond", "say", "type"]);
-  const DIRECT_CONSENT_WORDS = new Set(["yes", "go", "proceed", "ready"]);
-  const PAID_WORK_PROMISE_VERBS = new Set([
+  // Otto promising to start paid creative work from words alone. The left-hand consent
+  // wording is deliberately irrelevant: the invariant lives in Otto's promise clause.
+  const PAID_MEDIA_ACTIONS = new Set([
     "start",
     "begin",
     "run",
@@ -234,6 +232,35 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
     "build",
     "make",
   ]);
+  const PAID_MEDIA_TARGETS = new Set([
+    "generation",
+    "generations",
+    "image",
+    "images",
+    "video",
+    "videos",
+    "ad",
+    "ads",
+    "creative",
+    "creatives",
+    "campaign",
+    "campaigns",
+    "asset",
+    "assets",
+    "media",
+    "work",
+  ]);
+  const FREE_INFORMATION_TARGETS = new Set([
+    "check",
+    "checks",
+    "plan",
+    "plans",
+    "research",
+    "suggestion",
+    "suggestions",
+    "explanation",
+    "explanations",
+  ]);
 
   function includesTokenSequence(tokens: string[], sequence: string[]): boolean {
     return tokens.some((_, at) =>
@@ -241,58 +268,54 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
     );
   }
 
-  function hasWordsOnlyConsentCue(tokens: string[]): boolean {
-    return tokens.some((command, commandAt) => {
-      const cue = tokens.slice(commandAt + 1, commandAt + 7);
-      if (DIRECT_CONSENT_COMMANDS.has(command)) {
-        return (
-          cue.some((token) => DIRECT_CONSENT_WORDS.has(token)) ||
-          includesTokenSequence(cue, ["make", "it"]) ||
-          includesTokenSequence(cue, ["the", "word"])
-        );
-      }
-      if (command === "tell" && cue[0] === "me") {
-        return cue.some((token) => DIRECT_CONSENT_WORDS.has(token));
-      }
-      if (command === "send" || command === "give") {
-        return cue.includes("go-ahead") || includesTokenSequence(cue, ["go", "ahead"]);
-      }
-      return command === "confirm";
+  function promiseTargetsPaidMedia(promise: string[]): boolean {
+    const hasFreeTarget = (tokens: string[]) =>
+      tokens.some((token) => FREE_INFORMATION_TARGETS.has(token));
+
+    const structuralPromise = promise.some((token, actionAt) => {
+      if (!PAID_MEDIA_ACTIONS.has(token)) return false;
+      const rawObject = promise.slice(actionAt + 1, actionAt + 12);
+      const boundaryAt = rawObject.findIndex((part) => part === "and" || part === "then");
+      const beforeBoundary = boundaryAt < 0 ? rawObject : rawObject.slice(0, boundaryAt);
+      const boundaryHasTarget = beforeBoundary.some(
+        (part) => FREE_INFORMATION_TARGETS.has(part) || PAID_MEDIA_TARGETS.has(part),
+      );
+      const object = boundaryAt >= 0 && boundaryHasTarget ? beforeBoundary : rawObject;
+      return !hasFreeTarget(object) && object.some((part) => PAID_MEDIA_TARGETS.has(part));
     });
+    if (structuralPromise) return true;
+    if (hasFreeTarget(promise)) return false;
+
+    return [
+      ["get", "it", "going"],
+      ["get", "started"],
+      ["kick", "things", "off"],
+      ["start", "right", "away"],
+    ].some((idiom) => includesTokenSequence(promise, idiom));
   }
 
   function containsWordsOnlyPaidWorkPromise(text: string): boolean {
-    return text.split(/[.!?\n]+/).some((sentence) => {
+    return text.split(/[.!?;\n]+/).some((clause) => {
       const tokens =
-        sentence
+        clause
           .toLowerCase()
           .replaceAll("’", "'")
           .match(/[a-z]+(?:-[a-z]+)*(?:'[a-z]+)?/g) ?? [];
       if (tokens.length > 60) return false;
 
-      return tokens.some((connector, connectorAt) => {
-        if (connector !== "and" && connector !== "then") return false;
-        const lead = tokens.slice(Math.max(0, connectorAt - 12), connectorAt);
-        if (!hasWordsOnlyConsentCue(lead)) return false;
-
-        const promise = tokens.slice(connectorAt + 1, connectorAt + 14);
-        const subjectAt = promise.findIndex(
-          (token, index) =>
-            token === "i'll" ||
-            (token === "i" && promise[index + 1] === "will") ||
-            token === "we're",
-        );
-        if (subjectAt < 0) return false;
-
-        const predicate = promise.slice(subjectAt + 1, subjectAt + 10);
-        return (
-          predicate.some((token) => PAID_WORK_PROMISE_VERBS.has(token)) ||
-          (predicate.includes("get") &&
-            (predicate.includes("started") || predicate.includes("going"))) ||
-          (predicate.includes("kick") && predicate.includes("off")) ||
-          (promise[subjectAt] === "we're" && predicate.includes("off"))
-        );
+      const firstPersonFuture = tokens.some((token, subjectAt) => {
+        if (token === "i'll") return promiseTargetsPaidMedia(tokens.slice(subjectAt + 1));
+        if (token === "i" && tokens[subjectAt + 1] === "will") {
+          return promiseTargetsPaidMedia(tokens.slice(subjectAt + 2));
+        }
+        return false;
       });
+      if (firstPersonFuture) return true;
+
+      return (
+        includesTokenSequence(tokens, ["we're", "off"]) &&
+        !tokens.some((token) => FREE_INFORMATION_TARGETS.has(token))
+      );
     });
   }
 
@@ -335,6 +358,11 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
       "Tell me you're ready and I'll start the paid work.",
       "Give me the go-ahead, then I will run the generation.",
       "Just confirm and I'll do the image work.",
+      // r5 — the left-hand consent wording is irrelevant to the paid-work promise:
+      "Message me when you're ready and I'll generate the image.",
+      "Write back go and I will create the video.",
+      "Answer yes and I'll build the ad creative.",
+      "Let me know and I will make the campaign asset.",
     ];
     for (const escape of escapes) {
       expect(
@@ -348,6 +376,17 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
     const safeCopy = [
       "Tell me your business goal and I’ll suggest a plan.",
       "Please read the essay yesterday and I will create a research plan.",
+      "Reply yes and I'll run a quick free check.",
+      "Message me your business goal and I will create a draft plan.",
+      "Write your audience details and I'll build a research plan.",
+      "Answer the question and I will make a suggestion.",
+      "Let me know your product and I'll create an explanation.",
+      "Send your audience information and I will do a quick free check.",
+      "Reply yes and I'll run a quick free check on the image.",
+      "Message me and I will create a draft media plan.",
+      "Write back and I'll make a research plan for the campaign assets.",
+      "Answer me and I will create an explanation of the video options.",
+      "Let me know and I'll make a suggestion for the ad creative.",
     ];
     for (const sentence of safeCopy) {
       expect(containsWordsOnlyPaidWorkPromise(sentence)).toBe(false);
