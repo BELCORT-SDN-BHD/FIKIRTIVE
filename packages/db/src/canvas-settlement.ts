@@ -27,6 +27,7 @@
 import {
   CANVAS_JOB_KEY_PATTERN,
   CANVAS_REPAIR_JSON_KEY,
+  canvasMaterialWithoutRepair,
   canvasJobOrigin,
   newId,
   planCanvasSettlement,
@@ -48,6 +49,11 @@ export type CanvasSettlementOutcome = {
 };
 
 type Tx = Prisma.TransactionClient;
+
+/** A contended board must yield quickly enough for the worker to reach its later reapers. */
+export const CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS = 500;
+/** Bound the rest of one board transaction as a second line of defence around the lock timeout. */
+const CANVAS_SETTLEMENT_TRANSACTION_TIMEOUT_MS = 4_000;
 
 const CARD_SELECT = {
   id: true, type: true, x: true, y: true, w: true, h: true, prompt: true,
@@ -91,6 +97,7 @@ export async function settleCanvasCardsForGenJob(
     // the value read back off the job row. They are equal by construction (the job was found by
     // that ownerId) — using the authenticated one keeps the rule un-arguable at every line.
     const lockKey = canvasJobPlacementLockKey(ownerId, job.projectId, job.id);
+    await setCanvasSettlementLockTimeout(tx);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
 
     // Read the board INSIDE the lock: the job's own cards (tombstones included — deletion is a
@@ -182,7 +189,7 @@ export async function settleCanvasCardsForGenJob(
     }
 
     return { status: "settled" as const, nodeIds, created, updated };
-  });
+  }, canvasSettlementTransactionOptions());
 }
 
 export type CanvasSettlementBacklogJob = { id: string; ownerId: string; projectId: string };
@@ -238,6 +245,8 @@ export function canvasRepairWaitMs(attempts: number): number {
 
 /** How many candidates to gather before the budget is shared out between workspaces. */
 const BACKLOG_FAIRNESS_OVERSCAN = 4;
+/** A blocked catalog/table must not hold the worker ahead of every later maintenance reaper. */
+export const CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS = 2_000;
 
 /**
  * Delivered jobs whose board is still missing something — the worklist for the worker's canvas
@@ -259,13 +268,13 @@ const BACKLOG_FAIRNESS_OVERSCAN = 4;
  *   - and its repair record either does not exist (never tried), or says the wait is over. There
  *     is no terminal retry state: a paid board remains eligible at the maximum cadence.
  *
- * GETTING THROUGH THE QUEUE — the property three review rounds were spent on. The order is "whose
- * turn has been waiting longest": a board that was never tried is due at its delivery time, a
- * board that failed is due when its wait ends, and the scan takes the earliest first. That single
- * ordering is what makes starvation impossible. A board the budget could not take this tick keeps
- * its due time, so it is at the FRONT next tick; a board that was tried is pushed behind everything
- * still due. There is no window to slip out of, no book to be evicted from, and no share of the
- * budget reserved for retries that the rest of the queue has to wait behind (#601 r4 / r5 / r6).
+ * GETTING THROUGH THE QUEUE — the property three review rounds were spent on. Fairness is applied
+ * in SQL BEFORE its global cap: every owner's first due board precedes every owner's second due
+ * board, while each owner's own queue remains oldest-first. Therefore one enormous workspace
+ * cannot consume the candidate cap and make another workspace invisible. A finite tick still
+ * cannot serve more distinct owners than its limit; excess first-turn boards remain due and
+ * compete oldest-first next tick. There is no window to slip out of, no book to be evicted from,
+ * and no share reserved for retries that the rest of the queue waits behind (#601 r4 / r5 / r6).
  *
  * WHY RAW SQL. Three of the clauses are cross-table `EXISTS` tests against `CanvasNode` and
  * `ChatThread`, which carry no foreign key to `GenJob` and so have no Prisma relation to traverse;
@@ -302,9 +311,24 @@ export async function findCanvasSettlementBacklog(options: {
   // therefore due, never a value allowed to suppress a paid board indefinitely.
   const repairTimePattern = "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$";
 
-  const rows = await prisma.$queryRaw<CanvasSettlementBacklogJob[]>`
-    SELECT j.id, j."ownerId", j."projectId"
-    FROM "GenJob" j
+  const rows = await prisma.$transaction(async (tx) => {
+    // This is intentionally a PostgreSQL statement timeout, not a JavaScript race: PostgreSQL
+    // cancels the blocked query itself and the connection returns to the pool in a known state.
+    await tx.$executeRawUnsafe(
+      `SET LOCAL statement_timeout = '${CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS}ms'`,
+    );
+    return tx.$queryRaw<CanvasSettlementBacklogJob[]>`
+      WITH due AS (
+      SELECT j.id, j."ownerId", j."projectId", CASE
+        WHEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt' ~ ${repairTimePattern}
+          AND pg_input_is_valid(
+            j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt',
+            'timestamp with time zone'
+          )
+        THEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt'
+        ELSE to_char(j."finishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+      END AS due_order
+      FROM "GenJob" j
     WHERE j.status = 'DONE'
       -- A DONE row is not proof of a paid provider call. Only settled paid outputs are repairable.
       AND j.spent = TRUE
@@ -371,22 +395,24 @@ export async function findCanvasSettlementBacklog(options: {
             AND (n.status <> 'done' OR n."generationId" IS NULL)
         )
       )
-    -- Whose turn has been waiting longest. Both sides are ISO-8601 UTC, which sorts chronologically
-    -- as text, so a never-tried board (due when it was delivered) compares directly against a board
-    -- whose wait has run out. Rendered straight from the column, which already holds UTC: going
-    -- through a timestamptz would print it in the SESSION's zone and order the queue by whatever
-    -- timezone the connection happened to have.
-    ORDER BY CASE
-      WHEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt' ~ ${repairTimePattern}
-        AND pg_input_is_valid(
-          j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt',
-          'timestamp with time zone'
-        )
-      THEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt'
-      ELSE to_char(j."finishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-    END ASC, j.id ASC
-    LIMIT ${limit * BACKLOG_FAIRNESS_OVERSCAN}
-  `;
+    ), owner_ranked AS (
+      SELECT id, "ownerId", "projectId", due_order,
+        ROW_NUMBER() OVER (PARTITION BY "ownerId" ORDER BY due_order ASC, id ASC) AS owner_turn
+      FROM due
+    )
+    -- Fairness happens BEFORE the global cap: first board per owner, then second, and so on.
+    -- Within each owner, both sides of due_order are ISO-8601 UTC text and retain oldest-turn
+    -- order. If more owners are due than the tick's finite budget, the oldest owner-turns win;
+    -- no finite tick can promise same-tick service to more distinct owners than its own limit.
+    SELECT id, "ownerId", "projectId"
+    FROM owner_ranked
+    ORDER BY owner_turn ASC, due_order ASC, id ASC
+      LIMIT ${limit * BACKLOG_FAIRNESS_OVERSCAN}
+    `;
+  }, {
+    maxWait: 1_000,
+    timeout: CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS + 1_000,
+  });
 
   return fairShare(rows, limit);
 }
@@ -404,6 +430,7 @@ export async function noteCanvasRepairFailure(
 ): Promise<CanvasRepairRecord | null> {
   return prisma.$transaction(async (tx) => {
     const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    await setCanvasSettlementLockTimeout(tx);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
     const current = await tx.genJob.findFirst({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
@@ -435,13 +462,14 @@ export async function noteCanvasRepairFailure(
       },
     });
     return updated.count === 1 ? record : null;
-  });
+  }, canvasSettlementTransactionOptions());
 }
 
 /** The board is finished: remove only the reserved record and restore its original JSON shape. */
 export async function clearCanvasRepairRecord(job: CanvasSettlementBacklogJob): Promise<void> {
   await prisma.$transaction(async (tx) => {
     const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    await setCanvasSettlementLockTimeout(tx);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
     const current = await tx.genJob.findFirst({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
@@ -450,23 +478,25 @@ export async function clearCanvasRepairRecord(job: CanvasSettlementBacklogJob): 
     if (!current || !isJsonObject(current.videoOptions)) return;
     const record = current.videoOptions[CANVAS_REPAIR_JSON_KEY];
     if (record === undefined) return;
-    const videoOptions = { ...current.videoOptions };
-    delete videoOptions[CANVAS_REPAIR_JSON_KEY];
-    const restoreNull = isJsonObject(record) && record.videoOptionsWasNull === true;
-    const originalVideoOptions = isJsonObject(record) && Object.hasOwn(record, "originalVideoOptions")
-      ? record.originalVideoOptions
-      : undefined;
+    const material = canvasMaterialWithoutRepair(current.videoOptions);
     await tx.genJob.updateMany({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
       data: {
-        videoOptions: originalVideoOptions !== undefined
-          ? originalVideoOptions as Prisma.InputJsonValue
-          : restoreNull && Object.keys(videoOptions).length === 0
-            ? Prisma.DbNull
-            : videoOptions as Prisma.InputJsonValue,
+        videoOptions: material === null ? Prisma.DbNull : material as Prisma.InputJsonValue,
       },
     });
-  });
+  }, canvasSettlementTransactionOptions());
+}
+
+async function setCanvasSettlementLockTimeout(tx: Tx): Promise<void> {
+  // Static text only: no identifier or merchant value enters this statement.
+  await tx.$executeRawUnsafe(
+    `SET LOCAL lock_timeout = '${CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS}ms'`,
+  );
+}
+
+function canvasSettlementTransactionOptions(): { maxWait: number; timeout: number } {
+  return { maxWait: 1_000, timeout: CANVAS_SETTLEMENT_TRANSACTION_TIMEOUT_MS };
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

@@ -14,6 +14,7 @@ import {
   canvasJobBelongsOnBoard,
   canvasJobOrigin,
   canvasBoardNeedsSettlement,
+  canvasMaterialWithoutRepair,
   isCanvasJobKey,
   planCanvasSettlement,
   type CanvasJobOrigin,
@@ -27,6 +28,48 @@ import { canvasBatchSlotOffset, canvasRectsOverlap, type CanvasRect } from "./ca
 const OUTPUTS = ["gen-1", "gen-2", "gen-3", "gen-4"];
 /** `canvas:` plus a full SHA-256 digest — the exact shape startCanvasGen mints server-side. */
 const SERVER_MINTED_CANVAS_KEY = `${CANVAS_JOB_KEY_PREFIX}${"0123456789abcdef".repeat(4)}`;
+
+describe("paid material beside canvas repair bookkeeping", () => {
+  it.each(["legacy-material", ["legacy", "material"]])(
+    "restores a genuine wrapped scalar or array (%j)",
+    (originalVideoOptions) => {
+      expect(canvasMaterialWithoutRepair({
+        __canvasRepair: {
+          genJobId: "gjb-1",
+          attempts: 1,
+          nextAt: "2026-08-03T01:00:00.000Z",
+          reason: "failed",
+          videoOptionsWasNull: false,
+          originalVideoOptions,
+        },
+      })).toEqual(originalVideoOptions);
+    },
+  );
+
+  it("keeps real sibling material when stale metadata claims a different original value", () => {
+    expect(canvasMaterialWithoutRepair({
+      seconds: 5,
+      merchantChoice: "cinematic",
+      __canvasRepair: {
+        genJobId: "stale",
+        originalVideoOptions: { seconds: 10 },
+      },
+    })).toEqual({ seconds: 5, merchantChoice: "cinematic" });
+  });
+
+  it("does not restore an explicitly undefined value from an otherwise writer-shaped record", () => {
+    expect(canvasMaterialWithoutRepair({
+      __canvasRepair: {
+        genJobId: "gjb-1",
+        attempts: 1,
+        nextAt: "2026-08-03T01:00:00.000Z",
+        reason: "failed",
+        videoOptionsWasNull: false,
+        originalVideoOptions: undefined,
+      },
+    })).toEqual({});
+  });
+});
 
 function job(overrides: Partial<SettlementJob> = {}): SettlementJob {
   return {

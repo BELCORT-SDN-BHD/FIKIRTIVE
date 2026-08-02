@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { Client } from "pg";
 import {
   CANVAS_JOB_KEY_PREFIX,
   canvasBoardNeedsSettlement,
@@ -32,6 +33,7 @@ import {
 import { prisma } from "../index.js";
 import {
   CANVAS_REPAIR_JSON_KEY,
+  CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS,
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
   clearCanvasRepairRecord,
@@ -636,6 +638,15 @@ describe("a board that is not at the front of the queue", () => {
     expect(await sweepIds({ limit: 2 })).toContain(neighbourJobId);
   });
 
+  it("applies owner fairness before the global cap hides a later workspace", async () => {
+    const limit = 200;
+    await seedUnfinishedBoards(limit * 4 + 1, minutesAgo(180));
+    const neighbour = await seedNeighbourWorkspace();
+    const neighbourJobId = await seedUnfinishedBoardFor(neighbour, minutesAgo(60));
+
+    expect(await sweepIds({ limit })).toContain(neighbourJobId);
+  }, 60_000);
+
   it("serves whose turn has waited longest, not whoever was delivered longest ago", async () => {
     const now = new Date();
     // Delivered ten hours ago, tried twenty minutes ago: its wait ran out five minutes ago.
@@ -896,6 +907,56 @@ describe("a board whose repair failed", () => {
       noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write failed" }),
     ).resolves.toBeNull();
   });
+
+  it("preserves sibling paid material when stale metadata claims a different original value", async () => {
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+    await prisma.genJob.update({
+      where: { id: jobId },
+      data: {
+        videoOptions: {
+          seconds: 5,
+          merchantChoice: "cinematic",
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: "stale",
+            originalVideoOptions: { seconds: 10 },
+          },
+        },
+      },
+    });
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+
+    const restored = await prisma.genJob.findUniqueOrThrow({
+      where: { id: jobId }, select: { videoOptions: true },
+    });
+    expect(restored.videoOptions).toEqual({ seconds: 5, merchantChoice: "cinematic" });
+  });
+});
+
+describe("the database scan's wall-clock boundary", () => {
+  it("cancels a raw backlog scan blocked on a table lock", async () => {
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("BEGIN");
+    await blocker.query('LOCK TABLE "GenJob" IN ACCESS EXCLUSIVE MODE');
+    let fallbackRelease: Promise<unknown> | undefined;
+    const release = setTimeout(() => {
+      fallbackRelease = blocker.query("ROLLBACK");
+    }, 3_000);
+    const startedAt = Date.now();
+
+    try {
+      await expect(sweep()).rejects.toThrow(/statement timeout|canceling statement/i);
+      expect(Date.now() - startedAt).toBeLessThan(CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS + 1_500);
+    } finally {
+      clearTimeout(release);
+      if (fallbackRelease) await fallbackRelease.catch(() => undefined);
+      else await blocker.query("ROLLBACK").catch(() => undefined);
+      await blocker.end();
+    }
+  }, 10_000);
 });
 
 /**

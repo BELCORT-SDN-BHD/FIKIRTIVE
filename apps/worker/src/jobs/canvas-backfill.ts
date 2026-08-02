@@ -43,6 +43,11 @@ import { sanitizeError } from "../redact.js";
 export const CANVAS_BACKFILL_GRACE_MS = 2 * 60_000;
 /** Ceiling per sweep, so one bad day cannot turn a 5-minute tick into an unbounded job. */
 export const CANVAS_BACKFILL_LIMIT = 200;
+/**
+ * Leave the shared reaper tick promptly for credit refunds and other recovery work. Ten seconds is
+ * long enough for several ordinary board transactions but short beside the five-minute cadence.
+ */
+export const CANVAS_BACKFILL_WALL_BUDGET_MS = 10_000;
 
 /**
  * Finish every delivered job whose board is still incomplete. Returns how many boards this sweep
@@ -51,7 +56,12 @@ export const CANVAS_BACKFILL_LIMIT = 200;
  * Runs inside the worker's reaper tick, which already carries the system principal; each repair
  * re-enters as its own tenant (#463 two-phase: cross-tenant scan, per-owner write).
  */
-export async function backfillCanvasBoards(now: Date = new Date()): Promise<number> {
+export async function backfillCanvasBoards(
+  now: Date = new Date(),
+  options: { monotonicNow?: () => number } = {},
+): Promise<number> {
+  const monotonicNow = options.monotonicNow ?? (() => performance.now());
+  const startedAtMs = monotonicNow();
   // The SCAN is inside the guard, not just the per-job repair. This sweep shares one reaper tick
   // with the refgen, LLM-reservation, research, publish and ingest recoveries, and they run in
   // sequence: a throw from the scan escaped into the tick and skipped every one of them (#601 r2
@@ -71,6 +81,9 @@ export async function backfillCanvasBoards(now: Date = new Date()): Promise<numb
 
   let repaired = 0;
   for (const job of due) {
+    // Check BETWEEN rows: never abandon a transaction half-way through, and never let the Canvas
+    // slice consume the later refund/recovery reapers' whole shared tick. Unvisited rows stay due.
+    if (monotonicNow() - startedAtMs >= CANVAS_BACKFILL_WALL_BUDGET_MS) break;
     try {
       // The async callback is load-bearing: Prisma promises dispatch lazily, so returning one
       // directly would pop the tenant frame before the query actually runs.

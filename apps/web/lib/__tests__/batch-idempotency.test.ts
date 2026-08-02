@@ -7,6 +7,7 @@ import {
   normalizeFactoryMaterial,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
+  type FactoryMaterial,
 } from "../batch-idempotency";
 
 describe("canvas action keys", () => {
@@ -167,6 +168,23 @@ describe("factory material binding", () => {
         [CANVAS_REPAIR_JSON_KEY]: { attempts: 3 },
       },
     }, { ...expected, videoOptions: userOptions })).toBe(false);
+
+    expect(factoryMaterialMatches({
+      ...expected,
+      videoOptions: {
+        seconds: 5,
+        merchantChoice: "cinematic",
+        [CANVAS_REPAIR_JSON_KEY]: {
+          genJobId: "stale",
+          originalVideoOptions: { seconds: 10 },
+        },
+      },
+    }, {
+      ...expected,
+      videoOptions: { seconds: 5, merchantChoice: "cinematic" },
+      // Deliberately malformed legacy material: bypass the normal Factory input shape so this
+      // exact stale-row counterexample reaches the comparator unchanged.
+    } as unknown as FactoryMaterial)).toBe(true);
 
     // A legacy non-object payload must remain paid material while the repair record temporarily
     // wraps it. Removing the reserved key must not turn that corruption into an apparent null.

@@ -47,6 +47,7 @@ const {
   backfillCanvasBoards,
   CANVAS_BACKFILL_GRACE_MS,
   CANVAS_BACKFILL_LIMIT,
+  CANVAS_BACKFILL_WALL_BUDGET_MS,
 } = await import("./canvas-backfill.js");
 
 const settled = { status: "settled", nodeIds: ["n1"], created: 1, updated: 0 };
@@ -127,6 +128,22 @@ describe("the canvas backfill sweep", () => {
     await expect(tick()).resolves.toBeUndefined();
     expect(afterwards).toEqual(["refgen", "llm-reservations", "research", "publish", "ingest"]);
     expect(m.settleCanvasCardsForGenJob).not.toHaveBeenCalled();
+  });
+
+  it("stops between rows at its wall-clock budget so later recovery reapers still run", async () => {
+    const now = new Date("2026-08-01T12:00:00.000Z");
+    m.findCanvasSettlementBacklog.mockResolvedValue([board("g1"), board("g2"), board("g3")]);
+    const clock = [0, 0, CANVAS_BACKFILL_WALL_BUDGET_MS + 1];
+    const afterwards: string[] = [];
+
+    const tick = async () => {
+      await backfillCanvasBoards(now, { monotonicNow: () => clock.shift() ?? clock.at(-1) ?? 0 });
+      afterwards.push("refgen", "llm-reservations", "research", "publish", "ingest");
+    };
+
+    await expect(tick()).resolves.toBeUndefined();
+    expect(m.settleCanvasCardsForGenJob.mock.calls).toEqual([["g1", "o1"]]);
+    expect(afterwards).toEqual(["refgen", "llm-reservations", "research", "publish", "ingest"]);
   });
 
   it("never touches money — no ledger, no settle, no refund, whatever it finds", async () => {

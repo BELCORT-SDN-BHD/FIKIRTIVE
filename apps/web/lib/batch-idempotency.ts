@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { CANVAS_REPAIR_JSON_KEY, videoDefaults, type GenVideoModel } from "@fikirtive/core";
+import { canvasMaterialWithoutRepair, videoDefaults, type GenVideoModel } from "@fikirtive/core";
 
 const HASH_HEX_LENGTH = 32;
 const FACTORY_KEY_RE = /^batch:([0-9a-f]{32}):attempt:([0-9a-f]{32})$/;
@@ -157,24 +157,6 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** Post-delivery repair scheduling is bookkeeping, never part of the paid request identity. */
-function materialVideoOptions(value: unknown): unknown {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return value ?? null;
-  const material = { ...value as Record<string, unknown> };
-  if (!Object.hasOwn(material, CANVAS_REPAIR_JSON_KEY)) return material;
-  const repair = material[CANVAS_REPAIR_JSON_KEY];
-  if (
-    repair !== null &&
-    typeof repair === "object" &&
-    !Array.isArray(repair) &&
-    Object.hasOwn(repair, "originalVideoOptions")
-  ) {
-    return (repair as Record<string, unknown>).originalVideoOptions;
-  }
-  delete material[CANVAS_REPAIR_JSON_KEY];
-  return Object.keys(material).length === 0 ? null : material;
-}
-
 /** Full material binding. FAILED rows are deliberately not special: status never weakens content
  *  identity. entityIds are order-sensitive and preserve duplicates because the worker consumes
  *  them in order; JSON object key order is irrelevant. */
@@ -191,7 +173,7 @@ export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: F
     prior.referenceVideoGenerationId === expected.referenceVideoGenerationId &&
     prior.shotId === expected.shotId &&
     (prior.threadId ?? null) === expected.threadId &&
-    canonicalJson(materialVideoOptions(prior.videoOptions)) ===
-      canonicalJson(materialVideoOptions(expected.videoOptions))
+    canonicalJson(canvasMaterialWithoutRepair(prior.videoOptions)) ===
+      canonicalJson(canvasMaterialWithoutRepair(expected.videoOptions))
   );
 }

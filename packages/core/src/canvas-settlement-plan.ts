@@ -47,6 +47,64 @@ export const CANVAS_JOB_KEY_PATTERN = /^canvas:[0-9a-f]{64}$/;
 /** Reserved GenJob.videoOptions key used only by the post-delivery canvas repair sweep. */
 export const CANVAS_REPAIR_JSON_KEY = "__canvasRepair";
 
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
+}
+
+function isCanvasRepairWriterRecord(value: unknown): value is Record<string, unknown> {
+  if (!isJsonObject(value)) return false;
+  return (
+    typeof value.genJobId === "string" && value.genJobId.length > 0
+    && Number.isSafeInteger(value.attempts) && (value.attempts as number) > 0
+    && isIsoTimestamp(value.nextAt)
+    && typeof value.reason === "string"
+    && typeof value.videoOptionsWasNull === "boolean"
+  );
+}
+
+/**
+ * Remove post-delivery Canvas repair bookkeeping without letting stale JSON replace paid material.
+ *
+ * The repair writer only stores `originalVideoOptions` when a legacy scalar/array had to be wrapped,
+ * so that field is authoritative only when the OUTER object contains the repair key alone and the
+ * record has the complete writer shape. With real sibling material present, the siblings always win.
+ */
+export function canvasMaterialWithoutRepair(value: unknown): unknown {
+  if (!isJsonObject(value)) return value ?? null;
+  const material = { ...value };
+  if (!Object.hasOwn(material, CANVAS_REPAIR_JSON_KEY)) return material;
+
+  const repair = material[CANVAS_REPAIR_JSON_KEY];
+  const hasSiblingMaterial = Object.keys(material).some((key) => key !== CANVAS_REPAIR_JSON_KEY);
+  const original = isJsonObject(repair) ? repair.originalVideoOptions : undefined;
+  const isLegacyWrapper = (
+    !hasSiblingMaterial
+    && isCanvasRepairWriterRecord(repair)
+    && Object.hasOwn(repair, "originalVideoOptions")
+    && original !== undefined
+    && original !== null
+    && (Array.isArray(original) || typeof original !== "object")
+  );
+  if (isLegacyWrapper) return original;
+
+  delete material[CANVAS_REPAIR_JSON_KEY];
+  if (
+    Object.keys(material).length === 0
+    && isCanvasRepairWriterRecord(repair)
+    && repair.videoOptionsWasNull === true
+    && !Object.hasOwn(repair, "originalVideoOptions")
+  ) {
+    return null;
+  }
+  return material;
+}
+
 /** Is this exactly a key the server minted for a Canvas press? */
 export function isCanvasJobKey(idempotencyKey: string | null | undefined): boolean {
   return typeof idempotencyKey === "string" && CANVAS_JOB_KEY_PATTERN.test(idempotencyKey);
