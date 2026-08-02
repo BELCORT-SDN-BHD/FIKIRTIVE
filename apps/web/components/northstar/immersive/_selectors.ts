@@ -35,10 +35,10 @@ import {
 } from "@/components/northstar/_mock";
 // 队 cx-campaign-schedule:postsForCampaign 改从 store live 源派生(见下)。_store 是同目录
 // 的纯 client 内存单例(非后台),读它不违反 fence;仍无 Date.now / Math.random。
-// [gate4/M2] conversationsView/contactsView/contactByIdView 同理:收件箱/CRM 的运行时改动
+// [gate4/M2] conversationsView/contactByIdView 同理:收件箱/CRM 的运行时改动
 // (回复、合并、字段补丁)必须在首页读到 —— 静态 NS_CONVERSATIONS/NS_CONTACTS 只作 store 的
 // 初始种子(_store.ts 用它们初始化 state),永不再被这里直接旁路读。
-import { scheduledPosts, campaignEntries, conversationsView, contactsView, contactByIdView } from "./_store";
+import { scheduledPosts, campaignEntries, conversationsView, contactByIdView } from "./_store";
 
 /* ── 额度概览(派生自 NS_BRAND + NS_CREDIT_LEDGER) ─────────────────────────── */
 export function creditSummary(): { balance: number; spentThisWeek: number; toppedUp: number } {
@@ -154,12 +154,6 @@ export function conversationsForCampaign(campaignId: string): NsConversation[] {
 export function contactsByLifecycle(stage: NsLifecycle): NsContact[] {
   return NS_CONTACTS.filter((c) => c.lifecycle === stage);
 }
-/** 久未下单的大客户(win-back 提示 / 大单提醒;dormant + 历史订单额 ≥ 门槛)。
- * [gate4/M2] 读 store live 的 contactsView(),不再直读静态 NS_CONTACTS —— CRM 里的合并/
- * 字段补丁/新建联系人从此在首页「久未下单」提醒里同步现身。 */
-export function dormantHighValue(minMyr = 1000): NsContact[] {
-  return contactsView().filter((c) => c.lifecycle === "dormant" && c.totalOrdersMyr >= minMyr);
-}
 /** 平均客单价(totalOrdersMyr / orderCount;CRM 档案 + 预测字段读它,无单则 0)。
  * [gate4/M2] 用 contactByIdView(同 store 的合并/补丁解析),不再直读静态 NS_CONTACTS。 */
 export function avgOrderValue(contactId: string): number {
@@ -172,62 +166,4 @@ export function avgOrderValue(contactId: string): number {
  * 里的回复/解决/新会话从此在首页「需要你」清单里同步现身。 */
 export function needsOwnerConversations(): NsConversation[] {
   return conversationsView().filter((c) => c.state === "waiting-owner" || c.state === "overdue");
-}
-
-/* ── [wave-c Z1-home-global] 本周已确认订单(首页「生意状态」头卡:诚实读真实成交) ──
- * 老板开门第一问是「这周赚了几单」,不是「花了多少 credit」。全城唯一诚实的「已成交」
- * 信号 = 收件箱里被确认下来的订单。这里只从对话消息里读结构化的 RM 金额,刻意不碰跨区
- * deals 表 —— 那张表的金额是 lifetime 总额(dealAmountMyr),拿来当「本周」会注水、还会和
- * 收件箱里同客户的单笔报价打架(一店两数)。
- *
- * 判成交的键是「客户接受」,不是「Otto/店主说了 confirm」(参考金标准 REFERENCE-PROPOSAL-MERDEKA:
- * commercial truth = confirmed orders,买家点头才算)。一笔算数需要两件事都成立:
- *   (a) 有 Otto/店主给出的带 RM 金额的报价;
- *   (b) 这单被落实 —— 客户明确接受(confirm/approved/deal…),或 Otto/店主陈述式确认
- *       (Confirmed / booked / ready for…),但排除只是「Shall I confirm?」这种提议式反问。
- * 金额取报价里的 RM;仅计本周落定的(最近一条消息在本周窗口内),避免把十天前的旧单
- * (如 cv-09 客户 6/28 Approved 的 RM1,450)误算进「本周」。确定性:纯字符串比较,无 Date.now。 */
-export interface NsOrdersThisWeek {
-  revenueMyr: number;
-  orderCount: number;
-}
-// 本周窗口起点(mock 的「现在」≈ 2026-07-07;本周 = 07-01 起,YYYY-MM-DD 字符串直接比较)。
-const ORDERS_WEEK_START = "2026-07-01";
-const QUOTE_RM_RE = /RM\s?([\d,]+)/; // 带价的报价
-// 客户接受一份报价(买家点头 = commercial truth)。
-const CUSTOMER_ACCEPT_RE = /\b(confirm|confirmed|approve|approved|deal|go ahead|sounds good)\b/i;
-// Otto/店主陈述式确认(这单已定),而不是「shall I…?」式的提议反问。
-const OWNER_SETTLED_RE = /\b(confirmed|booked|see you then|ready for|all set)\b/i;
-const OWNER_PROPOSAL_RE = /\b(shall i|want me to|should i|do you want)\b/i;
-// [gate4/M2] conversationsView() 是 store live 源(种子=NS_CONVERSATIONS + 收件箱运行时改动);
-// 不再直读静态表,否则收件箱里新落定的成交永远算不进「本周」。
-export function ordersThisWeek(): NsOrdersThisWeek {
-  let revenueMyr = 0;
-  let orderCount = 0;
-  for (const c of conversationsView()) {
-    // (a) 本对话里 Otto/店主给出的带价报价。
-    const quote = c.messages.find(
-      (m) => (m.from === "otto" || m.from === "owner") && QUOTE_RM_RE.test(m.text),
-    );
-    if (!quote) continue;
-    const amount = Number(QUOTE_RM_RE.exec(quote.text)?.[1].replace(/,/g, "") ?? "0");
-    if (amount <= 0) continue;
-    // (b) 落实 = 客户接受,或 Otto/店主陈述式确认(排除提议反问)。
-    const customerAccepted = c.messages.some(
-      (m) => m.from === "customer" && CUSTOMER_ACCEPT_RE.test(m.text),
-    );
-    const ownerSettled = c.messages.some(
-      (m) =>
-        (m.from === "otto" || m.from === "owner") &&
-        OWNER_SETTLED_RE.test(m.text) &&
-        !OWNER_PROPOSAL_RE.test(m.text),
-    );
-    if (!customerAccepted && !ownerSettled) continue;
-    // 只计本周落定的(最近一条消息在本周窗口内)。
-    const latest = c.messages[c.messages.length - 1]?.at.slice(0, 10) ?? "";
-    if (latest < ORDERS_WEEK_START) continue;
-    revenueMyr += amount;
-    orderCount += 1;
-  }
-  return { revenueMyr, orderCount };
 }

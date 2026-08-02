@@ -11,8 +11,7 @@
  * 经营事实,是最恶劣的一类假物。取而代之的是一颗按钮,跳**真对话**(线上 Otto `/otto`)。
  * 画布页自带真输入框,所以那一页不重复挂这颗按钮。
  *
- * 提供 ImmersiveProvider:insideImmersive=true 让复用的页面内容自动隐藏画廊角标;
- * openOtto() 让任意页面的「问 Otto」都落到同一条真对话上。
+ * 提供 ImmersiveProvider:insideImmersive=true 让复用的页面内容自动隐藏画廊角标。
  */
 
 import * as React from "react";
@@ -26,7 +25,7 @@ import { ImmersiveNav, type ShellIdentity } from "./immersive-nav";
 const GALLERY_PREFIX = "/northstar/";
 const IMMERSIVE_PREFIX = "/northstar-immersive/";
 
-/** 真 Otto 对话的家(线上产品本体);壳里任何一个 Otto 入口都落到这里。 */
+/** 真 Otto 对话的家(线上产品本体);壳里常驻 Otto 入口落到这里。 */
 const REAL_OTTO_HREF = "/otto";
 
 /**
@@ -102,7 +101,6 @@ export function ImmersiveShell({
   identity: ShellIdentity | null;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const reduced = useReducedMotion();
   const rootRef = React.useRef<HTMLDivElement>(null);
   useKeepInsideImmersive(rootRef);
@@ -135,13 +133,7 @@ export function ImmersiveShell({
     return () => window.removeEventListener("keydown", onKey);
   }, [drawerOpen]);
 
-  // 页面上的「问 Otto」落到真对话。旧实现是展开假小窗并预填一句话;那个小窗已被砍除,
-  // 所以这里只做一件不撒谎的事:把商家送到真的 Otto 面前。
-  const openOtto = React.useCallback(() => {
-    router.push(REAL_OTTO_HREF);
-  }, [router]);
-
-  const ctx = React.useMemo(() => ({ insideImmersive: true, openOtto }), [openOtto]);
+  const ctx = React.useMemo(() => ({ insideImmersive: true }), []);
 
   // 画布页自带真输入框(#600 合体内核),再挂一颗按钮就是两个 Otto 同屏;那一页不出现这颗按钮。
   // (#615:市政厅 /admin 与 /onboarding/login 两条路线已退场,各自的特判随之删除。)

@@ -99,8 +99,7 @@ export interface NsEvent {
 
 /* ── D2 单流(F2 循环系统):Otto = 一条 append-only 消息流 ─────────────────────
  * 心智 = 你和某个员工的 WhatsApp 单聊:一条时间线,零线程管理。每条自动带 context
- * chip {zone, campaignId?, label, href?};dock 小窗 / `/otto` 全屏 / campaign 详情
- * 「对话」tab 都是这条流的**过滤视图**(streamFor),不是另一条对话。种子 = _mock 的
+ * chip {zone, campaignId?, label, href?};dock 小窗与 `/otto` 全屏共读同一条流。种子 = _mock 的
  * NS_OTTO_STREAM(62 条跨三周历史),live 发送 append 在尾部。 */
 export interface NsStreamMsg extends NsOttoStreamMessage {
   /** 富卡(可选;live 发送 / 就地触点演示用) */
@@ -109,12 +108,6 @@ export interface NsStreamMsg extends NsOttoStreamMessage {
   substeps?: string[];
   error?: boolean;
 }
-/** 单流过滤器:按区 / 按 campaign 收窄同一条流(空 = 全流)。 */
-export interface NsStreamFilter {
-  zone?: NsOttoZone;
-  campaignId?: string;
-}
-
 /* ── Campaign 草稿(workbench 表单 → proposal-card 跨路由传值;客户端换路由存活) ── */
 export interface NsCampaignDraft {
   goal: string;
@@ -1008,7 +1001,7 @@ export function appendChatMessage(_threadId: string, message: NsChatMessage) {
 
 /** 就地 AI 触点统一入口(O-12 / 宪法 7):任意区的就地「问 Otto」按钮调它 —— 请求与回复
  * 落进共享 dock/otto-chat 的同一根线程(chatThreads[0]),不再各页开匿名小 AI。
- * 传 context 顺带点亮上下文桥。组件随后调 openOtto() 把 dock 展开给店主看见这轮对话。 */
+ * 传 context 顺带点亮上下文桥。 */
 export function askOttoInline(prompt: string, reply: string, context?: NsOttoContext) {
   if (context) state.ottoContext = context;
   // D2:就地触点 append 进同一条 ottoStream(dock / /otto 立刻可见);context chip
@@ -1125,10 +1118,6 @@ export function chatThreads(): NsChatThread[] {
       })),
     },
   ];
-}
-
-export function connections(): NsConnection[] {
-  return state.connections;
 }
 
 export function rules(): NsRule[] {
@@ -1306,12 +1295,10 @@ if (typeof window !== "undefined") {
 /* ═══════════════════════════════════════════════════════════════════════════
  * [F2 循环系统] D2 单流 API —— 全城 10 个 zone worker 直接可用
  *
- * 一条 append-only Otto 消息流(state.ottoStream)是唯一源;dock 小窗 / `/otto` 全屏 /
- * campaign 详情「对话」tab 都是它的**过滤视图**。zones 用法:
- *   - 读全流:            streamFor()            // 无过滤 = 整条
- *   - 读某 campaign:     streamFor({ campaignId }) 或 threadForContext(campaignId)
- *   - 读某区往来:        streamFor({ zone: "Inbox" })
+ * 一条 append-only Otto 消息流(state.ottoStream)是唯一源;dock 小窗与 `/otto` 全屏共读。
+ * zones 用法:
  *   - dock 小窗末尾几条: streamTail(n)
+ *   - `/otto` 读全流:   ottoStreamView()
  *   - append 一条:      appendToStream({ role, text, context? })
  * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从 _mock 派生。
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -1372,20 +1359,6 @@ export function appendToStream(input: {
   state.ottoStream = [...state.ottoStream, msg];
   notify();
   return msg.id;
-}
-
-/** 单流过滤视图(D2 核心):同一条流,按 zone / campaign 收窄。无 filter = 整条流。 */
-export function streamFor(filter?: NsStreamFilter): NsStreamMsg[] {
-  let s = state.ottoStream;
-  if (filter?.zone) s = s.filter((m) => m.context.zone === filter.zone);
-  if (filter?.campaignId) s = s.filter((m) => m.context.campaignId === filter.campaignId);
-  return s;
-}
-
-/** campaign 详情「对话」tab 用:这条全局流按该 campaign 过滤后的视图(= streamFor 的别名)。
- * 不传 campaignId 则回落全流。语义:找旧对话 = 去那件事的页面看,而不是管理线程。 */
-export function threadForContext(campaignId?: string): NsStreamMsg[] {
-  return streamFor(campaignId ? { campaignId } : undefined);
 }
 
 /** dock 小窗显示末尾 n 条(与 /otto 全屏同源,只是窗口大小不同)。 */
@@ -2867,97 +2840,14 @@ export function canvasObjectById(id: string | null | undefined): NsCanvasObject 
 /* ═══════════════════════════════════════════════════════════════════════════
  * [f2-primitives] C-C 新原语地基 —— 文件尾追加(注明队名 f2-primitives;零改动上文)
  *
- * 两件全城共享原语的 store 层:
- *  ①「Otto 帮我」assist 承接(§O7):任意动脑面挂一颗 ghost 小钮 → 打开 dock 时把
- *     {zone, entityId, formState} 上下文自动带上、渲染 2-3 个意图 chip、Apply 回填回调。
- *  ② 首次直播 escort(§8e):新鲜前台指示的工作落在别的表面时,导航一次到现场看它落地;
+ * 首次直播 escort(§8e):新鲜前台指示的工作落在别的表面时,导航一次到现场看它落地;
  *     离开不拉回,返回续播(store 是单一源,故「续播」结构性成立,无需特判)。
  *
  * 铁律不变:纯 client、零后台 import;coral 只属于 Otto;数据只从区/_mock 派生,原语自身
- * 不造品牌事实;涉钱/误发不由 Apply 触发(Apply 只填字段,发/花仍要店主亲手点)。
+ * 不造品牌事实。
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── ①「Otto 帮我」assist(§O7)──────────────────────────────────────────────── */
-
-/** 一个一键意图 chip(surface-specific;零打字路径)。运行 = 落一轮往来进单流。 */
-export interface NsAssistIntent {
-  id: string;
-  /** chip 文案(祈使、sentence case;如 "Write 3 caption options") */
-  label: string;
-  /** 点 chip 时作为 owner 消息落进单流的话 */
-  prompt: string;
-  /** Otto 的回应(落进单流;原型无真模型,故由 zone 作者写实、不夸口) */
-  reply: string;
-  /** 有值 = Otto 的回应带「Apply」:一键把产出回填原表面(onApply 落地 + §8a sweep) */
-  apply?: NsAssistApply;
-  /** 有值 = 这条是「工作落在别处」的新鲜前台指示 → 运行时 escort 到现场看它落地(§8e) */
-  landsOn?: { surface: string; label: string };
-}
-
-/** Apply 回填载荷(zone 自定义 patch 形状;发/花永不由此触发——只填字段)。 */
-export interface NsAssistApply {
-  /** 人话一行:Apply 会填什么(按钮说明 / sweep 文案) */
-  summary: string;
-  /** 回填补丁(形状由 zone 的 onApply 约定;原语不解释内容) */
-  patch: Record<string, unknown>;
-}
-
-/** dock 打开时自动带上的 assist 上下文(§O7:zone + entity + 当前表单/选区快照 + 意图)。 */
-export interface NsAssistContext {
-  zone: NsOttoZone;
-  /** 选中/编辑对象 id(可选;onApply 把产出落到具体对象) */
-  entityId?: string;
-  /** 对象人话名(dock「Looking at」chip 显示它,回退到 zone) */
-  entityLabel?: string;
-  /** 当前表单/选区快照(Otto「看见」的现场状态;原语不解释内容,只透传给作者的 reply/apply) */
-  formState?: Record<string, unknown>;
-  /** 2-3 个 surface-specific 意图 chip(零打字路径) */
-  intents: NsAssistIntent[];
-}
-
-let assistContext: NsAssistContext | null = null;
-let assistOwner: string | null = null;
-let assistApplyHandler: ((apply: NsAssistApply) => void) | null = null;
-
-/** OttoAssist 小钮点开时调它:登记 assist 上下文 + Apply 回调,并点亮上下文桥(dock 读它)。 */
-export function openAssist(
-  owner: string,
-  ctx: NsAssistContext,
-  onApply?: (apply: NsAssistApply) => void,
-): void {
-  assistOwner = owner;
-  assistContext = ctx;
-  assistApplyHandler = onApply ?? null;
-  // 复用既有上下文桥:dock「Looking at」+ streamContextFromOtto 的 zone 派生都靠它。
-  state.ottoContext = {
-    view: ctx.zone,
-    selectedId: ctx.entityId,
-    selectedLabel: ctx.entityLabel ?? ctx.zone,
-  };
-  notify();
-}
-
-/** 原表面卸载时调它(owner 匹配才清,避免旧表面的卸载抹掉新表面刚设的 assist)。 */
-export function clearAssist(owner?: string): void {
-  if (owner && owner !== assistOwner) return;
-  if (!assistContext && !assistOwner) return;
-  assistContext = null;
-  assistOwner = null;
-  assistApplyHandler = null;
-  notify();
-}
-
-/** 当前 assist 上下文(dock 读它渲染意图 chip / Apply;无 = dock 走普通聊天)。 */
-export function assistContextView(): NsAssistContext | null {
-  return assistContext;
-}
-
-/** dock 的 Apply 钮调它:把产出交回原表面的 onApply(填字段 + sweep)。发/花仍要店主亲手点。 */
-export function runAssistApply(apply: NsAssistApply): void {
-  assistApplyHandler?.(apply);
-}
-
-/* ── ② 首次直播 escort(§8e)──────────────────────────────────────────────────
+/* ── 首次直播 escort(§8e)─────────────────────────────────────────────────────
  * 只有「新鲜、前台、可执行、工作落在别的表面」的指示才导航一次。escortTo 只写一个带
  * 单调 id 的请求;真正的 router.push 由外壳的导航器执行、每个 id 只执行一次(外壳是唯一
  * 常驻件,acted-id 存它的 ref)。离开不拉回(不产生新 id 就不再导航);返回续播是结构性的
@@ -3070,11 +2960,10 @@ export function recipeInstalled(id: string, seed: boolean): boolean {
   return recipeInstallState[id] ?? seed;
 }
 
-/* ── [fix wave-c-audit/foundation] 两件原语护栏 —— 文件尾追加(注明队名 f2-primitives)──
- * 修 §8e escort / §O7 assist 的两处结构缺陷。纯 client、零后台 import;只读高水位线 +
- * 存活探针,不改上文任何既有函数签名。
+/* ── [fix wave-c-audit/foundation] escort 原语护栏 —— 文件尾追加(注明队名 f2-primitives)──
+ * 纯 client、零后台 import;不改上文任何既有函数签名。
  *
- * ① escort 已导航高水位线(缺陷#1):acted-id 原存外壳组件 ref。外壳在离开/回到
+ * escort 已导航高水位线(缺陷#1):acted-id 原存外壳组件 ref。外壳在离开/回到
  *    /northstar-immersive 路由组时会卸载重挂(SPA 后退退出 → 再点回),ref 归零,而
  *    escortRequest 是模块级永存单例 → 陈旧 escort 被当新指示重放,把店主凭空拽回他没
  *    要求返回的表面(如 /create/canvas)。修法:把「已导航到此 id」的高水位线搬到模块级,
@@ -3090,21 +2979,6 @@ export function escortActedId(): number {
 /** 标记某 escort id 已导航过(单调抬升;远端调用不 notify,只是导航守卫的高水位线)。 */
 export function markEscortActed(id: number): void {
   if (id > escortActedHighWater) escortActedHighWater = id;
-}
-
-/** ② Apply 回调是否仍活着(缺陷#2):源表面卸载后 assistApplyHandler 被 clearAssist 置 null。
- *  dock 点 Apply 前先问它 —— 回调已死就别对着 null handler 空转还打「Filled it into …」的
- *  假成功(诚实化:没真填就不宣称填了)。 */
-export function hasAssistApplyHandler(): boolean {
-  return assistApplyHandler !== null;
-}
-
-/** ③ 当前登记 assist 的 owner token(缺陷#2 二轮 · 跨表面陈旧 Apply):dock 把 pendingApply
- *  绑定到产出它的源 owner —— 点 Apply 前比对本值。owner 变了(别的表面顶替、handler 已换成
- *  它的 onApply)或 handler 已死都拒填,不再把源表面 A 的 patch 灌进现表面 B 的 onApply
- *  还谎报「Filled it into B」。null = 当前无任何 assist 登记(队名 f2-primitives)。 */
-export function assistOwnerToken(): string | null {
-  return assistOwner;
 }
 
 /* ── [gate4/H4] 帖 → 分群受众关联(尾部追加,不改 NsScheduledPost/_mock) ──────────
