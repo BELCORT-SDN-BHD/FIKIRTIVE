@@ -33,13 +33,37 @@ describe("convergeIdentity", () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue(null);
     db.user.create.mockResolvedValue({ id: "usr_1", email: "merchant@x.test", emailVerified: new Date() });
+    mockBootstrap.mockResolvedValue("org_usr_1");
     await convergeIdentity({ email: "merchant@x.test", name: "M", emailVerified: true });
     // #544 — the canonical create stamps emailVerified (DateTime, next-auth convention).
     expect(db.user.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ emailVerified: expect.any(Date) }) }),
     );
     expect(mockBootstrap).toHaveBeenCalledWith("usr_1", "merchant@x.test");
-    expect(db.actionEvent.create).toHaveBeenCalled();
+    // #568 — the signin audit row belongs to the signed-in merchant's OWN org, never "founder".
+    expect(db.actionEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ownerId: "org_usr_1", type: "auth.signin" }) }),
+    );
+  });
+
+  // #568 — the ONLY signin whose audit row may name the founder org is a founder-admin's own.
+  it("#568 — attributes a founder-admin signin audit row to the founder org", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date() });
+    await convergeIdentity({ email: "founder@x.test", emailVerified: true });
+    expect(db.actionEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ ownerId: "founder", type: "auth.signin" }) }),
+    );
+  });
+
+  // #568 — when no org resolves (bootstrap hiccup), write NO audit row rather than a
+  // misattributed one: falling back to "founder" is exactly the bug this test pins.
+  it("#568 — skips the signin audit row when bootstrap resolves no org (never falls back to founder)", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue({ id: "usr_n", email: "noorg@x.test", emailVerified: new Date() });
+    mockBootstrap.mockResolvedValue(null);
+    await convergeIdentity({ email: "noorg@x.test", emailVerified: true });
+    expect(db.actionEvent.create).not.toHaveBeenCalled();
   });
 
   it("#544 — stamps emailVerified on an existing canonical row that is still null (set-once via emailVerified:null filter)", async () => {

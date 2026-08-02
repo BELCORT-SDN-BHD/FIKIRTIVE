@@ -52,6 +52,12 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       } else if (!user.emailVerified) {
         await prisma.user.updateMany({ where: { email, emailVerified: null }, data: { emailVerified: new Date() } });
       }
+      // #568 — the org the signin audit row is attributed to. Resolved by the SAME branch
+      // that resolves the identity below: founder-admins → the founder org, everyone else →
+      // their own personal org from bootstrapPersonalOrg. Stays null when no org resolves
+      // (bootstrap hiccup) — NEVER defaults to "founder", which misattributed every
+      // merchant's signin to the Founder org.
+      let auditOwnerId: string | null = null;
       // 2. Founder super-admin self-heal (promote-only, idempotent).
       if (isFounderAdmin(email)) {
         await prisma.$transaction(async (tx) => {
@@ -65,11 +71,12 @@ export async function convergeIdentity(input: { email: string; name?: string | n
             update: {},
           });
         });
+        auditOwnerId = FOUNDER_OWNER_ID;
       } else {
         // 3. Non-founder personal-org convergence (best-effort; requireOwner re-bootstraps on demand).
         try {
           const { bootstrapPersonalOrg } = await import("@/lib/auth-guard");
-          await bootstrapPersonalOrg(user.id, email);
+          auditOwnerId = await bootstrapPersonalOrg(user.id, email);
         } catch (e) {
           // #538 — every bootstrap failure is a retryable hiccup EXCEPT one: the operator's
           // revoke won the AllowedEmail row mid-provisioning and the tx was rolled back on
@@ -84,8 +91,12 @@ export async function convergeIdentity(input: { email: string; name?: string | n
           console.warn("[better-auth] converge bootstrap failed (non-fatal):", e instanceof Error ? e.message : e);
         }
       }
-      // 4. Audit.
-      await Promise.resolve(prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "auth.signin", payload: { email } } })).catch(() => {});
+      // 4. Audit. #568 — attributed to the signed-in user's OWN org (see auditOwnerId above).
+      //    No org resolved → no row: a best-effort audit line that names the wrong subject is
+      //    worse than none (the bootstrap failure itself is already logged above).
+      if (auditOwnerId) {
+        await Promise.resolve(prisma.actionEvent.create({ data: { id: newId(), ownerId: auditOwnerId, type: "auth.signin", payload: { email } } })).catch(() => {});
+      }
     } catch (e) {
       // The one deliberate exception to never-throws (#538): a provisioning refusal is a
       // security decision, not a convergence hiccup, and must not be downgraded here either.
