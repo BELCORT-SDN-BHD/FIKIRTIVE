@@ -21,6 +21,7 @@ export {
   noteCanvasRepairFailure,
   clearCanvasRepairRecord,
   canvasJobPlacementLockKey,
+  canvasRepairLockKey,
   canvasRepairWaitMs,
   CANVAS_REPAIR_JSON_KEY,
   CANVAS_REPAIR_WAIT_BASE_MS,

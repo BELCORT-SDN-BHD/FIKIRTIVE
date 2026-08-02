@@ -31,11 +31,14 @@ import {
   canvasJobOrigin,
 } from "@fikirtive/core";
 import { prisma } from "../index.js";
+import { Prisma } from "../../generated/prisma/client.js";
 import {
   CANVAS_REPAIR_JSON_KEY,
   CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS,
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
+  CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS,
+  canvasJobPlacementLockKey,
   clearCanvasRepairRecord,
   findCanvasSettlementBacklog,
   noteCanvasRepairFailure,
@@ -47,6 +50,12 @@ import { seedOrg } from "../../test/setup.js";
 
 const CARD = { w: 320, h: 320 };
 const HOUR = 60 * 60_000;
+const TEST_BACKFILL_TIMEOUTS = {
+  statementTimeoutMs: 250,
+  advisoryLockTimeoutMs: CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS,
+  transactionMaxWaitMs: 500,
+  transactionTimeoutMs: 1_000,
+} as const;
 
 let orgId: string;
 let projectId: string;
@@ -675,6 +684,38 @@ describe("a board that is not at the front of the queue", () => {
     await noteCanvasRepairFailure(boardOf(mine[0] as string), { now: new Date(), reason: "board write blew up" });
     expect(await sweepIds({ limit: 1 })).toEqual([mine[1]]);
   });
+
+  it("records a contended placement and lets the next tick reach the same owner's later board", async () => {
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const now = new Date();
+    const first = await seedDeliveredJob({ outputs: 1, finishedAt: new Date(now.getTime() - HOUR) });
+    const later = await seedDeliveredJob({ outputs: 1, finishedAt: new Date(now.getTime() - HOUR + 1_000) });
+    const firstBoard = boardOf(first.jobId);
+    const lockKey = canvasJobPlacementLockKey(orgId, projectId, first.jobId);
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("SELECT pg_advisory_lock(hashtextextended($1, 0::bigint))", [lockKey]);
+
+    try {
+      expect(await sweepIds({ now, limit: 1 })).toEqual([first.jobId]);
+      await expect(
+        settleCanvasCardsForGenJob(first.jobId, orgId, TEST_BACKFILL_TIMEOUTS),
+      ).rejects.toThrow(/lock timeout|canceling statement/i);
+      await expect(noteCanvasRepairFailure(
+        firstBoard,
+        { now, reason: "placement lock stayed busy" },
+        TEST_BACKFILL_TIMEOUTS,
+      )).resolves.toMatchObject({ genJobId: first.jobId, attempts: 1 });
+
+      expect(await sweepIds({ now, limit: 1 })).toEqual([later.jobId]);
+    } finally {
+      await blocker
+        .query("SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))", [lockKey])
+        .catch(() => undefined);
+      await blocker.end();
+    }
+  }, 10_000);
 });
 
 /**
@@ -755,6 +796,116 @@ describe("a board whose repair failed", () => {
       select: { videoOptions: true },
     });
     expect(repaired.videoOptions).toEqual(material);
+  });
+
+  it.each([
+    ["null", null],
+    ["scalar", "legacy-material"],
+    ["array", ["legacy", "material"]],
+  ])("keeps trusted %s material through continuous retries and cleanup", async (_label, material) => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+    await prisma.genJob.update({
+      where: { id: jobId },
+      data: { videoOptions: material === null ? Prisma.DbNull : material },
+    });
+
+    expect(await noteCanvasRepairFailure(
+      boardOf(jobId),
+      { now: start, reason: "first board write failed" },
+    )).toMatchObject({ genJobId: jobId, attempts: 1 });
+    expect(await noteCanvasRepairFailure(
+      boardOf(jobId),
+      { now: start, reason: "second board write failed" },
+    )).toMatchObject({ genJobId: jobId, attempts: 2 });
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+    const restored = await prisma.genJob.findUniqueOrThrow({
+      where: { id: jobId }, select: { videoOptions: true },
+    });
+    expect(restored.videoOptions).toEqual(material);
+  });
+
+  it("resets foreign or malformed repair history from the current real material", async () => {
+    const start = new Date();
+    const cases = [
+      {
+        current: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: "gjb_foreign",
+            attempts: 7,
+            nextAt: "2026-08-03T01:00:00.000Z",
+            reason: "foreign",
+            videoOptionsWasNull: true,
+            originalVideoOptions: ["foreign"],
+          },
+        },
+        restored: {},
+      },
+      {
+        current: {
+          seconds: 5,
+          merchantChoice: "cinematic",
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: "gjb_foreign",
+            attempts: 7,
+            nextAt: "2026-08-03T01:00:00.000Z",
+            reason: "foreign",
+            videoOptionsWasNull: true,
+            originalVideoOptions: ["foreign"],
+          },
+        },
+        restored: { seconds: 5, merchantChoice: "cinematic" },
+      },
+    ];
+
+    for (const entry of cases) {
+      const { jobId } = await seedDeliveredJob({ outputs: 1 });
+      await prisma.genJob.update({ where: { id: jobId }, data: { videoOptions: entry.current } });
+
+      const record = await noteCanvasRepairFailure(
+        boardOf(jobId),
+        { now: start, reason: "current board write failed" },
+      );
+      expect(record).toMatchObject({
+        genJobId: jobId,
+        attempts: 1,
+        videoOptionsWasNull: false,
+      });
+      expect(record).not.toHaveProperty("originalVideoOptions");
+
+      await clearCanvasRepairRecord(boardOf(jobId));
+      const restored = await prisma.genJob.findUniqueOrThrow({
+        where: { id: jobId }, select: { videoOptions: true },
+      });
+      expect(restored.videoOptions).toEqual(entry.restored);
+    }
+
+    const { jobId: malformedJobId } = await seedDeliveredJob({ outputs: 1 });
+    await prisma.genJob.update({
+      where: { id: malformedJobId },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: malformedJobId,
+            attempts: 5,
+            nextAt: "2026-08-03T01:00:00.000Z",
+            reason: "malformed",
+            videoOptionsWasNull: true,
+            originalVideoOptions: "malformed",
+          },
+        },
+      },
+    });
+    expect(await noteCanvasRepairFailure(
+      boardOf(malformedJobId),
+      { now: start, reason: "current board write failed" },
+    )).toMatchObject({ genJobId: malformedJobId, attempts: 1, videoOptionsWasNull: false });
+    await clearCanvasRepairRecord(boardOf(malformedJobId));
+    const malformedRestored = await prisma.genJob.findUniqueOrThrow({
+      where: { id: malformedJobId }, select: { videoOptions: true },
+    });
+    expect(malformedRestored.videoOptions).toEqual({});
   });
 
   it("keeps the wait across a restart, because the wait is a row and not a process", async () => {
@@ -901,12 +1052,27 @@ describe("a board whose repair failed", () => {
       seedDeliveredJob({ outputs: 2, minutesAgo: 40 }),
       seedDeliveredJob({ outputs: 2, minutesAgo: 30 }),
       seedDeliveredJob({ outputs: 2, minutesAgo: 20 }),
+      seedDeliveredJob({ outputs: 2, minutesAgo: 15 }),
+      seedDeliveredJob({ outputs: 2, minutesAgo: 10 }),
+      seedDeliveredJob({ outputs: 2, minutesAgo: 5 }),
     ]);
     const records = [
       { attempts: 0, reason: "invalid attempt", videoOptionsWasNull: true },
       { attempts: 1.5, reason: "fractional attempt", videoOptionsWasNull: true },
       { attempts: 1, reason: "x".repeat(201), videoOptionsWasNull: true },
       { attempts: 1, reason: "invalid boolean", videoOptionsWasNull: "true" },
+      {
+        attempts: 1, reason: "null contradicts original", videoOptionsWasNull: true,
+        originalVideoOptions: "legacy",
+      },
+      {
+        attempts: 1, reason: "object is not a wrapped legacy value", videoOptionsWasNull: false,
+        originalVideoOptions: { seconds: 5 },
+      },
+      {
+        attempts: 1, reason: "null is carried by the boolean", videoOptionsWasNull: false,
+        originalVideoOptions: null,
+      },
     ];
     await Promise.all(malformed.map(({ jobId }, index) => prisma.genJob.update({
       where: { id: jobId },
@@ -949,12 +1115,19 @@ describe("a board whose repair failed", () => {
     await seedCard({ jobId, x: 0, status: "deleted", generationId: null });
 
     expect(await repairRecord(jobId)).not.toBeNull();
-    expect((await settleCanvasCardsForGenJob(jobId, orgId)).status).toBe("suppressed");
+    const firstSweep = await sweep({ now: start });
+    expect(firstSweep.map((job) => job.id)).toContain(jobId);
+    const repairJob = firstSweep.find((job) => job.id === jobId);
+    if (!repairJob) throw new Error("stale suppressed repair was not offered");
+    expect((await settleCanvasCardsForGenJob(repairJob.id, repairJob.ownerId)).status).toBe("suppressed");
 
-    await clearCanvasRepairRecord(boardOf(jobId));
+    await clearCanvasRepairRecord(repairJob);
 
     expect(await repairRecord(jobId)).toBeNull();
     expect(await sweepIds({ now: start })).not.toContain(jobId);
+    expect(await cardsForJob(jobId)).toEqual([
+      expect.objectContaining({ status: "deleted", generationId: null }),
+    ]);
   });
 
   it("does not let an unrecordable oldest row starve a valid later paid board across ticks", async () => {
@@ -992,6 +1165,34 @@ describe("a board whose repair failed", () => {
     await expect(
       noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write failed" }),
     ).resolves.toBeNull();
+  });
+
+  it.each([
+    { videoOptionsWasNull: true },
+    { videoOptionsWasNull: false, originalVideoOptions: ["foreign", "array"] },
+  ])("does not restore a wrong-job null or array claim during direct cleanup", async (claim) => {
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+    await prisma.genJob.update({
+      where: { id: jobId },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: "gjb_foreign",
+            attempts: 2,
+            nextAt: "2026-08-03T01:00:00.000Z",
+            reason: "foreign",
+            ...claim,
+          },
+        },
+      },
+    });
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+
+    const restored = await prisma.genJob.findUniqueOrThrow({
+      where: { id: jobId }, select: { videoOptions: true },
+    });
+    expect(restored.videoOptions).toEqual({});
   });
 
   it("preserves sibling paid material when stale metadata claims a different original value", async () => {

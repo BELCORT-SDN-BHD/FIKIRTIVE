@@ -8,6 +8,7 @@ import {
   parseCanvasActionKey,
   parseFactoryAttemptKey,
   type FactoryMaterial,
+  type StoredFactoryMaterial,
 } from "../batch-idempotency";
 
 describe("canvas action keys", () => {
@@ -76,25 +77,26 @@ describe("factory material binding", () => {
     entityIds: ["e1", "e2"],
     variantSel: { e1: "v1", e2: "v2" },
   });
+  const storedExpected = { id: "job-1", ...expected };
 
   it("keeps entity order significant while ignoring JSON object key order", () => {
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       entityIds: ["e1", "e2"],
       variantSel: { e2: "v2", e1: "v1" },
     }, expected)).toBe(true);
 
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       entityIds: ["e2", "e1"],
     }, expected)).toBe(false);
 
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       variantSel: { e1: "v1", e2: "changed" },
     }, expected)).toBe(false);
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       variantSel: { e1: "v1", e3: "v2" },
     }, expected)).toBe(false);
   });
@@ -117,23 +119,23 @@ describe("factory material binding", () => {
     });
 
     expect(empty.variantSel).toBeNull();
-    expect(factoryMaterialMatches({ ...omitted, variantSel: {} }, omitted)).toBe(true);
-    expect(factoryMaterialMatches({ ...empty, variantSel: null }, empty)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...omitted, variantSel: {} }, omitted)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...empty, variantSel: null }, empty)).toBe(true);
   });
 
   it("does not erase duplicate entity ids — [a,a] is different from [a]", () => {
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       entityIds: ["e1", "e2", "e2"],
     }, expected)).toBe(false);
   });
 
   it("binds the live thread attribution as frozen generation material", () => {
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       threadId: "thread-other",
     }, {
-      ...expected,
+      ...storedExpected,
       threadId: "thread-expected",
     })).toBe(false);
   });
@@ -148,7 +150,7 @@ describe("factory material binding", () => {
       merchantChoice: "cinematic",
     };
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       videoOptions: {
         ...userOptions,
         [CANVAS_REPAIR_JSON_KEY]: {
@@ -161,7 +163,7 @@ describe("factory material binding", () => {
     }, { ...expected, videoOptions: userOptions })).toBe(true);
 
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       videoOptions: {
         ...userOptions,
         merchantChoice: "documentary",
@@ -170,7 +172,7 @@ describe("factory material binding", () => {
     }, { ...expected, videoOptions: userOptions })).toBe(false);
 
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       videoOptions: {
         seconds: 5,
         merchantChoice: "cinematic",
@@ -189,7 +191,7 @@ describe("factory material binding", () => {
     // A legacy non-object payload must remain paid material while the repair record temporarily
     // wraps it. Removing the reserved key must not turn that corruption into an apparent null.
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       videoOptions: {
         [CANVAS_REPAIR_JSON_KEY]: {
           attempts: 3,
@@ -198,6 +200,33 @@ describe("factory material binding", () => {
       },
     }, expected)).toBe(false);
 
-    expect(factoryMaterialMatches({ ...expected, videoOptions: {} }, expected)).toBe(false);
+    expect(factoryMaterialMatches({ ...storedExpected, videoOptions: {} }, expected)).toBe(false);
+  });
+
+  it("binds repair restoration to the stored database row id and fails closed without one", () => {
+    const original = ["legacy", "material"];
+    const repair = {
+      genJobId: "job-1",
+      attempts: 2,
+      nextAt: "2026-08-03T01:00:00.000Z",
+      reason: "board write failed",
+      videoOptionsWasNull: false,
+      originalVideoOptions: original,
+    };
+    const expectedLegacy = { ...expected, videoOptions: original } as unknown as FactoryMaterial;
+
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      videoOptions: { [CANVAS_REPAIR_JSON_KEY]: repair },
+    }, expectedLegacy)).toBe(true);
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      id: "job-other",
+      videoOptions: { [CANVAS_REPAIR_JSON_KEY]: repair },
+    }, expectedLegacy)).toBe(false);
+    expect(factoryMaterialMatches({
+      ...expected,
+      videoOptions: { [CANVAS_REPAIR_JSON_KEY]: repair },
+    } as unknown as StoredFactoryMaterial, expectedLegacy)).toBe(false);
   });
 });

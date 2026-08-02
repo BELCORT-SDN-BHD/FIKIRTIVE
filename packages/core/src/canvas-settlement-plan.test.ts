@@ -15,6 +15,7 @@ import {
   canvasJobOrigin,
   canvasBoardNeedsSettlement,
   canvasMaterialWithoutRepair,
+  isTrustedCanvasRepairRecord,
   isCanvasJobKey,
   planCanvasSettlement,
   type CanvasJobOrigin,
@@ -30,21 +31,68 @@ const OUTPUTS = ["gen-1", "gen-2", "gen-3", "gen-4"];
 const SERVER_MINTED_CANVAS_KEY = `${CANVAS_JOB_KEY_PREFIX}${"0123456789abcdef".repeat(4)}`;
 
 describe("paid material beside canvas repair bookkeeping", () => {
+  const trusted = {
+    genJobId: "gjb-1",
+    attempts: 1,
+    nextAt: "2026-08-03T01:00:00.000Z",
+    reason: "failed",
+    videoOptionsWasNull: false,
+  };
+
+  it("trusts only the complete bounded writer shape for the expected job", () => {
+    expect(isTrustedCanvasRepairRecord(trusted, "gjb-1")).toBe(true);
+    for (const repair of [
+      { ...trusted, genJobId: "gjb-other" },
+      { ...trusted, attempts: 0 },
+      { ...trusted, attempts: 1.5 },
+      { ...trusted, attempts: Number.MAX_SAFE_INTEGER + 1 },
+      { ...trusted, nextAt: "2026-08-03T01:00:00Z" },
+      { ...trusted, nextAt: "2026-02-30T01:00:00.000Z" },
+      { ...trusted, reason: "x".repeat(201) },
+      { ...trusted, videoOptionsWasNull: "false" },
+      { ...trusted, videoOptionsWasNull: true, originalVideoOptions: "contradiction" },
+      { ...trusted, originalVideoOptions: null },
+      { ...trusted, originalVideoOptions: undefined },
+      { ...trusted, originalVideoOptions: { seconds: 5 } },
+      { attempts: 1, nextAt: trusted.nextAt, reason: "failed", videoOptionsWasNull: false },
+    ]) {
+      expect(isTrustedCanvasRepairRecord(repair, "gjb-1")).toBe(false);
+    }
+    expect(isTrustedCanvasRepairRecord({ ...trusted, originalVideoOptions: "legacy" }, "gjb-1"))
+      .toBe(true);
+    expect(isTrustedCanvasRepairRecord({ ...trusted, originalVideoOptions: ["legacy"] }, "gjb-1"))
+      .toBe(true);
+    expect(isTrustedCanvasRepairRecord({ ...trusted, videoOptionsWasNull: true }, "gjb-1"))
+      .toBe(true);
+  });
+
   it.each(["legacy-material", ["legacy", "material"]])(
-    "restores a genuine wrapped scalar or array (%j)",
+    "restores a trusted wrapped scalar or array (%j)",
     (originalVideoOptions) => {
       expect(canvasMaterialWithoutRepair({
         __canvasRepair: {
-          genJobId: "gjb-1",
-          attempts: 1,
-          nextAt: "2026-08-03T01:00:00.000Z",
-          reason: "failed",
-          videoOptionsWasNull: false,
+          ...trusted,
           originalVideoOptions,
         },
-      })).toEqual(originalVideoOptions);
+      }, "gjb-1")).toEqual(originalVideoOptions);
     },
   );
+
+  it("restores trusted null without inventing scalar material", () => {
+    expect(canvasMaterialWithoutRepair({
+      __canvasRepair: { ...trusted, videoOptionsWasNull: true },
+    }, "gjb-1")).toBeNull();
+  });
+
+  it.each([
+    { ...trusted, genJobId: "gjb-other", originalVideoOptions: ["foreign"] },
+    { ...trusted, genJobId: "gjb-other", videoOptionsWasNull: true },
+    { ...trusted, attempts: 0, originalVideoOptions: "malformed" },
+  ])("deletes untrusted repair metadata without restoring its claimed value", (repair) => {
+    expect(canvasMaterialWithoutRepair({ __canvasRepair: repair }, "gjb-1")).toEqual({});
+    expect(canvasMaterialWithoutRepair({ seconds: 5, __canvasRepair: repair }, "gjb-1"))
+      .toEqual({ seconds: 5 });
+  });
 
   it("keeps real sibling material when stale metadata claims a different original value", () => {
     expect(canvasMaterialWithoutRepair({
@@ -54,7 +102,7 @@ describe("paid material beside canvas repair bookkeeping", () => {
         genJobId: "stale",
         originalVideoOptions: { seconds: 10 },
       },
-    })).toEqual({ seconds: 5, merchantChoice: "cinematic" });
+    }, "gjb-1")).toEqual({ seconds: 5, merchantChoice: "cinematic" });
   });
 
   it("does not restore an explicitly undefined value from an otherwise writer-shaped record", () => {
@@ -67,7 +115,7 @@ describe("paid material beside canvas repair bookkeeping", () => {
         videoOptionsWasNull: false,
         originalVideoOptions: undefined,
       },
-    })).toEqual({});
+    }, "gjb-1")).toEqual({});
   });
 });
 

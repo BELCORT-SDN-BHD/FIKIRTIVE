@@ -26,6 +26,7 @@ import { prisma } from "../index.js";
 import {
   CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS,
   canvasJobPlacementLockKey,
+  canvasRepairLockKey,
   clearCanvasRepairRecord,
   noteCanvasRepairFailure,
   settleCanvasCardsForGenJob,
@@ -324,7 +325,7 @@ describe("money stays exactly where it was", () => {
 });
 
 describe("a contended board cannot hold the maintenance worker", () => {
-  it("bounds the shared advisory-lock wait for settle, failure-note and cleanup", async () => {
+  it("bounds the placement-lock wait for settlement without blocking its failure note or cleanup", async () => {
     const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
     if (!connectionString) throw new Error("test database URL is required");
     const { jobId } = await seedJob({
@@ -346,18 +347,61 @@ describe("a contended board cannot hold the maintenance worker", () => {
       );
     }, 2_500);
 
-    const operations = [
-      () => settleCanvasCardsForGenJob(jobId, orgId, TEST_BACKFILL_TIMEOUTS),
-      () => noteCanvasRepairFailure(
+    try {
+      const startedAt = Date.now();
+      await expect(
+        settleCanvasCardsForGenJob(jobId, orgId, TEST_BACKFILL_TIMEOUTS),
+      ).rejects.toThrow(/lock timeout|canceling statement/i);
+      expect(Date.now() - startedAt).toBeLessThan(CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS + 1_000);
+
+      await expect(noteCanvasRepairFailure(
         board,
         { now: new Date(), reason: "board write failed" },
         TEST_BACKFILL_TIMEOUTS,
-      ),
-      () => clearCanvasRepairRecord(board, TEST_BACKFILL_TIMEOUTS),
-    ];
+      )).resolves.toMatchObject({ genJobId: jobId, attempts: 1 });
+      await expect(clearCanvasRepairRecord(board, TEST_BACKFILL_TIMEOUTS)).resolves.toBeUndefined();
+    } finally {
+      clearTimeout(release);
+      if (fallbackRelease) await fallbackRelease.catch(() => undefined);
+      else {
+        await blocker
+          .query("SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))", [lockKey])
+          .catch(() => undefined);
+      }
+      await blocker.end();
+    }
+  }, 10_000);
+
+  it("bounds the dedicated repair-lock wait for failure notes and cleanup", async () => {
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const { jobId } = await seedJob({
+      status: "DONE",
+      outputs: 1,
+      idempotencyKey: canvasKey(),
+    });
+    const board = { id: jobId, ownerId: orgId, projectId };
+    const lockKey = canvasRepairLockKey(orgId, projectId, jobId);
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("SELECT pg_advisory_lock(hashtextextended($1, 0::bigint))", [lockKey]);
+    let fallbackRelease: Promise<unknown> | undefined;
+    const release = setTimeout(() => {
+      fallbackRelease = blocker.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))",
+        [lockKey],
+      );
+    }, 2_500);
 
     try {
-      for (const operation of operations) {
+      for (const operation of [
+        () => noteCanvasRepairFailure(
+          board,
+          { now: new Date(), reason: "board write failed" },
+          TEST_BACKFILL_TIMEOUTS,
+        ),
+        () => clearCanvasRepairRecord(board, TEST_BACKFILL_TIMEOUTS),
+      ]) {
         const startedAt = Date.now();
         await expect(operation()).rejects.toThrow(/lock timeout|canceling statement/i);
         expect(Date.now() - startedAt).toBeLessThan(CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS + 1_000);

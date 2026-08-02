@@ -29,6 +29,7 @@ import {
   CANVAS_REPAIR_JSON_KEY,
   canvasMaterialWithoutRepair,
   canvasJobOrigin,
+  isTrustedCanvasRepairRecord,
   newId,
   planCanvasSettlement,
   type CanvasRect,
@@ -69,6 +70,11 @@ const CARD_SELECT = {
 /** Every writer for one paid job's cards shares this lock, browser-side or worker-side. */
 export function canvasJobPlacementLockKey(ownerId: string, projectId: string, genJobId: string): string {
   return `canvas-job-placement:${ownerId}:${projectId}:${genJobId}`;
+}
+
+/** Repair bookkeeping serializes with itself without queuing behind a slow card placement. */
+export function canvasRepairLockKey(ownerId: string, projectId: string, genJobId: string): string {
+  return `canvas-repair:${ownerId}:${projectId}:${genJobId}`;
 }
 
 /**
@@ -352,10 +358,14 @@ export async function findCanvasSettlementBacklog(options: {
       )
       -- The merchant deleted the card while the batch was still running: that was a decision about
       -- the whole job, and the projection honours it for ever.
-      AND NOT EXISTS (
-        SELECT 1 FROM "CanvasNode" n
-        WHERE n."ownerId" = j."ownerId" AND n."projectId" = j."projectId"
-          AND n."genJobId" = j.id AND n.status = 'deleted' AND n."generationId" IS NULL
+      AND (
+        -- A stale repair record still needs one cleanup turn even after suppression became durable.
+        j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} IS NOT NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM "CanvasNode" n
+          WHERE n."ownerId" = j."ownerId" AND n."projectId" = j."projectId"
+            AND n."genJobId" = j.id AND n.status = 'deleted' AND n."generationId" IS NULL
+        )
       )
       -- canvasBoardNeedsSettlement. Owner, project AND job together on every card predicate:
       -- CanvasNode.genJobId carries no foreign key, so a row in another workspace — or on the
@@ -395,6 +405,12 @@ export async function findCanvasSettlementBacklog(options: {
         WHEN jsonb_typeof(repair -> 'reason') IS DISTINCT FROM 'string'
           OR length(repair ->> 'reason') > 200 THEN NULL
         WHEN jsonb_typeof(repair -> 'videoOptionsWasNull') IS DISTINCT FROM 'boolean' THEN NULL
+        -- originalVideoOptions exists only for a wrapped legacy scalar/array. Null is carried by
+        -- videoOptionsWasNull, while ordinary object material stays beside the repair key.
+        WHEN repair ? 'originalVideoOptions' AND (
+          repair ->> 'videoOptionsWasNull' IS DISTINCT FROM 'false'
+          OR jsonb_typeof(repair -> 'originalVideoOptions') NOT IN ('string', 'number', 'boolean', 'array')
+        ) THEN NULL
         WHEN NOT CASE
           WHEN jsonb_typeof(repair -> 'nextAt') = 'string'
             AND repair ->> 'nextAt' ~ ${repairTimePattern}
@@ -441,8 +457,8 @@ export async function findCanvasSettlementBacklog(options: {
  * Record that a board's repair did not finish it: wait longer next time, up to the cadence cap.
  *
  * This is the ONLY thing the sweep writes about a job: one reserved JSON key. No money column, no
- * job status, no ledger, no provider. It shares the settlement lock so two workers cannot lose an
- * attempt or overwrite each other's bookkeeping.
+ * job status, no ledger, no provider. Its own per-job lock keeps repair writers serialized while
+ * allowing a failed placement to be recorded even when that placement lock is still contended.
  */
 export async function noteCanvasRepairFailure(
   job: CanvasSettlementBacklogJob,
@@ -451,7 +467,7 @@ export async function noteCanvasRepairFailure(
 ): Promise<CanvasRepairRecord | null> {
   return prisma.$transaction(async (tx) => {
     await setCanvasSettlementTimeouts(tx, timeouts);
-    const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    const lockKey = canvasRepairLockKey(job.ownerId, job.projectId, job.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
     const current = await tx.genJob.findFirst({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
@@ -459,18 +475,24 @@ export async function noteCanvasRepairFailure(
     });
     if (!current) return null;
 
-    const editable = editableVideoOptions(current.videoOptions);
+    const currentMaterial = canvasMaterialWithoutRepair(current.videoOptions, job.id);
+    const editable = editableVideoOptions(currentMaterial);
     const videoOptions = editable.value;
-    const prior = videoOptions[CANVAS_REPAIR_JSON_KEY];
-    const attempts = Math.min(priorAttempts(prior) + 1, Number.MAX_SAFE_INTEGER);
-    const originalVideoOptions = repairOriginalVideoOptions(prior, editable.originalVideoOptions);
+    const prior = isJsonObject(current.videoOptions)
+      ? current.videoOptions[CANVAS_REPAIR_JSON_KEY]
+      : undefined;
+    const trustedPrior = isTrustedCanvasRepairRecord(prior, job.id) ? prior : null;
+    const attempts = Math.min((trustedPrior?.attempts ?? 0) + 1, Number.MAX_SAFE_INTEGER);
+    const originalVideoOptions = trustedPrior && Object.hasOwn(trustedPrior, "originalVideoOptions")
+      ? trustedPrior.originalVideoOptions
+      : editable.originalVideoOptions;
     const record: CanvasRepairRecord = {
       genJobId: job.id,
       attempts,
       nextAt: new Date(input.now.getTime() + canvasRepairWaitMs(attempts)).toISOString(),
       // Bounded: this record is a note for a human, never a log of the failure.
       reason: input.reason.slice(0, 200),
-      videoOptionsWasNull: priorVideoOptionsWereNull(prior, current.videoOptions),
+      videoOptionsWasNull: trustedPrior?.videoOptionsWasNull ?? currentMaterial === null,
       ...(originalVideoOptions !== undefined ? { originalVideoOptions } : {}),
     };
     const updated = await tx.genJob.updateMany({
@@ -493,7 +515,7 @@ export async function clearCanvasRepairRecord(
 ): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await setCanvasSettlementTimeouts(tx, timeouts);
-    const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
+    const lockKey = canvasRepairLockKey(job.ownerId, job.projectId, job.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
     const current = await tx.genJob.findFirst({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
@@ -502,7 +524,7 @@ export async function clearCanvasRepairRecord(
     if (!current || !isJsonObject(current.videoOptions)) return;
     const record = current.videoOptions[CANVAS_REPAIR_JSON_KEY];
     if (record === undefined) return;
-    const material = canvasMaterialWithoutRepair(current.videoOptions);
+    const material = canvasMaterialWithoutRepair(current.videoOptions, job.id);
     await tx.genJob.updateMany({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
       data: {
@@ -547,29 +569,6 @@ function editableVideoOptions(value: unknown): {
   if (value === null) return { value: {} };
   if (isJsonObject(value)) return { value: { ...value } };
   return { value: {}, originalVideoOptions: value };
-}
-
-function repairOriginalVideoOptions(prior: unknown, current: unknown): unknown {
-  if (isJsonObject(prior) && Object.hasOwn(prior, "originalVideoOptions")) {
-    return prior.originalVideoOptions;
-  }
-  return current;
-}
-
-function priorVideoOptionsWereNull(prior: unknown, current: unknown): boolean {
-  if (isJsonObject(prior) && typeof prior.videoOptionsWasNull === "boolean") {
-    return prior.videoOptionsWasNull;
-  }
-  return current === null;
-}
-
-/** A record written by anything other than the function above is read as "never tried". */
-function priorAttempts(payload: unknown): number {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return 0;
-  const attempts = (payload as { attempts?: unknown }).attempts;
-  return typeof attempts === "number" && Number.isFinite(attempts) && attempts > 0
-    ? Math.min(Math.floor(attempts), Number.MAX_SAFE_INTEGER)
-    : 0;
 }
 
 /**
