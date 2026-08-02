@@ -416,9 +416,6 @@ export function ApprovalFlow({
                 ))}
               </ul>
             </div>
-            {kind === "generation" && (
-              <p className="mt-2 text-xs font-medium text-muted-foreground">This will spend real credits.</p>
-            )}
           </>
         )}
       </div>

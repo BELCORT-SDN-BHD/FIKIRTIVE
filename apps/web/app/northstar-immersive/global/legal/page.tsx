@@ -1,17 +1,10 @@
-"use client";
-
 /**
- * 沉浸式 · 全局 /legal(privacy / terms / data-deletion)—— 复用画廊法务页组,套进常驻外壳。
- * 设计降级页:纯文本排版对齐 token,页内 tab 井切换三份文本;无 Otto、无 coral。
+ * 沉浸式 · 全局 /legal — #615 Founder 裁决(2026-08-02):壳内假法务副本退场,一行跳转真法务页。
+ * 真文本住在 /privacy(页内可达 /terms 与 /legal/data-deletion);壳不再自带会过期的分叉副本。
  */
 
-import GalleryPage from "@/app/northstar/global/legal/page";
-import { GalleryFrame } from "@/components/northstar/immersive/schedule-assets-ads/gallery-frame";
+import { redirect } from "next/navigation";
 
 export default function Page() {
-  return (
-    <GalleryFrame>
-      <GalleryPage />
-    </GalleryFrame>
-  );
+  redirect("/privacy");
 }
