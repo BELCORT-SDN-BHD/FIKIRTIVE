@@ -744,16 +744,16 @@ export interface OttoContext {
    *  it ONLY via ctx.projects — never importing web actions or Prisma (CI fence rule). Absent in the
    *  minimal worker verdict ctx; the skill degrades gracefully when it is not injected. */
   projects?: {
-    /** debt-03: the owner's default campaign id (idempotent bootstrap read — creates "My Videos" if none). */
+    /** debt-03: the owner's default project id (idempotent bootstrap read — creates the "New project" placeholder if none, #546). */
     getDefault(): Promise<{ id: string } | { error: string }>;
-    /** debt-04: create a new named campaign. */
+    /** debt-04: create a new named project. */
     create(name: string): Promise<{ id: string } | { error: string }>;
-    /** debt-06: rename an owned campaign (display metadata only). */
+    /** debt-06: rename an owned project (display metadata only). */
     rename(projectId: string, name: string): Promise<{ ok: true; name: string } | { error: string }>;
-    /** debt-07: pin/unpin an owned campaign in the sidebar. */
+    /** debt-07: pin/unpin an owned project in the sidebar. */
     setPinned(projectId: string, pinned: boolean): Promise<{ ok: true; pinnedAt: string | null } | { error: string }>;
-    /** debt-05: PERMANENTLY delete an owned EMPTY campaign. The port hard-refuses (deterministic
-     *  live-Generation count gate, fail-closed) a campaign that still contains generated media —
+    /** debt-05: PERMANENTLY delete an owned EMPTY project. The port hard-refuses (deterministic
+     *  live-Generation count gate, fail-closed) a project that still contains generated media —
      *  deleting it would physically destroy settled paid outputs with no refund; that deletion is
      *  UI-only (type-the-name confirm). The action stays guarded (refuses while a generation runs,
      *  refunds queued jobs). Irreversible — not a soft delete. */

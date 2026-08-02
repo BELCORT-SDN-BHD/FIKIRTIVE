@@ -1,8 +1,11 @@
 "use client";
 /**
- * QuickBrief — structured intake form that composes a brief string and saves it
- * via setCoworkBrief. Surfaces in OttoFrontDoor so the brand context is set
- * before Otto starts planning. No money/credit operations.
+ * QuickBrief — structured intake form that composes the PROJECT brief string and
+ * saves it via setCoworkBrief (Project.coworkBrief — per-project, see CONTEXT.md
+ * "Project Brief"). Surfaces in OttoFrontDoor so this project's brief is set
+ * before Otto starts planning. #546 F-06: this is NOT the brand brief — brand-
+ * constant facts live in Brand memory, and the copy below says so. No
+ * money/credit operations.
  */
 import { useState } from "react";
 import { setCoworkBrief } from "@/lib/cowork-actions";
@@ -65,7 +68,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
         </svg>
-        Set up brand brief
+        Project brief
         <svg
           width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
           aria-hidden
@@ -81,6 +84,11 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
           className="mt-4 p-4 bg-card border border-border rounded-[14px] flex flex-col gap-3"
           style={{ borderWidth: "1.5px" }}
         >
+          {/* #546 F-06: one-line pointer so merchants stop typing store-wide facts into a
+              per-project field — that identity lives in Brand memory and follows every project. */}
+          <p className="m-0 text-[0.75rem] text-muted-foreground/70">
+            For this project only — facts about your whole shop live in Brand memory.
+          </p>
           <div>
             <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">What you sell / offer</label>
             <input

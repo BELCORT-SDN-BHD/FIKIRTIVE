@@ -1,0 +1,125 @@
+// @vitest-environment jsdom
+/**
+ * project-campaign-vocabulary.test.ts — #546 (E2E-S0 F-04/F-06): the Otto rail's primary
+ * creation entry used to say "New campaign" while what it built was a **Project** row —
+ * so /campaign (which lists real Campaign rows only, see lib/campaign-view-data.ts
+ * listCampaigns → prisma.campaign.findMany) truthfully said "No campaigns yet" and the
+ * merchant's just-done work looked like it never happened.
+ *
+ * Vocabulary authority: docs/BLUEPRINT.md:191 (Campaign is an independent object, a
+ * Project is never a campaign) and CONTEXT.md (Project _Avoid:_ Campaign; Project Brief
+ * is the per-project brief — brand-constant facts live in Brand memory).
+ *
+ * These tests render the REAL OttoNav and REAL QuickBrief (jsdom, the harness shape
+ * established by otto-new-conversation-routing.test.ts) and pin the cured vocabulary:
+ *  - the rail's creation entry is "New project" and calls the onNewProject contract;
+ *  - the per-project brief entry is "Project brief" and points store-level facts to
+ *    Brand memory.
+ * RED on the pre-#546 code (button said "New campaign", brief said "Set up brand brief").
+ */
+import { act, createElement, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { setCoworkBriefMock } = vi.hoisted(() => ({ setCoworkBriefMock: vi.fn() }));
+vi.mock("@/lib/cowork-actions", () => ({ setCoworkBrief: setCoworkBriefMock }));
+
+import { OttoNav } from "@/components/otto/OttoNav";
+import { QuickBrief } from "@/components/otto/QuickBrief";
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+
+afterEach(async () => {
+  if (root) await act(async () => root?.unmount());
+  container?.remove();
+  root = null;
+  container = null;
+  vi.clearAllMocks();
+});
+
+async function render(element: ReactElement): Promise<HTMLDivElement> {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  await act(async () => root!.render(element));
+  return container;
+}
+
+async function click(el: Element) {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+function navProps(over: Record<string, unknown> = {}) {
+  return {
+    view: "otto" as const,
+    onViewChange: vi.fn(),
+    projects: [{ id: "p1", name: "Raya push", pinnedAt: null }],
+    activeProjectId: "p1",
+    sidebarThreads: [],
+    activeThreadId: null,
+    onSelectThread: vi.fn(),
+    onSwitchProject: vi.fn(),
+    onNewChat: vi.fn(),
+    onRenameProject: vi.fn(),
+    onSetProjectPinned: vi.fn(),
+    onDeleteProject: vi.fn(),
+    onNewProject: vi.fn(async () => true),
+    onRenameThread: vi.fn(),
+    onSetThreadPinned: vi.fn(),
+    onDeleteThread: vi.fn(),
+    ...over,
+  };
+}
+
+describe("#546 F-04 — the rail's creation entry says what it builds (a Project)", () => {
+  it("labels the primary creation action 'New project', never 'New campaign'", async () => {
+    const dom = await render(createElement(OttoNav, navProps() as never));
+
+    const buttons = Array.from(dom.querySelectorAll("button"));
+    const creation = buttons.find((b) => /^New /.test(b.textContent?.trim() ?? ""));
+    expect(creation, "the rail must keep a primary creation action").toBeTruthy();
+    // The entry creates a Project row (OttoApp → createProject). Claiming "campaign"
+    // here is the exact lie #546 documents: /campaign lists Campaign rows only, so the
+    // merchant's new work could never show up there.
+    expect(creation!.textContent!.trim()).toBe("New project");
+    expect(dom.textContent).not.toContain("New campaign");
+  });
+
+  it("wires that entry to the onNewProject contract", async () => {
+    const onNewProject = vi.fn(async () => true);
+    const dom = await render(createElement(OttoNav, navProps({ onNewProject }) as never));
+
+    const creation = Array.from(dom.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === "New project",
+    );
+    expect(creation).toBeTruthy();
+    await click(creation!);
+    expect(onNewProject).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("#546 F-06 — the per-project brief is a Project brief, not a brand brief", () => {
+  it("labels the intake toggle 'Project brief' and points store-level facts to Brand memory", async () => {
+    const dom = await render(createElement(QuickBrief, { projectId: "p1" }));
+
+    const toggle = Array.from(dom.querySelectorAll("button")).find((b) =>
+      /brief/i.test(b.textContent ?? ""),
+    );
+    expect(toggle, "the brief toggle must exist").toBeTruthy();
+    // "Set up brand brief" was the 2026-07 UI drift: it stored Project.coworkBrief
+    // (per-project, gone when you switch projects) while sounding like the org-level
+    // Brand memory. The vocabulary name is "Project brief".
+    expect(toggle!.textContent).toContain("Project brief");
+    expect(toggle!.textContent).not.toMatch(/brand brief/i);
+
+    // Open it: the form must carry the one-line pointer that brand-constant facts
+    // live in Brand memory (so merchants stop typing their shop identity in here).
+    await click(toggle!);
+    expect(dom.textContent).toContain("Brand memory");
+  });
+});

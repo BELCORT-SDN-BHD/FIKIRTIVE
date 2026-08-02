@@ -68,7 +68,7 @@ export interface OttoChatStreamProps {
   entities: EntityDTO[];
   thread: ChatThreadDTO;
   balanceUsd: number;
-  /** Starts a new conversation in this campaign. Rendered as a persistent button
+  /** Starts a new conversation in this project. Rendered as a persistent button
    *  in the chat header, so it's always reachable — not only via a sidebar hover. */
   onNewConversation?: () => void;
   onRefresh: () => Promise<void>;
@@ -760,7 +760,7 @@ export function OttoChatStream({
           <button
             type="button"
             onClick={onNewConversation}
-            title="Start a new conversation in this campaign"
+            title="Start a new conversation in this project"
             aria-label="New conversation"
             className="inline-flex shrink-0 items-center gap-[6px] rounded-[9px] border border-border bg-transparent px-[10px] py-[6px] text-[0.8125rem] font-medium text-foreground cursor-pointer transition-colors hover:bg-secondary"
           >

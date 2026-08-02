@@ -116,7 +116,7 @@ function IconLink() {
 export interface OttoNavProps {
   view: OttoViewKey;
   onViewChange: (v: OttoViewKey) => void;
-  /** All projects (campaigns) for the sidebar. */
+  /** All projects for the sidebar. */
   projects: ProjectMeta[];
   /** The open project. */
   activeProjectId: string;
@@ -128,21 +128,21 @@ export interface OttoNavProps {
   onSwitchProject: (projectId: string, threadId?: string) => void;
   /** Open a project's new-turn front door without exposing a separate "chat" nav action. */
   onNewChat: (projectId: string) => void;
-  /** Open the rename flow for a project (campaign). */
+  /** Open the rename flow for a project. */
   onRenameProject: (projectId: string) => void;
-  /** Pin/unpin a project (campaign). */
+  /** Pin/unpin a project. */
   onSetProjectPinned: (projectId: string, pinned: boolean) => void;
-  /** Permanently delete a project (campaign). */
+  /** Permanently delete a project. */
   onDeleteProject: (projectId: string) => void;
-  /** Create a new campaign with the default name and open it immediately. No naming
-   *  step — the campaign is auto-titled from its first conversation (see actions.ts
+  /** Create a new project with the default name and open it immediately. No naming
+   *  step — the project is auto-titled from its first conversation (see actions.ts
    *  autoTitleProjectIfDefault). */
-  onNewCampaign: () => Promise<boolean>;
-  newCampaignPending?: boolean;
+  onNewProject: () => Promise<boolean>;
+  newProjectPending?: boolean;
   onRenameThread: (id: string) => void;
   onSetThreadPinned: (id: string, pinned: boolean) => void;
   onDeleteThread: (id: string) => void;
-  /** Deprecated display-only prop. Media now lives under Workspace/Library to keep this rail focused on campaigns. */
+  /** Deprecated display-only prop. Media now lives under Workspace/Library to keep this rail focused on projects. */
   history?: HistoryThumb[];
   /** Mobile: whether the drawer is open (controlled by OttoApp). */
   drawerOpen?: boolean;
@@ -166,8 +166,8 @@ export function OttoNav({
   onRenameProject,
   onSetProjectPinned,
   onDeleteProject,
-  onNewCampaign,
-  newCampaignPending = false,
+  onNewProject,
+  newProjectPending = false,
   onRenameThread,
   onSetThreadPinned,
   onDeleteThread,
@@ -181,7 +181,7 @@ export function OttoNav({
   const isOpen = drawerOpen || !collapsed;
   const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
-  // Keep history scannable: current campaign open, older campaigns compact until expanded.
+  // Keep history scannable: current project open, older projects compact until expanded.
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(toolsActive);
@@ -232,10 +232,10 @@ export function OttoNav({
     onDrawerClose?.();
   }
 
-  async function handleNewCampaignClick() {
-    if (newCampaignPending) return;
+  async function handleNewProjectClick() {
+    if (newProjectPending) return;
     setOpenMenu(null);
-    const ok = await onNewCampaign();
+    const ok = await onNewProject();
     if (ok) onDrawerClose?.();
   }
 
@@ -368,21 +368,22 @@ export function OttoNav({
         </button>
       </div>
 
-      {/* Primary creation action. Creates the campaign immediately and opens it —
-          no naming step. It's auto-titled from its first conversation. */}
+      {/* Primary creation action. Creates the project immediately and opens it —
+          no naming step. It's auto-titled from its first conversation (#546: it builds
+          a Project, so it says project — never "New campaign"). */}
       <div className="pt-4 px-3 pb-3">
         <button
-          onClick={handleNewCampaignClick}
-          disabled={newCampaignPending}
-          aria-busy={newCampaignPending}
-          className={`flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:pointer-events-none disabled:opacity-60${newCampaignPending ? " cursor-wait" : ""}`}
+          onClick={handleNewProjectClick}
+          disabled={newProjectPending}
+          aria-busy={newProjectPending}
+          className={`flex items-center justify-center gap-[7px] w-full h-[38px] border-0 bg-primary text-primary-foreground text-[0.875rem] font-semibold px-3 rounded-[12px] cursor-pointer transition shadow-[0_4px_12px_rgba(236,88,40,0.18)] disabled:pointer-events-none disabled:opacity-60${newProjectPending ? " cursor-wait" : ""}`}
         >
           <IconPlus />
-          New campaign
+          New project
         </button>
       </div>
 
-      {/* Projects (campaigns) + History */}
+      {/* Projects + History */}
       {hasSidebar && (
         <div className="flex-1 overflow-auto pt-4 px-3 pb-2">
           {hasHistoryContent && (
@@ -407,12 +408,12 @@ export function OttoNav({
               const projectMenuOpen = openMenu === projectMenuKey;
               return (
                 <div key={`project:${p.id}`} className="mb-1">
-                  {/* project (campaign) row — chevron toggles conversations; right controls match Codex density. */}
+                  {/* project row — chevron toggles conversations; right controls match Codex density. */}
                   <div className="otto-recent-row relative flex items-center" data-menu-open={projectMenuOpen ? "true" : "false"}>
                     {canExpand ? (
                       <button
                         type="button"
-                        aria-label={isCollapsed ? "Expand campaign" : "Collapse campaign"}
+                        aria-label={isCollapsed ? "Expand project" : "Collapse project"}
                         aria-expanded={!isCollapsed}
                         onClick={(e) => { e.stopPropagation(); toggleProjectCollapse(p.id); }}
                         className="flex items-center justify-center w-[18px] h-[26px] border-0 bg-transparent text-muted-foreground/70 p-0 shrink-0 cursor-pointer"
@@ -448,7 +449,7 @@ export function OttoNav({
                         aria-label={`${p.name} controls`}
                         aria-haspopup="menu"
                         aria-expanded={projectMenuOpen}
-                        title="Campaign controls"
+                        title="Project controls"
                         onClick={(e) => { e.stopPropagation(); setOpenMenu(projectMenuOpen ? null : projectMenuKey); }}
                       >
                         <MoreHorizontal size={15} aria-hidden />

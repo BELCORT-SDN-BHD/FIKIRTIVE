@@ -1988,7 +1988,9 @@ export async function createEmptyCoworkThread(raw: unknown): Promise<{ id: strin
 
     const id = newId();
     await prisma.chatThread.create({
-      data: { id, ownerId, projectId, title: title.slice(0, 80) || "New campaign" },
+      // "Untitled" (not "New campaign" — #546): a conversation is never a campaign, and
+      // OttoApp's auto-title effect already treats "Untitled" threads as unnamed.
+      data: { id, ownerId, projectId, title: title.slice(0, 80) || "Untitled" },
     });
     return { id };
   } catch (e) {

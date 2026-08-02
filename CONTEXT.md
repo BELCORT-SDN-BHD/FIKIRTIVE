@@ -48,9 +48,16 @@ Reading the table below:
   @mentionable reference asset). _Avoid:_ **design system** (that names Fikirtive's own app UI
   library, not a merchant's identity), brand guidelines (informal), theme, style guide.
 
-- **Project** (项目) — A unit of work under a Brand (a campaign or a video effort); contains many
-  Chats and one shared Canvas. _Avoid:_ workspace, folder, brand, Campaign (the future marketing
-  Campaign object is separate).
+- **Project** (项目) — A unit of creative work under a Brand; contains many Chats and one shared
+  Canvas. The UI default placeholder name is "New project" (auto-titled from the first
+  conversation) — never "New campaign" (#546). _Avoid:_ workspace, folder, brand, Campaign (the
+  independent marketing Campaign object below).
+
+- **Campaign** (营销活动) — The independent marketing object (Blueprint v1.8: "独立 Campaign 对象,
+  不升格 project"): a goal, a start/end period, UTM/attribution, grouping creative work and sends.
+  A Campaign *groups*; it never produces. A Project may soft-link to one via `campaignId`, but
+  creating a Project never creates a Campaign — /campaign lists Campaign rows only. _Avoid:_
+  Project, ad-pack, broadcast run.
 
 ## Customer engagement 顾客互动
 
@@ -273,12 +280,13 @@ Reading the table below:
   estimated price the user can edit and then Generate. Display-only until clicked. _Avoid:_ proposal
   (informal), gen card, suggestion.
 
-- **Project Brief** (项目纲要 / coworkBrief→projectBrief) — The creative brief for ONE Project (this
-  campaign/video): what to make and why, *this time*. The **project-level** context layer. It sits
+- **Project Brief** (项目纲要 / coworkBrief→projectBrief) — The creative brief for ONE Project:
+  what to make and why, *this time*. The **project-level** context layer. It sits
   UNDER the Brand Brain — brand-constant things (voice, Brand Kit, catalog) live in the Brand Brain,
   NOT here, so the Project Brief stays light. **Otto's full context = Brand Brain + Project Brief +
   the conversation.** Human-authored; Otto may self-update it. Renamed from "coworkBrief". _Avoid:_
-  Brand Brain (brand-level, not project-level), description, notes, prompt, summary.
+  Brand Brain (brand-level, not project-level), Brand brief (2026-07 UI drift — it made a
+  per-project field sound org-level, #546), description, notes, prompt, summary.
 
 - **Planner** (规划器) — The LLM call inside an Otto turn that produces the structured plan/proposal
   JSON. Otto is the persona/loop; the Planner is the model call it makes — two layers, never merged.
