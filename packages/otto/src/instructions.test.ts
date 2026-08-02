@@ -222,7 +222,8 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
   // #559-style conservative safety lint: these are auditable banned wording families,
   // not a general English classifier. An ambiguous new instruction should be reviewed.
   const SAY_TO_START_INVITATIONS = [
-    /\b(?:just\s+)?(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\bjust\s+say\b[^.!?\n]{1,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
+    /\b(?:say|reply|respond|type|write|message|send|answer)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
     /\b(?:tell(?:\s+me)?|give(?:\s+me)?)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
     /\b(?:let\s+me\s+know|just\s+confirm)\b[^.!?\n]{0,50}\b(?:and|then)\b[^.!?\n]{0,12}\b(?:I['’]ll(?:\s+be)?|I\s+will(?:\s+be)?|I['’]m\s+going\s+to)\s+(?:start(?:ing)?|begin(?:ning)?|get(?:ting)?|kick(?:ing)?|mak(?:e|ing)|creat(?:e|ing)|generat(?:e|ing)|build(?:ing)?|run(?:ning)?|do(?:ing)?|render(?:ing)?|animat(?:e|ing))\b/i,
     /\b(?:say|reply|respond|type|write|message|send|answer|tell|give)\b[^.!?\n]{0,50}\b(?:(?:the\s+)?go(?:[- ]ahead)?|yes|ready|proceed|ok(?:ay)?|make\s+it|generate\s+all|the\s+word)\b[^.!?\n]{0,30}\b(?:and|then)\b[^.!?\n]{0,12}\bwe['’]re\s+off\b/i,
@@ -284,6 +285,9 @@ describe("ottoInstructions — #541 confirming is a button press, never a word",
       "Message ready then I will animate the image.",
       "Answer ok and I'm going to start it.",
       "Let me know you're ready and I'll be creating it.",
+      // r7 — Founder "just say X" wording may use any short phrase:
+      "Just say ship it and I'll start the work.",
+      "Just say do it then I will generate the image.",
     ];
     for (const escape of escapes) {
       expect(
