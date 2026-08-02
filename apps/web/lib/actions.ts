@@ -119,12 +119,12 @@ const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled 
  *  must still refuse to copy it onto a default Project. */
 const UNTITLED_CHAT_TITLE = "Untitled";
 
-async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string } | null> {
+async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string; name: string } | null> {
   if (!DEFAULT_PROJECT_NAMES.has(name)) return null;
   const candidates = await prisma.project.findMany({
     where: { ownerId, name: { in: [...DEFAULT_PROJECT_NAMES] }, deletedAt: null },
     orderBy: { createdAt: "desc" },
-    select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
+    select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
     take: 12,
   });
   for (const candidate of candidates) {
@@ -175,7 +175,30 @@ export async function createProject(name: string): Promise<{ id: string } | { er
   const { ownerId } = gate;
   const cleanName = name.trim() || "Untitled Project";
   const reusable = await findReusableEmptyDefaultProject(ownerId, cleanName);
-  if (reusable) return { id: reusable.id };
+  if (reusable) {
+    if (cleanName === "New project" && reusable.name !== cleanName) {
+      const renamed = await prisma.$transaction(async (tx) => {
+        const { count } = await tx.project.updateMany({
+          where: { id: reusable.id, ownerId, name: reusable.name, deletedAt: null },
+          data: { name: cleanName },
+        });
+        if (count !== 1) return false;
+        await tx.actionEvent.create({
+          data: {
+            id: newId(),
+            ownerId,
+            projectId: reusable.id,
+            type: "project.rename",
+            payload: { name: cleanName },
+          },
+        });
+        return true;
+      });
+      if (!renamed) return { error: "Project not found." };
+      revalidatePath("/", "layout");
+    }
+    return { id: reusable.id };
+  }
   const project = await prisma.project.create({
     data: { id: newId(), ownerId, name: cleanName },
   });

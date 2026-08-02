@@ -238,7 +238,7 @@ describe("createProject", () => {
   });
 
   it("reuses an empty default project instead of creating duplicate sidebar rows", async () => {
-    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_empty", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_empty", name: "New project", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
 
     await expect(createProject("New project")).resolves.toEqual({ id: "p_empty" });
 
@@ -249,7 +249,7 @@ describe("createProject", () => {
         deletedAt: null,
       },
       orderBy: { createdAt: "desc" },
-      select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
+      select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
       take: 12,
     });
     expect(prisma.chatThread.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
@@ -259,6 +259,8 @@ describe("createProject", () => {
     expect(prisma.genJob.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty" } });
     expect(prisma.generation.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
     expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.project.updateMany).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.actionEvent.create).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
   });
@@ -274,7 +276,31 @@ describe("createProject", () => {
         name: { in: ["New project", "New campaign", "Untitled Project"] },
         deletedAt: null,
       },
+      select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
     }));
+    expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.project.updateMany).toHaveBeenCalledWith({
+      where: { id: "p_legacy", ownerId: "o1", name: "New campaign", deletedAt: null },
+      data: { name: "New project" },
+    });
+    expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        ownerId: "o1",
+        projectId: "p_legacy",
+        type: "project.rename",
+        payload: { name: "New project" },
+      }),
+    }));
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+  });
+
+  it("fails closed if the legacy row changes before its canonical rename", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_legacy", name: "New campaign", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.project.updateMany as Mock).mockResolvedValue({ count: 0 });
+
+    await expect(createProject("New project")).resolves.toEqual({ error: "Project not found." });
+
     expect(prisma.project.create).not.toHaveBeenCalled();
     expect(prisma.actionEvent.create).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
