@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { videoDefaults, type GenVideoModel } from "@fikirtive/core";
+import { CANVAS_REPAIR_JSON_KEY, videoDefaults, type GenVideoModel } from "@fikirtive/core";
 
 const HASH_HEX_LENGTH = 32;
 const FACTORY_KEY_RE = /^batch:([0-9a-f]{32}):attempt:([0-9a-f]{32})$/;
@@ -62,9 +62,6 @@ export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "vari
   /** Legacy/non-Canvas readers may omit the column; absence is the same as null. */
   threadId?: string | null;
 };
-
-/** Reserved GenJob.videoOptions key used only by the post-delivery canvas repair sweep. */
-export const CANVAS_REPAIR_JSON_KEY = "__canvasRepair";
 
 function shortHash(scope: string, value: string): string {
   return createHash("sha256")
@@ -165,6 +162,15 @@ function materialVideoOptions(value: unknown): unknown {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value ?? null;
   const material = { ...value as Record<string, unknown> };
   if (!Object.hasOwn(material, CANVAS_REPAIR_JSON_KEY)) return material;
+  const repair = material[CANVAS_REPAIR_JSON_KEY];
+  if (
+    repair !== null &&
+    typeof repair === "object" &&
+    !Array.isArray(repair) &&
+    Object.hasOwn(repair, "originalVideoOptions")
+  ) {
+    return (repair as Record<string, unknown>).originalVideoOptions;
+  }
   delete material[CANVAS_REPAIR_JSON_KEY];
   return Object.keys(material).length === 0 ? null : material;
 }

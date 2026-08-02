@@ -26,6 +26,7 @@
  */
 import {
   CANVAS_JOB_KEY_PATTERN,
+  CANVAS_REPAIR_JSON_KEY,
   canvasJobOrigin,
   newId,
   planCanvasSettlement,
@@ -34,6 +35,8 @@ import {
 } from "@fikirtive/core";
 import { Prisma } from "../generated/prisma/client.js";
 import { prisma } from "./index.js";
+
+export { CANVAS_REPAIR_JSON_KEY };
 
 export type CanvasSettlementOutcome = {
   /** "settled" = the board matches the job. The others are the honest reasons for doing nothing. */
@@ -199,23 +202,15 @@ export type CanvasSettlementBacklogJob = { id: string; ownerId: string; projectI
  * WHERE IT LIVES. The Founder's zero-migration Design A reserves `GenJob.videoOptions` key
  * `__canvasRepair` for this bookkeeping. Every other key remains paid request material;
  * `factoryMaterialMatches` ignores this key alone. A repair that works removes only the reserved
- * key and restores an originally-null value to null. A board written off keeps the record, with
- * `terminalAt`, so retirement is visible and reversible rather than silent loss.
+ * key and restores the original value exactly. Attempts and next-at remain persisted for as long
+ * as the board needs repair; reaching the backoff ceiling slows retries but never retires it.
  */
-export const CANVAS_REPAIR_JSON_KEY = "__canvasRepair";
 /** How long a board waits after its first failed repair; it doubles per consecutive failure. */
 export const CANVAS_REPAIR_WAIT_BASE_MS = 15 * 60_000;
 /** …up to this, so a board that will never write still gets a look a few times a day. */
 export const CANVAS_REPAIR_WAIT_MAX_MS = 4 * 60 * 60_000;
-/**
- * How many failed repairs before a board is written off — roughly three days of trying.
- *
- * Written off is NOT thrown away, and the difference is the whole point: the record stays, with
- * the attempt count, the moment it was written off and the last failure's reason, so a board that
- * stopped being swept is a row someone can find and act on. Clearing that row puts the board back
- * in the sweep. Silently dropping a merchant's paid board is what the last three rounds were about.
- */
-export const CANVAS_REPAIR_MAX_ATTEMPTS = 20;
+/** Safety cap for the exponential calculation only. It never limits attempts or eligibility. */
+const CANVAS_REPAIR_BACKOFF_EXPONENT_CAP = 4;
 
 /** What one troubled board's row says. Written here and read by the scan's SQL — nowhere else. */
 export type CanvasRepairRecord = {
@@ -224,17 +219,20 @@ export type CanvasRepairRecord = {
   attempts: number;
   /** ISO-8601 UTC. The sweep leaves this board alone until then. */
   nextAt: string;
-  /** ISO-8601 UTC once the board is written off; `null` while it is still being tried. */
-  terminalAt: string | null;
   /** Why the last attempt did not finish the board — for the human who reads this row. */
   reason: string;
   /** Restores the paid material exactly when the reserved record is removed. */
   videoOptionsWasNull: boolean;
+  /** Preserves an unexpected legacy scalar/array while the object-shaped repair note exists. */
+  originalVideoOptions?: unknown;
 };
 
 /** The wait after the Nth consecutive failure: doubling, capped. */
 export function canvasRepairWaitMs(attempts: number): number {
-  const doublings = Math.max(0, Math.floor(attempts) - 1);
+  const doublings = Math.min(
+    CANVAS_REPAIR_BACKOFF_EXPONENT_CAP,
+    Math.max(0, Math.floor(attempts) - 1),
+  );
   return Math.min(CANVAS_REPAIR_WAIT_BASE_MS * 2 ** doublings, CANVAS_REPAIR_WAIT_MAX_MS);
 }
 
@@ -258,8 +256,8 @@ const BACKLOG_FAIRNESS_OVERSCAN = 4;
  *   - the merchant did not delete the in-flight card, which suppresses the whole job for ever;
  *   - something is actually missing (`canvasBoardNeedsSettlement`): a paid output with no card of
  *     its own, or a card that is not finished;
- *   - and its repair record either does not exist (never tried), or says the wait is over and the
- *     board has not been written off.
+ *   - and its repair record either does not exist (never tried), or says the wait is over. There
+ *     is no terminal retry state: a paid board remains eligible at the maximum cadence.
  *
  * GETTING THROUGH THE QUEUE — the property three review rounds were spent on. The order is "whose
  * turn has been waiting longest": a board that was never tried is due at its delivery time, a
@@ -300,6 +298,9 @@ export async function findCanvasSettlementBacklog(options: {
   // The exact shape of a server-minted Canvas key, taken from the module that mints it rather
   // than spelled again here. POSIX and JavaScript agree on every construct it uses.
   const canvasKeyPattern = CANVAS_JOB_KEY_PATTERN.source;
+  // Date.toISOString() is the only writer. Anything outside this exact shape is malformed and
+  // therefore due, never a value allowed to suppress a paid board indefinitely.
+  const repairTimePattern = "^[0-9]{4}-(0[1-9]|1[0-2])-([0-2][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$";
 
   const rows = await prisma.$queryRaw<CanvasSettlementBacklogJob[]>`
     SELECT j.id, j."ownerId", j."projectId"
@@ -310,15 +311,21 @@ export async function findCanvasSettlementBacklog(options: {
       AND j."finishedAt" IS NOT NULL
       AND j."finishedAt" < ${finishedBeforeIso}::timestamp
       AND COALESCE(array_length(j."generationIds", 1), 0) > 0
-      -- Never tried, or its wait is over and it has not been written off. A record whose payload
-      -- is missing a field is read as DUE, never as absent: a malformed row must cost an extra
-      -- attempt, never a merchant's board.
+      -- Never tried, or its wait is over. Missing/malformed metadata is DUE: an old terminalAt or
+      -- a broken nextAt must cost an extra attempt, never a merchant's board.
       AND (
         j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} IS NULL
-        OR (
-          j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'terminalAt' IS NULL
-          AND COALESCE(j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt', '') <= ${nowIso}
-        )
+        OR CASE
+          WHEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt' IS NULL THEN TRUE
+          WHEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt' ~ ${repairTimePattern}
+            AND pg_input_is_valid(
+              j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt',
+              'timestamp with time zone'
+            )
+          THEN (j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt')::timestamptz
+            <= ${nowIso}::timestamptz
+          ELSE TRUE
+        END
       )
       -- canvasJobBelongsOnBoard: bought from the board, bought in a live chat, or already showing
       -- a card. "No card yet" is exactly the state this sweep repairs, so it never means "no board".
@@ -347,7 +354,9 @@ export async function findCanvasSettlementBacklog(options: {
       -- merchant's other board — can name this job, and matching it loosely once retired boards
       -- that were still missing paid work (#601 r2 P1③ / r3 P2).
       AND (
-        EXISTS (
+        -- A completed board whose repair note failed to clear comes back for idempotent cleanup.
+        j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} IS NOT NULL
+        OR EXISTS (
           SELECT 1 FROM unnest(j."generationIds") AS paid(generation_id)
           WHERE paid.generation_id <> '' AND NOT EXISTS (
             SELECT 1 FROM "CanvasNode" n
@@ -367,10 +376,15 @@ export async function findCanvasSettlementBacklog(options: {
     -- whose wait has run out. Rendered straight from the column, which already holds UTC: going
     -- through a timestamptz would print it in the SESSION's zone and order the queue by whatever
     -- timezone the connection happened to have.
-    ORDER BY COALESCE(
-      j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt',
-      to_char(j."finishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-    ) ASC, j.id ASC
+    ORDER BY CASE
+      WHEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt' ~ ${repairTimePattern}
+        AND pg_input_is_valid(
+          j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt',
+          'timestamp with time zone'
+        )
+      THEN j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} ->> 'nextAt'
+      ELSE to_char(j."finishedAt", 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+    END ASC, j.id ASC
     LIMIT ${limit * BACKLOG_FAIRNESS_OVERSCAN}
   `;
 
@@ -378,8 +392,7 @@ export async function findCanvasSettlementBacklog(options: {
 }
 
 /**
- * Record that a board's repair did not finish it: wait longer next time, and write it off at the
- * cap.
+ * Record that a board's repair did not finish it: wait longer next time, up to the cadence cap.
  *
  * This is the ONLY thing the sweep writes about a job: one reserved JSON key. No money column, no
  * job status, no ledger, no provider. It shares the settlement lock so two workers cannot lose an
@@ -388,7 +401,7 @@ export async function findCanvasSettlementBacklog(options: {
 export async function noteCanvasRepairFailure(
   job: CanvasSettlementBacklogJob,
   input: { now: Date; reason: string },
-): Promise<CanvasRepairRecord> {
+): Promise<CanvasRepairRecord | null> {
   return prisma.$transaction(async (tx) => {
     const lockKey = canvasJobPlacementLockKey(job.ownerId, job.projectId, job.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
@@ -396,28 +409,32 @@ export async function noteCanvasRepairFailure(
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
       select: { videoOptions: true },
     });
-    if (!current) throw new Error(`paid DONE canvas job not found: ${job.id}`);
+    if (!current) return null;
 
-    const videoOptions = editableVideoOptions(current.videoOptions, job.id);
+    const editable = editableVideoOptions(current.videoOptions);
+    const videoOptions = editable.value;
     const prior = videoOptions[CANVAS_REPAIR_JSON_KEY];
-    const attempts = priorAttempts(prior) + 1;
+    const attempts = Math.min(priorAttempts(prior) + 1, Number.MAX_SAFE_INTEGER);
+    const originalVideoOptions = repairOriginalVideoOptions(prior, editable.originalVideoOptions);
     const record: CanvasRepairRecord = {
       genJobId: job.id,
       attempts,
       nextAt: new Date(input.now.getTime() + canvasRepairWaitMs(attempts)).toISOString(),
-      terminalAt: attempts >= CANVAS_REPAIR_MAX_ATTEMPTS ? input.now.toISOString() : null,
       // Bounded: this record is a note for a human, never a log of the failure.
       reason: input.reason.slice(0, 200),
       videoOptionsWasNull: priorVideoOptionsWereNull(prior, current.videoOptions),
+      ...(originalVideoOptions !== undefined ? { originalVideoOptions } : {}),
     };
     const updated = await tx.genJob.updateMany({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
       data: {
-        videoOptions: { ...videoOptions, [CANVAS_REPAIR_JSON_KEY]: record } as Prisma.InputJsonValue,
+        videoOptions: {
+          ...videoOptions,
+          [CANVAS_REPAIR_JSON_KEY]: record,
+        } as unknown as Prisma.InputJsonValue,
       },
     });
-    if (updated.count !== 1) throw new Error(`paid DONE canvas job changed while recording repair: ${job.id}`);
-    return record;
+    return updated.count === 1 ? record : null;
   });
 }
 
@@ -436,12 +453,17 @@ export async function clearCanvasRepairRecord(job: CanvasSettlementBacklogJob): 
     const videoOptions = { ...current.videoOptions };
     delete videoOptions[CANVAS_REPAIR_JSON_KEY];
     const restoreNull = isJsonObject(record) && record.videoOptionsWasNull === true;
+    const originalVideoOptions = isJsonObject(record) && Object.hasOwn(record, "originalVideoOptions")
+      ? record.originalVideoOptions
+      : undefined;
     await tx.genJob.updateMany({
       where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId },
       data: {
-        videoOptions: restoreNull && Object.keys(videoOptions).length === 0
-          ? Prisma.DbNull
-          : videoOptions as Prisma.InputJsonValue,
+        videoOptions: originalVideoOptions !== undefined
+          ? originalVideoOptions as Prisma.InputJsonValue
+          : restoreNull && Object.keys(videoOptions).length === 0
+            ? Prisma.DbNull
+            : videoOptions as Prisma.InputJsonValue,
       },
     });
   });
@@ -451,11 +473,21 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Refuse to replace unexpected paid material with bookkeeping. */
-function editableVideoOptions(value: unknown, jobId: string): Record<string, unknown> {
-  if (value === null) return {};
-  if (isJsonObject(value)) return { ...value };
-  throw new Error(`canvas repair cannot edit non-object videoOptions: ${jobId}`);
+/** Make every database JSON value recordable while preserving unexpected legacy material. */
+function editableVideoOptions(value: unknown): {
+  value: Record<string, unknown>;
+  originalVideoOptions?: unknown;
+} {
+  if (value === null) return { value: {} };
+  if (isJsonObject(value)) return { value: { ...value } };
+  return { value: {}, originalVideoOptions: value };
+}
+
+function repairOriginalVideoOptions(prior: unknown, current: unknown): unknown {
+  if (isJsonObject(prior) && Object.hasOwn(prior, "originalVideoOptions")) {
+    return prior.originalVideoOptions;
+  }
+  return current;
 }
 
 function priorVideoOptionsWereNull(prior: unknown, current: unknown): boolean {
@@ -470,7 +502,7 @@ function priorAttempts(payload: unknown): number {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return 0;
   const attempts = (payload as { attempts?: unknown }).attempts;
   return typeof attempts === "number" && Number.isFinite(attempts) && attempts > 0
-    ? Math.floor(attempts)
+    ? Math.min(Math.floor(attempts), Number.MAX_SAFE_INTEGER)
     : 0;
 }
 

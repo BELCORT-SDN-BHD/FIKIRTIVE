@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANVAS_JOB_KEY_PREFIX, isCanvasJobKey } from "@fikirtive/core";
+import { CANVAS_JOB_KEY_PREFIX, CANVAS_REPAIR_JSON_KEY, isCanvasJobKey } from "@fikirtive/core";
 import {
   canvasActionKey,
   factoryAttemptKey,
@@ -150,7 +150,7 @@ describe("factory material binding", () => {
       ...expected,
       videoOptions: {
         ...userOptions,
-        __canvasRepair: {
+        [CANVAS_REPAIR_JSON_KEY]: {
           attempts: 3,
           nextAt: "2026-08-03T01:00:00.000Z",
           terminalAt: null,
@@ -164,9 +164,21 @@ describe("factory material binding", () => {
       videoOptions: {
         ...userOptions,
         merchantChoice: "documentary",
-        __canvasRepair: { attempts: 3 },
+        [CANVAS_REPAIR_JSON_KEY]: { attempts: 3 },
       },
     }, { ...expected, videoOptions: userOptions })).toBe(false);
+
+    // A legacy non-object payload must remain paid material while the repair record temporarily
+    // wraps it. Removing the reserved key must not turn that corruption into an apparent null.
+    expect(factoryMaterialMatches({
+      ...expected,
+      videoOptions: {
+        [CANVAS_REPAIR_JSON_KEY]: {
+          attempts: 3,
+          originalVideoOptions: "legacy-material",
+        },
+      },
+    }, expected)).toBe(false);
 
     expect(factoryMaterialMatches({ ...expected, videoOptions: {} }, expected)).toBe(false);
   });

@@ -44,6 +44,9 @@ export const CANVAS_JOB_KEY_PREFIX = "canvas:";
  */
 export const CANVAS_JOB_KEY_PATTERN = /^canvas:[0-9a-f]{64}$/;
 
+/** Reserved GenJob.videoOptions key used only by the post-delivery canvas repair sweep. */
+export const CANVAS_REPAIR_JSON_KEY = "__canvasRepair";
+
 /** Is this exactly a key the server minted for a Canvas press? */
 export function isCanvasJobKey(idempotencyKey: string | null | undefined): boolean {
   return typeof idempotencyKey === "string" && CANVAS_JOB_KEY_PATTERN.test(idempotencyKey);

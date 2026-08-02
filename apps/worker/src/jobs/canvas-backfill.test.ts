@@ -192,6 +192,22 @@ describe("what the sweep records about a repair", () => {
     expect(m.noteCanvasRepairFailure).not.toHaveBeenCalled();
   });
 
+  it("retries record cleanup on a later tick without calling a completed settlement a failure", async () => {
+    const stale = board("g-cleanup");
+    m.findCanvasSettlementBacklog.mockResolvedValue([stale]);
+    m.settleCanvasCardsForGenJob.mockResolvedValue(nothingToDo);
+    m.clearCanvasRepairRecord
+      .mockRejectedValueOnce(new Error("cleanup write lost its connection"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(backfillCanvasBoards()).resolves.toBe(0);
+    await expect(backfillCanvasBoards()).resolves.toBe(0);
+
+    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledTimes(2);
+    expect(m.clearCanvasRepairRecord).toHaveBeenCalledTimes(2);
+    expect(m.noteCanvasRepairFailure).not.toHaveBeenCalled();
+  });
+
   it("carries on when the record itself cannot be written — the board simply stays due", async () => {
     m.findCanvasSettlementBacklog.mockResolvedValue([board("g-broken"), board("g-fine")]);
     m.settleCanvasCardsForGenJob

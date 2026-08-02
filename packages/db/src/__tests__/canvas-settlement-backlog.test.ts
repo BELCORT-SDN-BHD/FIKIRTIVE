@@ -14,9 +14,9 @@
  *   3. Repairing lands EXACTLY once — a second sweep finds nothing left to do.
  *   4. Boards that are already right, jobs the merchant suppressed, and jobs that have no board
  *      at all are never in the worklist, so the sweep cannot churn or resurrect anything.
- *   5. Every board eventually gets its turn, whatever is in front of it, and a board that stops
- *      being swept leaves a record saying so (#601 r7 — the retry layer is a database query now,
- *      not a book in the worker's memory).
+ *   5. Every board eventually gets its turn, whatever is in front of it, and failures persist a
+ *      bounded-cadence retry record (#601 r7 — the retry layer is a database query now, not a book
+ *      in the worker's memory).
  *
  * The failed write is reproduced by its OBSERVABLE result — the cards were not written — which is
  * exactly the state `settleCanvasBoard`'s swallowed exception leaves behind in production.
@@ -31,7 +31,6 @@ import {
 } from "@fikirtive/core";
 import { prisma } from "../index.js";
 import {
-  CANVAS_REPAIR_MAX_ATTEMPTS,
   CANVAS_REPAIR_JSON_KEY,
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
@@ -688,6 +687,8 @@ describe("a board whose repair failed", () => {
     const waits: number[] = [];
     for (let attempt = 1; attempt <= 8; attempt += 1) {
       const record = await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write blew up" });
+      expect(record).not.toBeNull();
+      if (!record) throw new Error("seeded paid board disappeared");
       expect(record.attempts).toBe(attempt);
       waits.push(Date.parse(record.nextAt) - start.getTime());
     }
@@ -734,7 +735,6 @@ describe("a board whose repair failed", () => {
       [CANVAS_REPAIR_JSON_KEY]: {
         genJobId: jobId,
         attempts: 1,
-        terminalAt: null,
       },
     });
 
@@ -771,33 +771,36 @@ describe("a board whose repair failed", () => {
     }
   });
 
-  it("is written off after enough failures — and the record says so, on file, for ever", async () => {
+  it("remains automatically retryable after more than twenty failures without touching money", async () => {
     const start = new Date();
     const { jobId } = await seedDeliveredJob({ outputs: 2 });
+    const before = await moneySnapshot(jobId);
     let record: CanvasRepairRecord | null = null;
-    for (let attempt = 1; attempt <= CANVAS_REPAIR_MAX_ATTEMPTS; attempt += 1) {
+    const failures = 21;
+    for (let attempt = 1; attempt <= failures; attempt += 1) {
       record = await noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: `attempt ${attempt} blew up` });
-      // Not written off one attempt early: the cap is the cap.
-      if (attempt < CANVAS_REPAIR_MAX_ATTEMPTS) expect(record.terminalAt).toBeNull();
     }
 
-    expect(record?.terminalAt).toBe(start.toISOString());
-
-    // It leaves the sweep — however long you wait, it is not offered again…
+    expect(record?.attempts).toBe(failures);
     const muchLater = new Date(start.getTime() + 365 * 24 * HOUR);
-    expect(await sweepIds({ now: muchLater })).not.toContain(jobId);
-
-    // …but it is not gone. The row is still there, with the count, the moment and the reason, and
-    // clearing it puts the board straight back in the queue. Written off is not thrown away.
-    const onFile = await repairRecord(jobId);
-    expect(onFile).toMatchObject({
-      genJobId: jobId,
-      attempts: CANVAS_REPAIR_MAX_ATTEMPTS,
-      terminalAt: start.toISOString(),
-      reason: `attempt ${CANVAS_REPAIR_MAX_ATTEMPTS} blew up`,
-    });
-    await clearCanvasRepairRecord(boardOf(jobId));
     expect(await sweepIds({ now: muchLater })).toContain(jobId);
+
+    const after = await moneySnapshot(jobId);
+    expect({
+      status: after.job.status,
+      spent: after.job.spent,
+      spentUsd: after.job.spentUsd,
+      generationIds: after.job.generationIds,
+      ledger: after.ledger,
+      account: after.account,
+    }).toEqual({
+      status: before.job.status,
+      spent: before.job.spent,
+      spentUsd: before.job.spentUsd,
+      generationIds: before.job.generationIds,
+      ledger: before.ledger,
+      account: before.account,
+    });
   });
 
   it("is offered rather than lost when its record makes no sense", async () => {
@@ -812,6 +815,86 @@ describe("a board whose repair failed", () => {
     });
 
     expect(await sweepIds({ now: start })).toContain(jobId);
+  });
+
+  it("fails open when present next-time metadata or an old retirement marker is malformed", async () => {
+    const start = new Date();
+    const { jobId: invalidNextAt } = await seedDeliveredJob({ outputs: 2, minutesAgo: 40 });
+    const { jobId: oldTerminalAt } = await seedDeliveredJob({ outputs: 2, minutesAgo: 30 });
+    await prisma.genJob.update({
+      where: { id: invalidNextAt },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: invalidNextAt, attempts: 3, nextAt: "not-a-time",
+            terminalAt: null, reason: "legacy", videoOptionsWasNull: true,
+          },
+        },
+      },
+    });
+    await prisma.genJob.update({
+      where: { id: oldTerminalAt },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: oldTerminalAt, attempts: 20, nextAt: start.toISOString(),
+            terminalAt: "not-a-time", reason: "legacy", videoOptionsWasNull: true,
+          },
+        },
+      },
+    });
+
+    expect(await sweepIds({ now: start })).toEqual(expect.arrayContaining([invalidNextAt, oldTerminalAt]));
+  });
+
+  it("offers a stale repair record again when the board is complete but cleanup did not stick", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+    await noteCanvasRepairFailure(boardOf(jobId), {
+      now: new Date(start.getTime() - CANVAS_REPAIR_WAIT_BASE_MS),
+      reason: "first repair failed",
+    });
+    await settleCanvasCardsForGenJob(jobId, orgId);
+    expect(await cardsForJob(jobId)).toHaveLength(1);
+
+    expect(await sweepIds({ now: start })).toContain(jobId);
+  });
+
+  it("does not let an unrecordable oldest row starve a valid later paid board across ticks", async () => {
+    const start = new Date();
+    const first = await seedDeliveredJob({ outputs: 1, finishedAt: new Date(start.getTime() - HOUR) });
+    const later = await seedDeliveredJob({ outputs: 1, finishedAt: new Date(start.getTime() - HOUR + 1_000) });
+    await prisma.genJob.update({ where: { id: first.jobId }, data: { videoOptions: "legacy-material" } });
+    const attempted: string[] = [];
+
+    for (let tick = 0; tick < 3; tick += 1) {
+      const due = await sweep({ now: start, limit: 1 });
+      for (const job of due) {
+        attempted.push(job.id);
+        try {
+          await noteCanvasRepairFailure(job, { now: start, reason: "board write failed" });
+        } catch {
+          // This is the production sweep's per-row isolation: the next tick must still progress.
+        }
+      }
+    }
+
+    expect(attempted).toContain(later.jobId);
+    await clearCanvasRepairRecord(boardOf(first.jobId));
+    const restored = await prisma.genJob.findUniqueOrThrow({
+      where: { id: first.jobId }, select: { videoOptions: true },
+    });
+    expect(restored.videoOptions).toBe("legacy-material");
+  });
+
+  it("treats a row deleted after the scan as a harmless no-op", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+    await prisma.genJob.delete({ where: { id: jobId } });
+
+    await expect(
+      noteCanvasRepairFailure(boardOf(jobId), { now: start, reason: "board write failed" }),
+    ).resolves.toBeNull();
   });
 });
 

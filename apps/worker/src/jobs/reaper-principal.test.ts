@@ -29,7 +29,7 @@
  * `ownerId: null`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { getPrincipal, type Principal } from "@fikirtive/db/principal";
+import { getPrincipal, runAsSystem, type Principal } from "@fikirtive/db/principal";
 
 // Recorded at call time by the mocked Prisma surface below.
 const seen: Array<{ at: string; principal: Principal | undefined }> = [];
@@ -50,6 +50,10 @@ const db = vi.hoisted(() => {
   const scheduledPostUpdateMany = vi.fn();
   const refundReservation = vi.fn();
   const settleCredits = vi.fn();
+  const findCanvasSettlementBacklog = vi.fn();
+  const settleCanvasCardsForGenJob = vi.fn();
+  const noteCanvasRepairFailure = vi.fn();
+  const clearCanvasRepairRecord = vi.fn();
   const queryRaw = vi.fn();
   const transaction = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,6 +72,8 @@ const db = vi.hoisted(() => {
     chatMessageUpdateMany, creditLedgerFindFirst, researchJobFindMany, researchJobUpdateMany,
     publishAttemptFindMany, publishAttemptUpdateMany, scheduledPostFindUnique,
     scheduledPostUpdateMany, refundReservation, settleCredits, queryRaw, transaction,
+    findCanvasSettlementBacklog, settleCanvasCardsForGenJob, noteCanvasRepairFailure,
+    clearCanvasRepairRecord,
   };
 });
 
@@ -75,9 +81,10 @@ vi.mock("@fikirtive/db", () => ({
   prisma: db.prisma,
   refundReservation: db.refundReservation,
   settleCredits: db.settleCredits,
-  // #601: the delivery path ends by writing the job's canvas cards. Stubbed so this suite
-  // exercises the tenant framing it is about, not a swallowed canvas error.
-  settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
+  findCanvasSettlementBacklog: db.findCanvasSettlementBacklog,
+  settleCanvasCardsForGenJob: db.settleCanvasCardsForGenJob,
+  noteCanvasRepairFailure: db.noteCanvasRepairFailure,
+  clearCanvasRepairRecord: db.clearCanvasRepairRecord,
 }));
 // import-time deps these reapers never exercise
 vi.mock("../storage.js", () => ({ storage: {} }));
@@ -88,6 +95,7 @@ import { reapStaleGenJobs } from "./gen.js";
 import { reapStaleLlmReservations } from "./llm-reservation-reaper.js";
 import { reapStaleResearchJobs } from "./research.js";
 import { reapStalePublishAttempts } from "./publish.js";
+import { backfillCanvasBoards } from "./canvas-backfill.js";
 
 /**
  * A stand-in for `PrismaPromise`: it records the ambient principal when the caller DISPATCHES it
@@ -127,6 +135,52 @@ beforeEach(() => {
   db.creditLedgerFindFirst.mockImplementation(() => lazyThenable("creditLedger.findFirst", () => null));
   db.refundReservation.mockImplementation(async () => { note("refundReservation"); });
   db.queryRaw.mockImplementation(lazyImpl("$queryRaw", () => []));
+  db.findCanvasSettlementBacklog.mockImplementation(lazyImpl("canvasBacklog.scan", () => []));
+  db.settleCanvasCardsForGenJob.mockImplementation(
+    lazyImpl("canvasBacklog.settle", () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
+  );
+  db.noteCanvasRepairFailure.mockImplementation(lazyImpl("canvasBacklog.note", () => null));
+  db.clearCanvasRepairRecord.mockImplementation(lazyImpl("canvasBacklog.clear", () => undefined));
+});
+
+describe("backfillCanvasBoards carries the row tenant through every per-board operation", () => {
+  it("keeps the cross-tenant scan in the system frame and scopes settle, note and clear", async () => {
+    db.findCanvasSettlementBacklog.mockImplementation(
+      lazyImpl("canvasBacklog.scan", () => [
+        { id: "g-settled", ownerId: "o1", projectId: "p1" },
+        { id: "g-failed", ownerId: "o2", projectId: "p2" },
+      ]),
+    );
+    db.settleCanvasCardsForGenJob
+      .mockImplementationOnce(
+        lazyImpl("canvasBacklog.settle", () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })),
+      )
+      .mockImplementationOnce(() => ({
+        then(onFulfilled: (value: never) => unknown, onRejected: (reason: Error) => unknown) {
+          note("canvasBacklog.settle");
+          return Promise.reject(new Error("board write failed")).then(onFulfilled, onRejected);
+        },
+      }));
+
+    await runAsSystem("worker-reaper-tick", async () => {
+      await backfillCanvasBoards(new Date("2026-08-02T12:00:00.000Z"));
+    });
+
+    expect(at("canvasBacklog.scan")).toEqual({
+      kind: "system", reason: "worker-reaper-tick", ownerId: null,
+    });
+    expect(all("canvasBacklog.settle")).toEqual([
+      { kind: "system", reason: "worker-reaper-tick", ownerId: "o1" },
+      { kind: "system", reason: "worker-reaper-tick", ownerId: "o2" },
+    ]);
+    expect(at("canvasBacklog.clear")).toEqual({
+      kind: "system", reason: "worker-reaper-tick", ownerId: "o1",
+    });
+    expect(at("canvasBacklog.note")).toEqual({
+      kind: "system", reason: "worker-reaper-tick", ownerId: "o2",
+    });
+    expect(getPrincipal()).toBeUndefined();
+  });
 });
 
 describe("reapStaleGenJobs carries a two-phase principal", () => {

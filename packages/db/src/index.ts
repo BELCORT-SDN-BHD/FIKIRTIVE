@@ -25,7 +25,6 @@ export {
   CANVAS_REPAIR_JSON_KEY,
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
-  CANVAS_REPAIR_MAX_ATTEMPTS,
   type CanvasSettlementOutcome,
   type CanvasSettlementBacklogJob,
   type CanvasRepairRecord,

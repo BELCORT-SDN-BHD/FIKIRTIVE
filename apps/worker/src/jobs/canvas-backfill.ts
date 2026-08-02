@@ -21,10 +21,9 @@
  *
  * WHAT IT IS NOT — read this before touching it:
  *   - It NEVER touches money. No ledger, no `spent`/`spentUsd`, no reservation, no refund, no
- *     provider call, no GenJob write of any kind. It reads finished jobs and calls ONE idempotent
- *     card-writing shell. A job it cannot repair is left for a later sweep, and after roughly three
- *     days of failures it is written off — which means its record stays on file, not that it is
- *     forgotten (see `CANVAS_REPAIR_MAX_ATTEMPTS`).
+ *     provider call, and no job-status write. It reads finished jobs, calls ONE idempotent
+ *     card-writing shell, and updates only the reserved repair note. A job it cannot repair stays
+ *     automatically eligible at a bounded maximum cadence.
  *   - It never decides what a board should contain: `settleCanvasCardsForGenJob` runs the same
  *     single projection the delivery path runs, under the same per-job lock, and honours the
  *     merchant's deletions.
@@ -34,9 +33,11 @@ import {
   findCanvasSettlementBacklog,
   noteCanvasRepairFailure,
   settleCanvasCardsForGenJob,
+  type CanvasSettlementOutcome,
   type CanvasSettlementBacklogJob,
 } from "@fikirtive/db";
 import { runAsTenant } from "@fikirtive/db/principal";
+import { sanitizeError } from "../redact.js";
 
 /** Leave a just-delivered job alone: its own completion path is probably still writing the cards. */
 export const CANVAS_BACKFILL_GRACE_MS = 2 * 60_000;
@@ -64,41 +65,63 @@ export async function backfillCanvasBoards(now: Date = new Date()): Promise<numb
       limit: CANVAS_BACKFILL_LIMIT,
     });
   } catch (e) {
-    console.error("[canvas-backfill] backlog scan failed (retries next sweep):", e instanceof Error ? e.message : e);
+    console.error("[canvas-backfill] backlog scan failed (retries next sweep):", sanitizeError(e));
     return 0;
   }
 
   let repaired = 0;
   for (const job of due) {
-    // Per-job try/catch: one unrepairable board must not stop the sweep — it waits, then retries.
     try {
-      const outcome = await runAsTenant(job.ownerId, () => settleCanvasCardsForGenJob(job.id, job.ownerId));
-      if (outcome.status === "settled") {
-        await clearCanvasRepairRecord(job);
-        if (outcome.created + outcome.updated > 0) {
-          console.log(`[canvas-backfill] ${job.id}: wrote ${outcome.created} card(s), fixed ${outcome.updated}`);
-          repaired += 1;
+      // The async callback is load-bearing: Prisma promises dispatch lazily, so returning one
+      // directly would pop the tenant frame before the query actually runs.
+      await runAsTenant(job.ownerId, async () => {
+        const recordFailure = async (reason: string) => {
+          try {
+            await noteCanvasRepairFailure(job, { now, reason });
+          } catch (bookkeeping) {
+            console.error(
+              `[canvas-backfill] ${job.id}: could not record the failed repair:`,
+              sanitizeError(bookkeeping),
+            );
+          }
+        };
+
+        let outcome: CanvasSettlementOutcome;
+        try {
+          outcome = await settleCanvasCardsForGenJob(job.id, job.ownerId);
+        } catch (e) {
+          const reason = sanitizeError(e, 200);
+          console.error(`[canvas-backfill] ${job.id} failed (retries after a wait):`, reason);
+          await recordFailure(reason);
+          return;
         }
-        continue;
-      }
-      // The scan said this board was missing something and the projection disagreed — a card
-      // written between the two, or a state the scan reads more loosely than the projection does.
-      // Treated exactly like a failure: wait, then look again. Never dropped on the spot, because
-      // "the projection said no once" is not the same as "this board can never need repair".
-      await noteCanvasRepairFailure(job, { now, reason: outcome.status });
+
+        if (outcome.status === "settled") {
+          // Cleanup is not settlement. If this write fails, the stale record makes the idempotent
+          // board eligible again next tick; never turn a completed board into a failed repair.
+          try {
+            await clearCanvasRepairRecord(job);
+          } catch (cleanup) {
+            console.error(
+              `[canvas-backfill] ${job.id}: could not clear the completed repair record:`,
+              sanitizeError(cleanup),
+            );
+          }
+          if (outcome.created + outcome.updated > 0) {
+            console.log(`[canvas-backfill] ${job.id}: wrote ${outcome.created} card(s), fixed ${outcome.updated}`);
+            repaired += 1;
+          }
+          return;
+        }
+
+        // The scan said this board was missing something and the projection disagreed — a card
+        // written between the two, or a state the scan reads more loosely than the projection does.
+        // "The projection said no once" is not the same as "this board can never need repair".
+        await recordFailure(outcome.status);
+      });
     } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      console.error(`[canvas-backfill] ${job.id} failed (retries after a wait):`, reason);
-      // The record is the whole reason this board keeps its turn in the queue, so a failure to
-      // write it must not take the sweep down with it — the board simply stays due.
-      try {
-        await noteCanvasRepairFailure(job, { now, reason });
-      } catch (bookkeeping) {
-        console.error(
-          `[canvas-backfill] ${job.id}: could not record the failed repair:`,
-          bookkeeping instanceof Error ? bookkeeping.message : bookkeeping,
-        );
-      }
+      // Principal setup itself is the only expected path outside the per-tenant isolation above.
+      console.error(`[canvas-backfill] ${job.id}: tenant repair frame failed:`, sanitizeError(e));
     }
   }
   return repaired;
