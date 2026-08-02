@@ -44,6 +44,11 @@ describe("ottoInstructions — brand memory guidance", () => {
     expect(ottoInstructions).toMatch(/durable/i);
     expect(ottoInstructions).toMatch(/one-off/i);
   });
+
+  it("keeps Brand memory distinct from the Project brief and never calls either a brand brief", () => {
+    expect(ottoInstructions).toMatch(/Brand memory[\s\S]*Project brief|Project brief[\s\S]*Brand memory/i);
+    expect(ottoInstructions).not.toMatch(/brand brief/i);
+  });
 });
 
 describe("ottoInstructions — meta-action tool name (F26)", () => {

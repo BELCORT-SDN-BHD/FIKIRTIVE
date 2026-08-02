@@ -112,10 +112,12 @@ async function createRefSkippingDup(data: { id: string; ownerId: string; entityI
 /** Placeholder names a fresh project carries until its first conversation names it.
  *  "New project" is the current default (#546 — a Project is never called a campaign;
  *  the independent Campaign object lives in campaign-actions.ts). "New campaign" and
- *  "Untitled Project" stay listed so pre-#546 DB rows keep reusing/auto-titling.
- *  "Untitled" is the empty-thread-title fallback (otto-actions.ts) — listed so
- *  auto-title never adopts it as a project name. */
-const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled Project", "Untitled"]);
+ *  "Untitled Project" stay listed so pre-#546 DB rows keep reusing/auto-titling. */
+const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled Project"]);
+
+/** Empty Chat title fallback. It is not a reusable Project placeholder, but auto-title
+ *  must still refuse to copy it onto a default Project. */
+const UNTITLED_CHAT_TITLE = "Untitled";
 
 async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string } | null> {
   if (!DEFAULT_PROJECT_NAMES.has(name)) return null;
@@ -323,7 +325,7 @@ export async function autoTitleProjectIfDefault(projectId: string): Promise<{ ok
     select: { title: true },
   });
   const title = thread?.title?.trim();
-  if (!title || DEFAULT_PROJECT_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
+  if (!title || title === UNTITLED_CHAT_TITLE || DEFAULT_PROJECT_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
   const clean = title.slice(0, 80);
   await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
   await logAction(ownerId, "project.autotitle", project.id, { name: clean });

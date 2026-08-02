@@ -49,15 +49,11 @@ Reading the table below:
   library, not a merchant's identity), brand guidelines (informal), theme, style guide.
 
 - **Project** (项目) — A unit of creative work under a Brand; contains many Chats and one shared
-  Canvas. The UI default placeholder name is "New project" (auto-titled from the first
-  conversation) — never "New campaign" (#546). _Avoid:_ workspace, folder, brand, Campaign (the
-  independent marketing Campaign object below).
+  Canvas. _Avoid:_ workspace, folder, brand, Campaign (an independent marketing object).
 
-- **Campaign** (营销活动) — The independent marketing object (Blueprint v1.8: "独立 Campaign 对象,
-  不升格 project"): a goal, a start/end period, UTM/attribution, grouping creative work and sends.
-  A Campaign *groups*; it never produces. A Project may soft-link to one via `campaignId`, but
-  creating a Project never creates a Campaign — /campaign lists Campaign rows only. _Avoid:_
-  Project, ad-pack, broadcast run.
+- **Campaign** (营销活动) — An independent marketing object with a goal, start/end period,
+  UTM/attribution, and grouped creative work and sends; it groups work but never produces it.
+  _Avoid:_ Project, ad-pack, broadcast run.
 
 ## Customer engagement 顾客互动
 
@@ -285,8 +281,8 @@ Reading the table below:
   UNDER the Brand Brain — brand-constant things (voice, Brand Kit, catalog) live in the Brand Brain,
   NOT here, so the Project Brief stays light. **Otto's full context = Brand Brain + Project Brief +
   the conversation.** Human-authored; Otto may self-update it. Renamed from "coworkBrief". _Avoid:_
-  Brand Brain (brand-level, not project-level), Brand brief (2026-07 UI drift — it made a
-  per-project field sound org-level, #546), description, notes, prompt, summary.
+  Brand Brain (brand-level, not project-level), Brand brief (sounds brand-level), description,
+  notes, prompt, summary.
 
 - **Planner** (规划器) — The LLM call inside an Otto turn that produces the structured plan/proposal
   JSON. Otto is the persona/loop; the Planner is the model call it makes — two layers, never merged.

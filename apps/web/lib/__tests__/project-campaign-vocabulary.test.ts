@@ -54,6 +54,19 @@ async function click(el: Element) {
   });
 }
 
+async function typeInto(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+async function submit(form: HTMLFormElement) {
+  await act(async () => {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+}
+
 function navProps(over: Record<string, unknown> = {}) {
   return {
     view: "otto" as const,
@@ -121,5 +134,35 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     // live in Brand memory (so merchants stop typing their shop identity in here).
     await click(toggle!);
     expect(dom.textContent).toContain("Brand memory");
+  });
+
+  it("saves only project-specific goals and deliverables into the Project brief", async () => {
+    setCoworkBriefMock.mockResolvedValue({ ok: true });
+    const dom = await render(createElement(QuickBrief, { projectId: "p1" }));
+    const toggle = Array.from(dom.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Project brief"),
+    );
+    await click(toggle!);
+
+    const goal = dom.querySelector<HTMLInputElement>("#qb-goal");
+    const deliverable = dom.querySelector<HTMLInputElement>("#qb-deliverable");
+    const audience = dom.querySelector<HTMLInputElement>("#qb-audience");
+    const channel = dom.querySelector<HTMLInputElement>("#qb-platform");
+    expect(goal).toBeTruthy();
+    expect(deliverable).toBeTruthy();
+    expect(dom.textContent).not.toContain("What you sell / offer");
+
+    await typeInto(goal!, "Launch the summer collection");
+    await typeInto(deliverable!, "Three 15-second vertical videos");
+    await typeInto(audience!, "First-time home buyers");
+    await typeInto(channel!, "TikTok");
+    await submit(dom.querySelector("form")!);
+
+    expect(setCoworkBriefMock).toHaveBeenCalledWith({
+      projectId: "p1",
+      brief:
+        "Goal: Launch the summer collection. Deliverable: Three 15-second vertical videos. " +
+        "Audience: First-time home buyers. Channel: TikTok",
+    });
   });
 });

@@ -340,4 +340,18 @@ describe("createProject", () => {
       data: { id: expect.any(String), ownerId: "o1", name: "Summer launch" },
     });
   });
+
+  it("treats an explicit 'Untitled' Project name as custom instead of reusing an existing Project", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([
+      { id: "p_existing", editJson: null, coworkBrief: null, brandId: null, campaignId: null },
+    ]);
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "Untitled" });
+
+    await expect(createProject("Untitled")).resolves.toEqual({ id: "p_new" });
+
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+    expect(prisma.project.create).toHaveBeenCalledWith({
+      data: { id: expect.any(String), ownerId: "o1", name: "Untitled" },
+    });
+  });
 });
