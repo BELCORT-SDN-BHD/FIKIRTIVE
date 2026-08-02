@@ -122,7 +122,7 @@ const UNTITLED_CHAT_TITLE = "Untitled";
 async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string } | null> {
   if (!DEFAULT_PROJECT_NAMES.has(name)) return null;
   const candidates = await prisma.project.findMany({
-    where: { ownerId, name, deletedAt: null },
+    where: { ownerId, name: { in: [...DEFAULT_PROJECT_NAMES] }, deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
     take: 12,

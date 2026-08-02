@@ -4,7 +4,7 @@
  * saves it via setCoworkBrief (Project.coworkBrief — per-project, see CONTEXT.md
  * "Project Brief"). Surfaces in OttoFrontDoor so this project's brief is set
  * before Otto starts planning. Brand-constant facts live in Brand memory; this
- * form captures only the goal and deliverable for the current Project. No money/credit operations.
+ * form captures project-specific inputs only. No money/credit operations.
  */
 import { useState } from "react";
 import { setCoworkBrief } from "@/lib/cowork-actions";
@@ -18,28 +18,28 @@ interface QuickBriefProps {
 }
 
 /** Compose a concise brief string from the structured fields. */
-function composeBrief(fields: { goal: string; deliverable: string; audience: string; platform: string }): string {
+function composeBrief(fields: { offer: string; audience: string; platform: string; budget: string }): string {
   const parts: string[] = [];
-  if (fields.goal.trim()) parts.push(`Goal: ${fields.goal.trim()}`);
-  if (fields.deliverable.trim()) parts.push(`Deliverable: ${fields.deliverable.trim()}`);
+  if (fields.offer.trim()) parts.push(`We offer: ${fields.offer.trim()}`);
   if (fields.audience.trim()) parts.push(`Audience: ${fields.audience.trim()}`);
-  if (fields.platform.trim()) parts.push(`Channel: ${fields.platform.trim()}`);
+  if (fields.platform.trim()) parts.push(`Posts on: ${fields.platform.trim()}`);
+  if (fields.budget.trim()) parts.push(`Budget vibe: ${fields.budget.trim()}`);
   return parts.join(". ");
 }
 
 export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
   const [open, setOpen] = useState(false);
-  const [goal, setGoal] = useState("");
-  const [deliverable, setDeliverable] = useState("");
+  const [offer, setOffer] = useState("");
   const [audience, setAudience] = useState("");
   const [platform, setPlatform] = useState("");
+  const [budget, setBudget] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
-    const brief = composeBrief({ goal, deliverable, audience, platform });
+    const brief = composeBrief({ offer, audience, platform, budget });
     if (!brief) return;
     setSaving(true);
     setError(null);
@@ -84,52 +84,52 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
           style={{ borderWidth: "1.5px" }}
         >
           <p className="m-0 text-[0.75rem] text-muted-foreground/70">
-            Use this for the goal and deliverables in this Project. Shop-wide identity and catalog facts live in Brand memory.
+            Use this for the offer, audience, channel, and budget in this Project. Shop-wide identity and catalog facts live in Brand memory.
           </p>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-goal">Project goal</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">Offer for this Project</label>
             <input
-              id="qb-goal"
+              id="qb-offer"
               type="text"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. launch the summer collection"
+              value={offer}
+              onChange={(e) => setOffer(e.target.value.slice(0, MAX_FIELD))}
+              placeholder="e.g. the summer mug collection"
               className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-deliverable">What are you making?</label>
-            <input
-              id="qb-deliverable"
-              type="text"
-              value={deliverable}
-              onChange={(e) => setDeliverable(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. three 15-second vertical videos"
-              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
-              disabled={saving}
-            />
-          </div>
-          <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Who it&apos;s for (audience)</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Audience for this Project</label>
             <input
               id="qb-audience"
               type="text"
               value={audience}
               onChange={(e) => setAudience(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. design-minded home cooks, 25–40"
+              placeholder="e.g. first-time home buyers"
               className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where will it run?</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where this Project will run</label>
             <input
               id="qb-platform"
               type="text"
               value={platform}
               onChange={(e) => setPlatform(e.target.value.slice(0, MAX_FIELD))}
               placeholder="e.g. Instagram, TikTok, LinkedIn"
+              className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
+              disabled={saving}
+            />
+          </div>
+          <div>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget for this Project <span className="font-normal normal-case">(optional)</span></label>
+            <input
+              id="qb-budget"
+              type="text"
+              value={budget}
+              onChange={(e) => setBudget(e.target.value.slice(0, MAX_FIELD))}
+              placeholder="e.g. low-cost DIY, or $500/month"
               className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
@@ -151,11 +151,11 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
             </button>
             <button
               type="submit"
-              disabled={saving || !composeBrief({ goal, deliverable, audience, platform })}
+              disabled={saving || !composeBrief({ offer, audience, platform, budget })}
               className="py-2 px-4 text-[0.875rem] font-semibold text-primary-foreground rounded-[14px] border-0 transition-colors duration-150"
               style={{
                 background: saved ? "var(--success, #22c55e)" : "var(--primary)",
-                cursor: saving || !composeBrief({ goal, deliverable, audience, platform }) ? "not-allowed" : "pointer",
+                cursor: saving || !composeBrief({ offer, audience, platform, budget }) ? "not-allowed" : "pointer",
                 opacity: saving ? 0.7 : 1,
               }}
             >

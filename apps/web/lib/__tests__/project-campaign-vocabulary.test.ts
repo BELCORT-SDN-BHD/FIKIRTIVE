@@ -136,7 +136,7 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     expect(dom.textContent).toContain("Brand memory");
   });
 
-  it("saves only project-specific goals and deliverables into the Project brief", async () => {
+  it("keeps the original four-field brief capability while scoping every prompt to this Project", async () => {
     setCoworkBriefMock.mockResolvedValue({ ok: true });
     const dom = await render(createElement(QuickBrief, { projectId: "p1" }));
     const toggle = Array.from(dom.querySelectorAll("button")).find((button) =>
@@ -144,25 +144,31 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     );
     await click(toggle!);
 
-    const goal = dom.querySelector<HTMLInputElement>("#qb-goal");
-    const deliverable = dom.querySelector<HTMLInputElement>("#qb-deliverable");
+    const offer = dom.querySelector<HTMLInputElement>("#qb-offer");
     const audience = dom.querySelector<HTMLInputElement>("#qb-audience");
-    const channel = dom.querySelector<HTMLInputElement>("#qb-platform");
-    expect(goal).toBeTruthy();
-    expect(deliverable).toBeTruthy();
+    const platform = dom.querySelector<HTMLInputElement>("#qb-platform");
+    const budget = dom.querySelector<HTMLInputElement>("#qb-budget");
+    expect(offer).toBeTruthy();
+    expect(audience).toBeTruthy();
+    expect(platform).toBeTruthy();
+    expect(budget).toBeTruthy();
+    expect(dom.textContent).toContain("Offer for this Project");
+    expect(dom.textContent).toContain("Audience for this Project");
+    expect(dom.textContent).toContain("Where this Project will run");
+    expect(dom.textContent).toContain("Budget for this Project");
     expect(dom.textContent).not.toContain("What you sell / offer");
 
-    await typeInto(goal!, "Launch the summer collection");
-    await typeInto(deliverable!, "Three 15-second vertical videos");
+    await typeInto(offer!, "The summer collection");
     await typeInto(audience!, "First-time home buyers");
-    await typeInto(channel!, "TikTok");
+    await typeInto(platform!, "TikTok");
+    await typeInto(budget!, "$500/month");
     await submit(dom.querySelector("form")!);
 
     expect(setCoworkBriefMock).toHaveBeenCalledWith({
       projectId: "p1",
       brief:
-        "Goal: Launch the summer collection. Deliverable: Three 15-second vertical videos. " +
-        "Audience: First-time home buyers. Channel: TikTok",
+        "We offer: The summer collection. Audience: First-time home buyers. " +
+        "Posts on: TikTok. Budget vibe: $500/month",
     });
   });
 });

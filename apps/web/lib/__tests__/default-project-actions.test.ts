@@ -243,7 +243,11 @@ describe("createProject", () => {
     await expect(createProject("New project")).resolves.toEqual({ id: "p_empty" });
 
     expect(prisma.project.findMany).toHaveBeenCalledWith({
-      where: { ownerId: "o1", name: "New project", deletedAt: null },
+      where: {
+        ownerId: "o1",
+        name: { in: ["New project", "New campaign", "Untitled Project"] },
+        deletedAt: null,
+      },
       orderBy: { createdAt: "desc" },
       select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
       take: 12,
@@ -259,15 +263,21 @@ describe("createProject", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("still reuses empty legacy 'New campaign' rows (pre-#546 DB names keep working)", async () => {
-    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_legacy", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+  it("reuses an empty legacy 'New campaign' row for the canonical 'New project' request", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_legacy", name: "New campaign", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_legacy" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_legacy" });
 
     expect(prisma.project.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { ownerId: "o1", name: "New campaign", deletedAt: null },
+      where: {
+        ownerId: "o1",
+        name: { in: ["New project", "New campaign", "Untitled Project"] },
+        deletedAt: null,
+      },
     }));
     expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.actionEvent.create).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("creates a new default project when the existing default project has work", async () => {
