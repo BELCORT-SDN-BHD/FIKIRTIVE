@@ -44,9 +44,14 @@ const {
 const settled = { status: "settled", nodeIds: ["n1"], created: 1, updated: 0 };
 const nothingToDo = { status: "settled", nodeIds: ["n1"], created: 0, updated: 0 };
 
-/** The backlog's answer: the boards to repair, and where the read stopped. */
+/** The backlog's answer: the boards to repair, and where the pass got to. */
 function page(jobs: { id: string; ownerId: string }[], cursor: unknown = null) {
   return { jobs, cursor };
+}
+
+/** A pass in progress: the window it is walking, and the row it read up to. */
+function passAt(windowStart: string, lastRead: string) {
+  return { windowStart: new Date(windowStart), after: { finishedAt: new Date(windowStart), id: lastRead } };
 }
 
 beforeEach(() => {
@@ -80,8 +85,11 @@ describe("the canvas backfill sweep", () => {
     await backfillCanvasBoards(now);
 
     expect(m.findCanvasSettlementBacklog).toHaveBeenCalledWith({
-      finishedAfter: new Date(now.getTime() - CANVAS_BACKFILL_LOOKBACK_MS),
-      finishedBefore: new Date(now.getTime() - CANVAS_BACKFILL_GRACE_MS),
+      // The clock itself, not a window worked out from it: the window belongs to the PASS, and
+      // only the scan that applies the cursor may decide it (#601 r4 judge P1).
+      now,
+      lookbackMs: CANVAS_BACKFILL_LOOKBACK_MS,
+      graceMs: CANVAS_BACKFILL_GRACE_MS,
       limit: CANVAS_BACKFILL_LIMIT,
       // A freshly booted worker starts at the front of the window and owes nobody a wait.
       cursor: null,
@@ -90,8 +98,8 @@ describe("the canvas backfill sweep", () => {
     expect(CANVAS_BACKFILL_GRACE_MS).toBeGreaterThan(0);
   });
 
-  it("carries on next tick from where this one stopped reading", async () => {
-    const stopped = { finishedAt: new Date("2026-08-01T09:00:00.000Z"), id: "g-last-read" };
+  it("carries on next tick from where this one stopped reading, in the same window", async () => {
+    const stopped = passAt("2026-08-01T09:00:00.000Z", "g-last-read");
     m.findCanvasSettlementBacklog.mockResolvedValueOnce(page([], stopped));
 
     await backfillCanvasBoards(new Date("2026-08-01T12:00:00.000Z"));
@@ -99,12 +107,14 @@ describe("the canvas backfill sweep", () => {
 
     // Reading always started at the oldest row of the window, so whatever filled the first tick
     // filled every later one too and the merchant behind it was never reached (#601 r3 judge P1①).
+    // The pass's own lower bound rides along with it — five minutes later this tick is still
+    // reading the window the pass opened with, not one that has slid on (#601 r4 judge P1).
     expect(m.findCanvasSettlementBacklog.mock.calls[1]![0]).toMatchObject({ cursor: stopped });
   });
 
-  it("goes back to the front of the window once it has read to the end", async () => {
+  it("goes back to the front of the window once the pass is over", async () => {
     m.findCanvasSettlementBacklog
-      .mockResolvedValueOnce(page([], { finishedAt: new Date("2026-08-01T09:00:00.000Z"), id: "g-last-read" }))
+      .mockResolvedValueOnce(page([], passAt("2026-08-01T09:00:00.000Z", "g-last-read")))
       .mockResolvedValueOnce(page([], null));
 
     for (let tick = 0; tick < 3; tick += 1) {
@@ -198,6 +208,34 @@ describe("the canvas backfill sweep", () => {
     // A repair that worked clears the board's record, so nothing holds it back afterwards.
     expect(await tick(3 * base + 1)).toBe(true);
     expect(m.findCanvasSettlementBacklog.mock.calls.at(-1)![0].deferredJobIds).toEqual([]);
+  });
+
+  it("still tries again on a board whose wait outlasted its place in the window", async () => {
+    // #601 r4 judge P1, the failure-backoff path. This board is five minutes from the far end of
+    // the 24-hour window when its repair throws, and the wait before another try is fifteen. By
+    // then no scan can offer it: the row is older than the oldest a new pass will look at. The
+    // wait has to be the sweep's own promise, or the merchant's paid outputs never reach the board.
+    const start = Date.parse("2026-08-01T12:00:00.000Z");
+    const finishedAt = start - CANVAS_BACKFILL_LOOKBACK_MS + 5 * 60_000;
+    // The window rule itself, which is all this mock does: a row is offered only while it is newer
+    // than the lower bound of the pass being read, and never while the sweep is holding it back.
+    m.findCanvasSettlementBacklog.mockImplementation(
+      async (options: { now: Date; lookbackMs: number; deferredJobIds?: string[] }) => {
+        const heldBack = new Set(options.deferredJobIds ?? []);
+        const inWindow = finishedAt >= options.now.getTime() - options.lookbackMs;
+        return page(inWindow && !heldBack.has("g-late") ? [{ id: "g-late", ownerId: "o1" }] : []);
+      },
+    );
+    m.settleCanvasCardsForGenJob
+      .mockRejectedValueOnce(new Error("board write blew up"))
+      .mockResolvedValue(settled);
+
+    await backfillCanvasBoards(new Date(start));                                 // offered — and throws
+    await backfillCanvasBoards(new Date(start + CANVAS_BACKFILL_RETRY_BASE_MS)); // the wait is over
+
+    expect(m.settleCanvasCardsForGenJob.mock.calls.map((call) => call[0])).toEqual(["g-late", "g-late"]);
+    // …and the second go was still made as that board's own tenant, not the sweep's.
+    expect(m.tenants).toEqual(["o1", "o1"]);
   });
 
   it("never touches money — no ledger, no settle, no refund, whatever it finds", async () => {

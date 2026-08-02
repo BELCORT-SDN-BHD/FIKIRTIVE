@@ -60,14 +60,21 @@ async function seedNeighbourWorkspace(): Promise<{ ownerId: string; projectId: s
   return { ownerId, projectId: pid };
 }
 
-/** The window a sweep uses: everything delivered in the last day, bar the last two minutes. */
-function sweepWindow(now = Date.now()) {
-  return { finishedAfter: new Date(now - 24 * HOUR), finishedBefore: new Date(now - 2 * 60_000), limit: 200 };
+/** The sweep's own settings: everything delivered in the last day, bar the last two minutes. */
+const SWEEP = { lookbackMs: 24 * HOUR, graceMs: 2 * 60_000, limit: 200 };
+
+type SweepPage = Awaited<ReturnType<typeof findCanvasSettlementBacklog>>;
+
+/** One tick, at a moment of the test's choosing — the clock is the only thing the sweep reads. */
+function sweep(
+  overrides: { now?: Date; limit?: number; cursor?: SweepPage["cursor"] } = {},
+): Promise<SweepPage> {
+  return findCanvasSettlementBacklog({ ...SWEEP, now: new Date(), ...overrides });
 }
 
 /** One tick's worklist, read from the front of the window as a freshly started worker would. */
 async function sweepJobs(overrides: { limit?: number } = {}) {
-  return (await findCanvasSettlementBacklog({ ...sweepWindow(), ...overrides })).jobs;
+  return (await sweep(overrides)).jobs;
 }
 
 async function seedGeneration(): Promise<string> {
@@ -88,23 +95,42 @@ async function seedGeneration(): Promise<string> {
 async function seedDeliveredJob(input: {
   outputs: number;
   minutesAgo?: number;
+  /** An exact delivery moment, for the cases that place a board relative to a window edge. */
+  finishedAt?: Date;
   threadId?: string | null;
   canvasKey?: boolean;
 }): Promise<{ jobId: string; generationIds: string[] }> {
   const generationIds: string[] = [];
   for (let i = 0; i < input.outputs; i += 1) generationIds.push(await seedGeneration());
   const jobId = `gjb_${randomUUID()}`;
-  const finishedAt = new Date(Date.now() - (input.minutesAgo ?? 30) * 60_000);
+  const finishedAt = input.finishedAt ?? new Date(Date.now() - (input.minutesAgo ?? 30) * 60_000);
   await prisma.genJob.create({
     data: {
       id: jobId, ownerId: orgId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
       count: input.outputs, status: "DONE", generationIds,
       threadId: input.threadId ?? null,
       idempotencyKey: input.canvasKey === false ? null : canvasKey(),
-      spent: true, spentUsd: 0.12, startedAt: new Date(Date.now() - HOUR), finishedAt,
+      spent: true, spentUsd: 0.12, startedAt: new Date(finishedAt.getTime() - HOUR), finishedAt,
     },
   });
   return { jobId, generationIds };
+}
+
+/** An unfinished board belonging to another workspace: delivered, paid, and no cards at all. */
+async function seedUnfinishedBoardFor(
+  where: { ownerId: string; projectId: string },
+  finishedAt: Date,
+): Promise<string> {
+  const jobId = `gjb_${randomUUID()}`;
+  await prisma.genJob.create({
+    data: {
+      id: jobId, ownerId: where.ownerId, projectId: where.projectId, prompt: "their own unfinished board",
+      kind: "IMAGE", model: "seedream", count: 2, status: "DONE",
+      generationIds: [`gen_${randomUUID()}`, `gen_${randomUUID()}`], idempotencyKey: canvasKey(),
+      spent: true, spentUsd: 0.12, startedAt: new Date(finishedAt.getTime() - HOUR), finishedAt,
+    },
+  });
+  return jobId;
 }
 
 /**
@@ -282,8 +308,13 @@ describe("one workspace's backlog is never another's", () => {
   });
 });
 
+/** How long ago, as a moment — the sweep orders by when a job was delivered. */
+function minutesAgo(minutes: number): Date {
+  return new Date(Date.now() - minutes * 60_000);
+}
+
 /** A run of jobs whose boards are already complete — every one of them a no-op for the sweep. */
-async function seedFinishedBoards(count: number, minutesAgo: number): Promise<void> {
+async function seedFinishedBoards(count: number, finishedAt: Date): Promise<void> {
   const jobs = Array.from({ length: count }, () => ({
     id: `gjb_${randomUUID()}`,
     generationId: `gen_${randomUUID()}`,
@@ -293,8 +324,8 @@ async function seedFinishedBoards(count: number, minutesAgo: number): Promise<vo
       id: job.id, ownerId: orgId, projectId, prompt: "already on the board", kind: "IMAGE" as const,
       model: "seedream", count: 1, status: "DONE" as const, generationIds: [job.generationId],
       idempotencyKey: canvasKey(), spent: true, spentUsd: 0.12,
-      startedAt: new Date(Date.now() - HOUR),
-      finishedAt: new Date(Date.now() - minutesAgo * 60_000),
+      startedAt: new Date(finishedAt.getTime() - HOUR),
+      finishedAt,
     })),
   });
   await prisma.canvasNode.createMany({
@@ -310,7 +341,7 @@ async function seedFinishedBoards(count: number, minutesAgo: number): Promise<vo
  * A run of jobs that can NEVER be repaired: their chat is gone and they were not bought from the
  * board, so the projection answers "not a canvas job" for each of them, for ever.
  */
-async function seedPermanentNoOps(count: number, minutesAgo: number): Promise<void> {
+async function seedPermanentNoOps(count: number, finishedAt: Date): Promise<void> {
   const rows = Array.from({ length: count }, () => ({ id: `gjb_${randomUUID()}`, threadId: `thr_${randomUUID()}` }));
   await prisma.chatThread.createMany({
     data: rows.map((row) => ({
@@ -322,8 +353,8 @@ async function seedPermanentNoOps(count: number, minutesAgo: number): Promise<vo
       id: row.id, ownerId: orgId, projectId, prompt: "chat that is gone", kind: "IMAGE" as const,
       model: "seedream", count: 1, status: "DONE" as const, generationIds: [`gen_${randomUUID()}`],
       threadId: row.threadId, idempotencyKey: null, spent: true, spentUsd: 0.12,
-      startedAt: new Date(Date.now() - HOUR),
-      finishedAt: new Date(Date.now() - minutesAgo * 60_000),
+      startedAt: new Date(finishedAt.getTime() - HOUR),
+      finishedAt,
     })),
   });
 }
@@ -331,7 +362,7 @@ async function seedPermanentNoOps(count: number, minutesAgo: number): Promise<vo
 describe("a board that is not at the front of the queue", () => {
   it("is still reached when a full page of finished boards sits in front of it", async () => {
     // Oldest first is the sweep's order, so these 200 are read before anything else…
-    await seedFinishedBoards(200, 120);
+    await seedFinishedBoards(200, minutesAgo(120));
     // …and this is the merchant whose cards were never written, delivered later.
     const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
 
@@ -376,9 +407,9 @@ describe("the sweep gets through the queue instead of restarting at the front", 
   /** Consecutive ticks of the same worker: each one resumes where the last stopped reading. */
   async function jobsSeenAcrossTicks(): Promise<Set<string>> {
     const seen = new Set<string>();
-    let cursor = null as Awaited<ReturnType<typeof findCanvasSettlementBacklog>>["cursor"];
+    let cursor: SweepPage["cursor"] = null;
     for (let tick = 0; tick < TICKS; tick += 1) {
-      const page = await findCanvasSettlementBacklog({ ...sweepWindow(), ...SMALL, cursor });
+      const page = await sweep({ ...SMALL, cursor });
       cursor = page.cursor;
       for (const job of page.jobs) seen.add(job.id);
     }
@@ -388,14 +419,14 @@ describe("the sweep gets through the queue instead of restarting at the front", 
   it("reaches a merchant sitting behind more finished boards than one tick can read", async () => {
     // 51 boards that need nothing, all delivered before the merchant's — one more than the 50 rows
     // a tick with this limit can read, so the read ceiling is reached before the merchant's row.
-    await seedFinishedBoards(51, 120);
+    await seedFinishedBoards(51, minutesAgo(120));
     const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
 
     expect([...await jobsSeenAcrossTicks()]).toContain(jobId);
   });
 
   it("reaches a merchant sitting behind boards that can never be repaired", async () => {
-    await seedPermanentNoOps(51, 120);
+    await seedPermanentNoOps(51, minutesAgo(120));
     const { jobId } = await seedDeliveredJob({ outputs: 2, minutesAgo: 10 });
 
     expect([...await jobsSeenAcrossTicks()]).toContain(jobId);
@@ -474,5 +505,69 @@ describe("one project's board is never answered for by another project's cards",
     });
 
     expect((await sweepJobs()).map((job) => job.id)).toContain(jobId);
+  });
+});
+
+/**
+ * #601 r4 judge P1 — the window must not slide out from under the pass that is walking it.
+ *
+ * The sweep resumes where it stopped reading, and it only looks back a day. Those two were decided
+ * independently: the cursor was carried from tick to tick, the day was measured again from a fresh
+ * clock every tick. So a board could be AHEAD of the cursor (not read yet) and BEHIND the new
+ * lower bound (no longer eligible) at the same instant, and from then on nothing could reach it —
+ * the merchant paid, the job says delivered, and the cards never appear on the board.
+ *
+ * Both cases below are the production shape scaled down: a tick reads at most 25 pages, so a limit
+ * of two makes the read ceiling 50 rows, and time is moved on by hand between ticks.
+ */
+describe("a pass keeps the window it started with", () => {
+  const SMALL = { limit: 2 };
+  const DAY = 24 * HOUR;
+
+  it("still reaches a board that was one tick away from falling out of the window", async () => {
+    const start = new Date();
+    const windowStart = start.getTime() - DAY;
+    // 51 boards that need nothing, right at the oldest edge — one more than the 50 rows this tick
+    // can read, so the reading stops short of the merchant's row…
+    await seedFinishedBoards(51, new Date(windowStart + 60_000));
+    // …and the merchant's unfinished board, with ten minutes of window left.
+    const { jobId } = await seedDeliveredJob({ outputs: 2, finishedAt: new Date(windowStart + 10 * 60_000) });
+
+    const first = await sweep({ ...SMALL, now: start });
+    expect(first.jobs.map((job) => job.id)).not.toContain(jobId);
+
+    // Twelve minutes later that board is older than a freshly measured day. A tick that worked its
+    // lower bound out again here skipped straight past it — the cursor pointed at a row the new
+    // window no longer contained, and no later tick could ever go back for it.
+    const second = await sweep({ ...SMALL, now: new Date(start.getTime() + 12 * 60_000), cursor: first.cursor });
+
+    expect(second.jobs.map((job) => job.id)).toContain(jobId);
+  });
+
+  it("still reaches a board this tick's budget could not take", async () => {
+    const start = new Date();
+    const windowStart = start.getTime() - DAY;
+    // Three unfinished boards of one workspace at the oldest edge of the window…
+    const mine: string[] = [];
+    for (const minute of [1, 2, 3]) {
+      const { jobId } = await seedDeliveredJob({ outputs: 2, finishedAt: new Date(windowStart + minute * 60_000) });
+      mine.push(jobId);
+    }
+    // …and one of a second workspace behind them.
+    const neighbour = await seedNeighbourWorkspace();
+    const theirs = await seedUnfinishedBoardFor(neighbour, new Date(windowStart + 4 * 60_000));
+
+    // A budget of two: this workspace's oldest board and the neighbour's. The other two are passed
+    // over — which is only "later" if the sweep can still come back to them.
+    const first = await sweep({ ...SMALL, now: start });
+    expect(first.jobs.map((job) => job.id)).toEqual([mine[0], theirs]);
+
+    // Five and ten minutes on. Both boards the budget passed over are by now older than a freshly
+    // measured day, so this pass is their only remaining chance.
+    const second = await sweep({ ...SMALL, now: new Date(start.getTime() + 5 * 60_000), cursor: first.cursor });
+    const third = await sweep({ ...SMALL, now: new Date(start.getTime() + 10 * 60_000), cursor: second.cursor });
+
+    expect([...second.jobs, ...third.jobs].map((job) => job.id))
+      .toEqual(expect.arrayContaining([mine[1], mine[2]]));
   });
 });

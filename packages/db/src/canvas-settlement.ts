@@ -187,15 +187,28 @@ export async function settleCanvasCardsForGenJob(
 export type CanvasSettlementBacklogJob = { id: string; ownerId: string };
 
 /**
- * How far a sweep got through the window. Hand it back to the next sweep and it carries on from
- * there instead of starting at the oldest row again — see the starvation note below.
+ * A PASS over the window: which window is being walked, and how far this sweep got through it.
+ *
+ * The two travel together on purpose (#601 r4 judge P1). The lower bound used to be recomputed
+ * from a fresh `now` on every tick while the cursor carried on from where the last tick stopped —
+ * so a row could sit ahead of the cursor (not read yet) and behind the new bound (no longer
+ * eligible) at the same instant, and it then dropped out of the sweep FOR EVER. A pass keeps the
+ * bound it opened with; only finishing the pass takes a newer one.
  */
-export type CanvasSettlementBacklogCursor = { finishedAt: Date; id: string };
+export type CanvasSettlementBacklogCursor = {
+  /** The pass's lower bound, frozen for as long as the pass lasts. */
+  windowStart: Date;
+  /** The last row this pass read; `null` = none yet, resume at the front of the SAME window. */
+  after: CursorPosition | null;
+};
+
+/** A row's place in the sweep's reading order. */
+type CursorPosition = { finishedAt: Date; id: string };
 
 export type CanvasSettlementBacklogPage = {
   /** The boards to repair this tick — at most `limit`, shared out between workspaces. */
   jobs: CanvasSettlementBacklogJob[];
-  /** Where to resume. `null` = the window was read to its end; start again at its (newer) front. */
+  /** Where to resume. `null` = the pass is over — every row was read AND every candidate offered. */
   cursor: CanvasSettlementBacklogCursor | null;
 };
 
@@ -248,16 +261,23 @@ function tenantKey(...parts: (string | null)[]): string {
  * use — boards that are already complete, boards that can never be repaired, boards whose repair
  * keeps throwing — sits at the front of the window and used to be read again from scratch on every
  * tick, so a merchant behind more of them than one tick can read was never reached AT ALL. And
- * because this is one global queue, the rows in front belong to other workspaces. Three things
+ * because this is one global queue, the rows in front belong to other workspaces. Four things
  * together make that impossible, and none of them is optional:
  *   1. `cursor` — where the last tick stopped reading. The next tick resumes there, so the window
- *      is walked through rather than restarted, and reaching its end is the only way back to the
+ *      is walked through rather than restarted, and finishing the pass is the only way back to the
  *      front. New work is never skipped by this: a job enters the window with a `finishedAt` of
  *      now, which is always ahead of the cursor.
- *   2. `deferredJobIds` — boards serving a backoff after a failed repair. Excluded in the DATABASE,
- *      so they cost neither a slot in the budget nor a row of the tick's reading.
- *   3. `fairShare` — the budget is dealt out a board per workspace at a time, so a workspace with a
- *      long backlog cannot take the tick away from a workspace with one broken board.
+ *   2. the cursor's FROZEN lower bound. Resuming where the last tick stopped is worth nothing if
+ *      the window slides forward underneath it: a row could be ahead of the cursor and behind the
+ *      new bound at once, and then no cursor could ever reach it (#601 r4 judge P1). The bound is
+ *      taken once, when a pass opens, and carried by the cursor until that pass ends.
+ *   3. `deferredJobIds` — boards serving a backoff after a failed repair. Excluded in the DATABASE,
+ *      so they cost neither a slot in the budget nor a row of the tick's reading. Their retry is
+ *      owned by the caller's own worklist, not by this scan (see the sweep's backoff book).
+ *   4. `fairShare` — the budget is dealt out a board per workspace at a time, so a workspace with a
+ *      long backlog cannot take the tick away from a workspace with one broken board; and the
+ *      cursor is then held BEFORE the first board the budget could not take, so being passed over
+ *      is a wait for the next tick and never a row the sweep has walked past.
  *
  * Two filters keep the reading itself bounded:
  *   - the time window, so a permanently unplaceable job cannot be retried until the end of time;
@@ -271,23 +291,36 @@ function tenantKey(...parts: (string | null)[]): string {
  *     is not swept. No generation flow produces that state, and catching it would mean trading this
  *     indexed filter for a card-aware one.
  *
- * A candidate the budget could not take this tick is not lost either: the sweep reads the window to
- * its end and starts again, so it is offered on the next pass — bounded by how long a pass takes,
- * never indefinitely.
+ * WHAT A PASS GUARANTEES. Every row that enters the window is READ before it can leave it: it
+ * enters ahead of the cursor (its `finishedAt` is newer than anything already read), the bound
+ * behind the cursor does not move while the pass runs, and the pass only ends — taking a newer
+ * bound with it — once the reading has gone past every row and every candidate has been offered.
+ * How LONG a pass takes is not fixed: a tick reads up to 25 pages, and where there are more broken
+ * boards than one tick may repair it advances only as far as the boards it handed out. That is the
+ * trade — a slower walk, but nothing walked past.
  */
 export async function findCanvasSettlementBacklog(options: {
-  finishedAfter: Date;
-  finishedBefore: Date;
+  /** This tick's clock. The window is derived from it, so a test can hold time still. */
+  now: Date;
+  /** How far back a NEW pass looks. A pass already in progress keeps the bound it opened with. */
+  lookbackMs: number;
+  /** How long a just-delivered job is left to its own completion path before the sweep looks. */
+  graceMs: number;
   limit: number;
-  /** Where the previous sweep stopped reading. Absent or `null` = the front of the window. */
+  /** The pass in progress. Absent or `null` = open a new pass at the front of a fresh window. */
   cursor?: CanvasSettlementBacklogCursor | null;
   /** Boards serving a backoff after a failed repair — they must not occupy this tick's budget. */
   deferredJobIds?: readonly string[];
 }): Promise<CanvasSettlementBacklogPage> {
+  const nowMs = options.now.getTime();
   const limit = Math.max(1, Math.floor(options.limit));
   const deferred = [...new Set(options.deferredJobIds ?? [])];
-  const candidates: CanvasSettlementBacklogJob[] = [];
-  let cursor: CanvasSettlementBacklogCursor | null = options.cursor ?? null;
+  // The pass's own bound, never a freshly computed one, for as long as the pass lasts.
+  const windowStart = options.cursor?.windowStart ?? new Date(nowMs - options.lookbackMs);
+  const finishedBefore = new Date(nowMs - options.graceMs);
+  /** Each candidate remembers the cursor that reads it AGAIN, in case the budget cannot take it. */
+  const candidates: (CanvasSettlementBacklogJob & { resumeFrom: CursorPosition | null })[] = [];
+  let after: CursorPosition | null = options.cursor?.after ?? null;
   let reachedEnd = false;
 
   for (
@@ -300,7 +333,7 @@ export async function findCanvasSettlementBacklog(options: {
       where: {
         ownerId: { not: "" },
         status: "DONE",
-        finishedAt: { gte: options.finishedAfter, lt: options.finishedBefore },
+        finishedAt: { gte: windowStart, lt: finishedBefore },
         NOT: { generationIds: { isEmpty: true } },
         ...(deferred.length ? { id: { notIn: deferred } } : {}),
         AND: [
@@ -308,11 +341,11 @@ export async function findCanvasSettlementBacklog(options: {
           // Resume strictly after the last row read, in the same (finishedAt, id) order the scan
           // uses. Spelled out rather than handed to Prisma's row cursor, which needs the row it
           // names to still exist — this one survives that row being deleted between ticks.
-          ...(cursor
+          ...(after
             ? [{
                 OR: [
-                  { finishedAt: { gt: cursor.finishedAt } },
-                  { finishedAt: cursor.finishedAt, id: { gt: cursor.id } },
+                  { finishedAt: { gt: after.finishedAt } },
+                  { finishedAt: after.finishedAt, id: { gt: after.id } },
                 ],
               }]
             : []),
@@ -329,19 +362,34 @@ export async function findCanvasSettlementBacklog(options: {
       reachedEnd = true;
       break;
     }
-    const last = jobs[jobs.length - 1]!;
-    // Non-null by the where clause above; the fallback only keeps the type honest.
-    cursor = { finishedAt: last.finishedAt ?? options.finishedAfter, id: last.id };
-
-    candidates.push(...await unfinishedBoards(jobs));
+    const unfinished = new Set((await unfinishedBoards(jobs)).map((job) => job.id));
+    for (const job of jobs) {
+      // `after` is still the row BEFORE this one, which is exactly the cursor that reads this row
+      // again — what a candidate the budget cannot take needs in order not to be walked past.
+      if (unfinished.has(job.id)) {
+        candidates.push({ id: job.id, ownerId: job.ownerId, resumeFrom: after });
+      }
+      // Non-null by the where clause above; the fallback only keeps the type honest.
+      after = { finishedAt: job.finishedAt ?? windowStart, id: job.id };
+    }
     if (jobs.length < limit) {
       reachedEnd = true;
       break;
     }
   }
 
-  // Reaching the end of the window is the ONLY thing that sends the next tick back to the front.
-  return { jobs: fairShare(candidates, limit), cursor: reachedEnd ? null : cursor };
+  const chosen = fairShare(candidates, limit).map(({ id, ownerId }) => ({ id, ownerId }));
+  const taken = new Set(chosen.map((job) => job.id));
+  // Hold the cursor before the first board this tick could not hand out. Passing over a candidate
+  // is only a wait if the sweep comes back to it; letting the cursor run past it made "deferred,
+  // not lost" untrue for anything whose remaining life was shorter than a lap of the window
+  // (#601 r4 judge P1). Reading the window out is therefore NOT enough to end the pass.
+  const missed = candidates.find((candidate) => !taken.has(candidate.id));
+  if (reachedEnd && !missed) return { jobs: chosen, cursor: null };
+  return {
+    jobs: chosen,
+    cursor: { windowStart, after: missed ? missed.resumeFrom : after },
+  };
 }
 
 /**
