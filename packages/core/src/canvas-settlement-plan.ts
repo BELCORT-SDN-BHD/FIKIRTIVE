@@ -85,7 +85,7 @@ export function normalizeCanvasRepairReason(reason: string): string {
   for (const character of reason) {
     if (codePoints >= 200) break;
     const value = character.codePointAt(0);
-    normalized += value !== undefined && value >= 0xd800 && value <= 0xdfff
+    normalized += value === 0 || (value !== undefined && value >= 0xd800 && value <= 0xdfff)
       ? "\ufffd"
       : character;
     codePoints += 1;

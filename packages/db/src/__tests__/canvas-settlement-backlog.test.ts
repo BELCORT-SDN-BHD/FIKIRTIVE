@@ -948,6 +948,25 @@ describe("a board whose repair failed", () => {
     })).toContain(jobId);
   });
 
+  it("replaces NUL in a persisted repair reason and keeps the retry backoff", async () => {
+    const start = new Date();
+    const { jobId } = await seedDeliveredJob({ outputs: 1 });
+
+    const record = await noteCanvasRepairFailure(
+      boardOf(jobId),
+      { now: start, reason: `before\u0000after` },
+    );
+    expect(record).toMatchObject({ attempts: 1, reason: "before�after" });
+    expect(record?.reason).not.toContain("\u0000");
+
+    expect(await sweepIds({
+      now: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS - 1),
+    })).not.toContain(jobId);
+    expect(await sweepIds({
+      now: new Date(start.getTime() + CANVAS_REPAIR_WAIT_BASE_MS),
+    })).toContain(jobId);
+  });
+
   it("resets foreign or malformed repair history from the current real material", async () => {
     const start = new Date();
     const cases = [

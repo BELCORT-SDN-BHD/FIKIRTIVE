@@ -121,6 +121,17 @@ describe("paid material beside canvas repair bookkeeping", () => {
       .toBe(false);
   });
 
+  it("replaces embedded and boundary NUL code points without changing the 200-point cap", () => {
+    expect(normalizeCanvasRepairReason(`before\u0000after`)).toBe("before�after");
+    expect(normalizeCanvasRepairReason(`\u0000edge`)).toBe("�edge");
+
+    const atBoundary = normalizeCanvasRepairReason(`${"x".repeat(199)}\u0000trailing`);
+    expect(atBoundary).toBe(`${"x".repeat(199)}�`);
+    expect([...atBoundary]).toHaveLength(200);
+    expect(isTrustedCanvasRepairRecord({ ...trusted, reason: `before\u0000after` }, "gjb-1", false))
+      .toBe(false);
+  });
+
   it.each([
     { ...trusted, genJobId: "gjb-other", originalVideoOptions: ["foreign"] },
     { ...trusted, genJobId: "gjb-other", videoOptionsWasNull: true },
