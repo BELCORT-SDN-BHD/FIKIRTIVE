@@ -238,6 +238,58 @@ describe("the canvas backfill sweep", () => {
     expect(m.tenants).toEqual(["o1", "o1"]);
   });
 
+  it("keeps its promise to a held board even when new failures flood a full book", async () => {
+    // #601 r5 judge P1. The book used to hold at most 1,000 boards, and admitted a new failure by
+    // evicting its oldest — which is exactly the board most likely to have outlived its place in
+    // the window, the book being the one place it is still offered from. Evicted, it was nowhere:
+    // not in the book, past every scan's lower bound — the merchant's paid outputs never arrived
+    // and nothing ever logged why. This case replays that sequence move for move: a board in the
+    // book may leave it repaired, or scannable — never silently.
+    const start = Date.parse("2026-08-01T12:00:00.000Z");
+    /** Every delivered-but-unwritten board there is, id → finishedAt. */
+    const boards = new Map<string, number>();
+    // The victim and 999 boards of stuffing finished a whisker inside the 24-hour window, so a few
+    // minutes from now no new pass can reach any of them. The straw arrives fresh, later.
+    const nearlyOut = start - CANVAS_BACKFILL_LOOKBACK_MS + 5 * 60_000;
+    boards.set("g-victim", nearlyOut);
+    for (let i = 1; i <= 999; i += 1) boards.set(`g-stuffing-${i}`, nearlyOut);
+    boards.set("g-straw", start + 10 * 60_000);
+    // The window rule, the grace, the hold-backs and the budget, exactly as the database applies them.
+    m.findCanvasSettlementBacklog.mockImplementation(
+      async (options: { now: Date; lookbackMs: number; graceMs: number; limit: number; deferredJobIds?: string[] }) => {
+        const heldBack = new Set(options.deferredJobIds ?? []);
+        const nowMs = options.now.getTime();
+        return page([...boards]
+          .filter(([id, finishedAt]) =>
+            finishedAt >= nowMs - options.lookbackMs && finishedAt < nowMs - options.graceMs && !heldBack.has(id))
+          .slice(0, options.limit)
+          .map(([id]) => ({ id, ownerId: "o1" })));
+      },
+    );
+    // Every repair throws, every time: all of these are the boards the book exists for.
+    m.settleCanvasCardsForGenJob.mockRejectedValue(new Error("board write blew up"));
+
+    // Five quick ticks fill the book to the old cap, 200 boards a tick, the victim inserted first.
+    for (let tick = 0; tick < 5; tick += 1) await backfillCanvasBoards(new Date(start + tick * 60_000));
+    // The eviction tick: the victim's wait is over, it is retried and fails again — a re-failure
+    // never refreshed its place, so it stayed the oldest entry. Then the freshly scanned straw
+    // fails too, and admitting it to the full book pushed the victim out.
+    await backfillCanvasBoards(new Date(start + CANVAS_BACKFILL_RETRY_BASE_MS));
+
+    // From here on only the book can offer the victim — its row left the window during the waits.
+    const evictionTickCalls = m.settleCanvasCardsForGenJob.mock.calls.length;
+    for (let tick = 2; tick <= 16; tick += 1) {
+      await backfillCanvasBoards(new Date(start + tick * CANVAS_BACKFILL_RETRY_BASE_MS));
+    }
+
+    // Four hours of sweeps later, the victim has been tried again. On the evicting code it never
+    // was — not that tick, not ever, and `expect` here is how that showed as red.
+    const attemptedAfterwards = m.settleCanvasCardsForGenJob.mock.calls
+      .slice(evictionTickCalls)
+      .map((call) => call[0]);
+    expect(attemptedAfterwards).toContain("g-victim");
+  });
+
   it("never touches money — no ledger, no settle, no refund, whatever it finds", async () => {
     m.findCanvasSettlementBacklog.mockResolvedValue(page([
       { id: "g1", ownerId: "o1" },

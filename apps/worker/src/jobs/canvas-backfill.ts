@@ -36,8 +36,6 @@ export const CANVAS_BACKFILL_LIMIT = 200;
 export const CANVAS_BACKFILL_RETRY_BASE_MS = 15 * 60_000;
 /** …up to this, so a board that will never write still gets a look a few times a day. */
 export const CANVAS_BACKFILL_RETRY_MAX_MS = 4 * 60 * 60_000;
-/** Ceiling on the backoff book, so a bad day cannot grow it without bound. */
-const RETRY_BOOK_MAX = 1_000;
 /**
  * The most of one tick's budget the backoff book may take back.
  *
@@ -77,16 +75,18 @@ export function resetCanvasBackfillSweepState(): void {
  * end of its 24 hours simply left the window during its own wait, and no later scan could offer
  * it (#601 r4 judge P1). Held here, the wait is a wait whatever the window is doing.
  *
- * An entry leaves only by being repaired, or when the book is full (which hands it back to the
- * scan, since the book is also what excludes it from one).
+ * An entry leaves ONLY by being repaired. There is deliberately no cap and no eviction: the book
+ * used to hold 1,000 at most and admit a new failure by dropping its oldest — which is exactly the
+ * board most likely to have outlived its place in the window, the book being the one place it was
+ * still offered from. Dropped there, it was nowhere, and the merchant's paid outputs were silently
+ * gone (#601 r5 judge P1). The book stays bounded without a cap: it admits at most one scan budget
+ * per tick, every entry is a real delivered job whose board write keeps failing — a state worth an
+ * ops alarm long before its few dozen bytes strain a process — and however large it grows,
+ * `RETRY_SHARE` still caps what any one tick spends on it.
  */
 function deferAfterFailure(jobId: string, ownerId: string, nowMs: number): void {
   const attempts = (retryAfter.get(jobId)?.attempts ?? 0) + 1;
   const wait = Math.min(CANVAS_BACKFILL_RETRY_BASE_MS * 2 ** (attempts - 1), CANVAS_BACKFILL_RETRY_MAX_MS);
-  if (!retryAfter.has(jobId) && retryAfter.size >= RETRY_BOOK_MAX) {
-    const oldest = retryAfter.keys().next().value;
-    if (oldest !== undefined) retryAfter.delete(oldest);
-  }
   retryAfter.set(jobId, { at: nowMs + wait, attempts, ownerId });
 }
 
