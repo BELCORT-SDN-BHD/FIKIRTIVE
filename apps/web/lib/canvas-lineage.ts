@@ -10,8 +10,8 @@
  *
  * FOUNDER RULE — the generation engine is confidential: nothing here ever carries a model or
  * provider name. Settings are the merchant-visible shape of the output (seconds, resolution,
- * aspect, batch position), never the engine that produced it. `scripts/ci/check-provider-secrecy.mjs`
- * enforces the same rule at the file level.
+ * aspect, batch position), never the engine that produced it. Provider-secrecy behavior tests
+ * enforce the same rule.
  */
 
 import { creditsLabel } from "./credit-format";

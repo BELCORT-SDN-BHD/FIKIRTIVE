@@ -1,5 +1,8 @@
 # 直建全城 · 总计划 v1.1（#334 / Blueprint v2.12 对齐；Founder 批准链见 GitHub provenance）
 
+> **状态：历史参考，已于 2026-08-03 被 harness reset 取代。**
+> 本文件及其矩阵不再决定 current scope、执行顺序、状态、agent 权限或 merge。仍可按任务选择性引用其中的产品研究与功能想法。
+
 > **冻结记录(founder 原话)**:①范围宪章「照签」(§二提案表即签认版:CRM 最小版真建、Campaign 一期真建、协作/订阅挂壳、TikTok/email/Agency/市政厅v2/手机App 不在本程);②Q1 细化=「A 只收 credits(seats 之后再讨论)」→ 订阅层=壳+Coming soon;③Q4 细化=「材料先办、**受审面就绪就递**」(验证类前置归材料施工期办;递交触发=B4/B5/B6+法务页就绪,不等全城收口);④合并窗口「接受」(每 2-3 周一次法定放行,非产品验收);⑤**email=挂壳 Coming soon**(宪章 email 行由「不在本程」改为「壳」)。
 > 另两条通用规则已入 §〇:Q6(≥3 次未达攒批)、Q7(意外 blocker 跳过攒批)。本文件是现有 Route-B 计划载体；执行身份、权限与实时状态另取当前 GitHub task 和项目法。
 

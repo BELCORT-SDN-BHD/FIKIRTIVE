@@ -1,5 +1,11 @@
 import "server-only";
 
+import {
+  effectiveOrgRoles,
+  orgRolesAllow,
+  primaryOrgRole,
+  type OrgRole,
+} from "@fikirtive/core";
 import { prisma as defaultDb } from "@fikirtive/db";
 
 /**
@@ -16,9 +22,6 @@ import { prisma as defaultDb } from "@fikirtive/db";
  */
 
 type MemberDirectoryDb = typeof defaultDb;
-type ActiveRole = "owner" | "admin" | "member";
-const ACTIVE_ROLES = new Set<ActiveRole>(["owner", "admin", "member"]);
-
 export const MEMBER_DIRECTORY_ERROR_CODES = {
   NOT_AUTHORIZED: "NOT_AUTHORIZED",
   ACTION_DENIED: "ACTION_DENIED",
@@ -39,12 +42,13 @@ export type MemberDirectoryPrincipal = { ownerId: string; membershipId: string }
 export type MemberDirectoryEntry = {
   membershipId: string;
   displayName: string;
-  role: ActiveRole;
+  role: OrgRole;
+  roles: OrgRole[];
   isSelf: boolean;
 };
 
 export type MemberDirectory = {
-  self: { membershipId: string; role: ActiveRole };
+  self: { membershipId: string; role: OrgRole; roles: OrgRole[] };
   members: MemberDirectoryEntry[];
 };
 
@@ -71,28 +75,46 @@ export function createMemberDirectoryService(options: { db?: MemberDirectoryDb }
     // directory (the gateway already resolves this, but a read must fail closed on its own).
     const self = await db.membership.findFirst({
       where: { id: principal.membershipId, orgId: principal.ownerId, status: "active", deletedAt: null },
-      select: { id: true, role: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
-    if (!self || !ACTIVE_ROLES.has(self.role as ActiveRole)) {
+    const selfRoles = effectiveOrgRoles(
+      (self?.roles ?? []).map((assignment) => assignment.role),
+    );
+    const selfPrimary = primaryOrgRole(selfRoles);
+    if (!self || !selfPrimary || !orgRolesAllow(selfRoles, "members.read")) {
       throw new MemberDirectoryError("ACTION_DENIED");
     }
 
     const rows = await db.membership.findMany({
       where: { orgId: principal.ownerId, status: "active", deletedAt: null },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      select: { id: true, role: true, user: { select: { name: true, email: true } } },
+      select: {
+        id: true,
+        roles: { select: { role: true } },
+        user: { select: { name: true, email: true } },
+      },
     });
 
-    const members: MemberDirectoryEntry[] = rows
-      .filter((row) => ACTIVE_ROLES.has(row.role as ActiveRole))
-      .map((row) => ({
-        membershipId: row.id,
-        displayName: displayNameFor(row.user, row.id),
-        role: row.role as ActiveRole,
-        isSelf: row.id === principal.membershipId,
-      }));
+    const members: MemberDirectoryEntry[] = rows.flatMap((row) => {
+      const roles = effectiveOrgRoles(
+        (row.roles ?? []).map((assignment) => assignment.role),
+      );
+      const role = primaryOrgRole(roles);
+      return role
+        ? [{
+            membershipId: row.id,
+            displayName: displayNameFor(row.user, row.id),
+            role,
+            roles,
+            isSelf: row.id === principal.membershipId,
+          }]
+        : [];
+    });
 
-    return { self: { membershipId: self.id, role: self.role as ActiveRole }, members };
+    return {
+      self: { membershipId: self.id, role: selfPrimary, roles: selfRoles },
+      members,
+    };
   }
 
   return { listMemberDirectory };

@@ -10,6 +10,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const userFindUnique = vi.fn();
 const userUpdate = vi.fn();
+const userRoleDeleteMany = vi.fn();
+const userRoleCreateMany = vi.fn();
 const betterAuthUserUpdateMany = vi.fn();
 const actionEventCreate = vi.fn();
 
@@ -19,6 +21,7 @@ vi.mock("@fikirtive/db", () => ({
     $transaction: async (fn: (tx: unknown) => unknown) =>
       fn({
         user: { update: userUpdate },
+        userRole: { deleteMany: userRoleDeleteMany, createMany: userRoleCreateMany },
         betterAuthUser: { updateMany: betterAuthUserUpdateMany },
         actionEvent: { create: actionEventCreate },
       }),
@@ -34,6 +37,8 @@ beforeEach(() => {
   mockRequireRole.mockReset();
   userFindUnique.mockReset();
   userUpdate.mockReset();
+  userRoleDeleteMany.mockReset();
+  userRoleCreateMany.mockReset();
   betterAuthUserUpdateMany.mockReset();
   actionEventCreate.mockReset();
 });
@@ -60,7 +65,7 @@ describe("saveUserRole", () => {
 
   it("rejects self-escalation (actor changing their own role)", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    userFindUnique.mockResolvedValue({ id: "usr_f", email: "founder@fikirtive.com", role: "super-admin" });
+    userFindUnique.mockResolvedValue({ id: "usr_f", email: "founder@fikirtive.com", role: "super-admin", roles: [{ role: "super-admin" }] });
     const result = await saveUserRole({ userId: "usr_f", role: "ops" });
     expect(result).toEqual({ error: "You can't change your own role." });
     expect(userUpdate).not.toHaveBeenCalled();
@@ -75,10 +80,13 @@ describe("saveUserRole", () => {
 
   it("updates User.role and mirrors onto ba_user.role (by email, lowercased)", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    userFindUnique.mockResolvedValue({ id: "usr_2", email: "Operator@x.test", role: "member" });
+    userFindUnique.mockResolvedValue({ id: "usr_2", email: "Operator@x.test", role: "member", roles: [{ role: "viewer" }] });
     const result = await saveUserRole({ userId: "usr_2", role: "ops" });
     expect(result).toEqual({ ok: true });
     expect(userUpdate).toHaveBeenCalledWith({ where: { id: "usr_2" }, data: { role: "ops" } });
+    expect(userRoleCreateMany).toHaveBeenCalledWith({
+      data: [{ userId: "usr_2", role: "ops" }],
+    });
     expect(betterAuthUserUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "operator@x.test" }, data: { role: "ops" } })
     );
@@ -87,10 +95,34 @@ describe("saveUserRole", () => {
 
   it("does NOT call betterAuthUser.updateMany when target has no email", async () => {
     mockRequireRole.mockResolvedValue(GATE);
-    userFindUnique.mockResolvedValue({ id: "usr_3", email: null, role: "member" });
+    userFindUnique.mockResolvedValue({ id: "usr_3", email: null, role: "member", roles: [{ role: "viewer" }] });
     const result = await saveUserRole({ userId: "usr_3", role: "ops" });
     expect(result).toEqual({ ok: true });
     expect(userUpdate).toHaveBeenCalled();
     expect(betterAuthUserUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("stores more than one role and mirrors only a deterministic primary value", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindUnique.mockResolvedValue({
+      id: "usr_4",
+      email: "multi@x.test",
+      role: "viewer",
+      roles: [{ role: "viewer" }],
+    });
+
+    expect(
+      await saveUserRole({ userId: "usr_4", roles: ["finance", "ops"] }),
+    ).toEqual({ ok: true });
+    expect(userRoleCreateMany).toHaveBeenCalledWith({
+      data: [
+        { userId: "usr_4", role: "finance" },
+        { userId: "usr_4", role: "ops" },
+      ],
+    });
+    expect(userUpdate).toHaveBeenCalledWith({
+      where: { id: "usr_4" },
+      data: { role: "ops" },
+    });
   });
 });

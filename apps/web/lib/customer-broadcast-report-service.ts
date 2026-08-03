@@ -1,5 +1,7 @@
 import "server-only";
 
+import { effectiveOrgRoles, orgRolesAllow } from "@fikirtive/core";
+
 import {
   aggregateDeliveryAxes,
   createMessageDeliveryReconciliation,
@@ -101,7 +103,7 @@ export function createCustomerBroadcastReportService(
   const clock = options.clock ?? (() => new Date());
   const reconciliation = createMessageDeliveryReconciliation(db, { clock });
 
-  async function requireOwnerRead(principal: CustomerBroadcastReportPrincipal): Promise<void> {
+  async function requireBroadcastRead(principal: CustomerBroadcastReportPrincipal): Promise<void> {
     if (!principal || typeof principal.ownerId !== "string" || typeof principal.membershipId !== "string") {
       fail("NOT_AUTHORIZED");
     }
@@ -109,13 +111,17 @@ export function createCustomerBroadcastReportService(
       where: {
         id: principal.membershipId,
         orgId: principal.ownerId,
-        role: "owner",
         status: "active",
         deletedAt: null,
       },
-      select: { id: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
-    if (!membership || principal.impersonating) fail("ACTION_DENIED");
+    const roles = effectiveOrgRoles(
+      (membership?.roles ?? []).map((assignment) => assignment.role),
+    );
+    if (!orgRolesAllow(roles, "broadcast.report.read") || principal.impersonating) {
+      fail("ACTION_DENIED");
+    }
   }
 
   function receiptInput(value: unknown): BroadcastDeliveryReceiptInput {
@@ -138,7 +144,7 @@ export function createCustomerBroadcastReportService(
     principal: CustomerBroadcastReportPrincipal,
     rawInput: BroadcastDeliveryReceiptInput,
   ): Promise<DeliveryReceiptView> {
-    await requireOwnerRead(principal);
+    await requireBroadcastRead(principal);
     const input = receiptInput(rawInput);
     const receipt = await reconciliation.getBroadcastMemberReceipt(principal.ownerId, input);
     if (!receipt) fail("RESOURCE_NOT_FOUND");
@@ -149,7 +155,7 @@ export function createCustomerBroadcastReportService(
     principal: CustomerBroadcastReportPrincipal,
     rawInput: CustomerBroadcastReportInput,
   ): Promise<CustomerBroadcastReport> {
-    await requireOwnerRead(principal);
+    await requireBroadcastRead(principal);
     const input = reportInput(rawInput);
     const run = await db.broadcastRun.findFirst({
       where: { id: input.broadcastRunId, ownerId: principal.ownerId },

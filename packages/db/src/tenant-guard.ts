@@ -1,19 +1,17 @@
 import { Prisma } from "../generated/prisma/client.js";
+import { getPrincipal } from "./principal.js";
 
-/** The owner-scoped models. findMany/findFirst/findFirstOrThrow/updateMany/deleteMany on these
- *  MUST carry an ownerId filter (the repository convention). This extension is a BACKSTOP,
- *  not the sole guarantee.
- *  Documented blind spots: raw SQL, nested writes, unique-key access (findUnique/update/delete/upsert), aggregate/groupBy/count.
- *  Unique-key access shares the findUnique exemption rationale, but update/delete/upsert are
- *  higher-risk writes. The guard does not block them: their write paths must use requireOwner,
- *  an explicit ownerId filter, and a 2-org isolation test. Whether unique-key writes should join
- *  the guard is ticketed as a separate audit (~69 existing call sites).
- *  COVERAGE CONTRACT (2026-07-04 审计): every schema model carrying ownerId must be in THIS
- *  set or in TENANT_GUARD_EXEMPT below — enforced by tenant-guard-coverage.test.ts. */
+/** Owner-scoped models protected at the Prisma boundary.
+ *
+ * Ambient user/tenant context pins reads and writes to its ownerId. Tenant-less system work may
+ * read across owners, but must enter runAsTenant before writing. Raw SQL and nested relation writes
+ * remain outside Prisma query-extension coverage and require focused tests at their boundaries.
+ * Every schema model carrying ownerId must appear here or in TENANT_GUARD_EXEMPT; the coverage
+ * test enforces that choice. */
 export const TENANT_MODELS = new Set([
   "Project", "Entity", "EntityVariant", "ReferenceImage", "Asset", "Shot", "ShotEntityRef",
   "Generation", "RenderJob", "GenJob", "RefGenJob", "ChatThread", "ChatMessage",
-  "CaptionJob", "Transcript",
+  "CaptionJob",
   "Memory", "GenerationBatch", // v1 additive
   "CanvasNode", // 2026-07-04 审计: canvas is the newest active surface; all queries verified owner-scoped
   // 2026-07-04 adversarial review: all four below verified fully owner-scoped at every
@@ -64,14 +62,45 @@ export const TENANT_GUARD_EXEMPT: Record<string, string> = {
   ModelRegistryOverlay: "founder model-registry overrides (admin surface, platform-wide)",
   ResearchJob: "worker claims jobs queue-style by id/status (not owner lists); owner scoping lives in research-actions",
   TemplateBundle: "templates/Discover read official platform-wide bundles",
+  Transcript: "content-addressed cache shared only after the caller proves ownership of identical source bytes",
 };
 
-// Operations we check (those that take a `where`). Unique-key access
-// (findUnique/update/delete/upsert) shares one exemption rationale; the guard does not block it.
-// The higher-risk writes require requireOwner + an explicit ownerId filter + a 2-org isolation test
-// in their write paths. Guard coverage for unique-key writes is a separate audit (~69 call sites).
-// aggregate/groupBy/count are exempt (admin platform-wide reads use them intentionally).
-const CHECKED_OPS = new Set(["findMany", "findFirst", "findFirstOrThrow", "updateMany", "deleteMany"]);
+const SCOPED_WHERE_OPS = new Set([
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+  "update",
+  "updateMany",
+  "updateManyAndReturn",
+  "upsert",
+  "delete",
+  "deleteMany",
+  "count",
+  "aggregate",
+  "groupBy",
+]);
+const CREATE_OPS = new Set(["create", "createMany", "createManyAndReturn"]);
+const WRITE_OPS = new Set([
+  ...CREATE_OPS,
+  "update",
+  "updateMany",
+  "updateManyAndReturn",
+  "upsert",
+  "delete",
+  "deleteMany",
+]);
+const SYSTEM_SCAN_OPS = new Set([
+  "findUnique",
+  "findUniqueOrThrow",
+  "findFirst",
+  "findFirstOrThrow",
+  "findMany",
+  "count",
+  "aggregate",
+  "groupBy",
+]);
 
 function whereHasOwnerId(where: unknown): boolean {
   if (!where || typeof where !== "object") return false;
@@ -84,19 +113,132 @@ function whereHasOwnerId(where: unknown): boolean {
   return false;
 }
 
-/** Apply to the PrismaClient. In production it WARNS (never throws — a false positive must
- *  not 500 a live request); under test it THROWS so the isolation suite catches an unscoped
- *  query. Result shape is never modified. */
+function scopeWhere(args: Record<string, any>, ownerId: string, model: string, operation: string) {
+  const where = args.where && typeof args.where === "object" ? args.where : {};
+  if (
+    Object.prototype.hasOwnProperty.call(where, "ownerId") &&
+    where.ownerId !== undefined &&
+    where.ownerId !== ownerId
+  ) {
+    throw new Error(
+      `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
+    );
+  }
+  args.where = { ...where, ownerId };
+}
+
+function scopeCreateData(
+  data: unknown,
+  ownerId: string,
+  model: string,
+  operation: string,
+): unknown {
+  if (Array.isArray(data)) {
+    return data.map((entry) => scopeCreateData(entry, ownerId, model, operation));
+  }
+  if (!data || typeof data !== "object") {
+    throw new Error(`[tenant-guard] ${model}.${operation} has no tenant-owned data`);
+  }
+  const row = data as Record<string, unknown>;
+  if (row.ownerId !== undefined && row.ownerId !== ownerId) {
+    throw new Error(
+      `[tenant-guard] ${model}.${operation} tried to create data for another tenant`,
+    );
+  }
+  return { ...row, ownerId };
+}
+
+function rejectOwnerRewrite(
+  data: unknown,
+  ownerId: string,
+  model: string,
+  operation: string,
+) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+  const nextOwner = (data as Record<string, unknown>).ownerId;
+  if (nextOwner !== undefined && nextOwner !== ownerId) {
+    throw new Error(
+      `[tenant-guard] ${model}.${operation} tried to move data to another tenant`,
+    );
+  }
+}
+
+function dataHasOwnerId(data: unknown): boolean {
+  if (Array.isArray(data)) return data.length > 0 && data.every(dataHasOwnerId);
+  if (!data || typeof data !== "object") return false;
+  return (data as Record<string, unknown>).ownerId !== undefined;
+}
+
+function dataRewritesOwner(data: unknown): boolean {
+  return Boolean(
+    data &&
+      typeof data === "object" &&
+      !Array.isArray(data) &&
+      (data as Record<string, unknown>).ownerId !== undefined,
+  );
+}
+
+/**
+ * Apply tenant scope at the Prisma boundary.
+ *
+ * - A user or tenant-scoped system frame is authoritative: every operation is pinned to its
+ *   ownerId, including unique reads and writes.
+ * - A tenant-less system frame may scan, but must enter runAsTenant before writing.
+ * - Older unframed call sites retain the explicit-ownerId backstop while they migrate.
+ */
 export function withTenantGuard<T extends object>(client: T): T {
-  const strict = process.env.NODE_ENV === "test";
   return (client as any).$extends({
     query: {
       $allModels: {
         async $allOperations({ model, operation, args, query }: any) {
-          if (TENANT_MODELS.has(model) && CHECKED_OPS.has(operation) && !whereHasOwnerId(args?.where)) {
-            const msg = `[tenant-guard] ${model}.${operation} has no ownerId filter — possible cross-tenant leak`;
-            if (strict) throw new Error(msg);
-            console.warn(msg);
+          if (!TENANT_MODELS.has(model)) return query(args);
+
+          const principal = getPrincipal();
+          const activeOwnerId = principal?.ownerId ?? null;
+          if (activeOwnerId) {
+            if (SCOPED_WHERE_OPS.has(operation)) {
+              scopeWhere(args, activeOwnerId, model, operation);
+            }
+            if (CREATE_OPS.has(operation)) {
+              args.data = scopeCreateData(args.data, activeOwnerId, model, operation);
+            }
+            if (operation === "upsert") {
+              args.create = scopeCreateData(args.create, activeOwnerId, model, operation);
+              rejectOwnerRewrite(args.update, activeOwnerId, model, operation);
+            } else if (WRITE_OPS.has(operation)) {
+              rejectOwnerRewrite(args.data, activeOwnerId, model, operation);
+            }
+          } else if (principal?.kind === "system") {
+            if (!SYSTEM_SCAN_OPS.has(operation)) {
+              throw new Error(
+                `[tenant-guard] ${model}.${operation} requires runAsTenant before system writes`,
+              );
+            }
+          } else {
+            if (SCOPED_WHERE_OPS.has(operation) && !whereHasOwnerId(args?.where)) {
+              throw new Error(
+                `[tenant-guard] ${model}.${operation} has no ownerId filter — possible cross-tenant leak`,
+              );
+            }
+            if (CREATE_OPS.has(operation) && !dataHasOwnerId(args?.data)) {
+              throw new Error(
+                `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
+              );
+            }
+            if (operation === "upsert" && !dataHasOwnerId(args?.create)) {
+              throw new Error(
+                `[tenant-guard] ${model}.${operation} has no ownerId in created data`,
+              );
+            }
+            if (
+              !CREATE_OPS.has(operation) &&
+              WRITE_OPS.has(operation) &&
+              dataRewritesOwner(operation === "upsert" ? args?.update : args?.data)
+            ) {
+              throw new Error(
+                `[tenant-guard] ${model}.${operation} cannot rewrite ownerId without an active tenant`,
+              );
+            }
           }
           return query(args);
         },

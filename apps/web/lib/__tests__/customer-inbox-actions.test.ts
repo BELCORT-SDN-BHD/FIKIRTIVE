@@ -170,6 +170,18 @@ async function seed(): Promise<void> {
       { id: MEMBER_B, userId: USER_B, orgId: ORG_B, role: "owner" },
     ],
   });
+  await prisma.membershipRole.createMany({
+    data: [
+      { membershipId: OWNER, role: "owner" },
+      { membershipId: ADMIN, role: "admin" },
+      { membershipId: MEMBER, role: "member" },
+      { membershipId: MEMBER_2, role: "member" },
+      { membershipId: SUSPENDED, role: "member" },
+      { membershipId: REVOKED, role: "member" },
+      { membershipId: DELETED, role: "member" },
+      { membershipId: MEMBER_B, role: "owner" },
+    ],
+  });
   await prisma.contact.createMany({
     data: [
       { id: CONTACT_A, ownerId: ORG_A, name: "Aisyah", source: "whatsapp", firstTouchAt: NOW, lastSeenAt: NOW },
@@ -1220,10 +1232,14 @@ function createRoleDemotionHarness(membershipId: string, demoteTo: string): type
         const result = await (target.findFirst as any)(...args);
         if (!intercepted && result?.id === membershipId) {
           intercepted = true;
-          await prisma.membership.update({
-            where: { id: membershipId },
-            data: { role: demoteTo },
-          });
+          await prisma.$transaction([
+            prisma.membership.update({
+              where: { id: membershipId },
+              data: { role: demoteTo },
+            }),
+            prisma.membershipRole.deleteMany({ where: { membershipId } }),
+            prisma.membershipRole.create({ data: { membershipId, role: demoteTo } }),
+          ]);
         }
         return result;
       };

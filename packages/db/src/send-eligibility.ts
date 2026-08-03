@@ -166,6 +166,7 @@ async function evalConsentStop(
   try {
     const row = await db.consentStateProjection.findUnique({
       where: {
+        ownerId: input.ownerId,
         ownerId_contactId_channel_purpose: {
           ownerId: input.ownerId,
           contactId: input.contactId,
@@ -238,11 +239,17 @@ async function evalProviderRefusal(
   try {
     const [recipient, account] = await Promise.all([
       db.providerRefusalState.findUnique({
-        where: { ownerId_scopeKey: { ownerId: input.ownerId, scopeKey: recipientScope } },
+        where: {
+          ownerId: input.ownerId,
+          ownerId_scopeKey: { ownerId: input.ownerId, scopeKey: recipientScope },
+        },
         select: { blocked: true },
       }),
       db.providerRefusalState.findUnique({
-        where: { ownerId_scopeKey: { ownerId: input.ownerId, scopeKey: accountScope } },
+        where: {
+          ownerId: input.ownerId,
+          ownerId_scopeKey: { ownerId: input.ownerId, scopeKey: accountScope },
+        },
         select: { blocked: true },
       }),
     ]);

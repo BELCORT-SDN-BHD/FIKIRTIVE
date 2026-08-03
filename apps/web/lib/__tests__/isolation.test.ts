@@ -99,7 +99,7 @@ describe("2-org isolation — org B can never read org A", () => {
   });
   it("refgen: B's getRefGenJobs cannot see A's refgen job", async () => {
     await asUser(B_EMAIL);
-    const entityOfA = (await prisma.refGenJob.findUnique({ where: { id: aRefGenJobId }, select: { entityId: true } }))!.entityId;
+    const entityOfA = (await prisma.refGenJob.findUnique({ where: { id: aRefGenJobId, ownerId: orgA }, select: { entityId: true } }))!.entityId;
     const jobs = await refgen.getRefGenJobs(entityOfA);
     expect(Array.isArray(jobs) ? jobs.some((j: { id: string }) => j.id === aRefGenJobId) : false).toBe(false);
   });

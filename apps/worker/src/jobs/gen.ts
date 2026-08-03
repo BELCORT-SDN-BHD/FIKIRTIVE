@@ -360,7 +360,9 @@ export async function reapStaleGenJobs(): Promise<number> {
 }
 
 export async function handleGen(data: GenJobData, retryCount: number): Promise<void> {
-  const job = await prisma.genJob.findUnique({ where: { id: data.genJobId } });
+  const job = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.genJob.findUnique({ where: { id: data.genJobId } }),
+  );
   if (!job) {
     console.error(`[gen] job ${data.genJobId} missing — dropping`);
     return;

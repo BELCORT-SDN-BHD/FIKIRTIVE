@@ -71,11 +71,11 @@ async function jobs(ownerId: string, projectId: string) {
 // The worker's terminal outcomes, via the SAME ledger fns the worker calls.
 async function workerSettle(ownerId: string, jobId: string) {
   await prisma.$transaction((tx) => settleCredits(tx, { orgId: ownerId, refId: jobId }));
-  await prisma.genJob.update({ where: { id: jobId }, data: { status: "DONE", spent: true, finishedAt: new Date() } });
+  await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "DONE", spent: true, finishedAt: new Date() } });
 }
 async function workerRefund(ownerId: string, jobId: string) {
   await prisma.$transaction((tx) => refundReservation(tx, { orgId: ownerId, refId: jobId }));
-  await prisma.genJob.update({ where: { id: jobId }, data: { status: "FAILED", error: "provider failed", finishedAt: new Date() } });
+  await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "FAILED", error: "provider failed", finishedAt: new Date() } });
 }
 function asOwner(ownerId: string) {
   mockRequireOwner.mockResolvedValue({ ownerId, email: `${ownerId}@fikirtive.test` });
@@ -362,7 +362,7 @@ describe("W-B3-E-P ledger — EP-A4 route ④: cancel (the stop button)", () => 
     const acct = await account(ownerId);
     expect(acct.balance).toBe(1000); // fully restored
     expect(acct.reserved).toBe(0);
-    const job = await prisma.genJob.findUniqueOrThrow({ where: { id: res.id } });
+    const job = await prisma.genJob.findUniqueOrThrow({ where: { id: res.id, ownerId } });
     expect(job.status).toBe("FAILED");
     expect(job.error).toBe("Cancelled by you");
 
@@ -380,7 +380,7 @@ describe("W-B3-E-P ledger — EP-A4 route ④: cancel (the stop button)", () => 
     const res = idOf(await startGen({ projectId, prompt: "too late", entityIds: [], count: 1, kind: "image", model: "seedream", idempotencyKey: `late-${randomUUID().slice(0, 8)}` }));
 
     // the worker claimed it (QUEUED → GENERATING) before the user clicked stop
-    await prisma.genJob.update({ where: { id: res.id }, data: { status: "GENERATING", startedAt: new Date() } });
+    await prisma.genJob.update({ where: { id: res.id, ownerId }, data: { status: "GENERATING", startedAt: new Date() } });
 
     const result = await cancelGenJob({ jobId: res.id });
     expect(result).toEqual({ alreadyStarted: true }); // honest "too late" — never a fake refund

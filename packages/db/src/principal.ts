@@ -34,6 +34,7 @@ export type SystemReason =
   | "stripe-webhook"
   | "meta-data-deletion"
   | "worker-heartbeat"
+  | "worker-job-dispatch"
   | "worker-reaper-tick"
   | "gen-reaper"
   | "refgen-reaper"
@@ -53,7 +54,7 @@ export type SystemReason =
  * recorded only as `impersonatedByBaUserId`.
  *
  * The two role axes are NEVER merged (packages/core/src/org-roles.ts:1-2 forbids it):
- * `orgRole` is the per-org membership axis (owner|admin|member). The platform-staff axis
+ * `orgRole` is the compatibility primary role on the per-org membership axis. The platform-staff axis
  * (`Role`: super-admin|ops|finance|moderator|viewer) is NOT carried here — it belongs to
  * requireRole and the admin console, not to tenant scoping.
  *
@@ -80,8 +81,8 @@ export type Principal =
       subjectEmail: string;
       /** The org being acted upon (the subject org). */
       ownerId: string;
-      /** `Membership.role` in `ownerId`. Null is reachable — see `subjectUserId`. */
-      orgRole: "owner" | "admin" | "member" | null;
+      /** Compatibility `Membership.role` in `ownerId`. Authorization uses MembershipRole. */
+      orgRole: "owner" | "admin" | "member" | "creator" | "approver" | null;
       /**
        * `Membership.id` of the acting member in `ownerId` — the same id the CRM gateways
        * already hand their services, carried here so a reader needs no second query.

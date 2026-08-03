@@ -218,7 +218,9 @@ export async function reapStaleRefGenJobs(): Promise<number> {
 }
 
 export async function handleRefGen(data: RefGenJobData, retryCount: number): Promise<void> {
-  const job = await prisma.refGenJob.findUnique({ where: { id: data.refGenJobId } });
+  const job = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.refGenJob.findUnique({ where: { id: data.refGenJobId } }),
+  );
   if (!job) {
     console.error(`[refgen] job ${data.refGenJobId} missing — dropping`);
     return;

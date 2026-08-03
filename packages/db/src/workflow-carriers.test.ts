@@ -239,7 +239,7 @@ async function createGraph(
     },
   });
   await prisma.workflowDefinition.update({
-    where: { id: definitionId },
+    where: { id: definitionId, ownerId: tenant.ownerId },
     data: { currentRevision: 1, status: "published", rowRevision: { increment: 1 } },
   });
   await prisma.routine.create({
@@ -288,7 +288,7 @@ async function createGraph(
     },
   });
   await prisma.contactJourneyState.update({
-    where: { id: journeyId },
+    where: { id: journeyId, ownerId: tenant.ownerId },
     data: { lastRoutineRunId: runId, rowRevision: { increment: 1 } },
   });
   await prisma.workflowStepExecution.create({
@@ -471,7 +471,7 @@ describe("C7-M1 tenant guard and owner isolation", () => {
 
     await expect(
       prisma.contactJourneyState.update({
-        where: { id: graph.journeyId },
+        where: { id: graph.journeyId, ownerId: ORG_A },
         data: { lastRoutineRunId: graphB.runId },
       }),
     ).rejects.toMatchObject({ code: "P2003" });
@@ -1065,14 +1065,14 @@ describe("C7-M1 checks and immutable envelopes", () => {
 
     await expect(
       prisma.workflowStepExecution.update({
-        where: { id: reservedStep.id },
+        where: { id: reservedStep.id, ownerId: ORG_A },
         data: { status: "delegated" },
       }),
     ).rejects.toThrow();
 
     await expect(
       prisma.workflowStepExecution.update({
-        where: { id: reservedStep.id },
+        where: { id: reservedStep.id, ownerId: ORG_A },
         data: { status: "unavailable", reasonCode: "exact_identity_unavailable" },
       }),
     ).resolves.toMatchObject({
@@ -1125,21 +1125,21 @@ describe("C7-M1 checks and immutable envelopes", () => {
 
     await expect(
       prisma.workflowRevision.update({
-        where: { id: graph.revisionId },
+        where: { id: graph.revisionId, ownerId: ORG_A },
         data: { rulesSource: "version: changed" },
       }),
     ).rejects.toThrow(/immutable|WorkflowRevision/i);
 
     await expect(
       prisma.routine.update({
-        where: { id: graph.routineId },
+        where: { id: graph.routineId, ownerId: ORG_A },
         data: { maxCreditsPerRun: 1 },
       }),
     ).rejects.toThrow(/immutable|authorized Routine/i);
 
     await expect(
       prisma.routine.update({
-        where: { id: graph.routineId },
+        where: { id: graph.routineId, ownerId: ORG_A },
         data: {
           killSwitchEngaged: true,
           killedByMembershipId: MEMBER_A,
@@ -1172,14 +1172,14 @@ describe("C7-M1 checks and immutable envelopes", () => {
 
     await expect(
       prisma.businessHoursPolicy.update({
-        where: { id: graph.policyId },
+        where: { id: graph.policyId, ownerId: ORG_A },
         data: { timeZone: "UTC" },
       }),
     ).rejects.toThrow(/immutable|BusinessHoursPolicy/i);
 
     await expect(
       prisma.businessHoursPolicy.update({
-        where: { id: graph.policyId },
+        where: { id: graph.policyId, ownerId: ORG_A },
         data: { status: "archived", archivedAt: NOW, rowRevision: { increment: 1 } },
       }),
     ).resolves.toMatchObject({ status: "archived" });
@@ -1198,7 +1198,7 @@ describe("C7-M1 checks and immutable envelopes", () => {
 
     const killTransaction = prisma.$transaction(async (tx) => {
       await tx.routine.update({
-        where: { id: graph.routineId },
+        where: { id: graph.routineId, ownerId: ORG_A },
         data: {
           killSwitchEngaged: true,
           killedByMembershipId: MEMBER_A,
@@ -1292,16 +1292,16 @@ describe("C7-M1 Restrict and storage-only boundaries", () => {
 
     const deletes = [
       () => prisma.organization.delete({ where: { id: ORG_A } }),
-      () => prisma.membership.delete({ where: { id: MEMBER_A } }),
-      () => prisma.contact.delete({ where: { id: CONTACT_A } }),
-      () => prisma.contactIdentity.delete({ where: { id: IDENTITY_A } }),
-      () => prisma.channelConnection.delete({ where: { id: CONNECTION_A } }),
-      () => prisma.workflowDefinition.delete({ where: { id: graph.definitionId } }),
-      () => prisma.workflowRevision.delete({ where: { id: graph.revisionId } }),
-      () => prisma.routine.delete({ where: { id: graph.routineId } }),
-      () => prisma.routineRun.delete({ where: { id: graph.runId } }),
-      () => prisma.contactJourneyState.delete({ where: { id: graph.journeyId } }),
-      () => prisma.businessHoursPolicy.delete({ where: { id: graph.policyId } }),
+      () => prisma.membership.delete({ where: { id: MEMBER_A, orgId: ORG_A } }),
+      () => prisma.contact.delete({ where: { id: CONTACT_A, ownerId: ORG_A } }),
+      () => prisma.contactIdentity.delete({ where: { id: IDENTITY_A, ownerId: ORG_A } }),
+      () => prisma.channelConnection.delete({ where: { id: CONNECTION_A, ownerId: ORG_A } }),
+      () => prisma.workflowDefinition.delete({ where: { id: graph.definitionId, ownerId: ORG_A } }),
+      () => prisma.workflowRevision.delete({ where: { id: graph.revisionId, ownerId: ORG_A } }),
+      () => prisma.routine.delete({ where: { id: graph.routineId, ownerId: ORG_A } }),
+      () => prisma.routineRun.delete({ where: { id: graph.runId, ownerId: ORG_A } }),
+      () => prisma.contactJourneyState.delete({ where: { id: graph.journeyId, ownerId: ORG_A } }),
+      () => prisma.businessHoursPolicy.delete({ where: { id: graph.policyId, ownerId: ORG_A } }),
     ];
     for (const remove of deletes) await expect(remove()).rejects.toMatchObject({ code: "P2003" });
 

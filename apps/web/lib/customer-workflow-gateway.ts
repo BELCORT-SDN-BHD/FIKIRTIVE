@@ -2,7 +2,11 @@ import "server-only";
 
 import { prisma } from "@fikirtive/db";
 import { runAsUser, type UserPrincipal } from "@fikirtive/db/principal";
-import { isOrgRole } from "@fikirtive/core";
+import {
+  effectiveOrgRoles,
+  orgRolesAllow,
+  primaryOrgRole,
+} from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "./better-auth/compat";
 import {
@@ -50,14 +54,19 @@ async function resolvePrincipal(): Promise<ResolvedPrincipal> {
   const membership = await prisma.membership.findFirst({
     where: {
       orgId: gate.ownerId,
-      role: "owner",
       status: "active",
       deletedAt: null,
       user: { email: gate.email },
     },
-    select: { id: true, role: true, userId: true },
+    select: { id: true, userId: true, roles: { select: { role: true } } },
   });
   if (!membership) throw new CustomerWorkflowError("ACTION_DENIED");
+  const orgRoles = effectiveOrgRoles(
+    membership.roles.map((assignment) => assignment.role),
+  );
+  if (!orgRolesAllow(orgRoles, "workflow.read")) {
+    throw new CustomerWorkflowError("ACTION_DENIED");
+  }
 
   const impersonating = await isImpersonating();
   return {
@@ -67,7 +76,7 @@ async function resolvePrincipal(): Promise<ResolvedPrincipal> {
       subjectUserId: membership.userId,
       subjectEmail: gate.email,
       ownerId: gate.ownerId,
-      orgRole: isOrgRole(membership.role) ? membership.role : null,
+      orgRole: primaryOrgRole(orgRoles),
       membershipId: membership.id,
       impersonating,
       // #463 never carries the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).

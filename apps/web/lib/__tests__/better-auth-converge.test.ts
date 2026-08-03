@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 const db = {
   user: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+  userRole: { upsert: vi.fn() },
   membership: { upsert: vi.fn() },
+  membershipRole: { upsert: vi.fn() },
   betterAuthUser: { updateMany: vi.fn() },
   actionEvent: { create: vi.fn() },
   $transaction: vi.fn(),
@@ -15,15 +17,20 @@ beforeEach(() => {
   db.$transaction.mockReset();
   db.$transaction.mockImplementation(async (fn: (tx: {
     user: { updateMany: Mock };
+    userRole: { upsert: Mock };
     betterAuthUser: { updateMany: Mock };
     membership: { upsert: Mock };
+    membershipRole: { upsert: Mock };
   }) => Promise<unknown>) =>
     fn({
       user: { updateMany: db.user.updateMany },
+      userRole: { upsert: db.userRole.upsert },
       betterAuthUser: { updateMany: db.betterAuthUser.updateMany },
       membership: { upsert: db.membership.upsert },
+      membershipRole: { upsert: db.membershipRole.upsert },
     })
   );
+  db.membership.upsert.mockResolvedValue({ id: "membership-founder" });
   mockBootstrap.mockReset();
   process.env.FOUNDER_ADMIN_EMAILS = "founder@x.test";
 });
@@ -32,7 +39,7 @@ describe("convergeIdentity", () => {
   it("creates the canonical user if absent and bootstraps a non-founder org + audit", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue(null);
-    db.user.create.mockResolvedValue({ id: "usr_1", email: "merchant@x.test", emailVerified: new Date() });
+    db.user.create.mockResolvedValue({ id: "usr_1", email: "merchant@x.test", emailVerified: new Date(), role: "viewer" });
     await convergeIdentity({ email: "merchant@x.test", name: "M", emailVerified: true });
     // #544 — the canonical create stamps emailVerified (DateTime, next-auth convention).
     expect(db.user.create).toHaveBeenCalledWith(
@@ -44,7 +51,7 @@ describe("convergeIdentity", () => {
 
   it("#544 — stamps emailVerified on an existing canonical row that is still null (set-once via emailVerified:null filter)", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
-    db.user.findUnique.mockResolvedValue({ id: "usr_2", email: "merchant2@x.test", emailVerified: null });
+    db.user.findUnique.mockResolvedValue({ id: "usr_2", email: "merchant2@x.test", emailVerified: null, role: "viewer" });
     await convergeIdentity({ email: "merchant2@x.test", emailVerified: true });
     expect(db.user.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "merchant2@x.test", emailVerified: null }, data: { emailVerified: expect.any(Date) } }),
@@ -53,13 +60,13 @@ describe("convergeIdentity", () => {
 
   it("#544 — does NOT re-stamp an already-verified canonical row", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
-    db.user.findUnique.mockResolvedValue({ id: "usr_3", email: "merchant3@x.test", emailVerified: new Date("2026-01-01T00:00:00Z") });
+    db.user.findUnique.mockResolvedValue({ id: "usr_3", email: "merchant3@x.test", emailVerified: new Date("2026-01-01T00:00:00Z"), role: "viewer" });
     await convergeIdentity({ email: "merchant3@x.test", emailVerified: true });
     expect(db.user.updateMany).not.toHaveBeenCalled();
   });
   it("self-heals founder super-admin + seeds founder membership, no personal bootstrap", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
-    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date() });
+    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date(), role: "super-admin" });
     await convergeIdentity({ email: "founder@x.test", emailVerified: true });
     expect(db.user.updateMany).toHaveBeenCalled();   // promote-only self-heal
     expect(db.membership.upsert).toHaveBeenCalled();  // founder membership seed
@@ -72,7 +79,7 @@ describe("convergeIdentity", () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     // Founder is already verified, so the #544 emailVerified stamp is skipped and the ONLY
     // user.updateMany reaching the rejecting mock is the in-tx role write this test targets.
-    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date() });
+    db.user.findUnique.mockResolvedValue({ id: "usr_f", email: "founder@x.test", emailVerified: new Date(), role: "super-admin" });
     db.user.updateMany.mockRejectedValue(new Error("canonical role write failed"));
 
     await expect(convergeIdentity({ email: "founder@x.test", emailVerified: true })).resolves.toBeUndefined();
@@ -104,7 +111,7 @@ describe("convergeIdentity", () => {
     const refusal = new Error("provisioning refused: address revoked during signup");
     refusal.name = "RevokedDuringProvisioning";
     mockBootstrap.mockRejectedValue(refusal);
-    db.user.findUnique.mockResolvedValue({ id: "usr_rev", email: "revoked@x.test", emailVerified: new Date() });
+    db.user.findUnique.mockResolvedValue({ id: "usr_rev", email: "revoked@x.test", emailVerified: new Date(), role: "viewer" });
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -127,7 +134,7 @@ describe("convergeIdentity", () => {
   it("still treats an ordinary bootstrap failure as non-fatal", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     mockBootstrap.mockRejectedValue(new Error("connection reset"));
-    db.user.findUnique.mockResolvedValue({ id: "usr_ok", email: "blip@x.test", emailVerified: new Date() });
+    db.user.findUnique.mockResolvedValue({ id: "usr_ok", email: "blip@x.test", emailVerified: new Date(), role: "viewer" });
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await expect(convergeIdentity({ email: "blip@x.test", emailVerified: true })).resolves.toBeUndefined();
