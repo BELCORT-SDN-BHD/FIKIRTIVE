@@ -24,6 +24,8 @@ import { Client } from "pg";
 import { CANVAS_JOB_KEY_PREFIX } from "@fikirtive/core";
 import { prisma } from "../index.js";
 import {
+  CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS,
+  CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS,
   CANVAS_SETTLEMENT_LOCK_TIMEOUT_MS,
   canvasJobPlacementLockKey,
   canvasRepairLockKey,
@@ -417,6 +419,115 @@ describe("a contended board cannot hold the maintenance worker", () => {
       await blocker.end();
     }
   }, 10_000);
+
+  it("bounds the wait for a merchant opening a board, without being asked to", async () => {
+    // The retry worker names its own tight bounds. Everybody ELSE — the delivery path, and the
+    // merchant whose browser opens a board and reconciles it — used to name none, which meant no
+    // DB-side bound at all: the wait for a contended board ended when the client-side transaction
+    // gave up, with the blocked statement still sitting in the database (#611 OPUS5 P2). A board is
+    // the merchant's home; it must come back quickly even when it comes back unfinished, and the
+    // sweep repairs what this call could not.
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const { jobId } = await seedJob({ status: "DONE", outputs: 1, idempotencyKey: canvasKey() });
+    const lockKey = canvasJobPlacementLockKey(orgId, projectId, jobId);
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("SELECT pg_advisory_lock(hashtextextended($1, 0::bigint))", [lockKey]);
+    // Held well past every client-side patience this call has, so a pass cannot come from the
+    // blocker letting go: only a bound the settlement itself set can end the wait in time.
+    let fallbackRelease: Promise<unknown> | undefined;
+    const release = setTimeout(() => {
+      fallbackRelease = blocker.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))",
+        [lockKey],
+      );
+    }, 12_000);
+
+    try {
+      const startedAt = Date.now();
+      // Two arguments: the ordinary call every non-retry caller makes.
+      await expect(settleCanvasCardsForGenJob(jobId, orgId))
+        .rejects.toThrow(/lock timeout|canceling statement/i);
+      expect(Date.now() - startedAt)
+        .toBeLessThan(CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS + 1_000);
+    } finally {
+      clearTimeout(release);
+      if (fallbackRelease) await fallbackRelease.catch(() => undefined);
+      else {
+        await blocker
+          .query("SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))", [lockKey])
+          .catch(() => undefined);
+      }
+      await blocker.end();
+    }
+  }, 20_000);
+
+  it("bounds the repair bookkeeping's own wait by default too", async () => {
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const { jobId } = await seedJob({ status: "DONE", outputs: 1, idempotencyKey: canvasKey() });
+    const board = { id: jobId, ownerId: orgId, projectId };
+    const lockKey = canvasRepairLockKey(orgId, projectId, jobId);
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("SELECT pg_advisory_lock(hashtextextended($1, 0::bigint))", [lockKey]);
+    let fallbackRelease: Promise<unknown> | undefined;
+    const release = setTimeout(() => {
+      fallbackRelease = blocker.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))",
+        [lockKey],
+      );
+    }, 12_000);
+
+    try {
+      for (const operation of [
+        () => noteCanvasRepairFailure(board, { now: new Date(), reason: "board write failed" }),
+        () => clearCanvasRepairRecord(board),
+      ]) {
+        const startedAt = Date.now();
+        await expect(operation()).rejects.toThrow(/lock timeout|canceling statement/i);
+        expect(Date.now() - startedAt)
+          .toBeLessThan(CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS + 1_000);
+      }
+    } finally {
+      clearTimeout(release);
+      if (fallbackRelease) await fallbackRelease.catch(() => undefined);
+      else {
+        await blocker
+          .query("SELECT pg_advisory_unlock(hashtextextended($1, 0::bigint))", [lockKey])
+          .catch(() => undefined);
+      }
+      await blocker.end();
+    }
+  }, 30_000);
+
+  it("bounds an ordinary caller's pre-read when the job table itself is blocked", async () => {
+    const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("test database URL is required");
+    const { jobId } = await seedJob({ status: "DONE", outputs: 1, idempotencyKey: canvasKey() });
+    const blocker = new Client({ connectionString });
+    await blocker.connect();
+    await blocker.query("BEGIN");
+    await blocker.query('LOCK TABLE "GenJob" IN ACCESS EXCLUSIVE MODE');
+    let fallbackRelease: Promise<unknown> | undefined;
+    const release = setTimeout(() => {
+      fallbackRelease = blocker.query("ROLLBACK");
+    }, 12_000);
+    const startedAt = Date.now();
+
+    try {
+      await expect(settleCanvasCardsForGenJob(jobId, orgId))
+        .rejects.toThrow(/lock timeout|statement timeout|canceling statement/i);
+      expect(Date.now() - startedAt)
+        .toBeLessThan(CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS + 1_000);
+    } finally {
+      clearTimeout(release);
+      if (fallbackRelease) await fallbackRelease.catch(() => undefined);
+      else await blocker.query("ROLLBACK").catch(() => undefined);
+      await blocker.end();
+    }
+  }, 20_000);
 
   it("bounds the job pre-read before a backfill settlement reaches its board lock", async () => {
     const connectionString = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;

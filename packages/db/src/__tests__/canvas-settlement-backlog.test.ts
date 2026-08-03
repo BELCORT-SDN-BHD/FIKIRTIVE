@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, afterEach, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { Client } from "pg";
 import {
   CANVAS_JOB_KEY_PREFIX,
@@ -1186,6 +1187,65 @@ describe("a board whose repair failed", () => {
     expect(await sweepIds({ now: start })).toEqual(expect.arrayContaining([wrongJob, waitBeyondCap]));
   });
 
+  it("never lets a date that does not exist on a calendar defer a paid board", async () => {
+    const start = new Date();
+    // Each of these matches the writer's text shape exactly and would sit far in the future if it
+    // were a real moment, so a scan that took one at face value would hide paid work for years.
+    // None of them is a time. The cast that turns this field into a moment THROWS on every one,
+    // and a throw here is SILENT: the sweep catches it and repairs nothing at all that tick.
+    const impossible = [
+      "9999-02-30T00:00:00.000Z", // February never has thirty days
+      "9999-04-31T00:00:00.000Z", // nor April thirty-one
+      "9999-06-31T00:00:00.000Z",
+      "9999-09-31T00:00:00.000Z",
+      "9999-11-31T00:00:00.000Z",
+      "9999-01-00T00:00:00.000Z", // there is no zeroth day
+      "2100-02-29T00:00:00.000Z", // divisible by four AND by a hundred: not a leap year
+      "2027-02-29T00:00:00.000Z", // an ordinary year
+      "0000-06-15T00:00:00.000Z", // there is no year zero
+    ];
+    const jobs = await Promise.all(impossible.map(() => seedDeliveredJob({ outputs: 2 })));
+    await Promise.all(jobs.map(({ jobId }, index) => prisma.genJob.update({
+      where: { id: jobId },
+      data: {
+        videoOptions: {
+          [CANVAS_REPAIR_JSON_KEY]: {
+            genJobId: jobId, attempts: 1, nextAt: impossible[index],
+            reason: "a date that never happened", videoOptionsWasNull: true,
+          },
+        },
+      },
+    })));
+
+    expect(await sweepIds({ now: start })).toEqual(
+      expect.arrayContaining(jobs.map(({ jobId }) => jobId)),
+    );
+  });
+
+  it("still waits out a real leap day, so a valid record is not retried early", async () => {
+    // The other side of the calendar check: rejecting too much would put every board back in the
+    // queue the moment its wait was written, which is the retry storm the backoff exists to avoid.
+    // Both leap rules are pinned — divisible by four, and the every-four-hundred-years exception.
+    for (const leapDay of ["2028-02-29", "2400-02-29"]) {
+      const { jobId } = await seedDeliveredJob({ outputs: 2 });
+      await prisma.genJob.update({
+        where: { id: jobId },
+        data: {
+          videoOptions: {
+            [CANVAS_REPAIR_JSON_KEY]: {
+              genJobId: jobId, attempts: 1, nextAt: `${leapDay}T02:00:00.000Z`,
+              reason: "waiting on a leap day", videoOptionsWasNull: true,
+            },
+          },
+        },
+      });
+
+      // The tick's clock is the only thing the scan reads, so we can stand on the leap day itself:
+      // the wait is then inside the writer's four-hour cadence ceiling and must still be honoured.
+      expect(await sweepIds({ now: new Date(`${leapDay}T00:30:00.000Z`) })).not.toContain(jobId);
+    }
+  });
+
   it("defers only a complete writer-shaped repair record", async () => {
     const start = new Date();
     const malformed = await Promise.all([
@@ -1452,6 +1512,27 @@ describe("the database scan's wall-clock boundary", () => {
       await blocker.end();
     }
   }, 10_000);
+});
+
+/**
+ * #601 r7 judge P1 — the scan must run on the PostgreSQL the merchant's data actually lives on.
+ *
+ * This repository and CI are PostgreSQL 16. The PRODUCTION major is not something this repository
+ * knows, and asking it is not this worker's to do. The asymmetry is what makes a version dependency
+ * dangerous here rather than merely wrong: if the scan throws, the sweep catches it and returns
+ * zero (deliberately — a bad canvas query must not stop credit refunds in the shared reaper tick).
+ * So on a server missing one function, every board that is missing paid work simply stays broken,
+ * for ever, without a single failed test or red check anywhere. The scan therefore uses SQL that
+ * has been in PostgreSQL for many majors, and this case is the fence that keeps it that way.
+ */
+describe("the backlog scan's SQL is not newer than the database it must run on", () => {
+  it("validates a repair record's next-attempt time without PostgreSQL 16's input-testing pair", async () => {
+    const source = await readFile(new URL("../canvas-settlement.ts", import.meta.url), "utf8");
+
+    // Both arrived in PostgreSQL 16 and are the obvious reach for "would this text cast cleanly?".
+    // Anything they would answer has to be answered with arithmetic instead.
+    expect(source).not.toMatch(/pg_input_is_valid|pg_input_error_info/);
+  });
 });
 
 /**

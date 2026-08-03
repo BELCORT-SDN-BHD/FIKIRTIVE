@@ -48,7 +48,10 @@ export const CANVAS_BACKFILL_LIMIT = 200;
  * long enough for several ordinary board transactions but short beside the five-minute cadence.
  */
 export const CANVAS_BACKFILL_WALL_BUDGET_MS = 10_000;
-/** Database bounds apply only to retry work, never normal delivery or a merchant opening a board. */
+/**
+ * Tighter than the bounds every settlement carries by default, because this sweep has the rest of
+ * the shared reaper tick waiting behind it — a merchant opening a board has nothing behind it.
+ */
 export const CANVAS_BACKFILL_DB_TIMEOUTS = {
   statementTimeoutMs: 2_000,
   advisoryLockTimeoutMs: 500,
