@@ -211,6 +211,23 @@ describe("mergeReloadedCanvasNodes", () => {
     expect(merged.map((node) => node.id)).toEqual(["a"]);
   });
 
+  // The tail's OWN line of defence, pinned on a row the other rule cannot reach. A card this tab
+  // placed itself carries no `serverKnown` stamp, so "the server used to return it and no longer
+  // does" says nothing about it — being absent from the read is exactly what a just-placed card
+  // looks like. Only the removal memory can tell that this one is gone. Without this case the
+  // tail's memory check could be deleted and every test would stay green (r5 review P2).
+  it("drops a card it removed even when no read ever acknowledged it", () => {
+    const placedHereThenDeleted = justPlaced("gone");
+
+    const merged = mergeReloadedCanvasNodes(
+      [placedHereThenDeleted, server("a")],
+      [server("a")],
+      new Set(["gone"]),
+    );
+
+    expect(merged.map((node) => node.id)).toEqual(["a"]);
+  });
+
   it("takes the server's answer the moment the server HAS one", () => {
     // The other half of the same rule: a reread only loses while it is still catching up. As soon
     // as the row is settled truth it wins, whatever this tab had guessed.
