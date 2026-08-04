@@ -494,6 +494,54 @@ describe("executePropose — mock DB", () => {
     expect(payload["downgradeNote"]).toContain("This run will use 10 of your 17 reference photos.");
   });
 
+  // 复审抓到的实数缺陷:底图是 unshift 进去的,不占元素的 10 张名额
+  // (apps/worker/src/jobs/gen.ts:650-659),所以带挂图时引擎真收到的是 11 张,
+  // 商家给的也是 18 张 —— 卡面过去照旧只会说「10 of your 17」,两个数都不对。
+  it("#619: attached base image + 17 element photos → 11 of 18, not 10 of 17", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }, { id: "e2" }]);
+    mockPrisma.referenceImage.count.mockResolvedValueOnce(9).mockResolvedValueOnce(8);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "the whole cast, on this beach", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen-1", sourceGenerationIds: ["gen-1"] }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgradeNote"]).toContain("This run will use 11 of your 18 reference photos.");
+  });
+
+  // 挂图 + 元素刚好压线:元素没被截,底图仍额外上车 —— 没有截断就不许编一句提醒。
+  it("#619: attached base image + exactly 10 element photos → nothing is truncated, so nothing is claimed", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }, { id: "e2" }]);
+    mockPrisma.referenceImage.count.mockResolvedValueOnce(5).mockResolvedValueOnce(5);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "both of them, on this beach", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen-1", sourceGenerationIds: ["gen-1"] }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
+  });
+
+  // 视频分支的 provider.generateVideo 根本不收 inputImageUrls
+  // (apps/worker/src/jobs/gen.ts:636-644),元素图一张都到不了视频引擎 ——
+  // 那就一个参考照数字都不许报,而不是报一个错的。
+  it("#619: a reference-video card never claims a reference-photo count (elements don't reach the video engine)", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(17);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "move like this", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", referenceVideoGenerationId: "gen_vid" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["kind"]).toBe("video");
+    expect(String(payload["downgradeNote"] ?? "")).not.toContain("reference photos");
+  });
+
   it("#619: within the engine limit → no truncation sentence is invented", async () => {
     mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
     mockPrisma.referenceImage.count.mockResolvedValue(3);

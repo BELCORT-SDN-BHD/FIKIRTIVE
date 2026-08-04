@@ -15,11 +15,11 @@ import {
   REFERENCE_VIDEO_MODEL,
   MAX_GEN_PROMPT,
   MAX_GEN_COUNT,
-  MAX_CONDITIONING_IMAGES,
   displayCredits,
   pricedGenCredits,
   EXECUTED_SPEC,
   type GenVideoModel,
+  type ReferenceBudget,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
@@ -155,22 +155,24 @@ export function buildSpecChips(
 /**
  * #619 参考照片预算 —— 花钱**之前**说清楚这一趟真会用上几张。
  *
- * 引擎一次只收 `MAX_CONDITIONING_IMAGES` 张 @元素参考照，worker 按 round-robin 截断
- * （`apps/worker/src/jobs/gen.ts`）。截断不改价、不改选型，但商家过去是花完钱才在详情页
- * 发现有元素没上车。这里把它变成卡面上的一行披露。
+ * 数字不在这里算：`referenceBudget`（`@fikirtive/core`）是 worker 选片规则的唯一副本，
+ * 且由 `apps/worker/src/jobs/gen-reference-budget.test.ts` 拿真 `handleGen` 发出去的
+ * `inputImageUrls` 长度逐例对表。这里只负责把它说成人话。
  *
- * `attachedImageCount` 是商家这一轮挂进来的图片数：只有第一张会成为底图（付费请求的
- * `sourceGenerationId` 是单值），其余只参与 Otto 的理解 —— 也照实说，不假装全用了。
+ * 两句话各管一件事，都不许静默：
+ *   - 引擎上限截掉了元素照片 → 说清「真会用几张 / 商家一共给了几张」（含底图，因为底图
+ *     也是引擎真收到的一张）；
+ *   - 挂了不止一张图 → 说清哪张是底图，其余只参与理解（付费请求的底图字段是单值）。
  */
 export function buildReferenceBudgetNotes(input: {
-  liveReferenceImageCount: number;
+  budget: ReferenceBudget;
   attachedImageCount: number;
   usesAttachedImage: boolean;
 }): string[] {
   const notes: string[] = [];
-  if (input.liveReferenceImageCount > MAX_CONDITIONING_IMAGES) {
+  if (input.budget.truncated) {
     notes.push(
-      `This run will use ${MAX_CONDITIONING_IMAGES} of your ${input.liveReferenceImageCount} reference photos.`,
+      `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
     );
   }
   if (input.usesAttachedImage && input.attachedImageCount > 1) {
