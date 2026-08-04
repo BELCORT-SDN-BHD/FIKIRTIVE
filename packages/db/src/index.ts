@@ -26,6 +26,8 @@ export {
   CANVAS_REPAIR_JSON_KEY,
   CANVAS_REPAIR_WAIT_BASE_MS,
   CANVAS_REPAIR_WAIT_MAX_MS,
+  CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS,
+  CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS,
   type CanvasSettlementOutcome,
   type CanvasSettlementTimeoutOptions,
   type CanvasSettlementBacklogJob,

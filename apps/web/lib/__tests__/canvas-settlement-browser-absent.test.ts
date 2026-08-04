@@ -500,47 +500,117 @@ describe("a finished job whose settlement write fell over, reloaded from the cha
   });
 
   /**
-   * THE READ→WRITE WINDOW, AND WHAT IS AND IS NOT PROMISED ABOUT IT.
+   * TWO STALE RELOADS, ONE CARD (#613 r3, cross-family judge P1).
    *
-   * The planner decides "still running?" from rows read moments earlier, and a job can finish in
-   * between. This case makes that interleaving deterministic rather than hoping to hit it: another
-   * transaction takes the job's placement lock and finishes the job while holding it, so the
-   * reload reads QUEUED, plans a card, and is still holding that plan when the job turns DONE
-   * underneath it.
+   * Two tabs — or one tab and a retry — can reload at the same instant. Both planners read a board
+   * with no card, both plan one, and both reach the placement. The advisory lock serializes them,
+   * but serializing is not the same as agreeing: in READ COMMITTED a statement's snapshot is taken
+   * when the STATEMENT starts, so as long as the "does a card already exist?" test lives in the
+   * same statement that acquires the lock, the second writer evaluates it against a snapshot
+   * predating the first writer's commit and inserts a second anchor.
    *
-   * MEASURED, NOT ASSUMED: the card IS placed. Repeating the status gate in the INSERT does not
-   * prevent it, because that statement's snapshot is taken before the CTE acquires the lock, so a
-   * status committed while it waited is invisible to its own predicate. This test exists to keep
-   * that fact honest — an earlier revision of this branch claimed the opposite in a comment.
+   * `CanvasNode.genJobId` carries no uniqueness (schema.prisma), so nothing below catches it, and
+   * the damage is durable: the settlement binds one anchor to the batch's first output now and the
+   * other to the SAME output on a later pass, so a merchant ends up with one paid picture shown
+   * twice and a phantom card in its lineage.
    *
-   * It is left that way on purpose. A job that finished microseconds ago was genuinely in flight
-   * when the merchant reloaded, so the card is the ordinary in-flight anchor — the very thing a
-   * browser puts down — and the settlement binds it exactly the same way. What must hold, and is
-   * what this asserts, is that the board still CONVERGES: one card per paid output, none
-   * duplicated, none missing, and no second anchor left behind.
+   * This forces the interleaving rather than hoping for it: a third connection holds the placement
+   * lock while both reloads take their snapshots and queue behind it, then releases.
    */
-  it("converges to one correct batch when the job finishes between the read and the write", async () => {
+  it("gives a job exactly one card when two stale reloads race for it", async () => {
+    projectId = await freshProject();
+    const seeded = await seedChatCardJob({ outputs: 2, status: "GENERATING" });
+    const pid = projectId;
+
+    let first!: Promise<unknown>;
+    let second!: Promise<unknown>;
+    await prisma.$transaction(async (tx) => {
+      const lockKey = canvasJobPlacementLockKey(ownerId, pid, seeded.jobId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+      // Both reloads read the empty board and queue at the lock. Their snapshots are now fixed,
+      // and neither can see what the other is about to write.
+      first = syncOttoCanvasNodes(pid);
+      second = syncOttoCanvasNodes(pid);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }, { maxWait: 10_000, timeout: 60_000 });
+    await Promise.all([first, second]);
+
+    const rows = await boardRows(pid);
+    expect(rows).toHaveLength(1);
+    expect(rows.map((row) => ({ status: row.status, genJobId: row.genJobId })))
+      .toEqual([{ status: "pending", genJobId: seeded.jobId }]);
+
+    // …and the batch that follows carries each paid output exactly once.
+    await prisma.genJob.update({
+      where: { id: seeded.jobId, ownerId },
+      data: { status: "DONE", finishedAt: new Date(Date.now() - 30 * 60_000) },
+    });
+    expect(await backstop(seeded.jobId)).toBe(true);
+    const settled = await boardRows(pid);
+    expect(settled.map((row) => row.generationId).sort()).toEqual([...seeded.generationIds].sort());
+  }, 60_000);
+
+  /**
+   * THE READ→WRITE WINDOW, from both sides.
+   *
+   * The planner decides "still running?" from rows read moments earlier, and the job can change
+   * while the placement queues behind somebody else's hold on its lock. Both cases below force
+   * that queue deterministically: a third connection holds the lock, the reload takes its
+   * snapshot and blocks, and the hold is released.
+   *
+   * The pair matters. The first proves the placement REALLY HAPPENS on the far side of that wait —
+   * without it, the second would be satisfied by a placement that had quietly stopped working at
+   * all (#613 r3, judge P2). The second proves the window is closed: because the lock is taken in
+   * its own statement, the INSERT that follows reads a snapshot taken after the lock was granted
+   * and sees the job's committed ending. An earlier revision of this branch measured the opposite
+   * and said so; taking the lock out of the INSERT's own statement is what changed the answer.
+   */
+  async function whileTheLockIsHeld(
+    jobId: string,
+    pid: string,
+    duringTheHold?: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<void>,
+  ): Promise<void> {
+    let reload!: Promise<unknown>;
+    await prisma.$transaction(async (tx) => {
+      const lockKey = canvasJobPlacementLockKey(ownerId, pid, jobId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+      await duringTheHold?.(tx);
+      // The reload reads the board and the job (this transaction has not committed), plans a
+      // card, and queues at the placement lock.
+      reload = syncOttoCanvasNodes(pid);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }, { maxWait: 10_000, timeout: 60_000 });
+    await reload;
+  }
+
+  it("does place the card once the wait is over, when the job is still running", async () => {
+    projectId = await freshProject();
+    const seeded = await seedChatCardJob({ outputs: 0, status: "GENERATING" });
+    const pid = projectId;
+
+    await whileTheLockIsHeld(seeded.jobId, pid);
+
+    const rows = await boardRows(pid);
+    expect(rows.map((row) => ({ status: row.status, genJobId: row.genJobId })))
+      .toEqual([{ status: "pending", genJobId: seeded.jobId }]);
+  }, 60_000);
+
+  it("places nothing when the job finishes while the placement waits for the lock", async () => {
     projectId = await freshProject();
     const seeded = await seedChatCardJob({ outputs: 3, status: "QUEUED" });
     const pid = projectId;
 
-    let reload!: Promise<unknown>;
-    await prisma.$transaction(async (tx) => {
-      const lockKey = canvasJobPlacementLockKey(ownerId, pid, seeded.jobId);
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+    await whileTheLockIsHeld(seeded.jobId, pid, async (tx) => {
       // The job finishes — not yet visible to anyone else, and the lock is not yet released.
       await tx.genJob.updateMany({
         where: { id: seeded.jobId, ownerId },
         data: { status: "DONE", finishedAt: new Date(Date.now() - 30 * 60_000) },
       });
-      // The reload reads QUEUED (this transaction has not committed), plans the card, and blocks
-      // on the placement lock at its INSERT.
-      reload = syncOttoCanvasNodes(pid);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }, { maxWait: 10_000, timeout: 60_000 });
-    await reload;
+    });
 
-    // Whatever the window produced, the backstop finishes the batch and the board is correct.
+    // The INSERT woke up into a DONE job and wrote nothing; the backstop owns it from here, and
+    // the board it produces carries each paid output exactly once.
+    expect(await boardRows(pid)).toHaveLength(0);
     expect(await backstop(seeded.jobId)).toBe(true);
     const rows = await boardRows(pid);
     expect(rows.map((row) => row.generationId).sort()).toEqual([...seeded.generationIds].sort());

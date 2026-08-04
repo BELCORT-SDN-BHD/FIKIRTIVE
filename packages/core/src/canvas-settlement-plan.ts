@@ -340,6 +340,16 @@ export type CanvasSettlementPlan =
       kind: "place";
       /** Anchor first, then siblings in batch order. */
       cards: PlannedCard[];
+      /**
+       * Unbound cards of this job that no paid output is left for — an anomaly, never a plan.
+       *
+       * One job can only ever have one legitimately unbound card: the in-flight anchor, which the
+       * two placement paths each admit once per job. More than one means two writers both placed
+       * an anchor. They are deliberately NOT planned — binding one to an output another card
+       * already carries is how a merchant ends up with one paid picture shown twice — and they are
+       * reported here so the caller can say so out loud instead of writing the duplicate.
+       */
+      duplicateAnchorIds: string[];
     }
   | {
       /** The job ended badly: settle the cards it left behind, create nothing. */
@@ -525,7 +535,32 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
 
   const type = job.kind === "VIDEO" ? "video" : "image";
   const primaryGenerationId = surviving[0]!;
-  const anchor = findAnchor(live, primaryGenerationId);
+
+  /**
+   * WHICH UNBOUND CARDS ARE REAL (#613 r3, cross-family judge P1).
+   *
+   * An unbound card is the anchor waiting for its first output. A job can only have one — both
+   * placement paths admit a card per job exactly once — so a second one means two writers raced
+   * and both placed one. `CanvasNode.genJobId` has no uniqueness behind it, so nothing under this
+   * function would notice; and left to the old rule the damage was durable, because each pass
+   * bound whichever unbound card it found to the batch's FIRST output. Two passes, two cards, the
+   * same paid picture on both, and a phantom in the lineage.
+   *
+   * So an unbound card is only an anchor while there is an output NO live card carries yet. The
+   * rest are reported to the caller and never planned: unbound is a visible, honest state (the
+   * board shows a delivered job's outputless card as missing) and a duplicated paid output is not.
+   */
+  const carriedByLiveCards = new Set(
+    live.map((card) => card.generationId).filter((id): id is string => !!id),
+  );
+  const unclaimed = surviving.filter((id) => !carriedByLiveCards.has(id));
+  const unbound = live.filter((card) => card.generationId === null);
+  const duplicateAnchorIds = (unclaimed.length ? unbound.slice(1) : unbound).map((card) => card.id);
+  const anchorCandidates = duplicateAnchorIds.length
+    ? live.filter((card) => !duplicateAnchorIds.includes(card.id))
+    : live;
+
+  const anchor = findAnchor(anchorCandidates, primaryGenerationId);
   const planned: PlannedCard[] = [];
 
   // ── the anchor card ──────────────────────────────────────────────────────────────────────
@@ -577,9 +612,12 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     anchorPrompt = anchor.prompt ?? (job.prompt || null);
     anchorSourceNodeId = anchor.sourceNodeId;
     const patch: { status?: string; generationId?: string } = {};
-    // Only an anchor with no output yet may be bound to one. A card that already shows a
-    // different output is a sibling's card, and is never re-pointed.
-    if (anchor.generationId === null) patch.generationId = primaryGenerationId;
+    // Only an anchor with no output yet may be bound to one, and only to an output NO live card
+    // is already carrying — binding it to one that is already on the board is how the same paid
+    // picture ends up on two cards. `unclaimed` is non-empty whenever an unbound card survived
+    // the duplicate filter above, so the batch's first free output is always there to bind.
+    // A card that already shows a different output is a sibling's card, and is never re-pointed.
+    if (anchor.generationId === null) patch.generationId = unclaimed[0]!;
     anchorGenerationId = patch.generationId ?? anchor.generationId ?? primaryGenerationId;
     if (anchor.status !== "done") patch.status = "done";
     const batchIndex = Math.max(0, outputs.indexOf(anchorGenerationId));
@@ -630,5 +668,5 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     });
   }
 
-  return { kind: "place", cards: planned };
+  return { kind: "place", cards: planned, duplicateAnchorIds };
 }

@@ -189,6 +189,18 @@ export async function settleCanvasCardsForGenJob(
       return { status: "settled" as const, nodeIds: terminalIds, created: 0, updated: settled };
     }
 
+    // An anomaly the projection refused to write over, said out loud (#613 r3). Two writers each
+    // placed an anchor for this job, so one unbound card has no output left to carry. It is left
+    // exactly as it is — the board shows a delivered job's outputless card as missing, which is
+    // true, where binding it would have put one paid picture on two cards. Nothing here retries or
+    // repairs it; a durable uniqueness rule for a job's anchor belongs with #599 D5 batch identity.
+    if (plan.duplicateAnchorIds.length) {
+      console.warn(
+        `[canvas] ${job.id}: ${plan.duplicateAnchorIds.length} extra unbound card(s) for one job — `
+        + `left unbound rather than duplicating a paid output: ${plan.duplicateAnchorIds.join(", ")}`,
+      );
+    }
+
     const nodeIds: string[] = [];
     let created = 0;
     let updated = 0;

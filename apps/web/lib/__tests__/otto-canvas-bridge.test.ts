@@ -9,6 +9,7 @@ const {
   mockChatThreadFindMany,
   mockGenJobFindMany,
   mockExecuteRaw,
+  mockQueryRaw,
   mockGetGenerationThumbs,
   mockPlaceCanvasJobNode,
   mockNewId,
@@ -25,6 +26,7 @@ const {
   mockChatThreadFindMany: vi.fn(),
   mockGenJobFindMany: vi.fn(),
   mockExecuteRaw: vi.fn(),
+  mockQueryRaw: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
   mockNewId: vi.fn(),
@@ -63,10 +65,18 @@ vi.mock("@fikirtive/db", () => ({
     creditLedger: { findMany: mockLedgerFindMany },
     organization: { findFirst: mockOrganizationFindFirst },
     $executeRaw: mockExecuteRaw,
+    $queryRaw: mockQueryRaw,
+    // #613 r3: the in-flight placement now runs in its own transaction so the advisory lock is a
+    // SEPARATE statement from the guarded INSERT. The stub hands the same spies through, so the
+    // order and the separation of those statements stay visible to the assertions below.
+    $transaction: (run: (tx: unknown) => Promise<unknown>) =>
+      run({ $executeRaw: mockExecuteRaw, $queryRaw: mockQueryRaw }),
   },
   // #601 r2: the chat-side reader no longer repairs a delivered job itself — it calls the ONE
   // settlement the canvas reader and the worker call.
   settleCanvasCardsForGenJob: mockSettleCanvasCards,
+  CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS: 2_000,
+  CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS: 4_000,
 }));
 
 import { syncOttoCanvasNodes } from "../otto-canvas-bridge";
@@ -83,6 +93,7 @@ beforeEach(() => {
   mockLedgerFindMany.mockResolvedValue([]);
   mockOrganizationFindFirst.mockResolvedValue({ settings: {} });
   mockExecuteRaw.mockResolvedValue(1);
+  mockQueryRaw.mockResolvedValue([{}]);
   mockSettleCanvasCards.mockResolvedValue({ status: "settled", nodeIds: [], created: 0, updated: 0 });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
@@ -268,9 +279,15 @@ describe("syncOttoCanvasNodes project scoping", () => {
         threadId: "thread-1",
       }),
     ]);
-    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    // TWO statements, not one (#613 r3, judge P1). The lock is taken on its own so the INSERT
+    // that follows reads a snapshot taken AFTER it was granted — that is what stops a second
+    // racing reload from inserting a duplicate anchor it cannot yet see.
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
     expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining([
       "canvas-job-placement:u1:p1:job-1",
+    ]));
+    expect(mockExecuteRaw.mock.calls[0]).not.toEqual(expect.arrayContaining(["job-1", "thread-1"]));
+    expect(mockExecuteRaw.mock.calls[1]).toEqual(expect.arrayContaining([
       "p1",
       "video",
       "job-1",
@@ -336,7 +353,7 @@ describe("syncOttoCanvasNodes project scoping", () => {
     expect(mockGenJobFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { ownerId: "u1", projectId: "p1", OR: [{ idempotencyKey: { in: ["cowork:card-1"] } }] },
     }));
-    expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining(["job-fallback"]));
+    expect(mockExecuteRaw.mock.calls[1]).toEqual(expect.arrayContaining(["job-fallback"]));
   });
 
   it("leaves a batch with missing cards alone — it settles nothing and patches nothing", async () => {
