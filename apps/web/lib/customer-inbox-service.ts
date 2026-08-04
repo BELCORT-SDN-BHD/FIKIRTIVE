@@ -858,6 +858,7 @@ export function createCustomerInboxService(
       const membership = await activeMembership(tx, principal);
       if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       const target = targetMembershipId
         ? await requireAssignableMembership(tx, principal.ownerId, targetMembershipId)
         : null;
@@ -890,6 +891,7 @@ export function createCustomerInboxService(
       const membership = await activeMembership(tx, principal);
       if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       requireMemberAssignment(membership, current.assigneeMembershipId);
       if (current.automationState !== "otto_active") fail("ACTION_DENIED");
       return commitConversationEvent(tx, {
@@ -917,6 +919,7 @@ export function createCustomerInboxService(
       const membership = await activeMembership(tx, principal);
       if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       requireMemberAssignment(membership, current.assigneeMembershipId);
       const target = await requireAssignableMembership(
         tx,
@@ -949,8 +952,8 @@ export function createCustomerInboxService(
       const membership = await activeMembership(tx, principal);
       if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
-      requireMemberAssignment(membership, current.assigneeMembershipId);
       if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
+      requireMemberAssignment(membership, current.assigneeMembershipId);
       if (current.status === input.status) fail("INVALID_ARGUMENT");
       return commitConversationEvent(tx, {
         principal,
