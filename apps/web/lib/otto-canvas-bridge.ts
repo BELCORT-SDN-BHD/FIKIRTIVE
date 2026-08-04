@@ -7,7 +7,7 @@ import { withCanvasLineage } from "./canvas-lineage-data";
 import { canvasJobPlacementLockKey } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -210,12 +210,9 @@ export async function syncOttoCanvasNodes(
   ];
   const thumbs = await getGenerationThumbs(ownerId, genIds); // generationId → { src, kind }
 
-  const repairs: Array<{
-    id: string;
-    status: string;
-    generationId: string | null;
-    data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>>;
-  }> = [];
+  // PURELY A READ from here down (#613 T2d) — the same rule the canvas reader now follows. What a
+  // card SAYS is resolved for display, so a row that has not caught up still shows the merchant
+  // the truth; nothing seen while rendering is written back to the row.
   const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const gid = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
@@ -226,15 +223,7 @@ export async function syncOttoCanvasNodes(
     // the id is the job's OWN generation (owner-scoped above), no spend logic.
     const thumb = gid ? thumbs[gid] : undefined;
     const url = thumb?.src ?? null;
-    const jobStatus = job?.status;
-    const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
-    // A delivered job's rows are the settlement's to write (see canvas-settlement-reconcile.ts):
-    // repairing one here from a picture's availability is the second opinion that made the two
-    // writers disagree. Rows of a job that is NOT delivered still get repaired here.
-    const patch = jobStatus === "DONE"
-      ? null
-      : settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
-    if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
+    const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
     return {
       ...n,
       generationId: gid,
@@ -245,14 +234,6 @@ export async function syncOttoCanvasNodes(
       origin: canvasNodeOrigin(job?.idempotencyKey),
     };
   });
-  if (repairs.length) {
-    await Promise.all(repairs.map(async (r) => {
-      await prisma.canvasNode.updateMany({
-        where: { id: r.id, ownerId, projectId, status: r.status, generationId: r.generationId },
-        data: r.data,
-      });
-    }));
-  }
 
   return withCanvasLineage(ownerId, projectId, resolved);
 }
