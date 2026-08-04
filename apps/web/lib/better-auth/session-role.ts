@@ -1,14 +1,17 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
-import { isRole, type Role } from "@fikirtive/core";
+import { primaryPlatformRole, type Role } from "@fikirtive/core";
 
-/** Canonical role for an email (the BA session enrichment seam). Mirrors auth.ts's
- *  session callback: missing/garbage/no-email/DB-error → "viewer", never throws. */
+/** Compatibility role for session/UI surfaces that still display one value. */
 export async function roleForEmail(email: string | null | undefined): Promise<Role> {
   if (!email) return "viewer";
   try {
-    const row = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { role: true } });
-    return isRole(row?.role) ? row.role : "viewer";
+    const row = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() },
+      select: { roles: { select: { role: true } } },
+    });
+    const assignments = row?.roles?.map((assignment) => assignment.role) ?? [];
+    return primaryPlatformRole(assignments);
   } catch {
     return "viewer";
   }

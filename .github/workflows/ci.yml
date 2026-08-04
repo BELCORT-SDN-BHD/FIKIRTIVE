@@ -1,55 +1,22 @@
-# The four CI jobs and the local fallback share scripts/ci/run-job.sh as their only command
-# source. Deployment is Founder-only; external source triggers and the deployed commit must be
-# queried live rather than inferred from this workflow.
 name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+
+permissions:
+  contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: quality-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  check:
-    name: typecheck + fences + frozen lockfile
+  quality:
+    name: quality
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # pnpm version comes from package.json's `packageManager` field — action-setup@v4
-      # errors if `version` is ALSO set here.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: bash scripts/ci/run-job.sh check
-
-  # `next build` for apps/web — the exact command Railway's Dockerfile runs on deploy.
-  # Typecheck can't catch client→server-bundle leaks (a "use client" file value-importing
-  # @fikirtive/otto or another server-only module drags prisma/pg into the browser bundle);
-  # that class of bug merged green twice (#33, and the otto-in-client leak found 2026-07-02)
-  # and only exploded at deploy time. Needs NO env vars: every route is dynamic (ƒ) and all
-  # process.env reads sit behind lazy getters, so nothing connects to a DB at build time.
-  # If a build ever starts demanding an env var, prefer making the read lazy over adding a
-  # stub here — a build-time env dependency would also break Railway builds.
-  web-build:
-    name: next build (apps/web)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: bash scripts/ci/run-job.sh web-build
-
-  test:
-    name: unit + integration tests
-    runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -60,30 +27,22 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
-      # Database name ends in _test — required by the packages/db and apps/web (F35) guards.
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/fikirtive_test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
+      BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
+      BETTER_AUTH_URL: http://localhost:3000
+      GOOGLE_CLIENT_ID: fikirtive-ci-only-google-client
+      GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - run: bash scripts/ci/run-job.sh test
-
-  # ESLint remains a separate hard job because its output-heavy failure mode is distinct from the
-  # typecheck/fence job. The shared runner builds workspace packages first; no DB or web build is
-  # required here. Do not hide regressions with eslint-disable.
-  lint:
-    name: eslint (apps/web)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4 # version from package.json `packageManager` (see check job)
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: bash scripts/ci/run-job.sh lint
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality

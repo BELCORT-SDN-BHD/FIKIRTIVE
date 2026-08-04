@@ -8,7 +8,7 @@
  *     from the persisted plan so the confirm page can show it before the owner confirms.
  *   - confirmCampaignGeneration: dispatches the approved entries through orchestrateBatch.
  *
- * MONEY SAFETY (money-safety-review; B0-57 §7.2; 零新钱路 / 零第二金库):
+ * MONEY SAFETY (零新钱路 / 零第二金库):
  *   - This file adds NO spend authority. It does NOT import or call reserveCredits /
  *     settleCredits / refundReservation / grantCredits, never creates a GenJob, never calls
  *     a provider, never sends to GEN_QUEUE. Every dollar still flows through startGen's

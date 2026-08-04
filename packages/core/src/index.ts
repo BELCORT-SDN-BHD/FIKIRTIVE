@@ -1,6 +1,17 @@
 export { newId } from "./ids.js";
 export { storageKey, parseStorageKey, keyOwnerMatches, FOUNDER_OWNER_ID } from "./storage-key.js";
-export { ORG_ROLES, isOrgRole, type OrgRole } from "./org-roles.js";
+export {
+  ORG_ROLES,
+  ORG_CAPABILITIES,
+  ORG_ROLE_CAPABILITIES,
+  isOrgRole,
+  isOrgCapability,
+  effectiveOrgRoles,
+  primaryOrgRole,
+  orgRolesAllow,
+  type OrgRole,
+  type OrgCapability,
+} from "./org-roles.js";
 export { sha256Stream, sha256Bytes } from "./hash.js";
 export {
   fikirtiveEdit,

@@ -16,7 +16,6 @@ import {
   type Section,
 } from "@fikirtive/core";
 // Founder-only platform admin read model; every query below is bounded and metadata-first.
-// eslint-disable-next-line no-restricted-imports
 import { prisma } from "@fikirtive/db";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { listConversations } from "@/lib/conversation-admin";

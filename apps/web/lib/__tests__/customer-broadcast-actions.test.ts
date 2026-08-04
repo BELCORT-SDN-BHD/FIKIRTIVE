@@ -246,6 +246,14 @@ async function seed(): Promise<void> {
       { id: MEMBER_B, userId: USER_B, orgId: ORG_B, role: "owner" },
     ],
   });
+  await prisma.membershipRole.createMany({
+    data: [
+      { membershipId: OWNER, role: "owner" },
+      { membershipId: ADMIN, role: "admin" },
+      { membershipId: MEMBER, role: "member" },
+      { membershipId: MEMBER_B, role: "owner" },
+    ],
+  });
   await prisma.contact.createMany({
     data: [
       { id: CONTACT_A, ownerId: ORG_A, name: "Aisyah", source: "whatsapp", firstTouchAt: NOW, lastSeenAt: NOW },
@@ -875,7 +883,7 @@ describe("C5-M2 frozen snapshot is display/audit-only, never live authority", ()
 
     // Consent flips to effective_revoke AFTER the freeze.
     await prisma.consentStateProjection.update({
-      where: { ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_A, channel: "whatsapp", purpose: "marketing" } },
+      where: { ownerId: ORG_A, ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_A, channel: "whatsapp", purpose: "marketing" } },
       data: { state: "effective_revoke" },
     });
 
@@ -1024,6 +1032,7 @@ describe("C5-M3 ledger #35: audience estimate derives from ConsentStateProjectio
     // to verified_grant. The estimate must now KEEP it — proving the legacy column is ignored.
     await prisma.consentStateProjection.update({
       where: {
+        ownerId: ORG_A,
         ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_A_OPTOUT, channel: "whatsapp", purpose: "marketing" },
       },
       data: { state: "verified_grant" },
@@ -1040,6 +1049,7 @@ describe("C5-M3 ledger #35: audience estimate derives from ConsentStateProjectio
   it("excludes a contact whose projection is effective_revoke regardless of the legacy column", async () => {
     await prisma.consentStateProjection.update({
       where: {
+        ownerId: ORG_A,
         ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_GRANT, channel: "whatsapp", purpose: "marketing" },
       },
       data: { state: "effective_revoke" },
@@ -1104,8 +1114,8 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     const run = await createFrozenConfirmedRun("c5-m3-exec-resume");
     // Simulate a crash right AFTER recording the granted contact's frequency event but BEFORE the
     // member sendState flipped: run is executing, the member is still pending, the freq row exists.
-    await prisma.broadcastRun.update({ where: { id: run.id }, data: { status: "executing" } });
-    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    await prisma.broadcastRun.update({ where: { id: run.id, ownerId: ORG_A }, data: { status: "executing" } });
+    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id, ownerId: ORG_A } });
     const key = `freq:${ORG_A}:${run.id}:${IDENTITY_GRANT}:whatsapp:proactive_non_transactional`;
     await prisma.contactSendFrequencyEvent.create({
       data: {
@@ -1125,6 +1135,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     // that already spent cap.
     await prisma.consentStateProjection.update({
       where: {
+        ownerId: ORG_A,
         ownerId_contactId_channel_purpose: { ownerId: ORG_A, contactId: CONTACT_GRANT, channel: "whatsapp", purpose: "marketing" },
       },
       data: { state: "effective_revoke" },
@@ -1166,10 +1177,10 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
   it("serializes two resumers finalizing the same pending member so state and frequency event cannot contradict", async () => {
     const run = await createFrozenConfirmedRun("c5-m3-same-member-finalize-race");
     await prisma.broadcastRun.update({
-      where: { id: run.id },
+      where: { id: run.id, ownerId: ORG_A },
       data: { status: "executing" },
     });
-    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id, ownerId: ORG_A } });
     const grantedMember = await prisma.broadcastAudienceMember.findFirstOrThrow({
       where: {
         ownerId: ORG_A,
@@ -1288,10 +1299,10 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
   it("lets the blocked loser reclaim a member after the winner's frequency-cap rollback", async () => {
     const run = await createFrozenConfirmedRun("c5-m3-same-member-cap-rollback");
     await prisma.broadcastRun.update({
-      where: { id: run.id },
+      where: { id: run.id, ownerId: ORG_A },
       data: { status: "executing" },
     });
-    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const executing = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id, ownerId: ORG_A } });
     const grantedMember = await prisma.broadcastAudienceMember.findFirstOrThrow({
       where: {
         ownerId: ORG_A,
@@ -1436,7 +1447,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
   });
 
   it("skips a DND-blocked contact with a doNotDisturb reason and zero frequency rows", async () => {
-    await prisma.contact.update({ where: { id: CONTACT_GRANT }, data: { doNotDisturb: true } });
+    await prisma.contact.update({ where: { id: CONTACT_GRANT, ownerId: ORG_A }, data: { doNotDisturb: true } });
     const run = await createFrozenConfirmedRun("c5-m3-dnd");
     const result = await broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: run.revision });
     const granted = result.members.find((m) => m.contactIdentityId === IDENTITY_GRANT)!;
@@ -1474,7 +1485,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
     const run = await createFrozenConfirmedRun("c5-m3-cas");
     await expectCode(broadcast.executeBroadcastRun(owner, { broadcastRunId: run.id, expectedRevision: 99 }), "CAS_CONFLICT");
     expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
-    const untouched = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const untouched = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id, ownerId: ORG_A } });
     expect(untouched.status).toBe("confirmed");
   });
 
@@ -1484,7 +1495,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
       await expectCode(broadcast.executeBroadcastRun(principal, { broadcastRunId: run.id, expectedRevision: run.revision }), "ACTION_DENIED");
     }
     expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
-    const untouched = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id } });
+    const untouched = await prisma.broadcastRun.findUniqueOrThrow({ where: { id: run.id, ownerId: ORG_A } });
     expect(untouched.status).toBe("confirmed");
   });
 
@@ -1504,7 +1515,7 @@ describe("C5-M3 executeBroadcastRun — simulated provider execution (zero real 
 
   it("prunes stale members on a re-freeze to a narrower segment; execution never touches the dropped ones", async () => {
     // Give CONTACT_GRANT a spend so a spend-gated narrow segment matches ONLY it (not CONTACT_A).
-    await prisma.contact.update({ where: { id: CONTACT_GRANT }, data: { totalOrdersMyr: 100 } });
+    await prisma.contact.update({ where: { id: CONTACT_GRANT, ownerId: ORG_A }, data: { totalOrdersMyr: 100 } });
     await prisma.segment.create({
       data: {
         id: "c5-m3-narrow-seg",
@@ -1601,7 +1612,7 @@ describe("C5-M3 member directory (#27)", () => {
 
   it("returns the owner-scoped memberships with a server-derived self, marking isSelf, no cross-tenant leak", async () => {
     const result = await directory.listMemberDirectory({ ownerId: ORG_A, membershipId: OWNER });
-    expect(result.self).toEqual({ membershipId: OWNER, role: "owner" });
+    expect(result.self).toEqual({ membershipId: OWNER, role: "owner", roles: ["owner"] });
     const ids = result.members.map((m) => m.membershipId).sort();
     expect(ids).toEqual([ADMIN, MEMBER, OWNER].sort());
     expect(result.members.find((m) => m.membershipId === OWNER)!.isSelf).toBe(true);
@@ -1611,7 +1622,7 @@ describe("C5-M3 member directory (#27)", () => {
 
   it("derives self and role from the passed membership (server-derived), falling back to email for the display name", async () => {
     const result = await directory.listMemberDirectory({ ownerId: ORG_A, membershipId: MEMBER });
-    expect(result.self).toEqual({ membershipId: MEMBER, role: "member" });
+    expect(result.self).toEqual({ membershipId: MEMBER, role: "member", roles: ["member"] });
     const self = result.members.find((m) => m.membershipId === MEMBER)!;
     expect(self.displayName).toBe("c5-m2-member@example.test"); // user row has no name -> email
   });

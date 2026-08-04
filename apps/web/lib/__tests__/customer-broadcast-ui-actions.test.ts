@@ -42,6 +42,7 @@ async function seed(): Promise<void> {
   await prisma.organization.create({ data: { id: ORG_A } });
   await prisma.user.create({ data: { id: USER_OWNER, email: "c5-m3-ui-owner@example.test" } });
   await prisma.membership.create({ data: { id: OWNER, userId: USER_OWNER, orgId: ORG_A, role: "owner" } });
+  await prisma.membershipRole.create({ data: { membershipId: OWNER, role: "owner" } });
   await prisma.channelScope.create({ data: { id: SCOPE_A, ownerId: ORG_A, channel: "whatsapp", scopeKey: "waba-a", createdAt: NOW } });
   await prisma.customerMessageTemplate.create({
     data: {

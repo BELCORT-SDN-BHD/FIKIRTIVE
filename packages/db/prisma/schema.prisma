@@ -72,6 +72,7 @@ model Project {
   shots       Shot[]
   generations Generation[]
 
+  @@unique([id, ownerId])
   @@index([ownerId, deletedAt])
   @@index([ownerId, pinnedAt, createdAt], map: "Project_owner_pinned_idx")
 }
@@ -103,6 +104,7 @@ model Entity {
   variants        EntityVariant[]
   shotRefs        ShotEntityRef[]
 
+  @@unique([id, ownerId])
   @@index([ownerId, type, deletedAt])
 }
 
@@ -124,9 +126,10 @@ model EntityVariant {
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
-  entity          Entity           @relation(fields: [entityId], references: [id], onDelete: Restrict)
+  entity          Entity           @relation(fields: [entityId, ownerId], references: [id, ownerId], onDelete: Restrict)
   referenceImages ReferenceImage[]
 
+  @@unique([id, ownerId])
   @@index([ownerId, deletedAt])
   @@index([entityId, deletedAt])
 }
@@ -148,9 +151,9 @@ model ReferenceImage {
   createdAt DateTime  @default(now())
   deletedAt DateTime?
 
-  entity  Entity         @relation(fields: [entityId], references: [id])
-  asset   Asset          @relation(fields: [assetId], references: [id])
-  variant EntityVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
+  entity  Entity         @relation(fields: [entityId, ownerId], references: [id, ownerId])
+  asset   Asset          @relation(fields: [assetId, ownerId], references: [id, ownerId])
+  variant EntityVariant? @relation(fields: [variantId, ownerId], references: [id, ownerId], onDelete: Restrict)
 
   // 防并发重复挂靠靠迁移里的 PARTIAL UNIQUE 索引(Prisma 无法在 schema 表达条件唯一,
   // 故只在 20260703000000_reference_image_live_uniqueness/migration.sql 里建):同一
@@ -188,6 +191,7 @@ model Asset {
   referenceImages ReferenceImage[]
   generations     Generation[]
 
+  @@unique([id, ownerId])
   @@unique([ownerId, contentHash])
   @@index([ownerId, deletedAt])
   @@index([deletedAt]) // 跨 owner 的 30 天清扫扫描
@@ -216,10 +220,11 @@ model Shot {
   updatedAt              DateTime   @updatedAt
   deletedAt              DateTime?
 
-  project     Project         @relation(fields: [projectId], references: [id])
+  project     Project         @relation(fields: [projectId, ownerId], references: [id, ownerId])
   entityRefs  ShotEntityRef[]
   generations Generation[]
 
+  @@unique([id, ownerId])
   @@unique([projectId, number])
   @@index([projectId, status, deletedAt])
   // 扩容覆盖索引（scale audit 2026-06-20）：getShots 按 [scene asc, number asc] 排序，
@@ -235,8 +240,8 @@ model ShotEntityRef {
   ownerId  String
   organization Organization @relation(fields: [ownerId], references: [id])
 
-  shot   Shot   @relation(fields: [shotId], references: [id])
-  entity Entity @relation(fields: [entityId], references: [id])
+  shot   Shot   @relation(fields: [shotId, ownerId], references: [id, ownerId])
+  entity Entity @relation(fields: [entityId, ownerId], references: [id, ownerId])
 
   @@id([shotId, entityId])
   @@index([entityId])
@@ -273,11 +278,10 @@ model Generation {
   createdAt      DateTime    @default(now())
   deletedAt      DateTime?
 
-  project Project @relation(fields: [projectId], references: [id])
-  shot    Shot?   @relation(fields: [shotId], references: [id], onDelete: Restrict)
-  asset   Asset   @relation(fields: [assetId], references: [id])
-  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
-  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  project Project @relation(fields: [projectId, ownerId], references: [id, ownerId])
+  shot    Shot?   @relation(fields: [shotId, ownerId], references: [id, ownerId], onDelete: Restrict)
+  asset   Asset   @relation(fields: [assetId, ownerId], references: [id, ownerId])
+  campaign Campaign? @relation(fields: [campaignId, ownerId], references: [id, ownerId], onDelete: Restrict)
 
   @@index([projectId, shotId, deletedAt])
   @@index([ownerId, shotId, deletedAt, createdAt]) // 候选区查询：shotId IS NULL，按时间倒序
@@ -539,14 +543,27 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
-  /// 操作员 RBAC（OPT-6 P1b）：默认 viewer；值由代码侧 zod 枚举 ROLES 校验（非 PG enum，
-  /// 加第 6 个角色无需迁移）。session callback 把它读进 session.user.role；requireRole 用它。
-  /// allowlist 仍是外墙、永不读 role —— 默认 viewer 锁不了 app，只锁 role-gated 区段。
+  /// Compatibility/display role for Better Auth and older UI. Authorization reads UserRole;
+  /// new code must not assume this one string is the user's complete access.
   role          String    @default("viewer")
   activeOrgId   String? // RESERVED NOW (future multi-org switcher; avoids an auth-table migration later)
   accounts      Account[]
   sessions      Session[]
   memberships   Membership[] // NEW: per-org membership (per-tenant RBAC lives here)
+  roles         UserRole[]
+}
+
+// Platform staff role assignments. A user may hold several sibling roles at once.
+// Role → capability mapping lives in packages/core/src/roles.ts.
+model UserRole {
+  userId     String
+  role       String
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, role])
+  @@index([role])
 }
 
 model Account {
@@ -672,14 +689,13 @@ model Organization {
   businessHoursPolicies     BusinessHoursPolicy[]
 }
 
-// User <-> Organization join, carrying the per-org role. role/status are code-validated
-// Strings (ORG_ROLES / "active"|"suspended"|"revoked"), NOT PG enums. RESERVED columns
-// (status/deletedAt/invitedBy) are unused in beta but free to add now.
+// User <-> Organization join. MembershipRole is the authorization source; the legacy role
+// column remains temporarily for old UI/display compatibility.
 model Membership {
   id        String    @id // ULID
   userId    String
   orgId     String
-  role      String    @default("owner") // ORG_ROLES: owner|admin|member (NOT User.role)
+  role      String    @default("owner") // compatibility primary role; do not authorize from it alone
   status    String    @default("active") // RESERVED: active|suspended|revoked
   invitedBy String? // RESERVED (future invites)
   deletedAt DateTime? // RESERVED (revocation audit)
@@ -687,6 +703,7 @@ model Membership {
 
   user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  roles MembershipRole[]
 
   assignedCustomerConversations   CustomerConversation[]           @relation("CustomerConversationAssignee")
   customerMessages                CustomerMessage[]                @relation("CustomerMessageActor")
@@ -708,6 +725,19 @@ model Membership {
   @@unique([id, orgId])
   @@index([orgId, role])
   @@index([userId])
+}
+
+// Organization-scoped role assignments. Roles are permission bundles and are not a rank;
+// one membership can hold creator + approver or any other valid combination.
+model MembershipRole {
+  membershipId String
+  role         String
+  assignedAt   DateTime @default(now())
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@id([membershipId, role])
+  @@index([role])
 }
 
 // DB-backed invite allowlist (closed-beta admin P1). email is lowercased at write
@@ -810,6 +840,7 @@ model ModelDirective {
 
   revisions ModelDirectiveRevision[]
 
+  @@unique([id, ownerId])
   @@unique([ownerId, family, mode]) // the lookup key; one directive per cell
   @@index([ownerId, family])
 }
@@ -856,7 +887,7 @@ model ModelDirectiveRevision {
   editedBy    String   @default("") // the admin email at save time
   createdAt   DateTime @default(now())
 
-  parent ModelDirective @relation(fields: [directiveId], references: [id], onDelete: Cascade)
+  parent ModelDirective @relation(fields: [directiveId, ownerId], references: [id, ownerId], onDelete: Cascade)
 
   @@index([directiveId, createdAt])
 }
@@ -909,6 +940,7 @@ model ChatThread {
   // thread list: a PARTIAL index ON (projectId, ownerId, updatedAt) WHERE deletedAt IS NULL
   // lives in migration.sql (Prisma can't express the WHERE). The full @@index is intentionally
   // omitted — the partial covers every live-thread read; deleted threads are never listed.
+  @@unique([id, ownerId])
   @@index([ownerId, pinnedAt, updatedAt], map: "ChatThread_owner_pinned_idx")
 }
 
@@ -928,7 +960,7 @@ model ChatMessage {
   createdAt          DateTime        @default(now())
   deletedAt          DateTime?
 
-  thread ChatThread @relation(fields: [threadId], references: [id], onDelete: Restrict)
+  thread ChatThread @relation(fields: [threadId, ownerId], references: [id, ownerId], onDelete: Restrict)
 
   @@index([threadId, seq])
 }
@@ -1216,7 +1248,7 @@ model SharePreviewToken {
   ownerId         String
   organization    Organization  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   scheduledPostId String
-  post            ScheduledPost @relation(fields: [scheduledPostId], references: [id], onDelete: Cascade)
+  post            ScheduledPost @relation(fields: [scheduledPostId, ownerId], references: [id, ownerId], onDelete: Cascade)
   tokenDigest     String        @unique // sha256 hex of the signed token (lookup key at verify time)
   expiresAt       DateTime
   revokedAt       DateTime?     // set by revokeSharePreview — a revoked row fails verify (fail-closed)
@@ -1312,8 +1344,7 @@ model TrendSnapshot {
   sources    Json
   capturedAt DateTime
   campaignId String?
-  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
-  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaign   Campaign? @relation(fields: [campaignId, ownerId], references: [id, ownerId], onDelete: Restrict)
   createdAt  DateTime @default(now())
   deletedAt  DateTime?
 
@@ -1328,8 +1359,7 @@ model Contact {
   lifecycleStage       String   @default("New") // New | Active | Dormant (code-validated)
   source               String
   firstTouchCampaignId String?
-  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
-  firstTouchCampaign   Campaign? @relation("ContactFirstTouchCampaign", fields: [firstTouchCampaignId], references: [id], onDelete: SetNull)
+  firstTouchCampaign   Campaign? @relation("ContactFirstTouchCampaign", fields: [firstTouchCampaignId, ownerId], references: [id, ownerId], onDelete: Restrict)
   firstTouchAt         DateTime
   lastSeenAt           DateTime
   marketingConsent     String   @default("unknown") // opt_in | opt_out | unknown (code-validated)
@@ -2111,8 +2141,7 @@ model ScheduledPost {
   projectId    String
   // B8 一期: nullable Campaign grouping; a Campaign soft-delete never removes posts.
   campaignId   String?
-  // 写路径必须校验被引用行的 ownerId == 调用者 ownerId；DB 层不拦跨租户连线。
-  campaign     Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  campaign     Campaign? @relation(fields: [campaignId, ownerId], references: [id, ownerId], onDelete: Restrict)
   channel      String       // 'instagram' | 'facebook' (code-validated, not a PG enum — house style)
   // Connected IG business id / FB page id. NULLABLE: an OTTO DRAFT may have no resolved
   // target until the owner picks a connected channel at approve-time. Must belong to the
@@ -2138,6 +2167,7 @@ model ScheduledPost {
   attempts PublishAttempt[]
   sharePreviewTokens SharePreviewToken[] // B0-28: seat-less share links minted for this post
 
+  @@unique([id, ownerId])
   @@index([status, scheduledAt])  // scheduler polling (slice 2)
   @@index([ownerId, scheduledAt]) // list / calendar queries
   @@index([ownerId, campaignId, deletedAt])
@@ -2231,6 +2261,7 @@ model TrackedLink {
   // 重定向解析 (domain, slug) → link,与 owner 无关(点击者匿名),故唯一约束在 (domain, slug)。
   // 一条 raw partial UNIQUE INDEX ON (domain, slug) WHERE deletedAt IS NULL 落 migration
   // (Prisma 无法表达 partial index;同 BrandRecord.nameKey / PublishAttempt 手法)。
+  @@unique([id, ownerId])
   @@index([ownerId, createdAt])
   @@index([ownerId, purpose, createdAt]) // 报表:按用途聚合
 }
@@ -2245,7 +2276,7 @@ model QrAsset {
   brandId      String?
   campaignId   String?
   linkId       String    // FK→TrackedLink;QR 的一切扫码事件经这条短链抄表
-  link         TrackedLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  link         TrackedLink @relation(fields: [linkId, ownerId], references: [id, ownerId], onDelete: Cascade)
   label        String    // "Raya 海报 / GM Klang 门店橱窗"
   imageAssetId String?   // 渲染好的 QR PNG(R2,可选;也可前端即时渲染)
   status        String    @default("active") // 'active' | 'revoked'
@@ -2258,6 +2289,7 @@ model QrAsset {
 
   placements QrPlacement[]
 
+  @@unique([id, ownerId])
   @@index([ownerId, linkId])
 }
 
@@ -2268,7 +2300,7 @@ model QrPlacement {
   ownerId      String    // 反范式冗余,供 tenant guard 直接过滤
   organization Organization @relation(fields: [ownerId], references: [id])
   qrAssetId    String
-  qr           QrAsset   @relation(fields: [qrAssetId], references: [id], onDelete: Cascade)
+  qr           QrAsset   @relation(fields: [qrAssetId, ownerId], references: [id, ownerId], onDelete: Cascade)
   location     String    // 人话:"GM Klang 门店橱窗" / "Raya 海报 A 批"
   version      Int       @default(1) // 重印版本;换码即 version+1
   printStatus  String    @default("DRAFT") // 'DRAFT' | 'PRINTED' | 'DEPLOYED' | 'RECALLED'(code-validated;状态机是纯 helper)

@@ -71,12 +71,8 @@ const SPEND_ACTIONS = [
 /** A file "announces" if it publishes the signal itself or calls a wired-in callback. */
 const ANNOUNCES = /notifyBalanceRefresh\(\)|onBalanceRefresh(?:\?\.)?\(\)/;
 
-// There is no exemption list. There was one for exactly as long as three spend entries
-// (OttoFrontDoor / OttoMemory / OttoPlanCard) sat inside another session's ACTIVE
-// task-ownership claim and this task physically could not write them; #555 wired all three
-// and merged them to main (92aedcae), and the list's own self-invalidating assertion is what
-// went red to say so. The fence now applies to every spend entry with no escape hatch —
-// re-introducing one should take a deliberate, argued change to this file.
+// There is no exemption list. The test applies to every spend entry so a new path cannot silently
+// omit the balance refresh signal.
 
 function walkSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {

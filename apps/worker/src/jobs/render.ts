@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { prisma } from "@fikirtive/db";
-import { runAsTenant } from "@fikirtive/db/principal";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import {
@@ -354,7 +354,9 @@ function buildAudioMix(sounded: PlannedInput[], renderSeconds: number): { lines:
 }
 
 export async function handleRender(data: RenderJobData, retryCount = 0): Promise<void> {
-  const job = await prisma.renderJob.findUnique({ where: { id: data.renderJobId } });
+  const job = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.renderJob.findUnique({ where: { id: data.renderJobId } }),
+  );
   if (!job) {
     console.error(`[render] job row ${data.renderJobId} missing — dropping`);
     return;
