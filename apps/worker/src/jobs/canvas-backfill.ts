@@ -1,5 +1,5 @@
 /**
- * canvas-backfill — the sweep that finishes a delivered job's board when the completion path
+ * canvas-backfill — the sweep that finishes a finished job's board when the completion path
  * could not.
  *
  * WHY IT EXISTS (#601 T2b r2, judge P2①): writing the cards is the last step of a delivered job,
@@ -7,6 +7,12 @@
  * merchant has already been charged for. Best-effort with nothing behind it, though, means a
  * board that stays half-empty forever: the job is DONE, so no redelivery and no stale-job reaper
  * ever looks at it again. This sweep is what "it can be written again later" actually means.
+ *
+ * BOTH ENDINGS (#613 T2d). The same promise, and the same cost, applies to a job that ended badly:
+ * its card write is best-effort too (#612 T2c), and when it fell over the merchant used to be
+ * rescued by the board READER repairing the card on the way past. That read-time repair is gone, so
+ * this sweep now covers terminal boards as well — a card still saying "being made" for a job that
+ * failed or was cancelled is brought to that job's real ending here, by the same shell.
  *
  * WHERE THE WORKLIST LIVES (#601 r7, Founder ruling 2026-08-02). This file used to keep two
  * things in the worker's memory: how far the last tick got through a 24-hour window, and a book
@@ -39,7 +45,7 @@ import {
 import { runAsTenant } from "@fikirtive/db/principal";
 import { sanitizeError } from "../redact.js";
 
-/** Leave a just-delivered job alone: its own completion path is probably still writing the cards. */
+/** Leave a just-finished job alone: its own completion path is probably still writing the cards. */
 export const CANVAS_BACKFILL_GRACE_MS = 2 * 60_000;
 /** Ceiling per sweep, so one bad day cannot turn a 5-minute tick into an unbounded job. */
 export const CANVAS_BACKFILL_LIMIT = 200;
@@ -60,7 +66,8 @@ export const CANVAS_BACKFILL_DB_TIMEOUTS = {
 } as const;
 
 /**
- * Finish every delivered job whose board is still incomplete. Returns how many boards this sweep
+ * Finish every finished job whose board is still incomplete — outputs missing from a delivered
+ * board, or a card that has not been told how its job ended. Returns how many boards this sweep
  * actually changed (0 when there was nothing to do — the normal case).
  *
  * Runs inside the worker's reaper tick, which already carries the system principal; each repair

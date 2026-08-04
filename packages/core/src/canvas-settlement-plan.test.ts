@@ -14,6 +14,7 @@ import {
   canvasJobBelongsOnBoard,
   canvasJobOrigin,
   canvasBoardNeedsSettlement,
+  canvasTerminalBoardNeedsSettlement,
   canvasMaterialWithoutRepair,
   isTrustedCanvasRepairRecord,
   isCanvasJobKey,
@@ -733,6 +734,68 @@ describe("deciding whether a settlement is worth running at all", () => {
       if (changes) {
         expect({ scenario: scenario.name, needs: canvasBoardNeedsSettlement(input.job.generationIds, input.cards) })
           .toEqual({ scenario: scenario.name, needs: true });
+      }
+    }
+  });
+});
+
+/**
+ * The same question for the other ending (#613 T2d) — the rule the backfill sweep asks of every
+ * board in one query, which must agree with the terminal projection card for card.
+ */
+describe("deciding whether an ending has reached its cards", () => {
+  const spinning = { generationId: null, status: "pending" };
+
+  it("says no when the job has not ended", () => {
+    expect(canvasTerminalBoardNeedsSettlement("QUEUED", [spinning])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("GENERATING", [spinning])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("DONE", [spinning])).toBe(false);
+  });
+
+  it("says no when there is nothing an ending may touch", () => {
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [])).toBe(false);
+    // Already settled to this ending.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "failed" }])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("CANCELLED", [{ generationId: null, status: "cancelled" }])).toBe(false);
+    // Carrying a paid output: an ending is about the work that did not arrive.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: "gen-1", status: "done" }])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: "gen-1", status: "pending" }])).toBe(false);
+    // The merchant deleted the in-flight card, which suppresses the whole job for ever.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "deleted" }])).toBe(false);
+  });
+
+  it("says yes exactly for the cards the ending still has to reach", () => {
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [spinning])).toBe(true);
+    expect(canvasTerminalBoardNeedsSettlement("CANCELLED", [spinning])).toBe(true);
+    // The browser's "I stopped watching" is not an ending.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "timeout" }])).toBe(true);
+    // One terminal never stands in for the other.
+    expect(canvasTerminalBoardNeedsSettlement("CANCELLED", [{ generationId: null, status: "failed" }])).toBe(true);
+    // One settled card does not settle its sibling.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "failed" }, spinning])).toBe(true);
+  });
+
+  it("agrees with the terminal projection card for card, over every shape it can be asked", () => {
+    const cardStates = ["pending", "timeout", "failed", "cancelled", "done", "deleted"];
+    for (const jobStatus of ["QUEUED", "GENERATING", "DONE", "FAILED", "CANCELLED"]) {
+      for (const first of cardStates) {
+        for (const second of [...cardStates, null]) {
+          for (const carries of [false, true]) {
+            const cards: SettlementCard[] = [
+              card({ id: "a", generationId: carries ? "gen-1" : null, status: first }),
+              ...(second === null ? [] : [card({ id: "b", generationId: null, status: second })]),
+            ];
+            const plan = planCanvasSettlement({
+              job: { status: jobStatus, generationIds: ["gen-1"], kind: "IMAGE", prompt: "p", origin: "canvas" },
+              cards,
+              occupied: [],
+            });
+            const projectionWrites = plan.kind === "terminal"
+              && plan.cards.some((entry) => entry.action !== "keep");
+            expect({ jobStatus, first, second, carries, needs: canvasTerminalBoardNeedsSettlement(jobStatus, cards) })
+              .toEqual({ jobStatus, first, second, carries, needs: projectionWrites });
+          }
+        }
       }
     }
   });

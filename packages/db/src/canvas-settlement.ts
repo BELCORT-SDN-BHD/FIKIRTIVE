@@ -303,22 +303,30 @@ const BACKLOG_FAIRNESS_OVERSCAN = 4;
 export const CANVAS_BACKLOG_STATEMENT_TIMEOUT_MS = 2_000;
 
 /**
- * Delivered jobs whose board is still missing something — the worklist for the worker's canvas
+ * Finished jobs whose board is still missing something — the worklist for the worker's canvas
  * backfill sweep (apps/worker/src/jobs/canvas-backfill.ts), oldest-due first.
  *
  * READ-ONLY, and money-free by construction: it reads finished jobs, their cards, their chats and
  * their repair records, and writes nothing at all.
  *
+ * BOTH ENDINGS ARE SWEPT (#613 T2d). This used to look only at DELIVERED jobs, because the card of
+ * a job that ended badly was corrected by the board READER on the way past. That read-time repair
+ * is gone, so the ending's own backstop has to be here — otherwise a terminal write that fell over
+ * leaves a merchant watching a card spin for a job that finished long ago, with nothing in the
+ * system ever looking at it again.
+ *
  * WHAT MAKES A BOARD A CANDIDATE. Every clause below is the SQL twin of a rule that already exists
  * in `@fikirtive/core`, and `canvas-settlement-backlog.test.ts` pins the two against each other
  * over a matrix of board shapes so they cannot drift:
- *   - delivered and past the grace period — its own completion path is no longer running;
- *   - it belongs on a board at all (`canvasJobBelongsOnBoard`): bought from the board with a
- *     server-minted `canvas:` key, or bought in a chat that is still live, or already showing a
- *     card the merchant can see, whatever made it;
+ *   - finished and past the grace period — its own completion path is no longer running;
+ *   - DELIVERED: it belongs on a board at all (`canvasJobBelongsOnBoard`): bought from the board
+ *     with a server-minted `canvas:` key, or bought in a chat that is still live, or already
+ *     showing a card the merchant can see, whatever made it; and something is actually missing
+ *     (`canvasBoardNeedsSettlement`): a paid output with no card of its own, or an unfinished card;
+ *   - ENDED BADLY: a live card of its own carries no output and does not yet say how the job ended
+ *     (`canvasTerminalBoardNeedsSettlement`). It is asked no admission question, because the only
+ *     thing a terminal may touch is a card that is already there, and it creates nothing;
  *   - the merchant did not delete the in-flight card, which suppresses the whole job for ever;
- *   - something is actually missing (`canvasBoardNeedsSettlement`): a paid output with no card of
- *     its own, or a card that is not finished;
  *   - and its repair record either does not exist (never tried), or says the wait is over. There
  *     is no terminal retry state: a paid board remains eligible at the maximum cadence.
  *
@@ -380,16 +388,23 @@ export async function findCanvasSettlementBacklog(options: {
       SELECT j.id, j."ownerId", j."projectId", j."finishedAt", j."videoOptions" AS material,
         j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} AS repair
       FROM "GenJob" j
-    WHERE j.status = 'DONE'
-      -- A DONE row is not proof of a paid provider call. Only settled paid outputs are repairable.
-      AND j.spent = TRUE
+      -- WHICH ENDINGS THIS SWEEP REPAIRS (#613 T2d). Delivered work has outputs to place and was
+      -- charged for; a job that ended badly has neither, and is repairable only because a card the
+      -- merchant can see is still saying it is being made. A job still in flight is neither.
+    WHERE (
+        -- A DONE row is not proof of a paid provider call. Only settled paid outputs are repairable.
+        (j.status = 'DONE' AND j.spent = TRUE AND COALESCE(array_length(j."generationIds", 1), 0) > 0)
+        OR j.status IN ('FAILED', 'CANCELLED')
+      )
       AND j."finishedAt" IS NOT NULL
       AND j."finishedAt" < ${finishedBeforeIso}::timestamp
-      AND COALESCE(array_length(j."generationIds", 1), 0) > 0
       -- canvasJobBelongsOnBoard: bought from the board, bought in a live chat, or already showing
       -- a card. "No card yet" is exactly the state this sweep repairs, so it never means "no board".
+      -- A terminal job is not asked this question at all: it can only ever settle a card that is
+      -- ALREADY on the board, so the card below IS the answer, and it creates nothing either way.
       AND (
-        j."idempotencyKey" ~ ${canvasKeyPattern}
+        j.status <> 'DONE'
+        OR j."idempotencyKey" ~ ${canvasKeyPattern}
         OR EXISTS (
           SELECT 1 FROM "ChatThread" t
           WHERE t.id = j."threadId" AND t."ownerId" = j."ownerId"
@@ -419,20 +434,31 @@ export async function findCanvasSettlementBacklog(options: {
       AND (
         -- A completed board whose repair note failed to clear comes back for idempotent cleanup.
         j."videoOptions" -> ${CANVAS_REPAIR_JSON_KEY} IS NOT NULL
-        OR EXISTS (
-          SELECT 1 FROM unnest(j."generationIds") AS paid(generation_id)
-          WHERE paid.generation_id <> '' AND NOT EXISTS (
+        OR (j.status = 'DONE' AND (
+          EXISTS (
+            SELECT 1 FROM unnest(j."generationIds") AS paid(generation_id)
+            WHERE paid.generation_id <> '' AND NOT EXISTS (
+              SELECT 1 FROM "CanvasNode" n
+              WHERE n."ownerId" = j."ownerId" AND n."projectId" = j."projectId"
+                AND n."genJobId" = j.id AND n."generationId" = paid.generation_id
+            )
+          )
+          OR EXISTS (
             SELECT 1 FROM "CanvasNode" n
             WHERE n."ownerId" = j."ownerId" AND n."projectId" = j."projectId"
-              AND n."genJobId" = j.id AND n."generationId" = paid.generation_id
+              AND n."genJobId" = j.id AND n.status <> 'deleted'
+              AND (n.status <> 'done' OR n."generationId" IS NULL)
           )
-        )
-        OR EXISTS (
+        ))
+        -- canvasTerminalBoardNeedsSettlement (#613). A card carrying a paid output is invisible
+        -- to an ending, so only cards with no output count — and only while one of them still
+        -- says something other than how this job actually ended.
+        OR (j.status IN ('FAILED', 'CANCELLED') AND EXISTS (
           SELECT 1 FROM "CanvasNode" n
           WHERE n."ownerId" = j."ownerId" AND n."projectId" = j."projectId"
-            AND n."genJobId" = j.id AND n.status <> 'deleted'
-            AND (n.status <> 'done' OR n."generationId" IS NULL)
-        )
+            AND n."genJobId" = j.id AND n.status <> 'deleted' AND n."generationId" IS NULL
+            AND n.status <> CASE j.status WHEN 'FAILED' THEN 'failed' ELSE 'cancelled' END
+        ))
       )
     ), shaped AS (
       SELECT id, "ownerId", "projectId", "finishedAt", CASE
@@ -556,6 +582,21 @@ export async function findCanvasSettlementBacklog(options: {
 }
 
 /**
+ * The jobs a repair note may be written against — the same two endings the scan above sweeps.
+ *
+ * It is deliberately the note's own guard rather than a re-read of the scan: a job that moved on
+ * between the scan and the note gets no note at all, so the reserved key can never be left on a row
+ * this sweep has no business annotating. `factoryMaterialMatches` strips the key before comparing
+ * paid material for every status, so a note on a terminal row cannot affect batch identity either.
+ */
+const REPAIRABLE_JOB: Prisma.GenJobWhereInput = {
+  OR: [
+    { status: "DONE", spent: true },
+    { status: { in: ["FAILED", "CANCELLED"] } },
+  ],
+};
+
+/**
  * Record that a board's repair did not finish it: wait longer next time, up to the cadence cap.
  *
  * This is the ONLY thing the sweep writes about a job: one reserved JSON key. No money column, no
@@ -572,7 +613,7 @@ export async function noteCanvasRepairFailure(
     const lockKey = canvasRepairLockKey(job.ownerId, job.projectId, job.id);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
     const current = await tx.genJob.findFirst({
-      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
+      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, ...REPAIRABLE_JOB },
       select: { videoOptions: true },
     });
     if (!current) return null;
@@ -600,7 +641,7 @@ export async function noteCanvasRepairFailure(
       ...(originalVideoOptions !== undefined ? { originalVideoOptions } : {}),
     };
     const updated = await tx.genJob.updateMany({
-      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, status: "DONE", spent: true },
+      where: { id: job.id, ownerId: job.ownerId, projectId: job.projectId, ...REPAIRABLE_JOB },
       data: {
         videoOptions: {
           ...videoOptions,

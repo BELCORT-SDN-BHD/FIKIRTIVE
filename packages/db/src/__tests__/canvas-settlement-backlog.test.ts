@@ -30,6 +30,7 @@ import {
   canvasBoardNeedsSettlement,
   canvasJobBelongsOnBoard,
   canvasJobOrigin,
+  canvasTerminalBoardNeedsSettlement,
 } from "@fikirtive/core";
 import { prisma } from "../index.js";
 import { Prisma } from "../../generated/prisma/client.js";
@@ -265,6 +266,138 @@ describe("a delivered job whose board write fell over", () => {
     const { jobId } = await seedDeliveredJob({ outputs: 2 });
 
     expect((await sweep()).find((job) => job.id === jobId)).toEqual({ id: jobId, ownerId: orgId, projectId });
+  });
+});
+
+/**
+ * #613 T2d — THE OTHER ENDING'S BACKSTOP, and the precondition for deleting the read-time repair.
+ *
+ * A job that ended badly has its cards written by the same completion path, with the same
+ * best-effort promise (#612 T2c): if that write falls over, the merchant's card keeps saying "being
+ * made" for a job that ended twenty minutes ago. Until now the only thing that ever corrected such
+ * a card was the board READER repairing it on the way past — which is exactly what T2d removes. So
+ * this sweep has to see the bad endings too, or removing the reader's repair opens a fresh hole.
+ *
+ * Everything else about a terminal board is deliberately NOT the delivered rules:
+ *   - it is not `spent` and has no outputs, because there was nothing to charge for or to place;
+ *   - it is a candidate only when it ALREADY has a live card with no output on it, which is also
+ *     the only thing the terminal projection is allowed to touch — so "belongs on a board" needs no
+ *     separate question here, the card is the answer;
+ *   - a card carrying a paid output is never a reason to sweep, and never touched.
+ */
+describe("a job that ended badly and whose card write fell over", () => {
+  /** A job that ended failed or cancelled, exactly as the worker leaves it: terminal, refunded. */
+  async function seedTerminalJob(input: {
+    status: "FAILED" | "CANCELLED";
+    minutesAgo?: number;
+  }): Promise<string> {
+    const jobId = `gjb_${randomUUID()}`;
+    const finishedAt = new Date(Date.now() - (input.minutesAgo ?? 30) * 60_000);
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId: orgId, projectId, prompt: "a cup steaming", kind: "IMAGE",
+        model: "seedream", count: 1, status: input.status, generationIds: [],
+        idempotencyKey: canvasKey(), spent: false,
+        startedAt: new Date(finishedAt.getTime() - HOUR), finishedAt,
+        error: input.status === "FAILED" ? "provider said no" : "",
+      },
+    });
+    return jobId;
+  }
+
+  for (const { status, card } of [
+    { status: "FAILED" as const, card: "failed" },
+    { status: "CANCELLED" as const, card: "cancelled" },
+  ]) {
+    it(`is found again, and the sweep alone brings its card to ${card}`, async () => {
+      const jobId = await seedTerminalJob({ status });
+      // The in-flight card the browser placed before the tab was closed; the completion path's
+      // terminal write then threw, so it is still spinning.
+      await seedCard({ jobId, x: 100, status: "pending" });
+      const money = await moneySnapshot(jobId);
+
+      const first = await sweep();
+      expect(first.map((job) => job.id)).toContain(jobId);
+      for (const job of first) await settleCanvasCardsForGenJob(job.id, job.ownerId);
+
+      expect((await cardsForJob(jobId)).map((row) => row.status)).toEqual([card]);
+
+      // Once, not once per tick — and the money and the job row never entered into it.
+      expect(await sweepIds()).not.toContain(jobId);
+      expect(await moneySnapshot(jobId)).toEqual(money);
+    });
+  }
+
+  it("leaves a terminal job alone once its card already says how it ended", async () => {
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+    await seedCard({ jobId, x: 100, status: "failed" });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("never sweeps a terminal job for a card that carries a paid output", async () => {
+    // The free-delivery guard fails a job closed AFTER outputs were recorded, so a FAILED job can
+    // have a delivered card. A terminal must not be a reason to go anywhere near it.
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+    const generationId = await seedGeneration();
+    await seedCard({ jobId, x: 100, status: "done", generationId });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("never sweeps a terminal job that has no card at all", async () => {
+    // Nothing was ever placed, and a terminal never creates a card: there is nothing to repair,
+    // and a merchant who never saw a card is not told about a job by this sweep.
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("honours the merchant deleting the card while the job was still running", async () => {
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+    await seedCard({ jobId, x: 100, status: "deleted", generationId: null });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("leaves a terminal job alone while its own completion path may still be writing", async () => {
+    const jobId = await seedTerminalJob({ status: "FAILED", minutesAgo: 0 });
+    await seedCard({ jobId, x: 100, status: "pending" });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("still decides nothing about a job that is only in flight", async () => {
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+    await prisma.genJob.update({ where: { id: jobId, ownerId: orgId }, data: { status: "GENERATING" } });
+    await seedCard({ jobId, x: 100, status: "pending" });
+
+    expect(await sweepIds()).not.toContain(jobId);
+  });
+
+  it("records a failed terminal repair against the board, so it waits before the next try", async () => {
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+    await seedCard({ jobId, x: 100, status: "pending" });
+
+    const record = await noteCanvasRepairFailure(boardOf(jobId), { now: new Date(), reason: "board write blew up" });
+
+    expect(record).toMatchObject({ genJobId: jobId, attempts: 1, reason: "board write blew up" });
+    expect(await repairRecord(jobId)).toMatchObject({ genJobId: jobId, attempts: 1 });
+    // …and the wait is respected, exactly as it is for a delivered board.
+    expect(await sweepIds()).not.toContain(jobId);
+    expect(await sweepIds({ now: new Date(Date.now() + CANVAS_REPAIR_WAIT_BASE_MS + 60_000) })).toContain(jobId);
+  });
+
+  it("comes back for a stale repair note even after its card was settled", async () => {
+    const jobId = await seedTerminalJob({ status: "FAILED" });
+    await seedCard({ jobId, x: 100, status: "pending" });
+    await noteCanvasRepairFailure(boardOf(jobId), { now: new Date(Date.now() - 5 * HOUR), reason: "board write blew up" });
+    await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(await sweepIds()).toContain(jobId);
+
+    await clearCanvasRepairRecord(boardOf(jobId));
+    expect(await sweepIds()).not.toContain(jobId);
   });
 });
 
@@ -550,6 +683,64 @@ describe("the scan and the shared rules agree about every board shape", () => {
     expect(actual.sort()).toEqual(expected.sort());
     // A rule that excluded everything would pass the comparison above and mean nothing.
     expect(expected.length).toBeGreaterThan(4);
+  });
+
+  /**
+   * The same anti-drift contract for the other ending (#613). The scan's terminal clause and
+   * `canvasTerminalBoardNeedsSettlement` are the two languages one rule is written in, including
+   * which card state each terminal puts on a card — so every shape is asked of both.
+   */
+  it("returns exactly the ended-badly boards the shared terminal rule calls unsettled", async () => {
+    type TerminalShape = {
+      name: string;
+      status: "FAILED" | "CANCELLED";
+      cards: { status: string; carriesOutput: boolean }[];
+    };
+    const terminalShapes: TerminalShape[] = [
+      { name: "failed, no card at all", status: "FAILED", cards: [] },
+      { name: "failed, card still being made", status: "FAILED", cards: [{ status: "pending", carriesOutput: false }] },
+      { name: "failed, card the browser timed out on", status: "FAILED", cards: [{ status: "timeout", carriesOutput: false }] },
+      { name: "failed, card already says failed", status: "FAILED", cards: [{ status: "failed", carriesOutput: false }] },
+      { name: "failed, card says the other terminal", status: "FAILED", cards: [{ status: "cancelled", carriesOutput: false }] },
+      { name: "failed, card carrying a paid output", status: "FAILED", cards: [{ status: "done", carriesOutput: true }] },
+      { name: "failed, in-flight card deleted", status: "FAILED", cards: [{ status: "deleted", carriesOutput: false }] },
+      { name: "failed, one settled and one still spinning", status: "FAILED", cards: [{ status: "failed", carriesOutput: false }, { status: "pending", carriesOutput: false }] },
+      { name: "cancelled, no card at all", status: "CANCELLED", cards: [] },
+      { name: "cancelled, card still being made", status: "CANCELLED", cards: [{ status: "pending", carriesOutput: false }] },
+      { name: "cancelled, card already says cancelled", status: "CANCELLED", cards: [{ status: "cancelled", carriesOutput: false }] },
+      { name: "cancelled, card says the other terminal", status: "CANCELLED", cards: [{ status: "failed", carriesOutput: false }] },
+      { name: "cancelled, card carrying a paid output", status: "CANCELLED", cards: [{ status: "done", carriesOutput: true }] },
+      { name: "cancelled, in-flight card deleted", status: "CANCELLED", cards: [{ status: "deleted", carriesOutput: false }] },
+    ];
+
+    const expected: string[] = [];
+    const seeded: { name: string; jobId: string }[] = [];
+    for (const shape of terminalShapes) {
+      const jobId = `gjb_${randomUUID()}`;
+      const finishedAt = new Date(Date.now() - 30 * 60_000);
+      await prisma.genJob.create({
+        data: {
+          id: jobId, ownerId: orgId, projectId, prompt: "a cup steaming", kind: "IMAGE",
+          model: "seedream", count: 1, status: shape.status, generationIds: [],
+          idempotencyKey: canvasKey(), spent: false,
+          startedAt: new Date(finishedAt.getTime() - HOUR), finishedAt,
+        },
+      });
+      const cards: { status: string; generationId: string | null }[] = [];
+      for (const [index, card] of shape.cards.entries()) {
+        const generationId = card.carriesOutput ? await seedGeneration() : null;
+        await seedCard({ jobId, x: index * 340, status: card.status, generationId });
+        cards.push({ status: card.status, generationId });
+      }
+      if (canvasTerminalBoardNeedsSettlement(shape.status, cards)) expected.push(shape.name);
+      seeded.push({ name: shape.name, jobId });
+    }
+
+    const found = new Set(await sweepIds({ limit: terminalShapes.length * 2 }));
+    const actual = seeded.filter((entry) => found.has(entry.jobId)).map((entry) => entry.name);
+
+    expect(actual.sort()).toEqual(expected.sort());
+    expect(expected.length).toBeGreaterThan(3);
   });
 });
 

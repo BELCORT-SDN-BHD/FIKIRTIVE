@@ -370,6 +370,31 @@ export function canvasBoardNeedsSettlement(
   return cards.some((card) => card.status !== "deleted" && (card.status !== "done" || card.generationId === null));
 }
 
+/**
+ * Cheap "has this job's ending reached its cards?" — the terminal twin of the rule above (#613).
+ *
+ * `planTerminalSettlement` below is the authority; this answers the same question without a
+ * transaction, so the backfill sweep can ask it of every board in one query. `true` exactly when
+ * that projection would write something: the job ended, the merchant did not delete the in-flight
+ * card, and at least one live card carrying no output still says something other than this ending.
+ *
+ * A card that carries a paid output is never counted — an ending is about the work that did not
+ * arrive, and may not take away work that did.
+ *
+ * `cards` must include tombstones — a deleted card is a row that exists on purpose.
+ */
+export function canvasTerminalBoardNeedsSettlement(
+  jobStatus: string,
+  cards: readonly Pick<SettlementCard, "generationId" | "status">[],
+): boolean {
+  const status = canvasTerminalCardStatus(jobStatus);
+  if (!status) return false;
+  if (cards.some((card) => card.status === "deleted" && card.generationId === null)) return false;
+  return cards.some((card) => (
+    card.status !== "deleted" && card.generationId === null && card.status !== status
+  ));
+}
+
 export type CanvasSettlementInput = {
   job: SettlementJob;
   /** Every card already linked to this job, tombstones included. */
