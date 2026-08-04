@@ -430,6 +430,9 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
     const human =
       s === "DONE" ? "the last generation finished"
       : s === "FAILED" ? "the last generation FAILED — the user was automatically refunded, so they were NOT charged for it"
+      // Otto must not describe a cancel as a failure either (#602 T3): it is the user's own
+      // decision, and speaking about it apologetically invites an offer to retry.
+      : s === "CANCELLED" ? "the user CANCELLED the last generation themselves — it was refunded, so they were NOT charged for it, and nothing went wrong"
       : s === "GENERATING" ? "a generation is being made right now"
       : s === "QUEUED" ? "a generation is queued and about to start"
       : `the last generation status is ${s}`;

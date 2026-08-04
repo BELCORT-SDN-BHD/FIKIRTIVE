@@ -112,7 +112,7 @@ describe("mergeReloadedCanvasNodes", () => {
   /** A card this tab has just placed: no read has returned it yet, so absence proves nothing. */
   const justPlaced = (id: string): BoardNode => ({
     id,
-    data: { status: "pending", url: null },
+    data: { status: "generating", url: null },
   });
 
   it("keeps every card the merchant had picked selected", () => {
@@ -128,7 +128,7 @@ describe("mergeReloadedCanvasNodes", () => {
   });
 
   it("still takes the server's fresh media for a selected card", () => {
-    const previous = [{ ...server("a", { status: "pending", url: null }), selected: true }];
+    const previous = [{ ...server("a", { status: "generating", url: null }), selected: true }];
 
     const merged = mergeReloadedCanvasNodes(previous, [server("a", { url: "https://cdn.example/new.png" })]);
 
@@ -137,9 +137,9 @@ describe("mergeReloadedCanvasNodes", () => {
   });
 
   it("does not clobber a card that is still generating locally", () => {
-    const local = { ...server("a", { status: "pending", url: null }), selected: false, local: true };
+    const local = { ...server("a", { status: "generating", url: null }), selected: false, local: true };
 
-    const merged = mergeReloadedCanvasNodes([local], [server("a", { status: "pending", url: null })]);
+    const merged = mergeReloadedCanvasNodes([local], [server("a", { status: "generating", url: null })]);
 
     expect(merged[0]).toBe(local);
   });
@@ -151,7 +151,7 @@ describe("mergeReloadedCanvasNodes", () => {
     // merchant had just watched appear start spinning again (r3 review P2-1).
     const finishedHere = { ...server("a"), selected: true };
 
-    const merged = mergeReloadedCanvasNodes([finishedHere], [server("a", { status: "pending", url: null })]);
+    const merged = mergeReloadedCanvasNodes([finishedHere], [server("a", { status: "generating", url: null })]);
 
     expect(merged[0]).toBe(finishedHere);
   });
@@ -167,7 +167,7 @@ describe("mergeReloadedCanvasNodes", () => {
   // nothing that ever arrives can take it off again, and a card that is still "being made" stays
   // on screen for ever. The two populations are told apart by whether a read has shown the card.
   it("lets go of a card the server used to return and no longer does", () => {
-    const deletedElsewhere = { ...server("gone", { status: "pending", url: null }), selected: true };
+    const deletedElsewhere = { ...server("gone", { status: "generating", url: null }), selected: true };
 
     const merged = mergeReloadedCanvasNodes([deletedElsewhere, server("a")], [server("a")]);
 
@@ -187,7 +187,7 @@ describe("mergeReloadedCanvasNodes", () => {
   ])("does not put the spinner back on a card this tab has already left %s", (status) => {
     const here = { ...server("a", { status, url: null }), selected: true };
 
-    const merged = mergeReloadedCanvasNodes([here], [server("a", { status: "pending", url: null })]);
+    const merged = mergeReloadedCanvasNodes([here], [server("a", { status: "generating", url: null })]);
 
     expect(merged[0]).toBe(here);
     expect(merged[0]!.data.status).not.toBe("pending");
@@ -204,7 +204,7 @@ describe("mergeReloadedCanvasNodes", () => {
   });
 
   it("keeps removed cards out even if they are still in this tab's own list", () => {
-    const stillHere = server("gone", { status: "pending", url: null });
+    const stillHere = server("gone", { status: "generating", url: null });
 
     const merged = mergeReloadedCanvasNodes([stillHere], [server("a")], new Set(["gone"]));
 

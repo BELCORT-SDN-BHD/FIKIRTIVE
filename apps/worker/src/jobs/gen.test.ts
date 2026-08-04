@@ -93,17 +93,58 @@ beforeEach(() => {
   m.generationCreate.mockResolvedValue({ id: "gen_out1" });
 });
 
+/**
+ * #602 r2 (judge P1-2) — a job's status is decided ONCE, by whoever gets there first.
+ *
+ * `handleGen` snapshots the job row at the top and then runs a long sequence of gates against
+ * that snapshot. A merchant can press Cancel anywhere in that window. Every terminal write here
+ * is therefore conditional on the row still being in flight: `count === 0` means someone else
+ * already ended the job, wrote the truth, and did their own money and messaging.
+ *
+ * (Money is unaffected either way — `refundReservation` is idempotent on `refund:<jobId>`. What
+ * an unconditional write destroyed was the TRUTH about who stopped the job, and it put an
+ * apology for a failure on top of the merchant's own decision.)
+ */
+describe("handleGen — a cancellation that lands after the job snapshot", () => {
+  it("is left alone: no overwrite, no second refund, no failure message", async () => {
+    // Pre-claim fail-closed branch (the project was deleted), reached after the merchant's cancel
+    // already set CANCELLED and refunded.
+    m.projectFindFirst.mockResolvedValue(null);
+    m.genJobUpdateMany.mockResolvedValue({ count: 0 }); // no in-flight row left to terminal-fail
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.genJobUpdate).not.toHaveBeenCalled();
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.chatMessageCreate).not.toHaveBeenCalled();
+  });
+
+  it("still fails closed + refunds + tells the merchant when the job IS still in flight", async () => {
+    m.projectFindFirst.mockResolvedValue(null);
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // we won: the row was still ours to end
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    const terminal = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(terminal).toBeTruthy();
+    // The guard is spelled in the WHERE, so it holds in the database rather than between reads.
+    expect(terminal![0].where).toMatchObject({ id: "g1", ownerId: "o1", status: { in: ["QUEUED", "GENERATING"] } });
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
+    expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
   it("reference video set but not found → fail closed, no spend", async () => {
     m.generationFindFirst.mockResolvedValue(null); // the reference video Generation doesn't resolve
     await handleGen({ genJobId: "g1" }, 0);
 
     expect(m.generateVideo).not.toHaveBeenCalled();
-    // failClosedWithRefund: FAILED + refund + TURN_ERROR
-    expect(m.genJobUpdate).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "g1" } }),
+    // failClosedWithRefund: a GUARDED FAILED write (#602 r2) + refund + TURN_ERROR
+    expect(m.genJobUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "g1", ownerId: "o1", status: { in: ["QUEUED", "GENERATING"] } } }),
     );
-    const updateCall = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
     expect(updateCall![0].data.error).toContain("reference video");
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
@@ -121,7 +162,7 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
     await handleGen({ genJobId: "g1" }, 0);
 
     expect(m.generateVideo).not.toHaveBeenCalled();
-    const updateCall = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(updateCall).toBeTruthy();
     expect(updateCall![0].data.error).toMatch(/2.*6/);
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
@@ -185,7 +226,7 @@ describe("handleGen — provider rejection fail-closed (EP-A4 route ①)", () =>
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow(/rejected/);
 
-    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data.spent).toBe(true); // paid-but-undelivered stays auditable
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
@@ -208,7 +249,7 @@ describe("handleGen — provider rejection fail-closed (EP-A4 route ①)", () =>
     expect(requeue![0].where.status).toEqual({ in: ["QUEUED", "GENERATING"] });
     expect(m.refundReservation).not.toHaveBeenCalled(); // the hold survives for the retry / a later finalizer
     expect(m.settleCredits).not.toHaveBeenCalled();
-    expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED")).toBeFalsy();
+    expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED")).toBeFalsy();
     expect(m.chatMessageCreate).not.toHaveBeenCalled();
   });
 
@@ -218,7 +259,7 @@ describe("handleGen — provider rejection fail-closed (EP-A4 route ①)", () =>
 
     await expect(handleGen({ genJobId: "g1" }, GEN_RETRY_LIMIT)).rejects.toThrow();
 
-    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data.spent).toBe(false); // a free pre-charge failure, told apart from a paid one
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
@@ -235,7 +276,7 @@ describe("handleGen — provider timeout fail-closed (EP-A4 route ②)", () => {
 
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
     expect(m.settleCredits).not.toHaveBeenCalled();
-    expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED")).toBeTruthy();
+    expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED")).toBeTruthy();
   });
 
   it("an expired in-flight call (lost claim, STALE owner) fails closed + refunds once — provider never re-called", async () => {
@@ -303,7 +344,7 @@ describe("handleGen — worker-crash recovery (EP-A4 route ③ / 六态⑥恢复
     expect(m.generateImages).not.toHaveBeenCalled();
     expect(m.settleCredits).not.toHaveBeenCalled(); // no re-settle against a refunded hold
     expect(m.refundReservation).not.toHaveBeenCalled(); // and no double refund
-    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data.error).toMatch(/refunded/);
     expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR" });
@@ -334,7 +375,7 @@ describe("handleGen — count 2-4 exactly-count guard (D-035 / issue #311)", () 
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow(/only 2\/4/);
 
-    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data.spent).toBe(true); // the billed sub-images stay auditable (paid-but-undelivered)
     expect(m.refundReservation).toHaveBeenCalledTimes(1); // the FULL count-hold releases — not "only the failed cells"
@@ -389,7 +430,7 @@ describe("handleGen — count 2-4 exactly-count guard (D-035 / issue #311)", () 
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
     expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
 
-    const failedUpdate = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data).toMatchObject({ status: "FAILED", spent: true });
     expect(failedUpdate![0].data.spentUsd).toBeCloseTo(0.16); // frozen count=4 COGS remains auditable

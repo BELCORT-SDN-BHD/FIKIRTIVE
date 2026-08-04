@@ -198,13 +198,15 @@ describe("run-state algebra", () => {
     "waiting",
     "done",
     "failed",
+    // 商家自己叫停的一态(#602 T3):终态,不转圈,而且**不是** failed。
+    "cancelled",
     "stale",
     "degraded",
     "data-error",
   ];
 
-  it("terminal states are exactly the five that can never move again", () => {
-    expect([...TERMINAL_RUN_STATES].sort()).toEqual(["data-error", "degraded", "done", "failed", "stale"]);
+  it("terminal states are exactly the six that can never move again", () => {
+    expect([...TERMINAL_RUN_STATES].sort()).toEqual(["cancelled", "data-error", "degraded", "done", "failed", "stale"]);
     for (const state of ALL) {
       expect(isTerminalRunState(state)).toBe(TERMINAL_RUN_STATES.has(state));
     }
@@ -232,6 +234,9 @@ describe("run-state algebra", () => {
     expect(runStateOfCard("idle")).toBe("waiting");
     expect(runStateOfCard("done")).toBe("done");
     expect(runStateOfCard("failed")).toBe("failed");
+    // 取消有自己的一态,绝不折进 failed —— 折进去卡面就长出「再试一次」(#602 T3)。
+    expect(runStateOfCard("cancelled")).toBe("cancelled");
+    expect(runStateSpins(runStateOfCard("cancelled"))).toBe(false);
   });
 });
 

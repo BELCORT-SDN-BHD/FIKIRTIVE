@@ -40,6 +40,8 @@ const { storage } = await import("@/lib/storage");
 const { listCanvasNodes, resolveCanvasNode, deleteCanvasNode } = await import("@/lib/canvas-actions");
 const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
 const { mergeReloadedCanvasNodes } = await import("@/lib/canvas-selection");
+const { placeCanvasJobNode } = await import("@/lib/canvas-node-placement");
+const { canvasCardRowAdvances } = await import("@/lib/canvas-card-status");
 const { isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
 
 const EMAIL = `canvas612-${randomUUID()}@fikirtive.test`;
@@ -237,12 +239,13 @@ describe("a card another tab deleted", () => {
     }));
   }
 
-  /** A board read, in the shape FlowCanvas folds in. */
+  /** A board read, in the shape FlowCanvas folds in — the row's face verbatim, because the read
+   *  already decided it (#602 r2: FlowCanvas no longer re-derives from the URL either). */
   function readAsNodes(cards: unknown): BoardCard[] {
     expect(Array.isArray(cards)).toBe(true);
     return (cards as Array<{ id: string; status: string; url?: string | null }>).map((row) => ({
       id: row.id,
-      data: { status: row.url ? "done" : row.status, url: row.url ?? null, serverKnown: true },
+      data: { status: row.status, url: row.url ?? null, serverKnown: true },
     }));
   }
 
@@ -497,4 +500,73 @@ describe("a terminal card the server never managed to write", () => {
     expect(await visibleBoard([])).toEqual([{ status: "failed", carries: "nothing", hasPicture: false }]);
     expect(await boardRows()).toEqual(untouched);
   });
+});
+
+/**
+ * #602 r3 (judge P2) — the OTHER guarded write, proved the same way.
+ *
+ * `placeCanvasJobNode` reads the card it is about to bind (`status: { not: "deleted" }`) and then
+ * writes it. r2 added the same tombstone predicate to that write; the test beside it MOCKED the
+ * write, so it proved the WHERE was passed, not that the database enforces it.
+ *
+ * The window the guard exists for is between that read and that write. Today's callers all hold
+ * the job's advisory lock, so it cannot open on its own — it is forced here by blocking the
+ * placement on `ChatThread` (which it reads for attribution, after finding the card and before
+ * writing it), deleting the card from a second connection meanwhile, and letting it go. The real,
+ * planned UPDATE then runs against a row the database says is deleted, and must change nothing.
+ */
+describe("the placement's own write refuses a card deleted after it was found", () => {
+  async function waitForLockWait(): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*)::bigint AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock' AND state = 'active'`;
+      if (Number(rows[0]!.n) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("the placement never blocked on the table lock — the race was not forced");
+  }
+
+  it("reports the card as suppressed and leaves the tombstone alone", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "board" } });
+    const generationId = await seedStoredGeneration();
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, threadId, prompt: "a cup steaming", kind: "IMAGE",
+        model: "seedream", count: 1, status: "DONE", generationIds: [generationId], finishedAt: new Date(),
+      },
+    });
+    // Live when the placement looks it up — this is the row it plans to bind and flip to done.
+    const cardId = await seedPendingAnchor(jobId);
+
+    const blocker = prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('LOCK TABLE "ChatThread" IN ACCESS EXCLUSIVE MODE');
+      await waitForLockWait();
+      await tx.$executeRawUnsafe(`UPDATE "CanvasNode" SET "status" = 'deleted' WHERE "id" = $1`, cardId);
+    }, { timeout: 20_000, maxWait: 20_000 });
+
+    const [placement] = await Promise.all([
+      placeCanvasJobNode({
+        ownerId, projectId, genJobId: jobId, type: "image",
+        x: 100, y: 50, w: 320, h: 320, text: null, prompt: "a cup steaming",
+        generationId, status: "done", threadId,
+      }),
+      blocker,
+    ]);
+
+    // The write ran and matched nothing, so the placement reports the deletion rather than
+    // resurrecting the card — a tombstone is a durable owner instruction, not a lost update.
+    //
+    // `scope: "generation"` is what proves the GUARD answered rather than the tombstone pre-check
+    // at the top of the function: that pre-check sees a tombstone carrying no generationId — which
+    // is exactly the row seeded here — and reports `scope: "job"`. Getting "generation" back means
+    // the card was still live when it ran, and the write is what refused.
+    expect(placement).toEqual({ suppressed: true, scope: "generation" });
+    const after = await prisma.canvasNode.findFirstOrThrow({ where: { id: cardId, ownerId }, select: { status: true, generationId: true } });
+    expect(after.status).toBe("deleted");
+    expect(after.generationId).toBeNull();
+    expect(canvasCardRowAdvances("deleted", "done")).toBe(false);
+  }, 30_000);
 });

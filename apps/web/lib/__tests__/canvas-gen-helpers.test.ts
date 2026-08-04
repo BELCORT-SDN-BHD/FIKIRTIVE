@@ -47,14 +47,19 @@ describe("isInFlightPaidGen (paid-aware delete-guard predicate)", () => {
   // A paid GenJob that hasn't resolved to media yet: deleting the card won't refund it and
   // re-running mints a fresh per-click idempotencyKey → a SECOND charge. The delete confirm
   // must warn for exactly these nodes.
-  it("true for a still-generating image (pending, no url)", () => {
-    expect(isInFlightPaidGen({ type: "image", status: "pending" })).toBe(true);
+  // The card FACE, not the stored row word (#602 T3): a card being made reads as queued while its
+  // job waits and generating once it runs, and both are "paid and unresolved".
+  it("true for a still-generating image (generating, no url)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "generating" })).toBe(true);
+  });
+  it("true for an image whose job is only queued (accepted, not started)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "queued" })).toBe(true);
   });
   it("true for a timed-out video (client gave up; job may still settle server-side)", () => {
     expect(isInFlightPaidGen({ type: "video", status: "timeout" })).toBe(true);
   });
   it("false once resolved to media (has url)", () => {
-    expect(isInFlightPaidGen({ type: "image", status: "pending", url: "https://r2/x.png" })).toBe(false);
+    expect(isInFlightPaidGen({ type: "image", status: "generating", url: "https://r2/x.png" })).toBe(false);
     expect(isInFlightPaidGen({ type: "video", status: "done", url: "https://tos/v.mp4" })).toBe(false);
   });
   it("false for a failed gen (terminal → already refunded, safe to delete)", () => {
@@ -64,7 +69,13 @@ describe("isInFlightPaidGen (paid-aware delete-guard predicate)", () => {
     expect(isInFlightPaidGen({ type: "video", status: "missing" })).toBe(false);
   });
   it("false for a text node (never paid)", () => {
-    expect(isInFlightPaidGen({ type: "text", status: "pending" })).toBe(false);
+    expect(isInFlightPaidGen({ type: "text", status: "generating" })).toBe(false);
+  });
+  it("false for a cancelled gen — the merchant stopped it, and it was refunded then", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "cancelled" })).toBe(false);
+  });
+  it("false for a card whose state is unknown — nothing is running to warn about", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "unknown" })).toBe(false);
   });
 });
 

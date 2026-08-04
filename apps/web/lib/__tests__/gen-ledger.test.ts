@@ -363,7 +363,8 @@ describe("W-B3-E-P ledger — EP-A4 route ④: cancel (the stop button)", () => 
     expect(acct.balance).toBe(1000); // fully restored
     expect(acct.reserved).toBe(0);
     const job = await prisma.genJob.findUniqueOrThrow({ where: { id: res.id, ownerId } });
-    expect(job.status).toBe("FAILED");
+    // 取消有自己的词(#602 T3);这条测试守的是钱,而钱路一个字节没变。
+    expect(job.status).toBe("CANCELLED");
     expect(job.error).toBe("Cancelled by you");
 
     // double-click on the stop button: at-most-once refund

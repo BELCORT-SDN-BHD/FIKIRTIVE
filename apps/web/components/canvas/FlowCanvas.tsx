@@ -934,11 +934,12 @@ export default function FlowCanvas({
           // read stops returning it, that is a deletion rather than a read running behind
           // (#612 r4) — reads omit tombstones, so nothing else could ever say so.
           serverKnown: true,
-          // A node with a resolved media URL is finished — show the image. Canvas
-          // nodes persist status "pending" and aren't updated to "done" in the DB,
-          // so without this a completed generation re-renders as "generating
-          // forever" on reload (founder bug: image loads forever).
-          status: r.url ? "done" : r.status,
+          // The board read already answered this (#602 r2, judge P2). A local
+          // `r.url ? "done" : r.status` used to sit here, from when rows persisted
+          // "pending" and were never updated — a second derivation that happened to
+          // agree, until it did not. `canvasCardFace` is the one derivation and it
+          // has already weighed the URL; re-deciding it here is how forks start.
+          status: r.status,
           url: r.url ?? undefined,
           generationId: r.generationId ?? undefined,
           prompt: r.prompt,

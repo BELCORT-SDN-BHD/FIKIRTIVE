@@ -134,15 +134,17 @@ describe("placeCanvasJobNode", () => {
     mocks.jobFindFirst.mockResolvedValue({ id: "job-1", generationIds: ["gen-1", "gen-2"], sourceGenerationId: null, threadId: "thread-1" });
     mocks.nodeFindFirst.mockResolvedValue(saved);
     const resolved = { ...saved, generationId: "gen-1", status: "done" };
-    mocks.nodeUpdate.mockResolvedValue(resolved);
+    mocks.nodeUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.nodeFindFirst.mockResolvedValueOnce(saved).mockResolvedValue(resolved);
 
     await expect(placeCanvasJobNode({ ...base, generationId: "gen-1", status: "done" }))
       .resolves.toEqual({ inserted: false, node: resolved });
 
-    expect(mocks.nodeUpdate).toHaveBeenCalledWith({
-      where: { id: "node-1" },
+    // The write carries the tombstone rule in its own WHERE (#602 r2, judge P2): a card the
+    // merchant deleted between the read and this write must not be resurrected.
+    expect(mocks.nodeUpdateMany).toHaveBeenCalledWith({
+      where: { id: "node-1", ownerId: "owner-1", projectId: "project-1", status: { not: "deleted" } },
       data: { generationId: "gen-1", status: "done" },
-      select: expect.any(Object),
     });
     expect(mocks.nodeCreate).not.toHaveBeenCalled();
   });
@@ -319,13 +321,17 @@ describe("placeCanvasJobNode", () => {
       sourceGenerationId: "gen-source",
       threadId: "thread-1",
     });
+    const resolved = { ...pending, generationId: "gen-out", sourceNodeId: "node-source", threadId: "thread-1", status: "done" };
     mocks.nodeFindFirst
       .mockResolvedValueOnce(pending)
       .mockResolvedValueOnce({
         id: "node-source",
         generationId: "gen-source",
         genJobId: "source-job",
-      });
+      })
+      // …and the re-read after the guarded write.
+      .mockResolvedValueOnce(resolved);
+    mocks.nodeUpdateMany.mockResolvedValue({ count: 1 });
 
     await expect(placeCanvasJobNode({
       ...base,
@@ -342,16 +348,29 @@ describe("placeCanvasJobNode", () => {
       },
     });
 
-    expect(mocks.nodeUpdate).toHaveBeenCalledWith({
-      where: { id: "node-1" },
+    expect(mocks.nodeUpdateMany).toHaveBeenCalledWith({
+      where: { id: "node-1", ownerId: "owner-1", projectId: "project-1", status: { not: "deleted" } },
       data: {
         generationId: "gen-out",
         status: "done",
         sourceNodeId: "node-source",
         threadId: "thread-1",
       },
-      select: expect.any(Object),
     });
+  });
+
+  it("refuses to resurrect a card tombstoned between the read and the write (#602 r2, judge P2)", () => {
+    // The guard lives in the WHERE, so the write itself matches nothing once the merchant has
+    // deleted the card — and a deletion is a durable owner instruction, not a lost update.
+    const pending = { ...saved, threadId: null };
+    mocks.jobFindFirst.mockResolvedValue({
+      id: "job-1", generationIds: ["gen-out"], sourceGenerationId: null, threadId: "thread-1",
+    });
+    mocks.nodeFindFirst.mockResolvedValueOnce(pending);
+    mocks.nodeUpdateMany.mockResolvedValue({ count: 0 }); // the tombstone won
+
+    return expect(placeCanvasJobNode({ ...base, generationId: "gen-out", status: "done" }))
+      .resolves.toEqual({ suppressed: true, scope: "generation" });
   });
 
   it("does not let an existing placement bypass a mismatched source replay", async () => {

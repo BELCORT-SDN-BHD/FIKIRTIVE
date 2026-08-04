@@ -214,8 +214,13 @@ export async function settleCanvasCardsForGenJob(
         continue;
       }
       if (entry.action === "update") {
+        // `status: { not: "deleted" }` for the same reason the terminal write below carries it
+        // (#602 r2, judge P2): the projection reads tombstones and plans around them, but a card
+        // the merchant removed must be un-writable at the WRITE too, not only in the plan. The
+        // job lock narrows the window; it does not close it, and a resurrected card is a card
+        // nothing can ever take off the board again.
         await tx.canvasNode.updateMany({
-          where: { id: entry.id, ownerId, projectId: job.projectId },
+          where: { id: entry.id, ownerId, projectId: job.projectId, status: { not: "deleted" } },
           data: entry.patch,
         });
         nodeIds.push(entry.id);

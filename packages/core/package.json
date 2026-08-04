@@ -16,6 +16,10 @@
       "types": "./dist/canvas-layout.d.ts",
       "default": "./dist/canvas-layout.js"
     },
+    "./canvas-card-status": {
+      "types": "./dist/canvas-card-status.d.ts",
+      "default": "./dist/canvas-card-status.js"
+    },
     "./canvas-settlement-plan": {
       "types": "./dist/canvas-settlement-plan.d.ts",
       "default": "./dist/canvas-settlement-plan.js"

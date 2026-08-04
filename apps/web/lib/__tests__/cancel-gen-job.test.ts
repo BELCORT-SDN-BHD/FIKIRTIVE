@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 //      owner-scoped job matches (races against the worker's QUEUED→GENERATING claim lose),
 //  (b) refundReservation fires ONLY when count>0,
 //  (c) owner scoping (a cross-tenant jobId never matches),
-//  (d) idempotency: a second call finds count 0 (status already FAILED) → no double-refund.
+//  (d) idempotency: a second call finds count 0 (status already CANCELLED) → no double-refund.
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner, requireRole: vi.fn(), requireSession: vi.fn() }));
@@ -49,7 +49,9 @@ describe("cancelGenJob — refund/race (audit #46)", () => {
     expect(res).toEqual({ refunded: true });
     expect(updateMany).toHaveBeenCalledWith({
       where: { id: "g1", ownerId: "org-1", status: "QUEUED" },
-      data: expect.objectContaining({ status: "FAILED" }),
+      // CANCELLED, not FAILED (#602 T3): cancel is its own ending. The refund below is byte-
+      // identical either way — same call, same key, same transaction.
+      data: expect.objectContaining({ status: "CANCELLED" }),
     });
     expect(refundReservation).toHaveBeenCalledTimes(1);
     expect(refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "org-1", refId: "g1" });
@@ -70,7 +72,7 @@ describe("cancelGenJob — refund/race (audit #46)", () => {
     });
   });
 
-  it("already started (worker won the race / DONE / FAILED): count 0 → no refund", async () => {
+  it("already started (worker won the race / DONE / FAILED / CANCELLED): count 0 → no refund", async () => {
     updateMany.mockResolvedValue({ count: 0 });
     const res = await cancelGenJob({ jobId: "g2" });
     expect(res).toEqual({ alreadyStarted: true });

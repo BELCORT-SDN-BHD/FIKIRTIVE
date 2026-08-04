@@ -142,6 +142,10 @@ export type OttoRunState =
   | "waiting"
   | "done"
   | "failed"
+  /** 商家自己叫停的 —— 终态，而且**不是失败**（#602 T3 · spec #599 D4）。
+   *  从前取消写的是 FAILED，于是卡面红着说「这一条没成」还递一颗「再试一次」，
+   *  替商家自己的决定道歉。它有了自己的词，卡面就必须有自己的脸。 */
+  | "cancelled"
   /** 会话已被别的轮次取代（CAS stale）—— 终态。 */
   | "stale"
   /** 这一轮被降级收尾（例如超出最大回合数）—— 终态。 */
@@ -153,6 +157,7 @@ export type OttoRunState =
 export const TERMINAL_RUN_STATES: ReadonlySet<OttoRunState> = new Set<OttoRunState>([
   "done",
   "failed",
+  "cancelled",
   "stale",
   "degraded",
   "data-error",
@@ -209,6 +214,8 @@ export function runStateOfCard(cardState: CardState): OttoRunState {
       return "done";
     case "failed":
       return "failed";
+    case "cancelled":
+      return "cancelled";
   }
 }
 

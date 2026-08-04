@@ -7,7 +7,7 @@ import {
   type ActiveGenModels,
 } from "../../lib/gen-actions";
 import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
-import { isTerminalCardStatus } from "@/lib/canvas-card-status";
+import { canvasCardIsInFlightPaid, isTerminalCardStatus } from "@/lib/canvas-card-status";
 import {
   CANVAS_IMAGE_DEFAULT_COUNT,
   canvasGenCostQuote,
@@ -299,18 +299,15 @@ export async function createNodeWithRetry(
 }
 
 /**
- * A canvas node representing a PAID generation still in flight — an image/video gen
- * node that hasn't resolved to media yet (status "pending"/"timeout", no url).
- * Deleting one does NOT refund (its GenJob already reserved and will settle) and
- * re-running starts a fresh paid action → a SECOND charge. The delete
- * confirm uses this to warn before the owner reflexively removes a stuck-looking
- * card and reclicks. "failed" is terminal (already refunded) and "done"/url-present
- * is finished — both safe to delete.
+ * A canvas node representing a PAID generation still in flight. The delete confirm uses this to
+ * warn before the owner reflexively removes a stuck-looking card and reclicks — deleting one does
+ * NOT refund, and re-running mints a fresh paid action.
+ *
+ * The rule itself lives in `@fikirtive/core` because Otto's `remove` refusal must ask exactly the
+ * same question, and its hand-kept mirror had already drifted (#602 r2, judge P1-3).
  */
 export function isInFlightPaidGen(node: { type: string; status?: string; url?: string | null }): boolean {
-  if (node.type !== "image" && node.type !== "video") return false;
-  if (node.url) return false;
-  return node.status === "pending" || node.status === "timeout";
+  return canvasCardIsInFlightPaid(node);
 }
 
 /**
@@ -598,9 +595,13 @@ export function useCanvasGen(
     const createdPos = persistedNodePos(created, pos);
     onNode({
       id: created.id,
+      // The card the browser puts down knows ONE thing: a job was accepted. Whether it has
+      // started is the job row's to say, and the board read brings that word seconds later — so
+      // this says queued, which is true either way, and never "making this now" (#602 T3).
+      // The stored row stays `pending`; queued/generating are faces, not row words.
+      status: "queued",
       type: "image",
       pos: createdPos,
-      status: "pending",
       prompt,
       genJobId: started.id,
       variantIndex: 0,
@@ -776,7 +777,8 @@ export function useCanvasGen(
       id: created.id,
       type: "video",
       pos: createdPos,
-      status: "pending",
+      // Queued, not "making this now" — see the image path above (#602 T3).
+      status: "queued",
       prompt,
       sourceNodeId,
       genJobId: started.id,
@@ -879,7 +881,8 @@ export function useCanvasGen(
       id: created.id,
       type: "video",
       pos: createdPos,
-      status: "pending",
+      // Queued, not "making this now" — see the image path above (#602 T3).
+      status: "queued",
       prompt,
       genJobId: started.id,
       variantIndex: 0,

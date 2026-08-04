@@ -10,6 +10,7 @@
  * `inFlightPaid` is supplied by the caller from `isInFlightPaidGen` — the single definition
  * of "paid and unresolved" stays where the spend path already keeps it.
  */
+import { isInFlightCardFace } from "./canvas-card-status";
 
 export type CanvasSelectionNode = {
   id: string;
@@ -138,10 +139,14 @@ export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
     // server row, so the spinner came back with nothing left running to take it off again: the
     // poll was over, and the resolve that would have recorded the ending had not landed.
     //
-    // So the rule is now the thing it was always trying to say: while the server row is still
-    // `pending` with no media it has nothing to teach this card, and the moment it holds a settled
-    // answer — an ending, or the picture — that answer wins, whatever this tab had guessed.
-    const serverStillCatchingUp = node.data.status === "pending" && !node.data.url;
+    // So the rule is now the thing it was always trying to say: while the server still says this
+    // card is being made and carries no media, it has nothing to teach this card; the moment it
+    // holds a settled answer — an ending, or the picture — that answer wins, whatever this tab had
+    // guessed. "Being made" is the in-flight FACE set (#602 T3), which is queued and generating —
+    // the same one row word, split by what the job itself says.
+    const serverStillCatchingUp = isInFlightCardFace(
+      typeof node.data.status === "string" ? node.data.status : null,
+    ) && !node.data.url;
     // Either way this card is one the server HAS answered for, which is what lets an absent card
     // be read as deleted further down.
     if (serverStillCatchingUp) return acknowledged(old);

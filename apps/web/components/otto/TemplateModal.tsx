@@ -19,7 +19,7 @@ import type { EntityDTO } from "@/lib/types";
 import { type Template, buildTemplatePrompt, templateRunCredits } from "@/lib/templates";
 import { creditsLabel } from "@/lib/credit-format";
 
-type Phase = "form" | "generating" | "done" | "unknown";
+type Phase = "form" | "generating" | "done" | "cancelled" | "unknown";
 
 export type TemplateRunState = {
   phase: Phase;
@@ -32,6 +32,8 @@ type TemplateRunEvent =
   | { type: "start" }
   | { type: "explicit-error"; message: string }
   | { type: "failed" }
+  /** The merchant stopped it themselves — an ending, and NOT a failure (#602 r2, judge P2). */
+  | { type: "cancelled" }
   | { type: "unknown" }
   | { type: "done"; url: string; genId: string }
   | { type: "clear-message" }
@@ -53,6 +55,9 @@ export function templateRunReducer(state: TemplateRunState, event: TemplateRunEv
       return { ...state, phase: "form", message: event.message };
     case "failed":
       return { ...state, phase: "form", message: "Generation failed. You weren't charged. Try again." };
+    case "cancelled":
+      // No `message`: the alert slot is styled as an error, and nothing went wrong.
+      return { ...state, phase: "cancelled", message: null, resultUrl: null, resultGenId: null };
     case "unknown":
       return {
         ...state,
@@ -71,6 +76,7 @@ export function templateRunReducer(state: TemplateRunState, event: TemplateRunEv
 export type TemplatePollOutcome =
   | { kind: "done"; url: string; genId: string }
   | { kind: "failed" }
+  | { kind: "cancelled" }
   | { kind: "unknown" };
 
 type TemplateStartOutcome =
@@ -131,6 +137,14 @@ export async function pollTemplateJob(
       const url = job.urls[0];
       const genId = job.generationIds[0];
       return url && genId ? { kind: "done", url, genId } : { kind: "unknown" };
+    }
+    // Either ending stops the wait (#602 T3). A CANCELLED job used to be unrecognised here, so
+    // this loop kept polling a job that had stopped until its budget ran out — and it gets its
+    // own word, so the modal does not apologise for the merchant's own decision (r2 judge P2).
+    if (job.status === "CANCELLED") {
+      return job.generationIds.length === 0 && job.urls.length === 0
+        ? { kind: "cancelled" }
+        : { kind: "unknown" };
     }
     if (job.status === "FAILED") {
       return job.generationIds.length === 0 && job.urls.length === 0
@@ -252,6 +266,8 @@ export default function TemplateModal({
       if (cancelledRef.current) return;
       if (out.kind === "failed") {
         dispatchRun({ type: "failed" });
+      } else if (out.kind === "cancelled") {
+        dispatchRun({ type: "cancelled" });
       } else if (out.kind === "unknown") {
         dispatchRun({ type: "unknown" });
       } else {
@@ -277,6 +293,12 @@ export default function TemplateModal({
       <Button type="button" variant="brand" size="sm" disabled>
         Generating…
       </Button>
+    ) : phase === "cancelled" ? (
+      // Nothing to retry and nothing to apologise for — the merchant stopped it (#602 r2).
+      <div className="flex w-full items-center justify-between gap-3">
+        <p className="m-0 text-[0.8125rem] text-muted-foreground">Cancelled — you weren&rsquo;t charged.</p>
+        <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
+      </div>
     ) : phase === "unknown" ? (
       <Button type="button" variant="secondary" size="sm" onClick={onClose}>Close</Button>
     ) : confirming ? (

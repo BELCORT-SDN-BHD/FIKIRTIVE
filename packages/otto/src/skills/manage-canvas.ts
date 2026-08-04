@@ -19,6 +19,7 @@
  * the canvas (v2, codex TR1 item 2 — no model self-confirmation; 宪法 11 protective rail).
  */
 import { z } from "zod";
+import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import type { OttoContext, CanvasNodeView } from "../context.js";
@@ -82,13 +83,17 @@ function toModelNode(n: CanvasNodeView) {
   };
 }
 
-/** Mirror of the human UI's in-flight-paid-gen delete guard (useCanvasGen.isInFlightPaidGen):
- *  an image/video node with no media yet and a non-terminal status may be a PAID job still
- *  running — deleting it hides the card without refunding or stopping the job. */
+/** Is this node a PAID job still in flight — deleting it hides the card without refunding or
+ *  stopping the job?
+ *
+ *  This USED to be a hand-kept mirror of the human UI's guard, spelled `pending || timeout`. It
+ *  was wrong the moment the card faces gained `queued`/`generating` (#602 T3): a board read hands
+ *  this function a FACE, and `pending` is a stored ROW word that no board read has ever returned
+ *  since. Otto could therefore delete a merchant's in-flight paid card without so much as a
+ *  refusal. A mirror that can drift is not a guard, so both callers now ask the SAME function in
+ *  `@fikirtive/core` (#602 r2, judge P1-3). */
 export function isInFlightPaidNode(node: Pick<CanvasNodeView, "type" | "status" | "url">): boolean {
-  if (node.type !== "image" && node.type !== "video") return false;
-  if (node.url) return false;
-  return node.status === "pending" || node.status === "timeout";
+  return canvasCardIsInFlightPaid(node);
 }
 
 export async function executeManageCanvas(

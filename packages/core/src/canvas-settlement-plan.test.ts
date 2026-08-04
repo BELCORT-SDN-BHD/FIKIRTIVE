@@ -28,6 +28,7 @@ import {
   type SettlementCard,
   type SettlementJob,
 } from "./canvas-settlement-plan.js";
+import { GEN_JOB_ENDED_STATUSES, genJobEndedWithoutDelivering } from "./gen-job-state.js";
 import { canvasBatchSlotOffset, canvasRectsOverlap, type CanvasRect } from "./canvas-layout.js";
 
 const OUTPUTS = ["gen-1", "gen-2", "gen-3", "gen-4"];
@@ -443,6 +444,25 @@ describe("how a job's own ending reaches its cards", () => {
     for (const inFlight of ["QUEUED", "GENERATING", "DONE", "whatever-comes-next"]) {
       expect(canvasTerminalCardStatus(inFlight)).toBeNull();
     }
+  });
+
+  // #602 T3 — the CARD's endings and the JOB's endings are two vocabularies that must name the
+  // same two job statuses. `genJobEndedWithoutDelivering` is what every non-canvas rule asks
+  // (the batch dedup guard, the worker's resume short-circuit); this projection is what the board
+  // asks. If they ever disagreed, a job would be "over" to one of them and "still live" to the
+  // other — which is exactly the shape of the defect that let a cancelled job be handed back to a
+  // merchant pressing Generate again.
+  it("agrees with the job-side vocabulary about which statuses are endings", () => {
+    for (const status of GEN_JOB_ENDED_STATUSES) {
+      expect(genJobEndedWithoutDelivering(status)).toBe(true);
+      expect(canvasTerminalCardStatus(status)).not.toBeNull();
+    }
+    for (const live of ["QUEUED", "GENERATING", "DONE"]) {
+      expect(genJobEndedWithoutDelivering(live)).toBe(false);
+      expect(canvasTerminalCardStatus(live)).toBeNull();
+    }
+    expect(genJobEndedWithoutDelivering(null)).toBe(false);
+    expect(genJobEndedWithoutDelivering("whatever-comes-next")).toBe(false);
   });
 
   it("settles every waiting card of the job, not just the first", () => {

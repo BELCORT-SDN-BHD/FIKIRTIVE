@@ -11,7 +11,8 @@ import { withCanvasLineage } from "./canvas-lineage-data";
 import { canvasJobPlacementLockKey } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard, planPendingJobNodes } from "./otto-canvas-bridge-core";
+import { censusCanvasJobCards, displayGenerationIdForCard, planPendingJobNodes } from "./otto-canvas-bridge-core";
+import { canvasCardFace } from "./canvas-card-status";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -271,7 +272,7 @@ export async function syncOttoCanvasNodes(
     });
     const thumb = gid ? thumbs[gid] : undefined;
     const url = thumb?.src ?? null;
-    const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
+    const status = canvasCardFace({ rowStatus: n.status, jobStatus: job?.status, generationId: gid, url });
     return {
       ...n,
       generationId: gid,

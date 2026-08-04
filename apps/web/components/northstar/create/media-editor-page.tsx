@@ -62,7 +62,7 @@ export function MediaEditorPage() {
         y: 0,
         w: 0,
         h: 0,
-        status: "ready",
+        status: "done" as const,
         parentId: runtime.lineage,
         duration: runtime.duration,
         credits: runtime.credits ?? 0,

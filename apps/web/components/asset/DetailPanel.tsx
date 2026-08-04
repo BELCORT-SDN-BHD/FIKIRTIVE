@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
 import { creditsLabel } from "@/lib/credit-format";
+import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
@@ -99,7 +100,7 @@ export default function DetailPanel({
   // Edit @composer (24)
   const [editPrompt, setEditPrompt] = useState("");
   const [editIds, setEditIds] = useState<string[]>([]);
-  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
+  const [editStatus, setEditStatus] = useState<AssetSpendStatus>("idle");
   const [composerKey, setComposerKey] = useState(() => String(Date.now()));
 
   // Crop (16)
@@ -110,8 +111,8 @@ export default function DetailPanel({
   const [cropStatus, setCropStatus] = useState<"idle" | "saving" | "done" | "failed">("idle");
 
   // Action states
-  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
-  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
+  const [regenStatus, setRegenStatus] = useState<AssetSpendStatus>("idle");
+  const [animStatus, setAnimStatus] = useState<AssetSpendStatus>("idle");
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const regenBusyRef = useRef(false);
@@ -229,7 +230,7 @@ export default function DetailPanel({
     if ("error" in result) applyLocal(!next); // revert
   }, [gen, favorite, selectedGenId, readOnly]);
 
-  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "timeout"> => {
+  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "cancelled" | "timeout"> => {
     // ~8 min at 2.5s — mirrors the canvas poll() window (useCanvasGen.ts). Video gens can
     // legitimately exceed the old ~4-min cap; the worker settles late jobs regardless of this
     // client poll. A client-side give-up is a "timeout" (still working), NOT a "failed": surfacing
@@ -241,6 +242,11 @@ export default function DetailPanel({
       if (!job) return "failed";
       if (job.status === "DONE") return "done";
       if (job.status === "FAILED") return "failed";
+      // A cancel is its own ending, not a failure (#602 T3 · r2 judge P2). It stops the poll —
+      // before, CANCELLED was unrecognised here and this loop ran its full ~8-minute budget on a
+      // job that had already stopped — and it gets its own word, so the button that comes back
+      // does not say "Failed — retry?" about something the merchant chose to stop.
+      if (job.status === "CANCELLED") return "cancelled";
       await new Promise((r) => setTimeout(r, 2500));
     }
     return "timeout";
@@ -681,7 +687,7 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcRetry size={14} />}
                   onClick={() => requestSpendConfirm("regen")}
-                  disabled={readOnly || regenStatus === "running" || regenStatus === "timeout"}
+                  disabled={assetSpendControlDisabled(regenStatus, readOnly)}
                   title={readOnlyReason}
                 >
                   {regenStatus === "running"
@@ -690,6 +696,8 @@ export default function DetailPanel({
                     ? "New version ready"
                     : regenStatus === "timeout"
                     ? "Still processing — check the library"
+                    : regenStatus === "cancelled"
+                    ? "Cancelled"
                     : regenStatus === "failed"
                     ? "Failed — retry?"
                     : "Regenerate"}
@@ -703,7 +711,7 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcPlay size={14} />}
                   onClick={() => requestSpendConfirm("animate")}
-                  disabled={readOnly || animStatus === "running" || animStatus === "timeout"}
+                  disabled={assetSpendControlDisabled(animStatus, readOnly)}
                   title={readOnlyReason}
                 >
                   {animStatus === "running"
@@ -712,6 +720,8 @@ export default function DetailPanel({
                     ? "Video ready"
                     : animStatus === "timeout"
                     ? "Still processing — check the library"
+                    : animStatus === "cancelled"
+                    ? "Cancelled"
                     : animStatus === "failed"
                     ? "Failed — retry?"
                     : "Animate"}
@@ -775,7 +785,7 @@ export default function DetailPanel({
                     variant="primary"
                     size="sm"
                     onClick={requestEditSubmit}
-                    disabled={readOnly || editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
+                    disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim()}
                     title={readOnlyReason}
                   >
                     {editStatus === "running"
@@ -784,6 +794,8 @@ export default function DetailPanel({
                       ? "Edit ready!"
                       : editStatus === "timeout"
                       ? "Still processing — check the library"
+                      : editStatus === "cancelled"
+                      ? "Cancelled"
                       : editStatus === "failed"
                       ? "Failed"
                       : "Send"}

@@ -8,6 +8,7 @@
 
 import { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsImage, nsPlaceholder } from "../_mock";
 import { resolveCanvasFromSeed } from "../assets/_data";
+import type { CanvasCardFace } from "@/lib/canvas-card-status";
 
 export { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsImage, nsPlaceholder };
 
@@ -20,7 +21,14 @@ export function cvImage(kind: CvKind, seed: number): string {
 
 // ── Canvas 画布对象(GOAL B/C/D:对象 = 有状态一等公民) ────────────────────
 export type CvKind = "image" | "video";
-export type CvStatus = "ready" | "generating" | "failed" | "timeout" | "missing";
+/**
+ * 卡面状态 = 产品那一套,不是这里另起的一套(#602 T3 · spec #599 D4)。
+ *
+ * 本文件从前自己列了一份 `"ready" | "generating" | …`,页面再写一张翻译表把服务端的词
+ * 换过来 —— 那张表的兜底是 `"generating"`,于是「已取消」「未知」全都在画面上变成「正在生成」,
+ * 永久转圈就是这么来的。现在直接用那一份,翻译表连同它的兜底一起删掉。
+ */
+export type CvStatus = CanvasCardFace;
 
 export interface CvObject {
   id: string;
@@ -62,25 +70,25 @@ export const CV_SEED_OBJECTS: CvObject[] = [
     id: "cv-img-1", ref: "Image 1", kind: "image", title: "Merdeka box hero shot",
     prompt: "Overhead studio shot of a festive Malaysian cookie gift box, warm morning light, red and white ribbon, marble table",
     src: cvImage("image", 14),
-    x: 40, y: 60, w: 224, h: 224, status: "ready", credits: 12,
+    x: 40, y: 60, w: 224, h: 224, status: "done", credits: 12,
   },
   {
     id: "cv-img-2", ref: "Image 2", kind: "image", title: "Hero shot · warmer light",
     prompt: "Same gift box, golden hour side light, steam rising from fresh bakes in the background",
     src: cvImage("image", 17),
-    x: 320, y: 24, w: 200, h: 200, status: "ready", parentId: "cv-img-1", fork: "A", credits: 12,
+    x: 320, y: 24, w: 200, h: 200, status: "done", parentId: "cv-img-1", fork: "A", credits: 12,
   },
   {
     id: "cv-img-3", ref: "Image 3", kind: "image", title: "Hero shot · top-down flat lay",
     prompt: "Same gift box, top-down flat lay with scattered cookies and batik cloth",
     src: cvImage("image", 10),
-    x: 320, y: 260, w: 200, h: 200, status: "ready", parentId: "cv-img-1", fork: "B", credits: 12,
+    x: 320, y: 260, w: 200, h: 200, status: "done", parentId: "cv-img-1", fork: "B", credits: 12,
   },
   {
     id: "cv-vid-1", ref: "Video 1", kind: "video", title: "Croissant fold reel",
     prompt: "Hands folding croissant dough on a floured counter, close-up, 6 seconds, soft kitchen light",
     src: cvImage("video", 4),
-    x: 590, y: 60, w: 168, h: 300, status: "ready", duration: 6, credits: 40,
+    x: 590, y: 60, w: 168, h: 300, status: "done", duration: 6, credits: 40,
   },
 ];
 
@@ -130,19 +138,19 @@ const CV_SEED_OBJECTS_SS2: CvObject[] = [
     id: "cv2-vid-1", ref: "Video 1", kind: "video", title: "6am croissant fold",
     prompt: "Hands folding croissant dough on a floured counter at dawn, slow reel, warm kitchen light",
     src: cvImage("video", 6),
-    x: 40, y: 60, w: 168, h: 300, status: "ready", duration: 6, credits: 40,
+    x: 40, y: 60, w: 168, h: 300, status: "done", duration: 6, credits: 40,
   },
   {
     id: "cv2-vid-2", ref: "Video 2", kind: "video", title: "Lamination close-up",
     prompt: "Macro of butter layers in laminated dough being rolled, steam, soft morning light",
     src: cvImage("video", 9),
-    x: 280, y: 40, w: 168, h: 300, status: "ready", parentId: "cv2-vid-1", fork: "A", duration: 6, credits: 40,
+    x: 280, y: 40, w: 168, h: 300, status: "done", parentId: "cv2-vid-1", fork: "A", duration: 6, credits: 40,
   },
   {
     id: "cv2-img-1", ref: "Image 1", kind: "image", title: "Finished croissant hero",
     prompt: "A single glossy croissant on brown paper, top light, crumbs, shallow depth of field",
     src: cvImage("image", 1),
-    x: 520, y: 80, w: 224, h: 224, status: "ready", credits: 12,
+    x: 520, y: 80, w: 224, h: 224, status: "done", credits: 12,
   },
 ];
 
@@ -161,19 +169,19 @@ const CV_SEED_OBJECTS_SS3: CvObject[] = [
     id: "cv3-img-1", ref: "Image 1", kind: "image", title: "Menu card base",
     prompt: "Clean menu card layout on kraft paper, batik border, hand-lettered header, top-down",
     src: cvImage("image", 11),
-    x: 40, y: 60, w: 224, h: 224, status: "ready", credits: 12,
+    x: 40, y: 60, w: 224, h: 224, status: "done", credits: 12,
   },
   {
     id: "cv3-img-2", ref: "Image 2", kind: "image", title: "Card · pandan palette",
     prompt: "Same menu card, pandan-green accent palette, softer type, morning light",
     src: cvImage("image", 14),
-    x: 320, y: 24, w: 200, h: 200, status: "ready", parentId: "cv3-img-1", fork: "A", credits: 12,
+    x: 320, y: 24, w: 200, h: 200, status: "done", parentId: "cv3-img-1", fork: "A", credits: 12,
   },
   {
     id: "cv3-img-3", ref: "Image 3", kind: "image", title: "Card · kopi palette",
     prompt: "Same menu card, warm kopi-brown palette, retro kopitiam type, top-down",
     src: cvImage("image", 21),
-    x: 320, y: 260, w: 200, h: 200, status: "ready", parentId: "cv3-img-1", fork: "B", credits: 12,
+    x: 320, y: 260, w: 200, h: 200, status: "done", parentId: "cv3-img-1", fork: "B", credits: 12,
   },
 ];
 
@@ -278,7 +286,7 @@ function seedFromExternal(
     y: 120,
     w: isVid ? 168 : 240,
     h: isVid ? 300 : 240,
-    status: "ready",
+    status: "done",
     example: true,
     credits,
   };
@@ -288,7 +296,7 @@ export function resolveCanvasSeed(fromId: string | null): CvObject | null {
   if (!fromId) return null;
   // 1) 画布种子对象(Library / asset-viewer 深链)—— 原样搬上一张干净画布
   const seed = CV_ALL_SEED_OBJECTS.find((o) => o.id === fromId);
-  if (seed) return { ...seed, x: 96, y: 120, parentId: undefined, fork: undefined, status: "ready", example: true };
+  if (seed) return { ...seed, x: 96, y: 120, parentId: undefined, fork: undefined, status: "done", example: true };
   // 2) 首页模板
   const tpl = NS_TEMPLATES.find((t) => t.id === fromId);
   if (tpl) return seedFromExternal(tpl.id, tpl.kind, tpl.name, `Start from the “${tpl.name}” template`, tpl.thumb);

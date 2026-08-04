@@ -64,6 +64,7 @@ import {
   type ImmersiveCanvasRuntimeContext,
 } from "@/components/canvas/immersive-canvas-runtime";
 import { isInFlightPaidGen } from "@/components/canvas/useCanvasGen";
+import { isCanvasCardFace, isInFlightCardFace } from "@/lib/canvas-card-status";
 // [cx-canvas-runtime] 断层 3/5 ②:品牌记忆「Make for them」带 ?audience=,选角「Make with this face」
 // 带 ?persona=;canvas 读它解析出上下文名,显示可关 context chip 并预填进 prompt 前缀。
 import { AUDIENCE_PROFILES } from "../immersive/assets/data";
@@ -166,12 +167,17 @@ function deriveCounters(objs: CvObject[]): { image: number; video: number } {
   return { image, video };
 }
 
-function runtimeStatus(status: string, url?: string | null): CvStatus {
-  if (status === "done" && url) return "ready";
-  if (status === "failed") return "failed";
-  if (status === "timeout") return "timeout";
-  if (status === "missing" || (status === "done" && !url)) return "missing";
-  return "generating";
+/**
+ * The board's card faces come from the ONE derivation, not from a table here (#602 T3).
+ *
+ * What stood here was a translation table whose last line was `return "generating"`, so every word
+ * it had not been taught — `cancelled` above all — was drawn as work in progress. A merchant who
+ * pressed Cancel watched their card generate for ever (F21). The server now hands over a face from
+ * the closed set (`canvasCardFace`); this only refuses to draw anything it cannot name, and what
+ * it cannot name is `unknown` — a state that RESTS.
+ */
+function runtimeFace(status: string): CvStatus {
+  return isCanvasCardFace(status) ? status : "unknown";
 }
 
 function runtimeNodeToObject(
@@ -195,7 +201,7 @@ function runtimeNodeToObject(
     y: node.pos.y,
     w: node.pos.w,
     h: node.pos.h,
-    status: runtimeStatus(node.status, node.url),
+    status: runtimeFace(node.status),
     generationId: node.generationId ?? previous?.generationId,
     genJobId: node.genJobId ?? previous?.genJobId,
     threadId: node.threadId ?? previous?.threadId,
@@ -387,15 +393,16 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
     setSelected((current) => current.filter((id) => nextObjectIds.has(id)));
     setJobs(
       live
-        .filter((node) => node.status === "generating")
+        .filter((node) => isInFlightCardFace(node.status))
         .map((node) => ({ objectId: node.id, pct: node.progress ?? 0 })),
     );
     setUncertainRequest((current) => {
       if (!current) return current;
       const matchingNode = nodes.find((node) => findRequestForNode(node)?.actionId === current.actionId);
       if (!matchingNode) return current;
-      const status = runtimeStatus(matchingNode.status, matchingNode.url);
-      return status === "ready" || status === "failed" || status === "missing" ? null : current;
+      const status = runtimeFace(matchingNode.status);
+      // Cancelled belongs here too: the merchant ended it, so there is nothing left uncertain.
+      return status === "done" || status === "failed" || status === "missing" || status === "cancelled" ? null : current;
     });
     if (ottoEvents.length > 0) {
       const latest = ottoEvents[ottoEvents.length - 1]!;
@@ -435,7 +442,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
   }, [findRequestForNode, refForRuntimeNode, runtimeContext.activeProjectId]);
 
   const onRuntimeResolve = React.useCallback((nodeId: string, url: string | null, status: string, generationId?: string) => {
-    const nextStatus = runtimeStatus(status, url);
+    const nextStatus = runtimeFace(status);
     const request = requestByRuntimeNodeRef.current.get(nodeId);
     const syncedNode = runtimeSyncStateRef.current.nodes.get(nodeId);
     if (syncedNode) {
@@ -467,10 +474,13 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
         setUncertainRequest((current) => current?.actionId === request.actionId ? null : current);
       }
     }
-    if (nextStatus === "ready") {
+    if (nextStatus === "done") {
       setSweepId(nodeId);
       window.setTimeout(() => setSweepId((current) => current === nodeId ? null : current), 650);
-    } else {
+    } else if (nextStatus !== "cancelled") {
+      // A cancel raises NOTHING (#602 T3). The board-wide banner exists to tell a merchant that
+      // something went wrong with work they asked for; a job they stopped themselves is not that,
+      // and announcing it as a runtime failure is the same lie as the red card.
       setRuntimeFailure({
         message: nextStatus === "timeout"
           ? "We cannot confirm the final result yet. Checking again must reuse the same action ID."
@@ -524,7 +534,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
 
   React.useEffect(() => {
     for (const object of objects) {
-      if (object.example || object.status !== "ready" || !object.src) continue;
+      if (object.example || object.status !== "done" || !object.src) continue;
       const fingerprint = [object.kind, object.src, object.prompt, object.title, object.parentId ?? "", object.ref, object.duration ?? ""].join("\u0000");
       if (registeredCanvasObjectsRef.current.get(object.id) === fingerprint) continue;
       registerCanvasObject({
@@ -853,9 +863,11 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
     const live = removed.filter((object) => !object.example);
     if (live.length > 0) {
       const label = live.length === 1 ? live[0].ref : `${live.length} objects`;
+      // One vocabulary now, so the face goes straight in — this used to translate `generating`
+      // back into the row word `pending` to make the shared guard understand it (#602 T3).
       const includesInFlightPaidGeneration = live.some((object) => isInFlightPaidGen({
         type: object.kind,
-        status: object.status === "generating" ? "pending" : object.status,
+        status: object.status,
         url: object.src || null,
       }));
       const warning = includesInFlightPaidGeneration
@@ -918,7 +930,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
     });
   };
 
-  const mentionables = objects.filter((o) => o.status === "ready");
+  const mentionables = objects.filter((o) => o.status === "done");
   const highlightedMentionIndex = Math.min(mentionIndex, Math.max(mentionables.length - 1, 0));
   const selectMention = (object: CvObject) => {
     setDraft((current) => `${current.replace(/@$/, "")}@${object.ref} `);
@@ -1479,16 +1491,28 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
             {objects.map((obj) => {
               const isSel = selected.includes(obj.id);
               const job = jobs.find((j) => j.objectId === obj.id);
-              const pct = job?.pct ?? obj.progress ?? (obj.status === "ready" ? 100 : 0);
-              const phase = obj.status === "ready"
+              const pct = job?.pct ?? obj.progress ?? (obj.status === "done" ? 100 : 0);
+              // WHAT IS HAPPENING comes from the state, and only HOW FAR from the percentage
+              // (#602 T3). The old fallback did it the other way round — anything the table could
+              // not name fell through to `pct < 8 ? "Queued" : "Generating …"`, so a cancelled
+              // card announced a percentage of a job that had stopped.
+              const inFlight = isInFlightCardFace(obj.status);
+              const cancelled = obj.status === "cancelled";
+              const phase = obj.status === "done"
                 ? "Ready"
                 : obj.status === "failed"
                   ? "Failed"
-                  : obj.status === "timeout"
-                    ? "Status uncertain"
-                    : obj.status === "missing"
-                      ? "Media missing"
-                      : pct < 8 ? "Queued" : pct < 85 ? `Generating ${pct}%` : "Refining…";
+                  : obj.status === "cancelled"
+                    ? "Cancelled"
+                    : obj.status === "timeout"
+                      ? "Status uncertain"
+                      : obj.status === "missing"
+                        ? "Media missing"
+                        : obj.status === "queued"
+                          ? "Queued"
+                          : obj.status === "generating"
+                            ? (pct < 85 ? `Generating ${pct}%` : "Refining…")
+                            : "Status unknown";
               const objectRequest = obj.actionId
                 ? retryRequests[obj.actionId]
                 : undefined;
@@ -1524,12 +1548,12 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
                     )}
                     style={{
                       height: obj.h,
-                      ...(sweepId === obj.id ? SWEEP_STYLE : obj.status === "generating" ? undefined : undefined),
-                      ...(obj.status === "generating" && pct === 0 ? LAND_STYLE : {}),
+                      ...(sweepId === obj.id ? SWEEP_STYLE : undefined),
+                      ...(inFlight && pct === 0 ? LAND_STYLE : {}),
                     }}
                   >
                     {/* 内容 / C4 中间态 */}
-                    {obj.status === "generating" && pct < 85 ? (
+                    {inFlight && pct < 85 ? (
                       <div className="flex size-full flex-col items-center justify-center gap-2 bg-muted">
                         <span className="font-mono text-[11px] leading-[14px] font-medium tracking-[0.08em] text-muted-foreground tabular-nums">{phase}</span>
                         <span className="relative h-[5px] w-24 overflow-hidden rounded-full border border-border bg-background">
@@ -1537,7 +1561,16 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
                         </span>
                         <span className="text-[11px] text-muted-foreground">Credits reserved on acceptance · terminal failures refund</span>
                       </div>
-                    ) : obj.status === "failed" || obj.status === "timeout" || obj.status === "missing" ? (
+                    ) : cancelled ? (
+                      // THE MERCHANT'S OWN DECISION, NOT A FAILURE (#602 T3 · spec #599 D4).
+                      // No warning tone and no retry button: nothing went wrong, they stopped it,
+                      // and the hold went back at that moment. Offering "try again" here reads as
+                      // an apology for something they chose.
+                      <div className="flex size-full flex-col items-center justify-center gap-1.5 bg-muted p-4 text-center">
+                        <span className="text-[12px] font-semibold text-foreground">Cancelled</span>
+                        <span className="text-[11px] leading-4 text-muted-foreground">You stopped this one — you weren&rsquo;t charged.</span>
+                      </div>
+                    ) : obj.status === "failed" || obj.status === "timeout" || obj.status === "missing" || obj.status === "unknown" ? (
                       <div className="flex size-full flex-col items-center justify-center gap-2 bg-muted p-4 text-center">
                         <span className="text-[12px] font-semibold text-foreground">{phase}</span>
                         <span className="text-[11px] leading-4 text-muted-foreground">{obj.error ?? "Reload the saved status or retry the same action."}</span>
@@ -1577,7 +1610,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
                             }}
                             onPointerDown={(event) => event.stopPropagation()}
                             onClick={(event) => event.stopPropagation()}
-                            className={cn("size-full bg-black object-contain", obj.status === "generating" && "opacity-70 blur-[1px]")}
+                            className={cn("size-full bg-black object-contain", inFlight && "opacity-70 blur-[1px]")}
                           />
                         ) : (
                           // eslint-disable-next-line @next/next/no-img-element
@@ -1585,10 +1618,10 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
                             src={obj.src}
                             alt={obj.title}
                             draggable={false}
-                            className={cn("size-full object-cover", obj.status === "generating" && "opacity-70 blur-[1px]")}
+                            className={cn("size-full object-cover", inFlight && "opacity-70 blur-[1px]")}
                           />
                         )}
-                        {obj.status === "generating" && (
+                        {inFlight && (
                           <span className="absolute inset-x-2 bottom-2 rounded-md bg-primary/70 px-2 py-0.5 text-center font-mono text-[10px] text-primary-foreground tabular-nums">
                             {phase}
                           </span>
@@ -1636,7 +1669,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
                   </div>
 
                   {/* 贴附工具条(D1)+ Type to imagine(D2)— 随对象移动 */}
-                  {isSel && singleSelected?.id === obj.id && obj.status === "ready" && (
+                  {isSel && singleSelected?.id === obj.id && obj.status === "done" && (
                     <ObjectToolbar
                       obj={obj}
                       feedback={feedback[obj.id] ?? null}

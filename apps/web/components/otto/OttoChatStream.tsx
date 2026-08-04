@@ -15,6 +15,8 @@ import { ACCEPT_ATTACH, isVideoFile, defaultFrameTime, frameFileName, FRAME_MAX_
 import {
   resultJobIds,
   errorJobIds,
+  cancelledJobIds as durablyCancelledJobIds,
+  cancelledTurnPayload,
   deriveCardState,
   hasWorkingJob as computeHasWorkingJob,
   cardIdsOf,
@@ -340,6 +342,9 @@ export function OttoChatStream({
   // whether any approved job is still working (drives the poll + queued state).
   const jobsWithResult = resultJobIds(messages);
   const jobsWithError = errorJobIds(messages);
+  // A cancel and a failure land on the SAME durable message kind, so the card needs this second
+  // set to tell them apart after a reload (#602 T3).
+  const jobsCancelled = durablyCancelledJobIds(messages);
   const hasWorkingJob = computeHasWorkingJob(messages, cancelledJobIds);
 
   // Map genJobId → cardId so GEN_RESULT widgets can pass sourceCardId to OttoResult
@@ -846,6 +851,7 @@ export function OttoChatStream({
                       submitted: submittedCardIds.has(durableId),
                       results: jobsWithResult,
                       errors: jobsWithError,
+                      cancelled: jobsCancelled,
                     }),
                     pendingApproval: pendingApprovalCardIds.has(durableId),
                   };
@@ -925,6 +931,7 @@ export function OttoChatStream({
                       submitted: submittedCardIds.has(durableId),
                       results: jobsWithResult,
                       errors: jobsWithError,
+                      cancelled: jobsCancelled,
                     })}
                     pendingApproval={pendingApprovalCardIds.has(durableId)}
                     onApproved={({ cardId: approvedCardId, chained }) => {
@@ -1062,6 +1069,19 @@ export function OttoChatStream({
             if (kind === "TURN_ERROR") {
               const durableText =
                 (m.parts.find((p) => p.type === "text") as { text?: string } | undefined)?.text ?? "";
+              // A cancel is carried by TURN_ERROR (that kind owns the one-terminal-message-per-job
+              // index) but it is not an error: no alert styling, and nothing to retry (#602 T3).
+              if (cancelledTurnPayload(m.metadata?.payload)) {
+                return (
+                  <div
+                    key={m.id}
+                    className="text-[0.875rem] leading-normal text-muted-foreground"
+                    style={isNewMessage(m.id) ? MSG_ENTER_STYLE : undefined}
+                  >
+                    {durableText}
+                  </div>
+                );
+              }
               const durableError = persistedStreamErrorOf(m.metadata?.payload, durableText);
               const failedUserMessageId = persistedStreamErrorUserMessageId(m.metadata?.payload);
               const durableRetryDraft = durableError.kind === "error" && failedUserMessageId

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
 import { executeManageCanvas, manageCanvasSkill, isInFlightPaidNode, VIEW_NODE_CAP } from "./manage-canvas.js";
 import type { OttoContext, CanvasNodeView } from "../context.js";
 
@@ -140,7 +141,10 @@ describe("edit_text / resolve — pass-through to the shared actions", () => {
 });
 
 describe("remove — in-flight paid cards are UI-only, pre-check is fail-closed (debt-37, v2)", () => {
-  const inFlight = node({ id: "n-hot", type: "video", status: "pending", url: null, generationId: null });
+  // A board read returns the card FACE. `generating` is what a running job's card actually says
+  // (#602 T3) — the fixture used to say `pending`, a row word no read ever returns, so this whole
+  // guard was being exercised against a value the product cannot produce.
+  const inFlight = node({ id: "n-hot", type: "video", status: "generating", url: null, generationId: null });
   it("HARD-refuses an in-flight paid card and directs the user to the canvas (no model self-confirm)", async () => {
     const list = vi.fn(async () => [inFlight]);
     const remove = vi.fn(async () => ({ ok: true as const }));
@@ -174,12 +178,24 @@ describe("remove — in-flight paid cards are UI-only, pre-check is fail-closed 
     expect(res).toEqual({ ok: true });
     expect(remove).toHaveBeenCalledWith("n-done");
   });
-  it("isInFlightPaidNode mirrors the human UI guard (useCanvasGen.isInFlightPaidGen)", () => {
-    expect(isInFlightPaidNode({ type: "video", status: "pending", url: null })).toBe(true);
+  it("isInFlightPaidNode IS the human UI guard — same function, not a copy of it (#602 r2)", () => {
+    // The words this reads are CARD FACES: it is handed a board read (`canvas.list()`), and a
+    // board read returns faces. The old hand-kept copy tested `pending`, a stored ROW word that
+    // no board read has returned since the faces split queued/generating apart — so Otto could
+    // delete a merchant's in-flight PAID card with no refusal at all.
+    expect(isInFlightPaidNode({ type: "image", status: "queued", url: null })).toBe(true);
+    expect(isInFlightPaidNode({ type: "video", status: "generating", url: null })).toBe(true);
+    // The browser stopped watching, but the job may still be running — still costly to delete.
     expect(isInFlightPaidNode({ type: "image", status: "timeout", url: null })).toBe(true);
-    expect(isInFlightPaidNode({ type: "image", status: "failed", url: null })).toBe(false); // terminal, refunded
-    expect(isInFlightPaidNode({ type: "image", status: "pending", url: "https://cdn/x.png" })).toBe(false);
-    expect(isInFlightPaidNode({ type: "text", status: "pending", url: null })).toBe(false);
+    // Every resting face is an answer: the warning would be false.
+    for (const settled of ["failed", "cancelled", "missing", "unknown", "done"]) {
+      expect(isInFlightPaidNode({ type: "image", status: settled, url: null }), settled).toBe(false);
+    }
+    expect(isInFlightPaidNode({ type: "image", status: "generating", url: "https://cdn/x.png" })).toBe(false);
+    expect(isInFlightPaidNode({ type: "text", status: "generating", url: null })).toBe(false);
+    // …and it is literally the shared definition, so the two can never drift again.
+    expect(isInFlightPaidNode).toBeTypeOf("function");
+    expect(canvasCardIsInFlightPaid({ type: "image", status: "queued", url: null })).toBe(true);
   });
 });
 
