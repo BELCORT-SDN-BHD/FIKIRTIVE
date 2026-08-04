@@ -6,7 +6,6 @@ import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
-import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
@@ -46,7 +45,7 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
-  let nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
   // Tombstones are read too — a deleted row is a durable suppression marker, and it keeps
   // chat/result recovery from resurrecting an item the owner deliberately removed.
   const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
@@ -57,13 +56,6 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
-  // Finish any delivered job whose cards are still incomplete — through the ONE settlement every
-  // writer shares, so opening the board can never produce a different result from the worker
-  // having settled it first. Re-read only when it actually wrote something; everything after this
-  // point is display-only.
-  if (await reconcileSettledCanvasJobs({ ownerId: gate.ownerId, cards: nodes, jobs })) {
-    nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
-  }
   const visibleNodes = nodes.filter((node) => node.status !== "deleted");
   const genIds = [
     ...visibleNodes.map((n) => n.generationId).filter((x): x is string => !!x),

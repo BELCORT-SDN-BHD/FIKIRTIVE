@@ -31,7 +31,7 @@ vi.mock("@/lib/allowlist", () => {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma, settleCanvasCardsForGenJob, canvasJobPlacementLockKey } = await import("@fikirtive/db");
+const { prisma, settleCanvasCardsForGenJob, findCanvasSettlementBacklog, canvasJobPlacementLockKey } = await import("@fikirtive/db");
 const { storage } = await import("@/lib/storage");
 const { listCanvasNodes } = await import("@/lib/canvas-actions");
 const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
@@ -204,14 +204,28 @@ describe("coming back to a board nobody was watching", () => {
 });
 
 /**
- * Two writers, one board. The worker writes a delivered job's cards; opening the board writes
- * whatever it finds missing. They take turns (one lock), but taking turns only stops them
- * corrupting each other — it does not make them AGREE. These cases run the identical scenario
- * twice, once per writer, and require the resulting board to be the same either way. A merchant
- * must not get a different board because a tab happened to be open.
+ * ONE WRITER, one board (#613 T2d).
+ *
+ * These cases used to run each scenario twice — once settled by the worker, once "settled" by
+ * opening the board — and require the two boards to match, because a merchant must not get a
+ * different board depending on whether a tab happened to be open. There is no second writer to
+ * compare against any more: the board reader was deleted along with its idea of what a batch
+ * should look like. So the same scenarios now assert the thing that replaced that guarantee:
+ * opening the board writes NOTHING, and the board is finished by the server's own backstop — the
+ * sweep offers the unfinished board, the one settlement writes it, and the result is the board the
+ * delivery path would have written in the first place.
  */
-describe("the board is the same whichever writer got there first", () => {
-  it("puts the missing card of a half-deleted batch in the same place either way", async () => {
+describe("what a board reader does to an unfinished board", () => {
+  /** The backstop, exactly as the worker's sweep runs it: the sweep names the board, the one
+   *  settlement writes it. Returns whether the sweep offered this board at all. */
+  async function backstop(jobId: string): Promise<boolean> {
+    const due = await findCanvasSettlementBacklog({ now: new Date(), graceMs: 0, limit: 200 });
+    const board = due.find((job) => job.id === jobId);
+    if (board) await settleCanvasCardsForGenJob(board.id, board.ownerId);
+    return !!board;
+  }
+
+  it("writes nothing to a half-deleted batch, and the backstop finishes it the server's way", async () => {
     // A batch of two where only the SECOND card is still on the board.
     async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {
       projectId = await freshProject();
@@ -224,13 +238,16 @@ describe("the board is the same whichever writer got there first", () => {
     await settleCanvasCardsForGenJob(server.jobId, ownerId);
 
     const browser = await scenario();
+    const untouched = await boardRows(browser.pid);
     await listCanvasNodes(browser.pid);
+    expect(await boardRows(browser.pid)).toEqual(untouched);
 
+    expect(await backstop(browser.jobId)).toBe(true);
     expect(shape(await boardRows(browser.pid), browser))
       .toEqual(shape(await boardRows(server.pid), server));
   });
 
-  it("gives a batch made FROM an earlier card the same cards either way", async () => {
+  it("writes nothing to a batch made FROM an earlier card either", async () => {
     async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {
       projectId = await freshProject();
       const sourceGenerationId = await seedStoredGeneration();
@@ -245,8 +262,11 @@ describe("the board is the same whichever writer got there first", () => {
     await settleCanvasCardsForGenJob(server.jobId, ownerId);
 
     const browser = await scenario();
+    const untouched = await boardRows(browser.pid);
     await listCanvasNodes(browser.pid);
+    expect(await boardRows(browser.pid)).toEqual(untouched);
 
+    expect(await backstop(browser.jobId)).toBe(true);
     expect(shape(await boardRows(browser.pid), browser))
       .toEqual(shape(await boardRows(server.pid), server));
   });
