@@ -19,6 +19,7 @@ import {
   pricedGenCredits,
   EXECUTED_SPEC,
   type GenVideoModel,
+  type ReferenceBudget,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
@@ -123,6 +124,7 @@ export function buildSpecChips(
   kind: "image" | "video",
   params: CardPayload["params"],
   hasSourceImage: boolean,
+  usesAttachedImage = false,
 ): string[] {
   const chips: string[] = [];
   if (kind === "video") {
@@ -142,8 +144,54 @@ export function buildSpecChips(
     chips.push(`${width} × ${height}`);
     if (EXECUTED_SPEC.image.aspectHonoured && params.aspectRatio) chips.push(params.aspectRatio);
     chips.push(params.count === 1 ? "1 image" : `${params.count} images`);
+    // #619：商家挂的那张图现在真的随卡进引擎（付费请求带 sourceGenerationId），
+    // 所以卡面必须在批准前说出来。这一条只在卡真的带着图时出现 —— 界面上出现的
+    // 每一句都得是执行层真会做的事（#608）。
+    if (usesAttachedImage) chips.push("Uses your attached image");
   }
   return chips;
+}
+
+/**
+ * #619 参考照片预算 —— 花钱**之前**说清楚这一趟真会用上几张。
+ *
+ * 数字不在这里算：`referenceBudget`（`@fikirtive/core`）是 worker 选片规则的唯一副本，
+ * 且由 `apps/worker/src/jobs/gen-reference-budget.test.ts` 拿真 `handleGen` 发出去的
+ * `inputImageUrls` 长度逐例对表。这里只负责把它说成人话。
+ *
+ * 两句话各管一件事，都不许静默：
+ *   - 引擎上限截掉了元素照片 → 说清「真会用几张 / 商家一共给了几张」（含底图，因为底图
+ *     也是引擎真收到的一张）；
+ *   - 挂了不止一张图 → 说清哪张是底图，其余只参与理解（付费请求的底图字段是单值）。
+ */
+export function buildReferenceBudgetNotes(input: {
+  budget: ReferenceBudget;
+  attachedImageCount: number;
+  usesAttachedImage: boolean;
+}): string[] {
+  const notes: string[] = [];
+  if (input.budget.truncated) {
+    notes.push(
+      `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
+    );
+  }
+  if (input.usesAttachedImage && input.attachedImageCount > 1) {
+    notes.push(
+      `You attached ${input.attachedImageCount} images — the first one is the base image; the others only informed this plan.`,
+    );
+  }
+  return notes;
+}
+
+/**
+ * 把参考照片披露并进已铸好的卡面。一旦有照片上不了车，这张卡就是 `downgraded` ——
+ * 前端只在 `downgraded` 为 true 时渲染 `downgradeNote`（`OttoPlanCard.tsx`），
+ * 所以两者必须一起写。纯展示：不改价、不改选型、不改 payload 的任何付费字段。
+ */
+export function withReferenceBudget(payload: CardPayload, notes: string[]): CardPayload {
+  if (notes.length === 0) return payload;
+  const merged = [payload.downgradeNote, ...notes].filter(Boolean).join(" ");
+  return { ...payload, downgraded: true, downgradeNote: merged };
 }
 
 /** 商家提出的、可能被执行层打折的诉求。 */
@@ -213,15 +261,20 @@ export function buildProposeCard(
   ownedEntityIds: string[],
 ): ProposeCardResult {
   // Step 1: kind is the PLANNER'S decision — an attached reference no longer forces video.
-  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame ONLY for a video plan;
-  // for an image plan it is a vision reference the planner already SAW (buildOttoContext)
-  // and is NOT threaded into the gen request (no silent image-to-image).
+  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame for a video plan; for an
+  // image plan it rides along as the PRIMARY reference the image engine actually receives
+  // (#619 Founder 决议：挂图 + 要图片 = 引擎真收到这张图。worker 把它 unshift 到参考数组
+  // 第 0 位 —— apps/worker/src/jobs/gen.ts F09 —— 与详情页 edit 走的是同一条活路)。
+  // `hasSourceImage` 仍然只说 i2v：它驱动选型与 @元素清空，那两件事对图片方案不变
+  // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
   let entityIds = input.entityIds;
   let variantSel = input.variantSel;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
   const hasSourceImage = isI2V;
+  /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
+  const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
 
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
@@ -355,7 +408,7 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    specChips: buildSpecChips(kind, sm.params, hasSourceImage),
+    specChips: buildSpecChips(kind, sm.params, hasSourceImage, usesAttachedImage),
     downgraded,
     ...(downgraded
       ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, hasSourceImage) }
@@ -366,8 +419,9 @@ export function buildProposeCard(
     estimatedPriceUsd: price,
     estimatedCredits,
     ...(videoStep ? { videoStep } : {}),
-    // isI2V ⇒ kind==="video" && !!ctx.sourceGenerationId, so the non-null assertion is sound.
-    ...(isI2V ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
+    // isI2V | usesAttachedImage ⇒ !!ctx.sourceGenerationId, so the non-null assertion is sound.
+    // video ⇒ i2v 起始帧；image ⇒ 引擎的编辑底图（第一参考）。两条路都真的送图。
+    ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
   };
