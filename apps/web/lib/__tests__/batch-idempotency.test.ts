@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CANVAS_JOB_KEY_PREFIX, CANVAS_REPAIR_JSON_KEY, isCanvasJobKey } from "@fikirtive/core";
 import {
   canvasActionKey,
   factoryAttemptKey,
@@ -6,6 +7,8 @@ import {
   normalizeFactoryMaterial,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
+  type FactoryMaterial,
+  type StoredFactoryMaterial,
 } from "../batch-idempotency";
 
 describe("canvas action keys", () => {
@@ -20,6 +23,24 @@ describe("canvas action keys", () => {
     expect(parseCanvasActionKey(first.key)).toEqual(first);
     expect(first).not.toEqual(other);
     expect(parseCanvasActionKey("canvas:caller-controlled")).toBeNull();
+  });
+
+  it("keeps the WHOLE key shape the settlement reads as 'this job was bought from the board'", () => {
+    // The canvas settlement decides whether a delivered job belongs on a board by reading this
+    // key (packages/core, isCanvasJobKey). The two live in different packages, so pin them
+    // together here: changing the shape on one side without the other would silently stop paid
+    // canvas work from ever reaching the board.
+    const minted = canvasActionKey("canvas-action-123").key;
+    expect(minted.startsWith(CANVAS_JOB_KEY_PREFIX)).toBe(true);
+    expect(CANVAS_JOB_KEY_PREFIX).toBe("canvas:");
+    expect(isCanvasJobKey(minted)).toBe(true);
+
+    // …and the reading side is no looser than the minting side (#601 r2 judge P2①). Anything the
+    // reserved-family parser refuses must not be read back as a board purchase either.
+    for (const forged of ["canvas:caller-controlled", `${CANVAS_JOB_KEY_PREFIX}abc`, `${CANVAS_JOB_KEY_PREFIX}${"a".repeat(32)}`]) {
+      expect({ forged, parsed: parseCanvasActionKey(forged), read: isCanvasJobKey(forged) })
+        .toEqual({ forged, parsed: null, read: false });
+    }
   });
 });
 
@@ -56,25 +77,26 @@ describe("factory material binding", () => {
     entityIds: ["e1", "e2"],
     variantSel: { e1: "v1", e2: "v2" },
   });
+  const storedExpected = { id: "job-1", ...expected };
 
   it("keeps entity order significant while ignoring JSON object key order", () => {
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       entityIds: ["e1", "e2"],
       variantSel: { e2: "v2", e1: "v1" },
     }, expected)).toBe(true);
 
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       entityIds: ["e2", "e1"],
     }, expected)).toBe(false);
 
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       variantSel: { e1: "v1", e2: "changed" },
     }, expected)).toBe(false);
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       variantSel: { e1: "v1", e3: "v2" },
     }, expected)).toBe(false);
   });
@@ -97,24 +119,114 @@ describe("factory material binding", () => {
     });
 
     expect(empty.variantSel).toBeNull();
-    expect(factoryMaterialMatches({ ...omitted, variantSel: {} }, omitted)).toBe(true);
-    expect(factoryMaterialMatches({ ...empty, variantSel: null }, empty)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...omitted, variantSel: {} }, omitted)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...empty, variantSel: null }, empty)).toBe(true);
   });
 
   it("does not erase duplicate entity ids — [a,a] is different from [a]", () => {
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       entityIds: ["e1", "e2", "e2"],
     }, expected)).toBe(false);
   });
 
   it("binds the live thread attribution as frozen generation material", () => {
     expect(factoryMaterialMatches({
-      ...expected,
+      ...storedExpected,
       threadId: "thread-other",
     }, {
-      ...expected,
+      ...storedExpected,
       threadId: "thread-expected",
     })).toBe(false);
+  });
+
+  it("ignores only reserved canvas-repair bookkeeping when comparing paid material", () => {
+    const userOptions = {
+      seconds: 10,
+      resolution: "720p",
+      aspectRatio: "16:9",
+      fps: 24,
+      audio: false,
+      merchantChoice: "cinematic",
+    };
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      videoOptions: {
+        ...userOptions,
+        [CANVAS_REPAIR_JSON_KEY]: {
+          attempts: 3,
+          nextAt: "2026-08-03T01:00:00.000Z",
+          terminalAt: null,
+          reason: "board write failed",
+        },
+      },
+    }, { ...expected, videoOptions: userOptions })).toBe(true);
+
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      videoOptions: {
+        ...userOptions,
+        merchantChoice: "documentary",
+        [CANVAS_REPAIR_JSON_KEY]: { attempts: 3 },
+      },
+    }, { ...expected, videoOptions: userOptions })).toBe(false);
+
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      videoOptions: {
+        seconds: 5,
+        merchantChoice: "cinematic",
+        [CANVAS_REPAIR_JSON_KEY]: {
+          genJobId: "stale",
+          originalVideoOptions: { seconds: 10 },
+        },
+      },
+    }, {
+      ...expected,
+      videoOptions: { seconds: 5, merchantChoice: "cinematic" },
+      // Deliberately malformed legacy material: bypass the normal Factory input shape so this
+      // exact stale-row counterexample reaches the comparator unchanged.
+    } as unknown as FactoryMaterial)).toBe(true);
+
+    // A legacy non-object payload must remain paid material while the repair record temporarily
+    // wraps it. Removing the reserved key must not turn that corruption into an apparent null.
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      videoOptions: {
+        [CANVAS_REPAIR_JSON_KEY]: {
+          attempts: 3,
+          originalVideoOptions: "legacy-material",
+        },
+      },
+    }, expected)).toBe(false);
+
+    expect(factoryMaterialMatches({ ...storedExpected, videoOptions: {} }, expected)).toBe(false);
+  });
+
+  it("binds repair restoration to the stored database row id and fails closed without one", () => {
+    const original = ["legacy", "material"];
+    const repair = {
+      genJobId: "job-1",
+      attempts: 2,
+      nextAt: "2026-08-03T01:00:00.000Z",
+      reason: "board write failed",
+      videoOptionsWasNull: false,
+      originalVideoOptions: original,
+    };
+    const expectedLegacy = { ...expected, videoOptions: original } as unknown as FactoryMaterial;
+
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      videoOptions: { [CANVAS_REPAIR_JSON_KEY]: repair },
+    }, expectedLegacy)).toBe(true);
+    expect(factoryMaterialMatches({
+      ...storedExpected,
+      id: "job-other",
+      videoOptions: { [CANVAS_REPAIR_JSON_KEY]: repair },
+    }, expectedLegacy)).toBe(false);
+    expect(factoryMaterialMatches({
+      ...expected,
+      videoOptions: { [CANVAS_REPAIR_JSON_KEY]: repair },
+    } as unknown as StoredFactoryMaterial, expectedLegacy)).toBe(false);
   });
 });

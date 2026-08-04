@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
+const { mockSettleCanvasCards, mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -19,6 +19,7 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockNewId: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
   mockTombstoneCanvasNode: vi.fn(),
+  mockSettleCanvasCards: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
@@ -38,6 +39,9 @@ vi.mock("@fikirtive/db", () => ({
     creditLedger: { findMany: mockLedgerFindMany },
     organization: { findFirst: mockOrganizationFindFirst },
   },
+  // #601 r2: the board read no longer repairs a delivered job itself — it calls the ONE
+  // settlement the worker calls. Mocked here so these unit cases can prove the delegation.
+  settleCanvasCardsForGenJob: mockSettleCanvasCards,
 }));
 // Only newId is stubbed. The credit conversion stays REAL: a test that hand-rolls
 // internal→displayed would happily agree with a broken conversion (#547 B4 reads the ledger).
@@ -68,6 +72,7 @@ beforeEach(() => {
   mockGenerationFindMany.mockResolvedValue([]);
   mockLedgerFindMany.mockResolvedValue([]);
   mockOrganizationFindFirst.mockResolvedValue({ settings: {} });
+  mockSettleCanvasCards.mockResolvedValue({ status: "settled", nodeIds: [], created: 0, updated: 0 });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
@@ -269,10 +274,10 @@ describe("listCanvasNodes", () => {
     expect(mockGenJobFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" } }),
     );
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-1", ownerId: "u1", projectId: "p1", status: "timeout", generationId: null },
-      data: { status: "done", generationId: "gen-1" },
-    });
+    // #601 r2: the row itself is repaired by the ONE settlement, with the whole job in view —
+    // opening the board never writes a delivered job's card from what a picture happens to say.
+    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("recovers stale promptbar nodes from the first displayable job generation", async () => {
@@ -306,18 +311,15 @@ describe("listCanvasNodes", () => {
       }),
     ]);
     expect(mockGetGenerationThumbs).toHaveBeenCalledWith("u1", expect.arrayContaining(["gen-missing", "gen-good"]));
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-1", ownerId: "u1", projectId: "p1", status: "pending", generationId: null },
-      data: { status: "done", generationId: "gen-good" },
-    });
+    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("recovers missing sibling nodes for a completed multi-variant canvas job", async () => {
+  it("hands a batch with missing cards to the one settlement instead of placing its own", async () => {
+    // The read path used to plan and place the missing siblings itself, with its own idea of where
+    // they go and what they hang off. That second opinion is what made an open tab produce a
+    // different board from a closed one (#601 r2 P2②).
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
-    mockNewId
-      .mockReturnValueOnce("node-sib-1")
-      .mockReturnValueOnce("node-sib-2")
-      .mockReturnValueOnce("node-sib-3");
     mockFindMany.mockResolvedValue([
       {
         id: "node-primary",
@@ -340,94 +342,32 @@ describe("listCanvasNodes", () => {
     ]);
     mockGetGenerationThumbs.mockResolvedValue({
       "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
-      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
-      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
-      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
     });
 
-    await expect(listCanvasNodes("p1")).resolves.toEqual([
-      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
-      expect.objectContaining({ id: "node-sib-1", generationId: "gen-2", status: "done", url: "/files/u1/two.jpeg", x: 440, y: 50 }),
-      expect.objectContaining({ id: "node-sib-2", generationId: "gen-3", status: "done", url: "/files/u1/three.jpeg", x: 100, y: 390 }),
-      expect.objectContaining({ id: "node-sib-3", generationId: "gen-4", status: "done", url: "/files/u1/four.jpeg", x: 440, y: 390 }),
-    ]);
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-primary", ownerId: "u1", projectId: "p1", status: "pending", generationId: null },
-      data: { status: "done", generationId: "gen-1" },
-    });
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        ownerId: "u1",
-        projectId: "p1",
-        generationId: "gen-2",
-        genJobId: "job-1",
-        status: "done",
-        threadId: "thread-1",
-        x: 440,
-        y: 50,
-    }));
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(2, expect.objectContaining({ generationId: "gen-3", x: 100, y: 390 }));
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(3, expect.objectContaining({ generationId: "gen-4", x: 440, y: 390 }));
+    await listCanvasNodes("p1");
+
+    expect(mockSettleCanvasCards).toHaveBeenCalledTimes(1);
+    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
-  it("does not create duplicate siblings when another reload already claimed the primary repair", async () => {
+  it("does not ask the settlement for a job whose board already matches it", async () => {
+    // Every reload would otherwise pay for a settlement transaction per job on the board.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
-    mockUpdateMany.mockResolvedValue({ count: 0 });
     mockFindMany.mockResolvedValue([
       {
-        id: "node-primary",
-        type: "image",
-        x: 100,
-        y: 50,
-        w: 320,
-        h: 320,
-        text: null,
-        prompt: "four variants",
-        generationId: null,
-        genJobId: "job-1",
-        status: "pending",
-        sourceNodeId: null,
-        threadId: "thread-1",
+        id: "node-1",
+        type: "image", x: 0, y: 0, w: 320, h: 320, text: null, prompt: "one",
+        generationId: "gen-1", genJobId: "job-1", status: "done", sourceNodeId: null, threadId: null,
       },
     ]);
-    mockGenJobFindMany.mockResolvedValue([
-      { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] },
-    ]);
-    mockGetGenerationThumbs.mockResolvedValue({
-      "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
-      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
-      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
-      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
-    });
-    for (const [index, generationId] of ["gen-2", "gen-3", "gen-4"].entries()) {
-      mockPlaceCanvasJobNode.mockResolvedValueOnce({
-        inserted: false,
-        node: {
-          id: `node-existing-${index + 2}`,
-          type: "image",
-          x: index % 2 === 0 ? 440 : 100,
-          y: index < 1 ? 50 : 390,
-          w: 320,
-          h: 320,
-          text: null,
-          prompt: "four variants",
-          generationId,
-          genJobId: "job-1",
-          status: "done",
-          sourceNodeId: "node-primary",
-          threadId: "thread-1",
-        },
-      });
-    }
+    mockGenJobFindMany.mockResolvedValue([{ id: "job-1", status: "DONE", generationIds: ["gen-1"] }]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/one.jpeg", kind: "image" } });
 
-    await expect(listCanvasNodes("p1")).resolves.toEqual([
-      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
-      expect.objectContaining({ id: "node-existing-2", generationId: "gen-2", url: "/files/u1/two.jpeg" }),
-      expect.objectContaining({ id: "node-existing-3", generationId: "gen-3", url: "/files/u1/three.jpeg" }),
-      expect.objectContaining({ id: "node-existing-4", generationId: "gen-4", url: "/files/u1/four.jpeg" }),
-    ]);
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({ generationId: "gen-2" }));
+    await listCanvasNodes("p1");
+
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 });
 

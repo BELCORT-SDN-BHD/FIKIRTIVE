@@ -4,10 +4,11 @@ import { prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
-import { canvasJobPlacementLockKey, placeCanvasJobNode } from "./canvas-node-placement";
+import { canvasJobPlacementLockKey } from "./canvas-node-placement";
+import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planBridgeNodes, planPendingJobNodes, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -118,11 +119,11 @@ export async function syncOttoCanvasNodes(
       },
     },
   });
-  const existing = await prisma.canvasNode.findMany({
+  // Tombstones included — a deleted card is a durable instruction the settlement below must see.
+  const cardsBeforeSettlement = await prisma.canvasNode.findMany({
     where: { ownerId, projectId },
     select: { generationId: true, genJobId: true, status: true },
   });
-  let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
   const jobIds = [...new Set(messages.map((m) => m.genJobId).filter((id): id is string => !!id))];
   const cardJobKeys = [...new Set(messages
@@ -133,7 +134,7 @@ export async function syncOttoCanvasNodes(
     ...(cardJobKeys.length ? [{ idempotencyKey: { in: cardJobKeys } }] : []),
   ];
   const bridgeJobs = jobWhere.length
-    ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, generationIds: true } })
+    ? await prisma.genJob.findMany({ where: { ownerId, projectId, OR: jobWhere }, select: { id: true, idempotencyKey: true, status: true, generationIds: true } })
     : [];
   const bridgeJobById = new Map(bridgeJobs.map((j) => [j.id, j]));
   const bridgeJobByCardId = new Map(
@@ -141,39 +142,33 @@ export async function syncOttoCanvasNodes(
       .filter((j) => j.idempotencyKey?.startsWith("cowork:"))
       .map((j) => [j.idempotencyKey!.slice("cowork:".length), j]),
   );
-  const jobGenIds = new Map(bridgeJobs.map((j) => [j.id, j.generationIds]));
+
+  // A DELIVERED job's cards belong to the ONE settlement, here as everywhere else (#601 r2 judge
+  // P2②). This used to place them itself, one card per output, left to right — so the board a
+  // merchant got depended on whether a chat happened to be open when the batch landed: this
+  // writer produced a 1×4 row and the settlement a 2×2 grid, and whichever reached the job lock
+  // first decided. Worse, its own writes made the shared pre-check say "the board is finished",
+  // so the settlement never got to correct it.
+  const resultJobIds = new Set(messages
+    .filter((m) => m.kind === "GEN_RESULT")
+    .map((m) => m.genJobId)
+    .filter((id): id is string => !!id));
+  const settlementWrote = await reconcileSettledCanvasJobs({
+    ownerId,
+    cards: cardsBeforeSettlement,
+    jobs: bridgeJobs.filter((job) => resultJobIds.has(job.id)),
+  });
+  const existing = settlementWrote
+    ? await prisma.canvasNode.findMany({
+      where: { ownerId, projectId },
+      select: { generationId: true, genJobId: true, status: true },
+    })
+    : cardsBeforeSettlement;
+
+  let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));
   const haveJobs = new Set(existing.map((n) => n.genJobId).filter((id): id is string => !!id));
-  const suppressedJobs = new Set(existing
-    .filter((n) => n.status === "deleted" && n.generationId === null)
-    .map((n) => n.genJobId)
-    .filter((id): id is string => !!id));
   for (const thread of threads) {
-    const resultMessages = thread.messages.filter((m) => m.kind === "GEN_RESULT");
-    const toCreate = planBridgeNodes(resultMessages, jobGenIds, have)
-      .filter((node) => !suppressedJobs.has(node.genJobId));
-    for (const node of toCreate) {
-      // Job-wide placement reuses the pending primary for generationIds[0] and
-      // deduplicates every later generation against client/reload writers.
-      const placement = await placeCanvasJobNode({
-        ownerId,
-        projectId,
-        type: node.kind,
-        x: 80 + placed * NODE.step,
-        y: NODE.y,
-        w: NODE.w,
-        h: NODE.h,
-        generationId: node.generationId,
-        genJobId: node.genJobId,
-        threadId: thread.id,
-        status: "done",
-        prompt: node.prompt ?? undefined,
-      });
-      if ("error" in placement || "suppressed" in placement) continue;
-      have.add(node.generationId);
-      haveJobs.add(node.genJobId);
-      if (placement.inserted) placed += 1;
-    }
     const cardMessages = (thread.messages as BridgeMessage[])
       .filter((m) => m.kind === "GEN_CARD")
       .map((m) => ({ ...m, genJobId: m.genJobId ?? bridgeJobByCardId.get(m.id)?.id ?? null }));
@@ -199,20 +194,20 @@ export async function syncOttoCanvasNodes(
   }
 
   // ── 2. Return all project nodes with media URLs resolved (display-only) ──
-  const nodes = await prisma.canvasNode.findMany({
-    where: { ownerId, projectId, status: { not: "deleted" } },
-    select: {
-      id: true, type: true, x: true, y: true, w: true, h: true, text: true,
-      prompt: true, generationId: true, genJobId: true, status: true,
-      sourceNodeId: true, threadId: true,
-    },
-  });
+  // Tombstones are read too: a deleted card is a durable instruction the settlement below must
+  // see, so it cannot mistake a suppressed batch for a board that is missing everything.
+  const boardSelect = {
+    id: true, type: true, x: true, y: true, w: true, h: true, text: true,
+    prompt: true, generationId: true, genJobId: true, status: true,
+    sourceNodeId: true, threadId: true,
+  } as const;
+  let board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
 
   // A node's media comes from its generationId, or (for canvas-promptbar nodes,
   // which persist only the job) from the job's first generation. Pull status for
   // every linked job too: CanvasNode.status is not a reliable activity source
   // after terminal settlement because legacy rows can stay "pending" forever.
-  const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
+  const linkedJobIds = [...new Set(board.map((n) => n.genJobId).filter((x): x is string => !!x))];
   const jobs = linkedJobIds.length
     ? await prisma.genJob.findMany({
       where: { id: { in: linkedJobIds }, ownerId, projectId },
@@ -220,6 +215,14 @@ export async function syncOttoCanvasNodes(
     })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
+
+  // Finish any delivered job whose cards are still incomplete — the SAME settlement the canvas
+  // reader and the worker call, so this board cannot end up different from the board a merchant
+  // who never opened the chat would see. Re-read only when it actually wrote something.
+  if (await reconcileSettledCanvasJobs({ ownerId, cards: board, jobs })) {
+    board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
+  }
+  const nodes = board.filter((node) => node.status !== "deleted");
 
   const genIds = [
     ...nodes.map((n) => n.generationId).filter((x): x is string => !!x),
@@ -245,7 +248,12 @@ export async function syncOttoCanvasNodes(
     const url = thumb?.src ?? null;
     const jobStatus = job?.status;
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, jobStatus, url);
-    const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
+    // A delivered job's rows are the settlement's to write (see canvas-settlement-reconcile.ts):
+    // repairing one here from a picture's availability is the second opinion that made the two
+    // writers disagree. Rows of a job that is NOT delivered still get repaired here.
+    const patch = jobStatus === "DONE"
+      ? null
+      : settledCanvasNodeRepairPatch(n.status, n.generationId, jobStatus, gid, url);
     if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
     return {
       ...n,
@@ -266,40 +274,5 @@ export async function syncOttoCanvasNodes(
     }));
   }
 
-  const siblingPlans = planSettledCanvasJobSiblingNodes(
-    nodes,
-    jobById,
-    thumbs,
-    [...resolved.map((n) => n.generationId), ...have],
-  );
-  const recoveredSiblings: CanvasNodeWithUrl[] = [];
-  for (const plan of siblingPlans) {
-    const thumb = thumbs[plan.generationId];
-    const placement = await placeCanvasJobNode({
-      ownerId,
-      projectId,
-      type: plan.type,
-      x: plan.x,
-      y: plan.y,
-      w: plan.w,
-      h: plan.h,
-      text: null,
-      prompt: plan.prompt,
-      generationId: plan.generationId,
-      genJobId: plan.genJobId,
-      status: "done",
-      sourceNodeId: plan.sourceNodeId,
-      threadId: plan.threadId,
-    });
-    if ("error" in placement || "suppressed" in placement) continue;
-    const node = placement.node;
-    recoveredSiblings.push({
-      ...node,
-      url: plan.url,
-      mediaWidth: thumb?.width ?? null,
-      mediaHeight: thumb?.height ?? null,
-      origin: canvasNodeOrigin(jobById.get(plan.genJobId)?.idempotencyKey),
-    });
-  }
-  return withCanvasLineage(ownerId, projectId, [...resolved, ...recoveredSiblings]);
+  return withCanvasLineage(ownerId, projectId, resolved);
 }
