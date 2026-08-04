@@ -119,11 +119,6 @@ export async function syncOttoCanvasNodes(
       },
     },
   });
-  // Tombstones included — a deleted card is a durable instruction the settlement below must see.
-  const cardsBeforeSettlement = await prisma.canvasNode.findMany({
-    where: { ownerId, projectId },
-    select: { generationId: true, genJobId: true, status: true },
-  });
   const messages = threads.flatMap((thread) => thread.messages) as BridgeMessage[];
   const jobIds = [...new Set(messages.map((m) => m.genJobId).filter((id): id is string => !!id))];
   const cardJobKeys = [...new Set(messages
@@ -143,27 +138,19 @@ export async function syncOttoCanvasNodes(
       .map((j) => [j.idempotencyKey!.slice("cowork:".length), j]),
   );
 
-  // A DELIVERED job's cards belong to the ONE settlement, here as everywhere else (#601 r2 judge
-  // P2②). This used to place them itself, one card per output, left to right — so the board a
-  // merchant got depended on whether a chat happened to be open when the batch landed: this
-  // writer produced a 1×4 row and the settlement a 2×2 grid, and whichever reached the job lock
-  // first decided. Worse, its own writes made the shared pre-check say "the board is finished",
-  // so the settlement never got to correct it.
-  const resultJobIds = new Set(messages
-    .filter((m) => m.kind === "GEN_RESULT")
-    .map((m) => m.genJobId)
-    .filter((id): id is string => !!id));
-  const settlementWrote = await reconcileSettledCanvasJobs({
-    ownerId,
-    cards: cardsBeforeSettlement,
-    jobs: bridgeJobs.filter((job) => resultJobIds.has(job.id)),
+  // A DELIVERED job's cards are written by the job itself, here as everywhere else (#601 r2 judge
+  // P2② → #613 T2d). This used to place them itself, one card per output, left to right — so the
+  // board a merchant got depended on whether a chat happened to be open when the batch landed:
+  // this writer produced a 1×4 row and the settlement a 2×2 grid, and whichever reached the job
+  // lock first decided. #601 T2b replaced that with a call to the ONE settlement; T2d removes even
+  // the call, so a GEN_RESULT message is nothing but a message again. All this read still does
+  // below is put down the IN-FLIGHT card of a batch the merchant just started from a chat — a
+  // state the settlement deliberately does not project.
+  // Tombstones included — a deleted card is a durable instruction this read must not walk past.
+  const existing = await prisma.canvasNode.findMany({
+    where: { ownerId, projectId },
+    select: { generationId: true, genJobId: true, status: true },
   });
-  const existing = settlementWrote
-    ? await prisma.canvasNode.findMany({
-      where: { ownerId, projectId },
-      select: { generationId: true, genJobId: true, status: true },
-    })
-    : cardsBeforeSettlement;
 
   let placed = await prisma.canvasNode.count({ where: { ownerId, projectId } });
   const have = new Set(existing.map((n) => n.generationId).filter((id): id is string => !!id));

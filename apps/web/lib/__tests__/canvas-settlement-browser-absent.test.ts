@@ -305,7 +305,9 @@ describe("what a board reader does to an unfinished board", () => {
  * Until #601 r3 that message made the bridge place the batch itself, one card per output in a
  * left-to-right line, and its own writes then made the shared pre-check report the board as
  * finished — so the settlement never got to correct it. Which board a merchant ended up with
- * depended on whether a chat happened to be open, and on who reached the job lock first.
+ * depended on whether a chat happened to be open, and on who reached the job lock first. #601 T2b
+ * replaced that writer with a call to the ONE settlement; #613 T2d removed the call as well, so a
+ * GEN_RESULT message writes nothing at all and the board is the job's own to finish.
  */
 describe("a batch that arrived as a chat result", () => {
   async function seedChatResultJob(outputs: number): Promise<{ jobId: string; generationIds: string[]; threadId: string }> {
@@ -323,7 +325,7 @@ describe("a batch that arrived as a chat result", () => {
     return { jobId, generationIds, threadId };
   }
 
-  it("gets the same board from the chat reader as from the server, card for card", async () => {
+  it("is not placed by the chat reader, and the backstop places it the server's way", async () => {
     const server = await (async () => {
       projectId = await freshProject();
       const seeded = await seedChatResultJob(4);
@@ -335,8 +337,16 @@ describe("a batch that arrived as a chat result", () => {
       projectId = await freshProject();
       const seeded = await seedChatResultJob(4);
       await syncOttoCanvasNodes(projectId);
-      return { pid: projectId, outputs: seeded.generationIds };
+      return { pid: projectId, jobId: seeded.jobId, outputs: seeded.generationIds };
     })();
+
+    // Opening the chat wrote nothing: a delivered batch is not this reader's to place.
+    expect(await boardRows(chat.pid)).toHaveLength(0);
+
+    const due = await findCanvasSettlementBacklog({ now: new Date(), graceMs: 0, limit: 200 });
+    const board = due.find((job) => job.id === chat.jobId);
+    expect(board).toBeDefined();
+    await settleCanvasCardsForGenJob(board!.id, board!.ownerId);
 
     expect(await boardRows(chat.pid)).toHaveLength(4);
     expect(shape(await boardRows(chat.pid), chat)).toEqual(shape(await boardRows(server.pid), server));

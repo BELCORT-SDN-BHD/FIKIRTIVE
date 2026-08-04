@@ -160,11 +160,13 @@ describe("syncOttoCanvasNodes project scoping", () => {
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
-  it("hands every live thread's GEN_RESULT job to the one settlement, and places nothing itself", async () => {
+  it("writes nothing for a live thread's GEN_RESULT job — it neither settles nor places", async () => {
     // #601 r3 (judge P2②): this reader used to write a delivered batch itself — one card per
     // output, left to right — and its own writes then told the shared pre-check the board was
     // finished, so the settlement never saw the job. A merchant got a 1×4 row with a chat open
-    // and the settlement's 2×2 grid without one.
+    // and the settlement's 2×2 grid without one. T2b made it call the ONE settlement instead;
+    // #613 T2d removes the call too — the job's own completion path (and the backfill sweep behind
+    // it) writes those cards, whether or not anyone has this chat open.
     mockChatThreadFindMany.mockResolvedValue([
       {
         id: "thread-1",
@@ -189,7 +191,7 @@ describe("syncOttoCanvasNodes project scoping", () => {
 
     await syncOttoCanvasNodes("p1");
 
-    expect(mockSettleCanvasCards.mock.calls).toEqual([["job-1", "u1"], ["job-2", "u1"]]);
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
