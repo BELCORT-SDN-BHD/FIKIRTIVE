@@ -417,11 +417,12 @@ describe("the chat-side board reader writes nothing either", () => {
  * The other half of "the board is the merchant's home": it has to open even when somebody else
  * is writing it.
  *
- * The settlement bounds its wait for the job's placement lock inside PostgreSQL, so a contended
- * board gives up in about two seconds instead of hanging (#611). Giving up is a REJECTION, and
- * these cases hold the lock for real while a real board is opened: both readers must come back
- * with the board as it stands — the merchant's existing cards — instead of an error page.
- * What this read could not finish, the backfill sweep finishes later.
+ * This was the #611 problem — a read that settled had to WAIT for the job's placement lock, and an
+ * unbounded wait meant a merchant sat looking at nothing while the worker held it. #613 T2d
+ * dissolves the problem rather than bounding it: a read takes no job lock at all, so there is
+ * nothing left to wait for. These cases hold the lock for real anyway and require both readers to
+ * come back promptly with the board as it stands — so if a read ever starts taking that lock
+ * again, this is where it is caught.
  */
 describe("opening a board another writer is already holding", () => {
   /** Hold that job's placement lock for real, and run the reader while it is held. */
