@@ -151,8 +151,18 @@ describe("the one licence to paint a local report as truth", () => {
       .toEqual({ kind: "refused", paint: null });
   });
 
+  it("removes a card another tab deleted, rather than drawing anything on it", async () => {
+    // Removal is the one thing this tab CAN do unaided: it needs no media and no further answer.
+    // Leaving the card alone was the r3 hole — nothing visible could ever converge a tombstone,
+    // so the merchant kept watching a card being made that no longer existed (judge r3 P1).
+    m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: false, status: "deleted" });
+
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast))
+      .toEqual({ kind: "removed" });
+  });
+
   it("treats an {error} answer as unknown, never as acceptance", async () => {
-    // A card another tab deleted, a generation that moved: the server did NOT take this report
+    // A generation that moved, a card that never existed: the server did NOT take this report
     // and never told us what the card says. Painting the report here was the r2 hole (judge P1②①).
     m.resolveCanvasNode.mockResolvedValue({ error: "Node not found." });
 

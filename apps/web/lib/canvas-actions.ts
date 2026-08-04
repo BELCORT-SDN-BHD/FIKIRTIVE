@@ -240,7 +240,20 @@ export async function resolveCanvasNode(
     },
     select: { id: true, projectId: true, genJobId: true },
   });
-  if (!node) return { error: "Node not found." };
+  if (!node) {
+    // DELETION IS AN ANSWER (#612 r4, judge P1). The lookup above walks past tombstones, so a card
+    // the merchant removed in another tab came back as "Node not found" — indistinguishable from a
+    // card that never existed, and therefore filed by the caller as "nobody knows". Nothing could
+    // ever converge that: board reads omit tombstones too, so the only visible thing left was a
+    // card being made that no longer exists. One read-only lookup makes the deletion sayable. The
+    // WRITE predicate below is untouched — "deleted" was never in the overwritable set.
+    const tombstone = await prisma.canvasNode.findFirst({
+      where: { id, ownerId: gate.ownerId, projectId, status: "deleted" },
+      select: { id: true },
+    });
+    if (tombstone) return { ok: true as const, applied: false as const, status: "deleted" };
+    return { error: "Node not found." };
+  }
 
   let generationId: string | null = null;
   if (input.generationId) {

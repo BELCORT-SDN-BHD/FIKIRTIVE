@@ -472,6 +472,17 @@ export default function FlowCanvas({
     void deleteCanvasNode(projectId, id);
   }, [projectId]);
 
+  /**
+   * Take a card off THIS board because the server says it is already gone (#612 r4).
+   *
+   * Deliberately not `deleteNode`: there is nothing to delete — the tombstone exists, written by
+   * whoever removed the card (another tab, or Otto). This is the local half only, and it is the
+   * only thing that can end a card whose row a board read will never return again.
+   */
+  const removeCanvasNodeLocally = useCallback((id: string) => {
+    setNodes((ns) => ns.filter((n) => n.id !== id));
+  }, []);
+
   // Remove a whole selection (#547 B6). Same per-card server action as the single ✕ —
   // batching is a UI convenience, not a new deletion path.
   const deleteNodes = useCallback((ids: string[]) => {
@@ -576,6 +587,7 @@ export default function FlowCanvas({
     onBalanceRefresh,
     undefined,
     scheduleLineageReload,
+    removeCanvasNodeLocally,
   );
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
@@ -904,6 +916,10 @@ export default function FlowCanvas({
         type: r.type,
         position: { x: r.x, y: r.y },
         data: withNodeActionLock({
+          // This card came OUT of a board read, so the server has answered for it. If a later
+          // read stops returning it, that is a deletion rather than a read running behind
+          // (#612 r4) — reads omit tombstones, so nothing else could ever say so.
+          serverKnown: true,
           // A node with a resolved media URL is finished — show the image. Canvas
           // nodes persist status "pending" and aren't updated to "done" in the DB,
           // so without this a completed generation re-renders as "generating

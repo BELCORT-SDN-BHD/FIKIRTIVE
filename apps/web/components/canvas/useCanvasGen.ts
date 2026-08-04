@@ -323,6 +323,8 @@ export function isInFlightPaidGen(node: { type: string; status?: string; url?: s
 export type CanvasResolveOutcome =
   | { kind: "accepted"; paint: string }
   | { kind: "refused"; paint: string | null }
+  /** The card is gone. Taking it off the board needs no media and no further answer (#612 r4). */
+  | { kind: "removed" }
   | { kind: "unknown" };
 
 /** How many times a lost answer is asked for again before the board read takes over. */
@@ -378,8 +380,11 @@ export async function applyCanvasResolve(
       return { kind: "unknown" };
     }
     if (answer.applied) return { kind: "accepted", paint: input.status };
-    // Only an ending this tab can draw on its own. "done" needs a picture this poll does not have,
-    // and "deleted" is not a card any more — the board read settles both.
+    // A tombstone is not a state to draw — it is a card to take away, and taking it away is the
+    // one thing this tab can finish on its own (#612 r4).
+    if (answer.status === "deleted") return { kind: "removed" };
+    // Otherwise only an ending this tab can draw unaided. "done" needs a picture this poll does
+    // not have, so the board read is what delivers it.
     return { kind: "refused", paint: isTerminalCardStatus(answer.status) ? answer.status : null };
   }
   return { kind: "unknown" };
@@ -443,6 +448,12 @@ export function useCanvasGen(
    * board once per card (r3 review P2-1). Nothing here spends: it reports that a job settled.
    */
   onBatchSettled?: () => void,
+  /**
+   * This card is GONE — the server says it was deleted (in another tab, or by Otto). Take it off
+   * the board; nothing else can. Board reads omit tombstones, so a card kept here after its row
+   * became a tombstone is a card that can never be corrected by a later read (#612 r4).
+   */
+  onRemoved?: (nodeId: string) => void,
 ) {
   const cancelledRef = useRef(false);
   const resumedReceiptIdsRef = useRef(new Set<string>());
@@ -601,6 +612,7 @@ export function useCanvasGen(
       if (status !== "done" || urls.length === 0) {
         const outcome = await applyCanvasResolve(projectId, created.id, { status });
         if (outcome.kind === "accepted") onResolve(created.id, null, outcome.paint);
+        else if (outcome.kind === "removed") onRemoved?.(created.id);
         else {
           if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
           onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
@@ -612,6 +624,7 @@ export function useCanvasGen(
       if (!primaryGenerationId) {
         const outcome = await applyCanvasResolve(projectId, created.id, { status: "missing" });
         if (outcome.kind === "accepted") onResolve(created.id, null, outcome.paint);
+        else if (outcome.kind === "removed") onRemoved?.(created.id);
         else {
           if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
           onBatchSettled?.();
@@ -623,6 +636,7 @@ export function useCanvasGen(
       // the merchant is looking at; the siblings below still belong on the board, and the batch's
       // own board read at the end of this loop is what brings the server's answer.
       if (anchor.kind === "accepted") onResolve(created.id, urls[0], "done", primaryGenerationId);
+      else if (anchor.kind === "removed") onRemoved?.(created.id);
       else if (anchor.kind === "refused" && anchor.paint) onResolve(created.id, null, anchor.paint);
       // one sibling card per remaining variant, laid out in a 2×2 cluster. Each
       // is a plain canvas-node placement of an already-generated (already-charged)
@@ -689,7 +703,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, onRemoved, loadModelsForAction]);
 
   const animate = useCallback(async (
     sourceGenerationId: string,
@@ -774,6 +788,7 @@ export function useCanvasGen(
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
       const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      if (outcome.kind === "removed") { onRemoved?.(created.id); return; }
       if (outcome.kind !== "accepted") {
         if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
         onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
@@ -792,7 +807,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, onRemoved, loadModelsForAction]);
 
   // Phase 3: text-to-video. The same paid video path as animate(), minus the
   // source frame — the gate allows video without sourceGenerationId (it's the
@@ -875,6 +890,7 @@ export function useCanvasGen(
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
       const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      if (outcome.kind === "removed") { onRemoved?.(created.id); return; }
       if (outcome.kind !== "accepted") {
         if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
         onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
@@ -893,7 +909,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, onRemoved, loadModelsForAction]);
 
   useEffect(() => {
     let stopped = false;

@@ -82,7 +82,17 @@ export function canvasBatchSelection(nodes: readonly CanvasSelectionNode[]): Can
 export type CanvasMergeNode = {
   id: string;
   selected?: boolean;
-  data: { status?: unknown; url?: unknown };
+  data: {
+    status?: unknown;
+    url?: unknown;
+    /**
+     * A board read has shown this card at least once (#612 r4). It separates the two populations
+     * an absent card can belong to: one the server has never heard of (just placed here, a read
+     * already in flight cannot contain it) and one the server used to return and no longer does
+     * — which, since reads omit tombstones, means it was deleted.
+     */
+    serverKnown?: unknown;
+  };
 };
 
 /**
@@ -122,11 +132,24 @@ export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
     // `pending` with no media it has nothing to teach this card, and the moment it holds a settled
     // answer — an ending, or the picture — that answer wins, whatever this tab had guessed.
     const serverStillCatchingUp = node.data.status === "pending" && !node.data.url;
-    if (serverStillCatchingUp) return old;
+    // Either way this card is one the server HAS answered for, which is what lets an absent card
+    // be read as deleted further down.
+    if (serverStillCatchingUp) return acknowledged(old);
     return old.selected === node.selected ? node : { ...node, selected: old.selected };
   });
   const mergedIds = new Set(merged.map((node) => node.id));
-  return [...merged, ...previous.filter((node) => !mergedIds.has(node.id))];
+  // A card missing from an authoritative read is one of two very different things, and treating
+  // them alike is what kept a deleted card on screen for ever (#612 r4). A card the server has
+  // never returned may simply be newer than the read in flight — it stays. A card the server used
+  // to return and no longer does has been deleted: reads omit tombstones, so nothing that arrives
+  // later can ever take it off the board, and keeping it means a merchant watching a card being
+  // made that does not exist. It goes.
+  return [...merged, ...previous.filter((node) => !mergedIds.has(node.id) && !node.data.serverKnown)];
+}
+
+/** Stamp a card as one a board read has shown, without disturbing one already stamped. */
+function acknowledged<T extends CanvasMergeNode>(node: T): T {
+  return node.data.serverKnown ? node : { ...node, data: { ...node.data, serverKnown: true } };
 }
 
 /** Plain-language confirm copy for removing a whole selection. */

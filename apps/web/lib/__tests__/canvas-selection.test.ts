@@ -97,14 +97,22 @@ describe("mergeReloadedCanvasNodes", () => {
     id: string;
     selected?: boolean;
     local?: boolean;
-    data: { status: string; url: string | null | undefined };
+    data: { status: string; url: string | null | undefined; serverKnown?: boolean };
   };
+  /** A card a board read has already shown — the population an absent row means "deleted" for. */
   const server = (id: string, extra: { status?: string; url?: string | null } = {}): BoardNode => ({
     id,
     data: {
       status: extra.status ?? "done",
       url: "url" in extra ? extra.url : "https://cdn.example/a.png",
+      serverKnown: true,
     },
+  });
+
+  /** A card this tab has just placed: no read has returned it yet, so absence proves nothing. */
+  const justPlaced = (id: string): BoardNode => ({
+    id,
+    data: { status: "pending", url: null },
   });
 
   it("keeps every card the merchant had picked selected", () => {
@@ -124,7 +132,7 @@ describe("mergeReloadedCanvasNodes", () => {
 
     const merged = mergeReloadedCanvasNodes(previous, [server("a", { url: "https://cdn.example/new.png" })]);
 
-    expect(merged[0]!.data).toEqual({ status: "done", url: "https://cdn.example/new.png" });
+    expect(merged[0]!.data).toMatchObject({ status: "done", url: "https://cdn.example/new.png" });
     expect(merged[0]!.selected).toBe(true);
   });
 
@@ -149,9 +157,21 @@ describe("mergeReloadedCanvasNodes", () => {
   });
 
   it("keeps a card the server read has not caught up with yet", () => {
-    const merged = mergeReloadedCanvasNodes([server("local-only")], [server("a")]);
+    const merged = mergeReloadedCanvasNodes([justPlaced("local-only")], [server("a")]);
 
     expect(merged.map((node) => node.id)).toEqual(["a", "local-only"]);
+  });
+
+  // #612 r4 (cross-family review P1): the other side of the same question. A card the server used
+  // to return and no longer does was DELETED — board reads omit tombstones, so keeping it means
+  // nothing that ever arrives can take it off again, and a card that is still "being made" stays
+  // on screen for ever. The two populations are told apart by whether a read has shown the card.
+  it("lets go of a card the server used to return and no longer does", () => {
+    const deletedElsewhere = { ...server("gone", { status: "pending", url: null }), selected: true };
+
+    const merged = mergeReloadedCanvasNodes([deletedElsewhere, server("a")], [server("a")]);
+
+    expect(merged.map((node) => node.id)).toEqual(["a"]);
   });
 
   // #612 r3 (cross-family review P1②③): the same "an older read must not drag a card backwards"
@@ -182,7 +202,7 @@ describe("mergeReloadedCanvasNodes", () => {
     const delivered = mergeReloadedCanvasNodes([here], [server("a", { url: "https://cdn.example/new.png" })]);
 
     expect(settled[0]!.data.status).toBe("failed");
-    expect(delivered[0]!.data).toEqual({ status: "done", url: "https://cdn.example/new.png" });
+    expect(delivered[0]!.data).toMatchObject({ status: "done", url: "https://cdn.example/new.png" });
     expect(delivered[0]!.selected).toBe(true);
   });
 });

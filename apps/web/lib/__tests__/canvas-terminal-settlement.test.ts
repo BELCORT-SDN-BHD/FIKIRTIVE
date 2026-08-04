@@ -37,7 +37,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma, settleCanvasCardsForGenJob } = await import("@fikirtive/db");
 const { storage } = await import("@/lib/storage");
-const { listCanvasNodes, resolveCanvasNode } = await import("@/lib/canvas-actions");
+const { listCanvasNodes, resolveCanvasNode, deleteCanvasNode } = await import("@/lib/canvas-actions");
+const { mergeReloadedCanvasNodes } = await import("@/lib/canvas-selection");
 
 const EMAIL = `canvas612-${randomUUID()}@fikirtive.test`;
 let ownerId: string;
@@ -206,6 +207,93 @@ describe("a closed tab reporting back late", () => {
     const [row] = await boardRows();
     expect(row?.status).toBe("timeout");
     expect(row?.generationId).toBeNull();
+  });
+});
+
+/**
+ * #612 r4 (cross-family review P1) — the card another tab deleted.
+ *
+ * Deletion was INVISIBLE to everything that converges a card: the resolve looked past tombstones
+ * and answered "Node not found", which r3 correctly filed as `unknown` and therefore painted
+ * nothing; the board read omits tombstones; the merge re-appended the card it could no longer
+ * see; and a retained pending card is exactly what keeps the 5-second re-read running. A durable
+ * tombstone can never come back as a visible row, so the loop had nothing left to converge ON —
+ * the merchant watched a card being made that no longer existed, for ever.
+ *
+ * These cases run the whole seam against a REAL database: delete through the real action, ask the
+ * real resolve, take the real board read, and fold it in with the real merge.
+ */
+describe("a card another tab deleted", () => {
+  /** A card as this tab holds it on the board. */
+  type BoardCard = { id: string; data: { status: string; url: string | null; serverKnown?: boolean } };
+
+  /** The board as this tab holds it: cards a server read has already acknowledged. */
+  function held(rows: Array<{ id: string; status: string; url?: string | null }>): BoardCard[] {
+    return rows.map((row) => ({
+      id: row.id,
+      data: { status: row.status, url: row.url ?? null, serverKnown: true },
+    }));
+  }
+
+  /** A board read, in the shape FlowCanvas folds in. */
+  function readAsNodes(cards: unknown): BoardCard[] {
+    expect(Array.isArray(cards)).toBe(true);
+    return (cards as Array<{ id: string; status: string; url?: string | null }>).map((row) => ({
+      id: row.id,
+      data: { status: row.url ? "done" : row.status, url: row.url ?? null, serverKnown: true },
+    }));
+  }
+
+  it("answers the deletion instead of pretending the card was never there", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    // The merchant removes the card in their other tab — the real action, a durable tombstone.
+    expect(await deleteCanvasNode(projectId, cardId)).toEqual({ ok: true });
+
+    // This tab's poll gives up and reports what it last knew.
+    await expect(resolveCanvasNode(projectId, cardId, { status: "timeout" }))
+      .resolves.toEqual({ ok: true, applied: false, status: "deleted" });
+  });
+
+  it("still says 'not found' for a card that never existed at all", async () => {
+    await expect(resolveCanvasNode(projectId, `cnd_${randomUUID()}`, { status: "timeout" }))
+      .resolves.toEqual({ error: "Node not found." });
+  });
+
+  it("converges to the card being gone, never to a card that is still being made", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    const onScreen = held([{ id: cardId, status: "pending" }]);
+    await deleteCanvasNode(projectId, cardId);
+
+    // The board read that the 5-second loop takes: the tombstone is not in it.
+    const board = await listCanvasNodes(projectId);
+    expect((board as unknown[]).length).toBe(0);
+
+    // Folding that read in must let the card GO. Re-appending it is what kept the spinner alive.
+    expect(mergeReloadedCanvasNodes(onScreen, readAsNodes(board))).toEqual([]);
+  });
+
+  it("still protects a card this tab has just placed and no read has seen yet", async () => {
+    // The other population, and the reason the rule cannot simply be "drop what is not in the
+    // read": a card created a moment ago is legitimately absent from a read already in flight.
+    const justPlaced: BoardCard[] = [{ id: `cnd_${randomUUID()}`, data: { status: "pending", url: null } }];
+
+    const merged = mergeReloadedCanvasNodes(justPlaced, readAsNodes(await listCanvasNodes(projectId)));
+
+    expect(merged).toEqual(justPlaced);
   });
 });
 
