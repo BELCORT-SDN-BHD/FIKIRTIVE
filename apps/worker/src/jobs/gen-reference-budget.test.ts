@@ -3,17 +3,23 @@
  *
  * 卡面在**花钱之前**告诉商家「这一趟会用你 N 张参考照里的 M 张」。那句话的数字由
  * `referenceBudget`(`@fikirtive/core`)算出,而真相住在 `handleGen` 里。两处各算各的
- * 就是本仓库反复重学的「说的与做的失同步」——所以这里不再断言一个手抄的期望值,而是
- * **跑真的 `handleGen`**,把它真正交给 `provider.generate` 的 `inputImageUrls` 长度,
- * 跟卡面那句话用的 `referenceBudget(...).used` 逐例对表。
+ * 就是本仓库反复重学的「说的与做的失同步」——所以这里不断言手抄的期望值,而是
+ * **跑真的 `handleGen`**,拿它真正交给 `provider.generate` 的 `inputImageUrls` 对表。
+ *
+ * 断言分两层,缺一层就漏得掉一整类漂移:
+ *   ① **张数** = 卡面那句话用的 `referenceBudget(...).used`(数字不许说错);
+ *   ② **实发集与次序** = 逐张比对 URL(哪几张上车、谁排第几,也不许变)。
+ *      只钉张数是不够的:`[20, 1]` 这种偏斜案例下,「把第一个元素装满 10 张、把第二个
+ *      元素饿死」张数照样是 10,却让商家 @ 到的那个元素**一张都没进引擎**——他为一个
+ *      看不见的元素付了钱。所以这里钉死 A0,B0,A1…A8。
  *
  * 真相出处(main @ 6b6c537c,`apps/worker/src/jobs/gen.ts` —— 本票不改这个文件,
  * 它属于 E-6/T2 的范围):
  *   `:519-532` 元素参考照 round-robin,聚合上限 MAX_CONDITIONING_IMAGES(10);
  *   `:650-659` image 分支把编辑底图 unshift 到第 0 位 —— **在上限之外再加一张**。
  *
- * worker 的选片规则一旦漂移(改上限、改成先放底图再截断、改 round-robin),这里当场红,
- * 逼着 core 里那份副本跟着改,卡面于是自动开始说新话。
+ * worker 的选片规则一旦漂移(改上限、改成先放底图再截断、改 round-robin 为顺序装满),
+ * 这里当场红,逼着 core 里那份副本跟着改,卡面于是自动开始说新话。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -103,6 +109,33 @@ function refsFor(entityIndex: number, n: number) {
   }));
 }
 
+/** 每张图在 `inputImageUrls` 里长什么样(presignedGet 替身返回 `url:<storageKey>`)。 */
+const urlOf = (contentHash: string) => `url:u/o1/${contentHash}.png`;
+/** 第 `entityIndex` 个元素的第 `refIndex` 张图 —— 与 refsFor 同一把尺。 */
+const elementUrl = (entityIndex: number, refIndex: number) =>
+  urlOf(hexHash((entityIndex + 1) * 1000 + refIndex));
+const BASE_URL = urlOf(BASE_HASH);
+
+/**
+ * 期望的实发集与次序 —— 按 worker 的 round-robin **独立**推一遍(gen.ts:521-532)。
+ * 刻意不复用 `referenceBudget`:那个函数只回张数,推不出次序,所以这里不存在
+ * 「拿被测对象自己当答案」的循环论证。
+ */
+function expectedRoundRobinUrls(perEntityLiveCounts: number[]): string[] {
+  const picked: string[] = [];
+  for (let round = 0; picked.length < MAX_CONDITIONING_IMAGES; round++) {
+    let progressed = false;
+    for (let e = 0; e < perEntityLiveCounts.length; e++) {
+      if (round >= perEntityLiveCounts[e]!) continue;
+      picked.push(elementUrl(e, round));
+      progressed = true;
+      if (picked.length >= MAX_CONDITIONING_IMAGES) break;
+    }
+    if (!progressed) break;
+  }
+  return picked;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   m.storage.presignedGet = m.storagePresignedGet;
@@ -164,15 +197,39 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
       attachedImageCount,
     });
 
-    // ① 卡面说的张数 = 引擎真收到的张数。
+    // ① **实发集与次序**逐张对表 —— 哪几张上车、谁排第几,一张都不许变。
+    //    (只钉 length 的话,「把第一个元素装满、饿死第二个」也会通过。)
+    expect(actual).toEqual([
+      ...(hasBaseImage ? [BASE_URL] : []),
+      ...expectedRoundRobinUrls(perEntityLiveCounts),
+    ]);
+    // ② 卡面说的张数 = 引擎真收到的张数。
     expect(actual.length).toBe(predicted.used);
-    // ② 商家一共给了几张,也不许说错(挂了但没当底图的那些不进引擎,但仍是他给的)。
+    // ③ 商家一共给了几张,也不许说错(挂了但没当底图的那些不进引擎,但仍是他给的)。
     const elementTotal = perEntityLiveCounts.reduce((s, n) => s + n, 0);
     expect(predicted.total).toBe(elementTotal + Math.max(attachedImageCount, hasBaseImage ? 1 : 0));
-    // ③ 截断这件事本身也不许说错。
+    // ④ 截断这件事本身也不许说错。
     expect(predicted.truncated).toBe(Math.min(elementTotal, MAX_CONDITIONING_IMAGES) < elementTotal);
-    // ④ 底图真的占着第 0 位(byteplus 把 inputImageUrls[0] 当第一参考)。
-    if (hasBaseImage) expect(actual[0]).toContain(BASE_HASH);
+  });
+
+  // 偏斜案例单独钉一遍字面量 —— 上面的期望值是推出来的,这里的是**写死**的,
+  // 所以「推导器和被测行为一起漂移」也逃不掉。商家 @ 的第二个元素必须真的上车:
+  // 顺序装满(A0…A9)张数同样是 10,但他为一个引擎从没见过的元素付了钱。
+  it("[20, 1] 的实发集必须是 A0,B0,A1…A8 —— 不是「先把 A 装满」", async () => {
+    const byEntity = new Map([["e0", refsFor(0, 20)], ["e1", refsFor(1, 1)]]);
+    m.referenceImageFindMany.mockImplementation(async ({ where }: { where: { entityId: string } }) =>
+      byEntity.get(where.entityId) ?? [],
+    );
+
+    const actual = await inputImageUrlsFromRealWorker({ ...imageJob, entityIds: ["e0", "e1"] });
+
+    expect(actual).toEqual([
+      elementUrl(0, 0), elementUrl(1, 0),
+      elementUrl(0, 1), elementUrl(0, 2), elementUrl(0, 3), elementUrl(0, 4),
+      elementUrl(0, 5), elementUrl(0, 6), elementUrl(0, 7), elementUrl(0, 8),
+    ]);
+    // 那唯一一张属于第二个元素的图,确实在车上。
+    expect(actual).toContain(elementUrl(1, 0));
   });
 
   it("元素图一张都到不了视频引擎 —— 所以视频卡不许报参考照数字", async () => {
