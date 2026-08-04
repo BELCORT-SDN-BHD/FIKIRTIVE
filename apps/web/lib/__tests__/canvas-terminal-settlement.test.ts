@@ -35,9 +35,10 @@ vi.mock("@/lib/allowlist", () => {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma, settleCanvasCardsForGenJob } = await import("@fikirtive/db");
+const { prisma, settleCanvasCardsForGenJob, findCanvasSettlementBacklog } = await import("@fikirtive/db");
 const { storage } = await import("@/lib/storage");
 const { listCanvasNodes, resolveCanvasNode, deleteCanvasNode } = await import("@/lib/canvas-actions");
+const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
 const { mergeReloadedCanvasNodes } = await import("@/lib/canvas-selection");
 const { isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
 
@@ -432,5 +433,68 @@ describe("a job that ended badly", () => {
 
     expect(outcome.status).toBe("suppressed");
     expect(await boardRows()).toEqual(deleted);
+  });
+});
+
+/**
+ * #613 T2d — WHEN THE ENDING'S OWN WRITE FELL OVER, and no browser fixes it any more.
+ *
+ * The terminal write is best-effort (it runs after the refund, and must never be able to undo it),
+ * so it can fail. Until T2d the card was quietly corrected by the board READER on the way past;
+ * that repair is now deleted, so the whole rescue has to come from the backfill sweep. These cases
+ * reproduce the failed write by its observable result — the card is still `pending` for a job that
+ * ended long ago — and require:
+ *
+ *   1. opening the board changes NOTHING in the database, and
+ *   2. the sweep alone brings the card to that job's real ending, with nothing else running.
+ */
+describe("a terminal card the server never managed to write", () => {
+  /** The backstop, exactly as the worker's sweep runs it: the scan names it, one settlement writes it. */
+  async function backstop(jobId: string): Promise<boolean> {
+    const due = await findCanvasSettlementBacklog({ now: new Date(), graceMs: 0, limit: 200 });
+    const board = due.find((job) => job.id === jobId);
+    if (board) await settleCanvasCardsForGenJob(board.id, board.ownerId);
+    return !!board;
+  }
+
+  it.each([
+    ["FAILED" as const, "failed"],
+    ["CANCELLED" as const, "cancelled"],
+  ])("is repaired by the backstop alone after a %s job, never by opening the board", async (jobStatus, cardStatus) => {
+    const jobId = await seedTerminalJob(jobStatus);
+    await seedPendingAnchor(jobId);
+    // Roll the ending back past the sweep's grace period: the completion path is long done.
+    await prisma.genJob.update({
+      where: { id: jobId, ownerId },
+      data: { finishedAt: new Date(Date.now() - 30 * 60_000) },
+    });
+
+    // Opening the board — both readers — writes nothing at all.
+    const untouched = await boardRows();
+    await listCanvasNodes(projectId);
+    await syncOttoCanvasNodes(projectId);
+    expect(await boardRows()).toEqual(untouched);
+    expect(untouched.map((row) => row.status)).toEqual(["pending"]);
+
+    // The sweep is the only thing left that can fix it — and it does.
+    expect(await backstop(jobId)).toBe(true);
+    expect((await boardRows()).map((row) => row.status)).toEqual([cardStatus]);
+    expect(await visibleBoard([])).toEqual([{ status: cardStatus, carries: "nothing", hasPicture: false }]);
+
+    // Once, not once per tick.
+    const settled = await boardRows();
+    expect(await backstop(jobId)).toBe(false);
+    expect(await boardRows()).toEqual(settled);
+  });
+
+  it("still tells the merchant the truth on a board the sweep has not reached yet", async () => {
+    // The row says "pending" and the job says FAILED. A read may not write, but it must not lie
+    // either: the display projection reads the job, so the merchant sees the ending immediately.
+    const jobId = await seedTerminalJob("FAILED");
+    await seedPendingAnchor(jobId);
+
+    const untouched = await boardRows();
+    expect(await visibleBoard([])).toEqual([{ status: "failed", carries: "nothing", hasPicture: false }]);
+    expect(await boardRows()).toEqual(untouched);
   });
 });

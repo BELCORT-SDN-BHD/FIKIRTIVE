@@ -6,9 +6,8 @@ import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
-import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
 import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
 
 export type CanvasNodeDTO = {
@@ -42,11 +41,22 @@ async function ownedProject(projectId: string, ownerId: string) {
   return prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
 }
 
+/**
+ * The board, as it stands. A PURE READ (#613 T2d).
+ *
+ * Opening a board used to finish it: it settled every delivered job whose cards looked incomplete,
+ * and patched individual rows from whether a picture happened to resolve. Those were second and
+ * third opinions about rows the job's own completion path already writes (#601 T2b / #612 T2c),
+ * and a merchant must not get a different board because a tab happened to be open. A board that is
+ * unfinished now stays unfinished until the one settlement finishes it — from the job's completion
+ * path, or from the backfill sweep behind it (`findCanvasSettlementBacklog`), which covers both a
+ * delivered job's missing outputs and a card that was never told how its job ended.
+ */
 export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[] | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
-  let nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
   // Tombstones are read too — a deleted row is a durable suppression marker, and it keeps
   // chat/result recovery from resurrecting an item the owner deliberately removed.
   const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
@@ -57,13 +67,6 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
-  // Finish any delivered job whose cards are still incomplete — through the ONE settlement every
-  // writer shares, so opening the board can never produce a different result from the worker
-  // having settled it first. Re-read only when it actually wrote something; everything after this
-  // point is display-only.
-  if (await reconcileSettledCanvasJobs({ ownerId: gate.ownerId, cards: nodes, jobs })) {
-    nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
-  }
   const visibleNodes = nodes.filter((node) => node.status !== "deleted");
   const genIds = [
     ...visibleNodes.map((n) => n.generationId).filter((x): x is string => !!x),
@@ -71,29 +74,25 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   ];
   const thumbs = await getGenerationThumbs(gate.ownerId, genIds);
 
-  const repairs: Array<{
-    id: string;
-    status: string;
-    generationId: string | null;
-    data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>>;
-  }> = [];
+  // PURELY A READ from here down (#613 T2d). What each card SAYS is resolved for display — a
+  // stored row that has not caught up still shows the merchant the truth — but nothing observed
+  // while rendering is written back. A row is the settlement's to write: the job's completion path
+  // writes it, and the backfill sweep writes it when that could not.
+  // One rule, shared with the chat reader: a card that carries no output may only borrow one no
+  // other live card of its job is showing, and only when it is that job's sole unbound card.
+  const census = censusCanvasJobCards(visibleNodes);
   const resolved = visibleNodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
-    const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
+    const generationId = displayGenerationIdForCard({
+      rowGenerationId: n.generationId,
+      genJobId: n.genJobId,
+      jobGenerationIds: job?.generationIds,
+      census,
+      thumbs,
+    });
     const thumb = generationId ? thumbs[generationId] : undefined;
     const url = thumb?.src ?? null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
-    // A delivered job's rows belong to the settlement above — it has just run, with the whole
-    // job in view. Repairing one of them here from a picture's availability would re-open the
-    // second opinion this file was fixing: the two would disagree about which output the primary
-    // card carries the moment one output's media is slow to resolve. Rows of a job that ended
-    // badly are now written by that same settlement too (#612 T2c); what is left here is the
-    // backstop for a board whose terminal settlement has not run, and it goes with the rest of
-    // the read-time repair in T2d.
-    const patch = job?.status === "DONE"
-      ? null
-      : settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
-    if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
     return {
       ...n,
       generationId,
@@ -104,14 +103,6 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
       origin: canvasNodeOrigin(job?.idempotencyKey),
     };
   });
-  if (repairs.length) {
-    await Promise.all(repairs.map(async (r) => {
-      await prisma.canvasNode.updateMany({
-        where: { id: r.id, ownerId: gate.ownerId, projectId, status: r.status, generationId: r.generationId },
-        data: r.data,
-      });
-    }));
-  }
 
   return withCanvasLineage(gate.ownerId, projectId, resolved);
 }

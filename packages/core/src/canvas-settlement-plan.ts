@@ -314,11 +314,42 @@ export function canvasTerminalCardStatus(jobStatus: string): string | null {
   return TERMINAL_CARD_STATUS[jobStatus] ?? null;
 }
 
+/**
+ * THE ONLY JOB STATES A BOARD READ MAY PUT A CARD DOWN FOR (#613 r2, cross-family judge P1).
+ *
+ * `GenStatus` has five values (packages/db/prisma/schema.prisma): QUEUED, GENERATING, DONE,
+ * FAILED, CANCELLED. The first two are the job still running; the other three are finished work,
+ * and finished work belongs to the settlement — placed by the job's own completion path, or by the
+ * backfill sweep when that write fell over.
+ *
+ * Named rather than derived by negation on purpose. "Not terminal and not DONE" would silently
+ * admit any status added later, and admitting a status here means a board READ writing a card for
+ * a job that has already finished — which is the whole class of defect T2d removes. A new status
+ * must be considered explicitly; `packages/db/src/__tests__/canvas-settlement-backlog.test.ts`
+ * pins this list against the generated enum so one cannot be added without meeting this decision.
+ */
+export const CANVAS_IN_FLIGHT_JOB_STATUSES = ["QUEUED", "GENERATING"] as const;
+
+/** Is this job still running — the one state whose card no settlement will ever place? */
+export function canvasJobIsInFlight(jobStatus: string | null | undefined): boolean {
+  return (CANVAS_IN_FLIGHT_JOB_STATUSES as readonly string[]).includes(jobStatus ?? "");
+}
+
 export type CanvasSettlementPlan =
   | {
       kind: "place";
       /** Anchor first, then siblings in batch order. */
       cards: PlannedCard[];
+      /**
+       * Unbound cards of this job that no paid output is left for — an anomaly, never a plan.
+       *
+       * One job can only ever have one legitimately unbound card: the in-flight anchor, which the
+       * two placement paths each admit once per job. More than one means two writers both placed
+       * an anchor. They are deliberately NOT planned — binding one to an output another card
+       * already carries is how a merchant ends up with one paid picture shown twice — and they are
+       * reported here so the caller can say so out loud instead of writing the duplicate.
+       */
+      duplicateAnchorIds: string[];
     }
   | {
       /** The job ended badly: settle the cards it left behind, create nothing. */
@@ -368,6 +399,31 @@ export function canvasBoardNeedsSettlement(
   const placed = new Set(cards.map((card) => card.generationId).filter((id): id is string => !!id));
   if (generationIds.some((id) => !!id && !placed.has(id))) return true;
   return cards.some((card) => card.status !== "deleted" && (card.status !== "done" || card.generationId === null));
+}
+
+/**
+ * Cheap "has this job's ending reached its cards?" — the terminal twin of the rule above (#613).
+ *
+ * `planTerminalSettlement` below is the authority; this answers the same question without a
+ * transaction, so the backfill sweep can ask it of every board in one query. `true` exactly when
+ * that projection would write something: the job ended, the merchant did not delete the in-flight
+ * card, and at least one live card carrying no output still says something other than this ending.
+ *
+ * A card that carries a paid output is never counted — an ending is about the work that did not
+ * arrive, and may not take away work that did.
+ *
+ * `cards` must include tombstones — a deleted card is a row that exists on purpose.
+ */
+export function canvasTerminalBoardNeedsSettlement(
+  jobStatus: string,
+  cards: readonly Pick<SettlementCard, "generationId" | "status">[],
+): boolean {
+  const status = canvasTerminalCardStatus(jobStatus);
+  if (!status) return false;
+  if (cards.some((card) => card.status === "deleted" && card.generationId === null)) return false;
+  return cards.some((card) => (
+    card.status !== "deleted" && card.generationId === null && card.status !== status
+  ));
 }
 
 export type CanvasSettlementInput = {
@@ -479,7 +535,32 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
 
   const type = job.kind === "VIDEO" ? "video" : "image";
   const primaryGenerationId = surviving[0]!;
-  const anchor = findAnchor(live, primaryGenerationId);
+
+  /**
+   * WHICH UNBOUND CARDS ARE REAL (#613 r3, cross-family judge P1).
+   *
+   * An unbound card is the anchor waiting for its first output. A job can only have one — both
+   * placement paths admit a card per job exactly once — so a second one means two writers raced
+   * and both placed one. `CanvasNode.genJobId` has no uniqueness behind it, so nothing under this
+   * function would notice; and left to the old rule the damage was durable, because each pass
+   * bound whichever unbound card it found to the batch's FIRST output. Two passes, two cards, the
+   * same paid picture on both, and a phantom in the lineage.
+   *
+   * So an unbound card is only an anchor while there is an output NO live card carries yet. The
+   * rest are reported to the caller and never planned: unbound is a visible, honest state (the
+   * board shows a delivered job's outputless card as missing) and a duplicated paid output is not.
+   */
+  const carriedByLiveCards = new Set(
+    live.map((card) => card.generationId).filter((id): id is string => !!id),
+  );
+  const unclaimed = surviving.filter((id) => !carriedByLiveCards.has(id));
+  const unbound = live.filter((card) => card.generationId === null);
+  const duplicateAnchorIds = (unclaimed.length ? unbound.slice(1) : unbound).map((card) => card.id);
+  const anchorCandidates = duplicateAnchorIds.length
+    ? live.filter((card) => !duplicateAnchorIds.includes(card.id))
+    : live;
+
+  const anchor = findAnchor(anchorCandidates, primaryGenerationId);
   const planned: PlannedCard[] = [];
 
   // ── the anchor card ──────────────────────────────────────────────────────────────────────
@@ -531,9 +612,12 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     anchorPrompt = anchor.prompt ?? (job.prompt || null);
     anchorSourceNodeId = anchor.sourceNodeId;
     const patch: { status?: string; generationId?: string } = {};
-    // Only an anchor with no output yet may be bound to one. A card that already shows a
-    // different output is a sibling's card, and is never re-pointed.
-    if (anchor.generationId === null) patch.generationId = primaryGenerationId;
+    // Only an anchor with no output yet may be bound to one, and only to an output NO live card
+    // is already carrying — binding it to one that is already on the board is how the same paid
+    // picture ends up on two cards. `unclaimed` is non-empty whenever an unbound card survived
+    // the duplicate filter above, so the batch's first free output is always there to bind.
+    // A card that already shows a different output is a sibling's card, and is never re-pointed.
+    if (anchor.generationId === null) patch.generationId = unclaimed[0]!;
     anchorGenerationId = patch.generationId ?? anchor.generationId ?? primaryGenerationId;
     if (anchor.status !== "done") patch.status = "done";
     const batchIndex = Math.max(0, outputs.indexOf(anchorGenerationId));
@@ -584,5 +668,5 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     });
   }
 
-  return { kind: "place", cards: planned };
+  return { kind: "place", cards: planned, duplicateAnchorIds };
 }

@@ -14,6 +14,7 @@ import {
   canvasJobBelongsOnBoard,
   canvasJobOrigin,
   canvasBoardNeedsSettlement,
+  canvasTerminalBoardNeedsSettlement,
   canvasMaterialWithoutRepair,
   isTrustedCanvasRepairRecord,
   isCanvasJobKey,
@@ -733,6 +734,156 @@ describe("deciding whether a settlement is worth running at all", () => {
       if (changes) {
         expect({ scenario: scenario.name, needs: canvasBoardNeedsSettlement(input.job.generationIds, input.cards) })
           .toEqual({ scenario: scenario.name, needs: true });
+      }
+    }
+  });
+});
+
+/**
+ * #613 r3 (cross-family judge P1) — TWO ANCHORS FOR ONE JOB, and the paid output that must not be
+ * duplicated because of it.
+ *
+ * A job can only have one legitimately unbound card: the in-flight anchor, which each placement
+ * path admits once per job. Two of them means two writers raced. `CanvasNode.genJobId` carries no
+ * uniqueness, so nothing under this function notices — and under the old rule the damage was
+ * durable, because every pass bound whichever unbound card it found to the batch's FIRST output:
+ *
+ *   pass 1 → dup-a := gen-0, sibling created for gen-1
+ *   pass 2 → dup-b := gen-0   ← the same paid picture, on a second card, for ever
+ *
+ * The rule now is that an unbound card may only be bound to an output NO live card is carrying.
+ * The extras are reported instead of planned; the caller says so out loud, and the board shows a
+ * delivered job's outputless card as missing, which is true.
+ */
+describe("more than one unbound card for a single job", () => {
+  const anchorJob: SettlementJob = {
+    status: "DONE", generationIds: ["gen-0", "gen-1"], kind: "IMAGE", prompt: "p", origin: "canvas",
+  };
+
+  function place(cards: SettlementCard[]) {
+    const plan = planCanvasSettlement({ job: anchorJob, cards, occupied: [] });
+    if (plan.kind !== "place") throw new Error(`expected a place plan, got ${plan.kind}`);
+    return plan;
+  }
+
+  it("binds exactly one of them, and reports the rest instead of planning them", () => {
+    const plan = place([
+      card({ id: "dup-a", generationId: null, status: "pending" }),
+      card({ id: "dup-b", generationId: null, status: "pending" }),
+    ]);
+
+    expect(plan.duplicateAnchorIds).toEqual(["dup-b"]);
+    expect(plan.cards.map((entry) => ("id" in entry ? entry.id : `create:${entry.generationId}`)))
+      .toEqual(["dup-a", "create:gen-1"]);
+    // The extra is not touched at all — not bound, not restyled, not deleted.
+    expect(plan.cards.some((entry) => "id" in entry && entry.id === "dup-b")).toBe(false);
+  });
+
+  it("never gives a second card an output the board already carries — the durable half", () => {
+    // The state pass 1 leaves behind: one anchor bound, the phantom still unbound, siblings placed.
+    const plan = place([
+      card({ id: "dup-a", generationId: "gen-0", status: "done" }),
+      card({ id: "dup-b", generationId: null, status: "pending" }),
+      card({ id: "sib", generationId: "gen-1", status: "done" }),
+    ]);
+
+    expect(plan.duplicateAnchorIds).toEqual(["dup-b"]);
+    // Every planned entry is a no-op: nothing is re-pointed at gen-0.
+    expect(plan.cards.every((entry) => entry.action === "keep")).toBe(true);
+  });
+
+  it("leaves an ordinary single unbound anchor exactly as it was", () => {
+    const plan = place([card({ id: "only", generationId: null, status: "pending" })]);
+
+    expect(plan.duplicateAnchorIds).toEqual([]);
+    expect(plan.cards[0]).toMatchObject({
+      action: "update", role: "anchor", id: "only", patch: { generationId: "gen-0", status: "done" },
+    });
+  });
+
+  it("binds an unbound anchor to the first output nobody else is carrying", () => {
+    // A sibling landed before the anchor was ever bound. Binding it to the batch's first output
+    // would duplicate gen-0; the first FREE output is gen-1.
+    const plan = place([
+      card({ id: "late-anchor", generationId: null, status: "pending" }),
+      card({ id: "sib", generationId: "gen-0", status: "done" }),
+    ]);
+
+    expect(plan.duplicateAnchorIds).toEqual([]);
+    expect(plan.cards.find((entry) => "id" in entry && entry.id === "late-anchor"))
+      .toMatchObject({ patch: { generationId: "gen-1" } });
+    // …and gen-0 is still on exactly one card.
+    expect(plan.cards.filter((entry) => "patch" in entry && entry.patch.generationId === "gen-0")).toEqual([]);
+  });
+
+  it("reports nothing for a board that is simply correct", () => {
+    const plan = place([
+      card({ id: "a", generationId: "gen-0", status: "done" }),
+      card({ id: "b", generationId: "gen-1", status: "done" }),
+    ]);
+
+    expect(plan.duplicateAnchorIds).toEqual([]);
+    expect(plan.cards.every((entry) => entry.action === "keep")).toBe(true);
+  });
+});
+
+/**
+ * The same question for the other ending (#613 T2d) — the rule the backfill sweep asks of every
+ * board in one query, which must agree with the terminal projection card for card.
+ */
+describe("deciding whether an ending has reached its cards", () => {
+  const spinning = { generationId: null, status: "pending" };
+
+  it("says no when the job has not ended", () => {
+    expect(canvasTerminalBoardNeedsSettlement("QUEUED", [spinning])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("GENERATING", [spinning])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("DONE", [spinning])).toBe(false);
+  });
+
+  it("says no when there is nothing an ending may touch", () => {
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [])).toBe(false);
+    // Already settled to this ending.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "failed" }])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("CANCELLED", [{ generationId: null, status: "cancelled" }])).toBe(false);
+    // Carrying a paid output: an ending is about the work that did not arrive.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: "gen-1", status: "done" }])).toBe(false);
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: "gen-1", status: "pending" }])).toBe(false);
+    // The merchant deleted the in-flight card, which suppresses the whole job for ever.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "deleted" }])).toBe(false);
+  });
+
+  it("says yes exactly for the cards the ending still has to reach", () => {
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [spinning])).toBe(true);
+    expect(canvasTerminalBoardNeedsSettlement("CANCELLED", [spinning])).toBe(true);
+    // The browser's "I stopped watching" is not an ending.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "timeout" }])).toBe(true);
+    // One terminal never stands in for the other.
+    expect(canvasTerminalBoardNeedsSettlement("CANCELLED", [{ generationId: null, status: "failed" }])).toBe(true);
+    // One settled card does not settle its sibling.
+    expect(canvasTerminalBoardNeedsSettlement("FAILED", [{ generationId: null, status: "failed" }, spinning])).toBe(true);
+  });
+
+  it("agrees with the terminal projection card for card, over every shape it can be asked", () => {
+    const cardStates = ["pending", "timeout", "failed", "cancelled", "done", "deleted"];
+    for (const jobStatus of ["QUEUED", "GENERATING", "DONE", "FAILED", "CANCELLED"]) {
+      for (const first of cardStates) {
+        for (const second of [...cardStates, null]) {
+          for (const carries of [false, true]) {
+            const cards: SettlementCard[] = [
+              card({ id: "a", generationId: carries ? "gen-1" : null, status: first }),
+              ...(second === null ? [] : [card({ id: "b", generationId: null, status: second })]),
+            ];
+            const plan = planCanvasSettlement({
+              job: { status: jobStatus, generationIds: ["gen-1"], kind: "IMAGE", prompt: "p", origin: "canvas" },
+              cards,
+              occupied: [],
+            });
+            const projectionWrites = plan.kind === "terminal"
+              && plan.cards.some((entry) => entry.action !== "keep");
+            expect({ jobStatus, first, second, carries, needs: canvasTerminalBoardNeedsSettlement(jobStatus, cards) })
+              .toEqual({ jobStatus, first, second, carries, needs: projectionWrites });
+          }
+        }
       }
     }
   });

@@ -274,9 +274,10 @@ describe("listCanvasNodes", () => {
     expect(mockGenJobFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" } }),
     );
-    // #601 r2: the row itself is repaired by the ONE settlement, with the whole job in view —
-    // opening the board never writes a delivered job's card from what a picture happens to say.
-    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    // #613 T2d: the ROW is nobody's business here. What the merchant sees above is resolved for
+    // display only; the row itself is written by the job's completion path and, if that fell over,
+    // by the backfill sweep. Opening a board settles nothing and writes nothing.
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
@@ -311,14 +312,15 @@ describe("listCanvasNodes", () => {
       }),
     ]);
     expect(mockGetGenerationThumbs).toHaveBeenCalledWith("u1", expect.arrayContaining(["gen-missing", "gen-good"]));
-    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("hands a batch with missing cards to the one settlement instead of placing its own", async () => {
+  it("leaves a batch with missing cards alone — it places nothing and settles nothing", async () => {
     // The read path used to plan and place the missing siblings itself, with its own idea of where
     // they go and what they hang off. That second opinion is what made an open tab produce a
-    // different board from a closed one (#601 r2 P2②).
+    // different board from a closed one (#601 r2 P2②). #601 T2b replaced it with a call to the ONE
+    // settlement; #613 T2d removes even that — a board read is a read.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
     mockFindMany.mockResolvedValue([
       {
@@ -346,13 +348,13 @@ describe("listCanvasNodes", () => {
 
     await listCanvasNodes("p1");
 
-    expect(mockSettleCanvasCards).toHaveBeenCalledTimes(1);
-    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("does not ask the settlement for a job whose board already matches it", async () => {
-    // Every reload would otherwise pay for a settlement transaction per job on the board.
+  it("does not ask the settlement for a job whose board already matches it either", async () => {
+    // The board that needs nothing and the board that needs everything now cost the same: a read.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
     mockFindMany.mockResolvedValue([
       {
