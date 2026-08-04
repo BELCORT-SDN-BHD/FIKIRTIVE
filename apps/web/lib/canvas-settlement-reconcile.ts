@@ -28,6 +28,8 @@ import { settleCanvasCardsForGenJob } from "@fikirtive/db";
  * Owner scoping: the settlement is pinned to the AUTHENTICATED ownerId the caller resolved through
  * `requireOwner`, and the caller's `jobs` are its own owner+project-scoped read. This function
  * never derives identity from a card row.
+ *
+ * A board somebody else is already writing still opens: see SETTLEMENT_TIMEOUT_SQLSTATES below.
  */
 export async function reconcileSettledCanvasJobs(args: {
   ownerId: string;
@@ -50,8 +52,48 @@ export async function reconcileSettledCanvasJobs(args: {
   let changed = false;
   for (const job of delivered) {
     if (!canvasBoardNeedsSettlement(job.generationIds, byJob.get(job.id) ?? [])) continue;
-    const outcome = await settleCanvasCardsForGenJob(job.id, args.ownerId);
-    if (outcome.created + outcome.updated > 0) changed = true;
+    try {
+      const outcome = await settleCanvasCardsForGenJob(job.id, args.ownerId);
+      if (outcome.created + outcome.updated > 0) changed = true;
+    } catch (error) {
+      const sqlstate = postgresErrorCode(error);
+      if (sqlstate === null || !SETTLEMENT_TIMEOUT_SQLSTATES.has(sqlstate)) throw error;
+      // Somebody else is writing this job's cards right now (the worker's completion path, or
+      // another tab). The settlement bounds that wait in the DATABASE and gives up; the caller is
+      // a merchant opening their board, so giving up must mean "show what is there", not "show
+      // nothing". Stop at the first contended job — every further one would cost the same wait
+      // again — and let the backfill sweep finish what this read could not.
+      console.warn(
+        `[canvas] settlement gave way on a contended board (job ${job.id}, SQLSTATE ${sqlstate}); showing it as it stands.`,
+      );
+      return changed;
+    }
   }
   return changed;
+}
+
+/**
+ * The two ways PostgreSQL says "your bounded wait ran out", and nothing else.
+ *
+ * 55P03 `lock_not_available` — the job's placement lock was held past `lock_timeout`.
+ * 57014 `query_canceled`     — the statement ran past `statement_timeout`.
+ *
+ * Matched on SQLSTATE, never on wording: the message is PostgreSQL's to reword. Every OTHER
+ * database failure stays a hard failure — a board that is wrong for any other reason must not be
+ * quietly served as if it were right.
+ */
+const SETTLEMENT_TIMEOUT_SQLSTATES = new Set(["55P03", "57014"]);
+
+/**
+ * The SQLSTATE of a driver failure, wherever this Prisma version parked it: a RAW statement (the
+ * advisory lock) surfaces as P2010 carrying the driver error under `meta`, an ORM statement
+ * surfaces as the driver error itself. Both spell the code the same way underneath.
+ */
+function postgresErrorCode(error: unknown): string | null {
+  const carriers = [error, (error as { meta?: { driverAdapterError?: unknown } })?.meta?.driverAdapterError];
+  for (const carrier of carriers) {
+    const code = (carrier as { cause?: { code?: unknown } })?.cause?.code;
+    if (typeof code === "string") return code;
+  }
+  return null;
 }

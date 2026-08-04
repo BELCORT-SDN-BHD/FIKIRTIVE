@@ -31,7 +31,7 @@ vi.mock("@/lib/allowlist", () => {
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const { requireOwner } = await import("@/lib/auth-guard");
-const { prisma, settleCanvasCardsForGenJob } = await import("@fikirtive/db");
+const { prisma, settleCanvasCardsForGenJob, canvasJobPlacementLockKey } = await import("@fikirtive/db");
 const { storage } = await import("@/lib/storage");
 const { listCanvasNodes } = await import("@/lib/canvas-actions");
 const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
@@ -188,7 +188,7 @@ describe("coming back to a board nobody was watching", () => {
     const threadId = `thr_${randomUUID()}`;
     await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
     const { jobId, generationIds } = await seedDoneJob(2);
-    await prisma.genJob.update({ where: { id: jobId }, data: { threadId } });
+    await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { threadId } });
     await settleCanvasCardsForGenJob(jobId, ownerId);
     await syncOttoCanvasNodes(projectId);
 
@@ -236,7 +236,7 @@ describe("the board is the same whichever writer got there first", () => {
       const sourceGenerationId = await seedStoredGeneration();
       await seedCard({ jobId: null, x: 80, y: 80, status: "done", generationId: sourceGenerationId });
       const { jobId, generationIds } = await seedDoneJob(2);
-      await prisma.genJob.update({ where: { id: jobId }, data: { sourceGenerationId } });
+      await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { sourceGenerationId } });
       const anchorId = await seedCard({ jobId, x: 500, y: 500, status: "pending" });
       return { pid: projectId, jobId, anchorId, outputs: generationIds };
     }
@@ -292,7 +292,7 @@ describe("a batch that arrived as a chat result", () => {
     const threadId = `thr_${randomUUID()}`;
     await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
     const { jobId, generationIds } = await seedDoneJob(outputs);
-    await prisma.genJob.update({ where: { id: jobId }, data: { threadId } });
+    await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { threadId } });
     await prisma.chatMessage.create({
       data: {
         id: `msg_${randomUUID()}`, threadId, ownerId, role: "AGENT", kind: "GEN_RESULT", seq: 1,
@@ -357,7 +357,7 @@ describe("the chat-side board reader agrees too", () => {
       const threadId = `thr_${randomUUID()}`;
       await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
       const { jobId, generationIds } = await seedDoneJob(2);
-      await prisma.genJob.update({ where: { id: jobId }, data: { threadId } });
+      await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { threadId } });
       const anchorId = await seedCard({ jobId, x: 500, y: 200, status: "done", generationId: generationIds[1] });
       return { pid: projectId, jobId, anchorId, outputs: generationIds };
     }
@@ -371,4 +371,64 @@ describe("the chat-side board reader agrees too", () => {
     expect(shape(await boardRows(chat.pid), chat))
       .toEqual(shape(await boardRows(server.pid), server));
   });
+});
+
+/**
+ * The other half of "the board is the merchant's home": it has to open even when somebody else
+ * is writing it.
+ *
+ * The settlement bounds its wait for the job's placement lock inside PostgreSQL, so a contended
+ * board gives up in about two seconds instead of hanging (#611). Giving up is a REJECTION, and
+ * these cases hold the lock for real while a real board is opened: both readers must come back
+ * with the board as it stands — the merchant's existing cards — instead of an error page.
+ * What this read could not finish, the backfill sweep finishes later.
+ */
+describe("opening a board another writer is already holding", () => {
+  /** Hold that job's placement lock for real, and run the reader while it is held. */
+  async function whileJobLockIsHeld<T>(jobId: string, pid: string, read: () => Promise<T>): Promise<T> {
+    return prisma.$transaction(async (tx) => {
+      const lockKey = canvasJobPlacementLockKey(ownerId, pid, jobId);
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+      // Nothing releases this lock until the read has returned, so a read that waited without a
+      // bound would never return at all.
+      return read();
+    }, { maxWait: 10_000, timeout: 60_000 });
+  }
+
+  it("gives the canvas reader the board as it stands, and writes nothing", async () => {
+    const { jobId } = await seedDoneJob(2);
+    await seedPendingAnchor(jobId);
+    const before = await boardRows();
+
+    const startedAt = Date.now();
+    const board = await whileJobLockIsHeld(jobId, projectId, () => listCanvasNodes(projectId));
+
+    expect(Array.isArray(board)).toBe(true);
+    expect(board as unknown[]).toHaveLength(1);
+    expect(await boardRows()).toEqual(before);
+    // The DB-side bound is 2s; anything near this ceiling means the wait was not bounded at all.
+    expect(Date.now() - startedAt).toBeLessThan(15_000);
+  }, 60_000);
+
+  it("gives the chat-side reader the board as it stands too", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "Otto" } });
+    const { jobId, generationIds } = await seedDoneJob(2);
+    await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { threadId } });
+    await prisma.chatMessage.create({
+      data: {
+        id: `msg_${randomUUID()}`, threadId, ownerId, role: "AGENT", kind: "GEN_RESULT", seq: 1,
+        text: "a cup steaming", genJobId: jobId,
+        payload: { kind: "image", model: "seedream", generationIds },
+      },
+    });
+    await seedPendingAnchor(jobId);
+    const before = await boardRows();
+
+    const synced = await whileJobLockIsHeld(jobId, projectId, () => syncOttoCanvasNodes(projectId));
+
+    expect(Array.isArray(synced)).toBe(true);
+    expect(synced as unknown[]).toHaveLength(1);
+    expect(await boardRows()).toEqual(before);
+  }, 60_000);
 });
