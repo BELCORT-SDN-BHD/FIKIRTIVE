@@ -1,5 +1,6 @@
 // Pure core of the chat→canvas bridge — no DB, no I/O, so it is unit-testable.
 // (Kept out of the "use server" action file, whose exports must all be async.)
+import { canvasJobIsInFlight } from "@fikirtive/core";
 
 export type GenCardMsg = {
   seq: number;
@@ -11,6 +12,8 @@ export type GenCardMsg = {
 export type PendingBridgeJob = {
   id: string;
   generationIds: string[];
+  /** GenJob.status, exactly as stored. Read from the job row — never inferred from anything else. */
+  status: string;
 };
 
 export type PendingJobNode = {
@@ -62,9 +65,19 @@ export function firstDisplayableGenerationId(
 // delivered yet — a state the settlement deliberately does not project.
 
 /**
- * Plan one pending canvas node per approved GEN_CARD before the worker emits a
- * GEN_RESULT. This is display-only: the GenJob already exists and has already
- * gone through startGen/reserve. The caller owner/project-scopes `jobs`.
+ * Plan one pending canvas node per approved GEN_CARD of a job that is STILL RUNNING.
+ *
+ * Display-only: the GenJob already exists and has already gone through startGen/reserve. The
+ * caller owner/project-scopes `jobs`.
+ *
+ * THE STATUS GATE (#613 r2, cross-family judge P1). A GEN_CARD is durable — `coworkGenerate`
+ * stamps it with its job id and it stays in the thread for ever — so this planner meets the same
+ * card again on every single board reload, long after the job finished. Without the gate, a job
+ * that was DONE (or ended badly) but whose settlement write fell over got a fresh `pending` anchor
+ * from an ordinary reload, at this bridge's linear position rather than the whole-batch origin the
+ * settlement would have chosen. Opening the board then changed the merchant's final layout, and a
+ * finished job sat there claiming to be in flight. A finished job — settled or not — is the
+ * settlement's and the backfill sweep's business; the read walks past it.
  */
 export function planPendingJobNodes(
   genCards: GenCardMsg[],
@@ -80,6 +93,7 @@ export function planPendingJobNodes(
     if (!message.genJobId || seenJobs.has(message.genJobId)) continue;
     const job = jobs.get(message.genJobId);
     if (!job) continue;
+    if (!canvasJobIsInFlight(job.status)) continue;
     if (job.generationIds.some((id) => seenGenerations.has(id))) continue;
     seenJobs.add(message.genJobId);
     out.push({

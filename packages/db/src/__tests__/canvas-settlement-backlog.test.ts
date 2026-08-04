@@ -27,11 +27,14 @@ import { readFile } from "node:fs/promises";
 import { Client } from "pg";
 import {
   CANVAS_JOB_KEY_PREFIX,
+  CANVAS_IN_FLIGHT_JOB_STATUSES,
   canvasBoardNeedsSettlement,
   canvasJobBelongsOnBoard,
   canvasJobOrigin,
   canvasTerminalBoardNeedsSettlement,
+  canvasTerminalCardStatus,
 } from "@fikirtive/core";
+import { GenStatus } from "../../generated/prisma/enums.js";
 import { prisma } from "../index.js";
 import { Prisma } from "../../generated/prisma/client.js";
 import {
@@ -285,6 +288,36 @@ describe("a delivered job whose board write fell over", () => {
  *     separate question here, the card is the answer;
  *   - a card carrying a paid output is never a reason to sweep, and never touched.
  */
+/**
+ * #613 r2 — every GenStatus has to be somebody's, and the database is the one that says which
+ * exist.
+ *
+ * Three vocabularies read this enum and none of them can see it: the in-flight set a board read
+ * may place a card for, the terminal set an ending writes onto a card, and DONE. They are hand-
+ * written strings in `@fikirtive/core`, which cannot import the generated client. A status added
+ * to the schema and not considered here would silently fall through every one of them — and the
+ * dangerous direction is specific: an unconsidered status that is really "finished" but not named
+ * as such would be treated as in flight and get a card from a board READ, which is the exact
+ * defect this round closes. So the partition is asserted against the generated enum itself.
+ */
+describe("the job-status vocabulary the canvas rules split on", () => {
+  it("partitions every GenStatus the schema defines into in-flight, delivered, or ended", () => {
+    const all = Object.values(GenStatus) as string[];
+    const inFlight = all.filter((status) => (CANVAS_IN_FLIGHT_JOB_STATUSES as readonly string[]).includes(status));
+    const ended = all.filter((status) => canvasTerminalCardStatus(status) !== null);
+    const delivered = all.filter((status) => status === "DONE");
+
+    expect(all.sort()).toEqual(["CANCELLED", "DONE", "FAILED", "GENERATING", "QUEUED"]);
+    expect(inFlight.sort()).toEqual(["GENERATING", "QUEUED"]);
+    expect(ended.sort()).toEqual(["CANCELLED", "FAILED"]);
+    expect(delivered).toEqual(["DONE"]);
+    // Exhaustive and disjoint: nothing unclaimed, nothing claimed twice.
+    expect([...inFlight, ...ended, ...delivered].sort()).toEqual(all.sort());
+    // …and the constant names nothing the database does not have.
+    expect(all).toEqual(expect.arrayContaining([...CANVAS_IN_FLIGHT_JOB_STATUSES]));
+  });
+});
+
 describe("a job that ended badly and whose card write fell over", () => {
   /** A job that ended failed or cancelled, exactly as the worker leaves it: terminal, refunded. */
   async function seedTerminalJob(input: {

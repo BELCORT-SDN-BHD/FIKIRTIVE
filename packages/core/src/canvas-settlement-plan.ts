@@ -314,6 +314,27 @@ export function canvasTerminalCardStatus(jobStatus: string): string | null {
   return TERMINAL_CARD_STATUS[jobStatus] ?? null;
 }
 
+/**
+ * THE ONLY JOB STATES A BOARD READ MAY PUT A CARD DOWN FOR (#613 r2, cross-family judge P1).
+ *
+ * `GenStatus` has five values (packages/db/prisma/schema.prisma): QUEUED, GENERATING, DONE,
+ * FAILED, CANCELLED. The first two are the job still running; the other three are finished work,
+ * and finished work belongs to the settlement — placed by the job's own completion path, or by the
+ * backfill sweep when that write fell over.
+ *
+ * Named rather than derived by negation on purpose. "Not terminal and not DONE" would silently
+ * admit any status added later, and admitting a status here means a board READ writing a card for
+ * a job that has already finished — which is the whole class of defect T2d removes. A new status
+ * must be considered explicitly; `packages/db/src/__tests__/canvas-settlement-backlog.test.ts`
+ * pins this list against the generated enum so one cannot be added without meeting this decision.
+ */
+export const CANVAS_IN_FLIGHT_JOB_STATUSES = ["QUEUED", "GENERATING"] as const;
+
+/** Is this job still running — the one state whose card no settlement will ever place? */
+export function canvasJobIsInFlight(jobStatus: string | null | undefined): boolean {
+  return (CANVAS_IN_FLIGHT_JOB_STATUSES as readonly string[]).includes(jobStatus ?? "");
+}
+
 export type CanvasSettlementPlan =
   | {
       kind: "place";

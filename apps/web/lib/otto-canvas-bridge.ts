@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
-import { newId } from "@fikirtive/core";
+import { CANVAS_IN_FLIGHT_JOB_STATUSES, newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import { canvasJobPlacementLockKey } from "./canvas-node-placement";
@@ -56,11 +56,26 @@ async function createPendingCanvasNodeOnce(input: {
       NULL, ${input.prompt}, NULL, ${input.genJobId}, 'pending',
       NULL, ${input.threadId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
     FROM guard
+    -- STILL RUNNING, spelled a second time at the write (#613 r2, judge P1). The planner decides
+    -- this from rows it read moments earlier; repeating it here means a stale or mistaken caller
+    -- cannot make this statement place a card for finished work.
+    --
+    -- WHAT IT DOES NOT DO, measured rather than assumed: it does not close the read→write window.
+    -- This statement's snapshot is taken when the statement starts, which is BEFORE the CTE above
+    -- acquires the lock, so a status committed while we waited for that lock is invisible to this
+    -- predicate — canvas-settlement-browser-absent.test.ts drives exactly that interleaving and
+    -- a card is still placed. That outcome is deliberately left alone: a job that finished
+    -- microseconds ago was genuinely in flight when the merchant reloaded, so the card is the
+    -- ordinary in-flight anchor, indistinguishable from the one a browser puts down, and the
+    -- settlement binds it the same way (#601 T2b findAnchor). The defect this gate exists for is
+    -- the DURABLE one: a GEN_CARD outliving its job by minutes or days and re-placing a card on
+    -- every reload for ever. That the planner closes completely.
     WHERE EXISTS (
       SELECT 1 FROM "GenJob"
       WHERE "id" = ${input.genJobId}
         AND "ownerId" = ${input.ownerId}
         AND "projectId" = ${input.projectId}
+        AND "status" = ANY (${[...CANVAS_IN_FLIGHT_JOB_STATUSES]}::"GenStatus"[])
     )
       AND EXISTS (
         SELECT 1 FROM "ChatThread"

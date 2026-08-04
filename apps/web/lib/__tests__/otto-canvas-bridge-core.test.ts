@@ -16,8 +16,8 @@ describe("planPendingJobNodes", () => {
     const out = planPendingJobNodes(
       [card(2, "job-video", "video", "make the portrait walk through rain"), card(1, "job-image", "image", "a still")],
       new Map([
-        ["job-video", { id: "job-video", generationIds: [] }],
-        ["job-image", { id: "job-image", generationIds: [] }],
+        ["job-video", { id: "job-video", generationIds: [], status: "GENERATING" }],
+        ["job-image", { id: "job-image", generationIds: [], status: "GENERATING" }],
       ]),
       [],
       [],
@@ -37,14 +37,54 @@ describe("planPendingJobNodes", () => {
         card(4, "job-new", "video", "duplicate card"),
       ],
       new Map([
-        ["job-existing-node", { id: "job-existing-node", generationIds: [] }],
-        ["job-existing-generation", { id: "job-existing-generation", generationIds: ["gen-1"] }],
-        ["job-new", { id: "job-new", generationIds: [] }],
+        ["job-existing-node", { id: "job-existing-node", generationIds: [], status: "GENERATING" }],
+        ["job-existing-generation", { id: "job-existing-generation", generationIds: ["gen-1"], status: "GENERATING" }],
+        ["job-new", { id: "job-new", generationIds: [], status: "GENERATING" }],
       ]),
       ["gen-1"],
       ["job-existing-node"],
     );
     expect(out).toEqual([{ genJobId: "job-new", kind: "video", prompt: "new" }]);
+  });
+
+  /**
+   * #613 r2 (cross-family judge P1). The GEN_CARD is durable — production stamps it with its job
+   * id and it lives in the thread for ever — so this planner meets the same card on every reload,
+   * long after the job ended. Only a job that is genuinely still running may be given a card here;
+   * a finished one, settled or not, belongs to the settlement and the backfill sweep.
+   */
+  it.each(["QUEUED", "GENERATING"])("plans a card for a job that is still %s", (status) => {
+    const out = planPendingJobNodes(
+      [card(1, "job-1", "image", "a still")],
+      new Map([["job-1", { id: "job-1", generationIds: [], status }]]),
+      [],
+      [],
+    );
+    expect(out).toEqual([{ genJobId: "job-1", kind: "image", prompt: "a still" }]);
+  });
+
+  it.each(["DONE", "FAILED", "CANCELLED"])("never plans a card for a job that already ended (%s)", (status) => {
+    const out = planPendingJobNodes(
+      [card(1, "job-1", "image", "a still")],
+      // The board is empty and the job's outputs are nowhere on it — i.e. its settlement write
+      // fell over. Every OTHER guard in this planner passes; only the status gate stops it.
+      new Map([["job-1", { id: "job-1", generationIds: ["gen-1"], status }]]),
+      [],
+      [],
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("never plans a card for a status nobody has considered", () => {
+    // Fails closed: a status added to the schema without meeting the decision in
+    // CANVAS_IN_FLIGHT_JOB_STATUSES gets no card from a board read.
+    const out = planPendingJobNodes(
+      [card(1, "job-1", "image", "a still")],
+      new Map([["job-1", { id: "job-1", generationIds: [], status: "SOMETHING_NEW" }]]),
+      [],
+      [],
+    );
+    expect(out).toEqual([]);
   });
 });
 
