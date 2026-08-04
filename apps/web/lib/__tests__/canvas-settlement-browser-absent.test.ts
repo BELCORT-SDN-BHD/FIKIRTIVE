@@ -8,9 +8,12 @@
  *
  * What that lets this file prove:
  *  1. Opening the board shows every paid output, with its picture — no browser placed anything.
- *  2. Opening the board then has nothing left to fix. The read path still carries its own repair
- *     logic (deleting that is T2d); these cases show it now finds a board that already matches
- *     the job, which is the precondition T2d needs before any of it can be removed.
+ *  2. Opening the board writes nothing whatsoever. That was the precondition for #613 T2d, and
+ *     since T2d it is also the whole contract: the read paths carry no repair logic of their own,
+ *     so an unfinished board stays exactly as it is until the job's own completion path — or the
+ *     backfill sweep behind it — finishes it. The cases below that used to compare "the board the
+ *     browser wrote" against "the board the server wrote" now assert that pair instead: the read
+ *     changed nothing, and the backstop produced the server's board.
  *
  * Harness: only the session is mocked (same dialect as cross-tenant-write.test.ts) — requireOwner,
  * Prisma, the media store and the real server actions all run.

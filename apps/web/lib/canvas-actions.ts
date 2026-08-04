@@ -41,6 +41,17 @@ async function ownedProject(projectId: string, ownerId: string) {
   return prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null } });
 }
 
+/**
+ * The board, as it stands. A PURE READ (#613 T2d).
+ *
+ * Opening a board used to finish it: it settled every delivered job whose cards looked incomplete,
+ * and patched individual rows from whether a picture happened to resolve. Those were second and
+ * third opinions about rows the job's own completion path already writes (#601 T2b / #612 T2c),
+ * and a merchant must not get a different board because a tab happened to be open. A board that is
+ * unfinished now stays unfinished until the one settlement finishes it — from the job's completion
+ * path, or from the backfill sweep behind it (`findCanvasSettlementBacklog`), which covers both a
+ * delivered job's missing outputs and a card that was never told how its job ended.
+ */
 export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[] | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;

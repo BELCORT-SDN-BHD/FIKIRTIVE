@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, settledCanvasNodeRepairPatch, type GenCardMsg } from "../otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, type GenCardMsg } from "../otto-canvas-bridge-core";
 
 // The GEN_RESULT planner that used to live here is gone (#601 r2 judge P2②): a delivered job's
 // cards are the shared settlement's to plan, so the chat bridge has no second opinion left to test.
@@ -78,28 +78,5 @@ describe("firstDisplayableGenerationId", () => {
     expect(firstDisplayableGenerationId(["g-missing", "g-good"], { "g-good": { src: "/files/u/good.jpeg" } })).toBe("g-good");
     expect(firstDisplayableGenerationId(["g-missing", "g-later"], {})).toBe("g-missing");
     expect(firstDisplayableGenerationId([], {})).toBeNull();
-  });
-});
-
-describe("settledCanvasNodeRepairPatch", () => {
-  it("repairs a stale pending node when a linked done job has displayable media", () => {
-    expect(settledCanvasNodeRepairPatch("pending", null, "DONE", "gen-1", "/files/u/gen-1.jpeg")).toEqual({
-      status: "done",
-      generationId: "gen-1",
-    });
-  });
-
-  it("only backfills generationId when the stored status is already done", () => {
-    expect(settledCanvasNodeRepairPatch("done", null, "DONE", "gen-1", "/files/u/gen-1.jpeg")).toEqual({
-      generationId: "gen-1",
-    });
-  });
-
-  it("marks failed terminal jobs without inventing a generation id", () => {
-    expect(settledCanvasNodeRepairPatch("pending", null, "FAILED", null, null)).toEqual({ status: "failed" });
-  });
-
-  it("does not persist a missing-media display state as a destructive repair", () => {
-    expect(settledCanvasNodeRepairPatch("pending", null, "DONE", "gen-1", null)).toBeNull();
   });
 });

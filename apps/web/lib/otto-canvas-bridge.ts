@@ -82,12 +82,15 @@ async function createPendingCanvasNodeOnce(input: {
 /**
  * chat→canvas bridge — DISPLAY-ONLY, NO new spend.
  *
- * Ensures OTTO's chat results (GEN_RESULT messages) for every live thread in
- * this project show up as canvas nodes, then returns ALL of this project's canvas nodes with their
- * media URLs resolved. It is idempotent (one node per generation; skips
- * generations that already have a node) and it ONLY references generations the
- * worker already produced — it never calls startGen / the provider / the credit
- * ledger, so it cannot reserve, settle, or charge anything.
+ * Returns ALL of this project's canvas nodes with their media URLs resolved, and puts down the
+ * IN-FLIGHT card of a batch the merchant just started from a chat — the one state the settlement
+ * deliberately does not project, because until the job finishes there is nothing to project.
+ *
+ * WHAT IT NO LONGER DOES (#613 T2d): it does not finish a delivered job's board, does not repair a
+ * card from what a picture happens to say, and does not run any settlement. Those cards are the
+ * job's own to write, so a merchant's board cannot come out differently because a chat happened to
+ * be open. It never calls startGen / the provider / the credit ledger, so it cannot reserve,
+ * settle, or charge anything.
  *
  * Gated behind ?skin=gb on the client (the canvas only calls this under the
  * Grok-bright skin), so the default canvas behaviour is unchanged.

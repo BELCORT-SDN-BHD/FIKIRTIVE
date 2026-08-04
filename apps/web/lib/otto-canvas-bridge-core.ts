@@ -53,34 +53,13 @@ export function firstDisplayableGenerationId(
   return generationIds.find((id) => !!thumbs[id]?.src) ?? generationIds[0] ?? null;
 }
 
-export type CanvasNodeRepairPatch = {
-  status?: string;
-  generationId?: string;
-};
-
-export function settledCanvasNodeRepairPatch(
-  rowStatus: string,
-  rowGenerationId: string | null,
-  jobStatus: string | null | undefined,
-  resolvedGenerationId: string | null,
-  url: string | null | undefined,
-): CanvasNodeRepairPatch | null {
-  const patch: CanvasNodeRepairPatch = {};
-  if (url && resolvedGenerationId) {
-    if (rowStatus !== "done") patch.status = "done";
-    if (rowGenerationId !== resolvedGenerationId) patch.generationId = resolvedGenerationId;
-  } else if (jobStatus === "FAILED" && rowStatus !== "failed") {
-    patch.status = "failed";
-  }
-  return Object.keys(patch).length ? patch : null;
-}
-
 // The board readers used to recover a settled job's cards from HERE, with their own idea of how
-// many there should be, where each one goes and what it hangs off. That second opinion is gone:
-// both readers now call the one settlement (`canvas-settlement-reconcile.ts` →
-// `planCanvasSettlement`), the same one the worker runs, so a board cannot come out differently
-// depending on who got there first. What is left below is only the IN-FLIGHT card of a job that
-// has not been delivered yet — a state the settlement deliberately does not project (#601 T2b).
+// many there should be, where each one goes and what it hangs off, and they wrote what they
+// concluded back onto the rows. That second opinion is gone (#601 T2b → #613 T2d): what a job's
+// cards should be is decided once, by `planCanvasSettlement`, and written once, by the job's own
+// completion path — with the backfill sweep behind it when that write cannot land. Reading a board
+// writes nothing at all. What is left below is only the IN-FLIGHT card of a job that has not been
+// delivered yet — a state the settlement deliberately does not project.
 
 /**
  * Plan one pending canvas node per approved GEN_CARD before the worker emits a
