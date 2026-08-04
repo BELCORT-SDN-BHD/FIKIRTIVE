@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
 import { creditsLabel } from "@/lib/credit-format";
+import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
@@ -99,7 +100,7 @@ export default function DetailPanel({
   // Edit @composer (24)
   const [editPrompt, setEditPrompt] = useState("");
   const [editIds, setEditIds] = useState<string[]>([]);
-  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed" | "cancelled" | "timeout">("idle");
+  const [editStatus, setEditStatus] = useState<AssetSpendStatus>("idle");
   const [composerKey, setComposerKey] = useState(() => String(Date.now()));
 
   // Crop (16)
@@ -110,8 +111,8 @@ export default function DetailPanel({
   const [cropStatus, setCropStatus] = useState<"idle" | "saving" | "done" | "failed">("idle");
 
   // Action states
-  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed" | "cancelled" | "timeout">("idle");
-  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed" | "cancelled" | "timeout">("idle");
+  const [regenStatus, setRegenStatus] = useState<AssetSpendStatus>("idle");
+  const [animStatus, setAnimStatus] = useState<AssetSpendStatus>("idle");
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const regenBusyRef = useRef(false);
@@ -686,7 +687,7 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcRetry size={14} />}
                   onClick={() => requestSpendConfirm("regen")}
-                  disabled={readOnly || regenStatus === "running" || regenStatus === "timeout"}
+                  disabled={assetSpendControlDisabled(regenStatus, readOnly)}
                   title={readOnlyReason}
                 >
                   {regenStatus === "running"
@@ -710,7 +711,7 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcPlay size={14} />}
                   onClick={() => requestSpendConfirm("animate")}
-                  disabled={readOnly || animStatus === "running" || animStatus === "timeout"}
+                  disabled={assetSpendControlDisabled(animStatus, readOnly)}
                   title={readOnlyReason}
                 >
                   {animStatus === "running"
@@ -784,7 +785,7 @@ export default function DetailPanel({
                     variant="primary"
                     size="sm"
                     onClick={requestEditSubmit}
-                    disabled={readOnly || editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
+                    disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim()}
                     title={readOnlyReason}
                   >
                     {editStatus === "running"

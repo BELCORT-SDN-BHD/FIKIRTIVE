@@ -11,9 +11,14 @@
  * 这四条里最容易悄悄退化的是 ③:取消与失败共用同一种终局消息(TURN_ERROR 持有每任务一条
  * 终局消息的唯一索引),所以「刷新之后又变回失败卡」是默认结局,除非有东西把它们分开。
  */
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const mockRequireOwner = vi.fn();
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner, requireRole: vi.fn(), requireSession: vi.fn() }));
@@ -275,5 +280,46 @@ describe("④ 每一个按 FAILED 分支的读者都被问过 CANCELLED", () => 
   it("Library → Ads:取消不会长出一张红色「没成」卡片(它根本不进这个列表)", () => {
     expect(adJobStatusFromGenStatus("FAILED")).toBe("failed");
     expect(adJobStatusFromGenStatus("CANCELLED")).toBeNull();
+  });
+});
+
+/**
+ * #602 r3(判官 P2)—— 取消的卡不许递一颗「一键再花一次」。
+ *
+ * 详情面板的 Regenerate / Animate / Edit 三颗都是**花钱**按钮。取消态原来只改了按钮上的字
+ * (显示 "Cancelled"),按钮本身还是活的 —— 商家刚刚亲手停掉的东西,再点一下就又开一单。
+ */
+describe("⑤ 取消之后,详情面板的付费按钮是关的", () => {
+  it("取消关掉按钮;失败仍然可以再试(失败是退过款的、商家没拿到东西)", async () => {
+    const { assetSpendControlDisabled } = await import("@/lib/asset-detail-status");
+
+    expect(assetSpendControlDisabled("cancelled", false)).toBe(true);
+    // 已经在跑 / 结果还不确定:再点都可能是第二次扣费。
+    expect(assetSpendControlDisabled("running", false)).toBe(true);
+    expect(assetSpendControlDisabled("timeout", false)).toBe(true);
+    // 失败是「你要的东西没拿到,而且退了款」—— 再试一次是对的。
+    expect(assetSpendControlDisabled("failed", false)).toBe(false);
+    expect(assetSpendControlDisabled("idle", false)).toBe(false);
+    expect(assetSpendControlDisabled("done", false)).toBe(false);
+    // 只读身份照旧一律关。
+    expect(assetSpendControlDisabled("idle", true)).toBe(true);
+  });
+
+  it("三颗花钱按钮问的是同一个谓词,没有各自为政的副本", () => {
+    const source = readFileSync(resolve(WEB_ROOT, "components/asset/DetailPanel.tsx"), "utf8");
+    // Regenerate / Animate / Edit —— 一颗不多一颗不少。
+    expect((source.match(/assetSpendControlDisabled\(/g) ?? []).length).toBe(3);
+    // 每一个 <Button ... disabled={...}> 要么问这个谓词,要么与花钱无关。
+    // 三颗按钮读的是 regen/anim/edit 三个**生成**状态;它们的每一处 disabled 都必须走谓词。
+    const generationPredicates = [...source.matchAll(/disabled=\{([^}]*(?:regenStatus|animStatus|editStatus)[^}]*)\}/g)]
+      .map((m) => m[1]!);
+    for (const predicate of generationPredicates) {
+      const isSpendControl = /assetSpendControlDisabled/.test(predicate);
+      // 输入框那一条是故意不同的:跑的时候不让改字,但**取消之后照样可以打字** ——
+      // 商家想重新描述一次编辑是自由的,不该被自己的取消锁住;它花不出一分钱。
+      const isTypingLock = /^readOnly \|\| editStatus === "running"$/.test(predicate);
+      expect(isSpendControl || isTypingLock, `未归口的状态谓词:${predicate}`).toBe(true);
+    }
+    expect(generationPredicates.length).toBe(4); // 三颗按钮 + 那一个输入框
   });
 });

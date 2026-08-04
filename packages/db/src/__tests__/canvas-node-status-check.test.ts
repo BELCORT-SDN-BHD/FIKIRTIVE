@@ -194,3 +194,85 @@ describe("no writer can move a card backwards — driven through the real settle
     expect(again.status).toBe("failed");
   });
 });
+
+/**
+ * #602 r3 (judge P2) — the guard is proved AT THE WRITE, by forcing the race it exists for.
+ *
+ * The r2 round added `status: { not: "deleted" }` to the settlement's place-path update, and the
+ * r2 tests did not actually reach it: a tombstoned card is filtered out by the PROJECTION long
+ * before any write is planned (`planCanvasSettlement` reads tombstones and plans around them), so
+ * those cases proved the projection, not the guard.
+ *
+ * The guard exists for the one case the projection cannot see: the card is live when the board is
+ * read and deleted by the time the write lands. Under the job's advisory lock that window is
+ * closed for today's writers — which is exactly why it has to be forced to be tested. It is forced
+ * here by blocking the settlement on a table it reads BETWEEN the board read and the write
+ * (`ChatThread`, via `liveThreadId`), tombstoning the card from a second connection while it
+ * waits, then letting it go. The settlement then runs its real, planned UPDATE against a row the
+ * database now says is deleted — and must change nothing.
+ */
+describe("the settlement's own write refuses a card that was deleted after the board was read", () => {
+  /** Poll until some backend is parked on a lock — the settlement reaching the blocked read. */
+  async function waitForLockWait(): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*)::bigint AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock' AND state = 'active'`;
+      if (Number(rows[0]!.n) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("the settlement never blocked on the table lock — the race was not forced");
+  }
+
+  it("changes zero rows, and the card stays deleted", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId: orgId, projectId, title: "board" } });
+
+    const asset = await prisma.asset.create({
+      data: {
+        id: `ast_${randomUUID()}`, ownerId: orgId, contentHash: randomUUID().replace(/-/g, "").repeat(2),
+        ext: "png", mime: "image/png", sizeBytes: BigInt(64), source: "GENERATED",
+      },
+    });
+    const generation = await prisma.generation.create({
+      data: { id: `gen_${randomUUID()}`, ownerId: orgId, projectId, assetId: asset.id, source: "GENERATED", entitySnapshot: {} },
+    });
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId: orgId, projectId, threadId, prompt: "a cup steaming", kind: "IMAGE",
+        model: "seedream", count: 1, status: "DONE", generationIds: [generation.id], finishedAt: new Date(),
+      },
+    });
+    // A LIVE anchor: this is what the settlement's board read will see, and what it plans an
+    // `update` for (bind the output, flip to done).
+    const cardId = `node_${randomUUID()}`;
+    await prisma.canvasNode.create({
+      data: {
+        id: cardId, ownerId: orgId, projectId, type: "image",
+        x: 0, y: 0, w: 320, h: 320, genJobId: jobId, status: "pending",
+      },
+    });
+
+    // Second connection: hold ChatThread so the settlement parks after its board read, delete the
+    // card, then let go. Its own transaction commits the tombstone before the settlement resumes.
+    const blocker = prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('LOCK TABLE "ChatThread" IN ACCESS EXCLUSIVE MODE');
+      await waitForLockWait();
+      await tx.$executeRawUnsafe(`UPDATE "CanvasNode" SET "status" = 'deleted' WHERE "id" = $1`, cardId);
+    }, { timeout: 20_000, maxWait: 20_000 });
+
+    const [outcome] = await Promise.all([settleCanvasCardsForGenJob(jobId, orgId), blocker]);
+
+    // THE WRITE WAS REACHED — this is what separates "the guard held" from "nothing was planned".
+    // The settlement planned an update for THIS card and counted it as written…
+    expect(outcome.status).toBe("settled");
+    expect(outcome.nodeIds).toContain(cardId);
+    expect(outcome.updated).toBeGreaterThanOrEqual(1);
+    // …and the database changed nothing, because the row now says deleted.
+    const after = await prisma.canvasNode.findFirstOrThrow({ where: { id: cardId, ownerId: orgId }, select: { status: true, generationId: true } });
+    expect(after.status).toBe("deleted");
+    expect(after.generationId).toBeNull();
+    expect(canvasCardRowAdvances("deleted", "done")).toBe(false);
+  }, 30_000);
+});
