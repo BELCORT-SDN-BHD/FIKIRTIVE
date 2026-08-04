@@ -1,7 +1,7 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
 import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
-import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { GeneratingBody, FailedBody, isTerminalCardStatus, type TerminalCardStatus } from "./GeneratingBody";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
@@ -35,7 +35,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
   };
   const gb = d.skin === "gb";
   const writeLock = getCanvasNodeWriteLock(d);
-  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const terminal = isTerminalCardStatus(d.status);
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
   const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
@@ -220,7 +220,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
       {terminal ? (
-        <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
+        <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
       ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={gb} kind="video" onRefresh={d.onRefresh} />
       ) : gb ? (

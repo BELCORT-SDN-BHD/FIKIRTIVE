@@ -284,10 +284,11 @@ describe("what it must refuse to do", () => {
     expect((await cardsForJob(jobId)).filter((card) => card.status !== "deleted")).toHaveLength(0);
   });
 
-  // The T2c boundary: a job that ended badly must be left exactly as found, not half-projected.
-  // Which statuses count as "not delivered" is settled exhaustively in the projection's own suite.
-  it("leaves a failed job's card alone — that projection is a later slice", async () => {
-    const { jobId } = await seedJob({ status: "FAILED", outputs: 0 });
+  // A job still in flight decides nothing about its cards; a job that has ENDED settles them to
+  // that one ending (#612 T2c). Which status means which is settled exhaustively in the
+  // projection's own suite; here it is the shell's early return that is under test.
+  it("leaves a running job's card alone", async () => {
+    const { jobId } = await seedJob({ status: "GENERATING", outputs: 0 });
     await seedCard({ jobId, x: 0, y: 0, status: "pending" });
 
     const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
@@ -296,6 +297,35 @@ describe("what it must refuse to do", () => {
     const cards = await cardsForJob(jobId);
     expect(cards).toHaveLength(1);
     expect(cards[0]!.status).toBe("pending");
+  });
+
+  it("settles a failed job's waiting card to that one ending, and only once", async () => {
+    const { jobId } = await seedJob({ status: "FAILED", outputs: 0 });
+    await seedCard({ jobId, x: 0, y: 0, status: "pending" });
+
+    const first = await settleCanvasCardsForGenJob(jobId, orgId);
+    const second = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(first).toMatchObject({ status: "settled", created: 0, updated: 1 });
+    expect(second).toMatchObject({ status: "settled", created: 0, updated: 0 });
+    const cards = await cardsForJob(jobId);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.status).toBe("failed");
+    expect(cards[0]!.generationId).toBeNull();
+  });
+
+  it("cannot take a paid output off a card, whatever the job's row now says", async () => {
+    const { jobId, generationIds } = await seedJob({ status: "DONE", outputs: 2 });
+    await seedCard({ jobId, x: 0, y: 0, status: "pending" });
+    await settleCanvasCardsForGenJob(jobId, orgId);
+    const delivered = await cardsForJob(jobId);
+    await prisma.genJob.update({ where: { id: jobId, ownerId: orgId }, data: { status: "FAILED" } });
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, orgId);
+
+    expect(outcome).toMatchObject({ status: "nothing-to-place", created: 0, updated: 0 });
+    expect(await cardsForJob(jobId)).toEqual(delivered);
+    expect(delivered.map((card) => card.generationId).sort()).toEqual([...generationIds].sort());
   });
 
   it("refuses a job that belongs to another workspace", async () => {

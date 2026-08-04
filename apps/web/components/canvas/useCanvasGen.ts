@@ -343,6 +343,9 @@ export async function poll(
     opts.onProgress?.(progress, job.status);
     if (job.status === "DONE") return onDone(job.urls, job.urls.length ? "done" : "missing", job.generationIds ?? []);
     if (job.status === "FAILED") return onDone([], "failed", []);
+    // A cancelled job has its own ending (#612 · #599 D4). Without this the open tab keeps
+    // polling a job that stopped, and eventually shows the soft "still working" copy for it.
+    if (job.status === "CANCELLED") return onDone([], "cancelled", []);
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   // Client-side give-up ≠ failure: the worker may still finish and settle. Report a distinct

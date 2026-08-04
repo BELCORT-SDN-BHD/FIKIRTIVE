@@ -58,6 +58,10 @@ describe("canvasNodeDisplayStatus", () => {
     expect(canvasNodeDisplayStatus("pending", "DONE", null)).toBe("missing");
   });
 
+  it("shows a cancelled job as cancelled, never as a failure (#612)", () => {
+    expect(canvasNodeDisplayStatus("pending", "CANCELLED", null)).toBe("cancelled");
+  });
+
   it("only treats linked in-flight jobs as pending", () => {
     expect(canvasNodeDisplayStatus("done", "QUEUED", null)).toBe("pending");
     expect(canvasNodeDisplayStatus("done", "GENERATING", null)).toBe("pending");

@@ -157,17 +157,20 @@ async function appendCoworkResult(
   }
 }
 
-// #601 T2b: the LAST step of a DELIVERED job — put that job's cards on the canvas board, so a
-// merchant who closed the tab still comes back to every output they paid for. Same contract as
-// appendCoworkResult above and deliberately placed next to it at both call sites: it runs ONLY
-// after the job row is DONE and its charge is settled, it reads/writes no money column, no
-// ledger, no provider, and it can never throw into the completion path. A failure is swallowed —
-// a charge cannot be taken back, a card can be written again. What writes it again is NOT this
-// path: once the job is DONE no redelivery and no stale-job scan will ever look at it, so the
-// retry is the worker's canvas backfill sweep (apps/worker/src/jobs/canvas-backfill.ts), which
-// finds delivered jobs whose board is still incomplete and re-runs this same shell.
-// Idempotent: settleCanvasCardsForGenJob no-ops on a settled board.
-// Failure/cancelled/timeout terminals are NOT wired here — that projection is T2c.
+// #601 T2b / #612 T2c: the LAST step of a FINISHED job — write that job's cards on the canvas
+// board, so a merchant who closed the tab comes back to every output they paid for, and to a
+// definite ending for the work that never arrived instead of a card that spins for ever. Same
+// contract as appendCoworkResult above and deliberately placed next to it at every call site: it
+// runs ONLY after the job row is terminal and its charge is settled or refunded, it reads/writes
+// no money column, no ledger, no provider, and it can never throw into the completion path. A
+// failure is swallowed — a charge cannot be taken back, a card can be written again. What writes
+// a DELIVERED job's cards again is NOT this path: once the job is DONE no redelivery and no
+// stale-job scan will ever look at it, so the retry is the worker's canvas backfill sweep
+// (apps/worker/src/jobs/canvas-backfill.ts). That sweep looks at DELIVERED jobs only, so a
+// terminal card this call could not write is repaired by the board reader instead — which makes
+// it T2d's business: whichever slice removes that read-time repair owes the terminal cards a
+// backstop of their own (findCanvasSettlementBacklog is where it would go).
+// Idempotent: settleCanvasCardsForGenJob no-ops on a board that already says this.
 async function settleCanvasBoard(job: { id: string; ownerId: string }): Promise<void> {
   try {
     await settleCanvasCardsForGenJob(job.id, job.ownerId);
@@ -205,6 +208,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
     });
     // accurate terminal message (idempotent via the genJobId unique index): refund won → not charged
     await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+    await settleCanvasBoard(job);
     return;
   }
   if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
@@ -246,6 +250,7 @@ async function failClosedWithRefund(
   // Without a terminal message the client polls forever on a stuck "making this…".
   // Generic, reassuring text; the specific reason stays in GenJob.error for ops.
   await appendCoworkResult(job, "TURN_ERROR", [], "I couldn't finish that one — and you weren't charged. Want to try again?");
+  await settleCanvasBoard(job);
 }
 
 /** Proactive reaper: a job the worker hung/crashed on during its FINAL attempt can sit in
@@ -305,6 +310,7 @@ export async function reapStaleGenJobs(): Promise<number> {
         });
         if (failedClosed) {
           await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+          await settleCanvasBoard(job);
           reaped++;
         }
       });
@@ -337,6 +343,7 @@ export async function reapStaleGenJobs(): Promise<number> {
         });
         if (failedClosed) {
           await appendCoworkResult(job, "TURN_ERROR", [], "That one didn't start in time — the generator may be busy. You weren't charged; please try again.");
+          await settleCanvasBoard(job);
           reaped++;
         }
       });
@@ -479,7 +486,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         });
         // Only when WE failed it closed (not when an active winner still owns it): tell the
         // cowork UI the turn is over so it stops polling on a stuck "making this…".
-        if (failedClosed) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+        if (failedClosed) {
+          await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+          await settleCanvasBoard(job);
+        }
         return;
       }
 
@@ -814,7 +824,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         if (requeued.count === 0) console.error(`[gen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
       }
       // user-facing chat text stays generic; the sanitized provider error is kept in GenJob.error (ops/DB)
-      if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
+      if (final) {
+        await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
+        // #612 T2c: this is the ordinary way a generation ends badly (the provider, or storing
+        // what it returned). The card settles to that ending BEFORE the rethrow below, which
+        // pg-boss needs — and, like every other call site, after the money transaction.
+        await settleCanvasBoard(job);
+      }
       // rethrow SANITIZED: pg-boss serializes the thrown error into its own job.output,
       // so throwing the raw `err` would re-leak any signed URL/argv it carries there.
       throw new Error(message);
