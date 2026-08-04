@@ -155,6 +155,16 @@ export default function FlowCanvas({
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
   const referenceHandlerRef = useRef<typeof onReferenceInChat>(onReferenceInChat);
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  /**
+   * Cards taken off THIS board because they are deleted (#612 r5).
+   *
+   * A read already in flight left before the deletion and still carries the card, so it puts it
+   * back when it lands — and a captured TERMINAL row is not in flight, which stops the re-read
+   * loop with a deleted card on screen for good. This memory is what makes deletion outrank a
+   * snapshot whenever that snapshot departed. Per board: a fresh load's reads are all taken after
+   * the deletion, and reads omit tombstones, so nothing needs to survive a reload.
+   */
+  const removedNodeIdsRef = useRef<Set<string>>(new Set());
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
   // Counts board reads so a late answer from an overtaken read can be recognised and dropped.
   const reloadSeqRef = useRef(0);
@@ -468,6 +478,8 @@ export default function FlowCanvas({
   // stable delete
   const deleteNode = useCallback((id: string) => {
     if (directToolsLockedRef.current) return;
+    // The merchant's own deletion races an in-flight read exactly the same way (#612 r5).
+    removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => n.id !== id));
     void deleteCanvasNode(projectId, id);
   }, [projectId]);
@@ -480,6 +492,7 @@ export default function FlowCanvas({
    * only thing that can end a card whose row a board read will never return again.
    */
   const removeCanvasNodeLocally = useCallback((id: string) => {
+    removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => n.id !== id));
   }, []);
 
@@ -488,6 +501,7 @@ export default function FlowCanvas({
   const deleteNodes = useCallback((ids: string[]) => {
     if (directToolsLockedRef.current || ids.length === 0) return;
     const removing = new Set(ids);
+    for (const id of removing) removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => !removing.has(n.id)));
     for (const id of ids) void deleteCanvasNode(projectId, id);
   }, [projectId]);
@@ -950,11 +964,14 @@ export default function FlowCanvas({
     // its URL yet) so a reload never clobbers an in-flight promptbar gen, and keep whatever the
     // merchant has selected — the board reloads on a timer, and a selection that vanishes
     // mid-action is the board undoing their work (review P2-1).
-    setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped));
+    setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped, removedNodeIdsRef.current));
   }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, withNodeActionLock]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
   useEffect(() => { reloadRef.current = reload; }, [reload]);
+
+  // A different board has different cards; nothing removed here means anything there.
+  useEffect(() => { removedNodeIdsRef.current = new Set(); }, [projectId]);
 
   // Initial load + project-level reload. Under gb this bridges every chat in the project.
   useEffect(() => { void reload(); }, [reload]);

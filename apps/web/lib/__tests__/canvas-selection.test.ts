@@ -193,6 +193,24 @@ describe("mergeReloadedCanvasNodes", () => {
     expect(merged[0]!.data.status).not.toBe("pending");
   });
 
+  // #612 r5: a read cannot be un-sent. One that left before a deletion still carries the card and
+  // lands afterwards; if the row it captured is terminal, nothing re-reads for that card again.
+  it("refuses to bring back a card this tab removed, whenever the read departed", () => {
+    const captured = server("gone", { status: "failed", url: null });
+
+    const merged = mergeReloadedCanvasNodes([], [captured, server("a")], new Set(["gone"]));
+
+    expect(merged.map((node) => node.id)).toEqual(["a"]);
+  });
+
+  it("keeps removed cards out even if they are still in this tab's own list", () => {
+    const stillHere = server("gone", { status: "pending", url: null });
+
+    const merged = mergeReloadedCanvasNodes([stillHere], [server("a")], new Set(["gone"]));
+
+    expect(merged.map((node) => node.id)).toEqual(["a"]);
+  });
+
   it("takes the server's answer the moment the server HAS one", () => {
     // The other half of the same rule: a reread only loses while it is still catching up. As soon
     // as the row is settled truth it wins, whatever this tab had guessed.

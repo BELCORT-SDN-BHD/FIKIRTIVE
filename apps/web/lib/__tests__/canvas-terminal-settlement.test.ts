@@ -39,6 +39,7 @@ const { prisma, settleCanvasCardsForGenJob } = await import("@fikirtive/db");
 const { storage } = await import("@/lib/storage");
 const { listCanvasNodes, resolveCanvasNode, deleteCanvasNode } = await import("@/lib/canvas-actions");
 const { mergeReloadedCanvasNodes } = await import("@/lib/canvas-selection");
+const { isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
 
 const EMAIL = `canvas612-${randomUUID()}@fikirtive.test`;
 let ownerId: string;
@@ -284,6 +285,79 @@ describe("a card another tab deleted", () => {
 
     // Folding that read in must let the card GO. Re-appending it is what kept the spinner alive.
     expect(mergeReloadedCanvasNodes(onScreen, readAsNodes(board))).toEqual([]);
+  });
+
+  // #612 r5 (cross-family review): the live race left in r4. Removal does not invalidate a board
+  // read that is ALREADY IN FLIGHT — that read left before the deletion, so it still carries the
+  // card, and it carries it with the `serverKnown` stamp of its own snapshot. Landing after the
+  // local removal it puts the card back. If the row it captured is TERMINAL, the card is no
+  // longer in flight, so the board's re-read loop stops with it on screen: a ghost of a deleted
+  // card, permanently. (A captured PENDING row heals on the next read; the terminal one is the
+  // trap.) Deletion therefore has to outrank every snapshot, whenever that snapshot departed.
+  it("keeps a deleted card gone even when a read that left before the deletion lands after it", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    // A board read departs HERE and captures the card in a terminal state.
+    const readInFlight = readAsNodes([{ id: cardId, status: "failed", url: null }]);
+    // This is what makes the capture a trap rather than a blip: nothing re-reads for it.
+    expect(isInFlightPaidGen({ type: "image", status: "failed", url: null })).toBe(false);
+
+    // The merchant removes the card in their other tab; this tab learns it and takes it off.
+    await deleteCanvasNode(projectId, cardId);
+    expect(await resolveCanvasNode(projectId, cardId, { status: "timeout" }))
+      .toEqual({ ok: true, applied: false, status: "deleted" });
+    const removedHere = new Set([cardId]);
+
+    // …and only NOW does the read that left earlier land.
+    expect(mergeReloadedCanvasNodes([], readInFlight, removedHere)).toEqual([]);
+  });
+
+  it("cannot overwrite a card that was deleted before the write landed", async () => {
+    // The narrow window inside the resolve itself: the lookup found a live card, the tombstone
+    // was written, and only then did the update run. It matches nothing by construction — the
+    // write predicate admits `pending` and `timeout` only — and the answer becomes the deletion.
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    await deleteCanvasNode(projectId, cardId);
+    const tombstoned = await prisma.canvasNode.findMany({ where: { ownerId, projectId } });
+
+    await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+
+    expect(await prisma.canvasNode.findMany({ where: { ownerId, projectId } })).toEqual(tombstoned);
+  });
+
+  it("is harmless to ask again when a write landed but its answer was lost", async () => {
+    // The other half of the bounded retry: the first attempt DID write, its response never came
+    // back, and the second attempt writes the same thing to the same row.
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+
+    const first = await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+    const afterFirst = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: { id: true, status: true, generationId: true } });
+    const second = await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+
+    expect(first).toEqual({ ok: true, applied: true });
+    expect(second).toEqual({ ok: true, applied: true });
+    expect(await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: { id: true, status: true, generationId: true } }))
+      .toEqual(afterFirst);
   });
 
   it("still protects a card this tab has just placed and no read has seen yet", async () => {

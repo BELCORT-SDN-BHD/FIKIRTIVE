@@ -116,9 +116,19 @@ export type CanvasMergeNode = {
 export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
   previous: readonly T[],
   incoming: readonly T[],
+  /**
+   * Cards this tab has already taken off the board because they were DELETED (#612 r5).
+   *
+   * Removing a card cannot un-send a read that is already in flight: that read left before the
+   * deletion, so it still carries the card — stamped `serverKnown` from its own snapshot — and
+   * lands afterwards, putting it back. If the row it captured happens to be terminal, the card is
+   * no longer in flight, the board's re-read loop stops with it on screen, and a deleted card
+   * haunts the board for good. Deletion therefore outranks every snapshot, whenever it departed.
+   */
+  removedIds: ReadonlySet<string> = EMPTY_REMOVED,
 ): T[] {
   const previousById = new Map(previous.map((node) => [node.id, node]));
-  const merged = incoming.map((node) => {
+  const merged = incoming.filter((node) => !removedIds.has(node.id)).map((node) => {
     const old = previousById.get(node.id);
     if (!old) return node;
     // A read that is still catching up may never pull a card BACKWARDS (#612 r3, judge P1②③).
@@ -144,8 +154,14 @@ export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
   // to return and no longer does has been deleted: reads omit tombstones, so nothing that arrives
   // later can ever take it off the board, and keeping it means a merchant watching a card being
   // made that does not exist. It goes.
-  return [...merged, ...previous.filter((node) => !mergedIds.has(node.id) && !node.data.serverKnown)];
+  return [
+    ...merged,
+    ...previous.filter((node) => !mergedIds.has(node.id) && !node.data.serverKnown && !removedIds.has(node.id)),
+  ];
 }
+
+/** No card has been removed on this board yet. Shared so the default costs no allocation. */
+const EMPTY_REMOVED: ReadonlySet<string> = new Set<string>();
 
 /** Stamp a card as one a board read has shown, without disturbing one already stamped. */
 function acknowledged<T extends CanvasMergeNode>(node: T): T {
