@@ -516,6 +516,7 @@ describe("C4b-M2 assignment, takeover, draft, and status CAS races", () => {
   it.each([
     ["assignment", () => inbox.assignConversation(owner, { conversationId: CONVERSATION_UNASSIGNED, expectedRevision: 0, targetMembershipId: MEMBER })],
     ["takeover", () => inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 })],
+    ["handoff", () => inbox.handOffConversation(member, { conversationId: CONVERSATION_ASSIGNED, expectedRevision: 1, targetMembershipId: MEMBER_2 })],
     ["status", () => inbox.setConversationStatus(owner, { conversationId: CONVERSATION_OWNER, expectedRevision: 0, status: "closed" })],
   ] as Array<[string, () => Promise<unknown>]>)(
     "allows exactly one %s writer at the same conversation revision",
@@ -526,6 +527,43 @@ describe("C4b-M2 assignment, takeover, draft, and status CAS races", () => {
       expect(errorCode(loser.reason)).toBe("CAS_CONFLICT");
     },
   );
+
+  // The CAS check must run before every state precondition: the loser of a revision
+  // race (or a stale replay) must learn CAS_CONFLICT, never a misleading
+  // ACTION_DENIED/INVALID_ARGUMENT produced by the winner's own effect on the state.
+  it("reports stale assignment, takeover, and handoff replays as revision conflicts", async () => {
+    await inbox.assignConversation(owner, {
+      conversationId: CONVERSATION_UNASSIGNED,
+      expectedRevision: 0,
+      targetMembershipId: MEMBER,
+    });
+    await expectCode(
+      inbox.assignConversation(owner, {
+        conversationId: CONVERSATION_UNASSIGNED,
+        expectedRevision: 0,
+        targetMembershipId: MEMBER,
+      }),
+      "CAS_CONFLICT",
+    );
+    await inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 });
+    await expectCode(
+      inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 }),
+      "CAS_CONFLICT",
+    );
+    await inbox.handOffConversation(member, {
+      conversationId: CONVERSATION_OTTO,
+      expectedRevision: 1,
+      targetMembershipId: MEMBER_2,
+    });
+    await expectCode(
+      inbox.handOffConversation(member, {
+        conversationId: CONVERSATION_OTTO,
+        expectedRevision: 1,
+        targetMembershipId: MEMBER_2,
+      }),
+      "CAS_CONFLICT",
+    );
+  });
 
   it("reports a stale same-status replay as a revision conflict", async () => {
     await inbox.setConversationStatus(owner, {
