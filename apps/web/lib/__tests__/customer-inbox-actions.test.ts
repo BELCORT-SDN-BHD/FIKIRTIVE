@@ -527,6 +527,23 @@ describe("C4b-M2 assignment, takeover, draft, and status CAS races", () => {
     },
   );
 
+  it("reports a stale same-status replay as a revision conflict", async () => {
+    await inbox.setConversationStatus(owner, {
+      conversationId: CONVERSATION_OWNER,
+      expectedRevision: 0,
+      status: "closed",
+    });
+
+    await expectCode(
+      inbox.setConversationStatus(owner, {
+        conversationId: CONVERSATION_OWNER,
+        expectedRevision: 0,
+        status: "closed",
+      }),
+      "CAS_CONFLICT",
+    );
+  });
+
   it("allows exactly one draft writer at the same conversation and draft revisions", async () => {
     const input = {
       conversationId: CONVERSATION_ASSIGNED,

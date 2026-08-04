@@ -103,14 +103,14 @@ const SYSTEM_SCAN_OPS = new Set([
 ]);
 
 function whereHasOwnerId(where: unknown): boolean {
-  if (!where || typeof where !== "object") return false;
-  // `ownerId: undefined` is NOT a filter — Prisma drops undefined keys — so require a
-  // defined value, not mere key presence, before treating the query as owner-scoped.
-  if ((where as Record<string, unknown>).ownerId !== undefined) return true;
-  // allow ownerId nested under a top-level AND
-  const and = (where as { AND?: unknown }).AND;
-  if (Array.isArray(and)) return and.some((c) => whereHasOwnerId(c));
-  return false;
+  if (!where || typeof where !== "object" || Array.isArray(where)) return false;
+  if (!Object.prototype.hasOwnProperty.call(where, "ownerId")) return false;
+  const ownerFilter = (where as Record<string, unknown>).ownerId;
+  if (typeof ownerFilter === "string") return ownerFilter.length > 0;
+  if (!ownerFilter || typeof ownerFilter !== "object" || Array.isArray(ownerFilter)) {
+    return false;
+  }
+  return Object.values(ownerFilter).some((value) => value !== undefined);
 }
 
 function scopeWhere(args: Record<string, any>, ownerId: string, model: string, operation: string) {

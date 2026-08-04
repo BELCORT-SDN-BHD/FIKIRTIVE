@@ -45,21 +45,16 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       //    filter no-ops once set), so the moment-of-verification is preserved.
       let user = await prisma.user.findUnique({
         where: { email },
-        select: { id: true, emailVerified: true, role: true },
+        select: { id: true, emailVerified: true },
       });
       if (!user) {
         user = await prisma.user.create({
           data: { email, name: input.name ?? null, image: input.image ?? null, emailVerified: new Date() },
-          select: { id: true, emailVerified: true, role: true },
+          select: { id: true, emailVerified: true },
         });
       } else if (!user.emailVerified) {
         await prisma.user.updateMany({ where: { email, emailVerified: null }, data: { emailVerified: new Date() } });
       }
-      await prisma.userRole.upsert({
-        where: { userId_role: { userId: user.id, role: user.role } },
-        create: { userId: user.id, role: user.role },
-        update: {},
-      });
       // 2. Founder super-admin self-heal (promote-only, idempotent).
       if (isFounderAdmin(email)) {
         await prisma.$transaction(async (tx) => {

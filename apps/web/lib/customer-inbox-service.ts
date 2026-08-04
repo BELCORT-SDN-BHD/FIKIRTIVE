@@ -502,14 +502,10 @@ export function createCustomerInboxService(
       for (;;) {
         const pageWhere: Prisma.CustomerConversationWhereInput = cursor
           ? {
-              AND: [
-                where,
-                {
-                  OR: [
-                    { lastActivityAt: { lt: cursor.lastActivityAt } },
-                    { lastActivityAt: cursor.lastActivityAt, id: { lt: cursor.id } },
-                  ],
-                },
+              ...where,
+              OR: [
+                { lastActivityAt: { lt: cursor.lastActivityAt } },
+                { lastActivityAt: cursor.lastActivityAt, id: { lt: cursor.id } },
               ],
             }
           : where;
@@ -954,6 +950,7 @@ export function createCustomerInboxService(
       if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
       requireMemberAssignment(membership, current.assigneeMembershipId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       if (current.status === input.status) fail("INVALID_ARGUMENT");
       return commitConversationEvent(tx, {
         principal,

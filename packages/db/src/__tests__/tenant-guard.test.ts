@@ -50,6 +50,25 @@ describe("tenant-guard", () => {
     ).rejects.toThrow(/tenant-guard/);
   });
 
+  it("rejects an unframed OR query when ownerId appears in only one branch", async () => {
+    await expect(
+      prisma.memory.findMany({
+        where: {
+          OR: [
+            { ownerId: "o1" },
+            { deletedAt: null },
+          ],
+        },
+      }),
+    ).rejects.toThrow(/tenant-guard/);
+  });
+
+  it("rejects an undefined top-level ownerId", async () => {
+    await expect(
+      prisma.memory.findMany({ where: { ownerId: undefined } }),
+    ).rejects.toThrow(/tenant-guard/);
+  });
+
   it("requires a tenant frame before a system write", async () => {
     await expect(
       runAsSystem("test-seed", async () =>

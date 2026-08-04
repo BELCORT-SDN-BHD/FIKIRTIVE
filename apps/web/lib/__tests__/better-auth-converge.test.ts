@@ -47,6 +47,21 @@ describe("convergeIdentity", () => {
     );
     expect(mockBootstrap).toHaveBeenCalledWith("usr_1", "merchant@x.test");
     expect(db.actionEvent.create).toHaveBeenCalled();
+    expect(db.userRole.upsert).not.toHaveBeenCalled();
+  });
+
+  it("does not recreate an assignment from the legacy compatibility role", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue({
+      id: "usr_legacy",
+      email: "legacy@x.test",
+      emailVerified: new Date(),
+      role: "ops",
+    });
+
+    await convergeIdentity({ email: "legacy@x.test", emailVerified: true });
+
+    expect(db.userRole.upsert).not.toHaveBeenCalled();
   });
 
   it("#544 — stamps emailVerified on an existing canonical row that is still null (set-once via emailVerified:null filter)", async () => {
@@ -70,6 +85,11 @@ describe("convergeIdentity", () => {
     await convergeIdentity({ email: "founder@x.test", emailVerified: true });
     expect(db.user.updateMany).toHaveBeenCalled();   // promote-only self-heal
     expect(db.membership.upsert).toHaveBeenCalled();  // founder membership seed
+    expect(db.userRole.upsert).toHaveBeenCalledWith({
+      where: { userId_role: { userId: "usr_f", role: "super-admin" } },
+      create: { userId: "usr_f", role: "super-admin" },
+      update: {},
+    });
     expect(mockBootstrap).not.toHaveBeenCalled();
     expect(db.betterAuthUser.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "founder@x.test" }, data: { role: "super-admin" } })

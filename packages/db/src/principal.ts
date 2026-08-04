@@ -201,11 +201,9 @@ export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
  * Nested inside a `kind: "user"` frame for the SAME tenant, the user frame PASSES THROUGH
  * unchanged: re-stating the tenant a request already belongs to must not cost the actor.
  *
- * Nested inside a user frame for a DIFFERENT tenant it degrades to a `"tenant-direct"` system
- * frame, which LOSES the attribution — the frame then names the tenant but no longer names who
- * acted. That is the deliberate trade (carrying a user identity under someone else's tenant
- * would be worse than carrying none), and it never throws: #463 enforces nothing, it only
- * carries. Wiring this into a decision is #464's job.
+ * Nested inside a user frame for a DIFFERENT tenant it throws before entering the callback.
+ * The principal now drives tenant enforcement, so silently replacing an authenticated user with
+ * a system frame would turn an identity mismatch into a cross-tenant escape hatch.
  *
  * CALLERS: pass an `async` callback and `await` INSIDE it. A bare `prisma.x.op(…)` returns a lazy
  * PrismaPromise — this function would return it and pop the frame before an outer `await`
@@ -217,7 +215,12 @@ export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
  */
 export function runAsTenant<T>(ownerId: string, fn: () => T): T {
   const current = store.getStore();
-  if (current?.kind === "user" && current.ownerId === ownerId) return store.run(current, fn);
+  if (current?.kind === "user") {
+    if (current.ownerId !== ownerId) {
+      throw new Error("[principal] user frame cannot switch tenant");
+    }
+    return store.run(current, fn);
+  }
   const reason: SystemReason = current?.kind === "system" ? current.reason : "tenant-direct";
   return store.run(Object.freeze({ kind: "system" as const, reason, ownerId }), fn);
 }
