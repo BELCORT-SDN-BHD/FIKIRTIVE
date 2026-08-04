@@ -18,6 +18,10 @@ vi.mock("@fikirtive/db", () => ({
       findFirst: vi.fn(),
       create: vi.fn(),
     },
+    // #619 E-5: the pre-spend reference-budget count (read-only)
+    referenceImage: {
+      count: vi.fn(),
+    },
     // must NEVER be called — no GenJob creation in propose
     genJob: {
       create: vi.fn(),
@@ -171,12 +175,16 @@ describe("buildProposeCard — pure helper", () => {
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
   });
 
-  // Test 4b: DECOUPLE — an IMAGE plan + reference stays an image (NOT forced to video),
-  // keeps its owned entity refs, and does NOT thread sourceGenerationId into the gen request.
-  it("decouple: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId NOT in payload", () => {
+  // Test 4b (#619, Founder 决议 2026-08-02): 挂图 + 要图片 = 引擎真收到这张图。
+  //
+  // 这条断言过去锁的是相反的语义（"sourceGenerationId NOT in payload"）—— 界面对商家说
+  // "Tell Otto what to do with this image"，付费请求里却没有那张图。决议推翻它：kind 仍由
+  // 商家的话决定（挂图不再强制变视频、@ 的元素照旧保留），但那张图必须随卡走，
+  // 下游（gen-from-card → GenJob → worker → 引擎请求体）本来就无条件透传。
+  it("#619: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId IS in payload", () => {
     const ctx = makeCtx({ sourceGenerationId: "gen-abc123" });
     const input = {
-      kind: "image" as const, // user wants an image in the reference's style
+      kind: "image" as const, // user wants an image built from the reference
       structuredPrompt: "A product shot in this style",
       entityIds: ["entity-1"],
       variantSel: { "entity-1": "variant-1" },
@@ -186,9 +194,59 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.entityIds).toEqual(["entity-1"]);
     expect(cardPayload.variantSel).toEqual({ "entity-1": "variant-1" });
-    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBeUndefined();
-    // image tier pricing (1 credit/image), not video
+    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
+    // image tier pricing (1 credit/image), not video — carrying the reference costs nothing extra
     expect(cardPayload.estimatedCredits).toBe(1);
+  });
+
+  // 卡面披露（E-4）：带图这件事必须在批准前看得见，而且只在真带图时出现。
+  it("#619: an image card that carries the attached reference says so on its face", () => {
+    const withRef = buildProposeCard(
+      { kind: "image", structuredPrompt: "swap the background for a beach", entityIds: [], variantSel: {} },
+      makeCtx({ sourceGenerationId: "gen-abc123" }),
+      [],
+    ).cardPayload;
+    expect(withRef.specChips).toContain("Uses your attached image");
+
+    const withoutRef = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    ).cardPayload;
+    expect(withoutRef.specChips).not.toContain("Uses your attached image");
+  });
+
+  // 说的与做的同步（F 断言 1+2）：卡上写的那张图，执行层组请求体时必须原样拿到。
+  it("#619: the attached image survives into the paid request the execution layer builds", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "keep the product, beach background", entityIds: [], variantSel: {} },
+      makeCtx({ sourceGenerationId: "gen-abc123" }),
+      [],
+    );
+    const built = buildGenRequestFromCard({
+      cardPayload,
+      projectId: "proj-test",
+      threadId: "thread-test",
+      cardId: "card_1",
+      prompt: "keep the product, beach background",
+      entityIds: [],
+      variantSel: {},
+    });
+    expect(built.ok).toBe(true);
+    expect((built as { ok: true; req: Record<string, unknown> }).req["sourceGenerationId"]).toBe("gen-abc123");
+  });
+
+  // 挂了图但要视频的既有语义不动：图仍是 i2v 起始帧，元素照旧清空。
+  it("#619 does not disturb the video path: an attached image is still the i2v start frame", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "animate this", entityIds: ["entity-1"], variantSel: {} },
+      makeCtx({ sourceGenerationId: "gen-abc123" }),
+      ["entity-1"],
+    );
+    expect(cardPayload.kind).toBe("video");
+    expect(cardPayload.entityIds).toEqual([]);
+    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
+    expect(cardPayload.specChips).not.toContain("Uses your attached image");
   });
 
   it("reference video: kind=video + referenceVideoGenerationId → present in payload, image tier untouched", () => {
@@ -307,6 +365,7 @@ describe("executePropose — mock DB", () => {
   let mockPrisma: {
     entity: { findMany: ReturnType<typeof vi.fn> };
     chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
     genJob: { create: ReturnType<typeof vi.fn> };
   };
 
@@ -319,6 +378,7 @@ describe("executePropose — mock DB", () => {
     (mockPrisma.entity.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockPrisma.chatMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 5 });
     (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (mockPrisma.referenceImage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
   });
 
   // Test 6: execute persists GEN_CARD with correct shape, returns cardId + shownPriceDisplay
@@ -401,6 +461,83 @@ describe("executePropose — mock DB", () => {
     // Identity MUST come from ctx.orgId and ctx.threadId exclusively
     expect(createArg.data["ownerId"]).toBe("org-A");
     expect(createArg.data["threadId"]).toBe("thread-from-ctx");
+  });
+
+  // -------------------------------------------------------------------------
+  // #619 E-5 —— 截断必须在**花钱之前**出现在卡面上。
+  // 引擎一次只收 MAX_CONDITIONING_IMAGES 张 @元素参考照；过去是静默截断，商家批准、
+  // 扣完钱，才在详情页发现有元素根本没上车。
+  // -------------------------------------------------------------------------
+
+  /** 取这一次 create 写进去的 payload。 */
+  function persistedPayload(): Record<string, unknown> {
+    const createArg = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    };
+    return createArg.data.payload;
+  }
+
+  it("#619: 17 live reference photos on a 10-image engine → the card says so BEFORE approval", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }, { id: "e2" }]);
+    // two @mentioned elements carrying 9 + 8 live photos = 17
+    mockPrisma.referenceImage.count
+      .mockResolvedValueOnce(9)
+      .mockResolvedValueOnce(8);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "the whole cast on a beach", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("This run will use 10 of your 17 reference photos.");
+  });
+
+  it("#619: within the engine limit → no truncation sentence is invented", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(3);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "a hero shot", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
+  });
+
+  it("#619: the count follows the worker — a @mentioned variant is counted, not the base", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(2);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "her, on a beach", entityIds: ["e1"], variantSel: { e1: "var-1" } },
+      { context: makeCtx({ orgId: "org-var" }) },
+    );
+
+    expect(mockPrisma.referenceImage.count).toHaveBeenCalledWith({
+      where: { entityId: "e1", variantId: "var-1", ownerId: "org-var", deletedAt: null },
+    });
+  });
+
+  it("#619: several attached images → the card names which one is the base, and still carries it", async () => {
+    await executePropose(
+      { kind: "image", structuredPrompt: "like these, but on a beach", entityIds: [], variantSel: {} },
+      {
+        context: makeCtx({
+          sourceGenerationId: "gen-1",
+          sourceGenerationIds: ["gen-1", "gen-2", "gen-3"],
+        }),
+      },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["sourceGenerationId"]).toBe("gen-1");
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("You attached 3 images");
+    expect(payload["specChips"]).toContain("Uses your attached image");
   });
 });
 
