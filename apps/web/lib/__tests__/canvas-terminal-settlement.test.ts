@@ -237,12 +237,13 @@ describe("a card another tab deleted", () => {
     }));
   }
 
-  /** A board read, in the shape FlowCanvas folds in. */
+  /** A board read, in the shape FlowCanvas folds in — the row's face verbatim, because the read
+   *  already decided it (#602 r2: FlowCanvas no longer re-derives from the URL either). */
   function readAsNodes(cards: unknown): BoardCard[] {
     expect(Array.isArray(cards)).toBe(true);
     return (cards as Array<{ id: string; status: string; url?: string | null }>).map((row) => ({
       id: row.id,
-      data: { status: row.url ? "done" : row.status, url: row.url ?? null, serverKnown: true },
+      data: { status: row.status, url: row.url ?? null, serverKnown: true },
     }));
   }
 

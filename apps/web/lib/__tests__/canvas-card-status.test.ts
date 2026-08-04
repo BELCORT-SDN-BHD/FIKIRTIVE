@@ -85,8 +85,11 @@ describe("① 推导是全函数:每一组输入都落在唯一一张合法卡�
     expect(canvasCardFace({ rowStatus: "pending", jobStatus: "CANCELLED" })).toBe("cancelled");
     expect(canvasCardFace({ rowStatus: "done", jobStatus: "QUEUED" })).toBe("queued");
     // 4. 没有任务可问(手动从库里拖上来的图),行自己说了算。
-    expect(canvasCardFace({ rowStatus: "done" })).toBe("done");
+    expect(canvasCardFace({ rowStatus: "done", url: "https://cdn/a.png" })).toBe("done");
     expect(canvasCardFace({ rowStatus: "timeout" })).toBe("timeout");
+    // …但「行说 done,手上却什么都没有」不是 done,是 missing(#602 r2 复审 P1-3):
+    // 渲染器对画不出媒体的脸会回落到转圈,于是这种卡从前永久转圈。
+    expect(canvasCardFace({ rowStatus: "done" })).toBe("missing");
   });
 
   it("兜底是「未知」,永远不是「生成中」—— 这是永久转圈的病根", () => {
@@ -149,6 +152,22 @@ describe("② 六态卡面:排队 / 进行中 / 成功 / 失败 / 已取消 / �
   ])("图片卡在 %s 说的是自己的那句话", async (status, expected) => {
     const text = await renderFace(ImageNode, status);
     expect(text).toContain(expected);
+  });
+
+  it("说自己 done 却什么都没有的卡,说的是「取不到」而不是转圈(#602 r2 复审 P1-3)", async () => {
+    // 渲染器从前的兜底是「在途 || 没有图 → 转圈」,于是任何走到这里又没有图的卡都永久转圈:
+    // 库里的图取不到了、Otto 放了一张没绑产物的卡,都算。
+    const text = await renderFace(ImageNode, "done");
+
+    expect(text).not.toContain("Generating…");
+    expect(text).not.toContain("Otto is making this");
+    expect(text).toContain("Preview missing");
+  });
+
+  it("视频卡同理", async () => {
+    const text = await renderFace(VideoNode, "done");
+    expect(text).not.toContain("Rendering…");
+    expect(text).toContain("Preview missing");
   });
 
   it("成功态放的是图,不是任何一句状态文案", async () => {
@@ -219,53 +238,15 @@ describe("② 六态卡面:排队 / 进行中 / 成功 / 失败 / 已取消 / �
   });
 });
 
-/**
- * 每一个写入者,写成 (它能改的行, 它能写的词) 两张表 —— 直接从生产代码的 WHERE 谓词抄下来。
- * 这份台账是断言的对象:只要有人加一个写入者、或者放宽一条 WHERE,这里就必须跟着改,
- * 「单向前进」才是**库里**的规则,而不是注释里的规则。
- */
-const WRITERS = [
-  {
-    // 只有一种更新:把已经绑上产物的卡改成 done(`data.status = "done"`),
-    // 而且 WHERE 明确排除墓碑。建新行不在这张表里 —— 新行没有「从哪来」。
-    name: "placeCanvasJobNode(把卡绑到产物上)",
-    from: ["pending", "done", "failed", "cancelled", "timeout", "missing", "unknown"],
-    to: ["done"],
-  },
-  {
-    name: "resolveCanvasNode(浏览器上报 · #612 迟到写挡板)",
-    from: [...OVERWRITABLE_CARD_STATUSES],
-    to: ["done", "failed", "cancelled", "timeout", "missing"],
-  },
-  {
-    name: "settleCanvasCardsForGenJob(任务自己的结局)",
-    // WHERE: status not 'deleted' —— 结算是唯一读得到任务行的写入者。
-    from: ["pending", "done", "failed", "cancelled", "timeout", "missing", "unknown"],
-    to: ["done", "failed", "cancelled"],
-  },
-  {
-    name: "tombstoneCanvasNode(商家删卡)",
-    from: ["pending", "done", "failed", "cancelled", "timeout", "missing", "unknown"],
-    to: ["deleted"],
-  },
-] as const;
-
 describe("③ 单向前进:没有写入者能把一张卡拉回去", () => {
-  it.each(WRITERS.map((w) => [w.name, w] as const))("%s 的每一种可能写法都是前进", (_name, writer) => {
-    for (const from of writer.from) {
-      for (const to of writer.to) {
-        expect(canvasCardRowAdvances(from, to), `${from} → ${to}`).toBe(true);
-      }
-    }
-  });
-
-  it("往回走的两个方向都被序关系判死:停下的不许重新开始,删掉的不许回来", () => {
-    // 停下 → 重新在做:这就是迟到的浏览器上报把已结算卡打回「还在做」的那一类。
+  // 序关系本身在这里定义清楚;**真谓词的驱动**在 packages/db/src/__tests__/canvas-node-status-check.test.ts
+  // ——那里拿真库跑真结算,再对落库前后的两个词断言这条序关系(#602 r2 复审 P2:
+  // 「把 WHERE 抄一遍」证明不了什么,抄本和代码会漂,而测试读的是抄本)。
+  it("往回走的两个方向都被判死:停下的不许重新开始,删掉的不许回来", () => {
     for (const settled of ["done", "failed", "cancelled", "missing", "unknown"]) {
       expect(canvasCardRowAdvances(settled, "pending"), `${settled} → pending`).toBe(false);
       expect(canvasCardRowAdvances(settled, "timeout"), `${settled} → timeout`).toBe(false);
     }
-    // 墓碑吸收一切:删掉的卡任何写入者都不许复活。
     for (const to of CANVAS_CARD_ROW_STATUSES) {
       expect(canvasCardRowAdvances("deleted", to), `deleted → ${to}`).toBe(to === "deleted");
     }
@@ -278,10 +259,17 @@ describe("③ 单向前进:没有写入者能把一张卡拉回去", () => {
   });
 
   it("浏览器上报改不到任何一张已经结算的卡(这条才是真正的挡板)", () => {
+    // 这个常量不是复述:resolveCanvasNode 的 WHERE 直接 spread 它,改这里就等于改那道写。
     for (const settled of ["done", "failed", "cancelled", "missing", "unknown", "deleted"]) {
       expect((OVERWRITABLE_CARD_STATUSES as readonly string[]).includes(settled), settled).toBe(false);
     }
     expect([...OVERWRITABLE_CARD_STATUSES]).toEqual(["pending", "timeout"]);
+    // …而它允许写的五个词,从这两种行出发全都是前进。
+    for (const from of OVERWRITABLE_CARD_STATUSES) {
+      for (const to of ["done", "failed", "cancelled", "timeout", "missing"]) {
+        expect(canvasCardRowAdvances(from, to), `${from} → ${to}`).toBe(true);
+      }
+    }
   });
 
   it("集合外的词一律拒绝,序关系不给它落脚点", () => {

@@ -461,7 +461,8 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           // Factory's exact attempt + logical-cell content binding is decided under the SAME
           // owner/project advisory lock as create+reserve. No time window and no all-status index:
           // an exact attempt is reused forever; a new attempt may create only after every prior
-          // logical-cell job FAILED; content never changes across attempts (FAILED included).
+          // logical-cell job ENDED WITHOUT DELIVERING (failed OR cancelled — #602 T3);
+          // content never changes across attempts (a prior ending included).
           const history = await tx.genJob.findMany({
             where: {
               ownerId,

@@ -56,6 +56,7 @@ beforeEach(() => {
 });
 
 const { cancelGenJob } = await import("@/lib/cowork-actions");
+const { toChatMessageDTO } = await import("@/lib/dto");
 const { deriveCardState, cancelledJobIds, cancelledTurnPayload } = await import("@/lib/otto-inject-helpers");
 const { runStateOfCard, isTerminalRunState, runStateSpins } = await import("@/lib/otto-status-helpers");
 const { threadBadgeFromJobStatus } = await import("@/lib/thread-status");
@@ -169,7 +170,57 @@ function renderPlanCard(cardState: "working" | "failed" | "cancelled"): string {
     .replaceAll("&#39;", "'");
 }
 
+/** cancelGenJob 真正写进库的那一行,原样。 */
+const CANCEL_ROW = {
+  id: "m1",
+  role: "AGENT",
+  kind: "TURN_ERROR",
+  seq: 8,
+  text: "Cancelled — you weren't charged.",
+  payload: { cancelled: true },
+  genJobId: "job_1",
+  createdAt: new Date("2026-08-05T00:00:00Z"),
+} as never;
+
 describe("③ 刷新之后,那张卡还是「已取消」", () => {
+  /**
+   * 这一组是 r2 复审 P1-1 的补票。原来的断言喂的是**手搓的**消息形状,于是「写标记」和
+   * 「读标记」两头都绿,中间那一段 —— 重载真正走的那条路 —— 没人测:
+   *   otto/page.tsx → cowork-fetch → toChatMessageDTO()
+   * 而 toChatMessageDTO 的 TURN_ERROR 分支是一张白名单,只认 `error.kind`,取消的 payload
+   * 没有 error 键,于是整个 payload 被丢成 null:刷新之后卡片又变回红色失败卡 +「再试一次」。
+   * 所以现在从**真的 DTO 映射**出发。
+   */
+  it("重载映射不许把取消标记丢掉 —— 中间这一段才是从前断的地方", () => {
+    const dto = toChatMessageDTO(CANCEL_ROW, new Map());
+    expect(cancelledTurnPayload(dto.payload)).toBe(true);
+  });
+
+  it("于是重载回来的会话仍然推导出 cancelled,而不是 failed", () => {
+    const dto = toChatMessageDTO(CANCEL_ROW, new Map());
+    const messages = [{
+      id: dto.id,
+      metadata: { durableId: dto.id, kind: dto.kind, genJobId: dto.genJobId, payload: dto.payload },
+    }] as never;
+    expect(deriveCardState({
+      genJobId: "job_1",
+      submitted: true,
+      results: new Set<string>(),
+      errors: new Set(["job_1"]),
+      cancelled: cancelledJobIds(messages),
+    })).toBe("cancelled");
+  });
+
+  it("真的流错误照旧走它自己的那条路,没被这道新分支挡掉", () => {
+    const failure = {
+      ...(CANCEL_ROW as unknown as Record<string, unknown>),
+      payload: { error: { kind: "error", text: "the run fell over" }, userMessageId: "u1" },
+    } as never;
+    const dto = toChatMessageDTO(failure, new Map());
+    expect(cancelledTurnPayload(dto.payload)).toBe(false);
+    expect(dto.payload).toMatchObject({ kind: "stream_run_error", error: { kind: "error" } });
+  });
+
   it("耐久的取消标记被读出来,而且压过它所搭乘的失败", () => {
     expect(cancelledTurnPayload({ cancelled: true })).toBe(true);
     expect(cancelledTurnPayload({ error: { kind: "error", text: "boom" } })).toBe(false);

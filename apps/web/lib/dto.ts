@@ -131,7 +131,18 @@ export function toChatMessageDTO(
     // triggering USER id to restore the existing retry affordance.
     const p = m.payload as Record<string, unknown>;
     const error = p.error as Record<string, unknown> | undefined;
-    if (
+    // A MERCHANT'S OWN CANCEL COMES FIRST (#602 r2, cross-family judge P1-1).
+    //
+    // A job's terminal thread message is a TURN_ERROR whatever ended it — that kind owns the
+    // one-terminal-message-per-job unique index, so a cancel cannot have a kind of its own. The
+    // durable row therefore carries `{ cancelled: true }`, and THIS mapping is the only thing
+    // between it and the card. Without this arm the whitelist above dropped the marker (a cancel
+    // payload has no `error`), so `payload` came back null, the card re-derived `failed` on every
+    // reload, and the merchant was shown a red apology and a "Try again" button for work they
+    // chose to stop. Writing the marker was never the hard part — carrying it was.
+    if (p.cancelled === true) {
+      payload = { kind: "cancelled", cancelled: true };
+    } else if (
       (error?.kind === "insufficient_credits" || error?.kind === "error")
       && typeof error.text === "string"
     ) {

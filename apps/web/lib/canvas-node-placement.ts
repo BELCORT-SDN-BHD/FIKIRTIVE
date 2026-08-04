@@ -243,11 +243,22 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
       if (existing.sourceNodeId !== sourceNodeId) data.sourceNodeId = sourceNodeId;
       if (existing.threadId !== threadId) data.threadId = threadId;
       if (Object.keys(data).length) {
-        const node = await tx.canvasNode.update({
-          where: { id: existing.id },
+        // THE TOMBSTONE RULE, AT THE WRITE (#602 r2, judge P2). `existing` was read a few dozen
+        // lines up with `status: { not: "deleted" }`, and the advisory job lock above makes the
+        // read-then-write hard to interleave — but "hard" is not the same as "cannot", and a rule
+        // that lives only in a read is a rule the database is not keeping. A card the merchant
+        // removed may never come back, so the predicate is spelled again here.
+        const written = await tx.canvasNode.updateMany({
+          where: { id: existing.id, ownerId: input.ownerId, projectId: input.projectId, status: { not: "deleted" } },
           data,
-          select: NODE_SELECT,
         });
+        const node = written.count === 1
+          ? await tx.canvasNode.findFirst({ where: { id: existing.id, ownerId: input.ownerId }, select: NODE_SELECT })
+          : null;
+        // Nothing matched (or the row went away): the card was tombstoned between the read above
+        // and this write, and a deletion is a durable owner instruction — report it as suppressed
+        // rather than resurrecting it.
+        if (!node) return { suppressed: true, scope: "generation" };
         return { inserted: false, node };
       }
       return { inserted: false, node: existing };

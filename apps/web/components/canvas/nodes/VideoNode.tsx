@@ -220,10 +220,18 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       className="al-panel"
       style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
+      {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
+          `in-flight || !url → spinner`, so any card that reached this renderer without a picture
+          — a done row whose media no longer resolves, a face this component did not know — span
+          for ever (F21). Only the two in-flight faces spin now; everything else without media says
+          which resting state it is in, and `missing` is the board's own word for "the work exists,
+          this card cannot show it". */}
       {terminal ? (
         <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
-      ) : isInFlightCardFace(d.status) || !d.url ? (
+      ) : isInFlightCardFace(d.status) ? (
         <GeneratingBody gb={gb} kind="video" queued={d.status === "queued"} onRefresh={d.onRefresh} />
+      ) : !d.url ? (
+        <FailedBody status="missing" onRefresh={d.onRefresh} />
       ) : gb ? (
         // gb: clean poster (first frame) + centered play button, like the mockup —
         // no raw browser chrome until the owner presses play. Display-only.

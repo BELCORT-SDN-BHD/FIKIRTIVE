@@ -269,7 +269,10 @@ function runtimeNode(row: {
     id: row.id,
     type: row.type,
     pos: { x: row.x, y: row.y, w: row.w, h: row.h },
-    status: row.url ? "done" : row.status,
+    // The board read decided this already — `canvasCardFace` weighs the URL and every
+    // other fact once, and this row carries its answer. The local re-derivation that
+    // stood here was the second of the two silent forks the r2 judge counted (#602 r2).
+    status: row.status,
     url: row.url ?? null,
     prompt: row.prompt ?? "",
     generationId: row.generationId,

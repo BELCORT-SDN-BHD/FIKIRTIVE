@@ -90,8 +90,8 @@ export function censusCanvasJobCards(
  *     board says which is the real anchor, so letting either borrow a picture would be a coin
  *     toss; both wait for the settlement, which is the only thing that knows.
  *
- * A card left with nothing renders as `missing` for a delivered job (see canvasNodeDisplayStatus)
- * — the board's existing, honest word for a finished job's card that carries no output.
+ * A card left with nothing renders as `missing` (see `canvasCardFace`) — the board's existing,
+ * honest word for a card that carries no output it can show.
  */
 export function displayGenerationIdForCard(input: {
   rowGenerationId: string | null;

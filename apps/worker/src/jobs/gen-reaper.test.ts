@@ -219,8 +219,11 @@ describe("reapStaleGenJobs — committed-but-stuck resume scan (Codex 2026-07-03
     m.creditLedgerFindFirst.mockResolvedValueOnce({ id: "rf1" }); // a REFUND finalizer exists
     const n = await reapStaleGenJobs();
     expect(n).toBe(1); // transitioned out of stuck (to terminal FAILED) — counted as handled
-    const failed = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    // The free-delivery guard's terminal write is conditional on the row still being in flight
+    // like every other terminal write in gen.ts (#602 r2, judge P1-2).
+    const failed = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failed).toBeTruthy();
+    expect(failed![0].where).toMatchObject({ status: { in: ["QUEUED", "GENERATING"] } });
     expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeFalsy();
     expect(m.settleCredits).not.toHaveBeenCalled();
     expect(m.refundReservation).not.toHaveBeenCalled(); // already refunded — never refund twice

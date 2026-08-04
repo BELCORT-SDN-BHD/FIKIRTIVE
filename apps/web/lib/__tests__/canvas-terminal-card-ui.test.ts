@@ -97,7 +97,9 @@ describe("what a card says once it has stopped being made", () => {
   });
 
   it("still spins for a card that really is being made", async () => {
-    const text = await renderCard(ImageNode, "pending");
+    // The card FACE for a running job (#602 T3). `pending` is the stored ROW word and no board
+    // read returns it; a renderer asked about it now answers `unknown`, which rests.
+    const text = await renderCard(ImageNode, "generating");
 
     expect(text).not.toContain("Cancelled");
     expect(text).toContain("Generating…");
