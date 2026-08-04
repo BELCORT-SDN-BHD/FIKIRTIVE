@@ -1142,7 +1142,20 @@ model CanvasNode {
   // 词表与写入者的唯一权威在 apps/web/lib/canvas-card-status.ts;'unknown' 没有写入者,
   // 它只是迁移给历史越集值准备的落脚点。卡面(queued/generating/…)是**推导**出来的,不入库。
   status       String    @default("done")
+  // 一列三义的旧「来源」列(#603 T4 · spec #599 D5)。它同时装过「真派生」「同批锚点」
+  // 「假兄弟血缘」三件事,所以任何读它的人都只能猜。下面四列把这三件事拆开落盘;这一列
+  // 自 T4 起**无写入者、无读取者**,只为迁移回填留作证据。删列另开一片(见 migration 说明)。
   sourceNodeId String?
+  // ── 批次身份:服务端在结算那一刻就掌握的事实,不再由坐标或幸存卡数推回 ──
+  /// 这张卡在该付费作业产出列表里的位置(0 起)。null = 不知道(无作业/未绑定产出/老行)。
+  batchIndex   Int?
+  /// 该付费作业一共产出几张(不是「现在还剩几张」)。null = 不知道。
+  batchSize    Int?
+  /// 布局锚点:这张卡是围着哪张同批卡摆的。**只管摆放,永不定义血缘**。
+  layoutAnchorNodeId String?
+  /// 真派生:这张卡的付费作业是以哪张卡的产出为输入的(GenJob.sourceGenerationId 的卡)。
+  /// 唯一的连线依据。null = 没有派生,或来历不详 —— 两者都画不出线,这正是诚实的做法。
+  madeFromNodeId     String?
   // G4c: convo attribution — which ChatThread created this node. Nullable, no backfill;
   // validated (same owner+project) in createCanvasNode, no FK. null = "unattributed".
   threadId     String?

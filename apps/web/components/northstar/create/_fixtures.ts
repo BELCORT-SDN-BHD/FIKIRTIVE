@@ -49,8 +49,9 @@ export interface CvObject {
   threadId?: string;
   /** 同一次用户意图在 uncertain/failed retry 时保持不变。 */
   actionId?: string;
-  variantIndex?: number;
-  variantCount?: number;
+  /** 批内序号与批大小 —— 服务端落盘的事实,不由坐标或幸存卡数推(#603 T4)。 */
+  batchIndex?: number;
+  batchSize?: number;
   /** Server/job 返回的真实进度与失败说明。 */
   progress?: number;
   error?: string;

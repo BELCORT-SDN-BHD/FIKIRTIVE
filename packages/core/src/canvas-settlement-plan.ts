@@ -226,7 +226,11 @@ export type SettlementCard = {
   generationId: string | null;
   /** "pending" | "done" | "failed" | "deleted" | legacy "timeout" / "missing". */
   status: string;
-  sourceNodeId: string | null;
+  /** The batch identity already on the row, so a settled board can be recognised as settled. */
+  batchIndex: number | null;
+  batchSize: number | null;
+  layoutAnchorNodeId: string | null;
+  madeFromNodeId: string | null;
 };
 
 export type SettlementJob = {
@@ -263,8 +267,10 @@ export type PlannedSiblingCreate = PlannedCardShape & {
   role: "sibling";
   /** The card this sibling is laid out around. `null` means "the anchor card of THIS plan" —
    *  the caller knows its id, having just kept, updated or created it. It is a layout anchor,
-   *  never a parent: the cards of one batch came out of a single press together. */
-  layoutSourceNodeId: string | null;
+   *  never a parent: the cards of one batch came out of a single press together, and it now
+   *  goes to a column of its own (`CanvasNode.layoutAnchorNodeId`) so no reader can mistake
+   *  standing next to something for having come out of it (#603 T4). */
+  layoutAnchorNodeId: string | null;
 };
 
 export type PlannedCardCreate = PlannedAnchorCreate | PlannedSiblingCreate;
@@ -338,6 +344,15 @@ export function canvasJobIsInFlight(jobStatus: string | null | undefined): boole
 export type CanvasSettlementPlan =
   | {
       kind: "place";
+      /**
+       * HOW MANY CARDS THIS PAID PRESS PRODUCED — the batch's size, from the job's own record.
+       *
+       * Counted from what the merchant BOUGHT, never from what is still on the board. Deleting two
+       * cards of a batch of four does not turn it into a batch of two; it is a batch of four with
+       * two cards left. Counting survivors is how two leftovers grew A/B badges and unlocked
+       * Compare for a comparison the merchant never made (#599 D5, root map 根 4·A).
+       */
+      batchSize: number;
       /** Anchor first, then siblings in batch order. */
       cards: PlannedCard[];
       /**
@@ -567,7 +582,6 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
   let anchorRect: CanvasRect;
   let anchorId: string | null;
   let anchorPrompt: string | null;
-  let anchorSourceNodeId: string | null;
   // Which output the anchor ends up carrying. Normally the batch's first, but a board can be
   // reached where the only surviving card is a later one — and then the batch is laid out around
   // THAT card, and the earlier output is planned like any other sibling. Without this, the anchor
@@ -596,7 +610,6 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     };
     anchorId = null;
     anchorPrompt = job.prompt || null;
-    anchorSourceNodeId = null;
     planned.push({
       action: "create",
       role: "anchor",
@@ -610,7 +623,6 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
     anchorRect = { x: anchor.x, y: anchor.y, w: anchor.w, h: anchor.h };
     anchorId = anchor.id;
     anchorPrompt = anchor.prompt ?? (job.prompt || null);
-    anchorSourceNodeId = anchor.sourceNodeId;
     const patch: { status?: string; generationId?: string } = {};
     // Only an anchor with no output yet may be bound to one, and only to an output NO live card
     // is already carrying — binding it to one that is already on the board is how the same paid
@@ -662,11 +674,17 @@ export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettle
       w: anchorRect.w,
       h: anchorRect.h,
       prompt: anchorPrompt,
-      // The batch's ANCHOR, for layout — not a parent. If the anchor itself hangs off an earlier
-      // card, siblings hang off the same one; otherwise null means "this plan's anchor card".
-      layoutSourceNodeId: anchorSourceNodeId ?? anchorId,
+      // The batch's ANCHOR, for layout — not a parent, and no longer smuggled through the card
+      // the JOB was made from. It used to be `anchorSourceNodeId ?? anchorId`: when the anchor
+      // hung off an earlier card, every sibling was pointed at that earlier card too, in the one
+      // column that also meant "made from" — so an edit that produced four images drew four
+      // parentage lines out of the picture it was built on (#603 T4). Layout is layout: the
+      // sibling sits beside THIS batch's anchor, and `null` means that anchor's id, which the
+      // caller knows because it has just kept, updated or created it.
+      layoutAnchorNodeId: anchorId,
     });
   }
 
-  return { kind: "place", cards: planned, duplicateAnchorIds };
+  // The size of the batch the merchant PAID for — every recorded output, deleted ones included.
+  return { kind: "place", batchSize: outputs.length, cards: planned, duplicateAnchorIds };
 }

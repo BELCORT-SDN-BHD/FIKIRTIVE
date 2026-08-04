@@ -677,7 +677,6 @@ export interface OttoContext {
       text?: string;
       prompt?: string;
       generationId?: string;
-      sourceNodeId?: string;
     }): Promise<{ id: string } | { error: string }>;
     /** $0 write: edit a text node's content (updateTextNode). */
     editText(id: string, text: string): Promise<{ ok: true } | { error: string }>;
@@ -839,7 +838,12 @@ export type CanvasNodeView = {
   prompt: string | null;
   generationId: string | null;
   status: string;
-  sourceNodeId: string | null;
+  /** Which paid press produced this card, and where in it this card sits (#603 T4). */
+  genJobId: string | null;
+  batchIndex: number | null;
+  batchSize: number | null;
+  /** The card this one's paid job was actually MADE FROM. Never a same-batch neighbour. */
+  madeFromNodeId: string | null;
   url?: string | null;
 };
 

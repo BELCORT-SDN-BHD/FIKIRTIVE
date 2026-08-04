@@ -194,7 +194,10 @@ function card(overrides: Partial<SettlementCard> = {}): SettlementCard {
     prompt: "a cup steaming",
     generationId: null,
     status: "pending",
-    sourceNodeId: null,
+    batchIndex: null,
+    batchSize: null,
+    layoutAnchorNodeId: null,
+    madeFromNodeId: null,
     ...overrides,
   };
 }
@@ -257,7 +260,7 @@ describe("how many cards a finished job should have", () => {
       job: job({ generationIds: OUTPUTS.slice(0, 2) }),
       cards: [
         card({ id: "a", generationId: "gen-1", status: "done" }),
-        card({ id: "b", generationId: "gen-2", status: "done", x: 440, sourceNodeId: "a" }),
+        card({ id: "b", generationId: "gen-2", status: "done", x: 440, layoutAnchorNodeId: "a" }),
       ],
       occupied: [],
     }));
@@ -357,20 +360,23 @@ describe("where each card of a batch sits", () => {
     expect(planned.map((entry) => entry.batchIndex)).toEqual([1, 2]);
   });
 
-  it("hangs siblings off the batch anchor, and off the anchor's own source when it has one", () => {
+  it("lays siblings out around THIS batch's anchor, never around what the job was made from", () => {
     const withoutSource = place(planCanvasSettlement({
       job: job({ generationIds: OUTPUTS.slice(0, 2) }),
       cards: [card({ id: "a" })],
       occupied: [],
     }));
+    // Even when the anchor itself came out of an earlier card, the batch's siblings are laid out
+    // around the anchor — the earlier card is a lineage fact of the JOB and lives in its own
+    // column now, so it can never be smuggled in here as a layout anchor again (#603 T4).
     const withSource = place(planCanvasSettlement({
       job: job({ generationIds: OUTPUTS.slice(0, 2) }),
-      cards: [card({ id: "a", sourceNodeId: "made-from-this" })],
+      cards: [card({ id: "a", madeFromNodeId: "made-from-this" })],
       occupied: [],
     }));
 
-    expect(withoutSource[1]).toMatchObject({ layoutSourceNodeId: "a" });
-    expect(withSource[1]).toMatchObject({ layoutSourceNodeId: "made-from-this" });
+    expect(withoutSource[1]).toMatchObject({ layoutAnchorNodeId: "a" });
+    expect(withSource[1]).toMatchObject({ layoutAnchorNodeId: "a" });
   });
 
   it("tells the caller to use the plan's own anchor when that anchor is brand new", () => {
@@ -380,7 +386,24 @@ describe("where each card of a batch sits", () => {
       occupied: [],
     }));
 
-    expect(planned[1]).toMatchObject({ action: "create", role: "sibling", layoutSourceNodeId: null });
+    expect(planned[1]).toMatchObject({ action: "create", role: "sibling", layoutAnchorNodeId: null });
+  });
+
+  it("records the size of the batch that was BOUGHT, not the cards that survived", () => {
+    const plan = planCanvasSettlement({
+      job: job({ generationIds: OUTPUTS.slice(0, 4) }),
+      cards: [
+        card({ id: "a", generationId: "gen-1", status: "done" }),
+        card({ id: "b", generationId: "gen-2", status: "done", x: 440 }),
+        card({ id: "gone-3", generationId: "gen-3", status: "deleted" }),
+        card({ id: "gone-4", generationId: "gen-4", status: "deleted" }),
+      ],
+      occupied: [],
+    });
+
+    expect(plan.kind === "place" && plan.batchSize).toBe(4);
+    // …and the two survivors keep the positions they were born with.
+    expect(plan.kind === "place" && plan.cards.map((entry) => entry.batchIndex)).toEqual([0, 1]);
   });
 });
 
@@ -674,7 +697,7 @@ describe("where the job was bought", () => {
     // paid batch is still theirs and the card is still on the board.
     const plan = planCanvasSettlement({
       job: { status: "DONE", generationIds: ["gen-1", "gen-2"], kind: "IMAGE", prompt: "p", origin: "elsewhere" },
-      cards: [{ id: "card-1", x: 0, y: 0, w: 320, h: 320, prompt: "p", generationId: "gen-1", status: "done", sourceNodeId: null }],
+      cards: [{ id: "card-1", x: 0, y: 0, w: 320, h: 320, prompt: "p", generationId: "gen-1", status: "done", batchIndex: 0, batchSize: 1, layoutAnchorNodeId: null, madeFromNodeId: null }],
       occupied: [],
     });
 
@@ -1023,7 +1046,7 @@ function applyPlan(before: readonly SettlementCard[], plan: CanvasSettlementPlan
     after.push(card({
       id, x: entry.x, y: entry.y, w: entry.w, h: entry.h, prompt: entry.prompt,
       generationId: entry.generationId, status: "done",
-      sourceNodeId: entry.role === "anchor" ? null : entry.layoutSourceNodeId ?? anchorId,
+      layoutAnchorNodeId: entry.role === "anchor" ? null : entry.layoutAnchorNodeId ?? anchorId,
     }));
     if (entry.role === "anchor") anchorId = id;
   }
@@ -1117,7 +1140,7 @@ describe("running it twice", () => {
           y: entry.y,
           generationId: entry.generationId,
           status: "done",
-          sourceNodeId: "anchor",
+          layoutAnchorNodeId: "anchor",
         })),
     ];
 

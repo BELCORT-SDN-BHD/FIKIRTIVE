@@ -73,13 +73,13 @@ async function createPendingCanvasNodeOnce(input: {
         INSERT INTO "CanvasNode" (
           "id", "ownerId", "projectId", "type", "x", "y", "w", "h",
           "text", "prompt", "generationId", "genJobId", "status",
-          "sourceNodeId", "threadId", "createdAt", "updatedAt"
+          "threadId", "createdAt", "updatedAt"
         )
         SELECT
           ${id}, ${input.ownerId}, ${input.projectId}, ${input.type},
           ${input.x}, ${input.y}, ${input.w}, ${input.h},
           NULL, ${input.prompt}, NULL, ${input.genJobId}, 'pending',
-          NULL, ${input.threadId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+          ${input.threadId}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
         -- Still running. The planner decides this from rows it read moments earlier; deciding it
         -- again here, on a post-lock snapshot, is what makes it true at the moment of writing.
         WHERE EXISTS (
@@ -225,7 +225,10 @@ export async function syncOttoCanvasNodes(
   const boardSelect = {
     id: true, type: true, x: true, y: true, w: true, h: true, text: true,
     prompt: true, generationId: true, genJobId: true, status: true,
-    sourceNodeId: true, threadId: true,
+    // Batch identity and parentage as the server settled them (#603 T4). The old single
+    // `sourceNodeId` is deliberately absent: it meant three different things at once.
+    batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
+    threadId: true,
   } as const;
   const board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
 

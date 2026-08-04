@@ -16,7 +16,8 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     generationId?: string;
     skin?: string;
     lineage?: CanvasNodeLineage | null;
-    sourceNodeId?: string | null;
+    /** The card this one's paid job was made FROM — the one fact "Made from" reads (#603 T4). */
+    madeFromNodeId?: string | null;
     onDelete?: () => void;
     onOpenDetail?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on

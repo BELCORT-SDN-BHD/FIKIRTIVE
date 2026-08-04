@@ -78,14 +78,17 @@ beforeEach(() => {
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
     type: string; x: number; y: number; w: number; h: number; prompt?: string | null;
     generationId?: string | null; genJobId: string; status?: string;
-    sourceNodeId?: string | null; threadId?: string | null;
+    batchIndex?: number | null; batchSize?: number | null;
+    layoutAnchorNodeId?: string | null; madeFromNodeId?: string | null; threadId?: string | null;
   }) => ({
     inserted: true,
     node: {
       id: mockNewId(), type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
       text: null, prompt: input.prompt ?? null, generationId: input.generationId ?? null,
       genJobId: input.genJobId, status: input.status ?? "done",
-      sourceNodeId: input.sourceNodeId ?? null, threadId: input.threadId ?? null,
+      batchIndex: input.batchIndex ?? null, batchSize: input.batchSize ?? null,
+      layoutAnchorNodeId: input.layoutAnchorNodeId ?? null,
+      madeFromNodeId: input.madeFromNodeId ?? null, threadId: input.threadId ?? null,
     },
   }));
   mockUpdateMany.mockResolvedValue({ count: 1 });
@@ -112,7 +115,8 @@ describe("listCanvasNodes", () => {
       {
         id: "node-1", type: "video", x: 0, y: 0, w: 320, h: 320, text: null,
         prompt: "a cup steaming", generationId: "gen-1", genJobId: "job-1",
-        status: "done", sourceNodeId: "node-0", threadId: null,
+        status: "done", batchIndex: 0, batchSize: 1,
+        layoutAnchorNodeId: null, madeFromNodeId: "node-0", threadId: null,
       },
     ]);
     mockGenJobFindMany.mockResolvedValue([
@@ -146,7 +150,6 @@ describe("listCanvasNodes", () => {
       costCredits: 8,
       batchSize: 1,
       batchPosition: 1,
-      madeFromSource: true,
     });
     // Owner-scoped, every table: a merchant can only ever read their own workspace's record.
     expect(mockLedgerFindMany).toHaveBeenCalledWith(
@@ -159,20 +162,21 @@ describe("listCanvasNodes", () => {
     );
   });
   it("tells a batch's cards apart from a card made from another card (review P2-2)", async () => {
-    // Two cards of ONE "make 2 images" press. Both store the batch's first card in
-    // sourceNodeId as their layout anchor, and neither was made FROM the other — the paid job
-    // recorded no source generation at all.
+    // Two cards of ONE "make 2 images" press. The sibling records the batch anchor it was laid
+    // out around, in the column that means exactly that — and neither was made FROM the other.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
     mockFindMany.mockResolvedValue([
       {
         id: "node-primary", type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
         prompt: "two takes", generationId: "gen-1", genJobId: "job-1",
-        status: "done", sourceNodeId: null, threadId: null,
+        status: "done", batchIndex: 0, batchSize: 2,
+        layoutAnchorNodeId: null, madeFromNodeId: null, threadId: null,
       },
       {
         id: "node-sibling", type: "image", x: 340, y: 0, w: 320, h: 320, text: null,
         prompt: "two takes", generationId: "gen-2", genJobId: "job-1",
-        status: "done", sourceNodeId: "node-primary", threadId: null,
+        status: "done", batchIndex: 1, batchSize: 2,
+        layoutAnchorNodeId: "node-primary", madeFromNodeId: null, threadId: null,
       },
     ]);
     mockGenJobFindMany.mockResolvedValue([
@@ -187,9 +191,15 @@ describe("listCanvasNodes", () => {
       "gen-2": { src: "/files/u1/two.png", kind: "image" },
     });
 
-    const rows = await listCanvasNodes("p1") as Array<{ id: string; lineage: { madeFromSource: boolean; batchSize: number; batchPosition: number | null } | null }>;
+    const rows = await listCanvasNodes("p1") as Array<{
+      id: string;
+      madeFromNodeId: string | null;
+      layoutAnchorNodeId: string | null;
+      lineage: { batchSize: number; batchPosition: number | null } | null;
+    }>;
 
-    expect(rows.map((row) => row.lineage?.madeFromSource)).toEqual([false, false]);
+    expect(rows.map((row) => row.madeFromNodeId)).toEqual([null, null]);
+    expect(rows.map((row) => row.layoutAnchorNodeId)).toEqual([null, "node-primary"]);
     // What they ARE is same-batch cards, and the record still says which is which.
     expect(rows.map((row) => [row.lineage?.batchPosition, row.lineage?.batchSize])).toEqual([[1, 2], [2, 2]]);
   });
@@ -204,7 +214,8 @@ describe("listCanvasNodes", () => {
     const board = [{
       id: "node-1", type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
       prompt: "a cup steaming", generationId: "gen-1", genJobId: "job-1",
-      status: "done", sourceNodeId: null, threadId: null,
+      status: "done", batchIndex: 0, batchSize: 1,
+      layoutAnchorNodeId: null, madeFromNodeId: null, threadId: null,
     }];
     /** The board's OWN job read stays healthy; only the lineage-shaped one is broken. */
     const breakLineageJobRead = () => {
@@ -256,7 +267,7 @@ describe("listCanvasNodes", () => {
         generationId: null,
         genJobId: "job-1",
         status: "timeout",
-        sourceNodeId: null,
+        batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
         threadId: null,
       },
     ]);
@@ -296,7 +307,7 @@ describe("listCanvasNodes", () => {
         generationId: null,
         genJobId: "job-1",
         status: "pending",
-        sourceNodeId: null,
+        batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
         threadId: null,
       },
     ]);
@@ -335,7 +346,7 @@ describe("listCanvasNodes", () => {
         generationId: null,
         genJobId: "job-1",
         status: "pending",
-        sourceNodeId: null,
+        batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
         threadId: "thread-1",
       },
     ]);
@@ -360,7 +371,8 @@ describe("listCanvasNodes", () => {
       {
         id: "node-1",
         type: "image", x: 0, y: 0, w: 320, h: 320, text: null, prompt: "one",
-        generationId: "gen-1", genJobId: "job-1", status: "done", sourceNodeId: null, threadId: null,
+        generationId: "gen-1", genJobId: "job-1", status: "done",
+        batchIndex: 0, batchSize: 1, layoutAnchorNodeId: null, madeFromNodeId: null, threadId: null,
       },
     ]);
     mockGenJobFindMany.mockResolvedValue([{ id: "job-1", status: "DONE", generationIds: ["gen-1"] }]);
@@ -430,7 +442,7 @@ describe("listCanvasNodes selects threadId", () => {
   });
 });
 
-describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId owner-scoped", () => {
+describe("createCanvasNode attribution — generationId/genJobId owner-scoped", () => {
   beforeEach(() => mockProjectFindFirst.mockResolvedValue({ id: "p1" }));
 
   it("nulls a generationId the caller does not own", async () => {
@@ -454,25 +466,23 @@ describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId ow
     }));
   });
 
-  it("keeps sourceNodeId and genJobId only when they belong to the same owner+project", async () => {
-    mockCanvasNodeFindFirst.mockResolvedValue({ id: "source-mine" });
+  it("keeps genJobId only when it belongs to the same owner+project, and takes no source from the caller", async () => {
     mockGenJobFindFirst.mockResolvedValue({ id: "job-mine" });
     mockCreate.mockResolvedValue({ id: "node-1" });
 
     await createCanvasNode({
       projectId: "p1", type: "video", x: 0, y: 0, w: 1, h: 1,
-      sourceNodeId: "source-mine", genJobId: "job-mine",
+      genJobId: "job-mine",
     });
 
-    expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "source-mine", ownerId: "u1", projectId: "p1" },
-    }));
     expect(mockGenJobFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "job-mine", ownerId: "u1", projectId: "p1" },
     }));
     expect(mockPlaceCanvasJobNode).toHaveBeenCalledWith(expect.objectContaining({
-      sourceNodeId: "source-mine", genJobId: "job-mine",
+      genJobId: "job-mine",
     }));
+    // Parentage is the paid job's own record; no caller may name it (#603 T4).
+    expect(mockPlaceCanvasJobNode.mock.calls[0]![0]).not.toHaveProperty("sourceNodeId");
   });
 
   it("reuses a paid job's primary node after a lost create response", async () => {

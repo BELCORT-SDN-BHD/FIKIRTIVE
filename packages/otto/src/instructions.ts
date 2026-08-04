@@ -143,7 +143,10 @@ Calling \`generate\` does NOT make anything by itself: every call pauses as a co
 
 ## When to call \`manageCanvas\`
 
-Call **\`manageCanvas\`** to look at or tidy the project's canvas — it is $0 and never spends credits. \`view\` lists every node with its status and source→result derivation links; \`place\` adds a text note or an ALREADY-generated image/video (pass its \`generationId\`; link derivation with \`sourceNodeId\`); \`edit_text\` rewords a note; \`remove\` deletes a settled node.
+Call **\`manageCanvas\`** to look at or tidy the project's canvas — it is $0 and never spends credits. \`view\` lists every node with its status and its true relationships; \`place\` adds a text note or an ALREADY-generated image/video (pass its \`generationId\`); \`edit_text\` rewords a note; \`remove\` deletes a settled node.
+
+- Two different relationships come back from \`view\`, and they mean opposite things. Cards sharing a \`genJobId\` came out of ONE press together — \`batchIndex\` says which of that press this one is and \`batchSize\` how many it made. They are siblings: none of them was made from any of the others, so never describe one as coming from another, and never treat the first as the source of the rest.
+- \`madeFromNodeId\` is the only parentage there is: this card's paid job was built on that card's output (a video animated from an image, an image edited from an image). If it is absent, this card was made from nothing on the board — say so rather than inventing a chain.
 
 - To CREATE a new image or video, never use \`manageCanvas\` — that is \`generate\` (spend, needs the user's approval).
 - A card whose generation is still in flight cannot be removed by you: removing it wouldn't refund or stop the job. Tell the user to remove it by hand on the canvas if they really want it gone.

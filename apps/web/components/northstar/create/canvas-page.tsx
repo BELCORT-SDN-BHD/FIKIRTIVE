@@ -65,6 +65,7 @@ import {
 } from "@/components/canvas/immersive-canvas-runtime";
 import { isInFlightPaidGen } from "@/components/canvas/useCanvasGen";
 import { isCanvasCardFace, isInFlightCardFace } from "@/lib/canvas-card-status";
+import { canvasBatchLetter, canvasCardsComparable } from "@/lib/canvas-batch-identity";
 // [cx-canvas-runtime] 断层 3/5 ②:品牌记忆「Make for them」带 ?audience=,选角「Make with this face」
 // 带 ?persona=;canvas 读它解析出上下文名,显示可关 context chip 并预填进 prompt 前缀。
 import { AUDIENCE_PROFILES } from "../immersive/assets/data";
@@ -145,14 +146,18 @@ interface CvGroup {
   label: string;
 }
 
-/** 两对象是否同源可比(父子 / 同父兄弟)—— evolve 分叉并排对比闸(GOAL §6)。 */
+/**
+ * 两对象是否同源可比 —— evolve 分叉并排对比闸(GOAL §6),现在只读落盘事实(#603 T4)。
+ *
+ * 从前这道闸认「同父兄弟」:一批四张的兄弟卡在同一列里都指着批次锚点,于是四张里任意两张
+ * 都判为可比,闸对图片批次实际已成死代码。真正的 A/B 只有一种:一次只出两张的那一批,
+ * 序号 0 与序号 1。父子(真派生)照旧可比。
+ */
 function comparable(a: CvObject, b: CvObject): boolean {
-  if (a.kind !== b.kind) return false;
-  return a.parentId === b.id
-    || b.parentId === a.id
-    || (!!a.parentId && a.parentId === b.parentId)
-    || (!!a.actionId && a.actionId === b.actionId && a.variantCount === 2 && b.variantCount === 2)
-    || (!!a.genJobId && a.genJobId === b.genJobId && a.variantCount === 2 && b.variantCount === 2);
+  return canvasCardsComparable(
+    { id: a.id, type: a.kind, genJobId: a.genJobId, batchIndex: a.batchIndex, batchSize: a.batchSize, madeFromNodeId: a.parentId },
+    { id: b.id, type: b.kind, genJobId: b.genJobId, batchIndex: b.batchIndex, batchSize: b.batchSize, madeFromNodeId: b.parentId },
+  );
 }
 
 /** 从一组对象派生下一个可寻址名的计数(切会话后名号接得上)。 */
@@ -187,9 +192,8 @@ function runtimeNodeToObject(
   actionId?: string,
 ): CvObject | null {
   if (node.type !== "image" && node.type !== "video") return null;
-  const fork = node.variantCount === 2 && node.variantIndex !== undefined
-    ? node.variantIndex === 0 ? "A" : "B"
-    : undefined;
+  // A/B 只由落盘序号决定,拖到哪里都不会换(#603 T4)。
+  const fork = canvasBatchLetter({ batchIndex: node.batchIndex, batchSize: node.batchSize }) ?? undefined;
   return {
     id: node.id,
     ref,
@@ -206,10 +210,10 @@ function runtimeNodeToObject(
     genJobId: node.genJobId ?? previous?.genJobId,
     threadId: node.threadId ?? previous?.threadId,
     actionId: actionId ?? previous?.actionId,
-    variantIndex: node.variantIndex ?? previous?.variantIndex,
-    variantCount: node.variantCount ?? previous?.variantCount,
+    batchIndex: node.batchIndex ?? previous?.batchIndex,
+    batchSize: node.batchSize ?? previous?.batchSize,
     progress: previous?.progress ?? (node.status === "done" ? 100 : 0),
-    parentId: node.sourceNodeId ?? previous?.parentId,
+    parentId: node.madeFromNodeId ?? previous?.parentId,
     fork,
     credits: 0,
   };
@@ -347,7 +351,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
     if (existing) return existing;
     return [...pendingRequestsRef.current].reverse().find((request) => {
       if (request.kind !== node.type || request.prompt !== node.prompt) return false;
-      if (request.sourceNodeId && request.sourceNodeId !== node.sourceNodeId) return false;
+      if (request.sourceNodeId && request.sourceNodeId !== node.madeFromNodeId) return false;
       return true;
     });
   }, []);

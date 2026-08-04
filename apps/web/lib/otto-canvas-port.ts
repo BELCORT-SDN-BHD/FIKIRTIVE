@@ -30,7 +30,6 @@ type PlaceInput = {
   text?: string;
   prompt?: string;
   generationId?: string;
-  sourceNodeId?: string;
 };
 
 export function makeOttoCanvasPort(ownerId: string, projectId: string) {

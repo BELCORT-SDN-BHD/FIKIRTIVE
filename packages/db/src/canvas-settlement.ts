@@ -84,7 +84,10 @@ export type CanvasSettlementTimeoutOptions = {
 
 const CARD_SELECT = {
   id: true, type: true, x: true, y: true, w: true, h: true, prompt: true,
-  generationId: true, genJobId: true, status: true, sourceNodeId: true, threadId: true,
+  generationId: true, genJobId: true, status: true, threadId: true,
+  // The batch identity already on the row (#603 T4). Read so a board that is already correct
+  // stays a no-op, and so a row settled before these facts existed is brought up to date.
+  batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
 } as const;
 
 /** Every writer for one paid job's cards shares this lock, browser-side or worker-side. */
@@ -149,7 +152,9 @@ export async function settleCanvasCardsForGenJob(
       .map((node) => ({
         id: node.id, x: node.x, y: node.y, w: node.w, h: node.h,
         prompt: node.prompt, generationId: node.generationId,
-        status: node.status, sourceNodeId: node.sourceNodeId,
+        status: node.status,
+        batchIndex: node.batchIndex, batchSize: node.batchSize,
+        layoutAnchorNodeId: node.layoutAnchorNodeId, madeFromNodeId: node.madeFromNodeId,
       }));
     const occupied: CanvasRect[] = boardCards
       .filter((node) => node.status !== "deleted")
@@ -193,13 +198,25 @@ export async function settleCanvasCardsForGenJob(
     // placed an anchor for this job, so one unbound card has no output left to carry. It is left
     // exactly as it is — the board shows a delivered job's outputless card as missing, which is
     // true, where binding it would have put one paid picture on two cards. Nothing here retries or
-    // repairs it; a durable uniqueness rule for a job's anchor belongs with #599 D5 batch identity.
+    // repairs it. A DURABLE uniqueness rule for a job's anchor is still owed: it is a partial
+    // unique index rather than a column, and it validates existing rows — so it cannot ride in a
+    // columns-only migration, and until a duplicate pair has been counted and its disposal
+    // decided, adding it would be a production migration that can fail. It gets its own slice
+    // (#603 T4 migration note).
     if (plan.duplicateAnchorIds.length) {
       console.warn(
         `[canvas] ${job.id}: ${plan.duplicateAnchorIds.length} extra unbound card(s) for one job — `
         + `left unbound rather than duplicating a paid output: ${plan.duplicateAnchorIds.join(", ")}`,
       );
     }
+
+    // "MADE FROM" IS A FACT OF THE PAID JOB, not of a neighbouring card, so it is resolved ONCE
+    // for the whole batch (#603 T4). Every output of a job that was conditioned on an earlier
+    // card really did come out of that card — the anchor and its siblings alike — and a job that
+    // was conditioned on nothing gives every one of its cards a null here, whatever they happen
+    // to be sitting next to. This is the only thing that ever draws a derivation line.
+    const madeFromNodeId = await sourceCardForJob(tx, ownerId, job);
+    const rowById = new Map(ownCards.map((card) => [card.id, card]));
 
     const nodeIds: string[] = [];
     let created = 0;
@@ -208,32 +225,36 @@ export async function settleCanvasCardsForGenJob(
     let anchorNodeId: string | null = null;
 
     for (const entry of plan.cards) {
-      if (entry.action === "keep") {
+      if (entry.action !== "create") {
+        // The batch identity this card should be carrying. Recomputed on every settlement so a
+        // row written before these columns existed — or by the browser, which knows the position
+        // but not the whole batch — is brought up to date by the one authority that knows both.
+        const identity = {
+          batchIndex: entry.batchIndex,
+          batchSize: plan.batchSize,
+          layoutAnchorNodeId: entry.role === "anchor" ? null : anchorNodeId,
+          madeFromNodeId,
+        };
+        const patch = {
+          ...(entry.action === "update" ? entry.patch : {}),
+          ...batchIdentityDrift(rowById.get(entry.id), identity),
+        };
+        if (Object.keys(patch).length) {
+          // `status: { not: "deleted" }` for the same reason the terminal write above carries it
+          // (#602 r2, judge P2): the projection reads tombstones and plans around them, but a card
+          // the merchant removed must be un-writable at the WRITE too, not only in the plan. The
+          // job lock narrows the window; it does not close it, and a resurrected card is a card
+          // nothing can ever take off the board again.
+          await tx.canvasNode.updateMany({
+            where: { id: entry.id, ownerId, projectId: job.projectId, status: { not: "deleted" } },
+            data: patch,
+          });
+          updated += 1;
+        }
         nodeIds.push(entry.id);
         if (entry.role === "anchor") anchorNodeId = entry.id;
         continue;
       }
-      if (entry.action === "update") {
-        // `status: { not: "deleted" }` for the same reason the terminal write below carries it
-        // (#602 r2, judge P2): the projection reads tombstones and plans around them, but a card
-        // the merchant removed must be un-writable at the WRITE too, not only in the plan. The
-        // job lock narrows the window; it does not close it, and a resurrected card is a card
-        // nothing can ever take off the board again.
-        await tx.canvasNode.updateMany({
-          where: { id: entry.id, ownerId, projectId: job.projectId, status: { not: "deleted" } },
-          data: entry.patch,
-        });
-        nodeIds.push(entry.id);
-        if (entry.role === "anchor") anchorNodeId = entry.id;
-        updated += 1;
-        continue;
-      }
-      // "Made from" is a fact of the PAID JOB, never of a neighbouring card: only the anchor of a
-      // job that was conditioned on an earlier output points at that output's card. A sibling
-      // points at its batch anchor, which is layout, not lineage.
-      const sourceNodeId = entry.role === "anchor"
-        ? await sourceCardForJob(tx, ownerId, job)
-        : entry.layoutSourceNodeId ?? anchorNodeId;
       const node = await tx.canvasNode.create({
         data: {
           id: newId(),
@@ -249,7 +270,12 @@ export async function settleCanvasCardsForGenJob(
           generationId: entry.generationId,
           genJobId: job.id,
           status: "done",
-          sourceNodeId,
+          batchIndex: entry.batchIndex,
+          batchSize: plan.batchSize,
+          // Layout, and only layout: which card of this batch this one was placed around. `null`
+          // on the plan means "the anchor of this very plan", whose id is known by now.
+          layoutAnchorNodeId: entry.role === "anchor" ? null : entry.layoutAnchorNodeId ?? anchorNodeId,
+          madeFromNodeId,
           threadId,
         },
         select: { id: true },
@@ -261,6 +287,36 @@ export async function settleCanvasCardsForGenJob(
 
     return { status: "settled" as const, nodeIds, created, updated };
   }, canvasSettlementTransactionOptions(timeouts));
+}
+
+/** The batch identity a card should be carrying, as settled by the one authority. */
+type CanvasBatchIdentity = {
+  batchIndex: number;
+  batchSize: number;
+  layoutAnchorNodeId: string | null;
+  madeFromNodeId: string | null;
+};
+
+/**
+ * Only the identity fields that are actually WRONG, so a settled board stays a no-op.
+ *
+ * A row that already says what the settlement would say produces an empty object, which is what
+ * keeps `settleCanvasCardsForGenJob` idempotent: a redelivery, the reaper's resume and a browser
+ * that placed the same cards all converge without writing anything the second time.
+ */
+function batchIdentityDrift(
+  row: SettlementCard | undefined,
+  identity: CanvasBatchIdentity,
+): Partial<CanvasBatchIdentity> {
+  if (!row) return identity;
+  const drift: Partial<CanvasBatchIdentity> = {};
+  if (row.batchIndex !== identity.batchIndex) drift.batchIndex = identity.batchIndex;
+  if (row.batchSize !== identity.batchSize) drift.batchSize = identity.batchSize;
+  if (row.layoutAnchorNodeId !== identity.layoutAnchorNodeId) {
+    drift.layoutAnchorNodeId = identity.layoutAnchorNodeId;
+  }
+  if (row.madeFromNodeId !== identity.madeFromNodeId) drift.madeFromNodeId = identity.madeFromNodeId;
+  return drift;
 }
 
 export type CanvasSettlementBacklogJob = { id: string; ownerId: string; projectId: string };

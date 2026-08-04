@@ -149,7 +149,10 @@ async function cardsForJob(jobId: string) {
   return prisma.canvasNode.findMany({
     where: { ownerId: orgId, projectId, genJobId: jobId },
     orderBy: [{ y: "asc" }, { x: "asc" }],
-    select: { id: true, x: true, y: true, status: true, generationId: true, sourceNodeId: true, threadId: true, type: true },
+    select: {
+      id: true, x: true, y: true, status: true, generationId: true, threadId: true, type: true,
+      batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
+    },
   });
 }
 
@@ -184,8 +187,51 @@ describe("coming back to a board nobody was watching", () => {
     expect(cards.map((card) => card.status)).toEqual(["done", "done", "done", "done"]);
     expect(cards.map((card) => card.generationId)).toEqual(generationIds);
     expect(cards[0]!.id).toBe(anchorId);
-    // Siblings hang off the batch ANCHOR for layout; none of them claims the anchor made it.
-    expect(cards.slice(1).map((card) => card.sourceNodeId)).toEqual([anchorId, anchorId, anchorId]);
+    // BATCH IDENTITY IS WRITTEN DOWN (#603 T4). Every card of the press records where it sits and
+    // how many the press made, so nothing downstream has to sort by coordinate or count rows.
+    expect(cards.map((card) => card.batchIndex)).toEqual([0, 1, 2, 3]);
+    expect(cards.map((card) => card.batchSize)).toEqual([4, 4, 4, 4]);
+    // Siblings hang off the batch ANCHOR — for layout, in a column that means only that…
+    expect(cards.slice(1).map((card) => card.layoutAnchorNodeId)).toEqual([anchorId, anchorId, anchorId]);
+    // …and NONE of them claims the anchor made it. One press, four siblings, no parents.
+    expect(cards.every((card) => card.madeFromNodeId === null)).toBe(true);
+  });
+
+  it("keeps the batch size the merchant BOUGHT after they delete some of it", async () => {
+    const { jobId, generationIds } = await seedJob({ status: "DONE", outputs: 4 });
+    const anchorId = await seedCard({ jobId, x: 100, y: 50, status: "pending" });
+    await settleCanvasCardsForGenJob(jobId, orgId);
+
+    // The merchant removes two of the four. Deleting is a durable instruction, so the rows stay
+    // as tombstones — and the survivors keep the batch they were born into.
+    const placed = await cardsForJob(jobId);
+    for (const card of placed.filter((c) => c.generationId === generationIds[1] || c.generationId === generationIds[3])) {
+      await prisma.canvasNode.updateMany({ where: { id: card.id, ownerId: orgId }, data: { status: "deleted" } });
+    }
+    await settleCanvasCardsForGenJob(jobId, orgId);
+
+    const survivors = (await cardsForJob(jobId)).filter((card) => card.status !== "deleted");
+    expect(survivors.map((card) => card.batchIndex)).toEqual([0, 2]);
+    expect(survivors.map((card) => card.batchSize)).toEqual([4, 4]);
+    expect(survivors[0]!.id).toBe(anchorId);
+  });
+
+  it("brings a card settled before these facts existed up to date, then writes nothing more", async () => {
+    // A row from before the migration: it carries its output but knows nothing about its batch.
+    const { jobId, generationIds } = await seedJob({ status: "DONE", outputs: 2 });
+    const anchorId = await seedCard({ jobId, x: 100, y: 50, status: "done", generationId: generationIds[0] });
+    const siblingId = await seedCard({ jobId, x: 440, y: 50, status: "done", generationId: generationIds[1] });
+
+    const first = await settleCanvasCardsForGenJob(jobId, orgId);
+    expect(first.updated).toBe(2);
+    const cards = await cardsForJob(jobId);
+    expect(cards.map((card) => [card.batchIndex, card.batchSize])).toEqual([[0, 2], [1, 2]]);
+    expect(cards.map((card) => card.layoutAnchorNodeId)).toEqual([null, anchorId]);
+    expect(siblingId).toBe(cards[1]!.id);
+
+    // Idempotent by shape: a board that already says the right thing is written to zero times.
+    const second = await settleCanvasCardsForGenJob(jobId, orgId);
+    expect(second).toMatchObject({ status: "settled", created: 0, updated: 0 });
   });
 
   it("creates the cards too when no browser ever opened the board — clear of existing work, attributed, and linked to what they were made from", async () => {
@@ -203,8 +249,10 @@ describe("coming back to a board nobody was watching", () => {
     expect(cards.every((card) => card.status === "done")).toBe(true);
     // Attributed to the chat that asked for it…
     expect(cards.every((card) => card.threadId === threadId)).toBe(true);
-    // …linked to the card it was made from (a fact of the paid job, not of a neighbour)…
-    expect(cards[0]!.sourceNodeId).toBe(sourceCardId);
+    // …linked to the card it was made from — a fact of the paid JOB, so EVERY card of the batch
+    // carries it, while the sibling's arrangement stays in its own column…
+    expect(cards.every((card) => card.madeFromNodeId === sourceCardId)).toBe(true);
+    expect(cards.map((card) => card.layoutAnchorNodeId)).toEqual([null, cards[0]!.id]);
     // …and clear of the card that was already on the board.
     expect(cards.map((card) => [card.x, card.y])).not.toContainEqual([80, 80]);
   });

@@ -104,11 +104,13 @@ export type ImmersiveCanvasNode = {
   prompt: string;
   generationId?: string | null;
   genJobId?: string | null;
-  sourceNodeId?: string | null;
+  /** The card this one's paid job was made FROM. Never a batch anchor (#603 T4). */
+  madeFromNodeId?: string | null;
   threadId?: string | null;
   origin?: "otto" | null;
-  variantIndex?: number;
-  variantCount?: number;
+  /** Batch identity exactly as the server settled it. Read, never derived. */
+  batchIndex?: number | null;
+  batchSize?: number | null;
 };
 
 export type ImmersiveGenerateImageInput = {
@@ -260,7 +262,9 @@ function runtimeNode(row: {
   prompt: string | null;
   generationId: string | null;
   genJobId: string | null;
-  sourceNodeId: string | null;
+  madeFromNodeId: string | null;
+  batchIndex: number | null;
+  batchSize: number | null;
   threadId: string | null;
   origin?: "otto" | null;
 }): ImmersiveCanvasNode | null {
@@ -277,7 +281,14 @@ function runtimeNode(row: {
     prompt: row.prompt ?? "",
     generationId: row.generationId,
     genJobId: row.genJobId,
-    sourceNodeId: row.sourceNodeId,
+    madeFromNodeId: row.madeFromNodeId,
+    // WHICH ONE OF THE BATCH, AND HOW MANY — read off the row, full stop (#603 T4 · #599 D5).
+    // What stood here sorted the batch's cards by y coordinate and then by x, and handed out
+    // positions in that order. It looked right on the day it shipped, because the layout happens
+    // to place a batch in generation order — and then the merchant dragged B above A and the two
+    // labels swapped under them. Coordinates place cards; they never say which card this is.
+    batchIndex: row.batchIndex,
+    batchSize: row.batchSize,
     threadId: row.threadId,
     origin: row.origin ?? null,
   };
@@ -285,31 +296,6 @@ function runtimeNode(row: {
 
 function nonEmptyActionId(actionId: string): boolean {
   return actionId.trim().length > 0;
-}
-
-function annotateVariants(nodes: ImmersiveCanvasNode[]): ImmersiveCanvasNode[] {
-  const groups = new Map<string, ImmersiveCanvasNode[]>();
-  for (const node of nodes) {
-    if (node.type !== "image" || !node.genJobId) continue;
-    const group = groups.get(node.genJobId) ?? [];
-    group.push(node);
-    groups.set(node.genJobId, group);
-  }
-  const variants = new Map<string, { variantIndex: number; variantCount: number }>();
-  for (const group of groups.values()) {
-    if (group.length < 2) continue;
-    group
-      .sort(
-        (left, right) =>
-          left.pos.y - right.pos.y ||
-          left.pos.x - right.pos.x ||
-          left.id.localeCompare(right.id),
-      )
-      .forEach((node, variantIndex) => {
-        variants.set(node.id, { variantIndex, variantCount: group.length });
-      });
-  }
-  return nodes.map((node) => ({ ...node, ...variants.get(node.id) }));
 }
 
 function sameRuntimeNode(
@@ -328,11 +314,11 @@ function sameRuntimeNode(
     left.prompt === right.prompt &&
     left.generationId === right.generationId &&
     left.genJobId === right.genJobId &&
-    left.sourceNodeId === right.sourceNodeId &&
+    left.madeFromNodeId === right.madeFromNodeId &&
     left.threadId === right.threadId &&
     left.origin === right.origin &&
-    left.variantIndex === right.variantIndex &&
-    left.variantCount === right.variantCount
+    left.batchIndex === right.batchIndex &&
+    left.batchSize === right.batchSize
   );
 }
 
@@ -464,12 +450,10 @@ export function useImmersiveCanvasRuntime({
           reportError(rows.error);
           return;
         }
-        const nodes = annotateVariants(
-          rows.flatMap((row) => {
-            const node = runtimeNode(row);
-            return node ? [node] : [];
-          }),
-        );
+        const nodes = rows.flatMap((row) => {
+          const node = runtimeNode(row);
+          return node ? [node] : [];
+        });
         const next = new Map(nodes.map((node) => [node.id, node]));
         const wasLoaded =
           loadedProjectRef.current === projectId && hasLoadedRef.current;
