@@ -7,7 +7,7 @@ import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId } from "./otto-canvas-bridge-core";
 import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
 
 export type CanvasNodeDTO = {
@@ -63,29 +63,16 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   ];
   const thumbs = await getGenerationThumbs(gate.ownerId, genIds);
 
-  const repairs: Array<{
-    id: string;
-    status: string;
-    generationId: string | null;
-    data: NonNullable<ReturnType<typeof settledCanvasNodeRepairPatch>>;
-  }> = [];
+  // PURELY A READ from here down (#613 T2d). What each card SAYS is resolved for display — a
+  // stored row that has not caught up still shows the merchant the truth — but nothing observed
+  // while rendering is written back. A row is the settlement's to write: the job's completion path
+  // writes it, and the backfill sweep writes it when that could not.
   const resolved = visibleNodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
     const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     const thumb = generationId ? thumbs[generationId] : undefined;
     const url = thumb?.src ?? null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
-    // A delivered job's rows belong to the settlement above — it has just run, with the whole
-    // job in view. Repairing one of them here from a picture's availability would re-open the
-    // second opinion this file was fixing: the two would disagree about which output the primary
-    // card carries the moment one output's media is slow to resolve. Rows of a job that ended
-    // badly are now written by that same settlement too (#612 T2c); what is left here is the
-    // backstop for a board whose terminal settlement has not run, and it goes with the rest of
-    // the read-time repair in T2d.
-    const patch = job?.status === "DONE"
-      ? null
-      : settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
-    if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
     return {
       ...n,
       generationId,
@@ -96,14 +83,6 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
       origin: canvasNodeOrigin(job?.idempotencyKey),
     };
   });
-  if (repairs.length) {
-    await Promise.all(repairs.map(async (r) => {
-      await prisma.canvasNode.updateMany({
-        where: { id: r.id, ownerId: gate.ownerId, projectId, status: r.status, generationId: r.generationId },
-        data: r.data,
-      });
-    }));
-  }
 
   return withCanvasLineage(gate.ownerId, projectId, resolved);
 }
