@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, type GenCardMsg } from "../otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard, firstDisplayableGenerationId, planPendingJobNodes, type GenCardMsg } from "../otto-canvas-bridge-core";
 
 // The GEN_RESULT planner that used to live here is gone (#601 r2 judge P2②): a delivered job's
 // cards are the shared settlement's to plan, so the chat bridge has no second opinion left to test.
@@ -118,5 +118,74 @@ describe("firstDisplayableGenerationId", () => {
     expect(firstDisplayableGenerationId(["g-missing", "g-good"], { "g-good": { src: "/files/u/good.jpeg" } })).toBe("g-good");
     expect(firstDisplayableGenerationId(["g-missing", "g-later"], {})).toBe("g-missing");
     expect(firstDisplayableGenerationId([], {})).toBeNull();
+  });
+});
+
+/**
+ * #613 r4 (cross-family judge P1) — the one rule both board readers use for "which output does
+ * this card show?", and in particular what an UNBOUND card is allowed to borrow.
+ */
+describe("displayGenerationIdForCard", () => {
+  const thumbs = { "gen-0": { src: "/files/u/0.jpeg" }, "gen-1": { src: "/files/u/1.jpeg" } };
+  const outputs = ["gen-0", "gen-1"];
+
+  function show(
+    rowGenerationId: string | null,
+    board: { genJobId: string | null; generationId: string | null }[],
+    genJobId: string | null = "job-1",
+  ) {
+    return displayGenerationIdForCard({
+      rowGenerationId,
+      genJobId,
+      jobGenerationIds: outputs,
+      census: censusCanvasJobCards(board),
+      thumbs,
+    });
+  }
+
+  it("shows the output the row actually carries, whatever else is on the board", () => {
+    expect(show("gen-1", [
+      { genJobId: "job-1", generationId: "gen-0" },
+      { genJobId: "job-1", generationId: "gen-1" },
+    ])).toBe("gen-1");
+  });
+
+  it("lends the job's sole unbound card its first free output — what the fallback is FOR", () => {
+    // A promptbar card, delivered but not yet settled: without this the merchant sees a blank
+    // card and the client's Make video / Detail guard no-ops on it.
+    expect(show(null, [{ genJobId: "job-1", generationId: null }])).toBe("gen-0");
+  });
+
+  it("never lends an output another live card of the same job is already showing", () => {
+    expect(show(null, [
+      { genJobId: "job-1", generationId: "gen-0" },
+      { genJobId: "job-1", generationId: null },
+    ])).toBe("gen-1");
+    // …and when every output is spoken for, the extra card shows nothing at all.
+    expect(show(null, [
+      { genJobId: "job-1", generationId: "gen-0" },
+      { genJobId: "job-1", generationId: "gen-1" },
+      { genJobId: "job-1", generationId: null },
+    ])).toBeNull();
+  });
+
+  it("lends nothing when a job has two unbound cards — neither one is knowably the anchor", () => {
+    const twoAnchors = [
+      { genJobId: "job-1", generationId: null },
+      { genJobId: "job-1", generationId: null },
+    ];
+    expect(show(null, twoAnchors)).toBeNull();
+  });
+
+  it("counts each job's cards separately, and ignores cards that belong to no job", () => {
+    const board = [
+      { genJobId: "job-1", generationId: null },
+      { genJobId: "job-2", generationId: null },
+      { genJobId: null, generationId: "hand-placed" },
+    ];
+    expect(show(null, board, "job-1")).toBe("gen-0");
+    expect(show(null, board, "job-2")).toBe("gen-0");
+    // A card with no job has nothing to borrow from.
+    expect(show(null, board, null)).toBeNull();
   });
 });

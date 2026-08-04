@@ -188,6 +188,99 @@ async function seedChatCardJob(input: {
   return { jobId, generationIds, threadId, cardId };
 }
 
+/**
+ * #613 r4 (cross-family judge P1) — WHAT AN UNBOUND CARD IS ALLOWED TO SHOW.
+ *
+ * The settlement refuses to bind an extra anchor to an output another card already carries (r3).
+ * The DISPLAY had no such rule: both readers replaced an unbound card's null generationId with the
+ * job's first output that has a thumbnail, so the extra anchor rendered as `done` holding the paid
+ * picture anyway — the duplication the projection had just refused, put back on the screen.
+ *
+ * The shape is seeded directly. It can no longer be created (r3 closed the double insert), but the
+ * display rule has to be honest about a row that exists, whatever put it there.
+ */
+describe("a job that ended up with an extra unbound card", () => {
+  /** The board r3's projection leaves behind: one real anchor bound, the extra still unbound. */
+  async function seedDuplicateAnchorBoard(): Promise<{ jobId: string; outputs: string[]; extraId: string }> {
+    projectId = await freshProject();
+    const { jobId, generationIds } = await seedDoneJob(2);
+    await seedCard({ jobId, x: 0, y: 0, status: "done", generationId: generationIds[0] });
+    await seedCard({ jobId, x: 340, y: 0, status: "done", generationId: generationIds[1] });
+    const extraId = await seedCard({ jobId, x: 680, y: 0, status: "pending", generationId: null });
+    return { jobId, outputs: generationIds, extraId };
+  }
+
+  /** What the merchant sees, per card: which output it shows and whether it has a picture. */
+  function seen(
+    cards: unknown,
+    outputs: readonly string[],
+  ): Array<{ status: string; carries: string; hasPicture: boolean }> {
+    expect(Array.isArray(cards)).toBe(true);
+    return (cards as Array<{ status: string; generationId: string | null; url?: string | null }>)
+      .map((card) => ({
+        status: card.status,
+        carries: card.generationId ? `output-${outputs.indexOf(card.generationId)}` : "nothing",
+        hasPicture: typeof card.url === "string" && card.url.length > 0,
+      }))
+      .sort((a, b) => a.carries.localeCompare(b.carries) || a.status.localeCompare(b.status));
+  }
+
+  // Sorted by `carries`, so "nothing" leads. The extra shows no paid picture at all: `missing` is
+  // the word the board already uses for a delivered job's card that carries nothing, and it is the
+  // truth about this row. Each paid output appears exactly once.
+  const honestBoard = [
+    { status: "missing", carries: "nothing", hasPicture: false },
+    { status: "done", carries: "output-0", hasPicture: true },
+    { status: "done", carries: "output-1", hasPicture: true },
+  ];
+
+  it("does not hand the extra card a picture another card already shows — canvas reader", async () => {
+    const board = await seedDuplicateAnchorBoard();
+
+    expect(seen(await listCanvasNodes(projectId), board.outputs)).toEqual(honestBoard);
+  });
+
+  it("does not hand the extra card a picture another card already shows — chat reader", async () => {
+    const board = await seedDuplicateAnchorBoard();
+
+    expect(seen(await syncOttoCanvasNodes(projectId), board.outputs)).toEqual(honestBoard);
+  });
+
+  it("shows neither of two unbound cards a paid picture, in either reader", async () => {
+    // Before any settlement pass: nothing on the board says which of the two is the real anchor,
+    // so neither may claim an output. One of them showing the picture would be a coin toss.
+    projectId = await freshProject();
+    const { jobId, generationIds } = await seedDoneJob(2);
+    await seedCard({ jobId, x: 0, y: 0, status: "pending", generationId: null });
+    await seedCard({ jobId, x: 340, y: 0, status: "pending", generationId: null });
+
+    const nothingShown = [
+      { status: "missing", carries: "nothing", hasPicture: false },
+      { status: "missing", carries: "nothing", hasPicture: false },
+    ];
+    expect(seen(await listCanvasNodes(projectId), generationIds)).toEqual(nothingShown);
+    expect(seen(await syncOttoCanvasNodes(projectId), generationIds)).toEqual(nothingShown);
+  });
+
+  /**
+   * THE GUARDRAIL FOR WHAT THE FALLBACK IS FOR.
+   *
+   * A card pressed from the canvas promptbar persists only its job id, so between delivery and the
+   * settlement binding it there is a card whose row carries no output. Without the fallback the
+   * merchant sees a blank card, and "Make video" / "Detail" no-op on it because the client needs a
+   * generationId. That is the whole purpose — the job's SOLE card, before its settlement lands.
+   */
+  it("still shows a delivered job's only card its picture before the settlement lands", async () => {
+    projectId = await freshProject();
+    const { jobId, generationIds } = await seedDoneJob(2);
+    await seedCard({ jobId, x: 0, y: 0, status: "pending", generationId: null });
+
+    const shown = [{ status: "done", carries: "output-0", hasPicture: true }];
+    expect(seen(await listCanvasNodes(projectId), generationIds)).toEqual(shown);
+    expect(seen(await syncOttoCanvasNodes(projectId), generationIds)).toEqual(shown);
+  });
+});
+
 describe("coming back to a board nobody was watching", () => {
   it("shows every output of the batch, with its picture", async () => {
     const { jobId, generationIds } = await seedDoneJob(4);

@@ -7,7 +7,7 @@ import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
 import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
 
 export type CanvasNodeDTO = {
@@ -78,9 +78,18 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   // stored row that has not caught up still shows the merchant the truth — but nothing observed
   // while rendering is written back. A row is the settlement's to write: the job's completion path
   // writes it, and the backfill sweep writes it when that could not.
+  // One rule, shared with the chat reader: a card that carries no output may only borrow one no
+  // other live card of its job is showing, and only when it is that job's sole unbound card.
+  const census = censusCanvasJobCards(visibleNodes);
   const resolved = visibleNodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
-    const generationId = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
+    const generationId = displayGenerationIdForCard({
+      rowGenerationId: n.generationId,
+      genJobId: n.genJobId,
+      jobGenerationIds: job?.generationIds,
+      census,
+      thumbs,
+    });
     const thumb = generationId ? thumbs[generationId] : undefined;
     const url = thumb?.src ?? null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);

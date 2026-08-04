@@ -11,7 +11,7 @@ import { withCanvasLineage } from "./canvas-lineage-data";
 import { canvasJobPlacementLockKey } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard, planPendingJobNodes } from "./otto-canvas-bridge-core";
 
 /** A canvas node plus its resolved media URL (display-only). */
 export type CanvasNodeWithUrl = CanvasNodeDTO & { url: string | null };
@@ -252,14 +252,23 @@ export async function syncOttoCanvasNodes(
   // PURELY A READ from here down (#613 T2d) — the same rule the canvas reader now follows. What a
   // card SAYS is resolved for display, so a row that has not caught up still shows the merchant
   // the truth; nothing seen while rendering is written back to the row.
+  // The SAME rule the canvas reader uses — one place decides what an unbound card may show, so
+  // the two boards cannot disagree about it (#613 r4).
+  const census = censusCanvasJobCards(nodes);
   const resolved = nodes.map((n) => {
     const job = n.genJobId ? jobById.get(n.genJobId) : null;
-    const gid = n.generationId ?? firstDisplayableGenerationId(job?.generationIds, thumbs);
     // Return the RESOLVED generationId, not the raw row's. A promptbar-created node
     // persists only genJobId (generationId null), so after a reload the client had no
     // generationId for it — Make video / Detail silently no-oped on that primary card
     // (their guard needs nodeDataRef.generationId). Display-only metadata resolution;
     // the id is the job's OWN generation (owner-scoped above), no spend logic.
+    const gid = displayGenerationIdForCard({
+      rowGenerationId: n.generationId,
+      genJobId: n.genJobId,
+      jobGenerationIds: job?.generationIds,
+      census,
+      thumbs,
+    });
     const thumb = gid ? thumbs[gid] : undefined;
     const url = thumb?.src ?? null;
     const status = gid && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
