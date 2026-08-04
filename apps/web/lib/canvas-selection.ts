@@ -111,9 +111,18 @@ export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
   const merged = incoming.map((node) => {
     const old = previousById.get(node.id);
     if (!old) return node;
-    const serverBehind = node.data.status === "pending" && !node.data.url;
-    const knownHere = old.data.status === "pending" || old.data.status === "done" || !!old.data.url;
-    if (serverBehind && knownHere) return old;
+    // A read that is still catching up may never pull a card BACKWARDS (#612 r3, judge P1②③).
+    // The rule used to be spelled as a list of states this tab "already knew", and the list left
+    // out every state a card reaches when its own poll ENDS — it gave up (timeout), or learnt an
+    // ending the row has not been settled to yet. Those cards were replaced by the still-pending
+    // server row, so the spinner came back with nothing left running to take it off again: the
+    // poll was over, and the resolve that would have recorded the ending had not landed.
+    //
+    // So the rule is now the thing it was always trying to say: while the server row is still
+    // `pending` with no media it has nothing to teach this card, and the moment it holds a settled
+    // answer — an ending, or the picture — that answer wins, whatever this tab had guessed.
+    const serverStillCatchingUp = node.data.status === "pending" && !node.data.url;
+    if (serverStillCatchingUp) return old;
     return old.selected === node.selected ? node : { ...node, selected: old.selected };
   });
   const mergedIds = new Set(merged.map((node) => node.id));

@@ -313,46 +313,76 @@ export function isInFlightPaidGen(node: { type: string; status?: string; url?: s
   return node.status === "pending" || node.status === "timeout";
 }
 
-/** What this tab may draw on a card after telling the server what it saw (#612 r2). */
-export type CanvasResolveOutcome = {
-  /** The status to paint, or null when only the board's own read can supply the truth. */
-  paint: string | null;
-  /** The server refused this report: the card had already come to rest. Re-read the board. */
-  stale: boolean;
-};
+/**
+ * What this tab may draw on a card after telling the server what it saw (#612 r3).
+ *
+ * Three states, one positive licence. `accepted` is the ONLY outcome that lets this tab draw its
+ * own report as truth. `refused` means the server has a settled answer and hands it over.
+ * `unknown` means nobody knows: paint nothing and let the board's read bring the answer.
+ */
+export type CanvasResolveOutcome =
+  | { kind: "accepted"; paint: string }
+  | { kind: "refused"; paint: string | null }
+  | { kind: "unknown" };
+
+/** How many times a lost answer is asked for again before the board read takes over. */
+const CANVAS_RESOLVE_ATTEMPTS = 3;
+/** Grows per attempt. Short: the board's own re-read is running behind this the whole time. */
+const CANVAS_RESOLVE_RETRY_MS = 400;
 
 /**
- * Report a card's state to the server and answer with what this tab may PAINT.
+ * Report a card's state to the server, and answer with what this tab may PAINT.
  *
- * The tab used to fire the report and install its own status immediately, without waiting to hear
- * whether the server took it. That is how "Still working… check back in a moment" could appear on
- * a card the server had already settled — delivered, failed or cancelled — which is the same lie
- * the database barrier removes, just drawn locally instead (#612 r2, judge P1②). So a refused
- * report is never painted: the card keeps what it has, the server's own ending is drawn when it
- * is one this tab can draw without media it does not have, and the board is re-read either way.
+ * THE RULE, and it is one rule rather than a list of cases (#612 r3, judge P1② round two): a tab
+ * may draw its own report as truth only when the server SAYS it took it. Two rounds of review
+ * found this one branch at a time — first a refusal being painted anyway, then an `{error}` answer
+ * and a lost response being read as consent — which is what a wrong shape looks like from the
+ * outside. So there is now a single positive licence and everything else is `unknown`.
  *
- * A transport failure is NOT the server saying no. Refusing to paint on a network blip would
- * leave the card spinning for ever, which is the defect this whole slice exists to remove — so
- * that case keeps the old local behaviour.
+ * What "unknown" costs a merchant is nothing: the card keeps exactly what they are already looking
+ * at, and the answer arrives from the server. The convergence has two legs and neither is this
+ * tab's guess — the report is asked again a bounded number of times (a lost RESPONSE may mean the
+ * write landed, or that a settlement overtook it; only the server can say which), and the board's
+ * own re-read loop stays running for as long as the card is unresolved, so the settlement's answer
+ * lands on the board whenever it happens. That loop is keyed on `isInFlightPaidGen`, which is why
+ * an unpainted card keeps it alive.
+ *
+ * An `{error}` answer is NOT retried: those are deterministic refusals (the card is gone, the
+ * generation is not this job's), and asking again just spends another round trip to hear it twice.
  */
 export async function applyCanvasResolve(
   projectId: string,
   nodeId: string,
   input: { status: string; generationId?: string },
+  options: { attempts?: number; wait?: (ms: number) => Promise<void> } = {},
 ): Promise<CanvasResolveOutcome> {
-  let answer: Awaited<ReturnType<typeof resolveCanvasNode>>;
-  try {
-    answer = await resolveCanvasNode(projectId, nodeId, input);
-  } catch (e) {
-    console.warn("[canvas] card resolve failed; showing what this tab saw:", e instanceof Error ? e.message : e);
-    return { paint: input.status, stale: false };
-  }
-  if ("applied" in answer && answer.applied === false) {
-    // Only an ending this tab can draw on its own. "done" needs a picture the poll does not have,
+  const attempts = Math.max(1, options.attempts ?? CANVAS_RESOLVE_ATTEMPTS);
+  const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let answer: Awaited<ReturnType<typeof resolveCanvasNode>>;
+    try {
+      answer = await resolveCanvasNode(projectId, nodeId, input);
+    } catch (e) {
+      console.warn(
+        `[canvas] card resolve did not come back (attempt ${attempt}/${attempts}):`,
+        e instanceof Error ? e.message : e,
+      );
+      if (attempt < attempts) {
+        await wait(CANVAS_RESOLVE_RETRY_MS * attempt);
+        continue;
+      }
+      return { kind: "unknown" };
+    }
+    if ("error" in answer) {
+      console.warn(`[canvas] card resolve refused: ${answer.error}`);
+      return { kind: "unknown" };
+    }
+    if (answer.applied) return { kind: "accepted", paint: input.status };
+    // Only an ending this tab can draw on its own. "done" needs a picture this poll does not have,
     // and "deleted" is not a card any more — the board read settles both.
-    return { paint: isTerminalCardStatus(answer.status) ? answer.status : null, stale: true };
+    return { kind: "refused", paint: isTerminalCardStatus(answer.status) ? answer.status : null };
   }
-  return { paint: input.status, stale: false };
+  return { kind: "unknown" };
 }
 
 export async function poll(
@@ -569,24 +599,31 @@ export function useCanvasGen(
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       if (status !== "done" || urls.length === 0) {
-        const refused = await applyCanvasResolve(projectId, created.id, { status });
-        if (refused.paint) onResolve(created.id, null, refused.paint);
-        if (refused.stale) onBatchSettled?.();
+        const outcome = await applyCanvasResolve(projectId, created.id, { status });
+        if (outcome.kind === "accepted") onResolve(created.id, null, outcome.paint);
+        else {
+          if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+          onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
+        }
         return;
       }
       // primary card → first variant
       const primaryGenerationId = generationIds[0];
       if (!primaryGenerationId) {
-        const refused = await applyCanvasResolve(projectId, created.id, { status: "missing" });
-        if (refused.paint) onResolve(created.id, null, refused.paint);
-        if (refused.stale) onBatchSettled?.();
+        const outcome = await applyCanvasResolve(projectId, created.id, { status: "missing" });
+        if (outcome.kind === "accepted") onResolve(created.id, null, outcome.paint);
+        else {
+          if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+          onBatchSettled?.();
+        }
         return;
       }
       const anchor = await applyCanvasResolve(projectId, created.id, { status: "done", generationId: primaryGenerationId });
-      // A refused anchor keeps whatever the server settled it to; the siblings below still belong
-      // on the board, and the batch's own board read at the end of this loop shows the truth.
-      if (anchor.stale) { if (anchor.paint) onResolve(created.id, null, anchor.paint); }
-      else onResolve(created.id, urls[0], "done", primaryGenerationId);
+      // Only an accepted report may put this tab's picture on the card. Anything else keeps what
+      // the merchant is looking at; the siblings below still belong on the board, and the batch's
+      // own board read at the end of this loop is what brings the server's answer.
+      if (anchor.kind === "accepted") onResolve(created.id, urls[0], "done", primaryGenerationId);
+      else if (anchor.kind === "refused" && anchor.paint) onResolve(created.id, null, anchor.paint);
       // one sibling card per remaining variant, laid out in a 2×2 cluster. Each
       // is a plain canvas-node placement of an already-generated (already-charged)
       // Generation — createCanvasNode is not a spend path.
@@ -737,9 +774,9 @@ export function useCanvasGen(
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
       const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
-      if (outcome.stale) {
-        if (outcome.paint) onResolve(created.id, null, outcome.paint);
-        onBatchSettled?.();
+      if (outcome.kind !== "accepted") {
+        if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+        onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
         return;
       }
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
@@ -838,9 +875,9 @@ export function useCanvasGen(
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
       const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
-      if (outcome.stale) {
-        if (outcome.paint) onResolve(created.id, null, outcome.paint);
-        onBatchSettled?.();
+      if (outcome.kind !== "accepted") {
+        if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+        onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
         return;
       }
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);

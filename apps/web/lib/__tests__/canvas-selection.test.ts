@@ -153,4 +153,36 @@ describe("mergeReloadedCanvasNodes", () => {
 
     expect(merged.map((node) => node.id)).toEqual(["a", "local-only"]);
   });
+
+  // #612 r3 (cross-family review P1②③): the same "an older read must not drag a card backwards"
+  // rule, for the states the old `knownHere` list left out. A card whose own poll has ENDED — it
+  // gave up (timeout), or learnt an ending the server row has not been settled to yet — was
+  // replaced by the still-pending server row, so the spinner came back with nothing left running
+  // to take it off again.
+  it.each([
+    ["timeout"],
+    ["failed"],
+    ["cancelled"],
+    ["missing"],
+  ])("does not put the spinner back on a card this tab has already left %s", (status) => {
+    const here = { ...server("a", { status, url: null }), selected: true };
+
+    const merged = mergeReloadedCanvasNodes([here], [server("a", { status: "pending", url: null })]);
+
+    expect(merged[0]).toBe(here);
+    expect(merged[0]!.data.status).not.toBe("pending");
+  });
+
+  it("takes the server's answer the moment the server HAS one", () => {
+    // The other half of the same rule: a reread only loses while it is still catching up. As soon
+    // as the row is settled truth it wins, whatever this tab had guessed.
+    const here = { ...server("a", { status: "timeout", url: null }), selected: true };
+
+    const settled = mergeReloadedCanvasNodes([here], [server("a", { status: "failed", url: null })]);
+    const delivered = mergeReloadedCanvasNodes([here], [server("a", { url: "https://cdn.example/new.png" })]);
+
+    expect(settled[0]!.data.status).toBe("failed");
+    expect(delivered[0]!.data).toEqual({ status: "done", url: "https://cdn.example/new.png" });
+    expect(delivered[0]!.selected).toBe(true);
+  });
 });

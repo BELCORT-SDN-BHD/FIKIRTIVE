@@ -38,7 +38,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 const { ImageNode } = await import("@/components/canvas/nodes/ImageNode");
 const { VideoNode } = await import("@/components/canvas/nodes/VideoNode");
 const { TERMINAL_CARD_STATUSES } = await import("@/lib/canvas-card-status");
-const { applyCanvasResolve } = await import("@/components/canvas/useCanvasGen");
+const { applyCanvasResolve, isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -109,50 +109,97 @@ describe("what a card says once it has stopped being made", () => {
 });
 
 /**
- * #612 r2 (cross-family review P1②) — the browser must not PAINT what the server refused.
+ * #612 r3 — ONE licence to paint: the server said it took the report.
  *
- * Keeping the stale report out of the database is only half of it: the tab used to install its
- * own "timeout" on the card the moment its patience ran out, without waiting to hear whether the
- * server took it. So a card the server had already settled — delivered, failed or cancelled —
- * could still show "Still working… check back in a moment" locally. The browser now paints the
- * server's answer, never its own guess about a card that has come to rest.
+ * Two review rounds went at this a branch at a time (refusal in r2, then {error} and lost
+ * responses), which is the signature of a wrong shape rather than missing cases. So the rule is
+ * now a three-state machine with a single positive licence: `accepted` — and only `accepted` —
+ * lets this tab draw its own report as truth. `refused` means the server has a settled answer and
+ * hands it over. Everything else is `unknown`: an {error} the server returned, a response that
+ * never came back, a lost connection. Unknown paints NOTHING; the card keeps what a merchant is
+ * already looking at, and the answer arrives from the server through the board read that stays
+ * running while the card is unresolved.
  */
-describe("what the browser paints after the server refuses a stale report", () => {
+const fast = { attempts: 3, wait: async () => {} };
+
+describe("the one licence to paint a local report as truth", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("paints the server's ending instead of the stale transient, and asks for a board read", async () => {
+  it("paints the local status only when the server says it took it", async () => {
+    m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: true });
+
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast))
+      .toEqual({ kind: "accepted", paint: "timeout" });
+  });
+
+  it("paints the server's own ending when the report is refused", async () => {
     m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: false, status: "failed" });
 
-    const outcome = await applyCanvasResolve("p1", "card-1", { status: "timeout" });
+    const outcome = await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast);
 
-    expect(outcome).toEqual({ paint: "failed", stale: true });
+    expect(outcome).toEqual({ kind: "refused", paint: "failed" });
     // …and that is what a merchant then reads on the card.
-    const text = await renderCard(ImageNode, outcome.paint!);
+    const text = await renderCard(ImageNode, "failed");
     expect(text).toContain("That didn't finish");
     expect(text).not.toContain("Still working…");
   });
 
   it("paints nothing over a settled card whose picture this poll does not have", async () => {
-    // The DB already refuses to downgrade a delivered card; this is the LOCAL half of that.
     m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: false, status: "done" });
 
-    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }))
-      .toEqual({ paint: null, stale: true });
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast))
+      .toEqual({ kind: "refused", paint: null });
   });
 
-  it("still paints a legitimate transient the server accepted", async () => {
-    m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: true });
+  it("treats an {error} answer as unknown, never as acceptance", async () => {
+    // A card another tab deleted, a generation that moved: the server did NOT take this report
+    // and never told us what the card says. Painting the report here was the r2 hole (judge P1②①).
+    m.resolveCanvasNode.mockResolvedValue({ error: "Node not found." });
 
-    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }))
-      .toEqual({ paint: "timeout", stale: false });
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast))
+      .toEqual({ kind: "unknown" });
+    // Deterministic refusals are not worth asking again.
+    expect(m.resolveCanvasNode).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps painting locally when the server could not be reached at all", async () => {
-    // A transport failure is not the server saying no. Refusing to paint here would leave the
-    // card spinning on a blip, which is the eternal spinner this whole slice removes.
+  it("asks again when the answer is lost, and ends on the truth that landed meanwhile", async () => {
+    // The write may well have been applied — or a settlement may have overtaken it. Either way the
+    // tab does not know, so it asks again rather than drawing its own guess (judge P1②②).
+    m.resolveCanvasNode
+      .mockRejectedValueOnce(new Error("response lost"))
+      .mockResolvedValueOnce({ ok: true, applied: false, status: "failed" });
+
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast))
+      .toEqual({ kind: "refused", paint: "failed" });
+    expect(m.resolveCanvasNode).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends unknown — never on its own guess — when every attempt is lost", async () => {
     m.resolveCanvasNode.mockRejectedValue(new Error("network down"));
 
-    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }))
-      .toEqual({ paint: "timeout", stale: false });
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }, fast))
+      .toEqual({ kind: "unknown" });
+    expect(m.resolveCanvasNode).toHaveBeenCalledTimes(3);
+  });
+});
+
+/**
+ * The other half of `unknown`: nothing is painted, so SOMETHING has to keep looking.
+ *
+ * A card left unresolved by an unknown outcome is exactly the shape the board's own re-read loop
+ * runs for (FlowCanvas keys that 5-second loop on `isInFlightPaidGen`). This pins the join, so the
+ * "convergence keeps running" claim is a test rather than a sentence in a comment.
+ */
+describe("a card an unknown answer left behind keeps the board looking", () => {
+  it.each([
+    ["pending"],
+    ["timeout"],
+  ])("keeps the board's re-read loop alive for a %s card", (status) => {
+    expect(isInFlightPaidGen({ type: "image", status, url: null })).toBe(true);
+  });
+
+  it("lets the loop stop once the server has actually answered", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "failed", url: null })).toBe(false);
+    expect(isInFlightPaidGen({ type: "image", status: "done", url: "https://cdn.example/a.png" })).toBe(false);
   });
 });
