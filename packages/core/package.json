@@ -28,6 +28,10 @@
       "types": "./dist/model-config.d.ts",
       "default": "./dist/model-config.js"
     },
+    "./org-roles": {
+      "types": "./dist/org-roles.d.ts",
+      "default": "./dist/org-roles.js"
+    },
     "./refgen": {
       "types": "./dist/refgen.d.ts",
       "default": "./dist/refgen.js"

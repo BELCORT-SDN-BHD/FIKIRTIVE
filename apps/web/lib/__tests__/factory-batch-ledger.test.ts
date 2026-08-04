@@ -64,11 +64,11 @@ async function jobsFor(ownerId: string, projectId: string) {
 // The worker's terminal outcomes, via the SAME ledger fns the worker uses.
 async function workerSettle(ownerId: string, jobId: string) {
   await prisma.$transaction((tx) => settleCredits(tx, { orgId: ownerId, refId: jobId }));
-  await prisma.genJob.update({ where: { id: jobId }, data: { status: "DONE", spent: true, finishedAt: new Date() } });
+  await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "DONE", spent: true, finishedAt: new Date() } });
 }
 async function workerRefund(ownerId: string, jobId: string) {
   await prisma.$transaction((tx) => refundReservation(tx, { orgId: ownerId, refId: jobId }));
-  await prisma.genJob.update({ where: { id: jobId }, data: { status: "FAILED", error: "provider failed", finishedAt: new Date() } });
+  await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "FAILED", error: "provider failed", finishedAt: new Date() } });
 }
 // cancel = the QUEUED→FAILED + refund path (cancelGenJob core), refund-only.
 async function cancelQueued(ownerId: string, jobId: string) {

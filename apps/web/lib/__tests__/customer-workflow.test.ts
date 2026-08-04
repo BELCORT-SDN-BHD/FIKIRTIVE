@@ -302,6 +302,13 @@ async function seed(): Promise<void> {
       { id: OWNER_B, userId: USER_B, orgId: ORG_B, role: "owner" },
     ],
   });
+  await prisma.membershipRole.createMany({
+    data: [
+      { membershipId: OWNER_A, role: "owner" },
+      { membershipId: ADMIN_A, role: "admin" },
+      { membershipId: OWNER_B, role: "owner" },
+    ],
+  });
   await prisma.contact.createMany({
     data: [
       { id: CONTACT_KILL, ownerId: ORG_A, name: "Kill target", source: "whatsapp", firstTouchAt: NOW, lastSeenAt: NOW },
@@ -736,7 +743,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       `unmapped-template-${category}-${purposeClass}`,
     );
     await prisma.customerMessageTemplateVersion.update({
-      where: { id: TEMPLATE_VERSION_A },
+      where: { id: TEMPLATE_VERSION_A, ownerId: ORG_A },
       data: { purposeClass, category },
     });
     const execution = await workflows.dispatchWorkflowStep(workerA, {
@@ -935,7 +942,7 @@ describe("customer workflow lifecycle and dispatch", () => {
     );
     const run = await dueRun(workerA, lifecycle, CONTACT_PASS, IDENTITY_PASS, "drift-1");
     await prisma.customerMessageTemplateVersion.update({
-      where: { id: TEMPLATE_VERSION_A },
+      where: { id: TEMPLATE_VERSION_A, ownerId: ORG_A },
       data: { contentHash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
     });
     const unavailable = await workflows.dispatchWorkflowStep(workerA, {
@@ -1034,7 +1041,7 @@ describe("customer workflow lifecycle and dispatch", () => {
     });
     if (created.kind === "blocked") throw new Error("Expected customer-message run");
     await prisma.contactIdentity.update({
-      where: { id: IDENTITY_PASS },
+      where: { id: IDENTITY_PASS, ownerId: ORG_A },
       data: { deletedAt: NOW },
     });
     const unavailable = await workflows.dispatchWorkflowStep(workerA, {
@@ -1213,7 +1220,7 @@ describe("customer workflow lifecycle and dispatch", () => {
     })).toBe(1);
     const runCount = await prisma.routineRun.count({ where: { ownerId: ORG_A } });
     await prisma.customerMessage.update({
-      where: { id: "c7-m1-test-message-outside" },
+      where: { id: "c7-m1-test-message-outside", ownerId: ORG_A },
       data: { direction: "outbound" },
     });
     await expectCode(
@@ -1229,7 +1236,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       "AUTHORITY_UNAVAILABLE",
     );
     await prisma.customerMessage.update({
-      where: { id: "c7-m1-test-message-outside" },
+      where: { id: "c7-m1-test-message-outside", ownerId: ORG_A },
       data: { direction: "inbound", actorKind: "merchant" },
     });
     await expectCode(
@@ -1528,7 +1535,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       "read-surface-run",
     );
     await prisma.routineRun.update({
-      where: { id: run.id },
+      where: { id: run.id, ownerId: ORG_A },
       data: { summaryJson: { actionCount: 2, simulated: true, skippedCount: 0 } },
     });
     await workflows.createRoutineDraft(principalA, {
@@ -1638,7 +1645,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       "RESOURCE_NOT_FOUND",
     );
     await prisma.routineRun.update({
-      where: { id: run.id },
+      where: { id: run.id, ownerId: ORG_A },
       data: { summaryJson: { rawMessage: "must not cross the read boundary" } },
     });
     expect((await workflows.listRoutineRuns(principalA, {

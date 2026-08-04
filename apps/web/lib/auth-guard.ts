@@ -3,7 +3,19 @@ import { auth } from "@/lib/better-auth/compat";
 import { allowed, isFounderAdmin } from "@/lib/allowlist";
 import { prisma, grantCreditsTx } from "@fikirtive/db";
 import { runAsSystem, type UserPrincipal } from "@fikirtive/db/principal";
-import { newId, FOUNDER_OWNER_ID, SIGNUP_GRANT_CREDITS, roleAllows, isRole, isOrgRole, type Section, type Action, type Role } from "@fikirtive/core";
+import {
+  newId,
+  FOUNDER_OWNER_ID,
+  SIGNUP_GRANT_CREDITS,
+  rolesAllow,
+  primaryPlatformRole,
+  effectiveOrgRoles,
+  primaryOrgRole,
+  isRole,
+  type Section,
+  type Action,
+  type Role,
+} from "@fikirtive/core";
 
 /** In-handler auth (R7): re-assert auth()+allowlist INSIDE every action, not just
  *  at the opt-in proxy wall. Returns the email or an {error} the caller returns
@@ -15,27 +27,33 @@ export async function requireSession(): Promise<{ email: string } | { error: str
   return { email };
 }
 
-/** OPT-6 P1b operator-RBAC gate. Two walls: (1) the env allowlist (outer — never
- *  reads role; a default-viewer who is off the allowlist is out of the app), then
- *  (2) the section→role matrix (roleAllows). Denies by default; a denied attempt is
- *  audited (best-effort). Returns {email, role} on success. NOT used on spend
- *  actions — those keep requireSession (RBAC is operator-only). */
+/** Platform capability gate. Every assigned role contributes permissions. */
 export async function requireRole(
   section: Section,
   action: Action,
-): Promise<{ email: string; role: Role } | { error: string }> {
+): Promise<{ email: string; roles: Role[]; role: Role } | { error: string }> {
   const session = await auth();
   const email = session?.user?.email;
   if (!email || !(await allowed(email))) return { error: "Not authorized." };
-  const role: Role = isRole(session.user?.role) ? session.user.role : "viewer";
-  if (!roleAllows(role, section, action)) {
+
+  const user = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+    select: { role: true, roles: { select: { role: true } } },
+  });
+  const roles = [...new Set((user?.roles ?? []).map((assignment) => assignment.role).filter(isRole))];
+  if (!rolesAllow(roles, section, action)) {
     // denied-attempt audit (best-effort — never let the audit write change the deny)
     await prisma.actionEvent.create({
-      data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "rbac.deny", payload: { email, role, section, action } },
+      data: {
+        id: newId(),
+        ownerId: FOUNDER_OWNER_ID,
+        type: "rbac.deny",
+        payload: { email, roles, section, action },
+      },
     }).catch(() => {});
     return { error: "You don't have access to this." };
   }
-  return { email, role };
+  return { email, roles, role: primaryPlatformRole(roles) };
 }
 
 /** P3 — the authoritative, FAIL-CLOSED session→ownerId resolver. EVERY tenant-data and
@@ -122,14 +140,17 @@ export async function resolveUserPrincipal(
   // One query, the same shape and columns the four CRM gateways already resolve.
   const membership = await prisma.membership.findFirst({
     where: { orgId: gate.ownerId, status: "active", deletedAt: null, user: { email: gate.email } },
-    select: { id: true, role: true, userId: true },
+    select: { id: true, userId: true, roles: { select: { role: true } } },
   });
+  const orgRoles = effectiveOrgRoles(
+    (membership?.roles ?? []).map((assignment) => assignment.role),
+  );
   return {
     kind: "user",
     subjectUserId: membership?.userId ?? null,
     subjectEmail: gate.email,
     ownerId: gate.ownerId,
-    orgRole: membership && isOrgRole(membership.role) ? membership.role : null,
+    orgRole: primaryOrgRole(orgRoles),
     membershipId: membership?.id ?? null,
     impersonating: opts.impersonating ?? false,
     // #463/#464 never carry the impersonator's id — see @fikirtive/db/principal (deferred to ②-D).
@@ -223,9 +244,15 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       const owner = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
       const workspaceName = (owner?.name ?? "").trim() || email;
       await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: workspaceName }, update: {} });
-      await tx.membership.upsert({
+      const membership = await tx.membership.upsert({
         where: { userId_orgId: { userId, orgId } },
         create: { id: newId(), userId, orgId, role: "owner" },
+        update: {},
+        select: { id: true },
+      });
+      await tx.membershipRole.upsert({
+        where: { membershipId_role: { membershipId: membership.id, role: "owner" } },
+        create: { membershipId: membership.id, role: "owner" },
         update: {},
       });
       // revive a soft-deleted membership ONLY if it isn't suspended/revoked

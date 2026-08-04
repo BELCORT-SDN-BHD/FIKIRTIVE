@@ -122,6 +122,14 @@ async function seed(): Promise<void> {
       { id: OWNER_B, userId: USER_OWNER_B, orgId: ORG_B, role: "owner" },
     ],
   });
+  await prisma.membershipRole.createMany({
+    data: [
+      { membershipId: OWNER_A, role: "owner" },
+      { membershipId: ADMIN_A, role: "admin" },
+      { membershipId: MEMBER_A, role: "member" },
+      { membershipId: OWNER_B, role: "owner" },
+    ],
+  });
   await prisma.channelScope.createMany({
     data: [
       { id: SCOPE_A, ownerId: ORG_A, channel: "whatsapp", scopeKey: "c6-m2-waba-a" },

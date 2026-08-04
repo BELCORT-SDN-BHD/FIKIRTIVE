@@ -7,7 +7,7 @@
  *
  * SCOPE (B4 W-B4-4): this module is the deterministic tier MAPPING + JUDGEMENT only. It executes NO
  * charge — no reserve, no settle, no ledger, no genRequest. Wiring the X publish path through 缝3
- * reserve→settle is B12/later and MUST pass money-safety-review then. Keeping the money DECISION pure
+ * reserve→settle is B12/later and must preserve the exactly-once ledger contract. Keeping the money DECISION pure
  * and separate from EXECUTION is deliberate: the direction invariant below is unit-testable with a
  * ZERO spend surface, and nothing here can move real money.
  *

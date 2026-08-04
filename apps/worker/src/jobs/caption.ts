@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { prisma } from "@fikirtive/db";
-import { runAsTenant } from "@fikirtive/db/principal";
+import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import { storage } from "../storage.js";
 import { sanitizeError, scrubUrls } from "../redact.js";
 import {
@@ -49,7 +49,9 @@ interface WhisperJson {
 }
 
 export async function handleCaption(data: CaptionJobData, retryCount = 0): Promise<void> {
-  const job = await prisma.captionJob.findUnique({ where: { id: data.captionJobId } });
+  const job = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.captionJob.findUnique({ where: { id: data.captionJobId } }),
+  );
   if (!job) {
     console.error(`[caption] job row ${data.captionJobId} missing — dropping`);
     return;

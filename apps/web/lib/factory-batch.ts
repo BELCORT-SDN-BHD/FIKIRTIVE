@@ -2,13 +2,11 @@
  * factory-batch — the B3 factory batch ORCHESTRATION core (W-B3-F-P, spec §5.2).
  *
  * Headless batch orchestration over the ONE existing spend authority, `startGen`.
- * This file is deliberately a plain module (no server-action directive) and NOT
- * parity scanner (scripts/check-parity.mjs discoverActionSurfaces) does not treat
- * its exports as server actions — only the two thin wrappers in factory-actions.ts
- * are the owner-scoped action surface. Keeping the loop here lets tests drive it
+ * This file is deliberately a plain module (no server-action directive). Only the two
+ * thin wrappers in factory-actions.ts are the owner-scoped action surface. Keeping the loop here lets tests drive it
  * with an injected `startGen` (a stub for behaviour, the real one for the ledger).
  *
- * MONEY SAFETY (money-safety-review, B0-16 "零新钱路复用现有管线"):
+ * MONEY SAFETY (零新钱路复用现有管线):
  *   - This layer NEVER touches credits. It does not import or call
  *     reserveCredits / settleCredits / refundReservation, never creates a GenJob,
  *     never calls a provider. Each cell's reserve (same-tx with the GenJob insert)

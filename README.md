@@ -75,15 +75,15 @@ pnpm db:generate
 # COWORK_PROVIDER=mock. Otto's own turns use the real Anthropic model, so set
 # ANTHROPIC_API_KEY (and ANTHROPIC_BASE_URL=https://api.anthropic.com/v1) to exercise Otto.
 # That key is product-runtime configuration only; sanitation/review/recovery must not source
-# or inject it. Any real provider/API spend still requires explicit Founder approval.
+# or inject it. Configure provider-side budget limits before using a paid provider.
 pnpm --filter @fikirtive/worker exec tsx watch src/index.ts     # the pg-boss consumer (else gen jobs sit QUEUED)
 pnpm --filter @fikirtive/web exec next dev -p 3100              # http://localhost:3100
 
-pnpm test && pnpm typecheck
+pnpm quality
 ```
 
-To reproduce the current CI jobs locally (e.g. when GitHub Actions is unavailable), follow
-`docs/runbooks/local-ci.md`; the workflow and fallback must use the same command source.
+`pnpm quality` is the same quality gate used by CI. See `docs/runbooks/local-ci.md` for its
+isolated test-database behavior.
 
 Local auth supports email/password, magic link, and Google when configured. In development,
 the local magic-link sender writes the URL to `.data/last-magic-link.txt` instead of sending
