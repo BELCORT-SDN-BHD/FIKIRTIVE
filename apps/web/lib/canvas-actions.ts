@@ -6,8 +6,9 @@ import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
+import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planSettledCanvasJobSiblingNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -44,14 +45,10 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!(await ownedProject(projectId, gate.ownerId))) return { error: "Project not found." };
-  const nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
-  // A deleted row is a durable suppression marker. Keeping its job/generation identity prevents
+  let nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  // Tombstones are read too — a deleted row is a durable suppression marker, and it keeps
   // chat/result recovery from resurrecting an item the owner deliberately removed.
-  const visibleNodes = nodes.filter((node) => node.status !== "deleted");
-  const suppressedGenerationIds = nodes
-    .filter((node) => node.status === "deleted" && node.generationId)
-    .map((node) => node.generationId as string);
-  const linkedJobIds = [...new Set(visibleNodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
+  const linkedJobIds = [...new Set(nodes.map((n) => n.genJobId).filter((x): x is string => !!x))];
   const jobs = linkedJobIds.length
     ? await prisma.genJob.findMany({
       where: { id: { in: linkedJobIds }, ownerId: gate.ownerId, projectId },
@@ -59,6 +56,14 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     })
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
+  // Finish any delivered job whose cards are still incomplete — through the ONE settlement every
+  // writer shares, so opening the board can never produce a different result from the worker
+  // having settled it first. Re-read only when it actually wrote something; everything after this
+  // point is display-only.
+  if (await reconcileSettledCanvasJobs({ ownerId: gate.ownerId, cards: nodes, jobs })) {
+    nodes = await prisma.canvasNode.findMany({ where: { ownerId: gate.ownerId, projectId }, select: SELECT });
+  }
+  const visibleNodes = nodes.filter((node) => node.status !== "deleted");
   const genIds = [
     ...visibleNodes.map((n) => n.generationId).filter((x): x is string => !!x),
     ...jobs.flatMap((j) => j.generationIds),
@@ -77,7 +82,14 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     const thumb = generationId ? thumbs[generationId] : undefined;
     const url = thumb?.src ?? null;
     const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
-    const patch = settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
+    // A delivered job's rows belong to the settlement above — it has just run, with the whole
+    // job in view. Repairing one of them here from a picture's availability would re-open the
+    // second opinion this file was fixing: the two would disagree about which output the primary
+    // card carries the moment one output's media is slow to resolve. Rows of a job that is NOT
+    // delivered (a failed one) still get their display state repaired here; that projection is T2c.
+    const patch = job?.status === "DONE"
+      ? null
+      : settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
     if (patch) repairs.push({ id: n.id, status: n.status, generationId: n.generationId, data: patch });
     return {
       ...n,
@@ -98,43 +110,7 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     }));
   }
 
-  const siblingPlans = planSettledCanvasJobSiblingNodes(
-    visibleNodes,
-    jobById,
-    thumbs,
-    [...resolved.map((n) => n.generationId), ...suppressedGenerationIds],
-  );
-  const recoveredSiblings: CanvasNodeDTO[] = [];
-  for (const plan of siblingPlans) {
-    const thumb = thumbs[plan.generationId];
-    const placement = await placeCanvasJobNode({
-      ownerId: gate.ownerId,
-      projectId,
-      type: plan.type,
-      x: plan.x,
-      y: plan.y,
-      w: plan.w,
-      h: plan.h,
-      text: null,
-      prompt: plan.prompt,
-      generationId: plan.generationId,
-      genJobId: plan.genJobId,
-      status: "done",
-      sourceNodeId: plan.sourceNodeId,
-      threadId: plan.threadId,
-    });
-    if ("error" in placement || "suppressed" in placement) continue;
-    const node = placement.node;
-    recoveredSiblings.push({
-      ...node,
-      url: plan.url,
-      mediaWidth: thumb?.width ?? null,
-      mediaHeight: thumb?.height ?? null,
-      origin: canvasNodeOrigin(jobById.get(plan.genJobId)?.idempotencyKey),
-    });
-  }
-
-  return withCanvasLineage(gate.ownerId, projectId, [...resolved, ...recoveredSiblings]);
+  return withCanvasLineage(gate.ownerId, projectId, resolved);
 }
 
 export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedCanvasNode | { error: string }> {

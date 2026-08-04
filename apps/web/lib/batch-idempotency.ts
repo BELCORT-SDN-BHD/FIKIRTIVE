@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { videoDefaults, type GenVideoModel } from "@fikirtive/core";
+import { canvasMaterialWithoutRepair, videoDefaults, type GenVideoModel } from "@fikirtive/core";
 
 const HASH_HEX_LENGTH = 32;
 const FACTORY_KEY_RE = /^batch:([0-9a-f]{32}):attempt:([0-9a-f]{32})$/;
@@ -57,6 +57,8 @@ export interface FactoryMaterialInput {
 }
 
 export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "variantSel" | "threadId"> & {
+  /** The database row whose repair record is allowed to describe this material. */
+  id: string;
   variantSel: unknown;
   videoOptions: unknown;
   /** Legacy/non-Canvas readers may omit the column; absence is the same as null. */
@@ -161,6 +163,7 @@ function canonicalJson(value: unknown): string {
  *  identity. entityIds are order-sensitive and preserve duplicates because the worker consumes
  *  them in order; JSON object key order is irrelevant. */
 export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: FactoryMaterial): boolean {
+  if (typeof prior.id !== "string" || prior.id.length === 0) return false;
   return (
     prior.prompt === expected.prompt &&
     prior.model === expected.model &&
@@ -173,6 +176,7 @@ export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: F
     prior.referenceVideoGenerationId === expected.referenceVideoGenerationId &&
     prior.shotId === expected.shotId &&
     (prior.threadId ?? null) === expected.threadId &&
-    canonicalJson(prior.videoOptions ?? null) === canonicalJson(expected.videoOptions)
+    canonicalJson(canvasMaterialWithoutRepair(prior.videoOptions, prior.id)) ===
+      canonicalJson(canvasMaterialWithoutRepair(expected.videoOptions, prior.id))
   );
 }

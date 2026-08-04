@@ -17,6 +17,7 @@ import { handleIngest, redispatchLostIngest, type IngestJobData } from "./jobs/i
 import { handleRender } from "./jobs/render.js";
 import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
+import { backfillCanvasBoards } from "./jobs/canvas-backfill.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
@@ -238,6 +239,12 @@ async function main(): Promise<void> {
       await runAsSystem("worker-reaper-tick", async () => {
         const n = await reapStaleGenJobs();
         if (n) console.log(`[worker] reaped ${n} stale gen job(s)`);
+        // #601: the LAST step of a delivered job — writing its cards onto the board — is
+        // best-effort, so a merchant who was charged can still be looking at a half-empty board
+        // if that write fell over. This is the retry behind it: money-free, it only re-runs the
+        // same idempotent card writer for jobs whose board is provably incomplete.
+        const cn = await backfillCanvasBoards();
+        if (cn) console.log(`[worker] finished ${cn} incomplete canvas board(s)`);
         const rn = await reapStaleRefGenJobs();
         if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
         const ln = await reapStaleLlmReservations();
