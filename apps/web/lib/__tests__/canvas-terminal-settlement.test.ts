@@ -172,6 +172,25 @@ describe("a closed tab reporting back late", () => {
     ]);
   });
 
+  // #612 r2 (cross-family review P1): the first barrier keyed on "does this card carry an output".
+  // A settled FAILED or CANCELLED card carries none — that is what the terminal projection writes
+  // — so those rows stayed writable and a stale report could still reopen a finished card.
+  it.each([
+    ["FAILED", "failed"],
+    ["CANCELLED", "cancelled"],
+  ])("cannot reopen a card the server already settled as %s", async (jobStatus, cardStatus) => {
+    const jobId = await seedTerminalJob(jobStatus as "FAILED" | "CANCELLED");
+    const cardId = await seedPendingAnchor(jobId);
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+    const settled = await boardRows();
+    expect(settled[0]!.status).toBe(cardStatus);
+
+    // The tab the merchant closed gives up waiting and reports what IT last knew.
+    await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+
+    expect(await boardRows()).toEqual(settled);
+  });
+
   it("still lets a card nobody has settled reach its own terminal", async () => {
     const jobId = `gjb_${randomUUID()}`;
     await prisma.genJob.create({
@@ -182,7 +201,7 @@ describe("a closed tab reporting back late", () => {
     });
     const cardId = await seedPendingAnchor(jobId);
 
-    await expect(resolveCanvasNode(projectId, cardId, { status: "timeout" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode(projectId, cardId, { status: "timeout" })).resolves.toEqual({ ok: true, applied: true });
 
     const [row] = await boardRows();
     expect(row?.status).toBe("timeout");

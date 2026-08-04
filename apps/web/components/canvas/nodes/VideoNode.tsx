@@ -1,7 +1,8 @@
 // apps/web/components/canvas/nodes/VideoNode.tsx
 import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
-import { GeneratingBody, FailedBody, isTerminalCardStatus, type TerminalCardStatus } from "./GeneratingBody";
+import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";

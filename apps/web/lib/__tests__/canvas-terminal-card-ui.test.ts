@@ -15,6 +15,13 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const m = vi.hoisted(() => ({ resolveCanvasNode: vi.fn(), createCanvasNode: vi.fn() }));
+vi.mock("../canvas-actions", () => ({
+  resolveCanvasNode: m.resolveCanvasNode,
+  createCanvasNode: m.createCanvasNode,
+}));
+vi.mock("../gen-actions", () => ({ getGenJob: vi.fn(), startCanvasGen: vi.fn() }));
+
 vi.mock("@xyflow/react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@xyflow/react")>();
   return {
@@ -30,7 +37,8 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 
 const { ImageNode } = await import("@/components/canvas/nodes/ImageNode");
 const { VideoNode } = await import("@/components/canvas/nodes/VideoNode");
-const { TERMINAL_CARD_STATUSES } = await import("@/components/canvas/nodes/GeneratingBody");
+const { TERMINAL_CARD_STATUSES } = await import("@/lib/canvas-card-status");
+const { applyCanvasResolve } = await import("@/components/canvas/useCanvasGen");
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -97,5 +105,54 @@ describe("what a card says once it has stopped being made", () => {
 
   it("keeps one list of endings, so no renderer can miss one", () => {
     expect([...TERMINAL_CARD_STATUSES]).toEqual(["failed", "cancelled", "timeout", "missing"]);
+  });
+});
+
+/**
+ * #612 r2 (cross-family review P1②) — the browser must not PAINT what the server refused.
+ *
+ * Keeping the stale report out of the database is only half of it: the tab used to install its
+ * own "timeout" on the card the moment its patience ran out, without waiting to hear whether the
+ * server took it. So a card the server had already settled — delivered, failed or cancelled —
+ * could still show "Still working… check back in a moment" locally. The browser now paints the
+ * server's answer, never its own guess about a card that has come to rest.
+ */
+describe("what the browser paints after the server refuses a stale report", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("paints the server's ending instead of the stale transient, and asks for a board read", async () => {
+    m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: false, status: "failed" });
+
+    const outcome = await applyCanvasResolve("p1", "card-1", { status: "timeout" });
+
+    expect(outcome).toEqual({ paint: "failed", stale: true });
+    // …and that is what a merchant then reads on the card.
+    const text = await renderCard(ImageNode, outcome.paint!);
+    expect(text).toContain("That didn't finish");
+    expect(text).not.toContain("Still working…");
+  });
+
+  it("paints nothing over a settled card whose picture this poll does not have", async () => {
+    // The DB already refuses to downgrade a delivered card; this is the LOCAL half of that.
+    m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: false, status: "done" });
+
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }))
+      .toEqual({ paint: null, stale: true });
+  });
+
+  it("still paints a legitimate transient the server accepted", async () => {
+    m.resolveCanvasNode.mockResolvedValue({ ok: true, applied: true });
+
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }))
+      .toEqual({ paint: "timeout", stale: false });
+  });
+
+  it("keeps painting locally when the server could not be reached at all", async () => {
+    // A transport failure is not the server saying no. Refusing to paint here would leave the
+    // card spinning on a blip, which is the eternal spinner this whole slice removes.
+    m.resolveCanvasNode.mockRejectedValue(new Error("network down"));
+
+    expect(await applyCanvasResolve("p1", "card-1", { status: "timeout" }))
+      .toEqual({ paint: "timeout", stale: false });
   });
 });

@@ -250,6 +250,16 @@ describe("poll (F21)", () => {
     expect(onDone).toHaveBeenCalledWith([], "failed", []);
   });
 
+  it("reports 'cancelled' when the job was cancelled, never the soft 'still working' (#612)", async () => {
+    // Without this branch the tab keeps polling a job that has stopped, and eight minutes later
+    // tells the merchant to check back on something nobody is making.
+    m.getGenJob.mockResolvedValue({ status: "CANCELLED", urls: [], generationIds: [] });
+    const onDone = vi.fn();
+    await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
+    expect(onDone).toHaveBeenCalledWith([], "cancelled", []);
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
   it("reports 'missing' when the job is DONE but no media URL resolves", async () => {
     m.getGenJob.mockResolvedValue({ status: "DONE", urls: [], generationIds: ["g-missing"] });
     const onDone = vi.fn();

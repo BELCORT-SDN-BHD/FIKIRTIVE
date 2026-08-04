@@ -3,6 +3,7 @@
 // making the asset + an indeterminate progress bar + the honest money line
 // ("billed only when it finishes" — no fabricated credit number). The legacy
 // skin keeps the plain centered text so the old look is untouched (strangler).
+import type { TerminalCardStatus } from "@/lib/canvas-card-status";
 function OttoCloud() {
   return (
     <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden>
@@ -42,18 +43,6 @@ function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
       Check again
     </button>
   );
-}
-
-/**
- * The states a card comes to REST in — it is no longer being made, whatever it says (#612).
- *
- * Exported as one list because every card renderer has to agree on it: a status missing from
- * one of them puts that card back on the eternal spinner (F21) while the others show its ending.
- */
-export const TERMINAL_CARD_STATUSES = ["failed", "cancelled", "timeout", "missing"] as const;
-export type TerminalCardStatus = (typeof TERMINAL_CARD_STATUSES)[number];
-export function isTerminalCardStatus(status: string | undefined): status is TerminalCardStatus {
-  return (TERMINAL_CARD_STATUSES as readonly string[]).includes(status ?? "");
 }
 
 /** Terminal state for a card whose gen didn't deliver. "failed" is a hard fail (the worker

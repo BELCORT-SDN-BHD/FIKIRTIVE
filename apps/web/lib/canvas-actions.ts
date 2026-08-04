@@ -9,6 +9,7 @@ import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement
 import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -208,7 +209,22 @@ export async function updateTextNode(projectId: string, id: string, text: string
   return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
 }
 
-export async function resolveCanvasNode(projectId: string, id: string, input: { status: string; generationId?: string | null }) {
+/**
+ * What the server did with a browser's report about a card (#612 r2).
+ *
+ * `applied: false` is not an error — it means the card had already come to rest, and `status` is
+ * what it actually says. The caller is a tab that may be far behind; it needs the difference.
+ */
+export type ResolveCanvasNodeResult =
+  | { ok: true; applied: true }
+  | { ok: true; applied: false; status: string }
+  | { error: string };
+
+export async function resolveCanvasNode(
+  projectId: string,
+  id: string,
+  input: { status: string; generationId?: string | null },
+): Promise<ResolveCanvasNodeResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!RESOLVE_STATUSES.has(input.status as CanvasNodeResolveStatus)) return { error: "Invalid status." };
@@ -250,23 +266,36 @@ export async function resolveCanvasNode(projectId: string, id: string, input: { 
   // "timeout" for a card the server settled minutes ago. Applied as written that report knocked
   // the card back from done to timeout AND erased its generationId — the merchant's paid picture
   // came off the card, and the board then handed every orphaned card the batch's FIRST output, so
-  // one image appeared four times and three appeared nowhere. A card that already carries an
-  // output is therefore never re-pointed and never downgraded by a resolve: the where clause
-  // matches nothing instead, which also closes the race against a settlement landing between the
-  // read above and this write. Zero rows means the card is already settled with something better
-  // than this report — the caller's intent (a card that is no longer in flight) is satisfied, so
-  // this is success, not "Node not found".
-  await prisma.canvasNode.updateMany({
+  // one image appeared four times and three appeared nowhere.
+  //
+  // Two clauses, two different invariants, and the FIRST is the one that matters (#612 r2, judge
+  // P1): what may be overwritten is decided by the card's own STATE, not by whether it happens to
+  // carry an output. Keying only on `generationId: null` protected delivered cards and nothing
+  // else — a settled `failed` or `cancelled` card carries no output BY DESIGN, so a stale report
+  // could still reopen a card the server had already finished. `generationId: null` stays beside
+  // it as the independent promise that a resolve never erases or re-points a paid output.
+  //
+  // Both live in the WHERE, so the rule holds in the database rather than between the read above
+  // and this write: a settlement landing in that window makes this match nothing. Zero rows means
+  // the card is already settled with something better than this report — and the answer SAYS so,
+  // because a browser that is not told it was refused paints the stale state anyway.
+  const written = await prisma.canvasNode.updateMany({
     where: {
       id,
       ownerId: gate.ownerId,
       projectId: node.projectId,
-      status: { not: "deleted" },
+      status: { in: [...OVERWRITABLE_CARD_STATUSES] },
       generationId: null,
     },
     data: { status: input.status, generationId },
   });
-  return { ok: true as const };
+  if (written.count === 1) return { ok: true as const, applied: true as const };
+  const settled = await prisma.canvasNode.findFirst({
+    where: { id, ownerId: gate.ownerId, projectId: node.projectId },
+    select: { status: true },
+  });
+  // "deleted" also covers the card being removed between these two reads — nothing to paint.
+  return { ok: true as const, applied: false as const, status: settled?.status ?? "deleted" };
 }
 
 export async function deleteCanvasNode(projectId: string, id: string) {

@@ -7,6 +7,7 @@ import {
   type ActiveGenModels,
 } from "../../lib/gen-actions";
 import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
+import { isTerminalCardStatus } from "@/lib/canvas-card-status";
 import {
   CANVAS_IMAGE_DEFAULT_COUNT,
   canvasGenCostQuote,
@@ -312,6 +313,48 @@ export function isInFlightPaidGen(node: { type: string; status?: string; url?: s
   return node.status === "pending" || node.status === "timeout";
 }
 
+/** What this tab may draw on a card after telling the server what it saw (#612 r2). */
+export type CanvasResolveOutcome = {
+  /** The status to paint, or null when only the board's own read can supply the truth. */
+  paint: string | null;
+  /** The server refused this report: the card had already come to rest. Re-read the board. */
+  stale: boolean;
+};
+
+/**
+ * Report a card's state to the server and answer with what this tab may PAINT.
+ *
+ * The tab used to fire the report and install its own status immediately, without waiting to hear
+ * whether the server took it. That is how "Still working… check back in a moment" could appear on
+ * a card the server had already settled — delivered, failed or cancelled — which is the same lie
+ * the database barrier removes, just drawn locally instead (#612 r2, judge P1②). So a refused
+ * report is never painted: the card keeps what it has, the server's own ending is drawn when it
+ * is one this tab can draw without media it does not have, and the board is re-read either way.
+ *
+ * A transport failure is NOT the server saying no. Refusing to paint on a network blip would
+ * leave the card spinning for ever, which is the defect this whole slice exists to remove — so
+ * that case keeps the old local behaviour.
+ */
+export async function applyCanvasResolve(
+  projectId: string,
+  nodeId: string,
+  input: { status: string; generationId?: string },
+): Promise<CanvasResolveOutcome> {
+  let answer: Awaited<ReturnType<typeof resolveCanvasNode>>;
+  try {
+    answer = await resolveCanvasNode(projectId, nodeId, input);
+  } catch (e) {
+    console.warn("[canvas] card resolve failed; showing what this tab saw:", e instanceof Error ? e.message : e);
+    return { paint: input.status, stale: false };
+  }
+  if ("applied" in answer && answer.applied === false) {
+    // Only an ending this tab can draw on its own. "done" needs a picture the poll does not have,
+    // and "deleted" is not a card any more — the board read settles both.
+    return { paint: isTerminalCardStatus(answer.status) ? answer.status : null, stale: true };
+  }
+  return { paint: input.status, stale: false };
+}
+
 export async function poll(
   jobId: string,
   onDone: (urls: string[], status: string, generationIds: string[]) => void,
@@ -526,19 +569,24 @@ export function useCanvasGen(
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       if (status !== "done" || urls.length === 0) {
-        void resolveCanvasNode(projectId, created.id, { status });
-        onResolve(created.id, null, status);
+        const refused = await applyCanvasResolve(projectId, created.id, { status });
+        if (refused.paint) onResolve(created.id, null, refused.paint);
+        if (refused.stale) onBatchSettled?.();
         return;
       }
       // primary card → first variant
       const primaryGenerationId = generationIds[0];
       if (!primaryGenerationId) {
-        void resolveCanvasNode(projectId, created.id, { status: "missing" });
-        onResolve(created.id, null, "missing");
+        const refused = await applyCanvasResolve(projectId, created.id, { status: "missing" });
+        if (refused.paint) onResolve(created.id, null, refused.paint);
+        if (refused.stale) onBatchSettled?.();
         return;
       }
-      void resolveCanvasNode(projectId, created.id, { status: "done", generationId: primaryGenerationId });
-      onResolve(created.id, urls[0], "done", primaryGenerationId);
+      const anchor = await applyCanvasResolve(projectId, created.id, { status: "done", generationId: primaryGenerationId });
+      // A refused anchor keeps whatever the server settled it to; the siblings below still belong
+      // on the board, and the batch's own board read at the end of this loop shows the truth.
+      if (anchor.stale) { if (anchor.paint) onResolve(created.id, null, anchor.paint); }
+      else onResolve(created.id, urls[0], "done", primaryGenerationId);
       // one sibling card per remaining variant, laid out in a 2×2 cluster. Each
       // is a plain canvas-node placement of an already-generated (already-charged)
       // Generation — createCanvasNode is not a spend path.
@@ -684,11 +732,16 @@ export function useCanvasGen(
       variantIndex: 0,
       variantCount: 1,
     });
-    poll(started.id, (urls, status, generationIds) => {
+    poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
-      void resolveCanvasNode(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      if (outcome.stale) {
+        if (outcome.paint) onResolve(created.id, null, outcome.paint);
+        onBatchSettled?.();
+        return;
+      }
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
       // A video job is a batch of one: it has settled the moment its card carries media.
       if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
@@ -780,11 +833,16 @@ export function useCanvasGen(
       variantIndex: 0,
       variantCount: 1,
     });
-    poll(started.id, (urls, status, generationIds) => {
+    poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
-      void resolveCanvasNode(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      if (outcome.stale) {
+        if (outcome.paint) onResolve(created.id, null, outcome.paint);
+        onBatchSettled?.();
+        return;
+      }
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
       // A video job is a batch of one: it has settled the moment its card carries media.
       if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
