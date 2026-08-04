@@ -380,8 +380,8 @@ describe("a batch that arrived as a chat result", () => {
   });
 });
 
-describe("the chat-side board reader agrees too", () => {
-  it("places a half-deleted batch's missing card exactly where the server would", async () => {
+describe("the chat-side board reader writes nothing either", () => {
+  it("leaves a half-deleted batch untouched, and the backstop finishes it the server's way", async () => {
     async function scenario(): Promise<{ pid: string; jobId: string; anchorId: string; outputs: string[] }> {
       projectId = await freshProject();
       const threadId = `thr_${randomUUID()}`;
@@ -396,7 +396,14 @@ describe("the chat-side board reader agrees too", () => {
     await settleCanvasCardsForGenJob(server.jobId, ownerId);
 
     const chat = await scenario();
+    const untouched = await boardRows(chat.pid);
     await syncOttoCanvasNodes(chat.pid);
+    expect(await boardRows(chat.pid)).toEqual(untouched);
+
+    const due = await findCanvasSettlementBacklog({ now: new Date(), graceMs: 0, limit: 200 });
+    const board = due.find((job) => job.id === chat.jobId);
+    expect(board).toBeDefined();
+    await settleCanvasCardsForGenJob(board!.id, board!.ownerId);
 
     expect(shape(await boardRows(chat.pid), chat))
       .toEqual(shape(await boardRows(server.pid), server));

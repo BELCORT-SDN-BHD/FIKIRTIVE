@@ -5,7 +5,6 @@ import { newId } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { withCanvasLineage } from "./canvas-lineage-data";
 import { canvasJobPlacementLockKey } from "./canvas-node-placement";
-import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
 import type { CanvasNodeDTO } from "./canvas-actions";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, planPendingJobNodes, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
@@ -181,14 +180,14 @@ export async function syncOttoCanvasNodes(
   }
 
   // ── 2. Return all project nodes with media URLs resolved (display-only) ──
-  // Tombstones are read too: a deleted card is a durable instruction the settlement below must
-  // see, so it cannot mistake a suppressed batch for a board that is missing everything.
+  // Tombstones are read here too, and then filtered out below: a deleted card must not be counted
+  // as a card that is merely missing.
   const boardSelect = {
     id: true, type: true, x: true, y: true, w: true, h: true, text: true,
     prompt: true, generationId: true, genJobId: true, status: true,
     sourceNodeId: true, threadId: true,
   } as const;
-  let board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
+  const board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
 
   // A node's media comes from its generationId, or (for canvas-promptbar nodes,
   // which persist only the job) from the job's first generation. Pull status for
@@ -203,12 +202,6 @@ export async function syncOttoCanvasNodes(
     : [];
   const jobById = new Map(jobs.map((j) => [j.id, j]));
 
-  // Finish any delivered job whose cards are still incomplete — the SAME settlement the canvas
-  // reader and the worker call, so this board cannot end up different from the board a merchant
-  // who never opened the chat would see. Re-read only when it actually wrote something.
-  if (await reconcileSettledCanvasJobs({ ownerId, cards: board, jobs })) {
-    board = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: boardSelect });
-  }
   const nodes = board.filter((node) => node.status !== "deleted");
 
   const genIds = [

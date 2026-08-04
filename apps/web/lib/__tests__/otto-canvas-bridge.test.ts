@@ -339,9 +339,10 @@ describe("syncOttoCanvasNodes project scoping", () => {
     expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining(["job-fallback"]));
   });
 
-  it("hands a batch with missing cards to the one settlement instead of placing its own", async () => {
-    // Whether a chat was open must not change the board a merchant gets (#601 r2 P2②): this
-    // reader delegates to exactly the same settlement the canvas reader and the worker use.
+  it("leaves a batch with missing cards alone — it settles nothing and patches nothing", async () => {
+    // Whether a chat was open must not change the board a merchant gets (#601 r2 P2②). T2b made
+    // this reader delegate to the one settlement; #613 T2d makes it read, full stop — the board is
+    // the job's own to finish, and the backfill sweep is behind it if that write fell over.
     mockCanvasFindMany.mockResolvedValue([
       {
         id: "node-primary",
@@ -366,12 +367,12 @@ describe("syncOttoCanvasNodes project scoping", () => {
 
     await syncOttoCanvasNodes("p1");
 
-    expect(mockSettleCanvasCards).toHaveBeenCalledWith("job-1", "u1");
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockCanvasUpdateMany).not.toHaveBeenCalled();
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
-  it("does not ask the settlement for a job whose board already matches it", async () => {
+  it("does not ask the settlement for a job whose board already matches it either", async () => {
     mockCanvasFindMany.mockResolvedValue([
       {
         id: "node-1",
