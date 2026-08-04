@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard, firstDisplayableGenerationId, planPendingJobNodes, type GenCardMsg } from "../otto-canvas-bridge-core";
+import { censusCanvasJobCards, displayGenerationIdForCard, firstDisplayableGenerationId, planPendingJobNodes, type GenCardMsg } from "../otto-canvas-bridge-core";
 
 // The GEN_RESULT planner that used to live here is gone (#601 r2 judge P2②): a delivered job's
 // cards are the shared settlement's to plan, so the chat bridge has no second opinion left to test.
@@ -88,30 +88,9 @@ describe("planPendingJobNodes", () => {
   });
 });
 
-describe("canvasNodeDisplayStatus", () => {
-  it("treats a resolved URL as done even when the stored row is still pending", () => {
-    expect(canvasNodeDisplayStatus("pending", "DONE", "/files/u/video.mp4")).toBe("done");
-  });
-
-  it("uses linked GenJob terminal status when the canvas row is stale", () => {
-    expect(canvasNodeDisplayStatus("pending", "FAILED", null)).toBe("failed");
-    expect(canvasNodeDisplayStatus("pending", "DONE", null)).toBe("missing");
-  });
-
-  it("shows a cancelled job as cancelled, never as a failure (#612)", () => {
-    expect(canvasNodeDisplayStatus("pending", "CANCELLED", null)).toBe("cancelled");
-  });
-
-  it("only treats linked in-flight jobs as pending", () => {
-    expect(canvasNodeDisplayStatus("done", "QUEUED", null)).toBe("pending");
-    expect(canvasNodeDisplayStatus("done", "GENERATING", null)).toBe("pending");
-  });
-
-  it("falls back to the stored row status when no linked job status is available", () => {
-    expect(canvasNodeDisplayStatus("pending", null, null)).toBe("pending");
-    expect(canvasNodeDisplayStatus("failed", undefined, null)).toBe("failed");
-  });
-});
+// What a card SAYS is no longer derived here — it moved to `canvas-card-status.ts` as one
+// derivation with a closed set of faces, and `canvas-card-status.test.ts` drives it exhaustively
+// (#602 T3). This module keeps only the two questions about WHICH OUTPUT a card shows.
 
 describe("firstDisplayableGenerationId", () => {
   it("uses the first generation with a resolved thumbnail before falling back to the first id", () => {

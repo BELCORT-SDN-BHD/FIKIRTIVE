@@ -27,6 +27,7 @@ import {
   genSpentUsd,
   pricedGenCredits,
   displayCredits,
+  genJobEndedWithoutDelivering,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -418,7 +419,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     try {
       // RESUME FIRST: outputs already stored + recorded (generationIds) on a prior
       // delivery → finish the idempotent attach + DONE, never re-spending. Runs BEFORE
-      // the FAILED short-circuit and the project/shot validation, so a deleted shot or
+      // the terminal short-circuit and the project/shot validation, so a deleted shot or
       // a wrongly-FAILED-but-committed job still completes (attachToShot no-ops if the
       // shot is gone; the candidate generations remain, reusable) (#2/#3).
       if (job.generationIds.length > 0) {
@@ -426,7 +427,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         await resumeCommittedGenJob(job);
         return;
       }
-      if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
+      // Terminal with no recorded outputs — nothing to resume. This asks "did it END", not "did it
+      // FAIL" (#602 T3): a message pg-boss still delivers for a job the merchant cancelled would
+      // otherwise walk on into the pre-spend gates below, and a deleted project there would
+      // fail-close it — overwriting CANCELLED with FAILED and posting "I couldn't finish that
+      // one" for something they stopped on purpose. (No double refund either way:
+      // refundReservation is idempotent on `refund:<jobId>` — but the merchant would have been
+      // told a lie about their own decision.)
+      if (genJobEndedWithoutDelivering(job.status)) return;
 
       // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was
       // queued must FAIL WITHOUT SPENDING. Runs AFTER the resume short-circuit (a

@@ -282,12 +282,21 @@ const cancelGenJobRequest = z.object({ jobId: z.string().min(1) });
  *
  * Safety contract (mirrors the reaper pattern in gen.ts):
  * - The updateMany WHERE clause is { id: jobId, ownerId, status: "QUEUED" }.
- *   A job that is already GENERATING, DONE, or FAILED will not match — count===0
- *   → no refund, honest UI feedback.
+ *   A job that is already GENERATING, DONE, FAILED or CANCELLED will not match —
+ *   count===0 → no refund, honest UI feedback.
  * - refundReservation is called ONLY when count>0 (i.e. our update won the race).
- * - The whole operation is one $transaction so the FAILED status and the refund
+ * - The whole operation is one $transaction so the terminal status and the refund
  *   are written or rolled back atomically.
  * - Owner-scoped: ownerId in the WHERE so a user can only cancel their own jobs.
+ *
+ * CANCEL IS ITS OWN ENDING (#602 T3 · spec #599 D4). This wrote FAILED with the word "Cancelled"
+ * tucked into the error text, and every reader downstream believed the status rather than the
+ * text: the card went red, offered "Try again", and the batch guard treated the dead job as if it
+ * were still going to deliver. The word is now CANCELLED and the readers were taught it.
+ *
+ * MONEY IS UNCHANGED BY THAT FLIP, deliberately and verifiably: the same single refundReservation
+ * call, in the same transaction, at the same point, on the same idempotency key (`refund:<jobId>`
+ * — derived from the job id, never from its status). Only the word changes.
  */
 export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | { alreadyStarted: true } | { error: string }> {
   const parsed = cancelGenJobRequest.safeParse(raw);
@@ -299,7 +308,7 @@ export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | {
     const result = await prisma.$transaction(async (tx) => {
       const { count } = await tx.genJob.updateMany({
         where: { id: jobId, ownerId, status: "QUEUED" },
-        data: { status: "FAILED", error: "Cancelled by you", finishedAt: new Date() },
+        data: { status: "CANCELLED", error: "Cancelled by you", finishedAt: new Date() },
       });
       if (count > 0) {
         await refundReservation(tx, { orgId: ownerId, refId: jobId });
@@ -321,6 +330,14 @@ export async function cancelGenJob(raw: unknown): Promise<{ refunded: true } | {
               kind: "TURN_ERROR",
               seq: (last._max.seq ?? 0) + 1,
               text: "Cancelled — you weren't charged.",
+              // THE DURABLE MARK (#602 T3). The thread's terminal message for a job is a
+              // TURN_ERROR whatever ended it — that kind carries the per-job unique index, so a
+              // cancel cannot have a kind of its own without a second terminal message being
+              // possible. The plan card therefore read every cancel as a failure after a reload:
+              // red copy, and a "Try again" button for something the merchant chose to stop.
+              // This flag is what tells the card the difference; `cancelledTurnPayload` is the one
+              // reader of it.
+              payload: { cancelled: true },
               genJobId: jobId,
             },
           });

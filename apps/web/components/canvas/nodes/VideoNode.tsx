@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
-import { isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
+import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
@@ -222,8 +222,8 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     >
       {terminal ? (
         <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
-      ) : d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={gb} kind="video" onRefresh={d.onRefresh} />
+      ) : isInFlightCardFace(d.status) || !d.url ? (
+        <GeneratingBody gb={gb} kind="video" queued={d.status === "queued"} onRefresh={d.onRefresh} />
       ) : gb ? (
         // gb: clean poster (first frame) + centered play button, like the mockup —
         // no raw browser chrome until the owner presses play. Display-only.

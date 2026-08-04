@@ -141,6 +141,9 @@ export * from "./segment-rules.js";
 export * from "./canvas-layout.js";
 // The single projection from a finished job's result to the cards that should exist for it (#601).
 export * from "./canvas-settlement-plan.js";
+// The two words for "this job stopped and delivered nothing" — shared by every non-canvas rule
+// that used to say "failed" and mean both (#602).
+export * from "./gen-job-state.js";
 // 执行层真会做什么 —— 卡面文案(otto)与现役适配器请求体断言(generation)钉在同一份声明上。
 // 纯数据,无 node/network 依赖,可留在主 barrel。
 export { EXECUTED_SPEC } from "./executed-spec.js";

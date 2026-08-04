@@ -104,7 +104,9 @@ describe("what a card says once it has stopped being made", () => {
   });
 
   it("keeps one list of endings, so no renderer can miss one", () => {
-    expect([...TERMINAL_CARD_STATUSES]).toEqual(["failed", "cancelled", "timeout", "missing"]);
+    // `unknown` joined the list in #602 T3: a card with no account of itself has come to rest
+    // too, and the one thing it must not do is keep spinning.
+    expect([...TERMINAL_CARD_STATUSES]).toEqual(["failed", "cancelled", "timeout", "missing", "unknown"]);
   });
 });
 
@@ -202,7 +204,9 @@ describe("the one licence to paint a local report as truth", () => {
  */
 describe("a card an unknown answer left behind keeps the board looking", () => {
   it.each([
-    ["pending"],
+    // Card FACES, not the stored row word (#602 T3).
+    ["queued"],
+    ["generating"],
     ["timeout"],
   ])("keeps the board's re-read loop alive for a %s card", (status) => {
     expect(isInFlightPaidGen({ type: "image", status, url: null })).toBe(true);

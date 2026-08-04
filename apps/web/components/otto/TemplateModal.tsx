@@ -132,7 +132,9 @@ export async function pollTemplateJob(
       const genId = job.generationIds[0];
       return url && genId ? { kind: "done", url, genId } : { kind: "unknown" };
     }
-    if (job.status === "FAILED") {
+    // Either ending stops the wait (#602 T3). A CANCELLED job used to be unrecognised here, so
+    // this loop kept polling a job that had stopped until its budget ran out.
+    if (job.status === "FAILED" || job.status === "CANCELLED") {
       return job.generationIds.length === 0 && job.urls.length === 0
         ? { kind: "failed" }
         : { kind: "unknown" };

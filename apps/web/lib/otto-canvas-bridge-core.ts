@@ -33,20 +33,10 @@ function promptFromCardMessage(message: GenCardMsg): string | null {
   return message.text;
 }
 
-export function canvasNodeDisplayStatus(
-  rowStatus: string,
-  jobStatus: string | null | undefined,
-  url: string | null | undefined,
-): string {
-  if (url) return "done";
-  if (jobStatus === "FAILED") return "failed";
-  // A cancelled job is its own ending, not a failure (#612 · #599 D4). The settlement writes it
-  // on the row; saying it here too means a board opened before that write still reads truthfully.
-  if (jobStatus === "CANCELLED") return "cancelled";
-  if (jobStatus === "DONE") return "missing";
-  if (jobStatus === "QUEUED" || jobStatus === "GENERATING") return "pending";
-  return rowStatus;
-}
+// What a card SAYS moved to `canvas-card-status.ts` (#602 T3): it is one derivation shared by
+// every reader, with a closed set of faces and `unknown` — never "generating" — as its fallback.
+// The version that lived here answered with the row's own word when nothing else matched, which
+// is how a row carrying a word no renderer knew became an eternal spinner.
 
 export function firstDisplayableGenerationId(
   generationIds: readonly string[] | null | undefined,

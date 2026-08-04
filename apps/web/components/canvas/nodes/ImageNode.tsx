@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
-import { isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
+import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
@@ -249,8 +249,8 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     >
       {terminal ? (
         <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
-      ) : d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={d.skin === "gb"} kind="image" onRefresh={d.onRefresh} />
+      ) : isInFlightCardFace(d.status) || !d.url ? (
+        <GeneratingBody gb={d.skin === "gb"} kind="image" queued={d.status === "queued"} onRefresh={d.onRefresh} />
       ) : (
         <img
           src={d.url}

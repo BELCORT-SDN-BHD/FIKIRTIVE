@@ -240,7 +240,10 @@ export default function DetailPanel({
       const job = await getGenJob(jobId);
       if (!job) return "failed";
       if (job.status === "DONE") return "done";
-      if (job.status === "FAILED") return "failed";
+      // Both endings stop the poll (#602 T3). Before, a CANCELLED job was not recognised here and
+      // this loop ran its full ~8-minute budget on a job that had already stopped, leaving the
+      // panel spinning the whole time.
+      if (job.status === "FAILED" || job.status === "CANCELLED") return "failed";
       await new Promise((r) => setTimeout(r, 2500));
     }
     return "timeout";

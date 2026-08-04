@@ -7,13 +7,16 @@ import { withCanvasLineage } from "./canvas-lineage-data";
 import type { CanvasNodeLineage } from "./canvas-lineage";
 import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement";
 import { getGenerationThumbs } from "./data";
-import { canvasNodeDisplayStatus, censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
-import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
+import { censusCanvasJobCards, displayGenerationIdForCard } from "./otto-canvas-bridge-core";
+import { canvasCardFace, isCanvasCardRowStatus, OVERWRITABLE_CARD_STATUSES, type CanvasCardFace } from "./canvas-card-status";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
   text: string | null; prompt: string | null; generationId: string | null;
-  genJobId: string | null; status: string; sourceNodeId: string | null;
+  genJobId: string | null;
+  /** What this card SAYS — derived by `canvasCardFace`, never the stored row word (#602 T3). */
+  status: CanvasCardFace;
+  sourceNodeId: string | null;
   threadId: string | null; url?: string | null; mediaWidth?: number | null; mediaHeight?: number | null;
   origin?: "otto" | null;
   /** When it was made, with what settings, at what cost (#547 B4). Null for text cards. */
@@ -23,6 +26,7 @@ export type CreateNodeInput = {
   projectId: string; type: "image" | "video" | "text";
   x: number; y: number; w: number; h: number;
   text?: string; prompt?: string; generationId?: string; genJobId?: string;
+  /** A stored ROW word, not a face — validated against the same set the column's check enforces. */
   status?: string; sourceNodeId?: string; threadId?: string;
 };
 export type CreatedCanvasNode = { id: string; x: number; y: number; w: number; h: number };
@@ -92,7 +96,7 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     });
     const thumb = generationId ? thumbs[generationId] : undefined;
     const url = thumb?.src ?? null;
-    const status = generationId && !url ? "missing" : canvasNodeDisplayStatus(n.status, job?.status, url);
+    const status = canvasCardFace({ rowStatus: n.status, jobStatus: job?.status, generationId, url });
     return {
       ...n,
       generationId,
@@ -110,6 +114,13 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
 export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedCanvasNode | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  // THE LAST UNVALIDATED WRITER (#602 T3). This is a server action, so `input.status` is a string
+  // the browser chose, and for as long as this action has existed it went to the column unread.
+  // Our own callers only ever send "pending" or "done", but "our callers behave" is not a rule the
+  // database can keep — and a row carrying a word no renderer knows is exactly the eternal spinner
+  // the state algebra closes. The check constraint is the durable guarantee; this is the same rule
+  // said early, so a bad request gets an answer instead of a database error.
+  if (input.status !== undefined && !isCanvasCardRowStatus(input.status)) return { error: "Invalid status." };
   if (!(await ownedProject(input.projectId, gate.ownerId))) return { error: "Project not found." };
   // Attribution is fail-closed: only stamp threadId when it names a live thread in THIS
   // owner+project; otherwise store null. Never trust a client-supplied threadId blindly.

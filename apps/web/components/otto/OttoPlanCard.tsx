@@ -134,7 +134,13 @@ export function OttoPlanCard({
   // created, not that it started — so it must not say "making this now" (P1-3).
   const runState = runStateOfCard(cardState);
 
-  const [cancelled, setCancelled] = useState(false);
+  // Two ways this card can know it was stopped, and it needs both (#602 T3). The local flag is
+  // this press, right now, before any durable message exists; `runState` is the DURABLE answer,
+  // which is what a reload — or another tab — has to go on. Only the local one existed before, so
+  // the cancelled face survived exactly until the page was refreshed, and then the same card came
+  // back red with a "Try again" button on it.
+  const [locallyCancelled, setLocallyCancelled] = useState(false);
+  const cancelled = locallyCancelled || runState === "cancelled";
 
   async function cancel() {
     if (!genJobId || busy || cancelled) return;
@@ -147,7 +153,7 @@ export function OttoPlanCard({
         setError("It already started — can't cancel at this point.");
         return;
       }
-      setCancelled(true);
+      setLocallyCancelled(true);
       onCancelled?.();
     } catch {
       setError("Couldn't cancel — please try again.");
@@ -383,7 +389,14 @@ export function OttoPlanCard({
           )}
         </div>
 
-        {runState === "failed" ? (
+        {/* Cancelled is asked FIRST (#602 T3). The two states arrive on the same durable message,
+            so whichever is tested first wins — and a merchant's own decision must never be dressed
+            up as a failure with a "Try again" button attached to it. */}
+        {cancelled ? (
+          <div className="mt-4 text-[0.875rem] text-muted-foreground">
+            Cancelled — you weren&rsquo;t charged.
+          </div>
+        ) : runState === "failed" ? (
           <div className="mt-4">
             <div className="text-[0.875rem] font-semibold text-foreground">
               😕 This one didn&rsquo;t come through — and you weren&rsquo;t charged.
@@ -396,10 +409,6 @@ export function OttoPlanCard({
                 Change something
               </Button>
             </div>
-          </div>
-        ) : cancelled ? (
-          <div className="mt-4 text-[0.875rem] text-muted-foreground">
-            Cancelled — you weren&rsquo;t charged.
           </div>
         ) : runState === "done" ? (
           <div className="mt-4">

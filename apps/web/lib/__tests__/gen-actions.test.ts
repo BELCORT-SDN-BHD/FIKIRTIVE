@@ -710,6 +710,53 @@ describe("startGen", () => {
     expect(db.reserveCredits).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a NEW attempt start after the merchant cancelled the previous one (#602 T3)", async () => {
+    // THE GUARD (#599 D4). A new attempt on the same logical cell may only be created once every
+    // prior job for that cell has ENDED WITHOUT DELIVERING. That rule was spelled as
+    // `status !== "FAILED"`, i.e. "failed is the only ending that frees the cell" — true only
+    // while cancelling wrote the word FAILED. The moment cancel became its own word, a cancelled
+    // job read as "still live" and the merchant's next press was deduped back onto the dead job:
+    // they press Generate, nothing new is ever made, and the id they get back is a job that will
+    // never produce anything. Nothing about money changes here — a cancelled job was already
+    // refunded, and the fresh attempt reserves for itself exactly as any first attempt does.
+    const logical = `batch:${"9".repeat(32)}:attempt:`;
+    const key = `${logical}${"e".repeat(32)}`;
+    const cancelled = {
+      id: "job_cancelled_by_the_merchant",
+      status: "CANCELLED",
+      idempotencyKey: `${logical}${"f".repeat(32)}`,
+      prompt: "same material",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: ["entity-1"],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      videoOptions: null,
+    };
+    db.genJobFindMany.mockResolvedValue([cancelled]);
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "same material",
+      entityIds: ["entity-1"],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: key,
+    });
+
+    // A NEW job — never the cancelled one handed back as if it were still going to deliver.
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.genJobCreate).toHaveBeenCalledTimes(1);
+    // Money is untouched by the guard: the fresh attempt reserves once, like any first attempt.
+    expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(db.refundReservation).not.toHaveBeenCalled();
+  });
+
   it("reuses an exact factory attempt even after its job FAILED — delayed duplicate is never a retry", async () => {
     const key = `batch:${"a".repeat(32)}:attempt:${"b".repeat(32)}`;
     expect(key).toHaveLength(79);

@@ -1137,7 +1137,11 @@ model CanvasNode {
   prompt       String?
   generationId String?
   genJobId     String?
-  status       String    @default("done") // "pending" | "done" | "failed"
+  // 有限、互斥的取值集,由 CanvasNode_status_check 落库强制(#602 T3 · spec #599 D4):
+  // pending | done | failed | cancelled | timeout | missing | deleted | unknown。
+  // 词表与写入者的唯一权威在 apps/web/lib/canvas-card-status.ts;'unknown' 没有写入者,
+  // 它只是迁移给历史越集值准备的落脚点。卡面(queued/generating/…)是**推导**出来的,不入库。
+  status       String    @default("done")
   sourceNodeId String?
   // G4c: convo attribution — which ChatThread created this node. Nullable, no backfill;
   // validated (same owner+project) in createCanvasNode, no FK. null = "unattributed".

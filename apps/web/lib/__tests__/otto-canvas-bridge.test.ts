@@ -136,7 +136,10 @@ describe("syncOttoCanvasNodes project scoping", () => {
       expect.objectContaining({
         id: "node-1",
         generationId: null,
-        status: "pending",
+        // The job belongs to another project, so THIS read cannot see it — and a card whose job
+        // nobody can find is `unknown`, never "still being made" (#602 T3). Saying pending here
+        // was the eternal spinner in its purest form.
+        status: "unknown",
         url: null,
       }),
     ]);
@@ -274,7 +277,8 @@ describe("syncOttoCanvasNodes project scoping", () => {
         type: "video",
         genJobId: "job-1",
         generationId: null,
-        status: "pending",
+        // The job is QUEUED, so the card says queued — not "making this now" (#602 T3).
+        status: "queued",
         url: null,
         threadId: "thread-1",
       }),
@@ -340,7 +344,7 @@ describe("syncOttoCanvasNodes project scoping", () => {
       expect.objectContaining({
         id: "node-pending",
         genJobId: "job-fallback",
-        status: "pending",
+        status: "queued",
       }),
     ]);
     expect(mockChatThreadFindMany).toHaveBeenCalledWith(expect.objectContaining({

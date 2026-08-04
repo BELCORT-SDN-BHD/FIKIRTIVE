@@ -24,6 +24,7 @@ import {
   GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
+  genJobEndedWithoutDelivering,
   type GenVideoModel,
   type GenJobData,
 } from "@fikirtive/core";
@@ -124,8 +125,16 @@ function factoryHistoryVerdict(
   }
   const exact = history.find((prior) => prior.idempotencyKey === attempt.key);
   if (exact) return { id: exact.id, disposition: "reused" };
-  const nonFailed = history.find((prior) => prior.status !== "FAILED");
-  if (nonFailed) return { id: nonFailed.id, disposition: "reused" };
+  // A NEW attempt may only be created once every prior job for this cell has ENDED WITHOUT
+  // DELIVERING (#602 T3). This used to be spelled `status !== "FAILED"` — which said, without
+  // meaning to, that failing is the ONLY ending that frees the cell. That held exactly as long as
+  // cancelling wrote the word FAILED; the moment cancel became its own word, a cancelled job read
+  // as still live and the merchant's next press was handed back the dead job. They press
+  // Generate, wait, and nothing is ever made. Money is untouched by this line: a cancelled job
+  // was refunded when it was cancelled, and the fresh attempt below reserves for itself exactly
+  // as any first attempt does.
+  const stillLive = history.find((prior) => !genJobEndedWithoutDelivering(prior.status));
+  if (stillLive) return { id: stillLive.id, disposition: "reused" };
   return null;
 }
 

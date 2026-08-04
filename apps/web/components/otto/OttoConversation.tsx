@@ -15,7 +15,7 @@ import { PerformanceCard } from "./PerformanceCard";
 import { OttoResult } from "./OttoResult";
 import { OttoMarkdown } from "./parts/OttoMarkdown";
 import { nextPendingApprovalCardIds } from "./approval-chain";
-import { deriveCardState } from "@/lib/otto-inject-helpers";
+import { cancelledTurnPayload, deriveCardState } from "@/lib/otto-inject-helpers";
 import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import type { EntityDTO, ChatThreadDTO, ChatMessageDTO } from "@/lib/types";
 
@@ -186,6 +186,16 @@ export function OttoConversation({
       .filter((m) => m.kind === "TURN_ERROR" && m.genJobId)
       .map((m) => m.genJobId as string),
   );
+  // …and which of those terminal messages say the MERCHANT stopped it (#602 T3). A cancel and a
+  // failure share the message kind, so without this second read the card came back from a reload
+  // red, apologising, with a "Try again" button on work the merchant chose to stop. Unioned with
+  // the local set below so this press and a durable reload agree.
+  const durablyCancelledJobIds = new Set([
+    ...cancelledJobIds,
+    ...messages
+      .filter((m) => m.kind === "TURN_ERROR" && m.genJobId && cancelledTurnPayload(m.payload))
+      .map((m) => m.genJobId as string),
+  ]);
 
   // Map genJobId → cardId for the "Make another" path on GEN_RESULT widgets.
   const cardIdByJobId = new Map<string, string>(
@@ -282,6 +292,7 @@ export function OttoConversation({
               onRefresh={refreshAndUpdate}
               resultJobIds={resultJobIds}
               errorJobIds={errorJobIds}
+              cancelledJobIds={durablyCancelledJobIds}
               cardIdByJobId={cardIdByJobId}
               submittedCardIds={submittedCardIds}
               pendingApprovalCardIds={pendingApprovalCardIds}
@@ -453,6 +464,7 @@ function MessageRow({
   onRefresh,
   resultJobIds,
   errorJobIds,
+  cancelledJobIds,
   cardIdByJobId,
   submittedCardIds,
   pendingApprovalCardIds,
@@ -471,6 +483,8 @@ function MessageRow({
   onRefresh?: () => void | Promise<void>;
   resultJobIds: Set<string>;
   errorJobIds: Set<string>;
+  /** Terminal messages that say the MERCHANT stopped it — durable, so a reload agrees (#602 T3). */
+  cancelledJobIds: Set<string>;
   cardIdByJobId: Map<string, string>;
   submittedCardIds: Set<string>;
   pendingApprovalCardIds: Set<string>;
@@ -525,6 +539,7 @@ function MessageRow({
               submitted: submittedCardIds.has(m.id),
               results: resultJobIds,
               errors: errorJobIds,
+              cancelled: cancelledJobIds,
             })}
             pendingApproval={pendingApprovalCardIds.has(m.id)}
             genJobId={m.genJobId}
@@ -641,10 +656,17 @@ function MessageRow({
   }
 
   if (m.kind === "DENIAL" || m.kind === "TURN_ERROR") {
+    // A cancel rides on TURN_ERROR because that kind owns the one-terminal-message-per-job index
+    // — but it is not an error, and it must not wear the error colour (#602 T3).
+    const cancelled = m.kind === "TURN_ERROR" && cancelledTurnPayload(m.payload);
     return (
       <div className="flex items-start gap-3">
         <OttoAvatar size={32} state="idle" />
-        <div className="px-4 py-3 bg-error-soft text-[var(--error-soft-foreground)] rounded-[0_20px_20px_20px] text-[0.875rem] leading-normal">
+        <div
+          className={cancelled
+            ? "px-4 py-3 bg-muted text-muted-foreground rounded-[0_20px_20px_20px] text-[0.875rem] leading-normal"
+            : "px-4 py-3 bg-error-soft text-[var(--error-soft-foreground)] rounded-[0_20px_20px_20px] text-[0.875rem] leading-normal"}
+        >
           {m.text}
         </div>
       </div>

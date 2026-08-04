@@ -631,7 +631,12 @@ async function tagJobToBatch(
   }
 }
 
-/** Six-state rollup for a batch: read the grouped jobs' live statuses and count them. */
+/** Rollup for a batch: read the grouped jobs' live statuses and count them.
+ *
+ *  Every GenStatus gets its own line, `cancelled` included (#602 T3) — a rollup where the parts
+ *  do not add up to `total` is a rollup that cannot be read. While cancelling wrote FAILED, a
+ *  cancelled cell was counted as a failure; unnamed, it would have vanished from the counts
+ *  instead, which is the same problem wearing the opposite face. */
 export interface BatchStatus {
   batchId: string;
   /** GenJob status counts among the batch's grouped jobs. */
@@ -639,6 +644,7 @@ export interface BatchStatus {
   generating: number;
   done: number;
   failed: number;
+  cancelled: number;
   total: number;
 }
 
@@ -658,6 +664,7 @@ export async function batchCellStatuses(
     generating: count("GENERATING"),
     done: count("DONE"),
     failed: count("FAILED"),
+    cancelled: count("CANCELLED"),
     total: jobs.length,
   };
 }
