@@ -1,16 +1,18 @@
 /**
- * #601 T2b — placing the delivered cards is the LAST step of a generation job's completion path.
+ * #601 T2b / #612 T2c — writing the cards is the LAST step of a generation job, however it ends.
  *
  * What this pins, and why each one matters to a merchant:
  *  - Every way a job can be DELIVERED — first try, or resumed after a crash by a redelivery or
  *    the reaper — ends with the board being written, so "my tab was closed" can never mean "my
  *    paid work is missing".
- *  - The board write happens AFTER the charge is settled and after the job row says DONE. It is
- *    an append-only last step, never a participant in the charge.
+ *  - Every way a job can END BADLY writes the board too, so a merchant who was not watching comes
+ *    back to a definite ending instead of a card that is still pretending to be made. There are
+ *    six such endings in this file and each one is pinned by name below.
+ *  - The board write happens AFTER the money step — settled for a delivery, refunded for a
+ *    failure — and after the job row is terminal. It is an append-only last step, never a
+ *    participant in the charge.
  *  - If the board write itself falls over, the job still finishes and the money is still right.
  *    A card can be written again later; a charge cannot.
- *  - A job that ended badly is NOT written here. Failure/cancelled/timeout terminals are T2c, and
- *    the case below pins that this slice leaves them alone rather than half-projecting them.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -155,25 +157,60 @@ describe("a delivered job", () => {
 });
 
 describe("a job that never delivered", () => {
-  it("does not touch the board when the job fails before spending", async () => {
+  it("settles the card when the job fails before spending", async () => {
     m.projectFindFirst.mockResolvedValue(null); // project gone → fail closed, no spend
 
     await handleGen({ genJobId: "g1" }, 0);
 
     expect(m.generateImages).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
-    // Showing a failure on the card is T2c; this slice must not half-project it.
-    expect(m.settleCanvasCardsForGenJob).not.toHaveBeenCalled();
+    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledWith("g1", "o1");
+    // The card is settled AFTER the money is given back — never before, never instead.
+    expect(ranBefore(m.refundReservation, m.settleCanvasCardsForGenJob)).toBe(true);
   });
 
-  it("does not touch the board when a post-charge failure ends the job", async () => {
+  it("settles the card when a post-charge failure ends the job", async () => {
     // The paid call returned, then storing the bytes failed for good: terminal FAILED + refund.
     m.storagePut.mockRejectedValue(new Error("R2 down"));
 
     await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
 
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
-    expect(m.settleCanvasCardsForGenJob).not.toHaveBeenCalled();
+    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledWith("g1", "o1");
+    expect(ranBefore(m.refundReservation, m.settleCanvasCardsForGenJob)).toBe(true);
+  });
+
+  it("keeps the money right when the board write fails on a failing job", async () => {
+    m.projectFindFirst.mockResolvedValue(null);
+    m.settleCanvasCardsForGenJob.mockRejectedValue(new Error("canvas write blew up"));
+
+    await expect(handleGen({ genJobId: "g1" }, 0)).resolves.toBeUndefined();
+
+    expect(m.refundReservation).toHaveBeenCalledTimes(1);
+    expect(m.settleCredits).not.toHaveBeenCalled();
+  });
+
+  it("settles the card when the stale fail-close gives up on a lost claim", async () => {
+    // Lost the QUEUED→GENERATING claim, and the owning attempt is stale: FAILED + refund.
+    m.genJobUpdateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValue({ count: 1 });
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.generateImages).not.toHaveBeenCalled();
+    expect(m.refundReservation).toHaveBeenCalledTimes(1);
+    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledWith("g1", "o1");
+  });
+
+  it("settles the card when the free-delivery guard refuses to deliver a refunded job", async () => {
+    // Outputs on the row, but a REFUND won the finalizer: never deliver, never refund again.
+    m.genJobFindUnique.mockResolvedValue({ ...baseJob, status: "GENERATING", generationIds: ["gen1", "gen2"] });
+    m.creditLedgerFindFirst.mockResolvedValue({ id: "led-refund" });
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.settleCredits).not.toHaveBeenCalled();
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledWith("g1", "o1");
   });
 });
 
@@ -190,19 +227,36 @@ describe("a job finished by a later delivery", () => {
 });
 
 describe("the reaper", () => {
-  it("writes the board for the job it finishes, and not for the one it fails closed", async () => {
+  it("writes the board for every job it finishes, delivered or failed closed", async () => {
     const stale = { id: "g-stale", ownerId: "o1", threadId: "t1", kind: "IMAGE", model: "seedream" };
+    const queued = { id: "g-queued", ownerId: "o1", threadId: "t1", kind: "IMAGE", model: "seedream" };
     const committed = { ...baseJob, id: "g-committed", status: "GENERATING", generationIds: ["gen1"] };
     m.genJobFindMany
       .mockResolvedValueOnce([stale])      // stale GENERATING scan → fail closed + refund
-      .mockResolvedValueOnce([])           // stuck QUEUED scan
+      .mockResolvedValueOnce([queued])     // stuck QUEUED scan → fail closed + refund
       .mockResolvedValueOnce([committed]); // committed-but-stuck scan → resume to DONE
     m.genJobUpdateMany.mockResolvedValue({ count: 1 });
+    m.queryRaw.mockResolvedValue([]);      // no live pg-boss message for the queued one
 
     await reapStaleGenJobs();
 
-    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledTimes(1);
-    expect(m.settleCanvasCardsForGenJob).toHaveBeenCalledWith("g-committed", "o1");
+    expect(m.settleCanvasCardsForGenJob.mock.calls.map((call) => call[0]))
+      .toEqual(["g-stale", "g-queued", "g-committed"]);
+    expect(m.refundReservation).toHaveBeenCalledTimes(2);
+  });
+
+  it("leaves a job it did NOT claim alone, board included", async () => {
+    const stale = { id: "g-stale", ownerId: "o1", threadId: "t1", kind: "IMAGE", model: "seedream" };
+    m.genJobFindMany
+      .mockResolvedValueOnce([stale])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    m.genJobUpdateMany.mockResolvedValue({ count: 0 }); // an active winner still owns the job
+
+    await reapStaleGenJobs();
+
+    expect(m.refundReservation).not.toHaveBeenCalled();
+    expect(m.settleCanvasCardsForGenJob).not.toHaveBeenCalled();
   });
 
   it("recovers the MONEY when a job's board write fails — and does not claim the board was written", async () => {

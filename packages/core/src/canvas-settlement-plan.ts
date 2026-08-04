@@ -11,10 +11,9 @@
  * reads the rows, calls this, and applies the actions. That is what makes the whole state space
  * testable without a database.
  *
- * SCOPE (#601 T2a/T2b): this slice projects the SUCCESS terminal only. A job that is not DONE
- * gets `skip: "not-settled"`. Projecting failed / cancelled / timed-out terminals onto a card is
- * T2c and lands with the code that writes them — deliberately not pre-built here, so nobody has
- * to guess later whether an unwired branch was reviewed.
+ * TERMINALS (#612 T2c): a job that ended badly is projected too — one card state per job
+ * terminal, so a board whose tab was closed stops spinning without a browser having to come back
+ * and tell it. Only a job that is still in flight (QUEUED / GENERATING) projects nothing.
  */
 import { canvasBatchFootprint, canvasBatchSlotOffset, nextCanvasSpawnOrigin, type CanvasRect } from "./canvas-layout.js";
 
@@ -231,7 +230,7 @@ export type SettlementCard = {
 };
 
 export type SettlementJob = {
-  /** GenJob.status — only "DONE" projects onto cards in this slice. */
+  /** GenJob.status — "DONE" places the outputs, a terminal below settles the cards it never had. */
   status: string;
   /** The outputs the paid job recorded, in the order it recorded them. */
   generationIds: readonly string[];
@@ -287,6 +286,34 @@ export type PlannedCardKeep = {
 
 export type PlannedCard = PlannedCardCreate | PlannedCardUpdate | PlannedCardKeep;
 
+/** A card of a job that ended badly: it only ever changes state, and only if it has to. */
+export type PlannedTerminalCard =
+  | { action: "update"; id: string; patch: { status: string } }
+  | { action: "keep"; id: string };
+
+/**
+ * ONE NAME PER TERMINAL — the whole vocabulary a job's own ending may put on a card (#612).
+ *
+ * The two entries are the two endings the database can prove. A generation the reaper gave up on
+ * is one of them: it is FAILED and refunded, so it reads as a failure, never as the card
+ * vocabulary's `timeout` — that word is the BROWSER's "I stopped watching, it may still finish",
+ * and telling a merchant to check back for a job that was refunded twenty minutes ago would be a
+ * lie. A merchant-facing "it timed out" that is distinct from "it failed" needs a durable
+ * terminal-kind fact this schema does not have; that is the state algebra of #599 D4 (T3), which
+ * lands with its own migration.
+ *
+ * Anything absent from this map is still in flight and projects nothing.
+ */
+const TERMINAL_CARD_STATUS: Readonly<Record<string, string>> = {
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+};
+
+/** The card state a job's own ending puts on its cards, or null while the job is still running. */
+export function canvasTerminalCardStatus(jobStatus: string): string | null {
+  return TERMINAL_CARD_STATUS[jobStatus] ?? null;
+}
+
 export type CanvasSettlementPlan =
   | {
       kind: "place";
@@ -294,9 +321,16 @@ export type CanvasSettlementPlan =
       cards: PlannedCard[];
     }
   | {
+      /** The job ended badly: settle the cards it left behind, create nothing. */
+      kind: "terminal";
+      /** The one name this ending gets, from `canvasTerminalCardStatus`. */
+      status: string;
+      cards: PlannedTerminalCard[];
+    }
+  | {
       kind: "skip";
       reason:
-        /** Not DONE yet (or a terminal this slice does not project — see SCOPE above). */
+        /** Still in flight — QUEUED or GENERATING. Nothing about the cards is decided yet. */
         | "not-settled"
         /** A storyboard/Gen-space job with no card and no thread: it has no place on a board. */
         | "not-a-canvas-job"
@@ -377,6 +411,44 @@ function findAnchor(live: readonly SettlementCard[], primaryGenerationId: string
 }
 
 /**
+ * Project a job that did NOT deliver onto the cards it left behind (#612 T2c).
+ *
+ * Three rules, and they are the whole thing:
+ *   - a job still in flight decides nothing — its card keeps saying it is being made;
+ *   - a card that already carries a paid output is NEVER touched. A terminal is about the work
+ *     that did not arrive, so it may not take away work that did. (A FAILED row CAN carry
+ *     outputs — the free-delivery guard fails one closed after a refund won the finalizer — and
+ *     without this rule that guard would strip pictures off the merchant's board.)
+ *   - nothing is ever created. There is no output to place, and the merchant's board is not the
+ *     place to announce a job they may never have seen a card for.
+ *
+ * Idempotent by shape: a card already showing this terminal comes back as `keep`.
+ */
+function planTerminalSettlement(
+  job: SettlementJob,
+  cards: readonly SettlementCard[],
+): CanvasSettlementPlan {
+  const status = canvasTerminalCardStatus(job.status);
+  if (!status) return { kind: "skip", reason: "not-settled" };
+
+  const { suppressesJob } = tombstoneRules(cards);
+  if (suppressesJob) return { kind: "skip", reason: "suppressed" };
+
+  const settleable = cards.filter((card) => card.status !== "deleted" && card.generationId === null);
+  if (!settleable.length) return { kind: "skip", reason: "nothing-to-place" };
+
+  return {
+    kind: "terminal",
+    status,
+    cards: settleable.map((card) => (
+      card.status === status
+        ? { action: "keep", id: card.id }
+        : { action: "update", id: card.id, patch: { status } }
+    )),
+  };
+}
+
+/**
  * Project a settled job onto the cards that should exist for it.
  *
  * Idempotent by shape: run it against a board that is already correct and every card comes back
@@ -384,7 +456,7 @@ function findAnchor(live: readonly SettlementCard[], primaryGenerationId: string
  */
 export function planCanvasSettlement(input: CanvasSettlementInput): CanvasSettlementPlan {
   const { job, cards, occupied } = input;
-  if (job.status !== "DONE") return { kind: "skip", reason: "not-settled" };
+  if (job.status !== "DONE") return planTerminalSettlement(job, cards);
 
   const { suppressesJob, suppressedGenerationIds } = tombstoneRules(cards);
   if (suppressesJob) return { kind: "skip", reason: "suppressed" };

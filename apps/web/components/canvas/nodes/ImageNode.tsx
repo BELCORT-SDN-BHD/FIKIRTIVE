@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
@@ -14,7 +15,7 @@ import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineag
  *  exactly the drift #550 is about. Used for video cards too: the fields it reads
  *  (status/url/generationId) mean the same thing on both. */
 export function imageNodeActionable(d: { status?: string; url?: string; generationId?: string }): boolean {
-  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const terminal = isTerminalCardStatus(d.status);
   return !!d.url && !terminal && !!d.generationId;
 }
 
@@ -68,7 +69,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     setWasSolo(soloSelected);
     if (!soloSelected) setInfoOpen(false);
   }
-  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const terminal = isTerminalCardStatus(d.status);
   const actionable = imageNodeActionable(d);
   const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
   const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
@@ -247,7 +248,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
       {terminal ? (
-        <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
+        <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
       ) : d.status === "pending" || !d.url ? (
         <GeneratingBody gb={d.skin === "gb"} kind="image" onRefresh={d.onRefresh} />
       ) : (

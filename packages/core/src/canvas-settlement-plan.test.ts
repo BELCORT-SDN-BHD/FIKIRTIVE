@@ -20,8 +20,10 @@ import {
   normalizeCanvasRepairReason,
   planCanvasSettlement,
   type CanvasJobOrigin,
+  canvasTerminalCardStatus,
   type CanvasSettlementPlan,
   type PlannedCard,
+  type PlannedTerminalCard,
   type SettlementCard,
   type SettlementJob,
 } from "./canvas-settlement-plan.js";
@@ -195,13 +197,22 @@ function card(overrides: Partial<SettlementCard> = {}): SettlementCard {
   };
 }
 
+function describePlan(plan: CanvasSettlementPlan): string {
+  return plan.kind === "skip" ? `skip:${plan.reason}` : plan.kind;
+}
+
 function place(plan: CanvasSettlementPlan): PlannedCard[] {
-  if (plan.kind !== "place") throw new Error(`expected a placement plan, got skip:${plan.reason}`);
+  if (plan.kind !== "place") throw new Error(`expected a placement plan, got ${describePlan(plan)}`);
   return plan.cards;
 }
 
+function terminal(plan: CanvasSettlementPlan): { status: string; cards: PlannedTerminalCard[] } {
+  if (plan.kind !== "terminal") throw new Error(`expected a terminal plan, got ${describePlan(plan)}`);
+  return { status: plan.status, cards: plan.cards };
+}
+
 function skipReason(plan: CanvasSettlementPlan): string {
-  if (plan.kind !== "skip") throw new Error("expected the plan to skip");
+  if (plan.kind !== "skip") throw new Error(`expected the plan to skip, got ${describePlan(plan)}`);
   return plan.reason;
 }
 
@@ -406,14 +417,91 @@ describe("what kind of card it is", () => {
   });
 });
 
+/**
+ * #612 T2c — a job that ended badly. One name per ending, and the ending may only settle work
+ * that never arrived: a card carrying a paid output is not the failure's to touch.
+ */
+describe("how a job's own ending reaches its cards", () => {
+  it.each([
+    ["FAILED", "failed"],
+    ["CANCELLED", "cancelled"],
+  ])("gives a %s job's waiting card the state %s", (status, expected) => {
+    const plan = terminal(planCanvasSettlement({
+      job: job({ status, generationIds: [] }),
+      cards: [card()],
+      occupied: [],
+    }));
+
+    expect(plan.status).toBe(expected);
+    expect(plan.cards).toEqual([{ action: "update", id: "card-anchor", patch: { status: expected } }]);
+  });
+
+  it("names each ending exactly once, and nothing else", () => {
+    expect(canvasTerminalCardStatus("FAILED")).toBe("failed");
+    expect(canvasTerminalCardStatus("CANCELLED")).toBe("cancelled");
+    for (const inFlight of ["QUEUED", "GENERATING", "DONE", "whatever-comes-next"]) {
+      expect(canvasTerminalCardStatus(inFlight)).toBeNull();
+    }
+  });
+
+  it("settles every waiting card of the job, not just the first", () => {
+    const plan = terminal(planCanvasSettlement({
+      job: job({ status: "FAILED", generationIds: [] }),
+      cards: [card(), card({ id: "card-two" }), card({ id: "card-three", status: "timeout" })],
+      occupied: [],
+    }));
+
+    expect(plan.cards).toEqual([
+      { action: "update", id: "card-anchor", patch: { status: "failed" } },
+      { action: "update", id: "card-two", patch: { status: "failed" } },
+      { action: "update", id: "card-three", patch: { status: "failed" } },
+    ]);
+  });
+
+  it("writes the same ending only once — a card already saying it is kept", () => {
+    const plan = terminal(planCanvasSettlement({
+      job: job({ status: "FAILED", generationIds: [] }),
+      cards: [card({ status: "failed" })],
+      occupied: [],
+    }));
+
+    expect(plan.cards).toEqual([{ action: "keep", id: "card-anchor" }]);
+  });
+
+  it("never takes a paid output off a card, even when the job's row says FAILED", () => {
+    // The free-delivery guard's shape: outputs recorded, then failed closed after a refund won.
+    const plan = planCanvasSettlement({
+      job: job({ status: "FAILED", generationIds: OUTPUTS.slice(0, 2) }),
+      cards: [card({ status: "done", generationId: OUTPUTS[0] }), card({ id: "card-two" })],
+      occupied: [],
+    });
+
+    expect(terminal(plan).cards).toEqual([{ action: "update", id: "card-two", patch: { status: "failed" } }]);
+  });
+
+  it("creates nothing for an ending — there is no output to place", () => {
+    expect(skipReason(planCanvasSettlement({
+      job: job({ status: "FAILED", generationIds: [] }),
+      cards: [],
+      occupied: [],
+    }))).toBe("nothing-to-place");
+  });
+
+  it("still honours a card the merchant deleted while the job was running", () => {
+    expect(skipReason(planCanvasSettlement({
+      job: job({ status: "CANCELLED", generationIds: [] }),
+      cards: [card({ status: "deleted" })],
+      occupied: [],
+    }))).toBe("suppressed");
+  });
+});
+
 describe("when the board must be left alone", () => {
   it.each([
     ["QUEUED"],
     ["GENERATING"],
-    ["FAILED"],
-    ["CANCELLED"],
     ["something-nobody-has-invented-yet"],
-  ])("does nothing for a job in %s — only a delivered job projects onto cards in this slice", (status) => {
+  ])("does nothing for a job in %s — a job still in flight decides nothing about its cards", (status) => {
     expect(skipReason(planCanvasSettlement({
       job: job({ status, generationIds: OUTPUTS.slice(0, 2) }),
       cards: [card()],

@@ -21,14 +21,16 @@
  * projection in `@fikirtive/core` (`planCanvasSettlement`) — so a card cannot mean one thing in
  * the tab that made it and another thing after a reload.
  *
- * SCOPE (#601 T2b): the delivered (DONE) path only. Projecting failed / cancelled / timed-out
- * terminals onto a card is T2c and lands with the code that writes them.
+ * Both endings come through here (#612 T2c): a delivered job gets its outputs placed, and a job
+ * that ended failed or cancelled gets the cards it left behind settled to that one terminal. Only
+ * a job still in flight writes nothing.
  */
 import {
   CANVAS_JOB_KEY_PATTERN,
   CANVAS_REPAIR_JSON_KEY,
   canvasMaterialWithoutRepair,
   canvasJobOrigin,
+  canvasTerminalCardStatus,
   isTrustedCanvasRepairRecord,
   newId,
   normalizeCanvasRepairReason,
@@ -96,7 +98,7 @@ export function canvasRepairLockKey(ownerId: string, projectId: string, genJobId
 }
 
 /**
- * Write every canvas card a delivered generation job owns, exactly once.
+ * Write every canvas card a finished generation job owns, exactly once — delivered or not.
  *
  * Idempotent: run it again (a redelivery, the reaper's resume, or a browser that also placed the
  * cards) and the projection returns "keep" for everything, so nothing is written twice.
@@ -122,7 +124,11 @@ export async function settleCanvasCardsForGenJob(
       },
     });
     if (!job) return { status: "job-missing", ...nothing };
-    if (job.status !== "DONE") return { status: "not-settled", ...nothing };
+    // A job still in flight decides nothing about its cards. Every FINISHED job — delivered or
+    // ended badly — goes on to the one projection below (#612 T2c).
+    if (job.status !== "DONE" && canvasTerminalCardStatus(job.status) === null) {
+      return { status: "not-settled", ...nothing };
+    }
 
     // Every owner-scoped query below is pinned to the ownerId the CALLER authenticated, never to
     // the value read back off the job row. They are equal by construction (the job was found by
@@ -164,6 +170,24 @@ export async function settleCanvasCardsForGenJob(
       occupied,
     });
     if (plan.kind === "skip") return { status: plan.reason, ...nothing };
+
+    if (plan.kind === "terminal") {
+      const terminalIds: string[] = [];
+      let settled = 0;
+      for (const entry of plan.cards) {
+        terminalIds.push(entry.id);
+        if (entry.action === "keep") continue;
+        // `generationId: null` is the projection's own rule spelled again at the write: a card
+        // that carries a paid output is never downgraded by an ending, whoever bound it and
+        // whenever they did.
+        const written = await tx.canvasNode.updateMany({
+          where: { id: entry.id, ownerId, projectId: job.projectId, generationId: null, status: { not: "deleted" } },
+          data: entry.patch,
+        });
+        settled += written.count;
+      }
+      return { status: "settled" as const, nodeIds: terminalIds, created: 0, updated: settled };
+    }
 
     const nodeIds: string[] = [];
     let created = 0;

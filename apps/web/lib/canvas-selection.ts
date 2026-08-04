@@ -82,7 +82,17 @@ export function canvasBatchSelection(nodes: readonly CanvasSelectionNode[]): Can
 export type CanvasMergeNode = {
   id: string;
   selected?: boolean;
-  data: { status?: unknown; url?: unknown };
+  data: {
+    status?: unknown;
+    url?: unknown;
+    /**
+     * A board read has shown this card at least once (#612 r4). It separates the two populations
+     * an absent card can belong to: one the server has never heard of (just placed here, a read
+     * already in flight cannot contain it) and one the server used to return and no longer does
+     * — which, since reads omit tombstones, means it was deleted.
+     */
+    serverKnown?: unknown;
+  };
 };
 
 /**
@@ -106,18 +116,56 @@ export type CanvasMergeNode = {
 export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
   previous: readonly T[],
   incoming: readonly T[],
+  /**
+   * Cards this tab has already taken off the board because they were DELETED (#612 r5).
+   *
+   * Removing a card cannot un-send a read that is already in flight: that read left before the
+   * deletion, so it still carries the card — stamped `serverKnown` from its own snapshot — and
+   * lands afterwards, putting it back. If the row it captured happens to be terminal, the card is
+   * no longer in flight, the board's re-read loop stops with it on screen, and a deleted card
+   * haunts the board for good. Deletion therefore outranks every snapshot, whenever it departed.
+   */
+  removedIds: ReadonlySet<string> = EMPTY_REMOVED,
 ): T[] {
   const previousById = new Map(previous.map((node) => [node.id, node]));
-  const merged = incoming.map((node) => {
+  const merged = incoming.filter((node) => !removedIds.has(node.id)).map((node) => {
     const old = previousById.get(node.id);
     if (!old) return node;
-    const serverBehind = node.data.status === "pending" && !node.data.url;
-    const knownHere = old.data.status === "pending" || old.data.status === "done" || !!old.data.url;
-    if (serverBehind && knownHere) return old;
+    // A read that is still catching up may never pull a card BACKWARDS (#612 r3, judge P1②③).
+    // The rule used to be spelled as a list of states this tab "already knew", and the list left
+    // out every state a card reaches when its own poll ENDS — it gave up (timeout), or learnt an
+    // ending the row has not been settled to yet. Those cards were replaced by the still-pending
+    // server row, so the spinner came back with nothing left running to take it off again: the
+    // poll was over, and the resolve that would have recorded the ending had not landed.
+    //
+    // So the rule is now the thing it was always trying to say: while the server row is still
+    // `pending` with no media it has nothing to teach this card, and the moment it holds a settled
+    // answer — an ending, or the picture — that answer wins, whatever this tab had guessed.
+    const serverStillCatchingUp = node.data.status === "pending" && !node.data.url;
+    // Either way this card is one the server HAS answered for, which is what lets an absent card
+    // be read as deleted further down.
+    if (serverStillCatchingUp) return acknowledged(old);
     return old.selected === node.selected ? node : { ...node, selected: old.selected };
   });
   const mergedIds = new Set(merged.map((node) => node.id));
-  return [...merged, ...previous.filter((node) => !mergedIds.has(node.id))];
+  // A card missing from an authoritative read is one of two very different things, and treating
+  // them alike is what kept a deleted card on screen for ever (#612 r4). A card the server has
+  // never returned may simply be newer than the read in flight — it stays. A card the server used
+  // to return and no longer does has been deleted: reads omit tombstones, so nothing that arrives
+  // later can ever take it off the board, and keeping it means a merchant watching a card being
+  // made that does not exist. It goes.
+  return [
+    ...merged,
+    ...previous.filter((node) => !mergedIds.has(node.id) && !node.data.serverKnown && !removedIds.has(node.id)),
+  ];
+}
+
+/** No card has been removed on this board yet. Shared so the default costs no allocation. */
+const EMPTY_REMOVED: ReadonlySet<string> = new Set<string>();
+
+/** Stamp a card as one a board read has shown, without disturbing one already stamped. */
+function acknowledged<T extends CanvasMergeNode>(node: T): T {
+  return node.data.serverKnown ? node : { ...node, data: { ...node.data, serverKnown: true } };
 }
 
 /** Plain-language confirm copy for removing a whole selection. */

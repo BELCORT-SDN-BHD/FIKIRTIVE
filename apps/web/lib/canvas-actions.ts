@@ -9,6 +9,7 @@ import { placeCanvasJobNode, tombstoneCanvasNode } from "./canvas-node-placement
 import { reconcileSettledCanvasJobs } from "./canvas-settlement-reconcile";
 import { getGenerationThumbs } from "./data";
 import { canvasNodeDisplayStatus, firstDisplayableGenerationId, settledCanvasNodeRepairPatch } from "./otto-canvas-bridge-core";
+import { OVERWRITABLE_CARD_STATUSES } from "./canvas-card-status";
 
 export type CanvasNodeDTO = {
   id: string; type: string; x: number; y: number; w: number; h: number;
@@ -26,12 +27,12 @@ export type CreateNodeInput = {
   status?: string; sourceNodeId?: string; threadId?: string;
 };
 export type CreatedCanvasNode = { id: string; x: number; y: number; w: number; h: number };
-type CanvasNodeResolveStatus = "done" | "failed" | "timeout" | "missing";
+type CanvasNodeResolveStatus = "done" | "failed" | "cancelled" | "timeout" | "missing";
 
 const SELECT = { id: true, type: true, x: true, y: true, w: true, h: true, text: true,
   prompt: true, generationId: true, genJobId: true, status: true, sourceNodeId: true,
   threadId: true } as const;
-const RESOLVE_STATUSES = new Set<CanvasNodeResolveStatus>(["done", "failed", "timeout", "missing"]);
+const RESOLVE_STATUSES = new Set<CanvasNodeResolveStatus>(["done", "failed", "cancelled", "timeout", "missing"]);
 
 function canvasNodeOrigin(idempotencyKey: string | null | undefined): "otto" | null {
   return idempotencyKey?.startsWith("cowork:") ? "otto" : null;
@@ -85,8 +86,10 @@ export async function listCanvasNodes(projectId: string): Promise<CanvasNodeDTO[
     // A delivered job's rows belong to the settlement above — it has just run, with the whole
     // job in view. Repairing one of them here from a picture's availability would re-open the
     // second opinion this file was fixing: the two would disagree about which output the primary
-    // card carries the moment one output's media is slow to resolve. Rows of a job that is NOT
-    // delivered (a failed one) still get their display state repaired here; that projection is T2c.
+    // card carries the moment one output's media is slow to resolve. Rows of a job that ended
+    // badly are now written by that same settlement too (#612 T2c); what is left here is the
+    // backstop for a board whose terminal settlement has not run, and it goes with the rest of
+    // the read-time repair in T2d.
     const patch = job?.status === "DONE"
       ? null
       : settledCanvasNodeRepairPatch(n.status, n.generationId, job?.status, generationId, url);
@@ -206,7 +209,22 @@ export async function updateTextNode(projectId: string, id: string, text: string
   return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
 }
 
-export async function resolveCanvasNode(projectId: string, id: string, input: { status: string; generationId?: string | null }) {
+/**
+ * What the server did with a browser's report about a card (#612 r2).
+ *
+ * `applied: false` is not an error — it means the card had already come to rest, and `status` is
+ * what it actually says. The caller is a tab that may be far behind; it needs the difference.
+ */
+export type ResolveCanvasNodeResult =
+  | { ok: true; applied: true }
+  | { ok: true; applied: false; status: string }
+  | { error: string };
+
+export async function resolveCanvasNode(
+  projectId: string,
+  id: string,
+  input: { status: string; generationId?: string | null },
+): Promise<ResolveCanvasNodeResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (!RESOLVE_STATUSES.has(input.status as CanvasNodeResolveStatus)) return { error: "Invalid status." };
@@ -222,7 +240,20 @@ export async function resolveCanvasNode(projectId: string, id: string, input: { 
     },
     select: { id: true, projectId: true, genJobId: true },
   });
-  if (!node) return { error: "Node not found." };
+  if (!node) {
+    // DELETION IS AN ANSWER (#612 r4, judge P1). The lookup above walks past tombstones, so a card
+    // the merchant removed in another tab came back as "Node not found" — indistinguishable from a
+    // card that never existed, and therefore filed by the caller as "nobody knows". Nothing could
+    // ever converge that: board reads omit tombstones too, so the only visible thing left was a
+    // card being made that no longer exists. One read-only lookup makes the deletion sayable. The
+    // WRITE predicate below is untouched — "deleted" was never in the overwritable set.
+    const tombstone = await prisma.canvasNode.findFirst({
+      where: { id, ownerId: gate.ownerId, projectId, status: "deleted" },
+      select: { id: true },
+    });
+    if (tombstone) return { ok: true as const, applied: false as const, status: "deleted" };
+    return { error: "Node not found." };
+  }
 
   let generationId: string | null = null;
   if (input.generationId) {
@@ -243,16 +274,41 @@ export async function resolveCanvasNode(projectId: string, id: string, input: { 
     generationId = g.id;
   }
 
-  const r = await prisma.canvasNode.updateMany({
+  // THE LATE-WRITE BARRIER (#612). This is the browser reporting what IT last saw, and a browser
+  // can be arbitrarily far behind: a tab the merchant closed keeps polling, gives up, and sends
+  // "timeout" for a card the server settled minutes ago. Applied as written that report knocked
+  // the card back from done to timeout AND erased its generationId — the merchant's paid picture
+  // came off the card, and the board then handed every orphaned card the batch's FIRST output, so
+  // one image appeared four times and three appeared nowhere.
+  //
+  // Two clauses, two different invariants, and the FIRST is the one that matters (#612 r2, judge
+  // P1): what may be overwritten is decided by the card's own STATE, not by whether it happens to
+  // carry an output. Keying only on `generationId: null` protected delivered cards and nothing
+  // else — a settled `failed` or `cancelled` card carries no output BY DESIGN, so a stale report
+  // could still reopen a card the server had already finished. `generationId: null` stays beside
+  // it as the independent promise that a resolve never erases or re-points a paid output.
+  //
+  // Both live in the WHERE, so the rule holds in the database rather than between the read above
+  // and this write: a settlement landing in that window makes this match nothing. Zero rows means
+  // the card is already settled with something better than this report — and the answer SAYS so,
+  // because a browser that is not told it was refused paints the stale state anyway.
+  const written = await prisma.canvasNode.updateMany({
     where: {
       id,
       ownerId: gate.ownerId,
       projectId: node.projectId,
-      status: { not: "deleted" },
+      status: { in: [...OVERWRITABLE_CARD_STATUSES] },
+      generationId: null,
     },
     data: { status: input.status, generationId },
   });
-  return r.count === 1 ? { ok: true as const } : { error: "Node not found." };
+  if (written.count === 1) return { ok: true as const, applied: true as const };
+  const settled = await prisma.canvasNode.findFirst({
+    where: { id, ownerId: gate.ownerId, projectId: node.projectId },
+    select: { status: true },
+  });
+  // "deleted" also covers the card being removed between these two reads — nothing to paint.
+  return { ok: true as const, applied: false as const, status: settled?.status ?? "deleted" };
 }
 
 export async function deleteCanvasNode(projectId: string, id: string) {

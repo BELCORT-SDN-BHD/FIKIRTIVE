@@ -37,6 +37,9 @@ export function canvasNodeDisplayStatus(
 ): string {
   if (url) return "done";
   if (jobStatus === "FAILED") return "failed";
+  // A cancelled job is its own ending, not a failure (#612 · #599 D4). The settlement writes it
+  // on the row; saying it here too means a board opened before that write still reads truthfully.
+  if (jobStatus === "CANCELLED") return "cancelled";
   if (jobStatus === "DONE") return "missing";
   if (jobStatus === "QUEUED" || jobStatus === "GENERATING") return "pending";
   return rowStatus;

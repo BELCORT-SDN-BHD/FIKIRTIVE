@@ -3,6 +3,7 @@
 // making the asset + an indeterminate progress bar + the honest money line
 // ("billed only when it finishes" — no fabricated credit number). The legacy
 // skin keeps the plain centered text so the old look is untouched (strangler).
+import type { TerminalCardStatus } from "@/lib/canvas-card-status";
 function OttoCloud() {
   return (
     <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden>
@@ -45,26 +46,30 @@ function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
 }
 
 /** Terminal state for a card whose gen didn't deliver. "failed" is a hard fail (the worker
- *  FAILED + refunded the job, so it's safe to say "not charged"); "timeout" is soft — the
- *  client stopped polling but the worker may still settle it, so it invites a check-back
+ *  FAILED + refunded the job, so it's safe to say "not charged"); "cancelled" is the job's own
+ *  ending, not a failure, so it says nothing about money it cannot prove; "timeout" is soft —
+ *  the client stopped polling but the worker may still settle it, so it invites a check-back
  *  rather than claiming failure. Without this, a FAILED/timed-out node showed GeneratingBody
  *  forever (the eternal spinner, F21). "missing" means the job is terminal but
  *  the preview URL could not be resolved, so do not claim a refund. */
-export function FailedBody({ status, onRefresh }: { status: "failed" | "timeout" | "missing"; onRefresh?: () => void }) {
+export function FailedBody({ status, onRefresh }: { status: TerminalCardStatus; onRefresh?: () => void }) {
   const timeout = status === "timeout";
   const missing = status === "missing";
+  const cancelled = status === "cancelled";
   return (
     <div style={{ display: "grid", placeItems: "center", height: "100%", padding: 12, textAlign: "center", gap: 6 }}>
-      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{timeout ? "⏳" : "⚠️"}</div>
+      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{timeout ? "⏳" : cancelled ? "⃠" : "⚠️"}</div>
       <div style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.8 }}>
-        {timeout ? "Still working…" : missing ? "Preview missing" : "That didn't finish"}
+        {timeout ? "Still working…" : missing ? "Preview missing" : cancelled ? "Cancelled" : "That didn't finish"}
       </div>
       <div style={{ fontSize: 11.5, opacity: 0.55, lineHeight: 1.4 }}>
         {timeout
           ? "This is taking longer than usual — check back in a moment."
           : missing
             ? "The job finished, but this card could not load the media."
-            : "You weren't charged. Try again."}
+            : cancelled
+              ? "This generation was cancelled."
+              : "You weren't charged. Try again."}
       </div>
       {(timeout || missing) && <RefreshButton onRefresh={onRefresh} />}
     </div>

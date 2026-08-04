@@ -517,7 +517,7 @@ describe("resolveCanvasNode", () => {
     mockGenerationFindFirst.mockResolvedValue({ id: "g1" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true, applied: true });
 
     expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -539,10 +539,24 @@ describe("resolveCanvasNode", () => {
     );
     expect(mockUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "node-1", ownerId: "u1", projectId: "p1", status: { not: "deleted" } },
+        // The late-write barrier (#612 r2): a resolve may only change a card that is still in
+        // one of the states a browser owns, and may never erase or re-point a paid output. A
+        // report from a tab that has fallen behind therefore matches no row at all.
+        where: { id: "node-1", ownerId: "u1", projectId: "p1", status: { in: ["pending", "timeout"] }, generationId: null },
         data: { status: "done", generationId: "g1" },
       }),
     );
+  });
+
+  it("tells the caller its report was refused, and what the card actually says", async () => {
+    // #612 r2: silence here is what let a stale tab paint "Still working…" over a settled card.
+    mockCanvasNodeFindFirst
+      .mockResolvedValueOnce({ id: "node-1", projectId: "p1" })
+      .mockResolvedValueOnce({ status: "failed" });
+    mockUpdateMany.mockResolvedValue({ count: 0 }); // the barrier matched no row
+
+    await expect(resolveCanvasNode("p1", "node-1", { status: "timeout" }))
+      .resolves.toEqual({ ok: true, applied: false, status: "failed" });
   });
 
   it("does not resolve a paid job node to an unrelated same-project generation", async () => {
@@ -572,7 +586,7 @@ describe("resolveCanvasNode", () => {
     mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    await expect(resolveCanvasNode("p1", "node-1", { status: "failed" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "failed" })).resolves.toEqual({ ok: true, applied: true });
 
     expect(mockGenerationFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).toHaveBeenCalledWith(
