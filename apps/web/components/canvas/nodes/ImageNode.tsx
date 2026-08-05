@@ -7,6 +7,7 @@ import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasBatchLetter } from "@/lib/canvas-batch-identity";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -29,6 +30,11 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     lineage?: CanvasNodeLineage | null;
     /** The card this one's paid job was made FROM — the one fact "Made from" reads (#603 T4). */
     madeFromNodeId?: string | null;
+    /** Batch identity as the server settled it — what the A/B badge reads (#603 T4). */
+    batchIndex?: number | null;
+    batchSize?: number | null;
+    /** Opens the lineage tree for the picked card (#605 T6). Supplied by FlowCanvas. */
+    onOpenLineage?: () => void;
     onAnimate?: () => void;
     onEvolve?: (id: string, prompt: string) => void;
     onVariant?: (id: string) => void;
@@ -72,6 +78,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   }
   const terminal = isTerminalCardStatus(d.status);
   const actionable = imageNodeActionable(d);
+  const letter = canvasBatchLetter(d);
   const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
   const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
   const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
@@ -100,6 +107,21 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
+          </button>
+        )}
+        {/* T6: the card's whole story — what made it, what it made, who came out of the same
+            press. Unlike Info it is offered on a card that FAILED too: what a merchant most
+            wants to know about a card that did not work is where it came from (#605). */}
+        {d.onOpenLineage && (
+          <button
+            type="button"
+            aria-label="Show what this card came from"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="What made this card, and what it made"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
+          >
+            Lineage
           </button>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
@@ -241,6 +263,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
         Image
+        {/* The A/B letter, read off the recorded batch position and nothing else — dragging B
+            above A does not swap them, because a coordinate never said which one this is
+            (#603 T4 · #605 T6). Only a press that really made two has an A and a B. */}
+        {letter && <span className="cv-nodeletter">{letter}</span>}
       </span>
     {/* The picture is a picture, not a button: clicking it picks the card up and nothing else
         (#604 · spec #599 D6). Everything the card can DO lives on its toolbar above. */}

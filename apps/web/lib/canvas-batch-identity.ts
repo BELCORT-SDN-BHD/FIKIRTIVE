@@ -94,6 +94,50 @@ export function canvasCardsComparable(left: CanvasBatchNode, right: CanvasBatchN
   return !!leftLetter && !!rightLetter && leftLetter !== rightLetter;
 }
 
+/** Which card goes on which side of a side-by-side compare, and what each side is called. */
+export type CanvasComparePair = {
+  left: { id: string; label: string };
+  right: { id: string; label: string };
+  title: string;
+};
+
+/**
+ * The two sides of a side-by-side compare — decided by the recorded facts, never by the picking.
+ *
+ * A merchant screenshots the comparison and tells a colleague "I pick A". So the side a card
+ * lands on may not depend on which one they clicked first, or on where the cards sit: the
+ * recorded batch position puts A on the left, full stop. For a real derivation there is no A and
+ * no B — the honest label is which one made the other.
+ *
+ * Returns null for anything the gate refuses, so the caller cannot open a comparison the facts
+ * do not support.
+ */
+export function canvasComparePair(
+  first: CanvasBatchNode,
+  second: CanvasBatchNode,
+): CanvasComparePair | null {
+  if (!canvasCardsComparable(first, second)) return null;
+
+  const firstLetter = canvasBatchLetter(first);
+  const secondLetter = canvasBatchLetter(second);
+  if (firstLetter && secondLetter) {
+    const [left, right] = firstLetter === "A" ? [first, second] : [second, first];
+    return {
+      left: { id: left.id, label: "A" },
+      right: { id: right.id, label: "B" },
+      title: "Comparing A and B",
+    };
+  }
+
+  // The remaining way in is a recorded derivation: one of them was made FROM the other.
+  const [source, made] = second.madeFromNodeId === first.id ? [first, second] : [second, first];
+  return {
+    left: { id: source.id, label: "Source" },
+    right: { id: made.id, label: "Made from it" },
+    title: "Comparing a card with what it made",
+  };
+}
+
 /** One press's cards that are on the board right now, for the frame drawn around them. */
 export type CanvasBatchGroup = {
   genJobId: string;

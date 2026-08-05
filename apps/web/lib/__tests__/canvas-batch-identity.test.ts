@@ -14,6 +14,7 @@ import {
   canvasBatchLetter,
   canvasBatchSize,
   canvasCardsComparable,
+  canvasComparePair,
   isCanvasBatchCard,
 } from "../canvas-batch-identity";
 
@@ -96,6 +97,38 @@ describe("what may be compared side by side", () => {
 
   it("never compares cards from two different presses that each made two", () => {
     expect(canvasCardsComparable(batch("a", 0, 2), batch("z", 1, 2, "job-2"))).toBe(false);
+  });
+});
+
+/**
+ * 并排对比时两边各是谁(#605 T6)。
+ *
+ * 商家截图发给同事说「我选 A」,同事打开必须看到同一张。所以左右两边由落盘序号决定,
+ * 跟商家先点哪一张、卡片摆在哪里都无关。
+ */
+describe("the two sides of a side-by-side compare", () => {
+  it("puts the recorded A on the left however the merchant picked them", () => {
+    const forward = canvasComparePair(batch("a", 0, 2), batch("b", 1, 2))!;
+    const backward = canvasComparePair(batch("b", 1, 2), batch("a", 0, 2))!;
+
+    expect(forward).toEqual(backward);
+    expect([forward.left.id, forward.left.label]).toEqual(["a", "A"]);
+    expect([forward.right.id, forward.right.label]).toEqual(["b", "B"]);
+    expect(forward.title).toBe("Comparing A and B");
+  });
+
+  it("says which one made the other when that is the recorded relation", () => {
+    const source = { id: "src", type: "image", genJobId: "job-0", batchIndex: 0, batchSize: 1, madeFromNodeId: null };
+    const child = { id: "kid", type: "image", genJobId: "job-1", batchIndex: 0, batchSize: 1, madeFromNodeId: "src" };
+
+    const pair = canvasComparePair(child, source)!;
+    expect([pair.left.id, pair.left.label]).toEqual(["src", "Source"]);
+    expect([pair.right.id, pair.right.label]).toEqual(["kid", "Made from it"]);
+    expect(pair.title).toBe("Comparing a card with what it made");
+  });
+
+  it("has no pair at all for two cards that were never comparable", () => {
+    expect(canvasComparePair(batch("a", 0, 4), batch("c", 2, 4))).toBeNull();
   });
 });
 

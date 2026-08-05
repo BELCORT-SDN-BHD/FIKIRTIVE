@@ -7,14 +7,16 @@
  *   ① A/B 标签由坐标推。客户端把同一批的卡按「先比 y 坐标、再比 x 坐标」重排,序号就是排名。
  *      商家把 B 拖到 A 上面 → 新坐标写库 → 同步循环拉回 → 序号重算 → 两个角标当场互换。
  *      商家截图跟同事说「我选 A」,同事打开看到的 A 是另一张。
- *   ② 批大小由「现在还剩几张」数出来。一批 4 张删掉 2 张,剩下的 2 张凭空长出 A/B 角标并解锁
- *      「Compare」—— 商家从来没做过 A/B 对照。
+ *   ② 批大小由「现在还剩几张」数出来。一批 4 张删掉 2 张,剩下的 2 张凭空长出 A/B 角标 ——
+ *      商家从来没做过 A/B 对照。
  *
  * 这里全程驱动真页面(真 CanvasPage + 真 useImmersiveCanvasRuntime + 真同步循环),断言的是
- * 商家眼睛看得见的东西:卡上的字母、工具条上有没有 Compare。付费路径 useCanvasGen 换成假件,
- * 任何一条断言都花不出一个积分。
+ * 商家眼睛看得见的东西:卡上的字母。付费路径 useCanvasGen 换成假件,任何一条断言都花不出
+ * 一个积分。
  *
- * 先红后绿:改前 ① 拉回后角标互换、② 两张幸存卡长出 A/B 并出现 Compare;红证原始输出存 PR。
+ * 先红后绿:改前 ① 拉回后角标互换、② 两张幸存卡长出 A/B;红证原始输出存 PR。
+ *
+ * 并排对比与血缘树的断言已随家具搬进内核(#605 T6),见 `canvas-lineage-ab-ui.test.ts`。
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -171,11 +173,6 @@ function selectCard(id: string, add = false): void {
   });
 }
 
-function compareButton(): HTMLElement | undefined {
-  return [...container!.querySelectorAll("button")]
-    .find((button) => button.textContent?.trim() === "Compare");
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getMyAccount.mockResolvedValue({ balance: 500 });
@@ -244,25 +241,25 @@ describe("what is left of a batch after the merchant deletes some (#603 验收�
     expect(letterOn("card-c")).toBeNull();
   });
 
-  it("keeps Compare locked for them", async () => {
+  /**
+   * 并排对比的闸移到内核了(#605 T6 · spec #599 D8)。
+   *
+   * 这块手搓板已经不被任何路由挂载(#600 T1),它那份「同源可比」闸和并排对比是假边时代
+   * 留下的第二个实现;T6 把家具搬进唯一那块画布之后,它们在这里被删掉。同样两条商家可见的
+   * 行为——一批四张的幸存者不解锁 Compare、真的一批两张才解锁——现在断言在
+   * `canvas-lineage-ab-ui.test.ts`,驱动的是真 FlowCanvas。
+   *
+   * 这块板上还剩的批次身份行为(角标不随拖动互换、幸存者不长角标)照旧在上面两条里守着,
+   * 直到 T7 整块退场。
+   */
+  it("still refuses to hand the survivors an A or a B on the board itself", async () => {
     mocks.boardRead.mockResolvedValue(twoOfFour());
     await renderBoard();
 
     selectCard("card-a");
     selectCard("card-c", true);
     expect(container!.textContent).toContain("2 selected");
-    expect(compareButton()).toBeUndefined();
-  });
-
-  it("still offers Compare for the two cards of a batch that really was a pair", async () => {
-    mocks.boardRead.mockResolvedValue([
-      batchCard({ id: "card-a", batchIndex: 0, batchSize: 2, x: 40, y: 40 }),
-      batchCard({ id: "card-b", batchIndex: 1, batchSize: 2, x: 300, y: 40 }),
-    ]);
-    await renderBoard();
-
-    selectCard("card-a");
-    selectCard("card-b", true);
-    expect(compareButton()).toBeDefined();
+    expect(letterOn("card-a")).toBeNull();
+    expect(letterOn("card-c")).toBeNull();
   });
 });

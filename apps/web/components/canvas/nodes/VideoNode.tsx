@@ -7,6 +7,7 @@ import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasBatchLetter } from "@/lib/canvas-batch-identity";
 
 export function VideoNode({ data, id, selected }: NodeProps) {
   const d = data as {
@@ -18,6 +19,11 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     lineage?: CanvasNodeLineage | null;
     /** The card this one's paid job was made FROM — the one fact "Made from" reads (#603 T4). */
     madeFromNodeId?: string | null;
+    /** Batch identity as the server settled it — what the A/B badge reads (#603 T4). */
+    batchIndex?: number | null;
+    batchSize?: number | null;
+    /** Opens the lineage tree for the picked card (#605 T6). Supplied by FlowCanvas. */
+    onOpenLineage?: () => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
@@ -36,6 +42,7 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     remakeCostHint?: string;
   };
   const gb = d.skin === "gb";
+  const letter = canvasBatchLetter(d);
   const writeLock = getCanvasNodeWriteLock(d);
   const terminal = isTerminalCardStatus(d.status);
   const viewable = !!d.url && !terminal;
@@ -92,6 +99,21 @@ export function VideoNode({ data, id, selected }: NodeProps) {
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
+          </button>
+        )}
+        {/* T6: the card's whole story — what made it, what it made, who came out of the same
+            press. Offered on a card that failed too: where it came from is exactly what a
+            merchant wants to know about a card that did not work (#605). */}
+        {d.onOpenLineage && (
+          <button
+            type="button"
+            aria-label="Show what this card came from"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="What made this card, and what it made"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
+          >
+            Lineage
           </button>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the video used to do it
@@ -214,6 +236,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
+        {/* The recorded A/B letter — position in the press, never position on the board
+            (#603 T4 · #605 T6). */}
+        {letter && <span className="cv-nodeletter">{letter}</span>}
       </span>
     {/* The video is a video, not a button: clicking it picks the card up (and the play control
         still just plays it). Everything the card can DO lives on its toolbar above (#604 · D6). */}

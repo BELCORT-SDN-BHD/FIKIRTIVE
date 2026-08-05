@@ -40,7 +40,10 @@ import {
   type CanvasRect,
 } from "@/lib/canvas-batch-layout";
 import { buildCanvasLineageEdges } from "@/lib/canvas-lineage";
-import { canvasBatchFrameLabel, canvasBatchGroups } from "@/lib/canvas-batch-identity";
+import { canvasBatchFrameLabel, canvasBatchGroups, canvasComparePair } from "@/lib/canvas-batch-identity";
+import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
+import { CanvasLineagePanel } from "./CanvasLineagePanel";
+import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
@@ -147,6 +150,30 @@ export function BatchFrameNode({ data }: { data: { label: string } }) {
 }
 
 const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode, batchFrame: BatchFrameNode };
+
+/**
+ * One board read, with "it never arrived" folded into "it refused".
+ *
+ * The two reads already answer a refusal as `{ error }`; a transport failure threw instead, and
+ * a thrown read used to be swallowed whole — the board simply stopped changing, and the lineage
+ * tree carried on drawing relationships nobody had confirmed since. To the merchant those two
+ * failures are one thing, so they arrive here as one shape (#605 T6).
+ */
+async function readCanvasBoard(
+  skin: "gb" | undefined,
+  projectId: string,
+): Promise<
+  | Awaited<ReturnType<typeof listCanvasNodes>>
+  | Awaited<ReturnType<typeof syncOttoCanvasNodes>>
+> {
+  try {
+    return skin === "gb"
+      ? await syncOttoCanvasNodes(projectId)
+      : await listCanvasNodes(projectId);
+  } catch {
+    return { error: "We couldn't read this board just now." };
+  }
+}
 /** How far the same-batch frame stands off the cards it holds. */
 const BATCH_FRAME_PAD = 14;
 const CANVAS_REF_MAX_BYTES = 10 * 1024 * 1024;
@@ -196,6 +223,15 @@ export default function FlowCanvas({
   const [customMotion, setCustomMotion] = useState("");
   // Dragging an image file over the canvas (drop = upload it as an image node).
   const [dragOver, setDragOver] = useState(false);
+  // The lineage tree — "where did this card come from?" — for whichever single card is picked
+  // (#605 T6). Display state only: it opens on request and reads the facts already on the board.
+  const [lineageOpen, setLineageOpen] = useState(false);
+  // The last board read failed, so nothing on screen can be confirmed as current. The tree says
+  // "unavailable" rather than keep drawing relationships from a snapshot that may be stale
+  // (#605 验收③, fail closed). Cleared by the next read that lands.
+  const [lineageUnavailable, setLineageUnavailable] = useState(false);
+  // Two cards being looked at side by side. Holds their ids; null = no comparison open.
+  const [compareIds, setCompareIds] = useState<[string, string] | null>(null);
   // bumped on successful generation submit to remount MentionInput cleared
   const [composerKey, setComposerKey] = useState(0);
   // double-submit guard
@@ -564,6 +600,14 @@ export default function FlowCanvas({
 
   const clearSelection = useCallback(() => {
     setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
+  }, []);
+
+  /** Open the lineage tree. It is always about the card that is picked, so this only reveals it. */
+  const openLineage = useCallback(() => setLineageOpen(true), []);
+
+  /** Following a line in the tree picks that card on the board — the tree stays open on it. */
+  const pickLineageCard = useCallback((id: string) => {
+    setNodes((ns) => ns.map((n) => (n.selected === (n.id === id) ? n : { ...n, selected: n.id === id })));
   }, []);
 
   /** Save every selected card that has media. Uses the same `<a download>` the Detail panel
@@ -986,10 +1030,19 @@ export default function FlowCanvas({
     // A read that a NEWER read has already overtaken describes the board as it was before that
     // newer read: applying it puts back what the newer answer just corrected (r3 review P2-1).
     const seq = ++reloadSeqRef.current;
-    const rows = skin === "gb"
-      ? await syncOttoCanvasNodes(projectId)
-      : await listCanvasNodes(projectId);
+    // A read that refuses and a read that never arrives are the same thing to the merchant, so
+    // they are folded into one answer here and handled once below.
+    const rows = await readCanvasBoard(skin, projectId);
     if (seq !== reloadSeqRef.current) return;
+    // WHETHER THE BOARD'S HISTORY IS CURRENTLY KNOWABLE (#605 T6). A failed read leaves every
+    // card alone — they are paid work, and this read failing says nothing about them — but it
+    // does mean no relationship on screen can be confirmed right now, and the lineage tree has
+    // to say so instead of carrying on from the last snapshot.
+    //
+    // Deferred with queueMicrotask for the same reason OttoConnections defers its load: `reload`
+    // is invoked from an effect, and although this line runs after an await, the effect lint
+    // does not follow the await across the helper and reads it as a synchronous setState.
+    queueMicrotask(() => setLineageUnavailable("error" in (rows as object)));
     if ("error" in (rows as object)) return;
     const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
@@ -1185,9 +1238,9 @@ export default function FlowCanvas({
     // WHICH card had focus (#604 r2 P3). Says what it is, and what it was asked for.
     ariaLabel: canvasNodeAriaLabel(n),
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), selectedCount, onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
+      ? { ...withNodeActionLock(n.data), selectedCount, onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint, onOpenLineage: openLineage }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint }
+        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
         : withNodeActionLock(n.data),
   }));
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
@@ -1249,6 +1302,59 @@ export default function FlowCanvas({
     focusable: false,
     style: { stroke: "var(--muted-foreground)", strokeWidth: 1.5, opacity: 0.55 },
   }));
+
+  // T6: the four recorded columns, read off the board exactly once, for everything that talks
+  // about relationships — the tree, the compare gate, and the two sides of a comparison. No
+  // coordinate and no array order is in here; a card that never said which batch it belongs to
+  // simply carries nulls, and the shaping treats that as "not known" (#605 · spec #599 D5/D8).
+  const lineageFacts = visibleNodes.map((n) => ({
+    id: n.id,
+    type: n.type ?? null,
+    prompt: (n.data as { prompt?: string | null })?.prompt ?? null,
+    genJobId: n.genJobId ?? (n.data as { genJobId?: string | null })?.genJobId ?? null,
+    batchIndex: n.batchIndex ?? (n.data as { batchIndex?: number | null })?.batchIndex ?? null,
+    batchSize: n.batchSize ?? (n.data as { batchSize?: number | null })?.batchSize ?? null,
+    madeFromNodeId: n.madeFromNodeId ?? (n.data as { madeFromNodeId?: string | null })?.madeFromNodeId ?? null,
+  }));
+  const selectedCards = visibleNodes.filter((n) => n.selected === true);
+  // The tree is about ONE card. With none or several picked it has nothing to be about, which
+  // the panel says in words rather than by picking one of them itself.
+  const lineageFocusId = selectedCards.length === 1 ? selectedCards[0]!.id : null;
+  const lineageTree = lineageFocusId ? buildCanvasLineageTree(lineageFacts, lineageFocusId) : null;
+  // May these two be shown side by side, and which of them is A? Both answers come from the
+  // recorded facts, so neither the picking order nor the layout can change them (#605 验收②).
+  const comparePair = selectedCards.length === 2
+    ? canvasComparePair(
+      lineageFacts.find((card) => card.id === selectedCards[0]!.id)!,
+      lineageFacts.find((card) => card.id === selectedCards[1]!.id)!,
+    )
+    : null;
+  const compareCard = (id: string): CanvasCompareCard | null => {
+    const node = visibleNodes.find((n) => n.id === id);
+    if (!node) return null;
+    return {
+      id,
+      type: node.type ?? null,
+      url: (node.data as { url?: string | null })?.url ?? null,
+      prompt: (node.data as { prompt?: string | null })?.prompt ?? null,
+    };
+  };
+  // What is open right now: the pair the merchant asked for, re-checked against the facts on
+  // every render. A card removed or changed under an open comparison closes it rather than
+  // leaving two pictures on screen under labels that no longer hold.
+  const openComparePair = compareIds
+    ? (() => {
+      const [first, second] = compareIds;
+      const left = lineageFacts.find((card) => card.id === first);
+      const right = lineageFacts.find((card) => card.id === second);
+      if (!left || !right) return null;
+      const pair = canvasComparePair(left, right);
+      if (!pair) return null;
+      const leftCard = compareCard(pair.left.id);
+      const rightCard = compareCard(pair.right.id);
+      return leftCard && rightCard ? { pair, left: leftCard, right: rightCard } : null;
+    })()
+    : null;
 
   // B6: what a multi-card selection can do. React Flow owns the selection itself; this is
   // only what the batch bar needs to offer.
@@ -1345,6 +1451,26 @@ export default function FlowCanvas({
           readOnlyReason={directToolsLocked ? directToolsLockedReason : undefined}
         />
       )}
+      {/* The lineage tree (#605 T6). Opened from a card, about that card, and closed by the
+          merchant — never in the way of the board unless it was asked for. */}
+      {lineageOpen && (
+        <CanvasLineagePanel
+          tree={lineageTree}
+          unavailable={lineageUnavailable}
+          onPick={pickLineageCard}
+          onClose={() => setLineageOpen(false)}
+        />
+      )}
+      {/* Two cards side by side. The pair is re-checked against the recorded facts on every
+          render, so a comparison can never outlive the facts that justified it. */}
+      {openComparePair && (
+        <CanvasComparePanel
+          pair={openComparePair.pair}
+          left={openComparePair.left}
+          right={openComparePair.right}
+          onClose={() => setCompareIds(null)}
+        />
+      )}
       {skin === "gb" ? (
         // Every bottom-anchored control lives in ONE column (#604 r2): composer, then the
         // multi-card bar, then the tool row. Stacked rows cannot cover each other, which
@@ -1417,6 +1543,20 @@ export default function FlowCanvas({
             // wraps rather than getting clipped when the pane is narrow (#513).
             <div className="cv-batchbar" role="toolbar" aria-label="Selected cards">
               <span className="text-[0.8125rem]" style={{ whiteSpace: "nowrap" }}>{selection.count} selected</span>
+              {/* Side by side, and only when the recorded facts allow it: the two cards of a
+                  press that really made two, or a card and the card it was really made from.
+                  Any two cards of a batch of four have no A and no B, so there is nothing to
+                  offer them (#605 验收② · #603 T4). */}
+              {comparePair && (
+                <button
+                  type="button"
+                  className="al-btn al-btn-sm"
+                  title="Look at these two side by side"
+                  onClick={() => setCompareIds([comparePair.left.id, comparePair.right.id])}
+                >
+                  Compare
+                </button>
+              )}
               {/* D6: the whole picked set goes over to Otto together, one reference each, when
                   the merchant asks for it — never as a side effect of clicking a card (#604). */}
               <button
