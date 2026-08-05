@@ -37,36 +37,43 @@ export const MARGIN_FLOOR = 0.45;
 const FLOOR_EPSILON = 1e-9;
 
 /**
- * Founder-certified provider COGS, verbatim from the locked costing terminal case
- * (docs/design/2026-07-03-harmony-04-costing-model.md §二). Keyed by sellable-SKU id
- * (see buildSellableSkus). Do NOT edit these to make the gate pass — a change here is
- * a costing decision (B12/founder), and drift is exactly what this gate should catch.
+ * Provider COGS, transcribed BY HAND from the provider's own published pricing page —
+ * deliberately NOT imported from @fikirtive/core, so a code-side COGS edit can never
+ * silence this gate. Keyed by sellable-SKU id (see buildSellableSkus). Do NOT edit these
+ * to make the gate pass — a change here is a costing decision (B12/founder), and drift is
+ * exactly what this gate should catch.
  *
- * Conservative note (image): §二 bills images per-image at $0.035; the code's
- * record-only basis is $0.04 (gen.ts:90) and the token-推算 upper bound is ≈$0.054
- * (costing-inputs §1a). All three clear the floor (65% / 60% / 46%); we pin the
- * §二 certified value.
+ * #644 (2026-08-05): re-transcribed from https://docs.byteplus.com/en/docs/ModelArk/Pricing.
+ * The previous video numbers ($0.39 / $0.77 / $0.85) came from the 2026-06 RESOURCE-PACK
+ * effective rate ($3.564/M incl. tax, harmony-04-costing-model.md §二). The pack is neither
+ * guaranteed active nor auto-renewed (§二 itself flags "资源包烧完静默跳裸价 ≈ +57%", and
+ * pack monitoring is parked on the founder's ops list per #641), so the honest costing
+ * basis is the LIST price. Video is token-priced:
+ *   tokens = (input video seconds + output seconds) × W × H × fps / 1024
+ *   720p 16:9 @24fps = 21,600 tokens/s · $5.60/M without video input · $3.30/M with it
+ * Cross-checks against the provider's own finished prices: 720p 5s $0.60, 10s $1.21,
+ * with-reference 720p 5s $0.64–1.43. All three reproduce exactly.
  */
 export const COGS_INPUTS = {
   "image:seedream": {
     cogsUsd: 0.035,
-    source: "harmony-04-costing-model.md:22 — BytePlus bill 3003327224, $0.035/img (per-image billing)",
+    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — $0.035/img, per-image billing, size/aspect-independent; matches BytePlus bill 3003327224 (harmony-04-costing-model.md:22)",
   },
   "refgen:seedream": {
     cogsUsd: 0.035,
-    source: "harmony-04-costing-model.md:22 — refgen shares the image bill basis",
+    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — refgen shares the image per-image basis",
   },
   "video:seedance-2-fast:5:720p": {
-    cogsUsd: 0.39,
-    source: "harmony-04-costing-model.md:23 — 5s/720p ≈ $0.39 (0.077/s × 5s, bill-backed)",
+    cogsUsd: 0.6048,
+    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — 5s × 21,600 tok/s × $5.60/M = $0.6048 (list price; provider quotes $0.60)",
   },
   "video:seedance-2-fast:10:720p": {
-    cogsUsd: 0.77,
-    source: "harmony-04-costing-model.md:24 — 10s/720p ≈ $0.77 (0.077/s × 10s)",
+    cogsUsd: 1.2096,
+    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — 10s × 21,600 tok/s × $5.60/M = $1.2096 (list price; provider quotes $1.21)",
   },
   "video:seedance-2-fast:ref": {
-    cogsUsd: 0.85,
-    source: "harmony-04-costing-model.md:25 — whole-clip ref, 6s input + 5s output ≈ $0.85 (E1-06 present value)",
+    cogsUsd: 0.78408,
+    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — (6s ref cap + 5s output) × 21,600 tok/s × $3.30/M = $0.78408 (with-video-input rate; our window's worst case)",
   },
 };
 
@@ -145,11 +152,17 @@ function pct(x) {
 
 async function main() {
   const { skus, missing } = await buildSellableSkus();
-  const { rows, ok } = evaluateMarginFloor(skus);
+  const { rows } = evaluateMarginFloor(skus);
+  // The SINGLE registry of tiers already known to be below the floor and awaiting the
+  // founder's pricing ruling (#644). It lives in @fikirtive/core so the unit tests and
+  // this gate can never disagree about which tiers are adjudicated.
+  const { BELOW_FLOOR_PENDING_FOUNDER_RULING } = await import(
+    pathToFileURL(path.join(root, "packages/core/dist/margin-truth.js")).href
+  );
 
   console.log(`[margin-floor] 宪法 5 floor = ${pct(MARGIN_FLOOR)} · formula = (price − cost) / price`);
   for (const r of rows) {
-    const flag = r.pass ? "OK " : "RED";
+    const flag = r.pass ? "OK " : BELOW_FLOOR_PENDING_FOUNDER_RULING.has(r.id) ? "PENDING" : "RED";
     console.log(
       `[margin-floor] ${flag} ${r.label.padEnd(34)} charge $${r.chargeUsd.toFixed(3)}  cost $${r.cogsUsd.toFixed(3)}  margin ${pct(r.margin)}`,
     );
@@ -157,17 +170,42 @@ async function main() {
 
   if (missing.length) {
     console.error(`[margin-floor] MISSING costing input for sellable SKU(s): ${missing.join(", ")}`);
-    console.error("[margin-floor] add the provider COGS (with a harmony-04 source) to COGS_INPUTS — a sellable combo must never ship without a certified cost.");
+    console.error("[margin-floor] add the provider COGS (with a primary-source citation) to COGS_INPUTS — a sellable combo must never ship without a certified cost.");
     process.exit(1);
   }
-  if (!ok) {
-    const red = rows.filter((r) => !r.pass);
+
+  // Selling below cost is a hard failure for EVERY tier — the pending list never covers it.
+  const inverted = rows.filter((r) => r.chargeUsd <= r.cogsUsd);
+  // A tier on the pending list that now clears the floor means the ruling landed and the
+  // list went stale — red, so the registry can never rot into a permanent exemption.
+  const staleRuling = rows.filter((r) => r.pass && BELOW_FLOOR_PENDING_FOUNDER_RULING.has(r.id));
+  // Anything else below the floor is a NEW violation.
+  const red = rows.filter((r) => !r.pass && !BELOW_FLOOR_PENDING_FOUNDER_RULING.has(r.id));
+
+  if (inverted.length) {
+    console.error(`[margin-floor] ${inverted.length} SKU(s) charge AT OR BELOW cost — every sale loses money:`);
+    for (const r of inverted) console.error(`[margin-floor]   ${r.id}: charge $${r.chargeUsd} cost $${r.cogsUsd} — cost basis: ${r.cogsSource}`);
+    process.exit(1);
+  }
+  if (red.length) {
     console.error(`[margin-floor] ${red.length} SKU(s) below the ${pct(MARGIN_FLOOR)} floor:`);
     for (const r of red) console.error(`[margin-floor]   ${r.id}: margin ${pct(r.margin)} — cost basis: ${r.cogsSource}`);
     console.error("[margin-floor] This is a pricing violation. Do NOT edit COGS_INPUTS to silence it — report to the control plane (pricing = B12/founder).");
     process.exit(1);
   }
-  console.log(`[margin-floor] all ${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor.`);
+  if (staleRuling.length) {
+    console.error(`[margin-floor] ${staleRuling.length} SKU(s) now clear the floor but are still on BELOW_FLOOR_PENDING_FOUNDER_RULING:`);
+    for (const r of staleRuling) console.error(`[margin-floor]   ${r.id}: margin ${pct(r.margin)} — remove it from packages/core/src/margin-truth.ts`);
+    process.exit(1);
+  }
+
+  const pending = rows.filter((r) => !r.pass);
+  if (pending.length) {
+    console.warn(`[margin-floor] ${pending.length} SKU(s) BELOW the ${pct(MARGIN_FLOOR)} floor, awaiting the founder's pricing ruling (#644):`);
+    for (const r of pending) console.warn(`[margin-floor]   ${r.id}: margin ${pct(r.margin)} — cost basis: ${r.cogsSource}`);
+    console.warn("[margin-floor] These are REPORTED, not waived — the ruling is 调价 or 接受, and it is the founder's to make.");
+  }
+  console.log(`[margin-floor] ${rows.length - pending.length}/${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor.`);
 }
 
 // Run as CLI only — importing this module (the self-test) must not execute main().

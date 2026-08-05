@@ -84,10 +84,18 @@ export const REF_VIDEO_MIN_SECONDS = 2;
 export const REF_VIDEO_MAX_SECONDS = 6;
 /** Image price is flat per image; video price is dynamic — see videoPriceUsd
  *  (scales with duration × resolution × audio × count). */
-// F39: this is the RECORD-ONLY COGS basis (spentUsd/margin reporting), not the charge (images
-// charge a flat 1 credit/image via pricedGenCredits). 0.04 is the fal basis; prod now runs
-// BytePlus Seedream (cheaper) — left at 0.04 pending the founder's actual Ark per-image rate.
-export const GEN_PRICE_USD_PER_IMAGE = 0.04;
+/**
+ * RECORD-ONLY 图片成本记账基准(GenJob.spentUsd + 毛利报表)—— **不是收费**。图片一律按
+ * `pricedGenCredits` 收 1 credit/张,与这个数无关(`spend.test.ts` 有钉子测试守着)。
+ *
+ * $0.035/张:官方按张计价,不分尺寸与比例(所以 #642 补齐八个画幅没有新价格档)。
+ * 来源 https://docs.byteplus.com/en/docs/ModelArk/Pricing(2026-08-05 核);同值另有
+ * 2026-06 真实账单佐证(docs/design/2026-07-03-harmony-04-costing-model.md §二)。
+ *
+ * 旧值 $0.04 是 fal 基数占位 —— F39 的注释自认「pending the founder's actual Ark
+ * per-image rate」,高记约 14%。#644 改真。
+ */
+export const GEN_PRICE_USD_PER_IMAGE = 0.035;
 
 /* ---------------- image shape (#642) ---------------- */
 
@@ -240,14 +248,77 @@ export function videoDefaults(model: GenVideoModel): { seconds: number; resoluti
   return { seconds: o.durations[0]!, resolution: o.resolutions[0] ?? "", aspectRatio: o.aspectRatios[0] ?? "", fps: o.fps[0] ?? 0, audio: o.audioToggle };
 }
 
-/** Per-second fal rate ($/s) by model/resolution/audio — basis for the live price
- *  hint. Verified against each model's fal pricing page. */
+/* ---------------- 视频引擎官方 token 计价(#644 记账真相) ---------------- */
+
+/**
+ * 视频引擎按 **token** 计价,不是按秒:
+ *
+ *   tokens = (输入视频秒数 + 输出秒数) × 宽 × 高 × fps / 1024
+ *
+ * 来源:https://docs.byteplus.com/en/docs/ModelArk/Pricing(2026-08-05 核)。
+ * 720p 16:9 @24fps ⇒ 1280 × 720 × 24 / 1024 = 21,600 tokens/秒(720p 9:16 像素数相同,
+ * 同值;同档不同比例的像素差 ~1%,不另立档)。
+ *
+ * 用官方成品价反向校验本公式(三条全中):
+ *   720p 5s  无视频输入 = 108,000 tok × $5.60/M = $0.6048  → 官方 $0.60  ✓
+ *   720p 10s 无视频输入 = 216,000 tok × $5.60/M = $1.2096  → 官方 $1.21  ✓
+ *   720p 5s  含参考视频 = (4…15 + 5)s × 21,600 × $3.30/M = $0.64…$1.43 → 官方区间 ✓
+ *
+ * 只覆盖**现役 720p 档**。480p 等新档随 T4(档位扩容)带各自的官方核验一起进来 ——
+ * 这里不给没核过的档位编数字。
+ */
+export const BYTEPLUS_720P_TOKENS_PER_SECOND = 21_600;
+/** 无视频输入(t2v / i2v)牌价,$/M tokens。 */
+export const BYTEPLUS_USD_PER_MTOKEN = 5.6;
+/** 含视频输入(整段参考视频)牌价,$/M tokens —— 比无视频输入那档更便宜。 */
+export const BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT = 3.3;
+/**
+ * 参考视频输入的**最低计费秒数**(token 地板)。官方「含参考视频 720p 5s」区间下限
+ * $0.64 恰好 = (4 + 5) 秒 × 21,600 × $3.30/M,即输入不足 4 秒也按 4 秒计 —— 与引擎
+ * 自身 4 秒最短时长一致。我们的参考片窗口是 2–6 秒(REF_VIDEO_MIN/MAX_SECONDS),
+ * 所以这条地板会真的咬到 2–3 秒的参考片。
+ */
+export const BYTEPLUS_MIN_BILLED_INPUT_SECONDS = 4;
+
+/** 按官方 token 公式算 720p 的 COGS(USD)。纯函数,RECORD-ONLY —— 收费在 spend.ts。 */
+export function byteplusVideoCogsUsd(opts: { outputSeconds: number; referenceInputSeconds?: number }): number {
+  const rawInput = opts.referenceInputSeconds ?? 0;
+  const hasVideoInput = rawInput > 0;
+  const billedInput = hasVideoInput ? Math.max(rawInput, BYTEPLUS_MIN_BILLED_INPUT_SECONDS) : 0;
+  const tokens = (opts.outputSeconds + billedInput) * BYTEPLUS_720P_TOKENS_PER_SECOND;
+  const usdPerMToken = hasVideoInput ? BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT : BYTEPLUS_USD_PER_MTOKEN;
+  return (tokens * usdPerMToken) / 1_000_000;
+}
+
+/** 现役视频档(seedance-2-fast @720p)每秒等效记账成本 = **$0.12096/s**。RECORD-ONLY。 */
+export const SEEDANCE_720P_COGS_USD_PER_SECOND = byteplusVideoCogsUsd({ outputSeconds: 1 });
+
+/**
+ * 整段参考视频的记账成本 = **$0.78408**,按我们参考片窗口的**上限**保守记
+ * (6s 参考输入 + 5s 出片,含视频输入档 $3.30/M)。真实区间 $0.6415(≤4s 参考,吃地板)
+ * … $0.78408(6s 参考);记上限,永不低估成本。
+ *
+ * RECORD-ONLY —— 收费是 spend.ts 的 `REFERENCE_VIDEO_CREDITS`(16cr),与本值无关。
+ * 旧值 $0.85 用的是 2026-06 资源包折后价 $3.564/M;牌价里含视频输入那档更便宜,
+ * 所以这一档修正后成本反而**降**了。
+ */
+export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
+  outputSeconds: GEN_VIDEO_SECONDS,
+  referenceInputSeconds: REF_VIDEO_MAX_SECONDS,
+});
+
+/** Per-second rate ($/s) by model/resolution/audio — basis for the live price hint.
+ *  fal models: verified against each model's fal pricing page. seedance-2-fast (the one
+ *  in-service BytePlus model): the official token price, see SEEDANCE_720P_COGS_USD_PER_SECOND. */
 function videoRateUsdPerSec(model: GenVideoModel, resolution: string, audio: boolean): number {
   switch (model) {
     case "kling": return 0.07;                                             // always silent
     case "kling-2.6": return audio ? 0.14 : 0.07;
     case "kling-3": return audio ? 0.168 : 0.112;
-    case "seedance-2-fast": return 0.077;                                   // BytePlus bill-backed COGS: 5s≈$0.39, 10s≈$0.77. RECORD-ONLY; charge is in spend.ts.
+    // #644: 官方牌价 $0.12096/s @720p(5s=$0.6048、10s=$1.2096,对上官方 $0.60/$1.21)。
+    // 旧值 0.077 是 2026-06 资源包折后价($3.564/M 含税),不是我们随时拿得到的价 —— 低记 ~36%。
+    // 声音开关不影响 2.0 系列价格,所以这一档不看 audio。RECORD-ONLY;收费在 spend.ts 的 flat 表。
+    case "seedance-2-fast": return SEEDANCE_720P_COGS_USD_PER_SECOND;
     case "ltx-2": return resolution === "2160p" ? 0.24 : resolution === "1440p" ? 0.12 : 0.06;
     case "veo3.1-lite": return resolution === "1080p" ? (audio ? 0.08 : 0.05) : (audio ? 0.05 : 0.03);
     case "veo3.1-fast": return audio ? 0.15 : 0.10;

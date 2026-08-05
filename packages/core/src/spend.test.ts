@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, SIGNUP_GRANT_CREDITS } from "./spend.js";
 import { GEN_IMAGE_ASPECTS, GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
+import { MARGIN_FLOOR, BELOW_FLOOR_PENDING_FOUNDER_RULING, marginTruthTable } from "./margin-truth.js";
 // Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
 // (seedance-2-fast), USD-formula for all other (fal) models.
 
@@ -22,22 +23,27 @@ describe("genSpentUsd", () => {
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
   });
-  it("seedance-2-fast COGS uses the bill-backed BytePlus basis, not the old fal or benchmark basis", () => {
-    // 5s × $0.077/s ≈ $0.39, not 5 × 0.2419 = $1.21 or the old $0.03/s benchmark.
+  it("#644 seedance-2-fast COGS = 官方牌价 token 公式,不再是资源包折后价", () => {
+    // 官方成品价对照(https://docs.byteplus.com/en/docs/ModelArk/Pricing,2026-08-05 核):
+    // 720p 5s = $0.60、10s = $1.21。旧值 $0.077/s(5s≈$0.39)是 2026-06 资源包折后价,
+    // 不是我们随时都拿得到的价 —— 记账基准回到牌价(见 gen.ts byteplusVideoCogsUsd)。
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
-      .toBeCloseTo(0.385, 5);
+      .toBeCloseTo(0.6048, 6);
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
-      .toBeCloseTo(0.77, 5);
+      .toBeCloseTo(1.2096, 6);
+    // 声音开关不改价(2.0 系列),记账基准也必须不随它动。
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } }))
+      .toBeCloseTo(0.6048, 6);
   });
 
-  it("reference video COGS uses the locked costing estimate for 6s input + 5s output", () => {
+  it("#644 整段参考视频 COGS = 含视频输入档 $3.30/M × (6s 参考上限 + 5s 出片)", () => {
     expect(genSpentUsd({
       kind: "VIDEO",
       model: "seedance-2-fast",
       count: 1,
       referenceVideoGenerationId: "gen_ref",
       videoOptions: { seconds: 5, resolution: "720p", audio: true },
-    })).toBe(0.85);
+    })).toBeCloseTo(0.78408, 6);
   });
 });
 
@@ -49,13 +55,7 @@ describe("refgenSpentUsd", () => {
 });
 
 describe("credit pricing (deterministic CHARGE in internal credits; 1 internal = $0.01, 1 displayed = 10 internal)", () => {
-  const revenueUsd = (internalCredits: number) => internalCredits / CREDITS_PER_USD;
-  const expectMarginAtLeast45 = (internalCredits: number, cogsUsd: number) => {
-    const revenue = revenueUsd(internalCredits);
-    expect(cogsUsd).toBeLessThanOrEqual(revenue * 0.55 + 1e-9);
-  };
-
-  it("image = 1 displayed credit (10 internal) PER image — flat, with margin over the ~$0.04 true cost", () => {
+  it("image = 1 displayed credit (10 internal) PER image — flat, with margin over the $0.035 true cost", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, videoOptions: null })).toBe(40);
   });
@@ -123,24 +123,22 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(SIGNUP_GRANT_CREDITS).toBe(20 * INTERNAL_PER_DISPLAY);
     expect(displayCredits(SIGNUP_GRANT_CREDITS)).toBe(20);
   });
-  it("launch-priced spend points satisfy the constitutional >=45% margin floor", () => {
-    const image = { kind: "IMAGE" as const, model: "seedream", count: 1, videoOptions: null };
-    expectMarginAtLeast45(pricedGenCredits(image), genSpentUsd(image));
-
-    const seedance5s = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
-    expectMarginAtLeast45(pricedGenCredits(seedance5s), genSpentUsd(seedance5s));
-
-    const seedance10s = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } };
-    expectMarginAtLeast45(pricedGenCredits(seedance10s), genSpentUsd(seedance10s));
-
-    const referenceVideo = {
-      kind: "VIDEO" as const,
-      model: "seedance-2-fast",
-      count: 1,
-      referenceVideoGenerationId: "gen_ref",
-      videoOptions: { seconds: 5, resolution: "720p", audio: true },
-    };
-    expectMarginAtLeast45(pricedGenCredits(referenceVideo), genSpentUsd(referenceVideo));
+  // #644:记账基准改真后,视频两档真实毛利跌到 24.4% / 13.6%。断言从「全都 ≥45%」改成
+  // 「≥45%,除非它在 BELOW_FLOOR_PENDING_FOUNDER_RULING 这张**待 Founder 裁决**的名单上」——
+  // 这不是放行:名单被两头钉死(见 margin-truth.ts 的注释与 margin-truth.test.ts),新的
+  // 违规藏不住,定价修好后名单也必须清掉,否则同样红。
+  it("launch-priced spend points satisfy the constitutional >=45% margin floor(名单内的除外)", () => {
+    for (const row of marginTruthTable()) {
+      const pending = BELOW_FLOOR_PENDING_FOUNDER_RULING.has(row.id);
+      const detail = `${row.id}: 收费 $${row.chargeUsd} 成本 $${row.cogsUsd} 毛利率 ${(row.margin * 100).toFixed(1)}%`;
+      if (pending) {
+        expect(row.clearsFloor, `${detail} —— 已清地板,请把它从待裁决名单删掉`).toBe(false);
+      } else {
+        expect(row.margin, `${detail} —— 跌破地板且不在待裁决名单上`).toBeGreaterThanOrEqual(MARGIN_FLOOR - 1e-9);
+      }
+      // 无论在不在名单上,收费低于成本(卖一单亏一单)永远不许通过。
+      expect(row.grossUsd, `${detail} —— 收费低于成本`).toBeGreaterThan(0);
+    }
   });
 });
 
@@ -149,11 +147,15 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
 // VIDEO_CREDITS_BY_RESOLUTION 的售价、或给 flat 名单加了没算过账的模型 —— 任何
 // 一种情况把某个可售组合的毛利打到 45% 以下,这里立刻变红。视频任务恒 count=1
 // (gen-actions 强制),所以按 count=1 逐组合断言。
+//
+// #644 后唯一的例外:已经在 BELOW_FLOOR_PENDING_FOUNDER_RULING 上、正等 Founder 裁决的
+// 那两档。**新**跌破的组合(换档位、换定价、成本上涨)照旧当场变红。
 import { FLAT_PRICED_VIDEO_MODELS } from "./spend.js";
 import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
 
 describe("margin floor — every sellable video combo keeps ≥45% gross margin (宪法 5)", () => {
   it("holds for all flat-priced models × durations × resolutions × audio", () => {
+    let checked = 0;
     for (const model of FLAT_PRICED_VIDEO_MODELS) {
       const opts = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel];
       expect(opts, `flat-priced model ${model} must exist in GEN_VIDEO_MODEL_OPTIONS`).toBeDefined();
@@ -166,15 +168,21 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
             const priceUsd = pricedGenCredits(job) / CREDITS_PER_USD;
             const costUsd = genSpentUsd(job);
             const margin = (priceUsd - costUsd) / priceUsd;
+            const detail = `${model} ${seconds}s ${resolution || "(default res)"} audio=${audio}: price $${priceUsd} cost $${costUsd} margin ${(margin * 100).toFixed(1)}%`;
+            checked += 1;
+            // 收费低于成本(卖一单亏一单)对任何组合都是硬红,名单也救不了。
+            expect(priceUsd - costUsd, `${detail} —— 收费低于成本`).toBeGreaterThan(0);
             // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上(720p 10s 档,
             // #129 按 Ark 实测成本核定),0.63/1.4 在浮点里是 0.44999999999999996。
-            expect(
-              margin,
-              `${model} ${seconds}s ${resolution || "(default res)"} audio=${audio}: price $${priceUsd} cost $${costUsd} margin ${(margin * 100).toFixed(1)}%`,
-            ).toBeGreaterThanOrEqual(0.45 - 1e-9);
+            if (BELOW_FLOOR_PENDING_FOUNDER_RULING.has(`video:${model}:${seconds}:${resolution}`)) {
+              expect(margin, `${detail} —— 已清地板,请把它从待裁决名单删掉`).toBeLessThan(MARGIN_FLOOR - 1e-9);
+            } else {
+              expect(margin, `${detail} —— 跌破地板且不在待裁决名单上`).toBeGreaterThanOrEqual(MARGIN_FLOOR - 1e-9);
+            }
           }
         }
       }
     }
+    expect(checked, "可售视频组合一个都没被检查到 —— 枚举坏了").toBeGreaterThan(0);
   });
 });

@@ -8,16 +8,18 @@ import { evaluateMarginFloor, MARGIN_FLOOR, COGS_INPUTS } from "../check-margin-
 
 // ── GREEN cases (margin ≥ 45% floor) ──
 {
-  // 720p 10s tier sits EXACTLY at 45.0% (0.63/1.40 = 0.4499999…) → must pass via epsilon.
+  // Exactly-45.0% boundary fixture (0.63/1.40 = 0.4499999…) → must pass via epsilon.
+  // Historical: this WAS the 720p/10s tier under the 2026-06 resource-pack cost basis;
+  // #644 re-based it to list price, so it now survives here only as the epsilon fixture.
   const { rows, ok } = evaluateMarginFloor([{ id: "v10", label: "10s", chargeUsd: 1.4, cogsUsd: 0.77 }]);
   assert.equal(ok, true, "exactly-45% tier passes (IEEE754 epsilon)");
   assert.equal(rows[0].pass, true);
 }
 {
-  // E1-06 whole-clip reference video at present value: 16cr=$1.60 vs $0.85 → 46.875% → green.
-  const { rows, ok } = evaluateMarginFloor([{ id: "ref", label: "E1-06 ref", chargeUsd: 1.6, cogsUsd: 0.85 }]);
+  // E1-06 whole-clip reference video at present value: 16cr=$1.60 vs $0.78408 → 51.0% → green.
+  const { rows, ok } = evaluateMarginFloor([{ id: "ref", label: "E1-06 ref", chargeUsd: 1.6, cogsUsd: 0.78408 }]);
   assert.equal(ok, true, "E1-06 16cr clears the floor at current prices");
-  assert.ok(rows[0].margin > 0.46 && rows[0].margin < 0.47);
+  assert.ok(rows[0].margin > 0.50 && rows[0].margin < 0.52);
 }
 
 // ── RED cases (margin < 45% floor → alarm fires) ──
