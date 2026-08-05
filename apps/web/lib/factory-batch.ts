@@ -36,9 +36,10 @@ import {
   factoryAttemptKey,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
+  FACTORY_HISTORY_SELECT,
   type FactoryAttemptKey,
+  type FactoryHistoryRow,
   type FactoryMaterial,
-  type StoredFactoryMaterial,
 } from "./batch-idempotency";
 
 /** Batch size ceiling. A money-safety guard: an unbounded batch would let one
@@ -154,30 +155,6 @@ export interface BatchInterruption {
 }
 
 export type BatchFailure = { error: string; partial?: BatchInterruption };
-
-type FactoryHistoryRow = StoredFactoryMaterial & {
-  id: string;
-  status: string;
-  idempotencyKey: string | null;
-};
-
-const FACTORY_HISTORY_SELECT = {
-  id: true,
-  status: true,
-  idempotencyKey: true,
-  prompt: true,
-  model: true,
-  kind: true,
-  count: true,
-  entityIds: true,
-  variantSel: true,
-  sourceGenerationId: true,
-  tailGenerationId: true,
-  referenceVideoGenerationId: true,
-  shotId: true,
-  threadId: true,
-  videoOptions: true,
-} as const;
 
 /** Exact persisted request shape, shared with startGen's lock-time binding. Callers pass
  *  genCellError first so a video model is valid before video defaults are resolved. */

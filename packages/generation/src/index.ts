@@ -60,11 +60,19 @@ function solidPng(seed: number, w: number, h: number): Uint8Array {
   );
 }
 
-/** #642: the mock shrinks the real GEN_IMAGE_SIZES entry by this factor so offline runs
- *  stay tiny while keeping the shape EXACT — every entry's width and height are multiples
- *  of 16, so the divided size has the identical aspect ratio. Without this the mock's fixed
- *  8×8 square would hide every shape defect from the worker/web tests that all run on it. */
-const MOCK_SIZE_DIVISOR = 16;
+/** #642: the mock renders the real GEN_IMAGE_SIZES entry reduced to its lowest integer terms
+ *  and scaled by this factor — so the offline shape is EXACT by construction (not "close"),
+ *  and stays a few dozen pixels. The default square lands back on 8×8, byte-identical to the
+ *  pre-#642 mock. Without a shaped mock, the fixed 8×8 square hid every shape defect from the
+ *  worker/web tests, which all run on this provider. */
+const MOCK_RATIO_SCALE = 8;
+
+/** Reduce a real output size to its lowest integer terms (2880×1620 → 16×9). */
+function reducedRatio(width: number, height: number): { width: number; height: number } {
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const g = gcd(width, height) || 1;
+  return { width: width / g, height: height / g };
+}
 
 export class MockProvider implements GenerationProvider {
   readonly name = "mock";
@@ -73,8 +81,9 @@ export class MockProvider implements GenerationProvider {
     // distinct seeds → distinct bytes → distinct content hashes
     const base = hashSeed(req.prompt + "|" + req.inputImageUrls.join(","));
     const real = imageOutputSize(req.aspectRatio);
-    const w = real.width / MOCK_SIZE_DIVISOR;
-    const h = real.height / MOCK_SIZE_DIVISOR;
+    const ratio = reducedRatio(real.width, real.height);
+    const w = ratio.width * MOCK_RATIO_SCALE;
+    const h = ratio.height * MOCK_RATIO_SCALE;
     return Array.from({ length: req.count }, (_, i) => ({
       bytes: solidPng(base + i + 1, w, h),
       ext: "png",

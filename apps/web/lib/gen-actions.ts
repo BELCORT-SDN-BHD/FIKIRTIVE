@@ -43,10 +43,11 @@ import {
   normalizeFactoryMaterial,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
+  FACTORY_HISTORY_SELECT,
   type CanvasActionKey,
   type FactoryAttemptKey,
+  type FactoryHistoryRow,
   type FactoryMaterial,
-  type StoredFactoryMaterial,
 } from "./batch-idempotency";
 
 export type StartGenResult =
@@ -88,25 +89,6 @@ function resolvePublicModelAlias(raw: unknown): unknown {
   return model ? { ...record, model } : raw;
 }
 
-const FACTORY_HISTORY_SELECT = {
-  id: true,
-  status: true,
-  idempotencyKey: true,
-  prompt: true,
-  model: true,
-  kind: true,
-  count: true,
-  entityIds: true,
-  variantSel: true,
-  sourceGenerationId: true,
-  tailGenerationId: true,
-  referenceVideoGenerationId: true,
-  shotId: true,
-  threadId: true,
-  videoOptions: true,
-  imageOptions: true,
-} as const;
-
 /**
  * #642 — 「改这张图 / 再来一张」的画幅继承。
  *
@@ -140,12 +122,6 @@ async function inheritedImageAspect(
     return null;
   }
 }
-
-type FactoryHistoryRow = StoredFactoryMaterial & {
-  id: string;
-  status: string;
-  idempotencyKey: string | null;
-};
 
 /** Read-only history verdict. `null` means this attempt may be fresh, so the caller must run the
  * fresh-only gates and repeat this verdict under the project lock before create + reserve. */

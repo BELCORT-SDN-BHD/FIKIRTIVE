@@ -177,12 +177,18 @@ describe("GEN_IMAGE_SIZES(引擎约束)", () => {
       expect(pixels, `${aspect} 总像素`).toBeLessThanOrEqual(GEN_IMAGE_MAX_PIXELS);
     }
   });
-  it("每一档的实际比例就是它自称的比例(1% 容差内),且在引擎的 [1/16, 16] 区间", () => {
+  it("每一档的实际比例**精确**等于它自称的比例(零容差:约分后必须逐字相等)", () => {
+    // 容差是掩盖器。上一版用 1% 容差,把 1600×2848(约分 50:89,偏 0.125%)当成了 9:16 ——
+    // 商家买的是 9:16,拿到的是一个「差不多」的形状。这里改成整数约分比对,数学上不留缝。
+    const reduce = (a: number, b: number): [number, number] => {
+      const gcd = (x: number, y: number): number => (y === 0 ? x : gcd(y, x % y));
+      const g = gcd(a, b);
+      return [a / g, b / g];
+    };
     for (const [aspect, { width, height }] of Object.entries(GEN_IMAGE_SIZES)) {
       const [w, h] = aspect.split(":").map(Number) as [number, number];
-      const declared = w / h;
+      expect(reduce(width, height), `${aspect} 必须精确约分为它自称的比例`).toEqual(reduce(w, h));
       const actual = width / height;
-      expect(Math.abs(actual - declared) / declared, `${aspect} 比例偏差`).toBeLessThan(0.01);
       expect(actual).toBeGreaterThanOrEqual(1 / 16);
       expect(actual).toBeLessThanOrEqual(16);
     }
@@ -198,7 +204,7 @@ describe("imageOutputSize", () => {
     expect(imageOutputSize(null)).toEqual({ width: 2048, height: 2048 });
   });
   it("已知画幅 → 该画幅的确切尺寸", () => {
-    expect(imageOutputSize("9:16")).toEqual({ width: 1600, height: 2848 });
+    expect(imageOutputSize("9:16")).toEqual({ width: 1620, height: 2880 });
     expect(imageOutputSize("21:9")).toEqual(GEN_IMAGE_SIZES["21:9"]);
   });
   it("未知画幅 → 回落默认(纯函数,永不抛)", () => {

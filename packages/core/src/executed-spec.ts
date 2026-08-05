@@ -66,3 +66,27 @@ export const EXECUTED_SPEC: {
     audioHonoured: false,
   },
 };
+
+/**
+ * 这一趟**真正会跑**的那个适配器,会不会兑现图片画幅。
+ *
+ * 判官轮 r1 P2:卡面文案原本只问 `EXECUTED_SPEC.image.aspectHonoured`,那是**现役**适配器
+ * 的静态事实;可真正执行这一单的适配器由 `GENERATION_PROVIDER` 选定,而备用适配器根本不
+ * 携带画幅。只问静态标志,就会在选中备用路时承诺一件那条路做不到的事 —— 正是本项目反复
+ * 重学的「说的与做的失同步」。
+ *
+ * 所以披露的判据是这个函数,不是那个标志。分支与 `createGenerationProvider()` 读同一个
+ * 环境变量、同一套取值;`packages/generation` 的测试拿**每个真适配器实际发出去的请求体**
+ * 逐个对表,任一侧漂移当场红。
+ *
+ * 纯函数:不选型、不报价、不发请求。
+ */
+export function imageAspectHonoured(env?: Record<string, string | undefined>): boolean {
+  // 现役适配器都做不到,就没有下文了。
+  if (!EXECUTED_SPEC.image.aspectHonoured) return false;
+  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
+  // 备用路:不发尺寸 ⇒ 按声明如实回 false(不许假装)。
+  if (provider === "fal") return EXECUTED_SPEC.image.fallbackAdapterAspectHonoured;
+  // 现役路(byteplus)发确切 WxH;离线 mock 按同一张表出精确同比例的图。两者都兑现。
+  return true;
+}

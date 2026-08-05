@@ -173,6 +173,42 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
   };
 }
 
+/**
+ * The EXACT column set `factoryMaterialMatches` reads, as one Prisma projection.
+ *
+ * 它住在比对器旁边,是因为两者必须同生共死:投影漏掉哪一列,Prisma 结果里那一列就
+ * **根本不存在**,比对器只能按缺省解释它 —— 于是「同一个请求」被判成「不同内容」,
+ * 商家的重试被永久拒绝(方向安全,但功能坏掉)。#642 修复轮 r1 P1 就是这么发生的:
+ * 这份清单当时有两份手抄副本(startGen 一份、工厂批量一份),新增的规格列只补进了一份。
+ *
+ * 一份清单,两个读者。加一列只需要改这里一处。
+ */
+export const FACTORY_HISTORY_SELECT = {
+  id: true,
+  status: true,
+  idempotencyKey: true,
+  prompt: true,
+  model: true,
+  kind: true,
+  count: true,
+  entityIds: true,
+  variantSel: true,
+  sourceGenerationId: true,
+  tailGenerationId: true,
+  referenceVideoGenerationId: true,
+  shotId: true,
+  threadId: true,
+  videoOptions: true,
+  imageOptions: true,
+} as const;
+
+/** A history row read through FACTORY_HISTORY_SELECT. */
+export type FactoryHistoryRow = StoredFactoryMaterial & {
+  id: string;
+  status: string;
+  idempotencyKey: string | null;
+};
+
 /** #642 legacy equivalence. An IMAGE row enqueued before the shape column existed carries
  *  null — and those runs really did produce the default square, so null and an explicit
  *  default shape are the SAME material. Without this, every pre-migration attempt replay

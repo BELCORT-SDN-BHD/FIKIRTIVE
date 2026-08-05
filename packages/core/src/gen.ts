@@ -112,18 +112,20 @@ export const GEN_IMAGE_MAX_PIXELS = 16_777_216;
  *
  * 取值口径：
  *  - 1:1 保持 2048×2048，与今日逐字节一致（补齐画幅不改变既有方图行为）；
- *  - 其余各档取 2K 档参考映射，并且**每一档都 ≥ GEN_IMAGE_MIN_PIXELS**（引擎下限）；
- *  - 每档宽高都是 16 的整数倍，且实际比例与档位名一致（离线 mock 按同一张表等比缩放出图）。
+ *  - 其余各档取 2K 档格点，并且**每一档都 ≥ GEN_IMAGE_MIN_PIXELS**（引擎下限）；
+ *  - **每一档都精确约分为它自称的比例**（零容差，`gen.test.ts` 用整数约分逐档比对）。
+ *    这不是洁癖：商家买的是 9:16，一个「差不多的 9:16」就是一次没说出口的降级。
+ *    上一版 9:16 取 1600×2848，约分是 50:89（偏 0.125%），已按判官 r1 P2 改为精确格点。
  */
 export const GEN_IMAGE_SIZES: Record<GenImageAspect, { width: number; height: number }> = {
-  "1:1":  { width: 2048, height: 2048 }, // 4,194,304 px
-  "9:16": { width: 1600, height: 2848 }, // 4,556,800 px
-  "16:9": { width: 2848, height: 1600 }, // 4,556,800 px
-  "4:3":  { width: 2304, height: 1728 }, // 3,981,312 px
-  "3:4":  { width: 1728, height: 2304 }, // 3,981,312 px
-  "3:2":  { width: 2496, height: 1664 }, // 4,153,344 px
-  "2:3":  { width: 1664, height: 2496 }, // 4,153,344 px
-  "21:9": { width: 3136, height: 1344 }, // 4,214,784 px
+  "1:1":  { width: 2048, height: 2048 }, // 4,194,304 px — 精确 1:1
+  "9:16": { width: 1620, height: 2880 }, // 4,665,600 px — 精确 9:16（1620 = 9×180, 2880 = 16×180）
+  "16:9": { width: 2880, height: 1620 }, // 4,665,600 px — 精确 16:9
+  "4:3":  { width: 2304, height: 1728 }, // 3,981,312 px — 精确 4:3
+  "3:4":  { width: 1728, height: 2304 }, // 3,981,312 px — 精确 3:4
+  "3:2":  { width: 2496, height: 1664 }, // 4,153,344 px — 精确 3:2
+  "2:3":  { width: 1664, height: 2496 }, // 4,153,344 px — 精确 2:3
+  "21:9": { width: 3136, height: 1344 }, // 4,214,784 px — 精确 21:9（约分 7:3）
 };
 
 /** Per-model image controls — mirrors `VideoModelOptions`. Lists are default-first;
