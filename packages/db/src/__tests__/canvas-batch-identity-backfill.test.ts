@@ -17,7 +17,9 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CANVAS_JOB_KEY_PREFIX } from "@fikirtive/core";
 import { prisma } from "../index.js";
+import { settleCanvasCardsForGenJob } from "../canvas-settlement.js";
 import { seedOrg } from "../../test/setup.js";
 
 const MIGRATION = resolve(
@@ -76,9 +78,16 @@ async function seedGeneration(): Promise<string> {
   return generation.id;
 }
 
+/** A key of the shape startCanvasGen mints server-side for a Canvas press. */
+function canvasKey(): string {
+  return `${CANVAS_JOB_KEY_PREFIX}${randomUUID().replace(/-/g, "").repeat(2)}`;
+}
+
 async function seedJob(input: {
   generationIds: string[];
   sourceGenerationId?: string | null;
+  /** Set it to let the real settlement writer recognise this as a job bought from a board. */
+  idempotencyKey?: string | null;
 }): Promise<string> {
   const jobId = `gjb_${randomUUID()}`;
   await prisma.genJob.create({
@@ -87,6 +96,7 @@ async function seedJob(input: {
       kind: "IMAGE", model: "seedream", count: Math.max(1, input.generationIds.length),
       status: "DONE", generationIds: input.generationIds,
       sourceGenerationId: input.sourceGenerationId ?? null,
+      idempotencyKey: input.idempotencyKey ?? null,
       spent: true, spentUsd: 0.12, startedAt: new Date(), finishedAt: new Date(),
     },
   });
@@ -110,12 +120,34 @@ async function seedLegacyCard(input: {
   return id;
 }
 
+/**
+ * Put a row back into the ONE-COLUMN shape the pre-T4 writers left behind.
+ *
+ * Used on rows the REAL settlement has just written, so everything about them — ids, ordering,
+ * which card is the anchor, where each sits — is the writer's own output rather than a hand-drawn
+ * guess at it. Only the legacy column is stamped, exactly as the writer of the day stamped it.
+ */
+async function stampLegacySource(id: string, sourceNodeId: string | null): Promise<void> {
+  await prisma.$executeRawUnsafe(
+    `UPDATE "CanvasNode" SET "sourceNodeId" = $2 WHERE "id" = $1 AND "ownerId" = $3`,
+    id, sourceNodeId, orgId,
+  );
+}
+
 type Identity = {
   batchIndex: number | null;
   batchSize: number | null;
   layoutAnchorNodeId: string | null;
   madeFromNodeId: string | null;
 };
+
+async function cardsOfJob(genJobId: string) {
+  return prisma.canvasNode.findMany({
+    where: { ownerId: orgId, projectId, genJobId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, generationId: true, batchIndex: true },
+  });
+}
 
 async function identityOf(id: string): Promise<Identity> {
   const row = await prisma.canvasNode.findFirstOrThrow({
@@ -258,5 +290,73 @@ describe("what the T4 backfill refuses to guess", () => {
       batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
     });
     await prisma.canvasNode.deleteMany({ where: { ownerId: otherOrg } });
+  });
+});
+
+/**
+ * 判官轮 r1 · P1 —— 同一列的两种意思,不能用「这个作业有没有输入图」来分(#603 T4)。
+ *
+ * 反例是**可达的历史输出**,不是想象:T2a+b 的结算写者(main `a43438d7`)在「衍生批次多图、
+ * 板上还没有锚点」这一路上,先建锚点行(它的 `sourceNodeId` = 真来源卡),再把**刚建好的锚点
+ * 自己的 id** 写进兄弟行的 `sourceNodeId` —— 而整批的作业 `sourceGenerationId` 非空。按作业分类
+ * 的回填会把兄弟行那个「同批布局锚点」读成派生血缘:画布上凭空多一条「兄弟从锚点来」的线,
+ * 而它真正的布局锚点被丢掉。
+ *
+ * 所以判别式是**被引用的那张卡是什么**,不是作业是什么:同一个作业的卡 ⇒ 布局锚点;作业记录的
+ * 来源产出的卡 ⇒ 真派生;两样都验不上 ⇒ 两列都留空。
+ *
+ * 这两个用例的行由**真结算写者**产出(真 id、真顺序、真锚点),只把那一个旧列按当年写者的样子
+ * 盖回去,所以形状不是手画的。
+ */
+describe("one column, two meanings — decided by the card it points AT", () => {
+  it("keeps a derived batch's sibling as LAYOUT, and still gives it the batch's real parent", async () => {
+    const sourceGenerationId = await seedGeneration();
+    const sourceCard = await seedLegacyCard({
+      genJobId: null, generationId: sourceGenerationId, sourceNodeId: null,
+    });
+    const outputs = [await seedGeneration(), await seedGeneration()];
+    const jobId = await seedJob({ generationIds: outputs, sourceGenerationId, idempotencyKey: canvasKey() });
+
+    // The real writer places the whole batch: it creates the anchor first, then the sibling.
+    const settled = await settleCanvasCardsForGenJob(jobId, orgId);
+    expect(settled.created).toBe(2);
+    const [anchor, sibling] = await cardsOfJob(jobId);
+    expect(anchor!.generationId).toBe(outputs[0]);
+    expect(sibling!.generationId).toBe(outputs[1]);
+
+    // …and the writer OF THE DAY recorded both meanings in the one column: the anchor pointed at
+    // the picture the job was built on, the sibling pointed at the anchor it was laid out around.
+    await stampLegacySource(anchor!.id, sourceCard);
+    await stampLegacySource(sibling!.id, anchor!.id);
+
+    await runBackfill();
+
+    expect(await identityOf(anchor!.id)).toEqual({
+      batchIndex: 0, batchSize: 2, layoutAnchorNodeId: null, madeFromNodeId: sourceCard,
+    });
+    // The sibling stood NEXT TO the anchor; it did not come out of it. And the picture the whole
+    // paid job was built on is the sibling's parent too — that is a fact of the job.
+    expect(await identityOf(sibling!.id)).toEqual({
+      batchIndex: 1, batchSize: 2, layoutAnchorNodeId: anchor!.id, madeFromNodeId: sourceCard,
+    });
+  });
+
+  it("leaves both columns empty when the old value verifies as neither", async () => {
+    // Two ordinary presses, and a stale pointer from one press's card to the other's. It is not a
+    // same-batch anchor (different job) and it cannot be a parent (this job was built on nothing).
+    const otherJob = await seedJob({ generationIds: [await seedGeneration()] });
+    const elsewhere = await seedLegacyCard({
+      genJobId: otherJob, generationId: null, sourceNodeId: null,
+    });
+    const jobId = await seedJob({ generationIds: [await seedGeneration()] });
+    const stray = await seedLegacyCard({
+      genJobId: jobId, generationId: null, sourceNodeId: elsewhere,
+    });
+
+    await runBackfill();
+
+    expect(await identityOf(stray)).toEqual({
+      batchIndex: null, batchSize: 1, layoutAnchorNodeId: null, madeFromNodeId: null,
+    });
   });
 });

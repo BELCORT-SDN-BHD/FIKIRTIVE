@@ -14,23 +14,36 @@
 --
 -- ───────────────────────── 回填能回填什么、不能回填什么 ─────────────────────────
 --
--- 回填的唯一证据来源是 GenJob 行本身(付费作业自己的记录),不是画布现状:
---   - "batchSize"          ← array_length(j."generationIds", 1)   该作业一共产出几张
---   - "batchIndex"         ← array_position(j."generationIds", n."generationId") - 1
---   - "madeFromNodeId"     ← n."sourceNodeId",且仅当 j."sourceGenerationId" IS NOT NULL
---                            (作业确实是以另一张产出为输入跑的 → 那一列当时装的就是真派生)
---   - "layoutAnchorNodeId" ← n."sourceNodeId",且仅当 j."sourceGenerationId" IS NULL
---                            (作业没有输入图 → 那一列当时装的只可能是同批布局锚点)
--- 这个分法不是猜:两条写入路径(placeCanvasJobNode / settleCanvasCardsForGenJob)历史上
--- 都只按 j."sourceGenerationId" 有没有值来决定往那一列写哪种东西,所以同一个判据能把旧值
--- 无歧义地劈开。
+-- 批次序号与批大小的证据来源是 GenJob 行本身(付费作业自己的记录),不是画布现状:
+--   - "batchSize"  ← array_length(j."generationIds", 1)   该作业一共产出几张
+--   - "batchIndex" ← array_position(j."generationIds", n."generationId") - 1
+--
+-- 旧「来源」列到底是哪一种意思,**只能看它指着的那张卡是什么**,不能看作业是什么
+-- (判官轮 r1 · P1 推翻了上一版按作业分类的写法,反例见下):
+--   - 它指的卡与本行**同一个作业** ⇒ 那是同批布局锚点 ⇒ 回填 "layoutAnchorNodeId";
+--   - 它指的卡带着本行作业记录的来源产出(j."sourceGenerationId")⇒ 那是真派生源卡
+--     ⇒ 回填 "madeFromNodeId";
+--   - 两样都验不上 ⇒ 两列都留 NULL,不硬猜。
+--
+-- 上一版按「作业有没有输入图」分类,被一条**可达的历史输出**推翻:main `a43438d7` 的结算写者
+-- 在「衍生批次多图、板上还没有锚点」这一路上(该提交 canvas-settlement.ts:190-211),先建锚点行
+-- (它的 sourceNodeId = 真来源卡),再把**刚建好的锚点自己的 id** 写进兄弟行的 sourceNodeId;
+-- 而整批的 j."sourceGenerationId" 非空。按作业分类会把兄弟行那个布局锚点读成派生血缘 ——
+-- 画布上凭空多一条「兄弟从锚点来」的线,它真正的布局锚点还被丢掉。逐行按被引用卡分类之后,
+-- 同一批行两种形状都落对:锚点行拿到真来源卡,兄弟行拿到布局锚点。
+--
+-- "madeFromNodeId" 另有一条**可验证**的补齐(不是放宽):作业记录了 sourceGenerationId 时,
+-- 那张来源卡按结算写者同一条规则(同 owner+project、带该产出、createdAt 最早)解析出来 ——
+-- 所以衍生批次的兄弟行既拿到布局锚点,也拿到整批共同的真父卡,与 T4 之后新写入的行一致。
+-- 优先仍是本行旧值指着的那张卡(只要它验得上是来源卡),解析只在旧值验不上时兜底。
 --
 -- **回填不到的,一律留 NULL,不猜**(诚实先例:Q13=B「早期作品,来历不详」)。四类:
 --   (a) "genJobId" IS NULL 的卡 —— 商家自己上传/拖上来的图、文字便签。它们本来就没有批次。
 --   (b) "genJobId" 指向的 GenJob 行已经不在了 —— 删项目时任务行是物理删除,产出物却宣称
---       永不物删,所以真相源比它记录的事实先死。这类行连「那一列当时是哪种意思」都判不了,
---       所以 "madeFromNodeId" 与 "layoutAnchorNodeId" 双双留 NULL:宁可少画一条线,也不能
---       画一条错的 —— 错的溯源比没有溯源更危险(会被当成证据)。
+--       永不物删,所以真相源比它记录的事实先死。这类行整行不进本次 UPDATE(JOIN 落空),
+--       四列全部留 NULL:宁可少画一条线,也不能画一条错的 —— 错的溯源比没有溯源更危险
+--       (会被当成证据)。
+--   (e) 旧「来源」值指着的卡既不同批、也不是来源卡(跨批陈旧指针)—— 两个关系列都留 NULL。
 --   (c) "generationId" IS NULL 的卡(在途锚点卡、终态失败卡)—— 还没绑上任何一张产出,
 --       序号无从谈起,"batchIndex" 留 NULL;但 "batchSize" 是作业级事实,照填。
 --   (d) "generationId" 不在该作业的产出列表里的行(历史错绑)—— array_position 返回 NULL,
@@ -70,7 +83,11 @@
 --       ON j.id = n."genJobId" AND j."ownerId" = n."ownerId" AND j."projectId" = n."projectId"
 --    WHERE n."generationId" IS NOT NULL
 --      AND n."batchIndex" IS DISTINCT FROM array_position(j."generationIds", n."generationId") - 1;
--- 迁移后(留 NULL 的那部分,期望能逐条对上上面 (a)–(d) 四类):
+-- 迁移后(期望 0 行 —— 派生线只指向作业记录的来源卡,绝不指向同批兄弟):
+--   SELECT n.id FROM "CanvasNode" n
+--     JOIN "CanvasNode" p ON p.id = n."madeFromNodeId" AND p."ownerId" = n."ownerId"
+--    WHERE n."madeFromNodeId" IS NOT NULL AND p."genJobId" = n."genJobId";
+-- 迁移后(留 NULL 的那部分,期望能逐条对上上面 (a)–(e) 五类):
 --   SELECT count(*) FILTER (WHERE "genJobId" IS NULL)                        AS 无作业,
 --          count(*) FILTER (WHERE "genJobId" IS NOT NULL AND "batchSize" IS NULL) AS 作业已不在,
 --          count(*) FILTER (WHERE "generationId" IS NULL)                    AS 未绑产出
@@ -93,9 +110,33 @@ UPDATE "CanvasNode" n
          WHEN n."generationId" IS NULL THEN NULL
          ELSE array_position(j."generationIds", n."generationId") - 1
        END,
-       -- 作业有输入图 ⇒ 那一列当时装的是真派生;没有 ⇒ 装的只可能是同批布局锚点。
-       "madeFromNodeId" = CASE WHEN j."sourceGenerationId" IS NOT NULL THEN n."sourceNodeId" END,
-       "layoutAnchorNodeId" = CASE WHEN j."sourceGenerationId" IS NULL THEN n."sourceNodeId" END
+       -- 布局锚点:旧值指着的卡与本行同一个作业。同批 = 一起出来的,不是谁生了谁。
+       "layoutAnchorNodeId" = (
+         SELECT ref."id" FROM "CanvasNode" ref
+          WHERE ref."id" = n."sourceNodeId"
+            AND ref."ownerId" = n."ownerId"
+            AND ref."projectId" = n."projectId"
+            AND ref."genJobId" = n."genJobId"
+       ),
+       -- 真派生:作业记录了来源产出时才谈得上。先认本行旧值指着的那张卡(只要它确实带着
+       -- 那个来源产出),否则按结算写者同一条规则解析出那张来源卡;都不成立就留 NULL。
+       "madeFromNodeId" = CASE WHEN j."sourceGenerationId" IS NOT NULL THEN COALESCE(
+         (
+           SELECT ref."id" FROM "CanvasNode" ref
+            WHERE ref."id" = n."sourceNodeId"
+              AND ref."ownerId" = n."ownerId"
+              AND ref."projectId" = n."projectId"
+              AND ref."generationId" = j."sourceGenerationId"
+         ),
+         (
+           SELECT ref."id" FROM "CanvasNode" ref
+            WHERE ref."ownerId" = n."ownerId"
+              AND ref."projectId" = n."projectId"
+              AND ref."generationId" = j."sourceGenerationId"
+            ORDER BY ref."createdAt" ASC, ref."id" ASC
+            LIMIT 1
+         )
+       ) END
   FROM "GenJob" j
  WHERE n."genJobId" = j."id"
    AND n."ownerId" = j."ownerId"
