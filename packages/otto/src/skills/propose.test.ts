@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_PRICE_USD_PER_IMAGE, buildGenRequestFromCard } from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
 import { buildProposeCard, buildSpecChips, EXECUTED_SPEC } from "./propose.helpers.js";
 import { imageAspectHonoured } from "@fikirtive/core";
@@ -644,19 +644,21 @@ describe("#580 card spec chips — engine-free by construction", () => {
   });
 
   it("image: specChips report the size execution really produces, plus how many", () => {
+    // #643 T2：卡上现在总带着一个形状（没提就是默认方图），所以形状也在卡面上说出口 ——
+    // 商家在付费前看见的就是他会拿到的那一格。
     const one = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     ).cardPayload;
-    expect(one.specChips).toEqual(["2048 × 2048", "1 image"]);
+    expect(one.specChips).toEqual(["2048 × 2048", "1:1", "1 image"]);
 
     const pack = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, count: 3 },
       makeCtx(),
       [],
     ).cardPayload;
-    expect(pack.specChips).toEqual(["2048 × 2048", "3 images"]);
+    expect(pack.specChips).toEqual(["2048 × 2048", "1:1", "3 images"]);
     expect(pack.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 
@@ -702,35 +704,66 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     return (built as { ok: true; req: Record<string, unknown> }).req;
   }
 
-  it("图片：这条路还没把商家的画幅放上卡，所以卡面一个比例都不许承诺", () => {
-    // #642(T1)之后执行层**已经**认画幅了(EXECUTED_SPEC.image.aspectHonoured=true),
-    // 但 Otto 这条路把 desiredAspect 丢在选型那一步(T2 才接)。卡面的判据永远是
-    // 「这张卡真会交付什么」,不是「执行层理论上能不能」。
+  it("图片(#643 T2)：商家要的画幅真的落到卡上、也真的进了付费请求体", () => {
+    // T1 之后执行层已经认画幅（EXECUTED_SPEC.image.aspectHonoured=true）；T2 把 Otto 这条路
+    // 上「选型那一步丢掉 desiredAspect」的断点接上。卡面的判据仍然是「这张卡真会交付什么」。
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
       makeCtx(),
       [],
     );
-    // 卡上没有画幅 ⇒ 执行层拿到的请求体里也没有 —— 这就是「做的」。
+    // 「做的」：付费请求体里逐字带着这个形状。
     const req = genRequestFor(cardPayload);
-    expect(req).not.toHaveProperty("aspectRatio");
-    expect(cardPayload.params.aspectRatio).toBeUndefined();
-    // 于是「说的」也不许出现比例,报的是执行层此时真会产出的默认方图尺寸。
-    expect(cardPayload.specChips.some((chip) => /\d+\s*:\s*\d+/.test(chip))).toBe(false);
-    expect(cardPayload.specChips).toContain("2048 × 2048");
+    expect(req.aspectRatio).toBe("9:16");
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    // 「说的」：卡面报的是这一格真会产出的尺寸，并把形状说出口 —— 不再是写死的方图。
+    expect(cardPayload.specChips).toContain("9:16");
+    expect(cardPayload.specChips).toContain("1620 × 2880");
+    // 兑现了就不是降级，不许无中生有地报警。
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
   });
 
   it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来(执行层翻真也不许把这句话弄丢)", () => {
     expect(EXECUTED_SPEC.image.aspectHonoured).toBe(true);
+    // 5:7 不在引擎菜单上（八格之外），所以这一趟真会交付的是默认方图 —— 这句必须说出口。
     const { cardPayload } = buildProposeCard(
-      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7" },
       makeCtx(),
       [],
     );
+    expect(cardPayload.params.aspectRatio).toBe("1:1");
     expect(cardPayload.downgraded).toBe(true);
     expect(cardPayload.downgradeNote).toBe(
-      "You asked for 9:16 — this will be a square 2048 × 2048 image.",
+      "You asked for 5:7 — this will be a square 2048 × 2048 image.",
     );
+  });
+
+  it("图片(#643 T2)：商家的人话形状也一路落地(portrait ⇒ 9:16，卡面与请求体同口径)", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "portrait" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    expect(genRequestFor(cardPayload).aspectRatio).toBe("9:16");
+    expect(cardPayload.specChips).toContain("9:16");
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("图片(#643 T2)：八格全通 —— 每一格都是卡面声称 = 请求体携带 = 那一格的确切尺寸", () => {
+    for (const aspect of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      const { cardPayload } = buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: aspect },
+        makeCtx(),
+        [],
+      );
+      const size = EXECUTED_SPEC.image.outputSizes[aspect as keyof typeof EXECUTED_SPEC.image.outputSizes];
+      expect(cardPayload.params.aspectRatio, aspect).toBe(aspect);
+      expect(genRequestFor(cardPayload).aspectRatio, aspect).toBe(aspect);
+      expect(cardPayload.specChips, aspect).toEqual([`${size.width} × ${size.height}`, aspect, "1 image"]);
+      expect(cardPayload.downgraded, aspect).toBe(false);
+    }
   });
 
   // ── 正向锁(判官 r1 P2):披露**永不越过**接线事实 ──────────────────────────

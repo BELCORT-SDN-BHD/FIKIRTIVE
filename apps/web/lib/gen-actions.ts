@@ -25,6 +25,7 @@ import {
   GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
+  imageDefaults,
   genJobEndedWithoutDelivering,
   type GenModel,
   type GenVideoModel,
@@ -62,6 +63,10 @@ export type ActiveGenModels = {
   videoCredits: number;
   videoDefaults: ReturnType<typeof videoDefaults>;
   videoAspectRatios: string[];
+  /** #643 T2 —— 图片形状菜单（default-first）。UI 只渲染这份列表，自己不写死任何一格。 */
+  imageAspectRatios: string[];
+  /** 商家没选形状时会交付的那一格。UI 的初始选中值取这里，所以「显示的」= 「会交付的」。 */
+  imageDefaultAspect: string;
 };
 
 class QueuePrepareFailed extends Error {}
@@ -719,6 +724,8 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
     })),
     videoDefaults: defaults,
     videoAspectRatios: [...GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel].aspectRatios],
+    imageAspectRatios: [...GEN_IMAGE_MODEL_OPTIONS[imageModel as GenModel].aspectRatios],
+    imageDefaultAspect: imageDefaults(imageModel as GenModel).aspectRatio,
   };
 }
 

@@ -152,6 +152,40 @@ export function imageOutputSize(aspectRatio?: string | null): { width: number; h
   return size ?? GEN_IMAGE_SIZES[GEN_IMAGE_DEFAULT_ASPECT];
 }
 
+/**
+ * #643 T2 —— 商家说的形状 → 菜单上的那一格。认不出来就 `null`，**绝不猜**。
+ *
+ * 为什么需要它：商家的原话经 Otto 落到 `desiredAspect` 上时，可能写成 `9x16`、`portrait`，
+ * 也可能写成 `9:16`。严格逐字比对会把前两种当成「菜单外的值」，于是静默掉成方图 ——
+ * 商家要竖版、拿到方图，而且没人说过一句话。这里只做**写法归一 + 三个明确的人话别名**，
+ * 不做模糊猜测：认不出来返回 null，由调用方走「如实披露的降级」那条路。
+ *
+ * 别名口径（只收敛到菜单上确实存在的一格）：
+ *   portrait / vertical → 9:16；landscape / horizontal → 16:9；square → 1:1。
+ * 「portrait」在设计上也可以是 3:4 或 2:3 —— 这里取最常用的一格，而这个选择**会被说出口**
+ * （卡面/选择器显示的就是真会交付的那一格），不是一次静默替商家做主。
+ */
+const IMAGE_ASPECT_ALIASES: Record<string, GenImageAspect> = {
+  portrait: "9:16",
+  vertical: "9:16",
+  landscape: "16:9",
+  horizontal: "16:9",
+  square: "1:1",
+};
+
+export function normalizeImageAspect(raw?: string | null): GenImageAspect | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+  const alias = IMAGE_ASPECT_ALIASES[trimmed];
+  if (alias) return alias;
+  // 写法归一：`9 x 16` / `9×16` / `9 : 16` 都是同一个形状。
+  const canonical = trimmed.replace(/[x×:：\s]+/gu, ":");
+  return (GEN_IMAGE_ASPECTS as readonly string[]).includes(canonical)
+    ? (canonical as GenImageAspect)
+    : null;
+}
+
 /** Per-model facts: `label` for the picker, `sound` = generates native audio,
  *  `tail` = supports an end frame. Controls + price live in the two helpers below. */
 export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound: boolean; tail: boolean }> = {

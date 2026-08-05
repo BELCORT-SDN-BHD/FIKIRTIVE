@@ -573,6 +573,26 @@ describe("#642 非方图工厂批量:同请求重试必须复用,不得误判内
     expect(calls).toHaveLength(0); // 从未派发 ⇒ 从未重复扣款
   });
 
+  it("#643 T2 逐格:一批里每一格各带各的形状,互不串台且各自落盘", async () => {
+    const { db, jobs } = fakePrisma();
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const shapes = ["9:16", "16:9", "1:1", "21:9"];
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      {
+        ownerId: OWNER, projectId: PROJECT, batchId: "PERCELL", attemptId: ATTEMPT_A,
+        cells: shapes.map((aspectRatio, i) => genCell(`cell ${i}`, { aspectRatio })),
+      },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells.every((cell) => cell.status === "queued")).toBe(true);
+    // 请求体：每一格发出去的就是它自己那一格。
+    expect(calls.map((call) => call.aspectRatio)).toEqual(shapes);
+    // 落盘：每一格冻结的快照也是它自己那一格（形状不会在入队那一步被邻格覆盖）。
+    expect([...jobs.values()].map((job) => (job.imageOptions as { aspectRatio: string }).aspectRatio))
+      .toEqual(shapes);
+  });
+
   it("迁移前的历史行(该列为 NULL)按方图解释,老批量重放照旧", async () => {
     const { db, jobs } = fakePrisma();
     jobs.set("prior-legacy", {

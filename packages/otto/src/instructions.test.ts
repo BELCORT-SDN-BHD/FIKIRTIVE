@@ -111,6 +111,15 @@ describe("ottoInstructions — audit fix: propose/identity/keyframe reconciled w
     expect(ottoInstructions).toMatch(/desiredAspect/);
   });
 
+  it("#643 T2:图片形状菜单是插值进来的真菜单 —— 不是抄在文本里的一份副本", async () => {
+    const { GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT } = await import("@fikirtive/core");
+    // 每一格都真的出现在指令里（菜单加一格，这条自动开始要求它出现）。
+    for (const aspect of GEN_IMAGE_ASPECTS) expect(ottoInstructions).toContain(aspect);
+    expect(ottoInstructions).toContain(GEN_IMAGE_ASPECTS.join(", "));
+    // 菜单外的形状会被交付成默认形状，这句话必须说出口。
+    expect(ottoInstructions).toMatch(new RegExp(`delivered as ${GEN_IMAGE_DEFAULT_ASPECT}`));
+  });
+
   it("bridges the keyframe rule to seedreamPrompt's forVideo (Fix 8)", () => {
     expect(ottoInstructions).toMatch(/keyframe/i);
     expect(ottoInstructions).toMatch(/forVideo/);

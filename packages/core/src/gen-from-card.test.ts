@@ -48,8 +48,30 @@ describe("buildGenRequestFromCard — image card, no overrides", () => {
     expect(req.idempotencyKey).toBe("cowork:card_789");
     expect(req).not.toHaveProperty("durationSeconds");
     expect(req).not.toHaveProperty("resolution");
-    expect(req).not.toHaveProperty("aspectRatio");
     expect(req).not.toHaveProperty("audio");
+  });
+
+  // ---- #643 T2:卡上冻结的形状必须原样进付费请求 -------------------------
+  it("卡上带形状 ⇒ 付费请求体逐字带同一个形状(卡面说的 = 引擎做的)", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      cardPayload: imageCardPayload({ params: { count: 1, aspectRatio: "9:16" } }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req.aspectRatio).toBe("9:16");
+  });
+
+  it("卡上没形状 ⇒ 请求体不带形状(由服务端继承/默认解释,不在这里编一个)", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      cardPayload: imageCardPayload({ params: { count: 1 } }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req).not.toHaveProperty("aspectRatio");
   });
 
   it("uses count=1 when params.count is absent", () => {

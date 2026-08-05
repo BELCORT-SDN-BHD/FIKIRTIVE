@@ -466,6 +466,76 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #643 T2 —— 首帧图的形状 = 这个镜头的片子的形状
+//
+// 在这之前首帧一律是方图，而它接下来要变成的那条片子是横版的：商家为一张会被重新
+// 取景的图付了钱，而且没有一个地方说过这件事。形状不写死 —— 走和铸视频子卡同一条
+// 选型路，视频侧换档时首帧自动跟着换。
+// ---------------------------------------------------------------------------
+describe("首帧图形状(#643 T2)", () => {
+  /** 铸卡时传给 buildProposeCard 的第一个参数（图片方案的输入）。 */
+  const mintInputs = () => mockBuildProposeCard.mock.calls.map((call) => call[0] as { desiredAspect?: string });
+
+  it("片子是 16:9 ⇒ 首帧就按 16:9 铸（不再默认方图）", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "16:9", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    expect(mintInputs()).toHaveLength(2);
+    for (const input of mintInputs()) expect(input.desiredAspect).toBe("16:9");
+  });
+
+  it("视频侧换成竖版 ⇒ 首帧自动跟着换（形状不写死在这个文件里）", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "9:16", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    for (const input of mintInputs()) expect(input.desiredAspect).toBe("9:16");
+  });
+
+  it("这个视频模型压根不暴露形状 ⇒ 不发明一个值，交给图片侧的默认形状", async () => {
+    // 默认 mock 就是这种模型（kling：params 里没有 aspectRatio）。
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    for (const input of mintInputs()) expect(input.desiredAspect).toBeUndefined();
+  });
+
+  it("视频那一格不在图片菜单上 ⇒ 同样不发明值（引擎收不下的形状到不了付费请求）", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "adaptive", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    for (const input of mintInputs()) expect(input.desiredAspect).toBeUndefined();
+  });
+
+  it("重出一张首帧走的是同一条形状口径", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "16:9", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s0" });
+
+    expect(mintInputs()).toHaveLength(1);
+    expect(mintInputs()[0]!.desiredAspect).toBe("16:9");
+  });
+});
+
 describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
   it("按 shotId 铸新子卡只替换 firstFrameCardId,PRESERVE firstFrameGenerationId(其余镜头不动)", async () => {
     const p = payload3();

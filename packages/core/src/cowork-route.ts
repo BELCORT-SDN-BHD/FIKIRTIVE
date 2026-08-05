@@ -1,7 +1,11 @@
 import {
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_VIDEO_MODEL_INFO,
+  GEN_IMAGE_MODEL_OPTIONS,
+  imageDefaults,
+  normalizeImageAspect,
   videoDefaults,
+  type GenModel,
   type GenVideoModel,
 } from "./gen.js";
 import { activeVideoModel } from "./model-config.js";
@@ -35,12 +39,23 @@ export interface SuggestModelResult {
 
 export function suggestModel(input: SuggestModelInput): SuggestModelResult {
   if (input.kind === "image") {
+    // #643 T2 —— 这里原本 `params: { count: 1 }`，商家要的形状就**在这一步被丢掉**：
+    // 后面每一站（卡面、付费请求体、快照、适配器）都再也见不到它，于是商家说「竖版」、
+    // 卡面不提形状、引擎出方图，全程没有一句话解释。现在形状在这里定下来，并且和视频侧
+    // 一样：吸附到菜单上的一格，吸不上就回默认并**如实标成降级**。
+    const model: GenModel = "seedream";
+    const menu = GEN_IMAGE_MODEL_OPTIONS[model].aspectRatios;
+    const want = normalizeImageAspect(input.desiredAspect);
+    const honoured = want !== null && menu.includes(want);
+    const aspectRatio = honoured ? want : imageDefaults(model).aspectRatio;
+    // 商家提了、但这一格给不了 ⇒ 降级。没提就不是降级（不许无中生有地报警）。
+    const downgraded = !!input.desiredAspect && !honoured;
     return {
-      model: "seedream",
-      params: { count: 1 },
-      reason: "image → Seedream",
-      downgraded: false,
-      requested: {},
+      model,
+      params: { count: 1, aspectRatio },
+      reason: `image → Seedream — ${aspectRatio}`,
+      downgraded,
+      requested: downgraded ? { aspect: input.desiredAspect } : {},
     };
   }
 

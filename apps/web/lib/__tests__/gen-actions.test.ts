@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
+import {
+  INTERNAL_PER_DISPLAY, pricedGenCredits,
+  GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, imageOutputSize,
+} from "@fikirtive/core";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 const mockRequireOwner = vi.fn();
@@ -83,8 +86,9 @@ const { canvasActionKey } = await import("../batch-idempotency");
 
 const prevDefaultVideoModel = process.env.OTTO_DEFAULT_VIDEO_MODEL;
 
-beforeEach(() => {
-  vi.clearAllMocks();
+/** 每例的干净起点。抽成具名函数是为了让「一个用例里连跑八格」的循环能在每一轮
+ *  重新布好替身（`vi.clearAllMocks()` 会把 mockResolvedValue 一起清掉）。 */
+function resetStartGenMocks(): void {
   process.env.OTTO_DEFAULT_VIDEO_MODEL = "seedance-2-fast";
   mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
   mockIsImpersonating.mockResolvedValue(false);
@@ -112,6 +116,11 @@ beforeEach(() => {
   ) => options.id ?? null);
   mockCheckCast.mockResolvedValue(null);
   mockResolveDisabledModels.mockResolvedValue(new Set());
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetStartGenMocks();
 });
 
 afterEach(() => {
@@ -1454,5 +1463,61 @@ describe("startGen 图片规格快照", () => {
     }
     expect(new Set(costs).size).toBe(1);
     expect(costs[0]).toBe(2 * INTERNAL_PER_DISPLAY);
+  });
+
+  // -------------------------------------------------------------------------
+  // #643 T2 —— 每个付费入口都走完整条链：选的形状 → 请求 → 快照 → 那一格的确切 WxH
+  //
+  // 三个入口是三条不同的路（画布带 actionId、Otto 卡带 cowork: 键、详情页/工厂带自己的键），
+  // 而形状要么在每一条上都到底，要么就是「有的入口能选、有的入口白选」。这里逐条走一遍。
+  // -------------------------------------------------------------------------
+  describe("#643 T2 逐入口端到端：形状 → 快照 → 确切 WxH", () => {
+    const snapshotAspect = () => (createdData().imageOptions as { aspectRatio: string }).aspectRatio;
+
+    it("画布入口(startCanvasGen)：八格逐个走完，快照上的形状对应引擎确切的 WxH", async () => {
+      for (const [i, aspect] of GEN_IMAGE_ASPECTS.entries()) {
+        vi.clearAllMocks();
+        resetStartGenMocks();
+        const r = await startCanvasGen({
+          actionId: `canvas-shape-${i}`, expectedCredits: 1, ...base, aspectRatio: aspect,
+        });
+        expect(r, aspect).toEqual({ id: "job_ref", disposition: "fresh" });
+        expect(snapshotAspect(), aspect).toBe(aspect);
+        // 最后一环：这个形状在执行层就是这个确切像素格（适配器与卡面读的是同一张表）。
+        expect(imageOutputSize(snapshotAspect()), aspect).toEqual(GEN_IMAGE_SIZES[aspect]);
+      }
+    });
+
+    it("Otto 卡入口(startCoworkGen)：卡上冻结的形状原样落进快照 —— 说的 = 做的", async () => {
+      const r = await startCoworkGen({
+        projectId: "p1", threadId: "thread-1", prompt: "approved card", entityIds: [],
+        count: 1, kind: "image", model: "seedream", aspectRatio: "9:16",
+        idempotencyKey: "cowork:card-1",
+      });
+      expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(snapshotAspect()).toBe("9:16");
+      expect(imageOutputSize(snapshotAspect())).toEqual({ width: 1620, height: 2880 });
+    });
+
+    it("详情页 / 工厂入口(startGen + 自带幂等键)：同样一路到底", async () => {
+      await startGen({ ...base, aspectRatio: "21:9", idempotencyKey: "regen-g1-123" });
+      expect(snapshotAspect()).toBe("21:9");
+      expect(imageOutputSize(snapshotAspect())).toEqual(GEN_IMAGE_SIZES["21:9"]);
+    });
+
+    it("哪个入口都不许绕过菜单：引擎收不下的形状一律在花钱之前被拒", async () => {
+      const canvas = await startCanvasGen({
+        actionId: "canvas-bad", expectedCredits: 1, ...base, aspectRatio: "5:7",
+      });
+      expect(canvas).toEqual({ error: "That generation request is out of bounds." });
+      const cowork = await startCoworkGen({
+        projectId: "p1", threadId: "thread-1", prompt: "approved card", entityIds: [],
+        count: 1, kind: "image", model: "seedream", aspectRatio: "5:7",
+        idempotencyKey: "cowork:card-1",
+      });
+      expect(cowork).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
   });
 });

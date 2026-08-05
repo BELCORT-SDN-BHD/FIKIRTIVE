@@ -24,6 +24,7 @@ import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
+import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 import { creditsLabel } from "@/lib/credit-format";
 import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
 import type { EntityDTO } from "@/lib/types";
@@ -38,6 +39,8 @@ type GenDTO = {
   prompt: string;
   favorite: boolean;
   sourceGenerationId: string | null;
+  /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
+  imageAspect: string | null;
 };
 
 type PanelState = "loading" | "ready" | "error";
@@ -94,8 +97,12 @@ export default function DetailPanel({
   // Variant switcher (25)
   const [selectedIdx, setSelectedIdx] = useState(0);
 
-  // Aspect picker (17)
+  // Aspect picker (17) — the VIDEO shape, used by Animate only.
   const [chosenAspect, setChosenAspect] = useState<string>("");
+  // #643 T2 —— the IMAGE shape, used by Regenerate and by the edit composer. Seeded from the
+  // shape this very image was delivered in, so "do it again" / "edit this" keep the shape by
+  // default; the merchant can pick another one and what is on screen is what gets made.
+  const [chosenImageAspect, setChosenImageAspect] = useState<string>("");
 
   // Edit @composer (24)
   const [editPrompt, setEditPrompt] = useState("");
@@ -171,6 +178,15 @@ export default function DetailPanel({
       "";
     if (initialAspect) queueMicrotask(() => setChosenAspect((current) => current || initialAspect));
   }, [activeModels]);
+
+  // #643 T2：图片形状的种子 = 这张图**当初交付时的形状**（快照，不是从像素反推）；
+  // 快照读不到（T1 之前的老图）就用服务端的默认形状 —— 那正是那些老图当年真的形状。
+  // 换看另一张图（gen.id 变了）就重新播种，不把上一张的形状带过来。
+  useEffect(() => {
+    if (!activeModels) return;
+    const seed = gen?.imageAspect || activeModels.imageDefaultAspect;
+    if (seed) queueMicrotask(() => setChosenImageAspect(seed));
+  }, [activeModels, gen?.id, gen?.imageAspect]);
 
   // Clear edit composer on generation change
   useEffect(() => {
@@ -275,13 +291,16 @@ export default function DetailPanel({
     regenBusyRef.current = true;
     try {
       setRegenStatus("running");
-      const { image } = await ensureModels(); // F18: server-resolved model
+      const models = await ensureModels(); // F18: server-resolved model
+      // #643 T2：形状是屏幕上正显示的那一格 —— 重做一张不会悄悄换掉形状。
+      const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
       const result = await startGen({
         projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
         kind: "image",
-        model: image,
+        model: models.image,
+        ...(aspectRatio ? { aspectRatio } : {}),
         idempotencyKey: `regen-${generationId}-${Date.now()}`,
       });
       if ("error" in result) {
@@ -309,7 +328,7 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly]);
+  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly, chosenImageAspect]);
 
   const handleAnimate = useCallback(async () => {
     if (readOnly) return;
@@ -437,14 +456,18 @@ export default function DetailPanel({
     editBusyRef.current = true;
     try {
       setEditStatus("running");
-      const { image } = await ensureModels(); // F18: server-resolved model
+      const models = await ensureModels(); // F18: server-resolved model
+      // #643 T2：编辑同样交付屏幕上显示的那一格。服务端在没收到形状时会按底图快照继承，
+      // 这里显式带上是为了让「屏幕上写的」与「引擎收到的」永远是同一个值。
+      const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
       const result = await startGen({
         projectId: targetProjectId,
         prompt: editPrompt.trim(),
         entityIds: editIds,
         count: 1,
         kind: "image",
-        model: image,
+        model: models.image,
+        ...(aspectRatio ? { aspectRatio } : {}),
         // F09: condition the edit on the image the user is actually viewing (the selected
         // variant), so a paid "edit this" result relates to the displayed image instead of
         // being an unconditioned fresh generation. Owned id resolved server-side (D19).
@@ -470,7 +493,7 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly]);
+  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly, chosenImageAspect]);
 
   const runConfirmedAction = useCallback(() => {
     const action = confirmAction;
@@ -524,6 +547,7 @@ export default function DetailPanel({
 
   // Aspect ratios for picker (only show if model has options) — F18: server-resolved model
   const aspectRatios = activeModels?.videoAspectRatios ?? [];
+  const imageAspectRatios = activeModels?.imageAspectRatios ?? [];
 
   return (
     // Faux-viewport overlay — absolute inside the canvas container, not fixed
@@ -644,11 +668,31 @@ export default function DetailPanel({
               <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
-            {/* Aspect picker (17): for image-to-video Animate when model has aspect ratios */}
+            {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
+                Seeded from the shape this image was made in, so neither one silently reshapes it.
+                Same cost in every shape. */}
+            {gen.kind === "image" && imageAspectRatios.length > 0 && chosenImageAspect && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Image shape</span>
+                <ImageShapePicker
+                  compact
+                  label="Image shape"
+                  value={chosenImageAspect}
+                  options={imageAspectRatios}
+                  onChange={setChosenImageAspect}
+                  disabled={readOnly}
+                  title="The shape a new image made here will have — same cost in every shape"
+                />
+              </div>
+            )}
+
+            {/* Aspect picker (17): the VIDEO shape, for image-to-video Animate. Labelled apart
+                from the image shape above so two shape controls on one panel cannot be confused
+                for each other (#643 T2). */}
             {gen.kind === "image" && aspectRatios.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Aspect</span>
-                <div className="al-seg" role="tablist" aria-label="Aspect ratio">
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video shape</span>
+                <div className="al-seg" role="tablist" aria-label="Video shape">
                   {aspectRatios.map((ar) => (
                     <button
                       key={ar}

@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   updateTextNode: vi.fn(),
   uploadReference: vi.fn(),
   quoteCosts: vi.fn(),
+  imageShapes: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   toastMessage: vi.fn(),
@@ -63,6 +64,8 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
     animate: vi.fn(),
     generateVideoFromText: vi.fn(),
     quoteCosts: mocks.quoteCosts,
+    // #643 T2: 形状菜单来自服务端解析，测试替身也必须给得出，否则选择器渲染不出来。
+    imageShapes: mocks.imageShapes,
     cancelledRef: { current: false },
   }),
   isInFlightPaidGen: (node: { type: string; status?: string; url?: string | null }) =>
@@ -148,6 +151,7 @@ const sizedRect = () => ({
 beforeEach(() => {
   mocks.boardRead.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
+  mocks.imageShapes.mockResolvedValue({ options: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"], defaultAspect: "1:1" });
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
     unobserve() {}

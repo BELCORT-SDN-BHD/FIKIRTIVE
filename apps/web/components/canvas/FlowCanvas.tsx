@@ -39,7 +39,9 @@ import {
   nextCanvasSpawnOrigin,
   type CanvasRect,
 } from "@/lib/canvas-batch-layout";
-import { buildCanvasLineageEdges } from "@/lib/canvas-lineage";
+import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
+import type { CanvasImageShapes } from "@/components/canvas/useCanvasGen";
 import {
   canvasBatchFrameLabel,
   canvasBatchGroups,
@@ -70,6 +72,17 @@ type CanvasFlowNode = Node & {
   batchSize?: number | null;
 };
 const CANVAS_CARD_SIDE = 320;
+/**
+ * #643 T2 —— 一张卡默认会交付的形状：它自己记着的那一格（板子读回来的 lineage），
+ * 记不到就退回输入条当前的形状。纯函数：只看传进来的这张卡，不碰任何 ref。
+ */
+function recordedImageShape(
+  node: { data?: unknown } | undefined,
+  fallback: string | null,
+): string | undefined {
+  const lineage = (node?.data as { lineage?: CanvasNodeLineage | null } | undefined)?.lineage;
+  return (lineage?.settings.aspectRatio || fallback) ?? undefined;
+}
 /** What a card calls itself when it takes keyboard focus (#604 r2 P3). */
 function canvasNodeAriaLabel(n: { type?: string; data?: unknown }): string {
   const kind = n.type === "video" ? "Video card" : n.type === "text" ? "Text card" : "Image card";
@@ -240,6 +253,10 @@ export default function FlowCanvas({
   // How many images one Generate makes. Founder default is still 1; the merchant can ask
   // for up to the cap and the price shown next to Generate follows the choice (#547 A2).
   const [imageCount, setImageCount] = useState<number>(CANVAS_IMAGE_DEFAULT_COUNT);
+  // #643 T2：这次出图的形状。菜单与默认值都来自服务端（`imageShapes`）—— 界面一格都不写死，
+  // 所以商家看见的每一格都是引擎真给得了的，且选中的那一格就是会交付的那一格。
+  const [imageShapeMenu, setImageShapeMenu] = useState<CanvasImageShapes | null>(null);
+  const [imageShape, setImageShape] = useState<string | null>(null);
   // Making a video costs credits — clicking "Make video" opens a confirm first.
   // Holds the source image node id awaiting confirm; null = no dialog.
   const [pendingAnimateId, setPendingAnimateId] = useState<string | null>(null);
@@ -736,7 +753,7 @@ export default function FlowCanvas({
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(
+  const { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes } = useCanvasGen(
     projectId,
     onNewNode,
     onResolve,
@@ -749,7 +766,15 @@ export default function FlowCanvas({
   );
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
-  }, [quoteCosts]);
+    // #643 T2：形状菜单和价格一起取。菜单读不到就不渲染选择器（选不了形状仍然能出图，
+    // 服务端按默认形状交付）—— 界面绝不用一份自己编的菜单顶上。
+    void imageShapes()
+      .then((shapes) => {
+        setImageShapeMenu(shapes);
+        setImageShape((current) => current ?? shapes.defaultAspect);
+      })
+      .catch(() => setImageShapeMenu(null));
+  }, [quoteCosts, imageShapes]);
   // keep animateFnRef current (in an effect — refs must not be written during render)
   useEffect(() => { animateFnRef.current = animate; }, [animate]);
 
@@ -769,6 +794,9 @@ export default function FlowCanvas({
       // charge), so it is part of the action's material — asking for 4 after asking for 1 is
       // a different action, not a retry of the same one.
       const count = clampImageVariantCount(imageCount);
+      // #643 T2：形状和张数一样，是商家授权内容的一部分 —— 要竖版之后再要方图是**另一个**
+      // 动作，不是同一个动作的重试。所以它进材料。
+      const aspectRatio = imageShapeMenu ? imageShape : null;
       const material = JSON.stringify({
         projectId,
         threadId: activeThreadId ?? null,
@@ -779,6 +807,7 @@ export default function FlowCanvas({
           Object.entries(variantSel).sort(([left], [right]) => left.localeCompare(right)),
         ),
         count,
+        aspectRatio,
       });
       if (imageActionRef.current?.material !== material) {
         imageActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -789,7 +818,10 @@ export default function FlowCanvas({
         promptIds,
         variantSel,
         count,
-        { actionId: imageActionRef.current.actionId },
+        {
+          actionId: imageActionRef.current.actionId,
+          ...(aspectRatio ? { aspectRatio } : {}),
+        },
       );
       if (accepted) {
         imageActionRef.current = null;
@@ -804,7 +836,7 @@ export default function FlowCanvas({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCount, projectId, prompt, promptIds, spawnRect, variantSel]);
+  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
 
   /**
    * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
@@ -817,7 +849,7 @@ export default function FlowCanvas({
    */
   const evolveActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const evolveBusyRef = useRef(false);
-  const runImageEvolve = useCallback(async (id: string, rawPrompt: string): Promise<boolean> => {
+  const runImageEvolve = useCallback(async (id: string, rawPrompt: string, aspect?: string): Promise<boolean> => {
     if (directToolsLockedRef.current) return false;
     const text = rawPrompt.trim();
     if (!text) return false;
@@ -832,6 +864,10 @@ export default function FlowCanvas({
       return false;
     }
     evolveBusyRef.current = true;
+    // #643 T2：「改这张图 / 再来一张」默认交付**和这张一样的形状**（那张卡自己记着的形状；
+    // 记录不到的老图就是默认方图，那也正是它们当年真的形状）。商家在卡上换了形状，就带
+    // 他换的那一格 —— 换形状是另一个动作，所以它进材料。
+    const aspectRatio = aspect ?? null;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
@@ -840,6 +876,7 @@ export default function FlowCanvas({
       sourceGenerationId: entry.generationId,
       prompt: text,
       count: 1,
+      aspectRatio,
     });
     if (evolveActionRef.current?.material !== material) {
       evolveActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -853,7 +890,12 @@ export default function FlowCanvas({
         [],
         {},
         1,
-        { actionId, sourceGenerationId: entry.generationId, sourceNodeId: id },
+        {
+          actionId,
+          sourceGenerationId: entry.generationId,
+          sourceNodeId: id,
+          ...(aspectRatio ? { aspectRatio } : {}),
+        },
       );
       if (
         accepted
@@ -867,19 +909,24 @@ export default function FlowCanvas({
     }
   }, [activeThreadId, costQuote, generateImage, projectId, spawnRect]);
 
-  const handleEvolve = useCallback((id: string, text: string) => {
-    void runImageEvolve(id, text);
+  const handleEvolve = useCallback((id: string, text: string, aspect?: string) => {
+    void runImageEvolve(id, text, aspect);
   }, [runImageEvolve]);
 
-  const handleVariant = useCallback((id: string) => {
+  /** 事件处理里按 id 取同一件事（渲染期不许读 ref —— 那是 React 的规矩，也是本仓库的 lint 闸）。 */
+  const nodeImageShape = useCallback((id: string): string | undefined => (
+    recordedImageShape(nodesRef.current.find((n) => n.id === id), imageShape)
+  ), [imageShape]);
+
+  const handleVariant = useCallback((id: string, aspect?: string) => {
     const node = nodesRef.current.find((n) => n.id === id);
     const prompt = typeof node?.data?.prompt === "string" ? node.data.prompt : "";
     if (!prompt.trim()) {
       toast.error("This image has no saved description to build on.");
       return;
     }
-    void runImageEvolve(id, prompt);
-  }, [runImageEvolve]);
+    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id));
+  }, [runImageEvolve, nodeImageShape]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
@@ -1267,7 +1314,19 @@ export default function FlowCanvas({
     // WHICH card had focus (#604 r2 P3). Says what it is, and what it was asked for.
     ariaLabel: canvasNodeAriaLabel(n),
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), selectedCount, onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint, onOpenLineage: openLineage }
+      ? {
+          ...withNodeActionLock(n.data),
+          selectedCount,
+          onEvolve: handleEvolve,
+          onVariant: handleVariant,
+          evolveCostHint,
+          onOpenLineage: openLineage,
+          // #643 T2: the shape a new take of THIS card will be delivered in — this card's own
+          // recorded shape, so "make another one like this" keeps the shape by default. The menu
+          // comes from the server; the card writes down nothing itself.
+          imageShape: recordedImageShape(n, imageShape),
+          imageShapeOptions: imageShapeMenu?.options,
+        }
       : n.type === "video"
         ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
         : withNodeActionLock(n.data),
@@ -1532,27 +1591,44 @@ export default function FlowCanvas({
                   onSubmit={() => void handleGenerate()}
                 />
               </div>
-              {/* A2: how many images this one Generate makes. The price beside it follows the
-                  choice, so the merchant sees the real total before pressing anything. */}
-              <div
-                role="group"
-                aria-label="How many images to make"
-                style={{ display: "flex", gap: 2, alignItems: "center" }}
-              >
-                {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className={imageCount === n ? "al-btn al-btn-sm al-btn-primary" : "al-btn al-btn-sm"}
-                    aria-pressed={imageCount === n}
-                    aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
-                    title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
-                    style={{ minWidth: 30, paddingInline: 8 }}
-                    onClick={() => setImageCount(n)}
-                  >
-                    {n}
-                  </button>
-                ))}
+              {/* One row for "what this Generate will make": how many, and what shape. Both are
+                  answers to the same question, so they sit together rather than as two stray
+                  full-width rows in the composer's column (#643 T2). */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {/* A2: how many images this one Generate makes. The price beside it follows the
+                    choice, so the merchant sees the real total before pressing anything. */}
+                <div
+                  role="group"
+                  aria-label="How many images to make"
+                  style={{ display: "flex", gap: 2, alignItems: "center" }}
+                >
+                  {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={imageCount === n ? "al-btn al-btn-sm al-btn-primary" : "al-btn al-btn-sm"}
+                      aria-pressed={imageCount === n}
+                      aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
+                      title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
+                      style={{ minWidth: 30, paddingInline: 8 }}
+                      onClick={() => setImageCount(n)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                {/* #643 T2: the shape this Generate will deliver. The menu is whatever the server
+                    says the engine can make — nothing is written down here — and the selected one
+                    is exactly what the request carries. Costs the same in every shape. */}
+                {imageShapeMenu && imageShape && (
+                  <ImageShapePicker
+                    compact
+                    value={imageShape}
+                    options={imageShapeMenu.options}
+                    onChange={setImageShape}
+                    title="The shape these images will be made in — same cost in every shape"
+                  />
+                )}
               </div>
               <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>

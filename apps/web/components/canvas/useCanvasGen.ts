@@ -40,6 +40,13 @@ export type CanvasImageGenOptions = {
   actionId?: string;
   sourceGenerationId?: string;
   sourceNodeId?: string;
+  /**
+   * #643 T2 —— 这次出图要交付的形状，就是界面上显示的那一格。
+   *
+   * 缺省时不发：服务端按底图快照继承 / 落默认形状。但界面上只要显示了一个形状，这里就
+   * 一定带着它 —— 「显示的」与「发出去的」不许有第二个来源。
+   */
+  aspectRatio?: string;
   /** Exact accepted request material used only when resuming a browser receipt. */
   resumeModel?: string;
   resumeThreadId?: string | null;
@@ -55,6 +62,12 @@ type CanvasVideoResumeOptions = {
 function isConfirmedCreditQuote(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
+
+/** 服务端解析的图片形状菜单 + 商家没选时会交付的那一格。 */
+export type CanvasImageShapes = {
+  options: string[];
+  defaultAspect: string;
+};
 
 export type CanvasGenProgress = {
   nodeId: string;
@@ -92,6 +105,8 @@ export type StoredCanvasActionReceipt = {
   variantSel?: Record<string, string>;
   sourceGenerationId?: string;
   sourceNodeId?: string;
+  /** #643 T2：形状是商家授权内容的一部分，所以刷新后重放的必须是同一个形状。 */
+  aspectRatio?: string;
 };
 
 const CANVAS_RECEIPT_PREFIX = "fikirtive:canvas-action:v1:";
@@ -477,7 +492,13 @@ export function useCanvasGen(
         typeof (response as { video?: unknown }).video !== "string" ||
         !(response as { video: string }).video ||
         !isConfirmedCreditQuote((response as { imageCredits?: unknown }).imageCredits) ||
-        !isConfirmedCreditQuote((response as { videoCredits?: unknown }).videoCredits)
+        !isConfirmedCreditQuote((response as { videoCredits?: unknown }).videoCredits) ||
+        // #643 T2：形状菜单和默认形状必须真的到齐，否则选择器会拿一个空菜单或一个
+        // 界面自己编的默认值去渲染 —— 那就是「显示的」与「会交付的」第二次分家。
+        !Array.isArray((response as { imageAspectRatios?: unknown }).imageAspectRatios) ||
+        (response as { imageAspectRatios: unknown[] }).imageAspectRatios.length === 0 ||
+        typeof (response as { imageDefaultAspect?: unknown }).imageDefaultAspect !== "string" ||
+        !(response as { imageDefaultAspect: string }).imageDefaultAspect
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -488,6 +509,11 @@ export function useCanvasGen(
   const quoteCosts = useCallback(async (imageCount = CANVAS_IMAGE_DEFAULT_COUNT) => (
     canvasGenCostQuote(await ensureModels(), imageCount)
   ), [ensureModels]);
+  /** #643 T2：形状菜单只有一个来源 —— 服务端解析的那份。界面一格都不写死。 */
+  const imageShapes = useCallback(async (): Promise<CanvasImageShapes> => {
+    const models = await ensureModels();
+    return { options: models.imageAspectRatios, defaultAspect: models.imageDefaultAspect };
+  }, [ensureModels]);
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
   // guardian block, or a node-create that never recovered) must tell the user — otherwise they
   // see nothing, assume the app broke, and re-click as a fresh action → a real
@@ -553,6 +579,7 @@ export function useCanvasGen(
       entityIds,
       ...(vsel && { variantSel: vsel }),
       ...(options.sourceGenerationId && { sourceGenerationId: options.sourceGenerationId }),
+      ...(options.aspectRatio && { aspectRatio: options.aspectRatio }),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -570,6 +597,7 @@ export function useCanvasGen(
       ...(vsel ? { variantSel: vsel } : {}),
       ...(options.sourceGenerationId ? { sourceGenerationId: options.sourceGenerationId } : {}),
       ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
+      ...(options.aspectRatio ? { aspectRatio: options.aspectRatio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -938,6 +966,8 @@ export function useCanvasGen(
                 ? { sourceGenerationId: receipt.sourceGenerationId }
                 : {}),
               ...(receipt.sourceNodeId ? { sourceNodeId: receipt.sourceNodeId } : {}),
+              // #643 T2：重放的必须是商家当时看着按下去的那个形状，不是刷新后的默认值。
+              ...(receipt.aspectRatio ? { aspectRatio: receipt.aspectRatio } : {}),
             },
           );
           continue;
@@ -969,5 +999,5 @@ export function useCanvasGen(
     return () => { stopped = true; };
   }, [animate, generateImage, generateVideoFromText, projectId]);
 
-  return { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef };
+  return { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes, cancelledRef };
 }

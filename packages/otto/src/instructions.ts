@@ -3,6 +3,11 @@
 // Inlined as a TS constant (NOT a runtime file read) so it loads identically in every
 // runtime: Next.js/Turbopack (web), tsx (worker), the built dist, and vitest. A
 // readFileSync(new URL(...)) was rejected by Next/Turbopack fs shim at runtime. Edit here.
+//
+// #643 T2：图片形状菜单是**插值进来的**，不是抄一份在这里。菜单改一格，这段话跟着改口 ——
+// 抄一份就是这个仓库反复重学的那种「说的与做的失同步」。
+import { GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT } from "@fikirtive/core";
+
 export const ottoSimpleModeBlock = `## Talking to a beginner (Simple mode)
 This user has no marketing or AI knowledge. Use plain language only — warm and simple, never technical.
 - Never say: "generation", "render", "model", "keyframe", "proposal", "parameters", "verdict".
@@ -49,6 +54,8 @@ Before you propose a generation, build the prompt with the model-specific skill 
 - Video (kind:"video") → call **seedancePrompt** first (it returns the creative prompt only — the system adds resolution/duration/ratio), then propose the video with that prompt. Pass mode:'t2v' when there is no source frame to animate; keep the default i2v only when a first frame exists.
 
 Duration, aspect ratio, and audio the USER asked for go on \`propose\` as \`desiredDuration\` / \`desiredAspect\` / \`desiredAudio\` — never inside the prompt text (the prompt skill omits them and the system applies them).
+
+For images, \`desiredAspect\` must be one of: ${GEN_IMAGE_ASPECTS.join(", ")}. Pick the closest one to what the user described (a story or status post is ${GEN_IMAGE_ASPECTS[1]}); anything else is delivered as ${GEN_IMAGE_DEFAULT_ASPECT} and the card says so out loud.
 
 Our users don't know prompting or photography — these skills exist so YOU supply the craft (subject, camera move, lighting, composition). Fill those fields yourself from the goal and brand context; never ask the user for camera or lighting choices. For any @-referenced entity, pass it in the skill's \`references\` (role + name) so identity is locked, and still pass its id via propose's entityIds — that is how the reference image reaches the model.
 

@@ -45,6 +45,11 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { startGen } from "./gen-actions";
 import {
+  campaignGenKindForFormat,
+  campaignImageAspectForFormat,
+  type CampaignGenKind,
+} from "./campaign-format-shape";
+import {
   orchestrateBatch,
   quoteCell,
   MAX_BATCH_CELLS,
@@ -56,18 +61,6 @@ import {
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
-
-/** Formats that generate a video clip rather than a still image. Everything else (image,
- *  post, carousel, story, …) prices and generates as an image. The confirm page shows the
- *  resolved kind + unit price for every entry BEFORE the owner confirms, so this mapping is
- *  reviewed, never a hidden charge. NOT a price — the price comes from pricedGenCredits. */
-const VIDEO_FORMATS = new Set(["video", "reel", "reels", "short", "shorts", "clip", "animation", "gif"]);
-
-type CampaignGenKind = "image" | "video";
-
-function campaignGenKindForFormat(format: string): CampaignGenKind {
-  return VIDEO_FORMATS.has(format.trim().toLowerCase()) ? "video" : "image";
-}
 
 interface ApprovedCampaignEntry {
   id: string;
@@ -86,12 +79,17 @@ function buildCampaignGenCells(
 ): GenCell[] {
   return entries.map((entry) => {
     const kind = campaignGenKindForFormat(entry.format);
+    // #643 T2：商家在计划里写的格式名就是他要的东西 —— "story" 要的是竖版。形状来自
+    // `campaign-format-shape` 那**一张**表（确认页显示的也是它），所以商家看见的格式名
+    // 和真会交付的形状不可能分家。图片按张计价、不分形状，这一行不动任何价格。
+    const aspectRatio = kind === "image" ? campaignImageAspectForFormat(entry.format) : null;
     return {
       type: "gen",
       prompt: entry.brief,
       kind,
       model: kind === "video" ? models.video : models.image,
       count: 1,
+      ...(aspectRatio ? { aspectRatio } : {}),
       idempotencyId: entry.id,
     };
   });
@@ -127,6 +125,9 @@ export interface CampaignGenQuoteLine {
   kind: CampaignGenKind;
   /** displayed credits for this entry (the per-cell reserve, displayed). */
   displayCredits: number;
+  /** #643 T2 —— 这个条目真会交付的形状（图片；视频为 null）。确认页显示它，付费请求带的
+   *  是同一个值：商家复核的形状就是引擎收到的形状。 */
+  aspectRatio: string | null;
 }
 
 export interface CampaignGenQuote {
@@ -154,15 +155,19 @@ function quoteCampaignGenCells(entries: ApprovedCampaignEntry[], cells: GenCell[
         brief: entries[index].brief,
         kind: (cell.kind ?? "image") as CampaignGenKind,
         displayCredits: displayCredits(internalCredits),
+        aspectRatio: cell.aspectRatio ?? null,
       },
     };
   });
   const lines = priced.map(({ line }) => line);
+  // 形状进指纹：商家复核的是「这个条目会交付什么形状」，那它就必须是被批准的内容的一部分。
+  // 不进指纹的话，复核之后形状被改掉仍然能确认过去 —— 那正是「说的 ≠ 做的」的入口。
   const fingerprintPayload = priced
     .map(({ entry, cell, internalCredits }) => [
       entry.id,
       entry.brief,
       cell.model ?? "seedream",
+      cell.aspectRatio ?? "",
       internalCredits,
     ] as const)
     .sort(([leftId], [rightId]) => (leftId < rightId ? -1 : leftId > rightId ? 1 : 0));

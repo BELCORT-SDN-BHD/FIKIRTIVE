@@ -32,7 +32,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
@@ -152,6 +152,21 @@ function selectedVideoModel(disabledModels: string[]): GenVideoModel {
   return sm.model as GenVideoModel;
 }
 
+/**
+ * #643 T2 —— 首帧图该是什么形状：**这个镜头的片子会是什么形状，首帧就是什么形状**。
+ *
+ * 在这之前首帧一律是方图，而它接下来要变成的那条片子是横版的 —— 商家为一张会被重新
+ * 取景的图付了钱，全程没有一句话解释。形状不写死：走和铸视频子卡**同一条**选型路
+ * （suggestModel → 该视频模型的默认形状），所以视频侧换档时首帧自动跟着换。
+ *
+ * 视频那一格若不在图片菜单上（或该模型压根不暴露形状），`normalizeImageAspect` 返回
+ * null，铸卡就回到图片侧的默认形状 —— 不发明一个引擎给不了的值。
+ */
+function firstFrameAspect(disabledModels: string[]): string | undefined {
+  const sm = suggestModel({ kind: "video", disabled: new Set(disabledModels) });
+  return normalizeImageAspect(sm.params.aspectRatio) ?? undefined;
+}
+
 // ---------------------------------------------------------------------------
 // getStoryboardVideoOptions — $0 read: the selected video capability's durations
 // ---------------------------------------------------------------------------
@@ -191,6 +206,8 @@ async function mintChild(
       entityIds: shot.entityIds ?? [],
       variantSel: {},
       count: 1,
+      // #643 T2：首帧的形状 = 这个镜头的片子的形状（见 firstFrameAspect）。
+      desiredAspect: firstFrameAspect(ctx.disabledModels),
     },
     ctx,
     ownedIds,

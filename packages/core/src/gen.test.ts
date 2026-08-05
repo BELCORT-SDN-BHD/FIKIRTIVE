@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
-  GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, type GenImageAspect,
+  GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, normalizeImageAspect,
+  type GenImageAspect,
 } from "./gen.js";
 
 describe("modelFamily", () => {
@@ -209,6 +210,44 @@ describe("imageOutputSize", () => {
   });
   it("未知画幅 → 回落默认(纯函数,永不抛)", () => {
     expect(imageOutputSize("7:5")).toEqual({ width: 2048, height: 2048 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #643 T2 —— 商家用自己的话说形状,也得落到菜单上的那一格
+// ---------------------------------------------------------------------------
+describe("normalizeImageAspect(商家说法 → 菜单画幅)", () => {
+  it("菜单上的比例原样通过", () => {
+    for (const a of GEN_IMAGE_ASPECTS) expect(normalizeImageAspect(a)).toBe(a);
+  });
+  it("写法差异不算不同的形状(空白 / x / × / 全角冒号)", () => {
+    expect(normalizeImageAspect(" 9 : 16 ")).toBe("9:16");
+    expect(normalizeImageAspect("9x16")).toBe("9:16");
+    expect(normalizeImageAspect("9X16")).toBe("9:16");
+    expect(normalizeImageAspect("9×16")).toBe("9:16");
+    expect(normalizeImageAspect("9:16")).toBe("9:16");
+  });
+  it("人话说的形状也认(竖版 / 横版 / 方图)—— 否则商家的原话会静默掉成方图", () => {
+    expect(normalizeImageAspect("portrait")).toBe("9:16");
+    expect(normalizeImageAspect("Vertical")).toBe("9:16");
+    expect(normalizeImageAspect("landscape")).toBe("16:9");
+    expect(normalizeImageAspect("horizontal")).toBe("16:9");
+    expect(normalizeImageAspect("square")).toBe("1:1");
+  });
+  it("认不出来就是 null —— 绝不猜一个形状替商家做主", () => {
+    expect(normalizeImageAspect(undefined)).toBeNull();
+    expect(normalizeImageAspect(null)).toBeNull();
+    expect(normalizeImageAspect("")).toBeNull();
+    expect(normalizeImageAspect("5:7")).toBeNull();
+    expect(normalizeImageAspect("cinematic")).toBeNull();
+    expect(normalizeImageAspect("1080p")).toBeNull();
+  });
+  it("认出来的每一个值都真的在菜单上(不可能返回引擎收不下的形状)", () => {
+    for (const raw of ["portrait", "landscape", "square", "9x16", "21:9"]) {
+      const v = normalizeImageAspect(raw);
+      expect(v).not.toBeNull();
+      expect(GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios).toContain(v!);
+    }
   });
 });
 
