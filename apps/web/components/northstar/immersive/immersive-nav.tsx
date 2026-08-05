@@ -10,7 +10,7 @@
  *
  * 身份栏读的是**登录进来的这个人**(名 + 邮箱由外壳从认证会话喂进来,见
  * components/canvas/NorthstarShellEntry.tsx)。写死的样板余额与 Top up 一并拆除 ——
- * 价格只在方案点头时与账单页出现。
+ * 价格只在方案点头时与账单页出现。#606 起未登录进不到这层壳,所以身份栏没有「未登录形态」。
  *
  * 行状态 = §N3 单一状态系统:hover=--accent,active=--secondary+600,导航零 coral。
  * 每行是真 <Link>;零后台 import(围栏见 scripts/check-northstar-imports.sh)。
@@ -103,8 +103,8 @@ export function ImmersiveNav({
   onCloseMobile,
 }: {
   className?: string;
-  /** 登录进来的这个人;未登录(如 onboarding/login)传 null —— 壳不冒充任何人。 */
-  identity: ShellIdentity | null;
+  /** 登录进来的这个人。#606 之后未登录根本走不到这里 —— 受控入口先 redirect("/login")。 */
+  identity: ShellIdentity;
   /** ≤680 抽屉形态:外壳注入的开合态 + 关闭回调(§L4)。桌面(>680)常驻栏忽略这两项。 */
   mobileOpen?: boolean;
   onCloseMobile?: () => void;
@@ -147,24 +147,16 @@ export function ImmersiveNav({
         ))}
       </div>
 
-      {/* ③ 身份栏 —— 真登录用户。未登录只给一条回登录页的路,不摆任何名字。 */}
-      {identity ? (
-        <div className="flex shrink-0 items-center gap-2.5 border-t border-border px-4 py-3">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-foreground">
-            {initialsOf(identity.name)}
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] leading-[18px] font-medium text-foreground">{identity.name}</p>
-            <p className="truncate text-xs leading-4 text-muted-foreground">{identity.email}</p>
-          </div>
+      {/* ③ 身份栏 —— 真登录用户。 */}
+      <div className="flex shrink-0 items-center gap-2.5 border-t border-border px-4 py-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-foreground">
+          {initialsOf(identity.name)}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[13px] leading-[18px] font-medium text-foreground">{identity.name}</p>
+          <p className="truncate text-xs leading-4 text-muted-foreground">{identity.email}</p>
         </div>
-      ) : (
-        <div className="shrink-0 border-t border-border px-4 py-3">
-          <Link href="/login" className="text-[13px] font-medium text-muted-foreground hover:text-foreground">
-            Sign in
-          </Link>
-        </div>
-      )}
+      </div>
     </nav>
   );
 }

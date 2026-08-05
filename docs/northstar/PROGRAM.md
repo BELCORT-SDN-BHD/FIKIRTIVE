@@ -9,6 +9,11 @@
 > 任务/依赖在 GitHub。以下正文原样保留其历史语境,其中现在时、队列、并行关系和
 > “design contract”措辞都只能按当时记录理解。发生冲突时回到当前 authority 链,不得
 > 更新本文件来制造第二套现行计划。
+>
+> **2026-08-05(#606 · D7 · T7)**:本文件 §二 描述的交付形态已整体退役 —— `/northstar`
+> 设计稿画廊路由组与它的预览环境变量闸都从代码树里删除了。今天 `northstar` 前缀下只剩
+> 两条真产品路由(`/northstar-immersive` 与 `/northstar-immersive/create/canvas`),
+> 走正常登录墙。下文提到的路由、门禁与环境变量一律只能当历史读,不得照做。
 
 ## 人话对照表(工作规矩②)
 
@@ -61,8 +66,8 @@
 
 **门禁**(仿 skin-preview 先例,`apps/web/app/skin-preview/page.tsx` 的 production `notFound()`):
 
-- 布局层一行闸:`if (process.env.NODE_ENV === "production" && process.env.NORTHSTAR_PREVIEW !== "1") notFound();`
-- 当时方案拟在全 mock staging 设 `NORTHSTAR_PREVIEW=1` 供逐页审阅。旧环境 URL/变量状态不得沿用;任何 live 状态须现场查询。
+- 当时的布局层一行闸:生产环境默认 `notFound()`,除非一个专用预览环境变量被设成 `1`。
+- 当时方案拟在全 mock staging 打开那个变量供逐页审阅。**该闸与变量已于 #606(2026-08-05)整体删除**,变量名不再在仓库任何一处出现;旧环境 URL/变量状态不得沿用,任何 live 状态须现场查询。
 - 本地 dev 永远可见(设计施工的日常预览)。
 
 **零后台依赖的保证是结构性的,不靠自觉**:

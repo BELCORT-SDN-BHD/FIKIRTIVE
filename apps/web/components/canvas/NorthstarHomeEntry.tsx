@@ -1,6 +1,6 @@
 import "server-only";
 
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { NorthstarHome, type NorthstarHomeProject } from "@/components/canvas/NorthstarHome";
 import { requireOwner } from "@/lib/auth-guard";
 import { getProjects } from "@/lib/data";
@@ -14,11 +14,6 @@ import { getProjects } from "@/lib/data";
  * 租户口径:项目只经 `requireOwner()` 解析出的 ownerId 读,客户端传来的任何身份都不采信。
  */
 export async function NorthstarHomeEntry() {
-  // Layouts and pages can be evaluated independently while streaming. Repeat the preview
-  // gate here so a hidden production route cannot touch runtime data first.
-  if (process.env.NODE_ENV === "production" && process.env.NORTHSTAR_PREVIEW !== "1") {
-    notFound();
-  }
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");
 
