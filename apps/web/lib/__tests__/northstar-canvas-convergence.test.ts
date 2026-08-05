@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => ({
   uploadReference: vi.fn(),
   getMyAccount: vi.fn(),
   quoteCosts: vi.fn(),
+  imageShapes: vi.fn(),
   generateImage: vi.fn(),
   // The controlled entry's own dependencies — the @ reference chain starts at the session,
   // so this file drives the real entry instead of hand-feeding the workspace a prop.
@@ -147,6 +148,8 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
     animate: vi.fn(),
     generateVideoFromText: vi.fn(),
     quoteCosts: mocks.quoteCosts,
+    // #643 T2: 形状菜单来自服务端解析，测试替身也必须给得出，否则选择器渲染不出来。
+    imageShapes: mocks.imageShapes,
     cancelledRef: { current: false },
   }),
   isInFlightPaidGen: (node: { type: string; status?: string; url?: string | null }) =>
@@ -252,6 +255,7 @@ const sizedRect = () => ({
 beforeEach(() => {
   mocks.boardRead.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
+  mocks.imageShapes.mockResolvedValue({ options: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"], defaultAspect: "1:1" });
   mocks.generateImage.mockResolvedValue(true);
   mocks.getMyAccount.mockResolvedValue({ balance: 1240 });
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });

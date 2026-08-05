@@ -66,6 +66,22 @@ export function canvasVideoSettings(videoOptions: unknown): CanvasNodeSettings {
   };
 }
 
+/**
+ * #643 T2 —— 一张图当初是按什么形状交付的，读它自己的规格快照（`GenJob.imageOptions`）。
+ *
+ * 为什么不从像素反推：反推出来的是一个**看起来像事实**的推断值。快照读不到（T1 之前的老图）
+ * 就是 null，卡面据此什么都不说 —— 这比说一个可能不对的比例诚实。
+ */
+export function canvasImageSettings(imageOptions: unknown): CanvasNodeSettings {
+  const empty: CanvasNodeSettings = { durationSeconds: null, resolution: null, aspectRatio: null };
+  if (imageOptions === null || typeof imageOptions !== "object" || Array.isArray(imageOptions)) return empty;
+  const aspectRatio = (imageOptions as Record<string, unknown>).aspectRatio;
+  return {
+    ...empty,
+    aspectRatio: typeof aspectRatio === "string" && aspectRatio ? aspectRatio : null,
+  };
+}
+
 /** "5s · 720p · 16:9", or "" when nothing is known — never a guess and never an engine name. */
 export function canvasSettingsLabel(settings: CanvasNodeSettings): string {
   const parts = [

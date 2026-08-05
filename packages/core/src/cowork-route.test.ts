@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { suggestModel } from "./cowork-route.js";
-import { GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODEL_INFO, type GenVideoModel } from "./gen.js";
+import {
+  GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODEL_INFO,
+  GEN_IMAGE_MODEL_OPTIONS, imageDefaults, type GenVideoModel,
+} from "./gen.js";
 import { activeVideoModel } from "./model-config.js";
 
 describe("suggestModel", () => {
@@ -8,6 +11,36 @@ describe("suggestModel", () => {
     const r = suggestModel({ kind: "image" });
     expect(r.model).toBe("seedream");
     expect(r.params.count).toBeGreaterThanOrEqual(1);
+  });
+
+  // ---- #643 T2:图片这条路不再把商家要的形状丢在选型那一步 ----------------
+  it("图片:没提形状 ⇒ 默认方图,且不是降级", () => {
+    const r = suggestModel({ kind: "image" });
+    expect(r.params.aspectRatio).toBe(imageDefaults("seedream").aspectRatio);
+    expect(r.downgraded).toBe(false);
+    expect(r.requested.aspect).toBeUndefined();
+  });
+  it("图片:菜单上的每一个形状都原样落到 params(一格都不许被吞)", () => {
+    for (const a of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      const r = suggestModel({ kind: "image", desiredAspect: a });
+      expect(r.params.aspectRatio, a).toBe(a);
+      expect(r.downgraded, a).toBe(false);
+    }
+  });
+  it("图片:商家的人话形状也落地(portrait ⇒ 9:16)", () => {
+    const r = suggestModel({ kind: "image", desiredAspect: "portrait" });
+    expect(r.params.aspectRatio).toBe("9:16");
+    expect(r.downgraded).toBe(false);
+  });
+  it("图片:引擎给不了的形状 ⇒ 回默认方图,并如实标成降级(绝不静默)", () => {
+    const r = suggestModel({ kind: "image", desiredAspect: "5:7" });
+    expect(r.params.aspectRatio).toBe(imageDefaults("seedream").aspectRatio);
+    expect(r.downgraded).toBe(true);
+    expect(r.requested.aspect).toBe("5:7");
+  });
+  it("图片:reason 只是审计说明 —— 形状的真相在 params 上", () => {
+    const r = suggestModel({ kind: "image", desiredAspect: "21:9" });
+    expect(r.params.aspectRatio).toBe("21:9");
   });
   it("video honours a 9:16 t2v request with a model that exposes aspect", () => {
     const r = suggestModel({ kind: "video", desiredAspect: "9:16" });

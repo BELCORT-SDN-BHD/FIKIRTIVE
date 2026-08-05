@@ -38,6 +38,8 @@ vi.mock("@fikirtive/core", () => ({
   newId: () => "new-id-stub",
   resolveUploadMime: (_bytes: Uint8Array, ext: string) => `image/${ext}`,
   MEDIA_SNIFF_BYTES: 4096,
+  // #643 T2：面板要说出这张图当初是什么形状，靠的是这份菜单把快照里的值验一遍。
+  GEN_IMAGE_ASPECTS: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"],
 }));
 // storage.url is called by getGeneration; stub it to return a predictable URL
 vi.mock("../storage", () => ({
@@ -133,6 +135,46 @@ describe("getGeneration", () => {
     // mockJobFindFirst already returns null from beforeEach
     const result = await getGeneration("g1");
     expect((result as { sourceGenerationId: string | null }).sourceGenerationId).toBeNull();
+  });
+
+  // ---- #643 T2：这张图当初交付的形状（快照，不是从像素反推） -------------------
+  describe("imageAspect", () => {
+    const imageRow = () => ({
+      id: "g1",
+      promptText: "a poster",
+      favorite: false,
+      asset: { ownerId: "u1", contentHash: "abc", ext: "png" },
+    });
+
+    it("产出它的那一单记着 9:16 ⇒ 面板拿到 9:16（详情页据此不改形状地重做/编辑）", async () => {
+      mockGenFindFirst.mockResolvedValue(imageRow());
+      mockJobFindFirst.mockResolvedValue({
+        sourceGenerationId: null, generationIds: ["g1"], imageOptions: { aspectRatio: "9:16" },
+      });
+      expect((await getGeneration("g1") as { imageAspect: string | null }).imageAspect).toBe("9:16");
+    });
+
+    it("老图（快照列还不存在那会儿的行）⇒ null，不去反推一个看起来像事实的比例", async () => {
+      mockGenFindFirst.mockResolvedValue(imageRow());
+      mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1"], imageOptions: null });
+      expect((await getGeneration("g1") as { imageAspect: string | null }).imageAspect).toBeNull();
+    });
+
+    it("快照里是个已下线的形状 ⇒ null —— 不靠这条路把引擎收不下的值送回付费请求", async () => {
+      mockGenFindFirst.mockResolvedValue(imageRow());
+      mockJobFindFirst.mockResolvedValue({
+        sourceGenerationId: null, generationIds: ["g1"], imageOptions: { aspectRatio: "5:7" },
+      });
+      expect((await getGeneration("g1") as { imageAspect: string | null }).imageAspect).toBeNull();
+    });
+
+    it("快照畸形（不是对象 / 没有那把键）⇒ null，永不抛", async () => {
+      mockGenFindFirst.mockResolvedValue(imageRow());
+      for (const imageOptions of ["9:16", 42, [], {}, { aspectRatio: 9 }]) {
+        mockJobFindFirst.mockResolvedValue({ sourceGenerationId: null, generationIds: ["g1"], imageOptions });
+        expect((await getGeneration("g1") as { imageAspect: string | null }).imageAspect).toBeNull();
+      }
+    });
   });
 
   it("returns { error } when generation is not owned by caller", async () => {

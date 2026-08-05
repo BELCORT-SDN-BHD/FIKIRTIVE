@@ -19,6 +19,7 @@ import {
   pricedGenCredits,
   imageOutputSize,
   imageAspectHonoured,
+  normalizeImageAspect,
   EXECUTED_SPEC,
   type GenVideoModel,
   type ReferenceBudget,
@@ -398,9 +399,11 @@ export function buildProposeCard(
   //   ① 这一趟真正会跑的适配器根本不采纳画幅(imageAspectHonoured 说了不算数);
   //   ② 采纳,但这条路没把商家的画幅放上卡(卡上的画幅 ≠ 他要的)。
   // 纯展示：不改 params、不改选型、不改报价。
+  // #643 T2：比对前先归一商家的写法。`portrait` 和 `9:16` 是同一个形状，逐字比对会把一次
+  // **已经兑现**的请求误报成降级 —— 那句披露会变成噪音，商家学会忽略它，真降级也就跟着被忽略。
   const imageAspectDropped =
     kind === "image" && !!input.desiredAspect &&
-    (!imageAspectHonoured() || input.desiredAspect !== sm.params.aspectRatio);
+    (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio);
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
   const requested: RequestedSpec = {

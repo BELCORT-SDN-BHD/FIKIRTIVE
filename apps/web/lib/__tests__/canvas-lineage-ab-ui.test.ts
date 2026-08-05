@@ -34,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   listCanvasNodes: vi.fn(),
   uploadReference: vi.fn(),
   quoteCosts: vi.fn(),
+  imageShapes: vi.fn(),
   flow: { current: null as null | FlowProps },
   /** The board's own "put a card down" callback, as useCanvasGen receives it. */
   placeCard: { current: null as null | ((n: Record<string, unknown>) => void) },
@@ -64,6 +65,8 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
       animate: vi.fn(),
       generateVideoFromText: vi.fn(),
       quoteCosts: mocks.quoteCosts,
+      // #643 T2: 形状菜单来自服务端解析，测试替身也必须给得出，否则选择器渲染不出来。
+      imageShapes: mocks.imageShapes,
       cancelledRef: { current: false },
     };
   },
@@ -171,6 +174,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   mocks.boardRead.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
+  mocks.imageShapes.mockResolvedValue({ options: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"], defaultAspect: "1:1" });
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
     unobserve() {}

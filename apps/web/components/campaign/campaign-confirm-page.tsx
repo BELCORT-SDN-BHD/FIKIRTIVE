@@ -272,7 +272,12 @@ function ConfirmWorkspace({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="flex items-center gap-2">
                       <Badge variant="outline">{line.kind === "video" ? <VideoIcon className="size-3" /> : <ImageIcon className="size-3" />}{line.kind}</Badge>
-                      <span className="text-xs text-muted-foreground">{entry?.platform} · {entry?.format}</span>
+                      {/* #643 T2: the format the merchant planned and the shape it will actually
+                          be delivered in, side by side — one server-derived value, shown before
+                          anything is charged. */}
+                      <span className="text-xs text-muted-foreground">
+                        {entry?.platform} · {entry?.format}{line.aspectRatio ? ` · ${line.aspectRatio}` : ""}
+                      </span>
                     </span>
                     <span className="text-sm font-semibold">{line.displayCredits} {line.displayCredits === 1 ? "credit" : "credits"}</span>
                   </div>

@@ -8,6 +8,7 @@ import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
+import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -39,8 +40,12 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     /** Opens the lineage tree for the picked card (#605 T6). Supplied by FlowCanvas. */
     onOpenLineage?: () => void;
     onAnimate?: () => void;
-    onEvolve?: (id: string, prompt: string) => void;
-    onVariant?: (id: string) => void;
+    onEvolve?: (id: string, prompt: string, aspect?: string) => void;
+    onVariant?: (id: string, aspect?: string) => void;
+    /** #643 T2：一张新图默认交付的形状 = 这张卡自己记着的形状（「改这张图」不改形状）。 */
+    imageShape?: string;
+    /** 服务端解析的形状菜单。缺席 ⇒ 不渲染选择器（仍按默认形状出图）。 */
+    imageShapeOptions?: readonly string[];
     onDelete?: () => void;
     onOpenDetail?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
@@ -62,6 +67,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   // the merchant edits it in place. Re-seeded whenever the card's stored prompt changes.
   const [evolvePrompt, setEvolvePrompt] = useState(originalPrompt);
   const [promptSeed, setPromptSeed] = useState(originalPrompt);
+  // #643 T2：这条 bar 会交付的形状。种子是这张卡自己的形状 —— 商家什么都不动就等于
+  // 「和这张一样」，动了就按他动的那一格来。卡的形状变了（板子重读）就重新播种。
+  const [evolveShape, setEvolveShape] = useState(d.imageShape);
+  const [shapeSeed, setShapeSeed] = useState(d.imageShape);
   const [infoOpen, setInfoOpen] = useState(false);
   // This card's own bar belongs to THIS card, so it is only on screen while this card is the
   // only one picked. With two neighbouring cards picked, the two bars used to overlap and the
@@ -72,6 +81,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   if (promptSeed !== originalPrompt) {
     setPromptSeed(originalPrompt);
     setEvolvePrompt(originalPrompt);
+  }
+  if (shapeSeed !== d.imageShape) {
+    setShapeSeed(d.imageShape);
+    setEvolveShape(d.imageShape);
   }
   // The info panel belongs to the single picked card; anything else closes it. Render-phase
   // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
@@ -152,8 +165,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             className="al-btn al-btn-glass al-btn-sm nodrag nopan"
             disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onVariant?.(id); }}
-            title={writeLock.locked ? writeLock.reason : `Make another one like this${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
+            // #643 T2：形状用这张卡上正显示的那一格 —— 同一张卡上的两个按钮不许交付两种形状。
+            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onVariant?.(id, evolveShape); }}
+            title={writeLock.locked ? writeLock.reason : `Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
           >
             More like this
           </button>
@@ -225,7 +239,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
                 e.preventDefault();
                 const text = evolvePrompt.trim();
                 if (!text) return;
-                d.onEvolve?.(id, text);
+                d.onEvolve?.(id, text, evolveShape);
               }}
             >
               <input
@@ -237,6 +251,19 @@ export function ImageNode({ data, id, selected }: NodeProps) {
                 onPointerDown={(e) => e.stopPropagation()}
                 style={{ flex: 1, minWidth: 0, border: "none", background: "none", outline: "none", font: "inherit" }}
               />
+              {/* #643 T2: same shape as this card unless the merchant picks another one. What is
+                  on screen here is exactly what the next paid image will be made in. */}
+              {d.imageShapeOptions && evolveShape && (
+                <div className="nodrag nopan" onPointerDown={(e) => e.stopPropagation()}>
+                  <ImageShapePicker
+                    compact
+                    value={evolveShape}
+                    options={d.imageShapeOptions}
+                    onChange={setEvolveShape}
+                    title="The shape the new image will be made in — same cost in every shape"
+                  />
+                </div>
+              )}
               <button
                 type="submit"
                 aria-label="Make a new image from this edited prompt"

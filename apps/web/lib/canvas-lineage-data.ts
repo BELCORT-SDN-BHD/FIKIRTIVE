@@ -17,7 +17,7 @@ import "server-only";
 
 import { prisma } from "@fikirtive/db";
 import { displayCredits } from "@fikirtive/core";
-import { canvasVideoSettings, type CanvasNodeLineage } from "./canvas-lineage";
+import { canvasImageSettings, canvasVideoSettings, type CanvasNodeLineage } from "./canvas-lineage";
 import { mergeSettings } from "./owner-settings";
 import { formatDayLabel, formatTime, partsInTz } from "./schedule-view";
 
@@ -76,7 +76,11 @@ export async function loadCanvasNodeLineages(
         where: { id: { in: jobIds }, ownerId, projectId },
         select: {
           id: true,
+          kind: true,
           videoOptions: true,
+          // #643 T2：图片卡也要说得出自己的形状 —— 这是「每个东西都要有迹可循」的同一条规矩，
+          // 也是「改这张图」那条路上 UI 显示「会交付什么」的唯一依据（不从像素反推）。
+          imageOptions: true,
           createdAt: true,
           finishedAt: true,
         },
@@ -134,7 +138,9 @@ export async function loadCanvasNodeLineages(
           ?? job?.finishedAt
           ?? job?.createdAt,
       ),
-      settings: job ? canvasVideoSettings(job.videoOptions) : EMPTY_SETTINGS,
+      settings: job
+        ? (job.kind === "IMAGE" ? canvasImageSettings(job.imageOptions) : canvasVideoSettings(job.videoOptions))
+        : EMPTY_SETTINGS,
       costCredits: rows
         ? displayCredits(netChargedInternalCredits(rows))
         : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId) ? 0 : null),

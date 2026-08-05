@@ -203,6 +203,9 @@ beforeEach(() => {
       kind: (req.kind as "image" | "video") ?? "image",
       count: req.count as number,
       entityIds: req.entityIds as string[] | undefined,
+      // #643 T2：形状是真 startGen 材料的一部分，替身漏掉它就会比真库宽容，
+      // 「换了形状还当成同一份内容」这类缺陷永远测不出来。
+      aspectRatio: req.aspectRatio as string | undefined,
     });
     const priors = [...h.store.jobs.values()].filter(
       (job) =>
@@ -294,6 +297,70 @@ describe("quoteCampaignGeneration — server-recomputed price + content binding"
     expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toEqual({ error: "Campaign not found." });
     h.requireOwner.mockResolvedValue({ error: "Not authorized." });
     expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toEqual({ error: "Not authorized." });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #643 T2 —— 商家在计划里写的格式名，就是他要的东西的形状
+// ---------------------------------------------------------------------------
+describe("战役格式 → 交付形状(#643 T2)", () => {
+  const cellsFor = async (formats: string[]) => {
+    seedCampaign(formats.map((format, i) => entry(`E${i + 1}`, { format, brief: `brief ${i} letters` })));
+    seedProject();
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    return h.startGen.mock.calls.map((call) => call[0] as Record<string, unknown>);
+  };
+
+  it("竖版格式（story）⇒ 9:16 —— 不再交付一张横竖不分的方图", async () => {
+    const [req] = await cellsFor(["story"]);
+    expect(req!.kind).toBe("image");
+    expect(req!.aspectRatio).toBe("9:16");
+  });
+
+  it("Feed / 方图格式 ⇒ 1:1", async () => {
+    const reqs = await cellsFor(["feed", "post", "carousel"]);
+    expect(reqs.map((r) => r.aspectRatio)).toEqual(["1:1", "1:1", "1:1"]);
+  });
+
+  it("横版格式（banner）⇒ 16:9", async () => {
+    const [req] = await cellsFor(["banner"]);
+    expect(req!.aspectRatio).toBe("16:9");
+  });
+
+  it("表上没有的格式 ⇒ 默认方图（不去猜商家的意图）", async () => {
+    const [req] = await cellsFor(["something_new"]);
+    expect(req!.aspectRatio).toBe("1:1");
+  });
+
+  it("视频格式不受这张表管（形状归视频侧，不在这里编一个）", async () => {
+    const [req] = await cellsFor(["reel"]);
+    expect(req!.kind).toBe("video");
+    expect(req!.aspectRatio).toBeUndefined();
+  });
+
+  it("商家复核页看到的形状 = 真发出去的形状（同一个值，不是两次推导）", async () => {
+    seedCampaign([entry("E1", { format: "story" }), entry("E2", { format: "banner" })]);
+    seedProject();
+    const quote = await currentQuote();
+    expect(quote.lines.map((line) => line.aspectRatio)).toEqual(["9:16", "16:9"]);
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    const sent = h.startGen.mock.calls.map((call) => (call[0] as Record<string, unknown>).aspectRatio);
+    expect(sent).toEqual(quote.lines.map((line) => line.aspectRatio));
+  });
+
+  it("形状进内容指纹：复核之后形状被改掉，确认必须被挡下", async () => {
+    seedCampaign([entry("E1", { format: "story" })]);
+    seedProject();
+    const reviewed = await reviewedRequest();
+
+    // 商家复核的是竖版；此刻计划被改成了方图位。
+    seedCampaign([entry("E1", { format: "feed" })]);
+    const res = await confirmCampaignGeneration(reviewed);
+    expect("error" in res && res.error).toMatch(/changed since you reviewed it/);
+    expect(h.startGen).not.toHaveBeenCalled();
   });
 });
 
