@@ -309,7 +309,7 @@ describe("what the T4 backfill refuses to guess", () => {
  * 盖回去,所以形状不是手画的。
  */
 describe("one column, two meanings — decided by the card it points AT", () => {
-  it("keeps a derived batch's sibling as LAYOUT, and still gives it the batch's real parent", async () => {
+  it("keeps a derived batch's sibling as LAYOUT, and claims no parent for it", async () => {
     const sourceGenerationId = await seedGeneration();
     const sourceCard = await seedLegacyCard({
       genJobId: null, generationId: sourceGenerationId, sourceNodeId: null,
@@ -334,11 +334,49 @@ describe("one column, two meanings — decided by the card it points AT", () => 
     expect(await identityOf(anchor!.id)).toEqual({
       batchIndex: 0, batchSize: 2, layoutAnchorNodeId: null, madeFromNodeId: sourceCard,
     });
-    // The sibling stood NEXT TO the anchor; it did not come out of it. And the picture the whole
-    // paid job was built on is the sibling's parent too — that is a fact of the job.
+    // The sibling stood NEXT TO the anchor; it did not come out of it — so the pointer becomes a
+    // layout anchor and NOTHING else.
+    //
+    // 语义决定(判官轮 r2):兄弟行的 `madeFromNodeId` **留空**,不由作业级事实推出来。
+    // 那个指针记录的是布局,卡级父边在历史上根本没被记下来过;想从作业推回一张父卡,唯一办法
+    // 是「按 sourceGenerationId 找一张带该产出的卡」,而 tombstone 之前同一个产出可以摆好几张
+    // 卡、删除又是物删,所以那条路会挑中一张幸存的错卡。这一批的真血缘仍然表达得出来:锚点行
+    // 的指针是直接验得上的,它保留着真父边。少一条边是诚实,错一条边不是。
     expect(await identityOf(sibling!.id)).toEqual({
-      batchIndex: 1, batchSize: 2, layoutAnchorNodeId: anchor!.id, madeFromNodeId: sourceCard,
+      batchIndex: 1, batchSize: 2, layoutAnchorNodeId: anchor!.id, madeFromNodeId: null,
     });
+  });
+
+  it("says nothing when the card the row pointed at is gone — a survivor is not a substitute", async () => {
+    // 判官轮 r2 的反例。tombstone 之前,同一个生成可以摆在好几张卡上(schema 至今没有
+    // CanvasNode.generationId 唯一约束,老 manageCanvas place 也不去重),而当年的删除是**物删**。
+    // 商家点的是 B,派生行记的就是 B;B 后来被物删,只剩更早的 A。
+    // 「按 sourceGenerationId 找 createdAt 最早的那张」会把父边指到 A —— 一张商家没选过的卡,
+    // 而迁移当下**根本看不出这里有过歧义**(B 已经不在了)。所以验不上就置空。
+    const sourceGenerationId = await seedGeneration();
+    const earlier = await seedLegacyCard({
+      genJobId: null, generationId: sourceGenerationId, sourceNodeId: null,
+    });
+    const chosen = await seedLegacyCard({
+      genJobId: null, generationId: sourceGenerationId, sourceNodeId: null,
+    });
+    const jobId = await seedJob({ generationIds: [await seedGeneration()], sourceGenerationId });
+    const derived = await seedLegacyCard({
+      genJobId: jobId, generationId: null, sourceNodeId: chosen,
+    });
+
+    // The card the merchant actually picked is physically removed, exactly as it used to be.
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM "CanvasNode" WHERE "id" = $1 AND "ownerId" = $2`, chosen, orgId,
+    );
+
+    await runBackfill();
+
+    expect(await identityOf(derived)).toEqual({
+      batchIndex: null, batchSize: 1, layoutAnchorNodeId: null, madeFromNodeId: null,
+    });
+    // …and above all: never the survivor.
+    expect((await identityOf(derived)).madeFromNodeId).not.toBe(earlier);
   });
 
   it("leaves both columns empty when the old value verifies as neither", async () => {
