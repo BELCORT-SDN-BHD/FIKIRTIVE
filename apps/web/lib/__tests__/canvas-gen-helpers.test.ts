@@ -156,6 +156,29 @@ describe("startCanvasAction", () => {
     expect(retainCanvasActionIdentity("accepted")).toBe(false);
     expect(retainCanvasActionIdentity("unknown")).toBe(true);
   });
+
+  /**
+   * #656 P1 —— 「暂时失败,再试一次同一个动作」不是拒绝。
+   *
+   * 服务端在花钱之前遇到一次读故障时,它给的是「结果不明」而不是判决。这一格若被当成
+   * 确定性拒绝,这个 tab 就会把耐久回执删掉;商家下一次点击拿到的是**新**动作 id,而旧任务
+   * 可能还活着 —— 一次动作两笔钱。所以这一格必须保住动作身份。
+   */
+  it("keeps the action identity when the server says the outcome is unknown and retryable", async () => {
+    const fail = vi.fn();
+    const outcome = vi.fn();
+    m.startCanvasGen.mockResolvedValueOnce({
+      error: "We couldn't confirm the shape of the image you're editing — retry this same action.",
+      disposition: "retryable",
+    });
+
+    await expect(startCanvasAction({ actionId: "a" }, fail, outcome)).resolves.toBeNull();
+
+    expect(fail).toHaveBeenLastCalledWith(
+      "We couldn't confirm the shape of the image you're editing — retry this same action.",
+    );
+    expect(retainCanvasActionIdentity(outcome.mock.lastCall![0])).toBe(true);
+  });
 });
 
 describe("Canvas action recovery receipt", () => {

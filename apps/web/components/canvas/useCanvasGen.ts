@@ -82,12 +82,17 @@ export function freshCanvasActionId(): string {
 }
 
 type AcceptedCanvasGen = { id: string; disposition: "fresh" | "reused" };
-export type CanvasStartOutcome = "accepted" | "rejected" | "refunded" | "unknown";
+export type CanvasStartOutcome = "accepted" | "rejected" | "refunded" | "retryable" | "unknown";
 
 /** Only an outcome-unknown request keeps its stable action identity for a safe replay.
- * Accepted work is already durable; deterministic rejection/refund authorizes a new action. */
+ * Accepted work is already durable; deterministic rejection/refund authorizes a new action.
+ *
+ * `retryable` is the server SAYING the outcome is unknown ("nothing was charged, retry this same
+ * action") rather than the browser inferring it from a dead connection. It is the same class of
+ * answer and must keep the same identity: dropping the receipt here would hand the next click a
+ * FRESH actionId while the earlier job may still be alive — one action, two charges (#656 P1). */
 export function retainCanvasActionIdentity(outcome: CanvasStartOutcome): boolean {
-  return outcome === "unknown";
+  return outcome === "unknown" || outcome === "retryable";
 }
 
 export type StoredCanvasActionReceipt = {
@@ -262,7 +267,13 @@ export async function startCanvasAction(
     if (response !== null && typeof response === "object") {
       const result = response as { id?: unknown; disposition?: unknown; error?: unknown; refunded?: unknown };
       if (typeof result.error === "string") {
-        onOutcome?.(result.refunded === true ? "refunded" : "rejected");
+        // A `retryable` refusal is an outcome-unknown answer, not a verdict — it keeps this
+        // action's identity so the retry replays the same durable server key (#656 P1).
+        onOutcome?.(
+          result.refunded === true ? "refunded"
+            : result.disposition === "retryable" ? "retryable"
+              : "rejected",
+        );
         onError(result.error);
         return null;
       }

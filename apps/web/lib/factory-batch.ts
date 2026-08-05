@@ -94,7 +94,8 @@ export type StartGenPort = (
   req: Record<string, unknown>,
 ) => Promise<
   | { id: string; disposition: "fresh" | "reused" }
-  | { error: string; disposition?: "conflict" }
+  // `retryable` = 结果不明、花钱之前就停住了(#656 P1)。这一层照旧只把错误原样呈上去。
+  | { error: string; disposition?: "conflict" | "retryable" }
 >;
 
 export interface OrchestrateDeps {
