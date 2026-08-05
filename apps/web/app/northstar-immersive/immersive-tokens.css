@@ -5,7 +5,7 @@
  *
  * 一句话:coral = Otto 的声音(§2 coral law,不动);blue = 人手的声音(交互、焦点、
  * 可点)。这一层只在沉浸壳根容器 `.gb.ns-immersive` 上做 **scoped 覆盖** —— 全局 token
- * 值一个字节都不改,live 产品(/northstar 及真实产品路由,不带 .ns-immersive)完全不受影响。
+ * 值一个字节都不改,壳外的产品路由(不带 .ns-immersive)完全不受影响。
  *
  * 覆盖为什么能穿透 Tailwind 工具类:`ring-ring`/`outline-ring`/`bg-info-soft` 等最终解析到
  * `var(--ring)`/`var(--info-soft)` 这些 CSS 自定义属性;把这些属性在根容器上重新赋值,值沿

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import {
   NorthstarCanvasWorkspace,
   type ImmersiveCanvasRuntimeContext,
@@ -84,11 +84,6 @@ export async function ImmersiveCanvasEntry({
 }: {
   searchParams: Promise<ImmersiveCanvasSearchParams>;
 }) {
-  // Layouts and pages can be evaluated independently while streaming. Repeat the
-  // preview gate here so a hidden production route cannot touch runtime data first.
-  if (process.env.NODE_ENV === "production" && process.env.NORTHSTAR_PREVIEW !== "1") {
-    notFound();
-  }
   const sp = await searchParams;
   const owner = await requireOwner();
   if ("error" in owner) redirect("/login");

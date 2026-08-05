@@ -128,3 +128,33 @@ describe("proxy — public data-deletion page (/legal/data-deletion)", () => {
     expect(mockGetSession).toHaveBeenCalledOnce();
   });
 });
+
+// #606 (T7 第二刀):`northstar` 曾整个前缀免认证 —— 那条豁免存在的唯一理由是设计稿画廊与
+// 6 页 mock「反正生产 404」。假页删净、预览开关删除之后,这个前缀下只剩两条真产品路由
+// (Home + Canvas),它们读的是商家自己的项目与画布。所以豁免收回:northstar 回到登录墙内。
+describe("proxy — the northstar prefix is back inside the login wall (#606)", () => {
+  it("runs the auth wall for the two real northstar routes", () => {
+    expect(matcherRuns("/northstar-immersive")).toBe(true);
+    expect(matcherRuns("/northstar-immersive/create/canvas")).toBe(true);
+  });
+
+  it("runs the auth wall for anything else under the prefix (no mock page can slip back out)", () => {
+    expect(matcherRuns("/northstar")).toBe(true);
+    expect(matcherRuns("/northstar-immersive/cityhall/admin")).toBe(true);
+    expect(matcherRuns("/northstar-immersive/onboarding/login")).toBe(true);
+  });
+
+  it("a session-less request to the northstar canvas redirects to /login, keeping the deep link", async () => {
+    const res = await proxy(req("/northstar-immersive/create/canvas?project=p-1"));
+    expect(res?.status).toBe(307);
+    expect(mockGetSession).toHaveBeenCalledOnce();
+  });
+
+  it("the exemptions that must stay are untouched", () => {
+    // Scope check: pulling northstar back in must not disturb the doors that are public by design.
+    expect(matcherRuns("/login")).toBe(false);
+    expect(matcherRuns("/signup")).toBe(false);
+    expect(matcherRuns("/legal/data-deletion")).toBe(false);
+    expect(matcherRuns("/api/better-auth/callback/google")).toBe(false);
+  });
+});
