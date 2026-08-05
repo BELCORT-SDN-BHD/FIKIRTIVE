@@ -14,7 +14,8 @@ export { NS_ASSETS, NS_BRAND, NS_PRODUCTS, nsImage, nsPlaceholder };
 
 // ── 画布产物真图(§一 图片纪律:全城只从 NS_IMAGES 取图,零 placeholder 灰块) ──────
 // canvas 对象 / viewer take 的确定性取图:图→烘焙产品,视频海报→店景/出品过程。seed 稳定,
-// 同一对象跨会话/重生成图不跳。种子对象与运行时新生成对象(canvas-page)共用这一个入口。
+// 同一对象跨会话/重生成图不跳。现在只剩种子对象走这个入口 —— 当年一起用它的手搓板
+// (create/canvas-page)已随 #606 T7 退役。
 export function cvImage(kind: CvKind, seed: number): string {
   return kind === "video" ? nsImage("storefront", seed) : nsImage("bakery", seed);
 }

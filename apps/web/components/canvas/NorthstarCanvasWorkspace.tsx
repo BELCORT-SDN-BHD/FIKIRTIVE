@@ -20,7 +20,26 @@ import { getMyAccount } from "@/lib/account-actions";
 import { cn } from "@/lib/utils";
 import type { EntityDTO } from "@/lib/types";
 import FlowCanvas from "./FlowCanvas";
-import type { ImmersiveCanvasRuntimeContext } from "./immersive-canvas-runtime";
+
+/**
+ * 受控 Entry 交给这块画布的运行时上下文(#606 T7)。
+ *
+ * 这个类型原先住在 `immersive-canvas-runtime.ts` —— 手搓板的运行时。手搓板随 T7 退役,
+ * 整个模块删掉,类型跟着搬到它唯一的消费者这里,不再为一个类型留一个空壳文件。
+ */
+export type ImmersiveCanvasRuntimeContext = {
+  projects: Array<{ id: string; name: string }>;
+  threads: Array<{
+    id: string;
+    projectId: string;
+    title: string;
+    updatedAt: string;
+    pinnedAt: string | null;
+  }>;
+  activeProjectId: string;
+  activeThreadId: string | null;
+  initialBalance: number;
+};
 
 type SideTab = "chat" | "projects";
 

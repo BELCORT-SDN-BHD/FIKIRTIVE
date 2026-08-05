@@ -1,13 +1,15 @@
 import "server-only";
 
 import { notFound, redirect } from "next/navigation";
-import { NorthstarCanvasWorkspace } from "@/components/canvas/NorthstarCanvasWorkspace";
+import {
+  NorthstarCanvasWorkspace,
+  type ImmersiveCanvasRuntimeContext,
+} from "@/components/canvas/NorthstarCanvasWorkspace";
 import { getMyAccount } from "@/lib/account-actions";
 import { getOrCreateDefaultProject } from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
 import { getCoworkThreads, getEntities, getProjects } from "@/lib/data";
 import { toEntityDTO } from "@/lib/dto";
-import type { ImmersiveCanvasRuntimeContext } from "./immersive-canvas-runtime";
 
 export type ImmersiveCanvasSearchParams = Record<
   string,
@@ -137,8 +139,8 @@ export async function ImmersiveCanvasEntry({
   };
 
   // #600 (spec #599 D1/D2): this page mounts the mature canvas kernel (FlowCanvas / @xyflow)
-  // wearing the north-star skin. The hand-rolled north-star board is no longer rendered here;
-  // its file stays in the tree until the whole rollout is accepted (D7 · T7).
+  // wearing the north-star skin. The hand-rolled north-star board it replaced was deleted from
+  // the tree by #606 (D7 · T7) — there is one canvas implementation now, not two.
   return (
     <NorthstarCanvasWorkspace
       key={`${runtimeContext.activeProjectId}:${runtimeContext.activeThreadId ?? ""}`}
