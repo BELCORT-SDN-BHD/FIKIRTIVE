@@ -379,6 +379,36 @@ describe("one column, two meanings — decided by the card it points AT", () => 
     expect((await identityOf(derived)).madeFromNodeId).not.toBe(earlier);
   });
 
+  it("calls an overlapping card a layout anchor and nothing else", async () => {
+    // 判官轮 r3 的反例。两条分类谓词本来可以同时命中同一张卡:老 `createCanvasNode`
+    // (`2a2c5711^` 的 canvas-actions.ts:148-170)从不校验「这个 generationId 是不是该 genJob
+    // 的产出」,所以库里可能有一张卡**既挂在本行的作业上,又带着本行作业记录的来源产出**。
+    // 两列各自独立求值时它会被同时写进两列 —— 迁移自己声明的不变量(派生边不得指向同批卡)
+    // 当场破掉:画布会画出一条「本批的卡从本批的卡来」的线。
+    //
+    // 优先序:**同批永远是布局锚点,绝不是派生母卡**。一个作业的来源产出指向自己批次里的一张
+    // 卡,不是派生语义,历史上只可能是错绑。
+    //
+    // 这个形状是**手工播种**的:现行写者都不会产出它(结算与落位都按作业的产出列表绑卡),
+    // 它是老 action 缺校验留下的历史错绑。
+    const sourceGenerationId = await seedGeneration();
+    const jobId = await seedJob({
+      generationIds: [await seedGeneration()], sourceGenerationId,
+    });
+    const overlapping = await seedLegacyCard({
+      genJobId: jobId, generationId: sourceGenerationId, sourceNodeId: null,
+    });
+    const row = await seedLegacyCard({
+      genJobId: jobId, generationId: null, sourceNodeId: overlapping,
+    });
+
+    await runBackfill();
+
+    expect(await identityOf(row)).toEqual({
+      batchIndex: null, batchSize: 1, layoutAnchorNodeId: overlapping, madeFromNodeId: null,
+    });
+  });
+
   it("leaves both columns empty when the old value verifies as neither", async () => {
     // Two ordinary presses, and a stale pointer from one press's card to the other's. It is not a
     // same-batch anchor (different job) and it cannot be a parent (this job was built on nothing).

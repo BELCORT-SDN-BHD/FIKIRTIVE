@@ -21,9 +21,18 @@
 -- 旧「来源」列到底是哪一种意思,**只能看它指着的那张卡是什么**,不能看作业是什么
 -- (判官轮 r1 · P1 推翻了上一版按作业分类的写法,反例见下):
 --   - 它指的卡与本行**同一个作业** ⇒ 那是同批布局锚点 ⇒ 回填 "layoutAnchorNodeId";
---   - 它指的卡还在,且带着本行作业记录的来源产出(j."sourceGenerationId")⇒ 那是真派生源卡
---     ⇒ 回填 "madeFromNodeId";
+--   - 它指的卡还在、**不同作业**,且带着本行作业记录的来源产出(j."sourceGenerationId")
+--     ⇒ 那是真派生源卡 ⇒ 回填 "madeFromNodeId";
 --   - 两样都验不上(包括它指的卡已经不在了)⇒ 两列都留 NULL,不硬猜。
+--
+-- **两条分类互斥,同批优先**(判官轮 r3 · P1)。它们本来可以同时命中同一张卡:老
+-- `createCanvasNode`(`2a2c5711^` 的 canvas-actions.ts:148-170)从不校验「这个 generationId
+-- 是不是该 genJob 的产出」,所以库里可能有一张卡既挂在本行的作业上、又带着本行作业记录的
+-- 来源产出。两列各自独立求值时它会被同时写进两列,当场破掉下面那条不变量。
+-- 优先序:**同批永远是布局锚点,绝不是派生母卡** —— 一个作业的来源产出指向自己批次里的
+-- 一张卡不是派生语义,历史上只可能是错绑。重叠行的结果因此是:布局锚点 = 那张卡,
+-- "madeFromNodeId" = NULL。这条互斥由 madeFrom 子查询里的
+-- `ref."genJobId" IS DISTINCT FROM n."genJobId"` 强制,所以下面那条自查在任何数据下恒为 0 行。
 --
 -- 上一版按「作业有没有输入图」分类,被一条**可达的历史输出**推翻:main `a43438d7` 的结算写者
 -- 在「衍生批次多图、板上还没有锚点」这一路上(该提交 canvas-settlement.ts:190-211),先建锚点行
@@ -126,13 +135,15 @@ UPDATE "CanvasNode" n
             AND ref."projectId" = n."projectId"
             AND ref."genJobId" = n."genJobId"
        ),
-       -- 真派生:**只认本行旧值指着的那张卡**,且它必须确实带着本行作业记录的来源产出。
+       -- 真派生:**只认本行旧值指着的那张卡**,且它必须(一)不属于本行的作业 ——
+       -- 同批优先,同批卡永远只是布局锚点;(二)确实带着本行作业记录的来源产出。
        -- 没有兜底解析 —— 那张卡不在了就是不知道,不拿另一张带同一产出的幸存卡顶替。
        "madeFromNodeId" = (
          SELECT ref."id" FROM "CanvasNode" ref
           WHERE ref."id" = n."sourceNodeId"
             AND ref."ownerId" = n."ownerId"
             AND ref."projectId" = n."projectId"
+            AND ref."genJobId" IS DISTINCT FROM n."genJobId"
             AND j."sourceGenerationId" IS NOT NULL
             AND ref."generationId" = j."sourceGenerationId"
        )
