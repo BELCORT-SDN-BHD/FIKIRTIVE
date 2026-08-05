@@ -17,6 +17,7 @@ import {
   MAX_GEN_COUNT,
   displayCredits,
   pricedGenCredits,
+  imageOutputSize,
   EXECUTED_SPEC,
   type GenVideoModel,
   type ReferenceBudget,
@@ -139,8 +140,9 @@ export function buildSpecChips(
     // EXECUTED_SPEC 一处，卡面自动开始说真话。
     if (EXECUTED_SPEC.video.audioHonoured) chips.push(params.audio ? "With sound" : "No sound");
   } else {
-    // 图片：执行层固定输出方图，所以卡面报的就是它真会产出的尺寸，而不是商家要的画幅。
-    const { width, height } = EXECUTED_SPEC.image.outputSize;
+    // 图片：卡面报的永远是执行层**按这张卡的画幅**真会产出的尺寸。卡上没有画幅时,
+    // 执行层走默认(方图),这里报的就是方图 —— 「说的」与「做的」同一份表(#642)。
+    const { width, height } = imageOutputSize(params.aspectRatio);
     chips.push(`${width} × ${height}`);
     if (EXECUTED_SPEC.image.aspectHonoured && params.aspectRatio) chips.push(params.aspectRatio);
     chips.push(params.count === 1 ? "1 image" : `${params.count} images`);
@@ -223,9 +225,9 @@ export function buildDowngradeNote(
   if (requested.aspect && !(kind === "video" && requested.aspect === params.aspectRatio)) {
     asked.push(requested.aspect);
     if (kind === "image") {
-      // 执行层不接受图片画幅：如实说出它真会产出的方图尺寸。
-      const { width, height } = EXECUTED_SPEC.image.outputSize;
-      instead.push(`a square ${width} × ${height} image`);
+      // 如实说出这张卡真会产出的尺寸（卡上没带画幅 ⇒ 执行层走默认方图）。
+      const { width, height } = imageOutputSize(params.aspectRatio);
+      instead.push(width === height ? `a square ${width} × ${height} image` : `a ${width} × ${height} image`);
     } else {
       instead.push(params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"));
     }
@@ -387,12 +389,15 @@ export function buildProposeCard(
     }
   }
 
-  // Step 4.7: 执行层收不下的诉求也是降级 —— 必须显式披露，不得静默。
+  // Step 4.7: 商家要的画幅没落到这张卡上,也是降级 —— 必须显式披露,不得静默。
   // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以这两项
-  // 在这里按 EXECUTED_SPEC 补齐：图片的画幅根本到不了执行层；声音开关没接通。
+  // 在这里补齐。判据是**这张卡真会交付什么**,两种情况都算掉了:
+  //   ① 执行层根本不采纳画幅(EXECUTED_SPEC 说了不算数);
+  //   ② 采纳,但这条路没把商家的画幅放上卡(卡上的画幅 ≠ 他要的)。
   // 纯展示：不改 params、不改选型、不改报价。
   const imageAspectDropped =
-    kind === "image" && !!input.desiredAspect && !EXECUTED_SPEC.image.aspectHonoured;
+    kind === "image" && !!input.desiredAspect &&
+    (!EXECUTED_SPEC.image.aspectHonoured || input.desiredAspect !== sm.params.aspectRatio);
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
   const requested: RequestedSpec = {

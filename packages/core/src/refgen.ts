@@ -93,6 +93,9 @@ export interface GenerationRequest {
   inputImageUrls: string[];
   count: number;
   model: RefGenModel;
+  /** 商家要的画幅(`GEN_IMAGE_ASPECTS` 之一)。缺省 ⇒ 适配器按默认画幅(方图)出图。
+   *  参考图(refgen)不设画幅,始终走默认 —— 参考图是给引擎看的素材,不是交付物。 */
+  aspectRatio?: string;
 }
 
 /** One generated image, already downloaded by the provider — the worker

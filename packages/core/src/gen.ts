@@ -88,6 +88,68 @@ export const REF_VIDEO_MAX_SECONDS = 6;
 // charge a flat 1 credit/image via pricedGenCredits). 0.04 is the fal basis; prod now runs
 // BytePlus Seedream (cheaper) — left at 0.04 pending the founder's actual Ark per-image rate.
 export const GEN_PRICE_USD_PER_IMAGE = 0.04;
+
+/* ---------------- image shape (#642) ---------------- */
+
+/** 图片画幅菜单，**default-first**（照视频侧的选项表写法）。图像引擎**按张计价、不分
+ *  尺寸比例**，所以补齐画幅没有新价格档、没有 COGS 压力 —— 价格路径一行都不用改。 */
+export const GEN_IMAGE_ASPECTS = ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"] as const;
+export type GenImageAspect = (typeof GEN_IMAGE_ASPECTS)[number];
+/** 菜单第一项 = 未指定画幅时的默认（t2i 默认方图，与 2026-06-29 起的既有行为一致）。 */
+export const GEN_IMAGE_DEFAULT_ASPECT: GenImageAspect = GEN_IMAGE_ASPECTS[0];
+
+/** 引擎对「宽×高」写法的硬约束：总像素必须落在这个闭区间内，比例必须在 [1/16, 16]。
+ *  下表每一档都由 `gen.test.ts` 逐档验过这三条 —— 加档位时测试会替你把关。 */
+export const GEN_IMAGE_MIN_PIXELS = 3_686_400;
+export const GEN_IMAGE_MAX_PIXELS = 16_777_216;
+
+/**
+ * 画幅 → 执行层真正发出去的**确切** WxH（2K 档）。
+ *
+ * 这是「说的」与「做的」共用的**同一份**数据：图像适配器按它拼 `size`
+ * （`packages/generation/src/byteplus.ts`），卡面文案按它报尺寸
+ * （`EXECUTED_SPEC.image.outputSizes` 直接引用这张表）。改这里一处，两边同时改口。
+ *
+ * 取值口径：
+ *  - 1:1 保持 2048×2048，与今日逐字节一致（补齐画幅不改变既有方图行为）；
+ *  - 其余各档取 2K 档参考映射，并且**每一档都 ≥ GEN_IMAGE_MIN_PIXELS**（引擎下限）；
+ *  - 每档宽高都是 16 的整数倍，且实际比例与档位名一致（离线 mock 按同一张表等比缩放出图）。
+ */
+export const GEN_IMAGE_SIZES: Record<GenImageAspect, { width: number; height: number }> = {
+  "1:1":  { width: 2048, height: 2048 }, // 4,194,304 px
+  "9:16": { width: 1600, height: 2848 }, // 4,556,800 px
+  "16:9": { width: 2848, height: 1600 }, // 4,556,800 px
+  "4:3":  { width: 2304, height: 1728 }, // 3,981,312 px
+  "3:4":  { width: 1728, height: 2304 }, // 3,981,312 px
+  "3:2":  { width: 2496, height: 1664 }, // 4,153,344 px
+  "2:3":  { width: 1664, height: 2496 }, // 4,153,344 px
+  "21:9": { width: 3136, height: 1344 }, // 4,214,784 px
+};
+
+/** Per-model image controls — mirrors `VideoModelOptions`. Lists are default-first;
+ *  `maxCount` = batch ceiling (the image engine takes one request per image). */
+export type ImageModelOptions = {
+  aspectRatios: string[];
+  maxCount: number;
+};
+export const GEN_IMAGE_MODEL_OPTIONS: Record<GenModel, ImageModelOptions> = {
+  "seedream": { aspectRatios: [...GEN_IMAGE_ASPECTS], maxCount: MAX_GEN_COUNT },
+};
+
+/** A model's default image selections (first of each list) — mirrors `videoDefaults`.
+ *  Never throws on an unknown id: an unmapped model falls back to the default aspect. */
+export function imageDefaults(model: GenModel): { aspectRatio: string } {
+  const o = GEN_IMAGE_MODEL_OPTIONS[model] as ImageModelOptions | undefined;
+  return { aspectRatio: o?.aspectRatios[0] ?? GEN_IMAGE_DEFAULT_ASPECT };
+}
+
+/** 画幅 → 执行层真会产出的像素尺寸。缺省/未知一律回落默认画幅（纯函数，永不抛）——
+ *  历史行（迁移前没有画幅快照）走的就是这一条，产出与它们当年一致的方图。 */
+export function imageOutputSize(aspectRatio?: string | null): { width: number; height: number } {
+  const size = GEN_IMAGE_SIZES[(aspectRatio ?? "") as GenImageAspect];
+  return size ?? GEN_IMAGE_SIZES[GEN_IMAGE_DEFAULT_ASPECT];
+}
+
 /** Per-model facts: `label` for the picker, `sound` = generates native audio,
  *  `tail` = supports an end frame. Controls + price live in the two helpers below. */
 export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound: boolean; tail: boolean }> = {
@@ -208,6 +270,9 @@ export const genRequest = z
     // Each is validated against the chosen model's option set in the refine below.
     durationSeconds: z.number().int().min(1).max(60).nullish(),
     resolution: z.string().max(12).nullish(),
+    // shape. Shared by BOTH kinds (#642): video validates against the video model's
+    // aspectRatios, image against GEN_IMAGE_MODEL_OPTIONS. Absent → the kind's default
+    // (image: 1:1, unchanged from the pre-#642 fixed square).
     aspectRatio: z.string().max(12).nullish(),
     fps: z.number().int().min(1).max(120).nullish(),
     audio: z.boolean().nullish(),
@@ -247,6 +312,18 @@ export const genRequest = z
       if (v.fps != null && !o.fps.includes(v.fps)) bad("fps", "fps not available for this model");
       if (v.audio === false && !o.audioToggle) bad("audio", "this model can't turn audio off");
       if (v.count > o.maxCount) bad("count", "too many clips for this model");
+    }
+    // #642: same gate on the image side — a shape the image engine can't produce must
+    // never reach the worker and spend. (Price is unaffected: the image engine bills per
+    // image regardless of shape, so every option below costs exactly the same.)
+    if (v.kind === "image" && (GEN_MODELS as readonly string[]).includes(v.model)) {
+      const o = GEN_IMAGE_MODEL_OPTIONS[v.model as GenModel];
+      if (v.aspectRatio && !o.aspectRatios.includes(v.aspectRatio)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["aspectRatio"], message: "aspect ratio not available for this model" });
+      }
+      if (v.count > o.maxCount) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["count"], message: "too many images for this model" });
+      }
     }
     if (v.referenceVideoGenerationId) {
       if (v.kind !== "video") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["referenceVideoGenerationId"], message: "reference video is only valid for video generation" });

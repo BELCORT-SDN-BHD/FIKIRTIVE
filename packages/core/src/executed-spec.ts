@@ -16,14 +16,21 @@
  * 纯声明:不参与选型、报价、预扣或任何 provider 调用。
  *
  * 真相位置:
- *   - `packages/core/src/gen-from-card.ts` —— 卡 → genRequest 的组装。
- *     `durationSeconds` / `resolution` / `aspectRatio` **只在 video 分支**传出;
- *     图片分支一个都不传,所以图片的画幅根本到不了执行层。
- *   - 现役图像/视频适配器的请求体 —— 图片固定输出方图(与商家要的画幅无关);
- *     视频把 resolution / duration / ratio 编成 prompt flags 发出去,声音开关没有接出去。
+ *   - 现役图像适配器的请求体 —— 按请求画幅拼出确切的 WxH(#642);
+ *   - 现役视频适配器的请求体 —— 把 resolution / duration / ratio 编成 prompt flags
+ *     发出去,声音开关没有接出去。
  */
+import { GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_SIZES, type GenImageAspect } from "./gen.js";
+
 export const EXECUTED_SPEC: {
-  image: { outputSize: { width: number; height: number }; aspectHonoured: boolean };
+  image: {
+    outputSize: { width: number; height: number };
+    outputSizes: Record<GenImageAspect, { width: number; height: number }>;
+    defaultAspect: GenImageAspect;
+    aspectHonoured: boolean;
+    sourceAspectInheritedFromSnapshot: boolean;
+    fallbackAdapterAspectHonoured: boolean;
+  };
   video: {
     aspectHonoured: boolean;
     durationHonoured: boolean;
@@ -32,10 +39,24 @@ export const EXECUTED_SPEC: {
   };
 } = {
   image: {
-    /** 执行层固定输出的像素尺寸(方图)。 */
-    outputSize: { width: 2048, height: 2048 },
-    /** 画幅请求会不会被执行层采纳。false ⇒ 卡面不得承诺画幅;商家提了就是一次降级。 */
-    aspectHonoured: false,
+    /** 没指定画幅时执行层真会产出的像素尺寸(默认画幅 = 方图,与 #642 之前逐字节一致)。 */
+    outputSize: GEN_IMAGE_SIZES[GEN_IMAGE_DEFAULT_ASPECT],
+    /** 每个画幅执行层真会产出的像素尺寸 —— 与适配器读的是**同一个对象**,
+     *  所以卡面报的尺寸不可能和发出去的 `size` 分家。 */
+    outputSizes: GEN_IMAGE_SIZES,
+    /** 商家没提画幅时执行层采用的画幅。 */
+    defaultAspect: GEN_IMAGE_DEFAULT_ASPECT,
+    /** 画幅请求会不会被执行层采纳。#642 起为 true:契约带画幅、快照落盘、
+     *  worker 透传、适配器发出确切 WxH,`byteplus.test.ts` 逐档整体断言。 */
+    aspectHonoured: true,
+    /** 改图 / 再来一张(带底图)继承源图画幅的**唯一**依据是源图那一单的画幅快照
+     *  (`GenJob.imageOptions`)。快照读不到(迁移前的老图)就诚实回落默认方图 ——
+     *  执行层不去猜像素、不去反推比例。 */
+    sourceAspectInheritedFromSnapshot: true,
+    /** 备用(legacy fallback)图像适配器**不**携带画幅:它的尺寸参数未经官方文档确认,
+     *  本仓库的规矩是「没确认就不发明参数」(见视频侧 audio flag 同样处置)。
+     *  false ⇒ 这条路上画幅不成立,不得假装它成立。现役生产路径不走这条。 */
+    fallbackAdapterAspectHonoured: false,
   },
   video: {
     aspectHonoured: true,

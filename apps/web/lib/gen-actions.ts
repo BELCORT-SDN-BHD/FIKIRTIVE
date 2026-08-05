@@ -21,10 +21,12 @@ import {
   activeImageModel,
   activeVideoModel,
   GEN_MODELS,
+  GEN_IMAGE_MODEL_OPTIONS,
   GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
   genJobEndedWithoutDelivering,
+  type GenModel,
   type GenVideoModel,
   type GenJobData,
 } from "@fikirtive/core";
@@ -102,7 +104,42 @@ const FACTORY_HISTORY_SELECT = {
   shotId: true,
   threadId: true,
   videoOptions: true,
+  imageOptions: true,
 } as const;
+
+/**
+ * #642 — 「改这张图 / 再来一张」的画幅继承。
+ *
+ * 商家没另选画幅时,重做一张图不应该悄悄换掉形状。画幅的**唯一**依据是源图那一单入队时
+ * 冻结的规格快照(`GenJob.imageOptions`)—— 不去反推像素、不去猜。
+ *
+ * 读不到(迁移前的老图、快照缺失、那一单已不在)就返回 null,由调用方诚实回落默认画幅;
+ * `EXECUTED_SPEC.image.sourceAspectInheritedFromSnapshot` 把这条口径写成了数据。
+ *
+ * 只读、owner 作用域、永不抛 —— 它挡在付费路径上,一次 DB 抖动不得让商家点不动生成。
+ */
+async function inheritedImageAspect(
+  ownerId: string,
+  sourceGenerationId: string,
+  model: string,
+): Promise<string | null> {
+  try {
+    const source = await prisma.genJob.findFirst({
+      where: { ownerId, kind: "IMAGE", generationIds: { has: sourceGenerationId } },
+      orderBy: { createdAt: "desc" },
+      select: { imageOptions: true },
+    });
+    const snapshot = source?.imageOptions as { aspectRatio?: unknown } | null | undefined;
+    const aspect = typeof snapshot?.aspectRatio === "string" ? snapshot.aspectRatio : null;
+    // 快照里的值也要过**这一单要跑的那个模型**的菜单 —— 一个下线了的旧画幅不得靠继承
+    // 绕过契约校验,把一个引擎收不下的值送进付费调用。
+    return aspect && GEN_IMAGE_MODEL_OPTIONS[model as GenModel]?.aspectRatios.includes(aspect)
+      ? aspect
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 type FactoryHistoryRow = StoredFactoryMaterial & {
   id: string;
@@ -293,6 +330,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return { error: "Project not found." };
 
+    // #642 图片画幅:商家没明说时,带底图的请求(详情页 edit / 再来一张)继承源图的画幅,
+    // 让「改这张图」不改形状。读不到源图快照就是 null,由 normalizeFactoryMaterial 落默认。
+    // 解析在材料成形之前完成,所以快照、幂等材料、worker 三处看到的是同一个值。
+    const effectiveAspectRatio = kind === "image" && !aspectRatio && sourceGenerationId
+      ? await inheritedImageAspect(ownerId, sourceGenerationId, model)
+      : aspectRatio;
+
     // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
     // conditions on the source keyframe, not entity refs — the chosen variant is already
     // baked into that keyframe — so it's not meaningful for video and the worker ignores
@@ -312,7 +356,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       threadId,
       durationSeconds,
       resolution,
-      aspectRatio,
+      aspectRatio: effectiveAspectRatio,
       fps,
       audio,
     });
@@ -389,6 +433,8 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
 
     // The shared material normalizer resolves the exact five video controls persisted below.
     const videoOptions = material.videoOptions ?? undefined;
+    // …and the image shape (#642), from the same normalizer, persisted the same way.
+    const imageOptions = material.imageOptions ?? undefined;
 
     // consistencyGuardian (Phase 2): block obvious money-wasters BEFORE the spend
     // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
@@ -548,6 +594,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
             queueJobId,
             ...(videoOptions ? { videoOptions } : {}),
+            // #642: the frozen image shape — the worker reads it back, and a later
+            // "edit this image" inherits from it. Video jobs get null (normalizer drops it).
+            ...(imageOptions ? { imageOptions } : {}),
             // Phase C: persist the @mention→variant bindings so the worker conditions on
             // the right variant. Image-only (the shared material normalizer drops it for video).
             // Omitted when empty → column stays null (old/bare/video gens unchanged).

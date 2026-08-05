@@ -1346,3 +1346,113 @@ describe("generation read boundaries", () => {
     expect(result).not.toHaveProperty("model");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #642 图片形状端到端 —— 服务端全链路(gen-actions → 快照 → worker)
+// ---------------------------------------------------------------------------
+describe("startGen 图片规格快照", () => {
+  const base = {
+    projectId: "p1",
+    prompt: "a poster",
+    entityIds: [],
+    count: 1,
+    kind: "image" as const,
+    model: "seedream",
+  };
+  const createdData = () => db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+  /** 只让「按 generationIds 找源图那一单」这一次查询返回快照;其余 findFirst 照旧 null。 */
+  type GenJobFindFirstArgs = { where?: { generationIds?: unknown } };
+  const sourceSnapshot = (imageOptions: { aspectRatio: string } | null) =>
+    async (args: GenJobFindFirstArgs) =>
+      args?.where?.generationIds !== undefined ? { imageOptions } : null;
+
+  it("商家选的画幅冻结进作业行(不再蒸发)", async () => {
+    const r = await startGen({ ...base, aspectRatio: "9:16", idempotencyKey: "shape-1" });
+    expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "9:16" });
+  });
+
+  it("没选画幅 → 落默认 1:1(与今日方图逐字节一致)", async () => {
+    await startGen({ ...base, idempotencyKey: "shape-2" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("画布入口(startCanvasGen)也真的把画幅带到底 —— T2 接 UI 时链路已经通了", async () => {
+    const r = await startCanvasGen({
+      actionId: "action-shape", expectedCredits: 1, ...base, aspectRatio: "4:3",
+    });
+    expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "4:3" });
+  });
+
+  it("引擎收不下的画幅在花钱之前就被拒(不创建作业、不预扣)", async () => {
+    const r = await startGen({ ...base, aspectRatio: "5:7", idempotencyKey: "shape-3" });
+    expect(r).toEqual({ error: "That generation request is out of bounds." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("视频作业不写图片快照(两条规格路互不串台)", async () => {
+    await startGen({
+      ...base, kind: "video", model: "seedance-2-fast", aspectRatio: "16:9", idempotencyKey: "shape-4",
+    });
+    expect(createdData().imageOptions).toBeUndefined();
+    expect(createdData().videoOptions).toEqual(expect.objectContaining({ aspectRatio: "16:9" }));
+  });
+
+  it("改这张图 / 再来一张:没另选画幅就继承源图快照里的画幅(形状不被悄悄改掉)", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot({ aspectRatio: "9:16" }));
+    await startGen({ ...base, sourceGenerationId: "gen_src", idempotencyKey: "shape-5" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "9:16" });
+    // 源图查询必须带 tenant 约束
+    const lookup = db.genJobFindFirst.mock.calls.map(([a]) => a as GenJobFindFirstArgs)
+      .find((a) => a?.where?.generationIds !== undefined);
+    expect(lookup?.where).toEqual(expect.objectContaining({ ownerId: "org_ref", kind: "IMAGE" }));
+  });
+
+  it("源图快照读不到(迁移前的老图)→ 诚实回落 1:1,不去反推像素", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot(null));
+    await startGen({ ...base, sourceGenerationId: "gen_old", idempotencyKey: "shape-6" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("源图那一单根本不存在 → 同样回落 1:1(绝不抛、绝不挡住付费路径)", async () => {
+    db.genJobFindFirst.mockImplementation(async () => null);
+    await startGen({ ...base, sourceGenerationId: "gen_missing", idempotencyKey: "shape-7" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("源图快照里是个下线画幅 → 不靠继承绕过契约,回落 1:1", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot({ aspectRatio: "5:7" }));
+    await startGen({ ...base, sourceGenerationId: "gen_legacy", idempotencyKey: "shape-9" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("商家明确另选了画幅 → 以商家为准,不被源图覆盖", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot({ aspectRatio: "9:16" }));
+    await startGen({ ...base, sourceGenerationId: "gen_src", aspectRatio: "16:9", idempotencyKey: "shape-8" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "16:9" });
+  });
+
+  it("画幅不动价格:八个画幅报出来的预扣完全相同(引擎按张计价)", async () => {
+    const costs: number[] = [];
+    for (const [i, a] of ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"].entries()) {
+      vi.clearAllMocks();
+      db.projectFindFirst.mockResolvedValue({ id: "p1" });
+      db.genJobFindFirst.mockResolvedValue(null);
+      db.genJobFindMany.mockResolvedValue([]);
+      db.genJobCreate.mockResolvedValue({ id: "job_ref" });
+      db.reserveCredits.mockResolvedValue({ ok: true });
+      mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
+      mockIsImpersonating.mockResolvedValue(false);
+      mockCheckCast.mockResolvedValue(null);
+      mockResolveDisabledModels.mockResolvedValue(new Set());
+      mockGetBoss.mockResolvedValue({ send: mockBossSend });
+      mockBossSend.mockImplementation(async (_n: string, _d: unknown, o: { id?: string }) => o.id ?? null);
+      await startGen({ ...base, count: 2, aspectRatio: a, idempotencyKey: `price-${i}` });
+      costs.push(db.reserveCredits.mock.calls[0]?.[1]?.cost as number);
+    }
+    expect(new Set(costs).size).toBe(1);
+    expect(costs[0]).toBe(2 * INTERNAL_PER_DISPLAY);
+  });
+});

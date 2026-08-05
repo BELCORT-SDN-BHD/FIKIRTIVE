@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, SIGNUP_GRANT_CREDITS } from "./spend.js";
-import { GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
+import { GEN_IMAGE_ASPECTS, GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
 // Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
 // (seedance-2-fast), USD-formula for all other (fal) models.
@@ -108,6 +108,16 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   it("image charge stays 1 displayed credit per image", () => {
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 3, videoOptions: null })).toBe(30);
+  });
+  it("#642 画幅不动价格:八个画幅同价 = count × INTERNAL_PER_DISPLAY(引擎按张计价)", () => {
+    // 形状**根本不是**计价输入 —— 这里连多塞一个 aspectRatio 键都改不动结果。
+    // 端到端那一半(真跑 startGen 逐个画幅比预扣)在 apps/web 的 gen-actions 测试里。
+    for (const count of [1, 4]) {
+      const prices = GEN_IMAGE_ASPECTS.map((aspectRatio) =>
+        pricedGenCredits({ kind: "IMAGE", model: "seedream", count, videoOptions: null, ...{ aspectRatio } }));
+      expect(new Set(prices).size, `count=${count} 各画幅必须同价`).toBe(1);
+      expect(prices[0]).toBe(count * INTERNAL_PER_DISPLAY);
+    }
   });
   it("signup welcome grant is 20 displayed credits (#543 Founder decision; internal = ×INTERNAL_PER_DISPLAY)", () => {
     expect(SIGNUP_GRANT_CREDITS).toBe(20 * INTERNAL_PER_DISPLAY);

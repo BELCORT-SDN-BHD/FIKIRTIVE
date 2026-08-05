@@ -230,3 +230,37 @@ describe("factory material binding", () => {
     } as unknown as StoredFactoryMaterial, expectedLegacy)).toBe(false);
   });
 });
+
+describe("#642 图片规格快照(imageOptions)", () => {
+  const base = { prompt: "hero", model: "seedream", kind: "image" as const, count: 1, entityIds: [] };
+
+  it("图片作业落一份规格快照;没选画幅就落默认 1:1(与今日方图一致)", () => {
+    expect(normalizeFactoryMaterial(base).imageOptions).toEqual({ aspectRatio: "1:1" });
+    expect(normalizeFactoryMaterial({ ...base, aspectRatio: "9:16" }).imageOptions)
+      .toEqual({ aspectRatio: "9:16" });
+  });
+
+  it("视频作业不落图片快照(两条规格路互不串台)", () => {
+    const v = normalizeFactoryMaterial({ prompt: "clip", model: "seedance-2-fast", kind: "video", count: 1, aspectRatio: "16:9" });
+    expect(v.imageOptions).toBeNull();
+    expect((v.videoOptions as { aspectRatio: string }).aspectRatio).toBe("16:9");
+  });
+
+  it("画幅是材料的一部分:同键换画幅 = 材料冲突,不是静默复用", () => {
+    const square = normalizeFactoryMaterial(base);
+    const portrait = normalizeFactoryMaterial({ ...base, aspectRatio: "9:16" });
+    expect(factoryMaterialMatches({ id: "job-1", ...square }, square)).toBe(true);
+    expect(factoryMaterialMatches({ id: "job-1", ...square }, portrait)).toBe(false);
+  });
+
+  it("迁移前的历史行(该列为 NULL)与显式的默认画幅是同一份材料 —— 幂等键行为零回归", () => {
+    const square = normalizeFactoryMaterial(base);
+    // 老行库里没有这一列(null),甚至连字段都读不出来(undefined)。两种都必须照旧命中复用。
+    expect(factoryMaterialMatches({ id: "job-1", ...square, imageOptions: null }, square)).toBe(true);
+    const { imageOptions: _drop, ...legacyRow } = { id: "job-1", ...square };
+    expect(factoryMaterialMatches(legacyRow as StoredFactoryMaterial, square)).toBe(true);
+    // 但老行不等于「竖版」—— 它当年真的产出方图。
+    expect(factoryMaterialMatches({ id: "job-1", ...square, imageOptions: null },
+      normalizeFactoryMaterial({ ...base, aspectRatio: "9:16" }))).toBe(false);
+  });
+});

@@ -1,4 +1,5 @@
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@fikirtive/core";
+import { imageOutputSize } from "@fikirtive/core";
 import { chargedError, extFromUrl } from "./index.js";
 
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
@@ -18,13 +19,20 @@ export class BytePlusProvider implements GenerationProvider {
     const model = IMAGE_MODEL_MAP[req.model];
     if (!model) throw new Error("generation provider has no image model mapping"); // pre-spend
     const conditioned = req.inputImageUrls.length > 0;
+    // #642: the merchant's shape, as the exact pixels the engine will produce.
+    // The WxH form is bound by the engine to total pixels ∈ [3,686,400, 16,777,216] and
+    // ratio ∈ [1/16, 16]; every entry in the shared GEN_IMAGE_SIZES table satisfies both
+    // (asserted per-entry in packages/core/src/gen.test.ts). An absent/unknown shape falls
+    // back to the default square — never send a value the engine would reject. Price is
+    // unaffected: this engine bills per image, not per size.
+    const { width, height } = imageOutputSize(req.aspectRatio);
     // one request per image (count <= MAX_GEN_COUNT); each is all-or-nothing.
     const results = await Promise.allSettled(
       Array.from({ length: req.count }, async () => {
         const res = await fetch(`${ARK_BASE}/images/generations`, {
           method: "POST", headers: this.headers(),
           body: JSON.stringify({
-            model, prompt: req.prompt, size: "2048x2048", response_format: "url",
+            model, prompt: req.prompt, size: `${width}x${height}`, response_format: "url",
             // F40: Ark Seedream defaults watermark=true — paying customers must not receive
             // watermarked images, so set it false explicitly.
             watermark: false,

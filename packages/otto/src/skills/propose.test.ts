@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GEN_PRICE_USD_PER_IMAGE, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
-import { buildProposeCard, EXECUTED_SPEC } from "./propose.helpers.js";
+import { buildProposeCard, buildSpecChips, EXECUTED_SPEC } from "./propose.helpers.js";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
 import type { OttoContext } from "../context.js";
@@ -701,22 +701,26 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     return (built as { ok: true; req: Record<string, unknown> }).req;
   }
 
-  it("图片：画幅根本进不了执行层，所以卡面一个比例都不许承诺", () => {
+  it("图片：这条路还没把商家的画幅放上卡，所以卡面一个比例都不许承诺", () => {
+    // #642(T1)之后执行层**已经**认画幅了(EXECUTED_SPEC.image.aspectHonoured=true),
+    // 但 Otto 这条路把 desiredAspect 丢在选型那一步(T2 才接)。卡面的判据永远是
+    // 「这张卡真会交付什么」,不是「执行层理论上能不能」。
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
       makeCtx(),
       [],
     );
-    // 执行层拿到的请求体里没有画幅 —— 这就是「做的」。
+    // 卡上没有画幅 ⇒ 执行层拿到的请求体里也没有 —— 这就是「做的」。
     const req = genRequestFor(cardPayload);
     expect(req).not.toHaveProperty("aspectRatio");
-    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(false);
-    // 于是「说的」也不许出现比例。
+    expect(cardPayload.params.aspectRatio).toBeUndefined();
+    // 于是「说的」也不许出现比例,报的是执行层此时真会产出的默认方图尺寸。
     expect(cardPayload.specChips.some((chip) => /\d+\s*:\s*\d+/.test(chip))).toBe(false);
     expect(cardPayload.specChips).toContain("2048 × 2048");
   });
 
-  it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来", () => {
+  it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来(执行层翻真也不许把这句话弄丢)", () => {
+    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(true);
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
       makeCtx(),
@@ -726,6 +730,18 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     expect(cardPayload.downgradeNote).toBe(
       "You asked for 9:16 — this will be a square 2048 × 2048 image.",
     );
+  });
+
+  it("图片：一旦卡上真的带了商家要的画幅，卡面就照实承诺它，也不再报降级", () => {
+    // T2 把 desiredAspect 接上之后走的就是这条路。这里直接喂一张带画幅的卡,
+    // 证明文案层已经准备好说真话 —— 尺寸随画幅走,不再是写死的方图。
+    expect(buildSpecChips("image", { aspectRatio: "9:16", count: 1 }, false))
+      .toEqual(["1600 × 2848", "9:16", "1 image"]);
+    expect(buildSpecChips("image", { aspectRatio: "21:9", count: 2 }, false))
+      .toEqual(["3136 × 1344", "21:9", "2 images"]);
+    // 卡面报的尺寸与适配器真发出去的 size 是同一份表。
+    expect(buildSpecChips("image", { aspectRatio: "4:3", count: 1 }, false)[0])
+      .toBe(`${EXECUTED_SPEC.image.outputSizes["4:3"].width} × ${EXECUTED_SPEC.image.outputSizes["4:3"].height}`);
   });
 
   it("图片：没提画幅就不是降级 —— 不许无中生有地报警", () => {
