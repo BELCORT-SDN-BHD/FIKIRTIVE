@@ -27,7 +27,8 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     generationId?: string;
     skin?: string;
     lineage?: CanvasNodeLineage | null;
-    sourceNodeId?: string | null;
+    /** The card this one's paid job was made FROM — the one fact "Made from" reads (#603 T4). */
+    madeFromNodeId?: string | null;
     onAnimate?: () => void;
     onEvolve?: (id: string, prompt: string) => void;
     onVariant?: (id: string) => void;

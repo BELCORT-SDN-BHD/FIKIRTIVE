@@ -16,7 +16,13 @@ export type CanvasNodeDTO = {
   genJobId: string | null;
   /** What this card SAYS — derived by `canvasCardFace`, never the stored row word (#602 T3). */
   status: CanvasCardFace;
-  sourceNodeId: string | null;
+  /** Batch identity as the server settled it — never re-derived from coordinates (#603 T4). */
+  batchIndex: number | null;
+  batchSize: number | null;
+  /** Which card of the batch this one was arranged around. Layout only, never parentage. */
+  layoutAnchorNodeId: string | null;
+  /** The card this one's paid job was actually made FROM — the only thing that draws a line. */
+  madeFromNodeId: string | null;
   threadId: string | null; url?: string | null; mediaWidth?: number | null; mediaHeight?: number | null;
   origin?: "otto" | null;
   /** When it was made, with what settings, at what cost (#547 B4). Null for text cards. */
@@ -27,13 +33,14 @@ export type CreateNodeInput = {
   x: number; y: number; w: number; h: number;
   text?: string; prompt?: string; generationId?: string; genJobId?: string;
   /** A stored ROW word, not a face — validated against the same set the column's check enforces. */
-  status?: string; sourceNodeId?: string; threadId?: string;
+  status?: string; threadId?: string;
 };
 export type CreatedCanvasNode = { id: string; x: number; y: number; w: number; h: number };
 type CanvasNodeResolveStatus = "done" | "failed" | "cancelled" | "timeout" | "missing";
 
 const SELECT = { id: true, type: true, x: true, y: true, w: true, h: true, text: true,
-  prompt: true, generationId: true, genJobId: true, status: true, sourceNodeId: true,
+  prompt: true, generationId: true, genJobId: true, status: true,
+  batchIndex: true, batchSize: true, layoutAnchorNodeId: true, madeFromNodeId: true,
   threadId: true } as const;
 const RESOLVE_STATUSES = new Set<CanvasNodeResolveStatus>(["done", "failed", "cancelled", "timeout", "missing"]);
 
@@ -137,11 +144,6 @@ export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedC
     const g = await prisma.generation.findFirst({ where: { id: input.generationId, ownerId: gate.ownerId, projectId: input.projectId, deletedAt: null }, select: { id: true } });
     generationId = g ? g.id : null;
   }
-  let sourceNodeId: string | null = null;
-  if (input.sourceNodeId) {
-    const n = await prisma.canvasNode.findFirst({ where: { id: input.sourceNodeId, ownerId: gate.ownerId, projectId: input.projectId }, select: { id: true } });
-    sourceNodeId = n ? n.id : null;
-  }
   let genJobId: string | null = null;
   if (input.genJobId) {
     const j = await prisma.genJob.findFirst({ where: { id: input.genJobId, ownerId: gate.ownerId, projectId: input.projectId }, select: { id: true } });
@@ -161,7 +163,6 @@ export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedC
       prompt: input.prompt ?? null,
       generationId,
       status: input.status,
-      sourceNodeId,
       threadId,
     });
     return "error" in placement
@@ -184,7 +185,7 @@ export async function createCanvasNode(input: CreateNodeInput): Promise<CreatedC
       x: input.x, y: input.y, w: input.w, h: input.h,
       text: input.text ?? null, prompt: input.prompt ?? null,
       generationId, genJobId,
-      status: input.status ?? "done", sourceNodeId,
+      status: input.status ?? "done",
       threadId,
     },
   });

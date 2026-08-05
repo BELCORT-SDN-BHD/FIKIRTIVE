@@ -23,11 +23,13 @@ type OnNode = (node: {
   status: string;
   url?: string;
   prompt: string;
-  sourceNodeId?: string;
+  /** The card this one was made FROM — this session's own action vouches for it (#603 T4). */
+  madeFromNodeId?: string;
   generationId?: string;
   genJobId?: string;
-  variantIndex?: number;
-  variantCount?: number;
+  /** Batch identity, in the order the paid press was asked for. Never a coordinate. */
+  batchIndex?: number;
+  batchSize?: number;
 }) => void;
 
 export type CanvasImageGenOptions = {
@@ -584,7 +586,6 @@ export function useCanvasGen(
       prompt,
       genJobId: started.id,
       status: "pending",
-      ...(options.sourceNodeId && { sourceNodeId: options.sourceNodeId }),
       ...(requestThreadId ? { threadId: requestThreadId } : {}),
     });
     if ("error" in created) {
@@ -604,9 +605,9 @@ export function useCanvasGen(
       pos: createdPos,
       prompt,
       genJobId: started.id,
-      variantIndex: 0,
-      variantCount: safeCount,
-      ...(options.sourceNodeId && { sourceNodeId: options.sourceNodeId }),
+      batchIndex: 0,
+      batchSize: safeCount,
+      ...(options.sourceNodeId && { madeFromNodeId: options.sourceNodeId }),
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
@@ -650,13 +651,10 @@ export function useCanvasGen(
         const sy = createdPos.y + slot.dy;
         const generationId = generationIds[i];
         if (!generationId) continue;
-        // TWO different facts used to share one name. The BATCH ANCHOR is the card this sibling
-        // is laid out around; the placement path stores it in CanvasNode.sourceNodeId and
-        // derives it itself, so it is passed here only to match what the server would compute.
-        // The SOURCE is what this card was made FROM — a plain batch has none, its cards came
-        // out of one press together. Sending the anchor on as a source drew every batch as a
-        // family tree and told the merchant "Made from" about a card that made nothing.
-        const batchAnchorNodeId = options.sourceNodeId ?? created.id;
+        // The browser says WHERE, never WHO (#603 T4). It used to send a "source node" along with
+        // each sibling — the batch's own anchor — into the one column that also meant "made
+        // from", and the server enforced it. Both facts are the paid job's to state now: the
+        // server reads this card's position and its batch's anchor off the job itself.
         const sib = await createCanvasNode({
           projectId,
           type: "image",
@@ -668,7 +666,6 @@ export function useCanvasGen(
           generationId,
           genJobId: started.id,
           status: "done",
-          sourceNodeId: batchAnchorNodeId,
           ...(requestThreadId ? { threadId: requestThreadId } : {}),
         });
         if ("error" in sib) continue;
@@ -686,9 +683,9 @@ export function useCanvasGen(
           prompt,
           generationId,
           genJobId: started.id,
-          variantIndex: i,
-          variantCount: generationIds.length,
-          ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
+          batchIndex: i,
+          batchSize: generationIds.length,
+          ...(options.sourceNodeId ? { madeFromNodeId: options.sourceNodeId } : {}),
         });
         onResolve(sib.id, urls[i], "done", generationId);
       }
@@ -769,7 +766,7 @@ export function useCanvasGen(
       return false;
     }
     void onBalanceRefresh?.();
-    const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(requestThreadId ? { threadId: requestThreadId } : {}) });
+    const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(requestThreadId ? { threadId: requestThreadId } : {}) });
     if ("error" in created) { fail("Your video is generating — the card didn't appear yet. Refresh Canvas to recover it without paying again."); return false; }
     clearCanvasActionReceipt(receipt);
     const createdPos = persistedNodePos(created, pos);
@@ -780,10 +777,10 @@ export function useCanvasGen(
       // Queued, not "making this now" — see the image path above (#602 T3).
       status: "queued",
       prompt,
-      sourceNodeId,
+      madeFromNodeId: sourceNodeId,
       genJobId: started.id,
-      variantIndex: 0,
-      variantCount: 1,
+      batchIndex: 0,
+      batchSize: 1,
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
@@ -885,8 +882,8 @@ export function useCanvasGen(
       status: "queued",
       prompt,
       genJobId: started.id,
-      variantIndex: 0,
-      variantCount: 1,
+      batchIndex: 0,
+      batchSize: 1,
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();

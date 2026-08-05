@@ -37,7 +37,7 @@ type NewNode = {
   pos: { x: number; y: number; w: number; h: number };
   status: string;
   prompt: string;
-  sourceNodeId?: string;
+  madeFromNodeId?: string;
 };
 
 const mocks = vi.hoisted(() => ({
@@ -151,13 +151,13 @@ const LINEAGE: CanvasNodeLineage = {
   costCredits: 8,
   batchSize: 1,
   batchPosition: 1,
-  madeFromSource: false,
 };
 
 const pendingRow = (id: string) => ({
   id, type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
   prompt: "a cup steaming", generationId: null, genJobId: "job-1", status: "pending",
-  sourceNodeId: null, threadId: null, url: null, mediaWidth: null, mediaHeight: null,
+  batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
+  threadId: null, url: null, mediaWidth: null, mediaHeight: null,
   lineage: null,
 });
 
@@ -340,18 +340,16 @@ describe("two board reads racing each other (review P2-1 · r3)", () => {
 });
 
 /**
- * The lines between cards, when the server's record is missing rather than absent.
+ * The lines between cards (review P2-2 · r3 · #603 T4).
  *
- * CanvasNode.sourceNodeId is also a batch's LAYOUT ANCHOR, so it can never be believed on its
- * own. A card the browser placed a moment ago has no record field at all and this session's own
- * action vouches for it; a server row that came back with a null record is the server saying
- * nothing, and one failed lineage read must not turn an ordinary batch into a family tree.
+ * Standing beside something and coming out of it are two facts in two columns now, so a batch
+ * sibling has nothing a line could be drawn from — with or without a traceability record.
  */
 describe("lines between cards when a record is missing (review P2-2 · r3)", () => {
-  it("draws no parentage for a batch whose records the server did not return", async () => {
+  it("draws no parentage for a batch, whatever the record lookup returned", async () => {
     mocks.boardRead.mockResolvedValue([
       settledRow("anchor"),
-      { ...settledRow("sib", 1), sourceNodeId: "anchor", lineage: null },
+      { ...settledRow("sib", 1), layoutAnchorNodeId: "anchor", lineage: null },
     ]);
     await renderBoard();
 
@@ -369,7 +367,7 @@ describe("lines between cards when a record is missing (review P2-2 · r3)", () 
         pos: { x: 400, y: 0, w: 320, h: 320 },
         status: "pending",
         prompt: "make it move",
-        sourceNodeId: "src",
+        madeFromNodeId: "src",
       });
     });
 
@@ -396,5 +394,50 @@ describe("a board reload under the merchant's hands (review P2-1)", () => {
     expect(mocks.flow.current!.nodes.filter((n) => n.selected).map((n) => n.id)).toEqual(["n1", "n2"]);
     // And the selection is still usable — the batch bar counts the same two cards.
     expect(container!.textContent).toContain("2 selected");
+  });
+});
+
+/**
+ * 同批组框(#603 T4 · spec #599 D5 验收④)。
+ *
+ * 一次生成出来的几张,画布上应当读作「同一批的兄弟」——一个框,不是一条家谱。框的名字念的是
+ * 商家**买了几张**(落盘的 batchSize),不是现在还剩几张;删掉两张,框照旧写「Batch of 4」。
+ */
+describe("the frame around one paid press", () => {
+  const batchRow = (id: string, index: number, size: number) => ({
+    ...settledRow(id, index),
+    genJobId: "job-batch",
+    batchIndex: index,
+    batchSize: size,
+    layoutAnchorNodeId: index === 0 ? null : "b0",
+  });
+
+  it("draws one frame around the cards of a batch, named for what was bought", async () => {
+    mocks.boardRead.mockResolvedValue([
+      batchRow("b0", 0, 4), batchRow("b1", 1, 4), batchRow("b2", 2, 4), batchRow("b3", 3, 4),
+    ]);
+    await renderBoard();
+
+    const frames = mocks.flow.current!.nodes.filter((node) => node.type === "batchFrame");
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.data.label).toBe("Batch of 4");
+    // Same batch is a frame; made from is a line. This board has no parentage at all.
+    expect(mocks.flow.current!.edges).toEqual([]);
+  });
+
+  it("still says 'Batch of 4' when only two of the four are left", async () => {
+    mocks.boardRead.mockResolvedValue([batchRow("b0", 0, 4), batchRow("b2", 2, 4)]);
+    await renderBoard();
+
+    const frames = mocks.flow.current!.nodes.filter((node) => node.type === "batchFrame");
+    expect(frames).toHaveLength(1);
+    expect(frames[0]!.data.label).toBe("Batch of 4");
+  });
+
+  it("draws no frame around a card that was the only thing its press made", async () => {
+    mocks.boardRead.mockResolvedValue([{ ...settledRow("solo"), batchIndex: 0, batchSize: 1 }]);
+    await renderBoard();
+
+    expect(mocks.flow.current!.nodes.filter((node) => node.type === "batchFrame")).toEqual([]);
   });
 });

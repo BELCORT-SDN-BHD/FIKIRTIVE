@@ -84,7 +84,8 @@ describe("I1 $0 sub-journey: capture an idea → Suggest 3 ideas → turn one in
           store.push({
             id, type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
             text: input.text ?? null, prompt: input.prompt ?? null, generationId: input.generationId ?? null,
-            status: "done", sourceNodeId: input.sourceNodeId ?? null, url: null,
+            status: "done", genJobId: null, batchIndex: null, batchSize: null,
+            madeFromNodeId: null, url: null,
           });
           return { id };
         },

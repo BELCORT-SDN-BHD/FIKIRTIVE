@@ -39,7 +39,8 @@ import {
   nextCanvasSpawnOrigin,
   type CanvasRect,
 } from "@/lib/canvas-batch-layout";
-import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { buildCanvasLineageEdges } from "@/lib/canvas-lineage";
+import { canvasBatchFrameLabel, canvasBatchGroups } from "@/lib/canvas-batch-identity";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
@@ -50,7 +51,16 @@ import {
   type CanvasMediaDimensions,
 } from "@/lib/canvas-node-size";
 
-type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
+type CanvasFlowNode = Node & {
+  threadId: string | null;
+  /** Which paid press produced this card — the key every same-batch frame groups on. */
+  genJobId?: string | null;
+  /** The card this one's paid job was made FROM — the only thing that draws a line (#603 T4). */
+  madeFromNodeId?: string | null;
+  /** Batch identity as the server settled it. Position and size, never a coordinate or a count. */
+  batchIndex?: number | null;
+  batchSize?: number | null;
+};
 const CANVAS_CARD_SIDE = 320;
 /** What a card calls itself when it takes keyboard focus (#604 r2 P3). */
 function canvasNodeAriaLabel(n: { type?: string; data?: unknown }): string {
@@ -92,7 +102,53 @@ type FlowCanvasProps = {
 };
 
 // Must be stable (defined outside component) per ReactFlow requirements
-const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
+/**
+ * The frame drawn around the cards of ONE paid press (#603 T4 · spec #599 D5).
+ *
+ * A merchant who writes one sentence and gets four pictures got four pictures — not a mother and
+ * three daughters. The board used to say the second, third and fourth "came from" the first and
+ * drew the lines to prove it. Same batch is a frame; made from is a line; they are different
+ * things and now they look different. Purely decoration: never picked, never dragged, never
+ * deleted, and always behind the cards it holds.
+ */
+export function BatchFrameNode({ data }: { data: { label: string } }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: "100%",
+        height: "100%",
+        borderRadius: 18,
+        border: "1px dashed var(--muted-foreground, #9ca3af)",
+        opacity: 0.55,
+        pointerEvents: "none",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          // Top-RIGHT, not top-left: every card wears its own type pill above its left corner,
+          // and a frame label there lands on top of the first card's pill.
+          top: -10,
+          right: 12,
+          zIndex: 1,
+          padding: "0 8px",
+          borderRadius: 999,
+          background: "var(--card, #fff)",
+          font: "500 10px/16px ui-monospace, monospace",
+          color: "var(--muted-foreground, #6b7280)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {data.label}
+      </span>
+    </div>
+  );
+}
+
+const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode, batchFrame: BatchFrameNode };
+/** How far the same-batch frame stands off the cards it holds. */
+const BATCH_FRAME_PAD = 14;
 const CANVAS_REF_MAX_BYTES = 10 * 1024 * 1024;
 
 export default function FlowCanvas({
@@ -558,7 +614,17 @@ export default function FlowCanvas({
   }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
 
   const onNewNode = useCallback(
-    (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string; sourceNodeId?: string }) => {
+    (n: {
+      id: string;
+      type: "image" | "video";
+      pos: { x: number; y: number; w: number; h: number };
+      status: string;
+      prompt: string;
+      genJobId?: string;
+      madeFromNodeId?: string;
+      batchIndex?: number;
+      batchSize?: number;
+    }) => {
       nodeDataRef.current[n.id] = { pos: { x: n.pos.x, y: n.pos.y } };
       setNodes((ns) => [
         ...ns,
@@ -573,7 +639,9 @@ export default function FlowCanvas({
               skin,
               // The card it came from, so the lineage line can be drawn straight away
               // instead of only after the next board reload (#547 B4).
-              sourceNodeId: n.sourceNodeId ?? null,
+              madeFromNodeId: n.madeFromNodeId ?? null,
+              batchIndex: n.batchIndex ?? null,
+              batchSize: n.batchSize ?? null,
               onDelete: () => setPendingDeleteId(n.id),
               onRefresh: requestReload,
               onMediaSize: getOnMediaSize(n.id),
@@ -583,7 +651,10 @@ export default function FlowCanvas({
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
-          sourceNodeId: n.sourceNodeId ?? null,
+          genJobId: n.genJobId ?? null,
+          madeFromNodeId: n.madeFromNodeId ?? null,
+          batchIndex: n.batchIndex ?? null,
+          batchSize: n.batchSize ?? null,
         },
       ]);
       scheduleFitView();
@@ -947,7 +1018,9 @@ export default function FlowCanvas({
           skin,
           // Traceability the card carries with it: when, with what, at what cost, from what.
           lineage: r.lineage ?? null,
-          sourceNodeId: r.sourceNodeId ?? null,
+          madeFromNodeId: r.madeFromNodeId ?? null,
+          batchIndex: r.batchIndex ?? null,
+          batchSize: r.batchSize ?? null,
           onDelete: () => setPendingDeleteId(r.id),
           onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
@@ -958,7 +1031,10 @@ export default function FlowCanvas({
         }),
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
-        sourceNodeId: r.sourceNodeId ?? null,
+        genJobId: r.genJobId ?? null,
+        madeFromNodeId: r.madeFromNodeId ?? null,
+        batchIndex: r.batchIndex ?? null,
+        batchSize: r.batchSize ?? null,
       } as CanvasFlowNode;
     });
     // Merge, not replace: keep any node that's still generating locally (server may not have
@@ -1116,16 +1192,55 @@ export default function FlowCanvas({
   }));
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
   // evolved from, are joined by a line instead of sitting next to each other unexplained.
-  // A batch's cards are NOT joined: they share a layout anchor, not a parent (review P2-2).
-  // `lineage` is passed through EXACTLY as it is: a card the board read carries an explicit null
-  // when the server had no record (say nothing), while a card this browser just placed has no
-  // lineage field at all (this session's own action vouches for it). Flattening the two — which
-  // `?? null` did — is the difference between drawing nothing and drawing a whole false batch.
+  // ONE recorded fact decides it (#603 T4): the card this one's paid job was made FROM. A batch's
+  // cards are never joined — they came out of one press together, and where they SIT is a
+  // separate fact that no longer travels in the same field.
+  // B4 twin: the SAME-BATCH frame. One press, one frame, read from what the press recorded —
+  // never from how many cards are still on the board, and never from where they sit. Deleting two
+  // of a batch of four leaves a frame that still says "Batch of 4", because that is what was
+  // bought (#603 T4).
+  const batchFrames: CanvasFlowNode[] = canvasBatchGroups(
+    visibleNodes.map((n) => ({
+      id: n.id,
+      type: n.type ?? null,
+      genJobId: n.genJobId ?? (n.data as { genJobId?: string | null })?.genJobId ?? null,
+      batchIndex: n.batchIndex ?? (n.data as { batchIndex?: number | null })?.batchIndex ?? null,
+      batchSize: n.batchSize ?? (n.data as { batchSize?: number | null })?.batchSize ?? null,
+    })),
+  ).flatMap((group) => {
+    const members = group.memberIds
+      .map((id) => visibleNodes.find((n) => n.id === id))
+      .filter((n): n is CanvasFlowNode => !!n);
+    if (members.length < 2) return [];
+    const box = members.map((n) => ({
+      x: n.position.x,
+      y: n.position.y,
+      w: Number(n.style?.width ?? CANVAS_CARD_SIDE),
+      h: Number(n.style?.height ?? CANVAS_CARD_SIDE),
+    }));
+    const minX = Math.min(...box.map((b) => b.x));
+    const minY = Math.min(...box.map((b) => b.y));
+    const maxX = Math.max(...box.map((b) => b.x + b.w));
+    const maxY = Math.max(...box.map((b) => b.y + b.h));
+    return [{
+      id: `batch-frame:${group.genJobId}`,
+      type: "batchFrame",
+      position: { x: minX - BATCH_FRAME_PAD, y: minY - BATCH_FRAME_PAD },
+      data: { label: canvasBatchFrameLabel(group.batchSize) },
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      deletable: false,
+      zIndex: -1,
+      style: { width: maxX - minX + BATCH_FRAME_PAD * 2, height: maxY - minY + BATCH_FRAME_PAD * 2 },
+      threadId: null,
+    } as CanvasFlowNode];
+  });
+
   const lineageEdges: Edge[] = buildCanvasLineageEdges(
     visibleNodes.map((n) => ({
       id: n.id,
-      sourceNodeId: (n.sourceNodeId ?? (n.data as { sourceNodeId?: string | null })?.sourceNodeId) ?? null,
-      lineage: (n.data as { lineage?: CanvasNodeLineage | null })?.lineage,
+      madeFromNodeId: (n.madeFromNodeId ?? (n.data as { madeFromNodeId?: string | null })?.madeFromNodeId) ?? null,
     })),
   ).map((edge) => ({
     ...edge,
@@ -1198,7 +1313,7 @@ export default function FlowCanvas({
           <ReactFlow
             style={{ width: "100%", height: "100%", minHeight: 0 }}
             onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
-            nodes={visibleNodes}
+            nodes={[...batchFrames, ...visibleNodes]}
             edges={lineageEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}

@@ -16,7 +16,6 @@ export type CanvasJobPlacementInput = {
   prompt?: string | null;
   generationId?: string | null;
   status?: string;
-  sourceNodeId?: string | null;
   threadId?: string | null;
 };
 
@@ -32,7 +31,10 @@ export type CanvasJobPlacementNode = {
   generationId: string | null;
   genJobId: string | null;
   status: string;
-  sourceNodeId: string | null;
+  batchIndex: number | null;
+  batchSize: number | null;
+  layoutAnchorNodeId: string | null;
+  madeFromNodeId: string | null;
   threadId: string | null;
 };
 
@@ -53,7 +55,10 @@ const NODE_SELECT = {
   generationId: true,
   genJobId: true,
   status: true,
-  sourceNodeId: true,
+  batchIndex: true,
+  batchSize: true,
+  layoutAnchorNodeId: true,
+  madeFromNodeId: true,
   threadId: true,
 } as const;
 
@@ -157,81 +162,69 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
       threadId = thread?.id ?? null;
     }
 
-    let sourceNodeId: string | null = null;
+    // ── BATCH IDENTITY AND PARENTAGE, BOTH READ OFF THE PAID JOB (#603 T4 · spec #599 D5) ──
+    //
+    // Not one of these four facts is taken from the caller any more. They used to arrive as a
+    // single `sourceNodeId` the browser chose, and this function then ENFORCED the wrong one of
+    // its meanings: for any output past the first it demanded that the "source" be the batch's
+    // own primary card, and refused the write otherwise ("Source node does not match that job.").
+    // That rule made a plain four-image press look like a family of one parent and three
+    // children — to the canvas, to the lineage tree, to the compare gate, and to Otto. The four
+    // outputs of one press came out of that press together; none of them came out of another
+    // (root map 根 3·A).
+    //
+    // WHERE this card sits in the batch and HOW BIG the batch is are the job's own record, in the
+    // order the job recorded it. Neither is ever recounted from what is on the board.
+    const batchSize = job.generationIds.length || null;
+    const batchIndex = generationIndex >= 0 ? generationIndex : null;
+
+    // MADE FROM: only a job that was conditioned on an earlier output has a parent, and it is the
+    // JOB's parent, so every card of the batch shares it. Resolved here from the job's own row —
+    // if that output has no card yet (the browser can see a generation finish before its card is
+    // repaired), this stays null and the settlement fills it in when the card exists. A missing
+    // line for a moment is honest; a line to the wrong card is not.
+    let madeFromNodeId: string | null = null;
     if (job.sourceGenerationId) {
-      const candidateId = input.sourceNodeId ?? existing?.sourceNodeId ?? null;
-      if (candidateId) {
-        const candidate = await tx.canvasNode.findFirst({
-          where: { id: candidateId, ownerId: input.ownerId, projectId: input.projectId },
-          select: { id: true, generationId: true, genJobId: true },
-        });
-        let matchesSource = candidate?.generationId === job.sourceGenerationId;
-        // The client can observe a completed source before its CanvasNode repair commits. In
-        // that narrow race, the source node's own owner/project job is still durable proof.
-        if (!matchesSource && candidate?.genJobId) {
-          const sourceJob = await tx.genJob.findFirst({
-            where: { id: candidate.genJobId, ownerId: input.ownerId, projectId: input.projectId },
-            select: { generationIds: true },
-          });
-          matchesSource = sourceJob?.generationIds.includes(job.sourceGenerationId) ?? false;
-        }
-        if (!candidate || !matchesSource) {
-          return { error: "Source node does not match that job." };
-        }
-        sourceNodeId = candidate.id;
-      } else {
-        const source = await tx.canvasNode.findFirst({
-          where: {
-            ownerId: input.ownerId,
-            projectId: input.projectId,
-            generationId: job.sourceGenerationId,
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          select: { id: true },
-        });
-        sourceNodeId = source?.id ?? null;
-      }
-    } else if (generationIndex > 0) {
-      const candidateId = input.sourceNodeId ?? existing?.sourceNodeId ?? null;
-      if (candidateId) {
-        const candidate = await tx.canvasNode.findFirst({
-          where: { id: candidateId, ownerId: input.ownerId, projectId: input.projectId },
-          select: { id: true, generationId: true, genJobId: true },
-        });
-        const primaryGenerationId = job.generationIds[0] ?? null;
-        if (
-          !candidate
-          || candidate.genJobId !== input.genJobId
-          || (candidate.generationId !== null && candidate.generationId !== primaryGenerationId)
-        ) {
-          return { error: "Source node does not match that job." };
-        }
-        sourceNodeId = candidate.id;
-      } else {
-        const primary = await tx.canvasNode.findFirst({
-          where: {
-            ownerId: input.ownerId,
-            projectId: input.projectId,
-            genJobId: input.genJobId,
-            OR: [
-              { generationId: job.generationIds[0] ?? null },
-              { generationId: null },
-            ],
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          select: { id: true },
-        });
-        sourceNodeId = primary?.id ?? null;
-      }
-    } else if (input.sourceNodeId ?? existing?.sourceNodeId) {
-      return { error: "Source node does not match that job." };
+      const source = await tx.canvasNode.findFirst({
+        where: {
+          ownerId: input.ownerId,
+          projectId: input.projectId,
+          generationId: job.sourceGenerationId,
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      });
+      madeFromNodeId = source?.id ?? null;
+    }
+
+    // LAYOUT ANCHOR: which card of THIS batch this one was placed around. Pure arrangement, and
+    // only a sibling has one — the anchor is what everything else is measured from.
+    let layoutAnchorNodeId: string | null = null;
+    if (generationIndex > 0) {
+      const anchor = await tx.canvasNode.findFirst({
+        where: {
+          ownerId: input.ownerId,
+          projectId: input.projectId,
+          genJobId: input.genJobId,
+          OR: [
+            { generationId: job.generationIds[0] ?? null },
+            { generationId: null },
+          ],
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true },
+      });
+      layoutAnchorNodeId = anchor?.id ?? null;
     }
 
     if (existing) {
       const data: {
         generationId?: string;
         status?: string;
-        sourceNodeId?: string | null;
+        batchIndex?: number | null;
+        batchSize?: number | null;
+        layoutAnchorNodeId?: string | null;
+        madeFromNodeId?: string | null;
         threadId?: string | null;
       } = {};
       if (generationIndex === 0 && existing.generationId !== generationId && generationId) {
@@ -240,7 +233,12 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
       if (generationId && input.status === "done" && existing.status !== "done") {
         data.status = "done";
       }
-      if (existing.sourceNodeId !== sourceNodeId) data.sourceNodeId = sourceNodeId;
+      // A card placed while the job was in flight has no position yet — it gets one the moment
+      // the job names an output for it, and never from anywhere else.
+      if (batchIndex !== null && existing.batchIndex !== batchIndex) data.batchIndex = batchIndex;
+      if (batchSize !== null && existing.batchSize !== batchSize) data.batchSize = batchSize;
+      if (existing.layoutAnchorNodeId !== layoutAnchorNodeId) data.layoutAnchorNodeId = layoutAnchorNodeId;
+      if (existing.madeFromNodeId !== madeFromNodeId) data.madeFromNodeId = madeFromNodeId;
       if (existing.threadId !== threadId) data.threadId = threadId;
       if (Object.keys(data).length) {
         // THE TOMBSTONE RULE, AT THE WRITE (#602 r2, judge P2). `existing` was read a few dozen
@@ -279,7 +277,10 @@ export async function placeCanvasJobNode(input: CanvasJobPlacementInput): Promis
         generationId,
         genJobId: input.genJobId,
         status: input.status ?? "done",
-        sourceNodeId,
+        batchIndex,
+        batchSize,
+        layoutAnchorNodeId,
+        madeFromNodeId,
         threadId,
       },
       select: NODE_SELECT,

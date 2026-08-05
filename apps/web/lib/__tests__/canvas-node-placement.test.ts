@@ -69,7 +69,10 @@ const saved = {
   generationId: null,
   genJobId: "job-1",
   status: "pending",
-  sourceNodeId: null,
+  batchIndex: null,
+  batchSize: null,
+  layoutAnchorNodeId: null,
+  madeFromNodeId: null,
   threadId: "thread-1",
 };
 
@@ -119,6 +122,11 @@ describe("placeCanvasJobNode", () => {
         genJobId: "job-1",
         generationId: null,
         threadId: "thread-1",
+        // An in-flight anchor carries no output yet, so it has no position in the batch — and
+        // "not known" is written as null rather than assumed to be the first (#603 T4).
+        batchIndex: null,
+        layoutAnchorNodeId: null,
+        madeFromNodeId: null,
       }),
     }));
   });
@@ -144,7 +152,8 @@ describe("placeCanvasJobNode", () => {
     // merchant deleted between the read and this write must not be resurrected.
     expect(mocks.nodeUpdateMany).toHaveBeenCalledWith({
       where: { id: "node-1", ownerId: "owner-1", projectId: "project-1", status: { not: "deleted" } },
-      data: { generationId: "gen-1", status: "done" },
+      // Binding the anchor to its first output is also what tells it where in the batch it sits.
+      data: { generationId: "gen-1", status: "done", batchIndex: 0, batchSize: 2 },
     });
     expect(mocks.nodeCreate).not.toHaveBeenCalled();
   });
@@ -154,13 +163,15 @@ describe("placeCanvasJobNode", () => {
       ...saved,
       id: "node-2",
       generationId: "gen-2",
-      sourceNodeId: "node-primary",
+      batchIndex: 1,
+      batchSize: 2,
+      layoutAnchorNodeId: "node-primary",
       status: "done",
     };
     mocks.jobFindFirst.mockResolvedValue({ id: "job-1", generationIds: ["gen-1", "gen-2"], sourceGenerationId: null, threadId: "thread-1" });
     mocks.nodeFindFirst
       .mockResolvedValueOnce(sibling)
-      .mockResolvedValueOnce({ id: "node-primary", generationId: "gen-1", genJobId: "job-1" });
+      .mockResolvedValueOnce({ id: "node-primary" });
 
     await expect(placeCanvasJobNode({ ...base, generationId: "gen-2", status: "done" }))
       .resolves.toEqual({ inserted: false, node: sibling });
@@ -187,24 +198,10 @@ describe("placeCanvasJobNode", () => {
     expect(mocks.nodeCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects a same-project source node that does not match the job source", async () => {
-    mocks.jobFindFirst.mockResolvedValue({
-      id: "job-1",
-      generationIds: [],
-      sourceGenerationId: "gen-source",
-      threadId: "thread-1",
-    });
-    mocks.nodeFindFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: "node-correct-source" });
-
-    await expect(placeCanvasJobNode({ ...base, sourceNodeId: "node-wrong-source" }))
-      .resolves.toEqual({ error: "Source node does not match that job." });
-
-    expect(mocks.nodeCreate).not.toHaveBeenCalled();
-  });
-
-  it("allows a base-job sibling to point to that job's primary node", async () => {
+  it("gives a plain batch's sibling a layout anchor and NO parentage (#603 T4)", async () => {
+    // Four images out of one press. The sibling is laid out around the batch's anchor — and that
+    // is all it is. This function used to DEMAND a "source" here and reject the write without
+    // one, which is how a press became a family tree the merchant never created.
     mocks.jobFindFirst.mockResolvedValue({
       id: "job-1",
       generationIds: ["gen-1", "gen-2"],
@@ -213,24 +210,60 @@ describe("placeCanvasJobNode", () => {
     });
     mocks.nodeFindFirst
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: "node-primary", generationId: "gen-1", genJobId: "job-1" });
+      .mockResolvedValueOnce({ id: "node-anchor" });
     mocks.nodeCreate.mockResolvedValue({
       ...saved,
       id: "node-sibling",
       generationId: "gen-2",
-      sourceNodeId: "node-primary",
+      batchIndex: 1,
+      batchSize: 2,
+      layoutAnchorNodeId: "node-anchor",
       status: "done",
     });
 
     await expect(placeCanvasJobNode({
       ...base,
       generationId: "gen-2",
-      sourceNodeId: "node-primary",
       status: "done",
-    })).resolves.toMatchObject({ inserted: true, node: { sourceNodeId: "node-primary" } });
+    })).resolves.toMatchObject({
+      inserted: true,
+      node: { layoutAnchorNodeId: "node-anchor", madeFromNodeId: null },
+    });
 
     expect(mocks.nodeCreate).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ sourceNodeId: "node-primary" }),
+      data: expect.objectContaining({
+        batchIndex: 1,
+        batchSize: 2,
+        layoutAnchorNodeId: "node-anchor",
+        madeFromNodeId: null,
+      }),
+    }));
+  });
+
+  it("gives every card of an EDITED batch the same recorded parent", async () => {
+    // The job WAS conditioned on an earlier output, so its parent is the job's, and the whole
+    // batch shares it. The browser is not asked and cannot say otherwise.
+    mocks.jobFindFirst.mockResolvedValue({
+      id: "job-1",
+      generationIds: ["gen-1", "gen-2"],
+      sourceGenerationId: "gen-source",
+      threadId: "thread-1",
+    });
+    mocks.nodeFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "node-source" })
+      .mockResolvedValueOnce({ id: "node-anchor" });
+    mocks.nodeCreate.mockResolvedValue({ ...saved, id: "node-sibling", generationId: "gen-2" });
+
+    await placeCanvasJobNode({ ...base, generationId: "gen-2", status: "done" });
+
+    expect(mocks.nodeCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        batchIndex: 1,
+        batchSize: 2,
+        layoutAnchorNodeId: "node-anchor",
+        madeFromNodeId: "node-source",
+      }),
     }));
   });
 
@@ -244,7 +277,9 @@ describe("placeCanvasJobNode", () => {
     expect(mocks.nodeCreate).not.toHaveBeenCalled();
   });
 
-  it("accepts the exact selected source when another valid card for that generation is older", async () => {
+  it("resolves the parent card itself, from the job's own record", async () => {
+    // The browser no longer names it. Two cards can carry the same output; the oldest one is the
+    // parent, chosen by the server so no caller can point the line somewhere else (#603 T4).
     mocks.jobFindFirst.mockResolvedValue({
       id: "job-1",
       generationIds: ["gen-out"],
@@ -252,68 +287,44 @@ describe("placeCanvasJobNode", () => {
       threadId: "thread-1",
     });
     mocks.nodeFindFirst
+      // The anchor lookup and its fallback both come up empty; the third read is the parent.
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "node-selected-source",
-        generationId: "gen-source",
-        genJobId: "source-job",
-      });
-    mocks.nodeCreate.mockResolvedValue({
-      ...saved,
-      generationId: "gen-out",
-      sourceNodeId: "node-selected-source",
-      status: "done",
-    });
+      .mockResolvedValueOnce({ id: "node-oldest-source" });
+    mocks.nodeCreate.mockResolvedValue({ ...saved, generationId: "gen-out", status: "done" });
 
-    await expect(placeCanvasJobNode({
-      ...base,
-      generationId: "gen-out",
-      sourceNodeId: "node-selected-source",
-      status: "done",
-    })).resolves.toMatchObject({
-      inserted: true,
-      node: { sourceNodeId: "node-selected-source" },
-    });
+    await placeCanvasJobNode({ ...base, generationId: "gen-out", status: "done" });
 
     expect(mocks.nodeFindFirst).toHaveBeenNthCalledWith(3, {
-      where: { id: "node-selected-source", ownerId: "owner-1", projectId: "project-1" },
-      select: { id: true, generationId: true, genJobId: true },
+      where: { ownerId: "owner-1", projectId: "project-1", generationId: "gen-source" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true },
     });
+    expect(mocks.nodeCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ madeFromNodeId: "node-oldest-source", batchIndex: 0, batchSize: 1 }),
+    }));
   });
 
-  it("accepts a selected source whose node repair is racing its completed owner-scoped job", async () => {
-    mocks.jobFindFirst
-      .mockResolvedValueOnce({
-        id: "job-1",
-        generationIds: ["gen-out"],
-        sourceGenerationId: "gen-source",
-        threadId: "thread-1",
-      })
-      .mockResolvedValueOnce({ generationIds: ["gen-source"] });
-    mocks.nodeFindFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({
-        id: "node-racing-source",
-        generationId: null,
-        genJobId: "source-job",
-      });
-
-    await expect(placeCanvasJobNode({
-      ...base,
-      generationId: "gen-out",
-      sourceNodeId: "node-racing-source",
-      status: "done",
-    })).resolves.toMatchObject({ inserted: true });
-
-    expect(mocks.jobFindFirst).toHaveBeenNthCalledWith(2, {
-      where: { id: "source-job", ownerId: "owner-1", projectId: "project-1" },
-      select: { generationIds: true },
+  it("says nothing rather than guessing when the parent has no card yet", async () => {
+    // The browser can see a generation finish before its card is repaired. A missing line for a
+    // moment is honest; the settlement fills it in when the card exists.
+    mocks.jobFindFirst.mockResolvedValue({
+      id: "job-1",
+      generationIds: ["gen-out"],
+      sourceGenerationId: "gen-source",
+      threadId: "thread-1",
     });
+    mocks.nodeFindFirst.mockResolvedValue(null);
+    mocks.nodeCreate.mockResolvedValue({ ...saved, generationId: "gen-out", status: "done" });
+
+    await placeCanvasJobNode({ ...base, generationId: "gen-out", status: "done" });
+
+    expect(mocks.nodeCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ madeFromNodeId: null }),
+    }));
   });
 
-  it("resolves a pending primary and backfills canonical source and thread attribution", async () => {
+  it("resolves a pending primary and backfills its batch identity, parent and thread", async () => {
     const pending = { ...saved, threadId: null };
     mocks.jobFindFirst.mockResolvedValue({
       id: "job-1",
@@ -321,14 +332,18 @@ describe("placeCanvasJobNode", () => {
       sourceGenerationId: "gen-source",
       threadId: "thread-1",
     });
-    const resolved = { ...pending, generationId: "gen-out", sourceNodeId: "node-source", threadId: "thread-1", status: "done" };
+    const resolved = {
+      ...pending,
+      generationId: "gen-out",
+      batchIndex: 0,
+      batchSize: 1,
+      madeFromNodeId: "node-source",
+      threadId: "thread-1",
+      status: "done",
+    };
     mocks.nodeFindFirst
       .mockResolvedValueOnce(pending)
-      .mockResolvedValueOnce({
-        id: "node-source",
-        generationId: "gen-source",
-        genJobId: "source-job",
-      })
+      .mockResolvedValueOnce({ id: "node-source" })
       // …and the re-read after the guarded write.
       .mockResolvedValueOnce(resolved);
     mocks.nodeUpdateMany.mockResolvedValue({ count: 1 });
@@ -336,13 +351,12 @@ describe("placeCanvasJobNode", () => {
     await expect(placeCanvasJobNode({
       ...base,
       generationId: "gen-out",
-      sourceNodeId: "node-source",
       status: "done",
     })).resolves.toMatchObject({
       inserted: false,
       node: {
         generationId: "gen-out",
-        sourceNodeId: "node-source",
+        madeFromNodeId: "node-source",
         threadId: "thread-1",
         status: "done",
       },
@@ -353,7 +367,10 @@ describe("placeCanvasJobNode", () => {
       data: {
         generationId: "gen-out",
         status: "done",
-        sourceNodeId: "node-source",
+        // The anchor learns where it sits the moment the job names an output for it.
+        batchIndex: 0,
+        batchSize: 1,
+        madeFromNodeId: "node-source",
         threadId: "thread-1",
       },
     });
@@ -373,34 +390,36 @@ describe("placeCanvasJobNode", () => {
       .resolves.toEqual({ suppressed: true, scope: "generation" });
   });
 
-  it("does not let an existing placement bypass a mismatched source replay", async () => {
+  it("corrects a settled card whose recorded parent has drifted", async () => {
+    // A replay cannot point the line anywhere the job did not: the parent is re-resolved from
+    // the job's record and the row is brought back to it.
     mocks.jobFindFirst.mockResolvedValue({
       id: "job-1",
       generationIds: ["gen-out"],
       sourceGenerationId: "gen-source",
       threadId: "thread-1",
     });
-    mocks.nodeFindFirst
-      .mockResolvedValueOnce({
-        ...saved,
-        generationId: "gen-out",
-        sourceNodeId: "node-source",
-        status: "done",
-      })
-      .mockResolvedValueOnce({
-        id: "node-wrong-source",
-        generationId: "gen-other",
-        genJobId: "other-job",
-      });
-
-    await expect(placeCanvasJobNode({
-      ...base,
+    const settled = {
+      ...saved,
       generationId: "gen-out",
-      sourceNodeId: "node-wrong-source",
+      batchIndex: 0,
+      batchSize: 1,
+      madeFromNodeId: "node-stale",
       status: "done",
-    })).resolves.toEqual({ error: "Source node does not match that job." });
+    };
+    mocks.nodeFindFirst
+      .mockResolvedValueOnce(settled)
+      .mockResolvedValueOnce({ id: "node-source" })
+      .mockResolvedValueOnce({ ...settled, madeFromNodeId: "node-source" });
+    mocks.nodeUpdateMany.mockResolvedValue({ count: 1 });
 
-    expect(mocks.nodeUpdate).not.toHaveBeenCalled();
+    await expect(placeCanvasJobNode({ ...base, generationId: "gen-out", status: "done" }))
+      .resolves.toMatchObject({ inserted: false, node: { madeFromNodeId: "node-source" } });
+
+    expect(mocks.nodeUpdateMany).toHaveBeenCalledWith({
+      where: { id: "node-1", ownerId: "owner-1", projectId: "project-1", status: { not: "deleted" } },
+      data: { madeFromNodeId: "node-source" },
+    });
   });
 
   it("suppresses every later placement after an in-flight job anchor is deleted", async () => {

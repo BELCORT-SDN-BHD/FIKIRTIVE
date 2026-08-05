@@ -30,18 +30,16 @@ export type CanvasNodeLineage = {
   settings: CanvasNodeSettings;
   /** Displayed credits charged for the paid job behind this card; null when not known. */
   costCredits: number | null;
-  /** How many cards that one paid job produced (1 for a single image or a video). */
-  batchSize: number;
-  /** 1-based position of this card inside its batch; null when it can't be determined. */
-  batchPosition: number | null;
   /**
-   * Was this card's paid job actually conditioned on another card's output?
+   * How many cards that one paid job produced (1 for a single image or a video).
    *
-   * True only when the job recorded a source generation (image → video, "More like this", an
-   * edited prompt). A batch's cards all store the batch's first card in the same database
-   * column, but as a LAYOUT ANCHOR — they came out of the same press, not out of each other.
+   * Read straight off the card's own recorded `batchSize` (#603 T4) — what the merchant BOUGHT,
+   * not how many of them are still on the board. 1 also stands for "not known", which is how a
+   * card whose paid job no longer exists reads: it simply says nothing about a batch.
    */
-  madeFromSource: boolean;
+  batchSize: number;
+  /** 1-based position of this card inside its batch; null when it was never recorded. */
+  batchPosition: number | null;
 };
 
 /**
@@ -118,50 +116,34 @@ export type CanvasLineageEdge = { id: string; source: string; target: string };
 
 /** Everything needed to answer "was this card made from another one?". */
 export type CanvasNodeSourceFacts = {
-  /** CanvasNode.sourceNodeId — the card this one was made from, OR its batch's layout anchor. */
-  sourceNodeId?: string | null;
   /**
-   * The server's answer, and the DIFFERENCE between "not asked" and "asked, nothing there":
-   * absent (`undefined`) = a card this browser just placed, with no server row to read yet;
-   * `null` = the server answered and had no record — including when the lineage read failed.
+   * `CanvasNode.madeFromNodeId` — the card this one's PAID JOB was conditioned on, and nothing
+   * else. One fact, one column (#603 T4).
+   *
+   * It replaced `sourceNodeId`, which carried three meanings at once — a real derivation, a
+   * batch's layout anchor, and an invented sibling parentage the placement path used to enforce
+   * — so every reader had to guess which one it was looking at, and the guess needed a second
+   * server field (`lineage.madeFromSource`) to be worth anything. Null means no derivation, or
+   * a derivation nobody can prove; both draw nothing, which is the honest answer to each.
    */
-  lineage?: Pick<CanvasNodeLineage, "madeFromSource"> | null;
+  madeFromNodeId?: string | null;
 };
 
 /** A board card, as far as its parentage is concerned. */
 export type CanvasLineageNode = CanvasNodeSourceFacts & { id: string };
 
-/**
- * Was this card MADE FROM the card it points at — or does it just sit with it?
- *
- * `sourceNodeId` alone cannot answer that: the placement path stores a batch's first card there
- * as the anchor its siblings are laid out around, so four images from one press all pointed at
- * each other's parent. The paid job settles it — the server record says whether the job was
- * conditioned on another card's output at all.
- *
- * A card the browser placed moments ago has no server record yet — no `lineage` FIELD at all.
- * There, this session's own action is the proof: the browser sets `sourceNodeId` only for
- * "Make video" / "More like this" / an edited prompt, each of which sent that card's generation
- * to the paid call.
- *
- * A `lineage` of `null` is a different thing entirely: the server answered and had nothing —
- * no record, or a lineage read that came back empty. Absent proof is not proof, and this one
- * column is also every batch sibling's layout anchor, so being optimistic there turns a single
- * failed read into a whole batch drawn as a family tree. Say no (r3 review P2-2).
- */
+/** Was this card made FROM another card? One recorded fact answers it. */
 export function canvasNodeHasSource(node: CanvasNodeSourceFacts): boolean {
-  if (!node.sourceNodeId) return false;
-  if (node.lineage === undefined) return true;
-  return node.lineage === null ? false : node.lineage.madeFromSource;
+  return !!node.madeFromNodeId;
 }
 
 /**
  * One line per "this card came from that card" link, for every pair still on the board.
  *
  * A video made from an image, and an image evolved from an image, both record the card they
- * came from — but nothing drew it, so the trail was invisible (#547 B4). Self-links, links to
- * cards that are filtered out or deleted, and same-batch siblings are dropped rather than
- * rendered as a parentage the merchant never created.
+ * came from — but nothing drew it, so the trail was invisible (#547 B4). Self-links and links to
+ * cards that are filtered out or deleted are dropped. Same-batch siblings can no longer appear
+ * here at all: standing next to something now lives in its own column.
  */
 export function buildCanvasLineageEdges(
   nodes: ReadonlyArray<CanvasLineageNode>,
@@ -170,8 +152,7 @@ export function buildCanvasLineageEdges(
   const seen = new Set<string>();
   const edges: CanvasLineageEdge[] = [];
   for (const node of nodes) {
-    if (!canvasNodeHasSource(node)) continue;
-    const source = node.sourceNodeId;
+    const source = node.madeFromNodeId;
     if (!source || source === node.id || !present.has(source)) continue;
     const id = `lineage-${source}-${node.id}`;
     if (seen.has(id)) continue;
