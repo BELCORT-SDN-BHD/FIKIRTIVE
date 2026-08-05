@@ -343,6 +343,9 @@ describe("the same job with the keyboard only — #604 r3", () => {
     const walk = await tabUntil((el) => el.textContent?.trim() === SEND_TO_OTTO, 8);
     expect(walk.path).toEqual([
       "Show how this image was made",
+      // The card's lineage tree — added when the tree moved into the kernel (#605 T6). It is
+      // one of the card's own buttons, so it belongs in this walk.
+      "Show what this card came from",
       "Send the picked cards to Otto",
     ]);
     expect(document.activeElement).toBe(buttonsLabelled(SEND_TO_OTTO)[0]);

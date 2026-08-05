@@ -14,6 +14,8 @@ import {
   canvasBatchLetter,
   canvasBatchSize,
   canvasCardsComparable,
+  canvasComparePair,
+  canvasRecordedFacts,
   isCanvasBatchCard,
 } from "../canvas-batch-identity";
 
@@ -61,6 +63,47 @@ describe("how big the batch was", () => {
   });
 });
 
+/**
+ * 谁有资格说这四列(#605 r1 判官 P1-1)。
+ *
+ * 商家按下 Generate 的那一刻,浏览器手里只有「我请求了几张」;服务端还没落盘,那张卡到底是
+ * 一批里的第几张、从谁做出来的,都还没有答案。之前那张排队卡把请求参数当成事实写进本地节点,
+ * 树、徽章和对比闸照单全收——于是卡还在排队,板上已经写着「Batch of 2」和一条来源线。
+ * 落盘之后可能根本不是这样。所以四列只从「板读真的带回过这张卡」的行上读。
+ */
+describe("the four recorded columns", () => {
+  const claimed = {
+    genJobId: "job-1", batchIndex: 0, batchSize: 2, madeFromNodeId: "src",
+  };
+
+  it("says nothing at all for a card no board read has answered for", () => {
+    expect(canvasRecordedFacts(claimed)).toEqual({
+      genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
+    });
+    expect(canvasRecordedFacts({ ...claimed, serverKnown: false })).toEqual({
+      genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
+    });
+  });
+
+  it("hands the recorded columns over unchanged once the board read has", () => {
+    expect(canvasRecordedFacts({ ...claimed, serverKnown: true })).toEqual(claimed);
+  });
+
+  it("leaves a queued card wearing no letter, in no batch and with no source", () => {
+    const queued = canvasRecordedFacts(claimed);
+    expect(canvasBatchLetter(queued)).toBeNull();
+    expect(isCanvasBatchCard(queued)).toBe(false);
+    expect(canvasBatchGroups([
+      { id: "q0", type: "image", ...canvasRecordedFacts({ ...claimed, batchIndex: 0 }) },
+      { id: "q1", type: "image", ...canvasRecordedFacts({ ...claimed, batchIndex: 1 }) },
+    ])).toEqual([]);
+    expect(canvasCardsComparable(
+      { id: "q0", type: "image", ...canvasRecordedFacts({ ...claimed, batchIndex: 0 }) },
+      { id: "q1", type: "image", ...canvasRecordedFacts({ ...claimed, batchIndex: 1 }) },
+    )).toBe(false);
+  });
+});
+
 describe("what may be compared side by side", () => {
   it("offers the two cards of a real pair", () => {
     expect(canvasCardsComparable(batch("a", 0, 2), batch("b", 1, 2))).toBe(true);
@@ -82,11 +125,13 @@ describe("what may be compared side by side", () => {
     expect(canvasCardsComparable(batch("a", 0, 4), batch("c", 2, 4))).toBe(false);
   });
 
-  it("still offers a card and the card it was really made from", () => {
+  it("refuses a card and the card it was made from — that pair is not an A and a B", () => {
+    // 「同一次生成出来的两张」是唯一开门条件(#605 验收②)。母子并排是另一种语义,没有落盘的
+    // A/B 序号可依,也从未获批;闸不夹带它。
     const source = { id: "src", type: "image", genJobId: "job-0", batchIndex: 0, batchSize: 1, madeFromNodeId: null };
     const child = { id: "kid", type: "image", genJobId: "job-1", batchIndex: 0, batchSize: 1, madeFromNodeId: "src" };
-    expect(canvasCardsComparable(source, child)).toBe(true);
-    expect(canvasCardsComparable(child, source)).toBe(true);
+    expect(canvasCardsComparable(source, child)).toBe(false);
+    expect(canvasCardsComparable(child, source)).toBe(false);
   });
 
   it("never compares an image with a video, or a card with itself", () => {
@@ -96,6 +141,36 @@ describe("what may be compared side by side", () => {
 
   it("never compares cards from two different presses that each made two", () => {
     expect(canvasCardsComparable(batch("a", 0, 2), batch("z", 1, 2, "job-2"))).toBe(false);
+  });
+});
+
+/**
+ * 并排对比时两边各是谁(#605 T6)。
+ *
+ * 商家截图发给同事说「我选 A」,同事打开必须看到同一张。所以左右两边由落盘序号决定,
+ * 跟商家先点哪一张、卡片摆在哪里都无关。
+ */
+describe("the two sides of a side-by-side compare", () => {
+  it("puts the recorded A on the left however the merchant picked them", () => {
+    const forward = canvasComparePair(batch("a", 0, 2), batch("b", 1, 2))!;
+    const backward = canvasComparePair(batch("b", 1, 2), batch("a", 0, 2))!;
+
+    expect(forward).toEqual(backward);
+    expect([forward.left.id, forward.left.label]).toEqual(["a", "A"]);
+    expect([forward.right.id, forward.right.label]).toEqual(["b", "B"]);
+    expect(forward.title).toBe("Comparing A and B");
+  });
+
+  it("has no pair for a card and the card it was made from", () => {
+    const source = { id: "src", type: "image", genJobId: "job-0", batchIndex: 0, batchSize: 1, madeFromNodeId: null };
+    const child = { id: "kid", type: "image", genJobId: "job-1", batchIndex: 0, batchSize: 1, madeFromNodeId: "src" };
+
+    expect(canvasComparePair(child, source)).toBeNull();
+    expect(canvasComparePair(source, child)).toBeNull();
+  });
+
+  it("has no pair at all for two cards that were never comparable", () => {
+    expect(canvasComparePair(batch("a", 0, 4), batch("c", 2, 4))).toBeNull();
   });
 });
 

@@ -17,12 +17,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowUp,
   Bot,
-  Columns2,
   Copy,
   Crop,
   Download,
   FolderPlus,
-  GitBranch,
   Image as ImageIcon,
   Layers,
   Maximize2,
@@ -65,7 +63,7 @@ import {
 } from "@/components/canvas/immersive-canvas-runtime";
 import { isInFlightPaidGen } from "@/components/canvas/useCanvasGen";
 import { isCanvasCardFace, isInFlightCardFace } from "@/lib/canvas-card-status";
-import { canvasBatchLetter, canvasCardsComparable } from "@/lib/canvas-batch-identity";
+import { canvasBatchLetter } from "@/lib/canvas-batch-identity";
 // [cx-canvas-runtime] 断层 3/5 ②:品牌记忆「Make for them」带 ?audience=,选角「Make with this face」
 // 带 ?persona=;canvas 读它解析出上下文名,显示可关 context chip 并预填进 prompt 前缀。
 import { AUDIENCE_PROFILES } from "../immersive/assets/data";
@@ -88,7 +86,7 @@ import {
 } from "./_create-ui";
 
 type Mode = "image" | "video" | "agent";
-type SideTab = "chat" | "projects" | "tree";
+type SideTab = "chat" | "projects";
 
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 3;
@@ -146,19 +144,18 @@ interface CvGroup {
   label: string;
 }
 
-/**
- * 两对象是否同源可比 —— evolve 分叉并排对比闸(GOAL §6),现在只读落盘事实(#603 T4)。
+/*
+ * 「同源可比」闸与并排对比、血缘树 mini 视图,都已搬进唯一那块画布(#605 T6 · spec #599 D8)。
  *
- * 从前这道闸认「同父兄弟」:一批四张的兄弟卡在同一列里都指着批次锚点,于是四张里任意两张
- * 都判为可比,闸对图片批次实际已成死代码。真正的 A/B 只有一种:一次只出两张的那一批,
- * 序号 0 与序号 1。父子(真派生)照旧可比。
+ * 这道闸是假边时代的产物:一批四张的兄弟卡在同一列里都指着批次锚点,于是四张里任意两张都判
+ * 为可比,闸对图片批次实际已成死代码。T4 把事实拆成四列以后,闸的真身收敛成
+ * `canvasCardsComparable` 一处;这块手搓板已经不再被任何路由挂载(#600 T1),再留一份闸和一份
+ * 树,就是同一件事情有两个实现——正是本 spec 要消掉的东西。
+ *
+ * 现在这两件家具在内核里:`FlowCanvas` 的 Compare(闸只认落盘事实)与 `CanvasLineagePanel`
+ * (树只读 madeFromNodeId / genJobId / batchIndex / batchSize)。行为断言见
+ * `canvas-lineage-ab-ui.test.ts`。
  */
-function comparable(a: CvObject, b: CvObject): boolean {
-  return canvasCardsComparable(
-    { id: a.id, type: a.kind, genJobId: a.genJobId, batchIndex: a.batchIndex, batchSize: a.batchSize, madeFromNodeId: a.parentId },
-    { id: b.id, type: b.kind, genJobId: b.genJobId, batchIndex: b.batchIndex, batchSize: b.batchSize, madeFromNodeId: b.parentId },
-  );
-}
 
 /** 从一组对象派生下一个可寻址名的计数(切会话后名号接得上)。 */
 function deriveCounters(objs: CvObject[]): { image: number; video: number } {
@@ -276,7 +273,6 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
   const [copied, setCopied] = React.useState(false);
   const [undoChip, setUndoChip] = React.useState<CvObject[] | null>(null);
   const [groups, setGroups] = React.useState<CvGroup[]>([]);
-  const [compareIds, setCompareIds] = React.useState<string[] | null>(null);
   const [flash, setFlash] = React.useState<string | null>(null);
   const flashTimer = React.useRef<number | null>(null);
 
@@ -325,7 +321,6 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
   const canvasRef = React.useRef<HTMLDivElement>(null);
   const chatEndRef = React.useRef<HTMLDivElement>(null);
   const composerRef = React.useRef<HTMLTextAreaElement>(null);
-  const compareDialogRef = React.useRef<HTMLDivElement>(null);
   const runtimeRefById = React.useRef(new Map<string, string>());
   const registeredCanvasObjectsRef = React.useRef(new Map<string, string>());
   const runtimeSyncStateRef = React.useRef({
@@ -595,17 +590,12 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (mentionOpen) setMentionOpen(false);
-      else if (compareIds) setCompareIds(null);
       else if (promptFor) setPromptFor(null);
       else setSelected([]);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mentionOpen, compareIds, promptFor]);
-
-  React.useEffect(() => {
-    if (compareIds) compareDialogRef.current?.focus();
-  }, [compareIds]);
+  }, [mentionOpen, promptFor]);
 
   React.useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: "end" });
@@ -943,10 +933,6 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
     window.requestAnimationFrame(() => composerRef.current?.focus());
   };
   const exactlyTwoVideos = selectedObjects.length === 2 && selectedObjects.every((o) => o.kind === "video");
-  const canCompare = selectedObjects.length === 2 && comparable(selectedObjects[0], selectedObjects[1]);
-  const compareObjects = compareIds
-    ? (compareIds.map((id) => objects.find((o) => o.id === id)).filter(Boolean) as CvObject[])
-    : [];
   const lastEvent = recentEvents(1)[0];
   const imageQuote = costQuote?.imageCount === imageCount ? costQuote.imageCredits : null;
   const runtimeErrorMessage = runtimeFailure?.message ?? runtime.error;
@@ -985,7 +971,7 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
           </Button>
         </div>
         <div className="flex gap-1 px-3">
-          {(["chat", "projects", "tree"] as SideTab[]).map((t) => (
+          {(["chat", "projects"] as SideTab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -1042,30 +1028,6 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
                     <span className="truncate">{project.name}</span>
                   </Link>
               ))}
-            </div>
-          )}
-          {sideTab === "tree" && (
-            <div className="flex flex-col gap-0.5">
-              {/* 血缘树 mini 视图(GOAL §5:父子分支可点选 → 选中该对象) */}
-              {objects.length === 0 ? (
-                <p className="px-1 py-4 text-[13px] text-muted-foreground">This session is empty.</p>
-              ) : (
-                objects
-                  .filter((o) => !o.parentId || !objects.some((p) => p.id === o.parentId))
-                  .map((root) => {
-                    const children = objects.filter((c) => c.parentId === root.id);
-                    return (
-                      <div key={root.id} className="flex flex-col">
-                        <LineageRow obj={root} selected={selected.includes(root.id)} onSelect={() => setSelected([root.id])} />
-                        {children.map((c) => (
-                          <div key={c.id} className="ml-3 border-l border-border pl-2">
-                            <LineageRow obj={c} selected={selected.includes(c.id)} onSelect={() => setSelected([c.id])} />
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })
-              )}
             </div>
           )}
         </div>
@@ -1774,18 +1736,12 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
             </Tooltip>
           </div>
 
-          {/* 多选批量条(F1)— 右下;恰好 2 视频 → Stitch + play;同源 2 对象 → Compare */}
+          {/* 多选批量条(F1)— 右下;恰好 2 视频 → Stitch + play。并排对比已搬进内核(#605 T6)。 */}
           {selectedObjects.length > 1 && (
             <div className="absolute right-4 bottom-16 z-[10] flex max-w-[calc(100%-2rem)] items-center gap-1 overflow-x-auto rounded-[14px] border border-border bg-card p-1.5 shadow-[var(--shadow-md)]" style={LAND_STYLE}>
               <span className="px-2 font-mono text-[11px] leading-[14px] font-medium text-muted-foreground tabular-nums">
                 {selectedObjects.length} selected
               </span>
-              {canCompare && (
-                <Button variant="secondary" size="sm" className="h-8 px-2.5 text-xs" onClick={() => setCompareIds(selected.slice())}>
-                  <Columns2 className="size-3.5" strokeWidth={2} />
-                  Compare
-                </Button>
-              )}
               <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={groupSelected}>
                 <Layers className="size-3.5" strokeWidth={2} />
                 Group
@@ -1868,66 +1824,6 @@ export function CanvasPage({ runtimeContext }: { runtimeContext: ImmersiveCanvas
             </div>
           )}
 
-          {/* evolve 分叉并排对比(GOAL §6:选中父+子 → Compare → 两版同屏) */}
-          {compareObjects.length === 2 && (
-            <div
-              ref={compareDialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="canvas-compare-title"
-              tabIndex={-1}
-              className="absolute inset-0 z-30 flex flex-col bg-background/80 p-3 outline-none backdrop-blur-sm sm:p-6"
-              style={LAND_STYLE}
-            >
-              <div className="flex items-center justify-between pb-4">
-                <span id="canvas-compare-title" className="text-sm font-semibold text-foreground">
-                  Comparing {compareObjects[0].ref} and {compareObjects[1].ref}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Close compare"
-                  onClick={() => setCompareIds(null)}
-                  className="flex size-8 items-center justify-center rounded-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  <X className="size-4" strokeWidth={2} />
-                </button>
-              </div>
-              <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto sm:grid-cols-2">
-                {compareObjects.map((o) => (
-                  <div key={o.id} className="flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-border bg-card">
-                    <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-                      <span className="flex h-5 items-center gap-1 rounded-full bg-primary/75 px-1.5 font-mono text-[10px] leading-none font-medium text-primary-foreground">
-                        {o.kind === "image" ? <ImageIcon className="size-3" strokeWidth={2} /> : <Video className="size-3" strokeWidth={2} />}
-                        {o.ref}
-                      </span>
-                      {o.fork && (
-                        <span className="flex h-5 items-center rounded-full bg-secondary px-1.5 font-mono text-[10px] leading-none font-medium text-secondary-foreground">
-                          {o.fork}
-                        </span>
-                      )}
-                      <span className="truncate text-[13px] font-medium text-foreground">{o.title}</span>
-                    </div>
-                    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-3">
-                      {o.kind === "video" ? (
-                        <video
-                          src={o.src}
-                          aria-label={o.title}
-                          controls
-                          playsInline
-                          preload="metadata"
-                          className="max-h-full max-w-full rounded-[10px] bg-black object-contain"
-                        />
-                      ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={o.src} alt={o.title} className="max-h-full max-w-full rounded-[10px] object-contain" />
-                      )}
-                    </div>
-                    <p className="border-t border-border px-3 py-2 text-[12px] leading-[16px] text-muted-foreground">{o.prompt}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </section>
 
@@ -2085,31 +1981,3 @@ function ObjectToolbar({
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────
- * LineageRow — 血缘树 mini 视图的一行(GOAL §5:点选即选中画布对象)
- * ──────────────────────────────────────────────────────────────────────── */
-function LineageRow({ obj, selected, onSelect }: { obj: CvObject; selected: boolean; onSelect: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        "flex h-8 w-full items-center gap-1.5 rounded-[8px] px-2 text-left text-[12px] transition-colors duration-[120ms]",
-        selected ? "bg-secondary font-semibold text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      {obj.parentId ? (
-        <GitBranch className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
-      ) : obj.kind === "image" ? (
-        <ImageIcon className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
-      ) : (
-        <Video className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} />
-      )}
-      <span className="shrink-0 font-mono text-[11px] tabular-nums">{obj.ref}</span>
-      <span className="truncate">{obj.title}</span>
-      {obj.fork && (
-        <span className="ml-auto shrink-0 rounded-full bg-secondary px-1 font-mono text-[9px] leading-4 text-secondary-foreground">{obj.fork}</span>
-      )}
-    </button>
-  );
-}

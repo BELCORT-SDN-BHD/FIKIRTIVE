@@ -43,6 +43,56 @@ export type CanvasBatchNode = CanvasBatchFacts & {
 const AB_BATCH_SIZE = 2;
 const AB_LETTERS = ["A", "B"] as const;
 
+/** A card as the browser holds it, before anything it says may be believed. */
+export type CanvasRecordedFactsSource = {
+  genJobId?: string | null;
+  batchIndex?: number | null;
+  batchSize?: number | null;
+  madeFromNodeId?: string | null;
+  /**
+   * A board read has returned this card (`serverKnown`, stamped by the canvas merge). It is the
+   * only thing that separates a recorded fact from a request the browser has just sent.
+   */
+  serverKnown?: unknown;
+};
+
+/** The four columns, as the server settled them. Every one is null until it has. */
+export type CanvasRecordedFacts = {
+  genJobId: string | null;
+  batchIndex: number | null;
+  batchSize: number | null;
+  madeFromNodeId: string | null;
+};
+
+const NOTHING_RECORDED: CanvasRecordedFacts = {
+  genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
+};
+
+/**
+ * The four recorded columns of a card — and NOTHING from a card the server has not answered for.
+ *
+ * WHY (#605 r1 judge P1-1). The moment a merchant presses Generate, the browser puts a queued card
+ * down and it knows only what it ASKED for: two images, made from this one. What the batch turns
+ * out to be is the paid job's to settle, and until it does, the row's columns are null (see
+ * `canvas-node-placement`) — a press can come back with fewer outputs, or the derivation can
+ * resolve to nothing. Those request numbers used to be written onto the local card and read
+ * straight back out by the tree, the A/B badge, the same-batch frame and the compare gate, so a
+ * card that was still queueing already announced "Batch of 2", wore an A, and had a line drawn to
+ * a parent — statements the server had never made and might never make.
+ *
+ * A queued card is still a card: it sits on the board and says it is queued. It just says nothing
+ * about batches or parentage until the board read brings the settled columns back.
+ */
+export function canvasRecordedFacts(card: CanvasRecordedFactsSource): CanvasRecordedFacts {
+  if (card.serverKnown !== true) return NOTHING_RECORDED;
+  return {
+    genJobId: card.genJobId ?? null,
+    batchIndex: typeof card.batchIndex === "number" ? card.batchIndex : null,
+    batchSize: typeof card.batchSize === "number" ? card.batchSize : null,
+    madeFromNodeId: card.madeFromNodeId ?? null,
+  };
+}
+
 function knownIndex(facts: CanvasBatchFacts): number | null {
   const { batchIndex, batchSize } = facts;
   if (typeof batchIndex !== "number" || !Number.isInteger(batchIndex) || batchIndex < 0) return null;
@@ -76,22 +126,57 @@ export function canvasBatchLetter(facts: CanvasBatchFacts): "A" | "B" | null {
 /**
  * May these two cards be shown side by side as A and B?
  *
- * Two ways to earn it, and both are recorded facts:
- *   - they are the two cards of one two-card press (same job, sizes of two, positions 0 and 1);
- *   - one was MADE FROM the other — a real derivation the paid job recorded, never a card that
- *     merely sits in the same batch.
+ * ONE way in, and every part of it is a recorded fact: they are the two cards of one two-card
+ * press — same job, a recorded size of two, positions 0 and 1, all settled by the server.
  *
  * A batch of three or four has no A and no B, so nothing inside it is comparable — which is what
  * the gate was for before a batch's shared layout anchor lit it up for every pair (root map 根 3).
+ *
+ * A card and the card it was MADE FROM used to be let through here too (#605 r1 judge P1-2). That
+ * is a different thing to put on screen — a before and an after, not the two halves of one press —
+ * and nobody approved it: the letters A and B do not apply, so the panel had to invent "Source"
+ * and "Made from it" for the two sides. Comparing a card with what it made may well be worth
+ * building; it is its own product decision, not something this gate carries in on the side.
  */
 export function canvasCardsComparable(left: CanvasBatchNode, right: CanvasBatchNode): boolean {
   if (left.id === right.id) return false;
   if ((left.type ?? null) !== (right.type ?? null)) return false;
-  if (left.madeFromNodeId === right.id || right.madeFromNodeId === left.id) return true;
   if (!left.genJobId || left.genJobId !== right.genJobId) return false;
   const leftLetter = canvasBatchLetter(left);
   const rightLetter = canvasBatchLetter(right);
   return !!leftLetter && !!rightLetter && leftLetter !== rightLetter;
+}
+
+/** Which card goes on which side of a side-by-side compare, and what each side is called. */
+export type CanvasComparePair = {
+  left: { id: string; label: string };
+  right: { id: string; label: string };
+  title: string;
+};
+
+/**
+ * The two sides of a side-by-side compare — decided by the recorded facts, never by the picking.
+ *
+ * A merchant screenshots the comparison and tells a colleague "I pick A". So the side a card
+ * lands on may not depend on which one they clicked first, or on where the cards sit: the
+ * recorded batch position puts A on the left, full stop.
+ *
+ * Returns null for anything the gate refuses, so the caller cannot open a comparison the facts
+ * do not support.
+ */
+export function canvasComparePair(
+  first: CanvasBatchNode,
+  second: CanvasBatchNode,
+): CanvasComparePair | null {
+  if (!canvasCardsComparable(first, second)) return null;
+
+  // The gate passed, so both cards carry a recorded letter and the letters differ.
+  const [left, right] = canvasBatchLetter(first) === "A" ? [first, second] : [second, first];
+  return {
+    left: { id: left.id, label: "A" },
+    right: { id: right.id, label: "B" },
+    title: "Comparing A and B",
+  };
 }
 
 /** One press's cards that are on the board right now, for the frame drawn around them. */

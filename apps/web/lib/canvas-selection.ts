@@ -168,7 +168,15 @@ export function mergeReloadedCanvasNodes<T extends CanvasMergeNode>(
 /** No card has been removed on this board yet. Shared so the default costs no allocation. */
 const EMPTY_REMOVED: ReadonlySet<string> = new Set<string>();
 
-/** Stamp a card as one a board read has shown, without disturbing one already stamped. */
+/**
+ * Stamp a card as one a board read has shown, without disturbing one already stamped.
+ *
+ * It stamps the card that is ON SCREEN, not the row that just arrived, so this says "the server
+ * has answered for this card" and never "these columns came from the server". That distinction is
+ * what the lineage gate rests on (#605 r1 P1-1): a card the browser has just put down carries no
+ * batch identity at all, so keeping it here keeps nulls — the tree, the badge and the compare
+ * gate stay silent about it until a read that can place it brings the settled columns.
+ */
 function acknowledged<T extends CanvasMergeNode>(node: T): T {
   return node.data.serverKnown ? node : { ...node, data: { ...node.data, serverKnown: true } };
 }
