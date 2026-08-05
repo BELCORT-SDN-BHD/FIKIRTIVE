@@ -2831,6 +2831,10 @@ export function channelWalletSetAutoReload(on: boolean) {
  *
  * 铁律不变:纯 client、零后台 import;不新造品牌事实(图仍来自 canvas 对象自己的 src,
  * 即 cvImage → NS_IMAGES 产出)。本段仅在文件尾追加,未改动任何既有代码。
+ *
+ * #606 T7 起:唯一的写入方(手搓板 create/canvas-page)已退役,注册表现在只剩读的一半,
+ * 而读它的 asset-viewer / media-editor 两页本身也早已无路由挂载。三者同属原型创作页簇,
+ * 一起退场(见 PR #606 的「发现但未动」),所以这里不做半截删除。
  * ═══════════════════════════════════════════════════════════════════════════ */
 export interface NsCanvasObject {
   id: string;
