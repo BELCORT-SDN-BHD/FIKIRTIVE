@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, SIGNUP_GRANT_CREDITS } from "./spend.js";
 import { GEN_IMAGE_ASPECTS, GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
-import { MARGIN_FLOOR, BELOW_FLOOR_PENDING_FOUNDER_RULING, marginTruthTable } from "./margin-truth.js";
+import { MARGIN_FLOOR, marginTruthTable, pendingRulingFor } from "./margin-truth.js";
 // Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
 // (seedance-2-fast), USD-formula for all other (fal) models.
 
@@ -129,7 +129,7 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
   // 违规藏不住,定价修好后名单也必须清掉,否则同样红。
   it("launch-priced spend points satisfy the constitutional >=45% margin floor(名单内的除外)", () => {
     for (const row of marginTruthTable()) {
-      const pending = BELOW_FLOOR_PENDING_FOUNDER_RULING.has(row.id);
+      const pending = pendingRulingFor(row.id) !== undefined;
       const detail = `${row.id}: 收费 $${row.chargeUsd} 成本 $${row.cogsUsd} 毛利率 ${(row.margin * 100).toFixed(1)}%`;
       if (pending) {
         expect(row.clearsFloor, `${detail} —— 已清地板,请把它从待裁决名单删掉`).toBe(false);
@@ -174,7 +174,7 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
             expect(priceUsd - costUsd, `${detail} —— 收费低于成本`).toBeGreaterThan(0);
             // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上(720p 10s 档,
             // #129 按 Ark 实测成本核定),0.63/1.4 在浮点里是 0.44999999999999996。
-            if (BELOW_FLOOR_PENDING_FOUNDER_RULING.has(`video:${model}:${seconds}:${resolution}`)) {
+            if (pendingRulingFor(`video:${model}:${seconds}:${resolution}`)) {
               expect(margin, `${detail} —— 已清地板,请把它从待裁决名单删掉`).toBeLessThan(MARGIN_FLOOR - 1e-9);
             } else {
               expect(margin, `${detail} —— 跌破地板且不在待裁决名单上`).toBeGreaterThanOrEqual(MARGIN_FLOOR - 1e-9);

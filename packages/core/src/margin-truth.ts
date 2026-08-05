@@ -26,20 +26,53 @@ export const MARGIN_FLOOR = 0.45;
 export const MARGIN_FLOOR_EPSILON = 1e-9;
 
 /**
+ * 一条**待 Founder 裁决**的记录。四个字段都是必填 —— 缺任何一个,CI 闸直接红
+ * (`evaluateFloorDecisions`,scripts/check-margin-floor.mjs)。裸 id 会退化成永久豁免,
+ * 所以这里连「为什么」「谁在裁」「什么时候必须裁完」都是机器强制的。
+ */
+export type PendingFloorRuling = {
+  /** 档位 id,与毛利表 / CI 闸逐字对齐。 */
+  tier: string;
+  /** 这一档为什么现在跌破 —— 逐档写,不许复制全局套话。 */
+  reason: string;
+  /** 呈报给 Founder 的那次记录(GitHub issue / PR 链接)。 */
+  rulingRef: string;
+  /** **到期日 YYYY-MM-DD**:过了这天还没裁,CI 闸变红。这不是缓刑,是闹钟。 */
+  reviewBy: string;
+};
+
+/**
  * **跌破毛利地板、等 Founder 裁决的档位**(#644,2026-08-05)。
  *
- * 这不是豁免簿,是一张**待办**:名单上的每一档现在都在亏毛利底线,等 Founder 裁
- * 「调价」还是「接受」。名单被两头钉死,烂不掉 ——
- *   1. 真跌破却不在名单上 → 测试红(新的违规藏不住);
- *   2. 在名单上却已经不跌破了 → 测试红(定价修好后,名单必须清掉)。
+ * 这不是豁免簿,是一张**带闹钟的待办**。名单被四头钉死,烂不掉 ——
+ *   1. 真跌破却不在名单上 → 红(新的违规藏不住);
+ *   2. 在名单上却已经不跌破了 → 红(定价修好后,名单必须清掉);
+ *   3. 条目缺字段、日期格式不对、或指向一个根本不可售的档位 → 红;
+ *   4. 过了 `reviewBy` 还在名单上 → 红(裁决被拖着不做,CI 就停下来等)。
+ * 另外任何档位只要**收费 ≤ 成本**,名单一律救不了 —— 恒红。
  *
  * 为什么会跌破:记账基准从 2026-06 资源包折后价($3.564/M)回到官方牌价($5.60/M),
  * 视频成本 +57%,而收费一格没动(本片 record-only)。详见 PR「毛利真相表」章节。
  */
-export const BELOW_FLOOR_PENDING_FOUNDER_RULING: ReadonlySet<string> = new Set([
-  "video:seedance-2-fast:5:720p",
-  "video:seedance-2-fast:10:720p",
-]);
+export const BELOW_FLOOR_PENDING_FOUNDER_RULING: readonly PendingFloorRuling[] = [
+  {
+    tier: "video:seedance-2-fast:5:720p",
+    reason: "8cr = $0.80 对上牌价成本 $0.6048 → 24.4%。旧账按 2026-06 资源包折后价算成 51.3%,资源包不保证在有效期内。",
+    rulingRef: "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/655",
+    reviewBy: "2026-08-20",
+  },
+  {
+    tier: "video:seedance-2-fast:10:720p",
+    reason: "14cr = $1.40 对上牌价成本 $1.2096 → 13.6%。这一档原本是「精确压在 45.0% 地板上」,压住它的是资源包价而不是牌价。",
+    rulingRef: "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/655",
+    reviewBy: "2026-08-20",
+  },
+];
+
+/** 取某一档的待裁决记录;不在名单上返回 undefined。纯函数。 */
+export function pendingRulingFor(tier: string): PendingFloorRuling | undefined {
+  return BELOW_FLOOR_PENDING_FOUNDER_RULING.find((p) => p.tier === tier);
+}
 
 export type MarginRow = {
   /** 与 CI 闸对齐的档位 id。 */

@@ -3,6 +3,7 @@ import {
   MARGIN_FLOOR,
   MARGIN_TRUTH_SKUS,
   BELOW_FLOOR_PENDING_FOUNDER_RULING,
+  pendingRulingFor,
   marginTruthTable,
   formatMarginTruthTable,
 } from "./margin-truth.js";
@@ -78,7 +79,27 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
 
   it("跌破地板的档位 = 待 Founder 裁决名单,一格不多一格不少", () => {
     const belowFloor = marginTruthTable().filter((r) => !r.clearsFloor).map((r) => r.id).sort();
-    expect(belowFloor).toEqual([...BELOW_FLOOR_PENDING_FOUNDER_RULING].sort());
+    expect(belowFloor).toEqual(BELOW_FLOOR_PENDING_FOUNDER_RULING.map((p) => p.tier).sort());
+  });
+
+  it("待裁决名单的每一条都带齐「为什么 / 谁在裁 / 什么时候必须裁完」—— 裸 id = 永久豁免", () => {
+    expect(BELOW_FLOOR_PENDING_FOUNDER_RULING.length).toBeGreaterThan(0);
+    for (const entry of BELOW_FLOOR_PENDING_FOUNDER_RULING) {
+      // 指向真实存在的档位(名单不能烂成指向空气)。
+      expect(rows.has(entry.tier), `${entry.tier} 不是毛利表里的档位`).toBe(true);
+      expect(pendingRulingFor(entry.tier)).toEqual(entry);
+      // 逐档理由,不是复制的全局套话。
+      expect(entry.reason.trim().length, `${entry.tier} 缺逐档理由`).toBeGreaterThan(20);
+      expect(entry.rulingRef, `${entry.tier} 缺裁决引用`).toMatch(/^https:\/\/github\.com\//);
+      // 到期日必须是真日期 —— CI 闸过了这天就变红,逼裁决发生。
+      expect(entry.reviewBy, `${entry.tier} 的 reviewBy 格式不对`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(Number.isNaN(Date.parse(entry.reviewBy)), `${entry.tier} 的 reviewBy 不是真日期`).toBe(false);
+    }
+  });
+
+  it("不在名单上的档位查不到裁决记录", () => {
+    expect(pendingRulingFor("image:seedream")).toBeUndefined();
+    expect(pendingRulingFor("video:ghost:99:8k")).toBeUndefined();
   });
 
   it("真相表覆盖了 SKU 清单里的每一档(报表不能悄悄漏掉一行)", () => {
