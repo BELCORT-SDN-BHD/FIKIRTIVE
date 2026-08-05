@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   uploadReference: vi.fn(),
   quoteCosts: vi.fn(),
   flow: { current: null as null | FlowProps },
+  /** The board's own "put a card down" callback, as useCanvasGen receives it. */
+  placeCard: { current: null as null | ((n: Record<string, unknown>) => void) },
 }));
 
 vi.mock("@/lib/canvas-actions", () => ({
@@ -51,15 +53,20 @@ vi.mock("@/components/asset/DetailPanel", () => ({ default: () => null }));
 vi.mock("@/components/MentionInput", () => ({ MentionInput: () => null }));
 vi.mock("@/components/otto/OttoTrace", () => ({ OttoCanvasStatus: () => null }));
 
-// The paid path is a handle here; nothing in this file can start a generation.
+// The paid path is a handle here; nothing in this file can start a generation. The board's own
+// placement callback (argument 2) is kept, so a test can put a card down exactly the way a press
+// in flight does — without spending anything.
 vi.mock("@/components/canvas/useCanvasGen", () => ({
-  useCanvasGen: () => ({
-    generateImage: vi.fn(),
-    animate: vi.fn(),
-    generateVideoFromText: vi.fn(),
-    quoteCosts: mocks.quoteCosts,
-    cancelledRef: { current: false },
-  }),
+  useCanvasGen: (...args: unknown[]) => {
+    mocks.placeCard.current = args[1] as (n: Record<string, unknown>) => void;
+    return {
+      generateImage: vi.fn(),
+      animate: vi.fn(),
+      generateVideoFromText: vi.fn(),
+      quoteCosts: mocks.quoteCosts,
+      cancelledRef: { current: false },
+    };
+  },
   isInFlightPaidGen: (node: { type: string; status?: string; url?: string | null }) =>
     (node.type === "image" || node.type === "video")
     && !node.url
@@ -178,6 +185,7 @@ afterEach(async () => {
   root = null;
   container = null;
   mocks.flow.current = null;
+  mocks.placeCard.current = null;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -220,6 +228,15 @@ async function openLineageFor(id: string): Promise<HTMLElement> {
 function treeRowIds(panel: HTMLElement): string[] {
   return [...panel.querySelectorAll<HTMLElement>("[data-lineage-row]")]
     .map((el) => el.getAttribute("data-lineage-row") ?? "");
+}
+
+/** The A/B letter on a card right now, or null when it wears none. */
+function letterOn(id: string): string | null {
+  const card = container!.querySelector<HTMLElement>(`[data-node="${id}"]`)!;
+  const badges = [...card.querySelectorAll("span")]
+    .map((span) => span.textContent?.trim() ?? "")
+    .filter((text) => text === "A" || text === "B");
+  return badges[0] ?? null;
 }
 
 describe("the lineage tree reads the four recorded columns and nothing else", () => {
@@ -288,6 +305,74 @@ describe("the lineage tree reads the four recorded columns and nothing else", ()
 });
 
 /**
+ * 排队中的卡不许替服务端说话(#605 验收① · r1 判官 P1-1)。
+ *
+ * 商家按下 Generate,浏览器手里只有请求参数:我要两张、从这张做。服务端还没落盘,那一列可能
+ * 落成别的,也可能落成 null。之前这些请求参数被直接写进本地卡,树、徽章、组框和对比闸照单
+ * 全收——卡还在排队,板上已经写着「Batch of 2」、A/B 角标和一条来源线。排队占位照常显示,
+ * 但一句批次身份的话都不许说,直到板读真的把这张卡带回来。
+ */
+describe("a card the browser has only just put down", () => {
+  /** Exactly what the paid path hands over the moment a press is accepted — request numbers,
+   *  before the server has settled a single column. */
+  const justPressed = (id: string, batchIndex: number) => ({
+    id,
+    type: "image" as const,
+    pos: { x: batchIndex * 340, y: 0, w: 320, h: 320 },
+    status: "queued",
+    prompt: "two hats on a rattan chair",
+    genJobId: "job-new",
+    batchIndex,
+    batchSize: 2,
+    madeFromNodeId: "settled",
+  });
+
+  /** The board with one settled card on it, then a two-image press in flight. */
+  async function pressGenerate(): Promise<void> {
+    mocks.boardRead.mockResolvedValue([row({ id: "settled", prompt: "the first one" })]);
+    await renderBoard();
+    await act(async () => {
+      mocks.placeCard.current!(justPressed("q0", 0));
+      mocks.placeCard.current!(justPressed("q1", 1));
+    });
+  }
+
+  it("wears no A/B letter and stands in no batch frame", async () => {
+    await pressGenerate();
+
+    expect(letterOn("q0")).toBeNull();
+    expect(letterOn("q1")).toBeNull();
+    expect(container!.textContent).not.toContain("Batch of");
+    // The queued card itself is on the board, saying only that it is queued.
+    expect(mocks.flow.current!.nodes.map((node) => node.id)).toContain("q0");
+  });
+
+  it("draws no line back to the card the merchant pressed from", async () => {
+    await pressGenerate();
+
+    expect(mocks.flow.current!.edges).toEqual([]);
+  });
+
+  it("tells no story in the tree — no source, no batch", async () => {
+    await pressGenerate();
+
+    const panel = await openLineageFor("q0");
+    expect(treeRowIds(panel)).toEqual(["q0"]);
+    expect(panel.textContent).toContain("No source recorded");
+    expect(panel.textContent).not.toContain("Batch of");
+    expect(panel.textContent).not.toContain("settled");
+  });
+
+  it("unlocks no side-by-side compare for the two cards of the press", async () => {
+    await pressGenerate();
+
+    select(["q0", "q1"]);
+    expect(container!.textContent).toContain("2 selected");
+    expect(buttonNamed("Compare")).toBeUndefined();
+  });
+});
+
+/**
  * 读不出来就说读不出来(#605 验收③,沿用 fail-closed 先例)。
  *
  * 板读失败时静默吞掉,树会继续照着上一份快照讲故事——商家看到的是一份可能已经不成立的
@@ -338,6 +423,42 @@ describe("when the board's history cannot be read", () => {
       .toContain("Lineage unavailable");
   });
 
+  /**
+   * 板读回来一坨看不懂的东西,也是「读不出来」(r1 判官 P2-1)。
+   *
+   * 之前这里只认两种失败:一个 `{ error }`,一个抛错。答案是 null 时,`"error" in rows` 当场
+   * 抛在读路径里;答案是个不是数组的对象时,更糟——树先被判定为「可用」,然后 `.map` 抛掉,
+   * 屏幕上留着上一份关系图,商家看不出任何异常。凡不是一份合法的卡片列表,一律折成「暂不可用」。
+   */
+  const malformed: Array<[string, unknown]> = [
+    ["nothing at all", null],
+    ["something that is not a list of cards", { ok: true }],
+    ["a list with a card-shaped hole in it", [null]],
+    ["a list whose row is missing what a card is", [{ id: 7, type: "image" }]],
+    ["a list whose row cannot say where it sits", [{ id: "x", type: "image", x: "left", y: 0, w: 320, h: 320 }]],
+  ];
+
+  it.each(malformed)("says the lineage is unavailable when the read answers %s", async (_name, answer) => {
+    mocks.boardRead.mockResolvedValue([
+      row({ id: "src" }),
+      row({ id: "vid", type: "video", genJobId: "job-2", madeFromNodeId: "src" }),
+      stillGenerating(),
+    ]);
+    await renderBoard();
+    const panel = await openLineageFor("vid");
+    expect(treeRowIds(panel)).toEqual(["src", "vid"]);
+
+    mocks.boardRead.mockResolvedValue(answer);
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    await act(async () => { await Promise.resolve(); });
+
+    const failed = container!.querySelector<HTMLElement>('[aria-label="Lineage"]')!;
+    expect(failed.textContent).toContain("Lineage unavailable");
+    expect(treeRowIds(failed)).toEqual([]);
+    // Paid work stays on the board; only the story about it is withheld.
+    expect(mocks.flow.current!.nodes.some((node) => node.id === "vid")).toBe(true);
+  });
+
   it("comes back as soon as the board can be read again", async () => {
     mocks.boardRead.mockResolvedValue([row({ id: "src" }), stillGenerating()]);
     await renderBoard();
@@ -366,15 +487,6 @@ describe("when the board's history cannot be read", () => {
  * A/B 是画布替他编的。现在闸只认落盘事实。
  */
 describe("the A/B letter a card wears", () => {
-  /** The letter on a card right now, or null when it wears none. */
-  function letterOn(id: string): string | null {
-    const card = container!.querySelector<HTMLElement>(`[data-node="${id}"]`)!;
-    const badges = [...card.querySelectorAll("span")]
-      .map((span) => span.textContent?.trim() ?? "")
-      .filter((text) => text === "A" || text === "B");
-    return badges[0] ?? null;
-  }
-
   it("keeps A on A and B on B after the two cards swap places", async () => {
     mocks.boardRead.mockResolvedValue([
       batchRow("p0", 0, 2, { x: 40, y: 40 }),
@@ -446,7 +558,8 @@ describe("side-by-side compare", () => {
     expect(sides.map((side) => side.getAttribute("data-compare-side"))).toEqual(["p0", "p1"]);
   });
 
-  it("also opens for a card and the card it was really made from", async () => {
+  it("stays locked for a card and the card it was made from", async () => {
+    // 真同批是唯一开门条件(#605 验收②)。母子并排是另一种语义,未获批准,闸不夹带。
     mocks.boardRead.mockResolvedValue([
       row({ id: "src" }),
       row({ id: "kid", genJobId: "job-2", madeFromNodeId: "src" }),
@@ -454,10 +567,8 @@ describe("side-by-side compare", () => {
     await renderBoard();
 
     select(["kid", "src"]);
-    await click(buttonNamed("Compare")!);
-
-    const dialog = container!.querySelector<HTMLElement>('[role="dialog"]')!;
-    expect(dialog.textContent).toContain("Comparing a card with what it made");
+    expect(container!.textContent).toContain("2 selected");
+    expect(buttonNamed("Compare")).toBeUndefined();
   });
 
   it("never opens for a card paired with itself or with three others", async () => {

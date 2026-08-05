@@ -42,6 +42,7 @@ beforeAll(() => {
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const { listCanvasNodes } = await import("@/lib/canvas-actions");
+const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
 const { buildCanvasLineageTree } = await import("@/lib/canvas-lineage-tree");
 
 async function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
@@ -119,6 +120,50 @@ describe("商家 A 的谱系读取永远够不到商家 B 的卡", () => {
   it("B 的板读也只带回 B 自己的卡", async () => {
     await asUser(B_EMAIL);
     const rows = await listCanvasNodes(bProjectId) as Array<{ id: string }>;
+    expect(rows.map((card) => card.id)).toEqual([bCardId]);
+  });
+});
+
+/**
+ * 统一画布实际走的那条读路径(#605 r1 判官 P2-2)。
+ *
+ * 北极星把画布挂成 `skin="gb"`,于是板读走的是 `syncOttoCanvasNodes` 而不是 `listCanvasNodes`
+ * ——树的输入其实来自这一条。上面那组断言打在另一条上,租户回归就有一段没盖到。同一套断言
+ * 在这里再走一遍:只见己卡、拿别人的 project id 读到拒绝、序列化输出里不含对方任何 id。
+ */
+describe("统一画布(gb)的板读同样够不到别的商家", () => {
+  it("A 的 gb 板读只带回 A 自己的卡", async () => {
+    await asUser(A_EMAIL);
+    const rows = await syncOttoCanvasNodes(aProjectId);
+    expect(Array.isArray(rows)).toBe(true);
+    const cards = rows as Array<{ id: string; prompt: string | null }>;
+    expect(cards.map((card) => card.id)).toEqual([aCardId]);
+    expect(JSON.stringify(cards)).not.toContain("B's private product shot");
+    expect(JSON.stringify(cards)).not.toContain(bProjectId);
+  });
+
+  it("A 拿 B 的 project id 走 gb 读,读到的是拒绝而不是 B 的板", async () => {
+    await asUser(A_EMAIL);
+    expect(await syncOttoCanvasNodes(bProjectId)).toEqual({ error: "Project not found." });
+  });
+
+  it("从 gb 板读建出来的树,只说来源不在这块板上", async () => {
+    await asUser(A_EMAIL);
+    const rows = await syncOttoCanvasNodes(aProjectId) as Array<{
+      id: string; type: string; prompt: string | null; genJobId: string | null;
+      batchIndex: number | null; batchSize: number | null; madeFromNodeId: string | null;
+    }>;
+
+    const tree = buildCanvasLineageTree(rows, aCardId)!;
+    expect(tree.origin).toBe("off-board");
+    expect(tree.chain.map((row) => row.id)).toEqual([aCardId]);
+    expect(tree.batch).toBeNull();
+    expect(JSON.stringify(tree)).not.toContain(bCardId);
+  });
+
+  it("B 的 gb 板读也只带回 B 自己的卡", async () => {
+    await asUser(B_EMAIL);
+    const rows = await syncOttoCanvasNodes(bProjectId) as Array<{ id: string }>;
     expect(rows.map((card) => card.id)).toEqual([bCardId]);
   });
 });

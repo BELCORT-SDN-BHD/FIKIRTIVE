@@ -23,13 +23,17 @@ type OnNode = (node: {
   status: string;
   url?: string;
   prompt: string;
-  /** The card this one was made FROM — this session's own action vouches for it (#603 T4). */
-  madeFromNodeId?: string;
   generationId?: string;
   genJobId?: string;
-  /** Batch identity, in the order the paid press was asked for. Never a coordinate. */
-  batchIndex?: number;
-  batchSize?: number;
+  /**
+   * WHAT THIS CALLBACK NO LONGER CARRIES (#605 r1 judge P1-1): which of the batch this card is,
+   * how big the batch is, and what it was made from. It used to pass all three, taken from the
+   * REQUEST — and the board wrote them onto the card, where the lineage tree, the A/B badge, the
+   * same-batch frame and the compare gate read them as settled facts. They are not: the paid job
+   * settles them, the row the server just wrote carries nulls, and a press can end up smaller
+   * than it was asked for or with a derivation that resolves to nothing. The board read brings
+   * them once they exist.
+   */
 }) => void;
 
 export type CanvasImageGenOptions = {
@@ -605,9 +609,6 @@ export function useCanvasGen(
       pos: createdPos,
       prompt,
       genJobId: started.id,
-      batchIndex: 0,
-      batchSize: safeCount,
-      ...(options.sourceNodeId && { madeFromNodeId: options.sourceNodeId }),
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
@@ -683,9 +684,6 @@ export function useCanvasGen(
           prompt,
           generationId,
           genJobId: started.id,
-          batchIndex: i,
-          batchSize: generationIds.length,
-          ...(options.sourceNodeId ? { madeFromNodeId: options.sourceNodeId } : {}),
         });
         onResolve(sib.id, urls[i], "done", generationId);
       }
@@ -777,10 +775,7 @@ export function useCanvasGen(
       // Queued, not "making this now" — see the image path above (#602 T3).
       status: "queued",
       prompt,
-      madeFromNodeId: sourceNodeId,
       genJobId: started.id,
-      batchIndex: 0,
-      batchSize: 1,
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
@@ -882,8 +877,6 @@ export function useCanvasGen(
       status: "queued",
       prompt,
       genJobId: started.id,
-      batchIndex: 0,
-      batchSize: 1,
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();

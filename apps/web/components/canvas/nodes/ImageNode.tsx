@@ -7,7 +7,7 @@ import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
-import { canvasBatchLetter } from "@/lib/canvas-batch-identity";
+import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -33,6 +33,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     /** Batch identity as the server settled it — what the A/B badge reads (#603 T4). */
     batchIndex?: number | null;
     batchSize?: number | null;
+    /** A board read has returned this card. Until it has, the three columns above are only what
+     *  the press asked for, and this card may not speak them (#605 r1 P1-1). */
+    serverKnown?: unknown;
     /** Opens the lineage tree for the picked card (#605 T6). Supplied by FlowCanvas. */
     onOpenLineage?: () => void;
     onAnimate?: () => void;
@@ -78,7 +81,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   }
   const terminal = isTerminalCardStatus(d.status);
   const actionable = imageNodeActionable(d);
-  const letter = canvasBatchLetter(d);
+  // Only a card a board read has answered for wears a letter. What a press ASKED for is not
+  // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
+  const letter = canvasBatchLetter(canvasRecordedFacts(d));
   const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
   const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
   const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;

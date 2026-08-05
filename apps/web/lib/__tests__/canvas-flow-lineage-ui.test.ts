@@ -356,7 +356,11 @@ describe("lines between cards when a record is missing (review P2-2 · r3)", () 
     expect(mocks.flow.current!.edges).toEqual([]);
   });
 
-  it("still joins a card this browser just made from another one", async () => {
+  it("draws no line from a card this browser has only just put down", async () => {
+    // #547 B4 drew this line the moment the press was accepted, from the request's own
+    // "source node". That is the browser vouching for a fact only the paid job can settle —
+    // the row the server just wrote carries no source at all, and the job may resolve to none
+    // (#605 r1 judge P1-1). The queued card is on the board; the line waits for the read.
     mocks.boardRead.mockResolvedValue([settledRow("src")]);
     await renderBoard();
 
@@ -370,6 +374,17 @@ describe("lines between cards when a record is missing (review P2-2 · r3)", () 
         madeFromNodeId: "src",
       });
     });
+
+    expect(mocks.flow.current!.nodes.map((node) => node.id)).toContain("vid");
+    expect(mocks.flow.current!.edges).toEqual([]);
+
+    // The board read settles it, and the line appears — from the server's own column.
+    mocks.boardRead.mockResolvedValue([
+      settledRow("src"),
+      { ...settledRow("vid", 1), type: "video", madeFromNodeId: "src" },
+    ]);
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    await settleBoard();
 
     expect(mocks.flow.current!.edges.map((edge) => [edge.source, edge.target])).toEqual([["src", "vid"]]);
   });
