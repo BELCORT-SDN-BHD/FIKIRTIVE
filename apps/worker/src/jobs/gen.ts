@@ -21,6 +21,7 @@ import {
   GEN_RETRY_LIMIT,
   GEN_QUEUE,
   videoDefaults,
+  imageDefaults,
   MAX_CONDITIONING_IMAGES,
   REF_VIDEO_MIN_SECONDS,
   REF_VIDEO_MAX_SECONDS,
@@ -730,7 +731,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
           if (srcUrl) inputImageUrls.unshift(srcUrl);
         }
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });
+        // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
+        // (or a malformed snapshot) has none → the model's default square, which is exactly
+        // what those runs produced before the column existed.
+        const io = job.imageOptions as { aspectRatio?: unknown } | null;
+        const aspectRatio = typeof io?.aspectRatio === "string"
+          ? io.aspectRatio
+          : imageDefaults(job.model as GenModel).aspectRatio;
+        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {

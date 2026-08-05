@@ -10,6 +10,7 @@
  */
 import { deflateSync, crc32 } from "node:zlib";
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@fikirtive/core";
+import { imageOutputSize } from "@fikirtive/core";
 import { BytePlusProvider } from "./byteplus.js";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
@@ -19,12 +20,10 @@ const MOCK_MP4_B64 =
 
 /* ---------------- mock (deterministic, offline) ---------------- */
 
-/** Encode an 8×8 solid-colour RGB PNG — a real, decodable image with no deps
- *  beyond node:zlib. Colour derives from the seed so mock outputs are
+/** Encode a solid-colour RGB PNG at the given size — a real, decodable image with no
+ *  deps beyond node:zlib. Colour derives from the seed so mock outputs are
  *  visually distinct and their hashes differ (distinct content keys). */
-function solidPng(seed: number): Uint8Array {
-  const w = 8;
-  const h = 8;
+function solidPng(seed: number, w: number, h: number): Uint8Array {
   const r = (seed * 73) % 256;
   const g = (seed * 151) % 256;
   const b = (seed * 211) % 256;
@@ -61,14 +60,32 @@ function solidPng(seed: number): Uint8Array {
   );
 }
 
+/** #642: the mock renders the real GEN_IMAGE_SIZES entry reduced to its lowest integer terms
+ *  and scaled by this factor — so the offline shape is EXACT by construction (not "close"),
+ *  and stays a few dozen pixels. The default square lands back on 8×8, byte-identical to the
+ *  pre-#642 mock. Without a shaped mock, the fixed 8×8 square hid every shape defect from the
+ *  worker/web tests, which all run on this provider. */
+const MOCK_RATIO_SCALE = 8;
+
+/** Reduce a real output size to its lowest integer terms (2880×1620 → 16×9). */
+function reducedRatio(width: number, height: number): { width: number; height: number } {
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const g = gcd(width, height) || 1;
+  return { width: width / g, height: height / g };
+}
+
 export class MockProvider implements GenerationProvider {
   readonly name = "mock";
   async generate(req: GenerationRequest): Promise<GeneratedImage[]> {
     // deterministic per (prompt, conditioning, index) so a re-run is stable;
     // distinct seeds → distinct bytes → distinct content hashes
     const base = hashSeed(req.prompt + "|" + req.inputImageUrls.join(","));
+    const real = imageOutputSize(req.aspectRatio);
+    const ratio = reducedRatio(real.width, real.height);
+    const w = ratio.width * MOCK_RATIO_SCALE;
+    const h = ratio.height * MOCK_RATIO_SCALE;
     return Array.from({ length: req.count }, (_, i) => ({
-      bytes: solidPng(base + i + 1),
+      bytes: solidPng(base + i + 1, w, h),
       ext: "png",
     }));
   }
@@ -226,7 +243,15 @@ export class FalProvider implements GenerationProvider {
     const modelId = conditioned ? ids.edit : ids.t2i;
 
     // fal sync endpoint blocks until the images are ready — the worker job is
-    // already the async boundary, so no nested queue poll needed
+    // already the async boundary, so no nested queue poll needed.
+    //
+    // #642 shape: req.aspectRatio is deliberately NOT sent here. This legacy fallback's
+    // size parameter is not confirmed against the provider's own schema, and this file's
+    // standing rule is: do NOT invent a param until it's confirmed in the provider docs
+    // (same treatment as the video audio flag). Declared honestly rather than pretended —
+    // EXECUTED_SPEC.image.fallbackAdapterAspectHonoured is false, and index.test.ts asserts
+    // both the declaration and this request body agree. The PROD path is the active
+    // adapter (byteplus), which does carry the exact WxH.
     const res = await fetch(`https://fal.run/${modelId}`, {
       method: "POST",
       headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },

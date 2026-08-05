@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest } from "./gen.js";
+import {
+  GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
+  GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
+  GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, type GenImageAspect,
+} from "./gen.js";
 
 describe("modelFamily", () => {
   // every shipping video model resolves to a known family (version-agnostic, by prefix)
@@ -143,5 +147,89 @@ describe("genRequest.referenceVideoGenerationId", () => {
 
   it("rejects 10s reference-video output before spend because the 16cr price is modeled for 5s output", () => {
     expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref", durationSeconds: 10 }).success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #642 图片形状端到端 —— 契约 / 校验表 / 像素映射
+// ---------------------------------------------------------------------------
+describe("GEN_IMAGE_MODEL_OPTIONS(图片画幅菜单)", () => {
+  it("菜单就是引擎真支持的八个画幅,默认排第一(1:1,与今日方图一致)", () => {
+    expect(GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios).toEqual([
+      "1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9",
+    ]);
+    expect(imageDefaults("seedream").aspectRatio).toBe("1:1");
+    expect(GEN_IMAGE_DEFAULT_ASPECT).toBe("1:1");
+  });
+  it("每个菜单项都有确切的 WxH 映射(菜单上没有一格是假的)", () => {
+    for (const a of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      expect(GEN_IMAGE_SIZES[a as GenImageAspect]).toBeDefined();
+    }
+    expect(Object.keys(GEN_IMAGE_SIZES).sort()).toEqual([...GEN_IMAGE_ASPECTS].sort());
+  });
+});
+
+describe("GEN_IMAGE_SIZES(引擎约束)", () => {
+  it("每一档总像素都落在引擎的 WxH 区间内", () => {
+    for (const [aspect, { width, height }] of Object.entries(GEN_IMAGE_SIZES)) {
+      const pixels = width * height;
+      expect(pixels, `${aspect} 总像素`).toBeGreaterThanOrEqual(GEN_IMAGE_MIN_PIXELS);
+      expect(pixels, `${aspect} 总像素`).toBeLessThanOrEqual(GEN_IMAGE_MAX_PIXELS);
+    }
+  });
+  it("每一档的实际比例**精确**等于它自称的比例(零容差:约分后必须逐字相等)", () => {
+    // 容差是掩盖器。上一版用 1% 容差,把 1600×2848(约分 50:89,偏 0.125%)当成了 9:16 ——
+    // 商家买的是 9:16,拿到的是一个「差不多」的形状。这里改成整数约分比对,数学上不留缝。
+    const reduce = (a: number, b: number): [number, number] => {
+      const gcd = (x: number, y: number): number => (y === 0 ? x : gcd(y, x % y));
+      const g = gcd(a, b);
+      return [a / g, b / g];
+    };
+    for (const [aspect, { width, height }] of Object.entries(GEN_IMAGE_SIZES)) {
+      const [w, h] = aspect.split(":").map(Number) as [number, number];
+      expect(reduce(width, height), `${aspect} 必须精确约分为它自称的比例`).toEqual(reduce(w, h));
+      const actual = width / height;
+      expect(actual).toBeGreaterThanOrEqual(1 / 16);
+      expect(actual).toBeLessThanOrEqual(16);
+    }
+  });
+  it("1:1 逐字节保持今日的 2048×2048(补齐画幅不改变既有方图行为)", () => {
+    expect(GEN_IMAGE_SIZES["1:1"]).toEqual({ width: 2048, height: 2048 });
+  });
+});
+
+describe("imageOutputSize", () => {
+  it("缺省 / null → 默认画幅的尺寸(方图)", () => {
+    expect(imageOutputSize()).toEqual({ width: 2048, height: 2048 });
+    expect(imageOutputSize(null)).toEqual({ width: 2048, height: 2048 });
+  });
+  it("已知画幅 → 该画幅的确切尺寸", () => {
+    expect(imageOutputSize("9:16")).toEqual({ width: 1620, height: 2880 });
+    expect(imageOutputSize("21:9")).toEqual(GEN_IMAGE_SIZES["21:9"]);
+  });
+  it("未知画幅 → 回落默认(纯函数,永不抛)", () => {
+    expect(imageOutputSize("7:5")).toEqual({ width: 2048, height: 2048 });
+  });
+});
+
+describe("genRequest 图片画幅校验(照视频侧 superRefine)", () => {
+  const base = { projectId: "p1", prompt: "a poster", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
+  it("接受菜单上的每一个画幅", () => {
+    for (const a of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      expect(genRequest.safeParse({ ...base, aspectRatio: a }).success, a).toBe(true);
+    }
+  });
+  it("不带画幅仍然合法(默认 1:1,与今日一致)", () => {
+    expect(genRequest.safeParse(base).success).toBe(true);
+  });
+  it("拒绝菜单外的画幅 —— 引擎收不下的值绝不能到 worker 并扣费", () => {
+    expect(genRequest.safeParse({ ...base, aspectRatio: "5:7" }).success).toBe(false);
+    expect(genRequest.safeParse({ ...base, aspectRatio: "1080p" }).success).toBe(false);
+  });
+  it("视频侧画幅校验不受影响(仍按视频模型的选项表)", () => {
+    const v = { projectId: "p1", prompt: "a clip", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+    expect(genRequest.safeParse({ ...v, aspectRatio: "16:9" }).success).toBe(true);
+    // 3:2 在图片菜单里,但视频模型不支持 —— 按 kind 分别校验
+    expect(genRequest.safeParse({ ...v, aspectRatio: "3:2" }).success).toBe(false);
   });
 });

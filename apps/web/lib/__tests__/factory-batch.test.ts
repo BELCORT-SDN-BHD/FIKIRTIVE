@@ -20,6 +20,7 @@ type JobRow = {
   sourceGenerationId?: string | null; tailGenerationId?: string | null;
   referenceVideoGenerationId?: string | null; shotId?: string | null;
   videoOptions?: Record<string, unknown> | null;
+  imageOptions?: Record<string, unknown> | null;
 };
 
 // A tiny in-memory prisma double for the two tables orchestrateBatch touches. It moves
@@ -63,13 +64,14 @@ function fakePrisma() {
         if (j && j.ownerId === where.ownerId) j.batchId = data.batchId;
         return { count: j ? 1 : 0 };
       }),
-      findMany: vi.fn(async ({ where }: {
+      findMany: vi.fn(async ({ where, select }: {
         where: {
           ownerId: string;
           projectId?: string;
           batchId?: string;
           idempotencyKey?: { startsWith: string };
         };
+        select?: Record<string, boolean>;
       }) => {
         const rows = [...jobs.values()].filter((j) =>
           j.ownerId === where.ownerId &&
@@ -78,7 +80,7 @@ function fakePrisma() {
           (where.idempotencyKey == null || j.idempotencyKey?.startsWith(where.idempotencyKey.startsWith)),
         );
         if (where.batchId != null) return rows.map((j) => ({ status: j.status }));
-        return rows.map((j) => ({
+        const stored = (j: JobRow): Record<string, unknown> => ({
           id: j.id,
           status: j.status,
           idempotencyKey: j.idempotencyKey ?? null,
@@ -93,7 +95,12 @@ function fakePrisma() {
           referenceVideoGenerationId: j.referenceVideoGenerationId ?? null,
           shotId: j.shotId ?? null,
           videoOptions: j.videoOptions ?? null,
-        }));
+          imageOptions: j.imageOptions ?? null,
+        });
+        // 忠实模拟 Prisma:**只回 select 点名的列**。一个没被点名的列在结果对象里根本不存在
+        // —— 这正是「投影漏列」这类缺陷在真库上的形状,替身不许比真库宽容。
+        return rows.map((j) =>
+          Object.fromEntries(Object.entries(stored(j)).filter(([column]) => select?.[column])));
       }),
     },
   } as unknown as OrchestrateDeps["prisma"];
@@ -486,5 +493,101 @@ describe("money-safety: the orchestration layer never mutates credits directly",
       const code = stripComments(readFileSync(path.resolve(__dirname, rel), "utf8"));
       expect(banned.test(code), `${rel} must not touch credits directly`).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #642 修复轮 r1 P1 —— 非方图工厂批量的耐久重放
+//
+// 工厂批量在**每次派发之前**先读一遍这一格的历史,拿它跟本次材料比对(fail closed:
+// 材料不同就拒,绝不重复扣款)。历史那一读用的是这个文件自己的一份投影常量 —— 它一旦
+// 漏掉某一列,Prisma 结果里那一列**根本不存在**,比对器只好按缺省解释它,于是「同一个
+// 请求」被判成「不同内容」,重试永远走不到 startGen 的锁时复用检查。
+//
+// 方向是安全的(拒绝而不是重复扣款),但商家的竖版批量重试从此再也点不动。
+// ---------------------------------------------------------------------------
+describe("#642 非方图工厂批量:同请求重试必须复用,不得误判内容不同", () => {
+  it.each(["9:16", "16:9", "4:3", "21:9"])(
+    "%s 竖/横版:失败后按同一份材料重试 ⇒ 照常派发,不报「内容不同」",
+    async (aspectRatio) => {
+      const { db, jobs } = fakePrisma();
+      const batchId = `SHAPE-${aspectRatio}`;
+      jobs.set("prior-shape", {
+        id: "prior-shape", ownerId: OWNER, projectId: PROJECT, batchId, status: "FAILED",
+        idempotencyKey: factoryAttemptKey(batchId, 0, ATTEMPT_A).key,
+        prompt: "a poster", model: "seedream", kind: "IMAGE", count: 1,
+        imageOptions: { aspectRatio },
+      });
+      const { fn, calls } = spyStartGen(jobs, OWNER);
+
+      const res = await orchestrateBatch(
+        { startGen: fn, prisma: db },
+        {
+          ownerId: OWNER, projectId: PROJECT, batchId, attemptId: ATTEMPT_B,
+          cells: [genCell("a poster", { aspectRatio })],
+        },
+      );
+
+      if ("error" in res) throw new Error(res.error);
+      expect(res.cells[0], `${aspectRatio} 必须被判为同一份材料`).toMatchObject({ status: "queued", credits: INTERNAL_PER_DISPLAY });
+      expect(res.cells[0].error).toBeUndefined();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.aspectRatio).toBe(aspectRatio); // 形状一路带到 startGen
+    },
+  );
+
+  it("方图(默认)那条路照旧 —— 证明上面的红不是「全都通过」换来的", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-square", {
+      id: "prior-square", ownerId: OWNER, projectId: PROJECT, batchId: "SQ", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("SQ", 0, ATTEMPT_A).key,
+      prompt: "a poster", model: "seedream", kind: "IMAGE", count: 1,
+      imageOptions: { aspectRatio: "1:1" },
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "SQ", attemptId: ATTEMPT_B, cells: [genCell("a poster")] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "queued", credits: INTERNAL_PER_DISPLAY });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("真换了形状仍然 fail closed —— 修好重放不等于放松材料把关", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-changed", {
+      id: "prior-changed", ownerId: OWNER, projectId: PROJECT, batchId: "SC", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("SC", 0, ATTEMPT_A).key,
+      prompt: "a poster", model: "seedream", kind: "IMAGE", count: 1,
+      imageOptions: { aspectRatio: "9:16" },
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "SC", attemptId: ATTEMPT_B, cells: [genCell("a poster", { aspectRatio: "16:9" })] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 });
+    expect(res.cells[0].error).toMatch(/different content/i);
+    expect(calls).toHaveLength(0); // 从未派发 ⇒ 从未重复扣款
+  });
+
+  it("迁移前的历史行(该列为 NULL)按方图解释,老批量重放照旧", async () => {
+    const { db, jobs } = fakePrisma();
+    jobs.set("prior-legacy", {
+      id: "prior-legacy", ownerId: OWNER, projectId: PROJECT, batchId: "LG", status: "FAILED",
+      idempotencyKey: factoryAttemptKey("LG", 0, ATTEMPT_A).key,
+      prompt: "a poster", model: "seedream", kind: "IMAGE", count: 1,
+      imageOptions: null,
+    });
+    const { fn, calls } = spyStartGen(jobs, OWNER);
+    const res = await orchestrateBatch(
+      { startGen: fn, prisma: db },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "LG", attemptId: ATTEMPT_B, cells: [genCell("a poster")] },
+    );
+    if ("error" in res) throw new Error(res.error);
+    expect(res.cells[0]).toMatchObject({ status: "queued" });
+    expect(calls).toHaveLength(1);
   });
 });

@@ -479,6 +479,10 @@ model GenJob {
   count              Int       @default(1)
   /// 视频生成的每模型设置（duration/resolution/aspectRatio/fps/audio）；worker 传给 provider
   videoOptions       Json?
+  /// 图片生成的每模型设置（aspectRatio）；worker 传给 provider（#642）。
+  /// 入队时冻结的规格快照 —— 它同时是「改这张图 / 再来一张」继承源图画幅的唯一依据。
+  /// null = 迁移前的历史行：它们当年产出的就是默认方图，读取端按默认画幅解释。
+  imageOptions       Json?
   status             GenStatus @default(QUEUED)
   progress           Int       @default(0)
   /// DONE 时产出的 Generation 行（可多个）

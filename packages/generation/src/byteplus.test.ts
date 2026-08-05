@@ -230,14 +230,12 @@ describe("generate (Seedream image, sync)", () => {
 // 现役适配器,这一节必须跟着换到新适配器上,否则闸就空了。
 // ---------------------------------------------------------------------------
 describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
-  it("图像:整条请求体逐字段断言,尺寸与 EXECUTED_SPEC.image.outputSize 一致", async () => {
+  it("图像:不带画幅时整条请求体逐字段断言,尺寸 = 默认画幅(方图,与 #642 之前一致)", async () => {
     let body: any;
     stubFetch((url, init) => {
       if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
       return bytesRes();
     });
-    // 商家要的画幅不在 GenerationRequest 里 —— 它在 gen-from-card 那一层就被丢掉了,
-    // 所以适配器根本无从发送。这正是 aspectHonoured=false 的依据。
     await new BytePlusProvider("ark-test").generate({
       prompt: "a poster", inputImageUrls: [], count: 1, model: "seedream",
     });
@@ -249,8 +247,43 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
       response_format: "url",
       watermark: false,
     });
-    // 整体断言已经证明请求体里没有任何画幅字段 —— 卡面因此不得承诺画幅。
-    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(false);
+    expect(`${width}x${height}`).toBe("2048x2048"); // 既有方图行为逐字节不变
+  });
+
+  it("图像:**每一个**画幅都真的发出对应的确切 WxH —— 这是 aspectHonoured=true 的全部依据", async () => {
+    for (const [aspect, size] of Object.entries(EXECUTED_SPEC.image.outputSizes)) {
+      let body: any;
+      stubFetch((url, init) => {
+        if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+        return bytesRes();
+      });
+      await new BytePlusProvider("ark-test").generate({
+        prompt: "a poster", inputImageUrls: [], count: 1, model: "seedream", aspectRatio: aspect,
+      });
+      // 整条请求体逐字段断言:画幅真的变成了发出去的 size,而且没有多出任何字段。
+      expect(body, aspect).toEqual({
+        model: "seedream-5-0-260128",
+        prompt: "a poster",
+        size: `${size.width}x${size.height}`,
+        response_format: "url",
+        watermark: false,
+      });
+      vi.unstubAllGlobals();
+    }
+    // 上面这一圈整体断言就是这一行的依据:八个画幅全都发得出去。
+    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(true);
+  });
+
+  it("图像:未知画幅诚实回落默认方图(纯函数,绝不把引擎收不下的值发出去)", async () => {
+    let body: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/images/generations")) { body = JSON.parse(init.body); return jsonRes({ data: [{ url: "https://tos/x.png" }] }); }
+      return bytesRes();
+    });
+    await new BytePlusProvider("ark-test").generate({
+      prompt: "a poster", inputImageUrls: [], count: 1, model: "seedream", aspectRatio: "7:5",
+    });
+    expect(body.size).toBe("2048x2048");
   });
 
   it("视频:整条请求体逐字段断言 —— 时长/清晰度/画幅发得出去,声音发不出去", async () => {

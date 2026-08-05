@@ -149,4 +149,4 @@ export * from "./gen-job-state.js";
 export * from "./canvas-card-status.js";
 // 执行层真会做什么 —— 卡面文案(otto)与现役适配器请求体断言(generation)钉在同一份声明上。
 // 纯数据,无 node/network 依赖,可留在主 barrel。
-export { EXECUTED_SPEC } from "./executed-spec.js";
+export { EXECUTED_SPEC, imageAspectHonoured } from "./executed-spec.js";
