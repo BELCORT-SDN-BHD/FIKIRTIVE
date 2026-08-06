@@ -36,7 +36,7 @@ const { startGen } = await import("../gen-actions");
 const { prisma, reserveCredits, settleCredits, refundReservation } = await import("@fikirtive/db");
 
 const IMG = INTERNAL_PER_DISPLAY; // one image cell = 1 displayed credit = 10 internal
-const VID = 8 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/5s = 8 displayed credits (flat-priced video)
+const VID = 11 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/5s = 11 displayed credits (flat-priced video; #644 裁决 2026-08-06)
 const ATTEMPT_A = "approval-card-a";
 const ATTEMPT_B = "approval-card-b";
 
@@ -502,7 +502,7 @@ describe("W-B3-F-P ledger — video cell quote == reserve == settle (NODE-280 it
 
     const res = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells: [{ type: "gen", prompt: "product spin", kind: "video", model: "seedance-2-fast" }] });
     if ("error" in res) throw new Error(res.error);
-    expect(res.totalCredits).toBe(VID); // quote = 8 displayed × 10 internal
+    expect(res.totalCredits).toBe(VID); // quote = 11 displayed × 10 internal
     expect(res.cells[0]).toMatchObject({ status: "queued", credits: VID });
 
     expect((await account(ownerId)).reserved).toBe(VID); // reserve == quote
@@ -549,7 +549,7 @@ describe("W-B3-F-P ledger — video replay after DONE reuses (full-field compare
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
-    const VID10 = 14 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/10s flat = 14 displayed
+    const VID10 = 22 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/10s flat = 22 displayed(#644 裁决 2026-08-06)
     const cells = [{ type: "gen" as const, prompt: "product spin", kind: "video" as const, model: "seedance-2-fast", durationSeconds: 10 }];
 
     const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });

@@ -51,23 +51,12 @@ export type PendingFloorRuling = {
  *   4. 过了 `reviewBy` 还在名单上 → 红(裁决被拖着不做,CI 就停下来等)。
  * 另外任何档位只要**收费 ≤ 成本**,名单一律救不了 —— 恒红。
  *
- * 为什么会跌破:记账基准从 2026-06 资源包折后价($3.564/M)回到官方牌价($5.60/M),
- * 视频成本 +57%,而收费一格没动(本片 record-only)。详见 PR「毛利真相表」章节。
+ * **现在是空的。** 上一批(#644,2026-08-05)挂着视频 720p 5s / 10s 两档 —— 记账基准从
+ * 2026-06 资源包折后价($3.564/M)回到官方牌价($5.60/M)后,成本 +57% 而收费没动,毛利
+ * 掉到 24.4% / 13.6%。Founder 于 2026-08-06 裁决**调价**(8→11cr、14→22cr,留档于
+ * PR #655 评论),两档回到 45.0%,名单按第 2 条规则清空。
  */
-export const BELOW_FLOOR_PENDING_FOUNDER_RULING: readonly PendingFloorRuling[] = [
-  {
-    tier: "video:seedance-2-fast:5:720p",
-    reason: "8cr = $0.80 对上牌价成本 $0.6048 → 24.4%。旧账按 2026-06 资源包折后价算成 51.3%,资源包不保证在有效期内。",
-    rulingRef: "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/655",
-    reviewBy: "2026-08-20",
-  },
-  {
-    tier: "video:seedance-2-fast:10:720p",
-    reason: "14cr = $1.40 对上牌价成本 $1.2096 → 13.6%。这一档原本是「精确压在 45.0% 地板上」,压住它的是资源包价而不是牌价。",
-    rulingRef: "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/655",
-    reviewBy: "2026-08-20",
-  },
-];
+export const BELOW_FLOOR_PENDING_FOUNDER_RULING: readonly PendingFloorRuling[] = [];
 
 /** 取某一档的待裁决记录;不在名单上返回 undefined。纯函数。 */
 export function pendingRulingFor(tier: string): PendingFloorRuling | undefined {
