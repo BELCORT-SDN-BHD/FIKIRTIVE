@@ -54,6 +54,39 @@ describe("generateVideo (Seedance, async)", () => {
     expect("camera_fixed" in submitBody).toBe(false);
     expect("frames" in submitBody).toBe(false);
   });
+  it("#645 T4: adaptive 与新开的每一档都原样发给引擎 —— 卡面说的就是引擎收到的", async () => {
+    // 「说的」与「做的」同源的那一步:卡面显示 Adaptive,引擎收到的就是 ratio:"adaptive",
+    // 中间没有任何一处把它替换成某个具体比例。480p 与 4–15 秒同理。
+    for (const [aspectRatio, resolution, durationSeconds] of [
+      ["adaptive", "720p", 5],
+      ["21:9", "480p", 15],
+      ["3:4", "480p", 4],
+      ["1:1", "720p", 12],
+    ] as const) {
+      let submitBody: any;
+      stubFetch((url, init) => {
+        if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+          submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-t4" });
+        }
+        if (url.includes("/contents/generations/tasks/cgt-t4")) {
+          return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" }, usage: { total_tokens: 1 } });
+        }
+        return bytesRes();
+      });
+      const promise = new BytePlusProvider("ark-test").generateVideo({
+        prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds, model: "seedance-2-fast", resolution, aspectRatio,
+      });
+      await vi.runAllTimersAsync();
+      await promise;
+      expect(submitBody.ratio, `${aspectRatio}`).toBe(aspectRatio);
+      expect(submitBody.resolution, `${resolution}`).toBe(resolution);
+      expect(submitBody.duration, `${durationSeconds}`).toBe(durationSeconds);
+      // 严格顶层字段的纪律(#646 T5)在新档位上照旧成立。
+      expect(JSON.stringify(submitBody)).not.toContain("--");
+      expect("seed" in submitBody).toBe(false);
+    }
+  });
+
   it("t2v: text-only content when no source frame; no ratio field when the request has no shape", async () => {
     let submitBody: any;
     stubFetch((url, init) => {
