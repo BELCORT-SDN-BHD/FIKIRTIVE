@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   uploadReference: vi.fn(),
   quoteCosts: vi.fn(),
   imageShapes: vi.fn(),
+  videoSpecs: vi.fn(),
   generateImage: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -68,6 +69,7 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
     generateVideoFromText: vi.fn(),
     quoteCosts: mocks.quoteCosts,
     imageShapes: mocks.imageShapes,
+    videoSpecs: mocks.videoSpecs,
     cancelledRef: { current: false },
   }),
   isInFlightPaidGen: (node: { type: string; status?: string; url?: string | null }) =>
@@ -165,6 +167,13 @@ beforeEach(() => {
   mocks.boardRead.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
   mocks.imageShapes.mockResolvedValue({ options: MENU, defaultAspect: "1:1" });
+  mocks.videoSpecs.mockResolvedValue({
+    menu: { durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolutions: ["720p", "480p"], aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] },
+    t2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
+    i2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "adaptive" },
+    creditsFor: ({ seconds, resolution }: { seconds: number; resolution: string }) =>
+      Math.ceil((seconds * (resolution === "480p" ? 11 : 22)) / 10),
+  });
   mocks.generateImage.mockResolvedValue(true);
   mocks.actionSeq.current = 0;
   vi.stubGlobal("ResizeObserver", class {

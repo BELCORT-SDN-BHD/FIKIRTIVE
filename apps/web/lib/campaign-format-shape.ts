@@ -74,3 +74,34 @@ export function campaignImageAspectForFormat(format: string): GenImageAspect | n
   // 防御：这张表若被改成一个菜单外的值，宁可回默认，也不把它送进付费请求。
   return (GEN_IMAGE_ASPECTS as readonly string[]).includes(aspect) ? aspect : GEN_IMAGE_DEFAULT_ASPECT;
 }
+
+/**
+ * 片子格式 → 交付形状(#645 T4)。与上面的图片表同一条原则:**只收录形状本身就写在
+ * 格式名里的那些**。
+ *
+ * 竖版 9:16:reel / reels / short / shorts —— 平台上这几个位就是整屏竖版,商家写下
+ *   "reel" 要的就是竖版片子。在这之前视频侧根本没有形状映射,战役里的每一条片子都按
+ *   默认 16:9 交付 —— 商家看见的格式名和真拿到的东西对不上,而且全程没有一句话解释。
+ * 其余片子格式(video / clip / animation / gif)名字没说形状,走视频模型的默认形状,
+ *   不去猜商家的意图。
+ */
+const VIDEO_FORMAT_ASPECTS: Record<string, string> = {
+  reel: "9:16",
+  reels: "9:16",
+  short: "9:16",
+  shorts: "9:16",
+};
+
+/**
+ * 这个片子格式会交付的形状;名字没说形状 ⇒ null(由视频侧的默认档决定,这张表不发明值)。
+ * 图片格式同样返回 null —— 形状归上面那张表管,两张表互不越权。
+ *
+ * `menu` = 视频模型真能给的形状清单(`GEN_VIDEO_MODEL_OPTIONS[...].aspectRatios`)。
+ * 映射出的形状若不在菜单上,返回 null 而不是硬送 —— 绝不把一个引擎收不下的形状塞进付费请求。
+ */
+export function campaignVideoAspectForFormat(format: string, menu: readonly string[]): string | null {
+  if (campaignGenKindForFormat(format) !== "video") return null;
+  const mapped = VIDEO_FORMAT_ASPECTS[normalizeFormat(format)];
+  if (!mapped) return null;
+  return menu.includes(mapped) ? mapped : null;
+}

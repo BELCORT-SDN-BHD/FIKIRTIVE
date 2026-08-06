@@ -164,7 +164,9 @@ async function builtCards(): Promise<ServerCardPayload[]> {
   const base = { structuredPrompt: "a bowl of laksa", entityIds: [], variantSel: {} };
   return [
     buildProposeCard({ kind: "video", ...base }, ctx, []),
-    buildProposeCard({ kind: "video", ...base, desiredDuration: 7, desiredAspect: "1:1" }, ctx, []),
+    // #645 T4：7s / 1:1 现在都真给得了，所以「降级卡」这个夹具必须用引擎真做不到的值
+    // （30 秒 / 2:3），否则这张卡不再带 downgradeNote，下面的覆盖断言就空过去了。
+    buildProposeCard({ kind: "video", ...base, desiredDuration: 30, desiredAspect: "2:3" }, ctx, []),
     buildProposeCard({ kind: "image", ...base, count: 3 }, ctx, []),
     buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),

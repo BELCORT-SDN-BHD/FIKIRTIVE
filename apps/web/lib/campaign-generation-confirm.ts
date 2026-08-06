@@ -40,13 +40,14 @@ import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
 import { z } from "zod";
-import { activeImageModel, activeVideoModel, displayCredits, newId } from "@fikirtive/core";
+import { activeImageModel, activeVideoModel, displayCredits, newId, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { startGen } from "./gen-actions";
 import {
   campaignGenKindForFormat,
   campaignImageAspectForFormat,
+  campaignVideoAspectForFormat,
   type CampaignGenKind,
 } from "./campaign-format-shape";
 import {
@@ -82,7 +83,11 @@ function buildCampaignGenCells(
     // #643 T2：商家在计划里写的格式名就是他要的东西 —— "story" 要的是竖版。形状来自
     // `campaign-format-shape` 那**一张**表（确认页显示的也是它），所以商家看见的格式名
     // 和真会交付的形状不可能分家。图片按张计价、不分形状，这一行不动任何价格。
-    const aspectRatio = kind === "image" ? campaignImageAspectForFormat(entry.format) : null;
+    // #645 T4：片子侧同理 —— 商家写下 "reel" 要的是竖版片子。形状同样来自那张表，
+    // 并且只在视频模型真给得了的时候才带上（菜单从能力表读，不写死）。
+    const aspectRatio = kind === "image"
+      ? campaignImageAspectForFormat(entry.format)
+      : campaignVideoAspectForFormat(entry.format, GEN_VIDEO_MODEL_OPTIONS[models.video as GenVideoModel]?.aspectRatios ?? []);
     return {
       type: "gen",
       prompt: entry.brief,

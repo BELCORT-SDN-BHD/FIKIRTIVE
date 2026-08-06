@@ -107,8 +107,8 @@ const fails = (rows, pending, today = TODAY) => evaluateFloorDecisions(rows, pen
   const f = fails([inverted], [validPark()]);
   assert.ok(f.some((x) => /every sale loses money \(R1\)/.test(x)), "parking never covers selling below cost");
 }
-// R2: below floor and not parked at all.
-assert.ok(fails([lowRow], []).some((x) => /not parked \(R2\)/.test(x)), "an unparked violation must fail");
+// R2: below floor and in neither registry.
+assert.ok(fails([lowRow], []).some((x) => /neither registry \(R2\)/.test(x)), "an unparked violation must fail");
 // R3: parked but now clears the floor → the registry went stale.
 assert.ok(
   fails([{ ...lowRow, margin: 0.55, pass: true }], [validPark()]).some((x) => /remove it from BELOW_FLOOR/.test(x)),
@@ -137,5 +137,83 @@ assert.ok(
 // An empty/absent registry is fine as long as nothing is below the floor.
 assert.equal(evaluateFloorDecisions([okRow], [], TODAY).ok, true);
 assert.equal(evaluateFloorDecisions([okRow], undefined, TODAY).ok, true);
+
+// ── #645 T4: the ACCEPTED registry (Founder 已裁接受) — rules A1…A5 ────────────
+// Identical structure to the pending self-test above: every alarm is proven to fire, so an
+// accepted exemption can never quietly widen into a blanket waiver.
+const validAccept = (over = {}) => ({
+  tier: "v10",
+  ratios: ["4:3", "3:4"],
+  margin: 0.4467,
+  reason: "the tier's worst ratio lands 0.33pt under the floor; the founder accepted it",
+  ruledOn: "2026-08-06",
+  source: "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378",
+  ...over,
+});
+const acceptFails = (rows, accepted, today = TODAY) => evaluateFloorDecisions(rows, [], today, accepted).hardFails;
+
+// A5 GREEN: below floor, properly accepted → reported as accepted, not a failure.
+{
+  const { ok, accepted, parked, hardFails } = evaluateFloorDecisions([okRow, lowRow], [], TODAY, [validAccept()]);
+  assert.equal(ok, true, `a properly accepted tier must not fail: ${hardFails.join("; ")}`);
+  assert.deepEqual(accepted.map((r) => r.id), ["v10"], "the accepted tier is still REPORTED");
+  assert.deepEqual(parked, [], "an accepted tier is not a pending one");
+}
+// A1: each required field, missing or blank.
+for (const field of ["reason", "ruledOn", "source"]) {
+  assert.ok(
+    acceptFails([lowRow], [validAccept({ [field]: "  " })]).some((x) => x.includes(`missing "${field}"`)),
+    `a blank ${field} must fail (an exemption must say who ruled, when, and why)`,
+  );
+}
+assert.ok(
+  acceptFails([lowRow], [validAccept({ ratios: [] })]).some((x) => /must name the ratio\(s\)/.test(x)),
+  "an exemption that does not name the offending ratios must fail",
+);
+assert.ok(
+  acceptFails([lowRow], [{ ...validAccept(), tier: "  " }]).some((x) => /accepted floor exception with no tier id/.test(x)),
+  "a tier-less accepted entry must fail",
+);
+assert.ok(
+  acceptFails([lowRow], [validAccept({ ruledOn: "6 Aug 2026" })]).some((x) => /not YYYY-MM-DD \(A1\)/.test(x)),
+  "a malformed ruledOn must fail",
+);
+// A2: accepted entry naming a tier that is not sellable.
+assert.ok(
+  acceptFails([okRow], [validAccept({ tier: "video:ghost:99:8k" })]).some((x) => /not a sellable SKU/.test(x)),
+  "an accepted entry pointing at nothing must fail",
+);
+// A3: accepted but now clears the floor → the exemption went stale and must be deleted.
+assert.ok(
+  acceptFails([{ ...lowRow, margin: 0.55, pass: true }], [validAccept()])
+    .some((x) => /remove it from BELOW_FLOOR_FOUNDER_ACCEPTED \(A3\)/.test(x)),
+  "an accepted tier that now clears the floor must fail",
+);
+// A4: a tier in BOTH registries has an ambiguous status.
+assert.ok(
+  evaluateFloorDecisions([lowRow], [validPark()], TODAY, [validAccept()]).hardFails
+    .some((x) => /appears in BOTH the pending-ruling and the accepted-exception registry/.test(x)),
+  "a tier in both registries must fail",
+);
+// R1 still wins over an acceptance: no ruling licenses selling below cost.
+{
+  const inverted = { id: "v10", chargeUsd: 0.7, cogsUsd: 0.85, margin: -0.214, pass: false };
+  assert.ok(
+    acceptFails([inverted], [validAccept()]).some((x) => /every sale loses money \(R1\)/.test(x)),
+    "an acceptance never covers selling below cost",
+  );
+}
+// The accepted registry is optional — omitting it keeps the pre-#645 behaviour exactly.
+assert.equal(evaluateFloorDecisions([okRow], [], TODAY).ok, true);
+
+// ── structural sanity: the expanded tier table is fully costed (#645 T4) ──
+for (const seconds of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+  for (const res of ["480p", "720p"]) {
+    assert.ok(
+      COGS_INPUTS[`video:seedance-2-fast:${seconds}:${res}`],
+      `#645: sellable tier ${seconds}s ${res} must carry a certified COGS input`,
+    );
+  }
+}
 
 console.log("✓ check-margin-floor red/green self-test passed");

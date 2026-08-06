@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   uploadReference: vi.fn(),
   quoteCosts: vi.fn(),
   imageShapes: vi.fn(),
+  videoSpecs: vi.fn(),
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
   toastMessage: vi.fn(),
@@ -66,6 +67,7 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
     quoteCosts: mocks.quoteCosts,
     // #643 T2: 形状菜单来自服务端解析，测试替身也必须给得出，否则选择器渲染不出来。
     imageShapes: mocks.imageShapes,
+    videoSpecs: mocks.videoSpecs,
     cancelledRef: { current: false },
   }),
   isInFlightPaidGen: (node: { type: string; status?: string; url?: string | null }) =>
@@ -114,6 +116,13 @@ beforeEach(() => {
   mocks.boardRead.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
   mocks.imageShapes.mockResolvedValue({ options: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"], defaultAspect: "1:1" });
+  mocks.videoSpecs.mockResolvedValue({
+    menu: { durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolutions: ["720p", "480p"], aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] },
+    t2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
+    i2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "adaptive" },
+    creditsFor: ({ seconds, resolution }: { seconds: number; resolution: string }) =>
+      Math.ceil((seconds * (resolution === "480p" ? 11 : 22)) / 10),
+  });
   vi.stubGlobal("ResizeObserver", class {
     observe() {}
     unobserve() {}

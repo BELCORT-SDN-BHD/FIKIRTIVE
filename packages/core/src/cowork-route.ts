@@ -5,6 +5,7 @@ import {
   imageDefaults,
   normalizeImageAspect,
   videoDefaults,
+  VIDEO_ASPECT_ADAPTIVE,
   type GenModel,
   type GenVideoModel,
 } from "./gen.js";
@@ -70,7 +71,9 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult {
   const pick = activeVideoModel() as GenVideoModel;
 
   const o = GEN_VIDEO_MODEL_OPTIONS[pick];
-  const d = videoDefaults(pick);
+  // #645 T4:带首帧(i2v)时形状默认 adaptive —— 引擎跟着首帧走,而不是被一个默认值
+  // 悄悄改成别的画幅。商家明说了形状,下面 snap 仍然按商家说的来。
+  const d = videoDefaults(pick, { hasSourceImage: input.hasSourceImage });
 
   // Snap a desired value to the model's option list; flag downgraded if we had
   // to substitute.
@@ -91,8 +94,10 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult {
   const downgraded = dur.downgraded || aspect.downgraded || aspectDropped;
   // honest aspect note: a snapped value when the model exposes aspects; "from source
   // frame" for i2v (empty-aspect); "default aspect" for t2v with no aspect to set.
+  // #645 T4:adaptive 不是一个具体形状 —— 如实说成「跟着首帧走」,绝不翻译成 16:9 之类
+  // 的具体值(那就是卡面说一套、引擎做一套)。
   const aspectNote = o.aspectRatios.length
-    ? `${aspect.v}`
+    ? (aspect.v === VIDEO_ASPECT_ADAPTIVE ? "adaptive (follows the source frame)" : `${aspect.v}`)
     : input.hasSourceImage ? "aspect from source frame" : "default aspect";
 
   return {

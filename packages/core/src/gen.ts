@@ -225,14 +225,36 @@ export type VideoModelOptions = {
   fps: number[];
   audioToggle: boolean;
   maxCount: number;
+  /** EXPLICIT defaults (#645 T4). Absent ⇒ first of each list, the pre-#645 rule.
+   *  Present ⇒ list order is free to be the PICKER's order without moving what a
+   *  merchant gets when they choose nothing. Every value here must be in its list
+   *  (pinned by video-tiers.test.ts) — a default off the menu is a default the
+   *  contract gate would reject. */
+  defaults?: { seconds?: number; resolution?: string; aspectRatio?: string };
+  /** i2v-only shape default (#645 T4): with a source frame the engine matches the
+   *  frame instead of being told a ratio. Mirrors the image side's「改这张图不变形状」. */
+  i2vAspectRatio?: string;
 };
+
+/** 「跟着首帧走」——引擎自选比例。**不是一个具体形状**:卡面必须如实显示 Adaptive,
+ *  不许翻译成 16:9 之类的具体值(那就是又一次替商家做主还不说话)。 */
+export const VIDEO_ASPECT_ADAPTIVE = "adaptive";
 export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> = {
   "kling":           { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 },
   "veo3.1-lite":     { durations: [4, 6, 8],  resolutions: ["720p"],                    aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "ltx-2":           { durations: [6, 8, 10], resolutions: ["1080p", "1440p", "2160p"], aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "kling-2.6":       { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   "kling-3":         { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
-  "seedance-2-fast": { durations: [5, 10],   resolutions: ["720p"],                   aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 }, // BytePlus Seedance 2.0 fast = 720p-capped (verified; 1080p needs the full model)
+  // #645 T4:引擎真能给的每一档都开出来 —— duration 整数 [4,15]、480p/720p(Fast 无 1080p)、
+  // 六比例 + adaptive。列表顺序 = picker 顺序;默认值显式写在 `defaults` 里,与今日逐字一致。
+  "seedance-2-fast": {
+    durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    resolutions: ["720p", "480p"],
+    aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", VIDEO_ASPECT_ADAPTIVE],
+    fps: [], audioToggle: true, maxCount: 4,
+    defaults: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
+    i2vAspectRatio: VIDEO_ASPECT_ADAPTIVE,
+  },
   "veo3.1-fast":     { durations: [4, 6, 8],  resolutions: ["720p", "1080p"],           aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "veo3.1":          { durations: [4, 6, 8],  resolutions: ["720p", "1080p", "4k"],     aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
   "pixverse-v6":     { durations: [5, 8],    resolutions: ["360p", "540p", "720p", "1080p"], aspectRatios: [], fps: [], audioToggle: true,  maxCount: 4 }, // i2v schema has no aspect_ratio
@@ -242,10 +264,31 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
   "seedance-2":      { durations: [5, 10],   resolutions: ["480p", "720p", "1080p"],   aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
 };
 
-/** A model's default selections (first of each list; audio on for sound models). */
-export function videoDefaults(model: GenVideoModel): { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } {
+/**
+ * A model's default selections — explicit `defaults` where the model declares them,
+ * else first of each list (audio on for sound models).
+ *
+ * #645 T4:`hasSourceImage` 分开 t2v 与 i2v 的**形状**默认。i2v(动这张图/接首帧)默认
+ * 走模型的 `i2vAspectRatio`(Seedance = adaptive):有首帧时形状该跟着首帧走,而不是被
+ * 一个默认值悄悄改成别的画幅 —— 与图片侧「改这张图不变形状」同一条原则。其余三项
+ * (时长/分辨率/声音)两条路一致。
+ */
+export function videoDefaults(
+  model: GenVideoModel,
+  opts?: { hasSourceImage?: boolean },
+): { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } {
   const o = GEN_VIDEO_MODEL_OPTIONS[model];
-  return { seconds: o.durations[0]!, resolution: o.resolutions[0] ?? "", aspectRatio: o.aspectRatios[0] ?? "", fps: o.fps[0] ?? 0, audio: o.audioToggle };
+  const t2vAspect = o.defaults?.aspectRatio ?? o.aspectRatios[0] ?? "";
+  const i2vAspect = opts?.hasSourceImage && o.i2vAspectRatio && o.aspectRatios.includes(o.i2vAspectRatio)
+    ? o.i2vAspectRatio
+    : t2vAspect;
+  return {
+    seconds: o.defaults?.seconds ?? o.durations[0]!,
+    resolution: o.defaults?.resolution ?? o.resolutions[0] ?? "",
+    aspectRatio: i2vAspect,
+    fps: o.fps[0] ?? 0,
+    audio: o.audioToggle,
+  };
 }
 
 /* ---------------- 视频引擎官方 token 计价(#644 记账真相) ---------------- */
@@ -268,6 +311,29 @@ export function videoDefaults(model: GenVideoModel): { seconds: number; resoluti
  * 这里不给没核过的档位编数字。
  */
 export const BYTEPLUS_720P_TOKENS_PER_SECOND = 21_600;
+/** 官方 token 公式里的帧率(Seedance 2.0 系列输出恒 24fps)。 */
+export const BYTEPLUS_VIDEO_FPS = 24;
+
+/**
+ * Seedance 2.0 系列**官方输出像素表**(Create-task 文档
+ * https://docs.byteplus.com/en/docs/ModelArk/1520757,2026-07-31 核,Seedance 2.0 系列列)。
+ *
+ * 为什么必须有这张表(#645 T4):同一个分辨率档,不同比例的像素数**差得很远** ——
+ * 720p 的 4:3 是 927,408px,比 16:9 的 921,600px 多 0.6%;成本按 token 走,token 按像素走,
+ * 所以「720p 一个价」的成本其实是一段区间。毛利地板只有按**最差比例**建模才算数,
+ * 否则商家挑了最贵的比例,我们就在自己不知情的情况下卖到地板下面去。
+ */
+export const SEEDANCE_VIDEO_PIXELS: Record<"480p" | "720p", Record<string, readonly [number, number]>> = {
+  "480p": { "16:9": [864, 496], "4:3": [752, 560], "1:1": [640, 640], "3:4": [560, 752], "9:16": [496, 864], "21:9": [992, 432] },
+  "720p": { "16:9": [1280, 720], "4:3": [1112, 834], "1:1": [960, 960], "3:4": [834, 1112], "9:16": [720, 1280], "21:9": [1470, 630] },
+};
+
+/** 某一分辨率档下**最贵**那个比例的 tokens/秒(= 最大像素 × 24fps / 1024)。纯函数。
+ *  720p ⇒ 4:3/3:4 的 927,408px ⇒ 21,736.125 tok/s;480p ⇒ 21:9 的 428,544px ⇒ 10,044 tok/s。 */
+export function seedanceWorstRatioTokensPerSecond(resolution: "480p" | "720p"): number {
+  const widest = Math.max(...Object.values(SEEDANCE_VIDEO_PIXELS[resolution]).map(([w, h]) => w * h));
+  return (widest * BYTEPLUS_VIDEO_FPS) / 1024;
+}
 /** 无视频输入(t2v / i2v)牌价,$/M tokens。 */
 export const BYTEPLUS_USD_PER_MTOKEN = 5.6;
 /** 含视频输入(整段参考视频)牌价,$/M tokens —— 比无视频输入那档更便宜。 */
@@ -280,18 +346,40 @@ export const BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT = 3.3;
  */
 export const BYTEPLUS_MIN_BILLED_INPUT_SECONDS = 4;
 
-/** 按官方 token 公式算 720p 的 COGS(USD)。纯函数,RECORD-ONLY —— 收费在 spend.ts。 */
-export function byteplusVideoCogsUsd(opts: { outputSeconds: number; referenceInputSeconds?: number }): number {
+/** 按官方 token 公式算 COGS(USD)。纯函数,RECORD-ONLY —— 收费在 spend.ts。
+ *  `tokensPerSecond` 缺省 = 720p 16:9 那一档(整段参考视频沿用它,见下)。 */
+export function byteplusVideoCogsUsd(opts: {
+  outputSeconds: number;
+  referenceInputSeconds?: number;
+  tokensPerSecond?: number;
+}): number {
   const rawInput = opts.referenceInputSeconds ?? 0;
   const hasVideoInput = rawInput > 0;
   const billedInput = hasVideoInput ? Math.max(rawInput, BYTEPLUS_MIN_BILLED_INPUT_SECONDS) : 0;
-  const tokens = (opts.outputSeconds + billedInput) * BYTEPLUS_720P_TOKENS_PER_SECOND;
+  const tokens = (opts.outputSeconds + billedInput) * (opts.tokensPerSecond ?? BYTEPLUS_720P_TOKENS_PER_SECOND);
   const usdPerMToken = hasVideoInput ? BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT : BYTEPLUS_USD_PER_MTOKEN;
   return (tokens * usdPerMToken) / 1_000_000;
 }
 
-/** 现役视频档(seedance-2-fast @720p)每秒等效记账成本 = **$0.12096/s**。RECORD-ONLY。 */
+/** 现役视频档(seedance-2-fast @720p 16:9)每秒等效记账成本 = **$0.12096/s**。RECORD-ONLY。
+ *  #645 后它不再是收费/毛利的基准(那条路按最差比例走,见下),只留给整段参考视频那一档。 */
 export const SEEDANCE_720P_COGS_USD_PER_SECOND = byteplusVideoCogsUsd({ outputSeconds: 1 });
+
+/**
+ * **每秒记账成本,按各档的最差比例**(#645 T4)。RECORD-ONLY。
+ *   720p = 21,736.125 tok/s × $5.60/M = **$0.1217223/s**(4:3 / 3:4)
+ *   480p = 10,044     tok/s × $5.60/M = **$0.0562464/s**(21:9)
+ *
+ * 为什么按最差比例记而不是按这一单真实的比例:收费是**按档**的(同一档六个比例一个价),
+ * 所以毛利也只能按档判 —— 判据必须是这一档里最贵的那个比例,否则「平均起来是够的」会
+ * 掩盖掉真正卖亏的那几个比例。同一条保守原则下,记账宁可高估:与
+ * `REFERENCE_VIDEO_COGS_USD` 取参考片窗口上限是同一个理由(「记上限,永不低估成本」)。
+ * 代价是 16:9 这类便宜比例被高记 ≤0.6%,方向永远安全。
+ */
+export const SEEDANCE_COGS_USD_PER_SECOND: Record<"480p" | "720p", number> = {
+  "480p": byteplusVideoCogsUsd({ outputSeconds: 1, tokensPerSecond: seedanceWorstRatioTokensPerSecond("480p") }),
+  "720p": byteplusVideoCogsUsd({ outputSeconds: 1, tokensPerSecond: seedanceWorstRatioTokensPerSecond("720p") }),
+};
 
 /**
  * 整段参考视频的记账成本 = **$0.78408**,按我们参考片窗口的**上限**保守记
@@ -309,16 +397,18 @@ export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
 
 /** Per-second rate ($/s) by model/resolution/audio — basis for the live price hint.
  *  fal models: verified against each model's fal pricing page. seedance-2-fast (the one
- *  in-service BytePlus model): the official token price, see SEEDANCE_720P_COGS_USD_PER_SECOND. */
+ *  in-service BytePlus model): the official token price per tier's worst ratio, see
+ *  SEEDANCE_COGS_USD_PER_SECOND. */
 function videoRateUsdPerSec(model: GenVideoModel, resolution: string, audio: boolean): number {
   switch (model) {
     case "kling": return 0.07;                                             // always silent
     case "kling-2.6": return audio ? 0.14 : 0.07;
     case "kling-3": return audio ? 0.168 : 0.112;
-    // #644: 官方牌价 $0.12096/s @720p(5s=$0.6048、10s=$1.2096,对上官方 $0.60/$1.21)。
-    // 旧值 0.077 是 2026-06 资源包折后价($3.564/M 含税),不是我们随时拿得到的价 —— 低记 ~36%。
-    // 声音开关不影响 2.0 系列价格,所以这一档不看 audio。RECORD-ONLY;收费在 spend.ts 的 flat 表。
-    case "seedance-2-fast": return SEEDANCE_720P_COGS_USD_PER_SECOND;
+    // #644 官方牌价 token 公式;#645 T4 起按**档 × 最差比例**分开(480p 是真的半价档,
+    // 记成 720p 会把它的毛利算错)。未知/缺省分辨率一律回落到更贵的 720p —— 记账宁可高估。
+    // 声音开关不影响 2.0 系列价格,所以这一档不看 audio。RECORD-ONLY;收费在 spend.ts。
+    case "seedance-2-fast":
+      return SEEDANCE_COGS_USD_PER_SECOND[resolution as "480p" | "720p"] ?? SEEDANCE_COGS_USD_PER_SECOND["720p"];
     case "ltx-2": return resolution === "2160p" ? 0.24 : resolution === "1440p" ? 0.12 : 0.06;
     case "veo3.1-lite": return resolution === "1080p" ? (audio ? 0.08 : 0.05) : (audio ? 0.05 : 0.03);
     case "veo3.1-fast": return audio ? 0.15 : 0.10;

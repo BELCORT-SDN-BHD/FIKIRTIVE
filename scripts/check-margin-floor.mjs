@@ -76,14 +76,44 @@ export const COGS_INPUTS = {
     cogsUsd: 0.035,
     source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — refgen shares the image per-image basis",
   },
-  "video:seedance-2-fast:5:720p": {
-    cogsUsd: 0.6048,
-    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — 5s × 21,600 tok/s × $5.60/M = $0.6048 (list price; provider quotes $0.60)",
-  },
-  "video:seedance-2-fast:10:720p": {
-    cogsUsd: 1.2096,
-    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — 10s × 21,600 tok/s × $5.60/M = $1.2096 (list price; provider quotes $1.21)",
-  },
+  // ── #645 T4: every sellable duration × resolution, costed at the tier's WORST ratio ──
+  // Two published primary sources, both hand-transcribed:
+  //   PRICE  docs.byteplus.com/en/docs/ModelArk/1544106 (Last updated 2026-08-01) —
+  //          dreamina-seedance-2-0-fast-260128, $5.60/M tokens without video input, SAME
+  //          rate for 480p and 720p; tokens = W × H × 24fps × seconds / 1024. The page's own
+  //          worked examples (480p 16:9 5s = $0.28, 720p 16:9 5s = $0.60) reproduce exactly.
+  //   PIXELS docs.byteplus.com/en/docs/ModelArk/1520757 (Create task, 2026-07-31, Seedance 2.0
+  //          series row). Per resolution the six ratios differ in pixel count, so a tier is a
+  //          COST RANGE, not a point. The floor is only meaningful against the worst of it:
+  //            720p worst = 4:3 / 3:4 at 1112×834 = 927,408 px → 21,736.125 tok/s → $0.1217223/s
+  //                         (21:9 at 1470×630 = 926,100 px is a hair cheaper; 16:9 = 921,600 px)
+  //            480p worst = 21:9 at 992×432   =   428,544 px → 10,044     tok/s → $0.0562464/s
+  // Each entry below is that per-second figure × the tier's seconds. Do NOT "fix" one of these
+  // to make a tier pass — the cost is the provider's, not ours.
+  "video:seedance-2-fast:4:720p": { cogsUsd: 0.4868892, source: "ModelArk/1544106 + /1520757 — 4s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:5:720p": { cogsUsd: 0.6086115, source: "ModelArk/1544106 + /1520757 — 5s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M; 16:9 would be $0.6048, the provider's own quoted $0.60" },
+  "video:seedance-2-fast:6:720p": { cogsUsd: 0.7303338, source: "ModelArk/1544106 + /1520757 — 6s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:7:720p": { cogsUsd: 0.8520561, source: "ModelArk/1544106 + /1520757 — 7s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:8:720p": { cogsUsd: 0.9737784, source: "ModelArk/1544106 + /1520757 — 8s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:9:720p": { cogsUsd: 1.0955007, source: "ModelArk/1544106 + /1520757 — 9s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:10:720p": { cogsUsd: 1.217223, source: "ModelArk/1544106 + /1520757 — 10s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M; 16:9 would be $1.2096, the provider's own quoted $1.21" },
+  "video:seedance-2-fast:11:720p": { cogsUsd: 1.3389453, source: "ModelArk/1544106 + /1520757 — 11s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:12:720p": { cogsUsd: 1.4606676, source: "ModelArk/1544106 + /1520757 — 12s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:13:720p": { cogsUsd: 1.5823899, source: "ModelArk/1544106 + /1520757 — 13s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:14:720p": { cogsUsd: 1.7041122, source: "ModelArk/1544106 + /1520757 — 14s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:15:720p": { cogsUsd: 1.8258345, source: "ModelArk/1544106 + /1520757 — 15s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
+  "video:seedance-2-fast:4:480p": { cogsUsd: 0.2249856, source: "ModelArk/1544106 + /1520757 — 4s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:5:480p": { cogsUsd: 0.281232, source: "ModelArk/1544106 + /1520757 — 5s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M; 16:9 would be $0.28, the provider's own worked example" },
+  "video:seedance-2-fast:6:480p": { cogsUsd: 0.3374784, source: "ModelArk/1544106 + /1520757 — 6s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:7:480p": { cogsUsd: 0.3937248, source: "ModelArk/1544106 + /1520757 — 7s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:8:480p": { cogsUsd: 0.4499712, source: "ModelArk/1544106 + /1520757 — 8s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:9:480p": { cogsUsd: 0.5062176, source: "ModelArk/1544106 + /1520757 — 9s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:10:480p": { cogsUsd: 0.562464, source: "ModelArk/1544106 + /1520757 — 10s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:11:480p": { cogsUsd: 0.6187104, source: "ModelArk/1544106 + /1520757 — 11s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:12:480p": { cogsUsd: 0.6749568, source: "ModelArk/1544106 + /1520757 — 12s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:13:480p": { cogsUsd: 0.7312032, source: "ModelArk/1544106 + /1520757 — 13s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:14:480p": { cogsUsd: 0.7874496, source: "ModelArk/1544106 + /1520757 — 14s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
+  "video:seedance-2-fast:15:480p": { cogsUsd: 0.843696, source: "ModelArk/1544106 + /1520757 — 15s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
   "video:seedance-2-fast:ref": {
     cogsUsd: 0.78408,
     source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — (6s ref cap + 5s output) × 21,600 tok/s × $3.30/M = $0.78408 (with-video-input rate; our window's worst case)",
@@ -140,24 +170,59 @@ export function assertCogsAgreement(handTable, derivedRows) {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * PURE: apply every floor exception rule to evaluated rows + the pending-ruling
- * registry. `today` is an ISO date string (injected, so the expiry rule is testable).
- * Returns { hardFails, parked, ok } — `hardFails` are the reasons CI must go red.
+ * PURE: apply every floor exception rule to evaluated rows + BOTH registries.
+ * `today` is an ISO date string (injected, so the expiry rule is testable).
+ * Returns { hardFails, parked, accepted, ok } — `hardFails` are the reasons CI must go red.
+ *
+ * TWO registries, two different meanings — never merge them:
+ *   `pending`  = nobody has ruled yet. Carries an alarm clock (`reviewBy`) that rings in CI.
+ *   `accepted` = the founder HAS ruled, and the ruling was "accept this margin". No alarm to
+ *                ring (nothing is waiting), so instead it must name the date and the record.
  *
  * The rules, all of them, in one testable place:
- *   R1 charge ≤ cost                          → hard fail, ALWAYS (parking never covers it)
- *   R2 below floor and not parked             → hard fail (a new violation cannot hide)
- *   R3 parked but now clears the floor        → hard fail (the ruling landed; delete the entry)
- *   R4 parked entry missing a required field  → hard fail (a bare id = permanent exemption)
- *   R5 parked entry past its reviewBy date    → hard fail (the alarm clock actually rings)
- *   R6 parked entry naming an unknown tier    → hard fail (the registry cannot rot)
- *   R7 below floor, parked, valid, in-date    → REPORTED, not waived
+ *   R1 charge ≤ cost                            → hard fail, ALWAYS (no registry covers it)
+ *   R2 below floor and in NEITHER registry      → hard fail (a new violation cannot hide)
+ *   R3 pending but now clears the floor         → hard fail (the ruling landed; delete the entry)
+ *   R4 pending entry missing a required field   → hard fail (a bare id = permanent exemption)
+ *   R5 pending entry past its reviewBy date     → hard fail (the alarm clock actually rings)
+ *   R6 pending entry naming an unknown tier     → hard fail (the registry cannot rot)
+ *   R7 below floor, pending, valid, in-date     → REPORTED, not waived
+ *   A1 accepted entry missing a required field  → hard fail (an exemption must say who/when/why)
+ *   A2 accepted entry naming an unknown tier    → hard fail (the registry cannot rot)
+ *   A3 accepted but now clears the floor        → hard fail (delete the stale exemption)
+ *   A4 a tier in BOTH registries                → hard fail (its status must be unambiguous)
+ *   A5 below floor, accepted, valid             → REPORTED as 「Founder 已裁」, not silent
  * Exported for the red/green self-test.
  */
-export function evaluateFloorDecisions(rows, pending, today) {
+export function evaluateFloorDecisions(rows, pending, today, accepted = []) {
   const hardFails = [];
   const byId = new Map(rows.map((r) => [r.id, r]));
   const parkedIds = new Set();
+  const acceptedIds = new Set();
+
+  for (const entry of accepted ?? []) {
+    const tier = entry?.tier;
+    if (typeof tier !== "string" || !tier.trim()) {
+      hardFails.push(`accepted floor exception with no tier id: ${JSON.stringify(entry)} (A1)`);
+      continue;
+    }
+    acceptedIds.add(tier);
+    for (const field of ["reason", "ruledOn", "source"]) {
+      const v = entry[field];
+      if (typeof v !== "string" || !v.trim()) {
+        hardFails.push(`${tier}: accepted floor exception is missing "${field}" — an exemption must name who ruled, when, and why (A1)`);
+      }
+    }
+    if (!Array.isArray(entry.ratios) || entry.ratios.length === 0) {
+      hardFails.push(`${tier}: accepted floor exception must name the ratio(s) that fall below the floor (A1)`);
+    }
+    if (typeof entry.ruledOn === "string" && entry.ruledOn.trim() && !ISO_DATE.test(entry.ruledOn)) {
+      hardFails.push(`${tier}: ruledOn "${entry.ruledOn}" is not YYYY-MM-DD (A1)`);
+    }
+    if (!byId.has(tier)) {
+      hardFails.push(`${tier}: accepted floor exception names a tier that is not a sellable SKU — stale registry entry (A2)`);
+    }
+  }
 
   for (const entry of pending ?? []) {
     const tier = entry?.tier;
@@ -186,21 +251,31 @@ export function evaluateFloorDecisions(rows, pending, today) {
     }
   }
 
+  for (const id of acceptedIds) {
+    if (parkedIds.has(id)) {
+      hardFails.push(`${id}: appears in BOTH the pending-ruling and the accepted-exception registry — its status must be unambiguous (A4)`);
+    }
+  }
+
   for (const r of rows) {
     if (r.chargeUsd <= r.cogsUsd) {
       hardFails.push(`${r.id}: charge $${r.chargeUsd} ≤ cost $${r.cogsUsd} — every sale loses money (R1)`);
       continue;
     }
-    if (!r.pass && !parkedIds.has(r.id)) {
-      hardFails.push(`${r.id}: margin ${(r.margin * 100).toFixed(1)}% is below the floor and is not parked (R2)`);
+    if (!r.pass && !parkedIds.has(r.id) && !acceptedIds.has(r.id)) {
+      hardFails.push(`${r.id}: margin ${(r.margin * 100).toFixed(1)}% is below the floor and is in neither registry (R2)`);
     }
     if (r.pass && parkedIds.has(r.id)) {
       hardFails.push(`${r.id}: margin ${(r.margin * 100).toFixed(1)}% now clears the floor — remove it from BELOW_FLOOR_PENDING_FOUNDER_RULING (R3)`);
     }
+    if (r.pass && acceptedIds.has(r.id)) {
+      hardFails.push(`${r.id}: margin ${(r.margin * 100).toFixed(1)}% now clears the floor — remove it from BELOW_FLOOR_FOUNDER_ACCEPTED (A3)`);
+    }
   }
 
   const parked = rows.filter((r) => !r.pass && parkedIds.has(r.id) && r.chargeUsd > r.cogsUsd);
-  return { hardFails, parked, ok: hardFails.length === 0 };
+  const acceptedRows = rows.filter((r) => !r.pass && acceptedIds.has(r.id) && r.chargeUsd > r.cogsUsd);
+  return { hardFails, parked, accepted: acceptedRows, ok: hardFails.length === 0 };
 }
 
 /**
@@ -269,17 +344,20 @@ async function main() {
   // @fikirtive/core owns BOTH the derived cost table (from the official token formula)
   // and the single pending-ruling registry — so the unit tests and this gate can never
   // disagree about which tiers are parked, and their two cost sources are pinned below.
-  const { BELOW_FLOOR_PENDING_FOUNDER_RULING, marginTruthTable } = await import(
+  const { BELOW_FLOOR_PENDING_FOUNDER_RULING, BELOW_FLOOR_FOUNDER_ACCEPTED, marginTruthTable } = await import(
     pathToFileURL(path.join(root, "packages/core/dist/margin-truth.js")).href
   );
   const today = new Date().toISOString().slice(0, 10);
   const parkedIds = new Set((BELOW_FLOOR_PENDING_FOUNDER_RULING ?? []).map((p) => p?.tier));
+  const acceptedIds = new Set((BELOW_FLOOR_FOUNDER_ACCEPTED ?? []).map((e) => e?.tier));
 
   console.log(`[margin-floor] 宪法 5 floor = ${pct(MARGIN_FLOOR)} · formula = (price − cost) / price`);
   for (const r of rows) {
-    const flag = r.pass ? "OK " : parkedIds.has(r.id) ? "PENDING" : "RED";
+    // RULED = below the floor with the founder's explicit acceptance on record. It is printed
+    // as its own word, never as "OK" — an accepted exemption must stay visible every run.
+    const flag = r.pass ? "OK " : acceptedIds.has(r.id) ? "RULED" : parkedIds.has(r.id) ? "PENDING" : "RED";
     console.log(
-      `[margin-floor] ${flag} ${r.label.padEnd(34)} charge $${r.chargeUsd.toFixed(3)}  cost $${r.cogsUsd.toFixed(3)}  margin ${pct(r.margin)}`,
+      `[margin-floor] ${flag.padEnd(7)} ${r.label.padEnd(34)} charge $${r.chargeUsd.toFixed(3)}  cost $${r.cogsUsd.toFixed(3)}  margin ${pct(r.margin)}`,
     );
   }
 
@@ -299,7 +377,12 @@ async function main() {
     process.exit(1);
   }
 
-  const { hardFails, parked } = evaluateFloorDecisions(rows, BELOW_FLOOR_PENDING_FOUNDER_RULING, today);
+  const { hardFails, parked, accepted } = evaluateFloorDecisions(
+    rows,
+    BELOW_FLOOR_PENDING_FOUNDER_RULING,
+    today,
+    BELOW_FLOOR_FOUNDER_ACCEPTED,
+  );
   if (hardFails.length) {
     console.error(`[margin-floor] ${hardFails.length} hard failure(s):`);
     for (const f of hardFails) console.error(`[margin-floor]   ${f}`);
@@ -317,7 +400,20 @@ async function main() {
     }
     console.warn("[margin-floor] These are REPORTED, not waived — the ruling is 调价 or 接受, and it is the founder's to make.");
   }
-  console.log(`[margin-floor] ${rows.length - parked.length}/${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor.`);
+
+  if (accepted.length) {
+    console.warn(`[margin-floor] ${accepted.length} SKU(s) BELOW the ${pct(MARGIN_FLOOR)} floor with the FOUNDER'S EXPLICIT ACCEPTANCE (Founder 已裁):`);
+    for (const r of accepted) {
+      const entry = BELOW_FLOOR_FOUNDER_ACCEPTED.find((e) => e.tier === r.id);
+      console.warn(`[margin-floor]   ${r.id}: margin ${pct(r.margin)} — cost basis: ${r.cogsSource}`);
+      console.warn(`[margin-floor]     ratios below the floor: ${entry.ratios.join(", ")} (the tier's other ratios clear it)`);
+      console.warn(`[margin-floor]     why: ${entry.reason}`);
+      console.warn(`[margin-floor]     Founder 已裁 ${entry.ruledOn} · ${entry.source}`);
+    }
+    console.warn("[margin-floor] Accepted ≠ invisible: they are printed every run so the exemption can never fade into the background.");
+  }
+  const clear = rows.length - parked.length - accepted.length;
+  console.log(`[margin-floor] ${clear}/${rows.length} sellable SKU(s) clear the ${pct(MARGIN_FLOOR)} floor (${accepted.length} below it by founder ruling).`);
 }
 
 // Run as CLI only — importing this module (the self-test) must not execute main().

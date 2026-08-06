@@ -333,10 +333,14 @@ describe("战役格式 → 交付形状(#643 T2)", () => {
     expect(req!.aspectRatio).toBe("1:1");
   });
 
-  it("视频格式不受这张表管（形状归视频侧，不在这里编一个）", async () => {
-    const [req] = await cellsFor(["reel"]);
-    expect(req!.kind).toBe("video");
-    expect(req!.aspectRatio).toBeUndefined();
+  it("#645 T4：竖版片子位（reel）交付 9:16；名字没说形状的片子格式仍由视频侧默认档决定", async () => {
+    // #645 T4：片子侧现在也有形状映射 —— "reel" 是平台上的竖版位，所以它交付 9:16。
+    // 名字没说形状的片子格式（video）仍然不带形状，由视频侧的默认档决定。
+    const [reel, plain] = await cellsFor(["reel", "video"]);
+    expect(reel!.kind).toBe("video");
+    expect(reel!.aspectRatio).toBe("9:16");
+    expect(plain!.kind).toBe("video");
+    expect(plain!.aspectRatio).toBeUndefined();
   });
 
   it("商家复核页看到的形状 = 真发出去的形状（同一个值，不是两次推导）", async () => {

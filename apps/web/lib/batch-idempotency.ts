@@ -139,7 +139,12 @@ function canonicalVariantSel(value: unknown): unknown {
 export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMaterial {
   const videoOptions: FactoryVideoOptions | null = (() => {
     if (input.kind !== "video") return null;
-    const defaults = videoDefaults(input.model as GenVideoModel);
+    // #645 T4(判官 r1 P1-1):**有首帧的片子形状缺省 adaptive** —— 引擎跟着首帧走,
+    // 而不是被一个 t2v 默认值(16:9)悄悄改成别的画幅,把商家的竖版首帧裁成横版。
+    // 「有首帧」的口径与 core 的契约闸一致(gen.ts 的 tail 校验):worker 解析起始帧
+    // 只认这两处 —— 显式的 sourceGenerationId,或能拿到该镜头最新静帧的 shotId。
+    const hasSourceImage = !!input.sourceGenerationId || !!input.shotId;
+    const defaults = videoDefaults(input.model as GenVideoModel, { hasSourceImage });
     return {
       seconds: input.durationSeconds ?? defaults.seconds,
       resolution: input.resolution ?? defaults.resolution,
