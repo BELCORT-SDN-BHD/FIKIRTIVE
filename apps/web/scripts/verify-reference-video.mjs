@@ -9,9 +9,11 @@
  *
  * ⚠️ THIS SPENDS REAL MONEY on BytePlus (one video generation). Run ONLY with the founder's explicit go-ahead.
  *
- * The content array below is a byte-for-byte mirror of BytePlusProvider.generateVideo
+ * The request body below is a byte-for-byte mirror of BytePlusProvider.generateVideo
  * (packages/generation/src/byteplus.ts) for the reference-video (no i2v image) case, so this verifies
- * the exact request we ship — not a hand-rolled approximation.
+ * the exact request we ship — not a hand-rolled approximation. #646 T5 moved every control out of
+ * the prompt text and onto strict top-level fields; this mirror moved with it (an out-of-date mirror
+ * would spend real money verifying a request we no longer send).
  *
  * Usage:
  *   BYTEPLUS_API_KEY=... node apps/web/scripts/verify-reference-video.mjs --video <PUBLIC_MP4_URL> [--prompt "..."] [--duration 5]
@@ -44,20 +46,32 @@ if (Number(duration) !== 5) { console.error("✗ reference-video verification is
 
 const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
 
-// --- Mirror of byteplus.ts generateVideo content assembly (reference-video case) ---
-const flags = [`--resolution 720p`, `--duration ${duration}`].join(" ");
+// --- Mirror of byteplus.ts generateVideo request assembly (reference-video case) ---
+// content: the merchant's prompt ONLY — controls are top-level fields (#646 T5).
 const content = [
   { type: "video_url", video_url: { url: videoUrl }, role: "reference_video" },
-  { type: "text", text: `${prompt} ${flags}`.trim() },
+  { type: "text", text: prompt.trim() },
 ];
+// No aspect ratio is requested on this path, so — exactly like the provider — the `ratio`
+// field is ABSENT rather than sent with an invented value.
+const body = {
+  model: MODEL,
+  content,
+  resolution: "720p",
+  duration: Number(duration),
+  generate_audio: true, // = the provider's `req.audio ?? true`
+  watermark: false,
+  execution_expires_after: 3600,
+};
 
 console.log("⚠️  PAID run — one BytePlus video generation. Model:", MODEL);
 console.log("    reference_video:", videoUrl);
-console.log("    prompt+flags   :", `${prompt} ${flags}`);
+console.log("    prompt         :", prompt.trim());
+console.log("    controls       :", JSON.stringify({ ...body, model: undefined, content: undefined }));
 console.log("");
 
 const submit = await fetch(`${ARK_BASE}/contents/generations/tasks`, {
-  method: "POST", headers, body: JSON.stringify({ model: MODEL, content }),
+  method: "POST", headers, body: JSON.stringify(body),
 });
 const submitText = await submit.text();
 if (!submit.ok) {
@@ -90,7 +104,7 @@ while (true) {
     console.log(`     If COGS threatens the 45% margin floor at $1.60 (16cr), lower REF_VIDEO_MAX_SECONDS before shipping broader use.`);
     process.exit(0);
   }
-  if (["failed", "cancelled", "canceled"].includes(t.status)) {
+  if (["failed", "cancelled", "canceled", "expired"].includes(t.status)) {
     console.error(`\n✗ task ${t.status}: ${JSON.stringify(t).slice(0, 500)}`);
     console.error("  (if this is a real-face rejection, that's EXPECTED — retry with non-face footage.)");
     process.exit(1);

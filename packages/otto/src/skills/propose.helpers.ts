@@ -138,8 +138,8 @@ export function buildSpecChips(
       chips.push(`${params.durationSeconds}s`);
     }
     if (EXECUTED_SPEC.video.resolutionHonoured && params.resolution) chips.push(params.resolution);
-    // 声音：audioHonoured 为 false 时这一条不出现 —— 没接通就不承诺。接通那天改
-    // EXECUTED_SPEC 一处，卡面自动开始说真话。
+    // 声音：#646 T5 接通后这一条照实出现。判据仍然只有 EXECUTED_SPEC 一处 —— 哪天执行层
+    // 又断了，改那一处，卡面立刻停止承诺。
     if (EXECUTED_SPEC.video.audioHonoured) chips.push(params.audio ? "With sound" : "No sound");
   } else {
     // 图片：判据是**这一趟真正会跑的那个适配器**会不会兑现画幅(imageAspectHonoured),

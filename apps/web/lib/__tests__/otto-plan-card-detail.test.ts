@@ -267,7 +267,7 @@ const VIDEO_PAYLOAD: OttoPlanCardPayload = {
   model: "seedance-2-fast",
   params: { aspectRatio: "9:16", resolution: "720p", durationSeconds: 5, audio: true, count: 1 },
   reason: "Seedance 2.0 Fast — 9:16, 5s",
-  specChips: ["9:16", "5s", "720p"],
+  specChips: ["9:16", "5s", "720p", "With sound"],
   downgraded: true,
   downgradeNote: "You asked for 10s — this will be 5s.",
   structuredPrompt: "A steaming bowl of laksa, close up",
@@ -289,8 +289,12 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     const markup = renderCard(cardPayload);
     expect(cardPayload.specChips.length).toBeGreaterThan(0);
     for (const chip of cardPayload.specChips) expect(markup).toContain(chip);
-    // 「说的」不许超出 builder 给的那几条 —— 声音就是被这一条挡住的。
-    expect(markup).not.toMatch(/With sound|No sound/);
+    // 「说的」不许超出 builder 给的那几条。#646 T5 之后声音真的接通了执行层,builder 会给
+    // 这一条,卡面也就照实显示 —— 但它没选的那个反面措辞仍然一个字都不许出现。
+    const soundChip = cardPayload.params.audio ? "With sound" : "No sound";
+    expect(cardPayload.specChips).toContain(soundChip);
+    expect(markup).toContain(soundChip);
+    expect(markup).not.toMatch(cardPayload.params.audio ? /No sound/ : /With sound/);
   });
 
   it("图片卡(#643 T2):商家要的形状真会交付,所以卡面照实报那一格的尺寸与比例", async () => {

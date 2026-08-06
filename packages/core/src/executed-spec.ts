@@ -17,8 +17,9 @@
  *
  * 真相位置:
  *   - 现役图像适配器的请求体 —— 按请求画幅拼出确切的 WxH(#642);
- *   - 现役视频适配器的请求体 —— 把 resolution / duration / ratio 编成 prompt flags
- *     发出去,声音开关没有接出去。
+ *   - 现役视频适配器的请求体 —— resolution / duration / ratio / generate_audio 四项都作为
+ *     **严格顶层字段**发出去(#646 T5)。严格通道下写错的值当场报错,不会像旧的 prompt
+ *     flag 通道那样被悄悄换成默认值、把一支商家没批准的片子做出来并计费。
  */
 import { GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_SIZES, type GenImageAspect } from "./gen.js";
 
@@ -54,16 +55,19 @@ export const EXECUTED_SPEC: {
      *  执行层不去猜像素、不去反推比例。 */
     sourceAspectInheritedFromSnapshot: true,
     /** 备用(legacy fallback)图像适配器**不**携带画幅:它的尺寸参数未经官方文档确认,
-     *  本仓库的规矩是「没确认就不发明参数」(见视频侧 audio flag 同样处置)。
-     *  false ⇒ 这条路上画幅不成立,不得假装它成立。现役生产路径不走这条。 */
+     *  本仓库的规矩是「没确认就不发明参数」—— 确认了就得接上,视频侧的声音开关正是
+     *  这么在 #646 T5 接通的。false ⇒ 这条路上画幅不成立,不得假装它成立。
+     *  现役生产路径不走这条。 */
     fallbackAdapterAspectHonoured: false,
   },
   video: {
     aspectHonoured: true,
     durationHonoured: true,
     resolutionHonoured: true,
-    /** 声音控制未接通执行层 ⇒ 卡面既不得说 “With sound”,也不得说 “No sound”。 */
-    audioHonoured: false,
+    /** #646 T5:声音开关已接通执行层 —— 适配器把它作为顶层 `generate_audio` 发出去
+     *  (`byteplus.test.ts` 整体断言逐字比对),所以卡面可以照实说 “With sound” /
+     *  “No sound”。缺省 true = 引擎默认,也 = `videoDefaults()` 给这个模型的 audio。 */
+    audioHonoured: true,
   },
 };
 

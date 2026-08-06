@@ -74,25 +74,57 @@ export class BytePlusProvider implements GenerationProvider {
   async generateVideo(req: VideoRequest): Promise<GeneratedVideo> {
     const model = VIDEO_MODEL_MAP[req.model];
     if (!model) throw new Error("generation provider has no video model mapping"); // pre-spend
-    // BytePlus Seedance i2v takes only a START frame; first→last (end-frame) is not supported.
-    // Reject it BEFORE the paid submit (no spend) rather than silently dropping it — defense in
-    // depth behind GEN_VIDEO_MODEL_INFO["seedance-2-fast"].tail=false (the gate/composer won't
-    // offer it). Video is always count=1 (startGen hardcodes it); the charge is flat per resolution.
-    if (req.tailImageUrl) throw new Error("generation provider does not support an end frame for this video model"); // pre-spend
+    // #646 T5. First+last frames, single first frame, and whole-clip reference video are three
+    // MUTUALLY EXCLUSIVE scenarios — they cannot be mixed in one task. Refuse the mixed shape
+    // BEFORE the paid submit (no spend) rather than let the engine reject it after billing.
+    // Video is always count=1 (startGen hardcodes it); the charge is flat per resolution.
+    if (req.tailImageUrl && req.refVideoUrl) throw new Error("generation provider can't combine an end frame with a reference video"); // pre-spend
     const i2v = req.imageUrl.length > 0;
-    // Seedance encodes controls as text flags appended to the prompt.
-    // v1 limitation: req.audio is not wired to Ark Seedance. Seedance uses its own default
-    // audio behaviour; the audio toggle is tracked in VideoRequest but the Ark flag is
-    // unverified — do NOT invent one until confirmed in the Ark API docs.
-    const flags = [`--resolution ${req.resolution ?? "720p"}`, `--duration ${req.durationSeconds}`]
-      .concat(req.aspectRatio ? [`--ratio ${req.aspectRatio}`] : []).join(" ");
+    // An end frame with no start frame isn't a scenario the engine has — and silently dropping it
+    // would deliver (and bill for) a clip the merchant never asked for. Same guard the fallback
+    // adapter keeps. Unreachable from the worker (it only resolves a tail alongside a source), so
+    // this is defense in depth.
+    if (req.tailImageUrl && !i2v) throw new Error("generation provider needs a start image for an end frame"); // pre-spend
     const content: unknown[] = [];
-    if (i2v) content.push({ type: "image_url", image_url: { url: req.imageUrl } });
+    if (req.tailImageUrl && i2v) {
+      // first+last frames: BOTH parts carry an explicit role — that pair IS what selects the
+      // scenario. A roleless pair would read as the single-frame scenario instead.
+      // Mismatched shapes: the first frame wins and the end frame is cropped to it.
+      content.push({ type: "image_url", image_url: { url: req.imageUrl }, role: "first_frame" });
+      content.push({ type: "image_url", image_url: { url: req.tailImageUrl }, role: "last_frame" });
+    } else if (i2v) {
+      // single source frame — role may be omitted (the engine reads it as the first frame).
+      content.push({ type: "image_url", image_url: { url: req.imageUrl } });
+    }
     if (req.refVideoUrl) content.push({ type: "video_url", video_url: { url: req.refVideoUrl }, role: "reference_video" });
-    content.push({ type: "text", text: `${req.prompt} ${flags}`.trim() });
+    // The text part is the merchant's prompt ONLY — every control is a top-level field below.
+    content.push({ type: "text", text: req.prompt.trim() });
 
     const sub = await fetch(`${ARK_BASE}/contents/generations/tasks`, {
-      method: "POST", headers: this.headers(), body: JSON.stringify({ model, content }),
+      method: "POST", headers: this.headers(),
+      // #646 T5: STRICT top-level parameters, not the legacy `--flag` suffix on the prompt text.
+      // The two transports differ in exactly the way that costs money: the legacy suffix is
+      // loosely validated — a wrong value is silently replaced by the engine default and the
+      // clip is produced and BILLED at a spec the merchant never approved. Top-level fields are
+      // strictly validated: a wrong value is an error, before anything is billed.
+      // Deliberately NOT sent (this model rejects all three under strict validation):
+      // seed, camera_fixed, frames.
+      body: JSON.stringify({
+        model, content,
+        resolution: req.resolution ?? "720p",
+        duration: req.durationSeconds,
+        // absent shape ⇒ omit the field and let the engine pick (adaptive), matching the
+        // pre-#646 behaviour of not appending a ratio flag. Never send an invented value.
+        ...(req.aspectRatio ? { ratio: req.aspectRatio } : {}),
+        // the merchant's sound choice, finally wired. Default true = the engine default and
+        // videoDefaults()'s audio for this model, so an unset toggle changes nothing.
+        generate_audio: req.audio ?? true,
+        // F40 (same rule as the image path): paying merchants must not receive watermarked
+        // output. Video defaults to false today; declare it so a default drift can't undo that.
+        watermark: false,
+        // F06 reconciliation window, below. 3600s is the engine's minimum.
+        execution_expires_after: 3600,
+      }),
     });
     if (!sub.ok) {
       const detail = (await sub.text().catch(() => "")).slice(0, 300);
@@ -103,10 +135,23 @@ export class BytePlusProvider implements GenerationProvider {
     if (!taskId) throw new Error("generation provider video submit returned no task id");
     // task created ⇒ billed on success. Poll inside the provider (the worker just awaits).
     const startedAt = Date.now();
-    // F06: 15 min > realistic Seedance tail latency, so a still-running task isn't abandoned
-    // (abandoning FAILs+refunds the user while BytePlus later bills the completing task = margin
-    // leak). Stays safely under GEN_QUEUE_POLICY.expireInSeconds (20 min) minus download/persist
-    // headroom, so the worker's own message doesn't expire mid-poll.
+    // F06 — the reconciliation window, and why it is the size it is.
+    //
+    // Two clocks run on one task. OURS: this client gives up after 15 min, because the worker's
+    // own message expires at GEN_QUEUE_POLICY.expireInSeconds (20 min) and we need the remaining
+    // minutes to download and persist. THE ENGINE'S: it keeps working on an abandoned task and
+    // bills it when it completes. Whatever falls between the two clocks is the ambiguous window:
+    // we told the merchant "failed" (and refunded) while the engine still charged us.
+    //
+    // 15 min is well past realistic latency, so abandoning is already rare — and when it does
+    // happen, giving up EARLIER would be worse (a still-running task refunded mid-flight is a
+    // guaranteed margin leak, not a possible one). So the client side stays 15 min and keeps its
+    // charged semantics: an abandoned task is treated as billed.
+    //
+    // What #646 T5 fixes is the OTHER end. The engine's own limit defaulted to 48h, so the window
+    // was [15 min, 48h]. `execution_expires_after: 3600` (the minimum it accepts) shrinks it to
+    // [15 min, 1h]: past one hour the engine terminates the task itself as `expired` — no output,
+    // nothing billed — so an abandoned task can no longer quietly complete a day later.
     const TIMEOUT_MS = 15 * 60_000;
     // eslint-disable-next-line no-constant-condition
     while (true) {
@@ -135,6 +180,10 @@ export class BytePlusProvider implements GenerationProvider {
         if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
         return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
       }
+      // `expired` = the engine terminated the task at execution_expires_after before it produced
+      // anything ⇒ nothing was billed, and the task is dead so a retry can't double-bill. That
+      // makes it a PLAIN (retryable) failure, unlike failed/cancelled below.
+      if (t.status === "expired") throw new Error("generation provider video task expired");
       if (t.status === "failed" || t.status === "cancelled" || t.status === "canceled")
         throw chargedError(`generation provider video task ${t.status}`);
       if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError("generation provider video timed out");

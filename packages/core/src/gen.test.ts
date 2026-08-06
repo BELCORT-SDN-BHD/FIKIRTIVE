@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
+  GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
   GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, normalizeImageAspect,
   type GenImageAspect,
@@ -148,6 +148,47 @@ describe("genRequest.referenceVideoGenerationId", () => {
 
   it("rejects 10s reference-video output before spend because the 16cr price is modeled for 5s output", () => {
     expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref", durationSeconds: 10 }).success).toBe(false);
+  });
+});
+
+describe("genRequest.tailGenerationId", () => {
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+
+  it("#646 T5:现役视频模型接受尾帧(引擎支持首+尾帧,闸不再挡)", () => {
+    expect(GEN_VIDEO_MODEL_INFO["seedance-2-fast"].tail).toBe(true);
+    expect(genRequest.safeParse({ ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }).success).toBe(true);
+  });
+
+  it("模型真不支持尾帧时照旧在花钱前挡下(闸本身没松)", () => {
+    expect(GEN_VIDEO_MODEL_INFO["grok-imagine"].tail).toBe(false);
+    const r = genRequest.safeParse({ ...base, model: "grok-imagine", durationSeconds: 6, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" });
+    expect(r.success).toBe(false);
+  });
+
+  // ── #646 修复轮 P0-1:尾帧的跨字段前提 ────────────────────────────────────────
+  // 闸原本只问「这个模型支不支持尾帧」,不问「这一单到底有没有首帧」。worker 解析尾帧
+  // 那一步被 `job.tailGenerationId && sourceAsset` 短路(apps/worker/src/jobs/gen.ts:671):
+  // 首帧缺席 ⇒ tailImageUrl 根本没生成 ⇒ 适配器那道守卫看不见原请求 ⇒ 引擎收到的是一支
+  // 普通视频,商家却按尾帧那一单付了钱。所以前提必须在花钱之前查。
+
+  it("#646 P0-1:尾帧必须伴随首帧来源 —— 光有尾帧的请求在花钱前就被拒", () => {
+    // worker 解析首帧的来源**只有两个**(gen.ts:641-663):显式 sourceGenerationId,
+    // 或 shotId 那一格最新的图。两个都没有 ⇒ 这一单的尾帧到不了引擎。
+    const bare = genRequest.safeParse({ ...base, tailGenerationId: "gen_tail" });
+    expect(bare.success).toBe(false);
+    expect(JSON.stringify(bare.error?.issues)).toMatch(/start frame/);
+    // 两个合法来源都得放行,否则会误伤「画布动画」(只带 shotId)这条真路。
+    expect(genRequest.safeParse({ ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }).success).toBe(true);
+    expect(genRequest.safeParse({ ...base, shotId: "shot_1", tailGenerationId: "gen_tail" }).success).toBe(true);
+  });
+
+  it("#646 P0-1:尾帧与参考视频互斥 —— 同时给出在花钱前就被拒(与适配器同语义)", () => {
+    const r = genRequest.safeParse({
+      ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail",
+      referenceVideoGenerationId: "gen_ref", durationSeconds: 5,
+    });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).toMatch(/reference video/);
   });
 });
 

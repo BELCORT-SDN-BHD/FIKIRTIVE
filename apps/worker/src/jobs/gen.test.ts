@@ -206,6 +206,53 @@ describe("handleGen VIDEO — reference video resolution (fail-closed)", () => {
   });
 });
 
+// ── #646 修复轮 P0-1:尾帧无首帧,是钱路上的静默降级 ────────────────────────────
+// 判官 r1 抓到的洞:zod 闸只问模型支不支持尾帧,worker 的尾帧解析又被
+// `job.tailGenerationId && sourceAsset` 短路 —— 首帧缺席时尾帧被消隐,适配器那道守卫
+// 连原请求都看不到,于是引擎出一支普通视频、商家按尾帧那一单付钱。上一轮只测了适配器
+// 接口,没测这条真钱路。这里走**真** handleGen。
+describe("handleGen VIDEO — 尾帧无首帧(#646 P0-1 钱缝纵深)", () => {
+  const tailNoSourceJob = {
+    ...job,
+    referenceVideoGenerationId: null,
+    sourceGenerationId: null, // 没有显式首帧
+    shotId: null,             // 也没有能取到首帧的分镜格
+    tailGenerationId: "gen_tail",
+  };
+
+  it("尾帧但无首帧来源 ⇒ provider 一次都不调、失败退款,而不是静默降级成普通视频照常扣费", async () => {
+    m.genJobFindUnique.mockResolvedValue(tailNoSourceJob);
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    // 这一行就是本条的全部要害:钱路上不许出现「尾帧没了但片子照出」。
+    expect(m.generateVideo).not.toHaveBeenCalled();
+    const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(updateCall).toBeTruthy();
+    expect(updateCall![0].data.error).toMatch(/start frame/);
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
+    expect(m.chatMessageCreate).toHaveBeenCalledTimes(1);
+    expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR", genJobId: "g1" });
+  });
+
+  it("首帧在场时这道守卫不挡路 —— 尾帧照常解析并随请求进引擎", async () => {
+    m.genJobFindUnique.mockResolvedValue({ ...tailNoSourceJob, sourceGenerationId: "gen_src" });
+    // 首帧与尾帧两次 findFirst 都命中
+    m.generationFindFirst.mockResolvedValue({ id: "gen_x", asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" } });
+    const storageModule = await import("../storage.js");
+    (storageModule.storage as unknown as { presignedGet: (k: string, t: number) => Promise<string> }).presignedGet = vi.fn(async () => "https://signed/frame.png");
+    (storageModule.storage as unknown as { put: (b: Uint8Array, e: string) => Promise<{ contentHash: string; ext: string }> }).put = vi.fn(async () => ({ contentHash: "outhash", ext: "mp4" }));
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
+    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
+    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.generateVideo).toHaveBeenCalledTimes(1);
+    expect(m.generateVideo.mock.calls[0]![0].tailImageUrl).toBe("https://signed/frame.png");
+  });
+});
+
 // ── W-B3-E-P 查漏 (2026-07-14): EP-A4 fail-closed 四路中的 worker 三路 ──────────────
 // provider 拒绝(①) / 超时(②) / worker 崩溃恢复(③) —— 每路断言终态、退款恰一次、无双扣、
 // provider 永不重调。第四路(取消 cancelGenJob)是 web 动作,unit 面在 cancel-gen-job.test.ts,
