@@ -1,3 +1,6 @@
+// [ARCHIVED] 这三个用例已升格为正式 vitest:packages/generation/src/fal.test.ts
+// (CI 每次都跑,不再依赖这份一次性脚本)。仅供查证,不是当前流程或权威。
+//
 // Proves the fal adapter's post-charge commit boundary ($0, network stubbed).
 //   - POST !ok (model never ran)            → plain error, retryable (no .charged)
 //   - POST ok then download fails (billed)  → chargedError (.charged === true)
@@ -12,7 +15,7 @@ async function run(label, fetchStub, expectCharged) {
   const p = new FalProvider("test-key");
   let threw = null;
   try {
-    await p.generateVideo({ prompt: "x", imageUrl: "http://src/i.png", durationSeconds: 5, model: "kling" });
+    await p.generateVideo({ prompt: "x", imageUrl: "http://src/i.png", durationSeconds: 5, model: "seedance-2-fast" });
   } catch (e) { threw = e; }
   globalThis.fetch = realFetch;
   if (!threw) throw new Error(`${label}: expected a throw, got success`);
