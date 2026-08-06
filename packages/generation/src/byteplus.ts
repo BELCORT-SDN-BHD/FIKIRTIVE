@@ -180,12 +180,26 @@ export class BytePlusProvider implements GenerationProvider {
         if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
         return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
       }
-      // `expired` = the engine terminated the task at execution_expires_after before it produced
-      // anything ⇒ nothing was billed, and the task is dead so a retry can't double-bill. That
-      // makes it a PLAIN (retryable) failure, unlike failed/cancelled below.
+      // #661 — the three terminal statuses in which the ENGINE ITSELF reports that no video was
+      // produced. Official pricing page (docs.byteplus.com/en/docs/ModelArk/1544106, last updated
+      // 2026-08-01): "You are only charged for successfully generated videos. No fee is charged if
+      // generation fails due to reasons such as content moderation." So nothing was billed here.
+      //   `expired`   = terminated at execution_expires_after before producing anything.
+      //   `failed`    = the engine ran and rejected/aborted it (content moderation, bad input…).
+      //   `cancelled` = cancelled while still queued (spelled both ways by the API).
+      // PLAIN (no `charged` marker) ⇒ the worker keeps its existing retry policy and requeues.
+      // That is safe and intended: officially nothing was billed, so a retry cannot double-charge
+      // COGS. A moderation failure will very likely fail again — what that burns is retry
+      // attempts, not money — and the final terminal FAIL refunds the merchant while recording
+      // NO spend, which is the whole point of this ticket (no phantom COGS in the spend audit).
+      //
+      // BOUNDARY (#657, deliberately untouched): every "outcome unknown" path stays chargedError —
+      // the three abandon-timeouts, the download failure, a succeeded task with no result URL.
+      // Not knowing whether the engine produced a clip is not the same as the engine telling us it
+      // didn't; only an explicit no-output terminal status may go PLAIN.
       if (t.status === "expired") throw new Error("generation provider video task expired");
       if (t.status === "failed" || t.status === "cancelled" || t.status === "canceled")
-        throw chargedError(`generation provider video task ${t.status}`);
+        throw new Error(`generation provider video task ${t.status}`);
       if (Date.now() - startedAt > TIMEOUT_MS) throw chargedError("generation provider video timed out");
     }
   }
