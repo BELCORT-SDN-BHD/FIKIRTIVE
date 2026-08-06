@@ -386,6 +386,13 @@ describe("generate (Seedream image, sync)", () => {
     await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "nope" as any }))
       .rejects.toThrow(/no image model/);
   });
+  it("零 fetch:未知图片模型在**任何**网络调用之前就被拒", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "nope" as any }))
+      .rejects.toThrow(/no image model/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
   it("throws chargedError when a paid image fails to download (all-or-nothing)", async () => {
     stubFetch((url) => {
       if (url.endsWith("/images/generations")) return jsonRes({ data: [{ url: "https://tos/img1.png" }] });
@@ -582,5 +589,45 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #647 T6 修复轮 P2-3 —— 在产适配器对**未知视频模型**的付费前拒绝
+//
+// fal 那一侧已经有这条钉板(index.test.ts「下架模型在付费 POST 之前就被拒」),
+// byteplus 这一侧只钉过图片。而 byteplus 才是**在产**的那条路 —— 历史行、手写脚本、
+// 未来某次误接线送进来的一个菜单外模型,必须在任何一次网络调用之前就停住:
+// 提交一次异步视频任务就已经开始计费了,拒得晚一点就是真金白银。
+// ---------------------------------------------------------------------------
+describe("#647 T6 未知视频模型:付费之前拒,零 fetch", () => {
+  const RETIRED = ["kling", "veo3.1-fast", "ltx-2", "hailuo-02", "seedance-2"] as const;
+
+  it("每一个下架 id 都在任何网络调用之前被拒", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    for (const model of RETIRED) {
+      await expect(
+        new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: model as never }),
+      ).rejects.toThrow(/no video model mapping/u);
+    }
+    expect(fetchSpy, "下架模型竟然发出了任务提交请求").not.toHaveBeenCalled();
+  });
+
+  it("完全没见过的 id 同样(不是「名单外就放行」,是「表里查不到就停」)", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    await expect(
+      new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "never-existed" as never }),
+    ).rejects.toThrow(/no video model mapping/u);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("拒的时候不带 charged 标记 —— 没花过的钱不许记成花过", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const err = await new BytePlusProvider("ark-test")
+      .generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "kling" as never })
+      .catch((e: unknown) => e);
+    expect((err as { charged?: unknown }).charged).toBeUndefined();
   });
 });

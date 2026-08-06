@@ -12,37 +12,74 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { GEN_VIDEO_MODELS } from "@fikirtive/core";
 
-const { mockOwner, mockResolveDisabled, mockChatFindFirst, mockChatCreate, mockChatUpdate, db } = vi.hoisted(() => {
+const {
+  mockOwner, mockResolveDisabled, mockChatFindFirst, mockChatCreate, mockChatUpdate,
+  mockChatCreateMany, mockThreadUpdate, mockActionEventCreate, db,
+} = vi.hoisted(() => {
   const mockChatFindFirst = vi.fn();
   const mockChatCreate = vi.fn();
   const mockChatUpdate = vi.fn();
+  const mockChatCreateMany = vi.fn();
+  const mockThreadUpdate = vi.fn();
+  const mockActionEventCreate = vi.fn();
   const db: Record<string, unknown> = {
-    chatMessage: { findFirst: mockChatFindFirst, create: mockChatCreate, update: mockChatUpdate },
+    chatMessage: { findFirst: mockChatFindFirst, create: mockChatCreate, update: mockChatUpdate, createMany: mockChatCreateMany },
+    chatThread: { update: mockThreadUpdate },
+    actionEvent: { create: mockActionEventCreate },
     genJob: { findFirst: vi.fn().mockResolvedValue(null) },
     entity: { findMany: vi.fn().mockResolvedValue([]) },
     generation: { findMany: vi.fn().mockResolvedValue([]) },
     referenceImage: { count: vi.fn().mockResolvedValue(0) },
   };
   db.$executeRaw = vi.fn().mockResolvedValue(1);
-  db.$transaction = async (fn: (tx: unknown) => unknown) => fn(db);
+  // coworkVaryCard 用数组形式的 $transaction([...]);分镜用回调形式。两种都要支持。
+  db.$transaction = async (arg: unknown) =>
+    typeof arg === "function" ? (arg as (tx: unknown) => unknown)(db) : Promise.all(arg as Promise<unknown>[]);
   return {
     mockOwner: vi.fn(),
     mockResolveDisabled: vi.fn(),
     mockChatFindFirst,
     mockChatCreate,
     mockChatUpdate,
+    mockChatCreateMany,
+    mockThreadUpdate,
+    mockActionEventCreate,
     db,
   };
 });
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabled }));
-vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {} }));
+vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {}, refundReservation: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("../gen-actions", () => ({ startCoworkGen: vi.fn() }));
+vi.mock("../cowork-knowledge", () => ({ getEnhanceDirective: vi.fn() }));
 
 import { getStoryboardVideoOptions, prepareStoryboardVideos } from "../storyboard-gate1-actions";
+import { coworkVaryCard } from "../cowork-actions";
 
 const OWNER = "owner-1";
 const VIDEO_OFF = "Video generation is turned off right now.";
+const IMAGE_OFF = "Image generation is turned off right now.";
+
+/** 一张已铸好的 GEN_CARD —— 「Make another / Try again」克隆的就是它。 */
+function genCard(kind: "image" | "video") {
+  return {
+    id: "gen-card-1",
+    threadId: "t-1",
+    payload: {
+      kind,
+      model: kind === "video" ? "seedance-2-fast" : "seedream",
+      structuredPrompt: kind === "video" ? "a cat walks" : "a cat",
+      entityIds: [],
+      variantSel: {},
+      params: kind === "video" ? { count: 1, durationSeconds: 5, resolution: "720p" } : { count: 1 },
+      estimatedCredits: 11,
+    },
+    genJobId: null,
+    thread: { projectId: "p-1", deletedAt: null, ownerId: OWNER },
+  };
+}
 
 /** 一张分镜卡:一个镜头已有首帧、还没有片子 —— 闸② 眼里最标准的「该铸一张视频子卡」。 */
 function storyboardCard() {
@@ -59,15 +96,27 @@ function storyboardCard() {
   };
 }
 
+/** 让 chatMessage.findFirst 同时服务分镜卡与 GEN_CARD 两种查询。 */
+function wireCards(varyKind: "image" | "video" = "video") {
+  const sb = storyboardCard();
+  const gc = genCard(varyKind);
+  mockChatFindFirst.mockImplementation(async (args: { where?: { kind?: string }; orderBy?: unknown }) => {
+    if (args?.where?.kind === "STORYBOARD_CARD") return sb;
+    if (args?.where?.kind === "GEN_CARD") return gc;
+    if (args?.orderBy) return { seq: 3 }; // seq 分配读
+    return null;
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockOwner.mockResolvedValue({ ownerId: OWNER });
   mockChatCreate.mockResolvedValue({});
   mockChatUpdate.mockResolvedValue({});
-  const card = storyboardCard();
-  mockChatFindFirst.mockImplementation(async (args: { where?: { kind?: string } }) =>
-    args?.where?.kind === "STORYBOARD_CARD" ? card : null,
-  );
+  mockChatCreateMany.mockResolvedValue({ count: 2 });
+  mockThreadUpdate.mockResolvedValue({});
+  mockActionEventCreate.mockResolvedValue({});
+  wireCards();
 });
 
 describe("#647 T6 唯一视频引擎被关掉 ⇒ 分镜侧给诚实空态,零卡落库", () => {
@@ -109,5 +158,52 @@ describe("#647 T6 引擎没关时一切照旧(空态不许误伤正常路)", () 
     const r = await prepareStoryboardVideos({ cardId: "card-1" });
     expect(r).not.toHaveProperty("error");
     expect(mockChatCreate).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 修复轮 P1-1 —— 「Make another / Try again」这条入口曾经绕过整道闸
+// ---------------------------------------------------------------------------
+//
+// 判官 r1 现场:`coworkVaryCard`(apps/web/lib/cowork-actions.ts)只校验旧卡的**结构**
+// 就把 payload 原样克隆成一张新 GEN_CARD,从头到尾没读过后台开关。于是引擎全禁用时,
+// 商家在结果卡上点一下 "Make another"(OttoResult.tsx)或在计划卡上点 "Try again"
+// (OttoPlanCard.tsx),仍然会得到一张写着 11 credits、点下去必被花钱闸打回的卡 ——
+// 票面③要消灭的那个病,在这条入口原封不动地复发了一次。
+//
+// 判据必须与另外三个入口**同一条**:`suggestModel({ kind, disabled })` 说没有引擎,
+// 就一张卡都不落库,并给同一句人话。
+describe("#647 T6 修复轮 P1-1:Make another / Try again 也走同一道闸", () => {
+  it("视频卡:引擎全禁用 ⇒ 同一句人话,且一张卡都没落库", async () => {
+    mockResolveDisabled.mockResolvedValue(new Set<string>([...GEN_VIDEO_MODELS]));
+    wireCards("video");
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ error: VIDEO_OFF });
+    expect(mockChatCreateMany).not.toHaveBeenCalled();
+    expect(mockThreadUpdate).not.toHaveBeenCalled();
+  });
+
+  it("图片卡:图像引擎被关 ⇒ 图片那句人话,同样零卡落库", async () => {
+    mockResolveDisabled.mockResolvedValue(new Set<string>(["seedream"]));
+    wireCards("image");
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ error: IMAGE_OFF });
+    expect(mockChatCreateMany).not.toHaveBeenCalled();
+  });
+
+  it("只关掉视频 ⇒ 图片卡照旧可以「再来一张」(空态不许误伤另一台引擎)", async () => {
+    mockResolveDisabled.mockResolvedValue(new Set<string>([...GEN_VIDEO_MODELS]));
+    wireCards("image");
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ threadId: "t-1" });
+    expect(mockChatCreateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("什么都没关 ⇒ 视频卡照旧可以「再来一张」", async () => {
+    mockResolveDisabled.mockResolvedValue(new Set<string>());
+    wireCards("video");
+    const r = await coworkVaryCard({ cardId: "gen-card-1" });
+    expect(r).toEqual({ threadId: "t-1" });
+    expect(mockChatCreateMany).toHaveBeenCalledTimes(1);
   });
 });
