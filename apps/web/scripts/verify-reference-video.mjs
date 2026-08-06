@@ -9,11 +9,13 @@
  *
  * ⚠️ THIS SPENDS REAL MONEY on BytePlus (one video generation). Run ONLY with the founder's explicit go-ahead.
  *
- * The request body below is a byte-for-byte mirror of BytePlusProvider.generateVideo
- * (packages/generation/src/byteplus.ts) for the reference-video (no i2v image) case, so this verifies
- * the exact request we ship — not a hand-rolled approximation. #646 T5 moved every control out of
- * the prompt text and onto strict top-level fields; this mirror moved with it (an out-of-date mirror
- * would spend real money verifying a request we no longer send).
+ * The request body below mirrors what the REAL PAID PATH sends for a reference-video job
+ * (no i2v image): the merchant's choices normalised at enqueue (apps/web/lib/batch-idempotency.ts)
+ * and then assembled by BytePlusProvider.generateVideo (packages/generation/src/byteplus.ts).
+ * Mirroring the whole path, not just the adapter, is the point — the adapter alone would accept an
+ * absent `ratio`, but no paid job ever arrives without one (#663 P2-1). #646 T5 moved every control
+ * out of the prompt text and onto strict top-level fields; this mirror moved with it (an
+ * out-of-date mirror would spend real money verifying a request we no longer send).
  *
  * Usage:
  *   BYTEPLUS_API_KEY=... node apps/web/scripts/verify-reference-video.mjs --video <PUBLIC_MP4_URL> [--prompt "..."] [--duration 5]
@@ -52,13 +54,19 @@ const content = [
   { type: "video_url", video_url: { url: videoUrl }, role: "reference_video" },
   { type: "text", text: prompt.trim() },
 ];
-// No aspect ratio is requested on this path, so — exactly like the provider — the `ratio`
-// field is ABSENT rather than sent with an invented value.
+// #663 P2-1: the paid path NEVER reaches the adapter with an absent aspect ratio. A merchant
+// who picks no shape has it normalised to the model default at enqueue
+// (normalizeFactoryMaterial → videoDefaults("seedance-2-fast").aspectRatio = "16:9", in
+// apps/web/lib/batch-idempotency.ts), and that value rides all the way into the adapter body
+// as `ratio: "16:9"`. Omitting it here would spend real money verifying a request shape the
+// product does not send. Kept honest by apps/web/lib/__tests__/verify-reference-video-mirror.test.ts,
+// which evaluates this literal and derives the expected ratio from the same `videoDefaults`.
 const body = {
   model: MODEL,
   content,
   resolution: "720p",
   duration: Number(duration),
+  ratio: "16:9", // = videoDefaults("seedance-2-fast").aspectRatio, the paid path's normalised default
   generate_audio: true, // = the provider's `req.audio ?? true`
   watermark: false,
   execution_expires_after: 3600,
