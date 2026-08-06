@@ -507,8 +507,10 @@ describe("generate (Seedream image, sync)", () => {
         ? { ok: false, status: 500, text: async () => "internal error" }
         : bytesRes());
       const err = await generateOnce();
-      expect(err.message).toContain("500");
       expect(err.charged).toBe(true);
+      // 单张一旦标为 charged,批级就按「不足额且已花钱」重新包装消息(F05 既有行为,
+      // 本票未动);状态码仍留在 console.error 里。承重的是 charged 这一位。
+      expect(err.message).toMatch(/usable images/);
     });
     it("POST 503(网关侧同理)", async () => {
       stubFetch((url) => url.endsWith("/images/generations")

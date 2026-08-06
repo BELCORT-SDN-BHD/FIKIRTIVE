@@ -15,6 +15,41 @@ export class BytePlusProvider implements GenerationProvider {
     return { Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json" };
   }
 
+  /** #672 — the one paid POST each Ark path makes, with the charge boundary applied
+   *  to EVERY way it can die. House rule (settled across the #664/#665 judge chain):
+   *  a failure may stay PLAIN (retryable) ONLY where it is provable the engine never
+   *  spent; anything already billed — or whose outcome is unknown — is a chargedError
+   *  the worker must terminal-fail, because a retry POSTs again and pays twice.
+   *
+   *  The two Ark paths buy different things with a 2xx (the image endpoint bills
+   *  synchronously and returns the picture; the video endpoint accepts an order that
+   *  bills on completion), but what a FAILED POST can PROVE is identical on both, so
+   *  one yardstick serves both. Callers must not re-inspect the status: the
+   *  classification lives here and nowhere else. */
+  private async paidPost(what: "image request" | "video submit", url: string, model: string, body: unknown): Promise<Response> {
+    const res = await fetch(url, { method: "POST", headers: this.headers(), body: JSON.stringify(body) }).catch((e: unknown) => {
+      // No response at all (connection reset, DNS, socket closed mid-flight). The
+      // request may already have reached the engine — and been billed (image) or
+      // turned into a task (video) — with only the reply lost. Outcome unknown ⇒
+      // treated as billed, the same yardstick as "submit returned 2xx but the
+      // receipt was unreadable" below (#664). PLAIN here would requeue and POST a
+      // SECOND time against the same merchant request.
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error(`generation provider ${what} got no response:`, { model, error: detail });
+      throw chargedError(`generation provider ${what} got no response (${detail}); outcome unknown, treated as billed`);
+    });
+    if (res.ok) return res;
+    const detail = (await res.text().catch(() => "")).slice(0, 300);
+    console.error(`generation provider ${what} failed:`, { model, status: res.status, detail });
+    // 4xx — rejected BEFORE the engine spent anything (rate limit, validation, auth).
+    // The only provably-free failure, so the only one that stays PLAIN and retries.
+    if (res.status >= 400 && res.status < 500) throw new Error(`generation provider ${what} failed (${res.status})`);
+    // 5xx (and any other non-2xx) — a server-side error cannot prove the engine didn't
+    // run/accept: a gateway timeout or upstream 500 can land AFTER that happened.
+    // Fail closed: what we cannot prove was free is treated as spent.
+    throw chargedError(`generation provider ${what} failed (${res.status}); outcome unknown, treated as billed`);
+  }
+
   async generate(req: GenerationRequest): Promise<GeneratedImage[]> {
     const model = IMAGE_MODEL_MAP[req.model];
     if (!model) throw new Error("generation provider has no image model mapping"); // pre-spend
@@ -29,26 +64,22 @@ export class BytePlusProvider implements GenerationProvider {
     // one request per image (count <= MAX_GEN_COUNT); each is all-or-nothing.
     const results = await Promise.allSettled(
       Array.from({ length: req.count }, async () => {
-        const res = await fetch(`${ARK_BASE}/images/generations`, {
-          method: "POST", headers: this.headers(),
-          body: JSON.stringify({
-            model, prompt: req.prompt, size: `${width}x${height}`, response_format: "url",
-            // F40: Ark Seedream defaults watermark=true — paying customers must not receive
-            // watermarked images, so set it false explicitly.
-            watermark: false,
-            // Multi-reference conditioning: Ark Seedream's `image` field accepts an array of
-            // source images (verified against ark.ap-southeast; ≤14 refs, inputs+outputs ≤ 15,
-            // and the worker caps at MAX_CONDITIONING_IMAGES=10 → 10+1 ≤ 15). Send the whole
-            // presigned set so product+logo+character all condition. Keep the proven single-
-            // string form for exactly one ref (the live-verified prod shape); array only for 2+.
-            ...(conditioned ? { image: req.inputImageUrls.length === 1 ? req.inputImageUrls[0] : req.inputImageUrls } : {}),
-          }),
+        // #672: this POST IS the billing event on a sync endpoint. paidPost() owns the
+        // whole charge boundary for it — only a 4xx (rejected before the model ran) comes
+        // back PLAIN; a network throw or a 5xx is "outcome unknown" ⇒ charged. Do not
+        // re-inspect the status here.
+        const res = await this.paidPost("image request", `${ARK_BASE}/images/generations`, model, {
+          model, prompt: req.prompt, size: `${width}x${height}`, response_format: "url",
+          // F40: Ark Seedream defaults watermark=true — paying customers must not receive
+          // watermarked images, so set it false explicitly.
+          watermark: false,
+          // Multi-reference conditioning: Ark Seedream's `image` field accepts an array of
+          // source images (verified against ark.ap-southeast; ≤14 refs, inputs+outputs ≤ 15,
+          // and the worker caps at MAX_CONDITIONING_IMAGES=10 → 10+1 ≤ 15). Send the whole
+          // presigned set so product+logo+character all condition. Keep the proven single-
+          // string form for exactly one ref (the live-verified prod shape); array only for 2+.
+          ...(conditioned ? { image: req.inputImageUrls.length === 1 ? req.inputImageUrls[0] : req.inputImageUrls } : {}),
         });
-        if (!res.ok) {
-          const detail = (await res.text().catch(() => "")).slice(0, 300);
-          console.error("generation provider image request failed:", { model, status: res.status, detail });
-          throw new Error(`generation provider image request failed (${res.status})`);
-        } // pre-charge (nothing billed) — stays PLAIN so the worker can retry
         // res.ok ⇒ billed; a failure past here is a CHARGED failure (a retry would re-bill).
         // EVERY way of dying past this line is wrapped, not just the ones with a status code:
         // a malformed receipt (`res.json()` throwing), a download whose connection drops
@@ -71,11 +102,16 @@ export class BytePlusProvider implements GenerationProvider {
     const ok = results.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
     if (ok.length === req.count) return ok;
     // Shortfall (F05). If ANY image was billed — a promise fulfilled (its POST succeeded and
-    // billed), or a rejection is marked charged (a post-POST failure) — the batch is a CHARGED
-    // failure: a retry would re-bill the already-billed ones, so fail closed as charged. But if
-    // EVERY rejection is an unmarked PRE-charge failure (the POST itself 4xx/5xx'd, nothing
-    // billed), rethrow the first as a PLAIN error so the worker retries and the spend audit isn't
-    // polluted with phantom provider spend.
+    // billed), or a rejection is marked charged (a post-POST failure, or a POST whose outcome is
+    // unknown) — the batch is a CHARGED failure: a retry would re-bill, so fail closed as charged.
+    // Only when EVERY rejection is a provably-free failure does the batch rethrow the first as a
+    // PLAIN error, so the worker retries and the spend audit isn't polluted with phantom spend.
+    // #672 narrowed what "provably free" means at the per-image level (a POST 4xx — nothing ran),
+    // which narrows the batch by construction: a network throw or a 5xx on any single POST now
+    // arrives here already marked charged and flips the whole batch closed. The previous reading
+    // ("the POST itself 4xx/5xx'd, nothing billed") was the P0 hole — count images all throwing
+    // produced zero marks, so the batch went PLAIN and the worker re-POSTed a batch that may
+    // already have reached the engine.
     const rejections = results.flatMap((s) => (s.status === "rejected" ? [s.reason] : []));
     const anyCharged = ok.length > 0 || rejections.some((e) => e instanceof Error && (e as { charged?: boolean }).charged);
     if (anyCharged) throw chargedError(`generation provider returned only ${ok.length}/${req.count} usable images`);
@@ -110,8 +146,12 @@ export class BytePlusProvider implements GenerationProvider {
     // The text part is the merchant's prompt ONLY — every control is a top-level field below.
     content.push({ type: "text", text: req.prompt.trim() });
 
-    const sub = await fetch(`${ARK_BASE}/contents/generations/tasks`, {
-      method: "POST", headers: this.headers(),
+    // #672: the paid submit. paidPost() owns its charge boundary — a 4xx (rate limit /
+    // validation / auth, rejected before the engine took the order) is the only provably-free
+    // failure and stays PLAIN; the fetch throwing outright, or a 5xx, cannot prove no task was
+    // created, so they land as chargedError for exactly the reason spelled out below the call:
+    // a retry would submit a SECOND task against the same merchant request.
+    const sub = await this.paidPost("video submit", `${ARK_BASE}/contents/generations/tasks`, model, {
       // #646 T5: STRICT top-level parameters, not the legacy `--flag` suffix on the prompt text.
       // The two transports differ in exactly the way that costs money: the legacy suffix is
       // loosely validated — a wrong value is silently replaced by the engine default and the
@@ -119,28 +159,21 @@ export class BytePlusProvider implements GenerationProvider {
       // strictly validated: a wrong value is an error, before anything is billed.
       // Deliberately NOT sent (this model rejects all three under strict validation):
       // seed, camera_fixed, frames.
-      body: JSON.stringify({
-        model, content,
-        resolution: req.resolution ?? "720p",
-        duration: req.durationSeconds,
-        // absent shape ⇒ omit the field and let the engine pick (adaptive), matching the
-        // pre-#646 behaviour of not appending a ratio flag. Never send an invented value.
-        ...(req.aspectRatio ? { ratio: req.aspectRatio } : {}),
-        // the merchant's sound choice, finally wired. Default true = the engine default and
-        // videoDefaults()'s audio for this model, so an unset toggle changes nothing.
-        generate_audio: req.audio ?? true,
-        // F40 (same rule as the image path): paying merchants must not receive watermarked
-        // output. Video defaults to false today; declare it so a default drift can't undo that.
-        watermark: false,
-        // F06 reconciliation window, below. 3600s is the engine's minimum.
-        execution_expires_after: 3600,
-      }),
+      model, content,
+      resolution: req.resolution ?? "720p",
+      duration: req.durationSeconds,
+      // absent shape ⇒ omit the field and let the engine pick (adaptive), matching the
+      // pre-#646 behaviour of not appending a ratio flag. Never send an invented value.
+      ...(req.aspectRatio ? { ratio: req.aspectRatio } : {}),
+      // the merchant's sound choice, finally wired. Default true = the engine default and
+      // videoDefaults()'s audio for this model, so an unset toggle changes nothing.
+      generate_audio: req.audio ?? true,
+      // F40 (same rule as the image path): paying merchants must not receive watermarked
+      // output. Video defaults to false today; declare it so a default drift can't undo that.
+      watermark: false,
+      // F06 reconciliation window, below. 3600s is the engine's minimum.
+      execution_expires_after: 3600,
     });
-    if (!sub.ok) {
-      const detail = (await sub.text().catch(() => "")).slice(0, 300);
-      console.error("generation provider video submit failed:", { model, status: sub.status, detail });
-      throw new Error(`generation provider video submit failed (${sub.status})`);
-    } // pre-charge
     // submit returned 2xx ⇒ the engine ACCEPTED the order. From here on we can no longer prove
     // the task was never created, so an unreadable receipt is "outcome unknown", not "nothing
     // happened" (#657). PLAIN here would requeue and submit a SECOND task against the same
