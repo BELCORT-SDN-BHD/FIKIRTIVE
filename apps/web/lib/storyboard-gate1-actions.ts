@@ -32,7 +32,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
@@ -173,9 +173,11 @@ function firstFrameChildMatches(
 }
 
 /** #647 T6:唯一那台引擎被后台关掉时,分镜给商家的那句人话。
- *  English sentence case,不出现任何引擎/供应商名(商家侧本来就不该见引擎)。 */
-const VIDEO_UNAVAILABLE: Err = { error: "Video generation is turned off right now." };
-const IMAGE_UNAVAILABLE: Err = { error: "Image generation is turned off right now." };
+ *  措辞的**单一来源**在 @fikirtive/core(`generationUnavailableMessage`)—— 修复轮 P1-1 起,
+ *  四个铸卡入口(Otto propose / proposePack / 分镜闸①② / Make another)共用同一份,
+ *  否则同一件事迟早在四个地方说出四种话。 */
+const VIDEO_UNAVAILABLE: Err = { error: generationUnavailableMessage("video") };
+const IMAGE_UNAVAILABLE: Err = { error: generationUnavailableMessage("image") };
 
 /**
  * #647 T6:这一类创作现在还有没有引擎。null = 有,照常走;Err = 没有,调用方原样返回。
