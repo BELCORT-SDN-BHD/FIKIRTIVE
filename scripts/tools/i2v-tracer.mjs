@@ -38,21 +38,24 @@ async function enqueue({ projectId, shotId, prompt, kind, model }) {
   await boss.send(GEN_QUEUE, { genJobId: job.id });
   return job.id;
 }
+// Every read below carries ownerId explicitly: this script runs with NO principal frame,
+// and the tenant guard (packages/db/src/tenant-guard.ts) rejects an unscoped where on a
+// tenant model. That also rules out findUnique-by-id, hence findFirst on (id, ownerId).
 async function waitJob(id, secs = 180) {
   for (let i = 0; i < secs; i++) {
     await new Promise((r) => setTimeout(r, 1000));
-    const row = await prisma.genJob.findUnique({ where: { id } });
+    const row = await prisma.genJob.findFirst({ where: { id, ownerId: OWNER } });
     if (row.status === "DONE" || row.status === "FAILED") return row;
   }
   throw new Error(`job ${id} timed out`);
 }
 const latestGen = (shotId) =>
-  prisma.generation.findFirst({ where: { shotId, deletedAt: null }, orderBy: { version: "desc" }, include: { asset: true } });
+  prisma.generation.findFirst({ where: { shotId, ownerId: OWNER, deletedAt: null }, orderBy: { version: "desc" }, include: { asset: true } });
 
 // 1. project + a fresh shot we control
 let project = await prisma.project.findFirst({ where: { ownerId: OWNER, deletedAt: null }, orderBy: { createdAt: "asc" } });
 if (!project) project = await prisma.project.create({ data: { id: newId(), ownerId: OWNER, name: "i2v tracer" } });
-const last = await prisma.shot.findFirst({ where: { projectId: project.id }, orderBy: { number: "desc" } });
+const last = await prisma.shot.findFirst({ where: { projectId: project.id, ownerId: OWNER }, orderBy: { number: "desc" } });
 const shot = await prisma.shot.create({
   data: { id: newId(), ownerId: OWNER, projectId: project.id, number: (last?.number ?? 0) + 1, description: "a cat on a windowsill at dusk" },
 });
@@ -67,42 +70,50 @@ step(`source image v${img.version} ${img.asset.ext} ${img.asset.sizeBytes}B`);
 
 // 3. guard: i2v on a shot with NO image must terminal-fail WITHOUT spending
 {
-  const bareLast = await prisma.shot.findFirst({ where: { projectId: project.id }, orderBy: { number: "desc" } });
+  const bareLast = await prisma.shot.findFirst({ where: { projectId: project.id, ownerId: OWNER }, orderBy: { number: "desc" } });
   const bare = await prisma.shot.create({ data: { id: newId(), ownerId: OWNER, projectId: project.id, number: (bareLast?.number ?? 0) + 1 } });
-  const j = await waitJob(await enqueue({ projectId: project.id, shotId: bare.id, prompt: "animate nothing", kind: "video", model: "kling" }));
+  const j = await waitJob(await enqueue({ projectId: project.id, shotId: bare.id, prompt: "animate nothing", kind: "video", model: "seedance-2-fast" }));
   if (j.status !== "FAILED") throw new Error(`i2v with no source image ended ${j.status}, expected FAILED`);
   if (j.generationIds.length !== 0) throw new Error("no-source i2v produced output (spent!)");
   step(`no-source i2v terminal-fails without spending: "${j.error}"`);
 }
 
 // 4. animate (i2v) the source frame
-const vidJob = await waitJob(await enqueue({ projectId: project.id, shotId: shot.id, prompt: "the cat slowly turns its head, gentle breeze", kind: "video", model: "kling" }));
+const vidJob = await waitJob(await enqueue({ projectId: project.id, shotId: shot.id, prompt: "the cat slowly turns its head, gentle breeze", kind: "video", model: "seedance-2-fast" }));
 if (vidJob.status !== "DONE") throw new Error(`i2v ${vidJob.status}: ${vidJob.error}`);
 const vid = await latestGen(shot.id);
 if (vid.asset.ext.toLowerCase() !== "mp4") throw new Error(`latest ext ${vid.asset.ext}, expected mp4`);
 if (vid.version <= img.version) throw new Error(`video v${vid.version} not newer than image v${img.version}`);
 if (!vid.attachedAt) throw new Error("i2v output not attached to the shot");
 if (vid.asset.mime !== "video/mp4") throw new Error(`mime ${vid.asset.mime}, expected video/mp4`);
-const shotRow = await prisma.shot.findUnique({ where: { id: shot.id } });
+const shotRow = await prisma.shot.findFirst({ where: { id: shot.id, ownerId: OWNER } });
 if (shotRow.status !== "ATTACHED") throw new Error(`shot status ${shotRow.status}, expected ATTACHED`);
 step(`i2v video v${vid.version} mp4 attached · shot ATTACHED · ${vid.asset.sizeBytes}B`);
 
 // 4a. crash-after-spend guard (codex blocker #1): a redelivered job stuck in
 //     GENERATING with no generationIds must fail closed WITHOUT re-spending.
 {
-  const before = await prisma.generation.count({ where: { shotId: shot.id, deletedAt: null } });
+  // The worker only treats a lost QUEUED→GENERATING claim as a CRASH once the owning
+  // GENERATING row is older than GEN_STALE_MS; a RECENT one is read as an actively
+  // running duplicate delivery and deliberately left untouched (apps/worker/src/jobs/
+  // gen.ts, the `claim.count === 0` branch). A fixture row started "now" therefore never
+  // fails closed and this guard would just time out — so backdate it past that cutoff.
+  const GEN_STALE_MS = 1000 * 60 * 18; // mirrors GEN_STALE_MS in apps/worker/src/jobs/gen.ts
+  const staleStartedAt = new Date(Date.now() - GEN_STALE_MS - 60_000); // 1 minute past the cutoff
+  const before = await prisma.generation.count({ where: { shotId: shot.id, ownerId: OWNER, deletedAt: null } });
   const ghost = await prisma.genJob.create({
     data: {
       id: newId(), ownerId: OWNER, projectId: project.id, shotId: shot.id,
-      prompt: "interrupted i2v", entityIds: [], count: 1, model: "kling",
-      kind: "VIDEO", status: "GENERATING", startedAt: new Date(), attempts: 1,
+      prompt: "interrupted i2v", entityIds: [], count: 1, model: "seedance-2-fast",
+      kind: "VIDEO", status: "GENERATING", startedAt: staleStartedAt, attempts: 1,
     },
   });
   await boss.send(GEN_QUEUE, { genJobId: ghost.id });
   const row = await waitJob(ghost.id, 40);
   if (row.status !== "FAILED") throw new Error(`crash-resume job ended ${row.status}, expected FAILED`);
-  if (!/interrupted/i.test(row.error)) throw new Error(`crash-resume error not the guard: "${row.error}"`);
-  const after = await prisma.generation.count({ where: { shotId: shot.id, deletedAt: null } });
+  // the worker's own fail-closed wording for this path (gen.ts, stale GENERATING update)
+  if (!/stale GENERATING/i.test(row.error)) throw new Error(`crash-resume error not the guard: "${row.error}"`);
+  const after = await prisma.generation.count({ where: { shotId: shot.id, ownerId: OWNER, deletedAt: null } });
   if (after !== before) throw new Error(`crash-resume re-spent: generations ${before}→${after}`);
   step(`crash-after-spend guard: GENERATING redelivery fails closed, no re-spend (gens ${before}=${after})`);
 }
@@ -111,10 +122,10 @@ step(`i2v video v${vid.version} mp4 attached · shot ATTACHED · ${vid.asset.siz
 //     a shot in another project must fail closed without spending.
 {
   const projB = await prisma.project.create({ data: { id: newId(), ownerId: OWNER, name: "i2v tracer B" } });
-  const lastB = await prisma.shot.findFirst({ where: { projectId: projB.id }, orderBy: { number: "desc" } });
+  const lastB = await prisma.shot.findFirst({ where: { projectId: projB.id, ownerId: OWNER }, orderBy: { number: "desc" } });
   const shotB = await prisma.shot.create({ data: { id: newId(), ownerId: OWNER, projectId: projB.id, number: (lastB?.number ?? 0) + 1 } });
   const j = await prisma.genJob.create({
-    data: { id: newId(), ownerId: OWNER, projectId: project.id, shotId: shotB.id, prompt: "x", entityIds: [], count: 1, model: "kling", kind: "VIDEO" },
+    data: { id: newId(), ownerId: OWNER, projectId: project.id, shotId: shotB.id, prompt: "x", entityIds: [], count: 1, model: "seedance-2-fast", kind: "VIDEO" },
   });
   await boss.send(GEN_QUEUE, { genJobId: j.id });
   const row = await waitJob(j.id, 40);

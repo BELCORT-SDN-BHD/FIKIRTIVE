@@ -1,9 +1,11 @@
-// Real-fal PROD verification — enqueues real generations against production
-// (Neon + the prod fal worker + prod R2) and confirms each produces output.
-// SPENDS REAL MONEY (~$1.1): t2i x2 + i2v + t2v + last-frame i2v.
-// Run AFTER deploy via:  railway run --service worker -- node scripts/tools/prod-real-fal-verify.mjs
+// Real-generation PROD verification — enqueues real generations against production
+// (Neon + the prod worker + prod R2) and confirms each produces output. The worker
+// picks the provider from GENERATION_PROVIDER (prod = byteplus: Seedream image /
+// Seedance video). SPENDS REAL MONEY (~$1.9): t2i x2 + 3x 5s seedance-2-fast 720p
+// (≈$0.60 each, SEEDANCE_COGS_USD_PER_SECOND).
+// Run AFTER deploy via:  railway run --service worker -- node scripts/tools/prod-real-gen-verify.mjs
 import { interlock } from "./_interlock.mjs";
-interlock({ spends: "~$1.1 — real fal generations (t2i x2 + i2v + t2v + last-frame i2v)", prod: "prod Neon DB + prod worker queue + prod R2" });
+interlock({ spends: "~$1.9 — real generations (t2i x2 + i2v + t2v + last-frame i2v, 3x 5s Seedance 720p)", prod: "prod Neon DB + prod worker queue + prod R2" });
 import { createRequire } from "node:module";
 const require = createRequire(new URL("../../apps/worker/package.json", import.meta.url));
 const { PgBoss } = await import(require.resolve("pg-boss"));
@@ -39,7 +41,7 @@ async function wait(id, label, secs = 300) {
   throw new Error(`${label} timed out`);
 }
 
-const project = await prisma.project.create({ data: { id: newId(), ownerId: OWNER, name: "real-fal verify" } });
+const project = await prisma.project.create({ data: { id: newId(), ownerId: OWNER, name: "prod gen verify" } });
 step(`project ${project.id}`);
 
 // t2i x2 (Seedream) — real images on prod R2; sources for i2v + last-frame
@@ -49,19 +51,19 @@ step("text-to-image #1 DONE (real Seedream)");
 const g2 = await t2i("the same lighthouse, dawn light, calm sea, photoreal");
 step("text-to-image #2 DONE (real Seedream)");
 
-// i2v (Kling) from g1
-await wait(await enqueue({ projectId: project.id, prompt: "slow cinematic push-in, waves moving", kind: "VIDEO", model: "kling", sourceGenerationId: g1 }), "i2v");
-step("image-to-video DONE (real Kling, from the uploaded/generated still)");
+// i2v (Seedance) from g1
+await wait(await enqueue({ projectId: project.id, prompt: "slow cinematic push-in, waves moving", kind: "VIDEO", model: "seedance-2-fast", sourceGenerationId: g1 }), "i2v");
+step("image-to-video DONE (real Seedance, from the uploaded/generated still)");
 
-// t2v (Kling) from text
-await wait(await enqueue({ projectId: project.id, prompt: "aerial over a stormy ocean at dusk, cinematic", kind: "VIDEO", model: "kling" }), "t2v");
-step("text-to-video DONE (real Kling)");
+// t2v (Seedance) from text
+await wait(await enqueue({ projectId: project.id, prompt: "aerial over a stormy ocean at dusk, cinematic", kind: "VIDEO", model: "seedance-2-fast" }), "t2v");
+step("text-to-video DONE (real Seedance)");
 
-// last-frame i2v (Kling) g1 → g2
-await wait(await enqueue({ projectId: project.id, prompt: "transition from night to dawn", kind: "VIDEO", model: "kling", sourceGenerationId: g1, tailGenerationId: g2 }), "last-frame");
-step("last-frame image-to-video DONE (real Kling, start → end)");
+// last-frame i2v (Seedance, #646 T5 解禁) g1 → g2
+await wait(await enqueue({ projectId: project.id, prompt: "transition from night to dawn", kind: "VIDEO", model: "seedance-2-fast", sourceGenerationId: g1, tailGenerationId: g2 }), "last-frame");
+step("last-frame image-to-video DONE (real Seedance, start → end)");
 
 await boss.stop();
 await prisma.$disconnect();
-console.log("\nREAL-FAL PROD VERIFY PASSED — t2i, i2v, t2v, last-frame all produced real output (~$1.1 spent)");
+console.log("\nREAL-GEN PROD VERIFY PASSED — t2i, i2v, t2v, last-frame all produced real output (~$1.9 spent)");
 process.exit(0);

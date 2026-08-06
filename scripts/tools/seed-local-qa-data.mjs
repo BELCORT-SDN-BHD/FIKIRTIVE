@@ -861,7 +861,10 @@ async function seedAdminSurface() {
     ["seedream", "t2i", "Use natural prose, visible product, clear scene, and realistic local offer details."],
     ["seedream", "i2i", "Describe the edit clearly and preserve the reference identity."],
     ["seedance", "t2v", "Lead with motion and camera, one primary action, one camera move."],
-    ["veo", "t2v", "Director-style prompt with action, camera, lighting, and audio cue."],
+    // #647 T6:原第 4 行是 "veo" family —— 家族随 12 台假引擎一并下架(MODEL_FAMILIES
+    // 只剩 seedream/seedance),admin 知识格按 familyModes 遍历,veo 行永远不会被渲染。
+    // 改用 seedance × i2v 这个真实存在的格,保住「一族多模式」的展示场景。
+    ["seedance", "i2v", "Animate the source frame: one primary motion, keep the still's identity and framing."],
   ];
   for (const [family, mode, directive] of directives) {
     const row = await prisma.modelDirective.upsert({
@@ -907,11 +910,13 @@ async function seedAdminSurface() {
     valueJson: { provider: "mock" },
     updatedBy: "qa-seed",
   }, { valueJson: { provider: "mock" }, updatedBy: "qa-seed" });
-  await prisma.modelRegistryOverlay.upsert({
-    where: { ownerId_modelId: { ownerId: FOUNDER, modelId: "veo3.1-lite" } },
-    create: { id: id("model_overlay_veo"), ownerId: FOUNDER, modelId: "veo3.1-lite", enabled: false, notes: "QA disabled model row" },
-    update: { enabled: false, notes: "QA disabled model row" },
-  });
+  // #647 T6:这里原本有一条 modelRegistryOverlay disabled 行(veo3.1-lite,"QA disabled
+  // model row")。12 台假引擎下架后 knownDisabledSet 会把不在册的 id 过滤掉,这条行只会
+  // 变成一条 inert 数据;而在册 id 只剩 seedream / seedance-2-fast,都是各自 kind 唯一的
+  // 在产引擎,seed 里禁任何一个都会真实关掉本地 QA 的对应生成能力(overlay 是平台级
+  // 开关,只读 FOUNDER 行)。所以不再预置 disabled 行:「引擎被关掉」的行为由
+  // apps/web/lib/__tests__/engine-off-empty-state.test.ts 与 model-registry.test.ts 钉死;
+  // 要人工演示,去 admin 后台现场开关(会临时关掉本地视频生成,演示完记得开回来)。
   await prisma.metaConnection.upsert({
     where: { ownerId: FOUNDER },
     create: {
@@ -946,7 +951,9 @@ async function seedAuditEvents() {
   const events = [
     ["auth.signin", { email: "founder.qa@example.test" }],
     ["directive.seed", { inserted: 4, via: "qa-seed" }],
-    ["model.toggle", { modelId: "veo3.1-lite", enabled: false }],
+    // #647 T6:audit 演示行改用在册 id;enabled:true(一次「重新打开」的历史事件)与
+    // 「当前没有任何引擎被禁」的 seed 状态自洽 —— 不许出现日志说关了、菜单却亮着的假账。
+    ["model.toggle", { modelId: "seedance-2-fast", enabled: true }],
     ["tenant.invite", { email: "merchant.qa@example.test" }],
     ["generation.outcome", { generationId: id(`${FOUNDER}_project_01_gen_001`), result: "approved", posted: false }],
     ["credits.grant", { orgId: MERCHANT, displayedAmount: 250 }],
