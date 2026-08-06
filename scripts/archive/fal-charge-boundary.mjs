@@ -1,3 +1,9 @@
+// [ARCHIVED] 这三个用例已升格为正式 vitest:packages/generation/src/fal.test.ts
+// (CI 每次都跑,不再依赖这份一次性脚本)。仅供查证,不是当前流程或权威。
+// 注意:下面那句「POST !ok → plain error, retryable」是这份脚本当年的概括,已被
+// #666 修正 —— 现在只有 4xx 走 PLAIN,POST 自己抛与 5xx 都是 charged 终态。
+// 脚本本身用的是 429,故仍能跑通;完整边界以 fal.test.ts 为准。
+//
 // Proves the fal adapter's post-charge commit boundary ($0, network stubbed).
 //   - POST !ok (model never ran)            → plain error, retryable (no .charged)
 //   - POST ok then download fails (billed)  → chargedError (.charged === true)

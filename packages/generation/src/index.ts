@@ -107,12 +107,54 @@ function hashSeed(s: string): number {
 
 /* ---------------- fal (prod, real money) ---------------- */
 
-/** Mark an error raised AFTER the provider has already been billed (the fal
- *  sync POST returned ok, then parsing/downloading the result failed). The
- *  worker must terminal-fail on these — a retry would POST again and double-
- *  charge. Pre-charge failures (POST !ok, network) stay unmarked and retry. */
+/** Mark an error the merchant's engine spend must be assumed to cover. The house
+ *  rule (settled across the #664/#665 judge chain): a failure may stay PLAIN
+ *  (retryable) ONLY where it is provable the engine never ran; anything already
+ *  billed — or whose outcome is unknown — is a chargedError the worker must
+ *  terminal-fail, because a retry re-POSTs and double-charges.
+ *
+ *  fal.run is a SYNC endpoint: the POST itself is the billing event (its response
+ *  carries the finished asset). So on this provider only a 4xx is provably free
+ *  (rate limit / validation / auth rejected the request before the model ran).
+ *  A network throw on the POST is NOT free — the request may have reached the
+ *  engine and run, with only the response lost — and neither is a 5xx. */
 export function chargedError(message: string): Error {
   return Object.assign(new Error(message), { charged: true as const });
+}
+
+/** The one paid POST both fal paths make, with the charge boundary applied to
+ *  EVERY way it can die — image and video are the same sync endpoint shape, so
+ *  they get the same yardstick from one place. Returns the ok response; the
+ *  caller owns everything past it (all of which is already post-charge).
+ *
+ *  PLAIN (retryable) is reachable only via 4xx. Callers must not re-inspect the
+ *  status: the classification lives here. */
+async function falPaidPost(kind: "image" | "video", modelId: string, apiKey: string, body: unknown): Promise<Response> {
+  const res = await fetch(`https://fal.run/${modelId}`, {
+    method: "POST",
+    headers: { Authorization: `Key ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch((e: unknown) => {
+    // No response at all (connection reset, DNS, socket closed mid-flight). On a
+    // SYNC endpoint the request may already have reached the engine and run — we
+    // simply lost the reply. Outcome unknown ⇒ billed. Same yardstick as byteplus's
+    // "submit returned 2xx but the receipt was unreadable" (#664): what we cannot
+    // prove didn't spend, we treat as spent, because a retry POSTs a second time.
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`generation provider ${kind} request got no response:`, { modelId, error: detail });
+    throw chargedError(`generation provider ${kind} request got no response (${detail}); outcome unknown, treated as billed`);
+  });
+  if (res.ok) return res;
+  const detail = await res.text().catch(() => "");
+  console.error(`generation provider ${kind} request failed:`, { modelId, status: res.status, detail: detail.slice(0, 300) });
+  // 4xx — the endpoint rejected the request BEFORE running the model (rate limit,
+  // validation, auth). This is the only provably-free failure on a sync endpoint,
+  // so it is the only one that stays PLAIN and lets the worker retry.
+  if (res.status >= 400 && res.status < 500) throw new Error(`generation provider ${kind} request failed (${res.status})`);
+  // 5xx (and any other non-2xx) — a server-side error cannot prove the model didn't
+  // run: a gateway timeout or upstream 500 can land AFTER execution. Outcome unknown
+  // ⇒ terminal and charged, never a retry that risks a second charge.
+  throw chargedError(`generation provider ${kind} request failed (${res.status}); outcome unknown, treated as billed`);
 }
 
 /** fal model ids — text-to-image vs image-conditioned edit. v1: Seedream,
@@ -252,21 +294,11 @@ export class FalProvider implements GenerationProvider {
     // EXECUTED_SPEC.image.fallbackAdapterAspectHonoured is false, and index.test.ts asserts
     // both the declaration and this request body agree. The PROD path is the active
     // adapter (byteplus), which does carry the exact WxH.
-    const res = await fetch(`https://fal.run/${modelId}`, {
-      method: "POST",
-      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: req.prompt,
-        num_images: req.count,
-        ...(conditioned ? { image_urls: req.inputImageUrls } : {}),
-      }),
+    const res = await falPaidPost("image", modelId, this.apiKey, {
+      prompt: req.prompt,
+      num_images: req.count,
+      ...(conditioned ? { image_urls: req.inputImageUrls } : {}),
     });
-    if (!res.ok) {
-      // pre-charge failure (the model never ran) — safe for the worker to retry
-      const detail = await res.text().catch(() => "");
-      console.error("generation provider image request failed:", { modelId, status: res.status, detail: detail.slice(0, 300) });
-      throw new Error(`generation provider image request failed (${res.status})`);
-    }
     // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
     // past here must terminal-fail (chargedError), never retry-and-re-charge.
     try {
@@ -347,17 +379,7 @@ export class FalProvider implements GenerationProvider {
     } else {
       modelId = cfg.t2v;
     }
-    const res = await fetch(`https://fal.run/${modelId}`, {
-      method: "POST",
-      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      // pre-charge failure (the model never ran) — safe for the worker to retry
-      const detail = await res.text().catch(() => "");
-      console.error("generation provider video request failed:", { modelId, status: res.status, detail: detail.slice(0, 300) });
-      throw new Error(`generation provider video request failed (${res.status})`);
-    }
+    const res = await falPaidPost("video", modelId, this.apiKey, body);
     // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
     // past here must terminal-fail (chargedError), never retry-and-re-charge.
     try {
