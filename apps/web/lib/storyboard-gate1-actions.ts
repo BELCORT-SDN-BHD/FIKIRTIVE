@@ -231,7 +231,10 @@ export async function getStoryboardVideoOptions(): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
 
-  const disabledModels = Array.from(await resolveDisabledModels());
+  // #647 T6 修复轮 P1-3:开关读不到 ⇒ 同样不报档位表(不知道能不能做,就别端出一份菜单)。
+  const registry = await resolveDisabledModels();
+  if ("error" in registry) return registry;
+  const disabledModels = Array.from(registry.disabled);
   const model = selectedVideoModel(disabledModels);
   // #647 T6:引擎关掉时不许再报一份根本交付不了的档位表 —— 那是拿一份真的能力表
   // 去装点一个做不到的功能。明说不可用。
@@ -397,9 +400,12 @@ export async function prepareStoryboardFirstFrames(
     // after the lock, from the FRESH payload — so a set that changed while we waited for
     // the lock (an entity created/deleted, an admin model toggle) is picked up, never a
     // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
-    const disabledModels = Array.from(await resolveDisabledModels());
-    // #647 T6:锁内读完后台开关的第一件事 —— 这一类创作还有没有引擎。
-    // 没有就当场退出:零写入、零子卡、一句人话。
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
     unavailable = unavailableFor("image", disabledModels);
     if (unavailable) return;
     const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
@@ -536,9 +542,12 @@ export async function regenShotFirstFrameCard(
     // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
     // pre-lock flows into a write); the owned-entity read below already runs in-lock on the
     // fresh target's entityIds.
-    const disabledModels = Array.from(await resolveDisabledModels());
-    // #647 T6:锁内读完后台开关的第一件事 —— 这一类创作还有没有引擎。
-    // 没有就当场退出:零写入、零子卡、一句人话。
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
     unavailable = unavailableFor("image", disabledModels);
     if (unavailable) return;
     const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
@@ -882,9 +891,12 @@ export async function prepareStoryboardVideos(
     // R4① dataflow rule: model config derived AFTER the lock (nothing computed pre-lock
     // flows into a write). Video children are i2v (no entity refs) — no owned-entity lookup;
     // the per-shot ctx below is built from the FRESH thread id + this in-lock config.
-    const disabledModels = Array.from(await resolveDisabledModels());
-    // #647 T6:锁内读完后台开关的第一件事 —— 这一类创作还有没有引擎。
-    // 没有就当场退出:零写入、零子卡、一句人话。
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
     unavailable = unavailableFor("video", disabledModels);
     if (unavailable) return;
     const parent = { id: card.id, threadId: fresh.threadId };
@@ -1045,9 +1057,12 @@ export async function regenShotVideoCard(
 
     // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
     // pre-lock flows into a write).
-    const disabledModels = Array.from(await resolveDisabledModels());
-    // #647 T6:锁内读完后台开关的第一件事 —— 这一类创作还有没有引擎。
-    // 没有就当场退出:零写入、零子卡、一句人话。
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
     unavailable = unavailableFor("video", disabledModels);
     if (unavailable) return;
     const parent = { id: card.id, threadId: fresh.threadId };

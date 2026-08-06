@@ -181,7 +181,7 @@ beforeEach(() => {
 });
 
 function mockResolvedDefaults() {
-  mockResolveDisabled.mockResolvedValue(new Set<string>());
+  mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() });
   // suggestModel: 在产那台视频引擎(#647 T6 之后菜单上只剩它)。这个夹具喂的是**真的**
   // GEN_VIDEO_MODEL_OPTIONS 查表(via importOriginal),所以模型名必须是菜单上真有的一格 ——
   // 写一个下架 id 会让 options 读到 undefined。
@@ -1467,7 +1467,7 @@ describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
   });
 
   it("sources disabledModels 走 resolveDisabledModels(与铸卡同一来源)", async () => {
-    mockResolveDisabled.mockResolvedValue(new Set(["some-model"]));
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set(["some-model"]) });
     await getStoryboardVideoOptions();
     expect(mockResolveDisabled).toHaveBeenCalled();
     // the disabled set threads into suggestModel (same as minting)

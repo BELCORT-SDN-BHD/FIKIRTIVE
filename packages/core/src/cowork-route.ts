@@ -41,6 +41,21 @@ export interface SuggestModelResult {
 }
 
 /**
+ * 引擎被后台关掉时,商家看到的那句话 —— **四个铸卡入口共用这一份**(#647 T6 修复轮 P1-1)。
+ *
+ * 为什么要有单一来源:Otto propose、proposePack、分镜闸①②、以及「Make another / Try again」
+ * 是四条各自独立的路。同一件事在四个地方各写一句话,就是四份会各自漂移的措辞 —— 而商家
+ * 只会觉得「这个产品对同一件事说了四种话」。
+ *
+ * English sentence case;不出现任何引擎/供应商名(商家侧本来就不该见引擎)。
+ */
+export function generationUnavailableMessage(kind: "image" | "video"): string {
+  return kind === "video"
+    ? "Video generation is turned off right now."
+    : "Image generation is turned off right now.";
+}
+
+/**
  * 选型 + 参数吸附。**返回 null = 这一类创作现在没有可用引擎**(唯一那台被后台关掉)。
  *
  * 为什么是 null 而不是「照选不误、让下游拦」:下游那道 spend 闸拦得住**花钱**,拦不住

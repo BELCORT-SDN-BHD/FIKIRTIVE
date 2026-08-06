@@ -293,9 +293,10 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
 
       // OPT-6 P2 (highest-trust): fail-without-spend if the model was admin-disabled
       // after this job was queued. AFTER the resume short-circuit (a committed job
-      // still finishes) and BEFORE the spend claim + provider call. Fail-closed-to-
-      // typed-menu on a DB fault. (Variant jobs always use seedream → this is the
-      // seedream/image toggle for the variant path too.)
+      // still finishes) and BEFORE the spend claim + provider call. (Variant jobs always
+      // use seedream → this is the seedream/image toggle for the variant path too.)
+      // #647 T6 修复轮 P1-3:开关**读不到**时抛 PLAIN(不再回空集合当作「什么都没关」)——
+      // 花钱之前的瞬时故障,重投重试,零花费。
       const disabled = await workerDisabledModels();
       if (isModelDisabled(job.model, disabled)) {
         await failClosedRefund(job.id, job.ownerId, "this model was turned off before the job ran — not spending");

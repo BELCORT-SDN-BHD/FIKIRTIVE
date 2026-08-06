@@ -48,7 +48,8 @@ beforeEach(() => {
     thread: { projectId: "project-1", deletedAt: null, ownerId: "owner-1" },
   });
   mocks.genJobFindFirst.mockResolvedValue(null);
-  mocks.resolveDisabledModels.mockResolvedValue(new Set());
+  // #647 T6 修复轮 P1-3:resolver 现在回联合类型 —— 读得到是 { disabled },读不到是 { error }。
+  mocks.resolveDisabledModels.mockResolvedValue({ disabled: new Set<string>() });
   mocks.startCoworkGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.chatMessageUpdate.mockResolvedValue({});
 });

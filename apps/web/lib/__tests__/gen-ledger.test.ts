@@ -39,7 +39,7 @@ vi.mock("../queue", () => ({
   })),
 }));
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
-vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => new Set()) }));
+vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
 const { startGen } = await import("../gen-actions");
 const { cancelGenJob } = await import("../cowork-actions");

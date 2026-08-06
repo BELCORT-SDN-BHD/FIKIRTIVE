@@ -475,8 +475,10 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was
       // queued must FAIL WITHOUT SPENDING. Runs AFTER the resume short-circuit (a
       // committed job still finishes — its money already spent) and BEFORE the spend
-      // claim + provider call. Fail-closed-to-typed-menu: a DB fault → empty set →
-      // the job proceeds (the typed gate that admitted it is the authority).
+      // claim + provider call.
+      // #647 T6 修复轮 P1-3:开关**读不到**时 `workerDisabledModels` 抛 PLAIN(不是回空集合)。
+      // 那一抛落进下面的 catch:requeue、预扣挂着、零 provider 调用;重试用尽才终态 + 退款。
+      // 「不知道有没有被关」绝不许当成「没被关」往下走 —— 往下走一步就是真花钱。
       const disabled = await workerDisabledModels();
       if (isModelDisabled(job.model, disabled)) {
         await failClosedWithRefund(job,"this model was turned off before the job ran — not spending");

@@ -498,7 +498,13 @@ export async function buildOttoContext({
   /** Server-only factory attempt token: the hash-verified, CAS-consumed APPROVAL_CARD.id. */
   factoryAttemptId?: string;
 }): Promise<OttoContext> {
-  const disabledModels = Array.from(await resolveDisabledModels());
+  // #647 T6 修复轮 P1-3:读不到后台开关状态 ⇒ 这一轮不许开跑。Otto 一开跑就会铸卡,
+  // 而「不知道哪台引擎被关了」的时候铸出来的每一张卡都可能是确认不了的承诺。抛出去 ——
+  // 三个调用方(stream route / ottoTurn / ottoApprove)都有 try/catch,会把它翻译成
+  // 一句「等一下再试」,零卡落库。
+  const registry = await resolveDisabledModels();
+  if ("error" in registry) throw new Error(registry.error);
+  const disabledModels = Array.from(registry.disabled);
   const imageRefIds = orderedUniqueIds([...(sourceGenerationIds ?? []), sourceGenerationId]);
   const videoRefIds = orderedUniqueIds([...(referenceVideoGenerationIds ?? []), referenceVideoGenerationId]);
 

@@ -101,9 +101,19 @@ describe("#647 T6 知识格(45 → 5:每一格都真会被读到)", () => {
   });
 
   it("退役家族的 id 不再有家族(modelFamily 返回 undefined,不崩)", () => {
-    // 注意 seedance-2 不在这里:它退役了,但 `modelFamily` 是**按前缀**认家族的
-    // (版本升级自动继承),而 seedance 这个家族还在产。前缀命中一个在产家族不是
-    // 假菜单 —— 假菜单是「菜单上有这一格」,而 GEN_VIDEO_MODELS 上已经没有它了。
+    // ⚠️ ORACLE 修正留档(#647 T6 绿提交 9e5ce117,判官 r1 P2-2 点名):这条测试**红的时候**
+    // 断言的是「12 个退役 id 全部返回 undefined」,绿提交里改成了「除 seedance-2 之外的 11 个」。
+    // 改的是判据本身,所以不是纯红绿 —— 理由必须留在这里,而不是只活在某次对话里。
+    //
+    // 理由:`modelFamily` 按**前缀**认家族,这是它刻意的设计(版本升级自动继承家族,
+    // 见函数注释)。`seedance-2` 虽然从菜单上下架了,但 `seedance` 这个家族**还在产**
+    // (`seedance-2-fast` 是唯一那台真引擎)。前缀命中一个真家族不是假菜单 —— 假菜单的定义
+    // 是「菜单上有这一格」,而 `GEN_VIDEO_MODELS` 上早已没有 `seedance-2`(上面第一段钉着)。
+    // 换句话说:原来的断言写错了对象,它要的是「下架的家族不再有家族」,不是「下架的 id
+    // 一律无家族」。修正后的判据与 `modelFamily` 的设计一致,也与 T6 的真正目标一致。
+    //
+    // 如果哪天 seedance 整个家族也退场,这条会自动变红(过滤后 11 条里会多出 seedance-2),
+    // 那时该改的是 RETIRED_FAMILIES,不是这行过滤。
     const noLiveFamily = RETIRED_VIDEO_MODELS.filter((id) => !id.startsWith("seedance"));
     expect(noLiveFamily.length).toBe(11);
     for (const id of noLiveFamily) expect(modelFamily(id), id).toBeUndefined();

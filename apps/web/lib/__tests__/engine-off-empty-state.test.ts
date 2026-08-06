@@ -121,7 +121,7 @@ beforeEach(() => {
 
 describe("#647 T6 唯一视频引擎被关掉 ⇒ 分镜侧给诚实空态,零卡落库", () => {
   beforeEach(() => {
-    mockResolveDisabled.mockResolvedValue(new Set<string>([...GEN_VIDEO_MODELS]));
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>([...GEN_VIDEO_MODELS]) });
   });
 
   it("时长选项读:不再报一份根本交付不了的档位表,而是明说不可用", async () => {
@@ -145,7 +145,7 @@ describe("#647 T6 唯一视频引擎被关掉 ⇒ 分镜侧给诚实空态,零�
 
 describe("#647 T6 引擎没关时一切照旧(空态不许误伤正常路)", () => {
   beforeEach(() => {
-    mockResolveDisabled.mockResolvedValue(new Set<string>());
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() });
   });
 
   it("时长选项照常返回在产引擎的真实档位", async () => {
@@ -175,7 +175,7 @@ describe("#647 T6 引擎没关时一切照旧(空态不许误伤正常路)", () 
 // 就一张卡都不落库,并给同一句人话。
 describe("#647 T6 修复轮 P1-1:Make another / Try again 也走同一道闸", () => {
   it("视频卡:引擎全禁用 ⇒ 同一句人话,且一张卡都没落库", async () => {
-    mockResolveDisabled.mockResolvedValue(new Set<string>([...GEN_VIDEO_MODELS]));
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>([...GEN_VIDEO_MODELS]) });
     wireCards("video");
     const r = await coworkVaryCard({ cardId: "gen-card-1" });
     expect(r).toEqual({ error: VIDEO_OFF });
@@ -184,7 +184,7 @@ describe("#647 T6 修复轮 P1-1:Make another / Try again 也走同一道闸", (
   });
 
   it("图片卡:图像引擎被关 ⇒ 图片那句人话,同样零卡落库", async () => {
-    mockResolveDisabled.mockResolvedValue(new Set<string>(["seedream"]));
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>(["seedream"]) });
     wireCards("image");
     const r = await coworkVaryCard({ cardId: "gen-card-1" });
     expect(r).toEqual({ error: IMAGE_OFF });
@@ -192,7 +192,7 @@ describe("#647 T6 修复轮 P1-1:Make another / Try again 也走同一道闸", (
   });
 
   it("只关掉视频 ⇒ 图片卡照旧可以「再来一张」(空态不许误伤另一台引擎)", async () => {
-    mockResolveDisabled.mockResolvedValue(new Set<string>([...GEN_VIDEO_MODELS]));
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>([...GEN_VIDEO_MODELS]) });
     wireCards("image");
     const r = await coworkVaryCard({ cardId: "gen-card-1" });
     expect(r).toEqual({ threadId: "t-1" });
@@ -200,7 +200,7 @@ describe("#647 T6 修复轮 P1-1:Make another / Try again 也走同一道闸", (
   });
 
   it("什么都没关 ⇒ 视频卡照旧可以「再来一张」", async () => {
-    mockResolveDisabled.mockResolvedValue(new Set<string>());
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() });
     wireCards("video");
     const r = await coworkVaryCard({ cardId: "gen-card-1" });
     expect(r).toEqual({ threadId: "t-1" });

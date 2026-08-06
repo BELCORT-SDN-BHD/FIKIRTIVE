@@ -116,7 +116,7 @@ function resetStartGenMocks(): void {
     options: { id?: string },
   ) => options.id ?? null);
   mockCheckCast.mockResolvedValue(null);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
 }
 
 beforeEach(() => {
@@ -887,7 +887,7 @@ describe("startGen", () => {
       videoOptions: null,
     }]);
     mockCheckCast.mockResolvedValue({ error: "entity is now unavailable", report: { findings: [] } });
-    mockResolveDisabledModels.mockResolvedValue(new Set(["seedream"]));
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set(["seedream"]) });
 
     const result = await startGen({
       projectId: "p1",
@@ -1606,7 +1606,7 @@ describe("startGen 图片规格快照", () => {
       mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
       mockIsImpersonating.mockResolvedValue(false);
       mockCheckCast.mockResolvedValue(null);
-      mockResolveDisabledModels.mockResolvedValue(new Set());
+      mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
       mockGetBoss.mockResolvedValue({ send: mockBossSend });
       mockBossSend.mockImplementation(async (_n: string, _d: unknown, o: { id?: string }) => o.id ?? null);
       await startGen({ ...base, count: 2, aspectRatio: a, idempotencyKey: `price-${i}` });

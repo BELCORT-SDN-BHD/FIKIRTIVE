@@ -7,6 +7,7 @@
 import { z } from "zod";
 import {
   suggestModel,
+  generationUnavailableMessage,
   videoPriceUsd,
   videoDefaults,
   VIDEO_ASPECT_ADAPTIVE,
@@ -110,9 +111,8 @@ export type ProposeCardResult = {
  */
 export class GenerationUnavailableError extends Error {
   constructor(readonly kind: "image" | "video") {
-    super(kind === "video"
-      ? "Video generation is turned off right now."
-      : "Image generation is turned off right now.");
+    // 措辞的单一来源在 @fikirtive/core —— 四个铸卡入口共用一份(#647 T6 修复轮 P1-1)。
+    super(generationUnavailableMessage(kind));
     this.name = "GenerationUnavailableError";
   }
 }
