@@ -472,17 +472,6 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // told a lie about their own decision.)
       if (genJobEndedWithoutDelivering(job.status)) return;
 
-      // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was
-      // queued must FAIL WITHOUT SPENDING. Runs AFTER the resume short-circuit (a
-      // committed job still finishes — its money already spent) and BEFORE the spend
-      // claim + provider call. Fail-closed-to-typed-menu: a DB fault → empty set →
-      // the job proceeds (the typed gate that admitted it is the authority).
-      const disabled = await workerDisabledModels();
-      if (isModelDisabled(job.model, disabled)) {
-        await failClosedWithRefund(job,"this model was turned off before the job ran — not spending");
-        return; // terminal, no throw → no retry, no spend
-      }
-
       const project = await prisma.project.findFirst({ where: { id: job.projectId, ownerId: job.ownerId, deletedAt: null } });
       if (!project) {
         await failClosedWithRefund(job,"project gone before generation ran");
@@ -535,6 +524,27 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           await settleCanvasBoard(job);
         }
         return;
+      }
+
+      // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was queued
+      // must FAIL WITHOUT SPENDING. Still before any provider call — but now AFTER the claim.
+      //
+      // #647 T6 修复轮 r2 P1-R2-1:这道闸原本站在 claim **前面**,而 r1 把它的失败语义从
+      // 「回空集合」改成「抛 PLAIN」之后,那个位置就成了一条 exactly-once 的洞:
+      // 一个**重复** delivery 只要在这里读失败,抛出去的错就会落进通用 catch,而 catch 的
+      // requeue 会把状态写回 QUEUED —— 那一行可能正被另一个 delivery 拿着调 provider。
+      // 于是活跃 winner 被打回 QUEUED、重投再 claim 再调 provider = 同一单付两次。
+      //
+      // 挪到 claim 之后,这条路就不存在了:能走到这里的,一定是**刚刚亲手赢下 claim** 的那个
+      // delivery,这一行就是它的。requeue 自己的行天经地义,而输掉 claim 的 delivery 早在上面
+      // 那个分支返回了 —— 它连读都不会读。
+      //
+      // 抛的仍然是 PLAIN:落进 catch ⇒ requeue、预扣挂着、零 provider 调用;重试用尽才终态 +
+      // 退款。「不知道有没有被关」绝不许当成「没被关」往下走 —— 往下走一步就是真花钱。
+      const disabled = await workerDisabledModels();
+      if (isModelDisabled(job.model, disabled)) {
+        await failClosedWithRefund(job,"this model was turned off before the job ran — not spending");
+        return; // terminal, no throw → no retry, no spend
       }
 
       // resolve conditioning PER @mentioned entity, scoped to the variant it selected

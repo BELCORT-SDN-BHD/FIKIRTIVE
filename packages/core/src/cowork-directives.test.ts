@@ -58,7 +58,7 @@ describe("DIRECTIVE_SEED video-family coverage (OPT-6 P2)", () => {
       (GEN_VIDEO_MODELS as readonly string[]).map((m) => modelFamily(m)).filter((f): f is NonNullable<typeof f> => !!f),
     );
     const missing = [...routedFamilies].filter((f) => !seededFamilies.has(f));
-    expect(missing).toEqual([]); // veo, seedance, wan, pixverse, grok, hailuo must all be covered
+    expect(missing).toEqual([]); // #647 T6:菜单只剩一台引擎 ⇒ 只剩 seedance 这一个家族要覆盖
   });
   it("each new video-family seed targets a real video mode (t2v/i2v) with non-empty text", () => {
     for (const c of DIRECTIVE_SEED) {
@@ -70,14 +70,16 @@ describe("DIRECTIVE_SEED video-family coverage (OPT-6 P2)", () => {
 
 describe("modelDirectiveInput", () => {
   it("applies defaults (untested / enabled / founder)", () => {
-    const p = modelDirectiveInput.parse({ family: "veo", mode: "t2v" });
+    const p = modelDirectiveInput.parse({ family: "seedance", mode: "t2v" });
     expect(p).toMatchObject({ directive: "", notes: "", confidence: "untested", enabled: true, source: "founder" });
   });
 
   it("rejects an unknown family, mode, or extra key", () => {
     expect(() => modelDirectiveInput.parse({ family: "midjourney", mode: "t2v" })).toThrow();
-    expect(() => modelDirectiveInput.parse({ family: "veo", mode: "t9v" })).toThrow();
-    expect(() => modelDirectiveInput.parse({ family: "veo", mode: "t2v", bogus: 1 })).toThrow();
+    expect(() => modelDirectiveInput.parse({ family: "seedance", mode: "t9v" })).toThrow();
+    expect(() => modelDirectiveInput.parse({ family: "seedance", mode: "t2v", bogus: 1 })).toThrow();
+    // #647 T6:下架的家族连 enum 都进不去了
+    expect(() => modelDirectiveInput.parse({ family: "veo", mode: "t2v" })).toThrow();
   });
 });
 

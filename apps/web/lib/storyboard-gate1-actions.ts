@@ -32,7 +32,7 @@
  */
 import { z } from "zod";
 import { prisma, Prisma } from "@fikirtive/db";
-import { newId, storageKey, storageKeyToSrc, suggestModel, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
+import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
 import { requireOwner } from "./auth-guard";
@@ -172,12 +172,32 @@ function firstFrameChildMatches(
   );
 }
 
+/** #647 T6:唯一那台引擎被后台关掉时,分镜给商家的那句人话。
+ *  措辞的**单一来源**在 @fikirtive/core(`generationUnavailableMessage`)—— 修复轮 P1-1 起,
+ *  四个铸卡入口(Otto propose / proposePack / 分镜闸①② / Make another)共用同一份,
+ *  否则同一件事迟早在四个地方说出四种话。 */
+const VIDEO_UNAVAILABLE: Err = { error: generationUnavailableMessage("video") };
+const IMAGE_UNAVAILABLE: Err = { error: generationUnavailableMessage("image") };
+
+/**
+ * #647 T6:这一类创作现在还有没有引擎。null = 有,照常走;Err = 没有,调用方原样返回。
+ *
+ * 判据走的是**铸卡内部同一条** `suggestModel` —— 所以「面板说能做」与「铸卡真做得了」
+ * 不可能分家。没有这道闸时,后台关掉引擎之后分镜照旧把子卡落进对话里:每一张都写着
+ * credits、点得下去,而点下去必然被 spend 闸打回。卡是 $0 铸的,承诺不是。
+ */
+function unavailableFor(kind: "image" | "video", disabledModels: string[]): Err | null {
+  if (suggestModel({ kind, disabled: new Set(disabledModels) })) return null;
+  return kind === "video" ? VIDEO_UNAVAILABLE : IMAGE_UNAVAILABLE;
+}
+
 /** 闸② 铸卡会选定的视频模型 —— 与 buildProposeCard 内部同一条 selectModel 路径
  *  (suggestModel({ kind:"video", disabled }) → activeVideoModel)。这里复用它,保证
- *  "选项面板给的时长" 与 "铸卡吸附的时长" 出自同一模型,零硬编码。 */
-function selectedVideoModel(disabledModels: string[]): GenVideoModel {
+ *  "选项面板给的时长" 与 "铸卡吸附的时长" 出自同一模型,零硬编码。
+ *  null = 那台引擎被关掉了(#647 T6)—— 调用方必须给空态,不许接着铸卡。 */
+function selectedVideoModel(disabledModels: string[]): GenVideoModel | null {
   const sm = suggestModel({ kind: "video", disabled: new Set(disabledModels) });
-  return sm.model as GenVideoModel;
+  return sm ? (sm.model as GenVideoModel) : null;
 }
 
 /**
@@ -189,10 +209,13 @@ function selectedVideoModel(disabledModels: string[]): GenVideoModel {
  *
  * 视频那一格若不在图片菜单上（或该模型压根不暴露形状），`normalizeImageAspect` 返回
  * null，铸卡就回到图片侧的默认形状 —— 不发明一个引擎给不了的值。
+ *
+ * #647 T6:视频引擎被关掉时同样回 undefined —— 关掉的是片子那一侧,首帧图照铸,
+ * 只是它的形状回到图片侧的默认值(没有片子可跟,就别假装跟着一条片子走)。
  */
 function firstFrameAspect(disabledModels: string[]): string | undefined {
   const sm = suggestModel({ kind: "video", disabled: new Set(disabledModels) });
-  return normalizeImageAspect(sm.params.aspectRatio) ?? undefined;
+  return sm ? normalizeImageAspect(sm.params.aspectRatio) ?? undefined : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,8 +233,14 @@ export async function getStoryboardVideoOptions(): Promise<
   const gate = await requireOwner();
   if ("error" in gate) return gate;
 
-  const disabledModels = Array.from(await resolveDisabledModels());
+  // #647 T6 修复轮 P1-3:开关读不到 ⇒ 同样不报档位表(不知道能不能做,就别端出一份菜单)。
+  const registry = await resolveDisabledModels();
+  if ("error" in registry) return registry;
+  const disabledModels = Array.from(registry.disabled);
   const model = selectedVideoModel(disabledModels);
+  // #647 T6:引擎关掉时不许再报一份根本交付不了的档位表 —— 那是拿一份真的能力表
+  // 去装点一个做不到的功能。明说不可用。
+  if (!model) return VIDEO_UNAVAILABLE;
   const durations = GEN_VIDEO_MODEL_OPTIONS[model].durations;
   return { durations };
 }
@@ -348,6 +377,7 @@ export async function prepareStoryboardFirstFrames(
 
   const children: ChildFrameCard[] = [];
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -372,7 +402,14 @@ export async function prepareStoryboardFirstFrames(
     // after the lock, from the FRESH payload — so a set that changed while we waited for
     // the lock (an entity created/deleted, an admin model toggle) is picked up, never a
     // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
-    const disabledModels = Array.from(await resolveDisabledModels());
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+    unavailable = unavailableFor("image", disabledModels);
+    if (unavailable) return;
     const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
     const ownedIds = await ownedEntityIdsFor(tx, ownerId, allEntityIds);
     const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
@@ -447,6 +484,7 @@ export async function prepareStoryboardFirstFrames(
   });
 
   if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+  if (unavailable) return unavailable; // #647 T6 fail-closed surface
   const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
   return { children, totalCredits };
 }
@@ -484,6 +522,7 @@ export async function regenShotFirstFrameCard(
 
   let child: ChildFrameCard | null = null;
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -505,7 +544,14 @@ export async function regenShotFirstFrameCard(
     // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
     // pre-lock flows into a write); the owned-entity read below already runs in-lock on the
     // fresh target's entityIds.
-    const disabledModels = Array.from(await resolveDisabledModels());
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+    unavailable = unavailableFor("image", disabledModels);
+    if (unavailable) return;
     const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
     const parent = { id: card.id, threadId: fresh.threadId };
 
@@ -579,6 +625,7 @@ export async function regenShotFirstFrameCard(
   });
 
   if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+  if (unavailable) return unavailable; // #647 T6 fail-closed surface
   if (!child) return { error: "That shot no longer exists." };
   return { child };
 }
@@ -823,6 +870,7 @@ export async function prepareStoryboardVideos(
 
   const children: ChildFrameCard[] = [];
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -845,7 +893,14 @@ export async function prepareStoryboardVideos(
     // R4① dataflow rule: model config derived AFTER the lock (nothing computed pre-lock
     // flows into a write). Video children are i2v (no entity refs) — no owned-entity lookup;
     // the per-shot ctx below is built from the FRESH thread id + this in-lock config.
-    const disabledModels = Array.from(await resolveDisabledModels());
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+    unavailable = unavailableFor("video", disabledModels);
+    if (unavailable) return;
     const parent = { id: card.id, threadId: fresh.threadId };
 
     // Build the next shots array, mutating ONLY videoCardId on target shots.
@@ -936,6 +991,7 @@ export async function prepareStoryboardVideos(
   });
 
   if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+  if (unavailable) return unavailable; // #647 T6 fail-closed surface
   const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
   return { children, totalCredits };
 }
@@ -982,6 +1038,7 @@ export async function regenShotVideoCard(
 
   let child: ChildFrameCard | null = null;
   let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
   await prisma.$transaction(async (tx) => {
     await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
@@ -1002,7 +1059,14 @@ export async function regenShotVideoCard(
 
     // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
     // pre-lock flows into a write).
-    const disabledModels = Array.from(await resolveDisabledModels());
+    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) { unavailable = registry; return; }
+    const disabledModels = Array.from(registry.disabled);
+    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+    unavailable = unavailableFor("video", disabledModels);
+    if (unavailable) return;
     const parent = { id: card.id, threadId: fresh.threadId };
 
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
@@ -1075,6 +1139,7 @@ export async function regenShotVideoCard(
   });
 
   if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+  if (unavailable) return unavailable; // #647 T6 fail-closed surface
   if (!child) return { error: "That shot no longer exists." };
   return { child };
 }

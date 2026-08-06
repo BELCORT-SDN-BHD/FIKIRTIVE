@@ -402,7 +402,7 @@ function makeMockResult({
 
 function setupHappyPath() {
   mockRequireOwner.mockResolvedValue(GATE);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
   mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID });
   mockGenerationFindFirst.mockResolvedValue(null);
   mockChatThreadCreate.mockResolvedValue({});
@@ -531,7 +531,7 @@ describe("ottoTurn — continuing thread", () => {
 
 describe("buildOttoContext", () => {
   it("puts requireOwner's ownerId into ctx.orgId and injects startGen", async () => {
-    mockResolveDisabledModels.mockResolvedValue(new Set(["bad-model"]));
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set(["bad-model"]) });
 
     const ctx = await buildOttoContext({
       ownerId: "owner_xyz",
@@ -551,7 +551,7 @@ describe("buildOttoContext", () => {
   });
 
   it("keeps image refs visible as arrays but hides the image scalar from spend cards when a video ref exists", async () => {
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
 
     const ctx = await buildOttoContext({
       ownerId: "owner_xyz",
@@ -889,7 +889,7 @@ describe("buildOttoContext — research.search env-key wiring", () => {
     savedEnv.BRAVE_SEARCH_API_KEY = process.env.BRAVE_SEARCH_API_KEY;
     delete process.env.TAVILY_API_KEY;
     delete process.env.BRAVE_SEARCH_API_KEY;
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
   });
 
   afterEach(() => {
@@ -1606,7 +1606,7 @@ function makeApprovalItem(cardId: string, toolName = "generate") {
 
 function setupApproveHappyPath(approvalItem = makeApprovalItem(CARD_ID)) {
   mockRequireOwner.mockResolvedValue(GATE);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
 
   // Thread with paused ottoState
   mockChatThreadFindFirst.mockResolvedValue({
@@ -1826,7 +1826,7 @@ describe("ottoApprove — resume metered", () => {
 describe("ottoTurn — CAS miss → stale", () => {
   it("returns 'stale' when ottoState moved on (CAS miss), no AGENT message written", async () => {
     mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
     mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
     mockChatThreadFindFirst.mockResolvedValue({ projectId: "p1", ottoState: '{"prior":"x"}' });
     mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
@@ -1849,7 +1849,7 @@ describe("ottoTurn — CAS miss → stale", () => {
 describe("ottoTurn — interruption CAS miss → stale, no orphan AGENT message", () => {
   it("returns stale and does NOT write an AGENT chatMessage when CAS misses on interruption path", async () => {
     mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
     mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
     mockChatThreadFindFirst.mockResolvedValue({ projectId: "p1", ottoState: '{"prior":"x"}' });
     mockChatMessageFindFirst.mockResolvedValue({ seq: 2 });
@@ -1892,7 +1892,7 @@ describe("ottoTurn — interruption CAS miss → stale, no orphan AGENT message"
 describe("ottoApprove — interruption CAS miss → stale, no orphan AGENT message", () => {
   it("returns stale and does NOT write an AGENT chatMessage when CAS misses on chained interruption path", async () => {
     mockRequireOwner.mockResolvedValue(GATE);
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
 
     mockChatThreadFindFirst.mockResolvedValue({
       id: APPROVE_THREAD_ID,
@@ -2065,7 +2065,7 @@ describe("ottoApprove — chained interruption with zero narration synthesizes t
 describe("ottoTurn — injects brand context + refs as a system message", () => {
   it("includes brand memory text and entity name in the leading system message passed to run()", async () => {
     mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
     mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
     mockGenerationFindFirst.mockResolvedValue(null);
     mockChatThreadCreate.mockResolvedValue({});
@@ -2108,7 +2108,7 @@ describe("ottoTurn — injects brand context + refs as a system message", () => 
 describe("ottoTurn — goalKey seeds opening on new thread", () => {
   it("includes the goal preset opening in the system message for a new thread with goalKey", async () => {
     mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
     mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
     mockGenerationFindFirst.mockResolvedValue(null);
     mockChatThreadCreate.mockResolvedValue({});
@@ -2149,7 +2149,7 @@ describe("ottoTurn — goalKey seeds opening on new thread", () => {
 describe("ottoTurn — simple-mode injects the plain-language block only when simple:true", () => {
   const baseSetup = () => {
     mockRequireOwner.mockResolvedValue({ ownerId: "o1" });
-    mockResolveDisabledModels.mockResolvedValue(new Set());
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
     mockProjectFindFirst.mockResolvedValue({ id: "p1", ownerId: "o1" });
     mockGenerationFindFirst.mockResolvedValue(null);
     mockChatThreadCreate.mockResolvedValue({});
@@ -2569,7 +2569,7 @@ function setupUniversalApprove(
   payloadOverrides: Record<string, unknown> = {},
 ) {
   mockRequireOwner.mockResolvedValue(GATE);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
   mockChatThreadFindFirst.mockResolvedValue({
     id: APPROVE_THREAD_ID_2,
     projectId: PROJECT_ID,
@@ -3071,7 +3071,7 @@ function setupFactoryApprove(
   interruptionItems?: unknown[],
 ) {
   mockRequireOwner.mockResolvedValue(GATE);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
   mockChatThreadFindFirst.mockResolvedValue({
     id: FACTORY_THREAD_ID,
     projectId: PROJECT_ID,

@@ -21,7 +21,7 @@ export function buildPlannerMessages(args: {
   userText: string;
   history: ChatMessage[];        // already windowed + NL-only (assistant/user)
   availableRefs: { id: string; name: string; type: string; description?: string }[];
-  modelSummary: string;          // e.g. "image: seedream; video: kling/veo3.1/... (agent picks)"
+  modelSummary: string;          // 内部/审计用的一行能力摘要(引擎名绝不上商家界面)
   quoted?: { kind: string; preview: string }; // injected into the current turn only (NOT history)
   brief?: string;                // per-project creative brief (injected into system head — cacheable)
   images?: { label: string; dataUrl: string }[]; // Phase C vision: ref images to attach to the user turn

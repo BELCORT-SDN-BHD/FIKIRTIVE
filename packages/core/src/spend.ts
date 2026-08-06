@@ -72,17 +72,11 @@ export const CREDITS_PER_USD = 100;
 /** Display denomination: 1 user-facing credit = 10 internal = $0.10. Charges are whole
  *  displayed credits (×10 internal) so per-action costs read as small round numbers. */
 export const INTERNAL_PER_DISPLAY = 10;
-const USD_PER_DISPLAY_CREDIT = 0.1;
 
-/** Displayed credits from a USD amount: round UP to the $0.10 unit, min 1 (never
- *  under-charge, never zero). */
-function displayedFromUsd(usd: number): number {
-  return Math.max(1, Math.ceil(usd / USD_PER_DISPLAY_CREDIT));
-}
-
-/** Video models whose credit charge is a flat per-resolution number (BytePlus Seedance,
- *  priced by final locked costing, not the record-only COGS). All other models charge
- *  displayedFromUsd(true cost). */
+/** 收费用**按秒/按档的价目表**的视频模型(BytePlus Seedance —— 价来自 Founder 已裁的
+ *  价目表,不是 record-only 的 COGS)。#647 T6 之后,菜单上只剩这一台;这个集合仍然独立
+ *  存在,因为「在菜单上」与「已经有一个清得了毛利地板的价」是两回事 —— 上架一台新引擎
+ *  绝不能因为进了菜单就自动可售。不在这个集合里的 = 卖不了,只能落护栏价。 */
 export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
 
@@ -152,7 +146,13 @@ export function pricedGenCredits(job: GenSpendInput): number {
       if (perSecond !== null) return perSecond * INTERNAL_PER_DISPLAY;
       return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // 1080p / 未知 → 护栏价
     }
-    return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY; // fal models: per-model USD cost (restores correct scaling)
+    // #647 T6:走到这里的只可能是**菜单外的模型** —— 下架前存下的历史行。
+    // 旧写法是 `displayedFromUsd(genSpentUsd(job))`,靠那 12 台假引擎各自抄来的费率反推价;
+    // 引擎下架、费率随之作废(videoRateUsdPerSec 回 0),那条路会算出 1cr —— 一条视频卖
+    // 一毛钱。同一条护栏语义(「宁可贵,不许贱卖」)在这里也必须成立:算不出价就落护栏价。
+    // 新的付费请求永远到不了这一行(契约闸 + assertSpendableModel 只放行在产那一台),
+    // 所以这只是历史行读价时的兜底。
+    return (VIDEO_CREDITS_BY_RESOLUTION[job.videoOptions?.resolution ?? ""] ?? 16) * INTERNAL_PER_DISPLAY;
   }
   return job.count * INTERNAL_PER_DISPLAY; // 1 displayed credit per image
 }

@@ -9,7 +9,7 @@ import {
   type GenModel,
   type GenVideoModel,
 } from "./gen.js";
-import { activeVideoModel } from "./model-config.js";
+import { activeImageModel, activeVideoModel } from "./model-config.js";
 
 export interface SuggestModelInput {
   kind: "image" | "video";
@@ -18,9 +18,11 @@ export interface SuggestModelInput {
   desiredAudio?: boolean;
   hasSourceImage?: boolean;
   hasTail?: boolean;
-  /** OPT-6 P2: ids to exclude from the candidate pool (admin-disabled models).
-   *  Additive narrowing only — if it would empty the pool, the full typed menu is
-   *  used (the typed-menu validity gate downstream stays the authority). */
+  /** 后台关掉的模型 id(OPT-6 P2 的 model overlay)。
+   *
+   *  #647 T6:这个参数以前**收下就扔** —— 后台把唯一那台引擎关掉之后,这里照旧选中它、
+   *  照旧算出价,于是 Otto 铸出一张写着 credits、点得下去、而确认的那一刻必然被 spend
+   *  闸打回的付费卡。现在它真的算数:选中的那台被关掉 ⇒ 整个函数返回 null。 */
   disabled?: ReadonlySet<string>;
 }
 
@@ -38,8 +40,31 @@ export interface SuggestModelResult {
   requested: { aspect?: string; duration?: number };
 }
 
-export function suggestModel(input: SuggestModelInput): SuggestModelResult {
+/**
+ * 引擎被后台关掉时,商家看到的那句话 —— **四个铸卡入口共用这一份**(#647 T6 修复轮 P1-1)。
+ *
+ * 为什么要有单一来源:Otto propose、proposePack、分镜闸①②、以及「Make another / Try again」
+ * 是四条各自独立的路。同一件事在四个地方各写一句话,就是四份会各自漂移的措辞 —— 而商家
+ * 只会觉得「这个产品对同一件事说了四种话」。
+ *
+ * English sentence case;不出现任何引擎/供应商名(商家侧本来就不该见引擎)。
+ */
+export function generationUnavailableMessage(kind: "image" | "video"): string {
+  return kind === "video"
+    ? "Video generation is turned off right now."
+    : "Image generation is turned off right now.";
+}
+
+/**
+ * 选型 + 参数吸附。**返回 null = 这一类创作现在没有可用引擎**(唯一那台被后台关掉)。
+ *
+ * 为什么是 null 而不是「照选不误、让下游拦」:下游那道 spend 闸拦得住**花钱**,拦不住
+ * **承诺** —— 卡是 $0 铸的,可它在商家眼里是一个点得下去的确认。null 让编译器逼着每一个
+ * 调用点当场表态:要么给诚实空态,要么根本不该走到这里。
+ */
+export function suggestModel(input: SuggestModelInput): SuggestModelResult | null {
   if (input.kind === "image") {
+    if (input.disabled?.has(activeImageModel())) return null;
     // #643 T2 —— 这里原本 `params: { count: 1 }`，商家要的形状就**在这一步被丢掉**：
     // 后面每一站（卡面、付费请求体、快照、适配器）都再也见不到它，于是商家说「竖版」、
     // 卡面不提形状、引擎出方图，全程没有一句话解释。现在形状在这里定下来，并且和视频侧
@@ -69,6 +94,8 @@ export function suggestModel(input: SuggestModelInput): SuggestModelResult {
   // model would freeze a price onto a card that startGen then rejects. Params below are still
   // clamped to THIS model's options, so capability mismatches degrade to the model's defaults.
   const pick = activeVideoModel() as GenVideoModel;
+  // #647 T6:菜单上只剩这一台,所以「它被关掉」就是「视频全关」。铸不出真卡就一张都不铸。
+  if (input.disabled?.has(pick)) return null;
 
   const o = GEN_VIDEO_MODEL_OPTIONS[pick];
   // #645 T4:带首帧(i2v)时形状默认 adaptive —— 引擎跟着首帧走,而不是被一个默认值

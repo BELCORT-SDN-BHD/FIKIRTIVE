@@ -42,7 +42,7 @@ describe("buildPlannerMessages with quoted", () => {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
     availableRefs: [],
-    modelSummary: "image: seedream; video: kling",
+    modelSummary: "image: seedream; video: seedance-2-fast",
   };
 
   it("without quoted, last message content equals userText", () => {
@@ -55,12 +55,12 @@ describe("buildPlannerMessages with quoted", () => {
   it("with quoted, injects the quote note into the last user message", () => {
     const msgs = buildPlannerMessages({
       ...baseArgs,
-      quoted: { kind: "result", preview: "kling ×2" },
+      quoted: { kind: "result", preview: "Video ×2" },
     });
     const last = msgs[msgs.length - 1];
     expect(last?.role).toBe("user");
     expect(last?.content).toContain("[The user is replying to an earlier result message:");
-    expect(last?.content).toContain("kling ×2");
+    expect(last?.content).toContain("Video ×2");
     expect(last?.content).toContain("Make a cat video");
   });
 
@@ -136,7 +136,7 @@ describe("buildPlannerMessages with brief", () => {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
     availableRefs: [],
-    modelSummary: "image: seedream; video: kling",
+    modelSummary: "image: seedream; video: seedance-2-fast",
   };
 
   it("with brief, the system message content includes the brief text", () => {
@@ -292,7 +292,7 @@ describe("buildPlannerMessages with images (Phase C vision)", () => {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
     availableRefs: [],
-    modelSummary: "image: seedream; video: kling",
+    modelSummary: "image: seedream; video: seedance-2-fast",
   };
 
   it("with images: user turn content is an array containing a text part + label + image_url parts", () => {
@@ -431,7 +431,7 @@ describe("buildPlannerMessages availableRefs with description", () => {
   const baseArgs = {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
-    modelSummary: "image: seedream; video: kling",
+    modelSummary: "image: seedream; video: seedance-2-fast",
   };
 
   it("a ref WITH description renders as id=name(type): <desc> in the system message", () => {
