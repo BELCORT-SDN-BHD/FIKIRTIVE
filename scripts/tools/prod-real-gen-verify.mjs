@@ -41,7 +41,7 @@ async function wait(id, label, secs = 300) {
   throw new Error(`${label} timed out`);
 }
 
-const project = await prisma.project.create({ data: { id: newId(), ownerId: OWNER, name: "real-fal verify" } });
+const project = await prisma.project.create({ data: { id: newId(), ownerId: OWNER, name: "prod gen verify" } });
 step(`project ${project.id}`);
 
 // t2i x2 (Seedream) — real images on prod R2; sources for i2v + last-frame
