@@ -40,8 +40,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Constitutional margin floor: (price − cost)/price ≥ 45%. */
 export const MARGIN_FLOOR = 0.45;
-/** IEEE754 tolerance: the 720p/10s tier sits EXACTLY at 45.0% — 0.63/1.40 is
- *  0.44999999999999996 in float. Same epsilon the existing spend.test.ts uses. */
+/** IEEE754 tolerance: pricing is allowed to sit EXACTLY on the 45.0% floor, and a tier
+ *  that does lands one ulp under it in float. Under the #644 Founder ruling (2026-08-06)
+ *  the 720p tiers are priced to the floor from above — 720p/10s is 22cr = $2.20 against
+ *  $1.2096 (0.9904/2.20 = 45.0%), 720p/5s is 11cr = $1.10 against $0.6048 (same 45.0%) —
+ *  so neither currently depends on this epsilon; the exactly-on-the-floor case is kept
+ *  alive as a fixture in scripts/__tests__/check-margin-floor.test.mjs. Same epsilon the
+ *  existing spend.test.ts uses. */
 const FLOOR_EPSILON = 1e-9;
 
 /**

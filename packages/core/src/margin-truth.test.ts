@@ -43,22 +43,22 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     expect(r.clearsFloor).toBe(true);
   });
 
-  it("720p 5s:收 8cr = $0.80,成本 $0.6048,毛利 $0.1952 = 24.4% —— 跌破 45% 地板", () => {
+  it("720p 5s:收 11cr = $1.10,成本 $0.6048,毛利 $0.4952 = 45.0% —— 回到地板之上", () => {
     const r = row("video:seedance-2-fast:5:720p");
-    expect(r.chargeUsd).toBeCloseTo(0.8, 6);
+    expect(r.chargeUsd).toBeCloseTo(1.1, 6);
     expect(r.cogsUsd).toBeCloseTo(0.6048, 6);
-    expect(r.grossUsd).toBeCloseTo(0.1952, 6);
-    expect(r.margin).toBeCloseTo(0.244, 4);
-    expect(r.clearsFloor).toBe(false);
+    expect(r.grossUsd).toBeCloseTo(0.4952, 6);
+    expect(r.margin).toBeCloseTo(0.4502, 4);
+    expect(r.clearsFloor).toBe(true);
   });
 
-  it("720p 10s:收 14cr = $1.40,成本 $1.2096,毛利 $0.1904 = 13.6% —— 跌破 45% 地板", () => {
+  it("720p 10s:收 22cr = $2.20,成本 $1.2096,毛利 $0.9904 = 45.0% —— 回到地板之上", () => {
     const r = row("video:seedance-2-fast:10:720p");
-    expect(r.chargeUsd).toBeCloseTo(1.4, 6);
+    expect(r.chargeUsd).toBeCloseTo(2.2, 6);
     expect(r.cogsUsd).toBeCloseTo(1.2096, 6);
-    expect(r.grossUsd).toBeCloseTo(0.1904, 6);
-    expect(r.margin).toBeCloseTo(0.136, 4);
-    expect(r.clearsFloor).toBe(false);
+    expect(r.grossUsd).toBeCloseTo(0.9904, 6);
+    expect(r.margin).toBeCloseTo(0.4502, 4);
+    expect(r.clearsFloor).toBe(true);
   });
 
   it("整段参考视频(6s 参考上限 + 5s 出片):收 16cr = $1.60,成本 $0.78408,毛利 $0.81592 = 51.0%", () => {
@@ -82,8 +82,11 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     expect(belowFloor).toEqual(BELOW_FLOOR_PENDING_FOUNDER_RULING.map((p) => p.tier).sort());
   });
 
+  it("裁决已落地:待裁决名单是空的(留一条在上面 = R3 硬红)", () => {
+    expect(BELOW_FLOOR_PENDING_FOUNDER_RULING).toEqual([]);
+  });
+
   it("待裁决名单的每一条都带齐「为什么 / 谁在裁 / 什么时候必须裁完」—— 裸 id = 永久豁免", () => {
-    expect(BELOW_FLOOR_PENDING_FOUNDER_RULING.length).toBeGreaterThan(0);
     for (const entry of BELOW_FLOOR_PENDING_FOUNDER_RULING) {
       // 指向真实存在的档位(名单不能烂成指向空气)。
       expect(rows.has(entry.tier), `${entry.tier} 不是毛利表里的档位`).toBe(true);
@@ -110,6 +113,7 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   it("打印毛利真相表(报表本体)", () => {
     const report = formatMarginTruthTable(marginTruthTable());
     console.log(`\n${report}\n`);
-    expect(report).toContain("13.6%");
+    expect(report).toContain("毛利率 45.0%");
+    expect(report, "裁决落地后没有一行还挂着「地板 ↓」").not.toContain("地板 ↓");
   });
 });

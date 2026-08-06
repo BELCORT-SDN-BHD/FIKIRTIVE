@@ -63,9 +63,9 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     // Money-safety pin: changing the recorded COGS (videoRateUsdPerSec) must NOT change what the
     // user pays — seedance-2-fast is final-priced in credits.
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
-      .toBe(8 * INTERNAL_PER_DISPLAY);
+      .toBe(11 * INTERNAL_PER_DISPLAY);
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
-      .toBe(14 * INTERNAL_PER_DISPLAY);
+      .toBe(22 * INTERNAL_PER_DISPLAY);
     expect(pricedGenCredits({
       kind: "VIDEO",
       model: "seedance-2-fast",
@@ -92,12 +92,12 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(displayCredits(2500)).toBe(250);
     expect(CREDITS_PER_USD).toBe(100);
   });
-  it("video charge is flat by duration/guardrail: 720p 5s=8cr, 720p 10s=14cr, 1080p=16cr", () => {
+  it("video charge is flat by duration/guardrail: 720p 5s=11cr, 720p 10s=22cr, 1080p=16cr", () => {
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
-    expect(v("720p")).toBe(80);   // 8 displayed credits
+    expect(v("720p")).toBe(110);  // 11 displayed credits(#644 Founder 裁决 2026-08-06)
     expect(v("1080p")).toBe(160); // 16 displayed credits
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } }))
-      .toBe(140);
+      .toBe(220);
   });
   it("seedance-2-fast: unknown/higher resolution → the 1080p price (never under-charge)", () => {
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
@@ -123,10 +123,11 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(SIGNUP_GRANT_CREDITS).toBe(20 * INTERNAL_PER_DISPLAY);
     expect(displayCredits(SIGNUP_GRANT_CREDITS)).toBe(20);
   });
-  // #644:记账基准改真后,视频两档真实毛利跌到 24.4% / 13.6%。断言从「全都 ≥45%」改成
+  // #644:记账基准改真后视频两档一度跌到 24.4% / 13.6%,Founder 于 2026-08-06 裁决调价
+  // (8→11cr、14→22cr,PR #655 评论留档),两档回到 45.0%,待裁决名单已清空。断言仍是
   // 「≥45%,除非它在 BELOW_FLOOR_PENDING_FOUNDER_RULING 这张**待 Founder 裁决**的名单上」——
-  // 这不是放行:名单被两头钉死(见 margin-truth.ts 的注释与 margin-truth.test.ts),新的
-  // 违规藏不住,定价修好后名单也必须清掉,否则同样红。
+  // 名单被两头钉死(见 margin-truth.ts 的注释与 margin-truth.test.ts):新的违规藏不住,
+  // 已经达标的档位留在名单上同样红。
   it("launch-priced spend points satisfy the constitutional >=45% margin floor(名单内的除外)", () => {
     for (const row of marginTruthTable()) {
       const pending = pendingRulingFor(row.id) !== undefined;
@@ -148,8 +149,9 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
 // 一种情况把某个可售组合的毛利打到 45% 以下,这里立刻变红。视频任务恒 count=1
 // (gen-actions 强制),所以按 count=1 逐组合断言。
 //
-// #644 后唯一的例外:已经在 BELOW_FLOOR_PENDING_FOUNDER_RULING 上、正等 Founder 裁决的
-// 那两档。**新**跌破的组合(换档位、换定价、成本上涨)照旧当场变红。
+// 唯一的例外:挂在 BELOW_FLOOR_PENDING_FOUNDER_RULING 上、正等 Founder 裁决的档位
+// (2026-08-06 裁决落地后名单为空)。**新**跌破的组合(换档位、换定价、成本上涨)
+// 照旧当场变红。
 import { FLAT_PRICED_VIDEO_MODELS } from "./spend.js";
 import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
 
@@ -172,8 +174,11 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
             checked += 1;
             // 收费低于成本(卖一单亏一单)对任何组合都是硬红,名单也救不了。
             expect(priceUsd - costUsd, `${detail} —— 收费低于成本`).toBeGreaterThan(0);
-            // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上(720p 10s 档,
-            // #129 按 Ark 实测成本核定),0.63/1.4 在浮点里是 0.44999999999999996。
+            // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上,而正好压住的那一档在浮点里
+            // 会落到地板下一个 ulp。#644 裁决(2026-08-06)后 720p 两档是从上方贴着地板定价的
+            // ——10s 22cr = $2.20 对成本 $1.2096、5s 11cr = $1.10 对成本 $0.6048,都是 45.0%
+            // ——所以眼下没有一档真的依赖这个容差;「正好压在地板上」的情形由
+            // scripts/__tests__/check-margin-floor.test.mjs 的夹具继续守着。
             if (pendingRulingFor(`video:${model}:${seconds}:${resolution}`)) {
               expect(margin, `${detail} —— 已清地板,请把它从待裁决名单删掉`).toBeLessThan(MARGIN_FLOOR - 1e-9);
             } else {

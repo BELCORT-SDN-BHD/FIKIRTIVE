@@ -86,10 +86,14 @@ export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
 
 /** Flat video charge table for Seedance 2.0 Fast:
- *  720p 5s → 8cr, 720p 10s → 14cr, whole-clip reference video → 16cr.
- *  Unknown/higher resolution stays at the 16cr guardrail. */
-export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 8, "1080p": 16 };
-export const VIDEO_CREDITS_720P_10S = 14;
+ *  720p 5s → 11cr, 720p 10s → 22cr, whole-clip reference video → 16cr.
+ *  Unknown/higher resolution stays at the 16cr guardrail.
+ *
+ *  #644 Founder 裁决(2026-08-06,留档于 PR #655 评论):记账基准改回官方牌价后,720p
+ *  两档跌到 24.4% / 13.6%,裁决是**调价**——8→11cr、14→22cr,两档回到 45.0%
+ *  (11cr=$1.10 对成本 $0.6048;22cr=$2.20 对成本 $1.2096)。其余档位一格没动。 */
+export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 11, "1080p": 16 };
+export const VIDEO_CREDITS_720P_10S = 22;
 export const REFERENCE_VIDEO_CREDITS = 16;
 
 export function pricedGenCredits(job: GenSpendInput): number {
@@ -119,8 +123,11 @@ export function displayCredits(internal: number): number {
  *
  *  20 DISPLAYED credits = 20 × INTERNAL_PER_DISPLAY internal — the #543 Founder decision
  *  (2026-07-31): enough for one complete Otto experience (a full conversation + image +
- *  critique ≈ 9.5 displayed, one 5s video = 8 displayed), and it lands only AFTER the
- *  merchant verifies their email.
+ *  critique ≈ 9.5 displayed, one 5s video = 8 displayed at the time), and it lands only
+ *  AFTER the merchant verifies their email.
+ *  NOTE (#644 裁决 2026-08-06):5s 视频已由 8 → 11 显示 credits,所以 20cr 不再同时够
+ *  「一整场对话 + 一条视频」(9.5 + 11 ≈ 20.5)。赠额本身是 #543 的 Founder 决定,本次
+ *  一格没动 —— 是否跟着调是另一次裁决。
  *
  *  Supersedes the closed-beta seed (1000 → 100 in #66 → 20 here). It is granted
  *  idempotently in the org-bootstrap path under the stable key "signup:<orgId>"; the key

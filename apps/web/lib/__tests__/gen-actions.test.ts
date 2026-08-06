@@ -926,13 +926,14 @@ describe("startGen", () => {
     });
 
     expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
-    // flat-priced seedance-2-fast 720p/5s = 8 displayed credits for ONE clip. The client fans a
-    // multi-clip request out as N single-clip jobs, so startGen must reserve for count=1 — pricing
-    // the raw count here would double-charge the first clip of every fan-out.
+    // flat-priced seedance-2-fast 720p/5s = 11 displayed credits for ONE clip (#644 裁决
+    // 2026-08-06). The client fans a multi-clip request out as N single-clip jobs, so startGen
+    // must reserve for count=1 — pricing the raw count here would double-charge the first clip
+    // of every fan-out.
     expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
       orgId: "org_ref",
       refId: "job_ref",
-      cost: 8 * INTERNAL_PER_DISPLAY,
+      cost: 11 * INTERNAL_PER_DISPLAY,
     });
     expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ kind: "VIDEO", count: 1 }),
@@ -940,7 +941,7 @@ describe("startGen", () => {
     }));
   });
 
-  it("reserves the 14-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {
+  it("reserves the 22-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {
     const result = await startGen({
       projectId: "p1",
       prompt: "longer product spin",
@@ -957,7 +958,7 @@ describe("startGen", () => {
     expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
       orgId: "org_ref",
       refId: "job_ref",
-      cost: 14 * INTERNAL_PER_DISPLAY,
+      cost: 22 * INTERNAL_PER_DISPLAY,
     });
   });
 

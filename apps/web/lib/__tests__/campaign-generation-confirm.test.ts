@@ -114,7 +114,7 @@ const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
 const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
 const IMG = 1;
-const VID = 8;
+const VID = 11; // seedance-2-fast 720p/5s(#644 Founder 裁决 2026-08-06:8 → 11 显示 credits)
 const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);
 
 let failPrompts = new Set<string>();
@@ -577,7 +577,7 @@ describe("confirmCampaignGeneration — price consent", () => {
     const res = await confirmCampaignGeneration(
       rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
     );
-    expect("error" in res && res.error).toMatch(/was 1, now 8 credits/i);
+    expect("error" in res && res.error).toMatch(new RegExp(`was 1, now ${VID} credits`, "i"));
     expect(h.startGen).not.toHaveBeenCalled();
   });
 });

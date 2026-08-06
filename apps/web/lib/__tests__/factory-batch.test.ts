@@ -358,8 +358,8 @@ describe("orchestrateBatch — video quote never crashes the batch (NODE-280 ite
     expect(() => quoteCell(genCell("v", { kind: "video" }))).not.toThrow();
     expect(quoteCell(genCell("v", { kind: "video" }))).toBe(0);
     expect(() => quoteCell(genCell("v", { kind: "video", model: "seedream" }))).not.toThrow();
-    // a real video model prices via videoDefaults (seedance-2-fast: 720p/5s flat = 8 displayed)
-    expect(quoteCell(genCell("v", { kind: "video", model: "seedance-2-fast" }))).toBe(8 * INTERNAL_PER_DISPLAY);
+    // a real video model prices via videoDefaults (seedance-2-fast: 720p/5s flat = 11 displayed)
+    expect(quoteCell(genCell("v", { kind: "video", model: "seedance-2-fast" }))).toBe(11 * INTERNAL_PER_DISPLAY);
   });
 
   it("a mid-batch video cell with a missing model becomes a per-cell error — prior/later cells still dispatch (no throw)", async () => {
