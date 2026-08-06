@@ -42,22 +42,47 @@ describe("generateVideo (Seedance, async)", () => {
     expect(out.ext).toBe("mp4");
     expect(submitBody.model).toBe("dreamina-seedance-2-0-fast-260128");
     expect(submitBody.content[0]).toEqual({ type: "image_url", image_url: { url: "https://r2/frame.png" } });
-    expect(submitBody.content[1].text).toContain("--resolution 720p");
-    expect(submitBody.content[1].text).toContain("--duration 5");
-    expect(submitBody.content[1].text).toContain("--ratio 16:9");
+    // #646 T5: controls ride the STRICT top-level fields, and the prompt text is
+    // the merchant's words only — no `--flag` suffix anywhere.
+    expect(submitBody.content[1]).toEqual({ type: "text", text: "roll" });
+    expect(submitBody.resolution).toBe("720p");
+    expect(submitBody.duration).toBe(5);
+    expect(submitBody.ratio).toBe("16:9");
+    expect(JSON.stringify(submitBody)).not.toContain("--");
+    // Seedance 2.0 rejects these three under strict validation — never send them.
+    expect("seed" in submitBody).toBe(false);
+    expect("camera_fixed" in submitBody).toBe(false);
+    expect("frames" in submitBody).toBe(false);
   });
-  it("t2v: text-only content when no source frame", async () => {
+  it("t2v: text-only content when no source frame; no ratio field when the request has no shape", async () => {
     let submitBody: any;
     stubFetch((url, init) => {
       if (url.endsWith("/contents/generations/tasks")) { submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-2" }); }
       if (url.includes("/tasks/cgt-2")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast", resolution: "1080p" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
     await vi.runAllTimersAsync();
     await promise;
     expect(submitBody.content).toHaveLength(1);
     expect(submitBody.content[0].type).toBe("text");
+    // no shape asked ⇒ the field is absent, the engine picks its own (adaptive).
+    // Sending an empty/invented value under strict validation would 4xx the submit.
+    expect("ratio" in submitBody).toBe(false);
+    // no resolution asked ⇒ the engine default we price for (720p), sent explicitly.
+    expect(submitBody.resolution).toBe("720p");
+  });
+  it("sound off: generate_audio:false rides the request (the toggle really reaches the engine)", async () => {
+    let submitBody: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks")) { submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-mute" }); }
+      if (url.includes("/tasks/cgt-mute")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast", audio: false });
+    await vi.runAllTimersAsync();
+    await promise;
+    expect(submitBody.generate_audio).toBe(false);
   });
   it("a failed task throws chargedError", async () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
@@ -85,12 +110,51 @@ describe("generateVideo (Seedance, async)", () => {
     expect(out.ext).toBe("mp4");
   });
 
-  it("rejects an end frame (tailImageUrl) BEFORE any submit — no spend", async () => {
+  it("first+last frames: two image_url parts, roles spelled out (the engine requires both)", async () => {
+    let submitBody: any;
+    stubFetch((url, init) => {
+      if (url.endsWith("/contents/generations/tasks") && init?.method === "POST") {
+        submitBody = JSON.parse(init.body); return jsonRes({ id: "cgt-tail" });
+      }
+      if (url.includes("/tasks/cgt-tail")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+      return bytesRes();
+    });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "morph", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-fast" });
+    await vi.runAllTimersAsync();
+    await promise;
+    // In first+last mode `role` is REQUIRED on both parts — a roleless pair is a
+    // different (single-frame) scenario to the engine.
+    expect(submitBody.content[0]).toEqual({ type: "image_url", image_url: { url: "https://r2/frame.png" }, role: "first_frame" });
+    expect(submitBody.content[1]).toEqual({ type: "image_url", image_url: { url: "https://r2/end.png" }, role: "last_frame" });
+    expect(submitBody.content[2]).toEqual({ type: "text", text: "morph" });
+  });
+  it("an end frame together with a reference video is refused BEFORE any submit — no spend", async () => {
+    // first+last frames and reference-video are mutually exclusive scenarios; sending
+    // both is a request the engine rejects, so refuse it while nothing is billed yet.
     const calls: string[] = [];
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
-    await expect(new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-fast" }))
-      .rejects.toThrow(/end frame/);
-    expect(calls).toHaveLength(0); // pre-spend: never hit the API
+    let err: any;
+    try {
+      await new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-fast" });
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/end frame/);
+    expect(err.message).toMatch(/reference video/);
+    expect(err.charged).toBeFalsy(); // pre-spend
+    expect(calls).toHaveLength(0); // never hit the API
+  });
+  it("an expired task is a PLAIN failure (terminated before any output ⇒ nothing billed, safe to retry)", async () => {
+    stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
+      ? jsonRes({ status: "expired" })
+      : jsonRes({ id: "cgt-exp" }));
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    let err: any;
+    const assertion = promise.catch((e) => { err = e; });
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/expired/);
+    expect(err.charged).toBeFalsy();
   });
   it("generateVideo includes a reference_video content part when refVideoUrl is set", async () => {
     let submitBody: any;
@@ -286,7 +350,7 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
     expect(body.size).toBe("2048x2048");
   });
 
-  it("视频:整条请求体逐字段断言 —— 时长/清晰度/画幅发得出去,声音发不出去", async () => {
+  it("视频:整条请求体逐字段断言 —— 时长/清晰度/画幅/声音四项都真的发得出去", async () => {
     vi.useFakeTimers();
     try {
       let submitBody: any;
@@ -297,7 +361,6 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
         if (url.includes("/tasks/cgt-lockstep")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
         return bytesRes();
       });
-      // audio:true 明确传进来 —— 如果适配器把它发出去了,下面的整体断言就红。
       const promise = new BytePlusProvider("ark-test").generateVideo({
         prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast",
         resolution: "720p", aspectRatio: "16:9", audio: true,
@@ -306,14 +369,19 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
       await promise;
       expect(submitBody).toEqual({
         model: "dreamina-seedance-2-0-fast-260128",
-        content: [{ type: "text", text: "a clip --resolution 720p --duration 5 --ratio 16:9" }],
+        content: [{ type: "text", text: "a clip" }],
+        resolution: "720p",
+        duration: 5,
+        ratio: "16:9",
+        generate_audio: true,
+        watermark: false,
+        execution_expires_after: 3600,
       });
-      // 上面这一条整体断言就是这三行的依据:三个控制项真的编进了发出去的文本,
-      // 而 audio 一个字都没出现。
+      // 上面这一条整体断言就是这四行的依据:四个控制项真的作为顶层字段发了出去。
       expect(EXECUTED_SPEC.video.durationHonoured).toBe(true);
       expect(EXECUTED_SPEC.video.resolutionHonoured).toBe(true);
       expect(EXECUTED_SPEC.video.aspectHonoured).toBe(true);
-      expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
+      expect(EXECUTED_SPEC.video.audioHonoured).toBe(true);
     } finally {
       vi.useRealTimers();
     }

@@ -851,20 +851,29 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     expect(cardPayload.downgradeNote).toBeUndefined();
   });
 
-  it("视频：声音开关没接到执行层，卡面既不说 With sound 也不说 No sound", () => {
-    const { cardPayload } = buildProposeCard(
+  it("#646 T5 视频：声音开关接通执行层后，卡面照实说 With sound / No sound，也不再报降级", () => {
+    expect(EXECUTED_SPEC.video.audioHonoured).toBe(true);
+    const muted = buildProposeCard(
       { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredAudio: false },
       makeCtx(),
       [],
-    );
-    expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
-    expect(cardPayload.specChips.join(" ")).not.toMatch(/sound/i);
-    // 商家明确提了声音，而这个开关到不了执行层 —— 是降级，必须说出口。
-    expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toMatch(/Sound isn't something I can set here yet/);
+    ).cardPayload;
+    expect(muted.params.audio).toBe(false);
+    expect(muted.specChips).toContain("No sound");
+    // 商家要静音、执行层真会静音 —— 这不是降级,不许再报警。
+    expect(muted.downgraded).toBe(false);
+    expect(muted.downgradeNote).toBeUndefined();
+
+    const loud = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredAudio: true },
+      makeCtx(),
+      [],
+    ).cardPayload;
+    expect(loud.specChips).toContain("With sound");
+    expect(loud.downgraded).toBe(false);
   });
 
-  it("视频：时长/画幅/清晰度是真的会传到执行层的，所以卡面照旧承诺", () => {
+  it("视频：时长/画幅/清晰度/声音是真的会传到执行层的，所以卡面照旧承诺", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {} },
       makeCtx(),
@@ -874,10 +883,12 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     expect(req.aspectRatio).toBe(cardPayload.params.aspectRatio);
     expect(req.durationSeconds).toBe(cardPayload.params.durationSeconds);
     expect(req.resolution).toBe(cardPayload.params.resolution);
+    expect(req.audio).toBe(cardPayload.params.audio);
     expect(cardPayload.specChips).toEqual([
       cardPayload.params.aspectRatio,
       `${cardPayload.params.durationSeconds}s`,
       cardPayload.params.resolution,
+      cardPayload.params.audio ? "With sound" : "No sound",
     ]);
   });
 

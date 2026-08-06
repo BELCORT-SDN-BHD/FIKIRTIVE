@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
+  GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
   GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, normalizeImageAspect,
   type GenImageAspect,
@@ -148,6 +148,21 @@ describe("genRequest.referenceVideoGenerationId", () => {
 
   it("rejects 10s reference-video output before spend because the 16cr price is modeled for 5s output", () => {
     expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref", durationSeconds: 10 }).success).toBe(false);
+  });
+});
+
+describe("genRequest.tailGenerationId", () => {
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+
+  it("#646 T5:现役视频模型接受尾帧(引擎支持首+尾帧,闸不再挡)", () => {
+    expect(GEN_VIDEO_MODEL_INFO["seedance-2-fast"].tail).toBe(true);
+    expect(genRequest.safeParse({ ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }).success).toBe(true);
+  });
+
+  it("模型真不支持尾帧时照旧在花钱前挡下(闸本身没松)", () => {
+    expect(GEN_VIDEO_MODEL_INFO["grok-imagine"].tail).toBe(false);
+    const r = genRequest.safeParse({ ...base, model: "grok-imagine", durationSeconds: 6, tailGenerationId: "gen_tail" });
+    expect(r.success).toBe(false);
   });
 });
 
