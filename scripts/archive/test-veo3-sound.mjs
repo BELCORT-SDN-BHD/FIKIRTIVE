@@ -1,9 +1,14 @@
+// [ARCHIVED #647 T6] Veo 声音探针 —— 它要回答的问题(veo3.1-fast 出的片有没有真音轨)
+// 随 12 台假视频引擎下架而消失(PR #668)。在产引擎 seedance-2-fast 的声音验证由
+// #646 T5 的接线测试 + scripts/tools/check-video-audio.mjs 覆盖:后者默认按
+// modelRef = seedance-2-fast 取最近一条视频生成、ffprobe 音轨并打印所查模型($0 事后探针)。
+//
 // Verify a sound model returns a clip WITH a real audio track (real fal spend ~$0.90).
 // Exercises our ACTUAL provider code path (VIDEO_CFG lookup, generate_audio,
 // output parse + download), then ffprobes the bytes for an audio stream.
 // Defaults to veo3.1-fast; pass another model key as argv[2] to spot-check it.
-// Run via: railway run --service worker -- node scripts/tools/test-veo3-sound.mjs [model]
-import { interlock } from "./_interlock.mjs";
+// Run via: railway run --service worker -- node scripts/archive/test-veo3-sound.mjs [model]
+import { interlock } from "../tools/_interlock.mjs";
 interlock({ spends: "~$0.90 — one real fal text-to-video generation (audio on)" });
 import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
