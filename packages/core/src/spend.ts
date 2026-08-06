@@ -10,6 +10,7 @@
  */
 import {
   GEN_PRICE_USD_PER_IMAGE,
+  GEN_VIDEO_MODEL_OPTIONS,
   REFERENCE_VIDEO_COGS_USD,
   videoPriceUsd,
   videoDefaults,
@@ -104,25 +105,34 @@ export const SEEDANCE_DISPLAY_CREDITS_PER_10S: Record<string, number> = { "480p"
  * 一档视频的显示 credits。**返回 null = 这一档不按秒计价**,调用方必须落到护栏价,
  * 有两种情形:
  *   ① 分辨率不在按秒表上(1080p / 未知);
- *   ② 秒数不是一个**正整数**(0、负数、NaN、以及 0.4 / 4.4 这类非整数)。
+ *   ② 秒数**不属于这个模型开出来的档位**。
  *
- * ② 必须 **fail closed**,而且判据是「整数」不是「正数」——
- * **价格只定义在 Founder 裁过的那 12 个整数格上,格外一律护栏,绝不 round**。
- * round 等于替 Founder 发明价格:0.4s 会 round 成 0 ⇒ 0 credits,而 `reserveCredits`
- * 对 cost<=0 直接跳过(packages/db/src/credits.ts),那就是一条**免费**的付费任务;
- * 4.4s 会 round 成 4 ⇒ 9cr,一个从没被裁过的价。
+ * ② 的判据是**档位归属**,不是「正整数」——
+ * **价格只定义在 Founder 裁过的那些格上;格外不 round、不外推,只有护栏。**
+ * 三种错法都被这一条挡住:
+ *   - `0.4s` 若 round 成 0 ⇒ 0 credits,而 `reserveCredits` 对 cost<=0 直接跳过
+ *     (packages/db/src/credits.ts),那是一条**免费**的付费任务;
+ *   - `4.4s` 若 round 成 4 ⇒ 9cr,一个从没被裁过的价;
+ *   - `3s` / `16s` 是**正整数**,但同样不在已裁的十二格里,按公式外推会得到
+ *     7cr / 36cr —— 同样是替 Founder 发明价格。
+ * 档位归属一次覆盖三者:非整数、0、负数、NaN、∞ 都不可能命中 durations 表。
  *
- * 新请求那一侧有 zod `.int()` 拦着,但这个函数同时被**历史 JSON 行**读到
- * (worker 结算后重算展示价:apps/worker/src/jobs/gen.ts 的 GEN_RESULT 两处),
- * 那条路上没有 zod。所以防线必须长在钱函数自己身上。
+ * 判据的**单一事实来源**是能力表 `GEN_VIDEO_MODEL_OPTIONS[model].durations` ——
+ * 菜单上开了哪几档,就只有那几档有价。这里刻意不抄一份 [4..15] 字面量:抄一份,
+ * T6 或未来任何一次改档就会让「卖什么」和「收多少」分家。
+ *
+ * 为什么防线必须长在钱函数自己身上:新请求那一侧有 zod `.int()` 与档位校验拦着,
+ * 但 `GenJob.videoOptions` 是**无约束 JSON**,worker 结算后重算展示价的两条路
+ * (apps/worker/src/jobs/gen.ts 的 GEN_RESULT 两处)直达这里,那条路上没有 zod。
  *
  * 纯整数运算:seconds 与 per10s 都是整数,+9 再整除 10 就是向上取整,不经过任何小数 ——
  * 浮点差一格 credit 的路在这里根本不存在。
  */
-export function seedanceDisplayCredits(resolution: string, seconds: number): number | null {
+export function seedanceDisplayCredits(model: string, resolution: string, seconds: number): number | null {
   const per10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution];
   if (per10s === undefined) return null;
-  if (!Number.isInteger(seconds) || seconds <= 0) return null;
+  const ruledDurations = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel]?.durations;
+  if (!ruledDurations?.includes(seconds)) return null;
   return Math.floor((seconds * per10s + 9) / 10);
 }
 
@@ -138,7 +148,7 @@ export function pricedGenCredits(job: GenSpendInput): number {
       const d = videoDefaults(job.model as GenVideoModel);
       const r = job.videoOptions?.resolution ?? d.resolution;
       const seconds = job.videoOptions?.seconds ?? d.seconds;
-      const perSecond = seedanceDisplayCredits(r, seconds); // #645 T4: 按秒计价的档
+      const perSecond = seedanceDisplayCredits(job.model, r, seconds); // #645 T4: 按秒计价的档
       if (perSecond !== null) return perSecond * INTERNAL_PER_DISPLAY;
       return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // 1080p / 未知 → 护栏价
     }

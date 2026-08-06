@@ -145,13 +145,13 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     // 这些只可能来自畸形或历史 videoOptions JSON 行。按秒公式对 0 会算出 0 credits ——
     // 那就是一条**免费**的付费任务;宁可收护栏价,也不贱卖(方向与 #645 之前一致)。
     for (const seconds of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(seedanceDisplayCredits("720p", seconds), `seconds=${seconds}`).toBeNull();
+      expect(seedanceDisplayCredits(MODEL, "720p", seconds), `seconds=${seconds}`).toBeNull();
       expect(pricedGenCredits(videoJob(seconds, "720p")), `seconds=${seconds}`)
         .toBe(16 * INTERNAL_PER_DISPLAY);
     }
     // 正常档位不受影响。
-    expect(seedanceDisplayCredits("720p", 5)).toBe(11);
-    expect(seedanceDisplayCredits("480p", 5)).toBe(6);
+    expect(seedanceDisplayCredits(MODEL, "720p", 5)).toBe(11);
+    expect(seedanceDisplayCredits(MODEL, "480p", 5)).toBe(6);
   });
 
   it("FAIL CLOSED(判官 r1 P0-1):**正的非整数**秒同样落 16cr 护栏,绝不 round", () => {
@@ -159,8 +159,8 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     // Founder 发明价格:0.4s 会 round 成 0 ⇒ 0cr(reserveCredits 对 cost<=0 直接跳过,
     // 也就是**免费出片**);4.4s 会 round 成 4 ⇒ 9cr,一个从没被裁过的价。
     for (const seconds of [0.4, 4.4, 14.999, 5.5, 0.999]) {
-      expect(seedanceDisplayCredits("720p", seconds), `720p ${seconds}s`).toBeNull();
-      expect(seedanceDisplayCredits("480p", seconds), `480p ${seconds}s`).toBeNull();
+      expect(seedanceDisplayCredits(MODEL, "720p", seconds), `720p ${seconds}s`).toBeNull();
+      expect(seedanceDisplayCredits(MODEL, "480p", seconds), `480p ${seconds}s`).toBeNull();
       expect(pricedGenCredits(videoJob(seconds, "720p")), `720p ${seconds}s`)
         .toBe(16 * INTERNAL_PER_DISPLAY);
       expect(pricedGenCredits(videoJob(seconds, "480p")), `480p ${seconds}s`)
@@ -168,8 +168,8 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     }
     // 已裁的整数格一格未动。
     for (const row of FOUNDER_PRICE_TABLE) {
-      expect(seedanceDisplayCredits("720p", row.seconds)).toBe(row["720p"]);
-      expect(seedanceDisplayCredits("480p", row.seconds)).toBe(row["480p"]);
+      expect(seedanceDisplayCredits(MODEL, "720p", row.seconds)).toBe(row["720p"]);
+      expect(seedanceDisplayCredits(MODEL, "480p", row.seconds)).toBe(row["480p"]);
     }
   });
 
