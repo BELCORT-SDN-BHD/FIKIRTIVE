@@ -665,6 +665,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
           if (provider.name !== "mock" && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
         }
+        // #646: an end frame with NO start frame used to fall through the `&& sourceAsset`
+        // guard below — the tail silently vanished and the merchant was charged for an
+        // ordinary clip. `genRequest` now rejects that shape at enqueue, so this only catches
+        // a job queued before that rule; either way it must never spend. Permanent (a retry
+        // can't grow a start frame), so fail closed with the refund, like its siblings above.
+        if (job.tailGenerationId && !sourceAsset) {
+          await failClosedWithRefund(job, "an end frame needs a start frame — pick a source image, or a shot that has one");
+          return;
+        }
         // optional end frame (last-frame i2v): interpolate source→tail. Resolved
         // server-side from an owned id, and only meaningful with a start image.
         let tailImageUrl = "";

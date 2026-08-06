@@ -406,6 +406,19 @@ export const genRequest = z
     if (v.tailGenerationId) {
       const supportsTail = v.kind === "video" && GEN_VIDEO_MODEL_INFO[v.model as GenVideoModel]?.tail === true;
       if (!supportsTail) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tailGenerationId"], message: "this model doesn't support an end frame" });
+      // #646: an end frame is meaningless without a start frame, and the worker resolves the
+      // start frame from EXACTLY two places (apps/worker/src/jobs/gen.ts:641-663): an explicit
+      // sourceGenerationId, else the shot's latest still via shotId. With neither, the worker
+      // short-circuits the tail lookup — the end frame vanishes and the merchant pays for an
+      // ordinary clip. Reject the shape here, before anything is reserved.
+      if (!v.sourceGenerationId && !v.shotId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tailGenerationId"], message: "an end frame needs a start frame — pick a source image, or a shot that has one" });
+      }
+      // first+last frames and whole-clip reference video are mutually exclusive scenarios for
+      // the engine (same rule the provider enforces pre-spend).
+      if (v.referenceVideoGenerationId) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tailGenerationId"], message: "an end frame can't be combined with a reference video" });
+      }
     }
     // every chosen video control must be in the model's option set — a value the
     // fal endpoint would reject (or a more expensive one than priced) must never
