@@ -237,6 +237,39 @@ function wireLoads(parent: ReturnType<typeof card>, children: Record<string, { p
   });
 }
 
+/**
+ * #656 P2 —— 把「视频那一格现在是什么形状」摆成某个具体值,并让铸卡如实把这个形状冻进
+ * 子卡(真 buildProposeCard 就是这么做的:desiredAspect → params.aspectRatio)。
+ * 首帧形状的唯一来源是视频侧的选型(firstFrameAspect → suggestModel),所以改这一处
+ * 就等于「商家把片子的形状换了」。
+ */
+function useVideoShape(aspectRatio: string) {
+  mockSuggestModel.mockReturnValue({
+    model: "kling",
+    params: { durationSeconds: 5, count: 1, aspectRatio },
+    reason: "",
+    downgraded: false,
+    requested: {},
+  });
+  mockBuildProposeCard.mockImplementation(
+    (input: { structuredPrompt: string; entityIds: string[]; desiredAspect?: string }) => ({
+      cardPayload: {
+        kind: "image",
+        model: "m",
+        params: { count: 1, ...(input.desiredAspect ? { aspectRatio: input.desiredAspect } : {}) },
+        structuredPrompt: input.structuredPrompt,
+        entityIds: input.entityIds,
+        estimatedCredits: 5,
+        estimatedPriceUsd: 0.2,
+        reason: "",
+        downgraded: false,
+        variantSel: {},
+      },
+      shownPriceDisplay: 5,
+    }),
+  );
+}
+
 describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
   it("给缺图镜头逐个铸子 GEN_CARD(payload 带 storyboardCardId+shotId 回链),父卡写 firstFrameCardId", async () => {
     wireLoads(card(payload3()));
@@ -332,6 +365,58 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
     expect(updShots[0].firstFrameCardId).not.toBe("child-0");
     expect(res.children[0].childCardId).not.toBe("child-0");
+  });
+
+  /**
+   * #656 P2(判词):「首帧形状在 `storyboard-gate1-actions.ts:165` 推导、`:202` 冻入新子卡;
+   * 但准备与重生成的复用只比对提示词(`:370`、`:480`)。⇒ 改形状后,未花费的旧形状子卡存活
+   * 并可被批准。」
+   *
+   * 商家视角:片子从方图改成横版,分镜上那张首帧卡还是旧的方图 —— 卡面写着一个形状,批准
+   * 之后出的是另一个。提示词一个字没改,所以旧谓词认不出这是两张不同的卡。
+   */
+  it("#656 P2 形状漂移:子卡冻的形状已不是现在会铸出来的形状 → 不复用,铸新替换", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[2].firstFrameGenerationId = "gen2"; // isolate to s0
+    wireLoads(card(p), {
+      // 提示词一致,但冻的是方图 —— 而片子现在是横版。
+      "child-0": {
+        payload: { structuredPrompt: "ff0", entityIds: ["e0"], estimatedCredits: 5, params: { count: 1, aspectRatio: "1:1" } },
+        genJobId: null,
+      },
+    });
+    useVideoShape("16:9");
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // 铸了一张新的,而且冻的是现在这一格形状。
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.params.aspectRatio).toBe("16:9");
+    // 父卡指针从旧形状那张移开 —— 旧卡不再是这个镜头的首帧卡。
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].firstFrameCardId).not.toBe("child-0");
+    expect(res.children[0].childCardId).not.toBe("child-0");
+  });
+
+  it("#656 P2 对照:形状没变(提示词也没变)→ 照常复用,不铸新", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[2].firstFrameGenerationId = "gen2"; // isolate to s0
+    wireLoads(card(p), {
+      "child-0": {
+        payload: { structuredPrompt: "ff0", entityIds: ["e0"], estimatedCredits: 5, params: { count: 1, aspectRatio: "16:9" } },
+        genJobId: null,
+      },
+    });
+    useVideoShape("16:9");
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(res.children[0].childCardId).toBe("child-0");
   });
 
   it("spent 侦测:子卡存在幂等 job → spent:true,不计入 totalCredits", async () => {
@@ -474,7 +559,9 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
 // 选型路，视频侧换档时首帧自动跟着换。
 // ---------------------------------------------------------------------------
 describe("首帧图形状(#643 T2)", () => {
-  /** 铸卡时传给 buildProposeCard 的第一个参数（图片方案的输入）。 */
+  /** 传给 buildProposeCard 的第一个参数（图片方案的输入）。#656 P2 之后每个镜头会走两次
+   *  这条纯路：一次算「现在会铸出来的那张卡」用于复用比对，一次真的铸卡 —— 两次同一份输入，
+   *  这正是「比的就是会铸出来的东西」。铸了几张看 mockChatCreate。 */
   const mintInputs = () => mockBuildProposeCard.mock.calls.map((call) => call[0] as { desiredAspect?: string });
 
   it("片子是 16:9 ⇒ 首帧就按 16:9 铸（不再默认方图）", async () => {
@@ -486,7 +573,7 @@ describe("首帧图形状(#643 T2)", () => {
     wireLoads(card(payload3()));
     await prepareStoryboardFirstFrames({ cardId: "card-1" });
 
-    expect(mintInputs()).toHaveLength(2);
+    expect(mockChatCreate).toHaveBeenCalledTimes(2); // s0/s2 各铸一张
     for (const input of mintInputs()) expect(input.desiredAspect).toBe("16:9");
   });
 
@@ -531,8 +618,8 @@ describe("首帧图形状(#643 T2)", () => {
     wireLoads(card(payload3()));
     await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s0" });
 
-    expect(mintInputs()).toHaveLength(1);
-    expect(mintInputs()[0]!.desiredAspect).toBe("16:9");
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // 只重出这一个镜头
+    for (const input of mintInputs()) expect(input.desiredAspect).toBe("16:9");
   });
 });
 
@@ -593,6 +680,29 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     expect(res.child.estimatedCredits).toBe(5);
     expect(res.child.structuredPrompt).toBe("ff1");
     expect(res.child.spent).toBe(false);
+  });
+
+  /** #656 P2 —— 重生成侧的同一条病(`:480`):提示词一致就复用,漏掉冻结的形状。 */
+  it("#656 P2 形状漂移:既有未花钱子卡冻的形状已不是现在会铸的 → 不复用,铸新替换", async () => {
+    const p = payload3();
+    p.shots[1].firstFrameCardId = "child-1";
+    wireLoads(card(p), {
+      "child-1": {
+        payload: { structuredPrompt: "ff1", entityIds: [], estimatedCredits: 5, params: { count: 1, aspectRatio: "1:1" } },
+        genJobId: null,
+      },
+    });
+    useVideoShape("16:9");
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
+    if (!("child" in res)) throw new Error("expected child");
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.params.aspectRatio).toBe("16:9");
+    const shots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(shots[1].firstFrameCardId).not.toBe("child-1");
+    expect(shots[1].firstFrameGenerationId).toBe("gen1"); // 旧图仍然有效,直到新首帧真的落地
+    expect(res.child.childCardId).not.toBe("child-1");
   });
 
   it("可重入:既有子卡已花过钱(有幂等 job)→ 不复用,铸新替换", async () => {
