@@ -264,3 +264,50 @@ describe("#642 图片规格快照(imageOptions)", () => {
       normalizeFactoryMaterial({ ...base, aspectRatio: "9:16" }))).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #645 T4(判官 r1 P1-1)—— i2v 的形状缺省
+// ---------------------------------------------------------------------------
+//
+// 已定设计:**有首帧的片子默认 adaptive**(引擎跟着首帧走),没有首帧才落 t2v 默认 16:9。
+// normalizeFactoryMaterial 是通用 startGen 与工厂逐格**共用**的那一份材料规范化,所以
+// 这条路把缺省落错,等于 Otto/画布之外的每一条 i2v 都被悄悄改成 16:9 —— 商家的竖版
+// 首帧会被裁成横版,而且全程没有一句话解释。
+describe("#645 T4:i2v 形状缺省 = adaptive(通用 startGen / 工厂逐格共用的那一份)", () => {
+  const videoInput = (over: Record<string, unknown> = {}) => ({
+    prompt: "a product spin",
+    model: "seedance-2-fast",
+    kind: "video" as const,
+    count: 1,
+    entityIds: [] as string[],
+    ...over,
+  });
+
+  it("有首帧(sourceGenerationId)⇒ 形状缺省 adaptive", () => {
+    const m = normalizeFactoryMaterial(videoInput({ sourceGenerationId: "gen_frame" }));
+    expect(m.videoOptions?.aspectRatio).toBe("adaptive");
+  });
+
+  it("有首帧(shotId —— 分镜那条路同样解析得出首帧)⇒ 形状缺省 adaptive", () => {
+    const m = normalizeFactoryMaterial(videoInput({ shotId: "shot_1" }));
+    expect(m.videoOptions?.aspectRatio).toBe("adaptive");
+  });
+
+  it("没有首帧(t2v)⇒ 形状缺省仍是 16:9,一格未动", () => {
+    const m = normalizeFactoryMaterial(videoInput());
+    expect(m.videoOptions?.aspectRatio).toBe("16:9");
+  });
+
+  it("商家明说了形状 ⇒ 照他说的来,缺省规则不参与", () => {
+    const m = normalizeFactoryMaterial(videoInput({ sourceGenerationId: "gen_frame", aspectRatio: "9:16" }));
+    expect(m.videoOptions?.aspectRatio).toBe("9:16");
+  });
+
+  it("时长/清晰度/声音三项不受首帧影响 —— 只有形状分开处理", () => {
+    const withFrame = normalizeFactoryMaterial(videoInput({ sourceGenerationId: "gen_frame" }));
+    const without = normalizeFactoryMaterial(videoInput());
+    expect(withFrame.videoOptions?.seconds).toBe(without.videoOptions?.seconds);
+    expect(withFrame.videoOptions?.resolution).toBe(without.videoOptions?.resolution);
+    expect(withFrame.videoOptions?.audio).toBe(without.videoOptions?.audio);
+  });
+});

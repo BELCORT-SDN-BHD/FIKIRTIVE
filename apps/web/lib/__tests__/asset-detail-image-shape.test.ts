@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   getGeneration: vi.fn(),
   getActiveGenModels: vi.fn(),
   startGen: vi.fn(),
+  startAssetGen: vi.fn(),
   getGenJob: vi.fn(),
   setFavorite: vi.fn(),
   saveCroppedGeneration: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("@/lib/asset-actions", () => ({
 vi.mock("@/lib/actions", () => ({ deleteGeneration: mocks.deleteGeneration }));
 vi.mock("@/lib/gen-actions", () => ({
   startGen: mocks.startGen,
+  startAssetGen: mocks.startAssetGen,
   getGenJob: mocks.getGenJob,
   getActiveGenModels: mocks.getActiveGenModels,
 }));
@@ -87,6 +89,7 @@ beforeEach(() => {
     imageDefaultAspect: "1:1",
   });
   mocks.startGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
+  mocks.startAssetGen.mockResolvedValue({ id: "job-1", disposition: "fresh" });
   mocks.getGenJob.mockResolvedValue({ status: "DONE", generationIds: [] });
 });
 
@@ -212,5 +215,71 @@ describe("资产详情：图片形状(#643 T2)", () => {
     // 长度/清晰度默认与今日一致。
     expect((container!.querySelector('[aria-label="Length of the video"]') as HTMLSelectElement).value).toBe("5");
     expect((container!.querySelector('[aria-label="Quality of the video"]') as HTMLSelectElement).value).toBe("720p");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #645 T4(判官 r1 P0-2)—— 详情页把「屏幕上那个价」绑进付费请求
+// ---------------------------------------------------------------------------
+//
+// 详情页会先把价格显示出来,再按那个价扣钱。中间隔着一次网络往返和一个可能开了很久
+// 的面板。价格若在这期间改了(商家在同一个面板里把片子从 5 秒改成 12 秒也算),商家就是
+// 「按旧价签字、按新价扣款」。修法与 Canvas / Otto 同源:面板把展示的那个价随请求带上,
+// 服务端算出来不符即拒。
+describe("#645 T4:资产详情的付费请求带着屏幕上那个价", () => {
+  function assetGenArg(): Record<string, unknown> {
+    expect(mocks.startAssetGen).toHaveBeenCalled();
+    return mocks.startAssetGen.mock.calls[0]![0] as Record<string, unknown>;
+  }
+
+  /** 面板上的付费动作是两步:先按行动栏那个按钮开确认框,再在框里确认。两步都点。 */
+  async function confirmAction(label: string): Promise<void> {
+    const findAll = () => [...document.querySelectorAll<HTMLButtonElement>("button")]
+      .filter((b) => (b.textContent ?? "").trim() === label);
+    const rail = findAll();
+    expect(rail.length, `行动栏上应该有「${label}」`).toBeGreaterThan(0);
+    await act(async () => { rail[0]!.click(); });
+    await act(async () => { await Promise.resolve(); });
+    // 确认框里那个同名按钮 —— 它才是真正花钱的那一下。
+    const after = findAll();
+    const confirm = after[after.length - 1]!;
+    await act(async () => { confirm.click(); });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("Animate 带上面板显示的视频价(而不是让服务端自己决定收多少)", async () => {
+    await renderPanel("1:1");
+    await confirmAction("Animate");
+    const arg = assetGenArg();
+    expect(arg.kind).toBe("video");
+    // 面板显示的是默认档 720p/5s = 11 credits,带出去的必须是同一个数。
+    expect(arg.expectedCredits).toBe(11);
+  });
+
+  it("商家在面板里把片子改成 12 秒 ⇒ 带出去的价跟着变成 27,不是旧的 11", async () => {
+    await renderPanel("1:1");
+    const length = container!.querySelector('[aria-label="Length of the video"]') as HTMLSelectElement;
+    await act(async () => {
+      length.value = "12";
+      length.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await confirmAction("Animate");
+    const arg = assetGenArg();
+    expect(arg.durationSeconds).toBe(12);
+    expect(arg.expectedCredits).toBe(27);
+  });
+
+  it("Regenerate 同样带着面板显示的图片价", async () => {
+    await renderPanel("1:1");
+    await confirmAction("Regenerate");
+    const arg = assetGenArg();
+    expect(arg.kind).toBe("image");
+    expect(arg.expectedCredits).toBe(8);
+  });
+
+  it("付费路径不再走没有价格绑定的 startGen", async () => {
+    await renderPanel("1:1");
+    await confirmAction("Animate");
+    expect(mocks.startGen).not.toHaveBeenCalled();
   });
 });

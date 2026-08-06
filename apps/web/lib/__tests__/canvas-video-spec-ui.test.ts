@@ -363,3 +363,53 @@ describe("#645 T4 画布 Animate(带首帧):形状默认跟着首帧走", () => 
     expect(options.spec).toEqual({ seconds: 8, resolution: "480p", aspectRatio: "adaptive" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// #645 T4(判官 r1 P2-2)—— Adaptive 的提示文案按场景分立
+// ---------------------------------------------------------------------------
+//
+// Adaptive 在两条路上是**两件事**:没有源图(t2v)时引擎按描述智能挑一个比例;
+// 有源图(Animate)时跟着源图就近。原来两处共用一句「follows the source image」——
+// 在 t2v 的框里那句话是错的:那个框明说了「no source image needed」。
+describe("#645 T4:Adaptive 的说明按场景说准", () => {
+  function shapeTitle(): string {
+    const el = document.querySelector('select[aria-label="Shape of the video"]');
+    expect(el, "形状选择器应该在屏幕上").not.toBeNull();
+    return el!.getAttribute("title") ?? "";
+  }
+
+  async function openAnimateOn(nodeId: string): Promise<void> {
+    const button = [...container!.querySelectorAll<HTMLButtonElement>(`[data-node="${nodeId}"] button`)]
+      .find((b) => (b.textContent ?? "").trim() === "Make video") ?? null;
+    expect(button, "图片卡上应该有 Make video").not.toBeNull();
+    await act(async () => { button!.click(); });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it("t2v(没有源图)⇒ 说的是「按你的描述挑一个形状」,不许提源图", async () => {
+    await renderBoard();
+    await openT2v();
+    const title = shapeTitle();
+    expect(title).toContain("Adaptive picks a shape to suit your description");
+    expect(title.toLowerCase()).not.toContain("source image");
+  });
+
+  it("Animate(有源图)⇒ 说的是「跟着你的源图」", async () => {
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    select(["n1"]);
+    await openAnimateOn("n1");
+    expect(shapeTitle()).toContain("Adaptive keeps the shape of your source image");
+  });
+
+  it("两句文案确实不同 —— 不是同一句话到处贴", async () => {
+    await renderBoard();
+    await openT2v();
+    const t2v = shapeTitle();
+    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
+    await renderBoard();
+    select(["n1"]);
+    await openAnimateOn("n1");
+    expect(shapeTitle()).not.toBe(t2v);
+  });
+});

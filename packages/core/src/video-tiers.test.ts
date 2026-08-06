@@ -154,6 +154,25 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     expect(seedanceDisplayCredits("480p", 5)).toBe(6);
   });
 
+  it("FAIL CLOSED(判官 r1 P0-1):**正的非整数**秒同样落 16cr 护栏,绝不 round", () => {
+    // 价格只定义在 Founder 裁过的**整数**格上。格外的秒数一律护栏 —— round 等于替
+    // Founder 发明价格:0.4s 会 round 成 0 ⇒ 0cr(reserveCredits 对 cost<=0 直接跳过,
+    // 也就是**免费出片**);4.4s 会 round 成 4 ⇒ 9cr,一个从没被裁过的价。
+    for (const seconds of [0.4, 4.4, 14.999, 5.5, 0.999]) {
+      expect(seedanceDisplayCredits("720p", seconds), `720p ${seconds}s`).toBeNull();
+      expect(seedanceDisplayCredits("480p", seconds), `480p ${seconds}s`).toBeNull();
+      expect(pricedGenCredits(videoJob(seconds, "720p")), `720p ${seconds}s`)
+        .toBe(16 * INTERNAL_PER_DISPLAY);
+      expect(pricedGenCredits(videoJob(seconds, "480p")), `480p ${seconds}s`)
+        .toBe(16 * INTERNAL_PER_DISPLAY);
+    }
+    // 已裁的整数格一格未动。
+    for (const row of FOUNDER_PRICE_TABLE) {
+      expect(seedanceDisplayCredits("720p", row.seconds)).toBe(row["720p"]);
+      expect(seedanceDisplayCredits("480p", row.seconds)).toBe(row["480p"]);
+    }
+  });
+
   it("零改动:1080p 兜底 16cr、未知分辨率兜底 16cr、整段参考视频 16cr", () => {
     expect(VIDEO_CREDITS_BY_RESOLUTION["1080p"]).toBe(16);
     expect(REFERENCE_VIDEO_CREDITS).toBe(16);

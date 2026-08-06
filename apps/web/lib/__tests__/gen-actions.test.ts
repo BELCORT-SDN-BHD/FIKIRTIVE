@@ -80,6 +80,7 @@ const {
   getActiveGenModels,
   startCanvasGen,
   startCoworkGen,
+  startAssetGen,
   startGen,
 } = await import("../gen-actions");
 const { canvasActionKey } = await import("../batch-idempotency");
@@ -376,6 +377,69 @@ describe("startGen", () => {
     expect(db.genJobCreate).not.toHaveBeenCalled();
     expect(db.reserveCredits).not.toHaveBeenCalled();
     expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  // ── #645 T4(判官 r1 P0-2)—— 资产详情页的付费入口 ────────────────────────────
+  //
+  // 详情页会把价格显示给商家看,然后按那个价扣钱。中间隔着一次网络往返和一个可能开了
+  // 很久的面板 —— 价格在这期间改了,商家就是「按旧价签字、按新价扣款」。Canvas / Otto /
+  // Campaign 三条路都有价格重核,唯独这条没有。这里用**同一套** expectedCredits 绑定补上:
+  // 面板把屏幕上那个价随请求带上,服务端算出来不符就拒,一分钱不动。
+  describe("#645 T4:资产详情入口的价格绑定(与 Canvas/Otto 同一套机制)", () => {
+    const assetRequest = (over: Record<string, unknown> = {}) => ({
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "product hero",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "regen-gen1-123",
+      ...over,
+    });
+
+    it("显示价与当前价不符 ⇒ 在 create/reserve 之前拒绝,并给一句人话", async () => {
+      const result = await startAssetGen(assetRequest({ expectedCredits: 2 }));
+      expect(result).toEqual({
+        error: "The confirmed price changed from 2 to 1 credits. Reopen this image to load the current price, then try again.",
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+      expect(mockBossSend).not.toHaveBeenCalled();
+    });
+
+    it("显示价与当前价一致 ⇒ 照常建单并预扣", async () => {
+      const result = await startAssetGen(assetRequest());
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
+        orgId: "org_ref",
+        refId: "job_ref",
+        cost: 1 * INTERNAL_PER_DISPLAY,
+      });
+    });
+
+    it("视频档位同理:面板报 11cr 而当前是 27cr(商家改了时长)⇒ 拒绝", async () => {
+      const result = await startAssetGen(assetRequest({
+        kind: "video",
+        model: "seedance-2-fast",
+        durationSeconds: 12,
+        resolution: "720p",
+        expectedCredits: 11,
+        idempotencyKey: "anim-gen1-123",
+      }));
+      expect(result).toEqual({
+        error: "The confirmed price changed from 11 to 27 credits. Reopen this image to load the current price, then try again.",
+      });
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("不带 expectedCredits 一律出界 —— 这条路不许绕过绑定", async () => {
+      for (const bad of [{}, { expectedCredits: "1" }, { expectedCredits: -1 }, { expectedCredits: Number.NaN }]) {
+        const result = await startAssetGen({ ...assetRequest(), ...bad, expectedCredits: (bad as Record<string, unknown>).expectedCredits });
+        expect(result).toEqual({ error: "That generation request is out of bounds." });
+      }
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
   });
 
   it("requires Canvas to bind the price the owner approved", async () => {
