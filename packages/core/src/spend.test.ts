@@ -14,12 +14,12 @@ describe("genSpentUsd", () => {
       .toBe(GEN_PRICE_USD_PER_IMAGE * 4);
   });
   it("video = videoPriceUsd with the job's resolved options", () => {
-    const vo = { seconds: 5, resolution: "1080p", audio: true };
-    expect(genSpentUsd({ kind: "VIDEO", model: "veo3.1-fast", count: 1, videoOptions: vo }))
-      .toBe(videoPriceUsd("veo3.1-fast", { seconds: 5, resolution: "1080p", audio: true, count: 1 }));
+    const vo = { seconds: 5, resolution: "720p", audio: true };
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: vo }))
+      .toBe(videoPriceUsd("seedance-2-fast", { seconds: 5, resolution: "720p", audio: true, count: 1 }));
   });
   it("video with null/partial videoOptions falls back to the model's defaults (never NaN)", () => {
-    const v = genSpentUsd({ kind: "VIDEO", model: "kling", count: 1, videoOptions: null });
+    const v = genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: null });
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
   });
@@ -81,15 +81,18 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
       videoOptions: { seconds: 5, resolution: "720p", audio: false },
     })).toBe(16 * INTERNAL_PER_DISPLAY);
   });
-  it("video (fal, non-flat model) = USD formula, NOT the flat BytePlus table", () => {
+  it("#647 T6:菜单外的模型(历史行)落护栏价 —— 算不出价就宁可贵,绝不贱卖", () => {
+    // 这条测试的前身是「fal 非 flat 模型走 USD 公式」。那 12 台 fal 引擎在 T6 下架之后,
+    // 它们各自抄来的费率也随之作废(videoRateUsdPerSec 对菜单外的 id 回 0),USD 公式会
+    // 算出 1 显示 credit —— 一条视频卖一毛钱。新的付费请求永远走不到这里(契约闸只放行
+    // 在产那一台),这只是历史行读价的兜底,而兜底的语义只有一个:护栏价。
     const job = { kind: "VIDEO" as const, model: "kling", count: 1, videoOptions: { seconds: 5, resolution: "", audio: false } };
     const c = pricedGenCredits(job);
     expect(c % INTERNAL_PER_DISPLAY).toBe(0); // whole displayed credits
-    expect(c).toBeGreaterThanOrEqual(10);     // at least 1 displayed credit
-    // Must equal the USD-formula result, NOT the flat 1080p fallback (160)
-    const expected = Math.max(1, Math.ceil(genSpentUsd(job) / 0.1)) * INTERNAL_PER_DISPLAY;
-    expect(c).toBe(expected);
-    expect(c).not.toBe(160); // 160 = the stale flat fallback that would have been charged before the fix
+    expect(c).toBe(16 * INTERNAL_PER_DISPLAY);
+    expect(Number.isNaN(c)).toBe(false);
+    // 记账那一侧照旧是 record-only:不知道成本就是 0,而不是编一个数
+    expect(genSpentUsd(job)).toBe(0);
   });
   it("refgen = 1 displayed credit per image", () => {
     expect(pricedRefgenCredits({ model: "seedream", count: 1 })).toBe(10);

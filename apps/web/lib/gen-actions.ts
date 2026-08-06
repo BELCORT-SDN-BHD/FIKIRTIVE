@@ -513,9 +513,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
     // ADDITIVE narrowing — the typed superRefine above stays the authority over
     // which (model,params) may spend; this only subtracts a turned-off model.
-    // Fail-closed-to-typed-menu on a DB fault (resolveDisabledModels → empty set).
-    const disabled = await resolveDisabledModels();
-    if (isModelDisabled(model, disabled)) {
+    // #647 T6 修复轮 P1-3:开关读不到 ⇒ **不许扣款**。旧版把 DB 故障翻译成空集合
+    // (「什么都没关」),于是「库里全禁用 + 查询瞬时失败」这一刻钱照花。结果不明就不前进。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) return { error: registry.error };
+    if (isModelDisabled(model, registry.disabled)) {
       return { error: "That model is currently turned off — pick another." };
     }
 

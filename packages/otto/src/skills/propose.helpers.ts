@@ -7,6 +7,7 @@
 import { z } from "zod";
 import {
   suggestModel,
+  generationUnavailableMessage,
   videoPriceUsd,
   videoDefaults,
   VIDEO_ASPECT_ADAPTIVE,
@@ -98,6 +99,23 @@ export type ProposeCardResult = {
   cardPayload: CardPayload;
   shownPriceDisplay: number;
 };
+
+/**
+ * 这一类创作现在**没有可用引擎**(后台把唯一那台关掉了)—— #647 T6。
+ *
+ * 为什么是抛,而不是返回一张标着「不可用」的卡:一张卡就是一个可以点下去的承诺。
+ * 造不出真卡的时候唯一诚实的产物是**没有卡**,而抛异常让这件事 fail closed ——
+ * 将来任何一个新入口忘了接住它,商家看到的是一个错误,而不是一张确认不了的付费卡。
+ *
+ * `message` 就是给商家看的那句话(English sentence case,不出现任何引擎/供应商名)。
+ */
+export class GenerationUnavailableError extends Error {
+  constructor(readonly kind: "image" | "video") {
+    // 措辞的单一来源在 @fikirtive/core —— 四个铸卡入口共用一份(#647 T6 修复轮 P1-1)。
+    super(generationUnavailableMessage(kind));
+    this.name = "GenerationUnavailableError";
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 有效规格 —— 卡面文案的唯一真相来源
@@ -319,7 +337,9 @@ export function buildProposeCard(
     variantSel = filteredVarSel;
   }
 
-  // Step 3: model selection
+  // Step 3: model selection.
+  // #647 T6:null = 这一类的唯一引擎被后台关掉了。这里不给「降级卡」也不给「零元卡」——
+  // 直接抛,由入口翻译成一句人话,一张卡都不落库(见 GenerationUnavailableError)。
   const sm = suggestModel({
     kind,
     desiredAspect: input.desiredAspect,
@@ -329,6 +349,7 @@ export function buildProposeCard(
     hasTail: false,
     disabled: new Set(ctx.disabledModels),
   });
+  if (!sm) throw new GenerationUnavailableError(kind);
 
   if (isRefVideo) {
     const opts = GEN_VIDEO_MODEL_OPTIONS[REFERENCE_VIDEO_MODEL];
@@ -383,6 +404,8 @@ export function buildProposeCard(
   // When this image card is the first step of a two-step video plan (forVideo=true),
   // estimate the follow-on video cost so the card can show the full plan total.
   // Errors are silently swallowed — videoStep is best-effort and must never break the card.
+  // #647 T6:视频引擎被关掉时 `vm` 是 null —— 这张图片卡照铸(图片引擎还开着),只是
+  // 不再替一条现在做不了的片子报价。卡面上少一行,好过多一行做不到的承诺。
   let videoStep: { estimatedCredits: number } | undefined;
   if (kind === "image" && input.forVideo) {
     try {
@@ -395,7 +418,7 @@ export function buildProposeCard(
         hasTail: false,
         disabled: new Set(ctx.disabledModels),
       });
-      const videoEstCredits = displayCredits(
+      const videoEstCredits = vm === null ? null : displayCredits(
         pricedGenCredits({
           kind: "VIDEO",
           model: vm.model,
@@ -407,7 +430,7 @@ export function buildProposeCard(
           },
         }),
       );
-      videoStep = { estimatedCredits: videoEstCredits };
+      if (videoEstCredits !== null) videoStep = { estimatedCredits: videoEstCredits };
     } catch {
       // Best-effort — omit videoStep on any error
     }

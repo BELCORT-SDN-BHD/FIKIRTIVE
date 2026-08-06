@@ -204,7 +204,7 @@ function refgenCardPayload(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireOwner.mockResolvedValue(GATE);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
   mockGetBrandContextText.mockResolvedValue("");
   mockEntityFindMany.mockResolvedValue([]);
   mockGenerationFindFirst.mockResolvedValue(null);

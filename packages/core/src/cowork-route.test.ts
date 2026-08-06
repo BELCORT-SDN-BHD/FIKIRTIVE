@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { suggestModel } from "./cowork-route.js";
+import { suggestModel as suggestModelRaw, type SuggestModelInput, type SuggestModelResult } from "./cowork-route.js";
 import {
   GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_OPTIONS, GEN_VIDEO_MODEL_INFO,
   GEN_IMAGE_MODEL_OPTIONS, imageDefaults, type GenVideoModel,
 } from "./gen.js";
 import { activeVideoModel } from "./model-config.js";
+
+/** #647 T6:`suggestModel` 现在会返回 null(唯一引擎被后台关掉)。下面这一大段测的都是
+ *  **引擎开着**的路,所以走这个包装:拿到 null 当场就是一条失败,而不是一片
+ *  `!` 断言把「没有引擎」这件事悄悄吞掉。null 那条路由文件末尾的 T6 段专门测。 */
+function suggestModel(input: SuggestModelInput): SuggestModelResult {
+  const r = suggestModelRaw(input);
+  if (!r) throw new Error(`suggestModel 意外返回 null(${input.kind})—— 这一段测的是引擎开着的路`);
+  return r;
+}
 
 describe("suggestModel", () => {
   it("image → seedream with count default", () => {
@@ -112,41 +121,62 @@ describe("suggestModel", () => {
     expect(r.downgraded).toBe(true);
     expect(r.params.aspectRatio).not.toBe("2:3");
   });
-  it("disabled set does not change the model (locked to activeVideoModel; disabled is a no-op for selection)", () => {
-    // Before: disabled narrowed the candidate pool and forced a different pick.
-    // Now: model selection is locked to activeVideoModel() regardless. The disabled
-    // param is accepted on the interface (kept for future/upstream callers) but has
-    // no effect on which model is proposed — the spend gate enforces the single model.
+  it("选型仍然锁死在唯一那台在产引擎上(没有 picker,这一条 #647 一格没动)", () => {
+    // 商家侧本来就不该见引擎名,所以「选哪台」不是一个选项。这一条守的是:任何输入
+    // 组合下,选出来的都还是 activeVideoModel(),而不是被某个参数悄悄换掉。
     const free = suggestModel({ kind: "video" });
-    const withDisabled = suggestModel({ kind: "video", disabled: new Set([free.model]) });
     expect(free.model).toBe(activeVideoModel());
-    expect(withDisabled.model).toBe(activeVideoModel()); // still the active model
-    expect((GEN_VIDEO_MODELS as readonly string[]).includes(withDisabled.model)).toBe(true);
+    expect((GEN_VIDEO_MODELS as readonly string[]).includes(free.model)).toBe(true);
   });
-  it("impossible aspect (2:3) still returns activeVideoModel (locked) and is a valid typed model", () => {
-    // Before: an off-menu aspect → empty pool → fallback logic; disabled narrowed it further.
-    // Now: model is always activeVideoModel() regardless of aspect/disabled. The impossible
-    // aspect is still flagged as downgraded (params snapping below), but the model id is stable.
+  it("引擎给不了的比例(2:3)照旧如实标降级,模型 id 不因此改变", () => {
     // (#645 T4:夹具从 21:9 换成 2:3 —— 21:9 已经是菜单上的一格了。)
-    const r = suggestModel({ kind: "video", desiredAspect: "2:3", disabled: new Set([activeVideoModel()]) });
-    expect(r.model).toBe(activeVideoModel()); // locked regardless of disabled
-    expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true);
+    const r = suggestModel({ kind: "video", desiredAspect: "2:3" });
+    expect(r.model).toBe(activeVideoModel());
     expect(r.downgraded).toBe(true); // 2:3 is not in the model's aspectRatios → snapped
   });
-  it("disabling the natural pick still returns it (locked model; disabled is inert for selection)", () => {
-    // Before: disabling the natural pick forced a different model.
-    // Now: model is always activeVideoModel(). This test documents that the disabled
-    // param is intentionally a no-op — enforced at the spend gate, not here.
-    const natural = suggestModel({ kind: "video" });
-    const narrowed = suggestModel({ kind: "video", disabled: new Set([natural.model]) });
-    expect(natural.model).toBe(activeVideoModel());
-    expect(narrowed.model).toBe(activeVideoModel()); // same model despite disabled
-    expect((GEN_VIDEO_MODELS as readonly string[]).includes(narrowed.model)).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// #647 T6 —— `disabled` 从此真的算数
+// ---------------------------------------------------------------------------
+//
+// 缺陷现场:`suggestModel` 收下 `disabled` 参数,然后**一次也没用过**。后台把唯一那台
+// 视频引擎关掉之后,Otto 照旧选中它、照旧算出价、照旧铸出一张商家点得下去的付费卡 ——
+// 卡在那里躺着说「11 credits,确认就做」,而确认的那一刻必然被 spend 闸打回。菜单上多
+// 出来的那一格不是模型,是**一个确认不了的承诺**。
+//
+// 修法:唯一的引擎被关掉 ⇒ 这一类创作就是不可用,`suggestModel` 返回 null,由调用方
+// 给诚实空态。返回 null 而不是「照选不误」,是为了让编译器逼着每一个入口都表态。
+describe("#647 T6 suggestModel 尊重 disabled(关掉唯一引擎 ⇒ 铸不出付费卡)", () => {
+  it("视频:唯一在产引擎被关 ⇒ 返回 null(不选型、不报价)", () => {
+    expect(suggestModelRaw({ kind: "video", disabled: new Set([activeVideoModel()]) })).toBeNull();
   });
-  it("only the degenerate all-disabled case falls back to the full typed menu (returns a value, blocked downstream)", () => {
-    const allDisabled = new Set(GEN_VIDEO_MODELS as readonly string[]);
-    expect(() => suggestModel({ kind: "video", disabled: allDisabled })).not.toThrow();
-    const r = suggestModel({ kind: "video", disabled: allDisabled });
-    expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true); // still a typed model (spend gate rejects)
+
+  it("视频:整张菜单都被关 ⇒ 同样返回 null(不再回落到全量菜单)", () => {
+    expect(suggestModelRaw({ kind: "video", disabled: new Set(GEN_VIDEO_MODELS as readonly string[]) })).toBeNull();
+  });
+
+  it("视频:商家提了形状/时长也不改变结论 —— 没有引擎就是没有引擎", () => {
+    expect(
+      suggestModelRaw({ kind: "video", desiredAspect: "9:16", desiredDuration: 10, disabled: new Set([activeVideoModel()]) }),
+    ).toBeNull();
+  });
+
+  it("图片:唯一图像引擎被关 ⇒ 同样返回 null(同一个参数,同一条规矩)", () => {
+    expect(suggestModelRaw({ kind: "image", disabled: new Set(["seedream"]) })).toBeNull();
+  });
+
+  it("关的是**别的** id ⇒ 一切照旧(narrowing 只许窄,不许无中生有地拦)", () => {
+    const r = suggestModelRaw({ kind: "video", disabled: new Set(["kling", "veo3.1", "某个不存在的 id"]) });
+    expect(r).not.toBeNull();
+    expect(r?.model).toBe(activeVideoModel());
+    const img = suggestModelRaw({ kind: "image", disabled: new Set(["seedance-2-fast"]) });
+    expect(img).not.toBeNull();
+    expect(img?.model).toBe("seedream");
+  });
+
+  it("没传 disabled ⇒ 一切照旧(参数是可选的,缺省不等于全关)", () => {
+    expect(suggestModelRaw({ kind: "video" })).not.toBeNull();
+    expect(suggestModelRaw({ kind: "image" })).not.toBeNull();
   });
 });

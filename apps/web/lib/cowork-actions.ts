@@ -16,6 +16,7 @@ import {
   coworkRenameThreadRequest, coworkDeleteThreadRequest, coworkVaryCardRequest, coworkBriefRequest, MAX_GEN_PROMPT,
   composePrompt, isModelDisabled,
   buildGenRequestFromCard,
+  suggestModel, generationUnavailableMessage,
 } from "@fikirtive/core";
 import { getEnhanceDirective } from "./cowork-knowledge";
 import { resolveDisabledModels } from "./model-registry";
@@ -77,8 +78,10 @@ export async function coworkGenerate(raw: unknown): Promise<{ id: string } | { e
   // OPT-6 P2: re-check the chosen model isn't admin-disabled at SPEND (a card built
   // before a disable, a model override, or a disabled seedream image must not spend).
   // The worker (handleGen) is the all-status backstop for an already-queued job.
-  const disabled = await resolveDisabledModels();
-  if (isModelDisabled(chosenModel, disabled)) {
+  // #647 T6 修复轮 P1-3:读不到开关状态就不许花钱 —— 空集合等于替 Founder 把开关打开。
+  const registry = await resolveDisabledModels();
+  if ("error" in registry) return registry;
+  if (isModelDisabled(chosenModel, registry.disabled)) {
     return { error: "That model is currently turned off — pick another, or ask an admin to re-enable it." };
   }
 
@@ -227,6 +230,21 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
     const proposal = coworkProposalSchema.safeParse({ kind: p.kind, desiredAspect: p.desiredAspect, desiredDuration: p.desiredDuration, desiredAudio: p.desiredAudio, structuredPrompt: p.structuredPrompt, entityIds: p.entityIds ?? [], variantSel: p.variantSel ?? {} });
     if (!proposal.success) return { error: "This card is no longer valid." };
     if (typeof p.model !== "string") return { error: "This card is missing a model." };
+
+    // #647 T6 修复轮 P1-1 —— 这条入口以前**整道闸都没走**。
+    //
+    // 「Make another」(OttoResult)与「Try again」(OttoPlanCard)都落到这里,而这里只校验
+    // 旧卡的**结构**就把 payload 原样克隆成一张新 GEN_CARD。于是引擎全禁用时,商家照样拿到
+    // 一张写着 credits、点下去必被花钱闸打回的卡 —— 票面③要消灭的那个病,在这条入口原样
+    // 复发。钱确实花不出去,但一张确认不了的卡本身就是一个骗人的承诺。
+    //
+    // 判据与另外三个铸卡入口**同一条**(`suggestModel({ kind, disabled })`),措辞同一份
+    // (`generationUnavailableMessage`)—— 四条路对同一件事只许说一句话。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) return registry; // 读不到开关状态就不许铸卡(P1-3 同一条规矩)
+    if (!suggestModel({ kind: proposal.data.kind, disabled: registry.disabled })) {
+      return { error: generationUnavailableMessage(proposal.data.kind) };
+    }
 
     // Clone the payload verbatim — same model/params/prompt/refs/source. No seed is pinned,
     // so re-generating yields a genuinely different output server-side.

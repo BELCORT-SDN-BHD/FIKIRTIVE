@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, imageAspectHonoured } from "@fikirtive/core";
+import { EXECUTED_SPEC, GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, GEN_VIDEO_MODELS, imageAspectHonoured, type GenVideoModel } from "@fikirtive/core";
 import { createGenerationProvider, FalProvider, MockProvider } from "./index.js";
 
 /** Read a PNG's IHDR width/height — the only way to prove the mock really produced
@@ -174,6 +174,60 @@ describe("#642 imageAspectHonoured() ↔ 适配器实际发出去的东西", () 
     } finally {
       if (prev === undefined) delete process.env.GENERATION_PROVIDER;
       else process.env.GENERATION_PROVIDER = prev;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #647 T6 —— 假菜单的**第五处声明**就住在这个文件里(fal 视频接线表)
+//
+// gen.ts 的注释自述过一条纪律:「加一个模型 = 这里一条 + @fikirtive/generation 的
+// VIDEO_CFG 一条」。删的时候同一条纪律必须反着走 —— 只删菜单不删接线,菜单外的 id
+// 就还留着一条能真的把钱花出去的路。这里不看源码字符串,直接问适配器:给它一个下架
+// 模型,它会不会去付费端点。
+// ---------------------------------------------------------------------------
+describe("#647 T6 fal 视频接线只剩真的那一格", () => {
+  const RETIRED = [
+    "kling", "veo3.1-lite", "ltx-2", "kling-2.6", "kling-3", "veo3.1-fast",
+    "veo3.1", "pixverse-v6", "grok-imagine", "wan-2.5", "hailuo-02", "seedance-2",
+  ] as const;
+
+  it("下架模型在**付费 POST 之前**就被拒(接线表里没有它 = 花不出去这笔钱)", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      for (const model of RETIRED) {
+        await expect(
+          new FalProvider("fal-test").generateVideo({
+            prompt: "p", imageUrl: "", model: model as GenVideoModel, durationSeconds: 5,
+          } as never),
+        ).rejects.toThrow(/no video model mapping/u);
+      }
+      expect(fetchSpy, "下架模型竟然发出了付费请求").not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("在册的每一格都还接得上(删的是假的,没误伤真的)", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      calls.push(String(url));
+      if (String(url).includes("fal.run")) {
+        return { ok: true, status: 200, json: async (): Promise<unknown> => ({ video: { url: "https://fal/x.mp4" } }), text: async (): Promise<string> => "" };
+      }
+      return { ok: true, status: 200, arrayBuffer: async (): Promise<ArrayBuffer> => new Uint8Array([1]).buffer, text: async (): Promise<string> => "" };
+    }));
+    try {
+      for (const model of GEN_VIDEO_MODELS) {
+        const out = await new FalProvider("fal-test").generateVideo({
+          prompt: "p", imageUrl: "", model, durationSeconds: 5,
+        } as never);
+        expect(out.ext).toBe("mp4");
+      }
+      expect(calls.filter((u) => u.includes("fal.run")).length).toBe(GEN_VIDEO_MODELS.length);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });
