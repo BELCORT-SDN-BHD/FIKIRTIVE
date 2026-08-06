@@ -12,7 +12,7 @@ async function run(label, fetchStub, expectCharged) {
   const p = new FalProvider("test-key");
   let threw = null;
   try {
-    await p.generateVideo({ prompt: "x", imageUrl: "http://src/i.png", durationSeconds: 5, model: "kling" });
+    await p.generateVideo({ prompt: "x", imageUrl: "http://src/i.png", durationSeconds: 5, model: "seedance-2-fast" });
   } catch (e) { threw = e; }
   globalThis.fetch = realFetch;
   if (!threw) throw new Error(`${label}: expected a throw, got success`);

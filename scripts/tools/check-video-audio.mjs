@@ -1,4 +1,4 @@
-// Does a real generated (Kling) video carry an audio track? Downloads the most
+// Does a real generated video carry an audio track? Downloads the most
 // recent prod video generation and ffprobes it. Run via:
 //   railway run --service worker -- node scripts/tools/check-video-audio.mjs
 import { interlock } from "./_interlock.mjs";
