@@ -134,3 +134,90 @@ describe("#647 T6 修复轮 P1-3:读得到时行为逐字不变", () => {
     expect(m.refundReservation).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #647 T6 修复轮 r2 P1-R2-1 —— 上一轮的修法自己踩了 exactly-once
+// ---------------------------------------------------------------------------
+//
+// 判官 r2 给出的可达序列(我 r1 的改动亲手打开的):
+//
+//   delivery A 赢下 claim,正在调 provider(行里是 GENERATING + 新鲜心跳);
+//   重复 delivery B 落到同一个 job 上 —— 它在**抢 claim 之前**就去读 registry;
+//   B 的 registry 查询失败 ⇒ 抛 ⇒ 落进通用 catch ⇒ requeue 那一支把状态写回 QUEUED;
+//   而那一行是 **A 的**。于是 A 还在花钱,行却回到 QUEUED,下一次重投再 claim、再调
+//   provider —— **同一单付两次**。重试用尽时更糟:活跃作业被终态化 + 退款。
+//
+// 根子在**顺序**:registry 读取站在原子 claim 前面,于是「读失败」这条路能碰到一行不属于
+// 自己的作业。既有那条「近期活跃 winner 不许被碰」的防线(claim 失败分支只对 STALE 下手)
+// 被整个绕了过去 —— 因为 B 根本没走到 claim 就抛了。
+//
+// 修法(判官给定的最小修向):registry 读取挪到**成功 claim 之后、任何 provider 调用之前**。
+// 抛的还是 PLAIN,但此时这一行已经是本 delivery 抢到的,requeue 自己的行天经地义。
+describe("#647 T6 r2 P1-R2-1:重复 delivery 的 registry 故障不许碰别人的活跃 winner", () => {
+  /** A 已经赢下 claim:行是 GENERATING,心跳新鲜(远没到 stale 窗口)。 */
+  const activeWinner = { ...job, status: "GENERATING", startedAt: new Date() };
+
+  beforeEach(() => {
+    m.genJobFindUnique.mockResolvedValue(activeWinner);
+    // B 抢不到 claim(where status:"QUEUED" 匹配不到);而 staled 那一支
+    // (where status:"GENERATING" + startedAt < 阈值)也匹配不到 —— 这行是新鲜的。
+    // 任何**别的** updateMany 都会被下面的断言抓住。
+    m.genJobUpdateMany.mockImplementation(async (args: { where?: { status?: unknown } }) => {
+      const status = args?.where?.status;
+      if (status === "QUEUED") return { count: 0 };       // B 输掉 claim
+      if (status === "GENERATING") return { count: 0 };   // 不是 stale,不许 fail-close
+      return { count: 0 };
+    });
+    m.workerDisabledModels.mockRejectedValue(new Error("connection terminated unexpectedly"));
+  });
+
+  it("绝不把活跃 winner 的状态写回 QUEUED(写回去 = 下一次重投再花一次钱)", async () => {
+    await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
+    const requeued = m.genJobUpdateMany.mock.calls.filter((c) => c[0]?.data?.status === "QUEUED");
+    expect(requeued, "把别人的活跃作业打回了 QUEUED —— 这就是双花那条路").toEqual([]);
+  });
+
+  it("绝不把活跃 winner 终态化,也绝不退它的款", async () => {
+    await handleGen({ genJobId: "g1" }, GEN_RETRY_LIMIT).catch(() => undefined);
+    const failed = m.genJobUpdateMany.mock.calls.filter((c) => c[0]?.data?.status === "FAILED");
+    expect(failed).toEqual([]);
+    expect(m.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("零 provider 调用(B 这一趟本来就不该花钱)", async () => {
+    await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
+    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.generateImages).not.toHaveBeenCalled();
+  });
+
+  it("输掉 claim 的 delivery 根本不去读 registry —— 顺序对了,这条自然成立", async () => {
+    await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
+    expect(m.workerDisabledModels).not.toHaveBeenCalled();
+  });
+});
+
+// 顺序改了之后,「赢下 claim 的那个 delivery 读失败」这条路必须原样保留 r1 的语义:
+// 它动的是**自己**抢到的行,requeue 天经地义。
+describe("#647 T6 r2:赢下 claim 之后读失败 —— 仍然是自己的行,仍然 requeue", () => {
+  beforeEach(() => {
+    m.genJobFindUnique.mockResolvedValue(job); // QUEUED
+    m.genJobUpdateMany.mockResolvedValue({ count: 1 }); // 赢下 claim
+    m.workerDisabledModels.mockRejectedValue(new Error("connection terminated unexpectedly"));
+  });
+
+  it("requeue 自己的行、零 provider 调用、不退款", async () => {
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
+    const requeued = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "QUEUED");
+    expect(requeued).toBeTruthy();
+    expect(m.generateVideo).not.toHaveBeenCalled();
+    expect(m.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("registry 是在 claim **之后**才被读的(顺序本身就是那条防线)", async () => {
+    await handleGen({ genJobId: "g1" }, 0).catch(() => undefined);
+    expect(m.workerDisabledModels).toHaveBeenCalled();
+    const claimCall = m.genJobUpdateMany.mock.invocationCallOrder[0];
+    const registryCall = m.workerDisabledModels.mock.invocationCallOrder[0];
+    expect(claimCall, "claim 必须先发生").toBeLessThan(registryCall!);
+  });
+});
