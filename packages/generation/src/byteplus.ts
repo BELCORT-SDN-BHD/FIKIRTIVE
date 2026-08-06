@@ -50,12 +50,22 @@ export class BytePlusProvider implements GenerationProvider {
           throw new Error(`generation provider image request failed (${res.status})`);
         } // pre-charge (nothing billed) — stays PLAIN so the worker can retry
         // res.ok ⇒ billed; a failure past here is a CHARGED failure (a retry would re-bill).
-        const data = (await res.json()) as { data?: { url: string }[] };
-        const url = data.data?.[0]?.url;
-        if (!url) throw chargedError("generation provider image response had no result URL");
-        const r = await fetch(url);
-        if (!r.ok) throw chargedError(`image download → ${r.status}`);
-        return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
+        // EVERY way of dying past this line is wrapped, not just the ones with a status code:
+        // a malformed receipt (`res.json()` throwing), a download whose connection drops
+        // (`fetch` rejecting outright), a body that stops mid-stream (`arrayBuffer()` throwing).
+        // An unmarked escape here reads to the batch logic below as a pre-charge failure and
+        // gets retried — re-billing an image we already paid for.
+        try {
+          const data = (await res.json()) as { data?: { url: string }[] };
+          const url = data.data?.[0]?.url;
+          if (!url) throw chargedError("generation provider image response had no result URL");
+          const r = await fetch(url);
+          if (!r.ok) throw chargedError(`image download → ${r.status}`);
+          return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "png" } as GeneratedImage;
+        } catch (e) {
+          if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
+          throw chargedError(`generation provider billed but the image result was unusable (${e instanceof Error ? e.message : String(e)})`);
+        }
       }),
     );
     const ok = results.flatMap((s) => (s.status === "fulfilled" ? [s.value] : []));
@@ -131,8 +141,17 @@ export class BytePlusProvider implements GenerationProvider {
       console.error("generation provider video submit failed:", { model, status: sub.status, detail });
       throw new Error(`generation provider video submit failed (${sub.status})`);
     } // pre-charge
-    const taskId = ((await sub.json()) as { id?: string }).id;
-    if (!taskId) throw new Error("generation provider video submit returned no task id");
+    // submit returned 2xx ⇒ the engine ACCEPTED the order. From here on we can no longer prove
+    // the task was never created, so an unreadable receipt is "outcome unknown", not "nothing
+    // happened" (#657). PLAIN here would requeue and submit a SECOND task against the same
+    // merchant request — two tasks, two charges. Charged ⇒ terminal, no retry.
+    let taskId: string | undefined;
+    try {
+      taskId = ((await sub.json()) as { id?: string }).id;
+    } catch (e) {
+      throw chargedError(`generation provider video submit receipt was unreadable (${e instanceof Error ? e.message : String(e)})`);
+    }
+    if (!taskId) throw chargedError("generation provider video submit returned no task id");
     // task created ⇒ billed on success. Poll inside the provider (the worker just awaits).
     const startedAt = Date.now();
     // F06 — the reconciliation window, and why it is the size it is.
@@ -174,11 +193,20 @@ export class BytePlusProvider implements GenerationProvider {
         continue; // transient — poll again
       }
       if (t.status === "succeeded") {
+        // The clip exists and IS billed. Every way of failing to get it into our hands past this
+        // line is a charged failure — including the ones that never produce a status code:
+        // a download whose connection drops (`fetch` rejecting), a body that stops mid-stream
+        // (`arrayBuffer()` throwing). PLAIN here would requeue and generate a SECOND paid clip.
         const url = t.content?.video_url;
         if (!url) throw chargedError("generation provider video response had no result URL");
-        const r = await fetch(url);
-        if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
-        return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
+        try {
+          const r = await fetch(url);
+          if (!r.ok) throw chargedError(`generation provider video download failed (${r.status})`);
+          return { bytes: new Uint8Array(await r.arrayBuffer()), ext: extFromUrl(url) ?? "mp4" };
+        } catch (e) {
+          if (e instanceof Error && (e as { charged?: boolean }).charged) throw e; // already marked
+          throw chargedError(`generation provider video download failed (${e instanceof Error ? e.message : String(e)})`);
+        }
       }
       // #661 — the three terminal statuses in which the ENGINE ITSELF reports that no video was
       // produced. Official pricing page (docs.byteplus.com/en/docs/ModelArk/1544106, last updated

@@ -232,6 +232,56 @@ describe("generateVideo (Seedance, async)", () => {
       expect(err.message).toMatch(/download failed \(500\)/);
       expect(err.charged).toBe(true);
     });
+
+    // 判官 r1 P1-1:上面那条只盖住「下载返回非 2xx」。片子已经出了之后,下载还有两种
+    // **不返回任何状态码**的死法 —— 连接直接断(fetch 自己 reject)、以及连上了但读流中断
+    // (arrayBuffer 抛)。这两种此前原样 PLAIN 逸出 ⇒ worker 重投 ⇒ 旧片已计费,再出一支
+    // 再计一次费。钱已经花了这件事,和它是怎么死的无关。
+    it("succeeded 后下载连接直接断(fetch 自己 reject,连状态码都没有)", async () => {
+      stubFetch((url) => {
+        if (url.endsWith("/contents/generations/tasks")) return jsonRes({ id: "cgt-neterr" });
+        if (url.includes("/tasks/cgt-neterr")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+        throw new TypeError("fetch failed: ECONNRESET");
+      });
+      const err = await rejection(call);
+      expect(err.charged).toBe(true);
+    });
+    it("succeeded 后读流中断(arrayBuffer 抛,字节没拿全)", async () => {
+      stubFetch((url) => {
+        if (url.endsWith("/contents/generations/tasks")) return jsonRes({ id: "cgt-stream" });
+        if (url.includes("/tasks/cgt-stream")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
+        return { ok: true, status: 200, arrayBuffer: async () => { throw new Error("stream aborted mid-body"); } };
+      });
+      const err = await rejection(call);
+      expect(err.charged).toBe(true);
+    });
+
+    // 判官 r1 P1-2:submit 已经 2xx —— 引擎收单了。回执读不出来(JSON 损坏 / 没有 task id)
+    // 不等于任务没建成;重投会再开一个任务、再计一次费。这是标准的「结果不明」,必须 charged。
+    it("submit 2xx 但回执 JSON 损坏(收单了,只是回执读不出来)", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected end of JSON input"); }, text: async () => "{" }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.charged).toBe(true);
+    });
+    it("submit 2xx 但回执里没有 task id(同上:无法证明任务没建成)", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? jsonRes({})
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.message).toMatch(/no task id/);
+      expect(err.charged).toBe(true);
+    });
+    // 反向:submit 本身非 2xx = 引擎没收单 = 一分没花,必须留在 PLAIN(可重投)。
+    it("submit 非 2xx 仍是 PLAIN(预扣失败,引擎没收单)", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 429, text: async () => "rate limited" }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.message).toContain("429");
+      expect(err.charged).toBeFalsy();
+    });
   });
   it("generateVideo includes a reference_video content part when refVideoUrl is set", async () => {
     let submitBody: any;
@@ -312,15 +362,41 @@ describe("generate (Seedream image, sync)", () => {
       .rejects.toThrow(/usable/);
   });
 
-  // #661 反向钉板(图像侧):POST 成功 ⇒ 已计费。之后响应里没有图片 URL,是「出了但读不到」,
-  // 不是「没出」—— 仍按已扣终结,绝不重投。
-  it("throws chargedError when a billed image response carries no result URL (#661 边界)", async () => {
-    stubFetch((url) => url.endsWith("/images/generations") ? jsonRes({ data: [] }) : bytesRes());
-    let err: any;
-    try {
-      await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "seedream" });
-    } catch (e) { err = e; }
-    expect((err as any).charged).toBe(true);
+  // #661 反向钉板(图像侧):POST 成功 ⇒ 已计费。之后**任何**死法都是「出了但我们没拿到」,
+  // 不是「没出」—— 仍按已扣终结,绝不重投。判官 r1 P1-1:此前只有「无 URL」「下载非 2xx」
+  // 两条盖住,json 解析异常 / 下载连接断 / 读流中断三种都原样 PLAIN 逸出,会被批级逻辑当成
+  // 纯预扣失败重投、再计一次费。
+  describe("#661 边界(图像侧):POST 成功之后的每一种死法都必须 charged", () => {
+    async function generateOnce() {
+      let err: any;
+      try {
+        await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count: 1, model: "seedream" });
+      } catch (e) { err = e; }
+      return err;
+    }
+    it("响应里没有图片 URL(出了但读不到)", async () => {
+      stubFetch((url) => url.endsWith("/images/generations") ? jsonRes({ data: [] }) : bytesRes());
+      expect((await generateOnce()).charged).toBe(true);
+    });
+    it("回执 JSON 解析异常(已计费,回执读不出来)", async () => {
+      stubFetch((url) => url.endsWith("/images/generations")
+        ? { ok: true, status: 200, json: async () => { throw new SyntaxError("Unexpected end of JSON input"); }, text: async () => "{" }
+        : bytesRes());
+      expect((await generateOnce()).charged).toBe(true);
+    });
+    it("结果下载连接直接断(fetch 自己 reject,连状态码都没有)", async () => {
+      stubFetch((url) => {
+        if (url.endsWith("/images/generations")) return jsonRes({ data: [{ url: "https://tos/img1.png" }] });
+        throw new TypeError("fetch failed: ECONNRESET");
+      });
+      expect((await generateOnce()).charged).toBe(true);
+    });
+    it("结果读流中断(arrayBuffer 抛,字节没拿全)", async () => {
+      stubFetch((url) => url.endsWith("/images/generations")
+        ? jsonRes({ data: [{ url: "https://tos/img1.png" }] })
+        : { ok: true, status: 200, arrayBuffer: async () => { throw new Error("stream aborted mid-body"); } });
+      expect((await generateOnce()).charged).toBe(true);
+    });
   });
 
   it("sets watermark:false on the Ark image request (F40 — paying users must not get watermarked images)", async () => {
