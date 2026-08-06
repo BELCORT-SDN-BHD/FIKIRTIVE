@@ -174,8 +174,11 @@ describe("margin floor — every sellable video combo keeps ≥45% gross margin 
             checked += 1;
             // 收费低于成本(卖一单亏一单)对任何组合都是硬红,名单也救不了。
             expect(priceUsd - costUsd, `${detail} —— 收费低于成本`).toBeGreaterThan(0);
-            // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上(720p 10s 档,
-            // #129 按 Ark 实测成本核定),0.63/1.4 在浮点里是 0.44999999999999996。
+            // 1e-9 = IEEE754 容差:定价可以精确压在 45.0% 地板上,而正好压住的那一档在浮点里
+            // 会落到地板下一个 ulp。#644 裁决(2026-08-06)后 720p 两档是从上方贴着地板定价的
+            // ——10s 22cr = $2.20 对成本 $1.2096、5s 11cr = $1.10 对成本 $0.6048,都是 45.0%
+            // ——所以眼下没有一档真的依赖这个容差;「正好压在地板上」的情形由
+            // scripts/__tests__/check-margin-floor.test.mjs 的夹具继续守着。
             if (pendingRulingFor(`video:${model}:${seconds}:${resolution}`)) {
               expect(margin, `${detail} —— 已清地板,请把它从待裁决名单删掉`).toBeLessThan(MARGIN_FLOOR - 1e-9);
             } else {
