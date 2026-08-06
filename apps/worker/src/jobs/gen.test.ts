@@ -235,7 +235,10 @@ describe("handleGen VIDEO — 尾帧无首帧(#646 P0-1 钱缝纵深)", () => {
     expect(m.chatMessageCreate.mock.calls[0]![0].data).toMatchObject({ kind: "TURN_ERROR", genJobId: "g1" });
   });
 
-  it("首帧在场时这道守卫不挡路 —— 尾帧照常解析并随请求进引擎", async () => {
+  // #663 P2-2:这一条钉的是**显式首帧**(sourceGenerationId,Gen 空间上传→动画)那条路。
+  // 上一版的描述让人以为它顺带覆盖了分镜(shotId)取首帧那条路 —— 没有,shotId 在这里是
+  // null,那条分支的 worker 级覆盖由下面 describe 单独补。
+  it("显式首帧(sourceGenerationId)在场时这道守卫不挡路 —— 尾帧照常解析并随请求进引擎", async () => {
     m.genJobFindUnique.mockResolvedValue({ ...tailNoSourceJob, sourceGenerationId: "gen_src" });
     // 首帧与尾帧两次 findFirst 都命中
     m.generationFindFirst.mockResolvedValue({ id: "gen_x", asset: { ownerId: "o1", contentHash: "a".repeat(64), ext: "png" } });
@@ -250,6 +253,75 @@ describe("handleGen VIDEO — 尾帧无首帧(#646 P0-1 钱缝纵深)", () => {
 
     expect(m.generateVideo).toHaveBeenCalledTimes(1);
     expect(m.generateVideo.mock.calls[0]![0].tailImageUrl).toBe("https://signed/frame.png");
+  });
+});
+
+// ── #663 P2-2:分镜动画(shotId)取首帧 + 尾帧,worker 级真路覆盖 ──────────────────
+//
+// 商家在故事板上点「动画」时,首帧不是他挑的某张图,而是这一格分镜**最新那版**成品图 ——
+// worker 从 shotId 反查(gen.ts 的 `else if (job.shotId)` 分支)。上面那条只走
+// sourceGenerationId,这条分支此前在 worker 这一层一个测试都没有:它一旦断了,尾帧会被
+// 「尾帧必须有首帧」那道守卫误伤成失败退款,或者更糟 —— 悄悄降级成一支普通视频照常收钱。
+describe("handleGen VIDEO — 分镜首帧(shotId)+ 尾帧(#663 P2-2)", () => {
+  const shotTailJob = {
+    ...job,
+    referenceVideoGenerationId: null,
+    sourceGenerationId: null,  // 没有显式首帧 —— 首帧只能从分镜格里反查
+    shotId: "shot_1",
+    tailGenerationId: "gen_tail",
+  };
+
+  // 带 shotId 的任务比别的任务多两处 prisma.shot:开跑前的分镜归属闸,和出片后的回挂。
+  // 这两处别的用例都碰不到(它们的 shotId 都是 null),所以只在本 describe 里备好。
+  beforeEach(() => {
+    m.prisma.shot = { findFirst: vi.fn(async () => ({ id: "shot_1" })), updateMany: vi.fn(async () => ({ count: 1 })) };
+    m.prisma.generation.findMany = vi.fn(async () => []);
+  });
+
+  it("shotId 反查到分镜最新成品图当首帧 ⇒ 守卫不挡路,尾帧真的随请求进引擎", async () => {
+    m.genJobFindUnique.mockResolvedValue(shotTailJob);
+    // 两次 findFirst:① 分镜最新静态图(首帧) ② 尾帧
+    m.generationFindFirst
+      .mockResolvedValueOnce({ id: "gen_shot_still", asset: { ownerId: "o1", contentHash: "b".repeat(64), ext: "png" } })
+      .mockResolvedValueOnce({ id: "gen_tail", asset: { ownerId: "o1", contentHash: "c".repeat(64), ext: "png" } });
+    const storageModule = await import("../storage.js");
+    (storageModule.storage as unknown as { presignedGet: (k: string, t: number) => Promise<string> }).presignedGet =
+      vi.fn(async (key: string) => (key.includes("b".repeat(64)) ? "https://signed/shot-first.png" : "https://signed/tail.png"));
+    (storageModule.storage as unknown as { put: (o: string, b: Uint8Array, e: string) => Promise<{ contentHash: string }> }).put =
+      vi.fn(async () => ({ contentHash: "outhash" }));
+    m.generateVideo.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), ext: "mp4" });
+    m.prisma.asset = { upsert: vi.fn(async () => ({ id: "asset1" })) };
+    m.prisma.generation.create = vi.fn(async () => ({ id: "gen_out1" }));
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    // 走的确实是 shotId 那条分支(而不是被当成 sourceGenerationId 路):
+    // 查询按 shotId 过滤、按 version 倒序取最新那一版。
+    const firstQuery = m.generationFindFirst.mock.calls[0]![0];
+    expect(firstQuery.where).toMatchObject({ shotId: "shot_1", deletedAt: null });
+    expect(firstQuery.orderBy).toEqual({ version: "desc" });
+
+    // 首帧与尾帧都到了引擎手上 —— 尾帧没有被守卫误伤,也没有被悄悄消隐。
+    expect(m.generateVideo).toHaveBeenCalledTimes(1);
+    const arg = m.generateVideo.mock.calls[0]![0];
+    expect(arg.imageUrl).toBe("https://signed/shot-first.png");
+    expect(arg.tailImageUrl).toBe("https://signed/tail.png");
+    // 没有误伤:不该有失败退款,商家拿到的是成品不是道歉。
+    expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED")).toBeFalsy();
+    expect(m.refundReservation).not.toHaveBeenCalled();
+  });
+
+  it("分镜里还没有任何成品图 ⇒ 一分不花、失败退款(重投也长不出首帧)", async () => {
+    m.genJobFindUnique.mockResolvedValue(shotTailJob);
+    m.generationFindFirst.mockResolvedValue(null); // 这一格还没出过图
+
+    await handleGen({ genJobId: "g1" }, 0);
+
+    expect(m.generateVideo).not.toHaveBeenCalled();
+    const updateCall = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(updateCall).toBeTruthy();
+    expect(updateCall![0].data.error).toMatch(/no source image to animate/);
+    expect(m.refundReservation).toHaveBeenCalledWith(expect.anything(), { orgId: "o1", refId: "g1" });
   });
 });
 
@@ -311,6 +383,24 @@ describe("handleGen — provider rejection fail-closed (EP-A4 route ①)", () =>
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data.spent).toBe(false); // a free pre-charge failure, told apart from a paid one
     expect(m.refundReservation).toHaveBeenCalledTimes(1);
+    expect(m.settleCredits).not.toHaveBeenCalled();
+  });
+
+  // ── #661 幽灵成本清零:引擎说 failed,花费审计里就必须是零 ────────────────────────
+  // 官方只对成功出片收费,所以适配器把 failed/cancelled 按 PLAIN 上抛(见
+  // packages/generation/src/byteplus.test.ts)。这一条钉的是那个改动在**钱路尽头**的结果:
+  // 终态 FAILED 不写 spent、不写 spentUsd —— 引擎没收的钱,不进我们的成本账。
+  it("#661 引擎报 failed(未计费)⇒ 终态既不记 spent 也不记 spentUsd(零幽灵 COGS)", async () => {
+    m.genJobFindUnique.mockResolvedValue({ ...job, referenceVideoGenerationId: null });
+    m.generateVideo.mockRejectedValue(new Error("generation provider video task failed")); // PLAIN:无 charged 标记
+
+    await expect(handleGen({ genJobId: "g1" }, GEN_RETRY_LIMIT)).rejects.toThrow(/task failed/);
+
+    const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    expect(failedUpdate).toBeTruthy();
+    expect(failedUpdate![0].data.spent).toBe(false);
+    expect(failedUpdate![0].data.spentUsd).toBeUndefined(); // 一分成本都不许记
+    expect(m.refundReservation).toHaveBeenCalledTimes(1); // 商家照旧全额退款
     expect(m.settleCredits).not.toHaveBeenCalled();
   });
 });
