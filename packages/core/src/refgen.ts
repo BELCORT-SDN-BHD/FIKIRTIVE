@@ -34,9 +34,16 @@ export const MAX_REFGEN_PROMPT = 2000;
  *  identity anchor, VARIANT single i2i look from the base. */
 export const REFGEN_MODES = ["REFSHEET", "BASE", "VARIANT"] as const;
 export type RefGenMode = (typeof REFGEN_MODES)[number];
-/** Per-image price hint shown at the point of spend (fal Seedream 4.5).
- *  Display only — billing is a later slice. */
-export const REFGEN_PRICE_USD_PER_IMAGE = 0.04;
+/**
+ * RECORD-ONLY 参考图成本记账基准(RefGenJob.spentUsd + 毛利报表)—— **不是收费**。
+ * 参考图一律按 `pricedRefgenCredits` 收 1 credit/张,与这个数无关。
+ *
+ * $0.035/张,与正片图片同一张账单基数(按张计价,不分尺寸比例)。
+ * 来源 https://docs.byteplus.com/en/docs/ModelArk/Pricing(2026-08-05 核)。
+ * 旧值 $0.04 是 fal 基数占位,高记约 14%;#644 改真。刻意与 `GEN_PRICE_USD_PER_IMAGE`
+ * 保持**各自独立**的常量:两条链路将来可能换不同模型。
+ */
+export const REFGEN_PRICE_USD_PER_IMAGE = 0.035;
 
 /** What the web action accepts. Conditioning is derived server-side from the
  *  entity, so it is deliberately absent here (D19 trust boundary). */

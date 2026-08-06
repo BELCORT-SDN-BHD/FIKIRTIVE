@@ -5,6 +5,7 @@
  * closed (failClosedWithRefund) and the provider must NEVER be called.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { GEN_PRICE_USD_PER_IMAGE } from "@fikirtive/core/gen";
 
 const m = vi.hoisted(() => {
   const genJobFindUnique = vi.fn();
@@ -433,7 +434,9 @@ describe("handleGen — count 2-4 exactly-count guard (D-035 / issue #311)", () 
     const failedUpdate = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failedUpdate).toBeTruthy();
     expect(failedUpdate![0].data).toMatchObject({ status: "FAILED", spent: true });
-    expect(failedUpdate![0].data.spentUsd).toBeCloseTo(0.16); // frozen count=4 COGS remains auditable
+    // frozen count=4 COGS remains auditable. Derived from the constant, not a literal, so a
+    // COGS re-basing (#644: $0.04 → $0.035/张) can never leave a stale number asserted here.
+    expect(failedUpdate![0].data.spentUsd).toBeCloseTo(GEN_PRICE_USD_PER_IMAGE * 4);
     expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeFalsy();
     expect(m.genJobUpdateMany.mock.calls.some((c) => Array.isArray(c[0]?.data?.generationIds))).toBe(false);
     expect(m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "QUEUED")).toBeFalsy();

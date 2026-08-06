@@ -10,6 +10,7 @@
  */
 import {
   GEN_PRICE_USD_PER_IMAGE,
+  REFERENCE_VIDEO_COGS_USD,
   videoPriceUsd,
   videoDefaults,
   type GenVideoModel,
@@ -31,7 +32,10 @@ export interface GenSpendInput {
  *  provider call — never NaN). Image: flat per-image × count. */
 export function genSpentUsd(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
-    if (job.model === "seedance-2-fast" && job.referenceVideoGenerationId) return 0.85;
+    // #644 记账真相:整段参考视频的 COGS 基准搬去 gen.ts 与其它成本基准同住,并按官方
+    // token 公式重算($0.85 → $0.78408)。这是**记账**,不是收费 —— 收费仍是下面
+    // pricedGenCredits 里的 REFERENCE_VIDEO_CREDITS(16cr),本次一格没动。
+    if (job.model === "seedance-2-fast" && job.referenceVideoGenerationId) return REFERENCE_VIDEO_COGS_USD;
     const d = videoDefaults(job.model as GenVideoModel);
     return videoPriceUsd(job.model as GenVideoModel, {
       seconds: job.videoOptions?.seconds ?? d.seconds,
