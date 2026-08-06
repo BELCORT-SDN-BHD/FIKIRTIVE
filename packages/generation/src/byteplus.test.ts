@@ -143,6 +143,13 @@ describe("generateVideo (Seedance, async)", () => {
     expect(err.charged).toBeFalsy(); // pre-spend
     expect(calls).toHaveLength(0); // never hit the API
   });
+  it("an end frame with no start frame is refused BEFORE any submit — never silently dropped", async () => {
+    const calls: string[] = [];
+    stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
+    await expect(new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-fast" }))
+      .rejects.toThrow(/needs a start image/);
+    expect(calls).toHaveLength(0); // pre-spend
+  });
   it("an expired task is a PLAIN failure (terminated before any output ⇒ nothing billed, safe to retry)", async () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
       ? jsonRes({ status: "expired" })

@@ -633,13 +633,14 @@ describe("propose requires-gate + goal", () => {
 describe("#580 card spec chips — engine-free by construction", () => {
   const ENGINE_WORDS = /seedance|seedream|veo|kling|ltx|pixverse|grok|wan|hailuo/i;
 
-  it("video: specChips carry shape, length and quality — and no engine name", () => {
+  it("video: specChips carry shape, length, quality and sound — and no engine name", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a 5s clip", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     );
-    expect(cardPayload.specChips).toEqual(["16:9", "5s", "720p"]);
+    // #646 T5：声音接通执行层后多出这一格,措辞仍然不带引擎名。
+    expect(cardPayload.specChips).toEqual(["16:9", "5s", "720p", "With sound"]);
     expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 

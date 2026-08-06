@@ -203,7 +203,7 @@ export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound:
   "kling-2.6":       { label: "Kling 2.6 Pro",     sound: true, tail: true },
   "kling-3":         { label: "Kling 3.0 Pro",     sound: true, tail: true },
   "veo3.1-fast":     { label: "Veo 3.1 Fast",      sound: true, tail: true },
-  "seedance-2-fast": { label: "Seedance 2.0 Fast", sound: true, tail: false }, // BytePlus i2v = start-frame only (no first→last end frame)
+  "seedance-2-fast": { label: "Seedance 2.0 Fast", sound: true, tail: true }, // #646 T5: first+last frames ARE supported (two role-tagged frames in one task)
   "veo3.1":          { label: "Veo 3.1",           sound: true, tail: true },
   "pixverse-v6":     { label: "PixVerse V6",       sound: true,  tail: false }, // /transition end-frame deferred (params unverified)
   "grok-imagine":    { label: "Grok Imagine",      sound: false, tail: false },
