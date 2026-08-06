@@ -104,10 +104,17 @@ export const SEEDANCE_DISPLAY_CREDITS_PER_10S: Record<string, number> = { "480p"
  * 一档视频的显示 credits。**返回 null = 这一档不按秒计价**,调用方必须落到护栏价,
  * 有两种情形:
  *   ① 分辨率不在按秒表上(1080p / 未知);
- *   ② 秒数不是一个正数(0、负数、NaN —— 只可能来自畸形/历史 JSON 行)。
+ *   ② 秒数不是一个**正整数**(0、负数、NaN、以及 0.4 / 4.4 这类非整数)。
  *
- * ② 必须**fail closed**:seconds=0 若按公式算是 0 credits,那就是一条免费的付费任务。
- * 这里宁可回到 16cr 护栏(与 #645 之前那条路给畸形行的收费一致),也绝不贱卖。
+ * ② 必须 **fail closed**,而且判据是「整数」不是「正数」——
+ * **价格只定义在 Founder 裁过的那 12 个整数格上,格外一律护栏,绝不 round**。
+ * round 等于替 Founder 发明价格:0.4s 会 round 成 0 ⇒ 0 credits,而 `reserveCredits`
+ * 对 cost<=0 直接跳过(packages/db/src/credits.ts),那就是一条**免费**的付费任务;
+ * 4.4s 会 round 成 4 ⇒ 9cr,一个从没被裁过的价。
+ *
+ * 新请求那一侧有 zod `.int()` 拦着,但这个函数同时被**历史 JSON 行**读到
+ * (worker 结算后重算展示价:apps/worker/src/jobs/gen.ts 的 GEN_RESULT 两处),
+ * 那条路上没有 zod。所以防线必须长在钱函数自己身上。
  *
  * 纯整数运算:seconds 与 per10s 都是整数,+9 再整除 10 就是向上取整,不经过任何小数 ——
  * 浮点差一格 credit 的路在这里根本不存在。
@@ -115,8 +122,8 @@ export const SEEDANCE_DISPLAY_CREDITS_PER_10S: Record<string, number> = { "480p"
 export function seedanceDisplayCredits(resolution: string, seconds: number): number | null {
   const per10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution];
   if (per10s === undefined) return null;
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  return Math.floor((Math.round(seconds) * per10s + 9) / 10);
+  if (!Number.isInteger(seconds) || seconds <= 0) return null;
+  return Math.floor((seconds * per10s + 9) / 10);
 }
 
 /** 不按秒计价的兜底档:1080p(Fast 给不了,留作护栏)与任何未知分辨率都收 16cr。

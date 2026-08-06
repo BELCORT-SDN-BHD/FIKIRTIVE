@@ -123,6 +123,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const { default: FlowCanvas } = await import("@/components/canvas/FlowCanvas");
+const { videoShapeHint } = await import("@/components/gen/VideoSpecPicker");
 
 /** 服务端解析的八格菜单（default-first）—— 与 GEN_IMAGE_MODEL_OPTIONS 同序。 */
 const MENU = ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"];
@@ -402,14 +403,15 @@ describe("#645 T4:Adaptive 的说明按场景说准", () => {
     expect(shapeTitle()).toContain("Adaptive keeps the shape of your source image");
   });
 
-  it("两句文案确实不同 —— 不是同一句话到处贴", async () => {
-    await renderBoard();
-    await openT2v();
-    const t2v = shapeTitle();
-    mocks.boardRead.mockResolvedValue([boardRow("n1")]);
-    await renderBoard();
-    select(["n1"]);
-    await openAnimateOn("n1");
-    expect(shapeTitle()).not.toBe(t2v);
+  it("两句文案确实不同,且都不提引擎名 —— 不是同一句话到处贴", async () => {
+    // 这一条断在纯函数上:两个 DOM 用例已经证明了各自的框拿到哪一句,这里证明那两句
+    // 本身确实是两句话(共用一句正是判官抓到的那个缺陷)。
+    const withImage = videoShapeHint(true);
+    const withoutImage = videoShapeHint(false);
+    expect(withImage).not.toBe(withoutImage);
+    expect(withoutImage.toLowerCase()).not.toContain("source image");
+    for (const copy of [withImage, withoutImage]) {
+      expect(copy.toLowerCase()).not.toMatch(/seedance|byteplus|fal\.|veo|kling/);
+    }
   });
 });

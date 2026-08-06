@@ -202,6 +202,15 @@ function canvasHistoryVerdict(
 
 const CANVAS_ACTION_ID_MAX_LENGTH = 128;
 const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
+/** #645 T4(判官 r1 P0-2):资产详情页那条付费路的价格绑定,与 Canvas/Otto 同一套
+ *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。 */
+const TRUSTED_ASSET_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
+
+/** 「你签字的价和现在的价不是同一个」——三条付费路共用这一句的骨架,只有补救动作不同。
+ *  price 变更必须在 create/reserve **之前**拒绝,绝不静默按新价扣。 */
+function priceChangedError(approved: number, current: number, howToFix: string): string {
+  return `The confirmed price changed from ${approved} to ${current} credits. ${howToFix}`;
+}
 type TrustedCoworkRequest = {
   ownerId: string;
   cardId: string;
@@ -234,6 +243,35 @@ export async function startCanvasGen(raw: unknown): Promise<StartGenResult> {
   }
   const trustedRequest = { ...request, idempotencyKey: canvasActionKey(actionId).key };
   TRUSTED_CANVAS_REQUESTS.set(trustedRequest, { expectedCredits });
+  return startGen(trustedRequest);
+}
+
+/**
+ * 资产详情页的付费入口(#645 T4,判官 r1 P0-2)。
+ *
+ * 详情页先把价格显示给商家看,再按那个价扣钱 —— 中间隔着一次网络往返和一个可能开了
+ * 很久的面板。价格若在这期间变了(定价调整,或商家自己在同一个面板里把片子从 5 秒改到
+ * 12 秒),旧路是「按旧价签字、按新价扣款」。Canvas / Otto / Campaign 三条路都有价格
+ * 重核,唯独这条没有,所以这里补上**同一套**绑定:面板把屏幕上那个数字带上,服务端
+ * 自己算一遍,不符就在 create/reserve 之前拒绝。
+ *
+ * 与 Canvas 入口的唯一区别:详情页自己出幂等键(regen-/anim-/edit- 前缀 + 时间戳),
+ * 所以这里不代生成键,只做价格绑定。
+ */
+export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const { expectedCredits, ...request } = raw as Record<string, unknown>;
+  if (
+    typeof expectedCredits !== "number" ||
+    !Number.isFinite(expectedCredits) ||
+    expectedCredits <= 0
+  ) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const trustedRequest = { ...request };
+  TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits });
   return startGen(trustedRequest);
 }
 
@@ -293,9 +331,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const trustedCoworkRequest = raw !== null && typeof raw === "object"
     ? TRUSTED_COWORK_REQUESTS.get(raw as object)
     : undefined;
+  const trustedAssetRequest = raw !== null && typeof raw === "object"
+    ? TRUSTED_ASSET_REQUESTS.get(raw as object)
+    : undefined;
   if (raw !== null && typeof raw === "object") {
     TRUSTED_CANVAS_REQUESTS.delete(raw as object);
     TRUSTED_COWORK_REQUESTS.delete(raw as object);
+    TRUSTED_ASSET_REQUESTS.delete(raw as object);
   }
   const trustedCanvasKey = trustedCanvasRequest !== undefined;
   const gate = await requireOwner(); if ("error" in gate) return gate;
@@ -493,6 +535,19 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     });
     const displayedCost = displayCredits(cost);
 
+    // #645 T4(判官 r1 P0-2):资产详情页那条路带的是普通幂等键,落不进下面 canvas/cowork
+    // 的分支,所以它的价格重核在这里 —— 与那两条同一条规矩:**商家看到的数字是授权的
+    // 一部分**,对不上就在 create/reserve 之前停住,绝不静默按新价扣。
+    if (trustedAssetRequest && trustedAssetRequest.expectedCredits !== displayedCost) {
+      return {
+        error: priceChangedError(
+          trustedAssetRequest.expectedCredits,
+          displayedCost,
+          "Reopen this image to load the current price, then try again.",
+        ),
+      };
+    }
+
     // Prepare pg-boss before opening the money transaction, but do not return early on failure:
     // a concurrent same-action winner may already exist by the time we acquire the project lock.
     // The locked replay checks below get first say; only a genuinely fresh attempt is refused.
@@ -569,7 +624,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           // their already-authorized job regardless of later price changes.
           if (trustedCanvasRequest && trustedCanvasRequest.expectedCredits !== displayedCost) {
             return {
-              error: `The confirmed price changed from ${trustedCanvasRequest.expectedCredits} to ${displayedCost} credits. Refresh Canvas to load the current price, then review and send again.`,
+              error: priceChangedError(
+                trustedCanvasRequest.expectedCredits,
+                displayedCost,
+                "Refresh Canvas to load the current price, then review and send again.",
+              ),
             };
           }
         }

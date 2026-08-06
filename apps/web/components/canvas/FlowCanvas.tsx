@@ -1925,6 +1925,7 @@ export default function FlowCanvas({
                 menu={videoSpecMenu.menu}
                 onChange={setAnimateSpec}
                 disabled={videoSubmitting}
+                hasSourceImage
               />
             )}
             <div className="flex gap-2">

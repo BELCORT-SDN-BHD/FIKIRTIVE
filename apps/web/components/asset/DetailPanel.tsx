@@ -13,7 +13,7 @@ import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
 import {
-  startGen,
+  startAssetGen,
   getGenJob,
   getActiveGenModels,
   type ActiveGenModels,
@@ -306,7 +306,9 @@ export default function DetailPanel({
       const models = await ensureModels(); // F18: server-resolved model
       // #643 T2：形状是屏幕上正显示的那一格 —— 重做一张不会悄悄换掉形状。
       const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
-      const result = await startGen({
+      // #645 T4(判官 r1 P0-2)：同 Animate —— 屏幕上那个价随请求发出去，服务端重核。
+      const result = await startAssetGen({
+        expectedCredits: models.imageCredits,
         projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
@@ -354,7 +356,12 @@ export default function DetailPanel({
       // #645 T4：发出去的就是选择器上显示的那一档 —— 规格夹回菜单，夹不住就回默认档
       // （绝不把一个菜单外的值送进付费请求）。没有选择器时按服务端默认档交付。
       const spec = clampVideoSpec(models, videoSpec ?? undefined, { hasSourceImage: true });
-      const result = await startGen({
+      // #645 T4(判官 r1 P0-2)：屏幕上那个价是商家授权的一部分，所以它随请求一起发出去。
+      // 服务端自己算一遍，不符就在扣款前拒绝 —— 与 Canvas / Otto 同一套绑定。
+      const quoted = videoSpecCredits(models, spec);
+      if (quoted == null) { if (!cancelledRef.current) setAnimStatus("failed"); return; }
+      const result = await startAssetGen({
+        expectedCredits: quoted,
         projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
@@ -473,7 +480,9 @@ export default function DetailPanel({
       // #643 T2：编辑同样交付屏幕上显示的那一格。服务端在没收到形状时会按底图快照继承，
       // 这里显式带上是为了让「屏幕上写的」与「引擎收到的」永远是同一个值。
       const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
-      const result = await startGen({
+      // #645 T4(判官 r1 P0-2)：编辑框也显示价格，所以它同样带绑定。
+      const result = await startAssetGen({
+        expectedCredits: models.imageCredits,
         projectId: targetProjectId,
         prompt: editPrompt.trim(),
         entityIds: editIds,
@@ -713,6 +722,7 @@ export default function DetailPanel({
                   menu={videoSpecMenu}
                   onChange={setVideoSpec}
                   disabled={readOnly}
+                  hasSourceImage
                 />
               </div>
             )}

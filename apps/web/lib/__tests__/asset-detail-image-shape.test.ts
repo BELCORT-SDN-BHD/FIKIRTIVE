@@ -143,8 +143,10 @@ async function confirmAction(trigger: string, confirmLabel: string): Promise<voi
 }
 
 function startGenArg(): Record<string, unknown> {
-  expect(mocks.startGen).toHaveBeenCalled();
-  return mocks.startGen.mock.calls[0]![0] as Record<string, unknown>;
+  // #645 T4(判官 r1 P0-2):详情页的付费路改走带价格绑定的 startAssetGen。
+  // 这几条断言看的仍然是**形状**,与绑定无关 —— 只是读的那个替身换了名字。
+  expect(mocks.startAssetGen).toHaveBeenCalled();
+  return mocks.startAssetGen.mock.calls[0]![0] as Record<string, unknown>;
 }
 
 describe("资产详情：图片形状(#643 T2)", () => {

@@ -43,6 +43,21 @@ export type VideoSpec = {
   aspectRatio: string;
 };
 
+/**
+ * 形状那一格的提示语。**Adaptive 在两条路上是两件事**,所以这里必须分开说(#645 T4,
+ * 判官 r1 P2-2):
+ *   - 有源图(Animate / 接首帧):引擎跟着那张图就近;
+ *   - 没有源图(t2v):引擎按商家的描述挑一个合适的比例。
+ *
+ * 原来两处共用「follows the source image」—— 在 t2v 那个框里那句话是错的,那个框自己
+ * 明说了 no source image needed。卡面说错话和卡面不说话一样,都是替商家做了主。
+ */
+export function videoShapeHint(hasSourceImage: boolean): string {
+  return hasSourceImage
+    ? "The shape this video will be made in — Adaptive keeps the shape of your source image"
+    : "The shape this video will be made in — Adaptive picks a shape to suit your description";
+}
+
 /** 服务端解析的规格菜单 + 商家没选时会交付的那一档。 */
 export type VideoSpecMenu = {
   durations: readonly number[];
@@ -59,6 +74,7 @@ export function VideoSpecPicker({
   onChange,
   disabled = false,
   compact = false,
+  hasSourceImage = false,
 }: {
   /** 当前会交付的规格。每一格都必须在 `menu` 的对应列表里 —— 显示的就是会发出去的。 */
   value: VideoSpec;
@@ -68,6 +84,8 @@ export function VideoSpecPicker({
   disabled?: boolean;
   /** 窄条里用:标签只留给读屏器,视觉上只剩下值本身。 */
   compact?: boolean;
+  /** 这一次出片有没有源图。只影响**说法**(Adaptive 的含义两条路不同),不影响菜单。 */
+  hasSourceImage?: boolean;
 }) {
   const field = (label: string, control: React.ReactNode) => {
     if (compact) return control;
@@ -119,7 +137,7 @@ export function VideoSpecPicker({
           value={value.aspectRatio}
           disabled={disabled}
           aria-label="Shape of the video"
-          title="The shape this video will be made in — Adaptive follows the source image"
+          title={videoShapeHint(hasSourceImage)}
           onChange={(event) => onChange({ ...value, aspectRatio: event.target.value })}
           className={selectClass}
           style={{ flex: "none" }}

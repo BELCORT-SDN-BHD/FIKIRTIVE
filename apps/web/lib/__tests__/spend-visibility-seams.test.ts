@@ -63,6 +63,7 @@ const SPEND_ACTIONS = [
   "coworkVaryCard",
   "ottoApprove",
   "ottoTurn",
+  "startAssetGen",
   "startCanvasGen",
   "startGen",
   "startRefGen",
