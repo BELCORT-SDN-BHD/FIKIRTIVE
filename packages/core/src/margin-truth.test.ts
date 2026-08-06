@@ -4,6 +4,8 @@ import {
   MARGIN_TRUTH_SKUS,
   BELOW_FLOOR_PENDING_FOUNDER_RULING,
   pendingRulingFor,
+  BELOW_FLOOR_FOUNDER_ACCEPTED,
+  acceptedExceptionFor,
   marginTruthTable,
   formatMarginTruthTable,
 } from "./margin-truth.js";
@@ -43,21 +45,34 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     expect(r.clearsFloor).toBe(true);
   });
 
-  it("720p 5s:收 11cr = $1.10,成本 $0.6048,毛利 $0.4952 = 45.0% —— 回到地板之上", () => {
+  // #645 T4:成本基准从「720p 16:9」改成「720p 最差比例(4:3/3:4,927,408px)」。
+  // 收费一格没动(11 / 22cr),成本 +0.6%,于是这两档从 45.02% 落到 44.67% ——
+  // Founder 于 2026-08-06 明示接受,进具名豁免名单(BELOW_FLOOR_FOUNDER_ACCEPTED)。
+  it("720p 5s:收 11cr = $1.10,成本 $0.6086,毛利 $0.4914 = 44.67% —— Founder 已裁接受", () => {
     const r = row("video:seedance-2-fast:5:720p");
     expect(r.chargeUsd).toBeCloseTo(1.1, 6);
-    expect(r.cogsUsd).toBeCloseTo(0.6048, 6);
-    expect(r.grossUsd).toBeCloseTo(0.4952, 6);
-    expect(r.margin).toBeCloseTo(0.4502, 4);
-    expect(r.clearsFloor).toBe(true);
+    expect(r.cogsUsd).toBeCloseTo(0.6086115, 6);
+    expect(r.grossUsd).toBeCloseTo(0.4913885, 6);
+    expect(r.margin).toBeCloseTo(0.4467, 4);
+    expect(r.clearsFloor).toBe(false);
+    expect(acceptedExceptionFor(r.id)?.ruledOn).toBe("2026-08-06");
   });
 
-  it("720p 10s:收 22cr = $2.20,成本 $1.2096,毛利 $0.9904 = 45.0% —— 回到地板之上", () => {
+  it("720p 10s:收 22cr = $2.20,成本 $1.2172,毛利 $0.9828 = 44.67% —— Founder 已裁接受", () => {
     const r = row("video:seedance-2-fast:10:720p");
     expect(r.chargeUsd).toBeCloseTo(2.2, 6);
-    expect(r.cogsUsd).toBeCloseTo(1.2096, 6);
-    expect(r.grossUsd).toBeCloseTo(0.9904, 6);
-    expect(r.margin).toBeCloseTo(0.4502, 4);
+    expect(r.cogsUsd).toBeCloseTo(1.217223, 6);
+    expect(r.grossUsd).toBeCloseTo(0.982777, 6);
+    expect(r.margin).toBeCloseTo(0.4467, 4);
+    expect(r.clearsFloor).toBe(false);
+    expect(acceptedExceptionFor(r.id)?.ruledOn).toBe("2026-08-06");
+  });
+
+  it("480p 5s(新开的半价档):收 6cr = $0.60,成本 $0.2812,毛利 53.1%", () => {
+    const r = row("video:seedance-2-fast:5:480p");
+    expect(r.chargeUsd).toBeCloseTo(0.6, 6);
+    expect(r.cogsUsd).toBeCloseTo(0.281232, 6);
+    expect(r.margin).toBeCloseTo(0.5313, 4);
     expect(r.clearsFloor).toBe(true);
   });
 
@@ -77,9 +92,32 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     }
   });
 
-  it("跌破地板的档位 = 待 Founder 裁决名单,一格不多一格不少", () => {
+  it("跌破地板的档位 = 两张名单的并集,一格不多一格不少", () => {
     const belowFloor = marginTruthTable().filter((r) => !r.clearsFloor).map((r) => r.id).sort();
-    expect(belowFloor).toEqual(BELOW_FLOOR_PENDING_FOUNDER_RULING.map((p) => p.tier).sort());
+    const parked = [
+      ...BELOW_FLOOR_PENDING_FOUNDER_RULING.map((p) => p.tier),
+      ...BELOW_FLOOR_FOUNDER_ACCEPTED.map((e) => e.tier),
+    ].sort();
+    expect(belowFloor).toEqual(parked);
+  });
+
+  it("同一档不许同时挂在「待裁决」与「已裁接受」两张名单上(身份必须唯一)", () => {
+    for (const e of BELOW_FLOOR_FOUNDER_ACCEPTED) {
+      expect(pendingRulingFor(e.tier), `${e.tier} 同时出现在两张名单上`).toBeUndefined();
+    }
+  });
+
+  it("已裁豁免名单的每一条都带齐「哪些比例 / 为什么 / 哪天裁的 / 留档在哪」", () => {
+    for (const e of BELOW_FLOOR_FOUNDER_ACCEPTED) {
+      expect(rows.has(e.tier), `${e.tier} 不是毛利表里的档位`).toBe(true);
+      expect(acceptedExceptionFor(e.tier)).toEqual(e);
+      expect(e.ratios.length, `${e.tier} 没说是哪些比例跌破`).toBeGreaterThan(0);
+      expect(e.reason.trim().length, `${e.tier} 缺逐档理由`).toBeGreaterThan(20);
+      expect(e.ruledOn, `${e.tier} 的 ruledOn 格式不对`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(e.source, `${e.tier} 缺裁决留档链接`).toMatch(/^https:\/\/github\.com\//);
+      // 留档里记的毛利率必须和现算的对得上(差超过 0.5 个点 = 名单在说过期的话)。
+      expect(Math.abs(e.margin - rows.get(e.tier)!.margin), `${e.tier} 留档毛利与现算不符`).toBeLessThan(0.005);
+    }
   });
 
   it("裁决已落地:待裁决名单是空的(留一条在上面 = R3 硬红)", () => {
@@ -113,7 +151,10 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   it("打印毛利真相表(报表本体)", () => {
     const report = formatMarginTruthTable(marginTruthTable());
     console.log(`\n${report}\n`);
-    expect(report).toContain("毛利率 45.0%");
-    expect(report, "裁决落地后没有一行还挂着「地板 ↓」").not.toContain("地板 ↓");
+    // 24 个视频档 + 图片 + 参考图 + 整段参考视频 = 27 行。
+    expect(report.split("\n")).toHaveLength(27 + 1);
+    // 三条已裁豁免行必须**看得见**地标出来 —— 报表不许把它们印得跟过了地板一样。
+    expect(report.match(/地板 ↓/g) ?? []).toHaveLength(BELOW_FLOOR_FOUNDER_ACCEPTED.length);
+    expect(report).toContain("毛利率 44.7%");
   });
 });

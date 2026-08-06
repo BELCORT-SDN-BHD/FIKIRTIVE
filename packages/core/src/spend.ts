@@ -85,25 +85,45 @@ function displayedFromUsd(usd: number): number {
 export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
 
-/** Flat video charge table for Seedance 2.0 Fast:
- *  720p 5s → 11cr, 720p 10s → 22cr, whole-clip reference video → 16cr.
- *  Unknown/higher resolution stays at the 16cr guardrail.
+/**
+ * **Seedance 2.0 Fast 的按秒价目表**(#645 T4,Founder 裁决 2026-08-06,留档:
+ * https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378)。
  *
- *  #644 Founder 裁决(2026-08-06,留档于 PR #655 评论):记账基准改回官方牌价后,720p
- *  两档跌到 24.4% / 13.6%,裁决是**调价**——8→11cr、14→22cr,两档回到 45.0%
- *  (11cr=$1.10 对成本 $0.6048;22cr=$2.20 对成本 $1.2096)。其余档位一格没动。 */
-export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 11, "1080p": 16 };
-export const VIDEO_CREDITS_720P_10S = 22;
+ * 计价模型:**按秒计价,显示 credits 进位取整**。480p = 1.1cr/秒、720p = 2.2cr/秒。
+ * 这里存的是「每 10 秒多少显示 credits」的**整数**分子,于是全表可以纯整数算出来 ——
+ * 1.1 和 2.2 在 IEEE754 里都不是精确值,拿它们直接乘会让某些时长差一格 credit,
+ * 而差一格 credit 就是 quote / reserve / settle 三处对不上。
+ *
+ * 这张表替掉了 #644 的「每分辨率一个数 + 10 秒特例」两行结构 —— 5s=11cr / 10s=22cr
+ * 是那次裁决的数,按秒公式复算得一模一样(video-tiers.test.ts 有逐字回归钉板),
+ * 所以扩容没有动任何一个已裁的数字。
+ */
+export const SEEDANCE_DISPLAY_CREDITS_PER_10S: Record<string, number> = { "480p": 11, "720p": 22 };
+
+/** 一档视频的显示 credits;这一档不按秒计价(1080p / 未知分辨率)时返回 null。纯整数运算。 */
+export function seedanceDisplayCredits(resolution: string, seconds: number): number | null {
+  const per10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution];
+  if (per10s === undefined) return null;
+  // ceil(seconds × per10s / 10),全程整数:seconds 与 per10s 都是整数,+9 再整除 10 就是
+  // 向上取整,不经过任何小数 —— 浮点差一格 credit 的路在这里根本不存在。
+  return Math.floor((Math.max(0, Math.round(seconds)) * per10s + 9) / 10);
+}
+
+/** 不按秒计价的兜底档:1080p(Fast 给不了,留作护栏)与任何未知分辨率都收 16cr。
+ *  #644/#645 都没动这一格 —— 它是「宁可贵,不许贱卖」的最后一道。 */
+export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "1080p": 16 };
 export const REFERENCE_VIDEO_CREDITS = 16;
 
 export function pricedGenCredits(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
     if (isFlatPricedVideoModel(job.model)) {
       if (job.referenceVideoGenerationId) return REFERENCE_VIDEO_CREDITS * INTERNAL_PER_DISPLAY;
-      const r = job.videoOptions?.resolution ?? "720p";
-      const seconds = job.videoOptions?.seconds ?? 5;
-      if (r === "720p" && seconds >= 10) return VIDEO_CREDITS_720P_10S * INTERNAL_PER_DISPLAY;
-      return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // BytePlus: flat per resolution
+      const d = videoDefaults(job.model as GenVideoModel);
+      const r = job.videoOptions?.resolution ?? d.resolution;
+      const seconds = job.videoOptions?.seconds ?? d.seconds;
+      const perSecond = seedanceDisplayCredits(r, seconds); // #645 T4: 按秒计价的档
+      if (perSecond !== null) return perSecond * INTERNAL_PER_DISPLAY;
+      return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // 1080p / 未知 → 护栏价
     }
     return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY; // fal models: per-model USD cost (restores correct scaling)
   }

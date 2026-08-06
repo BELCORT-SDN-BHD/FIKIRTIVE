@@ -25,6 +25,14 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
+import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
+import {
+  clampVideoSpec,
+  defaultVideoSpec,
+  videoSpecCredits,
+  videoSpecMenu as videoSpecMenuOf,
+  type VideoSpec,
+} from "@/lib/video-spec";
 import { creditsLabel } from "@/lib/credit-format";
 import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
 import type { EntityDTO } from "@/lib/types";
@@ -97,8 +105,10 @@ export default function DetailPanel({
   // Variant switcher (25)
   const [selectedIdx, setSelectedIdx] = useState(0);
 
-  // Aspect picker (17) — the VIDEO shape, used by Animate only.
-  const [chosenAspect, setChosenAspect] = useState<string>("");
+  // #645 T4 — the VIDEO spec (length / quality / shape), used by Animate only. Animate always
+  // starts from THIS image, so the shape seeds to Adaptive: the engine follows the source frame
+  // rather than being told a ratio it would have to crop or pad to.
+  const [videoSpec, setVideoSpec] = useState<VideoSpec | null>(null);
   // #643 T2 —— the IMAGE shape, used by Regenerate and by the edit composer. Seeded from the
   // shape this very image was delivered in, so "do it again" / "edit this" keep the shape by
   // default; the merchant can pick another one and what is on screen is what gets made.
@@ -172,11 +182,9 @@ export default function DetailPanel({
 
   useEffect(() => {
     if (!activeModels) return;
-    const initialAspect =
-      activeModels.videoDefaults.aspectRatio ||
-      activeModels.videoAspectRatios[0] ||
-      "";
-    if (initialAspect) queueMicrotask(() => setChosenAspect((current) => current || initialAspect));
+    // 带首帧的那条路(Animate)⇒ 形状默认 Adaptive。菜单与默认档都来自服务端解析。
+    const initial = defaultVideoSpec(activeModels, { hasSourceImage: true });
+    queueMicrotask(() => setVideoSpec((current) => current ?? initial));
   }, [activeModels]);
 
   // #643 T2：图片形状的种子 = 这张图**当初交付时的形状**（快照，不是从像素反推）；
@@ -220,7 +228,11 @@ export default function DetailPanel({
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
   const targetProjectId = gen?.projectId ?? projectId;
   const imageCost = activeModels?.imageCredits ?? null;
-  const videoCost = activeModels?.videoCredits ?? null;
+  // #645 T4：视频按档计价，所以这里报的必须是**选中那一档**的价（服务端那张按档价目表），
+  // 不是默认档的价 —— 显示一个价、扣另一个价是这条线上最贵的一类缺陷。
+  const videoCost = activeModels
+    ? (videoSpec ? videoSpecCredits(activeModels, videoSpec) : activeModels.videoCredits)
+    : null;
   const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
   const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
 
@@ -339,8 +351,9 @@ export default function DetailPanel({
       const models = await ensureModels();
       const vm = models.video;
       const vd = models.videoDefaults;
-      // Use user's chosen aspect ratio if set; fall back to videoDefaults
-      const effectiveAspect = chosenAspect || vd.aspectRatio;
+      // #645 T4：发出去的就是选择器上显示的那一档 —— 规格夹回菜单，夹不住就回默认档
+      // （绝不把一个菜单外的值送进付费请求）。没有选择器时按服务端默认档交付。
+      const spec = clampVideoSpec(models, videoSpec ?? undefined, { hasSourceImage: true });
       const result = await startGen({
         projectId: targetProjectId,
         prompt: gen.prompt,
@@ -348,10 +361,10 @@ export default function DetailPanel({
         kind: "video",
         model: vm,
         sourceGenerationId: selectedGenId,
-        durationSeconds: vd.seconds,
-        resolution: vd.resolution,
+        durationSeconds: spec.seconds,
+        resolution: spec.resolution,
         audio: vd.audio,
-        ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
+        ...(spec.aspectRatio ? { aspectRatio: spec.aspectRatio } : {}),
         idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
       });
       if ("error" in result) {
@@ -373,7 +386,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, targetProjectId, pollJob, chosenAspect, reloadFromJob, readOnly]);
+  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, readOnly]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -545,8 +558,8 @@ export default function DetailPanel({
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
 
-  // Aspect ratios for picker (only show if model has options) — F18: server-resolved model
-  const aspectRatios = activeModels?.videoAspectRatios ?? [];
+  // #645 T4：视频规格菜单（只在模型暴露时渲染）— F18: server-resolved model
+  const videoSpecMenu = activeModels ? videoSpecMenuOf(activeModels) : null;
   const imageAspectRatios = activeModels?.imageAspectRatios ?? [];
 
   return (
@@ -686,28 +699,21 @@ export default function DetailPanel({
               </div>
             )}
 
-            {/* Aspect picker (17): the VIDEO shape, for image-to-video Animate. Labelled apart
-                from the image shape above so two shape controls on one panel cannot be confused
-                for each other (#643 T2). */}
-            {gen.kind === "image" && aspectRatios.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video shape</span>
-                <div className="al-seg" role="tablist" aria-label="Video shape">
-                  {aspectRatios.map((ar) => (
-                    <button
-                      key={ar}
-                      role="tab"
-                      type="button"
-                      aria-selected={chosenAspect === ar}
-                      className={`al-seg-item${chosenAspect === ar ? " al-seg-item-active" : ""}`}
-                      disabled={readOnly}
-                      title={readOnlyReason}
-                      onClick={() => setChosenAspect(ar)}
-                    >
-                      {ar}
-                    </button>
-                  ))}
-                </div>
+            {/* Video spec (#645 T4): length, quality and shape of the clip Animate will make.
+                Labelled apart from the image shape above so the two shape controls on one panel
+                cannot be confused for each other (#643 T2). The shape defaults to Adaptive —
+                Animate always starts from this image, so the engine follows it rather than
+                being told a ratio. The price below follows the chosen spec. */}
+            {gen.kind === "image" && videoSpec && videoSpecMenu && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video spec</span>
+                <VideoSpecPicker
+                  compact
+                  value={videoSpec}
+                  menu={videoSpecMenu}
+                  onChange={setVideoSpec}
+                  disabled={readOnly}
+                />
               </div>
             )}
 

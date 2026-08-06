@@ -53,10 +53,26 @@ describe("suggestModel", () => {
     expect(r.model).toBeTruthy();
   });
   it("snaps an unavailable duration to the model's option set and flags downgraded", () => {
-    const r = suggestModel({ kind: "video", desiredDuration: 7 });
+    // #645 T4:7 秒现在**是**菜单上的一档,所以旧夹具不再是「给不了的时长」。
+    // 换成真正给不了的 30 秒(引擎上限 15),降级语义原样守住。
+    const r = suggestModel({ kind: "video", desiredDuration: 30 });
     const o = GEN_VIDEO_MODEL_OPTIONS[r.model as GenVideoModel];
     expect(o.durations).toContain(r.params.durationSeconds);
     expect(r.downgraded).toBe(true);
+  });
+  it("#645 T4:菜单上的每一档时长都原样落到 params,且不算降级", () => {
+    for (const seconds of GEN_VIDEO_MODEL_OPTIONS[activeVideoModel() as GenVideoModel].durations) {
+      const r = suggestModel({ kind: "video", desiredDuration: seconds });
+      expect(r.params.durationSeconds, `${seconds}s 被吞了`).toBe(seconds);
+      expect(r.downgraded, `${seconds}s 不该算降级`).toBe(false);
+    }
+  });
+  it("#645 T4:菜单上的每一个比例都原样落到 params —— Otto 不再静默 16:9", () => {
+    for (const aspect of GEN_VIDEO_MODEL_OPTIONS[activeVideoModel() as GenVideoModel].aspectRatios) {
+      const r = suggestModel({ kind: "video", desiredAspect: aspect });
+      expect(r.params.aspectRatio, `${aspect} 被吞了`).toBe(aspect);
+      expect(r.downgraded, `${aspect} 不该算降级`).toBe(false);
+    }
   });
   it("always returns audio + count (so videoPriceUsd is truthful)", () => {
     const r = suggestModel({ kind: "video" });
@@ -91,9 +107,10 @@ describe("suggestModel", () => {
     expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true);
   });
   it("an aspect NO model can honor (t2v) flags downgraded and never fabricates the impossible aspect (fallback path)", () => {
-    const r = suggestModel({ kind: "video", desiredAspect: "21:9" }); // no model exposes 21:9 → empty pool → full-list fallback
+    // #645 T4:21:9 现在是菜单上的一格,所以旧夹具换成引擎真给不了的 2:3。
+    const r = suggestModel({ kind: "video", desiredAspect: "2:3" });
     expect(r.downgraded).toBe(true);
-    expect(r.params.aspectRatio).not.toBe("21:9");
+    expect(r.params.aspectRatio).not.toBe("2:3");
   });
   it("disabled set does not change the model (locked to activeVideoModel; disabled is a no-op for selection)", () => {
     // Before: disabled narrowed the candidate pool and forced a different pick.
@@ -106,14 +123,15 @@ describe("suggestModel", () => {
     expect(withDisabled.model).toBe(activeVideoModel()); // still the active model
     expect((GEN_VIDEO_MODELS as readonly string[]).includes(withDisabled.model)).toBe(true);
   });
-  it("impossible aspect (21:9) still returns activeVideoModel (locked) and is a valid typed model", () => {
-    // Before: 21:9 → empty pool → fallback logic; disabled narrowed the fallback further.
+  it("impossible aspect (2:3) still returns activeVideoModel (locked) and is a valid typed model", () => {
+    // Before: an off-menu aspect → empty pool → fallback logic; disabled narrowed it further.
     // Now: model is always activeVideoModel() regardless of aspect/disabled. The impossible
     // aspect is still flagged as downgraded (params snapping below), but the model id is stable.
-    const r = suggestModel({ kind: "video", desiredAspect: "21:9", disabled: new Set([activeVideoModel()]) });
+    // (#645 T4:夹具从 21:9 换成 2:3 —— 21:9 已经是菜单上的一格了。)
+    const r = suggestModel({ kind: "video", desiredAspect: "2:3", disabled: new Set([activeVideoModel()]) });
     expect(r.model).toBe(activeVideoModel()); // locked regardless of disabled
     expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true);
-    expect(r.downgraded).toBe(true); // 21:9 is not in veo3.1-lite's aspectRatios → snapped
+    expect(r.downgraded).toBe(true); // 2:3 is not in the model's aspectRatios → snapped
   });
   it("disabling the natural pick still returns it (locked model; disabled is inert for selection)", () => {
     // Before: disabling the natural pick forced a different model.

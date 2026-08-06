@@ -941,6 +941,63 @@ describe("startGen", () => {
     }));
   });
 
+  it("#645 T4:新开的每一档都按 Founder 表预扣 —— 卡面报的价就是真扣的价", async () => {
+    // 全表逐档跑真 startGen,断言 reserveCredits 收到的正是那张已裁价目表上的数。
+    // 界面报价走的是 getActiveGenModels().videoCreditsBySpec(同一个 pricedGenCredits),
+    // 上面那条测试已经把两者钉在一起 —— 于是「显示的」与「扣的」不可能分家。
+    const table: Record<string, number> = {
+      "720p:4": 9, "720p:5": 11, "720p:6": 14, "720p:7": 16, "720p:8": 18, "720p:9": 20,
+      "720p:10": 22, "720p:11": 25, "720p:12": 27, "720p:13": 29, "720p:14": 31, "720p:15": 33,
+      "480p:4": 5, "480p:5": 6, "480p:6": 7, "480p:7": 8, "480p:8": 9, "480p:9": 10,
+      "480p:10": 11, "480p:11": 13, "480p:12": 14, "480p:13": 15, "480p:14": 16, "480p:15": 17,
+    };
+    for (const [key, displayed] of Object.entries(table)) {
+      const [resolution, secondsRaw] = key.split(":");
+      db.reserveCredits.mockClear();
+      const result = await startGen({
+        projectId: "p1",
+        prompt: "a product spin",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-fast",
+        durationSeconds: Number(secondsRaw),
+        resolution: resolution!,
+        idempotencyKey: `video-tier-${key}`,
+      });
+      expect(result, key).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.reserveCredits, key).toHaveBeenCalledWith(db.prisma, {
+        orgId: "org_ref",
+        refId: "job_ref",
+        cost: displayed * INTERNAL_PER_DISPLAY,
+      });
+    }
+  });
+
+  it("#645 T4:界外的档位在花钱之前就被拒(3 秒 / 16 秒 / 1080p)", async () => {
+    for (const bad of [
+      { durationSeconds: 3, resolution: "720p" },
+      { durationSeconds: 16, resolution: "720p" },
+      { durationSeconds: 5, resolution: "1080p" },
+    ]) {
+      db.reserveCredits.mockClear();
+      db.genJobCreate.mockClear();
+      const result = await startGen({
+        projectId: "p1",
+        prompt: "a product spin",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-fast",
+        ...bad,
+        idempotencyKey: `video-bad-${bad.durationSeconds}-${bad.resolution}`,
+      });
+      expect(result, JSON.stringify(bad)).toHaveProperty("error");
+      expect(db.reserveCredits, JSON.stringify(bad)).not.toHaveBeenCalled();
+      expect(db.genJobCreate, JSON.stringify(bad)).not.toHaveBeenCalled();
+    }
+  });
+
   it("reserves the 22-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {
     const result = await startGen({
       projectId: "p1",
@@ -1299,6 +1356,35 @@ describe("generation read boundaries", () => {
     expect(models.imageCredits).toBeGreaterThan(0);
     expect(models.videoCredits).toBeGreaterThan(0);
     expect(serialized).not.toMatch(SECRET_TERMS);
+  });
+
+  it("#645 T4:按档价目表 = 收费函数本人算的 —— 卡面报价与预扣额不可能分家", async () => {
+    const { pricedGenCredits, displayCredits, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel } =
+      await import("@fikirtive/core");
+    const models = await getActiveGenModels();
+    const opts = GEN_VIDEO_MODEL_OPTIONS[activeVideoModel() as keyof typeof GEN_VIDEO_MODEL_OPTIONS];
+
+    // 菜单原样来自能力表 —— 服务端不另编一份。
+    expect(models.videoDurations).toEqual([...opts.durations]);
+    expect(models.videoResolutions).toEqual([...opts.resolutions]);
+    expect(models.videoAspectRatios).toEqual([...opts.aspectRatios]);
+
+    // 24 档全表逐格对上 pricedGenCredits(startGen 预扣用的就是它)。
+    let checked = 0;
+    for (const resolution of opts.resolutions) {
+      for (const seconds of opts.durations) {
+        const expected = displayCredits(pricedGenCredits({
+          kind: "VIDEO", model: activeVideoModel(), count: 1, videoOptions: { seconds, resolution },
+        }));
+        expect(models.videoCreditsBySpec[`${resolution}:${seconds}`], `${seconds}s ${resolution}`).toBe(expected);
+        checked += 1;
+      }
+    }
+    expect(checked).toBe(24);
+
+    // t2v 默认与 i2v 默认是**两个**值,不许互相顶替。
+    expect(models.videoDefaults.aspectRatio).toBe("16:9");
+    expect(models.videoI2vDefaultAspect).toBe("adaptive");
   });
 
   it("resolves an opaque image capability before the unchanged create-and-reserve path", async () => {

@@ -41,7 +41,9 @@ import {
 } from "@/lib/canvas-batch-layout";
 import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
 import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
-import type { CanvasImageShapes } from "@/components/canvas/useCanvasGen";
+import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
+import type { CanvasImageShapes, CanvasVideoSpecs } from "@/components/canvas/useCanvasGen";
+import type { VideoSpec } from "@/lib/video-spec";
 import {
   canvasBatchFrameLabel,
   canvasBatchGroups,
@@ -257,6 +259,13 @@ export default function FlowCanvas({
   // 所以商家看见的每一格都是引擎真给得了的，且选中的那一格就是会交付的那一格。
   const [imageShapeMenu, setImageShapeMenu] = useState<CanvasImageShapes | null>(null);
   const [imageShape, setImageShape] = useState<string | null>(null);
+  // #645 T4：这条片子的规格（长度 / 清晰度 / 形状）。菜单、默认档与每一档的价格都来自
+  // 服务端解析（`videoSpecs`）—— 界面一格都不写死，一分钱都不自己算。
+  // t2v 与 Animate 各记各的：前者默认 16:9，后者默认 Adaptive（跟着首帧走），两条路的
+  // 默认值不同，混用一个 state 就会把其中一条悄悄改成另一条的默认值。
+  const [videoSpecMenu, setVideoSpecMenu] = useState<CanvasVideoSpecs | null>(null);
+  const [t2vSpec, setT2vSpec] = useState<VideoSpec | null>(null);
+  const [animateSpec, setAnimateSpec] = useState<VideoSpec | null>(null);
   // Making a video costs credits — clicking "Make video" opens a confirm first.
   // Holds the source image node id awaiting confirm; null = no dialog.
   const [pendingAnimateId, setPendingAnimateId] = useState<string | null>(null);
@@ -486,6 +495,9 @@ export default function FlowCanvas({
     }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
+    // #645 T4：规格会改价（10 秒的片子是 5 秒的两倍钱），所以它是商家授权内容的一部分 ——
+    // 选完 5 秒再改成 10 秒是**另一个**动作，不是同一个动作的重试。因此它进材料。
+    const spec = videoSpecMenu ? animateSpec : null;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
@@ -493,6 +505,7 @@ export default function FlowCanvas({
       sourceNodeId: id,
       sourceGenerationId: entry.generationId,
       prompt: motionPrompt,
+      spec,
     });
     if (videoActionRef.current?.material !== material) {
       videoActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -509,6 +522,8 @@ export default function FlowCanvas({
         // The video belongs beside the image it was made from.
         spawnRect(1, id),
         actionId,
+        {},
+        { ...(spec ? { spec } : {}) },
       );
       if (
         accepted
@@ -521,7 +536,7 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, projectId, spawnRect]);
+  }, [activeThreadId, costQuote, projectId, spawnRect, animateSpec, videoSpecMenu]);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
   const onOpenDetailByNode = useRef<Record<string, () => void>>({});
@@ -753,7 +768,7 @@ export default function FlowCanvas({
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes } = useCanvasGen(
+  const { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes, videoSpecs } = useCanvasGen(
     projectId,
     onNewNode,
     onResolve,
@@ -774,7 +789,16 @@ export default function FlowCanvas({
         setImageShape((current) => current ?? shapes.defaultAspect);
       })
       .catch(() => setImageShapeMenu(null));
-  }, [quoteCosts, imageShapes]);
+    // #645 T4：视频规格菜单 + 按档价目表，与图片形状同一条路。取不到就不渲染规格选择器
+    // （仍然能出片，服务端按默认档交付）—— 界面绝不用一份自己编的菜单或价格顶上。
+    void videoSpecs()
+      .then((specs) => {
+        setVideoSpecMenu(specs);
+        setT2vSpec((current) => current ?? specs.t2vDefault);
+        setAnimateSpec((current) => current ?? specs.i2vDefault);
+      })
+      .catch(() => setVideoSpecMenu(null));
+  }, [quoteCosts, imageShapes, videoSpecs]);
   // keep animateFnRef current (in an effect — refs must not be written during render)
   useEffect(() => { animateFnRef.current = animate; }, [animate]);
 
@@ -1020,11 +1044,14 @@ export default function FlowCanvas({
     }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
+    // #645 T4：同 runAnimate —— 规格改价，所以它进材料。
+    const spec = videoSpecMenu ? t2vSpec : null;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
       kind: "video",
       prompt,
+      spec,
     });
     if (videoActionRef.current?.material !== material) {
       videoActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -1035,6 +1062,8 @@ export default function FlowCanvas({
         prompt,
         spawnRect(),
         actionId,
+        {},
+        { ...(spec ? { spec } : {}) },
       );
       if (
         accepted
@@ -1047,7 +1076,7 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect]);
+  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect, t2vSpec, videoSpecMenu]);
 
   /** "More like this" / an edited prompt on a VIDEO card. Video always keeps its explicit
    *  cost confirm (founder rule), so this seeds the same dialog instead of spending. */
@@ -1288,7 +1317,15 @@ export default function FlowCanvas({
     url: pendingDeleteNode.data?.url as string | undefined,
   });
   const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
-  const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
+  // #645 T4：视频按档计价，所以价格必须跟着商家**这一刻选中的那一档**走。价格永远来自
+  // 服务端那张按档价目表（`creditsFor`），界面自己不算 —— 报不出这一档的价就如实说
+  // "checking exact cost"，绝不拿默认档的价格顶上（那就是显示一个价、扣另一个价）。
+  const specCostLabel = (spec: VideoSpec | null): string => {
+    const credits = videoSpecMenu && spec ? videoSpecMenu.creditsFor(spec) : costQuote?.videoCredits ?? null;
+    return typeof credits === "number" ? creditsLabel(credits) : "checking exact cost";
+  };
+  const t2vCostLabel = specCostLabel(t2vSpec);
+  const animateCostLabel = specCostLabel(animateSpec);
   // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
   // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
   // The composer's price follows the chosen number of images, from the same clamp the paid
@@ -1872,10 +1909,20 @@ export default function FlowCanvas({
           <DialogHeader>
             <DialogTitle>Make a video from this image?</DialogTitle>
             <DialogDescription>
-              Pick how it should move, then confirm. Cost: {videoCostLabel}. No charge until you confirm.
+              Pick how it should move, then confirm. Cost: {animateCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
+            {/* #645 T4 — the spec this clip will be made in. Shape defaults to Adaptive here:
+                with a source image the engine follows that image instead of being told a ratio. */}
+            {videoSpecMenu && animateSpec && (
+              <VideoSpecPicker
+                value={animateSpec}
+                menu={videoSpecMenu.menu}
+                onChange={setAnimateSpec}
+                disabled={videoSubmitting}
+              />
+            )}
             <div className="flex gap-2">
               {([["gentle", "Gentle"], ["dynamic", "Dynamic"], ["custom", "Custom"]] as const).map(([key, label]) => (
                 <button
@@ -1927,7 +1974,7 @@ export default function FlowCanvas({
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
             <DialogDescription>
-              Describe the video you want — no source image needed. Cost: {videoCostLabel}. No charge until you confirm.
+              Describe the video you want — no source image needed. Cost: {t2vCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <textarea
@@ -1937,6 +1984,16 @@ export default function FlowCanvas({
             rows={3}
             className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
           />
+          {/* #645 T4 — the spec this clip will be made in. No source image here, so the shape
+              default is the model's own t2v default (16:9), not Adaptive. */}
+          {videoSpecMenu && t2vSpec && (
+            <VideoSpecPicker
+              value={t2vSpec}
+              menu={videoSpecMenu.menu}
+              onChange={setT2vSpec}
+              disabled={videoSubmitting}
+            />
+          )}
           <DialogFooter>
             <Button variant="ghost" disabled={videoSubmitting} onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
             <Button

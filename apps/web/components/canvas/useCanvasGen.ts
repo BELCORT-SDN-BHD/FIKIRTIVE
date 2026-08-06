@@ -14,6 +14,14 @@ import {
   clampImageVariantCount,
 } from "@/lib/canvas-gen-costs";
 import { canvasBatchSlotOffset } from "@/lib/canvas-batch-layout";
+import {
+  clampVideoSpec,
+  defaultVideoSpec,
+  videoSpecCredits,
+  videoSpecMenu,
+  type VideoSpec,
+  type VideoSpecMenu,
+} from "@/lib/video-spec";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: {
@@ -59,6 +67,17 @@ type CanvasVideoResumeOptions = {
   approvedCredits?: number;
 };
 
+/**
+ * #645 T4 —— 这条片子要交付的规格,就是界面上显示的那一档。
+ *
+ * 缺省时不发:服务端落这个模型的默认档。但界面上只要显示了一档规格,这里就一定带着它 ——
+ * 「显示的」与「发出去的」不许有第二个来源。规格会改价,所以带规格的调用必须同时带上
+ * 服务端为**这一档**报的价(`approvedCredits`),否则预扣额与卡面价格就分家了。
+ */
+export type CanvasVideoGenOptions = {
+  spec?: VideoSpec;
+};
+
 function isConfirmedCreditQuote(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
@@ -68,6 +87,25 @@ export type CanvasImageShapes = {
   options: string[];
   defaultAspect: string;
 };
+
+/** 服务端解析的视频规格菜单 + 两条路各自的默认档(t2v / 带首帧的 i2v)。 */
+export type CanvasVideoSpecs = {
+  menu: VideoSpecMenu;
+  t2vDefault: VideoSpec;
+  i2vDefault: VideoSpec;
+  /** 按档查价(显示 credits);表上没有这一档 ⇒ null。 */
+  creditsFor: (spec: VideoSpec) => number | null;
+};
+
+/** 回执里记着的那一档规格;回执早于 #645(没记规格)⇒ null,按服务端默认档走。 */
+function receiptVideoSpec(receipt: StoredCanvasActionReceipt): VideoSpec | null {
+  if (typeof receipt.videoSeconds !== "number" || typeof receipt.videoResolution !== "string") return null;
+  return {
+    seconds: receipt.videoSeconds,
+    resolution: receipt.videoResolution,
+    aspectRatio: receipt.aspectRatio ?? "",
+  };
+}
 
 export type CanvasGenProgress = {
   nodeId: string;
@@ -112,6 +150,10 @@ export type StoredCanvasActionReceipt = {
   sourceNodeId?: string;
   /** #643 T2：形状是商家授权内容的一部分，所以刷新后重放的必须是同一个形状。 */
   aspectRatio?: string;
+  /** #645 T4：视频规格同理 —— 而且它**会改价**，所以重放必须连规格带价格一起原样重发，
+   *  否则刷新后重放的可能是一档更贵/更便宜的片子，与商家当时按下去的那一档不是同一件事。 */
+  videoSeconds?: number;
+  videoResolution?: string;
 };
 
 const CANVAS_RECEIPT_PREFIX = "fikirtive:canvas-action:v1:";
@@ -509,7 +551,15 @@ export function useCanvasGen(
         !Array.isArray((response as { imageAspectRatios?: unknown }).imageAspectRatios) ||
         (response as { imageAspectRatios: unknown[] }).imageAspectRatios.length === 0 ||
         typeof (response as { imageDefaultAspect?: unknown }).imageDefaultAspect !== "string" ||
-        !(response as { imageDefaultAspect: string }).imageDefaultAspect
+        !(response as { imageDefaultAspect: string }).imageDefaultAspect ||
+        // #645 T4：规格菜单与按档价目表同样必须真的到齐 —— 少了它们，选择器会拿空菜单渲染，
+        // 或者更糟：拿一个界面自己编的价格去当预扣额。
+        !Array.isArray((response as { videoDurations?: unknown }).videoDurations) ||
+        (response as { videoDurations: unknown[] }).videoDurations.length === 0 ||
+        !Array.isArray((response as { videoResolutions?: unknown }).videoResolutions) ||
+        (response as { videoResolutions: unknown[] }).videoResolutions.length === 0 ||
+        (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec === null ||
+        typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object"
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -524,6 +574,16 @@ export function useCanvasGen(
   const imageShapes = useCallback(async (): Promise<CanvasImageShapes> => {
     const models = await ensureModels();
     return { options: models.imageAspectRatios, defaultAspect: models.imageDefaultAspect };
+  }, [ensureModels]);
+  /** #645 T4：视频规格菜单与价目表同理 —— 一个来源,界面一格都不写死、一分钱都不自己算。 */
+  const videoSpecs = useCallback(async (): Promise<CanvasVideoSpecs> => {
+    const models = await ensureModels();
+    return {
+      menu: videoSpecMenu(models),
+      t2vDefault: defaultVideoSpec(models),
+      i2vDefault: defaultVideoSpec(models, { hasSourceImage: true }),
+      creditsFor: (spec) => videoSpecCredits(models, spec),
+    };
   }, [ensureModels]);
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
   // guardian block, or a node-create that never recovered) must tell the user — otherwise they
@@ -747,9 +807,13 @@ export function useCanvasGen(
     pos: Pos,
     actionId?: string,
     resume: CanvasVideoResumeOptions = {},
+    options: CanvasVideoGenOptions = {},
   ): Promise<boolean> => {
     let video: string;
     let approvedCredits: number;
+    // #645 T4：带首帧 ⇒ 形状默认 adaptive（引擎跟着首帧走）。规格只有在界面真的显示过
+    // 一档时才带上；重放时用回执里记着的那一档，不是刷新后的默认值。
+    let spec: VideoSpec | null = null;
     if (typeof resume.model === "string") {
       if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
         fail("Generation settings couldn't be confirmed — please try again.");
@@ -757,11 +821,18 @@ export function useCanvasGen(
       }
       video = resume.model;
       approvedCredits = resume.approvedCredits;
+      spec = options.spec ?? null;
     } else {
       const models = await loadModelsForAction();
       if (!models) return false;
       video = models.video;
-      approvedCredits = models.videoCredits;
+      spec = options.spec ? clampVideoSpec(models, options.spec, { hasSourceImage: true }) : null;
+      const quoted = spec ? videoSpecCredits(models, spec) : models.videoCredits;
+      if (!isConfirmedCreditQuote(quoted)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      approvedCredits = quoted;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
     const requestThreadId = resume.threadId !== undefined
@@ -776,6 +847,7 @@ export function useCanvasGen(
       kind: "video" as const,
       model: video,
       sourceGenerationId,
+      ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -790,6 +862,7 @@ export function useCanvasGen(
       threadId: requestThreadId,
       sourceGenerationId,
       sourceNodeId,
+      ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -851,9 +924,12 @@ export function useCanvasGen(
     pos: Pos,
     actionId?: string,
     resume: CanvasVideoResumeOptions = {},
+    options: CanvasVideoGenOptions = {},
   ): Promise<boolean> => {
     let video: string;
     let approvedCredits: number;
+    // #645 T4：t2v 没有首帧，所以形状默认是模型的 t2v 默认档（16:9），不是 adaptive。
+    let spec: VideoSpec | null = null;
     if (typeof resume.model === "string") {
       if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
         fail("Generation settings couldn't be confirmed — please try again.");
@@ -861,11 +937,18 @@ export function useCanvasGen(
       }
       video = resume.model;
       approvedCredits = resume.approvedCredits;
+      spec = options.spec ?? null;
     } else {
       const models = await loadModelsForAction();
       if (!models) return false;
       video = models.video;
-      approvedCredits = models.videoCredits;
+      spec = options.spec ? clampVideoSpec(models, options.spec) : null;
+      const quoted = spec ? videoSpecCredits(models, spec) : models.videoCredits;
+      if (!isConfirmedCreditQuote(quoted)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      approvedCredits = quoted;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
     const requestThreadId = resume.threadId !== undefined
@@ -879,6 +962,7 @@ export function useCanvasGen(
       count: 1,
       kind: "video" as const,
       model: video,
+      ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -891,6 +975,7 @@ export function useCanvasGen(
       model: video,
       approvedCredits,
       threadId: requestThreadId,
+      ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -995,6 +1080,8 @@ export function useCanvasGen(
             receipt.pos,
             receipt.actionId,
             { model: receipt.model, threadId: receipt.threadId, approvedCredits: receipt.approvedCredits },
+            // #645 T4：重放的必须是商家当时看着按下去的那一档规格，不是刷新后的默认档。
+            { ...(receiptVideoSpec(receipt) ? { spec: receiptVideoSpec(receipt)! } : {}) },
           );
           continue;
         }
@@ -1003,6 +1090,7 @@ export function useCanvasGen(
           receipt.pos,
           receipt.actionId,
           { model: receipt.model, threadId: receipt.threadId, approvedCredits: receipt.approvedCredits },
+          { ...(receiptVideoSpec(receipt) ? { spec: receiptVideoSpec(receipt)! } : {}) },
         );
       }
     })();
@@ -1010,5 +1098,5 @@ export function useCanvasGen(
     return () => { stopped = true; };
   }, [animate, generateImage, generateVideoFromText, projectId]);
 
-  return { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes, cancelledRef };
+  return { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes, videoSpecs, cancelledRef };
 }

@@ -9,6 +9,7 @@ import {
   suggestModel,
   videoPriceUsd,
   videoDefaults,
+  VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
@@ -119,6 +120,20 @@ export { EXECUTED_SPEC } from "@fikirtive/core";
 // ---------------------------------------------------------------------------
 
 /**
+ * 片子形状那一格的卡面说法(#645 T4)。
+ *
+ * `adaptive` **不是一个具体形状** —— 引擎会跟着首帧自己挑。所以卡面绝不能把它印成
+ * 「16:9」之类的具体值(那就是卡面承诺了一件引擎没答应的事),也不该印生硬的 "adaptive"。
+ * 它的真实含义正好就是「和你给的图同一个形状」,于是就这么说。
+ */
+export function videoAspectChip(aspectRatio: string | undefined, hasSourceImage: boolean): string {
+  if (aspectRatio === VIDEO_ASPECT_ADAPTIVE) {
+    return hasSourceImage ? "Same shape as your reference" : "Shape picked to fit";
+  }
+  return aspectRatio ?? (hasSourceImage ? "Same shape as your reference" : "Default shape");
+}
+
+/**
  * 卡面规格条目（脱敏）。与 `reason` 同事实，但只从 `params` 取值，
  * 因此结构上不可能带出引擎名；并且只输出 `EXECUTED_SPEC` 认定执行层真会采纳的控制项，
  * 因此不可能承诺一件执行层做不到的事。这是卡面规格的**唯一一次**派生。
@@ -132,7 +147,7 @@ export function buildSpecChips(
   const chips: string[] = [];
   if (kind === "video") {
     if (EXECUTED_SPEC.video.aspectHonoured) {
-      chips.push(params.aspectRatio ?? (hasSourceImage ? "Same shape as your reference" : "Default shape"));
+      chips.push(videoAspectChip(params.aspectRatio, hasSourceImage));
     }
     if (EXECUTED_SPEC.video.durationHonoured && typeof params.durationSeconds === "number") {
       chips.push(`${params.durationSeconds}s`);
@@ -233,7 +248,12 @@ export function buildDowngradeNote(
       const { width, height } = imageOutputSize(imageAspectHonoured() ? params.aspectRatio : undefined);
       instead.push(width === height ? `a square ${width} × ${height} image` : `a ${width} × ${height} image`);
     } else {
-      instead.push(params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"));
+      // #645 T4：adaptive 同样如实说成「跟着你的图走」，不冒充一个具体形状。
+      instead.push(
+        params.aspectRatio === VIDEO_ASPECT_ADAPTIVE
+          ? (hasSourceImage ? "the shape of your reference" : "a shape picked to fit")
+          : params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"),
+      );
     }
   }
   if (asked.length > 0) {

@@ -10,6 +10,7 @@ import {
   VIDEO_FORMATS,
   campaignGenKindForFormat,
   campaignImageAspectForFormat,
+  campaignVideoAspectForFormat,
 } from "../campaign-format-shape";
 
 describe("campaignGenKindForFormat", () => {
@@ -63,5 +64,43 @@ describe("campaignImageAspectForFormat", () => {
   });
   it("写法差异不算不同的格式", () => {
     expect(campaignImageAspectForFormat(" STORY ")).toBe("9:16");
+  });
+});
+
+describe("campaignVideoAspectForFormat (#645 T4)", () => {
+  const MENU = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"];
+
+  it("竖版片子位（reel / short）⇒ 9:16 —— 商家写下 reel 要的就是竖版片子", () => {
+    for (const format of ["reel", "reels", "short", "shorts"]) {
+      expect(campaignVideoAspectForFormat(format, MENU), format).toBe("9:16");
+    }
+  });
+
+  it("名字没说形状的片子格式 ⇒ null（由视频侧的默认档决定,这张表不发明值）", () => {
+    for (const format of ["video", "clip", "animation", "gif"]) {
+      expect(campaignVideoAspectForFormat(format, MENU), format).toBeNull();
+    }
+  });
+
+  it("图片格式 ⇒ null（形状归图片那张表,两张表互不越权）", () => {
+    for (const format of ["story", "feed", "banner", "post"]) {
+      expect(campaignVideoAspectForFormat(format, MENU), format).toBeNull();
+    }
+  });
+
+  it("映射出的形状不在引擎菜单上 ⇒ null，绝不硬塞一个引擎收不下的形状", () => {
+    expect(campaignVideoAspectForFormat("reel", ["16:9"])).toBeNull();
+    expect(campaignVideoAspectForFormat("reel", [])).toBeNull();
+  });
+
+  it("写法差异不算不同的格式", () => {
+    expect(campaignVideoAspectForFormat("  REEL ", MENU)).toBe("9:16");
+  });
+
+  it("表上每一格都真的在引擎菜单上 —— 与 VIDEO_FORMATS 对齐,一个都不越界", () => {
+    for (const format of VIDEO_FORMATS) {
+      const aspect = campaignVideoAspectForFormat(format, MENU);
+      if (aspect !== null) expect(MENU, format).toContain(aspect);
+    }
   });
 });

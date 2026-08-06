@@ -72,7 +72,17 @@ beforeEach(() => {
     imageCredits: 8,
     videoCredits: 80,
     videoDefaults: { seconds: 5, resolution: "720p", aspectRatio: "16:9", fps: 0, audio: true },
-    videoAspectRatios: ["16:9", "9:16"],
+    videoAspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"],
+    // #645 T4：视频规格菜单 + 按档价目表（服务端解析的那一份）。
+    videoDurations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    videoResolutions: ["720p", "480p"],
+    videoI2vDefaultAspect: "adaptive",
+    videoCreditsBySpec: Object.fromEntries(
+      ["720p", "480p"].flatMap((r) =>
+        [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((s) =>
+          [`${r}:${s}`, Math.ceil((s * (r === "480p" ? 11 : 22)) / 10)] as const),
+      ),
+    ),
     imageAspectRatios: MENU,
     imageDefaultAspect: "1:1",
   });
@@ -184,10 +194,23 @@ describe("资产详情：图片形状(#643 T2)", () => {
     await renderPanel("1:1");
     const labels = [...container!.querySelectorAll("span")].map((s) => s.textContent);
     expect(labels).toContain("Image shape");
-    expect(labels).toContain("Video shape");
-    // 视频那一格仍然只喂 Animate —— 它的菜单是视频侧的，不是图片侧的。
-    const videoSeg = container!.querySelector('[aria-label="Video shape"]');
-    expect(videoSeg).not.toBeNull();
-    expect(videoSeg!.textContent).toBe("16:99:16");
+    // #645 T4：视频那一组现在是完整规格（长度/清晰度/形状），所以标题是 Video spec。
+    expect(labels).toContain("Video spec");
+    // 视频形状那一格仍然只喂 Animate —— 它的菜单是视频侧的，不是图片侧的。
+    const videoShape = container!.querySelector('[aria-label="Shape of the video"]');
+    expect(videoShape).not.toBeNull();
+    expect(videoShape!.textContent).toBe("16:99:161:14:33:421:9Adaptive");
+    // adaptive 在卡面上如实叫 Adaptive —— 绝不冒充某个具体比例。
+    expect(videoShape!.textContent).not.toContain("adaptive");
+  });
+
+  it("#645 T4：Animate 的形状默认 Adaptive（有首帧 ⇒ 引擎跟着首帧走，不替商家改画幅）", async () => {
+    await renderPanel("1:1");
+    const videoShape = container!.querySelector('[aria-label="Shape of the video"]') as HTMLSelectElement | null;
+    expect(videoShape).not.toBeNull();
+    expect(videoShape!.value).toBe("adaptive");
+    // 长度/清晰度默认与今日一致。
+    expect((container!.querySelector('[aria-label="Length of the video"]') as HTMLSelectElement).value).toBe("5");
+    expect((container!.querySelector('[aria-label="Quality of the video"]') as HTMLSelectElement).value).toBe("720p");
   });
 });

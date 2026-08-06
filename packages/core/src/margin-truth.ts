@@ -13,12 +13,14 @@
  */
 import {
   CREDITS_PER_USD,
+  FLAT_PRICED_VIDEO_MODELS,
   genSpentUsd,
   pricedGenCredits,
   pricedRefgenCredits,
   refgenSpentUsd,
   type GenSpendInput,
 } from "./spend.js";
+import { GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "./gen.js";
 
 /** 宪法 5 毛利地板:(售价 − 成本) / 售价 ≥ 45%。(docs/BLUEPRINT.md) */
 export const MARGIN_FLOOR = 0.45;
@@ -63,6 +65,74 @@ export function pendingRulingFor(tier: string): PendingFloorRuling | undefined {
   return BELOW_FLOOR_PENDING_FOUNDER_RULING.find((p) => p.tier === tier);
 }
 
+/**
+ * 一条**Founder 已裁、明示接受**的地板豁免。与上面那张「待裁决」名单是两件事:
+ * 待裁决 = 还没人拍板,带闹钟催;这里 = **已经拍过板了**,裁决内容是「接受」。
+ * 所以它没有 `reviewBy`(没有什么在等),取而代之的是 `ruledOn` + `source`:
+ * 哪一天、由谁在哪里裁的,机器强制写全。
+ */
+export type AcceptedFloorException = {
+  /** 档位 id,与毛利表 / CI 闸逐字对齐。 */
+  tier: string;
+  /** 具体是**哪几个比例**把这一档压到地板下(同档其余比例是过的)。 */
+  ratios: readonly string[];
+  /** 裁决当天这一档的毛利率(留档用;真值仍然是现算的,对不上会红)。 */
+  margin: number;
+  /** 为什么接受 —— 逐档写。 */
+  reason: string;
+  /** 裁决日期 YYYY-MM-DD。 */
+  ruledOn: string;
+  /** 裁决留档链接。 */
+  source: string;
+};
+
+/** #645 T4 裁决留档(Founder,2026-08-06)。 */
+const RULING_645 = "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378";
+
+/**
+ * **Founder 已裁接受的地板豁免**(#645,2026-08-06)。
+ *
+ * 720p 的按秒价(2.2cr/秒)在 5 / 10 / 15 秒这三个整点上**不产生进位余量** —— 收费正好
+ * 是 11 / 22 / 33cr。按 16:9 记(921,600px)它们是 45.02%,清地板;但同一档的 4:3 / 3:4
+ * (927,408px)与 21:9(926,100px)更贵,按**最差比例**建模后落到 44.67%,低于 45.0%
+ * 地板 0.33 个点。Founder 于 2026-08-06 明示接受这三档(留档见 `source`),理由是这三个
+ * 时长是主力档、已裁的 11/22cr 一个数不动,而 0.33 个点的缺口只在少数比例上出现。
+ *
+ * 这张名单同样被两头钉死(闸里的 A1–A4 规则):跌破却不在名单上 → 红;在名单上却已经
+ * 清了地板 → 红;条目缺字段或指向不存在的档位 → 红;同一档同时出现在两张名单上 → 红。
+ */
+export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [
+  {
+    tier: "video:seedance-2-fast:5:720p",
+    ratios: ["4:3", "3:4", "21:9"],
+    margin: 0.4467,
+    reason: "720p 5 秒 = 11cr 整,按秒价无进位余量;最差比例(4:3/3:4)成本 $0.6086 ⇒ 44.67%。已裁的 11cr 不动。",
+    ruledOn: "2026-08-06",
+    source: RULING_645,
+  },
+  {
+    tier: "video:seedance-2-fast:10:720p",
+    ratios: ["4:3", "3:4", "21:9"],
+    margin: 0.4467,
+    reason: "720p 10 秒 = 22cr 整,同样无进位余量;最差比例成本 $1.2172 ⇒ 44.67%。已裁的 22cr 不动。",
+    ruledOn: "2026-08-06",
+    source: RULING_645,
+  },
+  {
+    tier: "video:seedance-2-fast:15:720p",
+    ratios: ["4:3", "3:4", "21:9"],
+    margin: 0.4467,
+    reason: "720p 15 秒 = 33cr 整(新开的最长档),无进位余量;最差比例成本 $1.8258 ⇒ 44.67%。",
+    ruledOn: "2026-08-06",
+    source: RULING_645,
+  },
+];
+
+/** 取某一档的已裁豁免;不在名单上返回 undefined。纯函数。 */
+export function acceptedExceptionFor(tier: string): AcceptedFloorException | undefined {
+  return BELOW_FLOOR_FOUNDER_ACCEPTED.find((e) => e.tier === tier);
+}
+
 export type MarginRow = {
   /** 与 CI 闸对齐的档位 id。 */
   id: string;
@@ -94,11 +164,43 @@ const videoJob = (seconds: number, resolution: string): GenSpendInput => ({
   videoOptions: { seconds, resolution, audio: true },
 });
 
+type MarginSku = { id: string; label: string; charge: () => number; cogs: () => number };
+
 /**
- * 报表覆盖的档位。**现役可售的每一档都在这里**:图片、参考图,以及现役视频模型的
- * 两个时长档与整段参考视频。(视频任务恒 count=1 —— gen-actions 强制。)
+ * 现役可售视频档 = **从能力表现枚举**(#645 T4),不是手抄清单。
+ *
+ * 为什么改成枚举:扩容后是 2 分辨率 × 12 时长 = 24 档。手抄一份就等于把菜单抄了第二遍,
+ * 而这个仓库反复栽在「说的」与「做的」是两份副本上 —— 菜单加一档、报表忘一档,毛利闸
+ * 就再也看不见那一档。现在菜单是唯一来源:加一档,报表当场多一行,CI 闸当场要它的成本
+ * 输入(没有就红)。
  */
-export const MARGIN_TRUTH_SKUS: readonly { id: string; label: string; charge: () => number; cogs: () => number }[] = [
+function sellableVideoSkus(): MarginSku[] {
+  const out: MarginSku[] = [];
+  for (const model of FLAT_PRICED_VIDEO_MODELS) {
+    const o = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel];
+    if (!o) continue;
+    const resolutions = o.resolutions.length ? o.resolutions : [""];
+    for (const seconds of o.durations) {
+      for (const resolution of resolutions) {
+        const job = { kind: "VIDEO" as const, model, count: 1, videoOptions: { seconds, resolution, audio: true } };
+        out.push({
+          id: `video:${model}:${seconds}:${resolution}`,
+          label: `视频 ${resolution || "默认档"} ${seconds} 秒`,
+          charge: () => pricedGenCredits(job) / CREDITS_PER_USD,
+          cogs: () => genSpentUsd(job),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * 报表覆盖的档位。**现役可售的每一档都在这里**:图片、参考图,现役视频模型的
+ * 全部时长 × 分辨率(#645 T4 起 24 档),以及整段参考视频。
+ * (视频任务恒 count=1 —— gen-actions 强制。)
+ */
+export const MARGIN_TRUTH_SKUS: readonly MarginSku[] = [
   {
     id: "image:seedream",
     label: "图片 ×1",
@@ -111,18 +213,7 @@ export const MARGIN_TRUTH_SKUS: readonly { id: string; label: string; charge: ()
     charge: () => pricedRefgenCredits({ model: "seedream", count: 1 }) / CREDITS_PER_USD,
     cogs: () => refgenSpentUsd({ model: "seedream", count: 1 }),
   },
-  {
-    id: "video:seedance-2-fast:5:720p",
-    label: "视频 720p 5 秒",
-    charge: () => pricedGenCredits(videoJob(5, "720p")) / CREDITS_PER_USD,
-    cogs: () => genSpentUsd(videoJob(5, "720p")),
-  },
-  {
-    id: "video:seedance-2-fast:10:720p",
-    label: "视频 720p 10 秒",
-    charge: () => pricedGenCredits(videoJob(10, "720p")) / CREDITS_PER_USD,
-    cogs: () => genSpentUsd(videoJob(10, "720p")),
-  },
+  ...sellableVideoSkus(),
   {
     id: "video:seedance-2-fast:ref",
     label: "整段参考视频(6 秒参考上限 + 5 秒出片)",

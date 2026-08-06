@@ -677,12 +677,14 @@ describe("#580 card spec chips — engine-free by construction", () => {
   });
 
   it("no engine name reaches any merchant-facing field of the payload", () => {
+    // #645 T4：7s / 1:1 现在都真给得了，所以要触发披露必须用引擎真做不到的值（30s / 2:3）。
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredDuration: 7, desiredAspect: "1:1" },
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredDuration: 30, desiredAspect: "2:3" },
       makeCtx(),
       [],
     );
     expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
+    expect(cardPayload.downgradeNote).toBeDefined();
     expect(cardPayload.downgradeNote).not.toMatch(ENGINE_WORDS);
   });
 });
@@ -902,32 +904,46 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
 
 describe("#580 downgrade disclosure — never silent", () => {
   it("a length we can't do is stated in the merchant's own terms", () => {
+    // #645 T4：7 秒现在是真给得了的一档，所以夹具换成引擎上限之外的 30 秒。
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "a 7s clip", entityIds: [], variantSel: {}, desiredDuration: 7 },
+      { kind: "video", structuredPrompt: "a 30s clip", entityIds: [], variantSel: {}, desiredDuration: 30 },
       makeCtx(),
       [],
     );
     expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toBe("You asked for 7s — this will be 5s.");
+    expect(cardPayload.downgradeNote).toBe("You asked for 30s — this will be 5s.");
   });
 
   it("a shape we can't do is stated too", () => {
+    // #645 T4：1:1 现在是菜单上的一格，所以夹具换成引擎给不了的 2:3。
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "a square clip", entityIds: [], variantSel: {}, desiredAspect: "1:1" },
+      { kind: "video", structuredPrompt: "a 2:3 clip", entityIds: [], variantSel: {}, desiredAspect: "2:3" },
       makeCtx(),
       [],
     );
     expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toBe("You asked for 1:1 — this will be 16:9.");
+    expect(cardPayload.downgradeNote).toBe("You asked for 2:3 — this will be 16:9.");
   });
 
   it("both at once read as one sentence", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a 2:3 30s clip", entityIds: [], variantSel: {}, desiredDuration: 30, desiredAspect: "2:3" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgradeNote).toBe("You asked for 30s and 2:3 — this will be 5s and 16:9.");
+  });
+
+  it("#645 T4：7 秒 / 1:1 现在是真给得了的档 —— 一句降级都不该出现", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a square 7s clip", entityIds: [], variantSel: {}, desiredDuration: 7, desiredAspect: "1:1" },
       makeCtx(),
       [],
     );
-    expect(cardPayload.downgradeNote).toBe("You asked for 7s and 1:1 — this will be 5s and 16:9.");
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
+    expect(cardPayload.params.durationSeconds).toBe(7);
+    expect(cardPayload.params.aspectRatio).toBe("1:1");
   });
 
   it("a plan that honours the request carries no note at all", () => {

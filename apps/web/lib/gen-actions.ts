@@ -66,6 +66,20 @@ export type ActiveGenModels = {
   videoCredits: number;
   videoDefaults: ReturnType<typeof videoDefaults>;
   videoAspectRatios: string[];
+  /** #645 T4 —— 视频规格菜单(picker 顺序)。UI 只渲染这两份列表,自己不写死任何一档。 */
+  videoDurations: number[];
+  videoResolutions: string[];
+  /** 带首帧(Animate / 分镜首帧接片)时的默认形状 —— Seedance 是 adaptive:引擎跟着首帧走。
+   *  与 `videoDefaults.aspectRatio`(t2v 默认)是**两个**值,不许互相顶替。 */
+  videoI2vDefaultAspect: string;
+  /**
+   * 每一档规格的**确切**显示 credits,键 = `${resolution}:${seconds}`。
+   *
+   * 为什么是一整张表而不是让浏览器自己算:#645 起视频按秒计价,价格随商家选的档位变。
+   * 价格只能有一个来源(服务端的 `pricedGenCredits`)—— 浏览器复制一份计价公式,就是
+   * 「显示的」与「收的」第二次分家的入口。24 档全表一次带回来,选择器直接查表。
+   */
+  videoCreditsBySpec: Record<string, number>;
   /** #643 T2 —— 图片形状菜单（default-first）。UI 只渲染这份列表，自己不写死任何一格。 */
   imageAspectRatios: string[];
   /** 商家没选形状时会交付的那一格。UI 的初始选中值取这里，所以「显示的」= 「会交付的」。 */
@@ -732,7 +746,25 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
   const imageModel = activeImageModel();
   const videoModel = activeVideoModel();
   const defaults = videoDefaults(videoModel as GenVideoModel);
+  const videoOpts = GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel];
+  // #645 T4:整张按秒价目表,由**收费函数本人**逐档算出来 —— 选择器显示的每一个数字都
+  // 是 startGen 到时会预扣的那个数字,不是界面另算的一份。
+  const videoCreditsBySpec: Record<string, number> = {};
+  for (const resolution of videoOpts.resolutions) {
+    for (const seconds of videoOpts.durations) {
+      videoCreditsBySpec[`${resolution}:${seconds}`] = displayCredits(pricedGenCredits({
+        kind: "VIDEO",
+        model: videoModel,
+        count: 1,
+        videoOptions: { seconds, resolution },
+      }));
+    }
+  }
   return {
+    videoDurations: [...videoOpts.durations],
+    videoResolutions: [...videoOpts.resolutions],
+    videoI2vDefaultAspect: videoDefaults(videoModel as GenVideoModel, { hasSourceImage: true }).aspectRatio,
+    videoCreditsBySpec,
     image: publicModelAlias("image", imageModel),
     video: publicModelAlias("video", videoModel),
     imageCredits: displayCredits(pricedGenCredits({
