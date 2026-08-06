@@ -1320,8 +1320,10 @@ export default function FlowCanvas({
   // #645 T4：视频按档计价，所以价格必须跟着商家**这一刻选中的那一档**走。价格永远来自
   // 服务端那张按档价目表（`creditsFor`），界面自己不算 —— 报不出这一档的价就如实说
   // "checking exact cost"，绝不拿默认档的价格顶上（那就是显示一个价、扣另一个价）。
+  const specCredits = (spec: VideoSpec | null): number | null =>
+    (videoSpecMenu && spec ? videoSpecMenu.creditsFor(spec) : costQuote?.videoCredits ?? null);
   const specCostLabel = (spec: VideoSpec | null): string => {
-    const credits = videoSpecMenu && spec ? videoSpecMenu.creditsFor(spec) : costQuote?.videoCredits ?? null;
+    const credits = specCredits(spec);
     return typeof credits === "number" ? creditsLabel(credits) : "checking exact cost";
   };
   const t2vCostLabel = specCostLabel(t2vSpec);
@@ -1336,7 +1338,9 @@ export default function FlowCanvas({
   // A card's own bar makes ONE image built on that card, so it is priced by the single-image
   // quote — one source, no second price for the same action (#550 ②, #547 A4).
   const evolveCostHint = genCostHint(costQuote?.imageCredits);
-  const remakeCostHint = genCostHint(costQuote?.videoCredits);
+  // 视频卡的「More like this」是去开 t2v 确认框的,所以这里报的必须是**那个框会用的那一档**
+  // 的价 —— 报默认档就会出现「卡上说 11、框里收 27」。价格仍然只有服务端那一个来源。
+  const remakeCostHint = genCostHint(specCredits(t2vSpec) ?? costQuote?.videoCredits);
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const nodesOnBoard = filterNodesByConvo(nodes, activeThreadId, filterToConvo);
   // How many cards are picked right now. A card's own toolbar is about THAT card, so it only
