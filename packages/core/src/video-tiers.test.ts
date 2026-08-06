@@ -173,6 +173,42 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
     }
   });
 
+  it("FAIL CLOSED(判官 r2 P0):**已裁 12 档以外的正整数**同样落 16cr 护栏", () => {
+    // 上一轮只封住了非整数,没封住「整数但不在已裁的十二格里」:3s 会算出 7cr、16s 算出
+    // 36cr —— 两个 Founder 从没裁过的价。新请求那侧有 zod 拦着,但 GenJob.videoOptions
+    // 是**无约束 JSON**,worker 的两条历史重算路(apps/worker/src/jobs/gen.ts 的
+    // GEN_RESULT 两处)直达价格函数,那条路上没有 zod。
+    //
+    // 原则不变:**价格只定义在已裁格上,格外不 round、不外推、只护栏**。
+    for (const seconds of [1, 2, 3, 16, 20, 100]) {
+      expect(pricedGenCredits(videoJob(seconds, "720p")), `720p ${seconds}s`)
+        .toBe(16 * INTERNAL_PER_DISPLAY);
+      expect(pricedGenCredits(videoJob(seconds, "480p")), `480p ${seconds}s`)
+        .toBe(16 * INTERNAL_PER_DISPLAY);
+    }
+    // 已裁的十二格一格未动(护栏不许误伤真档位)。
+    for (const row of FOUNDER_PRICE_TABLE) {
+      expect(pricedGenCredits(videoJob(row.seconds, "720p")), `720p ${row.seconds}s`)
+        .toBe(row["720p"] * INTERNAL_PER_DISPLAY);
+      expect(pricedGenCredits(videoJob(row.seconds, "480p")), `480p ${row.seconds}s`)
+        .toBe(row["480p"] * INTERNAL_PER_DISPLAY);
+    }
+  });
+
+  it("判据的单一事实来源 = 能力表的 durations,不是抄一份 [4..15] 字面量", () => {
+    // 护栏放行的那一组秒数,必须**恰好**等于这个模型菜单上开出来的那一组 —— 两边靠
+    // 同一份 GEN_VIDEO_MODEL_OPTIONS 推导,所以 T6 或未来改档时不可能分家。
+    // 判据不能只看「是不是 16cr」—— 720p 7 秒**本来**就是 16cr,那是真档位不是护栏。
+    // 可靠的分辨法:按秒表在每一档都让两个分辨率**不同价**(半价档),而护栏对两者
+    // 给的是同一个 16cr。于是「两档同价」⇔「走了护栏」。
+    const menu = GEN_VIDEO_MODEL_OPTIONS[MODEL].durations;
+    const priced = [...Array(120).keys()]
+      .map((i) => i + 1)
+      .filter((seconds) =>
+        pricedGenCredits(videoJob(seconds, "720p")) !== pricedGenCredits(videoJob(seconds, "480p")));
+    expect(priced.sort((a, b) => a - b)).toEqual([...menu].sort((a, b) => a - b));
+  });
+
   it("零改动:1080p 兜底 16cr、未知分辨率兜底 16cr、整段参考视频 16cr", () => {
     expect(VIDEO_CREDITS_BY_RESOLUTION["1080p"]).toBe(16);
     expect(REFERENCE_VIDEO_CREDITS).toBe(16);
