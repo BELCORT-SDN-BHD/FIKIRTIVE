@@ -291,18 +291,6 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
         }
       }
 
-      // OPT-6 P2 (highest-trust): fail-without-spend if the model was admin-disabled
-      // after this job was queued. AFTER the resume short-circuit (a committed job
-      // still finishes) and BEFORE the spend claim + provider call. (Variant jobs always
-      // use seedream → this is the seedream/image toggle for the variant path too.)
-      // #647 T6 修复轮 P1-3:开关**读不到**时抛 PLAIN(不再回空集合当作「什么都没关」)——
-      // 花钱之前的瞬时故障,重投重试,零花费。
-      const disabled = await workerDisabledModels();
-      if (isModelDisabled(job.model, disabled)) {
-        await failClosedRefund(job.id, job.ownerId, "this model was turned off before the job ran — not spending");
-        return; // terminal, no throw → no retry, no spend
-      }
-
       // Atomic spend claim: QUEUED → GENERATING in a single conditional update,
       // so concurrent or duplicate deliveries can never both reach the provider.
       // A lost claim means another delivery owns the job, or a prior attempt
@@ -331,6 +319,21 @@ export async function handleRefGen(data: RefGenJobData, retryCount: number): Pro
           if (staled.count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });
         return;
+      }
+
+      // OPT-6 P2 (highest-trust): fail-without-spend if the model was admin-disabled after this
+      // job was queued. Still before any provider call — but now AFTER the claim. (Variant jobs
+      // always use seedream → this is the seedream/image toggle for the variant path too.)
+      //
+      // #647 T6 修复轮 r2 P1-R2-1:与 gen.ts 同一处病、同一个修法。这道闸原本站在 claim 前面,
+      // 而 r1 把它的失败语义改成「抛 PLAIN」之后,一个**重复** delivery 在这里读失败,抛出的
+      // 错会落进通用 catch,catch 的 requeue 把状态写回 QUEUED —— 那一行可能正被另一个
+      // delivery 拿着调 provider。挪到 claim 之后:能走到这里的一定是刚赢下 claim 的那个
+      // delivery,requeue 动的是自己的行;输掉 claim 的早在上面返回,连读都不会读。
+      const disabled = await workerDisabledModels();
+      if (isModelDisabled(job.model, disabled)) {
+        await failClosedRefund(job.id, job.ownerId, "this model was turned off before the job ran — not spending");
+        return; // terminal, no throw → no retry, no spend
       }
 
       // BASE = text-to-image (no conditioning). VARIANT = image-to-image conditioned

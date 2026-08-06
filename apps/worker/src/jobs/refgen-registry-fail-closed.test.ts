@@ -126,8 +126,13 @@ describe("#647 T6 r2 P1-R2-1:参考图侧,重复 delivery 的 registry 故障也
     await handleRefGen(DELIVERY, 0).catch(() => undefined);
     const requeued = m.refGenJobUpdateMany.mock.calls.filter((c) => c[0]?.data?.status === "QUEUED");
     expect(requeued, "把别人的活跃作业打回了 QUEUED —— 双花那条路").toEqual([]);
+    // 与 gen 侧同一条判据:允许既有那条 stale-only 的条件写(它对新鲜 winner 匹配 0 行),
+    // 但绝不允许一条没有 stale 守卫的终态写。
     const failed = m.refGenJobUpdateMany.mock.calls.filter((c) => c[0]?.data?.status === "FAILED");
-    expect(failed).toEqual([]);
+    for (const call of failed) {
+      expect(call[0]?.where?.startedAt?.lt, "终态写必须带 stale 守卫").toBeInstanceOf(Date);
+      expect(call[0]?.where?.status).toBe("GENERATING");
+    }
     expect(m.refundReservation).not.toHaveBeenCalled();
     expect(m.generateImages).not.toHaveBeenCalled();
   });

@@ -179,8 +179,16 @@ describe("#647 T6 r2 P1-R2-1:重复 delivery 的 registry 故障不许碰别人�
 
   it("绝不把活跃 winner 终态化,也绝不退它的款", async () => {
     await handleGen({ genJobId: "g1" }, GEN_RETRY_LIMIT).catch(() => undefined);
+    // 这里**允许**出现一次 FAILED 写 —— 那是既有的「输掉 claim」分支里那条 stale-only 的
+    // 条件写,它的 WHERE 带着 `startedAt < 阈值`,对一个心跳新鲜的 winner 匹配 0 行。
+    // 要钉死的不是「有没有发起这条写」,而是**绝不允许一条没有 stale 守卫的终态写**
+    // —— 那种写才会真的把别人的活跃作业打死。
     const failed = m.genJobUpdateMany.mock.calls.filter((c) => c[0]?.data?.status === "FAILED");
-    expect(failed).toEqual([]);
+    for (const call of failed) {
+      expect(call[0]?.where?.startedAt?.lt, "终态写必须带 stale 守卫").toBeInstanceOf(Date);
+      expect(call[0]?.where?.status).toBe("GENERATING");
+    }
+    // 匹配 0 行 ⇒ 没退款。退款发生了,就说明我们真把别人的 winner 打死了。
     expect(m.refundReservation).not.toHaveBeenCalled();
   });
 
