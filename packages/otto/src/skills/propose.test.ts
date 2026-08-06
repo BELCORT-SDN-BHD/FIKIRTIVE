@@ -115,10 +115,10 @@ describe("buildProposeCard — pure helper", () => {
   });
 
   // Test 2: video-model is locked to the single active model (product decision: one video
-  // model, no picker — see review-fixes F1). suggestModel ignores the `disabled` set for
-  // SELECTION; admin-disable is still enforced at spend time (assertSpendableModel /
-  // isModelDisabled in startGen), not by swapping the proposed model.
-  it("video model is locked to the active model regardless of the disabled set", () => {
+  // model, no picker — see review-fixes F1). #647 T6 改了这一条的后半段:关掉那台引擎
+  // 不再「照铸不误、留给 spend 闸拦」,而是**根本铸不出卡**(空态见文件末尾的 T6 段)。
+  // 这里留下的是仍然成立的那一半:别的输入组合都不会把选中的模型换掉。
+  it("video model is locked to the active model (no picker — selection never varies with input)", () => {
     const baseInput = {
       kind: "video" as const,
       structuredPrompt: "A cat walks across a sunlit room",
@@ -126,18 +126,16 @@ describe("buildProposeCard — pure helper", () => {
       variantSel: {},
     };
 
-    // Capture the active model (no disabled list)
-    const defaultCtx = makeCtx({ disabledModels: [] });
-    const { cardPayload: defaultCard } = buildProposeCard(baseInput, defaultCtx, []);
-    const defaultModel = defaultCard.model;
+    const ctx = makeCtx({ disabledModels: [] });
+    const { cardPayload: defaultCard } = buildProposeCard(baseInput, ctx, []);
+    const { cardPayload: shapedCard } = buildProposeCard(
+      { ...baseInput, desiredAspect: "9:16", desiredDuration: 10, desiredAudio: false },
+      ctx,
+      [],
+    );
 
-    // Disabling that model does NOT change the proposed model — selection is locked to the
-    // single active video model; the disabled gate fires later, at the spend boundary.
-    const disabledCtx = makeCtx({ disabledModels: [defaultModel] });
-    const { cardPayload: disabledCard } = buildProposeCard(baseInput, disabledCtx, []);
-
-    expect(disabledCard.kind).toBe("video");
-    expect(disabledCard.model).toBe(defaultModel);
+    expect(defaultCard.kind).toBe("video");
+    expect(shapedCard.model).toBe(defaultCard.model);
   });
 
   // Test 3: cardPayload does not carry ownerId/threadId from ctx (these are identity fields
@@ -410,13 +408,14 @@ describe("executePropose — mock DB", () => {
 
     // return value has the right shape
     expect(result).toHaveProperty("cardId");
-    expect(typeof result.cardId).toBe("string");
-    expect(result.cardId.length).toBeGreaterThan(0);
+    const minted = result as { cardId: string; shownPriceDisplay: number };
+    expect(typeof minted.cardId).toBe("string");
+    expect(minted.cardId.length).toBeGreaterThan(0);
     expect(result).toHaveProperty("shownPriceDisplay");
-    expect(typeof result.shownPriceDisplay).toBe("number");
+    expect(typeof minted.shownPriceDisplay).toBe("number");
 
     // M1: shownPriceDisplay must be positive (guards against regression to 0/NaN)
-    expect(result.shownPriceDisplay).toBeGreaterThan(0);
+    expect(minted.shownPriceDisplay).toBeGreaterThan(0);
   });
 
   // Test 7: genJob.create is NEVER called

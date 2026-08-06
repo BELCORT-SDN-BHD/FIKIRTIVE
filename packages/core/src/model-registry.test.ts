@@ -12,7 +12,9 @@ describe("ALL_MODEL_IDS", () => {
   });
   it("isKnownModelId accepts a catalog id and rejects garbage", () => {
     expect(isKnownModelId("seedream")).toBe(true);
-    expect(isKnownModelId("kling")).toBe(true);
+    expect(isKnownModelId("seedance-2-fast")).toBe(true);
+    // #647 T6:下架模型不再是「代码认识的模型」—— 后台连关它都关不了(也不需要关)
+    expect(isKnownModelId("kling")).toBe(false);
     expect(isKnownModelId("nonexistent")).toBe(false);
     expect(isKnownModelId("")).toBe(false);
   });
@@ -22,17 +24,17 @@ describe("isModelDisabled / enabledVideoModels (additive narrowing only)", () =>
   it("nothing disabled → full typed video menu, nothing reported disabled", () => {
     const none = new Set<string>();
     expect(enabledVideoModels(none)).toEqual([...GEN_VIDEO_MODELS]);
-    expect(isModelDisabled("kling", none)).toBe(false);
+    expect(isModelDisabled("seedance-2-fast", none)).toBe(false);
   });
   it("a disabled id is filtered out of the video menu and reported disabled", () => {
-    const d = new Set(["kling"]);
-    expect(enabledVideoModels(d)).not.toContain("kling");
+    const d = new Set(["seedance-2-fast"]);
+    expect(enabledVideoModels(d)).not.toContain("seedance-2-fast");
     expect(enabledVideoModels(d).length).toBe(GEN_VIDEO_MODELS.length - 1);
-    expect(isModelDisabled("kling", d)).toBe(true);
-    expect(isModelDisabled("veo3.1", d)).toBe(false);
+    expect(isModelDisabled("seedance-2-fast", d)).toBe(true);
+    expect(isModelDisabled("seedream", d)).toBe(false);
   });
   it("subset property: the enabled set is ALWAYS a subset of the typed menu for ANY (even garbage) disabled set", () => {
-    const garbage = new Set(["kling", "not-a-model", "", "💸"]);
+    const garbage = new Set(["kling", "not-a-model", "", "💸"]); // kling 已下架 = 与其它垃圾同类
     const enabled = enabledVideoModels(garbage);
     for (const m of enabled) expect((GEN_VIDEO_MODELS as readonly string[]).includes(m)).toBe(true);
     // a garbage disabled id can't change the menu (it was never in it)
@@ -46,9 +48,10 @@ describe("isModelDisabled / enabledVideoModels (additive narrowing only)", () =>
 
 describe("knownDisabledSet (unknown ignored at the resolver boundary)", () => {
   it("drops unknown ids and keeps known ones — unknowns never enter the set", () => {
-    const set = knownDisabledSet(["kling", "not-a-model", "", "💸", "seedream"]);
-    expect(set.has("kling")).toBe(true);
+    const set = knownDisabledSet(["seedance-2-fast", "kling", "not-a-model", "", "💸", "seedream"]);
+    expect(set.has("seedance-2-fast")).toBe(true);
     expect(set.has("seedream")).toBe(true);
+    expect(set.has("kling")).toBe(false); // #647 T6:下架模型不再在册,进不了这个集合
     expect(set.has("not-a-model")).toBe(false);
     expect(set.has("")).toBe(false);
     expect(set.has("💸")).toBe(false);

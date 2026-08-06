@@ -20,7 +20,7 @@ import type { RunContext } from "@openai/agents";
 import { newId } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
-import { proposeInput, buildProposeCard, type ProposeInput } from "./propose.helpers.js";
+import { proposeInput, buildProposeCard, GenerationUnavailableError, type ProposeInput, type CardPayload } from "./propose.helpers.js";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ type ProposePackInput = z.infer<typeof proposePackInput>;
 export async function executeProposePack(
   input: ProposePackInput,
   runContext: Pick<RunContext<OttoContext>, "context">,
-): Promise<{ packId: string; cardIds: string[] }> {
+): Promise<{ packId: string; cardIds: string[] } | { error: string }> {
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
 
@@ -66,12 +66,22 @@ export async function executeProposePack(
   const packId = newId();
   const cardIds: string[] = [];
 
-  for (const item of input.items) {
-    // Ownership guard: filter ownedEntityIds to those referenced by this item.
-    const itemOwnedEntityIds = ownedEntityIds.filter((id) => item.entityIds.includes(id));
+  // #647 T6:整包**先全部造完再落库**。造卡是纯的($0,无 I/O),所以先造后写不多花一分
+  // 成本,却买到一条硬性质:唯一那台引擎被关掉时,商家看到的是一句人话,而不是「前两张
+  // 落了库、第三张报错」的半截包 —— 半截包里每一张都是点得下去的付费卡。
+  const payloads: CardPayload[] = [];
+  try {
+    for (const item of input.items) {
+      // Ownership guard: filter ownedEntityIds to those referenced by this item.
+      const itemOwnedEntityIds = ownedEntityIds.filter((id) => item.entityIds.includes(id));
+      payloads.push(buildProposeCard(item as ProposeInput, ctx, itemOwnedEntityIds).cardPayload);
+    }
+  } catch (e) {
+    if (e instanceof GenerationUnavailableError) return { error: e.message };
+    throw e;
+  }
 
-    const { cardPayload } = buildProposeCard(item as ProposeInput, ctx, itemOwnedEntityIds);
-
+  for (const cardPayload of payloads) {
     // Stamp the pack grouping onto the payload (minimally extended).
     const packedPayload = {
       ...cardPayload,

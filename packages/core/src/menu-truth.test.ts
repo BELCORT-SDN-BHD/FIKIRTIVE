@@ -100,9 +100,15 @@ describe("#647 T6 知识格(45 → 5:每一格都真会被读到)", () => {
     for (const f of RETIRED_FAMILIES) expect(MODEL_FAMILIES as readonly string[]).not.toContain(f);
   });
 
-  it("下架模型的 id 不再有家族(modelFamily 对退役 id 返回 undefined,不崩)", () => {
-    for (const id of RETIRED_VIDEO_MODELS) expect(modelFamily(id)).toBeUndefined();
+  it("退役家族的 id 不再有家族(modelFamily 返回 undefined,不崩)", () => {
+    // 注意 seedance-2 不在这里:它退役了,但 `modelFamily` 是**按前缀**认家族的
+    // (版本升级自动继承),而 seedance 这个家族还在产。前缀命中一个在产家族不是
+    // 假菜单 —— 假菜单是「菜单上有这一格」,而 GEN_VIDEO_MODELS 上已经没有它了。
+    const noLiveFamily = RETIRED_VIDEO_MODELS.filter((id) => !id.startsWith("seedance"));
+    expect(noLiveFamily.length).toBe(11);
+    for (const id of noLiveFamily) expect(modelFamily(id), id).toBeUndefined();
     expect(modelFamily("完全没见过的东西")).toBeUndefined();
+    expect(modelFamily("")).toBeUndefined();
   });
 
   it("每个家族只开它真服务的模式:图片家族三个视频模式都不该有,反之亦然", () => {

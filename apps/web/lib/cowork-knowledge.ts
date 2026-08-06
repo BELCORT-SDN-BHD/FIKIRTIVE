@@ -49,7 +49,8 @@ export async function listDirectives(): Promise<DirectiveRow[]> {
 
 /** Guardian's cast-severity read (R6 fresh): the founder-tuned multi-character
  *  handling for (family, mode). undefined → no rule (Guardian won't block on
- *  multi-character; "LTX warns, Kling does not" is data, not code). */
+ *  multi-character — 哪台引擎在几个人的镜头里会翻车,是**数据**,由 Founder 在后台按
+ *  家族×模式填,不是写死在代码里的判断)。 */
 export async function getCastRule(family: ModelFamily, mode: GenMode): Promise<"warn" | "block" | undefined> {
   const row = await prisma.modelDirective.findUnique({
     where: { ownerId_family_mode: { ownerId: FOUNDER_OWNER_ID, family, mode } },

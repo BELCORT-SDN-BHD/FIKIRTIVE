@@ -11,6 +11,7 @@ import {
   REFGEN_MODELS,
   ROLES,
   SECTION_MATRIX,
+  familyModes,
   modelFamily,
   type Role,
   type Section,
@@ -704,8 +705,12 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
   ];
   const directives = await listDirectives();
   const directivesByKey = new Map(directives.map((row) => [`${row.family}:${row.mode}`, row]));
+  // #647 T6:知识格从 9 家族 × 5 模式 = 45 格,收缩成**真会被读到的那几格**。
+  // 家族随假引擎下架从 9 掉到 2;跨 kind 的组合(图像家族 × t2v 之类)本来就永远取不到
+  // 值 —— 后台可以把它填满,引擎一辈子看不见。`familyModes` 按在册模型现算,所以上架/
+  // 下架一台引擎,这张网格当场跟着变,不需要有人记得回来改一个数。
   const directiveCells = MODEL_FAMILIES.flatMap((family) =>
-    GEN_MODES.map((mode) => {
+    familyModes(family).map((mode) => {
       const row = directivesByKey.get(`${family}:${mode}`);
       return {
         family,
@@ -818,7 +823,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       provider,
       modelCount: modelIds.length,
       enabledModelCount: modelIds.filter((id) => !disabledModels.has(id)).length,
-      directiveCells: MODEL_FAMILIES.length * GEN_MODES.length,
+      // 计数就是那张网格本身的长度 —— 不再是「家族数 × 模式数」这个第二份推导
+      // (两份推导正是「说的」与「做的」失同步的老来源)。
+      directiveCells: directiveCells.length,
       filledDirectiveCells: filledDirectives,
       coveredFamilies: routedFamilies.filter((family) => seededFamilies.has(family)).length,
       routedFamilies: routedFamilies.length,

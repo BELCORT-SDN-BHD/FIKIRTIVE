@@ -8,20 +8,10 @@ import {
 
 describe("modelFamily", () => {
   // every shipping video model resolves to a known family (version-agnostic, by prefix)
+  // #647 T6:菜单收到只剩在产那一台之后,这张表也跟着只剩一行 —— 表与菜单同集由
+  // menu-truth.test.ts 钉着,这里钉的是映射本身。
   const expected: Record<string, string> = {
-    kling: "kling",
-    "kling-2.6": "kling",
-    "kling-3": "kling",
-    "veo3.1-lite": "veo",
-    "veo3.1-fast": "veo",
-    "veo3.1": "veo",
-    "ltx-2": "ltx",
     "seedance-2-fast": "seedance",
-    "pixverse-v6": "pixverse",
-    "grok-imagine": "grok",
-    "wan-2.5": "wan",
-    "hailuo-02": "hailuo",
-    "seedance-2": "seedance",
   };
   it("maps every video model to a family", () => {
     for (const m of GEN_VIDEO_MODELS) {
@@ -32,8 +22,8 @@ describe("modelFamily", () => {
     expect(modelFamily("seedream")).toBe("seedream");
   });
   it("is version-agnostic by prefix (future bumps inherit the family)", () => {
-    expect(modelFamily("kling-4")).toBe("kling");
-    expect(modelFamily("veo4")).toBe("veo");
+    expect(modelFamily("seedance-3-fast")).toBe("seedance");
+    expect(modelFamily("seedream-5")).toBe("seedream");
   });
   it("seedream vs seedance disambiguate (both start with 'seed')", () => {
     expect(modelFamily("seedream")).toBe("seedream");
@@ -143,7 +133,9 @@ describe("genRequest.referenceVideoGenerationId", () => {
   });
 
   it("rejects non-Seedance video jobs with referenceVideoGenerationId", () => {
-    expect(genRequest.safeParse({ ...base, model: "veo3.1-lite", referenceVideoGenerationId: "gen_ref", durationSeconds: 6 }).success).toBe(false);
+    // #647 T6:菜单上已经没有第二台引擎了,所以这一条只能用菜单外的 id 来问 —— 它同时
+    // 证明契约闸对下架/未知模型仍然 fail closed(既非在册模型,也不是参考视频那一台)。
+    expect(genRequest.safeParse({ ...base, model: "veo3.1-lite", referenceVideoGenerationId: "gen_ref", durationSeconds: 5 }).success).toBe(false);
   });
 
   it("rejects 10s reference-video output before spend because the 16cr price is modeled for 5s output", () => {
@@ -160,7 +152,10 @@ describe("genRequest.tailGenerationId", () => {
   });
 
   it("模型真不支持尾帧时照旧在花钱前挡下(闸本身没松)", () => {
-    expect(GEN_VIDEO_MODEL_INFO["grok-imagine"].tail).toBe(false);
+    // #647 T6:菜单上已经没有「不支持尾帧」的那一格了(唯一在产的那台支持)。闸的判据
+    // 是 `GEN_VIDEO_MODEL_INFO[model]?.tail === true`,所以事实表上查不到的模型一律当
+    // 「不支持」—— 用一个下架 id 来问,正好同时钉住这条 fail-closed 语义。
+    expect((GEN_VIDEO_MODEL_INFO as Record<string, { tail: boolean } | undefined>)["grok-imagine"]).toBeUndefined();
     const r = genRequest.safeParse({ ...base, model: "grok-imagine", durationSeconds: 6, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" });
     expect(r.success).toBe(false);
   });

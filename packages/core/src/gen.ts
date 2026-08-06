@@ -14,45 +14,77 @@ import { z } from "zod";
 
 export const GEN_MODELS = ["seedream"] as const;
 export type GenModel = (typeof GEN_MODELS)[number];
-/** Video model menu (fal) — mirrors LTX Studio's lineup. Kling 2.5 is the silent,
- *  cheap default; every other model generates native audio. Order = picker order
- *  (silent default first, then sound models roughly cheapest→priciest). */
-export const GEN_VIDEO_MODELS = [
-  "kling", "veo3.1-lite", "ltx-2", "kling-2.6", "kling-3", "veo3.1-fast", "seedance-2-fast", "veo3.1",
-  // added popular fal models (cheapest→priciest among the new ones)
-  "pixverse-v6", "grok-imagine", "wan-2.5", "hailuo-02", "seedance-2",
-] as const;
+/**
+ * 视频引擎菜单 —— **在产的只有这一台**。
+ *
+ * #647 T6:这里原本挂着 13 格,其中 12 格(kling / veo3.1 系 / ltx-2 / pixverse-v6 /
+ * grok-imagine / wan-2.5 / hailuo-02 / seedance-2)全部走 fal 接线,**从来没有在生产
+ * 出过一条片**。它们同时占着事实表、档位表、费率表、fal 接线表各一格,后台各一个开关,
+ * 知识库各一列家族 —— 一整片「说的」而没有「做的」。菜单上没有一格是假的(#641),
+ * 所以它们下架。
+ *
+ * 留下的 seedance-2-fast 是 BytePlus 直连、在产实付、毛利闸盯着的那一台。
+ * 要再卖一台:先给它 flat 且清地板的价(FLAT_PRICED_VIDEO_MODELS + 成本输入),
+ * 再在这里、事实表、档位表、费率与 @fikirtive/generation 的 VIDEO_CFG 一起加 ——
+ * 缺一处,「卖什么」和「做什么」当场分家。
+ */
+export const GEN_VIDEO_MODELS = ["seedance-2-fast"] as const;
 export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
 
 export const GEN_KINDS = ["image", "video"] as const;
 export type GenKind = (typeof GEN_KINDS)[number];
 
-/** The prompt-research FAMILIES the knowledge base keys on. Version-specific
- *  model ids (kling-2.6, kling-3) collapse to one family so the founder tunes
- *  one directive per family, not one per model. */
-export const MODEL_FAMILIES = ["seedream", "kling", "veo", "seedance", "ltx", "wan", "pixverse", "grok", "hailuo"] as const;
+/** 知识库按 FAMILY 建格 —— 同一家族的不同版本(seedream 4.5 / 5)共用一条指令,
+ *  Founder 调一次而不是每个版本调一次。
+ *
+ *  #647 T6:原本九个家族,其中七个(kling / veo / ltx / wan / pixverse / grok / hailuo)
+ *  是那 12 台假视频引擎带进来的。引擎下架,家族跟着下架 —— 留下的两个正好是两台在产
+ *  引擎各自的家族。加一台新引擎:先在 GEN_MODELS / GEN_VIDEO_MODELS 上架,再回来加它的
+ *  家族(`menu-truth.test.ts` 钉着两边必须同集)。 */
+export const MODEL_FAMILIES = ["seedream", "seedance"] as const;
 export type ModelFamily = (typeof MODEL_FAMILIES)[number];
 
 /** The generation MODES the knowledge base keys on alongside family. */
 export const GEN_MODES = ["t2i", "i2i", "t2v", "i2v", "i2v-tail"] as const;
 export type GenMode = (typeof GEN_MODES)[number];
 
+/** 每个模式属于哪一种作业。知识格是 family × mode,而**家族只服务一种 kind** ——
+ *  这张表就是「哪些格子真会被问到」的判据(见 `familyModes`)。 */
+export const GEN_MODE_KIND: Record<GenMode, GenKind> = {
+  "t2i": "image",
+  "i2i": "image",
+  "t2v": "video",
+  "i2v": "video",
+  "i2v-tail": "video",
+};
+
 /** Map a (version-specific) model id → its research family, by prefix so a
- *  future version bump (kling-4) inherits the family automatically. An unknown
- *  id returns undefined (the skill falls back to a family-neutral base prompt) —
- *  NEVER throws. seedream/seedance both start "seed" but the full prefixes
- *  disambiguate. */
+ *  future version bump inherits the family automatically. An unknown id returns
+ *  undefined (the skill falls back to a family-neutral base prompt) — NEVER throws.
+ *  seedream/seedance both start "seed" but the full prefixes disambiguate.
+ *  #647 T6:下架模型的 id 从此也走这条 undefined —— 「不知道」比「编一个家族出来」诚实。 */
 export function modelFamily(modelId: string): ModelFamily | undefined {
   if (modelId.startsWith("seedream")) return "seedream";
-  if (modelId.startsWith("kling")) return "kling";
-  if (modelId.startsWith("veo")) return "veo";
   if (modelId.startsWith("seedance")) return "seedance";
-  if (modelId.startsWith("ltx")) return "ltx";
-  if (modelId.startsWith("wan")) return "wan";
-  if (modelId.startsWith("pixverse")) return "pixverse";
-  if (modelId.startsWith("grok")) return "grok";
-  if (modelId.startsWith("hailuo")) return "hailuo";
   return undefined;
+}
+
+/**
+ * 一个家族**真会被问到**的模式(#647 T6)。
+ *
+ * 知识格原本是 9 家族 × 5 模式 = 45 格,读它的两条路(`getEnhanceDirective` /
+ * `getCastRule`)都按 (modelFamily(实际模型), deriveMode(实际请求)) 取值 —— 于是
+ * 「图像家族 × t2v」这种跨 kind 的格子**永远取不到**:Founder 可以在后台把它填满,
+ * 引擎一辈子看不见。那也是一格假菜单。
+ *
+ * 纯派生,不手抄:家族服务哪种 kind,由在册模型说了算;kind 对应哪几个模式,由
+ * `GEN_MODE_KIND` 说了算。上架/下架一个模型,格子当场跟着变。
+ */
+export function familyModes(family: ModelFamily): GenMode[] {
+  const kinds = new Set<GenKind>();
+  for (const m of GEN_MODELS) if (modelFamily(m) === family) kinds.add("image");
+  for (const m of GEN_VIDEO_MODELS) if (modelFamily(m) === family) kinds.add("video");
+  return GEN_MODES.filter((mode) => kinds.has(GEN_MODE_KIND[mode]));
 }
 
 /** Derive the generation MODE from a server-resolved request shape — the other
@@ -194,30 +226,18 @@ export function normalizeImageAspect(raw?: string | null): GenImageAspect | null
     : null;
 }
 
-/** Per-model facts: `label` for the picker, `sound` = generates native audio,
- *  `tail` = supports an end frame. Controls + price live in the two helpers below. */
+/** Per-model facts: `label` for INTERNAL/audit copy only (engine names never reach a
+ *  merchant surface), `sound` = generates native audio, `tail` = supports an end frame.
+ *  Controls + price live in the two helpers below. */
 export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound: boolean; tail: boolean }> = {
-  "kling":           { label: "Kling 2.5",         sound: false, tail: true },
-  "veo3.1-lite":     { label: "Veo 3.1 Lite",      sound: true, tail: false },
-  "ltx-2":           { label: "LTX-2",             sound: true, tail: false },
-  "kling-2.6":       { label: "Kling 2.6 Pro",     sound: true, tail: true },
-  "kling-3":         { label: "Kling 3.0 Pro",     sound: true, tail: true },
-  "veo3.1-fast":     { label: "Veo 3.1 Fast",      sound: true, tail: true },
   "seedance-2-fast": { label: "Seedance 2.0 Fast", sound: true, tail: true }, // #646 T5: first+last frames ARE supported (two role-tagged frames in one task)
-  "veo3.1":          { label: "Veo 3.1",           sound: true, tail: true },
-  "pixverse-v6":     { label: "PixVerse V6",       sound: true,  tail: false }, // /transition end-frame deferred (params unverified)
-  "grok-imagine":    { label: "Grok Imagine",      sound: false, tail: false },
-  "wan-2.5":         { label: "Wan 2.5",           sound: true,  tail: false }, // native audio (not toggleable)
-  "hailuo-02":       { label: "Hailuo 02 Pro",     sound: false, tail: true },
-  "seedance-2":      { label: "Seedance 2.0",      sound: true,  tail: true },
 };
 
-/** Per-model controls — each exposes exactly what its fal endpoint accepts (i2v
- *  limits; aspect is t2v-only on some models, deriving from the source image in
- *  i2v). Empty array = no such control. `audioToggle` false = always silent
- *  (Kling 2.5). Lists are default-first. `maxCount` = batch ceiling (we enqueue N
- *  one-clip jobs — fal video has no num_videos param). Add a model: one entry
- *  here + one in @fikirtive/generation's VIDEO_CFG. */
+/** Per-model controls — each exposes exactly what its engine accepts. Empty array =
+ *  no such control. `audioToggle` false = always silent. Lists are picker order.
+ *  `maxCount` = batch ceiling (we enqueue N one-clip jobs — the video endpoint has no
+ *  num_videos param). Add a model: one entry here + one in @fikirtive/generation's
+ *  VIDEO_CFG (双声明纪律 —— 删的时候同样两边一起删,见 GEN_VIDEO_MODELS). */
 export type VideoModelOptions = {
   durations: number[];
   resolutions: string[];
@@ -240,11 +260,6 @@ export type VideoModelOptions = {
  *  不许翻译成 16:9 之类的具体值(那就是又一次替商家做主还不说话)。 */
 export const VIDEO_ASPECT_ADAPTIVE = "adaptive";
 export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> = {
-  "kling":           { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 },
-  "veo3.1-lite":     { durations: [4, 6, 8],  resolutions: ["720p"],                    aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
-  "ltx-2":           { durations: [6, 8, 10], resolutions: ["1080p", "1440p", "2160p"], aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
-  "kling-2.6":       { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
-  "kling-3":         { durations: [5, 10],   resolutions: [],                           aspectRatios: [],               fps: [],       audioToggle: true,  maxCount: 4 },
   // #645 T4:引擎真能给的每一档都开出来 —— duration 整数 [4,15]、480p/720p(Fast 无 1080p)、
   // 六比例 + adaptive。列表顺序 = picker 顺序;默认值显式写在 `defaults` 里,与今日逐字一致。
   "seedance-2-fast": {
@@ -255,13 +270,6 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
     defaults: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
     i2vAspectRatio: VIDEO_ASPECT_ADAPTIVE,
   },
-  "veo3.1-fast":     { durations: [4, 6, 8],  resolutions: ["720p", "1080p"],           aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
-  "veo3.1":          { durations: [4, 6, 8],  resolutions: ["720p", "1080p", "4k"],     aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
-  "pixverse-v6":     { durations: [5, 8],    resolutions: ["360p", "540p", "720p", "1080p"], aspectRatios: [], fps: [], audioToggle: true,  maxCount: 4 }, // i2v schema has no aspect_ratio
-  "grok-imagine":    { durations: [6],       resolutions: ["480p", "720p"],            aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 },
-  "wan-2.5":         { durations: [5, 10],   resolutions: ["480p", "720p", "1080p"],   aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 }, // audio always on
-  "hailuo-02":       { durations: [6],       resolutions: [],                          aspectRatios: [],               fps: [],       audioToggle: false, maxCount: 4 }, // fixed 6s @ 1080p
-  "seedance-2":      { durations: [5, 10],   resolutions: ["480p", "720p", "1080p"],   aspectRatios: ["16:9", "9:16"], fps: [],       audioToggle: true,  maxCount: 4 },
 };
 
 /**
@@ -272,12 +280,20 @@ export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> =
  * 走模型的 `i2vAspectRatio`(Seedance = adaptive):有首帧时形状该跟着首帧走,而不是被
  * 一个默认值悄悄改成别的画幅 —— 与图片侧「改这张图不变形状」同一条原则。其余三项
  * (时长/分辨率/声音)两条路一致。
+ *
+ * #647 T6 历史安全:菜单收窄之后,库里仍存着写着已下架模型名的老 GenJob 行,而读它们的
+ * 每一条路(记账、价签、worker 重算)都会把那个字符串强转成 `GenVideoModel` 送进来。
+ * 菜单外的 id **不抛异常**(抛了就是卡面渲染直接崩),而是回一份**空规格** ——
+ * 「我不知道这台引擎当年给的是什么」。空规格不会被误认成一份真档位:秒数 0 与空
+ * 分辨率既不在任何按秒价目表上,也不在任何档位表上,所以下游只会落到护栏,
+ * 绝不会把一个编出来的数字当成真值。
  */
 export function videoDefaults(
   model: GenVideoModel,
   opts?: { hasSourceImage?: boolean },
 ): { seconds: number; resolution: string; aspectRatio: string; fps: number; audio: boolean } {
-  const o = GEN_VIDEO_MODEL_OPTIONS[model];
+  const o = GEN_VIDEO_MODEL_OPTIONS[model] as VideoModelOptions | undefined;
+  if (!o) return { seconds: 0, resolution: "", aspectRatio: "", fps: 0, audio: false };
   const t2vAspect = o.defaults?.aspectRatio ?? o.aspectRatios[0] ?? "";
   const i2vAspect = opts?.hasSourceImage && o.i2vAspectRatio && o.aspectRatios.includes(o.i2vAspectRatio)
     ? o.i2vAspectRatio
@@ -395,39 +411,30 @@ export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
   referenceInputSeconds: REF_VIDEO_MAX_SECONDS,
 });
 
-/** Per-second rate ($/s) by model/resolution/audio — basis for the live price hint.
- *  fal models: verified against each model's fal pricing page. seedance-2-fast (the one
- *  in-service BytePlus model): the official token price per tier's worst ratio, see
- *  SEEDANCE_COGS_USD_PER_SECOND. */
-function videoRateUsdPerSec(model: GenVideoModel, resolution: string, audio: boolean): number {
-  switch (model) {
-    case "kling": return 0.07;                                             // always silent
-    case "kling-2.6": return audio ? 0.14 : 0.07;
-    case "kling-3": return audio ? 0.168 : 0.112;
-    // #644 官方牌价 token 公式;#645 T4 起按**档 × 最差比例**分开(480p 是真的半价档,
-    // 记成 720p 会把它的毛利算错)。未知/缺省分辨率一律回落到更贵的 720p —— 记账宁可高估。
-    // 声音开关不影响 2.0 系列价格,所以这一档不看 audio。RECORD-ONLY;收费在 spend.ts。
-    case "seedance-2-fast":
-      return SEEDANCE_COGS_USD_PER_SECOND[resolution as "480p" | "720p"] ?? SEEDANCE_COGS_USD_PER_SECOND["720p"];
-    case "ltx-2": return resolution === "2160p" ? 0.24 : resolution === "1440p" ? 0.12 : 0.06;
-    case "veo3.1-lite": return resolution === "1080p" ? (audio ? 0.08 : 0.05) : (audio ? 0.05 : 0.03);
-    case "veo3.1-fast": return audio ? 0.15 : 0.10;
-    case "veo3.1": return resolution === "4k" ? (audio ? 0.60 : 0.40) : (audio ? 0.40 : 0.20);
-    case "pixverse-v6":
-      return resolution === "1080p" ? (audio ? 0.115 : 0.090)
-        : resolution === "720p" ? (audio ? 0.060 : 0.045)
-        : resolution === "540p" ? (audio ? 0.045 : 0.035)
-        : (audio ? 0.035 : 0.025);                                            // 360p
-    case "grok-imagine": return resolution === "720p" ? 0.07 : 0.05;          // 480p; +$0.002/img input fee not in the estimate
-    case "wan-2.5": return resolution === "1080p" ? 0.15 : resolution === "720p" ? 0.10 : 0.05; // 480p; native audio same price
-    case "hailuo-02": return 0.08;                                            // fixed 6s @ 1080p, single rate
-    case "seedance-2": return resolution === "1080p" ? 0.682 : resolution === "720p" ? 0.3024 : 0.134; // 480p≈; token-priced, per-sec est at 16:9
+/**
+ * Per-second COGS rate ($/s) by model/resolution — the record-only cost basis.
+ *
+ * #644/#645:在产那一档走官方 token 公式,按**档 × 最差比例**分开(480p 是真的半价档,
+ * 记成 720p 会把它的毛利算错)。未知/缺省分辨率一律回落到更贵的 720p —— 记账宁可高估。
+ * 声音开关不影响 2.0 系列价格,所以这一档不看 audio。
+ *
+ * #647 T6:菜单外的 id(下架前存下的历史行)回 **0** —— 那 12 台引擎的费率是从各自的 fal
+ * 定价页抄来的,引擎既已下架,那些数字就再没有人核过;留着它们等于让一条谁都不再验证的
+ * 价格继续参与记账。0 的意思是「这一趟的成本我们不知道」,而不是「这一趟不花钱」:
+ * 记账是 record-only,而**收费**那一侧(spend.ts)对同一批 id 走的是护栏价,不是 0。
+ */
+function videoRateUsdPerSec(model: GenVideoModel, resolution: string): number {
+  if (model === "seedance-2-fast") {
+    return SEEDANCE_COGS_USD_PER_SECOND[resolution as "480p" | "720p"] ?? SEEDANCE_COGS_USD_PER_SECOND["720p"];
   }
+  return 0;
 }
 
 /** Live total for a batch: count × seconds × per-second rate. */
 export function videoPriceUsd(model: GenVideoModel, opts: { seconds: number; resolution: string; audio: boolean; count: number }): number {
-  return opts.count * opts.seconds * videoRateUsdPerSec(model, opts.resolution, opts.audio);
+  // `audio` 留在入参里:调用方(卡面报价、worker 结算)手上就有它,而声音开关在别的引擎上
+  // 曾经是改价的。现在这一台不看它 —— 2.0 系列声音免费(#646 T5 已核)。
+  return opts.count * opts.seconds * videoRateUsdPerSec(model, opts.resolution);
 }
 
 export const genRequest = z
