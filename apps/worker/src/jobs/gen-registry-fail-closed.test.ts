@@ -125,4 +125,12 @@ describe("#647 T6 修复轮 P1-3:读得到时行为逐字不变", () => {
     expect(m.generateVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalled();
   });
+
+  it("图片作业走的是同一道闸,同一条语义(kind 不改变结论)", async () => {
+    m.genJobFindUnique.mockResolvedValue({ ...job, kind: "IMAGE", model: "seedream", count: 1 });
+    m.workerDisabledModels.mockRejectedValue(new Error("connection terminated unexpectedly"));
+    await expect(handleGen({ genJobId: "g1" }, 0)).rejects.toThrow();
+    expect(m.generateImages).not.toHaveBeenCalled();
+    expect(m.refundReservation).not.toHaveBeenCalled();
+  });
 });
