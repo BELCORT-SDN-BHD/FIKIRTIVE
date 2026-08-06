@@ -306,15 +306,57 @@ describe("generateVideo (Seedance, async)", () => {
       expect(err.message).toMatch(/no task id/);
       expect(err.charged).toBe(true);
     });
-    // 反向:submit 本身非 2xx = 引擎没收单 = 一分没花,必须留在 PLAIN(可重投)。
-    it("submit 非 2xx 仍是 PLAIN(预扣失败,引擎没收单)", async () => {
+    // ── #672:submit 的另外两种死法,与上面两条同尺 ────────────────────────────
+    //
+    // 上面两条盖住的是「submit 已经 2xx、回执读不出来」。submit 还有两种**根本没拿到
+    // 2xx** 的死法,此前双双按 PLAIN 逸出 ⇒ worker 重投 ⇒ 引擎那边可能已经有一个任务在
+    // 跑,再建第二个,同一支片子计两次费:
+    //   - fetch 自己抛:连响应都没拿到。请求可能已经到达引擎并建成了任务,只是回执丢在
+    //     路上 —— 与「2xx 但回执读不出来」是同一件事的不同死法,证明不了任务没建成。
+    //   - 5xx:网关超时 / 上游 500 可能发生在任务建成**之后**,同样证明不了没收单。
+    // 家规:只有可证明引擎没花钱才许 PLAIN;结果不明一律 charged(终态,不重投)。
+    it("#672 submit 的 fetch 自己抛(连响应都没拿到,证明不了任务没建成)", async () => {
+      stubFetch((url) => {
+        if (url.endsWith("/contents/generations/tasks")) throw new TypeError("fetch failed: ECONNRESET");
+        return jsonRes({ status: "running" });
+      });
+      const err = await rejection(call);
+      expect(err).toBeInstanceOf(Error);
+      expect(err.charged).toBe(true);
+    });
+    it("#672 submit 5xx(网关超时/上游 500 可能落在收单之后)", async () => {
       stubFetch((url) => url.endsWith("/contents/generations/tasks")
-        ? { ok: false, status: 429, text: async () => "rate limited" }
+        ? { ok: false, status: 500, text: async () => "internal error" }
         : jsonRes({ status: "running" }));
       const err = await rejection(call);
-      expect(err.message).toContain("429");
-      expect(err.charged).toBeFalsy();
+      expect(err.message).toContain("500");
+      expect(err.charged).toBe(true);
     });
+    it("#672 submit 503(网关侧同理,一并归入结果不明)", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 503, text: async () => "upstream busy" }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.charged).toBe(true);
+    });
+    // 反向(#672 拆窄):submit **4xx** = 引擎在收单前就拒了(限流 / 参数校验 / 鉴权)
+    // = 可证明一分没花,必须留在 PLAIN(可重投)。
+    //
+    // 这条反向钉板是 #664 判官链定下的,原文写的是「submit 非 2xx 仍是 PLAIN」—— 当时
+    // 防的是过度修正(别把预扣失败也算成已扣),但那个范围把 5xx 也框进了 PLAIN。5xx 与
+    // fetch 抛证明不了引擎没收单,按家规属「结果不明」,#672 已把它们移到 charged 一侧
+    // (见上面三条)。这里同步把反向保护拆窄为 4xx-only:保护还在,但只保护它真能证明的
+    // 那一段。裁决出处:#672 票面。
+    for (const status of [400, 401, 429] as const) {
+      it(`#672 submit ${status}(4xx:收单前被拒,可证明没花钱)仍是 PLAIN`, async () => {
+        stubFetch((url) => url.endsWith("/contents/generations/tasks")
+          ? { ok: false, status, text: async () => "rejected before the engine took the order" }
+          : jsonRes({ status: "running" }));
+        const err = await rejection(call);
+        expect(err.message).toContain(String(status));
+        expect(err.charged).toBeFalsy();
+      });
+    }
   });
   it("generateVideo includes a reference_video content part when refVideoUrl is set", async () => {
     let submitBody: any;
@@ -436,6 +478,99 @@ describe("generate (Seedream image, sync)", () => {
         ? jsonRes({ data: [{ url: "https://tos/img1.png" }] })
         : { ok: true, status: 200, arrayBuffer: async () => { throw new Error("stream aborted mid-body"); } });
       expect((await generateOnce()).charged).toBe(true);
+    });
+  });
+
+  // ── #672 钉板(图像侧):付费 POST **本身**的每一种死法 ────────────────────────
+  //
+  // 上面那组盖的是「POST 已经 2xx 之后」。POST 自己没拿到 2xx 的三种形状此前一律按
+  // PLAIN 逸出:/images/generations 是**同步计费端点**,一次 POST 就是一次计费事件,
+  // 它的响应里直接带着成品图。所以:
+  //   - fetch 自己抛(连响应都没拿到):请求可能已经到达引擎、模型已经跑完、只是回执丢
+  //     在路上 —— 证明不了没花钱。
+  //   - 5xx:网关超时 / 上游 500 可能发生在模型跑完**之后**,同样证明不了。
+  //   - 4xx(限流 / 参数校验 / 鉴权):在跑模型**之前**就被拒的单,可证明一分没花 ——
+  //     这是唯一能留在 PLAIN 的一段(反向钉板,见下)。
+  // 家规:只有可证明引擎没花钱才许 PLAIN;已计费或结果不明一律 chargedError(终态)。
+  describe("#672 图像付费 POST:结果不明按已扣终结,4xx 维持可重试", () => {
+    async function generateOnce(count = 1) {
+      let err: any;
+      try {
+        await new BytePlusProvider("ark-test").generate({ prompt: "x", inputImageUrls: [], count, model: "seedream" });
+      } catch (e) { err = e; }
+      return err;
+    }
+    it("POST 的 fetch 自己抛(连响应都没拿到,证明不了模型没跑)", async () => {
+      stubFetch((url) => {
+        if (url.endsWith("/images/generations")) throw new TypeError("fetch failed: ECONNRESET");
+        return bytesRes();
+      });
+      const err = await generateOnce();
+      expect(err).toBeInstanceOf(Error);
+      expect(err.charged).toBe(true);
+    });
+    it("POST 500(上游错误可能落在模型跑完之后)", async () => {
+      stubFetch((url) => url.endsWith("/images/generations")
+        ? { ok: false, status: 500, text: async () => "internal error" }
+        : bytesRes());
+      const err = await generateOnce();
+      expect(err.charged).toBe(true);
+      // 单张一旦标为 charged,批级就按「不足额且已花钱」重新包装消息(F05 既有行为,
+      // 本票未动);状态码仍留在 console.error 里。承重的是 charged 这一位。
+      expect(err.message).toMatch(/usable images/);
+    });
+    it("POST 503(网关侧同理)", async () => {
+      stubFetch((url) => url.endsWith("/images/generations")
+        ? { ok: false, status: 503, text: async () => "upstream busy" }
+        : bytesRes());
+      expect((await generateOnce()).charged).toBe(true);
+    });
+    // 反向钉板:4xx 是收单前被拒,可证明没花钱 —— 拆窄后这一段的 PLAIN 语义一字不变。
+    for (const status of [400, 401, 429] as const) {
+      it(`POST ${status}(4xx:跑模型前被拒)仍是 PLAIN(可重投)`, async () => {
+        stubFetch((url) => url.endsWith("/images/generations")
+          ? { ok: false, status, text: async () => "rejected before the model ran" }
+          : bytesRes());
+        const err = await generateOnce();
+        expect(err.message).toContain(String(status));
+        expect(err.charged).toBeFalsy();
+      });
+    }
+
+    // ── 批级(allSettled + anyCharged)后果,逐形状钉死 ───────────────────────
+    // 每张图各发一次 POST;批级只有一个问题要答:**这一批能不能整体重投**。能重投的
+    // 唯一条件是「每一条 rejection 都可证明没花钱」,即全部 4xx。
+    it("P0:count 张全部 fetch 抛 ⇒ 批级 charged(绝不整批重投)", async () => {
+      // 旧行为:三张全抛 ⇒ 三条 rejection 都没标记 ⇒ anyCharged=false ⇒ 整批 PLAIN ⇒
+      // worker 重投 ⇒ 若这三次请求其实已经到达引擎,同一批图被计两次 COGS。
+      stubFetch((url) => {
+        if (url.endsWith("/images/generations")) throw new TypeError("fetch failed: ECONNRESET");
+        return bytesRes();
+      });
+      const err = await generateOnce(3);
+      expect(err.charged).toBe(true);
+    });
+    it("批级混合 4xx + 5xx ⇒ charged(fail closed:只要有一条证明不了,整批不许重投)", async () => {
+      let n = 0;
+      stubFetch((url) => {
+        if (url.endsWith("/images/generations")) {
+          n++;
+          return n === 1
+            ? { ok: false, status: 429, text: async () => "rate limited" }
+            : { ok: false, status: 500, text: async () => "boom" };
+        }
+        return bytesRes();
+      });
+      const err = await generateOnce(2);
+      expect(err.charged).toBe(true);
+    });
+    it("反向:批级全部 4xx ⇒ 仍是 PLAIN(整批可证明没花钱,重投不会双扣)", async () => {
+      stubFetch((url) => url.endsWith("/images/generations")
+        ? { ok: false, status: 429, text: async () => "rate limited" }
+        : bytesRes());
+      const err = await generateOnce(3);
+      expect(err.message).toContain("429");
+      expect(err.charged).toBeFalsy();
     });
   });
 
