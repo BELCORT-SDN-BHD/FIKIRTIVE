@@ -150,3 +150,48 @@ describe("suggestModel", () => {
     expect((GEN_VIDEO_MODELS as readonly string[]).includes(r.model)).toBe(true); // still a typed model (spend gate rejects)
   });
 });
+
+// ---------------------------------------------------------------------------
+// #647 T6 —— `disabled` 从此真的算数
+// ---------------------------------------------------------------------------
+//
+// 缺陷现场:`suggestModel` 收下 `disabled` 参数,然后**一次也没用过**。后台把唯一那台
+// 视频引擎关掉之后,Otto 照旧选中它、照旧算出价、照旧铸出一张商家点得下去的付费卡 ——
+// 卡在那里躺着说「11 credits,确认就做」,而确认的那一刻必然被 spend 闸打回。菜单上多
+// 出来的那一格不是模型,是**一个确认不了的承诺**。
+//
+// 修法:唯一的引擎被关掉 ⇒ 这一类创作就是不可用,`suggestModel` 返回 null,由调用方
+// 给诚实空态。返回 null 而不是「照选不误」,是为了让编译器逼着每一个入口都表态。
+describe("#647 T6 suggestModel 尊重 disabled(关掉唯一引擎 ⇒ 铸不出付费卡)", () => {
+  it("视频:唯一在产引擎被关 ⇒ 返回 null(不选型、不报价)", () => {
+    expect(suggestModel({ kind: "video", disabled: new Set([activeVideoModel()]) })).toBeNull();
+  });
+
+  it("视频:整张菜单都被关 ⇒ 同样返回 null(不再回落到全量菜单)", () => {
+    expect(suggestModel({ kind: "video", disabled: new Set(GEN_VIDEO_MODELS as readonly string[]) })).toBeNull();
+  });
+
+  it("视频:商家提了形状/时长也不改变结论 —— 没有引擎就是没有引擎", () => {
+    expect(
+      suggestModel({ kind: "video", desiredAspect: "9:16", desiredDuration: 10, disabled: new Set([activeVideoModel()]) }),
+    ).toBeNull();
+  });
+
+  it("图片:唯一图像引擎被关 ⇒ 同样返回 null(同一个参数,同一条规矩)", () => {
+    expect(suggestModel({ kind: "image", disabled: new Set(["seedream"]) })).toBeNull();
+  });
+
+  it("关的是**别的** id ⇒ 一切照旧(narrowing 只许窄,不许无中生有地拦)", () => {
+    const r = suggestModel({ kind: "video", disabled: new Set(["kling", "veo3.1", "某个不存在的 id"]) });
+    expect(r).not.toBeNull();
+    expect(r?.model).toBe(activeVideoModel());
+    const img = suggestModel({ kind: "image", disabled: new Set(["seedance-2-fast"]) });
+    expect(img).not.toBeNull();
+    expect(img?.model).toBe("seedream");
+  });
+
+  it("没传 disabled ⇒ 一切照旧(参数是可选的,缺省不等于全关)", () => {
+    expect(suggestModel({ kind: "video" })).not.toBeNull();
+    expect(suggestModel({ kind: "image" })).not.toBeNull();
+  });
+});

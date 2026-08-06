@@ -1671,4 +1671,57 @@ describe("startGen 图片规格快照", () => {
       expect(db.reserveCredits).not.toHaveBeenCalled();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // #647 T6 ④ —— GenJob.model 的数据库默认值(`@default("seedream")`)与视频作业同表
+  //
+  // 图片与视频住在同一张 GenJob 表里,而这一列的库级默认值是**图片引擎**。任何一处
+  // insert 忘了带 model,落进去的就是一条「视频作业写着图片引擎」的行 —— 后面读它的每
+  // 一条路(计价、结算、worker 派单)都会拿着一个不属于这个 kind 的模型名去做决定。
+  //
+  // 处置分两层:app 层证明**没有一处依赖那个默认值**(下面这两条),迁移层(把默认值
+  // 从 schema 上撤掉)另呈 Founder 亲批 —— 迁移不在本片实施。
+  // -------------------------------------------------------------------------
+  describe("#647 T6 ④ GenJob.model 永远显式落库(不吃库级默认值)", () => {
+    it("视频作业落库时带的是视频引擎,不是默认值 seedream", async () => {
+      await startGen({
+        projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
+        kind: "video", model: "seedance-2-fast", idempotencyKey: "t6-video-1",
+      });
+      const data = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(data["kind"]).toBe("VIDEO");
+      expect(data["model"]).toBe("seedance-2-fast");
+      expect(data["model"]).not.toBe("seedream");
+    });
+
+    it("每一条落库的 GenJob 都自带 model —— insert 里那一格从来不空", async () => {
+      await startGen({
+        projectId: "p1", prompt: "a cat", entityIds: [], count: 1,
+        kind: "image", model: "seedream", idempotencyKey: "t6-image-1",
+      });
+      const imageData = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(Object.keys(imageData)).toContain("model");
+      expect(imageData["model"]).toBe("seedream");
+
+      db.genJobCreate.mockClear();
+      await startGen({
+        projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
+        kind: "video", model: "seedance-2-fast", idempotencyKey: "t6-video-2",
+      });
+      const videoData = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(Object.keys(videoData)).toContain("model");
+      expect(typeof videoData["model"]).toBe("string");
+      expect((videoData["model"] as string).length).toBeGreaterThan(0);
+    });
+
+    it("契约层堵死「视频请求不带 model」:zod 默认值 seedream 不是视频菜单上的一格,进不来", async () => {
+      const r = await startGen({
+        projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
+        kind: "video", idempotencyKey: "t6-video-3",
+      } as never);
+      expect(r).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+  });
 });

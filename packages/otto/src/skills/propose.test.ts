@@ -977,3 +977,97 @@ describe("#580 downgrade disclosure — never silent", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// #647 T6 —— 引擎被关掉时的诚实空态
+//
+// 在这之前:后台关掉唯一那台视频引擎,Otto 仍然铸出一张写着价钱、点得下去的 GEN_CARD;
+// 商家点「确认」,spend 闸才把他打回来。卡是 $0 铸的,可它在商家眼里是一个承诺。
+// 现在:铸不出来就说铸不出来 —— 一行英文人话,一张卡都不落库。
+// ---------------------------------------------------------------------------
+describe("#647 T6 唯一引擎被关掉 ⇒ 诚实空态,绝不落一张付费卡", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    (mockPrisma.entity.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockPrisma.chatMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 5 });
+    (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (mockPrisma.referenceImage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+  });
+
+  it("纯层:视频引擎全被关 ⇒ buildProposeCard 抛 GenerationUnavailableError(造不出卡就不造)", async () => {
+    const { GenerationUnavailableError } = await import("./propose.helpers.js");
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    expect(() =>
+      buildProposeCard({ kind: "video", structuredPrompt: "a cat walks", entityIds: [], variantSel: {} }, ctx, []),
+    ).toThrow(GenerationUnavailableError);
+  });
+
+  it("纯层:图片引擎被关 ⇒ 同样抛(同一个 disabled,同一条规矩)", async () => {
+    const { GenerationUnavailableError } = await import("./propose.helpers.js");
+    const ctx = makeCtx({ disabledModels: ["seedream"] });
+    expect(() =>
+      buildProposeCard({ kind: "image", structuredPrompt: "a cat", entityIds: [], variantSel: {} }, ctx, []),
+    ).toThrow(GenerationUnavailableError);
+  });
+
+  it("入口:executePropose 返回一句英文人话,并且**一张 GEN_CARD 都没落库**", async () => {
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    const result = await executePropose(
+      { kind: "video", structuredPrompt: "a cat walks", entityIds: [], variantSel: {} },
+      { context: ctx },
+    );
+    expect(result).toEqual({ error: "Video generation is turned off right now." });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("入口:图片侧同样,措辞是 English sentence case,不出现引擎名", async () => {
+    const ctx = makeCtx({ disabledModels: ["seedream"] });
+    const result = await executePropose(
+      { kind: "image", structuredPrompt: "a cat", entityIds: [], variantSel: {} },
+      { context: ctx },
+    );
+    expect(result).toEqual({ error: "Image generation is turned off right now." });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    // 引擎保密:空态文案里不许出现任何供应商/模型名
+    expect(JSON.stringify(result)).not.toMatch(/seedream|seedance|byteplus|fal|kling|veo/iu);
+  });
+
+  it("入口:proposePack 整包一起空 —— 不许先落几张再半路报错", async () => {
+    const { executeProposePack } = await import("./propose-pack.js");
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    const result = await executeProposePack(
+      {
+        packTitle: "Launch pack",
+        items: [
+          { kind: "video", structuredPrompt: "a cat walks", entityIds: [], variantSel: {} },
+          { kind: "video", structuredPrompt: "a dog runs", entityIds: [], variantSel: {} },
+        ],
+      },
+      { context: ctx },
+    );
+    expect(result).toEqual({ error: "Video generation is turned off right now." });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("只关掉一台不影响另一台:视频关了,图片卡照铸", async () => {
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    const result = await executePropose(
+      { kind: "image", structuredPrompt: "a cat", entityIds: [], variantSel: {} },
+      { context: ctx },
+    );
+    expect(result).toHaveProperty("cardId");
+    expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
+  });
+});
