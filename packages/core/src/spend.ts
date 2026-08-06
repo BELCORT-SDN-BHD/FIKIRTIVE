@@ -100,13 +100,23 @@ export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRI
  */
 export const SEEDANCE_DISPLAY_CREDITS_PER_10S: Record<string, number> = { "480p": 11, "720p": 22 };
 
-/** 一档视频的显示 credits;这一档不按秒计价(1080p / 未知分辨率)时返回 null。纯整数运算。 */
+/**
+ * 一档视频的显示 credits。**返回 null = 这一档不按秒计价**,调用方必须落到护栏价,
+ * 有两种情形:
+ *   ① 分辨率不在按秒表上(1080p / 未知);
+ *   ② 秒数不是一个正数(0、负数、NaN —— 只可能来自畸形/历史 JSON 行)。
+ *
+ * ② 必须**fail closed**:seconds=0 若按公式算是 0 credits,那就是一条免费的付费任务。
+ * 这里宁可回到 16cr 护栏(与 #645 之前那条路给畸形行的收费一致),也绝不贱卖。
+ *
+ * 纯整数运算:seconds 与 per10s 都是整数,+9 再整除 10 就是向上取整,不经过任何小数 ——
+ * 浮点差一格 credit 的路在这里根本不存在。
+ */
 export function seedanceDisplayCredits(resolution: string, seconds: number): number | null {
   const per10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution];
   if (per10s === undefined) return null;
-  // ceil(seconds × per10s / 10),全程整数:seconds 与 per10s 都是整数,+9 再整除 10 就是
-  // 向上取整,不经过任何小数 —— 浮点差一格 credit 的路在这里根本不存在。
-  return Math.floor((Math.max(0, Math.round(seconds)) * per10s + 9) / 10);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.floor((Math.round(seconds) * per10s + 9) / 10);
 }
 
 /** 不按秒计价的兜底档:1080p(Fast 给不了,留作护栏)与任何未知分辨率都收 16cr。

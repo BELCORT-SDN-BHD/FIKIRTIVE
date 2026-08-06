@@ -21,7 +21,7 @@ import {
   VIDEO_ASPECT_ADAPTIVE,
   type GenVideoModel,
 } from "./gen.js";
-import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, VIDEO_CREDITS_BY_RESOLUTION, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S } from "./spend.js";
+import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, VIDEO_CREDITS_BY_RESOLUTION, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S, seedanceDisplayCredits } from "./spend.js";
 import { MARGIN_FLOOR, marginTruthTable, acceptedExceptionFor, BELOW_FLOOR_FOUNDER_ACCEPTED } from "./margin-truth.js";
 
 const MODEL: GenVideoModel = "seedance-2-fast";
@@ -139,6 +139,19 @@ describe("#645 T4 定价 = Founder 已裁的按秒表(显示 credits)", () => {
       const off = pricedGenCredits({ ...videoJob(7, r), videoOptions: { seconds: 7, resolution: r, audio: false } });
       expect(on).toBe(off);
     }
+  });
+
+  it("FAIL CLOSED:畸形秒数(0 / 负数 / NaN)落到 16cr 护栏,绝不算成免费", () => {
+    // 这些只可能来自畸形或历史 videoOptions JSON 行。按秒公式对 0 会算出 0 credits ——
+    // 那就是一条**免费**的付费任务;宁可收护栏价,也不贱卖(方向与 #645 之前一致)。
+    for (const seconds of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(seedanceDisplayCredits("720p", seconds), `seconds=${seconds}`).toBeNull();
+      expect(pricedGenCredits(videoJob(seconds, "720p")), `seconds=${seconds}`)
+        .toBe(16 * INTERNAL_PER_DISPLAY);
+    }
+    // 正常档位不受影响。
+    expect(seedanceDisplayCredits("720p", 5)).toBe(11);
+    expect(seedanceDisplayCredits("480p", 5)).toBe(6);
   });
 
   it("零改动:1080p 兜底 16cr、未知分辨率兜底 16cr、整段参考视频 16cr", () => {
