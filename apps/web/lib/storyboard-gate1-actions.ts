@@ -144,6 +144,34 @@ function videoChildMatches(
   );
 }
 
+/** The stored fields of an existing FIRST-FRAME child card, shaped for the reuse comparison. */
+type ExistingFrameChild = {
+  structuredPrompt?: unknown;
+  params?: { aspectRatio?: unknown };
+};
+
+/** MONEY-CRITICAL reuse rule (SINGLE SOURCE for prepare AND regen) —— #656 P2。
+ *
+ *  一张既有首帧子卡等于「现在会铸出来的那一张」,当且仅当 structuredPrompt **和**冻结的
+ *  `params.aspectRatio` 都一致。形状漏在比对外面时,商家把片子从方图改成横版、提示词一个字
+ *  没动,分镜上那张方图子卡就照样存活、照样能被批准 —— 卡面写着一个形状,批准之后出的是
+ *  另一个(判官 #656 P2)。
+ *
+ *  `wouldBe` 是铸卡真正用的那次纯 `buildProposeCard` 输出(与视频侧 `videoChildMatches` 同一
+ *  手法),所以比的是「现在会铸出来的形状」,而不是任何一处手抄的推导。既有卡上读不到形状
+ *  (T2 之前铸的老卡)= 不知道它冻的是什么,不认作同一张 —— 重铸是 $0,认错才要钱。 */
+function firstFrameChildMatches(
+  existing: ExistingFrameChild,
+  wouldBe: { structuredPrompt: string; params: { aspectRatio?: string } },
+): boolean {
+  const frozenAspect =
+    typeof existing.params?.aspectRatio === "string" ? existing.params.aspectRatio : undefined;
+  return (
+    existing.structuredPrompt === wouldBe.structuredPrompt &&
+    frozenAspect === wouldBe.params.aspectRatio
+  );
+}
+
 /** 闸② 铸卡会选定的视频模型 —— 与 buildProposeCard 内部同一条 selectModel 路径
  *  (suggestModel({ kind:"video", disabled }) → activeVideoModel)。这里复用它,保证
  *  "选项面板给的时长" 与 "铸卡吸附的时长" 出自同一模型,零硬编码。 */
@@ -361,15 +389,31 @@ export async function prepareStoryboardFirstFrames(
         continue;
       }
 
+      // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
+      // call minting uses (mintChild), so the reuse comparison is against what a fresh mint
+      // would really produce (prompt AND the frozen shape). buildProposeCard is pure ($0) —
+      // this adds no I/O.
+      const shotOwnedIds = ownedIds.filter((id) => (shot.entityIds ?? []).includes(id));
+      const { cardPayload: wouldBe } = buildProposeCard(
+        {
+          kind: "image",
+          structuredPrompt: shot.firstFramePrompt,
+          entityIds: shot.entityIds ?? [],
+          variantSel: {},
+          count: 1,
+          desiredAspect: firstFrameAspect(ctx.disabledModels),
+        },
+        ctx,
+        shotOwnedIds,
+      );
+
       // Already points at a child → try to reuse it.
       if (shot.firstFrameCardId) {
         const existing = await tx.chatMessage.findFirst({
           where: { id: shot.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
           select: { id: true, payload: true, genJobId: true },
         });
-        const existingPrompt =
-          existing && ((existing.payload ?? {}) as { structuredPrompt?: unknown }).structuredPrompt;
-        if (existing && existingPrompt === shot.firstFramePrompt) {
+        if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
           // Fresh → REUSE, do not mint. Compute spent (genJobId OR idempotency job).
           const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
           const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
@@ -384,11 +428,10 @@ export async function prepareStoryboardFirstFrames(
           nextShots.push(shot);
           continue;
         }
-        // Missing or stale (defensive) → mint a replacement.
+        // Missing, or stale in prompt or in shape → mint a replacement.
       }
 
       // Mint a fresh child for this shot.
-      const shotOwnedIds = ownedIds.filter((id) => (shot.entityIds ?? []).includes(id));
       const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwnedIds);
       children.push(child);
       nextShots.push({ ...shot, firstFrameCardId: child.childCardId });
@@ -469,17 +512,32 @@ export async function regenShotFirstFrameCard(
     const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
     if (!target) return; // vanished mid-flight → no writes; caller returns error below.
 
-    // Reuse-if-fresh: an existing child that still matches the CURRENT prompt AND is
+    // The WOULD-BE-MINTED card — the SAME pure buildProposeCard call minting uses (mintChild),
+    // built on the SAME in-lock owned-entity read. Single source of truth for the reuse
+    // comparison: prompt AND the frozen shape (#656 P2).
+    const ownedAll = await ownedEntityIdsFor(tx, ownerId, target.entityIds ?? []);
+    const { cardPayload: wouldBe } = buildProposeCard(
+      {
+        kind: "image",
+        structuredPrompt: target.firstFramePrompt,
+        entityIds: target.entityIds ?? [],
+        variantSel: {},
+        count: 1,
+        desiredAspect: firstFrameAspect(disabledModels),
+      },
+      ctx,
+      ownedAll,
+    );
+
+    // Reuse-if-fresh: an existing child that still matches the would-be card AND is
     // unspent → reuse it, do NOT mint (repeated open/cancel would otherwise orphan $0
-    // cards). A spent or stale (prompt-drifted / missing) child → mint fresh.
+    // cards). A spent or stale (prompt- or shape-drifted / missing) child → mint fresh.
     if (target.firstFrameCardId) {
       const existing = await tx.chatMessage.findFirst({
         where: { id: target.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
         select: { id: true, payload: true, genJobId: true },
       });
-      const existingPrompt =
-        existing && ((existing.payload ?? {}) as { structuredPrompt?: unknown }).structuredPrompt;
-      if (existing && existingPrompt === target.firstFramePrompt) {
+      if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
         const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
         if (!spent) {
           const p = (existing.payload ?? {}) as {
@@ -501,10 +559,9 @@ export async function regenShotFirstFrameCard(
         }
         // spent → fall through to mint a fresh replacement.
       }
-      // missing / stale prompt → fall through to mint.
+      // missing / stale prompt or shape → fall through to mint.
     }
 
-    const ownedAll = await ownedEntityIdsFor(tx, ownerId, target.entityIds ?? []);
     child = await mintChild(tx, parent, target, ownerId, ctx, ownedAll);
     const newChildId = child.childCardId;
 

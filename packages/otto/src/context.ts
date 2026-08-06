@@ -300,7 +300,8 @@ export interface OttoContext {
    *  requireOwner() + genRequest validation + reserve + GenJob insert + enqueue. */
   startGen?: (req: GenRequestInput) => Promise<
     | { id: string; disposition: "fresh" | "reused" }
-    | { error: string; disposition?: "conflict" }
+    // `retryable` = 结果不明、花钱之前就停住了(#656 P1);Otto 侧照旧只把错误原样呈上去。
+    | { error: string; disposition?: "conflict" | "retryable" }
   >;
   /** Factory batch port (W-B3-F-P, spec §5.2) — injected by the web caller. Runs a HEADLESS
    *  batch of generations through the SAME startGen authority, one startGen call per cell, so

@@ -53,7 +53,10 @@ import {
 
 export type StartGenResult =
   | { id: string; disposition: "fresh" | "reused" }
-  | { error: string; disposition?: "conflict"; refunded?: true };
+  /** `conflict` 是一个确定性判决(这个键已经属于别的内容);`retryable` 说的是完全不同的一件事:
+   *  **谁也不知道结果**,而且花钱之前就停住了 —— 调用方必须保住同一个逻辑动作身份再试一次,
+   *  绝不可以当成拒绝而换一个新动作(#656 P1)。 */
+  | { error: string; disposition?: "conflict" | "retryable"; refunded?: true };
 
 export type ActiveGenModels = {
   /** Opaque browser control ids. The real provider-backed model ids remain server-side. */
@@ -94,38 +97,47 @@ function resolvePublicModelAlias(raw: unknown): unknown {
   return model ? { ...record, model } : raw;
 }
 
+/** 继承快照**读失败**。这不是一个答案,是「不知道」——`startGen` 把它翻译成一个可重试的
+ *  回应,先于任何 create/reserve(#656 P1)。 */
+class InheritedAspectUnknown extends Error {}
+
 /**
  * #642 — 「改这张图 / 再来一张」的画幅继承。
  *
  * 商家没另选画幅时,重做一张图不应该悄悄换掉形状。画幅的**唯一**依据是源图那一单入队时
  * 冻结的规格快照(`GenJob.imageOptions`)—— 不去反推像素、不去猜。
  *
- * 读不到(迁移前的老图、快照缺失、那一单已不在)就返回 null,由调用方诚实回落默认画幅;
- * `EXECUTED_SPEC.image.sourceAspectInheritedFromSnapshot` 把这条口径写成了数据。
+ * 这里有两种截然不同的结果,过去被写成了同一个 null,#656 P1 的双扣通道就是这么开的:
+ *  - **源头真的没有快照**(迁移前的老图、那一单已不在)→ 返回 null,调用方诚实回落默认画幅;
+ *    `EXECUTED_SPEC.image.sourceAspectInheritedFromSnapshot` 把这条口径写成了数据。
+ *  - **读的时候出错**(一次 DB 抖动)→ 谁也不知道源图是什么形状。这时候把它当成「没有快照」
+ *    就是拿一个**编造出来的默认形状**去和商家上一次真的落库的形状比对 —— 于是一次合法重试
+ *    被判成「换了内容」,回执被删,下一次点击变成新动作、第二笔钱。所以它必须原样上抛。
  *
- * 只读、owner 作用域、永不抛 —— 它挡在付费路径上,一次 DB 抖动不得让商家点不动生成。
+ * 只读、owner 作用域。
  */
 async function inheritedImageAspect(
   ownerId: string,
   sourceGenerationId: string,
   model: string,
 ): Promise<string | null> {
+  let source: { imageOptions: unknown } | null;
   try {
-    const source = await prisma.genJob.findFirst({
+    source = await prisma.genJob.findFirst({
       where: { ownerId, kind: "IMAGE", generationIds: { has: sourceGenerationId } },
       orderBy: { createdAt: "desc" },
       select: { imageOptions: true },
     });
-    const snapshot = source?.imageOptions as { aspectRatio?: unknown } | null | undefined;
-    const aspect = typeof snapshot?.aspectRatio === "string" ? snapshot.aspectRatio : null;
-    // 快照里的值也要过**这一单要跑的那个模型**的菜单 —— 一个下线了的旧画幅不得靠继承
-    // 绕过契约校验,把一个引擎收不下的值送进付费调用。
-    return aspect && GEN_IMAGE_MODEL_OPTIONS[model as GenModel]?.aspectRatios.includes(aspect)
-      ? aspect
-      : null;
-  } catch {
-    return null;
+  } catch (e) {
+    throw new InheritedAspectUnknown(e instanceof Error ? e.message : "inherited aspect read failed");
   }
+  const snapshot = source?.imageOptions as { aspectRatio?: unknown } | null | undefined;
+  const aspect = typeof snapshot?.aspectRatio === "string" ? snapshot.aspectRatio : null;
+  // 快照里的值也要过**这一单要跑的那个模型**的菜单 —— 一个下线了的旧画幅不得靠继承
+  // 绕过契约校验,把一个引擎收不下的值送进付费调用。
+  return aspect && GEN_IMAGE_MODEL_OPTIONS[model as GenModel]?.aspectRatios.includes(aspect)
+    ? aspect
+    : null;
 }
 
 /** Read-only history verdict. `null` means this attempt may be fresh, so the caller must run the
@@ -312,11 +324,24 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     if (!project) return { error: "Project not found." };
 
     // #642 图片画幅:商家没明说时,带底图的请求(详情页 edit / 再来一张)继承源图的画幅,
-    // 让「改这张图」不改形状。读不到源图快照就是 null,由 normalizeFactoryMaterial 落默认。
+    // 让「改这张图」不改形状。源头真的没有快照就是 null,由 normalizeFactoryMaterial 落默认。
     // 解析在材料成形之前完成,所以快照、幂等材料、worker 三处看到的是同一个值。
-    const effectiveAspectRatio = kind === "image" && !aspectRatio && sourceGenerationId
-      ? await inheritedImageAspect(ownerId, sourceGenerationId, model)
-      : aspectRatio;
+    //
+    // #656 P1:读**出错**时这里必须停住。继承出来的形状是幂等材料的一部分,而这一段跑在精确
+    // 键重放核对之前 —— 拿一个编造的默认形状继续走下去,就等于让一次瞬时读错把商家的合法重试
+    // 判成「换了内容」。停在这里花不出任何钱:create/reserve 都在后面。
+    let effectiveAspectRatio: string | null | undefined;
+    try {
+      effectiveAspectRatio = kind === "image" && !aspectRatio && sourceGenerationId
+        ? await inheritedImageAspect(ownerId, sourceGenerationId, model)
+        : aspectRatio;
+    } catch (e) {
+      if (!(e instanceof InheritedAspectUnknown)) throw e;
+      return {
+        error: "We couldn't confirm the shape of the image you're editing — nothing was charged. Retry this same action.",
+        disposition: "retryable",
+      };
+    }
 
     // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
     // conditions on the source keyframe, not entity refs — the chosen variant is already
