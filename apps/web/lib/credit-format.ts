@@ -26,6 +26,21 @@ export function creditsLabel(n: number): string {
   return `${formatCredits(n)} ${n === 1 ? "credit" : "credits"}`;
 }
 
+/** The ONE thing a merchant is told when a generation costs more credits than they hold (#699).
+ *
+ *  It used to read "You've used up your beta credits — reply and we'll top you up." in three
+ *  separate exits, and three things were wrong with it at once. The product has no beta and the
+ *  credits are sold — the signup page calls the same 20 "free starter credits". A toast is not a
+ *  mailbox, so "reply" pointed nowhere. And at the one moment the merchant had already decided to
+ *  spend, it sent them to wait on a human instead of to Billing, which is one click away in the
+ *  sidebar. This single function keeps the three exits from drifting again.
+ *
+ *  Takes the DISPLAYED credits the action was quoted at (same unit as every other helper here),
+ *  never a hand-written number — so the amount named is always the amount actually attempted. */
+export function outOfCreditsMessage(quotedCredits: number): string {
+  return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. Top up in Billing.`;
+}
+
 /** The ONE disclosure for what an Otto conversation costs (#555).
  *
  *  It used to read "Chatting with Otto uses a little credit." in three separate places. A

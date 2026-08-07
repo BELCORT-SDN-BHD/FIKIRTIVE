@@ -24,7 +24,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
@@ -184,23 +184,23 @@ describe("#699 nothing in the codebase calls them beta credits", () => {
   const SELF = path.basename(__filename);
 
   function walk(dir: string): string[] {
-    const { readdirSync } = require("node:fs") as typeof import("node:fs");
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return [];
-    }
-    return entries.flatMap((entry) => {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
       if (entry.isDirectory()) return SKIP_DIR.test(entry.name) ? [] : walk(path.join(dir, entry.name));
       if (entry.name === SELF) return [];
       return /\.(tsx?|jsx?|mjs)$/.test(entry.name) ? [path.join(dir, entry.name)] : [];
     });
   }
 
+  /** Comments may record what the copy used to say — that is how the repo keeps a fix
+   *  explainable (see CHAT_SPEND_NOTE). What must never come back is the phrase in code
+   *  that can reach a merchant, so the ban is enforced on everything except comments. */
+  function withoutComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
+  }
+
   it("no source file uses the phrase", () => {
     const offenders = SCAN_ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root)))
-      .filter((file) => /beta\s+credits/i.test(readFileSync(file, "utf8")))
+      .filter((file) => /beta\s+credits/i.test(withoutComments(readFileSync(file, "utf8"))))
       .map((file) => path.relative(REPO_ROOT, file));
 
     expect(offenders, `these still say "beta credits":\n${offenders.join("\n")}`).toEqual([]);

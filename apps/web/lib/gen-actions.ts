@@ -38,6 +38,7 @@ import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
+import { outOfCreditsMessage } from "./credit-format";
 import {
   canvasActionKey,
   factoryMaterialMatches,
@@ -699,7 +700,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     } catch (e) {
       // out of credits: the reserve rolled the tx back, so no job was created/queued.
       if (e instanceof InsufficientCredits) {
-        return { error: "You've used up your beta credits — reply and we'll top you up." };
+        return { error: outOfCreditsMessage(displayedCost) };
       }
       if (e instanceof Error && e.message === "PROJECT_DELETED_DURING_GENERATION_START") {
         return { error: "Project not found." };

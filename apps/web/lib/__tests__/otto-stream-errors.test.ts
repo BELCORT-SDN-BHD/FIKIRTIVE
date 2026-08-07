@@ -62,7 +62,7 @@ describe("persistStreamTurnError", () => {
         role: "AGENT",
         kind: "TURN_ERROR",
         seq: 10,
-        text: "Otto hit a snag - please try again. Reference: OTTO-ERR12345",
+        text: "Otto hit a snag — please try again. Reference: OTTO-ERR12345",
         payload: {
           errorId: "OTTO-ERR12345",
           refId: "otto-stream:msg_user",
@@ -70,7 +70,7 @@ describe("persistStreamTurnError", () => {
           kind: "stream_run_error",
           error: {
             kind: "error",
-            text: "Otto hit a snag - please try again. Reference: OTTO-ERR12345",
+            text: "Otto hit a snag — please try again. Reference: OTTO-ERR12345",
           },
         },
       }),
