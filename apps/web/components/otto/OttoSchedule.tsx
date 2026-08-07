@@ -24,7 +24,7 @@ import {
 } from "@/lib/schedule-actions";
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
-import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
+import { AUTO_PUBLISH_GATE_HINT } from "@/lib/auto-publish-gate";
 import { CONNECTABLE_CHANNEL_META, channelMeta, isConnectableChannel } from "@/lib/channels/channel-meta";
 // The single source of "which accounts is this merchant connected to right now" and the ONE
 // derived judgement built on it (#741 r2). This screen never touches the raw list — the type
@@ -34,6 +34,7 @@ import {
   CHECKING_ACCOUNTS_BLOCKER,
   accountPicker,
   approvalFor,
+  autoPublishAllowed,
   channelUnavailableBlocker,
   isCheckingAccounts,
   isConnectedTarget,
@@ -173,12 +174,6 @@ function Thumb({ item, size = 40 }: { item: { url: string | null; kind: StuffIte
   );
 }
 
-type ConnState =
-  | { phase: "loading" }
-  | { phase: "disconnected" }
-  | { phase: "reconnect" }
-  | { phase: "connected"; targets: { id: string; name: string }[] };
-
 export function OttoSchedule({
   stuffItems,
   onNavigate,
@@ -189,14 +184,15 @@ export function OttoSchedule({
   const [view, setView] = useState<ViewKey>("plan");
   const [posts, setPosts] = useState<ScheduledPostRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [conn, setConn] = useState<ConnState>({ phase: "loading" });
-  // THE connection state for this screen (#741 r2). Explicitly two-phase: ACCOUNTS_LOADING until
-  // the read lands, then loadedAccounts([...]) — where an empty list is a real answer. Header
-  // chips, the composer's account picker and "Approve all" all derive from this one value through
-  // lib/schedule-connections, so they cannot disagree with each other or with the server.
+  // THE connection state for this screen (#741 r2/r3). Explicitly two-phase: ACCOUNTS_LOADING until
+  // BOTH platform reads land, then loadedAccounts({...}) — where an empty list is a real answer.
+  // Header chips, the auto-publish switch, the composer's account picker and "Approve all" all
+  // derive from this one value through lib/schedule-connections, so they cannot disagree with each
+  // other or with the server. There is deliberately no second connection state on this screen: the
+  // one it used to have (`conn` + `canPublish`, fed by their own getMetaConnection call) is exactly
+  // how the header and the plan card ended up describing the same instant differently.
   const [accounts, setAccounts] = useState<ConnectedAccounts>(ACCOUNTS_LOADING);
   const [autoPublish, setAutoPublish] = useState(false);
-  const [canPublish, setCanPublish] = useState(false);
   const [defaultTz, setDefaultTz] = useState<string>("Asia/Kuala_Lumpur");
   const [savingAuto, setSavingAuto] = useState(false);
   const [composer, setComposer] = useState<ComposerSeed | null>(null);
@@ -230,15 +226,30 @@ export function OttoSchedule({
     // guard; a failed connection read leaves the previous state rather than inventing
     // "nothing connected" (the next cycle retries, so "Checking…" stays literally true).
     const postsPromise = listScheduledPosts();
-    const accountsPromise = listOwnerTargets().catch(() => ({ unavailable: true }) as const);
+    // BOTH platform reads, one answer (#741 r3 P1). The publish permission used to be a second
+    // read on its own timeline; it now rides this one, and the screen only commits to a connection
+    // state once BOTH have answered — so "accounts loaded empty while the permission read is still
+    // in flight" is no longer a state this screen can be in. Cost: getMetaConnection joins the 60s
+    // cycle (one more platform call per refresh), which is the price of one honest answer.
+    const connectionPromise = Promise.all([
+      listOwnerTargets().catch(() => ({ unavailable: true }) as const),
+      getMetaConnection().then((meta) => ({ meta }), () => null),
+    ]);
     // Not awaited together with the posts: a slow connection read must not hold the schedule
     // hostage, and a hung one must leave the screen in "still checking", not in a false answer.
-    void accountsPromise.then((res) => {
-      // #741 r3 P1: `unavailable` is the read saying it could not find out — a rejection and a
-      // transient platform failure now arrive as the same fact. Neither may be written down as a
-      // completed read, because a completed read is what licenses "you have no connected accounts".
-      if (seq !== reloadSeq.current || "unavailable" in res) return;
-      setAccounts(loadedAccounts(res.targets));
+    void connectionPromise.then(([targetsRes, metaRes]) => {
+      // `unavailable` / a rejected read = the platform did not tell us. Neither may be written down
+      // as a completed read, because a completed read is what licenses the screen to assert "you
+      // have no connected accounts". A getMetaConnection that ANSWERS `{ error }` (no session) is a
+      // real answer — it means no publish permission, not "we couldn't look".
+      if (seq !== reloadSeq.current || "unavailable" in targetsRes || !metaRes) return;
+      const meta = metaRes.meta;
+      setAccounts(
+        loadedAccounts({
+          targets: targetsRes.targets,
+          canPublish: !("error" in meta) && meta.canPublish === true,
+        }),
+      );
     });
     const rows = await postsPromise;
     if (seq !== reloadSeq.current) return;
@@ -259,17 +270,8 @@ export function OttoSchedule({
     // Async initial load — every setState below runs after an await/`.then`, never
     // synchronously in the effect body (the lint rule can't see through the promise).
     void reload();
-    void getMetaConnection().then((res) => {
-      if ("error" in res || !res.connected) {
-        setCanPublish(false);
-        return setConn({ phase: "disconnected" });
-      }
-      setCanPublish(res.canPublish === true);
-      if (res.needsReconnect) return setConn({ phase: "reconnect" });
-      setConn({ phase: "connected", targets: [] });
-    });
-    // Publishable targets are no longer read here: reload() above owns that read, so the first
-    // load and every later refresh follow the same single timeline (#741 r2).
+    // Neither the target list nor the publish permission is read here any more: reload() owns
+    // both, so the first load and every later refresh follow the same single timeline (#741 r2/r3).
     void getOwnerSettings().then((s) => {
       if (!("error" in s)) {
         setAutoPublish(s.autoPublish);
@@ -333,10 +335,8 @@ export function OttoSchedule({
   );
 
   const isConnected = connectedChannels.length > 0;
-  const autoPublishAvailable = canAutoPublish(
-    connectedChannels.map((channel) => channel.id),
-    canPublish,
-  );
+  // Same single source, same "unknown never unlocks anything" rule as everything else on the screen.
+  const autoPublishAvailable = autoPublishAllowed(accounts);
 
   function openNew() {
     setComposer({
@@ -387,7 +387,7 @@ export function OttoSchedule({
                   {c.label}
                 </span>
               ))
-            ) : conn.phase !== "loading" && !isCheckingAccounts(accounts) ? (
+            ) : !isCheckingAccounts(accounts) ? (
               <button
                 type="button"
                 onClick={() => onNavigate("connections")}

@@ -29,6 +29,7 @@
  */
 import type { OwnerTarget } from "./schedule-actions";
 import { isConnectableChannel, channelMeta } from "./channels/channel-meta";
+import { canAutoPublish } from "./auto-publish-gate";
 import { scheduleApproveBlockers } from "@fikirtive/core/schedule-draft";
 
 declare const CONNECTED_ACCOUNTS_BRAND: unique symbol;
@@ -41,16 +42,29 @@ declare const CONNECTED_ACCOUNTS_BRAND: unique symbol;
  */
 export type ConnectedAccounts = { readonly [CONNECTED_ACCOUNTS_BRAND]: "connected-accounts" };
 
-type AccountsState = { phase: "loading" } | { phase: "loaded"; targets: readonly OwnerTarget[] };
+/**
+ * Everything the screen knows about "can this merchant publish, and where" — assembled from BOTH
+ * platform reads (#741 r3 P1). `canPublish` used to be its own piece of component state fed by its
+ * own getMetaConnection() call with its own lifecycle, which is how the header could still be
+ * hiding its Connect button ("still loading") while the plan card had already decided the merchant
+ * had no accounts. Carrying it inside the same value makes that interleaving unrepresentable.
+ */
+export type AccountsRead = { targets: readonly OwnerTarget[]; canPublish: boolean };
+
+type AccountsState = { phase: "loading" } | ({ phase: "loaded" } & AccountsRead);
 
 const read = (accounts: ConnectedAccounts): AccountsState => accounts as unknown as AccountsState;
 
 /** Nothing read yet. Not "nothing connected" — the two must never be confused. */
 export const ACCOUNTS_LOADING = { phase: "loading" } as unknown as ConnectedAccounts;
 
-/** A completed read. An empty list is a real, final answer: nothing is connected. */
-export function loadedAccounts(targets: readonly OwnerTarget[]): ConnectedAccounts {
-  return { phase: "loaded", targets } as unknown as ConnectedAccounts;
+/**
+ * A completed read — BOTH facts together, which is the point: a caller that only has one of them
+ * cannot build this value, so it cannot half-publish a connection state to the screen. An empty
+ * target list is a real, final answer: nothing is connected.
+ */
+export function loadedAccounts(value: AccountsRead): ConnectedAccounts {
+  return { phase: "loaded", ...value } as unknown as ConnectedAccounts;
 }
 
 /** True while the answer is still unknown. For UI that must not commit either way yet. */
@@ -126,6 +140,18 @@ export function accountPicker(accounts: ConnectedAccounts, channel: string): Acc
 export function postableChannelIds(accounts: ConnectedAccounts): Set<string> {
   const state = read(accounts);
   return state.phase === "loaded" ? new Set(state.targets.map((t) => t.channel)) : new Set<string>();
+}
+
+/**
+ * Whether the auto-publish switch may be operated at all: a real publishable channel AND the
+ * platform's publish permission, judged by the SAME shared gate the settings copy explains. False
+ * while anything is unknown — the switch is a promise about what happens without the merchant
+ * watching, so an unfinished read never unlocks it.
+ */
+export function autoPublishAllowed(accounts: ConnectedAccounts): boolean {
+  const state = read(accounts);
+  if (state.phase !== "loaded") return false;
+  return canAutoPublish([...postableChannelIds(accounts)], state.canPublish);
 }
 
 /** Whether a stored target id is still one of the merchant's accounts on that channel. */

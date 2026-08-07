@@ -787,6 +787,95 @@ describe("#741 r3 连接读失败:整屏停在「正在查」,绝不断言没连
   });
 });
 
+// ── #741 判官 r3 [P1] 屏内只剩一套连接生命周期 ─────────────────────────────────
+//
+// 病灶:屏里还留着第二个连接读(getMetaConnection),它自己一套生命周期。账号读完是空、
+// Meta 读还悬着的那一瞬,Plan/composer 已经断言「你没连账号」,Header 却按 loading 把
+// Connect 按钮藏着 —— 同一块屏幕,两个口径。修法不是再对一次表,是让「已连接」这件事
+// **两个读都答复了才算数**,交错在结构上不再存在。
+
+describe("#741 r3 两个连接读折成一条生命周期", () => {
+  beforeEach(() => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
+    ]);
+  });
+
+  async function refreshCycle() {
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("账号读完是空、Meta 读还悬着:整屏还是「正在查」,没有一处抢先断言", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+    mocks.getMetaConnection.mockReturnValue(new Promise(() => {}));
+    await renderSchedule();
+
+    const text = document.body.textContent ?? "";
+    // 病灶:accounts 已经翻成 loaded([]),Plan 立刻改口说「去连账号」。
+    expect(text).toContain("Checking your connected accounts");
+    expect(text).not.toContain("Connect your account before approving.");
+    expect(
+      Array.from(document.body.querySelectorAll("button")).filter((b) =>
+        (b.textContent ?? "").includes("Connect a channel"),
+      ),
+    ).toEqual([]);
+    const approveAll = buttonByText("Approve all", document.body);
+    expect(approveAll.textContent).toContain("Approve all 0");
+    expect(approveAll.disabled).toBe(true);
+  });
+
+  it("反向交错:Meta 读先答复、账号读还悬着,Header 同样不抢跑", async () => {
+    mocks.listOwnerTargets.mockReturnValue(new Promise(() => {}));
+    mocks.getMetaConnection.mockResolvedValue({ connected: false, canPublish: false, needsReconnect: false });
+    await renderSchedule();
+
+    expect(
+      Array.from(document.body.querySelectorAll("button")).filter((b) =>
+        (b.textContent ?? "").includes("Connect a channel"),
+      ),
+    ).toEqual([]);
+    expect(document.body.textContent).toContain("Checking your connected accounts");
+  });
+
+  it("一条时间线:每趟刷新两个读各走一次,没有第二套自己的节奏", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    await renderSchedule();
+    expect(mocks.listOwnerTargets.mock.calls.length).toBe(1);
+    // 病灶:Meta 读只在挂载时来一次,focus/60s 刷新它一动不动 —— 那就是第二套生命周期。
+    expect(mocks.getMetaConnection.mock.calls.length).toBe(1);
+
+    await refreshCycle();
+    expect(mocks.listOwnerTargets.mock.calls.length).toBe(2);
+    expect(mocks.getMetaConnection.mock.calls.length).toBe(2);
+  });
+
+  it("两个读都答复了才算数:auto-publish 开关也走这同一份状态", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: true, needsReconnect: false });
+    await renderSchedule();
+
+    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Otto auto-publish"]')!;
+    expect(toggle.disabled).toBe(false);
+  });
+
+  it("Meta 读还没答复时 auto-publish 保持关着 —— 不确定不等于可以", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.getMetaConnection.mockReturnValue(new Promise(() => {}));
+    await renderSchedule();
+
+    const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Otto auto-publish"]')!;
+    expect(toggle.disabled).toBe(true);
+  });
+});
+
 // ── 单点权威的词法围栏 ────────────────────────────────────────────────────────
 //
 // #741 判官 r1 [P2]:上一版围栏只读三个写死的组件、只比对少数精确文本 —— 新组件手写渠道
