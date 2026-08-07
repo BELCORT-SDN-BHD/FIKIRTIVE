@@ -78,19 +78,22 @@ describe("getOrCreateDefaultProject", () => {
 
   it("creates the first project without render-time revalidation", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue(null);
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "My Videos" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
 
     await expect(getOrCreateDefaultProject()).resolves.toEqual({ id: "p_new" });
 
+    // #546 F-18: no more pre-seeded "My Videos" — a fresh org's bootstrap project is
+    // the standard "New project" placeholder, which auto-titles from the first
+    // conversation and is reused by the rail's New-project entry while still empty.
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "My Videos" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
     });
     expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         ownerId: "o1",
         projectId: "p_new",
         type: "project.create",
-        payload: { name: "My Videos", via: "simple-mode" },
+        payload: { name: "New project", via: "bootstrap" },
       }),
     }));
     expect(revalidatePath).not.toHaveBeenCalled();
@@ -98,7 +101,7 @@ describe("getOrCreateDefaultProject", () => {
 });
 
 describe("deleteProject", () => {
-  it("returns not found without mutating when the campaign is not owned/live", async () => {
+  it("returns not found without mutating when the project is not owned/live", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue(null);
 
     await expect(deleteProject("p_missing")).resolves.toEqual({ error: "Project not found." });
@@ -142,7 +145,7 @@ describe("deleteProject", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
-  it("refunds queued generation reservations before hard-deleting the campaign", async () => {
+  it("refunds queued generation reservations before hard-deleting the project", async () => {
     (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "Summer launch" });
     (prisma.genJob.findMany as Mock).mockResolvedValue([{ id: "g-queued", status: "QUEUED" }]);
 
@@ -152,7 +155,7 @@ describe("deleteProject", () => {
       where: { id: "g-queued", ownerId: "o1", status: "QUEUED" },
       data: expect.objectContaining({
         status: "FAILED",
-        error: "Cancelled by campaign deletion",
+        error: "Cancelled by project deletion",
         finishedAt: expect.any(Date),
       }),
     });
@@ -165,7 +168,7 @@ describe("deleteProject", () => {
     (prisma.genJob.findMany as Mock).mockResolvedValue([{ id: "g-live", status: "GENERATING" }]);
 
     await expect(deleteProject("p1")).resolves.toEqual({
-      error: "A generation is still running in this campaign. Delete it after the generation finishes.",
+      error: "A generation is still running in this project. Delete it after the generation finishes.",
     });
 
     expect(prisma.$transaction).toHaveBeenCalled();
@@ -179,7 +182,7 @@ describe("deleteProject", () => {
     (prisma.researchJob.findFirst as Mock).mockResolvedValue({ id: "r-live" });
 
     await expect(deleteProject("p1")).resolves.toEqual({
-      error: "Research is still running in this campaign. Delete it after research finishes.",
+      error: "Research is still running in this project. Delete it after research finishes.",
     });
 
     expect(prisma.$transaction).toHaveBeenCalled();
@@ -208,7 +211,7 @@ describe("createProject", () => {
   it("returns auth errors without throwing so expired sessions can recover in the UI", async () => {
     (requireOwner as Mock).mockResolvedValue({ error: "Not authorized." });
 
-    await expect(createProject("New campaign")).resolves.toEqual({ error: "Not authorized." });
+    await expect(createProject("New project")).resolves.toEqual({ error: "Not authorized." });
 
     expect(prisma.project.create).not.toHaveBeenCalled();
     expect(prisma.actionEvent.create).not.toHaveBeenCalled();
@@ -216,33 +219,37 @@ describe("createProject", () => {
   });
 
   it("creates an owner-scoped project and revalidates after success", async () => {
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_new" });
 
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
     });
     expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         ownerId: "o1",
         projectId: "p_new",
         type: "project.create",
-        payload: { name: "New campaign" },
+        payload: { name: "New project" },
       }),
     }));
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
-  it("reuses an empty default campaign instead of creating duplicate sidebar rows", async () => {
-    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_empty", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+  it("reuses an empty default project instead of creating duplicate sidebar rows", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_empty", name: "New project", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_empty" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_empty" });
 
     expect(prisma.project.findMany).toHaveBeenCalledWith({
-      where: { ownerId: "o1", name: "New campaign", deletedAt: null },
+      where: {
+        ownerId: "o1",
+        name: { in: ["New project", "New campaign", "Untitled Project"] },
+        deletedAt: null,
+      },
       orderBy: { createdAt: "desc" },
-      select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
+      select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
       take: 12,
     });
     expect(prisma.chatThread.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
@@ -252,71 +259,129 @@ describe("createProject", () => {
     expect(prisma.genJob.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty" } });
     expect(prisma.generation.count).toHaveBeenCalledWith({ where: { ownerId: "o1", projectId: "p_empty", deletedAt: null } });
     expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.project.updateMany).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.actionEvent.create).not.toHaveBeenCalled();
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it("creates a new default campaign when the existing default campaign has work", async () => {
+  it("reuses an empty legacy 'New campaign' row for the canonical 'New project' request", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_legacy", name: "New campaign", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_legacy" });
+
+    expect(prisma.project.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        ownerId: "o1",
+        name: { in: ["New project", "New campaign", "Untitled Project"] },
+        deletedAt: null,
+      },
+      select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
+    }));
+    expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.project.updateMany).toHaveBeenCalledWith({
+      where: { id: "p_legacy", ownerId: "o1", name: "New campaign", deletedAt: null },
+      data: { name: "New project" },
+    });
+    expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        ownerId: "o1",
+        projectId: "p_legacy",
+        type: "project.rename",
+        payload: { name: "New project" },
+      }),
+    }));
+    expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
+  });
+
+  it("does not rename the bootstrap project when the blank canvas entry reuses it", async () => {
+    // The northstar home's "New canvas" button calls createProject("") ⇒ cleanName
+    // "Untitled Project". Reuse is matched across every placeholder name, so it lands on
+    // the same empty bootstrap row — but only a "New project" request canonicalizes the
+    // name, so the merchant's sidebar row must not flip to "Untitled Project".
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_bootstrap", name: "New project", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+
+    await expect(createProject("")).resolves.toEqual({ id: "p_bootstrap" });
+
+    expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.project.updateMany).not.toHaveBeenCalled();
+    expect(prisma.actionEvent.create).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("fails closed if the legacy row changes before its canonical rename", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_legacy", name: "New campaign", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+    (prisma.project.updateMany as Mock).mockResolvedValue({ count: 0 });
+
+    await expect(createProject("New project")).resolves.toEqual({ error: "Project not found." });
+
+    expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.actionEvent.create).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("creates a new default project when the existing default project has work", async () => {
     (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_used", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
     (prisma.canvasNode.count as Mock).mockResolvedValue(1);
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_new" });
 
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
     });
     expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         ownerId: "o1",
         projectId: "p_new",
         type: "project.create",
-        payload: { name: "New campaign" },
+        payload: { name: "New project" },
       }),
     }));
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
-  it("creates a new default campaign when the existing default campaign has storyboard shots", async () => {
+  it("creates a new default project when the existing default project has storyboard shots", async () => {
     (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_storyboard", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
     (prisma.shot.count as Mock).mockResolvedValue(1);
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_new" });
 
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
     });
   });
 
-  it("creates a new default campaign when the existing default campaign has scheduled posts", async () => {
+  it("creates a new default project when the existing default project has scheduled posts", async () => {
     (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_schedule", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
     (prisma.scheduledPost.count as Mock).mockResolvedValue(1);
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_new" });
 
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
     });
   });
 
-  it("creates a new default campaign when the existing default campaign has project-level work", async () => {
+  it("creates a new default project when the existing default project has project-level work", async () => {
     (prisma.project.findMany as Mock).mockResolvedValue([
       { id: "p_brief", editJson: null, coworkBrief: "Use neon product closeups", brandId: null, campaignId: null },
       { id: "p_edit", editJson: { timeline: { clips: [] } }, coworkBrief: null, brandId: null, campaignId: null },
     ]);
-    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New campaign" });
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "New project" });
 
-    await expect(createProject("New campaign")).resolves.toEqual({ id: "p_new" });
+    await expect(createProject("New project")).resolves.toEqual({ id: "p_new" });
 
     expect(prisma.chatThread.count).not.toHaveBeenCalled();
     expect(prisma.project.create).toHaveBeenCalledWith({
-      data: { id: expect.any(String), ownerId: "o1", name: "New campaign" },
+      data: { id: expect.any(String), ownerId: "o1", name: "New project" },
     });
   });
 
-  it("does not reuse campaigns for explicit custom names", async () => {
+  it("does not reuse projects for explicit custom names", async () => {
     (prisma.project.create as Mock).mockResolvedValue({ id: "p_custom", name: "Summer launch" });
 
     await expect(createProject("Summer launch")).resolves.toEqual({ id: "p_custom" });
@@ -324,6 +389,20 @@ describe("createProject", () => {
     expect(prisma.project.findMany).not.toHaveBeenCalled();
     expect(prisma.project.create).toHaveBeenCalledWith({
       data: { id: expect.any(String), ownerId: "o1", name: "Summer launch" },
+    });
+  });
+
+  it("treats an explicit 'Untitled' Project name as custom instead of reusing an existing Project", async () => {
+    (prisma.project.findMany as Mock).mockResolvedValue([
+      { id: "p_existing", editJson: null, coworkBrief: null, brandId: null, campaignId: null },
+    ]);
+    (prisma.project.create as Mock).mockResolvedValue({ id: "p_new", name: "Untitled" });
+
+    await expect(createProject("Untitled")).resolves.toEqual({ id: "p_new" });
+
+    expect(prisma.project.findMany).not.toHaveBeenCalled();
+    expect(prisma.project.create).toHaveBeenCalledWith({
+      data: { id: expect.any(String), ownerId: "o1", name: "Untitled" },
     });
   });
 });

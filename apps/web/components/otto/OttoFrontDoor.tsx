@@ -130,7 +130,7 @@ export function OttoFrontDoor({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Synchronous latch: two fast clicks / Enter+tile both pass the async `busy` check
   // before the re-render, and each would start a NEW thread (no threadId). Mirror
-  // OttoConversation.send()'s busyRef guard so the front door can't duplicate campaigns.
+  // OttoConversation.send()'s busyRef guard so the front door can't duplicate conversations.
   const startingRef = useRef(false);
 
   // #542 — the sentence itself lives in lib/otto-greeting.ts so the tests assert against the

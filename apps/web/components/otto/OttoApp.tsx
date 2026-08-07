@@ -88,7 +88,7 @@ export type ProjectMeta = { id: string; name: string; pinnedAt?: string | null }
 
 export interface OttoAppProps {
   projectId: string;
-  /** All of the owner's projects (campaigns) for the Grok-style sidebar. */
+  /** All of the owner's projects for the Grok-style sidebar. */
   projects?: ProjectMeta[];
   /** The currently-open project (= projectId; explicit for nav highlighting). */
   activeProjectId?: string;
@@ -161,18 +161,18 @@ export function OttoApp({
   const [activity, setActivity] = useState<Set<string>>(new Set());
   const [seedText, setSeedText] = useState<string>("");
   // #513 A组返工 item 1 — closed by default: OttoNav is a slide-over now (see
-  // OttoNav.tsx), so the campaign/tools rail must not appear unprompted next to
+  // OttoNav.tsx), so the project/tools rail must not appear unprompted next to
   // the persistent global nav. The floating "Show sidebar" button below opens it.
   const [navCollapsed, setNavCollapsed] = useState(initialNavCollapsed ?? true);
   const [chatCollapsed, setChatCollapsed] = useState(initialChatCollapsed ?? false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [newCampaignPending, setNewCampaignPending] = useState(false);
+  const [newProjectPending, setNewProjectPending] = useState(false);
   const [renameProjectTarget, setRenameProjectTarget] = useState<ProjectMeta | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectMeta | null>(null);
   const [renameThreadTarget, setRenameThreadTarget] = useState<ChatThreadDTO | null>(null);
   const [deleteThreadTarget, setDeleteThreadTarget] = useState<ChatThreadDTO | null>(null);
-  const newCampaignPendingRef = useRef(false);
-  // ── Multi-project (campaign = project) navigation ──
+  const newProjectPendingRef = useRef(false);
+  // ── Multi-project navigation ──
   const curProjectId = activeProjectId ?? projectId;
 
   useEffect(() => {
@@ -330,7 +330,7 @@ export function OttoApp({
     setThreads(next);
     // The sidebar receives all-project thread metas from the server, but a new
     // front-door thread is created client-side before the next server refresh.
-    // Mirror the active project's thread list immediately so campaign history
+    // Mirror the active project's thread list immediately so project history
     // does not look empty until reload.
     setSidebarThreadList((prev) => [
       ...next,
@@ -348,14 +348,16 @@ export function OttoApp({
     pushViewHistory(projectHref(thread.projectId || curProjectId, thread.id));
   }, [curProjectId, handleThreadsChange, projectHref, pushViewHistory, threads]);
 
-  const handleNewCampaign = useCallback(async () => {
-    if (newCampaignPendingRef.current) return false;
-    newCampaignPendingRef.current = true;
-    setNewCampaignPending(true);
+  const handleNewProject = useCallback(async () => {
+    if (newProjectPendingRef.current) return false;
+    newProjectPendingRef.current = true;
+    setNewProjectPending(true);
     setActionError(null);
     const loginHref = `/login?from=${encodeURIComponent(projectHref(curProjectId))}`;
     try {
-      const res = await createProject("New campaign");
+      // #546: the entry builds a Project and says so — "New campaign" was the literal
+      // DB name merchants then hunted for on /campaign (which lists Campaign rows only).
+      const res = await createProject("New project");
       if (res && "id" in res) {
         window.location.assign(projectHref(res.id));
         return true;
@@ -377,12 +379,12 @@ export function OttoApp({
         window.location.assign(loginHref);
         return false;
       }
-      console.error("[handleNewCampaign] failed:", e);
-      setActionError("Could not create a campaign. Refresh and try again.");
+      console.error("[handleNewProject] failed:", e);
+      setActionError("Could not create a project. Refresh and try again.");
       return false;
     } finally {
-      newCampaignPendingRef.current = false;
-      setNewCampaignPending(false);
+      newProjectPendingRef.current = false;
+      setNewProjectPending(false);
     }
   }, [projectHref, curProjectId]);
 
@@ -454,14 +456,15 @@ export function OttoApp({
     else if (res && "error" in res) setActionError(res.error);
   }, [router]);
 
-  // Auto-title a still-default campaign from its first conversation (Grok pattern).
+  // Auto-title a still-default project from its first conversation (Grok pattern).
   // Runs once when the open project is unnamed but already has a titled thread.
   // Money-safe: the action writes only the project name, never any spend path.
+  // ("New campaign" stays matched so pre-#546 DB rows keep auto-titling.)
   const autoTitledRef = useRef(false);
   useEffect(() => {
     if (autoTitledRef.current) return;
     const active = projects.find((p) => p.id === curProjectId);
-    if (!active || (active.name !== "New campaign" && active.name !== "Untitled Project")) return;
+    if (!active || (active.name !== "New project" && active.name !== "New campaign" && active.name !== "Untitled Project")) return;
     const named = sidebarThreadList.some(
       (t) => t.projectId === curProjectId && t.title && t.title !== "New campaign" && t.title !== "Untitled",
     );
@@ -616,8 +619,8 @@ export function OttoApp({
         onRenameProject={requestRenameProject}
         onSetProjectPinned={handleSetProjectPinned}
         onDeleteProject={requestDeleteProject}
-        onNewCampaign={handleNewCampaign}
-        newCampaignPending={newCampaignPending}
+        onNewProject={handleNewProject}
+        newProjectPending={newProjectPending}
         onRenameThread={requestRenameThread}
         onSetThreadPinned={handleSetThreadPinned}
         onDeleteThread={requestDeleteThread}
@@ -744,9 +747,9 @@ export function OttoApp({
       <OttoRenameDialog
         open={!!renameProjectTarget}
         onOpenChange={(open) => { if (!open) setRenameProjectTarget(null); }}
-        title="Rename campaign"
+        title="Rename project"
         description="This only changes the sidebar name. Your chats, canvas, and assets stay where they are."
-        label="Campaign name"
+        label="Project name"
         initialValue={renameProjectTarget?.name ?? ""}
         onSubmit={async (name) => {
           if (!renameProjectTarget) return;
@@ -757,15 +760,15 @@ export function OttoApp({
       <OttoConfirmDialog
         open={!!deleteProjectTarget}
         onOpenChange={(open) => { if (!open) setDeleteProjectTarget(null); }}
-        title="Permanently delete campaign?"
+        title="Permanently delete project?"
         description={deleteProjectTarget ? `Otto will delete "${deleteProjectTarget.name}" and its project-scoped work.` : ""}
         impacts={[
-          "The campaign record is permanently deleted.",
+          "The project record is permanently deleted.",
           "Its chats, canvas nodes, jobs, and project media records are deleted.",
           "Global library assets and credit ledger rows are not deleted here.",
         ]}
         confirmText={deleteProjectTarget?.name}
-        confirmLabel="Delete campaign"
+        confirmLabel="Delete project"
         confirmingLabel="Deleting..."
         tone="danger"
         onConfirm={async () => {
@@ -778,7 +781,7 @@ export function OttoApp({
         open={!!renameThreadTarget}
         onOpenChange={(open) => { if (!open) setRenameThreadTarget(null); }}
         title="Rename conversation"
-        description="This only changes the label shown in the campaign history."
+        description="This only changes the label shown in the conversation history."
         label="Conversation name"
         initialValue={renameThreadTarget?.title ?? ""}
         onSubmit={async (title) => {

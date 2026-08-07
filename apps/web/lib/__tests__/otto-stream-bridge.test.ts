@@ -218,6 +218,19 @@ describe("stepEventOf — agent step narration (the live trace)", () => {
     expect(stepEventOf(toolCalledEvent("seedancePrompt"))?.label).toBe("Crafting the video prompt");
   });
 
+  it("uses Project vocabulary for the live manageProjects start and done steps (#546)", () => {
+    expect(stepEventOf(toolCalledEvent("manageProjects"))).toEqual({
+      id: "call_1",
+      label: "Organizing your projects",
+      phase: "start",
+    });
+    expect(stepEventOf(toolOutputEvent("manageProjects", { ok: true }))).toEqual({
+      id: "call_1",
+      label: "Organizing your projects",
+      phase: "done",
+    });
+  });
+
   it("labels the five B4 schedule skills (debt-70~74, B9 契约4: new skill ships with a label)", () => {
     expect(stepEventOf(toolCalledEvent("approveScheduledPost"))?.label).toBe("Asking you to approve a post");
     expect(stepEventOf(toolCalledEvent("cancelScheduledPost"))?.label).toBe("Cancelling a scheduled post");
