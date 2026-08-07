@@ -29,6 +29,17 @@ export const SCHEDULE_CHANNEL_CAPS: Record<
   x: { label: "X", maxMediaCount: 0, supportsFirstComment: false },
 };
 
+/**
+ * Said when a connection read FAILED — we could not find out which accounts are connected, so we
+ * refuse (approving without checking would consent to a publish we can't validate) but we do NOT
+ * blame the merchant's connection (#741 r3 P1). "Nothing connected" and "couldn't look" used to
+ * come out of the same branch, so one flaky platform call told a perfectly connected merchant
+ * they had no accounts. One sentence, every mouth: the server action refuses with it and Otto
+ * answers with it, so no surface can invent a friendlier-sounding lie.
+ */
+export const ACCOUNTS_UNREADABLE_ERROR =
+  "Couldn't check your connected accounts just now — try again in a moment.";
+
 export type ScheduleApproveInput = {
   channel: string;
   /** The post's stored account id — null/empty when nobody has picked one yet. */

@@ -114,6 +114,7 @@ export {
   type ScheduledPostStatus,
 } from "./schedule-state.js";
 export {
+  ACCOUNTS_UNREADABLE_ERROR,
   SCHEDULE_CHANNELS,
   SCHEDULE_CHANNEL_CAPS,
   isScheduleChannel,

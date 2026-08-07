@@ -230,12 +230,15 @@ export function OttoSchedule({
     // guard; a failed connection read leaves the previous state rather than inventing
     // "nothing connected" (the next cycle retries, so "Checking…" stays literally true).
     const postsPromise = listScheduledPosts();
-    const accountsPromise = listOwnerTargets().catch(() => null);
+    const accountsPromise = listOwnerTargets().catch(() => ({ unavailable: true }) as const);
     // Not awaited together with the posts: a slow connection read must not hold the schedule
     // hostage, and a hung one must leave the screen in "still checking", not in a false answer.
-    void accountsPromise.then((t) => {
-      if (seq !== reloadSeq.current || !t) return;
-      setAccounts(loadedAccounts(t));
+    void accountsPromise.then((res) => {
+      // #741 r3 P1: `unavailable` is the read saying it could not find out — a rejection and a
+      // transient platform failure now arrive as the same fact. Neither may be written down as a
+      // completed read, because a completed read is what licenses "you have no connected accounts".
+      if (seq !== reloadSeq.current || "unavailable" in res) return;
+      setAccounts(loadedAccounts(res.targets));
     });
     const rows = await postsPromise;
     if (seq !== reloadSeq.current) return;

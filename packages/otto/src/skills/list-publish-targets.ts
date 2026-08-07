@@ -10,6 +10,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { ACCOUNTS_UNREADABLE_ERROR } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -22,8 +23,11 @@ export async function executeListPublishTargets(
 ): Promise<unknown> {
   const ctx = runContext.context as OttoContext;
   if (!ctx?.schedule?.listTargets) return { error: "Scheduling isn't available right now." };
-  const targets = await ctx.schedule.listTargets();
-  return { targets };
+  const res = await ctx.schedule.listTargets();
+  // "Couldn't look" is never reported as "nothing connected" (#741 r3 P1). Same sentence the
+  // approve action refuses with, so Otto and the Schedule screen cannot tell different stories.
+  if ("unavailable" in res) return { unavailable: true, message: ACCOUNTS_UNREADABLE_ERROR };
+  return { targets: res.targets };
 }
 
 export const listPublishTargetsSkill = defineOttoSkill({
@@ -34,7 +38,9 @@ export const listPublishTargetsSkill = defineOttoSkill({
   description:
     "List the accounts the user can publish to (their connected Instagram business / Facebook pages) " +
     "so you can choose a valid target when drafting or editing a post. $0 read-only. An empty list means " +
-    "they have not connected a publishable account yet — tell them to connect one.",
+    "they have not connected a publishable account yet — tell them to connect one. A result with " +
+    "unavailable:true means the connection could NOT be read this time — say you couldn't check and " +
+    "offer to try again; never tell them they have no connected accounts.",
   parameters: params,
   execute: executeListPublishTargets,
 });

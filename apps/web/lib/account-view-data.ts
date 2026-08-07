@@ -37,7 +37,15 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
       status: META_BACKED_CHANNEL_IDS.includes(c.id)
         ? metaConnectionToStatus(await metaConnPromise)
         : await c.connectionStatus(ownerId).catch(() => "not_connected" as const),
-      targets: await c.listTargets(ownerId).then((t) => t.map((x) => x.name)).catch(() => [] as string[]),
+      // Page names decorate a row whose CLAIM is `status` above (Connected / Reconnect needed /
+      // Not connected) — the row never says "you have no accounts", it falls back to the bare word
+      // "Connected". So an unreadable list drops the names and asserts nothing, same as a rejected
+      // read always has (#741 r3 P1: only the Schedule screen and the approve path turned a failed
+      // read into a claim, and those two now carry `unavailable` explicitly).
+      targets: await c
+        .listTargets(ownerId)
+        .then((r) => ("targets" in r ? r.targets.map((t) => t.name) : []))
+        .catch(() => [] as string[]),
     })),
   );
   const [settingsRes, packs, metaConn, channels] = await Promise.all([

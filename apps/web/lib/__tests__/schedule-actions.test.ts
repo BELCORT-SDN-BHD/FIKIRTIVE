@@ -105,6 +105,7 @@ import {
   revokeSharePreview,
 } from "../schedule-actions";
 import { sharePreviewTokenDigest } from "../share-preview";
+import { ACCOUNTS_UNREADABLE_ERROR } from "@fikirtive/core";
 import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
 import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 
@@ -130,9 +131,9 @@ beforeEach(() => {
   mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
     args.where.id.in.map((id) => ({ id, asset: { mime: "image/png" } })),
   );
-  mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
-  mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
-  mockXListTargets.mockResolvedValue([]); // no X connection by default (X approve test overrides)
+  mockIgListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+  mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+  mockXListTargets.mockResolvedValue({ targets: [] }); // no X connection by default (X approve test overrides)
   mockPublishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt
   mockShareTokenCreate.mockResolvedValue({}); // B0-28: authority-row write succeeds by default
   mockShareTokenUpdateMany.mockResolvedValue({ count: 0 });
@@ -679,16 +680,27 @@ describe("approveScheduledPost", () => {
 
   it("rejects when the owner has no connected channel (fetchOwnerPages notConnected), no write", async () => {
     mockFindFirst.mockResolvedValue(draftReady());
-    mockIgListTargets.mockResolvedValue([]);
+    mockIgListTargets.mockResolvedValue({ targets: [] });
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
+  // #741 判官 r3 [P1] —— 连接读失败 ≠ 没连账号。两种情形都拒(fail closed,不变),但理由必须是真的:
+  // 说「Connect your account before approving.」等于告诉一个连接好好的商家「你没连」。
+  it("连接列表读不到时:照旧拒绝、照旧不写库,但说的是「没查到」而不是「你没连账号」", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockResolvedValue({ unavailable: true });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: ACCOUNTS_UNREADABLE_ERROR });
+    expect(res).not.toEqual({ error: "Connect your account before approving." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("validates approval against the post channel's own target adapter", async () => {
     mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook" }));
-    mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "IG Page" }]);
-    mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "FB Page" }]);
+    mockIgListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "IG Page" }] });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "FB Page" }] });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     expect(await approveScheduledPost("p1")).toEqual({ ok: true });
     expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
@@ -707,7 +719,7 @@ describe("approveScheduledPost", () => {
     // AND a media X post would become NEEDS_ATTENTION (executeX refuses media) — X publishing impossible.
     mockFindFirst.mockResolvedValue(draftReady({ channel: "x", metaTargetId: "x-acct", media: [] }));
     mockGenFindMany.mockResolvedValue([]);
-    mockXListTargets.mockResolvedValue([{ id: "x-acct", name: "X account" }]);
+    mockXListTargets.mockResolvedValue({ targets: [{ id: "x-acct", name: "X account" }] });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await approveScheduledPost("p1");
     expect(res).toEqual({ ok: true });
@@ -932,28 +944,40 @@ describe("listScheduledPosts", () => {
 
 describe("listOwnerTargets", () => {
   it("returns the owner's connectable targets per channel, owner-scoped", async () => {
-    mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
-    mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+    mockIgListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
     const res = await listOwnerTargets();
     // each adapter is asked for the SESSION owner's targets, never a client id
     expect(mockIgListTargets).toHaveBeenCalledWith(OWNER);
     expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
-    expect(res).toEqual([
-      { id: "page-1", name: "My Page", channel: "instagram" },
-      { id: "page-1", name: "My Page", channel: "facebook" },
-    ]);
+    expect(res).toEqual({
+      targets: [
+        { id: "page-1", name: "My Page", channel: "instagram" },
+        { id: "page-1", name: "My Page", channel: "facebook" },
+      ],
+    });
   });
 
-  it("returns [] when the owner has no connected targets (Connect prompt case)", async () => {
-    // adapters return [] on notConnected/needsReconnect/needsPageScope (see fetchOwnerPages mapping)
-    mockIgListTargets.mockResolvedValue([]);
-    mockFbListTargets.mockResolvedValue([]);
-    expect(await listOwnerTargets()).toEqual([]);
+  it("returns an empty list when the owner has no connected targets (Connect prompt case)", async () => {
+    // adapters answer { targets: [] } on notConnected/needsReconnect/needsPageScope — a real answer
+    mockIgListTargets.mockResolvedValue({ targets: [] });
+    mockFbListTargets.mockResolvedValue({ targets: [] });
+    expect(await listOwnerTargets()).toEqual({ targets: [] });
   });
 
-  it("returns [] when not signed in, queries no channel", async () => {
+  // #741 判官 r3 [P1] —— 一个渠道读不到,就没有资格说出整份名单:少了 Instagram 的那份名单
+  // 会被下游当成「Instagram 一个账号都没连」,正是这一票要根治的那句谎话。
+  it("任何一个渠道读不到 → 整份答案是「没读到」,不是一份缺斤少两的名单", async () => {
+    mockIgListTargets.mockResolvedValue({ unavailable: true });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    const res = await listOwnerTargets();
+    expect(res).toEqual({ unavailable: true });
+    expect("targets" in res).toBe(false);
+  });
+
+  it("returns an empty list when not signed in, queries no channel", async () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
-    expect(await listOwnerTargets()).toEqual([]);
+    expect(await listOwnerTargets()).toEqual({ targets: [] });
     expect(mockIgListTargets).not.toHaveBeenCalled();
     expect(mockFbListTargets).not.toHaveBeenCalled();
   });

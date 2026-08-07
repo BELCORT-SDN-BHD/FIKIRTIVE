@@ -1,7 +1,7 @@
 import type { Channel, ChannelPost } from "./types";
 import { disconnectMeta } from "../meta-actions";
 import { fetchOwnerPages } from "../meta-pages";
-import { metaStatus, notImpl } from "./meta-shared";
+import { metaPagesToTargets, metaStatus, notImpl } from "./meta-shared";
 import { publishViaMeta } from "./meta-publish-adapter";
 
 export const instagram: Channel = {
@@ -16,10 +16,8 @@ export const instagram: Channel = {
   // pages as the targets; resolving page → instagram_business_account id is a
   // Schedule-plan concern (a single metaGraphGet on the page). Returning pages
   // here lets the Connections UI show "connected" + which pages back IG.
-  listTargets: async (ownerId) => {
-    const r = await fetchOwnerPages(ownerId);
-    return "pages" in r ? r.pages.map((p) => ({ id: p.id, name: p.name })) : [];
-  },
+  // A failed read is reported as a failed read, never as "no accounts" (#741 r3 P1).
+  listTargets: async (ownerId) => metaPagesToTargets(await fetchOwnerPages(ownerId)),
   autoPublishable: (post: ChannelPost) =>
     post.postType === "reel" || post.postType === "story" ? "reminder" : "auto",
   // L1: real organic publish — fail-closed until App Review grants the scopes (canPublish=false ⇒

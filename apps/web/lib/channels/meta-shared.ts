@@ -1,4 +1,5 @@
-import type { ConnectionStatus } from "./types";
+import type { ChannelTargetsResult, ConnectionStatus } from "./types";
+import type { fetchOwnerPages } from "../meta-pages";
 import { getMetaConnection, type MetaConnectionResult } from "../meta-actions";
 
 // Instagram and Facebook connect through the ONE Meta connection — same token, same
@@ -23,6 +24,23 @@ export function metaConnectionToStatus(c: MetaConnectionResult): ConnectionStatu
 // this shortcut.
 export async function metaStatus(): Promise<ConnectionStatus> {
   return metaConnectionToStatus(await getMetaConnection());
+}
+
+/**
+ * fetchOwnerPages → the adapter's honest answer (#741 r3 P1). Instagram and Facebook read the SAME
+ * pages through the SAME connection, so the mapping lives here once.
+ *
+ * The dividing line is "did this read produce an answer?", NOT "did it produce pages":
+ *   · transientError — network / 5xx / rate limit. We did NOT find out. The only `unavailable`.
+ *   · notConnected · needsPageScope · needsReconnect — all DETERMINATE. There is nothing this
+ *     merchant can post to right now, the Connections page says exactly that, and the honest next
+ *     step really is to (re)connect. A real, empty list.
+ * Collapsing the first into the rest is the bug: it told a connected merchant they had no accounts.
+ */
+export function metaPagesToTargets(r: Awaited<ReturnType<typeof fetchOwnerPages>>): ChannelTargetsResult {
+  if ("pages" in r) return { targets: r.pages.map((p) => ({ id: p.id, name: p.name })) };
+  if ("transientError" in r) return { unavailable: true };
+  return { targets: [] };
 }
 
 export const notImpl = () => { throw new Error("not implemented (filled by the Schedule/Analytics plan)"); };

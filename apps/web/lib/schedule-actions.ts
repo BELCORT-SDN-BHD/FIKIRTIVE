@@ -8,6 +8,7 @@ import {
   newId,
   parseScheduleInstant,
   scheduleApproveBlockers,
+  ACCOUNTS_UNREADABLE_ERROR,
   SCHEDULE_CHANNEL_CAPS,
   type ScheduledPostStatus,
 } from "@fikirtive/core";
@@ -370,12 +371,16 @@ export async function approveScheduledPost(
   // and the order (nothing connected → that account isn't yours) is unchanged. No adapter means
   // nothing can be connected on this channel, which is exactly the empty-list case.
   const adapter = channelRegistry[post.channel];
-  const targets = adapter ? await adapter.listTargets(gate.ownerId) : [];
+  const liveTargets = adapter ? await adapter.listTargets(gate.ownerId) : { targets: [] };
+  // #741 r3 P1: a read that FAILED is not an empty list. Both outcomes refuse (unchanged — we
+  // never approve a publish we couldn't validate), but the reason has to be true: telling a
+  // merchant whose connection is fine to "connect your account" is the lie this ticket is about.
+  if ("unavailable" in liveTargets) return { error: ACCOUNTS_UNREADABLE_ERROR };
   const liveTargetBlockers = scheduleApproveBlockers({
     channel: post.channel,
     targetId: post.metaTargetId,
     mediaCount: post.media.length,
-    connectedTargetIds: targets.map((t) => t.id),
+    connectedTargetIds: liveTargets.targets.map((t) => t.id),
   });
   if (liveTargetBlockers.length > 0) return { error: liveTargetBlockers[0]! };
 
@@ -484,22 +489,30 @@ export async function listScheduledPosts(
 
 export type OwnerTarget = { id: string; name: string; channel: ChannelId };
 
+/** The whole answer, or the honest admission that there isn't one (#741 r3 P1). */
+export type OwnerTargetsResult = { targets: OwnerTarget[] } | { unavailable: true };
+
 /** Owner-scoped list of connectable publish targets for the composer's account picker.
  *  Derives from the owner's OWN connected pages (fetchOwnerPages(gate.ownerId), the same
  *  owner-scoped source the approve path validates against) and cross-joins with each
- *  supported channel via the registry. $0 read. Returns [] (never throws) when the owner
- *  isn't connected / needs a reconnect / needs the page scope, so the UI shows a Connect
- *  prompt instead of an error. */
-export async function listOwnerTargets(): Promise<OwnerTarget[]> {
+ *  supported channel via the registry. $0 read.
+ *
+ *  An empty list is a REAL answer (not connected / needs reconnect / needs the page scope) and the
+ *  UI may act on it. A read that failed is not: if ANY channel could not be read, the whole answer
+ *  is `unavailable`. A partial list would be worse than no list — the missing channel would read
+ *  downstream as "that channel has no connected accounts", which is precisely the false assertion
+ *  this ticket exists to remove. */
+export async function listOwnerTargets(): Promise<OwnerTargetsResult> {
   const gate = await requireOwner();
-  if ("error" in gate) return [];
+  if ("error" in gate) return { targets: [] };
 
   const out: OwnerTarget[] = [];
   for (const channel of Object.values(channelRegistry)) {
-    const targets = await channel.listTargets(gate.ownerId);
-    for (const t of targets) out.push({ id: t.id, name: t.name, channel: channel.id });
+    const res = await channel.listTargets(gate.ownerId);
+    if ("unavailable" in res) return { unavailable: true };
+    for (const t of res.targets) out.push({ id: t.id, name: t.name, channel: channel.id });
   }
-  return out;
+  return { targets: out };
 }
 
 export type PostingTimeSuggestion = { dayOfWeek: number; hourUtc: number; score: number; rationale: string };
