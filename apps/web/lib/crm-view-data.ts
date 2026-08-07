@@ -2,6 +2,7 @@
 
 import { prisma } from "@fikirtive/db";
 import { requireOwner } from "@/lib/auth-guard";
+import { ownedContactsWhere } from "./crm-contact-scope";
 import { isCrmLifecycleStage, type CrmLifecycleStage } from "./crm-identity";
 
 export type CrmIdentityRow = {
@@ -49,7 +50,19 @@ export type CrmContactRow = {
 };
 
 export type CrmContactDetailRow = CrmContactRow & { consentEvents: CrmConsentEventRow[] };
-export type CrmContactsResult = { ok: true; contacts: CrmContactRow[] } | { error: string };
+/**
+ * `contacts` is one page. `totalCount` is how many rows the same owner-scoped filter has in
+ * total, so the merchant is never shown a truncated list that pretends to be everything.
+ */
+export type CrmContactsResult =
+  | {
+      ok: true;
+      contacts: CrmContactRow[];
+      totalCount: number;
+      nextCursor: string | null;
+      hasMore: boolean;
+    }
+  | { error: string };
 export type CrmContactResult = { ok: true; contact: CrmContactDetailRow } | { error: string };
 
 function contactSelect(ownerId: string) {
@@ -141,62 +154,91 @@ function queryOf(value: unknown): string | undefined {
   return query || undefined;
 }
 
-async function readContacts(
+type ContactCursor = { lastSeenAt: Date; id: string };
+
+/** Keyset position, matching the `lastSeenAt desc, id asc` read order. */
+function encodeCursor(row: CrmContactRow): string {
+  return `${row.lastSeenAt.toISOString()}|${row.id}`;
+}
+
+function readCursor(value: unknown): { ok: true; cursor: ContactCursor | null } | { ok: false } {
+  if (value === undefined || value === null || value === "") return { ok: true, cursor: null };
+  if (typeof value !== "string") return { ok: false };
+  const separator = value.indexOf("|");
+  if (separator <= 0) return { ok: false };
+  const lastSeenAt = new Date(value.slice(0, separator));
+  const id = value.slice(separator + 1);
+  if (Number.isNaN(lastSeenAt.getTime()) || !id || id.length > 64) return { ok: false };
+  return { ok: true, cursor: { lastSeenAt, id } };
+}
+
+type ContactPage = { contacts: CrmContactRow[]; nextCursor: string | null; hasMore: boolean };
+
+async function readContactPage(
   ownerId: string,
-  options: { lifecycleStage?: CrmLifecycleStage; query?: string; limit: number },
-): Promise<CrmContactRow[]> {
-  const query = options.query;
+  options: {
+    lifecycleStage?: CrmLifecycleStage;
+    query?: string;
+    limit: number;
+    cursor: ContactCursor | null;
+  },
+): Promise<ContactPage> {
+  const scope = ownedContactsWhere(ownerId, {
+    lifecycleStage: options.lifecycleStage,
+    query: options.query,
+  });
+  const cursor = options.cursor;
   const rows = await prisma.contact.findMany({
-    where: {
-      ownerId,
-      deletedAt: null,
-      ...(options.lifecycleStage ? { lifecycleStage: options.lifecycleStage } : {}),
-      ...(query
-        ? {
+    // `AND` (not a second `OR`) so the keyset never widens a search filter.
+    where: cursor
+      ? {
+          ...scope,
+          AND: [{
             OR: [
-              { name: { contains: query, mode: "insensitive" as const } },
-              {
-                identities: {
-                  some: {
-                    ownerId,
-                    deletedAt: null,
-                    externalId: { contains: query, mode: "insensitive" as const },
-                  },
-                },
-              },
-              {
-                identities: {
-                  some: {
-                    ownerId,
-                    deletedAt: null,
-                    handle: { contains: query, mode: "insensitive" as const },
-                  },
-                },
-              },
+              { lastSeenAt: { lt: cursor.lastSeenAt } },
+              { lastSeenAt: cursor.lastSeenAt, id: { gt: cursor.id } },
             ],
-          }
-        : {}),
-    },
+          }],
+        }
+      : scope,
     select: contactSelect(ownerId),
     orderBy: [{ lastSeenAt: "desc" }, { id: "asc" }],
-    take: options.limit,
+    // One extra row answers "is there more" without a second query.
+    take: options.limit + 1,
   });
-  return (rows as unknown as DbContactRow[]).map(presentContact);
+  const hasMore = rows.length > options.limit;
+  const contacts = (rows as unknown as DbContactRow[]).slice(0, options.limit).map(presentContact);
+  const last = contacts.at(-1);
+  return {
+    contacts,
+    hasMore,
+    nextCursor: hasMore && last ? encodeCursor(last) : null,
+  };
 }
 
 export async function listContacts(raw?: unknown): Promise<CrmContactsResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const input = (raw ?? {}) as { lifecycleStage?: unknown; query?: unknown; limit?: unknown };
+  const input = (raw ?? {}) as {
+    lifecycleStage?: unknown;
+    query?: unknown;
+    limit?: unknown;
+    cursor?: unknown;
+  };
   if (input.lifecycleStage !== undefined && !isCrmLifecycleStage(input.lifecycleStage)) {
     return { error: "Pick a valid lifecycle stage." };
   }
-  const contacts = await readContacts(gate.ownerId, {
+  const cursor = readCursor(input.cursor);
+  if (!cursor.ok) return { error: "Refresh the contact list and try again." };
+  const filter = {
     lifecycleStage: input.lifecycleStage as CrmLifecycleStage | undefined,
     query: queryOf(input.query),
-    limit: limitOf(input.limit),
-  });
-  return { ok: true, contacts };
+  };
+  const [page, totalCount] = await Promise.all([
+    readContactPage(gate.ownerId, { ...filter, limit: limitOf(input.limit), cursor: cursor.cursor }),
+    prisma.contact.count({ where: ownedContactsWhere(gate.ownerId, filter) }),
+  ]);
+  return { ok: true, ...page, totalCount };
 }
 
 export async function getContact(rawId: unknown): Promise<CrmContactResult> {
@@ -236,17 +278,27 @@ export async function searchContacts(raw: unknown): Promise<CrmContactsResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   const input = typeof raw === "string"
-    ? { query: raw, lifecycleStage: undefined, limit: undefined }
-    : ((raw ?? {}) as { query?: unknown; lifecycleStage?: unknown; limit?: unknown });
+    ? { query: raw, lifecycleStage: undefined, limit: undefined, cursor: undefined }
+    : ((raw ?? {}) as {
+        query?: unknown;
+        lifecycleStage?: unknown;
+        limit?: unknown;
+        cursor?: unknown;
+      });
   const query = queryOf(input.query);
-  if (!query) return { ok: true, contacts: [] };
+  if (!query) return { ok: true, contacts: [], totalCount: 0, nextCursor: null, hasMore: false };
   if (input.lifecycleStage !== undefined && !isCrmLifecycleStage(input.lifecycleStage)) {
     return { error: "Pick a valid lifecycle stage." };
   }
-  const contacts = await readContacts(gate.ownerId, {
+  const cursor = readCursor(input.cursor);
+  if (!cursor.ok) return { error: "Refresh the contact list and try again." };
+  const filter = {
     query,
     lifecycleStage: input.lifecycleStage as CrmLifecycleStage | undefined,
-    limit: limitOf(input.limit),
-  });
-  return { ok: true, contacts };
+  };
+  const [page, totalCount] = await Promise.all([
+    readContactPage(gate.ownerId, { ...filter, limit: limitOf(input.limit), cursor: cursor.cursor }),
+    prisma.contact.count({ where: ownedContactsWhere(gate.ownerId, filter) }),
+  ]);
+  return { ok: true, ...page, totalCount };
 }
