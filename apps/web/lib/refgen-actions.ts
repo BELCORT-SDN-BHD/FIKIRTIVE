@@ -13,6 +13,7 @@ import {
   slugify,
   REFGEN_QUEUE,
   isModelDisabled,
+  displayCredits,
   pricedRefgenCredits,
   type RefGenJobData,
 } from "@fikirtive/core";
@@ -21,6 +22,7 @@ import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
+import { outOfCreditsMessage } from "./credit-format";
 
 // a job stuck QUEUED/GENERATING past the queue's expiry is treated as abandoned
 // (worker died mid-run) so a new generation isn't blocked forever.
@@ -98,7 +100,7 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
     });
   } catch (e) {
     if (e instanceof InsufficientCredits) {
-      return { error: "You've used up your beta credits — reply and we'll top you up." };
+      return { error: outOfCreditsMessage(displayCredits(cost)) };
     }
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       const dupe = await prisma.refGenJob.findFirst({
@@ -211,7 +213,7 @@ async function dispatchVariantJob(ownerId: string, entityId: string, variantId: 
     });
   } catch (e) {
     if (e instanceof InsufficientCredits) {
-      return { error: "You've used up your beta credits — reply and we'll top you up." };
+      return { error: outOfCreditsMessage(displayCredits(cost)) };
     }
     if (typeof e === "object" && e !== null && (e as { code?: string }).code === "P2002") {
       const dupe = await prisma.refGenJob.findFirst({
