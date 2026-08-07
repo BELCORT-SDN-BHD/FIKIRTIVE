@@ -19,12 +19,13 @@
 import { createElement } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildStuffItems } from "../stuff-items";
 import { DEFAULT_SETTINGS } from "../owner-settings";
 import type { AccountInfo } from "../account-actions";
+import type { ScheduledPostRow } from "../schedule-actions";
 
 const mocks = vi.hoisted(() => ({
   listScheduledPosts: vi.fn(),
@@ -68,6 +69,26 @@ const STUFF_ITEMS = buildStuffItems({
 });
 
 const IG_TARGET = { id: "ig-1", name: "Kopi Kita", channel: "instagram" as const };
+
+function postRow(over: Partial<ScheduledPostRow> = {}): ScheduledPostRow {
+  return {
+    id: "post-1",
+    channel: "instagram",
+    caption: "Morning brew",
+    firstComment: null,
+    scheduledAt: new Date("2026-08-20T01:00:00Z"),
+    scheduledTz: "Asia/Kuala_Lumpur",
+    status: "DRAFT",
+    publishMode: "AUTO",
+    source: "owner",
+    metaTargetId: IG_TARGET.id,
+    approvedAt: null,
+    lastError: null,
+    media: [{ generationId: "gen-1", position: 0 }],
+    updatedAt: new Date("2026-08-19T00:00:00Z"),
+    ...over,
+  };
+}
 
 // ── DOM 小工具(composer 走 Radix Portal,内容落在 body) ────────────────────────
 function scope(): ParentNode {
@@ -348,27 +369,308 @@ describe("#695 Approve & schedule 灰着时,商家看得见到底缺什么", () 
   });
 });
 
+// ── #741 判官 r1 [P1] 账户有效性:界面不能只认草稿里存过的旧 id ──────────────────
+
+describe("#741 r1 断开连接后,界面不再假装账号还在", () => {
+  const STALE = "ig-gone"; // 草稿里存着的旧 id —— 商家断开连接后它还躺在那儿
+  const OTHER_TARGET = { id: "ig-2", name: "Kopi Kita Two", channel: "instagram" as const };
+
+  beforeEach(() => {
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+  });
+
+  async function openDraft(caption: string) {
+    const row = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.textContent ?? "").includes(caption),
+    );
+    if (!row) throw new Error(`no queue row for "${caption}"`);
+    await click(row);
+  }
+
+  it("旧 id 已不在连接列表里:批准禁用,并如实说这不是你连着的账号", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([OTHER_TARGET]);
+    mocks.listScheduledPosts.mockResolvedValue([postRow({ metaTargetId: STALE })]);
+    await renderSchedule();
+    await openDraft("Morning brew");
+
+    const approve = buttonByText("Approve & schedule", scope());
+    // 病灶:旧代码只看 !!metaTargetId,按钮是亮的,服务端 approve 时必拒。
+    expect(approve.disabled).toBe(true);
+    expect(scope().textContent).toContain("That account isn't one of your connected channels.");
+  });
+
+  it("一个账号都没连:指路去连接,不是叫人挑一个不存在的账号", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([]);
+    mocks.listScheduledPosts.mockResolvedValue([postRow({ metaTargetId: STALE })]);
+    await renderSchedule();
+    await openDraft("Morning brew");
+
+    expect(buttonByText("Approve & schedule", scope()).disabled).toBe(true);
+    expect(scope().textContent).toContain("Connect your account before approving.");
+  });
+
+  it("账号仍然连着:批准照常可用,不误伤", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    mocks.listScheduledPosts.mockResolvedValue([postRow({ metaTargetId: IG_TARGET.id })]);
+    await renderSchedule();
+    await openDraft("Morning brew");
+
+    expect(buttonByText("Approve & schedule", scope()).disabled).toBe(false);
+    expect(scope().textContent).not.toContain("before approving.");
+  });
+
+  it("Approve all 不把陈旧账号的帖子计为 ready", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([OTHER_TARGET]);
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-stale", source: "otto", status: "DRAFT", caption: "Otto draft", metaTargetId: STALE }),
+    ]);
+    await renderSchedule();
+
+    // 旧代码:1 of 1 ready、按钮可按 —— 按下去服务端逐条拒。
+    const approveAll = buttonByText("Approve all", document.body);
+    expect(approveAll.textContent).toContain("Approve all 0");
+    expect(approveAll.disabled).toBe(true);
+    expect(document.body.textContent).toContain("That account isn't one of your connected channels.");
+  });
+});
+
+// ── #741 判官 r1 [P2] 历史 X 草稿要如实呈现 ────────────────────────────────────
+
+describe("#741 r1 打开一条历史 X 草稿", () => {
+  beforeEach(() => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-x", channel: "x", caption: "Legacy X draft", metaTargetId: null, media: [] }),
+    ]);
+  });
+
+  async function openXDraft() {
+    const row = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.textContent ?? "").includes("Legacy X draft"),
+    );
+    if (!row) throw new Error("no queue row for the legacy X draft");
+    await click(row);
+  }
+
+  it("渠道区如实显示这条帖子在 X 上,而不是一个选中都没有", async () => {
+    await renderSchedule();
+    await openXDraft();
+
+    const buttons = Array.from(field("Channel").querySelectorAll<HTMLButtonElement>("button"));
+    const labels = buttons.map((b) => (b.textContent ?? "").trim());
+    // 病灶:可连渠道过滤被无条件用在编辑器上,X 整个消失,界面看不出这条草稿属于谁。
+    expect(labels).toContain("X");
+    const xButton = buttons.find((b) => (b.textContent ?? "").trim() === "X")!;
+    // 选中态用的是同一套高亮 class(border-foreground bg-secondary)。
+    expect(xButton.className).toContain("border-foreground");
+  });
+
+  it("X 仍然不可选:按钮禁用,并说清这条帖子发不出去", async () => {
+    await renderSchedule();
+    await openXDraft();
+
+    const xButton = Array.from(field("Channel").querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.textContent ?? "").trim() === "X",
+    )!;
+    expect(xButton.disabled).toBe(true);
+    expect(field("Channel").textContent).toMatch(/not available yet/i);
+  });
+
+  it("能连的渠道照旧可选 —— 商家可以把这条草稿挪到真发得出去的渠道", async () => {
+    await renderSchedule();
+    await openXDraft();
+
+    const ig = Array.from(field("Channel").querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.textContent ?? "").trim() === "Instagram",
+    )!;
+    expect(ig.disabled).toBe(false);
+  });
+
+  it("新建草稿的可选渠道不受影响,X 不会因此回到新帖入口", async () => {
+    await renderSchedule();
+    await click(buttonByText("New post"));
+
+    expect(composerChannelLabels()).toEqual(["Instagram"]);
+  });
+
+  it("「连得上但还没连」不等于「连不上」:断开后的 IG 草稿仍可留在 IG,不被说成 not available", async () => {
+    // 这一条挡的是本次修法自己可能踩的坑:如果把「不在可选列表里」一律当成「渠道不可用」,
+    // 商家断开连接后打开自己的 IG 草稿,会看到「Instagram is not available yet」—— 假话。
+    mocks.listOwnerTargets.mockResolvedValue([]);
+    mocks.getMetaConnection.mockResolvedValue({ connected: false, canPublish: false, needsReconnect: false });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-ig", channel: "instagram", caption: "Orphan IG draft", metaTargetId: null }),
+    ]);
+    await renderSchedule();
+    const row = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.textContent ?? "").includes("Orphan IG draft"),
+    )!;
+    await click(row);
+
+    const ig = Array.from(field("Channel").querySelectorAll<HTMLButtonElement>("button")).find(
+      (b) => (b.textContent ?? "").trim() === "Instagram",
+    )!;
+    expect(ig.className).toContain("border-foreground");
+    expect(ig.disabled).toBe(false);
+    expect(field("Channel").textContent).not.toMatch(/not available yet/i);
+  });
+});
+
+// ── #741 判官 r1 [P2] Approve all 的汇总句必须如实 ─────────────────────────────
+
+describe("#741 r1 Approve all 的缺项汇总只报真的缺项", () => {
+  beforeEach(() => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+  });
+
+  function planCardText(): string {
+    const approveAll = buttonByText("Approve all", document.body);
+    return approveAll.closest("div")?.parentElement?.textContent ?? document.body.textContent ?? "";
+  }
+
+  it("只缺媒体的批次:汇总句说图,不提根本不缺的渠道/账号", async () => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p1", source: "otto", status: "DRAFT", caption: "Otto A", media: [] }),
+      postRow({ id: "p2", source: "otto", status: "DRAFT", caption: "Otto B" }),
+    ]);
+    await renderSchedule();
+
+    const text = planCardText();
+    expect(text).toContain("1 of 2 ready");
+    expect(text).toContain("Add at least one image before approving.");
+    // 病灶:旧汇总句写死「add media & a channel」,渠道根本不缺也照说不误。
+    expect(text.toLowerCase()).not.toContain("a channel");
+  });
+
+  it("只缺账号的批次:汇总句说账号,不提图", async () => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p1", source: "otto", status: "DRAFT", caption: "Otto A", metaTargetId: null }),
+    ]);
+    await renderSchedule();
+
+    const text = planCardText();
+    expect(text).toContain("Pick which account to post to before approving.");
+    expect(text).not.toContain("Add at least one image before approving.");
+  });
+
+  it("全部就绪时汇总句退场,回到那句「说声就走」", async () => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p1", source: "otto", status: "DRAFT", caption: "Otto A" }),
+    ]);
+    await renderSchedule();
+
+    const text = planCardText();
+    expect(text).not.toContain("before approving.");
+    expect(text).toContain("Say go once you");
+  });
+});
+
 // ── 单点权威的词法围栏 ────────────────────────────────────────────────────────
+//
+// #741 判官 r1 [P2]:上一版围栏只读三个写死的组件、只比对少数精确文本 —— 新组件手写渠道
+// 数组不会被扫到,OttoSchedule 里第二份批准话术也照样过关,等于没有围栏。现在改成 glob 扫
+// apps/web 的 components / lib / app 三棵树下全部 .ts/.tsx。
+//
+// **威胁模型边界(如实声明,不虚标能力)**:这是词法检查,不是类型或数据流分析。它能抓到的
+// 是「以字面量形式写出来的第二份真相」——这正是本仓两次实际发生过的形状(#694 的 composer
+// 回退、#741 的 :705 汇总句)。它抓不到:
+//   ① 动态拼出来的渠道名单(`ids.filter(...)`、从服务端字符串拼装);
+//   ② 换一种说法的批准缺项话术(例如 "you still need a photo");
+//   ③ 把话术搬到 JSON / 数据库 / 翻译文件里再读回来;
+//   ④ 注释剥离用的是正则,遇到极端的字符串内容可能少剥或多剥一点。
+// 这四类只能靠复审。围栏的价值是挡住「顺手再写一份」的自然写法,不是证明不存在第二份真相。
+describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
+  const WEB_ROOT = path.resolve(__dirname, "../..");
+  // Every place a merchant-facing surface can be written: components, the shared lib, and the
+  // route tree. Missing one of these is how the previous fence let a second truth through.
+  const SCAN_ROOTS = ["components", "lib", "app"];
 
-describe("#694 #695 单点权威,不许再各说各话", () => {
-  const src = (rel: string) => readFileSync(path.resolve(__dirname, "../../components/otto", rel), "utf8");
-  const schedule = src("OttoSchedule.tsx");
-  const connections = src("OttoConnections.tsx");
-  const sections = src("settings/sections.tsx");
+  function walk(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) return e.name === "__tests__" ? [] : walk(full);
+      return /\.(ts|tsx)$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) ? [full] : [];
+    });
+  }
 
-  it("approve 的前置条件与话术只有一份:界面读共享校验函数,不自己写句子", () => {
+  /** 注释里的示例和历史说明不算「第二份真相」,先剥掉再匹配。 */
+  function stripComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
+  }
+
+  // 手写的渠道 id 名单:`["instagram","facebook"]`、`new Set(["x","instagram"])` 这类形状。
+  const HANDWRITTEN_CHANNEL_LIST =
+    /[[(]\s*(["'])(instagram|facebook|x)\1\s*,\s*(["'])(instagram|facebook|x)\3/;
+  // 手写的批准缺项话术:「(add|pick|choose|connect|select) … before approving」与
+  // 「at least one image/video/photo/media」两种自然形状。
+  const HANDWRITTEN_APPROVE_COPY = [
+    /(add|pick|choose|connect|select)\b[^.]{0,60}before approving/i,
+    /at least one (image|video|photo|media)/i,
+  ];
+
+  // 允许清单:这两处回答的是**另一个问题**(「哪些渠道由 Meta 连接支撑」/「哪些渠道属于 Meta
+  // 自然发布」),不是「现在能不能连上」。它们与 UNAVAILABLE_PUBLISHING_CHANNEL_IDS 各司其职,
+  // 不是同一份真相的副本。新文件写出同样形状会被抓住 —— 这正是围栏要挡的。
+  const CHANNEL_LIST_ALLOWLIST = new Set([
+    "lib/channels/meta-shared.ts",
+    "lib/auto-publish-gate.ts",
+  ]);
+
+  const files = SCAN_ROOTS.flatMap((r) => walk(path.join(WEB_ROOT, r))).map((f) => ({
+    rel: path.relative(WEB_ROOT, f),
+    code: stripComments(readFileSync(f, "utf8")),
+  }));
+
+  it("围栏本身认得出它要抓的两种形状(不是一条永远为真的断言)", () => {
+    // 承重自检:正则先在样本上证明自己会响,再去扫真实代码。
+    expect(HANDWRITTEN_CHANNEL_LIST.test('const ids = ["instagram", "facebook"];')).toBe(true);
+    expect(HANDWRITTEN_CHANNEL_LIST.test('new Set(["x", "instagram"])')).toBe(true);
+    expect(
+      HANDWRITTEN_APPROVE_COPY.some((re) => re.test("add media & a channel to the rest before approving.")),
+    ).toBe(true);
+    expect(HANDWRITTEN_APPROVE_COPY.some((re) => re.test("Add at least one image before approving."))).toBe(true);
+    // 反例:不该误伤别的「before approving」句子。
+    expect(
+      HANDWRITTEN_APPROVE_COPY.some((re) => re.test("Review your schedule before approving.")),
+    ).toBe(false);
+    // 扫描面必须真的覆盖到了这些文件(路径写错时不能静默通过)。
+    expect(files.length).toBeGreaterThan(50);
+    expect(files.some((f) => f.rel === "components/otto/OttoSchedule.tsx")).toBe(true);
+    expect(files.some((f) => f.rel === "components/otto/settings/sections.tsx")).toBe(true);
+    expect(files.some((f) => f.rel === "lib/channels/channel-meta.ts")).toBe(true);
+  });
+
+  it("apps/web 里没有第二份「哪些渠道能连」的手写名单", () => {
+    const offenders = files
+      .filter((f) => !CHANNEL_LIST_ALLOWLIST.has(f.rel) && HANDWRITTEN_CHANNEL_LIST.test(f.code))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("apps/web 里没有第二份批准缺项话术 —— 句子只能来自 scheduleApproveBlockers", () => {
+    const offenders = files
+      .filter((f) => HANDWRITTEN_APPROVE_COPY.some((re) => re.test(f.code)))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("三处消费方确实读的是共享权威,而不是各自空手过关", () => {
+    const byRel = new Map(files.map((f) => [f.rel, f.code]));
+    const schedule = byRel.get("components/otto/OttoSchedule.tsx")!;
+    const connections = byRel.get("components/otto/OttoConnections.tsx")!;
+    const sections = byRel.get("components/otto/settings/sections.tsx")!;
+    const actions = byRel.get("lib/schedule-actions.ts")!;
+
+    // approve 规则:界面与服务端读同一个函数。
     expect(schedule).toContain("scheduleApproveBlockers");
-    // 缺项句子只能来自共享规则,界面里不许再有第二份原文。
-    expect(schedule).not.toContain("Add at least one image");
-    expect(schedule).not.toContain("Pick which account to post to");
+    expect(actions).toContain("scheduleApproveBlockers");
     expect(schedule).not.toContain("Pick an account to approve");
     // 规则本身也不许再被手写第二遍(「有账号 + 有媒体」曾经在界面里被复制了三份)。
     expect(schedule).not.toMatch(/metaTargetId\s*&&\s*p?\.?media\.length/);
-  });
 
-  it("「哪些渠道现在真能连」只有一份:三处入口都过同一道滤", () => {
-    // Connections 页原本自带这张名单;它现在住在客户端渠道镜像里,composer、
-    // 筛选器、账户卡片一起读 —— X OAuth 落地时一处放开,四处同时点亮。
+    // 可连渠道名单:Connections 不再自带一份,三处入口读同一处。
     expect(connections).not.toMatch(/const\s+UNAVAILABLE_PUBLISHING_CHANNEL_IDS\s*=/);
     expect(connections).toContain("UNAVAILABLE_PUBLISHING_CHANNEL_IDS");
     expect(schedule).toContain("CONNECTABLE_CHANNEL_META");
