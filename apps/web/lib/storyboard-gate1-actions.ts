@@ -235,8 +235,8 @@ export async function getStoryboardVideoOptions(): Promise<
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
-  { durations: number[] } | Err
-> => {
+    { durations: number[] } | Err
+  > => {
 
     // #647 T6 修复轮 P1-3:开关读不到 ⇒ 同样不报档位表(不知道能不能做,就别端出一份菜单)。
     const registry = await resolveDisabledModels();
@@ -711,8 +711,8 @@ export async function syncStoryboardMedia(
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
-  { payload: StoryboardCardPayload; frames: Record<string, string>; videos: Record<string, string> } | Err
-> => {
+    { payload: StoryboardCardPayload; frames: Record<string, string>; videos: Record<string, string> } | Err
+  > => {
     const { ownerId } = gate;
 
     const card = await loadCard(parsed.data.cardId, ownerId);

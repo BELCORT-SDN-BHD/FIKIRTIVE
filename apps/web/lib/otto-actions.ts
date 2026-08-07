@@ -1198,12 +1198,12 @@ export async function ottoTurn(raw: unknown): Promise<
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
-  | { threadId: string; status: "done"; reply: string }
-  | { threadId: string; status: "needs_approval"; pendingCardIds: string[] }
-  | { threadId: string; status: "degraded" }
-  | { threadId: string; status: "stale" }
-  | { error: string }
-> => {
+    | { threadId: string; status: "done"; reply: string }
+    | { threadId: string; status: "needs_approval"; pendingCardIds: string[] }
+    | { threadId: string; status: "degraded" }
+    | { threadId: string; status: "stale" }
+    | { error: string }
+  > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
 
@@ -1405,14 +1405,14 @@ export async function ottoApprove(raw: unknown): Promise<
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
-  | { ok: true; status: "done"; reply: string; genJobId?: string }
-  | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }
-  | { ok: true; status: "degraded" }
-  | { ok: true; status: "stale" }
-  | { ok: true; genJobId: string; status: string } // double-approve: existing job
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" } // consumed/expired card: idempotent refusal
-  | { error: string }
-> => {
+    | { ok: true; status: "done"; reply: string; genJobId?: string }
+    | { ok: true; status: "needs_approval"; pendingCardIds: string[]; fallbackReply: string | null; narrationMessageId: string | null }
+    | { ok: true; status: "degraded" }
+    | { ok: true; status: "stale" }
+    | { ok: true; genJobId: string; status: string } // double-approve: existing job
+    | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" } // consumed/expired card: idempotent refusal
+    | { error: string }
+  > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
 
@@ -1850,10 +1850,10 @@ export async function ottoReject(raw: unknown): Promise<
   if ("error" in gate) return gate;
   const principal = await resolveUserPrincipal(gate);
   return runAsUser(principal, async (): Promise<
-  | { ok: true; status: "done"; reply: string }
-  | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" }
-  | { error: string }
-> => {
+    | { ok: true; status: "done"; reply: string }
+    | { ok: true; alreadyResolved: true; resolution: "approved" | "rejected" | "expired" }
+    | { error: string }
+  > => {
     if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to do this." };
     const { ownerId } = gate;
 
