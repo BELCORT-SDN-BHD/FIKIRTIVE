@@ -43,6 +43,17 @@ export type SystemReason =
   | "publish-reaper"
   | "ingest-redispatch"
   | "publish-scheduler"
+  /**
+   * #733 — the founder admin console's platform-wide READ model.
+   *
+   * A genuine system context, not a convenience: `/admin` reports on every tenant at once
+   * (job status histograms, today's spend, the tenant list), so there is no single tenant to
+   * scope it to. It is READ-ONLY BY CONSTRUCTION under this frame — a tenant-less system frame
+   * may scan but throws on any write (see the guard's SYSTEM_SCAN_OPS), so nothing under this
+   * name can mutate a merchant's data even by accident. Who may open it is decided BEFORE the
+   * frame, by `requireRole` at the page.
+   */
+  | "admin:platform-read"
   | "test-seed"
   | "tenant-direct";
 
