@@ -1,18 +1,50 @@
 /**
- * 威胁模型声明(#541 r5 起显式定界,编排者裁定)
+ * 威胁模型与守卫结构(#541 r6 终案,断路器三级,编排者裁定)
  * ────────────────────────────────────────────────────────────────────────────
- * 本文件里的文本钉板(UI 词汇封闭 / 金额词汇封闭 / 肯定式存在断言)防的是
- * **无意回归**:粗心的复制粘贴、顺手改文案、把一句话挪走时带掉了它的禁令。
+ * 六轮演化一句话总结:**词表判定语义封不死自然英语,所以不再判定语义 —— 改为冻结
+ * 字节**。r1→r5 每轮都在加正则(句式枚举 → 通用规则 → 词汇封闭 → 补词 → 真封闭),
+ * 判官每轮都用一句新的自然英语穿透(Pick Confirm / costs the same as / three
+ * credits 拼写数字)。根因是判定环节本身:只要守卫要"读懂"一句话是不是在点名按钮、
+ * 是不是在承诺金额,就总有它没读懂的写法。
  *
- * 它们**不防蓄意绕过**。同仓作者若有意规避,改提示词的同时也能改这里的白名单、
- * 词表与断言 —— 任何住在同一个仓库里的文本检查在该模型下都不可能封死。那道防线
- * 是**跨族判官轮与复审流程**,不是这些正则。
+ * ── 主守卫:golden 快照 ──────────────────────────────────────────────────
+ * `ottoInstructions` 整份文本冻结在 `__snapshots__/otto-instructions.golden.txt`。
+ * **任何字节改动 → 红。这个守卫没有判定环节,因此不存在写法逃逸。**
+ * 有意修改提示词的人必须同步更新快照,而**快照 diff 就是复审对象** —— 改了什么、
+ * 改成什么样,一行不落地摆在复审者面前。
  *
- * 因此:发现钉板在「蓄意作者」模型下可被绕过,不构成本文件的缺陷;发现它在
- * 「无意回归」模型下漏过(例如某种自然写法没被词表覆盖),才是要修的。
+ * ── 辅助:启发式预警 ────────────────────────────────────────────────────
+ * 下面的 UI/金额词表与存在断言**降级为启发式**:它们的价值是在常见回归上给出
+ * 比"快照对不上"更友好的报错信息(直接指出是按钮点名还是金额承诺)。
+ * 它们**不承诺封闭**,漏过某种写法不构成缺陷 —— 完整守卫是 golden 快照。
+ *
+ * ── 威胁模型 ────────────────────────────────────────────────────────────
+ * · golden 快照保证:**任何**提示词改动都被标红并进入复审。
+ * · 改动内容的语义真伪(这句话是不是假的、指的控件存不存在)由**跨族判官轮与
+ *   复审流程**判定 —— 那需要读代码和界面,不是文本测试能做的事。
+ * · 蓄意绕过(连快照一起改)同样由复审把关:快照 diff 让这种改动**无所遁形**,
+ *   这正是设计意图 —— 不是把它挡在测试里,是把它摆到复审桌上。
  */
 import { describe, it, expect } from "vitest";
 import { ottoSimpleModeBlock, ottoInstructions } from "./instructions.js";
+
+describe("ottoInstructions — golden 快照(#541 r6 主守卫)", () => {
+  // 没有判定环节:不解析、不匹配、不推断语义,只比字节。
+  // 红了不代表错了 —— 只代表"提示词变了,请复审这段 diff"。
+  //
+  // ⚠️ 这条红了怎么办:
+  //  1. 你**有意**改了 `instructions.ts` ⇒ 跑 `vitest -u` 更新快照,把快照 diff
+  //     一并提交,复审看的就是它。
+  //  2. 你**没碰** `instructions.ts` 却红了 ⇒ 大概率是**上游插值**变了。提示词
+  //     用模板串插入了 `@fikirtive/core` 的 `GEN_IMAGE_ASPECTS` /
+  //     `GEN_IMAGE_DEFAULT_ASPECT`(见 instructions.ts 的图片形状段),所以改动
+  //     图片形状菜单会连带改变提示词文本。这是**真的变了**,同样按 1 更新快照。
+  it("整份提示词与 golden 快照逐字节一致", async () => {
+    await expect(ottoInstructions).toMatchFileSnapshot(
+      "./__snapshots__/otto-instructions.golden.txt",
+    );
+  });
+});
 
 describe("ottoSimpleModeBlock", () => {
   it("simple-mode block bans jargon in plain language", () => {
@@ -256,17 +288,14 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   // 只改真卡的标签、别处留着旧字符串时照样绿 —— 拼接式设计不可救。组件行为归
   // 组件自己的测试管,不跨包。
 
-  // ── r3 → r4:词汇封闭(断路器二级)──────────────────────────────────────────
-  // r3 的检测器仍是**句式枚举**,判官逐一穿透:"click Launch" / "press Review cost" /
-  // "press the button labelled Launch" / 三词标签,全都不含 r3 正则要求的形状。
-  // 根因裁定(编排者):**用正则追捕无穷英文句式是打不赢的军备竞赛**。
+  // ── 启发式预警(r6 起降级)────────────────────────────────────────────────
+  // 以下词表与存在断言**不是**完整守卫,完整守卫是上面的 golden 快照。
+  // 它们的作用是:常见回归发生时给出比「快照对不上」更具体的报错(直接说明是
+  // 按钮点名还是金额承诺),省掉一次人工定位。
   //
-  // r4 换设计:**白名单剥离 + 词汇封闭**。先把「已知允许」的句子原文整句剥掉,
-  // 剩下的文本里 UI 交互词表**一次都不许出现**。这样不再需要预测句式 ——
-  // 任何点名写法都必然用到 button/click/press/tap 之一,剥离后即命中。
-  //
-  // 白名单是精确原文,不是正则:句子被删或被改动 ⇒ 剥离变成 no-op ⇒ 残留词命中 ⇒ 红;
-  // 同时下面的肯定式存在断言也会红。两条独立路径兜底。
+  // **不承诺封闭。** r1→r5 的教训就是词表判定语义封不死自然英语:判官先后用
+  // "click Launch"、"Pick Confirm"、"costs the same as"、"three credits"(拼写
+  // 数字)穿透过历轮词表。漏过某种写法**不构成缺陷** —— 那一层由快照兜住。
   const UI_VOCAB_ALLOWED = [
     // ① 按钮指路两句(r2 判官已认可,提示词侧一字未动)——它们必须提到 button 才能下禁令。
     "Point at the card, never at a button label — the card walks the user through its own cost check, and you cannot see what its buttons say.",
@@ -280,10 +309,10 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     "You cannot see the user's screen, the app's buttons, system logs, your own code, or infrastructure.",
   ];
 
-  // 封闭词表:UI 交互动词 + 控件名词。不枚举句式,只封词。
-  // r5 补四组动词(hit/select/choose/toggle)。加之前先 rg 全文:唯一命中是
+  // 词表:UI 交互动词 + 控件名词。覆盖常见写法,不覆盖全部(见文件头)。
+  // 含 r5 补的 hit/select/choose/toggle。当时先 rg 全文,唯一命中是
   // 「Do NOT choose a model」—— 那是对 Otto 说的挑模型,不是 UI 动作,已无损改写为
-  // pick,因此**不需要**为它开白名单(改写优先于豁免)。
+  // pick(与 :69 既有用词一致),因此不需要为它开白名单。
   const UI_VOCAB =
     /\b(?:button|buttons|click|clicks|clicked|clicking|press|presses|pressed|pressing|tap|taps|tapped|tapping|hit|hits|hitting|select|selects|selected|selecting|choose|chooses|chose|choosing|toggle|toggles|toggled|toggling)\b/i;
 
@@ -296,7 +325,7 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     const hit = stripped.match(UI_VOCAB);
     expect(
       hit,
-      `提示词在白名单之外出现了 UI 交互词「${hit?.[0] ?? ""}」—— 词汇封闭:任何点名按钮的写法都会用到这些词`,
+      `提示词在白名单之外出现了 UI 交互词「${hit?.[0] ?? ""}」—— 大概率是在点名按钮。完整守卫是 golden 快照,这条只是更具体的提示`,
     ).toBeNull();
   });
 
@@ -320,7 +349,7 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     ];
     for (const escape of escapes) {
       const stripped = stripAllowed(`${ottoInstructions}\n${escape}`, UI_VOCAB_ALLOWED);
-      expect(UI_VOCAB.test(stripped), `逃逸写法 "${escape}" 必须被词汇封闭逮住`).toBe(true);
+      expect(UI_VOCAB.test(stripped), `已知写法 "${escape}" 应被启发式词表逮住`).toBe(true);
     }
   });
 
@@ -357,10 +386,10 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(ottoInstructions).toContain("Talking to you costs credits");
   });
 
-  // 3) 金额词汇封闭 —— 同一把尺子。
-  // r3 判官 P1-1::223 残留 "a turn can cost as much as making an image",与 :147 新立的
-  // never compare 自相矛盾,而 r3 的句式正则不认 "as much as"。同一个军备竞赛问题。
-  // r4 裁定:提示词里的钱话只留 canonical 句 + 两层生成边界;零数字、零比较、零 free。
+  // 3) 金额启发式 —— 同一把尺子,同样只是预警。
+  // 提示词里的钱话的**口径**是:只留 canonical 句 + 两层生成边界;零数字、零比较、
+  // 零 free。这条口径由复审与判官轮守;下面的词表只负责在常见回归上早点报警。
+  // (r5 判官已证明它挡不住 "costs the same as" 与 "three credits" 这类写法。)
   const MONEY_ALLOWED = [
     // canonical 钱句(#555 唯一披露口径)
     "Talking to you costs credits.",
@@ -370,17 +399,14 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     "Making an image or a video costs credits and never happens without the user approving that specific card first.",
   ];
 
-  // 封闭词表:比较词 + 免费词 + 单价词。不枚举句式,只封词。
-  // r5:「free」由词组(is free / for free)升级为**裸词**封禁 —— 验红时发现
-  // "It's free" 的缩写形式绕过了 `is free`,那正是本文件威胁模型里要堵的无意回归。
-  // 唯一词法例外是 "free-text"(自由文本,与钱无关),用 lookahead 排除,
-  // 仍是封闭词规则、无句式洞。
+  // 词表:比较词 + 免费词 + 单价词。覆盖常见写法,不覆盖全部。
+  // 「free」用裸词而非词组(r5 验红发现 "It's free" 的缩写绕过了 `is free`),
+  // 唯一词法例外是 "free-text"(自由文本,与钱无关),用 lookahead 排除。
   const MONEY_VOCAB =
     /\b(?:as much as|as expensive as|more than|less than|cheaper|costlier|dearer|costs nothing|per image|per video|per turn|per generation)\b|\bfree\b(?!-text)/i;
 
-  // r5:金额规则升级为**真封闭** —— 白名单外禁止一切「数字 + credits」。
-  // 这不是句式枚举,是可枚举的封闭规则:任何具体金额承诺都必然写成数字加 credit(s),
-  // 没有句式洞可钻。落地前 rg 全文确认现有提示词**零**合法数字积分句,故无需白名单。
+  // 阿拉伯数字 + credits 的具体金额承诺。注意**只认阿拉伯数字**:
+  // 拼写数字("three credits")不在内 —— r5 判官正是这样穿透的,留作提醒。
   const NUMERIC_CREDITS = /\b\d+\s*credits?\b/i;
 
   it("keeps the canonical money sentence, and makes no comparison or free claim anywhere else", () => {
@@ -390,9 +416,9 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     const hit = stripped.match(MONEY_VOCAB);
     expect(
       hit,
-      `提示词在白名单之外出现了金额比较/免费词「${hit?.[0] ?? ""}」—— 钱话只留 canonical 句与两层生成边界`,
+      `提示词在白名单之外出现了金额比较/免费词「${hit?.[0] ?? ""}」—— 大概率是回归。完整守卫是 golden 快照,这条只是更具体的提示`,
     ).toBeNull();
-    // r5 真封闭:任何具体金额承诺(数字 + credits)一律不许出现。
+    // 具体金额承诺(阿拉伯数字 + credits)。
     const numeric = stripped.match(NUMERIC_CREDITS);
     expect(
       numeric,
@@ -417,7 +443,7 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
       "this one's free",
       // 单价化:
       "it is 1 credit per image",
-      // r5 真封闭:任何具体金额承诺
+      // 具体金额承诺
       "A chat costs 3 credits",
       "this will be 22 credits",
       "that's 1 credit",
