@@ -1,12 +1,16 @@
 /**
  * Once ReferenceImage_live_entity_asset_variant_key (migration 20260703000000) exists,
- * the two upload paths that create ReferenceImage rows must tolerate the live-uniqueness
- * P2002 — content-addressed upload dedups identical files to ONE Asset, so:
- *   - createEntity with the same image selected twice → 2nd create hits the index
+ * the two upload paths that create ReferenceImage rows must survive the live-uniqueness
+ * collision — content-addressed upload dedups identical files to ONE Asset, so:
+ *   - createEntity with the same image selected twice → the repeat targets the same row
  *   - addReferenceImages re-uploading an already-attached image → create hits the index
- * Both previously created a silent duplicate row; with the index the 2nd create throws
- * P2002. The action must skip that row and still succeed (never 500). A non-P2002 DB
- * error must still propagate.
+ * Both previously created a silent duplicate row. Neither may 500.
+ *
+ * The two paths answer it differently on purpose (#698): createEntity commits its rows in ONE
+ * transaction, where a P2002 would abort the whole upload, so it skips the repeat BEFORE the
+ * insert; addReferenceImages writes outside a transaction against a pre-existing element, so it
+ * still swallows the index's P2002 after the fact. A non-P2002 DB error must never be laundered
+ * into success — addReferenceImages propagates it, createEntity rolls back and returns { error }.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -25,14 +29,18 @@ const h = vi.hoisted(() => ({
 
 vi.mock("../auth-guard", async () => ({ requireOwner: h.requireOwner, resolveUserPrincipal: (await import("@/lib/__tests__/__stubs__/resolve-user-principal")).stubResolveUserPrincipal }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@fikirtive/db", () => ({
-  prisma: {
+vi.mock("@fikirtive/db", () => {
+  const prisma = {
     entity: { create: h.entityCreate, findFirst: h.entityFindFirst, update: h.entityUpdate },
     referenceImage: { create: h.refImageCreate, count: h.refImageCount, findFirst: h.refImageFindFirst },
     asset: { upsert: h.assetUpsert },
     actionEvent: { create: h.actionEventCreate },
-  },
-}));
+    // #698 — createEntity now commits every row write together; the tx client is this same
+    // mock so the assertions below still see each call.
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prisma),
+  };
+  return { prisma };
+});
 vi.mock("@fikirtive/core", () => ({
   newId: () => `id-${Math.random().toString(36).slice(2)}`,
   // used by ingestFile: byte-derived mime (工单 F) — stubbed to a stable image mime here (these
@@ -91,19 +99,30 @@ beforeEach(() => {
   h.assetUpsert.mockResolvedValue({ id: "asset-shared" });
 });
 
-describe("createEntity — same image selected twice (content-deduped) hits the live index", () => {
-  it("skips the P2002 duplicate row and still creates the entity", async () => {
-    h.refImageCreate.mockResolvedValueOnce({ id: "ref1" }).mockRejectedValueOnce(P2002);
+describe("createEntity — same image selected twice (content-deduped)", () => {
+  /** #698 — the row writes now share ONE transaction, where a P2002 aborts everything and
+   *  cannot be swallowed after the fact. The repeat is therefore skipped BEFORE the database
+   *  sees it: one reference row, one successful element, still never a 500. */
+  it("skips the repeat before it reaches the index and still creates the entity", async () => {
+    h.refImageCreate.mockResolvedValue({ id: "ref1" });
 
     const res = await createEntity(createForm(pngFile(), pngFile()));
 
-    expect(res).toEqual({ id: "e1" });
-    expect(h.refImageCreate).toHaveBeenCalledTimes(2); // both attempted; 2nd swallowed
+    expect(res).toMatchObject({ id: expect.any(String) });
+    expect(h.entityCreate).toHaveBeenCalledWith({
+      data: { id: (res as { id: string }).id, ownerId: "o1", name: "Nova", type: "CHARACTER" },
+    });
+    expect(h.refImageCreate).toHaveBeenCalledTimes(1); // the deduped repeat is never attempted
   });
 
-  it("still propagates a non-P2002 DB error", async () => {
+  /** #698 — a DB failure used to escape as a 500 AFTER the Entity row had committed, leaving
+   *  an imageless tile in the Library and no message. It now rolls back and comes back as a
+   *  merchant-readable error the dialog can render. */
+  it("reports a DB failure as an error instead of throwing, and creates no element", async () => {
     h.refImageCreate.mockRejectedValueOnce(new Error("db down"));
-    await expect(createEntity(createForm(pngFile()))).rejects.toThrow("db down");
+    const res = await createEntity(createForm(pngFile()));
+    expect(res).toMatchObject({ error: expect.any(String) });
+    expect(h.actionEventCreate).not.toHaveBeenCalled();
   });
 });
 

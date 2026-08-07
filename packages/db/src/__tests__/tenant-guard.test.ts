@@ -77,3 +77,61 @@ describe("tenant-guard", () => {
     ).rejects.toThrow(/requires runAsTenant/);
   });
 });
+
+/**
+ * #698 — Prisma names a compound unique key by joining its field names with "_"
+ * (`@@unique([ownerId, contentHash])` → `ownerId_contentHash`), so the tenant column
+ * arrives NESTED inside that key object instead of at the top level of `where`.
+ * A guard that only reads the top level called the merchant's own upload a cross-tenant
+ * leak. Reading the nested tenant must not soften the boundary: a compound key naming a
+ * FOREIGN tenant is still refused, and a key carrying no tenant at all is still refused.
+ */
+describe("tenant-guard — compound unique keys", () => {
+  it("accepts an unframed compound unique key that names the tenant inside it", async () => {
+    await expect(
+      prisma.asset.findUnique({
+        where: { ownerId_contentHash: { ownerId: "o1", contentHash: "h1" } },
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("accepts the id+owner compound key too (same nesting, different key)", async () => {
+    await expect(
+      prisma.asset.findUnique({ where: { id_ownerId: { id: "missing", ownerId: "o1" } } }),
+    ).resolves.toBeNull();
+  });
+
+  it("still rejects a unique key that carries no tenant at all", async () => {
+    await expect(prisma.asset.findUnique({ where: { id: "missing" } })).rejects.toThrow(
+      /tenant-guard/,
+    );
+  });
+
+  it("still rejects a compound key whose nested ownerId is empty", async () => {
+    await expect(
+      prisma.asset.findUnique({
+        where: { ownerId_contentHash: { ownerId: "", contentHash: "h1" } },
+      }),
+    ).rejects.toThrow(/tenant-guard/);
+  });
+
+  it("rejects a compound key naming another tenant while a tenant frame is active", async () => {
+    await expect(
+      runAsTenant("o1", async () =>
+        prisma.asset.findUnique({
+          where: { ownerId_contentHash: { ownerId: "o2", contentHash: "h1" } },
+        }),
+      ),
+    ).rejects.toThrow(/outside the active tenant/);
+  });
+
+  it("allows a compound key naming the active tenant", async () => {
+    await expect(
+      runAsTenant("o1", async () =>
+        prisma.asset.findUnique({
+          where: { ownerId_contentHash: { ownerId: "o1", contentHash: "h1" } },
+        }),
+      ),
+    ).resolves.toBeNull();
+  });
+});

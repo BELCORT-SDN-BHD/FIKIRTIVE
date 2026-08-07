@@ -102,8 +102,35 @@ const SYSTEM_SCAN_OPS = new Set([
   "groupBy",
 ]);
 
+/**
+ * The tenant ids a COMPOUND UNIQUE KEY names inside itself.
+ *
+ * Prisma exposes `@@unique([ownerId, contentHash])` as a single `where` field named by joining
+ * the member fields with "_" (`ownerId_contentHash: { ownerId, contentHash }`), so on those
+ * call sites the tenant column is one level DOWN — invisible to a top-level-only reader, which
+ * is how the guard came to refuse a merchant's own upload as a cross-tenant leak (#698).
+ *
+ * The match is deliberately narrow: the key NAME must contain `ownerId` as one of its
+ * underscore-joined segments AND the value must be a plain object carrying a non-empty string
+ * `ownerId`. Relation filters (`user: { … }`) and boolean combinators (`AND`/`OR`/`NOT`) are
+ * named differently and never match, so nothing that used to be refused starts passing except
+ * the compound keys that genuinely name their tenant.
+ */
+function compoundKeyOwnerIds(where: unknown): string[] {
+  if (!where || typeof where !== "object" || Array.isArray(where)) return [];
+  const found: string[] = [];
+  for (const [key, value] of Object.entries(where as Record<string, unknown>)) {
+    if (key === "ownerId" || !key.split("_").includes("ownerId")) continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const nested = (value as Record<string, unknown>).ownerId;
+    if (typeof nested === "string" && nested.length > 0) found.push(nested);
+  }
+  return found;
+}
+
 function whereHasOwnerId(where: unknown): boolean {
   if (!where || typeof where !== "object" || Array.isArray(where)) return false;
+  if (compoundKeyOwnerIds(where).length > 0) return true;
   if (!Object.prototype.hasOwnProperty.call(where, "ownerId")) return false;
   const ownerFilter = (where as Record<string, unknown>).ownerId;
   if (typeof ownerFilter === "string") return ownerFilter.length > 0;
@@ -123,6 +150,17 @@ function scopeWhere(args: Record<string, any>, ownerId: string, model: string, o
     throw new Error(
       `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
     );
+  }
+  // #698 — reading the tenant out of a compound key must not soften the boundary: a key that
+  // names a FOREIGN tenant is refused exactly like a foreign top-level ownerId. Without this,
+  // injecting the ambient ownerId beside the compound key merely made the lookup MISS, and an
+  // upsert then quietly created a row under the caller's own tenant instead of refusing.
+  for (const nested of compoundKeyOwnerIds(where)) {
+    if (nested !== ownerId) {
+      throw new Error(
+        `[tenant-guard] ${model}.${operation} tried to use ownerId outside the active tenant`,
+      );
+    }
   }
   args.where = { ...where, ownerId };
 }
