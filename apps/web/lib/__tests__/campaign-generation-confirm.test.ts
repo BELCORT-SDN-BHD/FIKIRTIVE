@@ -502,6 +502,20 @@ describe("confirmCampaignGeneration — an undo landing mid-batch stops the rest
     ]);
   });
 
+  it("carries the gate on every request handed to startGen — an ungated cell would be an ungated charge", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(h.startGen.mock.calls).toHaveLength(2);
+    // Losing the gate on the way to startGen would be silent — the cell would simply dispatch
+    // without ever checking the plan. Pin it per call, not once.
+    for (const [req] of h.startGen.mock.calls) {
+      expect(campaignApprovalGateFor(req)).toBeDefined();
+    }
+  });
+
   // #744 判官 r2 P2 — the gate's three failure modes, each injected into the client of the
   // transaction that would commit the charge. None of them may be read as "the approval still
   // stands": a check that could not complete stops the dispatch exactly like a check that said
