@@ -485,11 +485,22 @@ export interface OttoContext {
   };
   /** Meta analytics port (G6b) — injected by the web caller; reads the owner's connected ad-account
    *  performance. Skills reach it ONLY via ctx.metaInsights, never importing meta-insights.ts.
-   *  #692: each account carries its own `currency` (null when Meta reported none) — money figures
-   *  from different accounts must never be added together. */
+   *  #692 r3: money arrives as FINISHED TEXT (`money.*`) already carrying its currency, or naming
+   *  the account when Meta reported none. There is deliberately no numeric spend/cpc/cpm here —
+   *  a rule in a comment cannot stop a model, an absent field can. `moneyBucket` says which
+   *  figures share a denomination; figures from different buckets may never be combined. */
   metaInsights?: {
     get(datePreset: string): Promise<
-      | { accounts: { accountId: string; name: string; currency: string | null; metrics: Record<string, string | null> }[] }
+      | {
+          accounts: {
+            accountId: string;
+            name: string;
+            currency: string | null;
+            moneyBucket: string;
+            money: { spend: string; cpc: string; cpm: string };
+            metrics: Record<string, string | null>;
+          }[];
+        }
       | { needsReconnect: true }
       | { transientError: true }
       | { notConnected: true }
@@ -499,10 +510,11 @@ export interface OttoContext {
    *  connected ad-level performance + creative. Skills reach it ONLY via ctx.metaPerformance,
    *  never importing meta-performance.ts. Single action layer: this port and the P1b human
    *  panel's getAdPerformance action both resolve to fetchOwnerAdPerformance.
-   *  #692: each ad carries its ad account's `currency` (null when Meta reported none) and that
-   *  account's name, and the ads arrive grouped into money-bucket runs — money is comparable only
-   *  inside a run. #692 r2: accounts with NO reported currency each get their own run; two of them
-   *  are not thereby in the same currency, so their money may not be pooled or ranked together. */
+   *  #692 r3: same money boundary as metaInsights — `money.*` is finished text, there is no
+   *  numeric spend/cpc/cpm, and `moneyBucket` says which figures share a denomination. Ads arrive
+   *  grouped into buckets; accounts with NO reported currency each get their own bucket, because
+   *  two of them are not thereby in the same currency. `hasSpend` carries the only thing the
+   *  diagnosis ever needed the amount for: did this ad actually spend? */
   metaPerformance?: {
     getAds(datePreset: string): Promise<
       | {
@@ -512,6 +524,9 @@ export interface OttoContext {
             accountId: string;
             accountName: string | null;
             currency: string | null;
+            moneyBucket: string;
+            money: { spend: string; cpc: string; cpm: string };
+            hasSpend: boolean;
             metrics: Record<string, string | null>;
             creative: { imageUrl: string | null; body: string | null; title: string | null; videoId: string | null } | null;
           }[];

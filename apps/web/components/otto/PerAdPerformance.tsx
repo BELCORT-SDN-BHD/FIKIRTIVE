@@ -40,8 +40,10 @@ export function PerAdPerformance({ range }: { range: RangeKey }) {
         )}
       </div>
 
-      {/* #692: several ad-account currencies are shown as separate runs, never one ranking. */}
+      {/* #692: separate runs, never one ranking. The two sentences are earned separately —
+          runs split by CURRENCY and runs split because Meta reported none are different facts. */}
       {view?.currencyNote && <div className="text-[12px] text-muted-foreground mt-2">{view.currencyNote}</div>}
+      {view?.unreportedNote && <div className="text-[12px] text-muted-foreground mt-2">{view.unreportedNote}</div>}
 
       {view?.truncatedNote && <div className="text-[12px] text-muted-foreground mt-2">{view.truncatedNote}</div>}
 
@@ -54,10 +56,12 @@ export function PerAdPerformance({ range }: { range: RangeKey }) {
       <div className={pending ? "opacity-60 transition-opacity" : "transition-opacity"}>
         {view?.rows.map((r) => (
           <React.Fragment key={r.adId}>
-            {/* Heading for each currency run (#692) — the rows under it are ranked only
-                against each other, never against another currency's. */}
+            {/* Heading for each money-bucket run (#692) — the rows under it are ranked only
+                against each other, never against another bucket's. No `uppercase` (#692 r3):
+                the heading carries sentence-case copy and a real ad-account name, and shouting
+                them would mangle both. */}
             {r.groupLabel && (
-              <div className="text-[11.5px] text-[#86867F] font-semibold uppercase tracking-[0.04em] pt-[14px] border-t border-border">
+              <div className="text-[11.5px] text-[#86867F] font-semibold tracking-[0.01em] pt-[14px] border-t border-border">
                 {r.groupLabel}
               </div>
             )}

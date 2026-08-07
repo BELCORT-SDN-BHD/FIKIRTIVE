@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useTransition } from "react";
 import { getAnalytics, type AnalyticsData } from "@/lib/analytics-actions";
-import { RANGES, type RangeKey } from "@/lib/analytics-view";
+import { RANGES, buildCurrencyNotes, type RangeKey } from "@/lib/analytics-view";
 import { ANALYTICS_PLATFORMS, platformById } from "@/lib/analytics-platforms";
 import type { OttoViewKey } from "./OttoApp";
 import { PerAdPerformance } from "./PerAdPerformance";
@@ -65,6 +65,11 @@ export function OttoAnalytics({
   // The date-range select only appears on the meta+ready path (no range to
   // pick for soon platforms or connect/reconnect states).
   const isReady = isMeta && data.state === "ready";
+  // Only what the numbers establish (#692 r3) — computed from the same KPI lines on screen.
+  const currencyNotes =
+    data.state === "ready"
+      ? buildCurrencyNotes(data.kpis)
+      : { multipleCurrencies: null, unreportedCurrency: null };
   const rangeLabel = isReady ? RANGES.find((r) => r.key === data.range)?.label ?? "" : "";
   const label = selected?.label ?? platform;
 
@@ -187,23 +192,14 @@ export function OttoAnalytics({
             <div className="text-[12px] text-muted-foreground mt-2">No activity in this period yet.</div>
           )}
 
-          {/* #692: say it out loud when the money cards carry more than one currency, so a
-              merchant never reads two stacked subtotals as a single total. */}
-          {!data.empty && data.kpis.some((k) => k.values.length > 1) && (
-            <div className="text-[12px] text-muted-foreground mt-2">
-              Your ad accounts use more than one currency, so spend and sales are shown per currency
-              — never added together or converted.
-            </div>
+          {/* #692 r3: each sentence is earned separately in buildCurrencyNotes — "more than one
+              currency" needs two DIFFERENT known codes, which two unlabelled accounts do not
+              establish; an unlabelled figure needs its own explanation whatever else is on screen. */}
+          {!data.empty && currencyNotes.multipleCurrencies && (
+            <div className="text-[12px] text-muted-foreground mt-2">{currencyNotes.multipleCurrencies}</div>
           )}
-
-          {/* #692 r1: a bare figure gets its explanation whether or not any other line exists —
-              a lone unlabelled number is the case that reads most like an ordinary total.
-              #692 r2: each such account stands alone, so say that too. */}
-          {!data.empty && data.kpis.some((k) => k.values.some((v) => v.accountName !== null)) && (
-            <div className="text-[12px] text-muted-foreground mt-2">
-              Meta didn&apos;t report a currency for some of your ad accounts. Each of those is shown
-              on its own line, never added to anything else.
-            </div>
+          {!data.empty && currencyNotes.unreportedCurrency && (
+            <div className="text-[12px] text-muted-foreground mt-2">{currencyNotes.unreportedCurrency}</div>
           )}
 
           {/* OTTO insight banner */}

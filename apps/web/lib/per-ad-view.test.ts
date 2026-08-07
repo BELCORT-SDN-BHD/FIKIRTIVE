@@ -161,7 +161,9 @@ describe("buildPerAdView — currency (#692 r1)", () => {
       "Currency not reported — Kaia Cafe",
       "Currency not reported — Night Market",
     ]);
-    expect(view.currencyNote).toBeTruthy();
+    // #692 r3: two unlabelled accounts say NOTHING about currencies — only the honest note.
+    expect(view.currencyNote).toBeNull();
+    expect(view.unreportedNote).toBeTruthy();
   });
 
   it("an unlabelled run with no account name falls back to the account id", () => {

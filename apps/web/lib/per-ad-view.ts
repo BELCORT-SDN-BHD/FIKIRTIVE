@@ -21,8 +21,11 @@ export type PerAdView = {
   rows: PerAdDisplayRow[];
   stamp: string;
   truncatedNote: string | null;
-  /** Says out loud that the runs are not one ranking, when more than one currency is present. */
+  /** Only when at least two DIFFERENT KNOWN currencies are present (#692 r3) — runs split
+   *  merely because Meta reported no currency say nothing about currencies. */
   currencyNote: string | null;
+  /** Only when at least one run could not be labelled. Independent of the above. */
+  unreportedNote: string | null;
 };
 
 // Parses a Meta numeric string; null for null/""/non-numeric — never a stray "NaN" on screen
@@ -92,17 +95,31 @@ export function buildPerAdView(perf: OwnerAdPerformance): PerAdView {
     };
   });
 
+  // #692 r3: say only what is established. Runs split because the CURRENCIES differ is a
+  // different fact from runs split because Meta reported no currency — the old copy claimed
+  // the first whenever either happened.
+  const knownCurrencies = new Set(runKeys.filter((k) => !k.startsWith("unknown:")));
+  const anyUnreported = runKeys.some((k) => k.startsWith("unknown:"));
+  const severalCurrencies = knownCurrencies.size >= 2;
+
+  // "top N by spend" is only true inside a run. Name the right reason the runs exist.
+  const withinWhat = severalCurrencies
+    ? " within each currency"
+    : runCount > 1
+      ? " within each ad account"
+      : "";
+
   return {
     rows,
     stamp: `Meta · ${rangeLabel(perf.datePreset)} · fetched ${fmtDate(perf.fetchedAt)}`,
-    // With several currencies "top N by spend" is only true inside each run — say so rather
-    // than letting the note imply one league table.
     truncatedNote: perf.truncated
-      ? `Showing your top ${perf.ads.length} ads by spend${runCount > 1 ? " within each currency" : ""}.`
+      ? `Showing your top ${perf.ads.length} ads by spend${withinWhat}.`
       : null,
-    currencyNote:
-      runCount > 1
-        ? "Your ad accounts use more than one currency, so ads are grouped by currency and never ranked against each other."
-        : null,
+    currencyNote: severalCurrencies
+      ? "Your ad accounts use more than one currency, so ads are grouped by currency and never ranked against each other."
+      : null,
+    unreportedNote: anyUnreported
+      ? "Meta didn’t report a currency for some of these ad accounts, so their ads are grouped by account and never ranked against anything else."
+      : null,
   };
 }

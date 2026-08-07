@@ -13,6 +13,7 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { MONEY_RULE } from "../money-rule.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and connect Instagram or Facebook, then try again.";
@@ -44,7 +45,9 @@ export async function executeMetaInsights(
   if (res.accounts.length === 0) {
     return { message: "Meta is connected but no ad accounts returned data for this window." };
   }
-  return { datePreset: input.datePreset, accounts: res.accounts };
+  // #692 r3: the rule travels WITH the data, as text the model actually reads. The amounts in
+  // `money` are already finished strings — there is nothing here to add up in the first place.
+  return { datePreset: input.datePreset, moneyRule: MONEY_RULE, accounts: res.accounts };
 }
 
 // ---------------------------------------------------------------------------
@@ -59,9 +62,8 @@ export const metaInsightsSkill = defineOttoSkill({
   description:
     "Read the user's connected Meta (Facebook/Instagram) ad-account performance (spend, reach, CTR, CPC, ROAS) " +
     "so you can analyse it. Use this when the user asks about their ad performance or Meta results. " +
-    "Each account carries its own currency code — always state it with any money figure, and never add " +
-    "or compare money across accounts in different currencies (report one subtotal per currency instead). " +
-    "Read-only — this is $0 and does not require approval.",
+    MONEY_RULE +
+    " Read-only — this is $0 and does not require approval.",
   parameters: metaInsightsInput,
   execute: executeMetaInsights,
 });

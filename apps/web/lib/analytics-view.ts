@@ -223,6 +223,38 @@ export function buildKpis(series: DailyMetric[], accounts: readonly AccountTotal
   ];
 }
 
+/**
+ * The two things the KPI grid may need to say about currency — and NOTHING it hasn't
+ * established (#692 r3). Keying the multi-currency sentence off "more than one line" was a
+ * lie waiting to happen: two accounts Meta reported NO currency for produce two lines and
+ * say nothing whatever about currencies. So each sentence is earned separately:
+ *  - `multipleCurrencies` needs at least two DIFFERENT known codes;
+ *  - `unreportedCurrency` needs at least one line we could not label.
+ * Both, either, or neither can apply.
+ */
+export function buildCurrencyNotes(kpis: readonly Kpi[]): {
+  multipleCurrencies: string | null;
+  unreportedCurrency: string | null;
+} {
+  const known = new Set<string>();
+  let anyUnreported = false;
+  for (const k of kpis) {
+    for (const v of k.values) {
+      if (v.currency) known.add(v.currency);
+      else if (v.accountName !== null) anyUnreported = true;
+    }
+  }
+  return {
+    multipleCurrencies:
+      known.size >= 2
+        ? "Your ad accounts use more than one currency, so spend and sales are shown per currency — never added together or converted."
+        : null,
+    unreportedCurrency: anyUnreported
+      ? "Meta didn’t report a currency for some of your ad accounts. Each of those is shown on its own line, never added to anything else."
+      : null,
+  };
+}
+
 // --- chart ------------------------------------------------------------------
 
 /**

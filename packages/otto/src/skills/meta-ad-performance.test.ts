@@ -98,8 +98,8 @@ describe("executeMetaAdPerformance", () => {
   });
 
   it("the tool description still allows ratio metrics to be compared across currencies", () => {
-    expect(metaAdPerformanceSkill.description).toContain(
-      "Ratio metrics (CTR, ROAS) and counts ARE comparable across accounts",
-    );
+    const d = metaAdPerformanceSkill.description;
+    expect(d).toContain("Ratio metrics (CTR, ROAS) and counts");
+    expect(d).toContain("ARE comparable across accounts");
   });
 });

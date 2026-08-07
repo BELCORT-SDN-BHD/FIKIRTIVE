@@ -38,7 +38,7 @@ describe("diagnosePerformance", () => {
   });
 
   it("uses ROAS only when objective is conversion AND some ad has non-null ROAS; else falls to CTR", () => {
-    const withRoas = [ad("a1", "1.0", "100", "4.0"), ad("a2", "1.0", "100", "1.0")];
+    const withRoas = [ad("a1", "1.0", true, "4.0"), ad("a2", "1.0", true, "1.0")];
     expect(diagnosePerformance(withRoas, META_EXPERTISE_KB, { objective: "conversions" }).metricUsed).toBe("ROAS");
     // all ROAS null → never pick ROAS even if objective says conversions
     const noRoas = [ad("a1", "1.0"), ad("a2", "0.5")];

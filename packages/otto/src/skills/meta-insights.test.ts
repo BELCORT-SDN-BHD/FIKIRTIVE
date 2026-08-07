@@ -154,6 +154,7 @@ describe("executeMetaInsights — connected", () => {
     expect(d).toContain("already formatted");
     expect(d).toContain("never add, rank or compare money across different moneyBucket values");
     expect(d).toContain("no currency");
-    expect(d).toContain("Ratio metrics (CTR, ROAS) and counts ARE comparable across accounts");
+    expect(d).toContain("Ratio metrics (CTR, ROAS) and counts");
+    expect(d).toContain("ARE comparable across accounts");
   });
 });
