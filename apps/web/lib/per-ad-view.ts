@@ -1,7 +1,8 @@
-import { RANGES, currencyCode } from "./analytics-view";
+import { RANGES, currencyCode, moneyBucketKey } from "./analytics-view";
 import type { OwnerAdPerformance } from "./meta-performance";
 
-/** Heading for the run of ads whose currency Meta never reported. */
+/** Heading prefix for a run of ads whose currency Meta never reported. It always names the
+ *  account, because such runs are PER ACCOUNT (#692 r2) and there can be several. */
 const UNKNOWN_CURRENCY_LABEL = "Currency not reported";
 
 export type PerAdMetric = { label: string; value: string };
@@ -59,21 +60,27 @@ function fmtDate(iso: string): string {
 /** Shape the owner's per-ad performance into a display model. Pure — no fetch, no I/O.
  *  Every number stays as Meta returned it (no invented values); null → "—". */
 export function buildPerAdView(perf: OwnerAdPerformance): PerAdView {
-  // fetchOwnerAdPerformance already emits the ads grouped into per-currency runs; here we only
-  // mark where each run starts. Known currencies get a heading once there is more than one run;
-  // an unknown run is headed even when it is the only one, so a bare figure is never unexplained.
-  const runKeys = perf.ads.map((a) => currencyCode(a.currency ?? null));
+  // fetchOwnerAdPerformance already emits the ads grouped into money-bucket runs (same
+  // moneyBucketKey authority the KPI cards use); here we only mark where each run starts. A
+  // known currency gets a heading once there is more than one run; a run we could not label is
+  // headed ALWAYS — even as the only run — and names its account, because two such runs are two
+  // different accounts and must not read as one pool (#692 r2).
+  const runKeys = perf.ads.map((a) => moneyBucketKey({ accountId: a.accountId, currency: a.currency ?? null }));
   const runCount = new Set(runKeys).size;
 
   const rows: PerAdDisplayRow[] = perf.ads.map((a, i) => {
     const key = runKeys[i]!;
     const startsRun = i === 0 || runKeys[i - 1] !== key;
-    const named = runCount > 1 || key === "";
+    const code = currencyCode(a.currency ?? null);
+    const unlabelled = code === "";
+    const heading = unlabelled
+      ? `${UNKNOWN_CURRENCY_LABEL} — ${a.accountName?.trim() || a.accountId}`
+      : code;
     return {
       adId: a.adId,
       name: a.creative?.title || a.adName || "Untitled ad",
       currency: a.currency ?? null,
-      groupLabel: startsRun && named ? (key === "" ? UNKNOWN_CURRENCY_LABEL : key) : null,
+      groupLabel: startsRun && (runCount > 1 || unlabelled) ? heading : null,
       creative: { imageUrl: a.creative?.imageUrl ?? null, isVideo: !!a.creative?.videoId },
       metrics: [
         { label: "Spend", value: money(a.metrics.spend ?? null, a.currency ?? null) },

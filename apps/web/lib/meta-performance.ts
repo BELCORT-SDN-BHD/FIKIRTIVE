@@ -2,11 +2,16 @@ import { prisma } from "@fikirtive/db";
 import { decryptToken } from "./token-encryption";
 import { metaGraphGet, getAdInsights, getAdCreative, type AdCreative, type AdInsightsRow } from "./meta-graph";
 import { classifyMetaGraphError } from "./meta-errors";
+import { moneyBucketKey } from "./analytics-view";
 
 export const MAX_ADS = 25;
 
 export type OwnerAdRow = {
   adId: string; adName: string | null; accountId: string;
+  /** The ad account's display name, null when Meta reported none. #692 r2: a run of ads we
+   *  could not label has to say WHICH account it is, because such runs are per-account and
+   *  there can be several. */
+  accountName: string | null;
   /** ISO code the money in `metrics` is denominated in — from the ad ACCOUNT (Meta's only
    *  source for it), null when Meta reported none. #692: it travels with the row so no reader
    *  can display a bare figure or rank one currency's money against another's. */
@@ -34,36 +39,50 @@ export async function fetchOwnerAdPerformance(
   let token: string;
   try { token = decryptToken(conn.accessTokenEnc); } catch { return { needsReconnect: true }; }
 
-  let all: (AdInsightsRow & { accountId: string; currency: string | null })[];
+  let all: (AdInsightsRow & { accountId: string; accountName: string | null; currency: string | null })[];
   try {
     // `currency` must be requested — Meta reports it on the ad ACCOUNT node only, and without
-    // it every per-ad money figure downstream is unlabelable (#692).
-    const accountsRes: { data?: { id: string; account_id?: string; currency?: string }[] } =
-      await metaGraphGet(token, "me/adaccounts", { fields: "id,account_id,currency" });
+    // it every per-ad money figure downstream is unlabelable (#692). `name` rides along so a
+    // run we cannot label can still say which account it is (#692 r2).
+    const accountsRes: { data?: { id: string; account_id?: string; currency?: string; name?: string }[] } =
+      await metaGraphGet(token, "me/adaccounts", { fields: "id,account_id,currency,name" });
     const accounts = accountsRes.data ?? [];
+
+    const text = (v: unknown): string | null => {
+      if (v == null) return null;
+      const t = String(v).trim();
+      return t === "" ? null : t;
+    };
 
     all = [];
     for (const a of accounts) {
       const accountId = String(a.id ?? `act_${a.account_id}`);
-      const currency = a.currency == null || String(a.currency).trim() === "" ? null : String(a.currency).trim();
       const rows = await getAdInsights(token, accountId, datePreset);
-      for (const r of rows) all.push({ ...r, accountId, currency });
+      for (const r of rows) all.push({ ...r, accountId, accountName: text(a.name), currency: text(a.currency) });
     }
   } catch (e) {
     return classifyMetaGraphError(ownerId, e);
   }
 
-  // #692: spend is only comparable WITHIN one currency, so ranking happens inside per-currency
-  // runs and never across them. Groups are ordered by code (unknown first) for a stable list.
-  const byCurrency = new Map<string, typeof all>();
+  // #692: spend is only comparable WITHIN one money bucket, so ranking happens inside a bucket
+  // and never across them. moneyBucketKey is the Analytics family's single authority: accounts
+  // share a bucket only when they share a KNOWN currency, and each account whose currency Meta
+  // never reported gets a bucket of its own (#692 r2) — "Meta didn't say" is not a shared
+  // denomination. Labelled buckets sort first (by code), then the unlabelled ones (by account).
+  const byBucket = new Map<string, typeof all>();
   for (const r of all) {
-    const key = r.currency ?? "";
-    const group = byCurrency.get(key);
+    const key = moneyBucketKey(r);
+    const group = byBucket.get(key);
     if (group) group.push(r);
-    else byCurrency.set(key, [r]);
+    else byBucket.set(key, [r]);
   }
-  const groups = [...byCurrency.entries()]
-    .sort((x, y) => x[0].localeCompare(y[0]))
+  const groups = [...byBucket.entries()]
+    .sort(([x], [y]) => {
+      const xUnlabelled = x.startsWith("unknown:");
+      const yUnlabelled = y.startsWith("unknown:");
+      if (xUnlabelled !== yUnlabelled) return xUnlabelled ? 1 : -1;
+      return x.localeCompare(y);
+    })
     .map(([, rows]) => rows.slice().sort((x, y) => Number(y.spend ?? 0) - Number(x.spend ?? 0)));
 
   // Fill the MAX_ADS budget round-robin across the runs. A single global "top by spend" would
@@ -84,7 +103,7 @@ export async function fetchOwnerAdPerformance(
   const truncated = all.length > top.length;
 
   const ads: OwnerAdRow[] = await Promise.all(top.map(async (r) => ({
-    adId: r.adId, adName: r.adName, accountId: r.accountId, currency: r.currency,
+    adId: r.adId, adName: r.adName, accountId: r.accountId, accountName: r.accountName, currency: r.currency,
     metrics: metricsOf(r), creative: await getAdCreative(token, r.adId).catch(() => null),
   })));
 

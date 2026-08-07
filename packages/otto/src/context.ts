@@ -499,8 +499,10 @@ export interface OttoContext {
    *  connected ad-level performance + creative. Skills reach it ONLY via ctx.metaPerformance,
    *  never importing meta-performance.ts. Single action layer: this port and the P1b human
    *  panel's getAdPerformance action both resolve to fetchOwnerAdPerformance.
-   *  #692: each ad carries its ad account's `currency` (null when Meta reported none), and the
-   *  ads arrive grouped into per-currency runs — money is comparable only inside a run. */
+   *  #692: each ad carries its ad account's `currency` (null when Meta reported none) and that
+   *  account's name, and the ads arrive grouped into money-bucket runs — money is comparable only
+   *  inside a run. #692 r2: accounts with NO reported currency each get their own run; two of them
+   *  are not thereby in the same currency, so their money may not be pooled or ranked together. */
   metaPerformance?: {
     getAds(datePreset: string): Promise<
       | {
@@ -508,6 +510,7 @@ export interface OttoContext {
             adId: string;
             adName: string | null;
             accountId: string;
+            accountName: string | null;
             currency: string | null;
             metrics: Record<string, string | null>;
             creative: { imageUrl: string | null; body: string | null; title: string | null; videoId: string | null } | null;

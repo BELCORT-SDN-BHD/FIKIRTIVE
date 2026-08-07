@@ -138,8 +138,11 @@ export function OttoAnalytics({
                     Money cards carry one line PER CURRENCY (#692) — several lines mean several
                     ad-account currencies, shown side by side and never added together. */}
                 <div className="mt-1">
-                  {(data.empty ? ["—"] : k.values).map((v) => (
-                    <div key={v}>
+                  {(data.empty
+                    ? [{ text: "—", currency: null, accountName: null }]
+                    : k.values
+                  ).map((v, i) => (
+                    <div key={`${v.currency ?? ""}|${v.accountName ?? ""}|${i}`}>
                       <div
                         className={
                           "font-bold tracking-[-0.02em] " +
@@ -148,12 +151,13 @@ export function OttoAnalytics({
                             : "text-[26px]")
                         }
                       >
-                        {v}
+                        {v.text}
                       </div>
-                      {/* Name the bare line right where it sits, however many lines there are. */}
-                      {!data.empty && v === k.unknownCurrencyValue && (
+                      {/* A figure we cannot label says so on its OWN line, and says whose it is —
+                          each unlabelled line is one account's own money (#692 r2). */}
+                      {!data.empty && v.accountName !== null && (
                         <div className="text-[11.5px] text-muted-foreground font-medium">
-                          Currency not reported
+                          Currency not reported — {v.accountName}
                         </div>
                       )}
                     </div>
@@ -193,11 +197,12 @@ export function OttoAnalytics({
           )}
 
           {/* #692 r1: a bare figure gets its explanation whether or not any other line exists —
-              a lone unlabelled number is the case that reads most like an ordinary total. */}
-          {!data.empty && data.kpis.some((k) => k.unknownCurrencyValue !== null) && (
+              a lone unlabelled number is the case that reads most like an ordinary total.
+              #692 r2: each such account stands alone, so say that too. */}
+          {!data.empty && data.kpis.some((k) => k.values.some((v) => v.accountName !== null)) && (
             <div className="text-[12px] text-muted-foreground mt-2">
-              Meta didn&apos;t report a currency for one of your ad accounts, so the figure marked
-              &ldquo;Currency not reported&rdquo; is shown without one.
+              Meta didn&apos;t report a currency for some of your ad accounts. Each of those is shown
+              on its own line, never added to anything else.
             </div>
           )}
 

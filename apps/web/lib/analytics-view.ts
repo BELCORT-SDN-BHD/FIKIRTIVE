@@ -13,33 +13,50 @@ export const RANGES = [
 ] as const;
 export type RangeKey = (typeof RANGES)[number]["key"];
 
+/** One display line on a KPI card. */
+export type KpiValue = {
+  /** The formatted figure — "MYR 1,234.56", a bare "1,234.56", or the "—" no-data placeholder. */
+  text: string;
+  /** The ISO code this figure is in. null for counts, for "—", and for money whose currency
+   *  Meta never reported. */
+  currency: string | null;
+  /**
+   * The ad account this line belongs to — set ONLY when the line is money we could not label,
+   * because such a line is one single account's own figure and the reader has to know whose.
+   * Non-null therefore means exactly "this figure has no currency on it, and here is where it
+   * came from"; the UI keys its caveat off this. Never blank: an account with no name falls
+   * back to its id.
+   */
+  accountName: string | null;
+};
+
 export type Kpi = {
   label: string;
   /**
-   * The display lines for this card. Counts (Reach, Engagement) and money in a single
-   * currency have exactly ONE line. Money spanning several ad-account currencies has one
-   * SUBTOTAL PER CURRENCY and no grand total — see #692: an owner can hold a MYR and an
-   * SGD ad account, and there is no honest rate here to convert between them, so the
-   * shape itself refuses to produce a single cross-currency number.
+   * The display lines for this card. Counts (Reach, Engagement) and money in a single currency
+   * have exactly ONE line. Money spanning several ad-account currencies has one SUBTOTAL PER
+   * CURRENCY and no grand total — see #692: an owner can hold a MYR and an SGD ad account, and
+   * there is no honest rate here, so the shape itself refuses to produce a cross-currency
+   * number. Accounts whose currency Meta never reported get ONE LINE EACH (#692 r2): "Meta
+   * didn't say" is not a currency two accounts can be assumed to share.
    */
-  values: string[];
-  /**
-   * The one entry of `values` whose currency Meta never reported, or null when there is none
-   * (including for counts, and for the "—" no-data placeholder). It names the exact line the
-   * UI must caveat: a bare number with no caveat anywhere reads as an ordinary total, which is
-   * the second half of #692.
-   */
-  unknownCurrencyValue: string | null;
+  values: KpiValue[];
   delta: { dir: "up" | "down" | "flat"; text: string } | null;
 };
 
 /**
- * What the KPI builder needs from one ad account: its insight totals AND the currency
- * those totals are denominated in. Declared structurally (not imported from meta-insights)
- * so this module stays pure. `currency` is the ad ACCOUNT's ISO code — Meta reports
- * currency on the account node only — or null when Meta reported none.
+ * What the KPI builder needs from one ad account: its identity, its insight totals, and the
+ * currency those totals are denominated in. Declared structurally (not imported from
+ * meta-insights) so this module stays pure. `currency` is the ad ACCOUNT's ISO code — Meta
+ * reports currency on the account node only — or null when Meta reported none, in which case
+ * the identity is what keeps this account's money apart from every other unlabelled account's.
  */
-export type AccountTotals = { currency: string | null; metrics: AccountMetrics };
+export type AccountTotals = {
+  accountId: string;
+  name: string;
+  currency: string | null;
+  metrics: AccountMetrics;
+};
 
 export type ChartPoint = { x: number; y: number; date: string; value: number; peak: boolean };
 
@@ -52,11 +69,35 @@ function compact(n: number): string {
 }
 
 /** A usable ISO-4217 code is exactly 3 ASCII letters. Anything else (null, "") means the
- *  currency is unknown — we then show a bare number rather than invent a code. Unknown is
- *  its own bucket, so it never merges with a known-currency subtotal. Exported so the per-ad
- *  view applies exactly the same test (one authority for "is this a usable currency code"). */
+ *  currency is unknown — we then show a bare number rather than invent a code. Exported so the
+ *  per-ad view applies exactly the same test (one authority for "is this a usable code"). */
 export function currencyCode(code: string | null): string {
   return typeof code === "string" && /^[A-Za-z]{3}$/.test(code) ? code.toUpperCase() : "";
+}
+
+const UNKNOWN_PREFIX = "unknown:";
+
+/**
+ * Which pot one account's money goes in. Accounts sharing a KNOWN currency share a pot — that
+ * is what makes their subtotal true. An account whose currency Meta never reported gets a pot
+ * of its OWN, keyed by account (#692 r2): "Meta didn't say" is not a currency, so two such
+ * accounts may not be added together or ranked against each other — doing so would assert a
+ * shared denomination that nothing here knows. Single authority for the whole Analytics family:
+ * the KPI cards and the per-ad list both bucket through this.
+ */
+export function moneyBucketKey(account: { accountId: string; currency: string | null }): string {
+  const code = currencyCode(account.currency);
+  return code === "" ? `${UNKNOWN_PREFIX}${account.accountId}` : code;
+}
+
+/** True for a bucket key produced for an account with no usable currency. */
+function isUnknownBucket(key: string): boolean {
+  return key.startsWith(UNKNOWN_PREFIX);
+}
+
+/** A never-blank label for an account, so an unlabelled line can always say where it came from. */
+function accountLabel(account: { accountId: string; name: string }): string {
+  return account.name.trim() || account.accountId;
 }
 
 /** "MYR 1,234.56" — currency code, space, grouped number. Unknown currency drops the prefix. */
@@ -72,38 +113,49 @@ function num(s: string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+type Bucket = { key: string; total: number; label: string };
+
 /**
- * Sum `pick` across accounts, KEYED BY CURRENCY. Two accounts in different currencies land
- * in different buckets and are never added together (#692). Accounts contributing nothing
- * (null/unparseable) are skipped and never create an empty bucket.
+ * Sum `pick` across accounts into money buckets (see moneyBucketKey). Accounts in different
+ * currencies never land in the same bucket, and neither do two accounts whose currency Meta
+ * never reported (#692 r2). Accounts contributing nothing (null/unparseable) are skipped and
+ * never create an empty bucket. `label` is only meaningful for unknown buckets, where the
+ * bucket IS one account.
  */
-function sumByCurrency(
+function sumIntoBuckets(
   accounts: readonly AccountTotals[],
   pick: (m: AccountMetrics) => number | null,
-): Map<string, number> {
-  const out = new Map<string, number>();
+): Map<string, Bucket> {
+  const out = new Map<string, Bucket>();
   for (const a of accounts) {
     const v = pick(a.metrics);
     if (v == null) continue;
-    const key = currencyCode(a.currency);
-    out.set(key, (out.get(key) ?? 0) + v);
+    const key = moneyBucketKey(a);
+    const found = out.get(key);
+    if (found) found.total += v;
+    else out.set(key, { key, total: v, label: accountLabel(a) });
   }
   return out;
 }
 
-/** One display line per currency, ordered by code so the card is deterministic. No contributing
- *  account at all → the "—" placeholder the empty state already used (no data, NOT an unknown
- *  currency). `unknown` names the line whose currency Meta never reported, so the UI can caveat
- *  that exact line however many lines there are. */
-function moneyValues(
-  byCurrency: Map<string, number>,
-  digits: number,
-): { values: string[]; unknown: string | null } {
-  if (byCurrency.size === 0) return { values: ["—"], unknown: null };
-  const entries = [...byCurrency.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  const values = entries.map(([code, total]) => money(total, code, digits));
-  const unknownIndex = entries.findIndex(([code]) => code === "");
-  return { values, unknown: unknownIndex === -1 ? null : values[unknownIndex]! };
+/** One display line per bucket: the labelled currencies first (by code), then the lines we
+ *  could not label (by account), each carrying its account so the UI can say whose it is. No
+ *  contributing account at all → the "—" placeholder (no data, which is NOT an unknown
+ *  currency). Order is total so the card never reshuffles between renders. */
+function moneyValues(buckets: Map<string, Bucket>, digits: number): KpiValue[] {
+  if (buckets.size === 0) return [{ text: "—", currency: null, accountName: null }];
+  return [...buckets.values()]
+    .sort((a, b) => {
+      const au = isUnknownBucket(a.key);
+      const bu = isUnknownBucket(b.key);
+      if (au !== bu) return au ? 1 : -1;
+      return a.key.localeCompare(b.key);
+    })
+    .map((b) =>
+      isUnknownBucket(b.key)
+        ? { text: money(b.total, "", digits), currency: null, accountName: b.label }
+        : { text: money(b.total, b.key, digits), currency: b.key, accountName: null },
+    );
 }
 
 // --- deltas -----------------------------------------------------------------
@@ -135,36 +187,39 @@ function seriesDelta(series: DailyMetric[], pick: (d: DailyMetric) => number): K
  * Spend/Sales come from the per-account totals (deltas null in Phase A — the
  * account totals aren't a time series we can halve, so there's nothing to compare).
  *
- * Money carries its currency (#692): every money card is subtotalled PER AD-ACCOUNT
- * CURRENCY, so a merchant holding a MYR and an SGD ad account sees two honest subtotals
- * instead of one meaningless sum. Display only — no rate, no conversion, no spend path.
+ * Money carries its currency (#692): every money card is subtotalled PER MONEY BUCKET — one
+ * bucket per known currency, plus a bucket of its own for each account whose currency Meta
+ * never reported (#692 r2). So a merchant holding a MYR and an SGD ad account sees two honest
+ * subtotals instead of one meaningless sum, and two unlabelled accounts see one line each
+ * rather than a pooled figure asserting they share a denomination. Display only — no rate, no
+ * conversion, no spend path.
  */
 export function buildKpis(series: DailyMetric[], accounts: readonly AccountTotals[]): Kpi[] {
   const reach = series.reduce((s, d) => s + d.reach, 0);
   const clicks = series.reduce((s, d) => s + d.clicks, 0);
 
-  const spend = moneyValues(sumByCurrency(accounts, (m) => num(m.spend)), 2);
+  const spend = moneyValues(sumIntoBuckets(accounts, (m) => num(m.spend)), 2);
 
   // Estimated purchase value = Σ over accounts of (spend × purchaseRoas), skipping an
   // account when either side is null/unparseable. Rounded integer with thousands
   // separators, prefixed with the account's currency code. "—" when no account has both.
-  const salesRaw = sumByCurrency(accounts, (m) => {
+  const salesRaw = sumIntoBuckets(accounts, (m) => {
     const accountSpend = num(m.spend);
     const roas = num(m.purchaseRoas);
     return accountSpend == null || roas == null ? null : accountSpend * roas;
   });
-  const sales = moneyValues(
-    new Map([...salesRaw].map(([code, total]) => [code, Math.round(total)])),
-    0,
-  );
+  for (const bucket of salesRaw.values()) bucket.total = Math.round(bucket.total);
+  const sales = moneyValues(salesRaw, 0);
+
+  const count = (n: number): KpiValue[] => [{ text: compact(n), currency: null, accountName: null }];
 
   return [
-    { label: "Reach", values: [compact(reach)], unknownCurrencyValue: null, delta: seriesDelta(series, (d) => d.reach) },
-    { label: "Engagement", values: [compact(clicks)], unknownCurrencyValue: null, delta: seriesDelta(series, (d) => d.clicks) },
+    { label: "Reach", values: count(reach), delta: seriesDelta(series, (d) => d.reach) },
+    { label: "Engagement", values: count(clicks), delta: seriesDelta(series, (d) => d.clicks) },
     // Spend/Sales deltas null in Phase A: totals are a single aggregate per account,
     // not a series, so there's no older half to compare against.
-    { label: "Spend", values: spend.values, unknownCurrencyValue: spend.unknown, delta: null },
-    { label: "Sales (est.)", values: sales.values, unknownCurrencyValue: sales.unknown, delta: null },
+    { label: "Spend", values: spend, delta: null },
+    { label: "Sales (est.)", values: sales, delta: null },
   ];
 }
 
