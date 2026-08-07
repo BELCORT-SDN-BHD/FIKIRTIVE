@@ -100,6 +100,51 @@ describe("buildPerAdView — currency (#692 r1)", () => {
     expect(view.currencyNote!.toLowerCase()).toContain("currency");
   });
 
+  // #692 r3 [P2]: the multi-currency sentence and the "within each currency" truncation
+  // qualifier were keyed off "more than one run" — two accounts with NO reported currency
+  // are more than one run but say nothing about currencies. Three states, three answers.
+  describe("only claim what is known (#692 r3)", () => {
+    it("two DIFFERENT known currencies → currency claim, and truncation says within each currency", () => {
+      const view = buildPerAdView(perf([ad("a1", "MYR"), ad("b1", "SGD")], true));
+      expect(view.currencyNote).toContain("more than one currency");
+      expect(view.unreportedNote).toBeNull();
+      expect(view.truncatedNote).toContain("within each currency");
+    });
+
+    it("ONE unreported account → no currency claim; truncation must not say within each currency", () => {
+      const view = buildPerAdView(perf([ad("a1", null, "act_1", "Kaia Cafe")], true));
+      expect(view.currencyNote).toBeNull();
+      expect(view.unreportedNote).toBeTruthy();
+      expect(view.truncatedNote).not.toContain("within each currency");
+    });
+
+    it("TWO unreported accounts → still no currency claim anywhere", () => {
+      const view = buildPerAdView(perf([
+        ad("a1", null, "act_1", "Kaia Cafe"),
+        ad("b1", null, "act_2", "Night Market"),
+      ], true));
+      expect(view.currencyNote).toBeNull();
+      expect(view.unreportedNote).toBeTruthy();
+      expect(view.truncatedNote).not.toContain("within each currency");
+      expect(view.truncatedNote).toContain("within each ad account");
+    });
+
+    it("the same known currency twice is ONE currency: no notes, plain truncation", () => {
+      const view = buildPerAdView(perf([ad("a1", "MYR"), ad("a2", "MYR")], true));
+      expect(view.currencyNote).toBeNull();
+      expect(view.unreportedNote).toBeNull();
+      expect(view.truncatedNote).toBe("Showing your top 2 ads by spend.");
+    });
+
+    it("known currencies AND an unreported account → both notes", () => {
+      const view = buildPerAdView(perf([
+        ad("a1", "MYR"), ad("b1", "SGD"), ad("c1", null, "act_3", "Third"),
+      ]));
+      expect(view.currencyNote).toBeTruthy();
+      expect(view.unreportedNote).toBeTruthy();
+    });
+  });
+
   it("an unlabelled run is always headed — and names its account — even when it is the only one", () => {
     const view = buildPerAdView(perf([ad("a1", null), ad("a2", null)]));
     expect(view.rows[0]!.groupLabel).toBe("Currency not reported — Kaia Cafe");

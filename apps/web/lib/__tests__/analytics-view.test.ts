@@ -7,6 +7,7 @@ import {
   type RangeKey,
   type Kpi,
   type AccountTotals,
+  buildCurrencyNotes,
 } from "../analytics-view";
 import type { DailyMetric, AccountMetrics } from "../meta-graph";
 
@@ -437,5 +438,63 @@ describe("buildInsightText", () => {
     expect(out.text).toContain("2026-06-01");
     expect(out.text).not.toContain("NaN");
     expect(out.text).not.toContain("Infinity");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #692 r3 [P2]: the "more than one currency" sentence was keyed off "more than one
+// line", so two accounts Meta reported NO currency for triggered a claim about
+// currencies that nothing had established. Three states, three honest answers.
+describe("buildCurrencyNotes — only claim what is known (#692 r3)", () => {
+  const notesFor = (accounts: AccountTotals[]) => buildCurrencyNotes(buildKpis([], accounts));
+
+  it("two DIFFERENT known currencies → the multi-currency sentence", () => {
+    const notes = notesFor([
+      acct("MYR", { spend: "10" }, "act_1", "Kaia Cafe"),
+      acct("SGD", { spend: "5" }, "act_2", "Night Market"),
+    ]);
+    expect(notes.multipleCurrencies).toContain("more than one currency");
+    expect(notes.unreportedCurrency).toBeNull();
+  });
+
+  it("ONE unreported account → no currency claim, just the honest one", () => {
+    const notes = notesFor([acct(null, { spend: "10" }, "act_1", "Kaia Cafe")]);
+    expect(notes.multipleCurrencies).toBeNull();
+    expect(notes.unreportedCurrency).toBeTruthy();
+    expect(notes.unreportedCurrency!).toContain("didn’t report a currency");
+  });
+
+  it("TWO unreported accounts → still no currency claim (this is the r3 regression)", () => {
+    const notes = notesFor([
+      acct(null, { spend: "10" }, "act_1", "Kaia Cafe"),
+      acct(null, { spend: "5" }, "act_2", "Night Market"),
+    ]);
+    expect(notes.multipleCurrencies).toBeNull();
+    expect(notes.unreportedCurrency).toBeTruthy();
+  });
+
+  it("the same known currency twice is ONE currency, not several", () => {
+    const notes = notesFor([
+      acct("MYR", { spend: "10" }, "act_1", "Kaia Cafe"),
+      acct("MYR", { spend: "5" }, "act_2", "Night Market"),
+    ]);
+    expect(notes.multipleCurrencies).toBeNull();
+    expect(notes.unreportedCurrency).toBeNull();
+  });
+
+  it("known currencies AND an unreported account → both sentences", () => {
+    const notes = notesFor([
+      acct("MYR", { spend: "10" }, "act_1", "Kaia Cafe"),
+      acct("SGD", { spend: "5" }, "act_2", "Night Market"),
+      acct(null, { spend: "1" }, "act_3", "Third"),
+    ]);
+    expect(notes.multipleCurrencies).toBeTruthy();
+    expect(notes.unreportedCurrency).toBeTruthy();
+  });
+
+  it("nothing to say when there is no money at all", () => {
+    const notes = buildCurrencyNotes(buildKpis([day("2026-06-01", 500, 40)], []));
+    expect(notes.multipleCurrencies).toBeNull();
+    expect(notes.unreportedCurrency).toBeNull();
   });
 });
