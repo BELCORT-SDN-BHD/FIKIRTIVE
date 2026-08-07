@@ -1,7 +1,9 @@
 import type { MetaExpertiseKB, MetaCitation } from "../knowledge/meta-expertise.types.js";
 import { queryMetaKnowledge } from "../knowledge/meta-expertise.js";
 
-export type DiagAdInput = { adId: string; adName: string | null; metrics: Record<string, string | null> };
+/** #692 r3: no spend AMOUNT crosses into the diagnosis — money reaches Otto as finished text
+ *  that cannot be summed. `hasSpend` is all this ever used the amount for. */
+export type DiagAdInput = { adId: string; adName: string | null; hasSpend: boolean; metrics: Record<string, string | null> };
 export type DiagReasonKind = "creative" | "runtime" | "budget" | "targeting" | "data-gap";
 export type DiagReason = { kind: DiagReasonKind; text: string; grounded: boolean; citations: MetaCitation[] };
 export type AdVerdict = {
@@ -57,7 +59,7 @@ export function diagnosePerformance(
 
   const verdicts: AdVerdict[] = ads.map((a) => {
     const n = finite(a.metrics[metricKey] ?? null);
-    const spend = finite(a.metrics.spend ?? null) ?? 0;
+
     const name = a.adName || "Untitled ad";
     if (n == null) return { adId: a.adId, name, verdict: "neutral", metric: metricUsed, value: "—", reasons: [], suggestRecreate: false };
     const value = disp(n);
@@ -68,7 +70,8 @@ export function diagnosePerformance(
           text: `Top performer — ${metricUsed} ${value} is well above your account average (${meanDisplay}).` }],
       };
     }
-    if (mean > 0 && n <= mean * 0.6 && spend > 0) {
+    // Only blame an ad that actually ran: an ad that never spent has nothing to answer for.
+    if (mean > 0 && n <= mean * 0.6 && a.hasSpend) {
       return {
         adId: a.adId, name, verdict: "loser", metric: metricUsed, value, suggestRecreate: false,
         reasons: [

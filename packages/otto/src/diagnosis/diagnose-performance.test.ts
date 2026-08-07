@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import { diagnosePerformance } from "./diagnose-performance.js";
 import { META_EXPERTISE_KB } from "../knowledge/meta-expertise.js";
 
-const ad = (adId: string, ctr: string | null, spend = "100", roas: string | null = null) =>
-  ({ adId, adName: adId, metrics: { ctr, spend, purchaseRoas: roas, reach: "1000", cpc: "0.5" } as Record<string, string | null> });
+// #692 r3: the diagnosis no longer sees a spend AMOUNT — money reaches Otto as finished text
+// that cannot be summed. All it ever needed was "did this ad actually spend anything".
+const ad = (adId: string, ctr: string | null, hasSpend = true, roas: string | null = null) =>
+  ({ adId, adName: adId, hasSpend, metrics: { ctr, purchaseRoas: roas, reach: "1000" } as Record<string, string | null> });
 
 describe("diagnosePerformance", () => {
   it("needs >=2 comparable ads, else neutral + note", () => {
@@ -36,7 +38,7 @@ describe("diagnosePerformance", () => {
   });
 
   it("uses ROAS only when objective is conversion AND some ad has non-null ROAS; else falls to CTR", () => {
-    const withRoas = [ad("a1", "1.0", "100", "4.0"), ad("a2", "1.0", "100", "1.0")];
+    const withRoas = [ad("a1", "1.0", true, "4.0"), ad("a2", "1.0", true, "1.0")];
     expect(diagnosePerformance(withRoas, META_EXPERTISE_KB, { objective: "conversions" }).metricUsed).toBe("ROAS");
     // all ROAS null → never pick ROAS even if objective says conversions
     const noRoas = [ad("a1", "1.0"), ad("a2", "0.5")];
@@ -66,5 +68,26 @@ describe("diagnosePerformance", () => {
     const allText = d.verdicts.flatMap((v) => v.reasons.map((r) => r.text)).join(" ") + " " + d.basis;
     // grounding is account-relative; must not claim an industry/average-benchmark figure
     expect(allText).not.toMatch(/industry average|benchmark of|typical CTR is|good CTR is/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("diagnosePerformance — money never enters the judgement (#692 r3)", () => {
+  it("ranks on the ratio alone; a dormant ad is never called a loser", () => {
+    // a2 is far below average, but it never spent — calling it a loser would blame an ad
+    // that never ran. Same rule as before, now driven by hasSpend instead of an amount.
+    const d = diagnosePerformance(
+      [ad("a1", "3.0"), ad("a2", "0.1", false), ad("a3", "3.0")],
+      META_EXPERTISE_KB,
+    );
+    expect(d.verdicts.find((x) => x.adId === "a2")!.verdict).not.toBe("loser");
+  });
+
+  it("the same ad WITH spend is called a loser", () => {
+    const d = diagnosePerformance(
+      [ad("a1", "3.0"), ad("a2", "0.1", true), ad("a3", "3.0")],
+      META_EXPERTISE_KB,
+    );
+    expect(d.verdicts.find((x) => x.adId === "a2")!.verdict).toBe("loser");
   });
 });

@@ -51,7 +51,9 @@ export async function executeMetaExpert(
   const objective = res.ads.some((a) => a.metrics.purchaseRoas != null) ? "conversions" : undefined;
 
   const diagnosis = diagnosePerformance(
-    res.ads.map((a) => ({ adId: a.adId, adName: a.adName, metrics: a.metrics })),
+    // #692 r3: hasSpend replaces the spend amount — the diagnosis ranks on ratios and only
+    // ever needed to know whether an ad actually ran.
+    res.ads.map((a) => ({ adId: a.adId, adName: a.adName, hasSpend: a.hasSpend, metrics: a.metrics })),
     META_EXPERTISE_KB,
     objective ? { objective } : undefined,
   );

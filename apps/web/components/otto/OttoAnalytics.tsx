@@ -1,7 +1,7 @@
 "use client";
 import React, { useState, useTransition } from "react";
 import { getAnalytics, type AnalyticsData } from "@/lib/analytics-actions";
-import { RANGES, type RangeKey } from "@/lib/analytics-view";
+import { RANGES, buildCurrencyNotes, type RangeKey } from "@/lib/analytics-view";
 import { ANALYTICS_PLATFORMS, platformById } from "@/lib/analytics-platforms";
 import type { OttoViewKey } from "./OttoApp";
 import { PerAdPerformance } from "./PerAdPerformance";
@@ -65,6 +65,11 @@ export function OttoAnalytics({
   // The date-range select only appears on the meta+ready path (no range to
   // pick for soon platforms or connect/reconnect states).
   const isReady = isMeta && data.state === "ready";
+  // Only what the numbers establish (#692 r3) — computed from the same KPI lines on screen.
+  const currencyNotes =
+    data.state === "ready"
+      ? buildCurrencyNotes(data.kpis)
+      : { multipleCurrencies: null, unreportedCurrency: null };
   const rangeLabel = isReady ? RANGES.find((r) => r.key === data.range)?.label ?? "" : "";
   const label = selected?.label ?? platform;
 
@@ -134,9 +139,34 @@ export function OttoAnalytics({
             {data.kpis.map((k) => (
               <div key={k.label} className="rounded-[14px] border border-border bg-card p-[15px]">
                 <div className="text-[12px] text-[#86867F] font-medium">{k.label}</div>
-                {/* Empty period: every value renders "—" (buildKpis sums an empty series to 0). */}
-                <div className="text-[26px] font-bold tracking-[-0.02em] mt-1">
-                  {data.empty ? "—" : k.value}
+                {/* Empty period: every value renders "—" (buildKpis sums an empty series to 0).
+                    Money cards carry one line PER CURRENCY (#692) — several lines mean several
+                    ad-account currencies, shown side by side and never added together. */}
+                <div className="mt-1">
+                  {(data.empty
+                    ? [{ text: "—", currency: null, accountName: null }]
+                    : k.values
+                  ).map((v, i) => (
+                    <div key={`${v.currency ?? ""}|${v.accountName ?? ""}|${i}`}>
+                      <div
+                        className={
+                          "font-bold tracking-[-0.02em] " +
+                          (!data.empty && k.values.length > 1
+                            ? "text-[20px] leading-[1.25]"
+                            : "text-[26px]")
+                        }
+                      >
+                        {v.text}
+                      </div>
+                      {/* A figure we cannot label says so on its OWN line, and says whose it is —
+                          each unlabelled line is one account's own money (#692 r2). */}
+                      {!data.empty && v.accountName !== null && (
+                        <div className="text-[11.5px] text-muted-foreground font-medium">
+                          Currency not reported — {v.accountName}
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
                 {k.delta && (
                   <div
@@ -160,6 +190,16 @@ export function OttoAnalytics({
 
           {data.empty && (
             <div className="text-[12px] text-muted-foreground mt-2">No activity in this period yet.</div>
+          )}
+
+          {/* #692 r3: each sentence is earned separately in buildCurrencyNotes — "more than one
+              currency" needs two DIFFERENT known codes, which two unlabelled accounts do not
+              establish; an unlabelled figure needs its own explanation whatever else is on screen. */}
+          {!data.empty && currencyNotes.multipleCurrencies && (
+            <div className="text-[12px] text-muted-foreground mt-2">{currencyNotes.multipleCurrencies}</div>
+          )}
+          {!data.empty && currencyNotes.unreportedCurrency && (
+            <div className="text-[12px] text-muted-foreground mt-2">{currencyNotes.unreportedCurrency}</div>
           )}
 
           {/* OTTO insight banner */}

@@ -44,6 +44,18 @@ describe("metaGraphGet fixture", () => {
     expect(creative).toMatchObject({ title: "Iced Latte Launch" });
   });
 
+  it("#692: the two fixture ad accounts use DIFFERENT currencies so the multi-currency case is walkable", async () => {
+    vi.stubEnv("META_GRAPH_MOCK", "fixture");
+    vi.stubGlobal("fetch", vi.fn());
+
+    const accounts = await metaGraphGet("qa-token", "me/adaccounts", { fields: "name,account_id,currency" });
+    const currencies = (accounts.data ?? []).map((a) => a.currency);
+
+    expect(currencies).toHaveLength(2);
+    expect(currencies.every((c) => typeof c === "string" && c !== "")).toBe(true);
+    expect(new Set(currencies).size).toBe(2);
+  });
+
   it("does not enable fixture mode in production", async () => {
     vi.stubEnv("META_GRAPH_MOCK", "fixture");
     vi.stubEnv("NODE_ENV", "production");

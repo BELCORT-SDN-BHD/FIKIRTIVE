@@ -79,6 +79,7 @@ import { asApprovalCardPayload, type ApprovalCardPayload, type ApprovalCardSumma
 import { computeApprovalContentHash, refgenApprovalHashFromArgs, factoryBatchApprovalHashFromArgs, APPROVAL_CARD_TTL_MS } from "./approval-content-hash";
 import { readPageCached } from "./web-page-cache";
 import { fetchOwnerInsights } from "./meta-insights";
+import { toOttoInsightAccounts, toOttoAdRows } from "./otto-money-view";
 import { fetchOwnerAdPerformance } from "./meta-performance";
 import { fetchOwnerAdObjects } from "./meta-objects";
 import { fetchOwnerPages } from "./meta-pages";
@@ -551,8 +552,22 @@ export async function buildOttoContext({
     spending: makeOttoSpendingPort(),
     metaAds: { list: () => fetchOwnerAdObjects(ownerId) },
     metaPages: { list: () => fetchOwnerPages(ownerId) },
-    metaInsights: { get: (datePreset: string) => fetchOwnerInsights(ownerId, datePreset) },
-    metaPerformance: { getAds: (p: string) => fetchOwnerAdPerformance(ownerId, p) },
+    // #692 r3: money crosses into chat through the boundary in lib/otto-money-view.ts — as
+    // finished text carrying its currency (or naming the account when Meta reported none), with
+    // no numeric amount left to add across accounts. Three rounds of instructing the model
+    // failed; the shape is what holds. Connection states pass through untouched.
+    metaInsights: {
+      get: async (datePreset: string) => {
+        const res = await fetchOwnerInsights(ownerId, datePreset);
+        return "accounts" in res ? { accounts: toOttoInsightAccounts(res.accounts) } : res;
+      },
+    },
+    metaPerformance: {
+      getAds: async (p: string) => {
+        const res = await fetchOwnerAdPerformance(ownerId, p);
+        return "ads" in res ? { ...res, ads: toOttoAdRows(res.ads) } : res;
+      },
+    },
     metaPropose: (input) => proposeMetaActionForOwner(ownerId, threadId, input),
     metaBuild: { propose: (input) => proposeAdBuildForOwner(ownerId, threadId, input) },
     brandBrain: { context: () => getBrandContextText(ownerId, null).catch(() => "") },

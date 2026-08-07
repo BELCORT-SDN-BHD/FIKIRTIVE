@@ -12,11 +12,17 @@ function makeCtx(over?: Partial<OttoContext>): OttoContext {
   return { orgId: "org-test", userId: "u", projectId: "p", threadId: "t-1", disabledModels: [], sourceGenerationId: null, ...over } as OttoContext;
 }
 
+// #692 r3: the port hands over finished money text and a hasSpend flag — never an amount.
 const ad = (adId: string, ctr: string | null, roas: string | null = null) => ({
   adId,
   adName: `Ad ${adId}`,
   accountId: "act_1",
-  metrics: { ctr, spend: "100", purchaseRoas: roas, reach: "1000", cpc: "0.5" } as Record<string, string | null>,
+  accountName: "Kaia Cafe",
+  currency: "MYR",
+  moneyBucket: "MYR",
+  money: { spend: "MYR 100", cpc: "MYR 0.5", cpm: "—" },
+  hasSpend: true,
+  metrics: { ctr, purchaseRoas: roas, reach: "1000" } as Record<string, string | null>,
   creative: { imageUrl: `https://img/${adId}.png`, body: null, title: null, videoId: null },
 });
 

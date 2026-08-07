@@ -63,12 +63,15 @@ export async function getAnalytics(raw: unknown): Promise<AnalyticsData> {
     if ("transientError" in insightsResult || "transientError" in seriesResult) return { state: "transientError" };
 
     const series = seriesResult.series;
-    const totals = insightsResult.accounts.map((a) => a.metrics);
+    // #692: pass the ACCOUNTS, not just their metrics. Mapping to `.map(a => a.metrics)` here
+    // was where each account's currency got dropped, which is what let the KPI builder add a
+    // MYR account's spend to an SGD account's and print the result as one bare number.
+    const accounts = insightsResult.accounts;
 
-    const kpis = buildKpis(series, totals);
+    const kpis = buildKpis(series, accounts);
     const chart = series.length ? buildChart(series, CHART_W, CHART_H) : null;
     const insight = buildInsightText(series);
-    const empty = series.length === 0 && totals.every(metricsAllNull);
+    const empty = series.length === 0 && accounts.every((a) => metricsAllNull(a.metrics));
 
     return { state: "ready", range, kpis, chart, insight, empty };
   });

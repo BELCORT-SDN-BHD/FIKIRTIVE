@@ -8,6 +8,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
+// #692 r4: one closed contract, reused by the mapper tests and the end-to-end test below.
+import { expectClosedAccountPayload, expectClosedAdPayload } from "./otto-money-contract";
 
 // ── Hoisted mock primitives (available before vi.mock factories run) ─────────
 
@@ -228,6 +230,22 @@ vi.mock("@/lib/crm-actions", () => ({
   importContacts: mockImportContacts,
   setContactConsent: mockSetContactConsent,
   setContactDndFromOtto: mockSetContactDndFromOtto,
+}));
+
+// #692 r4: the RAW Meta reads. Mocking these and NOT the money boundary is the point — the
+// end-to-end money test below runs through the real port wiring in otto-actions and the real
+// lib/otto-money-view, so what it validates is what production hands the model.
+const { mockFetchOwnerInsights, mockFetchOwnerAdPerformance } = vi.hoisted(() => ({
+  mockFetchOwnerInsights: vi.fn(),
+  mockFetchOwnerAdPerformance: vi.fn(),
+}));
+vi.mock("@/lib/meta-insights", () => ({
+  fetchOwnerInsights: mockFetchOwnerInsights,
+  fetchOwnerInsightsSeries: vi.fn(),
+}));
+vi.mock("@/lib/meta-performance", () => ({
+  fetchOwnerAdPerformance: mockFetchOwnerAdPerformance,
+  MAX_ADS: 25,
 }));
 
 vi.mock("@fikirtive/db", () => ({
@@ -3176,5 +3194,92 @@ describe("contract matrix — approval-resume entry (ottoApprove, runFactoryBatc
     const out = await turnCtx.runFactoryBatch.variant({ batchId: FACTORY_BATCH_ID, projectId: PROJECT_ID });
     expect(out).toMatchObject({ error: expect.stringMatching(/approval attempt is missing/i) });
     expect(mockRunVariantBatch).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #692 r4 — money end-to-end, through the REAL wiring.
+//
+// The unit tests for lib/otto-money-view feed it hand-built rows. That proves the mapper, not
+// the pipe: a later edit could bypass the boundary in buildOttoContext and every mapper test
+// would stay green. Here the only thing faked is Meta itself — raw account/ad rows with plain
+// numeric spend, exactly as fetchOwnerInsights/fetchOwnerAdPerformance return them — and the
+// payload is read back off the ports buildOttoContext actually assembles, then put through the
+// same closed contract the mapper tests use.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("buildOttoContext — the money boundary, end to end (#692 r4)", () => {
+  const RAW_METRICS = {
+    spend: "48.75", impressions: "18342", reach: "12840", frequency: "1.43",
+    clicks: "412", ctr: "2.25", cpc: "0.12", cpm: "2.66", purchaseRoas: "3.1",
+  };
+
+  /** MYR + SGD + two accounts Meta reported no currency for — every bucket kind at once. */
+  const MIXED_ACCOUNTS = [
+    { accountId: "act_1", name: "Kaia Cafe", currency: "MYR", metrics: { ...RAW_METRICS, spend: "48.75" } },
+    { accountId: "act_2", name: "Night Market", currency: "SGD", metrics: { ...RAW_METRICS, spend: "33.10" } },
+    { accountId: "act_3", name: "Third Stall", currency: null, metrics: { ...RAW_METRICS, spend: "1240" } },
+    { accountId: "act_4", name: "Fourth Stall", currency: null, metrics: { ...RAW_METRICS, spend: "990" } },
+  ];
+
+  // #692 r5: real Meta identifiers are long runs of digits — the fixture uses that shape so the
+  // contract is exercised against real data, not against ids invented to be easy on it.
+  const MIXED_ADS = MIXED_ACCOUNTS.map((a, i) => ({
+    adId: `2385123456789012${i}`, adName: `Ad ${i}`, accountId: a.accountId, accountName: a.name,
+    currency: a.currency, metrics: a.metrics,
+    creative: { imageUrl: null, body: null, title: `2026080${i}`, videoId: `12345678901234${i}` },
+  }));
+
+  const ctxFor = async () => {
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    return buildOttoContext({ ownerId: OWNER_ID, projectId: PROJECT_ID, threadId: THREAD_ID });
+  };
+
+  it("the account payload the port hands over passes the closed contract, mixed buckets and all", async () => {
+    mockFetchOwnerInsights.mockResolvedValue({ accounts: MIXED_ACCOUNTS });
+    const ctx = await ctxFor();
+    const res = await ctx.metaInsights!.get("last_30d");
+    if (!("accounts" in res)) throw new Error("expected accounts");
+
+    expectClosedAccountPayload(res.accounts);
+    expect(res.accounts.map((a) => a.money.spend)).toEqual([
+      "MYR 48.75",
+      "SGD 33.10",
+      "1240 (currency not reported — Third Stall)",
+      "990 (currency not reported — Fourth Stall)",
+    ]);
+    // four accounts, four distinct buckets — nothing pools
+    expect(new Set(res.accounts.map((a) => a.moneyBucket)).size).toBe(4);
+    // none of the sums a model might reach for
+    const json = JSON.stringify(res);
+    for (const total of ["81.85", "2230", "2311.85"]) expect(json).not.toContain(total);
+  });
+
+  it("the per-ad payload goes through the SAME contract on the SAME wiring", async () => {
+    mockFetchOwnerAdPerformance.mockResolvedValue({
+      ads: MIXED_ADS, truncated: false, organic: { posts: [] },
+      datePreset: "last_30d", fetchedAt: "2026-07-03T00:00:00.000Z",
+    });
+    const ctx = await ctxFor();
+    const res = await ctx.metaPerformance!.getAds("last_30d");
+    if (!("ads" in res)) throw new Error("expected ads");
+
+    expectClosedAdPayload(res.ads);
+    expect(res.ads.map((a) => a.money.spend)).toEqual([
+      "MYR 48.75",
+      "SGD 33.10",
+      "1240 (currency not reported — Third Stall)",
+      "990 (currency not reported — Fourth Stall)",
+    ]);
+    expect(res.ads.every((a) => typeof a.hasSpend === "boolean")).toBe(true);
+  });
+
+  it("connection states cross the boundary untouched — no shape invented out of a failure", async () => {
+    for (const state of [{ notConnected: true }, { needsReconnect: true }, { transientError: true }]) {
+      mockFetchOwnerInsights.mockResolvedValue(state);
+      mockFetchOwnerAdPerformance.mockResolvedValue(state);
+      const ctx = await ctxFor();
+      expect(await ctx.metaInsights!.get("last_30d")).toEqual(state);
+      expect(await ctx.metaPerformance!.getAds("last_30d")).toEqual(state);
+    }
   });
 });
