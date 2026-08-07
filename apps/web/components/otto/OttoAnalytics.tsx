@@ -134,9 +134,23 @@ export function OttoAnalytics({
             {data.kpis.map((k) => (
               <div key={k.label} className="rounded-[14px] border border-border bg-card p-[15px]">
                 <div className="text-[12px] text-[#86867F] font-medium">{k.label}</div>
-                {/* Empty period: every value renders "—" (buildKpis sums an empty series to 0). */}
-                <div className="text-[26px] font-bold tracking-[-0.02em] mt-1">
-                  {data.empty ? "—" : k.value}
+                {/* Empty period: every value renders "—" (buildKpis sums an empty series to 0).
+                    Money cards carry one line PER CURRENCY (#692) — several lines mean several
+                    ad-account currencies, shown side by side and never added together. */}
+                <div className="mt-1">
+                  {(data.empty ? ["—"] : k.values).map((v) => (
+                    <div
+                      key={v}
+                      className={
+                        "font-bold tracking-[-0.02em] " +
+                        (!data.empty && k.values.length > 1
+                          ? "text-[20px] leading-[1.25]"
+                          : "text-[26px]")
+                      }
+                    >
+                      {v}
+                    </div>
+                  ))}
                 </div>
                 {k.delta && (
                   <div
@@ -160,6 +174,15 @@ export function OttoAnalytics({
 
           {data.empty && (
             <div className="text-[12px] text-muted-foreground mt-2">No activity in this period yet.</div>
+          )}
+
+          {/* #692: say it out loud when the money cards carry more than one currency, so a
+              merchant never reads two stacked subtotals as a single total. */}
+          {!data.empty && data.kpis.some((k) => k.values.length > 1) && (
+            <div className="text-[12px] text-muted-foreground mt-2">
+              Your ad accounts use more than one currency, so spend and sales are shown per currency
+              — never added together or converted.
+            </div>
           )}
 
           {/* OTTO insight banner */}

@@ -59,6 +59,8 @@ export const metaInsightsSkill = defineOttoSkill({
   description:
     "Read the user's connected Meta (Facebook/Instagram) ad-account performance (spend, reach, CTR, CPC, ROAS) " +
     "so you can analyse it. Use this when the user asks about their ad performance or Meta results. " +
+    "Each account carries its own currency code — always state it with any money figure, and never add " +
+    "or compare money across accounts in different currencies (report one subtotal per currency instead). " +
     "Read-only — this is $0 and does not require approval.",
   parameters: metaInsightsInput,
   execute: executeMetaInsights,

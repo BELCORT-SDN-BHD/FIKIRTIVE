@@ -484,10 +484,12 @@ export interface OttoContext {
     >;
   };
   /** Meta analytics port (G6b) — injected by the web caller; reads the owner's connected ad-account
-   *  performance. Skills reach it ONLY via ctx.metaInsights, never importing meta-insights.ts. */
+   *  performance. Skills reach it ONLY via ctx.metaInsights, never importing meta-insights.ts.
+   *  #692: each account carries its own `currency` (null when Meta reported none) — money figures
+   *  from different accounts must never be added together. */
   metaInsights?: {
     get(datePreset: string): Promise<
-      | { accounts: { accountId: string; name: string; metrics: Record<string, string | null> }[] }
+      | { accounts: { accountId: string; name: string; currency: string | null; metrics: Record<string, string | null> }[] }
       | { needsReconnect: true }
       | { transientError: true }
       | { notConnected: true }

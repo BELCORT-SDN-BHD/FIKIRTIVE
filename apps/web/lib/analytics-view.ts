@@ -15,9 +15,24 @@ export type RangeKey = (typeof RANGES)[number]["key"];
 
 export type Kpi = {
   label: string;
-  value: string;
+  /**
+   * The display lines for this card. Counts (Reach, Engagement) and money in a single
+   * currency have exactly ONE line. Money spanning several ad-account currencies has one
+   * SUBTOTAL PER CURRENCY and no grand total — see #692: an owner can hold a MYR and an
+   * SGD ad account, and there is no honest rate here to convert between them, so the
+   * shape itself refuses to produce a single cross-currency number.
+   */
+  values: string[];
   delta: { dir: "up" | "down" | "flat"; text: string } | null;
 };
+
+/**
+ * What the KPI builder needs from one ad account: its insight totals AND the currency
+ * those totals are denominated in. Declared structurally (not imported from meta-insights)
+ * so this module stays pure. `currency` is the ad ACCOUNT's ISO code — Meta reports
+ * currency on the account node only — or null when Meta reported none.
+ */
+export type AccountTotals = { currency: string | null; metrics: AccountMetrics };
 
 export type ChartPoint = { x: number; y: number; date: string; value: number; peak: boolean };
 
@@ -27,6 +42,54 @@ export type ChartPoint = { x: number; y: number; date: string; value: number; pe
 function compact(n: number): string {
   if (n >= 10000) return `${(n / 1000).toFixed(1)}K`;
   return Math.round(n).toLocaleString("en-US");
+}
+
+/** A usable ISO-4217 code is exactly 3 ASCII letters. Anything else (null, "") means the
+ *  currency is unknown — we then show a bare number rather than invent a code. Unknown is
+ *  its own bucket, so it never merges with a known-currency subtotal. */
+function currencyKey(code: string | null): string {
+  return typeof code === "string" && /^[A-Za-z]{3}$/.test(code) ? code.toUpperCase() : "";
+}
+
+/** "MYR 1,234.56" — currency code, space, grouped number. Unknown currency drops the prefix. */
+function money(n: number, code: string, digits: number): string {
+  const num = n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return code ? `${code} ${num}` : num;
+}
+
+/** Parse a Meta metric string → finite number, or null when absent/unparseable. */
+function num(s: string | null): number | null {
+  if (s == null) return null;
+  const n = Number.parseFloat(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Sum `pick` across accounts, KEYED BY CURRENCY. Two accounts in different currencies land
+ * in different buckets and are never added together (#692). Accounts contributing nothing
+ * (null/unparseable) are skipped and never create an empty bucket.
+ */
+function sumByCurrency(
+  accounts: readonly AccountTotals[],
+  pick: (m: AccountMetrics) => number | null,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const a of accounts) {
+    const v = pick(a.metrics);
+    if (v == null) continue;
+    const key = currencyKey(a.currency);
+    out.set(key, (out.get(key) ?? 0) + v);
+  }
+  return out;
+}
+
+/** One display line per currency, ordered by code so the card is deterministic. No
+ *  contributing account at all → the "—" placeholder the empty state already used. */
+function moneyValues(byCurrency: Map<string, number>, digits: number): string[] {
+  if (byCurrency.size === 0) return ["—"];
+  return [...byCurrency.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([code, total]) => money(total, code, digits));
 }
 
 // --- deltas -----------------------------------------------------------------
@@ -55,41 +118,39 @@ function seriesDelta(series: DailyMetric[], pick: (d: DailyMetric) => number): K
 /**
  * Exactly 4 KPI cards in order: Reach, Engagement, Spend, Sales (est.).
  * Reach/Engagement come from the daily `series` (with series-halving deltas);
- * Spend/Sales come from the per-account `totals` (deltas null in Phase A — the
+ * Spend/Sales come from the per-account totals (deltas null in Phase A — the
  * account totals aren't a time series we can halve, so there's nothing to compare).
+ *
+ * Money carries its currency (#692): every money card is subtotalled PER AD-ACCOUNT
+ * CURRENCY, so a merchant holding a MYR and an SGD ad account sees two honest subtotals
+ * instead of one meaningless sum. Display only — no rate, no conversion, no spend path.
  */
-export function buildKpis(series: DailyMetric[], totals: AccountMetrics[]): Kpi[] {
+export function buildKpis(series: DailyMetric[], accounts: readonly AccountTotals[]): Kpi[] {
   const reach = series.reduce((s, d) => s + d.reach, 0);
   const clicks = series.reduce((s, d) => s + d.clicks, 0);
 
-  const spendVals = totals
-    .map((t) => (t.spend == null ? null : Number.parseFloat(t.spend)))
-    .filter((v): v is number => v != null && Number.isFinite(v));
-  const spendStr = spendVals.length ? spendVals.reduce((s, v) => s + v, 0).toFixed(2) : "—";
+  const spendValues = moneyValues(sumByCurrency(accounts, (m) => num(m.spend)), 2);
 
   // Estimated purchase value = Σ over accounts of (spend × purchaseRoas), skipping an
-  // account when either side is null/non-finite. Plain rounded integer with thousands
-  // separators — NO currency symbol (no-hardcode-currency rule; a currency prefix is a
-  // separate future item). "—" when no account has both spend & roas.
-  let salesTotal = 0;
-  let salesHasAny = false;
-  for (const t of totals) {
-    const spend = t.spend == null ? NaN : Number.parseFloat(t.spend);
-    const roas = t.purchaseRoas == null ? NaN : Number.parseFloat(t.purchaseRoas);
-    if (Number.isFinite(spend) && Number.isFinite(roas)) {
-      salesTotal += spend * roas;
-      salesHasAny = true;
-    }
-  }
-  const salesStr = salesHasAny ? Math.round(salesTotal).toLocaleString("en-US") : "—";
+  // account when either side is null/unparseable. Rounded integer with thousands
+  // separators, prefixed with the account's currency code. "—" when no account has both.
+  const salesRaw = sumByCurrency(accounts, (m) => {
+    const spend = num(m.spend);
+    const roas = num(m.purchaseRoas);
+    return spend == null || roas == null ? null : spend * roas;
+  });
+  const salesValues = moneyValues(
+    new Map([...salesRaw].map(([code, total]) => [code, Math.round(total)])),
+    0,
+  );
 
   return [
-    { label: "Reach", value: compact(reach), delta: seriesDelta(series, (d) => d.reach) },
-    { label: "Engagement", value: compact(clicks), delta: seriesDelta(series, (d) => d.clicks) },
+    { label: "Reach", values: [compact(reach)], delta: seriesDelta(series, (d) => d.reach) },
+    { label: "Engagement", values: [compact(clicks)], delta: seriesDelta(series, (d) => d.clicks) },
     // Spend/Sales deltas null in Phase A: totals are a single aggregate per account,
     // not a series, so there's no older half to compare against.
-    { label: "Spend", value: spendStr, delta: null },
-    { label: "Sales (est.)", value: salesStr, delta: null },
+    { label: "Spend", values: spendValues, delta: null },
+    { label: "Sales (est.)", values: salesValues, delta: null },
   ];
 }
 

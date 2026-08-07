@@ -81,6 +81,7 @@ describe("executeMetaInsights — connected", () => {
       {
         accountId: "act_1",
         name: "Kaia Cafe",
+        currency: "MYR",
         metrics: {
           spend: "120",
           impressions: "64312",

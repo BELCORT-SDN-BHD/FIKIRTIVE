@@ -112,10 +112,13 @@ function metaGraphFixture(path: string, params: Record<string, string>): MetaGra
   if (process.env.NODE_ENV === "production" || process.env.META_GRAPH_MOCK !== "fixture") return null;
 
   if (path === "me/adaccounts") {
+    // #692: the two accounts deliberately use DIFFERENT currencies. Meta lets one person hold
+    // ad accounts in several currencies, and that is exactly the case a walkthrough has to be
+    // able to see — with both on MYR, a cross-currency sum looked correct on screen.
     return {
       data: [
         { id: "act_qa_1", account_id: "act_qa_1", name: "Kaia Cafe QA Ads", currency: "MYR", account_status: 1 },
-        { id: "act_qa_2", account_id: "act_qa_2", name: "Night Market QA Ads", currency: "MYR", account_status: 1 },
+        { id: "act_qa_2", account_id: "act_qa_2", name: "Night Market QA Ads", currency: "SGD", account_status: 1 },
       ],
     };
   }
