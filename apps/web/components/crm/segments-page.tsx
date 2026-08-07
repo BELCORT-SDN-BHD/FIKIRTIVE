@@ -13,10 +13,18 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { buildSegment, listSegments, previewSegment } from "@/lib/segment-actions";
+import { buildSegment, deleteSegment, listSegments, previewSegment } from "@/lib/segment-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -192,6 +200,9 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [refreshingDraft, setRefreshingDraft] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SegmentItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const selected = segments.find((segment) => segment.id === selectedId) ?? null;
   const selectedRulesKey = selected?.rules ? JSON.stringify(selected.rules) : null;
@@ -380,6 +391,34 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
     }
   }
 
+  /** #718 — the delete the page never had. Soft delete on the server; the list here is only
+   *  re-rendered after the server confirms, so a failure never shows a segment as gone. */
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = await deleteSegment({ segmentId: target.id });
+      if (!isSuccess(result)) {
+        setDeleteError(result.error);
+        return;
+      }
+      setSegments((current) => {
+        const remaining = current.filter((segment) => segment.id !== target.id);
+        setSelectedId((currentId) => (currentId === target.id ? remaining[0]?.id ?? null : currentId));
+        return remaining;
+      });
+      if (editingId === target.id) resetEditor();
+      setPendingDelete(null);
+      setSavedNotice(`“${target.name}” is deleted.`);
+    } catch {
+      setDeleteError("The delete request could not finish. Please retry.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function startFreshDraft() {
     if (!retryFence) return;
     setRefreshingDraft(true);
@@ -487,7 +526,11 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                         key={segment.id}
                         type="button"
                         onClick={() => setSelectedId(segment.id)}
-                        className={`min-h-16 rounded-xl border px-4 py-3 text-left transition-colors ${
+                        // #717 — the width constraint is load-bearing: without it the button
+                        // grows to whatever the name is, the inner `truncate` never bites, and
+                        // one long name pushes the whole 375px page into a permanent sideways
+                        // scroll. Keeps old over-long rows harmless too.
+                        className={`min-h-16 w-full min-w-0 max-w-full rounded-xl border px-4 py-3 text-left transition-colors ${
                           active ? "border-brand bg-brand-soft" : "border-transparent hover:border-border hover:bg-muted/50"
                         }`}
                       >
@@ -524,10 +567,24 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                     {selected ? selected.phrase : "Select a saved segment to inspect its current matches."}
                   </CardDescription>
                 </div>
-                {selected?.status === "ready" ? (
-                  <Button type="button" size="sm" variant="secondary" disabled={draftLocked} onClick={editSelectedSegment}>
-                    Edit segment
-                  </Button>
+                {selected ? (
+                  <div className="flex shrink-0 gap-2">
+                    {selected.status === "ready" ? (
+                      <Button type="button" size="sm" variant="secondary" disabled={draftLocked} onClick={editSelectedSegment}>
+                        Edit segment
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={draftLocked || deleting}
+                      onClick={() => { setDeleteError(null); setPendingDelete(selected); }}
+                    >
+                      <Trash2 />
+                      Delete
+                    </Button>
+                  </div>
                 ) : null}
               </div>
             </CardHeader>
@@ -651,6 +708,9 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                     id="segment-name"
                     className="mt-2"
                     value={name}
+                    // #717 — same bound as the contact name field. The server enforces it too;
+                    // this only stops the merchant reaching a rejection they can't see coming.
+                    maxLength={200}
                     onChange={(event) => {
                       setName(event.target.value);
                       setSaveError(null);
@@ -748,6 +808,39 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => { if (!next && !deleting) { setPendingDelete(null); setDeleteError(null); } }}
+      >
+        <DialogContent className="max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Delete “{pendingDelete?.name}”?</DialogTitle>
+            <DialogDescription>
+              This segment leaves your list. Contacts are never deleted, and broadcasts you already
+              sent keep the audience they were sent to.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+            Any automation still targeting this segment stops running until you point it at another
+            one. Nothing is sent to a stale audience.
+          </p>
+          {deleteError ? (
+            <p className="rounded-xl bg-error-soft px-4 py-3 text-sm text-error-soft-foreground" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="secondary" disabled={deleting} onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void confirmDelete()}>
+              {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+              Delete segment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

@@ -41,6 +41,14 @@ const CONTACT_SELECT = {
 
 const GENERIC_SAVE_ERROR = "Couldn't save this segment. Start a new draft and try again.";
 const GENERIC_UPDATE_ERROR = "Couldn't update this segment. Refresh and try again.";
+const SEGMENT_NOT_FOUND = "Segment not found.";
+const DUPLICATE_NAME_ERROR = "You already have a segment with this name. Choose a different name.";
+/** #717 — the same bound the contact name already carries (crm-actions `text(value, 200)`).
+ *  It was the one field in this convention without a limit, and one 300-character paste made
+ *  the mobile Segments page scroll sideways forever. Bounded on the SERVER: a browser-only
+ *  maxLength is a hint, not a rule. */
+const MAX_SEGMENT_NAME = 200;
+const TOO_LONG_NAME_ERROR = `Use ${MAX_SEGMENT_NAME} characters or fewer for the segment name.`;
 const UNAVAILABLE_FACTS = { lastOrderAt: true, tags: true } as const;
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const DRAFT_PROOF_CONTEXT = "fikirtive:crm-segment-draft:v1";
@@ -299,14 +307,14 @@ export async function getSegment(rawSegmentId: unknown) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (typeof rawSegmentId !== "string" || !ULID_PATTERN.test(rawSegmentId)) {
-    return { error: "Segment not found." };
+    return { error: SEGMENT_NOT_FOUND };
   }
 
   const row = (await prisma.segment.findFirst({
     where: { id: rawSegmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
     select: SEGMENT_LIST_SELECT,
   })) as SegmentRow | null;
-  if (!row) return { error: "Segment not found." };
+  if (!row) return { error: SEGMENT_NOT_FOUND };
 
   const evaluatedAt = new Date().toISOString();
   const segment = evaluatedSegment(row, await readContacts(gate.ownerId), evaluatedAt);
@@ -338,6 +346,78 @@ export async function previewSegment(rawRules: unknown) {
   };
 }
 
+/**
+ * #718 — is another live segment of this merchant's already called this?
+ *
+ * Three cards all reading "WhatsApp big spenders" are three cards nobody can tell apart, and
+ * the list only ever grew. Enforced in the application rather than as a database unique index
+ * because an index needs a migration; the comparison is owner-scoped and case-insensitive, and
+ * it always excludes the segment being saved so re-saving a segment under its own name (or
+ * replaying a create) is never a clash. A deleted segment frees its name again.
+ *
+ * Returns `null` if the check itself could not run — the caller refuses rather than guessing.
+ */
+async function nameTaken(ownerId: string, segmentId: string, name: string): Promise<boolean | null> {
+  try {
+    const clashes = await prisma.segment.count({
+      where: {
+        ownerId,
+        kind: "custom",
+        deletedAt: null,
+        id: { not: segmentId },
+        name: { equals: name, mode: "insensitive" },
+      },
+    });
+    return clashes > 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove a segment from the merchant's workspace — a SOFT delete (#718).
+ *
+ * Every read in this file, plus the broadcast and workflow services, already filters on
+ * `deletedAt: null`; nothing wrote it. Setting it is therefore the whole fix, and it keeps the
+ * row for the record: a broadcast that already froze its audience keeps its own snapshot, and
+ * an automation still scoped to this segment fails closed at its next run rather than sending
+ * to a stale audience.
+ */
+export async function deleteSegment(raw: unknown) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) {
+    return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+  }
+
+  const segmentId = (raw as { segmentId?: unknown })?.segmentId;
+  if (typeof segmentId !== "string" || !ULID_PATTERN.test(segmentId)) {
+    return { error: SEGMENT_NOT_FOUND };
+  }
+
+  try {
+    const removed = await prisma.segment.updateMany({
+      where: { id: segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (removed.count > 0) {
+      revalidatePath("/crm/segments");
+      return { ok: true as const, idempotent: false as const };
+    }
+    // Nothing live matched: either this is a replay of a delete that already landed, or the id
+    // is not this merchant's — which reports the same "not found" as any other tenant's id.
+    const alreadyGone = await prisma.segment.findFirst({
+      where: { id: segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (!alreadyGone) return { error: SEGMENT_NOT_FOUND };
+    revalidatePath("/crm/segments");
+    return { ok: true as const, idempotent: true as const };
+  } catch {
+    return { error: GENERIC_UPDATE_ERROR };
+  }
+}
+
 export async function buildSegment(raw: unknown) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -357,13 +437,14 @@ export async function buildSegment(raw: unknown) {
     return { error: "Choose create or update for this segment." };
   }
   if (typeof input.segmentId !== "string" || !ULID_PATTERN.test(input.segmentId)) {
-    return { error: operation === "create" ? "Start a new segment draft and try again." : "Segment not found." };
+    return { error: operation === "create" ? "Start a new segment draft and try again." : SEGMENT_NOT_FOUND };
   }
   if (operation === "create" && !validDraftProof(gate.ownerId, input.segmentId, input.segmentProof)) {
     return { error: "Start a new segment draft and try again." };
   }
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) return { error: "Give this segment a name." };
+  if (name.length > MAX_SEGMENT_NAME) return { error: TOO_LONG_NAME_ERROR };
   const validated = validateSegmentRuleGroup(input.rules);
   if (!validated.ok) return { error: "Choose valid segment rules." };
   if (!hasExactSpendPrecision(validated.value)) {
@@ -378,7 +459,7 @@ export async function buildSegment(raw: unknown) {
   })) as SegmentRow | null;
 
   if (operation === "update") {
-    if (!existing) return { error: "Segment not found." };
+    if (!existing) return { error: SEGMENT_NOT_FOUND };
     if (samePayload(existing, name, phrase, validated.value)) {
       revalidatePath("/crm/segments");
       return {
@@ -388,6 +469,10 @@ export async function buildSegment(raw: unknown) {
         segment: publicSegment(existing, validated.value),
       };
     }
+
+    const clash = await nameTaken(gate.ownerId, input.segmentId, name);
+    if (clash === null) return { error: GENERIC_UPDATE_ERROR };
+    if (clash) return { error: DUPLICATE_NAME_ERROR };
 
     try {
       const updated = await prisma.segment.updateMany({
@@ -438,6 +523,10 @@ export async function buildSegment(raw: unknown) {
       ...issueNextDraft(gate.ownerId),
     };
   }
+
+  const clash = await nameTaken(gate.ownerId, input.segmentId, name);
+  if (clash === null) return { error: GENERIC_SAVE_ERROR };
+  if (clash) return { error: DUPLICATE_NAME_ERROR };
 
   try {
     const created = (await prisma.segment.create({

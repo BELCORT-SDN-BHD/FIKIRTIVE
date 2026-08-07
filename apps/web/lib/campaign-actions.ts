@@ -7,10 +7,21 @@ import { prisma, Prisma } from "@fikirtive/db";
 import { z } from "zod";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { requireOwner } from "./auth-guard";
+import { campaignEntryLogicalPrefix } from "./campaign-gen-identity";
+import {
+  CAMPAIGN_STATUSES,
+  CAMPAIGN_STATUS_LABELS,
+  canEditCampaignDetails,
+  canMoveCampaign,
+  isCampaignStatus,
+  type CampaignStatus,
+} from "./campaign-lifecycle";
 
 const IMPERSONATION_BLOCK = "Paused while impersonating a customer — exit impersonation to do this.";
 const GENERIC_CREATE_ERROR = "Couldn't save that campaign — please retry the same draft.";
 const GENERIC_UPDATE_ERROR = "Couldn't update that campaign — please try again.";
+const CAMPAIGN_NOT_FOUND = "Campaign not found.";
+const CAMPAIGN_STALE = "Campaign changed — reload and try again.";
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/;
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -47,7 +58,7 @@ const boundedSlugSchema = z.string().trim().min(1).max(40)
   .transform((value) => value.toLowerCase())
   .pipe(z.string().regex(/^[a-z][a-z0-9_-]*$/));
 const idSchema = z.string().regex(ULID_PATTERN);
-const campaignStatusSchema = z.enum(["DRAFT", "ACTIVE", "DONE", "CANCELLED"]);
+const campaignStatusSchema = z.enum(CAMPAIGN_STATUSES);
 
 const trendSourceSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -313,6 +324,239 @@ export async function proposeCampaign(raw: unknown): Promise<
   return { ok: true, idempotent: false, campaignId: input.campaignId, payload: plan };
 }
 
+// ── #710 campaign lifecycle: edit, move status, remove ────────────────────────────────────
+//
+// The container had four persisted statuses and no route between them, no way to fix a typo in
+// its name, and no way to take a mistaken one off the list. Everything below writes ONLY the
+// Campaign row, always owner-scoped, always with an optimistic-concurrency check on updatedAt.
+// None of it touches credits, generations, scheduled posts or broadcasts.
+
+const campaignTargetSchema = z.object({ campaignId: idSchema }).strict();
+
+const campaignPatchSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  goal: z.string().trim().min(1).max(500),
+  period: periodSchema,
+}).partial().strict().refine(
+  (patch) => Object.keys(patch).length > 0,
+  "Include at least one change.",
+);
+
+const updateCampaignSchema = z.object({
+  campaignId: idSchema,
+  patch: campaignPatchSchema,
+}).strict();
+
+const setStatusSchema = z.object({
+  campaignId: idSchema,
+  status: campaignStatusSchema,
+}).strict();
+
+/** planJson is a JSON column and may predate any schema version. For the period check only the
+ *  entry DATES matter, so read exactly those and tolerate the rest — a stricter parse would
+ *  turn "your plan is in an older shape" into "you may never move your dates again". */
+const planEntryDatesSchema = z.object({
+  entries: z.array(z.object({ date: z.string() }).passthrough()).default([]),
+}).passthrough();
+
+export type CampaignSummary = {
+  id: string;
+  name: string;
+  goal: string;
+  status: CampaignStatus;
+  startAt: string;
+  endAt: string;
+};
+
+type CampaignRow = {
+  id: string;
+  name: string;
+  goal: string;
+  status: string;
+  startAt: Date;
+  endAt: Date;
+  planJson: Prisma.JsonValue;
+  updatedAt: Date;
+};
+
+async function loadOwnedCampaign(ownerId: string, campaignId: string): Promise<CampaignRow | null | "unavailable"> {
+  try {
+    return (await prisma.campaign.findFirst({
+      where: { id: campaignId, ownerId, deletedAt: null },
+      select: {
+        id: true, name: true, goal: true, status: true,
+        startAt: true, endAt: true, planJson: true, updatedAt: true,
+      },
+    })) as CampaignRow | null;
+  } catch {
+    return "unavailable";
+  }
+}
+
+function summarize(row: Pick<CampaignRow, "id" | "name" | "goal" | "startAt" | "endAt">, status: CampaignStatus): CampaignSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    goal: row.goal,
+    status,
+    startAt: row.startAt.toISOString(),
+    endAt: row.endAt.toISOString(),
+  };
+}
+
+function revalidateCampaign(campaignId: string) {
+  revalidatePath("/campaign");
+  revalidatePath(`/campaign/${campaignId}`);
+}
+
+/** Edit the campaign's own fields: name, goal, and the period every plan entry is bound to. */
+export async function updateCampaign(raw: unknown): Promise<
+  { ok: true; idempotent: boolean; campaign: CampaignSummary } | CampaignActionError
+> {
+  "use server";
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const parsed = updateCampaignSchema.safeParse(raw);
+  if (!parsed.success) return { error: "That campaign change isn't valid." };
+  const { campaignId, patch } = parsed.data;
+
+  const campaign = await loadOwnedCampaign(gate.ownerId, campaignId);
+  if (campaign === "unavailable") return { error: "Couldn't load that campaign — please try again." };
+  if (!campaign) return { error: CAMPAIGN_NOT_FOUND };
+  if (!isCampaignStatus(campaign.status)) return { error: CAMPAIGN_STALE };
+  if (!canEditCampaignDetails(campaign.status)) {
+    return { error: "Reopen this campaign before editing its name, goal, or dates." };
+  }
+
+  const next = {
+    name: patch.name ?? campaign.name,
+    goal: patch.goal ?? campaign.goal,
+    startAt: patch.period ? campaignStart(patch.period.start) : campaign.startAt,
+    endAt: patch.period ? campaignEnd(patch.period.end) : campaign.endAt,
+  };
+
+  // A shorter period must not strand plan entries outside it. The entry actions already refuse
+  // a date outside the campaign, so allowing it from this side would create exactly the state
+  // the merchant then cannot repair.
+  if (patch.period) {
+    const plan = planEntryDatesSchema.safeParse(campaign.planJson);
+    const stranded = plan.success
+      && plan.data.entries.some((entry) => entry.date < patch.period!.start || entry.date > patch.period!.end);
+    if (stranded) {
+      return {
+        error: "Move or remove the plan entries outside these dates first — every entry must stay inside the campaign period.",
+      };
+    }
+  }
+
+  if (
+    next.name === campaign.name
+    && next.goal === campaign.goal
+    && next.startAt.getTime() === campaign.startAt.getTime()
+    && next.endAt.getTime() === campaign.endAt.getTime()
+  ) {
+    return { ok: true, idempotent: true, campaign: summarize({ ...campaign, ...next }, campaign.status) };
+  }
+
+  try {
+    const { count } = await prisma.campaign.updateMany({
+      where: { id: campaignId, ownerId: gate.ownerId, deletedAt: null, updatedAt: campaign.updatedAt },
+      data: next,
+    });
+    if (!count) return { error: CAMPAIGN_STALE };
+  } catch {
+    return { error: GENERIC_UPDATE_ERROR };
+  }
+  revalidateCampaign(campaignId);
+  return { ok: true, idempotent: false, campaign: summarize({ ...campaign, ...next }, campaign.status) };
+}
+
+/** Move the campaign along its lifecycle. The allowed moves come from the one shared table in
+ *  campaign-lifecycle, so the buttons the page offers and the moves the server accepts cannot
+ *  drift apart. */
+export async function setCampaignStatus(raw: unknown): Promise<
+  { ok: true; idempotent: boolean; campaign: CampaignSummary } | CampaignActionError
+> {
+  "use server";
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const parsed = setStatusSchema.safeParse(raw);
+  if (!parsed.success) return { error: "That campaign status isn't valid." };
+  const { campaignId, status } = parsed.data;
+
+  const campaign = await loadOwnedCampaign(gate.ownerId, campaignId);
+  if (campaign === "unavailable") return { error: "Couldn't load that campaign — please try again." };
+  if (!campaign) return { error: CAMPAIGN_NOT_FOUND };
+  if (!isCampaignStatus(campaign.status)) return { error: CAMPAIGN_STALE };
+  if (campaign.status === status) {
+    return { ok: true, idempotent: true, campaign: summarize(campaign, status) };
+  }
+  if (!canMoveCampaign(campaign.status, status)) {
+    const from = CAMPAIGN_STATUS_LABELS[campaign.status].toLowerCase();
+    const to = CAMPAIGN_STATUS_LABELS[status].toLowerCase();
+    // Only offer the two-step route when it actually exists, rather than telling a merchant
+    // whose campaign is already active to make it active.
+    const viaActive = canMoveCampaign(campaign.status, "ACTIVE") && canMoveCampaign("ACTIVE", status);
+    return { error: `This campaign can't move from ${from} to ${to}.${viaActive ? " Set it to active first." : ""}` };
+  }
+
+  try {
+    const { count } = await prisma.campaign.updateMany({
+      where: { id: campaignId, ownerId: gate.ownerId, deletedAt: null, updatedAt: campaign.updatedAt },
+      data: { status },
+    });
+    if (!count) return { error: CAMPAIGN_STALE };
+  } catch {
+    return { error: GENERIC_UPDATE_ERROR };
+  }
+  revalidateCampaign(campaignId);
+  return { ok: true, idempotent: false, campaign: summarize(campaign, status) };
+}
+
+/**
+ * Remove a campaign from the merchant's workspace — a SOFT delete, deliberately.
+ *
+ * `deletedAt` is set on the Campaign row and NOTHING else is touched. Generations, scheduled
+ * posts, broadcast runs and trend snapshots keep their `campaignId`, so every credit already
+ * spent still has a named home in the record (每个东西都要有迹可循). A cascade here would delete
+ * exactly the rows that prove what a merchant was charged for.
+ */
+export async function deleteCampaign(raw: unknown): Promise<
+  { ok: true; idempotent: boolean } | CampaignActionError
+> {
+  "use server";
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const parsed = campaignTargetSchema.safeParse(raw);
+  if (!parsed.success) return { error: "That campaign change isn't valid." };
+  const { campaignId } = parsed.data;
+
+  try {
+    const { count } = await prisma.campaign.updateMany({
+      where: { id: campaignId, ownerId: gate.ownerId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (count) {
+      revalidateCampaign(campaignId);
+      return { ok: true, idempotent: false };
+    }
+    // Nothing live matched. Either it is already gone (a replay — report success) or it was
+    // never this merchant's to begin with (report the same "not found" every other tenant sees).
+    const alreadyGone = await prisma.campaign.findFirst({
+      where: { id: campaignId, ownerId: gate.ownerId, deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (!alreadyGone) return { error: CAMPAIGN_NOT_FOUND };
+    revalidateCampaign(campaignId);
+    return { ok: true, idempotent: true };
+  } catch {
+    return { error: GENERIC_UPDATE_ERROR };
+  }
+}
+
 const entryTargetSchema = z.object({
   campaignId: idSchema,
   entryId: idSchema,
@@ -486,6 +730,95 @@ export async function approveCampaignEntry(raw: unknown): Promise<CampaignPlanRe
       const entries = [...plan.entries];
       // Approval changes only planJson. It does not dispatch generation, schedule, publish, or credits.
       entries[index] = { ...entries[index], status: "approved" };
+      return { plan: { ...plan, entries }, idempotent: false };
+    },
+  });
+}
+
+/**
+ * Has this plan entry already been dispatched for generation — i.e. has money already moved
+ * for it?
+ *
+ * The campaign confirm path dispatches each approved entry under a stable per-entry factory
+ * identity (campaign-gen-identity), so a GenJob whose idempotencyKey carries that prefix is
+ * proof this entry went through startGen's reserve. The batch id is derived per (campaign,
+ * project), so every project grouped under this campaign is checked — including soft-deleted
+ * ones, whose jobs were charged just the same.
+ *
+ * Returns `null` when the read itself failed. The caller must treat that as "outcome unknown"
+ * and refuse, never as "no". #656 的教训:读故障按结果不明处理,不按「没有」处理。
+ */
+async function entryHasDispatchedGeneration(
+  ownerId: string,
+  campaignId: string,
+  entryId: string,
+): Promise<boolean | null> {
+  try {
+    const projects = await prisma.project.findMany({
+      where: { ownerId, campaignId },
+      select: { id: true },
+    });
+    for (const project of projects) {
+      const dispatched = await prisma.genJob.findFirst({
+        where: {
+          ownerId,
+          projectId: project.id,
+          idempotencyKey: { startsWith: campaignEntryLogicalPrefix(campaignId, project.id, entryId) },
+        },
+        select: { id: true },
+      });
+      if (dispatched) return true;
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Take an entry back out of the approved set (#712).
+ *
+ * Approval is what the confirm page prices, so this is the merchant's only way to change their
+ * mind about a costed item without destroying the creative brief they wrote. It edits ONLY
+ * planJson — no ledger row, generation or job is touched — and it is refused outright once the
+ * entry has been dispatched, because that generation and its credits are already history.
+ */
+export async function unapproveCampaignEntry(raw: unknown): Promise<CampaignPlanResult> {
+  "use server";
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
+  const parsed = entryTargetSchema.safeParse(raw);
+  if (!parsed.success) return { error: "That campaign change isn't valid." };
+  const { campaignId, entryId } = parsed.data;
+
+  // Owner-scoped existence check first, so another tenant's probe cannot tell an id that exists
+  // from one that does not by watching which error comes back.
+  const campaign = await loadOwnedCampaign(gate.ownerId, campaignId);
+  if (campaign === "unavailable") return { error: "Couldn't load that campaign — please try again." };
+  if (!campaign) return { error: CAMPAIGN_NOT_FOUND };
+
+  const dispatched = await entryHasDispatchedGeneration(gate.ownerId, campaignId, entryId);
+  if (dispatched === null) {
+    return { error: "We couldn't check this entry's generation history — nothing was changed. Please retry." };
+  }
+  if (dispatched) {
+    return {
+      error: "This entry has already been sent for generation, so its approval can't be undone. Its generation and credits stay in your history.",
+    };
+  }
+
+  return saveMutatedPlan({
+    ownerId: gate.ownerId,
+    campaignId,
+    mutate: (plan) => {
+      const index = plan.entries.findIndex((entry) => entry.id === entryId);
+      if (index < 0) return { error: "Campaign entry not found." };
+      if (plan.entries[index].status === "proposed") return { plan, idempotent: true };
+      const entries = [...plan.entries];
+      // Only the planning flag moves. The hook, brief and every other field stay exactly as the
+      // merchant wrote them — undo is not a delete.
+      entries[index] = { ...entries[index], status: "proposed" };
       return { plan: { ...plan, entries }, idempotent: false };
     },
   });
