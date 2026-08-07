@@ -70,6 +70,14 @@ type ChannelFilter = "all" | ChannelId;
 // generationId; History thumbs carry the same id, so this maps posts to their preview.
 type MediaLookup = Map<string, { url: string | null; kind: StuffItem["mediaKind"] }>;
 
+// The ONE media key this whole screen uses — generationId, the same key the media rows,
+// the server's owner-scoped check, and the Otto skills all speak (#691). A gen item's
+// `label` is its PROMPT TEXT (stuff-items.ts: `h.prompt || h.id`) — display copy only,
+// never a key. Keying off label sent prompt text where the server expected a Generation.id,
+// so every real (prompted) generation failed its ownership check and no media post could
+// be scheduled. Narrowing here makes the key non-optional at every use site below.
+type MediaChoice = StuffItem & { generationId: string };
+
 function tonePill(tone: StatusTone): string {
   switch (tone) {
     case "draft": return "bg-secondary text-muted-foreground";
@@ -180,17 +188,19 @@ export function OttoSchedule({
   const [composer, setComposer] = useState<ComposerSeed | null>(null);
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
 
-  // gen-media lookup (generationId → thumb) for post previews + the media picker.
+  // gen-media lookup (generationId → thumb) for post previews + the media picker. Keyed by
+  // generationId — what post.media rows actually store (see the lookups in QueueList/Calendar).
   const mediaLookup = useMemo<MediaLookup>(() => {
     const m: MediaLookup = new Map();
     for (const s of stuffItems) {
-      if (s.source === "gen") m.set(s.label, { url: s.url, kind: s.mediaKind });
+      if (s.source === "gen" && s.generationId) m.set(s.generationId, { url: s.url, kind: s.mediaKind });
     }
     return m;
   }, [stuffItems]);
-  // Selectable media = already-generated items with a preview (never regenerated → $0).
-  const mediaChoices = useMemo(
-    () => stuffItems.filter((s) => s.source === "gen" && s.url),
+  // Selectable media = already-generated items with a preview (never regenerated → $0) AND a
+  // generationId to select them BY — an item with no key can't be scheduled, so it isn't offered.
+  const mediaChoices = useMemo<MediaChoice[]>(
+    () => stuffItems.filter((s): s is MediaChoice => s.source === "gen" && !!s.url && !!s.generationId),
     [stuffItems],
   );
 
@@ -1064,7 +1074,7 @@ function Composer({
   seed: ComposerSeed;
   channels: ChannelId[];
   targets: OwnerTarget[];
-  mediaChoices: StuffItem[];
+  mediaChoices: MediaChoice[];
   onClose: () => void;
   onConnect: () => void;
   onSaved: () => Promise<void>;
@@ -1268,14 +1278,18 @@ function Composer({
             ) : (
               <div className="grid grid-cols-5 gap-1.5 max-h-[160px] overflow-auto">
                 {mediaChoices.map((m) => {
-                  const idx = media.indexOf(m.label);
+                  // Selection is tracked by generationId — the same key `media` is seeded with
+                  // (openEdit) and submitted as. Matching on `label` (prompt text) never lined up
+                  // with either, so an attached image showed as unselected and re-clicking it
+                  // appended the prompt text to `media` (#691).
+                  const idx = media.indexOf(m.generationId);
                   const selected = idx >= 0;
                   return (
                     <button
                       key={m.id}
                       type="button"
                       disabled={!editable}
-                      onClick={() => toggleMedia(m.label)}
+                      onClick={() => toggleMedia(m.generationId)}
                       className={`relative aspect-square rounded-[9px] overflow-hidden border-2 ${selected ? "border-brand" : "border-border"} disabled:opacity-50`}
                     >
                       {m.mediaKind === "video" ? (
