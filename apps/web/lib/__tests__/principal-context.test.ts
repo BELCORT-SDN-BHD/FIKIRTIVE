@@ -126,7 +126,7 @@ describe("test-seed system context", () => {
       await prisma.user.count();
       return getPrincipal();
     });
-    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
+    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null, readOnly: false });
     expect(getPrincipal()).toBeUndefined();
   });
 });
@@ -146,7 +146,7 @@ describe("bootstrapPersonalOrg runs under a named system identity", () => {
       await bootstrapPersonalOrg(userId, MERCHANT_EMAIL);
       return getPrincipal();
     });
-    expect(after).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
+    expect(after).toEqual({ kind: "system", reason: "test-seed", ownerId: null, readOnly: false });
     expect(getPrincipal()).toBeUndefined();
   });
 
@@ -221,6 +221,9 @@ describe("the gateway lane — the ambient USER principal (design contract §2-v
       membershipId: membership.id,
       impersonating: false,
       impersonatedByBaUserId: null, // #463 never carries the impersonator id (②-D)
+      // #743 r2: the gateway hands runAsUser an IDENTITY; the runner stamps the frame policy.
+      // Nothing here is inside a read-only frame, so the merchant's own work stays writable.
+      readOnly: false,
     });
     // the frame is scoped to the service call; the gateway's caller is left as it was
     expect(getPrincipal()).toBeUndefined();

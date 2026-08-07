@@ -126,7 +126,9 @@ describe("#464 B1 — Otto SSE frame liveness depends on the ai SDK calling exec
     // CREATED inside the frame and invoked afterwards from a foreign async context. Reproduced by
     // hand so the guard's value does not rest on anyone believing the prose — and so a reader can
     // see that the loss is silent: no throw, just `undefined`.
-    let seenInDeferredExecute: Principal | undefined = MERCHANT;
+    // Seeded with a NON-undefined sentinel so "still undefined" cannot pass by accident. It is
+    // the stored frame shape (identity + the policy runAsUser stamps), not the bare identity.
+    let seenInDeferredExecute: Principal | undefined = { ...MERCHANT, readOnly: false };
     let deferred: (() => Promise<void>) | undefined;
 
     runAsUser(MERCHANT, () => {

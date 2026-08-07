@@ -5,13 +5,20 @@ import { cn } from "@/lib/utils"
 /**
  * FIKIRTIVE card: white surface, 18px radius, hairline border + subtle shadow to
  * lift off the cool ground. Hover lifts 2px (opt-in via className).
+ *
+ * `min-w-0` is load-bearing, not cosmetic (#730). A card is almost always a grid or
+ * flex item, and such an item defaults to `min-width: auto` — its own content sets a
+ * floor it may not shrink below. One `truncate` line inside (truncate means
+ * `white-space: nowrap`, whose min-content width is the WHOLE line) then pushes the
+ * card straight through its track and the page scrolls sideways. `min-width: 0` hands
+ * the width back to the track, which is what makes `truncate` truncate at all.
  */
 function Card({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card"
       className={cn(
-        "flex flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-card text-card-foreground shadow-[var(--shadow-sm)] p-6",
+        "flex min-w-0 flex-col gap-4 rounded-[var(--radius-card)] border border-border bg-card text-card-foreground shadow-[var(--shadow-sm)] p-6",
         className
       )}
       {...props}

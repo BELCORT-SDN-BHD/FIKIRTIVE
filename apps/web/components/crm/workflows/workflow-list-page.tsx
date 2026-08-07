@@ -71,8 +71,8 @@ function safeSlug(value: string): string {
 
 function DeniedState({ message }: { message: string }) {
   return (
-    <main className="min-h-dvh bg-background px-6 py-10 text-foreground">
-      <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-8 shadow-[var(--shadow-sm)]">
+    <main className="min-h-dvh bg-background px-4 py-10 text-foreground sm:px-6">
+      <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-6 shadow-[var(--shadow-sm)] sm:p-8">
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground"><AlertCircle className="size-5" /></span>
         <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Workflows</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This workflow workspace is not available</h1>
@@ -164,16 +164,16 @@ export default function WorkflowListPage({
   }
 
   return (
-    <main className="min-h-dvh bg-background px-8 py-9 text-foreground">
+    <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
       <div className="mx-auto max-w-6xl">
-        <header className="flex items-end justify-between gap-8 border-b border-border pb-7">
+        <header className="flex flex-col gap-5 border-b border-border pb-7 sm:flex-row sm:items-end sm:justify-between sm:gap-8">
           <div>
             <Link href="/otto" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" />Return to Otto</Link>
             <p className="mt-4 text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM</p>
-            <h1 className="mt-2 text-4xl font-semibold tracking-[-0.035em]">Workflows</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">Workflows</h1>
             <p className="mt-3 max-w-3xl text-base leading-7 text-muted-foreground">Write readable rules, authorize exactly what a Routine may do, and inspect every simulated decision. Workflows never send or spend from this workspace.</p>
           </div>
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
             <Button type="button" variant="ghost" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button>
             <Button type="button" onClick={() => setDialogOpen(true)}><Plus />New workflow</Button>
           </div>
@@ -218,10 +218,10 @@ export default function WorkflowListPage({
                 return (
                   <Link key={definition.id} href={`/crm/workflows/${definition.id}`} className="group block">
                     <Card className="transition-[border-color,transform,box-shadow] group-hover:-translate-y-0.5 group-hover:border-foreground/20 group-hover:shadow-md">
-                      <CardContent className="grid grid-cols-[minmax(0,1fr)_220px_auto] items-center gap-6">
+                      <CardContent className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_220px_auto] sm:items-center sm:gap-6">
                         <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Journey" : "Rule"}</Badge>{definition.originKind === "inbox_recipe" ? <Badge variant="outline">Recipe</Badge> : null}</div><h3 className="mt-3 truncate text-lg font-semibold">{definition.name}</h3><p className="mt-1 truncate font-mono text-xs text-muted-foreground">/workflows/{definition.slug}.workflow.yaml</p></div>
-                        <div className="border-l border-border pl-6"><div className="flex items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="brand">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} saved ${definitionRoutines.length === 1 ? "authorization" : "authorizations"}. Published never implies active.`}</p></div>
-                        <div className="text-right"><p className="text-xs text-muted-foreground">Updated {dateTimeLabel(definition.updatedAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(definition.id)}</p><ArrowRight className="ml-auto mt-3 size-4 text-muted-foreground transition-transform group-hover:translate-x-1" /></div>
+                        <div className="border-t border-border pt-4 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0"><div className="flex flex-wrap items-center gap-2"><CircleHelp className="size-4 text-muted-foreground" />{routineErrorCode ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutines.length > 0 ? <Badge variant="brand">{activeRoutines.length} active {activeRoutines.length === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div><p className="mt-2 text-xs leading-5 text-muted-foreground">{routineErrorCode ? workflowErrorMessage(routineErrorCode) : `${definitionRoutines.length} saved ${definitionRoutines.length === 1 ? "authorization" : "authorizations"}. Published never implies active.`}</p></div>
+                        <div className="sm:text-right"><p className="text-xs text-muted-foreground">Updated {dateTimeLabel(definition.updatedAt)}</p><p className="mt-2 font-mono text-[11px] text-muted-foreground">{shortWorkflowId(definition.id)}</p><ArrowRight className="mt-3 size-4 text-muted-foreground transition-transform group-hover:translate-x-1 sm:ml-auto" /></div>
                       </CardContent>
                     </Card>
                   </Link>

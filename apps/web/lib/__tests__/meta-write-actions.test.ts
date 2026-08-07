@@ -43,7 +43,10 @@ vi.mock("@fikirtive/db", () => ({
 }));
 vi.mock("@fikirtive/core", () => ({ newId: () => "id-fixed" }));
 vi.mock("../meta-graph", () => ({ metaGraphGet: mockGraphGet, metaGraphPost: mockGraphPost }));
-vi.mock("../auth-guard", () => ({ requireOwner: mockRequireOwner }));
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 // token-encryption is REAL: decryptToken round-trips a token we encrypt under a fixed key.
 

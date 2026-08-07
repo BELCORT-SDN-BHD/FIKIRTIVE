@@ -140,6 +140,14 @@ export function isMerchantSurface(pathname: string): boolean {
   );
 }
 
+/** True when the surface draws its own mobile top bar and therefore needs NO space
+ *  reserved by the shell (see MOBILE_NAV_TRIGGER_INSET below). Only Otto does: OttoApp
+ *  renders an in-flow `.otto-mobile-topbar` above a 100dvh workspace, so a second
+ *  reservation would push its bar down and add a scrollbar to a pane that must not scroll. */
+function ownsMobileTopBar(pathname: string): boolean {
+  return pathMatches(pathname, "/otto");
+}
+
 function NavigationLink({
   item,
   active,
@@ -283,7 +291,10 @@ export function GlobalNavigation({
     <>
       {/* Mobile/tablet-under-1024 trigger — the persistent rail below becomes an
           off-canvas drawer at this tier (#513 global constraint: narrower than the
-          two desktop tiers only needs to not clip, not to be polished). */}
+          two desktop tiers only needs to not clip, not to be polished).
+          It is `fixed`, so it takes NO space of its own: the shell reserves that space
+          once, for every merchant surface, in MerchantShellContent (#685). Keep the
+          geometry here and MOBILE_NAV_TRIGGER_INSET in step. */}
       <button
         type="button"
         onClick={() => setMobileOpen(true)}
@@ -506,6 +517,16 @@ export function GlobalNavigation({
   );
 }
 
+/** Space the content area keeps clear for the floating mobile nav trigger (#685).
+ *  The trigger is `fixed left-3 top-3` at `size-10`, i.e. it ends 52px down, so 56px
+ *  (pt-14) clears it. Reserving it HERE is the whole point: the shell owns the button,
+ *  so the shell owns its footprint — a page must never have to know the button exists.
+ *  Every page that dodged it by hand instead was a page that could forget to (it did:
+ *  /billing and /profile ate their own H1, and eight campaign/CRM surfaces ate the
+ *  "Return to Otto" link, which is a LINK — covered meant unclickable, not just unreadable).
+ *  Mirrors `lg:pl-16 xl:pl-60`, which already reserves the rail's width the same way. */
+const MOBILE_NAV_TRIGGER_INSET = "pt-14 lg:pt-0";
+
 export function MerchantShellContent({
   children,
   pathname,
@@ -520,7 +541,12 @@ export function MerchantShellContent({
   return (
     <div className="min-h-dvh bg-background text-foreground">
       <GlobalNavigation pathname={pathname} signOutAction={signOutAction} />
-      <div className="min-h-dvh min-w-0 pl-0 lg:pl-16 xl:pl-60">
+      <div
+        className={cn(
+          "min-h-dvh min-w-0 pl-0 lg:pl-16 xl:pl-60",
+          !ownsMobileTopBar(pathname) && MOBILE_NAV_TRIGGER_INSET,
+        )}
+      >
         <SectionTabs pathname={pathname} />
         {children}
       </div>

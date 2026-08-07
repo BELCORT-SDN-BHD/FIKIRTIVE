@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import {
   AlertCircle,
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
   ChevronDown,
@@ -70,9 +71,19 @@ export default function ContactsPage({ initialState }: { initialState: ListResul
 
 function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [contacts, setContacts] = useState(initialState.contacts);
+  const [totalCount, setTotalCount] = useState(initialState.totalCount);
+  const [nextCursor, setNextCursor] = useState(initialState.nextCursor);
   const [query, setQuery] = useState("");
   const [stage, setStage] = useState<StageFilter>("all");
+  // The filter that actually produced the rows on screen — typing in the search box does not
+  // change it until the search runs, so "load more" always continues the visible list.
+  const [applied, setApplied] = useState<{ query: string; stage: StageFilter }>({ query: "", stage: "all" });
+  // Search and "load more" share one read lane. Only the newest request may write the list,
+  // its total, or its cursor — a slow page that lands after a newer search is dropped, never
+  // appended into a list it does not belong to.
+  const readSequence = useRef(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
@@ -89,6 +100,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [importError, setImportError] = useState<string | null>(null);
 
   async function refreshContacts(nextQuery = query, nextStage = stage) {
+    const sequence = ++readSequence.current;
     setLoading(true);
     setReadError(null);
     try {
@@ -96,12 +108,41 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
         query: nextQuery,
         ...(nextStage === "all" ? {} : { lifecycleStage: nextStage }),
       });
+      if (sequence !== readSequence.current) return;
       if (!("ok" in result)) return setReadError(result.error);
       setContacts(result.contacts);
+      setTotalCount(result.totalCount);
+      setNextCursor(result.nextCursor);
+      setApplied({ query: nextQuery, stage: nextStage });
     } catch {
+      if (sequence !== readSequence.current) return;
       setReadError("The contacts request could not finish. Please retry.");
     } finally {
-      setLoading(false);
+      if (sequence === readSequence.current) setLoading(false);
+    }
+  }
+
+  async function loadMoreContacts() {
+    if (!nextCursor) return;
+    const sequence = ++readSequence.current;
+    setLoadingMore(true);
+    setReadError(null);
+    try {
+      const result = await listContacts({
+        query: applied.query,
+        ...(applied.stage === "all" ? {} : { lifecycleStage: applied.stage }),
+        cursor: nextCursor,
+      });
+      if (sequence !== readSequence.current) return;
+      if (!("ok" in result)) return setReadError(result.error);
+      setContacts((current) => [...current, ...result.contacts]);
+      setTotalCount(result.totalCount);
+      setNextCursor(result.nextCursor);
+    } catch {
+      if (sequence !== readSequence.current) return;
+      setReadError("The contacts request could not finish. Please retry.");
+    } finally {
+      if (sequence === readSequence.current) setLoadingMore(false);
     }
   }
 
@@ -215,7 +256,13 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">Add a contact, import a CSV, or change the current search and lifecycle filter.</p>
           </section>
         ) : (
-          <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <>
+            <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">
+              {nextCursor
+                ? `Showing ${contacts.length} of ${totalCount} contacts`
+                : `Showing all ${totalCount} ${totalCount === 1 ? "contact" : "contacts"}`}
+            </p>
+            <section className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {contacts.map((contact) => {
               const consent = consentPresentation(contact.consentState.state);
               return (
@@ -234,7 +281,14 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
                 </Card>
               );
             })}
-          </section>
+            </section>
+            {nextCursor ? (
+              <Button type="button" className="mt-4" variant="secondary" disabled={loading || loadingMore} onClick={loadMoreContacts}>
+                {loadingMore ? <LoaderCircle className="animate-spin" /> : <ArrowDown />}
+                Load more contacts
+              </Button>
+            ) : null}
+          </>
         )}
 
         <div id="add-contact" className="mt-10 grid scroll-mt-8 gap-5 border-t border-border pt-8 lg:grid-cols-2">

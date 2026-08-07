@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
+  Archive,
   CalendarDays,
   Check,
   FolderKanban,
@@ -50,6 +51,7 @@ import {
   purposeLabel,
   runStatusPresentation,
 } from "@/components/crm/broadcasts/broadcast-format";
+import { trendSourceLabels } from "@/lib/trend-source-labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -540,6 +542,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
           </section>
 
           <aside className="grid content-start gap-5">
+            <CampaignTrendsCard trendSnapshots={campaign.trendSnapshots} />
             <CampaignBroadcastsCard broadcasts={campaign.grouped.broadcasts} />
             <GroupingCard
               title="Projects"
@@ -599,6 +602,52 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
         </DialogContent>
       </Dialog>
     </main>
+  );
+}
+
+/** #711 — the conclusions a merchant filed under this campaign, on the campaign itself. */
+export function CampaignTrendsCard({
+  trendSnapshots,
+}: {
+  trendSnapshots: CampaignDetailRow["trendSnapshots"];
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <span className="flex items-center gap-2 [&_svg]:size-4 [&_svg]:text-muted-foreground">
+          <Archive />
+          <CardTitle>Trend conclusions</CardTitle>
+        </span>
+        <CardDescription>Why this campaign exists. Saved research filed under it.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {trendSnapshots.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+            No conclusions are filed under this campaign yet.
+          </p>
+        ) : trendSnapshots.map((snapshot) => (
+          <article key={snapshot.id} className="rounded-xl border border-border p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <p className="text-sm font-semibold leading-6">{snapshot.summary}</p>
+              <Badge variant="outline">{dateLabel(snapshot.capturedAt)}</Badge>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {trendSourceLabels(snapshot.sources).map((label, index) => (
+                <span key={`${snapshot.id}:${index}`} className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
+                  {label}
+                </span>
+              ))}
+            </div>
+          </article>
+        ))}
+        <Link
+          href="/campaign/trends"
+          className="text-sm font-semibold text-brand-strong underline-offset-4 hover:underline"
+        >
+          Open trend archive
+        </Link>
+      </CardContent>
+    </Card>
   );
 }
 
