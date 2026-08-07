@@ -80,6 +80,7 @@ const contacts = [
     name: "Amina",
     totalOrdersMyr: "1200.50",
     doNotDisturb: false,
+    marketingConsent: "unknown",
     identities: [{ channel: "whatsapp" }, { channel: "email" }],
   },
   {
@@ -87,19 +88,14 @@ const contacts = [
     name: "Bo",
     totalOrdersMyr: "800",
     doNotDisturb: false,
+    marketingConsent: "unknown",
     identities: [{ channel: "email" }],
   },
 ];
 
 /** #726 — consent comes from the projection authority, never from a Contact column. */
-function projection(contactId: string, state: string, extra: Record<string, string> = {}) {
-  return {
-    contactId,
-    state,
-    evidenceStatus: "verified",
-    lastEventId: `${contactId}-last-event`,
-    ...extra,
-  };
+function projection(contactId: string, state: string) {
+  return { contactId, state };
 }
 
 const consentProjections = [projection("contact-2", "effective_revoke")];
@@ -172,6 +168,7 @@ describe("previewSegment", () => {
         name: true,
         totalOrdersMyr: true,
         doNotDisturb: true,
+        marketingConsent: true,
         identities: {
           where: { ownerId: "owner-1", deletedAt: null },
           select: { channel: true },
@@ -189,6 +186,7 @@ describe("previewSegment", () => {
       // Bo clears the spend threshold and is a known opt-out: the consent rule is what
       // removed him, and the merchant is told so instead of reading a bare "0" (#726).
       excludedByConsentCount: 1,
+      unresolvedLegacyOptOutCount: 0,
       reportedOptOutCount: 0,
       contacts: [
         {
@@ -294,13 +292,43 @@ describe("previewSegment", () => {
     ).resolves.toMatchObject({ matchedCount: 1, contactableCount: 0, knownOptOutCount: 1 });
   });
 
+  it("keeps a pre-ledger opt-out out until the customer's own evidence releases it", async () => {
+    // R-010 §4.6.5 — an opt-out recorded before this contact had a consent history is a known
+    // historical revoke. Moving selection onto the ledger must not be what puts her back.
+    mockContactFindMany.mockResolvedValue([{ ...contacts[0], marketingConsent: "opt_out" }]);
+    mockConsentProjectionFindMany.mockResolvedValue([]);
+
+    await expect(
+      previewSegment({ match: "all", rules: [{ kind: "contactability", value: "contactable" }] }),
+    ).resolves.toMatchObject({
+      matchedCount: 0,
+      excludedByConsentCount: 1,
+      unresolvedLegacyOptOutCount: 1,
+    });
+
+    // The merchant's own newer assertion cannot release it — only the customer's verified
+    // opt-in, which folds the ledger to a verified grant, supersedes the pre-ledger byte.
+    mockConsentProjectionFindMany.mockResolvedValue([projection("contact-1", "unknown")]);
+    mockConsentEventFindMany.mockResolvedValue([{ contactId: "contact-1", action: "grant" }]);
+    await expect(
+      previewSegment({ match: "all", rules: [{ kind: "contactability", value: "contactable" }] }),
+    ).resolves.toMatchObject({ matchedCount: 0, unresolvedLegacyOptOutCount: 1 });
+
+    mockConsentProjectionFindMany.mockResolvedValue([projection("contact-1", "verified_grant")]);
+    await expect(
+      previewSegment({ match: "all", rules: [{ kind: "contactability", value: "contactable" }] }),
+    ).resolves.toMatchObject({
+      matchedCount: 1,
+      excludedByConsentCount: 0,
+      unresolvedLegacyOptOutCount: 0,
+    });
+  });
+
   it("marks an opt-out the merchant recorded himself without ever excluding him", async () => {
     // #716 — the projection is still `unknown` (a merchant assertion is not verified evidence),
     // and its last event is that assertion. The page has to show it, not swallow it.
-    mockConsentProjectionFindMany.mockResolvedValue([
-      projection("contact-1", "unknown", { evidenceStatus: "asserted" }),
-    ]);
-    mockConsentEventFindMany.mockResolvedValue([{ id: "contact-1-last-event" }]);
+    mockConsentProjectionFindMany.mockResolvedValue([projection("contact-1", "unknown")]);
+    mockConsentEventFindMany.mockResolvedValue([{ contactId: "contact-1", action: "revoke" }]);
 
     const result = await previewSegment({
       match: "all",
@@ -310,12 +338,12 @@ describe("previewSegment", () => {
     expect(mockConsentEventFindMany).toHaveBeenCalledWith({
       where: {
         ownerId: "owner-1",
-        id: { in: ["contact-1-last-event"] },
-        action: "revoke",
+        channel: "whatsapp",
+        purpose: "marketing",
         actorKind: "merchant",
-        evidenceStatus: "asserted",
       },
-      select: { id: true },
+      select: { contactId: true, action: true },
+      orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
     });
     expect(result).toMatchObject({
       ok: true,
@@ -395,6 +423,7 @@ describe("listSegments", () => {
           contactableCount: 1,
           knownOptOutCount: 0,
           excludedByConsentCount: 1,
+          unresolvedLegacyOptOutCount: 0,
           reportedOptOutCount: 0,
           createdAt: "2026-07-14T00:00:00.000Z",
         },

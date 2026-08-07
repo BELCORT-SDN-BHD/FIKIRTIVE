@@ -371,6 +371,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         contactableCount: preview.contactableCount,
         knownOptOutCount: preview.knownOptOutCount,
         excludedByConsentCount: preview.excludedByConsentCount,
+        unresolvedLegacyOptOutCount: preview.unresolvedLegacyOptOutCount,
         reportedOptOutCount: preview.reportedOptOutCount,
       };
       setSegments((current) =>
@@ -781,6 +782,17 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
       </p>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
         Unknown consent stays included. {KNOWN_OPT_OUT_RULE_NOTE} Do not disturb is checked at send time and does not filter this segment.
+        {preview.unresolvedLegacyOptOutCount > 0
+          ? ` ${preview.unresolvedLegacyOptOutCount} of them opted out before consent history was kept, so they stay out until the customer opts in again — open the contact to see what was recorded.`
+          : ""}
+      </p>
+      {/*
+        #726 — the two numbers a merchant compares are counted over two different groups of
+        people. Saying so is the fix; quietly making them look identical is what let a frozen
+        audience disagree with the page that promised it.
+      */}
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        These counts cover every contact you have. A broadcast counts only the contacts it can reach on the channel it sends from, so its own numbers can be lower.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}

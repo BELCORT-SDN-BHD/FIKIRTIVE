@@ -15,14 +15,15 @@ import type { Prisma } from "@fikirtive/db";
  *
  * There is now exactly one reading. `ConsentStateProjection` is the R-010 authority; the legacy
  * column is a whatsapp+marketing compatibility mirror written by the consent runtime and is no
- * longer read by anything that selects, freezes or sends an audience.
+ * longer an authority of its own. It keeps exactly ONE power, described under
+ * `unresolvedLegacyOptOut` below: it can hold a customer out, never let one in.
  *
- * The reading carries TWO separate facts, and they are never collapsed into one:
- *  - `state` — the verified consent state. Only `effective_revoke` is a known opt-out.
- *  - `reportedOptOut` — the merchant's OWN record of an opt-out (contact profile
- *    "Record reported opt-out", or a CSV import row with `consent=opt_out`). R-010 keeps this
- *    out of the verified state on purpose: a merchant assertion is not customer-verified
- *    evidence (#496, Founder's option B). It is surfaced, never silently folded into "unknown".
+ * The reading carries THREE separate facts, and they are never collapsed into one:
+ *  - `state` — the verified consent state. Only `effective_revoke` is a verified opt-out.
+ *  - `unresolvedLegacyOptOut` — an opt-out recorded before this contact had a consent history.
+ *  - `reportedOptOut` — the merchant's OWN latest record says "opted out". R-010 keeps this out
+ *    of the verified state on purpose: a merchant assertion is not customer-verified evidence
+ *    (#496, Founder's option B). It is surfaced, never silently folded into "unknown".
  */
 
 /**
@@ -30,6 +31,9 @@ import type { Prisma } from "@fikirtive/db";
  * import, the contacts list badge — writes and reads this one scope. Segment selection has no
  * channel or purpose of its own, so it reads the same scope those pages display; a broadcast
  * reads its own run's channel + purpose through the same functions.
+ *
+ * R-010 §4.6.1 also fixes this as the ONLY scope the legacy `Contact.marketingConsent` column
+ * mirrors, which is why the pre-ledger fence below is scoped to it and to nothing else.
  */
 export const CRM_CONSENT_SCOPE = { channel: "whatsapp", purpose: "marketing" } as const;
 
@@ -38,18 +42,28 @@ export type ConsentScope = { channel: string; purpose: string };
 export type ConsentState = "unknown" | "verified_grant" | "effective_revoke";
 
 export type ContactConsentTruth = {
-  /** Verified R-010 state. Only `effective_revoke` is a known opt-out. */
+  /** Verified R-010 state folded from the consent ledger. */
   state: ConsentState;
+  /**
+   * An opt-out that predates this contact's consent history and nothing has resolved since
+   * (R-010 §4.6.5). It holds the contact OUT of every audience until the customer's own verified
+   * evidence supersedes it. See `contactConsentTruth`.
+   */
+  unresolvedLegacyOptOut: boolean;
   /** The merchant's own latest record says "opted out" — recorded, not verified. */
   reportedOptOut: boolean;
 };
 
-/** No consent event has ever been recorded for this contact in this scope. */
-export const NO_CONSENT_RECORD: ContactConsentTruth = { state: "unknown", reportedOptOut: false };
+/** No consent record of any kind exists for this contact in this scope. */
+export const NO_CONSENT_RECORD: ContactConsentTruth = {
+  state: "unknown",
+  unresolvedLegacyOptOut: false,
+  reportedOptOut: false,
+};
 
 /** The one definition of "known opt-out" — shared by segment selection, freeze and display. */
 export function isKnownOptOut(truth: ContactConsentTruth): boolean {
-  return truth.state === "effective_revoke";
+  return truth.state === "effective_revoke" || truth.unresolvedLegacyOptOut;
 }
 
 /**
@@ -57,40 +71,80 @@ export function isKnownOptOut(truth: ContactConsentTruth): boolean {
  * opt-out stays `unknown` because that is what it is — unverified.
  */
 export function consentFact(truth: ContactConsentTruth): "opt_in" | "opt_out" | "unknown" {
-  if (truth.state === "effective_revoke") return "opt_out";
+  if (isKnownOptOut(truth)) return "opt_out";
   return truth.state === "verified_grant" ? "opt_in" : "unknown";
 }
 
+/**
+ * The pre-ledger fence (R-010 §4.6.5): a `Contact.marketingConsent` of `opt_out` that the
+ * consent ledger has not yet reached is a KNOWN historical revoke, and R-010 forbids losing it
+ * silently in the cutover. Until the tuple is resolved one contact at a time, it is fail-closed:
+ * the customer stays out.
+ *
+ * Fail-closed means the merchant's own newer assertion cannot release it either — re-recording
+ * an opt-out, or asserting an opt-in, both leave the state `unknown` and the fence standing.
+ * Only the customer's own verified evidence (an opt-in through their channel, folding to
+ * `verified_grant`) supersedes the stale byte, which is exactly R-010 §4.6.4's rule that a
+ * historical baseline is neutral once a newer interactive stance covers it.
+ *
+ * Scoped to whatsapp+marketing because that is the only tuple the legacy column mirrors
+ * (R-010 §4.6.1); for any other channel or purpose the column carries no meaning and is not read.
+ */
+export function contactConsentTruth(
+  projected: ContactConsentTruth | undefined,
+  legacyMarketingConsent: string | null | undefined,
+  scope: ConsentScope = CRM_CONSENT_SCOPE,
+): ContactConsentTruth {
+  const truth = projected ?? NO_CONSENT_RECORD;
+  const fenced =
+    truth.state === "unknown" &&
+    legacyMarketingConsent === "opt_out" &&
+    scope.channel === CRM_CONSENT_SCOPE.channel &&
+    scope.purpose === CRM_CONSENT_SCOPE.purpose;
+  return fenced ? { ...truth, unresolvedLegacyOptOut: true } : truth;
+}
+
 export type ConsentExclusionCandidate = {
-  knownOptOut: boolean;
+  truth: ContactConsentTruth;
   matched: boolean;
   facts: SegmentContactFacts;
+};
+
+export type ConsentExclusionCounts = {
+  /** Known opt-outs the consent authority kept out of this selection. */
+  excluded: number;
+  /** Of those, the ones held out by the pre-ledger fence — resolvable one contact at a time. */
+  unresolvedLegacy: number;
 };
 
 /**
  * How many contacts the consent authority — not the merchant's other rules — kept out of this
  * selection: a known opt-out that does not match today, but would match if it were contactable.
  *
- * The segments page and the broadcast audience both count with this one function, so "N known
- * opt-out excluded" cannot mean one thing on one page and another downstream (#726). Each caller
- * passes its own population (the segments page has no channel; a broadcast counts only contacts
- * reachable on its run's channel), and both get the same arithmetic over it.
+ * The segments page and the broadcast audience both count with this one function, so the number
+ * cannot mean one thing on one page and another downstream (#726). Each caller passes its own
+ * population — the segments page every contact the merchant has, a broadcast only the contacts
+ * it can reach on its run's channel — and both pages say which population they counted.
  */
 export function countExcludedByConsent(
   contacts: readonly ConsentExclusionCandidate[],
   rules: SegmentRuleGroup,
   evaluatedAt: string,
-): number {
-  return contacts.filter(
+): ConsentExclusionCounts {
+  const excluded = contacts.filter(
     (contact) =>
-      contact.knownOptOut &&
+      isKnownOptOut(contact.truth) &&
       !contact.matched &&
       contactMatchesRules(
         { ...contact.facts, marketingConsent: "opt_in", doNotDisturb: false },
         rules,
         { evaluatedAt },
       ),
-  ).length;
+  );
+  return {
+    excluded: excluded.length,
+    unresolvedLegacy: excluded.filter((contact) => contact.truth.unresolvedLegacyOptOut).length,
+  };
 }
 
 function asState(value: string): ConsentState {
@@ -98,49 +152,46 @@ function asState(value: string): ConsentState {
 }
 
 /**
- * Reads every contact's consent truth for one owner in one scope.
+ * Reads every contact's ledger consent truth for one owner in one scope. The caller layers the
+ * pre-ledger fence on top with `contactConsentTruth`, because only the caller holds the contact
+ * rows the legacy column lives on.
  *
  * Two owner-fenced queries, no per-contact fan-out:
  *  1. the projection rows (the verified authority);
- *  2. the last event behind each projection that is still `unknown` AND `asserted` — that is
- *     exactly the "merchant recorded something and no verified evidence overrode it" set, and
- *     `lastEventId` makes it a primary-key read. Any verified event would have moved `state` off
- *     `unknown`, so a still-unknown projection whose last event is an asserted merchant revoke is
- *     precisely a merchant-recorded opt-out (the same rule the contact profile already states).
+ *  2. every merchant declaration in this scope, folded in R-010's own `(receivedAt, id)` order so
+ *     the LAST one wins. Looking at the merchant's latest record — rather than at the folded
+ *     state — is what makes an opt-out recorded after a verified opt-in visible: that fold stays
+ *     `verified_grant` (correctly, the customer's own evidence decides the send), so a reading
+ *     keyed on the state reported such a contact as zero and #716's disclosure gap survived.
  */
 export async function readContactConsentTruth(
   client: Prisma.TransactionClient,
   ownerId: string,
   scope: ConsentScope = CRM_CONSENT_SCOPE,
 ): Promise<Map<string, ContactConsentTruth>> {
-  const projections = await client.consentStateProjection.findMany({
-    where: { ownerId, channel: scope.channel, purpose: scope.purpose },
-    select: { contactId: true, state: true, evidenceStatus: true, lastEventId: true },
-  });
+  const [projections, declarations] = await Promise.all([
+    client.consentStateProjection.findMany({
+      where: { ownerId, channel: scope.channel, purpose: scope.purpose },
+      select: { contactId: true, state: true },
+    }),
+    // `actorKind: "merchant"` is the closed R-010 writer set for the two surfaces a merchant can
+    // record consent from himself (contact profile and CSV import); both are always `asserted`.
+    client.consentEvent.findMany({
+      where: { ownerId, channel: scope.channel, purpose: scope.purpose, actorKind: "merchant" },
+      select: { contactId: true, action: true },
+      orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
+    }),
+  ]);
 
-  const assertedLastEventIds = projections
-    .filter((row) => row.state === "unknown" && row.evidenceStatus === "asserted")
-    .map((row) => row.lastEventId);
-  const reportedEventIds = new Set<string>();
-  if (assertedLastEventIds.length > 0) {
-    const reported = await client.consentEvent.findMany({
-      where: {
-        ownerId,
-        id: { in: assertedLastEventIds },
-        action: "revoke",
-        actorKind: "merchant",
-        evidenceStatus: "asserted",
-      },
-      select: { id: true },
-    });
-    for (const row of reported) reportedEventIds.add(row.id);
-  }
+  const latestMerchantAction = new Map<string, string>();
+  for (const row of declarations) latestMerchantAction.set(row.contactId, row.action);
 
   const truth = new Map<string, ContactConsentTruth>();
   for (const row of projections) {
     truth.set(row.contactId, {
       state: asState(row.state),
-      reportedOptOut: reportedEventIds.has(row.lastEventId),
+      unresolvedLegacyOptOut: false,
+      reportedOptOut: latestMerchantAction.get(row.contactId) === "revoke",
     });
   }
   return truth;

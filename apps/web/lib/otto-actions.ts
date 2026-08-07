@@ -151,6 +151,7 @@ function makeOttoSegmentsPort() {
         contactableCount: result.contactableCount,
         knownOptOutCount: result.knownOptOutCount,
         excludedByConsentCount: result.excludedByConsentCount,
+        unresolvedLegacyOptOutCount: result.unresolvedLegacyOptOutCount,
         reportedOptOutCount: result.reportedOptOutCount,
         contacts: result.contacts,
       };

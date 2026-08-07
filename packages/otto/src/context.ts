@@ -49,6 +49,8 @@ export type CrmSegmentSummary = {
   knownOptOutCount: number;
   /** Known opt-outs this segment's consent rule kept out — the number the merchant reads. */
   excludedByConsentCount: number;
+  /** Of those, the ones held out by an opt-out recorded before the consent ledger existed. */
+  unresolvedLegacyOptOutCount: number;
   /** Contacts kept in on an opt-out the merchant recorded himself (unverified) — #716. */
   reportedOptOutCount: number;
   createdAt: string;
@@ -356,6 +358,7 @@ export interface OttoContext {
           contactableCount: number;
           knownOptOutCount: number;
           excludedByConsentCount: number;
+          unresolvedLegacyOptOutCount: number;
           reportedOptOutCount: number;
           contacts: CrmSegmentContact[];
         }
@@ -378,6 +381,7 @@ export interface OttoContext {
             | "contactableCount"
             | "knownOptOutCount"
             | "excludedByConsentCount"
+            | "unresolvedLegacyOptOutCount"
             | "reportedOptOutCount"
           >;
         }

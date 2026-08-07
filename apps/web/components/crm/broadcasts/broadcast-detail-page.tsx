@@ -125,7 +125,11 @@ export function ConsentExclusionNote({ consent }: { consent: AudienceConsentSumm
     <p className="text-xs leading-5 text-muted-foreground">
       {consent.excludedByConsent === 0
         ? "No contact was excluded for opting out."
-        : `${consent.excludedByConsent} ${consent.excludedByConsent === 1 ? "contact was" : "contacts were"} excluded for opting out — the same contacts the segment left out.`}
+        : `${consent.excludedByConsent} ${consent.excludedByConsent === 1 ? "contact was" : "contacts were"} excluded for opting out.`}
+      {consent.unresolvedLegacyOptOut > 0
+        ? ` ${consent.unresolvedLegacyOptOut} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
+        : ""}
+      {" This count covers the contacts this broadcast can reach on its channel, so it can be lower than the count on the segments page, which covers every contact you have."}
       {consent.reportedOptOutKept > 0
         ? ` ${consent.reportedOptOutKept} ${consent.reportedOptOutKept === 1 ? "contact is" : "contacts are"} in this audience with an opt-out you recorded yourself, which is not verified — open the contact to see its consent history.`
         : ""}

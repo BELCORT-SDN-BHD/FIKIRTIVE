@@ -20,10 +20,11 @@ import {
   type SendEligibilityResult,
 } from "@fikirtive/db";
 import {
+  contactConsentTruth,
   countExcludedByConsent,
   isKnownOptOut,
-  NO_CONSENT_RECORD,
   readContactConsentTruth,
+  type ConsentExclusionCandidate,
 } from "./consent-authority";
 import {
   broadcastPurposeFromTemplateClassification,
@@ -142,10 +143,17 @@ type AudienceCandidate = {
 /**
  * What the consent authority did to this audience, so freeze and preview can say it out loud
  * (#726): who it kept out, and who it kept in on the merchant's own unverified record (#716).
+ *
+ * Every number here is counted over the contacts this run can REACH — the ones with an identity
+ * on its channel. The segments page counts the same way over every contact the merchant has, so
+ * its numbers can be larger; each surface prints which population it counted rather than
+ * implying the two are one number.
  */
 export type AudienceConsentSummary = {
   /** Reachable contacts this segment would have selected but for their known opt-out. */
   excludedByConsent: number;
+  /** Of those, the ones held out by an opt-out recorded before the consent ledger existed. */
+  unresolvedLegacyOptOut: number;
   /** Reachable contacts in this audience whose only opt-out is the merchant's own record. */
   reportedOptOutKept: number;
 };
@@ -376,6 +384,12 @@ export function createCustomerBroadcastService(
    * "known opt-out" predicate now live in consent-authority.ts, which the segments page reads
    * too — so a contact the segments page says it excluded can never reappear here, and the two
    * pages report the exclusion with the same arithmetic.
+   *
+   * Same arithmetic, deliberately different population: this run can only speak about contacts
+   * it can REACH (an identity on its channel), while the segments page speaks about every
+   * contact the merchant has. Widening this side to match the page's number would mean matching
+   * contacts on channels this run cannot send to, which is a bigger send list — so the numbers
+   * stay honestly separate and both surfaces name the population they counted.
    */
   async function resolveSegmentAudience(
     client: DatabaseClient,
@@ -398,6 +412,8 @@ export function createCustomerBroadcastService(
         select: {
           id: true,
           totalOrdersMyr: true,
+          // Never an authority of its own: the pre-ledger fence can only hold a contact OUT.
+          marketingConsent: true,
           identities: { where: { ownerId, channel, deletedAt: null }, select: { id: true, channel: true } },
         },
       }),
@@ -406,10 +422,14 @@ export function createCustomerBroadcastService(
 
     const evaluatedAt = now().toISOString();
     const candidates: AudienceCandidate[] = [];
-    const reachable: Array<{ knownOptOut: boolean; matched: boolean; facts: SegmentContactFacts }> = [];
+    const reachable: ConsentExclusionCandidate[] = [];
     let reportedOptOutKept = 0;
     for (const contact of contacts) {
-      const truth = consent.get(contact.id) ?? NO_CONSENT_RECORD;
+      const truth = contactConsentTruth(consent.get(contact.id), contact.marketingConsent, {
+        channel,
+        purpose,
+      });
+      const optedOut = isKnownOptOut(truth);
       const facts: SegmentContactFacts = {
         lifetimeSpendMyr:
           contact.totalOrdersMyr === null || contact.totalOrdersMyr === undefined
@@ -418,23 +438,26 @@ export function createCustomerBroadcastService(
         channels: [channel],
         // Translated for the segment "contactability" rule only: a not-known-revoked contact
         // reads as opt_in so unknown permission stays in the estimate (flag + keep, B0-44).
-        marketingConsent: isKnownOptOut(truth) ? "opt_out" : "opt_in",
+        marketingConsent: optedOut ? "opt_out" : "opt_in",
         doNotDisturb: false,
       };
       const matched = contactMatchesRules(facts, validated.value, { evaluatedAt });
-      if (contact.identities.length > 0) {
-        reachable.push({ knownOptOut: isKnownOptOut(truth), matched, facts });
-      }
+      // Only contacts this run can reach are counted: an audience summary must describe the
+      // audience, not the address book.
+      if (contact.identities.length === 0) continue;
+      reachable.push({ truth, matched, facts });
       if (!matched) continue;
-      if (truth.reportedOptOut && contact.identities.length > 0) reportedOptOutKept += 1;
+      if (truth.reportedOptOut && !optedOut) reportedOptOutKept += 1;
       for (const identity of contact.identities) {
         candidates.push({ contactId: contact.id, contactIdentityId: identity.id });
       }
     }
+    const excluded = countExcludedByConsent(reachable, validated.value, evaluatedAt);
     return {
       candidates,
       consent: {
-        excludedByConsent: countExcludedByConsent(reachable, validated.value, evaluatedAt),
+        excludedByConsent: excluded.excluded,
+        unresolvedLegacyOptOut: excluded.unresolvedLegacy,
         reportedOptOutKept,
       },
     };

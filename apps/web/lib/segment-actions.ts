@@ -14,9 +14,9 @@ import { prisma, type Prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
 import {
   consentFact,
+  contactConsentTruth,
   countExcludedByConsent,
   isKnownOptOut,
-  NO_CONSENT_RECORD,
   readContactConsentTruth,
   type ContactConsentTruth,
 } from "./consent-authority";
@@ -45,6 +45,9 @@ const CONTACT_SELECT = {
   name: true,
   totalOrdersMyr: true,
   doNotDisturb: true,
+  // Never an authority of its own (#726). Read for one thing only: the pre-ledger fence, which
+  // can hold a customer out of an audience but can never put one in — see consent-authority.ts.
+  marketingConsent: true,
 } as const;
 
 const GENERIC_SAVE_ERROR = "Couldn't save this segment. Start a new draft and try again.";
@@ -58,6 +61,7 @@ type ContactRow = {
   name: string;
   totalOrdersMyr: unknown;
   doNotDisturb: boolean;
+  marketingConsent: string;
   identities: Array<{ channel: string }>;
 };
 
@@ -75,8 +79,7 @@ type EvaluatedContact = {
   name: string;
   channels: string[];
   contactable: boolean;
-  /** The merchant's own record says "opted out" — unverified, so still in the audience. */
-  reportedOptOut: boolean;
+  consent: ContactConsentTruth;
   facts: SegmentContactFacts;
 };
 
@@ -167,7 +170,7 @@ function evaluateContact(row: ContactRow, truth: ContactConsentTruth): Evaluated
     name: row.name,
     channels,
     contactable,
-    reportedOptOut: truth.reportedOptOut,
+    consent: truth,
     facts: {
       lifetimeSpendMyr: asLifetimeSpend(row.totalOrdersMyr),
       channels,
@@ -199,7 +202,7 @@ async function readContacts(ownerId: string): Promise<EvaluatedContact[]> {
     readContactConsentTruth(prisma, ownerId),
   ]);
   return (rows as ContactRow[]).map((row) =>
-    evaluateContact(row, truth.get(row.id) ?? NO_CONSENT_RECORD),
+    evaluateContact(row, contactConsentTruth(truth.get(row.id), row.marketingConsent)),
   );
 }
 
@@ -225,22 +228,23 @@ function matches(
 }
 
 function publicContacts(contacts: EvaluatedContact[]) {
-  return contacts.slice(0, 10).map(({ id, name, channels, contactable, reportedOptOut }) => ({
+  return contacts.slice(0, 10).map(({ id, name, channels, contactable, consent }) => ({
     id,
     name,
     channels,
     contactable,
-    reportedOptOut,
+    reportedOptOut: consent.reportedOptOut,
   }));
 }
 
 /**
- * Merchant-recorded opt-outs inside this match. They stay in the audience (they are not
- * verified evidence), so the merchant has to be told they are there — #716's whole defect was
- * that this number existed nowhere on the page.
+ * Merchant-recorded opt-outs this match KEPT. They stay in the audience (they are not verified
+ * evidence), so the merchant has to be told they are there — #716's whole defect was that this
+ * number existed nowhere on the page. A contact who is out on some other opt-out is not counted
+ * here: the page must never call the same person "still included" and "excluded" in one line.
  */
 function reportedOptOutCountOf(matched: EvaluatedContact[]): number {
-  return matched.filter((contact) => contact.reportedOptOut).length;
+  return matched.filter((contact) => contact.contactable && contact.consent.reportedOptOut).length;
 }
 
 /**
@@ -248,6 +252,10 @@ function reportedOptOutCountOf(matched: EvaluatedContact[]): number {
  * merchant reads as "known opt-out excluded": people this segment would otherwise have reached
  * and the opt-out rule removed — the same arithmetic, over the same authority, that the
  * broadcast audience reports downstream (#726).
+ *
+ * The population is every contact the merchant has. A broadcast counts the same way over the
+ * contacts IT can reach on its own channel, which is a smaller population; the two numbers are
+ * therefore not interchangeable, and both surfaces print which population they counted.
  */
 function countsOf(
   contacts: EvaluatedContact[],
@@ -257,19 +265,21 @@ function countsOf(
 ) {
   const matchedIds = new Set(matched.map((contact) => contact.id));
   const contactableCount = matched.filter((contact) => contact.contactable).length;
+  const excluded = countExcludedByConsent(
+    contacts.map((contact) => ({
+      truth: contact.consent,
+      matched: matchedIds.has(contact.id),
+      facts: contact.facts,
+    })),
+    rules,
+    evaluatedAt,
+  );
   return {
     matchedCount: matched.length,
     contactableCount,
     knownOptOutCount: matched.length - contactableCount,
-    excludedByConsentCount: countExcludedByConsent(
-      contacts.map((contact) => ({
-        knownOptOut: !contact.contactable,
-        matched: matchedIds.has(contact.id),
-        facts: contact.facts,
-      })),
-      rules,
-      evaluatedAt,
-    ),
+    excludedByConsentCount: excluded.excluded,
+    unresolvedLegacyOptOutCount: excluded.unresolvedLegacy,
     reportedOptOutCount: reportedOptOutCountOf(matched),
   };
 }
@@ -317,6 +327,7 @@ function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluat
       contactableCount: 0,
       knownOptOutCount: 0,
       excludedByConsentCount: 0,
+      unresolvedLegacyOptOutCount: 0,
       reportedOptOutCount: 0,
       createdAt: row.createdAt.toISOString(),
     };
