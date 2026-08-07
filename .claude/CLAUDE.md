@@ -26,6 +26,17 @@
 - 产品方向、身份、用户行为和验收改变由 Founder 决定。实现细节在不改变这些决定时由开发者按最简单可靠方案处理。
 - specs 与工程文档使用华语；UI copy 使用 English sentence case。
 
+## 代码地图（CodeGraph）
+
+- 唯一持图树是主检出 `/Users/winnin/Desktop/FIKIRTIVE`。orchestrator 做全局调查时在主检出上 CodeGraph-first。
+- 主检出会落后 `origin/main`。查图前先核对它的 HEAD，落后就 `git -C <主检出> pull --ff-only`（它历来零本地提交，watcher 随后自动跟上索引）。树新鲜与图新鲜要一起验，缺一不可。
+- 查图前必须先跑 `codegraph status` 验明地图身份：输出带 worktree 警告或不是 fresh，就不得用图。嵌在主检出目录内的 worktree（`.claude/worktrees/*`）里，`query` 与 `callers` 会零警告返回主检出的结果。
+- worker 与判官在自己的 worktree 一律诚实回退到 `rg` 与直接读文件；不跑 `codegraph init`，不借主检出的图。
+- 主检出以外的目录出现 `.codegraph/` 就是错误，就地删除。
+- lock、watchdog 或 sync 报错之后必须重新 `codegraph status` 才能声称 fresh；daemon 还在不等于图是新的。
+- 适用调查的交接带一行回执：`CodeGraph: used — query: "<query>"; index: <status>; fallback reads: <files or none>.`；没用图就写 `not used` 加原因。
+- CodeGraph 只是辅助调查能力；Git、当前文件和行为测试仍是事实权威。
+
 ## 外部边界
 
 未经 Founder 对该次动作明确授权，不部署、不修改生产数据或凭据、不发布外部内容、不删除远端或云端状态。
