@@ -186,4 +186,48 @@ describe("C6-M2 orthogonal report aggregation", () => {
       failed: { status: "unknown", value: null },
     });
   });
+
+  // #719: aggregation now sees every member, not only the attempted ones, so a member with
+  // nothing to reconcile must not inflate any reconciliation bucket.
+  it("keeps every bucket at zero when the aggregate covers members with no sending attempt", () => {
+    expect(aggregateDeliveryAxes([receipt("no-attempt", "unknown", "not_applicable")], true).reconciliation)
+      .toEqual({
+        pending: { status: "known", value: 0 },
+        conflict: { status: "known", value: 0 },
+        timeoutUnknown: { status: "known", value: 0 },
+      });
+  });
+});
+
+describe("#719 no sending attempt means nothing to reconcile", () => {
+  it("returns not_applicable instead of pending when no attempt was made and no fact exists", () => {
+    expect(reconcileDeliveryReceipt(
+      {
+        logicalSendRef: "member-skipped",
+        channel: "whatsapp",
+        attempted: false,
+        simulatedAttempt: false,
+        events: [],
+      },
+      clock,
+    )).toMatchObject({
+      lifecycle: "unknown",
+      reconciliation: "not_applicable",
+      reason: "NO_SENDING_ATTEMPT",
+      lastProviderEventAt: null,
+    });
+  });
+
+  it("still reconciles a provider fact that arrives for an un-attempted member", () => {
+    expect(reconcileDeliveryReceipt(
+      {
+        logicalSendRef: "member-unexpected-fact",
+        channel: "whatsapp",
+        attempted: false,
+        simulatedAttempt: false,
+        events: [event("a", "failed", "2026-07-22T09:00:00.000Z")],
+      },
+      clock,
+    )).toMatchObject({ lifecycle: "failed", reconciliation: "converged" });
+  });
 });

@@ -7,6 +7,7 @@ import {
 } from "../customer-broadcast-report-service";
 import { requireOwner } from "../auth-guard";
 import { isImpersonating } from "../better-auth/compat";
+import { reconciliationPresentation } from "@/components/crm/reports/report-format";
 
 vi.mock("../auth-guard", () => ({
   requireOwner: vi.fn(async () => ({
@@ -371,6 +372,60 @@ describe("C6-M2 truthful simulated-era reads", () => {
       unavailable: { status: "known", value: 0 },
     });
     expect(report.delivery.delivered).toEqual({ status: "unknown", value: null });
+  });
+});
+
+// #719: the summary counted only attempted members while the recipient cards asked for a
+// receipt per member, so an un-attempted member fell to the default "pending" and the same
+// page showed two different reconciliation counts. Both sides must read one source.
+describe("#719 reconciliation summary and recipient cards read one source", () => {
+  it("matches the summary pending count to the recipient cards labelled Pending across mixed send states", async () => {
+    const members = await prisma.broadcastAudienceMember.findMany({
+      where: { ownerId: ORG_A, broadcastRunId: RUN_A },
+      orderBy: [{ id: "asc" }],
+      select: { id: true, sendState: true },
+    });
+    expect(members.map((member) => member.sendState).sort()).toEqual([
+      "pending",
+      "send_unavailable",
+      "simulated_sent",
+      "skipped_ineligible",
+    ]);
+
+    const report = await reportService.getCustomerBroadcastReport(owner, { broadcastRunId: RUN_A });
+    const cardLabels = await Promise.all(
+      members.map(async (member) =>
+        reconciliationPresentation(
+          (
+            await reportService.getBroadcastDeliveryReceipt(owner, {
+              broadcastRunId: RUN_A,
+              audienceMemberId: member.id,
+            })
+          ).reconciliation,
+        ).label,
+      ),
+    );
+
+    expect(cardLabels.filter((label) => label === "Pending")).toHaveLength(
+      report.reconciliation.pending.value,
+    );
+    expect(report.reconciliation.pending.value).toBe(1);
+    expect(cardLabels.filter((label) => label === "Not applicable")).toHaveLength(3);
+  });
+
+  it("never labels an un-attempted member as pending reconciliation", async () => {
+    for (const audienceMemberId of [AUDIENCE_PENDING, AUDIENCE_SKIPPED, AUDIENCE_UNAVAILABLE]) {
+      const receipt = await reportService.getBroadcastDeliveryReceipt(owner, {
+        broadcastRunId: RUN_A,
+        audienceMemberId,
+      });
+      expect(receipt).toMatchObject({
+        lifecycle: "unknown",
+        reconciliation: "not_applicable",
+        reason: "NO_SENDING_ATTEMPT",
+        lastProviderEventAt: null,
+      });
+    }
   });
 });
 
