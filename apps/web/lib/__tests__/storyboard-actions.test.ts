@@ -7,7 +7,10 @@ const { mockOwner, mockFindFirst, mockUpdate } = vi.hoisted(() => ({
   mockUpdate: vi.fn(),
 }));
 
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@fikirtive/db", () => ({
   prisma: { chatMessage: { findFirst: mockFindFirst, update: mockUpdate } },
   Prisma: {},

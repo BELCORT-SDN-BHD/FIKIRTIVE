@@ -32,7 +32,8 @@ import { metaGraphPost, uploadAdImage, uploadAdVideo, type AdFile } from "./meta
 import { storage, mimeOf } from "./storage";
 import { policyDecision } from "./meta-action-policy";
 import { verifyApproval, type PlanStep } from "./meta-approval";
-import { requireOwner } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import type { MetaAdBuildCardPayload } from "./meta-build-spec";
 import { sanitizeUserError } from "./provider-secrecy";
@@ -391,48 +392,51 @@ export async function approveAdBuild(
 ): Promise<{ ok: true; state: BuildState; createdIds: Record<string, string> } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  if (await isImpersonating()) {
-    return { error: "Paused while impersonating a customer — exit impersonation to do this." };
-  }
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true; state: BuildState; createdIds: Record<string, string> } | { error: string }> => {
+    if (await isImpersonating()) {
+      return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+    }
+    const { ownerId } = gate;
 
-  const message = await prisma.chatMessage.findFirst({
-    where: { id: cardId, ownerId, kind: "BUILD_CARD" },
+    const message = await prisma.chatMessage.findFirst({
+      where: { id: cardId, ownerId, kind: "BUILD_CARD" },
+    });
+    if (!message || !message.payload) return { error: "That build card no longer exists." };
+    const payload = message.payload as unknown as MetaAdBuildCardPayload;
+
+    // Kill-switch / canWrite gate BEFORE consuming the single-use approval. runAdBuild throws
+    // KILL_SWITCH when adsWritesPaused — if we consumed first, that throw would burn the approval
+    // forever (card un-approvable, nothing built). Check up front so the approval survives.
+    const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
+    if (!conn || conn.canWrite !== true) {
+      return { error: "Meta isn't connected for ad changes — reconnect and try again." };
+    }
+    if (conn.adsWritesPaused === true) {
+      return { error: "Ad changes are paused (kill-switch on). Turn it off in Connections and try again." };
+    }
+
+    const verdict = verifyApproval(payload.approval, bindingSteps(payload), ownerId, new Date().toISOString());
+    if (!verdict.ok) {
+      return { error: `This build can't be approved (${verdict.reason}). Ask Otto to propose it again.` };
+    }
+
+    // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
+    // now re-reads a consumed approval (verifyApproval → "consumed") and is refused. The per-step
+    // MetaActionExecution unique index is the real exactly-once serialization point.
+    await consumeApproval(cardId, payload, new Date().toISOString());
+
+    const result = await runAdBuild(ownerId, cardId);
+    // Stamp buildOutcome onto the card so launchAdDraft can read it.
+    // Use record() so a stamp failure never masks the build result.
+    await record(ownerId, cardId, null, {
+      built: result.state === "done",
+      createdIds: result.createdIds,
+      state: result.state,
+      ...(result.state === "needs_review" ? { reason: NEEDS_REVIEW_REASON } : {}),
+    });
+    return { ok: true, state: result.state, createdIds: result.createdIds };
   });
-  if (!message || !message.payload) return { error: "That build card no longer exists." };
-  const payload = message.payload as unknown as MetaAdBuildCardPayload;
-
-  // Kill-switch / canWrite gate BEFORE consuming the single-use approval. runAdBuild throws
-  // KILL_SWITCH when adsWritesPaused — if we consumed first, that throw would burn the approval
-  // forever (card un-approvable, nothing built). Check up front so the approval survives.
-  const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
-  if (!conn || conn.canWrite !== true) {
-    return { error: "Meta isn't connected for ad changes — reconnect and try again." };
-  }
-  if (conn.adsWritesPaused === true) {
-    return { error: "Ad changes are paused (kill-switch on). Turn it off in Connections and try again." };
-  }
-
-  const verdict = verifyApproval(payload.approval, bindingSteps(payload), ownerId, new Date().toISOString());
-  if (!verdict.ok) {
-    return { error: `This build can't be approved (${verdict.reason}). Ask Otto to propose it again.` };
-  }
-
-  // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
-  // now re-reads a consumed approval (verifyApproval → "consumed") and is refused. The per-step
-  // MetaActionExecution unique index is the real exactly-once serialization point.
-  await consumeApproval(cardId, payload, new Date().toISOString());
-
-  const result = await runAdBuild(ownerId, cardId);
-  // Stamp buildOutcome onto the card so launchAdDraft can read it.
-  // Use record() so a stamp failure never masks the build result.
-  await record(ownerId, cardId, null, {
-    built: result.state === "done",
-    createdIds: result.createdIds,
-    state: result.state,
-    ...(result.state === "needs_review" ? { reason: NEEDS_REVIEW_REASON } : {}),
-  });
-  return { ok: true, state: result.state, createdIds: result.createdIds };
 }
 
 /**
@@ -448,48 +452,51 @@ export async function launchAdDraft(
 ): Promise<{ actionCardId: string } | { metaFallback: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ actionCardId: string } | { metaFallback: true } | { error: string }> => {
+    const { ownerId } = gate;
 
-  const message = await prisma.chatMessage.findFirst({
-    where: { id: cardId, ownerId, kind: "BUILD_CARD" },
-    select: { threadId: true, payload: true },
+    const message = await prisma.chatMessage.findFirst({
+      where: { id: cardId, ownerId, kind: "BUILD_CARD" },
+      select: { threadId: true, payload: true },
+    });
+    if (!message || !message.payload) return { error: "That build card no longer exists." };
+
+    const payload = message.payload as unknown as MetaAdBuildCardPayload;
+    const buildOutcome = payload.buildOutcome as
+      | { built?: boolean; state?: string; createdIds?: Record<string, string> }
+      | undefined;
+
+    if (!buildOutcome || buildOutcome.built !== true || buildOutcome.state !== "done") {
+      return { error: "The draft hasn't been built yet — approve it first." };
+    }
+
+    const createdIds = buildOutcome.createdIds ?? {};
+    const { campaignId, adsetId, adId } = createdIds;
+
+    if (!campaignId || !adsetId || !adId) {
+      return { metaFallback: true };
+    }
+
+    const { proposeMetaActionForOwner } = await import("./meta-propose");
+
+    const result = await proposeMetaActionForOwner(ownerId, message.threadId, {
+      planTitle: `Launch "${payload.goal || "ad"}"`,
+      steps: [
+        { op: "resume", targetId: campaignId, intent: {} },
+        { op: "resume", targetId: adsetId, intent: {} },
+        { op: "resume", targetId: adId, intent: {} },
+      ],
+    });
+
+    if ("notConnected" in result) return { error: "Meta isn't connected — reconnect and try again." };
+    if ("needsReconnect" in result) return { error: "Meta token expired — reconnect and try again." };
+    if ("transientError" in result) return { error: "Couldn't reach Meta just now — try again in a moment." };
+    if ("unknownTargets" in result) return { metaFallback: true };
+    if ("invalidSteps" in result) return { metaFallback: true };
+
+    return { actionCardId: result.cardId };
   });
-  if (!message || !message.payload) return { error: "That build card no longer exists." };
-
-  const payload = message.payload as unknown as MetaAdBuildCardPayload;
-  const buildOutcome = payload.buildOutcome as
-    | { built?: boolean; state?: string; createdIds?: Record<string, string> }
-    | undefined;
-
-  if (!buildOutcome || buildOutcome.built !== true || buildOutcome.state !== "done") {
-    return { error: "The draft hasn't been built yet — approve it first." };
-  }
-
-  const createdIds = buildOutcome.createdIds ?? {};
-  const { campaignId, adsetId, adId } = createdIds;
-
-  if (!campaignId || !adsetId || !adId) {
-    return { metaFallback: true };
-  }
-
-  const { proposeMetaActionForOwner } = await import("./meta-propose");
-
-  const result = await proposeMetaActionForOwner(ownerId, message.threadId, {
-    planTitle: `Launch "${payload.goal || "ad"}"`,
-    steps: [
-      { op: "resume", targetId: campaignId, intent: {} },
-      { op: "resume", targetId: adsetId, intent: {} },
-      { op: "resume", targetId: adId, intent: {} },
-    ],
-  });
-
-  if ("notConnected" in result) return { error: "Meta isn't connected — reconnect and try again." };
-  if ("needsReconnect" in result) return { error: "Meta token expired — reconnect and try again." };
-  if ("transientError" in result) return { error: "Couldn't reach Meta just now — try again in a moment." };
-  if ("unknownTargets" in result) return { metaFallback: true };
-  if ("invalidSteps" in result) return { metaFallback: true };
-
-  return { actionCardId: result.cardId };
 }
 
 /**

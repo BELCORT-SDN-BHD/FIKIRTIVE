@@ -122,7 +122,10 @@ const {
   };
 });
 
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mockResolveDisabled }));
 vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {} }));
 

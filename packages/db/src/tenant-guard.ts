@@ -5,7 +5,11 @@ import { getPrincipal } from "./principal.js";
  *
  * Ambient user/tenant context pins reads and writes to its ownerId. Tenant-less system work may
  * read across owners, but must enter runAsTenant before writing. Raw SQL and nested relation writes
- * remain outside Prisma query-extension coverage and require focused tests at their boundaries.
+ * are not TENANT-SCOPED here and still require focused tests at their boundaries — but note they
+ * are not invisible to a Prisma extension either: a raw operation reaches a top-level
+ * `query.$allOperations` hook with `model === undefined` (measured, #743), and a nested relation
+ * write always arrives inside an outer write verb. {@link withReadOnlyFrameGuard} uses exactly
+ * those two facts.
  * Every schema model carrying ownerId must appear here or in TENANT_GUARD_EXEMPT; the coverage
  * test enforces that choice. */
 export const TENANT_MODELS = new Set([
@@ -217,14 +221,80 @@ function dataRewritesOwner(data: unknown): boolean {
 }
 
 /**
+ * Refuse EVERY write, on EVERY model, under a read-only system frame.
+ *
+ * WHY A SEPARATE LAYER (#743 judge r1, P1). The tenant layer below returns early for anything
+ * outside TENANT_MODELS — that is its whole job, and it is correct. But it means a check written
+ * inside it can never see `CreditAccount`, `CreditLedger`, `RuntimeConfig`, or the deliberately
+ * exempt models (`ActionEvent`, `ModelDirective`, …), and never sees raw SQL at all (a `$allModels`
+ * hook is not called for an operation with no model). A "this frame cannot write" claim placed
+ * there would be true only of tenant tables, which is not what the words say. So the claim lives
+ * HERE, in a layer every operation passes through.
+ *
+ * WHAT IT COVERS, and why the coverage is structural rather than a list:
+ *  - It keys on the OPERATION VERB, not on the shape of `args`. A nested relation write hides in
+ *    the DATA of an outer verb (`update({ data: { refs: { create: … } } })`, `connect`,
+ *    `disconnect`, `deleteMany` inside an update) — every one of those still arrives here as
+ *    `update` / `upsert` / `create`, so refusing the verb refuses the nest with it. There is no
+ *    way to reach a nested write without an outer write verb.
+ *  - `model === undefined` is how a RAW operation arrives ($queryRaw / $executeRaw / their
+ *    Unsafe and Typed variants / $runCommandRaw). Raw SQL is opaque to any argument inspection —
+ *    `SELECT … ; UPDATE …` is one string — so the whole class is refused, reads included. The
+ *    admin read model issues no raw SQL, so this costs nothing and removes the analysis.
+ *  - Interactive `$transaction(cb)` dispatches each inner operation through this extension, so a
+ *    write cannot be smuggled inside one.
+ *
+ * Nothing here changes what a NON read-only frame may do: `readOnly` is false for every other
+ * system reason, so the worker's reapers and dispatchers are untouched.
+ */
+function withReadOnlyFrameGuard<T extends object>(client: T): T {
+  return (client as any).$extends({
+    query: {
+      async $allOperations({ model, operation, args, query }: any) {
+        const principal = getPrincipal();
+        // Read `readOnly` off ANY frame, not just a system one. Since #743 r2 the restriction is
+        // inherited by every nested frame including a user frame, so keying on `kind === "system"`
+        // would let exactly the frame that inherited it slip through.
+        if (!principal?.readOnly) return query(args);
+        const frame = principal.kind === "system" ? principal.reason : `user:${principal.ownerId}`;
+        if (model === undefined) {
+          throw new Error(
+            `[tenant-guard] ${operation} is raw SQL — refused under the read-only frame "${frame}"`,
+          );
+        }
+        if (WRITE_OPS.has(operation)) {
+          throw new Error(
+            `[tenant-guard] ${model}.${operation} is a write — refused under the read-only frame "${frame}"`,
+          );
+        }
+        return query(args);
+      },
+    },
+  }) as T;
+}
+
+/**
  * Apply tenant scope at the Prisma boundary.
  *
  * - A user or tenant-scoped system frame is authoritative: every operation is pinned to its
  *   ownerId, including unique reads and writes.
  * - A tenant-less system frame may scan, but must enter runAsTenant before writing.
  * - Older unframed call sites retain the explicit-ownerId backstop while they migrate.
+ * - A READ-ONLY system frame writes nothing at all — see {@link withReadOnlyFrameGuard}.
+ *
+ * ORDER IS LOAD-BEARING, and it is the opposite of what reading `$extends` suggests. MEASURED
+ * (read-only-system-frame.test.ts, "refuses a write to a TENANT_MODELS table"): the read-only
+ * layer must be applied FIRST for its hook to run FIRST. Applied the other way round, a
+ * tenant-model write under the admin frame is still refused — but by the tenant layer's older
+ * "requires runAsTenant before system writes", so the same violation reports two different
+ * messages depending on the table. Correctness holds either way; this order makes the refusal
+ * say the same thing every time, which is what makes the invariant legible.
  */
 export function withTenantGuard<T extends object>(client: T): T {
+  return withTenantScope(withReadOnlyFrameGuard(client));
+}
+
+function withTenantScope<T extends object>(client: T): T {
   return (client as any).$extends({
     query: {
       $allModels: {

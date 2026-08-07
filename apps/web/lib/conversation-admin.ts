@@ -1,17 +1,26 @@
 import "server-only";
 import { prisma } from "@fikirtive/db";
+import { runAsSystem } from "@fikirtive/db/principal";
 import { FOUNDER_OWNER_ID } from "@fikirtive/core";
 
 /**
  * Admin "Otto conversations" viewer (founder ops tool — section: content).
  * READ-ONLY, platform-wide (cross-tenant by design, requireRole-gated at the page).
  *
- * Two tenant-guard rules shape every query here:
- *   - findUnique / groupBy are EXEMPT → single-thread lookups use findUnique, message
- *     counts use groupBy.
- *   - findMany is CHECKED → every list query carries an explicit ownerId predicate
- *     (`ownerId: { in: orgIds }`, or `ownerId: thread.ownerId`). So the reads are
- *     cross-tenant yet each query is pinned to a known owner set — never an unscoped scan.
+ * HOW THE TENANT GUARD SEES THIS FILE (corrected 2026-08-08, #738):
+ *   NOTHING IS EXEMPT ANY MORE. `6b6c537c` (#626) put findUnique / count / aggregate / groupBy
+ *   into the guard's SCOPED_WHERE_OPS alongside findMany, and this comment — which said
+ *   "findUnique / groupBy are EXEMPT" — outlived that change by four days while every read
+ *   below threw. Both exports therefore declare what they actually are: a founder-only
+ *   PLATFORM READ, run under `runAsSystem("admin:platform-read", …)`. That name is on the
+ *   guard's READ_ONLY_SYSTEM_REASONS list, so the frame may scan across owners and is REFUSED
+ *   every write — any model (tenant, exempt, or unguarded), nested relation writes, and raw SQL
+ *   included. Not "we checked and it only reads": it cannot write. See
+ *   `packages/db/src/__tests__/read-only-system-frame.test.ts`.
+ *
+ *   The explicit owner predicates below stay as they are: `ownerId: { in: orgIds }` /
+ *   `ownerId: thread.ownerId` keep each query pinned to a known owner set rather than an
+ *   unbounded scan. They are a bound on the read, not the thing that satisfies the guard.
  *
  * ChatThread has no Prisma relation to Project or ChatMessage (only a projectId scalar),
  * so project names + message counts are fetched separately.
@@ -78,114 +87,118 @@ function ownerLabel(map: Map<string, string>, ownerId: string): string {
 }
 
 export async function listConversations(): Promise<ConversationRow[]> {
-  // The most recent threads across ALL tenants, bounded by take. `ownerId: { not: "" }`
-  // matches every row (ownerId is always a non-empty org id) AND satisfies the tenant-guard
-  // (the where carries an ownerId predicate) — so we get a cross-tenant read with NO org scan
-  // and no unbounded IN list as tenants grow.
-  const threads = await prisma.chatThread.findMany({
-    where: { ownerId: { not: "" }, deletedAt: null },
-    orderBy: { updatedAt: "desc" },
-    take: LIST_LIMIT,
-    select: { id: true, ownerId: true, projectId: true, title: true, updatedAt: true },
+  return runAsSystem("admin:platform-read", async (): Promise<ConversationRow[]> => {
+    // The most recent threads across ALL tenants, bounded by take. `ownerId: { not: "" }`
+    // matches every row (ownerId is always a non-empty org id) AND satisfies the tenant-guard
+    // (the where carries an ownerId predicate) — so we get a cross-tenant read with NO org scan
+    // and no unbounded IN list as tenants grow.
+    const threads = await prisma.chatThread.findMany({
+      where: { ownerId: { not: "" }, deletedAt: null },
+      orderBy: { updatedAt: "desc" },
+      take: LIST_LIMIT,
+      select: { id: true, ownerId: true, projectId: true, title: true, updatedAt: true },
+    });
+    if (threads.length === 0) return [];
+
+    const threadIds = threads.map((t) => t.id);
+    const ownerIds = [...new Set(threads.map((t) => t.ownerId))];
+    const projectIds = [...new Set(threads.map((t) => t.projectId))];
+    const [projects, counts, emails] = await Promise.all([
+      // project names — ownerId present → guard-safe
+      prisma.project.findMany({ where: { id: { in: projectIds }, ownerId: { in: ownerIds } }, select: { id: true, name: true } }),
+      // message counts — a platform-wide groupBy, legal under this file's system frame
+      prisma.chatMessage.groupBy({ by: ["threadId"], where: { threadId: { in: threadIds }, deletedAt: null }, _count: { _all: true } }),
+      ownerEmailMap(ownerIds),
+    ]);
+    const nameByProject = new Map(projects.map((p) => [p.id, p.name]));
+    const countByThread = new Map(counts.map((c) => [c.threadId, c._count._all]));
+
+    return threads.map((t) => ({
+      threadId: t.id,
+      projectId: t.projectId,
+      projectName: nameByProject.get(t.projectId) ?? "(deleted project)",
+      ownerId: t.ownerId,
+      ownerEmail: ownerLabel(emails, t.ownerId),
+      title: t.title,
+      messageCount: countByThread.get(t.id) ?? 0,
+      lastActiveAt: t.updatedAt.toISOString(),
+    }));
   });
-  if (threads.length === 0) return [];
-
-  const threadIds = threads.map((t) => t.id);
-  const ownerIds = [...new Set(threads.map((t) => t.ownerId))];
-  const projectIds = [...new Set(threads.map((t) => t.projectId))];
-  const [projects, counts, emails] = await Promise.all([
-    // project names — ownerId present → guard-safe
-    prisma.project.findMany({ where: { id: { in: projectIds }, ownerId: { in: ownerIds } }, select: { id: true, name: true } }),
-    // message counts — groupBy is guard-exempt
-    prisma.chatMessage.groupBy({ by: ["threadId"], where: { threadId: { in: threadIds }, deletedAt: null }, _count: { _all: true } }),
-    ownerEmailMap(ownerIds),
-  ]);
-  const nameByProject = new Map(projects.map((p) => [p.id, p.name]));
-  const countByThread = new Map(counts.map((c) => [c.threadId, c._count._all]));
-
-  return threads.map((t) => ({
-    threadId: t.id,
-    projectId: t.projectId,
-    projectName: nameByProject.get(t.projectId) ?? "(deleted project)",
-    ownerId: t.ownerId,
-    ownerEmail: ownerLabel(emails, t.ownerId),
-    title: t.title,
-    messageCount: countByThread.get(t.id) ?? 0,
-    lastActiveAt: t.updatedAt.toISOString(),
-  }));
 }
 
 export async function getConversation(threadId: string): Promise<ConversationDetail | null> {
-  // findUnique is guard-exempt (unique-key access) — the cross-tenant single read.
-  const thread = await prisma.chatThread.findUnique({
-    where: { id: threadId },
-    select: { id: true, ownerId: true, projectId: true, title: true, createdAt: true, deletedAt: true },
-  });
-  if (!thread || thread.deletedAt) return null; // deleted threads are not surfaced (matches app behavior)
+  return runAsSystem("admin:platform-read", async (): Promise<ConversationDetail | null> => {
+    // the cross-tenant single read — legal under this file's system frame, not by exemption.
+    const thread = await prisma.chatThread.findUnique({
+      where: { id: threadId },
+      select: { id: true, ownerId: true, projectId: true, title: true, createdAt: true, deletedAt: true },
+    });
+    if (!thread || thread.deletedAt) return null; // deleted threads are not surfaced (matches app behavior)
 
-  const [project, rows, emails] = await Promise.all([
-    prisma.project.findUnique({ where: { id: thread.projectId }, select: { name: true } }), // exempt
-    // Messages pinned to THIS thread's owner (ownerId present → guard-safe), live only, bounded.
-    prisma.chatMessage.findMany({
-      where: { threadId, ownerId: thread.ownerId, deletedAt: null },
-      orderBy: { seq: "asc" },
-      take: MESSAGE_LIMIT,
-      select: { id: true, role: true, kind: true, seq: true, text: true, payload: true, genJobId: true, createdAt: true },
-    }),
-    ownerEmailMap([thread.ownerId]),
-  ]);
+    const [project, rows, emails] = await Promise.all([
+      prisma.project.findUnique({ where: { id: thread.projectId }, select: { name: true } }),
+      // Messages pinned to THIS thread's owner (ownerId present → guard-safe), live only, bounded.
+      prisma.chatMessage.findMany({
+        where: { threadId, ownerId: thread.ownerId, deletedAt: null },
+        orderBy: { seq: "asc" },
+        take: MESSAGE_LIMIT,
+        select: { id: true, role: true, kind: true, seq: true, text: true, payload: true, genJobId: true, createdAt: true },
+      }),
+      ownerEmailMap([thread.ownerId]),
+    ]);
 
-  // Batch-resolve GenJob status + cost for GEN_RESULT rows (pinned to the owner → guard-safe).
-  const jobIds = rows.map((r) => r.genJobId).filter((x): x is string => !!x);
-  const jobs = jobIds.length
-    ? await prisma.genJob.findMany({
-        where: { id: { in: jobIds }, ownerId: thread.ownerId },
-        select: { id: true, status: true, spentUsd: true },
-      })
-    : [];
-  const jobById = new Map(jobs.map((j) => [j.id, j]));
+    // Batch-resolve GenJob status + cost for GEN_RESULT rows (pinned to the owner → guard-safe).
+    const jobIds = rows.map((r) => r.genJobId).filter((x): x is string => !!x);
+    const jobs = jobIds.length
+      ? await prisma.genJob.findMany({
+          where: { id: { in: jobIds }, ownerId: thread.ownerId },
+          select: { id: true, status: true, spentUsd: true },
+        })
+      : [];
+    const jobById = new Map(jobs.map((j) => [j.id, j]));
 
-  const messages: ConversationMessage[] = rows.map((m) => {
-    const base: ConversationMessage = {
-      id: m.id,
-      role: m.role as ConversationMessage["role"],
-      kind: m.kind as ConversationMessage["kind"],
-      seq: m.seq,
-      text: m.text,
-      createdAt: m.createdAt.toISOString(),
+    const messages: ConversationMessage[] = rows.map((m) => {
+      const base: ConversationMessage = {
+        id: m.id,
+        role: m.role as ConversationMessage["role"],
+        kind: m.kind as ConversationMessage["kind"],
+        seq: m.seq,
+        text: m.text,
+        createdAt: m.createdAt.toISOString(),
+      };
+      if (m.kind === "PLAN" && m.payload && typeof m.payload === "object") {
+        const steps = (m.payload as { planSteps?: unknown }).planSteps;
+        if (Array.isArray(steps)) base.planSteps = steps.filter((s): s is string => typeof s === "string");
+      } else if (m.kind === "GEN_CARD" && m.payload && typeof m.payload === "object") {
+        const p = m.payload as Record<string, unknown>;
+        const capability = p.kind === "video" ? "Video" : "Image";
+        base.card = {
+          capability,
+          prompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : "",
+          estimatedPriceUsd: typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : null,
+        };
+      } else if (m.kind === "GEN_RESULT") {
+        const p = (m.payload ?? {}) as Record<string, unknown>;
+        const job = m.genJobId ? jobById.get(m.genJobId) : undefined;
+        base.result = {
+          capability: p.kind === "video" ? "Video" : "Image",
+          genJobId: m.genJobId,
+          status: job?.status ?? null,
+          spentUsd: typeof job?.spentUsd === "number" ? job.spentUsd : null,
+        };
+      }
+      return base;
+    });
+
+    return {
+      threadId: thread.id,
+      title: thread.title,
+      projectId: thread.projectId,
+      projectName: project?.name ?? "(deleted project)",
+      ownerId: thread.ownerId,
+      ownerEmail: ownerLabel(emails, thread.ownerId),
+      createdAt: thread.createdAt.toISOString(),
+      messages,
     };
-    if (m.kind === "PLAN" && m.payload && typeof m.payload === "object") {
-      const steps = (m.payload as { planSteps?: unknown }).planSteps;
-      if (Array.isArray(steps)) base.planSteps = steps.filter((s): s is string => typeof s === "string");
-    } else if (m.kind === "GEN_CARD" && m.payload && typeof m.payload === "object") {
-      const p = m.payload as Record<string, unknown>;
-      const capability = p.kind === "video" ? "Video" : "Image";
-      base.card = {
-        capability,
-        prompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : "",
-        estimatedPriceUsd: typeof p.estimatedPriceUsd === "number" ? p.estimatedPriceUsd : null,
-      };
-    } else if (m.kind === "GEN_RESULT") {
-      const p = (m.payload ?? {}) as Record<string, unknown>;
-      const job = m.genJobId ? jobById.get(m.genJobId) : undefined;
-      base.result = {
-        capability: p.kind === "video" ? "Video" : "Image",
-        genJobId: m.genJobId,
-        status: job?.status ?? null,
-        spentUsd: typeof job?.spentUsd === "number" ? job.spentUsd : null,
-      };
-    }
-    return base;
   });
-
-  return {
-    threadId: thread.id,
-    title: thread.title,
-    projectId: thread.projectId,
-    projectName: project?.name ?? "(deleted project)",
-    ownerId: thread.ownerId,
-    ownerEmail: ownerLabel(emails, thread.ownerId),
-    createdAt: thread.createdAt.toISOString(),
-    messages,
-  };
 }
