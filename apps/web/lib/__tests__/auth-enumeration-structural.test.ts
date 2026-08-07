@@ -1,42 +1,63 @@
 /**
- * #678 r2 — the sign-in doors are indistinguishable in SHAPE, not just in words.
+ * #678 r3 — the sign-in request path performs the SAME WORK for every address.
  *
- * Round 1 made the two answers read identically and stopped there. A cross-family review found
- * that identical words are only half of it: the request still BEHAVED differently.
+ * Three rounds, three leaks, one root. Round 1 made the two answers read alike, so the CLOCK gave
+ * it away. Round 2 moved delivery to the background, so the background job's SYNCHRONOUS PREFIX
+ * gave it away: an address on FOUNDER_ADMIN_EMAILS or AUTH_ALLOWED_EMAILS resolved out of a string
+ * list without ever suspending, so the budget check and the send were dispatched before the
+ * response was built, while an address that had to be looked up in the database stopped at the
+ * query. Same words, different amount of work.
  *
- *   1. TIMING. An address with no account was one allowlist query and out. An address with an
- *      account wrote a verification token, queried again, then waited on the email network —
- *      five slow replies and then a suddenly fast sixth once the per-address cap kicked in.
- *      "Slow ×5 then fast" is a fingerprint of an account existing.
- *   2. FAILURE. An address with no account always succeeded, because nothing was ever handed to
- *      the mail provider on its behalf. An address with an account surfaced `delivery_failed`
- *      the moment the shared provider answered 429 or 5xx — and any public sending surface can
- *      push a shared provider into 429, so that was a signal an attacker could CREATE.
- *   3. PASSWORD. Our own before-hook refused an unknown address before Better Auth ran, walking
- *      straight past Better Auth's dummy password hash — the constant-time step that exists so a
- *      missing user costs the same as a wrong password (sign-in.mjs: `await
- *      ctx.context.password.hash(password)` on the not-found branch).
+ * So this file stops testing outcomes and tests the SHAPE. The central case (①) records every
+ * await and every database call the server action makes, for three addresses chosen to be as
+ * different as the system allows — one on an environment list (answerable with no I/O at all),
+ * one in the database allowlist (one query, a hit), one nobody has ever heard of (one query, a
+ * miss) — and demands the recorded sequences be identical item for item. A request that cannot
+ * be told apart cannot be timed apart.
  *
- * Timing is a poor thing to assert directly — a wall-clock threshold in CI is a flake generator.
- * So these tests assert the STRUCTURE that makes the timing equal, which is both stronger and
- * stable: what the request awaits, in what order, and that delivery is not part of it.
- *
- * The real Better Auth instance and the real database are used throughout: the claim is about
- * what the actual endpoint does, and a mock of the endpoint could not fail this suite.
+ * Real Better Auth, real database, real queue throughout; only the mail transport is a mock. A
+ * mocked endpoint could not fail these.
  */
-import { describe, it, expect, afterAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterAll, beforeAll, beforeEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 // ── the trace ────────────────────────────────────────────────────────────────────────────────
-// Every awaited step we can observe, in the order the request reached it. Populated by the two
-// wrappers below, both of which delegate to the REAL implementation.
+// Every awaited step and every database call we can observe, in the order it was reached. The
+// wrappers below all delegate to the REAL implementation — this records, it does not replace.
 const trace: string[] = [];
 
 const { mockSend } = vi.hoisted(() => ({ mockSend: vi.fn() }));
 
+vi.mock("@fikirtive/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@fikirtive/db")>();
+  return {
+    ...actual,
+    // Records at DISPATCH time (Prisma promises are lazy), which is exactly when the request
+    // would start paying for the query.
+    prisma: actual.prisma.$extends({
+      query: {
+        $allModels: {
+          async $allOperations({ model, operation, args, query }) {
+            trace.push(`db:${model}.${operation}`);
+            return query(args);
+          },
+        },
+      },
+    }),
+  };
+});
+
 vi.mock("@/lib/email", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/email")>();
-  return { ...actual, emailPort: { send: mockSend } };
+  return {
+    ...actual,
+    emailPort: {
+      send: (...args: unknown[]) => {
+        trace.push("email-send");
+        return mockSend(...args);
+      },
+    },
+  };
 });
 
 vi.mock("@/lib/allowlist", async (importOriginal) => {
@@ -54,52 +75,150 @@ vi.mock("@/lib/better-auth/sender", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/better-auth/sender")>();
   return {
     ...actual,
-    dispatchAuthEmail: (job: Parameters<typeof actual.dispatchAuthEmail>[0]) => {
-      trace.push("hand-off-to-background");
-      return actual.dispatchAuthEmail(job);
+    enqueueAuthEmail: (job: Parameters<typeof actual.enqueueAuthEmail>[0]) => {
+      trace.push("enqueue");
+      return actual.enqueueAuthEmail(job);
     },
   };
 });
 
 const mockHeaders = vi.fn();
-vi.mock("next/headers", () => ({ headers: mockHeaders }));
+vi.mock("next/headers", () => ({
+  headers: async () => {
+    trace.push("headers");
+    return mockHeaders();
+  },
+}));
 
-const WITH_ACCOUNT = `p678-known-${randomUUID()}@fikirtive.test`;
-const NO_ACCOUNT = `p678-stranger-${randomUUID()}@fikirtive.test`;
-// The per-address cap is real and module-scoped, so the endpoint-level case below uses its own
-// pair rather than spending what the cases above already spent.
-const WITH_ACCOUNT_HTTP = `p678-known-http-${randomUUID()}@fikirtive.test`;
-const NO_ACCOUNT_HTTP = `p678-stranger-http-${randomUUID()}@fikirtive.test`;
+// The three address kinds, chosen so the access question costs as differently as it can.
+const ENV_ALLOWED = `p678-env-${randomUUID()}@fikirtive.test`;   // answered from a string list
+const DB_ALLOWED = `p678-db-${randomUUID()}@fikirtive.test`;     // one query, a hit
+const UNKNOWN = `p678-unknown-${randomUUID()}@fikirtive.test`;   // one query, a miss
+
+// The password door needs a REAL account with a REAL credential (see ⑤).
+const PASSWORD_ACCOUNT = `p678-pw-${randomUUID()}@fikirtive.test`;
+const PASSWORD_UNKNOWN = `p678-pw-stranger-${randomUUID()}@fikirtive.test`;
+// A real account with a real credential that is on NO list — the fail-closed gate's subject.
+const PASSWORD_UNLISTED = `p678-pw-unlisted-${randomUUID()}@fikirtive.test`;
+const REAL_PASSWORD = "the-actual-password-9f2a";
+const WRONG_PASSWORD = "not-the-password";
 
 // Set BEFORE the dynamic imports below, not in a hook: better-auth reads these at construction,
 // and the imports are evaluated while the module loads — long before beforeAll runs.
 process.env.BETTER_AUTH_SECRET = "x".repeat(40);
 process.env.BETTER_AUTH_URL = "http://localhost:3100";
-process.env.AUTH_ALLOWED_EMAILS = `${WITH_ACCOUNT},${WITH_ACCOUNT_HTTP}`;
+process.env.AUTH_ALLOWED_EMAILS = `${ENV_ALLOWED},${PASSWORD_ACCOUNT}`;
 process.env.FOUNDER_ADMIN_EMAILS = "noone@fikirtive.test";
+
+/** The credential accounts ⑤ creates; declared here so afterAll can clean them up. */
+const createdUserIds: string[] = [];
 
 const { prisma } = await import("@fikirtive/db");
 const { auth } = await import("@/lib/better-auth/server");
-const { authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+const { authEmailQueueSettled, __resetAuthEmailCapsForTests } = await import(
+  "@/lib/better-auth/sender"
+);
+const { __resetMagicLinkThrottleForTests } = await import("@/lib/better-auth/magic-link-request");
 const { requestMagicLink } = await import("@/app/login/actions");
+const { POST: betterAuthPost } = await import("@/app/api/better-auth/[...all]/route");
 
 const NEUTRAL = {
   status: "success",
   message: "If this email has access, a sign-in link is on its way — check your inbox.",
 };
 
-const verificationCount = () => prisma.betterAuthVerification.count();
+const CALLER = new Headers({ origin: "http://localhost:3100", "x-forwarded-for": "203.0.113.10" });
+
+/** Rows minted for one address. The token lives in `identifier`; the ADDRESS lives in `value`
+ *  (magic-link/index.mjs stores `JSON.stringify({email, name})` there), which is why an earlier
+ *  version of this file matched on the wrong column and never cleaned anything up. */
+const rowsFor = (email: string) =>
+  prisma.betterAuthVerification.count({ where: { value: { contains: email } } });
+
+beforeAll(async () => {
+  await prisma.allowedEmail.upsert({
+    where: { email: DB_ALLOWED },
+    create: { email: DB_ALLOWED, status: "active", invitedBy: "p678-test@fikirtive.test" },
+    update: { status: "active" },
+  });
+});
 
 beforeEach(() => {
   trace.length = 0;
   mockSend.mockReset();
   mockSend.mockResolvedValue(undefined);
   mockHeaders.mockReset();
-  mockHeaders.mockResolvedValue(new Headers({ origin: "http://localhost:3100" }));
+  mockHeaders.mockReturnValue(CALLER);
+  // Both budgets are process memory with an hour-long window. Reset them so each case starts
+  // from a known state — this file is about the SHAPE of the path, and the two files that own
+  // the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
+  __resetMagicLinkThrottleForTests();
+  __resetAuthEmailCapsForTests();
 });
 
-// ── ① the response does not wait on delivery ─────────────────────────────────────────────────
-describe("#678 r2 ① — the request answers while the email is still in flight", () => {
+// ── ① the request path is blind to what kind of address it was handed ────────────────────────
+describe("#678 r3 ① — the request performs identical work for every kind of address", () => {
+  it("records the same awaits and the same database calls for all three", async () => {
+    const walk = async (email: string) => {
+      trace.length = 0;
+      const answer = await requestMagicLink({ email, callbackURL: "/" });
+      const recorded = [...trace]; // snapshot AT THE MOMENT the merchant has their answer
+      await authEmailQueueSettled(); // let the background finish before the next address starts
+      return { answer, recorded };
+    };
+
+    const env = await walk(ENV_ALLOWED);
+    const db = await walk(DB_ALLOWED);
+    const unknown = await walk(UNKNOWN);
+
+    // The central claim. Item for item, in order.
+    expect(db.recorded).toEqual(env.recorded);
+    expect(unknown.recorded).toEqual(env.recorded);
+
+    // And what that sequence IS: read the caller, hand over an opaque job. No allowlist lookup,
+    // no database call, no send — none of the work whose cost depends on the answer.
+    expect(env.recorded).toEqual(["headers", "enqueue"]);
+
+    // The answers are the same too, which was round 1's claim and is still required.
+    expect(env.answer).toEqual(NEUTRAL);
+    expect(db.answer).toEqual(NEUTRAL);
+    expect(unknown.answer).toEqual(NEUTRAL);
+  });
+
+  it("still delivers to exactly the two addresses that have access, silently", async () => {
+    for (const email of [ENV_ALLOWED, DB_ALLOWED, UNKNOWN]) {
+      await requestMagicLink({ email, callbackURL: "/" });
+      await authEmailQueueSettled();
+    }
+    const written = mockSend.mock.calls.map((c) => (c[0] as { to: string }).to).sort();
+    expect(written).toEqual([DB_ALLOWED, ENV_ALLOWED].sort());
+  });
+});
+
+// ── ② an address without access never causes a verification row ──────────────────────────────
+describe("#678 r3 ② — anonymous requests do not grow the verification table", () => {
+  it("writes nothing for ten unknown addresses, and exactly one for an address with access", async () => {
+    const before = await prisma.betterAuthVerification.count();
+    const strangers = Array.from({ length: 10 }, () => `p678-swarm-${randomUUID()}@fikirtive.test`);
+    for (const email of strangers) await requestMagicLink({ email, callbackURL: "/" });
+    await authEmailQueueSettled();
+
+    // The token is minted AFTER the access check now, so an address nobody invited never
+    // reaches Better Auth at all.
+    expect(await prisma.betterAuthVerification.count()).toBe(before);
+    for (const email of strangers) expect(await rowsFor(email)).toBe(0);
+
+    // Control: a press from an address that DOES have access mints one, so the zero above is
+    // the gate working and not the door being nailed shut.
+    const controlBefore = await rowsFor(ENV_ALLOWED);
+    await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
+    await authEmailQueueSettled();
+    expect((await rowsFor(ENV_ALLOWED)) - controlBefore).toBe(1);
+  });
+});
+
+// ── ③ the response does not wait on delivery ─────────────────────────────────────────────────
+describe("#678 r3 ③ — the request answers while the email is still in flight", () => {
   it("resolves with the neutral success before emailPort.send has settled", async () => {
     let release!: () => void;
     const sendStarted = new Promise<void>((resolveStarted) => {
@@ -112,62 +231,27 @@ describe("#678 r2 ① — the request answers while the email is still in flight
       );
     });
 
-    // RED before r2: sendMagicLink AWAITED the send, so this line could not resolve until
-    // `release()` had been called — the request's clock was the mail provider's clock.
-    const result = await requestMagicLink({ email: WITH_ACCOUNT, callbackURL: "/" });
+    const result = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
     expect(result).toEqual(NEUTRAL);
+    // Nothing about the job had even STARTED at that point — the queue drains on a macrotask.
+    expect(trace).toEqual(["headers", "enqueue"]);
 
     await sendStarted;
-    // The send is genuinely still open at the moment the merchant already has their answer.
     let settled = false;
-    void authEmailDispatchesSettled().then(() => {
+    void authEmailQueueSettled().then(() => {
       settled = true;
     });
     await Promise.resolve();
     expect(settled).toBe(false);
 
     release();
-    await authEmailDispatchesSettled();
+    await authEmailQueueSettled();
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 });
 
-// ── ② both doors await the same steps, in the same order ─────────────────────────────────────
-describe("#678 r2 ② — an address with an account and one without walk the same path", () => {
-  it("awaits an identical step sequence and leaves the same trace in the database", async () => {
-    const before1 = await verificationCount();
-    const known = await requestMagicLink({ email: WITH_ACCOUNT, callbackURL: "/" });
-    const knownTrace = [...trace]; // snapshot AT THE MOMENT the request answered
-    const knownRows = (await verificationCount()) - before1;
-
-    trace.length = 0;
-    const before2 = await verificationCount();
-    const stranger = await requestMagicLink({ email: NO_ACCOUNT, callbackURL: "/" });
-    const strangerTrace = [...trace];
-    const strangerRows = (await verificationCount()) - before2;
-
-    // RED before r2: the stranger's trace was ["allowlist-lookup"] with 0 rows written, while
-    // the known address wrote a token, looked the allowlist up a second time and then waited on
-    // the network. Same words, different work.
-    expect(strangerTrace).toEqual(knownTrace);
-    // The hand-off, then the access lookup the BACKGROUND job starts — the same two steps in the
-    // same order for both addresses. (The lookup is *started* synchronously inside the hand-off
-    // and never awaited by the request; test ① is what proves the request does not wait for it.)
-    expect(knownTrace).toEqual(["hand-off-to-background", "allowlist-lookup"]);
-    expect(strangerRows).toBe(knownRows);
-    expect(knownRows).toBe(1); // a token is minted for BOTH — that is what makes the cost equal
-    expect(known).toEqual(NEUTRAL);
-    expect(stranger).toEqual(NEUTRAL);
-
-    await authEmailDispatchesSettled();
-    // Exactly one of the two addresses was actually written to — the gate did its job, silently.
-    expect(mockSend).toHaveBeenCalledTimes(1);
-    expect(mockSend.mock.calls[0][0].to).toBe(WITH_ACCOUNT);
-  });
-});
-
-// ── ③ a broken mail provider changes nothing the merchant can see ────────────────────────────
-describe("#678 r2 ③ — a 429/5xx from the shared mail provider is an operator signal only", () => {
+// ── ④ a broken mail provider changes nothing the merchant can see ────────────────────────────
+describe("#678 r3 ④ — a 429/5xx from the shared mail provider is an operator signal only", () => {
   it.each([
     ["429 (shared provider under pressure)", "retryable"],
     ["5xx (provider outage)", "retryable"],
@@ -177,91 +261,159 @@ describe("#678 r2 ③ — a 429/5xx from the shared mail provider is an operator
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     mockSend.mockRejectedValue(new EmailSendError("provider detail", kind as "retryable"));
 
-    // RED before r2: this came back {status:"error",reason:"delivery_failed",…} for the address
-    // WITH an account, while the stranger's identical request still succeeded.
-    const known = await requestMagicLink({ email: WITH_ACCOUNT, callbackURL: "/" });
-    const stranger = await requestMagicLink({ email: NO_ACCOUNT, callbackURL: "/" });
+    const known = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
+    const stranger = await requestMagicLink({ email: UNKNOWN, callbackURL: "/" });
     expect(known).toEqual(NEUTRAL);
     expect(known).toEqual(stranger);
 
-    await authEmailDispatchesSettled();
+    await authEmailQueueSettled();
 
     const lines = log.mock.calls.map((c) => c.join(" "));
     expect(lines.some((l) => l.includes("auth email delivery failed"))).toBe(true);
     for (const line of lines) {
-      expect(line).not.toContain(WITH_ACCOUNT);
-      expect(line).not.toContain(NO_ACCOUNT);
+      expect(line).not.toContain(ENV_ALLOWED);
+      expect(line).not.toContain(UNKNOWN);
     }
     log.mockRestore();
   });
 });
 
-// ── endpoint-level parity (moved here from better-auth-magic-link-neutral.test.ts) ───────────
-describe("#678 r2 — the HTTP endpoint answers both addresses identically", () => {
+// ── the HTTP door is the same door ───────────────────────────────────────────────────────────
+describe("#678 r3 — Better Auth's own endpoint answers every address identically too", () => {
   const post = (email: string) =>
-    auth.handler(
+    betterAuthPost(
       new Request("http://localhost:3100/api/better-auth/sign-in/magic-link", {
         method: "POST",
-        headers: { "content-type": "application/json", origin: "http://localhost:3100" },
+        headers: {
+          "content-type": "application/json",
+          origin: "http://localhost:3100",
+          "x-forwarded-for": "198.51.100.7",
+        },
         body: JSON.stringify({ email, callbackURL: "/" }),
       }),
     );
 
-  it("same status and same body for an address with an account and one without", async () => {
-    const known = await post(WITH_ACCOUNT_HTTP);
-    const stranger = await post(NO_ACCOUNT_HTTP);
+  it("same status, same body, and the same work for an address with access and one without", async () => {
+    trace.length = 0;
+    const known = await post(ENV_ALLOWED);
+    const knownTrace = [...trace];
+    await authEmailQueueSettled();
+
+    trace.length = 0;
+    const stranger = await post(UNKNOWN);
+    const strangerTrace = [...trace];
+    await authEmailQueueSettled();
 
     expect(known.status).toBe(200);
     expect(stranger.status).toBe(known.status);
     expect(await stranger.json()).toEqual(await known.json());
-
-    await authEmailDispatchesSettled();
-    expect(mockSend).toHaveBeenCalledTimes(1);
-    expect(mockSend.mock.calls[0][0].to).toBe(WITH_ACCOUNT_HTTP);
+    // The endpoint takes the same four steps the login page does — no `headers()` here, because
+    // the caller's headers arrived on the Request itself.
+    expect(strangerTrace).toEqual(knownTrace);
+    expect(knownTrace).toEqual(["enqueue"]);
   });
 });
 
-// ── ④ the password door uses Better Auth's own constant-time path ────────────────────────────
-describe("#678 r2 ④ — an unknown address at the password door reaches the dummy hash", () => {
-  it("lets Better Auth hash the submitted password instead of short-circuiting", async () => {
+// ── ⑤ the password door compares a REAL account against an unknown one ───────────────────────
+describe("#678 r3 ⑤ — a real account with a wrong password and an unknown address answer alike", () => {
+  beforeAll(async () => {
+    // Genuine BetterAuthUsers with genuine credential accounts. The previous version of this
+    // file only put the address on an environment list, so BOTH sides of the comparison were
+    // unknown users taking Better Auth's dummy-hash branch — the case that actually matters
+    // ("real account, wrong password" → password.verify) was never exercised.
     const ctx = await auth.$context;
-    const hash = vi.spyOn(ctx.password, "hash");
-
-    // RED before r2: our before-hook threw INVALID_EMAIL_OR_PASSWORD at :117-125, so Better
-    // Auth's not-found branch — and its dummy hash — never ran for an unknown address.
-    await expect(
-      auth.api.signInEmail({
-        body: { email: NO_ACCOUNT, password: "not-the-password" },
-        headers: new Headers({ origin: "http://localhost:3100" }),
-      }),
-    ).rejects.toMatchObject({ status: "UNAUTHORIZED" });
-
-    expect(hash).toHaveBeenCalledTimes(1);
-    expect(hash).toHaveBeenCalledWith("not-the-password");
-    hash.mockRestore();
+    for (const email of [PASSWORD_ACCOUNT, PASSWORD_UNLISTED]) {
+      const id = randomUUID();
+      createdUserIds.push(id);
+      await prisma.betterAuthUser.create({
+        data: { id, name: "Password Door", email, emailVerified: true },
+      });
+      await prisma.betterAuthAccount.create({
+        data: {
+          id: randomUUID(),
+          accountId: id,
+          providerId: "credential",
+          userId: id,
+          password: await ctx.password.hash(REAL_PASSWORD),
+        },
+      });
+    }
   });
 
-  it("answers an address WITH access and one without with the same refusal", async () => {
-    const call = (email: string) =>
-      auth.api
-        .signInEmail({
-          body: { email, password: "not-the-password" },
-          headers: new Headers({ origin: "http://localhost:3100" }),
-        })
-        .then(() => "unexpected-success")
-        .catch((e: { status?: string; body?: { code?: string; message?: string } }) =>
-          JSON.stringify({ status: e.status, code: e.body?.code, message: e.body?.message }),
-        );
+  const refusal = (email: string, password: string) =>
+    auth.api
+      .signInEmail({
+        body: { email, password },
+        headers: new Headers({ origin: "http://localhost:3100" }),
+      })
+      .then(() => "unexpected-success")
+      .catch((e: { status?: string; body?: { code?: string; message?: string } }) =>
+        JSON.stringify({ status: e.status, code: e.body?.code, message: e.body?.message }),
+      );
 
-    expect(await call(NO_ACCOUNT)).toBe(await call(WITH_ACCOUNT));
+  it("takes verify for the real account and hash for the unknown one — and answers the same", async () => {
+    const ctx = await auth.$context;
+    const hash = vi.spyOn(ctx.password, "hash");
+    const verify = vi.spyOn(ctx.password, "verify");
+
+    const real = await refusal(PASSWORD_ACCOUNT, WRONG_PASSWORD);
+    expect(verify).toHaveBeenCalledTimes(1); // a stored hash existed, so it was compared
+    expect(hash).not.toHaveBeenCalled();
+
+    verify.mockClear();
+    hash.mockClear();
+    const stranger = await refusal(PASSWORD_UNKNOWN, WRONG_PASSWORD);
+    // Better Auth hashes the submitted password when it finds no user, precisely so the missing
+    // case costs what the wrong-password case costs. Our own before-hook used to skip that.
+    expect(hash).toHaveBeenCalledTimes(1);
+    expect(hash).toHaveBeenCalledWith(WRONG_PASSWORD);
+    expect(verify).not.toHaveBeenCalled();
+
+    expect(real).toBe(stranger);
+    expect(real).toContain("INVALID_EMAIL_OR_PASSWORD");
+
+    hash.mockRestore();
+    verify.mockRestore();
+  });
+
+  it("refuses a session for a real credential that is on no list, even with the RIGHT password", async () => {
+    // The gate the ticket must not loosen. PASSWORD_UNLISTED is a real account with a real,
+    // correct password — the door Better Auth would happily open — and it is on no allowlist.
+    // databaseHooks.session.create.before (assertAllowedForUserId) is what stops it, and it is
+    // still fail-closed after everything this round moved.
+    const outcome = await auth.api
+      .signInEmail({
+        body: { email: PASSWORD_UNLISTED, password: REAL_PASSWORD },
+        headers: new Headers({ origin: "http://localhost:3100" }),
+      })
+      .then((r) => (r && "token" in r ? "session-issued" : "no-session"))
+      .catch(() => "refused");
+    expect(outcome).toBe("refused");
+    expect(await prisma.betterAuthSession.count({ where: { userId: { in: createdUserIds } } })).toBe(0);
   });
 });
 
 afterAll(async () => {
-  await authEmailDispatchesSettled();
-  for (const email of [WITH_ACCOUNT, NO_ACCOUNT, WITH_ACCOUNT_HTTP, NO_ACCOUNT_HTTP]) {
-    try {
-      await prisma.betterAuthVerification.deleteMany({ where: { identifier: { contains: email } } });
-    } catch { /* best-effort cleanup */ }
+  await authEmailQueueSettled();
+  const addresses = [
+    ENV_ALLOWED,
+    DB_ALLOWED,
+    UNKNOWN,
+    PASSWORD_ACCOUNT,
+    PASSWORD_UNKNOWN,
+    PASSWORD_UNLISTED,
+  ];
+  try {
+    // The address lives in `value`, not in `identifier` (which is the random token).
+    await prisma.betterAuthVerification.deleteMany({
+      where: { OR: addresses.map((email) => ({ value: { contains: email } })) },
+    });
+    await prisma.betterAuthVerification.deleteMany({ where: { value: { contains: "p678-swarm-" } } });
+    await prisma.betterAuthSession.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await prisma.betterAuthAccount.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await prisma.betterAuthUser.deleteMany({ where: { email: { in: addresses } } });
+    await prisma.allowedEmail.deleteMany({ where: { email: { in: addresses } } });
+  } catch {
+    /* best-effort cleanup */
   }
 });

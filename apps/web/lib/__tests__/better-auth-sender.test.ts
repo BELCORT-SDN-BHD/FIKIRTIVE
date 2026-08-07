@@ -2,62 +2,89 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
+/**
+ * The BACKGROUND side of the auth-email path (#678 r3). Everything the request used to do and
+ * must not do any more happens here: the access decision, the per-address budget, minting the
+ * sign-in token, and the send itself.
+ */
+
 const DEV_FILE = path.join(process.cwd(), "..", "..", ".data", "last-magic-link.txt");
 
-const job = (over: Record<string, unknown> = {}) => ({
-  to: "a@x.test",
-  subject: "S",
-  url: "https://x.test/verify?t=1",
-  intro: "Sign in",
-  deliverIf: () => true,
-  ...over,
-});
+const verify = (over: Record<string, unknown> = {}) =>
+  ({ purpose: "verify-email" as const, email: "a@x.test", url: "https://x.test/verify?t=1", ...over });
 
-describe("dispatchAuthEmail", () => {
-  beforeEach(() => { delete process.env.RESEND_API_KEY; vi.stubEnv("NODE_ENV", "test"); });
+describe("the auth-email queue", () => {
+  beforeEach(async () => {
+    delete process.env.RESEND_API_KEY;
+    vi.stubEnv("NODE_ENV", "test");
+    const { __resetAuthEmailCapsForTests } = await import("@/lib/better-auth/sender");
+    __resetAuthEmailCapsForTests();
+  });
   afterEach(async () => { await rm(DEV_FILE, { force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-  it("returns synchronously — the caller never awaits delivery", async () => {
-    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+  it("returns synchronously and starts nothing — the caller never awaits any of it", async () => {
+    const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
     // The dev transport writes the link to a file; that write is still to come at this point.
-    expect(dispatchAuthEmail(job({ to: "sync@x.test" }))).toBeUndefined();
+    expect(enqueueAuthEmail(verify({ email: "sync@x.test" }))).toBeUndefined();
     await expect(readFile(DEV_FILE, "utf8")).rejects.toThrow();
-    await authEmailDispatchesSettled();
+    // Not even a microtask's worth of the job has run: the queue drains on a macrotask, so a
+    // job whose first step answers with no I/O (an address on an env list) cannot sneak its
+    // work into the request either.
+    await Promise.resolve();
+    await expect(readFile(DEV_FILE, "utf8")).rejects.toThrow();
+    await authEmailQueueSettled();
     expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/verify?t=1");
   });
 
-  it("delivers nothing when the address has no access, having travelled the same path", async () => {
-    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
-    const deliverIf = vi.fn(async () => false);
-    dispatchAuthEmail(job({ to: "stranger@x.test", deliverIf }));
-    await authEmailDispatchesSettled();
-    expect(deliverIf).toHaveBeenCalledTimes(1); // same job, same handover …
-    await expect(readFile(DEV_FILE, "utf8")).rejects.toThrow(); // … nothing written
-  });
-
-  // The cap is UNCHANGED at 5 per address per hour. What changed is that being over it is not
-  // observable from a request: it now happens on the background side, after the answer.
-  it("stops sending after 5 per address per hour — the gate itself is untouched", async () => {
-    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+  // The cap is UNCHANGED at 5 per address per hour. What changed is the KEY.
+  it("stops sending after 5 per address per hour", async () => {
+    const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    // One at a time: concurrent dispatches would land in the dev file in any order.
     for (let i = 1; i <= 5; i++) {
-      dispatchAuthEmail(job({ to: "rl@x.test", url: `https://x.test/link/${i}` }));
-      await authEmailDispatchesSettled();
+      enqueueAuthEmail(verify({ email: "rl@x.test", url: `https://x.test/link/${i}` }));
     }
+    await authEmailQueueSettled();
     expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/link/5");
 
-    dispatchAuthEmail(job({ to: "rl@x.test", url: "https://x.test/link/6" }));
-    await authEmailDispatchesSettled();
+    enqueueAuthEmail(verify({ email: "rl@x.test", url: "https://x.test/link/6" }));
+    await authEmailQueueSettled();
     // The 6th link never left the building: the dev transport still holds the 5th.
     expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/link/5");
   });
 
+  /**
+   * #678 r3 — the budget key is normalised.
+   *
+   * The key used to be the raw submitted string, while every access check lower-cased before
+   * comparing. So `owner@shop.test` and `owner@SHOP.test` were one merchant to the allowlist and
+   * two independent hourly budgets to the cap: flipping one letter's case bought a fresh five,
+   * and the address could be mailed as many times as it has case variants.
+   */
+  it("treats case and whitespace variants of one address as ONE budget", async () => {
+    const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const variants = [
+      "cap@shop.test",
+      "CAP@shop.test",
+      "cap@SHOP.test",
+      "Cap@Shop.Test",
+      "  cap@shop.test  ",
+      // The sixth variant is the same merchant, and must find the budget already spent.
+      "CAP@SHOP.TEST",
+    ];
+    variants.forEach((email, i) =>
+      enqueueAuthEmail(verify({ email, url: `https://x.test/variant/${i + 1}` })),
+    );
+    await authEmailQueueSettled();
+    // RED before the fix: six distinct Map keys, six sends, and the file holds variant/6.
+    expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/variant/5");
+  });
+
   it("logs the cap for the operator, with no address in the line", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
-    for (let i = 0; i < 6; i++) dispatchAuthEmail(job({ to: "quiet@x.test", url: "u" }));
-    await authEmailDispatchesSettled();
+    const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
+    for (let i = 0; i < 6; i++) enqueueAuthEmail(verify({ email: "quiet@x.test", url: "u" }));
+    await authEmailQueueSettled();
     expect(warn).toHaveBeenCalled();
     for (const [line] of warn.mock.calls) expect(String(line)).not.toContain("quiet@x.test");
   });
@@ -69,9 +96,9 @@ describe("dispatchAuthEmail", () => {
     const fetchMock = vi.fn(async () => new Response("rate limited", { status: 429 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
-    expect(dispatchAuthEmail(job({ to: "boom@x.test" }))).toBeUndefined();
-    await authEmailDispatchesSettled();
+    const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
+    expect(enqueueAuthEmail(verify({ email: "boom@x.test" }))).toBeUndefined();
+    await authEmailQueueSettled();
 
     const lines = error.mock.calls.map((c) => c.join(" "));
     expect(lines.some((l) => l.includes("auth email delivery failed"))).toBe(true);
@@ -80,6 +107,11 @@ describe("dispatchAuthEmail", () => {
 
   it("exports no error type or copy a caller could surface", async () => {
     const sender = await import("@/lib/better-auth/sender");
-    expect(Object.keys(sender).sort()).toEqual(["authEmailDispatchesSettled", "dispatchAuthEmail"]);
+    expect(Object.keys(sender).sort()).toEqual([
+      "__resetAuthEmailCapsForTests",
+      "authEmailQueueSettled",
+      "enqueueAuthEmail",
+      "sendAuthEmail",
+    ]);
   });
 });

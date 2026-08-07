@@ -5,12 +5,12 @@ import { magicLink, customSession, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
-import { dispatchAuthEmail } from "./sender";
+import { enqueueAuthEmail, sendAuthEmail } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
-import { isAllowedEmail, isRevokedEmail } from "@/lib/allowlist";
+import { isRevokedEmail } from "@/lib/allowlist";
 import { admitSelfSignup, signupsPaused, SIGNUPS_PAUSED_MESSAGE } from "@/lib/signup-gate";
 
 /** #543 — the one Better Auth path that self-service registration owns. Anything that is not
@@ -57,29 +57,17 @@ export const auth = betterAuth({
     sendResetPassword: async ({ user, url }) => {
       // Keep Better Auth's neutral reset response for removed users while still suppressing the
       // email (F17). Session creation independently re-checks access and remains fail-closed.
-      // #678 r2 — the access lookup AND the delivery both moved off the request path: this hook
-      // now hands the job over and returns, so the reset response time cannot encode whether the
-      // address still has access or whether the mail provider is healthy.
-      dispatchAuthEmail({
-        to: user.email,
-        subject: "Reset your Fikirtive password",
-        url,
-        intro: "Reset your password",
-        deliverIf: () => isAllowedEmail(user.email),
-      });
+      // #678 — the access lookup AND the delivery both live on the background side: this hook
+      // queues and returns, so the reset response time cannot encode whether the address still
+      // has access or whether the mail provider is healthy.
+      enqueueAuthEmail({ purpose: "password-reset", email: user.email, url });
     },
   },
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
-      // Same handover as every other auth email (#678 r2): the signup response must not wait on
-      // the mail provider either.
-      dispatchAuthEmail({
-        to: user.email,
-        subject: "Verify your Fikirtive email",
-        url,
-        intro: "Verify your email",
-        deliverIf: () => true,
-      });
+      // Same handover as every other auth email (#678): the signup response must not wait on the
+      // mail provider either.
+      enqueueAuthEmail({ purpose: "verify-email", email: user.email, url });
     },
     // #543 — verifying is the last step the merchant should have to take; the link drops
     // them straight into their new workspace. The token is single-use and short-lived, and
@@ -109,12 +97,12 @@ export const auth = betterAuth({
       "/sign-up/email": { window: 60 * 60, max: 5 },
       "/request-password-reset": { window: 60 * 60, max: 5 },
       "/send-verification-email": { window: 60 * 60, max: 5 },
-      // #678 r2 — every submitted address now mints a verification token (that is what makes
-      // the two doors cost the same), so this endpoint writes a row for callers it used to turn
-      // away for free. This is the compensating per-IP cap on that write, set well above any
-      // real merchant's retrying and far below a script's. Per-IP, so it is identical for an
-      // address with an account and one without — it adds no existence signal.
-      "/sign-in/magic-link": { window: 60 * 60, max: 20 },
+      // NOTE (#678 r3): there is deliberately NO rule for "/sign-in/magic-link" here. These
+      // rules only run inside `auth.handler`, and that endpoint no longer receives public
+      // traffic — app/api/better-auth/[...all]/route.ts answers it through the same throttled
+      // request path the login page uses (lib/better-auth/magic-link-request.ts), and the only
+      // caller left of Better Auth's own endpoint is our background queue. A rule here would
+      // cap the background, not the public.
     },
   },
   // Deny-by-default allowlist across EVERY method (before any session is issued).
@@ -131,8 +119,8 @@ export const auth = betterAuth({
         return;
       }
       if (ctx.path === "/sign-in/magic-link" || ctx.path === "/sign-in/email") {
-        // #678 r2 — DELIBERATELY NO ALLOWLIST DECISION HERE, for both doors. Deciding at the
-        // door is what made the RESPONSE TIME a function of whether the address has an account:
+        // #678 — DELIBERATELY NO ALLOWLIST DECISION HERE, for both doors. Deciding at the door
+        // is what made the RESPONSE TIME a function of whether the address has an account:
         //
         //   magic link — an address without access returned after ONE allowlist query, while an
         //     address with access went on to write a verification token, query again and wait on
@@ -142,12 +130,12 @@ export const auth = betterAuth({
         //     found, precisely so the two cases cost the same). Our shortcut walked around the
         //     constant-time path it was imitating.
         //
-        // Both doors now run Better Auth's normal flow for EVERY address, and the access
-        // decision happens where it cannot be timed: off the request path, inside the auth-email
-        // dispatch (magic link), or in Better Auth's own credential check (password).
+        // Where the access decision lives now: for the magic link, on the background side BEFORE
+        // the token is minted (lib/better-auth/sender.ts) — so this endpoint is only ever reached
+        // for an address that already passed it; for the password door, inside Better Auth's own
+        // credential check, which is constant-time by construction.
         //
-        // NOTHING IS LOOSENED. A magic-link token minted for an address without access is never
-        // delivered to anyone, and redeeming one is still refused twice over —
+        // NOTHING IS LOOSENED. Redeeming a magic-link token is still refused twice over —
         // databaseHooks.user.create.before (assertAllowedEmail) and
         // databaseHooks.session.create.before (assertAllowedForUserId) both stay fail-closed.
         // A password sign-in for an address without access still ends in Better Auth's own
@@ -207,18 +195,11 @@ export const auth = betterAuth({
     magicLink({
       expiresIn: 60 * 15,
       sendMagicLink: async ({ email, url }) => {
-        // #678 r2 — this hook AWAITS NOTHING. It hands the job over and returns, so the endpoint
-        // has answered before the access lookup or the mail provider has been touched. The
-        // access re-check still happens (it is `deliverIf`), just on the background side, where
-        // its cost and its outcome cannot be observed from outside. Session creation remains
-        // independently fail-closed through databaseHooks.session.create.before.
-        dispatchAuthEmail({
-          to: email,
-          subject: "Sign in to Fikirtive",
-          url,
-          intro: "Sign in to Fikirtive",
-          deliverIf: () => isAllowedEmail(email),
-        });
+        // #678 r3 — this hook is BACKGROUND-ONLY. The single caller of the endpoint that runs it
+        // is the auth-email queue (lib/better-auth/sender.ts), which has already checked access
+        // and the per-address budget before minting anything. So delivery is simply awaited here:
+        // there is no request waiting on it to await.
+        await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
       },
     }),
     // Surface the canonical role on the session so compat.ts matches NextAuth byte-for-byte.

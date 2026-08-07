@@ -41,7 +41,7 @@ beforeAll(() => {
 
 async function resetPasswordFor(email: string) {
   const { auth } = await import("@/lib/better-auth/server");
-  const { authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+  const { authEmailQueueSettled } = await import("@/lib/better-auth/sender");
   const context = await auth.$context;
   const sendResetPassword = context.options.emailAndPassword?.sendResetPassword;
   expect(sendResetPassword).toBeTypeOf("function");
@@ -61,9 +61,9 @@ async function resetPasswordFor(email: string) {
       token: "token",
     }),
   ).resolves.toBeUndefined();
-  // #678 r2 — the hook hands the job over and returns; the decision happens after. Asserting
-  // before this settles would pass for the wrong reason.
-  await authEmailDispatchesSettled();
+  // #678 — the hook queues and returns; the decision happens after. Asserting before this
+  // settles would pass for the wrong reason.
+  await authEmailQueueSettled();
 }
 
 describe("Better Auth enumeration-safe responses", () => {
