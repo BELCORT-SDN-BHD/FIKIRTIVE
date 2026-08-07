@@ -290,13 +290,16 @@ function ConversationRow({ row }: { row: Row }) {
   const assigneeId = hasAttention(row) ? row.assigneeMembership?.id ?? null : row.assigneeMembershipId;
   const assigneeRole = hasAttention(row) ? row.assigneeMembership?.role ?? null : null;
 
+  // min-w-0: this link, not the Card, is the grid item here — the card can only stay
+  // inside its track if the element the track actually sizes gives up its content
+  // floor too (#730).
   return (
-    <Link href={`/crm/inbox/${row.id}`} className="block">
+    <Link href={`/crm/inbox/${row.id}`} className="block min-w-0">
       <Card className="transition-colors hover:bg-secondary/40">
         <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="truncate text-base font-semibold">{identity.contact.name}</p>
+              <p className="min-w-0 truncate text-base font-semibold">{identity.contact.name}</p>
               <Badge variant="outline">{identity.channel}</Badge>
               <Badge variant={status.variant}>{status.label}</Badge>
               {hasAttention(row) ? (

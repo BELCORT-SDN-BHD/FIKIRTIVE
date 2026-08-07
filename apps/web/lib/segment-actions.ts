@@ -12,6 +12,7 @@ import {
 } from "@fikirtive/core";
 import { prisma, type Prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
+import { ownedContactsWhere } from "./crm-contact-scope";
 import { isImpersonating } from "./better-auth/compat";
 
 const SEGMENT_SELECT = {
@@ -171,9 +172,13 @@ function evaluateContact(row: ContactRow): EvaluatedContact {
   };
 }
 
+/**
+ * Every live contact this owner has, read through the same predicate the contacts list
+ * pages and counts (#715). `contacts.length` is therefore the same total that page shows.
+ */
 async function readContacts(ownerId: string): Promise<EvaluatedContact[]> {
   const rows = await prisma.contact.findMany({
-    where: { ownerId, deletedAt: null },
+    where: ownedContactsWhere(ownerId),
     orderBy: [{ name: "asc" }, { id: "asc" }],
     select: {
       ...CONTACT_SELECT,
@@ -291,6 +296,7 @@ export async function listSegments() {
     evaluatedAt,
     ...issueNextDraft(gate.ownerId),
     segments: (rows as SegmentRow[]).map((row) => evaluatedSegment(row, contacts, evaluatedAt)),
+    totalContactCount: contacts.length,
     unavailableFacts: UNAVAILABLE_FACTS,
   };
 }
@@ -309,8 +315,15 @@ export async function getSegment(rawSegmentId: unknown) {
   if (!row) return { error: "Segment not found." };
 
   const evaluatedAt = new Date().toISOString();
-  const segment = evaluatedSegment(row, await readContacts(gate.ownerId), evaluatedAt);
-  return { ok: true as const, evaluatedAt, segment, unavailableFacts: UNAVAILABLE_FACTS };
+  const contacts = await readContacts(gate.ownerId);
+  const segment = evaluatedSegment(row, contacts, evaluatedAt);
+  return {
+    ok: true as const,
+    evaluatedAt,
+    segment,
+    totalContactCount: contacts.length,
+    unavailableFacts: UNAVAILABLE_FACTS,
+  };
 }
 
 export async function previewSegment(rawRules: unknown) {
@@ -324,7 +337,8 @@ export async function previewSegment(rawRules: unknown) {
   }
 
   const evaluatedAt = new Date().toISOString();
-  const matched = matches(await readContacts(gate.ownerId), validated.value, evaluatedAt);
+  const contacts = await readContacts(gate.ownerId);
+  const matched = matches(contacts, validated.value, evaluatedAt);
   const contactableCount = matched.filter((contact) => contact.contactable).length;
   return {
     ok: true as const,
@@ -334,6 +348,7 @@ export async function previewSegment(rawRules: unknown) {
     contactableCount,
     knownOptOutCount: matched.length - contactableCount,
     contacts: publicContacts(matched),
+    totalContactCount: contacts.length,
     unavailableFacts: UNAVAILABLE_FACTS,
   };
 }

@@ -131,6 +131,47 @@ describe("MerchantShellContent", () => {
     expect(renderShell("/otto?foo=bar")).toMatch(/aria-current="page" title="Otto"/);
   });
 
+  // #685 — the mobile trigger is `fixed`, so it occupies no layout space of its own.
+  // The shell reserves that space once for every merchant surface, exactly as it already
+  // reserves the rail's width with lg:pl-16 / xl:pl-60. Before this, each page had to
+  // dodge the button by hand: /billing and /profile ate their own H1 ("illing",
+  // "rofile"), and eight campaign/CRM surfaces had "Return to Otto" — a LINK — covered,
+  // so the merchant's way back was unclickable at its left edge.
+  describe("mobile nav trigger footprint", () => {
+    const contentWrapper = /<div class="((?:[^"]*\b)?min-h-dvh min-w-0[^"]*)"/;
+
+    it.each([
+      "/billing",
+      "/profile",
+      "/campaign",
+      "/campaign/workbench",
+      "/crm/inbox",
+      "/crm/broadcasts",
+      "/crm/workflows",
+    ])("reserves the trigger's height above %s content on the mobile tier", (pathname) => {
+      const wrapper = renderShell(pathname).match(contentWrapper)?.[1];
+
+      expect(wrapper).toBeDefined();
+      // 56px clears the trigger, which is `left-3 top-3` at `size-10` (ends at 52px).
+      expect(wrapper).toContain("pt-14");
+      expect(wrapper).toContain("lg:pt-0");
+    });
+
+    it("reserves nothing on Otto, which draws its own in-flow mobile top bar", () => {
+      const wrapper = renderShell("/otto").match(contentWrapper)?.[1];
+
+      expect(wrapper).toBeDefined();
+      expect(wrapper).not.toContain("pt-14");
+    });
+
+    it("keeps the reserved height and the trigger's own geometry in step", () => {
+      const markup = renderShell("/billing");
+
+      expect(markup).toContain('aria-label="Open navigation"');
+      expect(markup).toMatch(/aria-label="Open navigation"[^>]*class="fixed left-3 top-3 [^"]*size-10/);
+    });
+  });
+
   it("keeps the impersonation banner above the merchant sidebar", () => {
     const markup = renderToStaticMarkup(
       createElement(

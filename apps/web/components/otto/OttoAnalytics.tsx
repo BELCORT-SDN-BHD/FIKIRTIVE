@@ -204,9 +204,13 @@ export function OttoAnalytics({
 
           {/* OTTO insight banner */}
           {data.insight && (
-            <div className="flex items-center gap-[13px] bg-[#FFF6F2] border border-[#FBD9C9] rounded-[16px] px-[17px] py-[15px] mt-[14px]">
+            /* flex-wrap + a real minimum for the copy (#697): the button below says
+               whitespace-nowrap, so on a phone it took the width it wanted and left the
+               sentence a two-words-per-line ribbon. Below ~220px of copy the button now
+               drops to its own line instead. */
+            <div className="flex flex-wrap items-center gap-[13px] bg-[#FFF6F2] border border-[#FBD9C9] rounded-[16px] px-[17px] py-[15px] mt-[14px]">
               <CoralCloud />
-              <span className="flex-1 text-[14px] leading-[1.45] text-[#9A3A1A]">{data.insight.text}</span>
+              <span className="min-w-[220px] flex-1 text-[14px] leading-[1.45] text-[#9A3A1A]">{data.insight.text}</span>
               <button
                 type="button"
                 onClick={() => {
