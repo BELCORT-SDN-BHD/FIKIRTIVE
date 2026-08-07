@@ -33,6 +33,7 @@ vi.mock("@/lib/allowlist", () => {
   return { allowed, isFounderAdmin, isAllowedEmail: allowed };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/lib/queue", () => ({ getBoss: vi.fn(async () => ({ send: vi.fn() })) }));
 // The REAL local-disk driver, with one injectable fault: `storageFailure.on` turns the
 // next `put` into the operational failure that used to strand a nameless Entity row.
 // A Proxy (not a spread) so the driver keeps its prototype methods and `this`.
@@ -66,7 +67,11 @@ beforeAll(() => {
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const { runAsTenant } = await import("@fikirtive/db/principal");
-const { createEntity } = await import("@/lib/actions");
+const { createEntity, addReferenceImages, uploadCandidates, uploadReference } =
+  await import("@/lib/actions");
+const { saveCroppedGeneration } = await import("@/lib/asset-actions");
+const { finalizeCandidateUploads } = await import("@/lib/upload-actions");
+const { storage } = await import("@/lib/storage");
 
 // A 1x1 PNG: valid magic + IHDR + IDAT, so the byte-derived mime resolves to image/png.
 const PNG = new Uint8Array([
@@ -132,7 +137,10 @@ afterAll(async () => {
     await prisma.referenceImage.deleteMany({ where: { ownerId: org } });
     await prisma.entity.updateMany({ where: { ownerId: org }, data: { baseAssetId: null } });
     await prisma.entity.deleteMany({ where: { ownerId: org } });
+    // Generation → Asset is FK Restrict, so generations go first
+    await prisma.generation.deleteMany({ where: { ownerId: org } });
     await prisma.asset.deleteMany({ where: { ownerId: org } });
+    await prisma.project.deleteMany({ where: { ownerId: org } });
     await prisma.actionEvent.deleteMany({ where: { ownerId: org } });
   }
 });
@@ -160,6 +168,80 @@ describe("#698 — a merchant uploading their own image", () => {
     const entityId = (res as { id: string }).id;
     const refs = await prisma.referenceImage.findMany({ where: { ownerId: orgA, entityId } });
     expect(refs).toHaveLength(1);
+  });
+});
+
+/**
+ * Every merchant-reachable `asset.upsert` runs UNFRAMED (a bare server action establishes no
+ * principal frame), so each one depended on the compound-key backstop the guard could not read.
+ * One test per call site, driven through the real action.
+ */
+describe("#698 — every merchant upload entry point clears the guard", () => {
+  let projectId: string;
+
+  beforeAll(async () => {
+    projectId = `prj_${randomUUID()}`;
+    await prisma.project.create({ data: { id: projectId, ownerId: orgA, name: "A upload project" } });
+  });
+
+  it("uploadCandidates (actions.ts) lands the asset + generation", async () => {
+    await asUser(A_EMAIL);
+    const fd = new FormData();
+    fd.append("files", pngFile("candidate.png", "candidates"));
+    fd.set("promptText", "");
+    const res = await uploadCandidates(projectId, fd);
+    expect(res).toMatchObject({ ok: true, count: 1 });
+  });
+
+  it("uploadReference (actions.ts) lands the i2v source image", async () => {
+    await asUser(A_EMAIL);
+    const fd = new FormData();
+    fd.append("files", pngFile("reference.png", "reference"));
+    const res = await uploadReference(projectId, fd);
+    expect(res).toMatchObject({ id: expect.any(String), src: expect.any(String) });
+  });
+
+  it("saveCroppedGeneration (asset-actions.ts) lands the cropped derivative", async () => {
+    await asUser(A_EMAIL);
+    const fd = new FormData();
+    fd.append("files", pngFile("crop-source.png", "crop-source"));
+    const source = await uploadReference(projectId, fd);
+    expect(source).toMatchObject({ id: expect.any(String) });
+    const bytes = new Uint8Array([...PNG, ...new TextEncoder().encode("cropped")]);
+    const dataUrl = `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`;
+    const res = await saveCroppedGeneration((source as { id: string }).id, dataUrl);
+    expect(res).toMatchObject({ id: expect.any(String) });
+  });
+
+  it("finalizeCandidateUploads (upload-actions.ts) lands the browser-direct upload", async () => {
+    await asUser(A_EMAIL);
+    const bytes = new Uint8Array([...PNG, ...new TextEncoder().encode("direct")]);
+    const { contentHash } = await storage.put(orgA, bytes, "png");
+    const res = await finalizeCandidateUploads(projectId, "", [], [
+      {
+        sha256: contentHash,
+        ext: "png",
+        sizeBytes: bytes.byteLength,
+        originalFilename: "direct.png",
+        upload: { mode: "existed" },
+      },
+    ]);
+    expect(res).toMatchObject({ ok: true, count: 1 });
+  });
+
+  it("addReferenceImages (actions.ts) attaches to an existing element and locks its base", async () => {
+    await asUser(A_EMAIL);
+    const created = await createEntity(entityForm("Later photos", []));
+    expect(created).toMatchObject({ id: expect.any(String) });
+    const entityId = (created as { id: string }).id;
+    const fd = new FormData();
+    fd.append("files", pngFile("later.png", "later"));
+    const res = await addReferenceImages(entityId, fd);
+    expect(res).toMatchObject({ ok: true });
+    const refs = await prisma.referenceImage.findMany({ where: { ownerId: orgA, entityId } });
+    expect(refs).toHaveLength(1);
+    const entity = await prisma.entity.findFirst({ where: { ownerId: orgA, id: entityId } });
+    expect(entity?.baseAssetId).toBe(refs[0]!.assetId);
   });
 });
 
