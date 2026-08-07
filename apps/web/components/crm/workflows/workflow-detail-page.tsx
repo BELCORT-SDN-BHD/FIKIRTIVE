@@ -386,7 +386,10 @@ export default function WorkflowDetailPage({
           </details>
         </section>
 
-        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel key={`routines-${readGeneration}`} workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
+        {/* #720: NO readGeneration key here. Remounting the panel on every Routine re-read threw
+            away whatever the merchant had open — including the confirmation dialog and the form
+            they were filling in. The panel reads its Routines from this prop instead. */}
+        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
         <div className="mt-12 border-t border-border pt-10"><WorkflowMonitoring key={`monitoring-${readGeneration}`} workflowDefinitionId={definition.id} initialRuns={runsResult} initialJourneys={journeysResult} /></div>
         <div className="mt-12 border-t border-border pt-10 pb-16"><WorkflowRecipesPanel key={`policies-${readGeneration}`} initialPolicies={policiesResult} /></div>
       </div>

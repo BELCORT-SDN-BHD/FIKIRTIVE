@@ -492,6 +492,43 @@ beforeEach(async () => {
 afterAll(cleanup);
 
 describe("customer workflow lifecycle and dispatch", () => {
+  // #720 — a routine key that is already taken is a naming collision, not an optimistic-lock
+  // race. Returning CAS_CONFLICT made the UI tell the merchant "this workflow changed in
+  // another session, refresh before trying again", which is false and points at a fix that can
+  // never work. The two conditions must be distinguishable by code.
+  it("reports a duplicate Routine key as ROUTINE_KEY_IN_USE, not as a concurrent-change conflict", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "dupkey",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    await expectCode(
+      workflows.createRoutineDraft(principalA, {
+        workflowDefinitionId: lifecycle.definition.id,
+        workflowRevisionId: lifecycle.revision.id,
+        routineKey: lifecycle.routine.routineKey,
+        scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+        maxCreditsPerRun: 0,
+        maxCreditsPerMonth: 0,
+        summaryPolicyJson: { mode: "counts_only" },
+      }),
+      "ROUTINE_KEY_IN_USE",
+    );
+    // A free key on the same workflow still works — the collision is about the key alone.
+    const fresh = await workflows.createRoutineDraft(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      workflowRevisionId: lifecycle.revision.id,
+      routineKey: "routine_dupkey_second",
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: { mode: "counts_only" },
+    });
+    expect(fresh.resource.status).toBe("draft");
+  });
+
   it("requires a real owner for activation and creates a new immutable envelope on reauthorization", async () => {
     const lifecycle = await createLifecycle(
       principalA,

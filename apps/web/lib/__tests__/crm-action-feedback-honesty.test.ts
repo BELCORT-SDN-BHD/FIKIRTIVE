@@ -20,6 +20,24 @@ vi.mock("@/lib/customer-broadcast-ui-actions", () => ({
 vi.mock("@/lib/customer-broadcast-report-ui-actions", () => ({
   getCustomerBroadcastReport: vi.fn(),
 }));
+vi.mock("@/lib/customer-workflow-ui-actions", () => ({
+  activateRoutine: vi.fn(),
+  archiveWorkflowDefinition: vi.fn(),
+  createRoutineDraft: vi.fn(),
+  getBusinessHoursPolicy: vi.fn(),
+  getContactJourneyStates: vi.fn(),
+  getRoutine: vi.fn(),
+  getWorkflowDefinition: vi.fn(),
+  killRoutine: vi.fn(),
+  listBusinessHoursPolicies: vi.fn(),
+  listRoutineRuns: vi.fn(),
+  listRoutines: vi.fn(),
+  listWorkflowRevisions: vi.fn(),
+  publishWorkflowRevision: vi.fn(),
+  reauthorizeRoutine: vi.fn(),
+  saveWorkflowRevision: vi.fn(),
+  validateWorkflowRules: vi.fn(),
+}));
 vi.mock("@/lib/customer-inbox-ui-actions", () => ({
   assignConversation: vi.fn(),
   getConversation: vi.fn(),
@@ -34,6 +52,17 @@ vi.mock("@/lib/customer-inbox-ui-actions", () => ({
 
 import BroadcastDetailPage from "@/components/crm/broadcasts/broadcast-detail-page";
 import InboxConversationPage from "@/components/crm/inbox/inbox-conversation-page";
+import WorkflowDetailPage from "@/components/crm/workflows/workflow-detail-page";
+import RoutineAuthorizationPanel from "@/components/crm/workflows/routine-authorization-panel";
+import {
+  activateRoutine,
+  getContactJourneyStates,
+  getWorkflowDefinition,
+  listBusinessHoursPolicies,
+  listRoutineRuns,
+  listRoutines,
+  listWorkflowRevisions,
+} from "@/lib/customer-workflow-ui-actions";
 import {
   cancelBroadcastRun,
   confirmBroadcastRun,
@@ -335,5 +364,161 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     // No ULID anywhere on screen: 26 chars of Crockford base32 is the shape the走查 hit.
     expect(dom.textContent).not.toMatch(/\b[0-9A-HJKMNP-TV-Z]{26}\b/);
     expect(dom.textContent).not.toContain("Assigned to membership 01KZ");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #720 / #721 — Routine authorization reads server truth; archived tells the truth
+// ---------------------------------------------------------------------------
+
+const DEFINITION = {
+  id: "wf-1",
+  slug: "outside-hours-reply",
+  name: "Outside hours reply",
+  definitionKind: "rule",
+  status: "published",
+  currentRevision: 1,
+  rowRevision: 1,
+  createdAt: "2026-08-01T00:00:00.000Z",
+  updatedAt: "2026-08-01T00:00:00.000Z",
+};
+
+const REVISION = {
+  id: "rev-1",
+  revision: 1,
+  validationState: "valid",
+  validationErrorsJson: null,
+  rulesSource: "version: fikirtive-workflow/v1\nname: Outside hours reply\n",
+  createdAt: "2026-08-01T00:00:00.000Z",
+};
+
+function persistedRoutine(status: string) {
+  return {
+    id: "routine-1",
+    routineKey: "outside-hours-reply-routine",
+    supersedesRoutineId: null,
+    status,
+    workflowDefinition: { id: DEFINITION.id, slug: DEFINITION.slug, name: DEFINITION.name },
+    workflowRevision: { id: REVISION.id, revision: 1, validationState: "valid" },
+    authorization: {
+      revision: 1,
+      authorized: status === "active",
+      authorizedAt: status === "active" ? "2026-08-01T00:00:00.000Z" : null,
+      expiresAt: "2026-12-31T00:00:00.000Z",
+    },
+    scopeSummary: {
+      actionKinds: ["complete"],
+      channelCount: 0,
+      contactCount: 0,
+      segmentCount: 0,
+      maxActions: 1,
+      maxRecipients: 1,
+    },
+    maxCreditsPerRun: 0,
+    maxCreditsPerMonth: 0,
+    summaryPolicy: { afterEachRun: "workflow_activity" },
+    killSwitchEngaged: false,
+    killedAt: null,
+    killReasonCode: null,
+    rowRevision: status === "active" ? 1 : 0,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+}
+
+function workflowProps(options: {
+  status?: string;
+  routines?: ReturnType<typeof persistedRoutine>[];
+  routinesFailed?: boolean;
+}): ComponentProps<typeof WorkflowDetailPage> {
+  return {
+    workflowDefinitionId: DEFINITION.id,
+    initialDefinition: { ok: true, resource: { ...DEFINITION, status: options.status ?? "published" } },
+    initialRevisions: { ok: true, resource: [REVISION] },
+    initialRoutines: options.routinesFailed
+      ? { ok: false, error: "AUTHORITY_UNAVAILABLE" }
+      : { ok: true, resource: { items: options.routines ?? [], nextCursor: null } },
+    initialRuns: { ok: true, resource: { items: [], nextCursor: null } },
+    initialJourneys: { ok: true, resource: { items: [], nextCursor: null } },
+    initialPolicies: { ok: true, resource: { items: [], nextCursor: null } },
+  } as unknown as ComponentProps<typeof WorkflowDetailPage>;
+}
+
+function statusSummaryText(dom: HTMLElement): string {
+  const heading = Array.from(dom.querySelectorAll("dt")).find((dt) => dt.textContent === "Status");
+  expect(heading, "the rule summary must carry a Status cell").toBeTruthy();
+  return heading!.parentElement?.querySelector("dd")?.textContent ?? "";
+}
+
+describe("Routine authorization is driven by the server read, not by this page load (#720)", () => {
+  it("activates a Routine draft that only exists on the server, and shows the switch once it is active", async () => {
+    vi.mocked(activateRoutine).mockResolvedValue({ ok: true, resource: { id: "routine-1" } } as never);
+    vi.mocked(listRoutines).mockResolvedValue({
+      ok: true,
+      resource: { items: [persistedRoutine("active")], nextCursor: null },
+    } as never);
+
+    // Exactly the走查 state: a draft Routine read back from the database on a fresh page load.
+    const dom = await render(
+      createElement(WorkflowDetailPage, workflowProps({ routines: [persistedRoutine("draft")] })),
+    );
+
+    // Before activation there is nothing to switch on — but there IS a way in.
+    expect(dom.querySelector('[role="switch"][aria-checked="true"]')).toBeNull();
+    await click(buttonWithText(dom, "Review activation"));
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    expect(dialog, "activation opens the human confirmation dialog").toBeTruthy();
+    const acknowledgement = dialog!.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(acknowledgement, "activation still requires the human confirmation checkbox").toBeTruthy();
+    await click(acknowledgement!);
+    await click(buttonWithText(dialog!, "Activate Routine"));
+
+    // The row read from the server is what gets activated — its id and its row revision.
+    expect(activateRoutine).toHaveBeenCalledWith({ routineId: "routine-1", expectedRowRevision: 0 });
+    // …and the re-read (not this session's memory) is what puts the on/off switch on screen.
+    expect(listRoutines).toHaveBeenCalled();
+    const knob = dom.querySelector('[role="switch"]');
+    expect(knob, "an active Routine must expose its on/off switch").toBeTruthy();
+    expect(knob!.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("renders the switch from props alone — no remount and no in-session envelope required", async () => {
+    function panelProps(status: string): ComponentProps<typeof RoutineAuthorizationPanel> {
+      return {
+        workflowDefinitionId: DEFINITION.id,
+        workflowSlug: DEFINITION.slug,
+        revisions: [REVISION],
+        routines: [persistedRoutine(status)],
+        routineReadError: null,
+        onRoutinesChanged: () => {},
+        disabled: false,
+      } as unknown as ComponentProps<typeof RoutineAuthorizationPanel>;
+    }
+
+    const dom = await render(createElement(RoutineAuthorizationPanel, panelProps("draft")));
+    expect(dom.querySelector('[role="switch"][aria-checked="true"]')).toBeNull();
+
+    // Same mounted component (same element type, no key change): the switch appears purely
+    // because the server read says the Routine is active — no remount, no session envelope.
+    await rerender(createElement(RoutineAuthorizationPanel, panelProps("active")));
+    expect(dom.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("keeps the setup form the merchant is filling in across a Routine re-read", async () => {
+    vi.mocked(getWorkflowDefinition).mockResolvedValue({ ok: true, resource: DEFINITION } as never);
+    vi.mocked(listWorkflowRevisions).mockResolvedValue({ ok: true, resource: [REVISION] } as never);
+    vi.mocked(listRoutines).mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } } as never);
+    vi.mocked(listRoutineRuns).mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } } as never);
+    vi.mocked(getContactJourneyStates).mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } } as never);
+    vi.mocked(listBusinessHoursPolicies).mockResolvedValue({ ok: true, resource: { items: [], nextCursor: null } } as never);
+
+    const dom = await render(createElement(WorkflowDetailPage, workflowProps({})));
+    await click(buttonWithText(dom, "Set up a new Routine"));
+    expect(dom.textContent).toContain("Define this authorization");
+
+    await click(buttonWithText(dom, "Refresh"));
+    // The panel used to be keyed on the read counter, so a refresh mid-setup wiped the form.
+    expect(dom.textContent).toContain("Define this authorization");
   });
 });

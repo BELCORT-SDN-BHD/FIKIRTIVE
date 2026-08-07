@@ -55,6 +55,10 @@ export const CUSTOMER_WORKFLOW_ERROR_CODES = {
   RESOURCE_NOT_FOUND: "RESOURCE_NOT_FOUND",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
   CAS_CONFLICT: "CAS_CONFLICT",
+  // #720 — a routine key already taken on this workflow is a naming collision, not an
+  // optimistic-lock race. Sharing CAS_CONFLICT made the UI tell merchants to refresh, which
+  // never resolves it. Distinct code so the copy can name the real cause.
+  ROUTINE_KEY_IN_USE: "ROUTINE_KEY_IN_USE",
   IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_CONFLICT",
   AUTHORITY_UNAVAILABLE: "AUTHORITY_UNAVAILABLE",
   ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED: "ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED",
@@ -1552,7 +1556,7 @@ export function workflowLifecycleService(
         where: { ownerId: principal.ownerId, workflowDefinitionId, routineKey },
         select: { id: true },
       });
-      if (existingRoutineKey) fail("CAS_CONFLICT");
+      if (existingRoutineKey) fail("ROUTINE_KEY_IN_USE");
       const workflowRevision = await tx.workflowRevision.findFirst({
         where: {
           id: workflowRevisionId,
