@@ -1,8 +1,10 @@
 "use client";
 /**
- * QuickBrief — structured intake form that composes a brief string and saves it
- * via setCoworkBrief. Surfaces in OttoFrontDoor so the brand context is set
- * before Otto starts planning. No money/credit operations.
+ * QuickBrief — structured intake form that composes the PROJECT brief string and
+ * saves it via setCoworkBrief (Project.coworkBrief — per-project, see CONTEXT.md
+ * "Project Brief"). Surfaces in OttoFrontDoor so this project's brief is set
+ * before Otto starts planning. Brand-constant facts live in Brand memory; this
+ * form captures project-specific inputs only. No money/credit operations.
  */
 import { useState } from "react";
 import { setCoworkBrief } from "@/lib/cowork-actions";
@@ -65,7 +67,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
           <path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
         </svg>
-        Set up brand brief
+        Project brief
         <svg
           width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
           aria-hidden
@@ -81,32 +83,35 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
           className="mt-4 p-4 bg-card border border-border rounded-[14px] flex flex-col gap-3"
           style={{ borderWidth: "1.5px" }}
         >
+          <p className="m-0 text-[0.75rem] text-muted-foreground/70">
+            Use this for the offer, audience, channel, and budget in this project. Shop-wide identity and catalog facts live in Brand memory.
+          </p>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">What you sell / offer</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">Offer for this project</label>
             <input
               id="qb-offer"
               type="text"
               value={offer}
               onChange={(e) => setOffer(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. handmade ceramic mugs"
+              placeholder="e.g. the summer mug collection"
               className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Who it&apos;s for (audience)</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Audience for this project</label>
             <input
               id="qb-audience"
               type="text"
               value={audience}
               onChange={(e) => setAudience(e.target.value.slice(0, MAX_FIELD))}
-              placeholder="e.g. design-minded home cooks, 25–40"
+              placeholder="e.g. first-time home buyers"
               className="w-full py-2 px-3 text-[0.875rem] text-foreground bg-card border border-border rounded-[14px] outline-none box-border"
               disabled={saving}
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where you&apos;ll post (platform)</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where this project will run</label>
             <input
               id="qb-platform"
               type="text"
@@ -118,7 +123,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget vibe <span className="font-normal normal-case">(optional)</span></label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget for this project <span className="font-normal normal-case">(optional)</span></label>
             <input
               id="qb-budget"
               type="text"
@@ -129,7 +134,6 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
               disabled={saving}
             />
           </div>
-
           {error && (
             <p role="alert" className="text-[0.75rem] text-[var(--error-soft-foreground)] m-0">
               {error}

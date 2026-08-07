@@ -209,7 +209,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   renderVideo: "Exporting your video",
   importMedia: "Importing media",
   // W-B3-D (home/ideas/library/brand debt):
-  manageProjects: "Organizing your campaigns",
+  manageProjects: "Organizing your projects",
   manageEntities: "Updating your elements",
   manageLibrary: "Looking through your saved media",
   manageBrandMemory: "Updating your brand memory",

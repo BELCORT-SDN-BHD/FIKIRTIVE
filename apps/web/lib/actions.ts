@@ -109,15 +109,22 @@ async function createRefSkippingDup(data: { id: string; ownerId: string; entityI
 
 // ---------- projects ----------
 
-/** Placeholder names a fresh campaign carries until its first conversation names it. */
-const DEFAULT_CAMPAIGN_NAMES = new Set(["New campaign", "Untitled Project"]);
+/** Placeholder names a fresh project carries until its first conversation names it.
+ *  "New project" is the current default (#546 — a Project is never called a campaign;
+ *  the independent Campaign object lives in campaign-actions.ts). "New campaign" and
+ *  "Untitled Project" stay listed so pre-#546 DB rows keep reusing/auto-titling. */
+const DEFAULT_PROJECT_NAMES = new Set(["New project", "New campaign", "Untitled Project"]);
 
-async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string } | null> {
-  if (!DEFAULT_CAMPAIGN_NAMES.has(name)) return null;
+/** Empty Chat title fallback. It is not a reusable Project placeholder, but auto-title
+ *  must still refuse to copy it onto a default Project. */
+const UNTITLED_CHAT_TITLE = "Untitled";
+
+async function findReusableEmptyDefaultProject(ownerId: string, name: string): Promise<{ id: string; name: string } | null> {
+  if (!DEFAULT_PROJECT_NAMES.has(name)) return null;
   const candidates = await prisma.project.findMany({
-    where: { ownerId, name, deletedAt: null },
+    where: { ownerId, name: { in: [...DEFAULT_PROJECT_NAMES] }, deletedAt: null },
     orderBy: { createdAt: "desc" },
-    select: { id: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
+    select: { id: true, name: true, editJson: true, coworkBrief: true, brandId: true, campaignId: true },
     take: 12,
   });
   for (const candidate of candidates) {
@@ -141,9 +148,13 @@ async function findReusableEmptyDefaultProject(ownerId: string, name: string): P
   return null;
 }
 
-/** Idempotent: returns the owner's oldest non-deleted project, or creates one named
- *  "My Videos" if none exist. Used by the /m (Simple Mode) route. Never throws — the
- *  caller surfaces any auth failure via the {error} contract. */
+/** Idempotent: returns the owner's oldest non-deleted project, or creates one with the
+ *  standard "New project" placeholder name if none exist (used by /otto, the immersive
+ *  canvas entry, and Otto's projects port). #546 F-18: no pre-seeded "My Videos" — the
+ *  bootstrap project is
+ *  indistinguishable from one the merchant created themselves: it auto-titles from its
+ *  first conversation and is reused by the rail's New-project entry while still empty.
+ *  Never throws — the caller surfaces any auth failure via the {error} contract. */
 export async function getOrCreateDefaultProject(): Promise<{ id: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
@@ -154,9 +165,9 @@ export async function getOrCreateDefaultProject(): Promise<{ id: string } | { er
   });
   if (existing) return { id: existing.id };
   const project = await prisma.project.create({
-    data: { id: newId(), ownerId, name: "My Videos" },
+    data: { id: newId(), ownerId, name: "New project" },
   });
-  await logAction(ownerId, "project.create", project.id, { name: project.name, via: "simple-mode" });
+  await logAction(ownerId, "project.create", project.id, { name: project.name, via: "bootstrap" });
   return { id: project.id };
 }
 
@@ -165,7 +176,30 @@ export async function createProject(name: string): Promise<{ id: string } | { er
   const { ownerId } = gate;
   const cleanName = name.trim() || "Untitled Project";
   const reusable = await findReusableEmptyDefaultProject(ownerId, cleanName);
-  if (reusable) return { id: reusable.id };
+  if (reusable) {
+    if (cleanName === "New project" && reusable.name !== cleanName) {
+      const renamed = await prisma.$transaction(async (tx) => {
+        const { count } = await tx.project.updateMany({
+          where: { id: reusable.id, ownerId, name: reusable.name, deletedAt: null },
+          data: { name: cleanName },
+        });
+        if (count !== 1) return false;
+        await tx.actionEvent.create({
+          data: {
+            id: newId(),
+            ownerId,
+            projectId: reusable.id,
+            type: "project.rename",
+            payload: { name: cleanName },
+          },
+        });
+        return true;
+      });
+      if (!renamed) return { error: "Project not found." };
+      revalidatePath("/", "layout");
+    }
+    return { id: reusable.id };
+  }
   const project = await prisma.project.create({
     data: { id: newId(), ownerId, name: cleanName },
   });
@@ -197,7 +231,7 @@ export async function deleteProject(projectId: string): Promise<{ ok: true } | {
         for (const job of activeJobs) {
           const { count } = await tx.genJob.updateMany({
             where: { id: job.id, ownerId, status: "QUEUED" },
-            data: { status: "FAILED", error: "Cancelled by campaign deletion", finishedAt: new Date() },
+            data: { status: "FAILED", error: "Cancelled by project deletion", finishedAt: new Date() },
           });
           if (count !== 1) throw new Error("GENERATION_STARTED_DURING_DELETE");
           await refundReservation(tx, { orgId: ownerId, refId: job.id });
@@ -255,23 +289,23 @@ export async function deleteProject(projectId: string): Promise<{ ok: true } | {
       });
     } catch (e) {
       if (e instanceof Error && e.message === "GENERATION_RUNNING_DURING_DELETE") {
-        return { error: "A generation is still running in this campaign. Delete it after the generation finishes." };
+        return { error: "A generation is still running in this project. Delete it after the generation finishes." };
       }
       if (e instanceof Error && e.message === "GENERATION_STARTED_DURING_DELETE") {
-        return { error: "A generation started while deleting this campaign. Delete it after the generation finishes." };
+        return { error: "A generation started while deleting this project. Delete it after the generation finishes." };
       }
       if (e instanceof Error && e.message === "RESEARCH_RUNNING_DURING_DELETE") {
-        return { error: "Research is still running in this campaign. Delete it after research finishes." };
+        return { error: "Research is still running in this project. Delete it after research finishes." };
       }
       console.error("[deleteProject] failed:", e);
-      return { error: "Couldn't delete the campaign — please try again." };
+      return { error: "Couldn't delete the project — please try again." };
     }
     revalidatePath("/", "layout");
     return { ok: true };
   });
 }
 
-/** Rename a project (campaign). Owner-scoped, fail-closed; display-only metadata. */
+/** Rename a project. Owner-scoped, fail-closed; display-only metadata. */
 export async function renameProject(projectId: string, name: string): Promise<{ ok: true; name: string } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
@@ -285,7 +319,7 @@ export async function renameProject(projectId: string, name: string): Promise<{ 
   return { ok: true, name: clean };
 }
 
-/** Pin/unpin a campaign in the sidebar. Owner-scoped display metadata only. */
+/** Pin/unpin a project in the sidebar. Owner-scoped display metadata only. */
 export async function setProjectPinned(projectId: string, pinned: boolean): Promise<{ ok: true; pinnedAt: string | null } | { error: string }> {
   const gate = await requireOwner(); if ("error" in gate) return gate;
   const { ownerId } = gate;
@@ -299,7 +333,7 @@ export async function setProjectPinned(projectId: string, pinned: boolean): Prom
   return { ok: true, pinnedAt: pinnedAt ? pinnedAt.toISOString() : null };
 }
 
-/** Auto-title a still-default campaign from its first conversation's title (Grok
+/** Auto-title a still-default project from its first conversation's title (Grok
  *  pattern: a new agent gets named from the first prompt). Owner-scoped, fail-closed,
  *  idempotent (no-op once the project has a real name); writes only project.name —
  *  touches no credits/generation. Safe to call repeatedly from the client. */
@@ -308,14 +342,14 @@ export async function autoTitleProjectIfDefault(projectId: string): Promise<{ ok
   const { ownerId } = gate;
   const project = await prisma.project.findFirst({ where: { id: projectId, ownerId, deletedAt: null }, select: { id: true, name: true } });
   if (!project) return { error: "Project not found." };
-  if (!DEFAULT_CAMPAIGN_NAMES.has(project.name)) return { ok: true }; // already named
+  if (!DEFAULT_PROJECT_NAMES.has(project.name)) return { ok: true }; // already named
   const thread = await prisma.chatThread.findFirst({
     where: { ownerId, projectId: project.id },
     orderBy: { createdAt: "asc" },
     select: { title: true },
   });
   const title = thread?.title?.trim();
-  if (!title || DEFAULT_CAMPAIGN_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
+  if (!title || title === UNTITLED_CHAT_TITLE || DEFAULT_PROJECT_NAMES.has(title)) return { ok: true }; // nothing to adopt yet
   const clean = title.slice(0, 80);
   await prisma.project.update({ where: { id: project.id }, data: { name: clean } });
   await logAction(ownerId, "project.autotitle", project.id, { name: clean });

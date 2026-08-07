@@ -3,7 +3,7 @@ import { executeManageProjects, manageProjectsSkill } from "./manage-projects.js
 import type { OttoContext } from "../context.js";
 
 // W-B3-D (parity debts 03-07 / B0-10): the skill routes EVERY operation through the injected
-// ctx.projects port — thin closures over the same owner-gated campaign server actions the human
+// ctx.projects port — thin closures over the same owner-gated Project server actions the human
 // sidebar uses. Tests mock the port and assert routing, missing-param guards, the delete safety
 // (explicit projectId required — never guess), and $0 gate.
 
@@ -25,10 +25,22 @@ describe("manageProjects registration hygiene", () => {
     const { ottoInstructions } = await import("../instructions.js");
     expect(ottoInstructions).toContain("When to call \`manageProjects\`");
   });
+
+  it("describes Projects only and never routes Campaign requests into the Project tool", async () => {
+    const { ottoInstructions } = await import("../instructions.js");
+    const section = ottoInstructions.match(/## When to call \`manageProjects\`([\s\S]*?)(?=\n## )/)?.[1];
+
+    expect(section).toBeDefined();
+    expect(section).toMatch(/user's projects/i);
+    expect(section).not.toMatch(/\bcampaigns?\b/i);
+    expect(section).not.toMatch(/\/campaign\b/i);
+    expect(manageProjectsSkill.description).toMatch(/user's projects/i);
+    expect(manageProjectsSkill.description).not.toMatch(/\bcampaigns?\b/i);
+  });
 });
 
 describe("manageProjects gate", () => {
-  it("free/write/internal → needsApproval false ($0 campaign surface, same as the human sidebar)", () => {
+  it("free/write/internal → needsApproval false ($0 Project surface, same as the human sidebar)", () => {
     expect(manageProjectsSkill.cost).toBe("free");
     expect(manageProjectsSkill.effect).toBe("write");
     expect(manageProjectsSkill.reach).toBe("internal");
@@ -39,12 +51,12 @@ describe("manageProjects gate", () => {
 describe("executeManageProjects — port required", () => {
   it("degrades gracefully when ctx.projects is not injected (minimal worker ctx)", async () => {
     const res = await executeManageProjects({ action: "get_default" }, { context: makeCtx() });
-    expect(res).toEqual({ ok: false, error: "Campaign management isn't available right now." });
+    expect(res).toEqual({ ok: false, error: "Project management isn't available right now." });
   });
 });
 
 describe("get_default / create", () => {
-  it("get_default returns the default campaign id (debt-03)", async () => {
+  it("get_default returns the default Project id (debt-03)", async () => {
     const getDefault = vi.fn(async () => ({ id: "p-default" }));
     const res = await executeManageProjects({ action: "get_default" }, { context: makeCtx({ getDefault }) });
     expect(res).toEqual({ ok: true, projectId: "p-default" });
@@ -80,7 +92,7 @@ describe("rename / set_pinned", () => {
 });
 
 describe("delete — PERMANENT, never guesses (debt-05)", () => {
-  it("refuses without an explicit projectId (won't delete an implicit/default campaign)", async () => {
+  it("refuses without an explicit projectId (won't delete an implicit/default project)", async () => {
     const remove = vi.fn(async () => ({ ok: true as const }));
     const res = (await executeManageProjects({ action: "delete" }, { context: makeCtx({ remove }) })) as { error: string };
     expect(res.error).toContain("won't guess");
@@ -89,22 +101,23 @@ describe("delete — PERMANENT, never guesses (debt-05)", () => {
   it("the port's contains-media refusal (empty-only parity) surfaces intact — no confirm parameter can override it", async () => {
     const gated = vi.fn(async () => ({
       error:
-        "That campaign still contains generated media (paid work would be permanently destroyed with no refund), " +
-        "so I can't delete it from here. Please delete it by hand on the campaigns page — it will ask you to type " +
-        "the campaign's name to confirm. I can only delete an empty campaign.",
+        "That project still contains generated media (paid work would be permanently destroyed with no refund), " +
+        "so I can't delete it from here. Please delete it by hand from the project's menu in the sidebar — it will " +
+        "ask you to type the project's name to confirm. I can only delete an empty project.",
     }));
     const res = (await executeManageProjects({ action: "delete", projectId: "p-media" }, { context: makeCtx({ remove: gated }) })) as {
       ok: boolean; error: string;
     };
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("by hand on the campaigns page");
-    expect(res.error).toContain("empty campaign");
+    expect(res.error).toContain("by hand from the project's menu in the sidebar");
+    expect(res.error).toContain("empty project");
+    expect(res.error).not.toMatch(/\bcampaigns?\b|\/campaign\b/i);
   });
   it("routes an explicit id; the guarded action's error (running generation) surfaces intact", async () => {
     const ok = vi.fn(async () => ({ ok: true as const }));
     expect(await executeManageProjects({ action: "delete", projectId: "p1" }, { context: makeCtx({ remove: ok }) })).toEqual({ ok: true });
     expect(ok).toHaveBeenCalledWith("p1");
-    const busy = vi.fn(async () => ({ error: "A generation is still running in this campaign. Delete it after the generation finishes." }));
+    const busy = vi.fn(async () => ({ error: "A generation is still running in this project. Delete it after the generation finishes." }));
     const res = (await executeManageProjects({ action: "delete", projectId: "p1" }, { context: makeCtx({ remove: busy }) })) as { ok: boolean; error: string };
     expect(res.ok).toBe(false);
     expect(res.error).toContain("still running");

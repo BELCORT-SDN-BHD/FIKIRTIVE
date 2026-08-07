@@ -26,7 +26,7 @@
 | manageEntities | free | write | internal | ❌ | Manage the user's reusable elements — the @-referenceable characters, locations, |
 | manageLibrary | free | write | internal | ❌ | Browse the user's Library — every image/video they've made — $0, never generates |
 | manageMedia | free | write | internal | ❌ | See and organize the project's generated media ($0 — never generates media or sp |
-| manageProjects | free | write | internal | ❌ | Manage the user's campaigns (projects) — $0, never generates or spends. get_defa |
+| manageProjects | free | write | internal | ❌ | Manage the user's Projects — $0, never generates or spends. get_default: the use |
 | meta-ad-performance | free | read | external | ❌ | Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + it |
 | meta-expert | free | write | internal | ❌ | Diagnose the user's Meta ad performance: which specific ads/creatives are winnin |
 | meta-insights | free | read | external | ❌ | Read the user's connected Meta (Facebook/Instagram) ad-account performance (spen |
