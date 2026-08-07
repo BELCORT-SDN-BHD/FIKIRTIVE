@@ -48,6 +48,7 @@ const TEMPLATE_VERSION_A = `${SUITE}-template-version-a`;
 const CONNECTION_A = `${SUITE}-connection-a`;
 const SEGMENT_WHATSAPP = `${SUITE}-segment-whatsapp`;
 const SEGMENT_EVERYONE = `${SUITE}-segment-everyone`;
+const SEGMENT_OPTED_OUT = `${SUITE}-segment-opted-out`;
 const NOW = new Date("2026-08-08T00:00:00.000Z");
 
 /** Names read like the walkthrough's, so a failure names a person, not an id. */
@@ -82,6 +83,11 @@ const WHATSAPP_CONTACTABLE = {
 const EVERYONE_CONTACTABLE = {
   match: "all" as const,
   rules: [{ kind: "contactability" as const, value: "contactable" as const }],
+};
+/** A merchant is allowed to go looking for the people who opted out — this is a real segment. */
+const OPTED_OUT_ONLY = {
+  match: "all" as const,
+  rules: [{ kind: "contactability" as const, value: "not_contactable" as const }],
 };
 
 const broadcast = createCustomerBroadcastService({ clock: () => NOW, id: () => `${SUITE}-gen-${randomUUID()}` });
@@ -294,6 +300,15 @@ beforeAll(async () => {
         kind: "custom",
         createdAt: NOW,
       },
+      {
+        id: SEGMENT_OPTED_OUT,
+        ownerId: ORG_A,
+        name: "Everyone who opted out",
+        phrase: "All of: contact is a known opt-out",
+        rulesJson: OPTED_OUT_ONLY,
+        kind: "custom",
+        createdAt: NOW,
+      },
     ],
   });
 }, 120_000);
@@ -372,9 +387,9 @@ describe("#726 the segment's promise and the frozen audience are the same list",
     if (!("ok" in excluded)) throw new Error(excluded.error);
     expect(excluded.contacts.map((contact) => contact.id).sort()).toEqual([CHANDRA, HANA, DEVI, GRACE].sort());
     // The consent history on Chandra's profile has nothing to show — there are no events behind
-    // this exclusion — so the row the merchant is looking at has to name the reason itself.
+    // this fence — so the row the merchant is looking at has to name the reason itself.
     const rows = renderToStaticMarkup(createElement(ContactPreview, { preview: excluded }));
-    expect(rows).toContain("Excluded · opted out before consent history");
+    expect(rows).toContain("Included · opted out before consent history");
 
     // And re-recording the same opt-out on the profile cannot be the act that releases it.
     const frozen = await freezeOnce("freeze-legacy", SEGMENT_WHATSAPP);
@@ -484,6 +499,32 @@ describe("#726 the two pages count different populations, and each one says whic
     expect(note).toContain("This count covers the contacts this broadcast can reach on its channel");
     // The freeze must not claim to have excluded the very same people the segment did.
     expect(note).not.toContain("the same contacts the segment left out");
+  });
+});
+
+describe("#726 a row says what this selection did with the contact, not what another one would", () => {
+  it("calls nobody excluded when the merchant deliberately selected the people who opted out", async () => {
+    actAs(ORG_A);
+    const preview = await previewSegment(OPTED_OUT_ONLY);
+    if (!("ok" in preview)) throw new Error(preview.error);
+    const frozen = await freezeOnce("freeze-optout-segment", SEGMENT_OPTED_OUT);
+    const delivered = new Set(frozen.members.map((member) => member.contactId));
+
+    // Looking for the people who opted out is a legitimate segment, and every one of them this
+    // broadcast can reach really does go into the frozen audience. (Sending is a separate gate:
+    // their consent axis is not a pass, so the executor will not deliver to them.)
+    expect(delivered.size).toBe(4); // John is the fifth, with no WhatsApp identity to reach
+    for (const contact of preview.contacts) {
+      expect(delivered.has(contact.id)).toBe(contact.channels.includes("whatsapp"));
+    }
+
+    // So the row may not stamp them "excluded" — the page would be saying the opposite of what
+    // the freeze on the very same rules just did.
+    const markup = renderToStaticMarkup(createElement(ContactPreview, { preview }));
+    expect(markup).not.toContain("Known opt-out excluded");
+    expect(markup).not.toContain("Excluded · ");
+    expect(markup).toContain("Included · known opt-out");
+    expect(markup).toContain("Included · opted out before consent history");
   });
 });
 

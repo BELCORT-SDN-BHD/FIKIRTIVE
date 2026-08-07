@@ -817,14 +817,22 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
                   {contact.channels.length > 0 ? contact.channels.join(" · ") : "No live identity"}
                 </p>
               </div>
+              {/*
+                Every row here MATCHED, and a matched contact is exactly what the broadcast
+                freeze turns into an audience member. So the badge may only describe this
+                contact's consent standing — never claim an exclusion. A merchant is allowed to
+                select the people who opted out; on that segment the old "excluded" wording said
+                the opposite of what the freeze on the same rules did. Whether such a member can
+                actually be messaged is decided later, by the four send-eligibility axes.
+              */}
               <Badge variant={contact.contactable && !contact.reportedOptOut ? "success" : "warning"}>
                 {contact.contactable
                   ? contact.reportedOptOut
                     ? "Included · reported opt-out"
                     : "Included"
                   : contact.unresolvedLegacyOptOut
-                    ? "Excluded · opted out before consent history"
-                    : "Known opt-out excluded"}
+                    ? "Included · opted out before consent history"
+                    : "Included · known opt-out"}
               </Badge>
             </li>
           ))}
