@@ -157,9 +157,12 @@ export default function BroadcastDetailPage({
   const createdByName =
     run && directory ? directory.members.find((m) => m.membershipId === run.createdByMembershipId)?.displayName ?? null : null;
 
+  // #724: refresh() NEVER clears actionError. runMutation always re-reads in its finally, so a
+  // clear here wipes the rejection the merchant was about to be shown — React batches both sets
+  // and the banner is never painted. Clearing belongs to the action that starts (runMutation)
+  // and to the merchant's own explicit Refresh, not to the read.
   async function refresh() {
     setBusy("refresh");
-    setActionError(null);
     try {
       const [result, report] = await Promise.all([
         getBroadcastRunLivePreflight({ broadcastRunId }),
@@ -246,7 +249,7 @@ export default function BroadcastDetailPage({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={busy !== null}>
+            <Button type="button" variant="ghost" onClick={() => { setActionError(null); void refresh(); }} disabled={busy !== null}>
               <RefreshCw className={busy === "refresh" ? "animate-spin" : undefined} />Refresh
             </Button>
           </div>
