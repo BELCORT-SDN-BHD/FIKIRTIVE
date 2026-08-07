@@ -90,9 +90,12 @@ beforeAll(async () => {
       lifecycleStage: "Active",
       source: "manual",
       firstTouchAt: new Date(base),
-      // Five contacts share each lastSeenAt, so the 50-row page boundary lands inside a tie
-      // group — the position the second page resumes from has to break ties by id.
-      lastSeenAt: new Date(base + Math.floor(index / 5) * 60_000),
+      // Seven contacts share each lastSeenAt. Read newest-first that lays out as 2, then
+      // 7, 7, 7, 7, 7, 7, 7 — so rows 45..51 are one tie group and the 50-row page boundary
+      // falls INSIDE it. The second page can only resume without losing rows 51 if the
+      // cursor breaks the tie by id. (Group size must not divide 50: with 5 per group the
+      // boundary lands between groups and the tie-break is never exercised.)
+      lastSeenAt: new Date(base + Math.floor(index / 7) * 60_000),
       marketingConsent: index === 0 ? "opt_out" : "unknown",
     })),
   });
@@ -108,7 +111,9 @@ beforeAll(async () => {
       lastSeenAt: new Date(base + index * 60_000),
     })),
   });
-});
+  // Bootstrapping two orgs and inserting 68 rows is past vitest's 10s default hook budget on
+  // a loaded runner.
+}, 60_000);
 
 describe("#715 contacts list tells the truth about truncation", () => {
   it("reports the real owner-scoped total next to the page it actually returned", async () => {
@@ -136,6 +141,26 @@ describe("#715 contacts list tells the truth about truncation", () => {
 
     const ids = [...first.contacts, ...second.contacts].map((contact) => contact.id);
     expect(new Set(ids).size).toBe(SEEDED);
+
+    // The seeding is only a real tie-break test if the boundary sits inside a tie group:
+    // last row of page one and first row of page two share a lastSeenAt, so only the id
+    // comparison keeps row 51 from being skipped.
+    expect(second.contacts[0].lastSeenAt.getTime())
+      .toBe(first.contacts.at(-1)!.lastSeenAt.getTime());
+  });
+
+  it("refuses a cursor it did not issue instead of silently restarting at row one", async () => {
+    await asUser(OWNER_EMAIL);
+
+    await expect(listContacts({ cursor: "not-a-cursor" })).resolves.toEqual({
+      error: "Refresh the contact list and try again.",
+    });
+    await expect(listContacts({ cursor: "not-a-date|con_1" })).resolves.toEqual({
+      error: "Refresh the contact list and try again.",
+    });
+    await expect(listContacts({ cursor: 42 })).resolves.toEqual({
+      error: "Refresh the contact list and try again.",
+    });
   });
 
   it("keeps the total inside the tenant fence", async () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import {
   AlertCircle,
   ArrowDown,
@@ -78,6 +78,10 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
   // The filter that actually produced the rows on screen — typing in the search box does not
   // change it until the search runs, so "load more" always continues the visible list.
   const [applied, setApplied] = useState<{ query: string; stage: StageFilter }>({ query: "", stage: "all" });
+  // Search and "load more" share one read lane. Only the newest request may write the list,
+  // its total, or its cursor — a slow page that lands after a newer search is dropped, never
+  // appended into a list it does not belong to.
+  const readSequence = useRef(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [readError, setReadError] = useState<string | null>(null);
@@ -96,6 +100,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [importError, setImportError] = useState<string | null>(null);
 
   async function refreshContacts(nextQuery = query, nextStage = stage) {
+    const sequence = ++readSequence.current;
     setLoading(true);
     setReadError(null);
     try {
@@ -103,20 +108,23 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
         query: nextQuery,
         ...(nextStage === "all" ? {} : { lifecycleStage: nextStage }),
       });
+      if (sequence !== readSequence.current) return;
       if (!("ok" in result)) return setReadError(result.error);
       setContacts(result.contacts);
       setTotalCount(result.totalCount);
       setNextCursor(result.nextCursor);
       setApplied({ query: nextQuery, stage: nextStage });
     } catch {
+      if (sequence !== readSequence.current) return;
       setReadError("The contacts request could not finish. Please retry.");
     } finally {
-      setLoading(false);
+      if (sequence === readSequence.current) setLoading(false);
     }
   }
 
   async function loadMoreContacts() {
     if (!nextCursor) return;
+    const sequence = ++readSequence.current;
     setLoadingMore(true);
     setReadError(null);
     try {
@@ -125,14 +133,16 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
         ...(applied.stage === "all" ? {} : { lifecycleStage: applied.stage }),
         cursor: nextCursor,
       });
+      if (sequence !== readSequence.current) return;
       if (!("ok" in result)) return setReadError(result.error);
       setContacts((current) => [...current, ...result.contacts]);
       setTotalCount(result.totalCount);
       setNextCursor(result.nextCursor);
     } catch {
+      if (sequence !== readSequence.current) return;
       setReadError("The contacts request could not finish. Please retry.");
     } finally {
-      setLoadingMore(false);
+      if (sequence === readSequence.current) setLoadingMore(false);
     }
   }
 
@@ -273,7 +283,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
             })}
             </section>
             {nextCursor ? (
-              <Button type="button" className="mt-4" variant="secondary" disabled={loadingMore} onClick={loadMoreContacts}>
+              <Button type="button" className="mt-4" variant="secondary" disabled={loading || loadingMore} onClick={loadMoreContacts}>
                 {loadingMore ? <LoaderCircle className="animate-spin" /> : <ArrowDown />}
                 Load more contacts
               </Button>
