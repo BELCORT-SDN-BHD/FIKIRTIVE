@@ -567,6 +567,152 @@ describe("#741 r1 Approve all 的缺项汇总只报真的缺项", () => {
   });
 });
 
+// ── #741 判官 r2 —— 单一状态源:同屏不许一边放行一边冤枉 ────────────────────────
+
+describe("#741 r2 连接状态还没读到时,整屏一致地「不确定」", () => {
+  beforeEach(() => {
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    // 连接读一直悬着 = 「还没读到」。帖子照常渲染,连接状态停在 loading。
+    mocks.listOwnerTargets.mockReturnValue(new Promise(() => {}));
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
+    ]);
+  });
+
+  it("Plan 一条都不计 ready,Approve all 禁用", async () => {
+    await renderSchedule();
+
+    const approveAll = buttonByText("Approve all", document.body);
+    // 病灶:Plan 收到 null 时把带旧 targetId 的帖子当作 ready,按钮可按。
+    expect(approveAll.textContent).toContain("Approve all 0");
+    expect(approveAll.disabled).toBe(true);
+  });
+
+  it("Plan 的汇总句说的是「正在查」,不是断言式的「去连账号」", async () => {
+    await renderSchedule();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Checking your connected accounts");
+    expect(text).not.toContain("Connect your account before approving.");
+  });
+
+  it("composer 同屏同一口径:中性句、不冤枉、也不给 Connect CTA", async () => {
+    await renderSchedule();
+    // Otto 提的草稿住在 Plan 卡片里,打开它的入口是那一行的「Tweak」。
+    await click(buttonByText("Tweak", document.body));
+
+    const text = scope().textContent ?? "";
+    // 病灶:Composer 收到初始 [] → 误报「没连账号」并禁用,与 Plan 的放行同屏矛盾。
+    expect(text).toContain("Checking your connected accounts");
+    expect(text).not.toContain("Connect your account before approving.");
+    expect(text).not.toContain("Connect an account first");
+    expect(buttonByText("Approve & schedule", scope()).disabled).toBe(true);
+  });
+});
+
+describe("#741 r2 他处断连:下一个刷新周期内草稿自动翻成 blocker", () => {
+  beforeEach(() => {
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft", metaTargetId: IG_TARGET.id }),
+    ]);
+  });
+
+  /** 一次刷新周期 = 商家切回这个标签页(focus)。帖子与连接列表必须走同一趟。 */
+  async function refreshCycle() {
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("一个账号都不剩(全部断开):计数下降,理由改口为「去连账号」", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    await renderSchedule();
+    expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
+
+    // 商家在别处断开了连接;下一趟刷新才知道 —— 而刷新必须把连接一起重读。
+    mocks.listOwnerTargets.mockResolvedValue([]);
+    await refreshCycle();
+
+    const approveAll = buttonByText("Approve all", document.body);
+    expect(approveAll.textContent).toContain("Approve all 0");
+    expect(approveAll.disabled).toBe(true);
+    expect(document.body.textContent).toContain("Connect your account before approving.");
+  });
+
+  it("换成了别的账号:同一草稿翻成「这不是你连着的账号」", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    await renderSchedule();
+    expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
+
+    mocks.listOwnerTargets.mockResolvedValue([{ id: "ig-2", name: "Another Page", channel: "instagram" as const }]);
+    await refreshCycle();
+
+    expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 0");
+    expect(document.body.textContent).toContain("That account isn't one of your connected channels.");
+  });
+
+  it("刷新是同一条时间线:帖子与连接列表每趟一起重读", async () => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    await renderSchedule();
+    const postsAfterMount = mocks.listScheduledPosts.mock.calls.length;
+    const targetsAfterMount = mocks.listOwnerTargets.mock.calls.length;
+
+    await refreshCycle();
+
+    // 病灶:连接列表只在挂载时读一次,focus/60s 刷新只重读帖子。
+    expect(mocks.listScheduledPosts.mock.calls.length).toBe(postsAfterMount + 1);
+    expect(mocks.listOwnerTargets.mock.calls.length).toBe(targetsAfterMount + 1);
+  });
+});
+
+describe("#741 r2 X 草稿:只指路换渠道,不给一个不存在的连接动作", () => {
+  beforeEach(() => {
+    mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-x", channel: "x", caption: "Legacy X draft", metaTargetId: null, media: [] }),
+    ]);
+  });
+
+  async function openXDraft() {
+    const row = Array.from(document.body.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
+      (b.textContent ?? "").includes("Legacy X draft"),
+    )!;
+    await click(row);
+  }
+
+  it("composer 里没有 Connect 按钮,也没有「Connect an account first」那段", async () => {
+    await renderSchedule();
+    await openXDraft();
+
+    const text = scope().textContent ?? "";
+    // 病灶:X 明明没有连接入口,同屏却又让换渠道、又让执行一个不存在的动作。
+    expect(text).not.toContain("Connect an account first");
+    const connectButtons = Array.from(scope().querySelectorAll("button")).filter(
+      (b) => (b.textContent ?? "").trim() === "Connect",
+    );
+    expect(connectButtons).toEqual([]);
+  });
+
+  it("缺项句只含换渠道指引,不含任何连接动作", async () => {
+    await renderSchedule();
+    await openXDraft();
+
+    const live = Array.from(scope().querySelectorAll('[role="status"]'))
+      .map((el) => el.textContent ?? "")
+      .join(" ");
+    expect(live).toMatch(/move this post to another channel/i);
+    expect(live).not.toMatch(/connect/i);
+    expect(buttonByText("Approve & schedule", scope()).disabled).toBe(true);
+  });
+});
+
 // ── 单点权威的词法围栏 ────────────────────────────────────────────────────────
 //
 // #741 判官 r1 [P2]:上一版围栏只读三个写死的组件、只比对少数精确文本 —— 新组件手写渠道
@@ -656,19 +802,39 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("三处消费方确实读的是共享权威,而不是各自空手过关", () => {
+  // #741 r2:approve 规则只有两个合法应用点 —— 服务端动作(权威)与客户端的单一状态源
+  // (它把 loading / loaded 与渠道可连性叠在规则之上)。任何组件直接调用它,就等于又开了一个
+  // 生命周期不同的判定点 —— 正是这三轮同族病的病根。
+  const APPROVE_RULE_CALLERS = new Set(["lib/schedule-actions.ts", "lib/schedule-connections.ts"]);
+
+  it("组件不许自己调 approve 规则 —— 判定只能来自单一状态源", () => {
+    const offenders = files
+      .filter((f) => !APPROVE_RULE_CALLERS.has(f.rel) && f.code.includes("scheduleApproveBlockers"))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+    // 反面:这两处必须真的在用它,不能空手过关。
+    for (const rel of APPROVE_RULE_CALLERS) {
+      expect(files.find((f) => f.rel === rel)?.code).toContain("scheduleApproveBlockers");
+    }
+  });
+
+  it("Schedule 屏不许自己拼「账号还算不算数」的判定,只能问单一状态源", () => {
+    const schedule = files.find((f) => f.rel === "components/otto/OttoSchedule.tsx")!.code;
+    expect(schedule).toContain("approvalFor");
+    // 自己 filter 一遍 targets 再拿去比对 —— 就是又生出一个判定点。
+    expect(schedule).not.toMatch(/targets\s*\.\s*(filter|some|find)\s*\(/);
+    expect(schedule).not.toMatch(/metaTargetId\s*&&\s*p?\.?media\.length/);
+    expect(schedule).not.toContain("Pick an account to approve");
+  });
+
+  it("消费方读的是共享权威,而不是各自空手过关", () => {
     const byRel = new Map(files.map((f) => [f.rel, f.code]));
     const schedule = byRel.get("components/otto/OttoSchedule.tsx")!;
     const connections = byRel.get("components/otto/OttoConnections.tsx")!;
     const sections = byRel.get("components/otto/settings/sections.tsx")!;
     const actions = byRel.get("lib/schedule-actions.ts")!;
 
-    // approve 规则:界面与服务端读同一个函数。
-    expect(schedule).toContain("scheduleApproveBlockers");
     expect(actions).toContain("scheduleApproveBlockers");
-    expect(schedule).not.toContain("Pick an account to approve");
-    // 规则本身也不许再被手写第二遍(「有账号 + 有媒体」曾经在界面里被复制了三份)。
-    expect(schedule).not.toMatch(/metaTargetId\s*&&\s*p?\.?media\.length/);
 
     // 可连渠道名单:Connections 不再自带一份,三处入口读同一处。
     expect(connections).not.toMatch(/const\s+UNAVAILABLE_PUBLISHING_CHANNEL_IDS\s*=/);
