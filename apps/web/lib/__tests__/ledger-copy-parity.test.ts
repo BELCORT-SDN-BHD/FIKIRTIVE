@@ -243,8 +243,13 @@ describe("#684 a top-up or a grant is never counted as a charge", () => {
   });
 
   it("counts only the two real charges out of four entries", () => {
-    // signup grant +20, top-up +500, one video charge, one admin deduction.
-    const markup = markupFor([LEDGER[0], LEDGER[1], LEDGER[2], LEDGER[3]]);
+    // The ticket's scenario B: signup grant +20, top-up +500, one settled video charge,
+    // one admin deduction. Two of those four added credits — they are not charges.
+    const videoSettled = row({
+      id: "vid1s", kind: "SETTLE", refId: "job_video", balanceDelta: 0, reservedDelta: -110,
+      createdAt: new Date("2026-08-07T05:01:00.000Z"),
+    });
+    const markup = markupFor([LEDGER[0], LEDGER[1], LEDGER[2], videoSettled, LEDGER[3]]);
 
     expect(markup).not.toMatch(/4 credit charges/);
     expect(markup).toMatch(/2 of them are charges/);

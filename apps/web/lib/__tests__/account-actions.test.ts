@@ -23,12 +23,14 @@ const findUnique = vi.fn();
 const organizationFindFirst = vi.fn();
 const creditLedgerFindMany = vi.fn();
 const genJobFindMany = vi.fn();
+const refGenJobFindMany = vi.fn();
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     organization: { findFirst: organizationFindFirst },
     creditAccount: { findUnique },
     creditLedger: { findMany: creditLedgerFindMany },
     genJob: { findMany: genJobFindMany },
+    refGenJob: { findMany: refGenJobFindMany },
   },
 }));
 
@@ -44,6 +46,8 @@ beforeEach(() => {
   creditLedgerFindMany.mockReset();
   genJobFindMany.mockReset();
   genJobFindMany.mockResolvedValue([]);
+  refGenJobFindMany.mockReset();
+  refGenJobFindMany.mockResolvedValue([]);
   organizationFindFirst.mockResolvedValue({ name: "Acme Studio" });
   mockHeaders.mockResolvedValue(new Headers({ cookie: "better-auth.session_token=test" }));
   mockSignOut.mockResolvedValue(undefined);
@@ -65,15 +69,15 @@ describe("getMyAccount", () => {
     findUnique.mockResolvedValue({ balance: 9990, reserved: 100 }); // internal credits (1 internal = $0.01)
     // the query filters balanceDelta != 0 in the DB, so the mock returns only balance-moving rows
     creditLedgerFindMany.mockResolvedValue([
-      { id: "l1", kind: "GRANT", reason: "beta signup grant", refId: null, balanceDelta: 10000, createdAt: new Date("2026-06-20T00:00:00Z") },
-      { id: "l2", kind: "RESERVE", reason: "", refId: "genjob_abc", balanceDelta: -10, createdAt: new Date("2026-06-20T01:00:00Z") },
-      // an Otto conversation turn — refId "otto-..." → labeled "Otto thinking", not "Generation"
-      { id: "l3", kind: "RESERVE", reason: "", refId: "otto-turn:thread1:3", balanceDelta: -35, createdAt: new Date("2026-06-20T02:00:00Z") },
-      { id: "l4", kind: "RESERVE", reason: "", refId: "genjob_video", balanceDelta: -70, createdAt: new Date("2026-06-20T03:00:00Z") },
+      { id: "l1", kind: "GRANT", source: "BETA", refId: null, balanceDelta: 10000, createdAt: new Date("2026-06-20T00:00:00Z") },
+      { id: "l2", kind: "RESERVE", source: "SYSTEM", refId: "genjob_abc", balanceDelta: -10, createdAt: new Date("2026-06-20T01:00:00Z") },
+      // an Otto conversation turn — refId "otto-..." → labeled "Chat", not a generation
+      { id: "l3", kind: "RESERVE", source: "SYSTEM", refId: "otto-turn:thread1:3", balanceDelta: -35, createdAt: new Date("2026-06-20T02:00:00Z") },
+      { id: "l4", kind: "RESERVE", source: "SYSTEM", refId: "genjob_video", balanceDelta: -70, createdAt: new Date("2026-06-20T03:00:00Z") },
     ]);
     genJobFindMany.mockResolvedValue([
-      { id: "genjob_abc", kind: "IMAGE", count: 4, videoOptions: null },
-      { id: "genjob_video", kind: "VIDEO", count: 1, videoOptions: { resolution: "720p" } },
+      { id: "genjob_abc", kind: "IMAGE" },
+      { id: "genjob_video", kind: "VIDEO" },
     ]);
 
     const res = await getMyAccount();
@@ -95,10 +99,11 @@ describe("getMyAccount", () => {
     expect(res.reserved).toBe(10); // 100 / 10
     expect(res.balanceUsd).toBeCloseTo(99.9); // 9990 / 100
     expect(res.recent.map((r) => r.id)).toEqual(["l1", "l2", "l3", "l4"]);
-    expect(res.recent[0]).toMatchObject({ label: "beta signup grant", delta: 1000 });
-    expect(res.recent[1]).toMatchObject({ label: "Image generation - 4 images", delta: -1 }); // media reserve (genjob refId)
-    expect(res.recent[2]).toMatchObject({ label: "Otto thinking", delta: -3.5 }); // otto- refId → conversation cost
-    expect(res.recent[3]).toMatchObject({ label: "Video generation - 720p", delta: -7 });
+    // Labels come from the shared ledger wording (#683) — the same words /billing shows.
+    expect(res.recent[0]).toMatchObject({ label: "Credits added", delta: 1000 });
+    expect(res.recent[1]).toMatchObject({ label: "Image", delta: -1 }); // media reserve (genjob refId)
+    expect(res.recent[2]).toMatchObject({ label: "Chat", delta: -3.5 }); // otto- refId → conversation cost
+    expect(res.recent[3]).toMatchObject({ label: "Video", delta: -7 });
   });
 
   it("treats a missing CreditAccount as zero (never throws)", async () => {
@@ -120,15 +125,15 @@ describe("getMyAccount", () => {
     creditLedgerFindMany.mockResolvedValue([
       // RESERVE held 12.0 displayed credits (120 internal); SETTLE later refunds the
       // unspent 0.4 (4 internal) — actual usage was 11.6. Same refId ⇒ one task.
-      { id: "settle1", kind: "SETTLE", reason: "", refId: "otto-turn:t1:1", balanceDelta: 4, createdAt: new Date("2026-07-28T10:05:00Z") },
-      { id: "reserve1", kind: "RESERVE", reason: "", refId: "otto-turn:t1:1", balanceDelta: -120, createdAt: new Date("2026-07-28T10:00:00Z") },
+      { id: "settle1", kind: "SETTLE", source: "SYSTEM", refId: "otto-turn:t1:1", balanceDelta: 4, createdAt: new Date("2026-07-28T10:05:00Z") },
+      { id: "reserve1", kind: "RESERVE", source: "SYSTEM", refId: "otto-turn:t1:1", balanceDelta: -120, createdAt: new Date("2026-07-28T10:00:00Z") },
     ]);
     const res = await getMyAccount();
     if ("error" in res) throw new Error("unexpected error");
     expect(res.recent).toHaveLength(1);
     expect(res.recent[0]).toMatchObject({
       id: "settle1", // the later (settling) row anchors the merged entry
-      label: "Otto thinking",
+      label: "Chat",
       delta: -11.6, // net: -12 + 0.4
       detail: "11.6 credits used · 0.4 refunded",
     });
@@ -169,15 +174,15 @@ describe("getMyAccount", () => {
     mockRequireOwner.mockResolvedValue({ email: "a@test", ownerId: "orgA" });
     findUnique.mockResolvedValue({ balance: 1000, reserved: 0 });
     creditLedgerFindMany.mockResolvedValue([
-      { id: "refund1", kind: "REFUND", reason: "", refId: "genjob_failed", balanceDelta: 20, createdAt: new Date("2026-07-28T11:01:00Z") },
-      { id: "reserve2", kind: "RESERVE", reason: "", refId: "genjob_failed", balanceDelta: -20, createdAt: new Date("2026-07-28T11:00:00Z") },
+      { id: "refund1", kind: "REFUND", source: "SYSTEM", refId: "genjob_failed", balanceDelta: 20, createdAt: new Date("2026-07-28T11:01:00Z") },
+      { id: "reserve2", kind: "RESERVE", source: "SYSTEM", refId: "genjob_failed", balanceDelta: -20, createdAt: new Date("2026-07-28T11:00:00Z") },
     ]);
-    genJobFindMany.mockResolvedValue([{ id: "genjob_failed", kind: "IMAGE", count: 2, videoOptions: null }]);
+    genJobFindMany.mockResolvedValue([{ id: "genjob_failed", kind: "IMAGE" }]);
     const res = await getMyAccount();
     if ("error" in res) throw new Error("unexpected error");
     expect(res.recent).toHaveLength(1);
     expect(res.recent[0]).toMatchObject({
-      label: "Image generation - 2 images",
+      label: "Image",
       delta: 0,
       detail: "Held, then refunded in full",
     });
