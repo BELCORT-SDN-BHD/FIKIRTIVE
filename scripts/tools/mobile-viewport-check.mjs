@@ -7,6 +7,10 @@
 //   3. 主行动在屏内  指定的主按钮 boundingBox 完整落在视口内
 //   4. 窄屏按钮让行  一行 flex 里的按钮必须换到正文下面,不把正文挤成细长条
 //
+// fail-closed:被断言的元素找不到(汉堡按钮、顶部锚点、主按钮、堆叠的正文/按钮)
+// 本身就算 failure。选择器过时 = 那一条断言压根没跑,不能当成「这个面是干净的」。
+// 唯一的例外是配置里显式写了 skipTopAnchor 的面 —— 那是有意不测,不是没测成。
+//
 // 用法(本地 dev,先起 worker 再起 web):
 //   node scripts/tools/mobile-viewport-check.mjs --base http://localhost:3111 --state ./state.json
 // state.json 由 Playwright storageState 产生(登录一次即可复用)。
@@ -92,9 +96,16 @@ for (const surface of SURFACES) {
   if (!surface.skipTopAnchor) {
     const trigger = await page.locator(NAV_TRIGGER).first().boundingBox().catch(() => null);
     const anchor = await page.locator(surface.topAnchor).first().boundingBox().catch(() => null);
-    if (!trigger) anchorVerdict = "no nav trigger (desktop tier?)";
-    else if (!anchor) anchorVerdict = `anchor "${surface.topAnchor}" not found`;
-    else if (overlaps(trigger, anchor)) {
+    // fail-closed: at 375px the trigger and the anchor both MUST be on the page. A
+    // renamed label or a restructured header would otherwise silently drop the only
+    // assertion that covers this surface, and the run would still print "clean".
+    if (!trigger) {
+      anchorVerdict = "MISSING nav trigger";
+      failures.push(`${surface.ticket} ${surface.path}: nav trigger ${NAV_TRIGGER} not found — cannot assert it clears the content`);
+    } else if (!anchor) {
+      anchorVerdict = `MISSING anchor "${surface.topAnchor}"`;
+      failures.push(`${surface.ticket} ${surface.path}: top anchor ${surface.topAnchor} not found — selector is stale, assertion did not run`);
+    } else if (overlaps(trigger, anchor)) {
       anchorVerdict = `OVERLAP trigger(${Math.round(trigger.x)},${Math.round(trigger.y)},${Math.round(trigger.width)}x${Math.round(trigger.height)}) vs anchor(${Math.round(anchor.x)},${Math.round(anchor.y)},${Math.round(anchor.width)}x${Math.round(anchor.height)})`;
       failures.push(`${surface.ticket} ${surface.path}: nav trigger covers ${surface.topAnchor} — ${anchorVerdict}`);
     } else {
@@ -116,8 +127,10 @@ for (const surface of SURFACES) {
   let actionVerdict = "n/a";
   if (surface.primaryAction) {
     const box = await page.locator(surface.primaryAction).first().boundingBox().catch(() => null);
-    if (!box) actionVerdict = `"${surface.primaryAction}" not found`;
-    else {
+    if (!box) {
+      actionVerdict = `MISSING "${surface.primaryAction}"`;
+      failures.push(`${surface.ticket} ${surface.path}: primary action ${surface.primaryAction} not found — selector is stale, assertion did not run`);
+    } else {
       const inside = box.x >= 0 && box.x + box.width <= VIEWPORT.width;
       actionVerdict = inside
         ? `in viewport (right=${Math.round(box.x + box.width)})`
@@ -132,8 +145,11 @@ for (const surface of SURFACES) {
     for (let i = 0; i < (surface.stacked.textParent ?? 0); i += 1) textLocator = textLocator.locator("xpath=..");
     const textBox = await textLocator.boundingBox().catch(() => null);
     const buttonBox = await page.locator(surface.stacked.button).first().boundingBox().catch(() => null);
-    if (!textBox || !buttonBox) stackedVerdict = "text or button not found";
-    else if (buttonBox.y + 2 < textBox.y + textBox.height) {
+    if (!textBox || !buttonBox) {
+      const absent = [!textBox && surface.stacked.text, !buttonBox && surface.stacked.button].filter(Boolean).join(" + ");
+      stackedVerdict = `MISSING ${absent}`;
+      failures.push(`${surface.ticket} ${surface.path}: ${absent} not found — selector is stale, assertion did not run`);
+    } else if (buttonBox.y + 2 < textBox.y + textBox.height) {
       stackedVerdict = `SAME ROW (text ${Math.round(textBox.width)}px wide, button top=${Math.round(buttonBox.y)} vs text bottom=${Math.round(textBox.y + textBox.height)})`;
       failures.push(`${surface.ticket} ${surface.path}: ${surface.stacked.button} does not wrap below the copy — ${stackedVerdict}`);
     } else {

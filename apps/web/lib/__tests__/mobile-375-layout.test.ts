@@ -34,19 +34,66 @@ function walk(dir: string): string[] {
 describe("full-page containers are mobile-first", () => {
   const CONTAINER = /className="([^"]*\bmin-h-dvh\b[^"]*\bbg-background\b[^"]*\bpx-[^"]*)"/g;
 
-  it("starts every min-h-dvh page container at px-4 and widens with a breakpoint", () => {
+  /** Every full-page container the sweep finds, keyed by repo-relative file. */
+  function sweepContainers(): { offenders: string[]; perFile: Map<string, number>; total: number } {
     const offenders: string[] = [];
+    const perFile = new Map<string, number>();
+    let total = 0;
 
     for (const file of [...walk(path.join(WEB_ROOT, "app")), ...walk(path.join(WEB_ROOT, "components"))]) {
+      const relative = path.relative(WEB_ROOT, file);
       const text = fs.readFileSync(file, "utf8");
       for (const match of text.matchAll(CONTAINER)) {
-        const classes = match[1];
-        const base = classes.match(/(?:^|\s)px-(\S+)/)?.[1];
-        if (base !== "4") offenders.push(`${path.relative(WEB_ROOT, file)}: px-${base}`);
+        total += 1;
+        perFile.set(relative, (perFile.get(relative) ?? 0) + 1);
+        const base = match[1].match(/(?:^|\s)px-(\S+)/)?.[1];
+        if (base !== "4") offenders.push(`${relative}: px-${base}`);
       }
     }
 
-    expect(offenders).toEqual([]);
+    return { offenders, perFile, total };
+  }
+
+  it("starts every min-h-dvh page container at px-4 and widens with a breakpoint", () => {
+    expect(sweepContainers().offenders).toEqual([]);
+  });
+
+  // The sweep above only proves something if it actually swept something. An empty
+  // `offenders` list is equally the answer for "every container is mobile-first" and
+  // for "the regex stopped matching anything" — delete the containers, rename the
+  // classes, or switch them to cn()/template literals and the green above means
+  // nothing. These two guard the sweep itself.
+  it("still finds the whole population it is supposed to police", () => {
+    // 53 containers across 36 files at the time of writing (#722). The floor leaves
+    // room for the codebase to grow; it exists to catch the population COLLAPSING.
+    expect(sweepContainers().total).toBeGreaterThanOrEqual(50);
+  });
+
+  it("still covers the surfaces the walkthrough actually caught", () => {
+    const { perFile } = sweepContainers();
+    // Named on purpose: the workflows pair that #722 was filed against (plus their
+    // route-level twins), the campaign five that #685 covered, and the two CRM lists
+    // from #730. A rewrite that drops any of these out of the sweep goes red here
+    // rather than passing quietly on an empty offenders list.
+    const required: [string, number][] = [
+      ["components/crm/workflows/workflow-list-page.tsx", 2],
+      ["components/crm/workflows/workflow-detail-page.tsx", 2],
+      ["app/crm/workflows/loading.tsx", 1],
+      ["app/crm/workflows/error.tsx", 1],
+      ["components/campaign/campaign-list-page.tsx", 1],
+      ["components/campaign/campaign-detail-page.tsx", 2],
+      ["components/campaign/campaign-calendar-page.tsx", 1],
+      ["components/campaign/campaign-trends-page.tsx", 1],
+      ["components/campaign/campaign-workbench-page.tsx", 1],
+      ["components/crm/inbox/inbox-list-page.tsx", 2],
+      ["components/crm/broadcasts/broadcast-list-page.tsx", 2],
+    ];
+
+    const missing = required
+      .filter(([file, count]) => (perFile.get(file) ?? 0) < count)
+      .map(([file, count]) => `${file}: expected >=${count}, swept ${perFile.get(file) ?? 0}`);
+
+    expect(missing).toEqual([]);
   });
 
   it("gives the workflows list header a column stack before the desktop row", () => {
