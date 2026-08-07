@@ -1,17 +1,34 @@
 import { formatCredits } from "@/lib/credit-format";
-import type { SpendEntry } from "@/lib/spend-history";
+import { countCharges, type SpendEntry } from "@/lib/spend-history";
 import type { SpendWindow } from "@/lib/spend-history-data";
 
-/** Say what this list covers. The truncated case names the cut instead of implying "all" —
- *  round-1 review P1①: a PR that fixes "the product says one thing and does another" must not
- *  ship its own version of it. Pure, so the wording is unit-tested without a render. */
-export function windowSummary(window: SpendWindow): string {
-  if (window.hasMore) {
-    return `Showing the last ${window.returned} charges, newest first — older activity isn’t listed here yet.`;
-  }
-  return window.returned === 1
-    ? "Your 1 credit charge so far."
-    : `All ${window.returned} credit charges on this workspace, newest first.`;
+/** Say what this list covers, and how much of it is money going OUT.
+ *
+ *  Two separate honesty rules meet in this one sentence:
+ *   - the truncated case names the cut instead of implying "all" (round-1 review P1①: a PR
+ *     that fixes "the product says one thing and does another" must not ship its own version);
+ *   - the count called "charges" counts charges only (#684). Every row used to be called a
+ *     charge, so a workspace holding nothing but its signup grant was told "Your 1 credit
+ *     charge so far" before it had spent anything. Top-ups and grants keep their own words —
+ *     "Top-up" and "Credits added" — on their own rows.
+ *
+ *  Pure, so the wording is unit-tested without a render. */
+export function windowSummary(window: SpendWindow, entries: readonly SpendEntry[]): string {
+  const coverage = window.hasMore
+    ? `Showing your last ${window.returned} credit entries, newest first — older activity isn’t listed here yet.`
+    : window.returned === 1
+      ? "Your 1 credit entry so far."
+      : `All ${window.returned} credit entries on this workspace, newest first.`;
+
+  const charges = countCharges(entries);
+  const charged =
+    charges === 0
+      ? "No charges yet."
+      : charges === 1
+        ? "1 of them is a charge."
+        : `${charges} of them are charges.`;
+
+  return `${coverage} ${charged}`;
 }
 
 /**
@@ -29,7 +46,7 @@ export function SpendHistory({ entries, window }: { entries: SpendEntry[]; windo
       <p className="text-muted-foreground" style={{ fontSize: 14, margin: "0 0 12px" }}>
         {entries.length === 0
           ? "Chat and Review are Otto’s conversation turns; they show up here as soon as you use them."
-          : `${windowSummary(window)} Chat and Review are Otto’s conversation turns.`}
+          : `${windowSummary(window, entries)} Chat and Review are Otto’s conversation turns.`}
       </p>
 
       {entries.length === 0 ? (

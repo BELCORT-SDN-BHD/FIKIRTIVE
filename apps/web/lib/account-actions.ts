@@ -15,10 +15,11 @@ import { auth } from "@/lib/better-auth/server";
 import { formatCredits } from "@/lib/credit-format";
 import { partsInTz, formatDayLabel, formatTime } from "@/lib/schedule-view";
 import { mergeSettings } from "@/lib/owner-settings";
+import { spendLabelOf } from "@/lib/spend-history";
 
 export type AccountActivity = {
   id: string;
-  label: string; // friendly description (the ledger reason, else a kind label)
+  label: string; // what the merchant is told this was — from the shared ledger wording (spend-history.ts)
   delta: number; // NET signed change in DISPLAYED credits for this task (1 displayed = $0.10)
   at: string; // ISO timestamp of the task's most recent ledger event
   atLabel: string; // pre-formatted, locale-fixed display time (never format dates client-side — see schedule-view.ts)
@@ -34,41 +35,12 @@ export type AccountInfo = {
   recent: AccountActivity[];
 };
 
-// Only kinds that move the spendable balance surface here (SETTLE is hold-only).
-const KIND_LABEL: Record<string, string> = {
-  GRANT: "Credits added",
-  RESERVE: "Generation",
-  REFUND: "Refund",
-  ADJUST: "Adjustment",
-  SETTLE: "Settled",
-};
-
-function videoResolution(videoOptions: unknown): string | null {
-  if (!videoOptions || typeof videoOptions !== "object" || Array.isArray(videoOptions)) return null;
-  const resolution = (videoOptions as { resolution?: unknown }).resolution;
-  return typeof resolution === "string" && resolution.trim() ? resolution.trim() : null;
-}
-
-function genJobActivityLabel(job: { kind: string; count: number; videoOptions: unknown }): string {
-  if (job.kind === "VIDEO") {
-    const resolution = videoResolution(job.videoOptions);
-    return resolution ? `Video generation - ${resolution}` : "Video generation";
-  }
-  const count = Math.max(1, job.count);
-  return `Image generation - ${count} ${count === 1 ? "image" : "images"}`;
-}
-
-/** Otto LLM-turn ledger rows carry an "otto-..." refId (otto-turn/stream/approve/verdict);
- *  media rows carry the GenJob id. Label the conversation cost distinctly so a chat turn
- *  doesn't read as "Generation" in the activity feed. */
-function activityLabel(
-  row: { refId: string | null; reason: string | null; kind: string },
-  genJobLabels: Map<string, string>,
-): string {
-  if (row.refId?.startsWith("otto-")) return "Otto thinking";
-  if (row.refId && genJobLabels.has(row.refId)) return genJobLabels.get(row.refId)!;
-  return row.reason?.trim() || KIND_LABEL[row.kind] || row.kind;
-}
+/* This file owns no wording of its own for a ledger row. It calls `spendLabelOf`
+ * (lib/spend-history.ts), the single authority every merchant-facing entrance shares, so the
+ * same row reads the same on /billing and here (#683). The table that used to live here put
+ * the ledger's INTERNAL operator note ahead of any human label, which meant an admin
+ * adjustment reached the merchant as the back-office ticket text an operator had typed. That
+ * field is no longer selected below, so there is nothing left to fall back to it. */
 
 /** Merge one task's hold + settle/refund ledger rows into a single entry (decision ④,
  *  spec issue #513 §C9): a generation job or an Otto turn writes RESERVE first, then
@@ -125,7 +97,7 @@ function mergeByTask(
   });
 }
 
-type LedgerRow = { id: string; kind: string; reason: string | null; refId: string | null; balanceDelta: number; createdAt: Date };
+type LedgerRow = { id: string; kind: string; source: string; refId: string | null; balanceDelta: number; createdAt: Date };
 
 /** Fetch every nonzero-delta ledger row for the `limit` most recent TASKS (a task is a
  *  refId group, or a lone row when refId is null) — not the `limit` most recent RAW rows.
@@ -171,7 +143,9 @@ async function recentTaskLedgerRows(ownerId: string, limit: number): Promise<Led
       ],
     },
     orderBy: { createdAt: "desc" },
-    select: { id: true, kind: true, reason: true, refId: true, balanceDelta: true, createdAt: true },
+    // The ledger's internal operator note is NOT selected (#683): the merchant-facing label
+    // comes from what the row IS (refId / kind / source), never from back-office text.
+    select: { id: true, kind: true, source: true, refId: true, balanceDelta: true, createdAt: true },
   });
   return rows;
 }
@@ -198,23 +172,31 @@ export async function getMyAccount(): Promise<AccountInfo | { error: string }> {
 
   const ledger = await recentTaskLedgerRows(ownerId, 25);
 
-  const genJobRefIds = ledger
+  // A refId with no prefix is a generation-job id; anything prefixed (otto-…, research:…) is
+  // named by its prefix instead. Same lookup and same filter as /billing's read
+  // (spend-history-data.ts), including reference-image jobs — otherwise a refgen row would
+  // read "Image" there and "Credit change" here, which is the split this fix exists to close.
+  const jobRefIds = ledger
     .map((l) => l.refId)
-    .filter((refId): refId is string => !!refId && !refId.startsWith("otto-"));
-  const genJobs = genJobRefIds.length
-    ? await prisma.genJob.findMany({
-        where: { ownerId, id: { in: genJobRefIds } },
-        select: { id: true, kind: true, count: true, videoOptions: true },
-      })
-    : [];
-  const genJobLabels = new Map(genJobs.map((j) => [j.id, genJobActivityLabel(j)]));
+    .filter((refId): refId is string => !!refId && !refId.includes(":"));
+  const [genJobs, refGenJobs] = jobRefIds.length
+    ? await Promise.all([
+        prisma.genJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true, kind: true } }),
+        prisma.refGenJob.findMany({ where: { ownerId, id: { in: jobRefIds } }, select: { id: true } }),
+      ])
+    : [[], []];
+  const jobKindByRefId = new Map<string, "IMAGE" | "VIDEO">([
+    ...genJobs.map((j) => [j.id, j.kind === "VIDEO" ? "VIDEO" : "IMAGE"] as const),
+    // Reference-image jobs only ever produce images.
+    ...refGenJobs.map((j) => [j.id, "IMAGE"] as const),
+  ]);
 
   const balanceInternal = account?.balance ?? 0;
   // balanceDelta != 0 is filtered in the query above (SETTLE is hold-only for the GEN
-  // path). Label each row first (label only depends on refId/reason/kind, so it's stable
-  // across a group's rows), then merge same-refId rows into one task per decision ④.
+  // path). Label each row first (the label depends only on refId/kind/source, so it is
+  // stable across a group's rows), then merge same-refId rows into one task per decision ④.
   const recent: AccountActivity[] = mergeByTask(
-    ledger.map((l) => ({ ...l, label: activityLabel(l, genJobLabels) })),
+    ledger.map((l) => ({ ...l, label: spendLabelOf(l, jobKindByRefId) })),
     tz,
   );
 

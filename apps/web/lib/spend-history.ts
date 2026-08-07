@@ -8,6 +8,16 @@
  * pairs, internal credits, refId prefixes) into what a shop owner actually reads: one row
  * per thing that happened, in plain categories, at the net amount really charged.
  *
+ * SINGLE AUTHORITY FOR MERCHANT-FACING LEDGER WORDING (#683). Every entrance that names a
+ * ledger row to a merchant — /billing's spend history, the "Billing and credits" activity
+ * feed in Otto settings (lib/account-actions.ts), and Otto's readSpending answer — takes its
+ * words from `spendCategoryOf` + SPEND_CATEGORY_LABEL here, via `spendLabelOf`. Before this,
+ * the settings feed carried its own table and preferred the ledger's INTERNAL operator note,
+ * so an admin adjustment reached the merchant as "…internal ticket OPS-9911" while /billing
+ * called the same row "Adjustment": one payment, two stories, and back-office text on a
+ * customer's screen. That internal note is therefore not part of this module's row shape at
+ * all — an unrecognised row falls back to the neutral "Credit change", never to raw text.
+ *
  * MONEY SAFETY: display only. Nothing here reserves, settles, refunds, or reads a balance —
  * it reshapes rows the caller already fetched. Amounts are converted to DISPLAYED credits
  * at the view seam (displayCredits) and never fed back into the ledger.
@@ -17,8 +27,9 @@
  * exactly the reserved amount → balanceDelta 0), which is fine for a preview but would make a
  * finished job here look like an unsettled hold. This module therefore takes EVERY row of a
  * task and decides "settled" from the presence of a SETTLE/REFUND row, not from its amount.
+ * The two differ in WHICH rows they show; the WORDS for a row come from here for both.
  */
-import { displayCredits } from "@fikirtive/core";
+import { displayCredits, creditDirection, type CreditDirection } from "@fikirtive/core";
 import { formatCredits } from "./credit-format";
 import { partsInTz, formatDayLabel, formatTime } from "./schedule-view";
 
@@ -46,12 +57,13 @@ export const SPEND_CATEGORY_LABEL: Record<SpendCategory, string> = {
   other: "Credit change",
 };
 
-/** Exactly the CreditLedger columns the history needs (a subset of the row). */
+/** Exactly the CreditLedger columns the history needs (a subset of the row). The ledger's
+ *  internal operator note is deliberately NOT here: nothing a merchant reads is derived from
+ *  it, so it never enters a merchant-facing view model in the first place (#683). */
 export type SpendLedgerRow = {
   id: string;
   kind: string; // CreditTxnKind
   source: string; // CreditTxnSource
-  reason: string | null;
   refId: string | null;
   balanceDelta: number; // INTERNAL credits, signed
   reservedDelta: number; // INTERNAL credits, signed
@@ -95,6 +107,38 @@ export function spendCategoryOf(
   if (row.kind === "GRANT") return row.source === "PURCHASE" ? "topup" : "grant";
   if (row.kind === "ADJUST") return "adjustment";
   return "other";
+}
+
+/**
+ * What a merchant is told this ledger row is — the ONE function every merchant-facing
+ * entrance calls (#683). It reads only what the row IS (refId shape, kind, source); it can
+ * never reach the ledger's internal operator note, so a back-office ticket number has no
+ * path to a customer's screen, including when nothing matches and "Credit change" answers.
+ */
+export function spendLabelOf(
+  row: { refId: string | null; kind: string; source: string },
+  jobKindByRefId: ReadonlyMap<string, "IMAGE" | "VIDEO">,
+): string {
+  return SPEND_CATEGORY_LABEL[spendCategoryOf(row, jobKindByRefId)];
+}
+
+/**
+ * What one entry did to the merchant's credits (#684) — a name for this page's field shape,
+ * over the ONE judgment in @fikirtive/core. The rules live there because Otto's readSpending
+ * has to reach the same verdict and packages/otto cannot import a web module; a copy here
+ * would be exactly the second opinion this fix exists to remove.
+ */
+export type SpendDirection = CreditDirection;
+
+export function spendDirectionOf(entry: Pick<SpendEntry, "delta" | "pending">): SpendDirection {
+  return creditDirection(entry.delta, entry.pending);
+}
+
+/** How many of these entries are real charges — the only number allowed to be called
+ *  "charges" in merchant copy. Counting rows instead is what told a brand-new workspace,
+ *  holding nothing but its signup grant, that it had "1 credit charge so far" (#684). */
+export function countCharges(entries: readonly Pick<SpendEntry, "delta" | "pending">[]): number {
+  return entries.reduce((count, entry) => count + (spendDirectionOf(entry) === "charge" ? 1 : 0), 0);
 }
 
 /**

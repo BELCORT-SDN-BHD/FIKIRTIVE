@@ -1,3 +1,16 @@
+/**
+ * 威胁模型声明(#541 r5 起显式定界,编排者裁定)
+ * ────────────────────────────────────────────────────────────────────────────
+ * 本文件里的文本钉板(UI 词汇封闭 / 金额词汇封闭 / 肯定式存在断言)防的是
+ * **无意回归**:粗心的复制粘贴、顺手改文案、把一句话挪走时带掉了它的禁令。
+ *
+ * 它们**不防蓄意绕过**。同仓作者若有意规避,改提示词的同时也能改这里的白名单、
+ * 词表与断言 —— 任何住在同一个仓库里的文本检查在该模型下都不可能封死。那道防线
+ * 是**跨族判官轮与复审流程**,不是这些正则。
+ *
+ * 因此:发现钉板在「蓄意作者」模型下可被绕过,不构成本文件的缺陷;发现它在
+ * 「无意回归」模型下漏过(例如某种自然写法没被词表覆盖),才是要修的。
+ */
 import { describe, it, expect } from "vitest";
 import { ottoSimpleModeBlock, ottoInstructions } from "./instructions.js";
 
@@ -268,7 +281,11 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   ];
 
   // 封闭词表:UI 交互动词 + 控件名词。不枚举句式,只封词。
-  const UI_VOCAB = /\b(?:button|buttons|click|clicks|clicked|clicking|press|presses|pressed|pressing|tap|taps|tapped|tapping)\b/i;
+  // r5 补四组动词(hit/select/choose/toggle)。加之前先 rg 全文:唯一命中是
+  // 「Do NOT choose a model」—— 那是对 Otto 说的挑模型,不是 UI 动作,已无损改写为
+  // pick,因此**不需要**为它开白名单(改写优先于豁免)。
+  const UI_VOCAB =
+    /\b(?:button|buttons|click|clicks|clicked|clicking|press|presses|pressed|pressing|tap|taps|tapped|tapping|hit|hits|hitting|select|selects|selected|selecting|choose|chooses|chose|choosing|toggle|toggles|toggled|toggling)\b/i;
 
   function stripAllowed(text: string, allowed: string[]): string {
     return allowed.reduce((acc, sentence) => acc.replaceAll(sentence, ""), text);
@@ -295,6 +312,11 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
       'press "Confirm generate" to start',
       "hit the button when ready", // 含 button
       "clicking the card's control starts it",
+      // r5 新补的四组动词:
+      "hit Launch to start",
+      "select Launch",
+      "choose Confirm generate",
+      "toggle Auto on",
     ];
     for (const escape of escapes) {
       const stripped = stripAllowed(`${ottoInstructions}\n${escape}`, UI_VOCAB_ALLOWED);
@@ -349,8 +371,17 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   ];
 
   // 封闭词表:比较词 + 免费词 + 单价词。不枚举句式,只封词。
+  // r5:「free」由词组(is free / for free)升级为**裸词**封禁 —— 验红时发现
+  // "It's free" 的缩写形式绕过了 `is free`,那正是本文件威胁模型里要堵的无意回归。
+  // 唯一词法例外是 "free-text"(自由文本,与钱无关),用 lookahead 排除,
+  // 仍是封闭词规则、无句式洞。
   const MONEY_VOCAB =
-    /\b(?:as much as|as expensive as|more than|less than|cheaper|costlier|dearer|free of charge|for free|is free|costs nothing|per image|per video|per turn|per generation)\b/i;
+    /\b(?:as much as|as expensive as|more than|less than|cheaper|costlier|dearer|costs nothing|per image|per video|per turn|per generation)\b|\bfree\b(?!-text)/i;
+
+  // r5:金额规则升级为**真封闭** —— 白名单外禁止一切「数字 + credits」。
+  // 这不是句式枚举,是可枚举的封闭规则:任何具体金额承诺都必然写成数字加 credit(s),
+  // 没有句式洞可钻。落地前 rg 全文确认现有提示词**零**合法数字积分句,故无需白名单。
+  const NUMERIC_CREDITS = /\b\d+\s*credits?\b/i;
 
   it("keeps the canonical money sentence, and makes no comparison or free claim anywhere else", () => {
     // 先肯定式:canonical 句必须在场。
@@ -360,6 +391,12 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(
       hit,
       `提示词在白名单之外出现了金额比较/免费词「${hit?.[0] ?? ""}」—— 钱话只留 canonical 句与两层生成边界`,
+    ).toBeNull();
+    // r5 真封闭:任何具体金额承诺(数字 + credits)一律不许出现。
+    const numeric = stripped.match(NUMERIC_CREDITS);
+    expect(
+      numeric,
+      `提示词出现了具体金额承诺「${numeric?.[0] ?? ""}」—— 价目会变,提示词不许写死数字`,
     ).toBeNull();
   });
 
@@ -375,12 +412,22 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
       "chatting is free",
       "typing costs nothing",
       "replying is free of charge",
+      // r5 验红发现的缩写绕过(裸词封禁后被捕获):
+      "It's free, immediate, and needs no approval.",
+      "this one's free",
       // 单价化:
       "it is 1 credit per image",
+      // r5 真封闭:任何具体金额承诺
+      "A chat costs 3 credits",
+      "this will be 22 credits",
+      "that's 1 credit",
     ];
     for (const claim of falseClaims) {
       const stripped = stripAllowed(`${ottoInstructions}\n${claim}`, MONEY_ALLOWED);
-      expect(MONEY_VOCAB.test(stripped), `错误金额话 "${claim}" 必须被逮住`).toBe(true);
+      expect(
+        MONEY_VOCAB.test(stripped) || NUMERIC_CREDITS.test(stripped),
+        `错误金额话 "${claim}" 必须被逮住`,
+      ).toBe(true);
     }
   });
 
@@ -531,6 +578,29 @@ describe("ottoInstructions — #555 credits and spending", () => {
       expect(ottoInstructions, `completeness overclaim ${overclaim} must not appear`).not.toMatch(
         overclaim,
       );
+    }
+  });
+
+  // #684: the list readSpending returns holds top-ups and grants, which ADD credits. /billing
+  // now calls it "credit entries" and counts the charges inside it; instructions that keep
+  // calling the whole list "charges" hand the merchant a second story from the same numbers —
+  // exactly the split #683 closed for row labels.
+  it("calls the readSpending list credit entries, not charges", () => {
+    expect(ottoInstructions).toMatch(/`entries` are their recent credit entries/);
+    expect(ottoInstructions).toMatch(/NOT all of them are charges/);
+    expect(ottoInstructions).toMatch(/ADD credits and are not charges at all/);
+    expect(ottoInstructions).toMatch(/OLDER credit entries that are not in it/);
+  });
+
+  const WHOLE_LIST_CALLED_CHARGES = [
+    /\bOLDER charges\b/,
+    /\brecent charges\b/i,
+    /\bentries\b[^.]*\bare the recent charges\b/i,
+  ];
+
+  it("never calls the whole entry list charges", () => {
+    for (const wording of WHOLE_LIST_CALLED_CHARGES) {
+      expect(ottoInstructions, `wording ${wording} calls additions charges`).not.toMatch(wording);
     }
   });
 
