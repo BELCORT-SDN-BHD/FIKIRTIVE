@@ -9,12 +9,22 @@
 --
 -- 为什么现在撤是安全的(前置已就绪,#668 已合并,本次在现场逐条复核):
 --   ① app 层唯一那处 GenJob insert —— `apps/web/lib/gen-actions.ts` 的 `tx.genJob.create`
---      —— 显式带 `model`;全仓没有第二处 `genJob.create/createMany`,也没有任何 raw SQL
---      往这张表插行;
+--      —— 显式带 `model`;产品代码里没有第二处 `genJob.create/createMany`,也没有任何
+--      raw SQL 往这张表插行;
 --   ② 契约闸 `genRequest`(`packages/core/src/gen.ts`)在视频请求漏带 `model` 时,zod 的
 --      默认值 `"seedream"` 不在视频菜单 `GEN_VIDEO_MODELS`(现只有 `seedance-2-fast`)上,
 --      superRefine 当场拒收。
---   所以这个默认值今天**没有任何读者**,撤掉它不改变任何在产行为。
+--   所以这个默认值在**生产与 CI 路径上零读者**,撤掉它不改变任何在产行为。
+--
+-- 措辞校准(跨族判官 r1 P2):最初这里写的是「没有任何读者」,不准确。仓库的一次性验证
+-- 脚本区 `scripts/` 不受 typecheck 保护、也不在 CI 路径上,其中
+-- `scripts/archive/local-cowork-idempotency-verify.mjs` 的 `base()` 确实曾靠这个默认值落行
+--(四处 insert)。该脚本已在同一 PR 里补上显式 `model: "seedream"` —— 与它此前从默认值
+-- 拿到的值逐字相同,行为不变。`scripts/` 下其余六个写 GenJob 的脚本本来就显式带 `model`。
+--
+-- 补一句实况,免得这条注释又变成一个过期事实:那个归档脚本**当前跑不到底**,但卡点与本次
+-- 迁移无关 —— 它在 insert 之后的 `genJob.count` 上被租户守卫拦下(该守卫晚于脚本加入,
+-- 脚本没带 ownerId 过滤)。本次只补 `model`,不顺手改那处 —— 它是既有缺陷,不属本票范围。
 --
 -- 撤掉之后的行为变化只有一条,而且是想要的那条:漏写 `model` 从「安静地写错」变成「立刻
 -- 报错」(列本身 NOT NULL,漏写 → 23502 not_null_violation)。fail closed。
