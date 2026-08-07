@@ -300,7 +300,8 @@ export interface OttoContext {
    *  requireOwner() + genRequest validation + reserve + GenJob insert + enqueue. */
   startGen?: (req: GenRequestInput) => Promise<
     | { id: string; disposition: "fresh" | "reused" }
-    | { error: string; disposition?: "conflict" }
+    // `retryable` = 结果不明、花钱之前就停住了(#656 P1);Otto 侧照旧只把错误原样呈上去。
+    | { error: string; disposition?: "conflict" | "retryable" }
   >;
   /** Factory batch port (W-B3-F-P, spec §5.2) — injected by the web caller. Runs a HEADLESS
    *  batch of generations through the SAME startGen authority, one startGen call per cell, so
@@ -677,7 +678,6 @@ export interface OttoContext {
       text?: string;
       prompt?: string;
       generationId?: string;
-      sourceNodeId?: string;
     }): Promise<{ id: string } | { error: string }>;
     /** $0 write: edit a text node's content (updateTextNode). */
     editText(id: string, text: string): Promise<{ ok: true } | { error: string }>;
@@ -839,7 +839,12 @@ export type CanvasNodeView = {
   prompt: string | null;
   generationId: string | null;
   status: string;
-  sourceNodeId: string | null;
+  /** Which paid press produced this card, and where in it this card sits (#603 T4). */
+  genJobId: string | null;
+  batchIndex: number | null;
+  batchSize: number | null;
+  /** The card this one's paid job was actually MADE FROM. Never a same-batch neighbour. */
+  madeFromNodeId: string | null;
   url?: string | null;
 };
 

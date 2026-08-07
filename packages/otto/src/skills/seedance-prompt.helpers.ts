@@ -23,7 +23,8 @@ export const seedancePromptInput = z.object({
 });
 export type SeedancePromptInput = z.infer<typeof seedancePromptInput>;
 
-/** 纯：结构化意图 → Seedance 创作 prompt（英文，无技术 flag —— provider 追加 --resolution/--duration/--ratio）。 */
+/** 纯：结构化意图 → Seedance 创作 prompt（英文，无技术 flag —— 时长/清晰度/画幅/声音都由
+ *  provider 作为严格顶层字段发送，#646 T5 起 prompt 文本里一个 flag 都不再有）。 */
 export function assembleSeedance(i: SeedancePromptInput): string {
   const lines: string[] = [];
   if (i.style) lines.push(i.style);

@@ -24,6 +24,13 @@ vi.mock("@fikirtive/db", () => ({
 // ---------------------------------------------------------------------------
 // Shared test context factory
 // ---------------------------------------------------------------------------
+/** #647 T6:`executeProposePack` 现在也可能回一句「引擎关掉了」。下面这一段测的都是
+ *  引擎开着的路 —— 拿到 error 当场就是失败,而不是被 `as` 掩盖过去。 */
+function minted<T extends object>(r: T | { error: string }): T {
+  if ("error" in r) throw new Error(`意外的空态:${(r as { error: string }).error}`);
+  return r;
+}
+
 function makeCtx(overrides?: Partial<OttoContext>): OttoContext {
   return {
     orgId: "org-test",
@@ -101,7 +108,7 @@ describe("executeProposePack — mock DB", () => {
     );
 
     expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(3);
-    expect(result.cardIds).toHaveLength(3);
+    expect(minted(result).cardIds).toHaveLength(3);
   });
 
   it("all cards share the same packId", async () => {
@@ -120,15 +127,15 @@ describe("executeProposePack — mock DB", () => {
     );
 
     // packId is a non-empty string
-    expect(result.packId).toBeTruthy();
-    expect(typeof result.packId).toBe("string");
+    expect(minted(result).packId).toBeTruthy();
+    expect(typeof minted(result).packId).toBe("string");
 
     // Every card persisted carries the same packId in its payload
     const calls = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls;
     for (const call of calls) {
       const data = (call[0] as { data: Record<string, unknown> }).data;
       const payload = data["payload"] as Record<string, unknown>;
-      expect(payload["packId"]).toBe(result.packId);
+      expect(payload["packId"]).toBe(minted(result).packId);
       expect(payload["packTitle"]).toBe("Carousel Pack");
     }
   });
@@ -221,9 +228,9 @@ describe("executeProposePack — mock DB", () => {
       runContext,
     );
 
-    expect(result.cardIds).toHaveLength(1);
-    expect(result.packId).toBeTruthy();
-    expect(typeof result.cardIds[0]).toBe("string");
+    expect(minted(result).cardIds).toHaveLength(1);
+    expect(minted(result).packId).toBeTruthy();
+    expect(typeof minted(result).cardIds[0]).toBe("string");
   });
 
   it("cards are GEN_CARD rows, not GenJob rows — the payload carries gen fields, not job metadata", async () => {

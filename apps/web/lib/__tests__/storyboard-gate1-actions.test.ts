@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { GEN_VIDEO_MODEL_OPTIONS } from "@fikirtive/core";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
 
 // ---------------------------------------------------------------------------
@@ -180,12 +181,12 @@ beforeEach(() => {
 });
 
 function mockResolvedDefaults() {
-  mockResolveDisabled.mockResolvedValue(new Set<string>());
-  // suggestModel: deterministic video model "kling" (real durations table = [5,10]).
-  // The action passes the SAME suggestModel path minting uses; options reads the REAL
-  // GEN_VIDEO_MODEL_OPTIONS[model].durations (kept via importOriginal).
+  mockResolveDisabled.mockResolvedValue({ disabled: new Set<string>() });
+  // suggestModel: 在产那台视频引擎(#647 T6 之后菜单上只剩它)。这个夹具喂的是**真的**
+  // GEN_VIDEO_MODEL_OPTIONS 查表(via importOriginal),所以模型名必须是菜单上真有的一格 ——
+  // 写一个下架 id 会让 options 读到 undefined。
   mockSuggestModel.mockReturnValue({
-    model: "kling",
+    model: "seedance-2-fast",
     params: { durationSeconds: 5, count: 1 },
     reason: "",
     downgraded: false,
@@ -235,6 +236,39 @@ function wireLoads(parent: ReturnType<typeof card>, children: Record<string, { p
     if (args?.orderBy) return { seq: 10 };
     return null;
   });
+}
+
+/**
+ * #656 P2 —— 把「视频那一格现在是什么形状」摆成某个具体值,并让铸卡如实把这个形状冻进
+ * 子卡(真 buildProposeCard 就是这么做的:desiredAspect → params.aspectRatio)。
+ * 首帧形状的唯一来源是视频侧的选型(firstFrameAspect → suggestModel),所以改这一处
+ * 就等于「商家把片子的形状换了」。
+ */
+function useVideoShape(aspectRatio: string) {
+  mockSuggestModel.mockReturnValue({
+    model: "seedance-2-fast",
+    params: { durationSeconds: 5, count: 1, aspectRatio },
+    reason: "",
+    downgraded: false,
+    requested: {},
+  });
+  mockBuildProposeCard.mockImplementation(
+    (input: { structuredPrompt: string; entityIds: string[]; desiredAspect?: string }) => ({
+      cardPayload: {
+        kind: "image",
+        model: "m",
+        params: { count: 1, ...(input.desiredAspect ? { aspectRatio: input.desiredAspect } : {}) },
+        structuredPrompt: input.structuredPrompt,
+        entityIds: input.entityIds,
+        estimatedCredits: 5,
+        estimatedPriceUsd: 0.2,
+        reason: "",
+        downgraded: false,
+        variantSel: {},
+      },
+      shownPriceDisplay: 5,
+    }),
+  );
 }
 
 describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
@@ -332,6 +366,58 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
     const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
     expect(updShots[0].firstFrameCardId).not.toBe("child-0");
     expect(res.children[0].childCardId).not.toBe("child-0");
+  });
+
+  /**
+   * #656 P2(判词):「首帧形状在 `storyboard-gate1-actions.ts:165` 推导、`:202` 冻入新子卡;
+   * 但准备与重生成的复用只比对提示词(`:370`、`:480`)。⇒ 改形状后,未花费的旧形状子卡存活
+   * 并可被批准。」
+   *
+   * 商家视角:片子从方图改成横版,分镜上那张首帧卡还是旧的方图 —— 卡面写着一个形状,批准
+   * 之后出的是另一个。提示词一个字没改,所以旧谓词认不出这是两张不同的卡。
+   */
+  it("#656 P2 形状漂移:子卡冻的形状已不是现在会铸出来的形状 → 不复用,铸新替换", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[2].firstFrameGenerationId = "gen2"; // isolate to s0
+    wireLoads(card(p), {
+      // 提示词一致,但冻的是方图 —— 而片子现在是横版。
+      "child-0": {
+        payload: { structuredPrompt: "ff0", entityIds: ["e0"], estimatedCredits: 5, params: { count: 1, aspectRatio: "1:1" } },
+        genJobId: null,
+      },
+    });
+    useVideoShape("16:9");
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    // 铸了一张新的,而且冻的是现在这一格形状。
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.params.aspectRatio).toBe("16:9");
+    // 父卡指针从旧形状那张移开 —— 旧卡不再是这个镜头的首帧卡。
+    const updShots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(updShots[0].firstFrameCardId).not.toBe("child-0");
+    expect(res.children[0].childCardId).not.toBe("child-0");
+  });
+
+  it("#656 P2 对照:形状没变(提示词也没变)→ 照常复用,不铸新", async () => {
+    const p = payload3();
+    p.shots[0].firstFrameCardId = "child-0";
+    p.shots[2].firstFrameGenerationId = "gen2"; // isolate to s0
+    wireLoads(card(p), {
+      "child-0": {
+        payload: { structuredPrompt: "ff0", entityIds: ["e0"], estimatedCredits: 5, params: { count: 1, aspectRatio: "16:9" } },
+        genJobId: null,
+      },
+    });
+    useVideoShape("16:9");
+
+    const res = await prepareStoryboardFirstFrames({ cardId: "card-1" });
+    if (!("children" in res)) throw new Error("expected children");
+
+    expect(mockChatCreate).not.toHaveBeenCalled();
+    expect(res.children[0].childCardId).toBe("child-0");
   });
 
   it("spent 侦测:子卡存在幂等 job → spent:true,不计入 totalCredits", async () => {
@@ -466,6 +552,78 @@ describe("prepareStoryboardFirstFrames — $0 铸卡", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #643 T2 —— 首帧图的形状 = 这个镜头的片子的形状
+//
+// 在这之前首帧一律是方图，而它接下来要变成的那条片子是横版的：商家为一张会被重新
+// 取景的图付了钱，而且没有一个地方说过这件事。形状不写死 —— 走和铸视频子卡同一条
+// 选型路，视频侧换档时首帧自动跟着换。
+// ---------------------------------------------------------------------------
+describe("首帧图形状(#643 T2)", () => {
+  /** 传给 buildProposeCard 的第一个参数（图片方案的输入）。#656 P2 之后每个镜头会走两次
+   *  这条纯路：一次算「现在会铸出来的那张卡」用于复用比对，一次真的铸卡 —— 两次同一份输入，
+   *  这正是「比的就是会铸出来的东西」。铸了几张看 mockChatCreate。 */
+  const mintInputs = () => mockBuildProposeCard.mock.calls.map((call) => call[0] as { desiredAspect?: string });
+
+  it("片子是 16:9 ⇒ 首帧就按 16:9 铸（不再默认方图）", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "16:9", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(2); // s0/s2 各铸一张
+    for (const input of mintInputs()) expect(input.desiredAspect).toBe("16:9");
+  });
+
+  it("视频侧换成竖版 ⇒ 首帧自动跟着换（形状不写死在这个文件里）", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "9:16", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    for (const input of mintInputs()) expect(input.desiredAspect).toBe("9:16");
+  });
+
+  it("这个视频模型压根不暴露形状 ⇒ 不发明一个值，交给图片侧的默认形状", async () => {
+    // 默认 mock 的 suggestModel 返回的 params 里就没有 aspectRatio（= 模型不暴露形状）。
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    for (const input of mintInputs()) expect(input.desiredAspect).toBeUndefined();
+  });
+
+  it("视频那一格不在图片菜单上 ⇒ 同样不发明值（引擎收不下的形状到不了付费请求）", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "adaptive", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await prepareStoryboardFirstFrames({ cardId: "card-1" });
+
+    for (const input of mintInputs()) expect(input.desiredAspect).toBeUndefined();
+  });
+
+  it("重出一张首帧走的是同一条形状口径", async () => {
+    mockSuggestModel.mockReturnValue({
+      model: "seedance-2-fast",
+      params: { durationSeconds: 5, aspectRatio: "16:9", count: 1 },
+      reason: "", downgraded: false, requested: {},
+    });
+    wireLoads(card(payload3()));
+    await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s0" });
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(1); // 只重出这一个镜头
+    for (const input of mintInputs()) expect(input.desiredAspect).toBe("16:9");
+  });
+});
+
 describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
   it("按 shotId 铸新子卡只替换 firstFrameCardId,PRESERVE firstFrameGenerationId(其余镜头不动)", async () => {
     const p = payload3();
@@ -523,6 +681,29 @@ describe("regenShotFirstFrameCard — $0 重出铸卡", () => {
     expect(res.child.estimatedCredits).toBe(5);
     expect(res.child.structuredPrompt).toBe("ff1");
     expect(res.child.spent).toBe(false);
+  });
+
+  /** #656 P2 —— 重生成侧的同一条病(`:480`):提示词一致就复用,漏掉冻结的形状。 */
+  it("#656 P2 形状漂移:既有未花钱子卡冻的形状已不是现在会铸的 → 不复用,铸新替换", async () => {
+    const p = payload3();
+    p.shots[1].firstFrameCardId = "child-1";
+    wireLoads(card(p), {
+      "child-1": {
+        payload: { structuredPrompt: "ff1", entityIds: [], estimatedCredits: 5, params: { count: 1, aspectRatio: "1:1" } },
+        genJobId: null,
+      },
+    });
+    useVideoShape("16:9");
+
+    const res = await regenShotFirstFrameCard({ cardId: "card-1", shotId: "s1" });
+    if (!("child" in res)) throw new Error("expected child");
+
+    expect(mockChatCreate).toHaveBeenCalledTimes(1);
+    expect(mockChatCreate.mock.calls[0][0].data.payload.params.aspectRatio).toBe("16:9");
+    const shots = (mockChatUpdate.mock.calls[0][0].data.payload as StoryboardCardPayload).shots;
+    expect(shots[1].firstFrameCardId).not.toBe("child-1");
+    expect(shots[1].firstFrameGenerationId).toBe("gen1"); // 旧图仍然有效,直到新首帧真的落地
+    expect(res.child.childCardId).not.toBe("child-1");
   });
 
   it("可重入:既有子卡已花过钱(有幂等 job)→ 不复用,铸新替换", async () => {
@@ -1259,7 +1440,7 @@ describe("syncStoryboardMedia — $0 对账(视频 + 级联 + urls)", () => {
 // ---------------------------------------------------------------------------
 
 describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
-  it("返回 suggestModel 选定视频模型在真实能力表里的 durations(kling → [5,10])", async () => {
+  it("返回 suggestModel 选定视频模型在真实能力表里的 durations", async () => {
     const res = await getStoryboardVideoOptions();
     expect("durations" in res).toBe(true);
     if (!("durations" in res)) return;
@@ -1269,29 +1450,24 @@ describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
     );
     expect(res).not.toHaveProperty("model");
     // durations come from the REAL GEN_VIDEO_MODEL_OPTIONS table (not hardcoded)
-    expect(res.durations).toEqual([5, 10]);
+    expect(res.durations).toEqual([...GEN_VIDEO_MODEL_OPTIONS["seedance-2-fast"].durations]);
     // $0: no writes at all
     expect(mockChatCreate).not.toHaveBeenCalled();
     expect(mockChatUpdate).not.toHaveBeenCalled();
     expect(mockGenJobCreate).not.toHaveBeenCalled();
   });
 
-  it("模型驱动:换一个选定模型 → 自动返回该模型的真实 durations(veo3.1-lite → [4,6,8])", async () => {
-    mockSuggestModel.mockReturnValue({
-      model: "veo3.1-lite",
-      params: { durationSeconds: 4, count: 1 },
-      reason: "",
-      downgraded: false,
-      requested: {},
-    });
+  it("#647 T6:选型说「没有引擎」(null)⇒ 不报档位表,给一句人话", async () => {
+    // 这条测试的前身是「换一个选定模型 → 自动返回它的 durations」。菜单上已经没有第二台
+    // 引擎可以换了,而同一条「跟着选型走」的性质现在由这条更要紧的路守着:选型说没有,
+    // 面板就不许拿一份真的能力表去装点一个做不到的功能。
+    mockSuggestModel.mockReturnValue(null);
     const res = await getStoryboardVideoOptions();
-    if (!("durations" in res)) throw new Error("expected durations");
-    expect(res).not.toHaveProperty("model");
-    expect(res.durations).toEqual([4, 6, 8]); // real table, zero hardcoding
+    expect(res).toEqual({ error: "Video generation is turned off right now." });
   });
 
   it("sources disabledModels 走 resolveDisabledModels(与铸卡同一来源)", async () => {
-    mockResolveDisabled.mockResolvedValue(new Set(["some-model"]));
+    mockResolveDisabled.mockResolvedValue({ disabled: new Set(["some-model"]) });
     await getStoryboardVideoOptions();
     expect(mockResolveDisabled).toHaveBeenCalled();
     // the disabled set threads into suggestModel (same as minting)
@@ -1316,15 +1492,15 @@ describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
  *  ctx.sourceGenerationId (i2v start frame) onto the payload so the action's reuse rule
  *  + backlink can be asserted.
  *
- *  Duration is SNAPPED deterministically, mirroring the real suggestModel snap for "kling"
- *  (durations [5,10], default 5): an off-menu desiredDuration (e.g. 7) or undefined snaps to
- *  5; an on-menu value (5 or 10) is kept. This is what makes the action's snapped-vs-snapped
- *  comparison faithful — the would-be card's params.durationSeconds is ALWAYS the snapped
- *  value, never the raw shot field (P2: no snap-mismatch churn). */
-const KLING_DURATIONS = [5, 10] as const;
-const KLING_DEFAULT_DURATION = 5;
+ *  Duration is SNAPPED deterministically, mirroring what the real suggestModel does: an
+ *  off-menu desiredDuration or undefined snaps to the model default (5s); an on-menu value is
+ *  kept. 这里刻意只认 [5,10] 两格 —— 这是**这个 mock 自己的** snap 集合(真菜单是 4–15),
+ *  测的是「铸卡与比对用的是同一个吸附结果」,不是菜单本身有哪几格(菜单由
+ *  packages/core/src/video-tiers.test.ts 钉)。 */
+const MOCK_SNAP_DURATIONS = [5, 10] as const;
+const MOCK_DEFAULT_DURATION = 5;
 function snapDuration(want: number | undefined): number {
-  return want != null && KLING_DURATIONS.includes(want as 5 | 10) ? want : KLING_DEFAULT_DURATION;
+  return want != null && MOCK_SNAP_DURATIONS.includes(want as 5 | 10) ? want : MOCK_DEFAULT_DURATION;
 }
 function mockVideoProposeCard() {
   mockBuildProposeCard.mockImplementation(
@@ -1334,7 +1510,7 @@ function mockVideoProposeCard() {
     ) => ({
       cardPayload: {
         kind: "video",
-        model: "kling",
+        model: "seedance-2-fast",
         params: { count: 1, durationSeconds: snapDuration(input.desiredDuration) },
         structuredPrompt: input.structuredPrompt,
         entityIds: input.entityIds,
@@ -1453,7 +1629,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -1477,7 +1653,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     // duration mismatch: child payload duration 8 != would-be (snapped) duration 5
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 8 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 8 } },
         genJobId: null,
       },
     });
@@ -1499,7 +1675,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     // source mismatch: child was built off an OLD frame id
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", model: "kling", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", model: "seedance-2-fast", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -1521,7 +1697,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -1539,7 +1715,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(res.totalCredits).toBe(0); // spent excluded from the quote
   });
 
-  // durationSeconds undefined → suggestModel snaps to the model DEFAULT (kling → 5s). The
+  // durationSeconds undefined → suggestModel snaps to the model DEFAULT (5s). The
   // would-be card therefore has params.durationSeconds:5, which matches the child minted at 5
   // → reuse. (The comparison is always snapped-vs-snapped, never against the raw shot field.)
   it("durationSeconds 未定义 → would-be 吸附到模型默认(5s),与子卡一致 → 复用", async () => {
@@ -1549,7 +1725,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -1560,20 +1736,20 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     expect(res.children[0].childCardId).toBe("vchild-0");
   });
 
-  // P2 (snap-mismatch churn kill): shot.durationSeconds is OFF-MENU (7; kling offers [5,10]).
+  // P2 (snap-mismatch churn kill): shot.durationSeconds 落在吸附集合之外(7,mock 只认 [5,10])。
   // The child was minted at the SNAPPED value (5). The comparison uses the WOULD-BE card's
   // params.durationSeconds (also snaps 7→5), NOT the raw shot field — so it MATCHES and the
   // child is reused with NO churn. The old raw-field comparison (7 != 5) would have re-minted
   // on every prepare, and combined with a spent pending child that re-opened the P1 double-pay.
-  it("P2:shot.durationSeconds 离菜单(7)→ would-be 吸附到 5,与吸附值铸的子卡一致 → 复用不 churn", async () => {
+  it("P2:shot.durationSeconds 离吸附集合(7)→ would-be 吸附到 5,与吸附值铸的子卡一致 → 复用不 churn", async () => {
     mockVideoProposeCard();
     const p = videoPayload3();
-    p.shots[0].durationSeconds = 7; // off-menu; suggestModel snaps 7 → 5
+    p.shots[0].durationSeconds = 7; // 离 mock 的吸附集合;snap 7 → 5
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
         // child was minted at the SNAPPED duration (5), NOT the raw 7
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -1592,12 +1768,14 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
   // model swap since the child was minted). A model mismatch is a genuine stale-input mismatch
   // → mint fresh + pointer swap; videoGenerationId is NEVER touched (old video survives).
   it("可重入:model 不一致(would-be model != 子卡 model)→ 铸新 + 指针替换,不碰 videoGenerationId", async () => {
-    mockVideoProposeCard(); // would-be model = "kling"
+    mockVideoProposeCard(); // would-be model = 在产那一台
     const p = videoPayload3();
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        // everything matches EXCEPT model — child was minted under a different (old) model
+        // everything matches EXCEPT model — 子卡是在一台**已下架**的引擎下铸的(#647 T6 之后
+        // 库里就是这个样子)。历史模型名必须照旧参与比对:不认作同一张 → 重铸($0),
+        // 而不是把一张旧引擎的卡当成新的接着卖。
         payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2", params: { durationSeconds: 5 } },
         genJobId: null,
       },
@@ -1628,7 +1806,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: "gj-1", // best-effort link present → spent (charged), video still pending
       },
     });
@@ -1657,7 +1835,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     wireLoads(card(p), {
       "vchild-0": {
         // SPENT (charged, video still pending) but its prompt has genuinely drifted since.
-        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: "gj-spent",
       },
     });
@@ -1712,7 +1890,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     };
     wireLoads(card(p), {
       "vchild-1": {
-        payload: { structuredPrompt: "vp1", sourceGenerationId: "ffgen1", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp1", sourceGenerationId: "ffgen1", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: "gj-spent-1", // best-effort link present → spent
       },
     });
@@ -1978,7 +2156,7 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -2002,7 +2180,7 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -2028,7 +2206,7 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     p.shots[0].videoGenerationId = "vid-OLD"; // an old landed video exists
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "kling", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 } },
         genJobId: "gj-spent", // spent AND drifted
       },
     });

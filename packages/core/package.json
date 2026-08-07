@@ -12,6 +12,18 @@
       "types": "./dist/brand-records.d.ts",
       "default": "./dist/brand-records.js"
     },
+    "./canvas-layout": {
+      "types": "./dist/canvas-layout.d.ts",
+      "default": "./dist/canvas-layout.js"
+    },
+    "./canvas-card-status": {
+      "types": "./dist/canvas-card-status.d.ts",
+      "default": "./dist/canvas-card-status.js"
+    },
+    "./canvas-settlement-plan": {
+      "types": "./dist/canvas-settlement-plan.d.ts",
+      "default": "./dist/canvas-settlement-plan.js"
+    },
     "./cowork-directives": {
       "types": "./dist/cowork-directives.d.ts",
       "default": "./dist/cowork-directives.js"
@@ -27,6 +39,10 @@
     "./model-config": {
       "types": "./dist/model-config.d.ts",
       "default": "./dist/model-config.js"
+    },
+    "./org-roles": {
+      "types": "./dist/org-roles.d.ts",
+      "default": "./dist/org-roles.js"
     },
     "./refgen": {
       "types": "./dist/refgen.d.ts",

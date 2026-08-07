@@ -71,6 +71,7 @@ function confirmProps(
           brief: "A festive product image",
           kind: "image",
           displayCredits: totalDisplayCredits,
+          aspectRatio: "1:1",
         }],
         totalDisplayCredits,
         count: 1,

@@ -67,12 +67,15 @@ export const config = {
   //   exception is scoped to exactly /api/media/pub/* (the [token] route) — it opens nothing else.
   // skin-preview: dev-only visual harness for the UI re-skin (the page itself 404s in
   // production), excluded here so it renders without a session in dev. Throwaway.
-  // northstar: the design-only prototype city + immersive app (zero backend, zero auth) —
-  // same precedent as skin-preview. The `northstar` prefix also covers `northstar-immersive`.
-  // Both layouts 404 in production unless NORTHSTAR_PREVIEW=1, so exempting auth is safe.
+  // northstar: NO LONGER EXEMPT (#606, D7 · T7). The exemption existed only because that
+  // prefix was a design-only prototype behind a preview flag that 404'd in production. The
+  // mock pages and the flag are both deleted; what is left under the prefix are two REAL
+  // product routes (Home + Canvas) that read the merchant's own projects and canvas, so the
+  // prefix belongs inside the wall like every other product surface. The pages keep their own
+  // requireOwner() gates — the wall is the outer of two locks, not the only one.
   // signup / forgot-password / reset-password: the #543 self-service door. These three pages
   // MUST render without a session — that is the whole point of them — so they join /login
   // outside the wall. They mutate nothing on their own; every action behind them goes through
   // Better Auth's own gates (pause switch, allowlist, verification, rate limit).
-  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|northstar|api/better-auth|api/stripe|api/health|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!login|signup|forgot-password|reset-password|terms|privacy|legal|skin-preview|api/better-auth|api/stripe|api/health|api/meta/data-deletion|api/media/pub/|_next/static|_next/image|favicon.ico).*)"],
 };

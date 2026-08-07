@@ -164,7 +164,9 @@ async function builtCards(): Promise<ServerCardPayload[]> {
   const base = { structuredPrompt: "a bowl of laksa", entityIds: [], variantSel: {} };
   return [
     buildProposeCard({ kind: "video", ...base }, ctx, []),
-    buildProposeCard({ kind: "video", ...base, desiredDuration: 7, desiredAspect: "1:1" }, ctx, []),
+    // #645 T4：7s / 1:1 现在都真给得了，所以「降级卡」这个夹具必须用引擎真做不到的值
+    // （30 秒 / 2:3），否则这张卡不再带 downgradeNote，下面的覆盖断言就空过去了。
+    buildProposeCard({ kind: "video", ...base, desiredDuration: 30, desiredAspect: "2:3" }, ctx, []),
     buildProposeCard({ kind: "image", ...base, count: 3 }, ctx, []),
     buildProposeCard({ kind: "image", ...base, forVideo: true }, ctx, []),
     buildProposeCard({ kind: "video", ...base }, { ...(ctx as object), sourceGenerationId: "gen_img" } as never, []),
@@ -267,7 +269,7 @@ const VIDEO_PAYLOAD: OttoPlanCardPayload = {
   model: "seedance-2-fast",
   params: { aspectRatio: "9:16", resolution: "720p", durationSeconds: 5, audio: true, count: 1 },
   reason: "Seedance 2.0 Fast — 9:16, 5s",
-  specChips: ["9:16", "5s", "720p"],
+  specChips: ["9:16", "5s", "720p", "With sound"],
   downgraded: true,
   downgradeNote: "You asked for 10s — this will be 5s.",
   structuredPrompt: "A steaming bowl of laksa, close up",
@@ -289,11 +291,15 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
     const markup = renderCard(cardPayload);
     expect(cardPayload.specChips.length).toBeGreaterThan(0);
     for (const chip of cardPayload.specChips) expect(markup).toContain(chip);
-    // 「说的」不许超出 builder 给的那几条 —— 声音就是被这一条挡住的。
-    expect(markup).not.toMatch(/With sound|No sound/);
+    // 「说的」不许超出 builder 给的那几条。#646 T5 之后声音真的接通了执行层,builder 会给
+    // 这一条,卡面也就照实显示 —— 但它没选的那个反面措辞仍然一个字都不许出现。
+    const soundChip = cardPayload.params.audio ? "With sound" : "No sound";
+    expect(cardPayload.specChips).toContain(soundChip);
+    expect(markup).toContain(soundChip);
+    expect(markup).not.toMatch(cardPayload.params.audio ? /No sound/ : /With sound/);
   });
 
-  it("图片卡:如实报执行层真会产出的尺寸,不承诺任何比例", async () => {
+  it("图片卡(#643 T2):商家要的形状真会交付,所以卡面照实报那一格的尺寸与比例", async () => {
     const { buildProposeCard } = await import("@fikirtive/otto");
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16", count: 3 },
@@ -301,12 +307,24 @@ describe("#580 P1-2 卡面显示值 = 真 builder 算出来的有效规格", () 
       [],
     );
     const markup = renderCard(cardPayload);
-    expect(cardPayload.specChips).toEqual(["2048 × 2048", "3 images"]);
+    expect(cardPayload.specChips).toEqual(["1620 × 2880", "9:16", "3 images"]);
     for (const chip of cardPayload.specChips) expect(markup).toContain(chip);
-    // 商家要的 9:16 到不了执行层,所以规格里不许出现任何比例 —— 它只可以出现在
-    // 「你要的是 X,实际会是 Y」这句披露里。
-    expect(cardPayload.specChips.some((chip) => /\d+\s*:\s*\d+/.test(chip))).toBe(false);
-    expect(markup).toContain("You asked for 9:16 — this will be a square 2048 × 2048 image.");
+    // 兑现了就不是降级 —— 卡面不许挂一句无中生有的披露。
+    expect(cardPayload.downgraded).toBe(false);
+    expect(markup).not.toMatch(/You asked for/);
+  });
+
+  it("图片卡(#643 T2):引擎给不了的形状 —— 卡面照旧把降级说出口,而且规格里不出现那个比例", async () => {
+    const { buildProposeCard } = await import("@fikirtive/otto");
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7", count: 3 },
+      { orgId: "o", userId: "u", projectId: "p", threadId: "t", disabledModels: [], sourceGenerationId: null } as never,
+      [],
+    );
+    const markup = renderCard(cardPayload);
+    expect(cardPayload.specChips).toEqual(["2048 × 2048", "1:1", "3 images"]);
+    expect(cardPayload.specChips).not.toContain("5:7");
+    expect(markup).toContain("You asked for 5:7 — this will be a square 2048 × 2048 image.");
   });
 
   it("never renders the engine name, even though the payload carries it", () => {

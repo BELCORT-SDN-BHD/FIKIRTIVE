@@ -63,9 +63,9 @@ describe("place — generationId is pre-validated (owner + project), hard reject
   it("a real in-project generationId passes through to the shared action with the port's projectId", async () => {
     mockGenerationFindFirst.mockResolvedValue({ id: "gen-ok" });
     mockCreateCanvasNode.mockResolvedValue({ id: "node-1" });
-    const res = await port().place({ ...base, generationId: "gen-ok", sourceNodeId: "n-src" });
+    const res = await port().place({ ...base, generationId: "gen-ok" });
     expect(res).toEqual({ id: "node-1" });
-    expect(mockCreateCanvasNode).toHaveBeenCalledWith({ projectId: "proj-1", ...base, generationId: "gen-ok", sourceNodeId: "n-src" });
+    expect(mockCreateCanvasNode).toHaveBeenCalledWith({ projectId: "proj-1", ...base, generationId: "gen-ok" });
   });
 
   it("a text note skips generation validation entirely", async () => {

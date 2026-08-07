@@ -63,6 +63,7 @@ const SPEND_ACTIONS = [
   "coworkVaryCard",
   "ottoApprove",
   "ottoTurn",
+  "startAssetGen",
   "startCanvasGen",
   "startGen",
   "startRefGen",
@@ -71,12 +72,8 @@ const SPEND_ACTIONS = [
 /** A file "announces" if it publishes the signal itself or calls a wired-in callback. */
 const ANNOUNCES = /notifyBalanceRefresh\(\)|onBalanceRefresh(?:\?\.)?\(\)/;
 
-// There is no exemption list. There was one for exactly as long as three spend entries
-// (OttoFrontDoor / OttoMemory / OttoPlanCard) sat inside another session's ACTIVE
-// task-ownership claim and this task physically could not write them; #555 wired all three
-// and merged them to main (92aedcae), and the list's own self-invalidating assertion is what
-// went red to say so. The fence now applies to every spend entry with no escape hatch —
-// re-introducing one should take a deliberate, argued change to this file.
+// There is no exemption list. The test applies to every spend entry so a new path cannot silently
+// omit the balance refresh signal.
 
 function walkSources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -257,8 +254,12 @@ describe("Card prompt-bar price tag seam (#550 ② · #547 A4)", () => {
     expect(src).toMatch(/import\s*\{[\s\S]*?\bgenCostHint\b[\s\S]*?\}\s*from\s*["']@\/lib\/canvas-gen-costs["']/);
     // An image card's bar makes one image → the single-image quote.
     expect(src).toMatch(/evolveCostHint\s*=\s*genCostHint\(costQuote\?\.imageCredits\)/);
-    // A video card's bar seeds the video confirm → the video quote.
-    expect(src).toMatch(/remakeCostHint\s*=\s*genCostHint\(costQuote\?\.videoCredits\)/);
+    // A video card's bar seeds the t2v confirm → the price of the tier THAT dialog will use
+    // (#645 T4: video is priced per tier now, so the default-tier quote would be a second,
+    // stale price source the moment the merchant picks another length).
+    expect(src).toMatch(/remakeCostHint\s*=\s*genCostHint\(specCredits\(t2vSpec\) \?\? costQuote\?\.videoCredits\)/);
+    // …and that per-tier price comes from the server's own table, never recomputed here.
+    expect(src).toMatch(/videoSpecMenu\.creditsFor\(spec\)/);
     // The composer's price follows the chosen batch size through the same clamp the paid
     // call applies, so the label and the charge cannot drift apart (#547 A2).
     expect(src).toMatch(/canvasGenCostQuote\(costQuote,\s*imageCount\)\.imageCredits/);

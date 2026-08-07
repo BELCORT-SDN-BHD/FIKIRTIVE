@@ -17,7 +17,7 @@ import "server-only";
 
 import { prisma } from "@fikirtive/db";
 import { displayCredits } from "@fikirtive/core";
-import { canvasVideoSettings, type CanvasNodeLineage } from "./canvas-lineage";
+import { canvasImageSettings, canvasVideoSettings, type CanvasNodeLineage } from "./canvas-lineage";
 import { mergeSettings } from "./owner-settings";
 import { formatDayLabel, formatTime, partsInTz } from "./schedule-view";
 
@@ -26,6 +26,9 @@ export type LineageLookupNode = {
   id: string;
   generationId: string | null;
   genJobId: string | null;
+  /** Batch identity as the server settled it. Never recomputed here (#603 T4). */
+  batchIndex?: number | null;
+  batchSize?: number | null;
 };
 
 const EMPTY_SETTINGS = { durationSeconds: null, resolution: null, aspectRatio: null } as const;
@@ -36,7 +39,6 @@ export const UNKNOWN_CANVAS_LINEAGE: CanvasNodeLineage = {
   costCredits: null,
   batchSize: 1,
   batchPosition: null,
-  madeFromSource: false,
 };
 
 /**
@@ -74,13 +76,13 @@ export async function loadCanvasNodeLineages(
         where: { id: { in: jobIds }, ownerId, projectId },
         select: {
           id: true,
-          generationIds: true,
+          kind: true,
           videoOptions: true,
+          // #643 T2：图片卡也要说得出自己的形状 —— 这是「每个东西都要有迹可循」的同一条规矩，
+          // 也是「改这张图」那条路上 UI 显示「会交付什么」的唯一依据（不从像素反推）。
+          imageOptions: true,
           createdAt: true,
           finishedAt: true,
-          // The only proof of parentage. CanvasNode.sourceNodeId also carries a batch's layout
-          // anchor, so it cannot tell "made from" apart from "made alongside" on its own.
-          sourceGenerationId: true,
         },
       })
       : Promise.resolve([]),
@@ -124,21 +126,26 @@ export async function loadCanvasNodeLineages(
     const job = node.genJobId ? jobById.get(node.genJobId) : undefined;
     if (!job && !node.generationId) continue;
     const rows = node.genJobId ? ledgerByJob.get(node.genJobId) : undefined;
-    const batchSize = Math.max(1, job?.generationIds.length ?? 1);
-    const index = node.generationId && job ? job.generationIds.indexOf(node.generationId) : -1;
+    // BOTH READ OFF THE CARD, never recounted (#603 T4 · spec #599 D5). This used to ask the job
+    // how long its output list was and where this card's output sat in it — the right source, but
+    // asked again on every read, so the Info panel and the board's own badges were two derivations
+    // of one fact and could disagree. The card carries the answer the settlement wrote.
+    const batchSize = Math.max(1, node.batchSize ?? 1);
+    const index = typeof node.batchIndex === "number" && node.batchIndex >= 0 ? node.batchIndex : -1;
     out[node.id] = {
       madeAtLabel: label(
         (node.generationId ? madeAtByGeneration.get(node.generationId) : null)
           ?? job?.finishedAt
           ?? job?.createdAt,
       ),
-      settings: job ? canvasVideoSettings(job.videoOptions) : EMPTY_SETTINGS,
+      settings: job
+        ? (job.kind === "IMAGE" ? canvasImageSettings(job.imageOptions) : canvasVideoSettings(job.videoOptions))
+        : EMPTY_SETTINGS,
       costCredits: rows
         ? displayCredits(netChargedInternalCredits(rows))
         : (!node.genJobId && node.generationId && uploadedGenerations.has(node.generationId) ? 0 : null),
       batchSize,
       batchPosition: index >= 0 ? index + 1 : null,
-      madeFromSource: !!job?.sourceGenerationId,
     };
   }
   return out;

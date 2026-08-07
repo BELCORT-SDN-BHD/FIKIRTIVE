@@ -16,14 +16,22 @@
  * 纯声明:不参与选型、报价、预扣或任何 provider 调用。
  *
  * 真相位置:
- *   - `packages/core/src/gen-from-card.ts` —— 卡 → genRequest 的组装。
- *     `durationSeconds` / `resolution` / `aspectRatio` **只在 video 分支**传出;
- *     图片分支一个都不传,所以图片的画幅根本到不了执行层。
- *   - 现役图像/视频适配器的请求体 —— 图片固定输出方图(与商家要的画幅无关);
- *     视频把 resolution / duration / ratio 编成 prompt flags 发出去,声音开关没有接出去。
+ *   - 现役图像适配器的请求体 —— 按请求画幅拼出确切的 WxH(#642);
+ *   - 现役视频适配器的请求体 —— resolution / duration / ratio / generate_audio 四项都作为
+ *     **严格顶层字段**发出去(#646 T5)。严格通道下写错的值当场报错,不会像旧的 prompt
+ *     flag 通道那样被悄悄换成默认值、把一支商家没批准的片子做出来并计费。
  */
+import { GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_SIZES, type GenImageAspect } from "./gen.js";
+
 export const EXECUTED_SPEC: {
-  image: { outputSize: { width: number; height: number }; aspectHonoured: boolean };
+  image: {
+    outputSize: { width: number; height: number };
+    outputSizes: Record<GenImageAspect, { width: number; height: number }>;
+    defaultAspect: GenImageAspect;
+    aspectHonoured: boolean;
+    sourceAspectInheritedFromSnapshot: boolean;
+    fallbackAdapterAspectHonoured: boolean;
+  };
   video: {
     aspectHonoured: boolean;
     durationHonoured: boolean;
@@ -32,16 +40,57 @@ export const EXECUTED_SPEC: {
   };
 } = {
   image: {
-    /** 执行层固定输出的像素尺寸(方图)。 */
-    outputSize: { width: 2048, height: 2048 },
-    /** 画幅请求会不会被执行层采纳。false ⇒ 卡面不得承诺画幅;商家提了就是一次降级。 */
-    aspectHonoured: false,
+    /** 没指定画幅时执行层真会产出的像素尺寸(默认画幅 = 方图,与 #642 之前逐字节一致)。 */
+    outputSize: GEN_IMAGE_SIZES[GEN_IMAGE_DEFAULT_ASPECT],
+    /** 每个画幅执行层真会产出的像素尺寸 —— 与适配器读的是**同一个对象**,
+     *  所以卡面报的尺寸不可能和发出去的 `size` 分家。 */
+    outputSizes: GEN_IMAGE_SIZES,
+    /** 商家没提画幅时执行层采用的画幅。 */
+    defaultAspect: GEN_IMAGE_DEFAULT_ASPECT,
+    /** 画幅请求会不会被执行层采纳。#642 起为 true:契约带画幅、快照落盘、
+     *  worker 透传、适配器发出确切 WxH,`byteplus.test.ts` 逐档整体断言。 */
+    aspectHonoured: true,
+    /** 改图 / 再来一张(带底图)继承源图画幅的**唯一**依据是源图那一单的画幅快照
+     *  (`GenJob.imageOptions`)。快照读不到(迁移前的老图)就诚实回落默认方图 ——
+     *  执行层不去猜像素、不去反推比例。 */
+    sourceAspectInheritedFromSnapshot: true,
+    /** 备用(legacy fallback)图像适配器**不**携带画幅:它的尺寸参数未经官方文档确认,
+     *  本仓库的规矩是「没确认就不发明参数」—— 确认了就得接上,视频侧的声音开关正是
+     *  这么在 #646 T5 接通的。false ⇒ 这条路上画幅不成立,不得假装它成立。
+     *  现役生产路径不走这条。 */
+    fallbackAdapterAspectHonoured: false,
   },
   video: {
     aspectHonoured: true,
     durationHonoured: true,
     resolutionHonoured: true,
-    /** 声音控制未接通执行层 ⇒ 卡面既不得说 “With sound”,也不得说 “No sound”。 */
-    audioHonoured: false,
+    /** #646 T5:声音开关已接通执行层 —— 适配器把它作为顶层 `generate_audio` 发出去
+     *  (`byteplus.test.ts` 整体断言逐字比对),所以卡面可以照实说 “With sound” /
+     *  “No sound”。缺省 true = 引擎默认,也 = `videoDefaults()` 给这个模型的 audio。 */
+    audioHonoured: true,
   },
 };
+
+/**
+ * 这一趟**真正会跑**的那个适配器,会不会兑现图片画幅。
+ *
+ * 判官轮 r1 P2:卡面文案原本只问 `EXECUTED_SPEC.image.aspectHonoured`,那是**现役**适配器
+ * 的静态事实;可真正执行这一单的适配器由 `GENERATION_PROVIDER` 选定,而备用适配器根本不
+ * 携带画幅。只问静态标志,就会在选中备用路时承诺一件那条路做不到的事 —— 正是本项目反复
+ * 重学的「说的与做的失同步」。
+ *
+ * 所以披露的判据是这个函数,不是那个标志。分支与 `createGenerationProvider()` 读同一个
+ * 环境变量、同一套取值;`packages/generation` 的测试拿**每个真适配器实际发出去的请求体**
+ * 逐个对表,任一侧漂移当场红。
+ *
+ * 纯函数:不选型、不报价、不发请求。
+ */
+export function imageAspectHonoured(env?: Record<string, string | undefined>): boolean {
+  // 现役适配器都做不到,就没有下文了。
+  if (!EXECUTED_SPEC.image.aspectHonoured) return false;
+  const provider = (env ?? (typeof process !== "undefined" ? process.env : {})).GENERATION_PROVIDER;
+  // 备用路:不发尺寸 ⇒ 按声明如实回 false(不许假装)。
+  if (provider === "fal") return EXECUTED_SPEC.image.fallbackAdapterAspectHonoured;
+  // 现役路(byteplus)发确切 WxH;离线 mock 按同一张表出精确同比例的图。两者都兑现。
+  return true;
+}

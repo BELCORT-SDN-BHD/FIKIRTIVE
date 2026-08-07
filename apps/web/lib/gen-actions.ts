@@ -21,9 +21,13 @@ import {
   activeImageModel,
   activeVideoModel,
   GEN_MODELS,
+  GEN_IMAGE_MODEL_OPTIONS,
   GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
+  imageDefaults,
+  genJobEndedWithoutDelivering,
+  type GenModel,
   type GenVideoModel,
   type GenJobData,
 } from "@fikirtive/core";
@@ -40,15 +44,19 @@ import {
   normalizeFactoryMaterial,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
+  FACTORY_HISTORY_SELECT,
   type CanvasActionKey,
   type FactoryAttemptKey,
+  type FactoryHistoryRow,
   type FactoryMaterial,
-  type StoredFactoryMaterial,
 } from "./batch-idempotency";
 
 export type StartGenResult =
   | { id: string; disposition: "fresh" | "reused" }
-  | { error: string; disposition?: "conflict"; refunded?: true };
+  /** `conflict` 是一个确定性判决(这个键已经属于别的内容);`retryable` 说的是完全不同的一件事:
+   *  **谁也不知道结果**,而且花钱之前就停住了 —— 调用方必须保住同一个逻辑动作身份再试一次,
+   *  绝不可以当成拒绝而换一个新动作(#656 P1)。 */
+  | { error: string; disposition?: "conflict" | "retryable"; refunded?: true };
 
 export type ActiveGenModels = {
   /** Opaque browser control ids. The real provider-backed model ids remain server-side. */
@@ -58,6 +66,24 @@ export type ActiveGenModels = {
   videoCredits: number;
   videoDefaults: ReturnType<typeof videoDefaults>;
   videoAspectRatios: string[];
+  /** #645 T4 —— 视频规格菜单(picker 顺序)。UI 只渲染这两份列表,自己不写死任何一档。 */
+  videoDurations: number[];
+  videoResolutions: string[];
+  /** 带首帧(Animate / 分镜首帧接片)时的默认形状 —— Seedance 是 adaptive:引擎跟着首帧走。
+   *  与 `videoDefaults.aspectRatio`(t2v 默认)是**两个**值,不许互相顶替。 */
+  videoI2vDefaultAspect: string;
+  /**
+   * 每一档规格的**确切**显示 credits,键 = `${resolution}:${seconds}`。
+   *
+   * 为什么是一整张表而不是让浏览器自己算:#645 起视频按秒计价,价格随商家选的档位变。
+   * 价格只能有一个来源(服务端的 `pricedGenCredits`)—— 浏览器复制一份计价公式,就是
+   * 「显示的」与「收的」第二次分家的入口。24 档全表一次带回来,选择器直接查表。
+   */
+  videoCreditsBySpec: Record<string, number>;
+  /** #643 T2 —— 图片形状菜单（default-first）。UI 只渲染这份列表，自己不写死任何一格。 */
+  imageAspectRatios: string[];
+  /** 商家没选形状时会交付的那一格。UI 的初始选中值取这里，所以「显示的」= 「会交付的」。 */
+  imageDefaultAspect: string;
 };
 
 class QueuePrepareFailed extends Error {}
@@ -85,29 +111,48 @@ function resolvePublicModelAlias(raw: unknown): unknown {
   return model ? { ...record, model } : raw;
 }
 
-const FACTORY_HISTORY_SELECT = {
-  id: true,
-  status: true,
-  idempotencyKey: true,
-  prompt: true,
-  model: true,
-  kind: true,
-  count: true,
-  entityIds: true,
-  variantSel: true,
-  sourceGenerationId: true,
-  tailGenerationId: true,
-  referenceVideoGenerationId: true,
-  shotId: true,
-  threadId: true,
-  videoOptions: true,
-} as const;
+/** 继承快照**读失败**。这不是一个答案,是「不知道」——`startGen` 把它翻译成一个可重试的
+ *  回应,先于任何 create/reserve(#656 P1)。 */
+class InheritedAspectUnknown extends Error {}
 
-type FactoryHistoryRow = StoredFactoryMaterial & {
-  id: string;
-  status: string;
-  idempotencyKey: string | null;
-};
+/**
+ * #642 — 「改这张图 / 再来一张」的画幅继承。
+ *
+ * 商家没另选画幅时,重做一张图不应该悄悄换掉形状。画幅的**唯一**依据是源图那一单入队时
+ * 冻结的规格快照(`GenJob.imageOptions`)—— 不去反推像素、不去猜。
+ *
+ * 这里有两种截然不同的结果,过去被写成了同一个 null,#656 P1 的双扣通道就是这么开的:
+ *  - **源头真的没有快照**(迁移前的老图、那一单已不在)→ 返回 null,调用方诚实回落默认画幅;
+ *    `EXECUTED_SPEC.image.sourceAspectInheritedFromSnapshot` 把这条口径写成了数据。
+ *  - **读的时候出错**(一次 DB 抖动)→ 谁也不知道源图是什么形状。这时候把它当成「没有快照」
+ *    就是拿一个**编造出来的默认形状**去和商家上一次真的落库的形状比对 —— 于是一次合法重试
+ *    被判成「换了内容」,回执被删,下一次点击变成新动作、第二笔钱。所以它必须原样上抛。
+ *
+ * 只读、owner 作用域。
+ */
+async function inheritedImageAspect(
+  ownerId: string,
+  sourceGenerationId: string,
+  model: string,
+): Promise<string | null> {
+  let source: { imageOptions: unknown } | null;
+  try {
+    source = await prisma.genJob.findFirst({
+      where: { ownerId, kind: "IMAGE", generationIds: { has: sourceGenerationId } },
+      orderBy: { createdAt: "desc" },
+      select: { imageOptions: true },
+    });
+  } catch (e) {
+    throw new InheritedAspectUnknown(e instanceof Error ? e.message : "inherited aspect read failed");
+  }
+  const snapshot = source?.imageOptions as { aspectRatio?: unknown } | null | undefined;
+  const aspect = typeof snapshot?.aspectRatio === "string" ? snapshot.aspectRatio : null;
+  // 快照里的值也要过**这一单要跑的那个模型**的菜单 —— 一个下线了的旧画幅不得靠继承
+  // 绕过契约校验,把一个引擎收不下的值送进付费调用。
+  return aspect && GEN_IMAGE_MODEL_OPTIONS[model as GenModel]?.aspectRatios.includes(aspect)
+    ? aspect
+    : null;
+}
 
 /** Read-only history verdict. `null` means this attempt may be fresh, so the caller must run the
  * fresh-only gates and repeat this verdict under the project lock before create + reserve. */
@@ -124,8 +169,16 @@ function factoryHistoryVerdict(
   }
   const exact = history.find((prior) => prior.idempotencyKey === attempt.key);
   if (exact) return { id: exact.id, disposition: "reused" };
-  const nonFailed = history.find((prior) => prior.status !== "FAILED");
-  if (nonFailed) return { id: nonFailed.id, disposition: "reused" };
+  // A NEW attempt may only be created once every prior job for this cell has ENDED WITHOUT
+  // DELIVERING (#602 T3). This used to be spelled `status !== "FAILED"` — which said, without
+  // meaning to, that failing is the ONLY ending that frees the cell. That held exactly as long as
+  // cancelling wrote the word FAILED; the moment cancel became its own word, a cancelled job read
+  // as still live and the merchant's next press was handed back the dead job. They press
+  // Generate, wait, and nothing is ever made. Money is untouched by this line: a cancelled job
+  // was refunded when it was cancelled, and the fresh attempt below reserves for itself exactly
+  // as any first attempt does.
+  const stillLive = history.find((prior) => !genJobEndedWithoutDelivering(prior.status));
+  if (stillLive) return { id: stillLive.id, disposition: "reused" };
   return null;
 }
 
@@ -149,6 +202,15 @@ function canvasHistoryVerdict(
 
 const CANVAS_ACTION_ID_MAX_LENGTH = 128;
 const TRUSTED_CANVAS_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
+/** #645 T4(判官 r1 P0-2):资产详情页那条付费路的价格绑定,与 Canvas/Otto 同一套
+ *  「商家看到的数字是授权的一部分」机制,只是各自的补救话术不同。 */
+const TRUSTED_ASSET_REQUESTS = new WeakMap<object, { expectedCredits: number }>();
+
+/** 「你签字的价和现在的价不是同一个」——三条付费路共用这一句的骨架,只有补救动作不同。
+ *  price 变更必须在 create/reserve **之前**拒绝,绝不静默按新价扣。 */
+function priceChangedError(approved: number, current: number, howToFix: string): string {
+  return `The confirmed price changed from ${approved} to ${current} credits. ${howToFix}`;
+}
 type TrustedCoworkRequest = {
   ownerId: string;
   cardId: string;
@@ -181,6 +243,35 @@ export async function startCanvasGen(raw: unknown): Promise<StartGenResult> {
   }
   const trustedRequest = { ...request, idempotencyKey: canvasActionKey(actionId).key };
   TRUSTED_CANVAS_REQUESTS.set(trustedRequest, { expectedCredits });
+  return startGen(trustedRequest);
+}
+
+/**
+ * 资产详情页的付费入口(#645 T4,判官 r1 P0-2)。
+ *
+ * 详情页先把价格显示给商家看,再按那个价扣钱 —— 中间隔着一次网络往返和一个可能开了
+ * 很久的面板。价格若在这期间变了(定价调整,或商家自己在同一个面板里把片子从 5 秒改到
+ * 12 秒),旧路是「按旧价签字、按新价扣款」。Canvas / Otto / Campaign 三条路都有价格
+ * 重核,唯独这条没有,所以这里补上**同一套**绑定:面板把屏幕上那个数字带上,服务端
+ * 自己算一遍,不符就在 create/reserve 之前拒绝。
+ *
+ * 与 Canvas 入口的唯一区别:详情页自己出幂等键(regen-/anim-/edit- 前缀 + 时间戳),
+ * 所以这里不代生成键,只做价格绑定。
+ */
+export async function startAssetGen(raw: unknown): Promise<StartGenResult> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const { expectedCredits, ...request } = raw as Record<string, unknown>;
+  if (
+    typeof expectedCredits !== "number" ||
+    !Number.isFinite(expectedCredits) ||
+    expectedCredits <= 0
+  ) {
+    return { error: "That generation request is out of bounds." };
+  }
+  const trustedRequest = { ...request };
+  TRUSTED_ASSET_REQUESTS.set(trustedRequest, { expectedCredits });
   return startGen(trustedRequest);
 }
 
@@ -240,9 +331,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const trustedCoworkRequest = raw !== null && typeof raw === "object"
     ? TRUSTED_COWORK_REQUESTS.get(raw as object)
     : undefined;
+  const trustedAssetRequest = raw !== null && typeof raw === "object"
+    ? TRUSTED_ASSET_REQUESTS.get(raw as object)
+    : undefined;
   if (raw !== null && typeof raw === "object") {
     TRUSTED_CANVAS_REQUESTS.delete(raw as object);
     TRUSTED_COWORK_REQUESTS.delete(raw as object);
+    TRUSTED_ASSET_REQUESTS.delete(raw as object);
   }
   const trustedCanvasKey = trustedCanvasRequest !== undefined;
   const gate = await requireOwner(); if ("error" in gate) return gate;
@@ -284,6 +379,26 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     const project = await prisma.project.findFirst({ where: { id: projectId, ...OWNED } });
     if (!project) return { error: "Project not found." };
 
+    // #642 图片画幅:商家没明说时,带底图的请求(详情页 edit / 再来一张)继承源图的画幅,
+    // 让「改这张图」不改形状。源头真的没有快照就是 null,由 normalizeFactoryMaterial 落默认。
+    // 解析在材料成形之前完成,所以快照、幂等材料、worker 三处看到的是同一个值。
+    //
+    // #656 P1:读**出错**时这里必须停住。继承出来的形状是幂等材料的一部分,而这一段跑在精确
+    // 键重放核对之前 —— 拿一个编造的默认形状继续走下去,就等于让一次瞬时读错把商家的合法重试
+    // 判成「换了内容」。停在这里花不出任何钱:create/reserve 都在后面。
+    let effectiveAspectRatio: string | null | undefined;
+    try {
+      effectiveAspectRatio = kind === "image" && !aspectRatio && sourceGenerationId
+        ? await inheritedImageAspect(ownerId, sourceGenerationId, model)
+        : aspectRatio;
+    } catch (e) {
+      if (!(e instanceof InheritedAspectUnknown)) throw e;
+      return {
+        error: "We couldn't confirm the shape of the image you're editing — nothing was charged. Retry this same action.",
+        disposition: "retryable",
+      };
+    }
+
     // variantSel conditions IMAGE generation (which keyframe to anchor on). Video (i2v)
     // conditions on the source keyframe, not entity refs — the chosen variant is already
     // baked into that keyframe — so it's not meaningful for video and the worker ignores
@@ -303,7 +418,7 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       threadId,
       durationSeconds,
       resolution,
-      aspectRatio,
+      aspectRatio: effectiveAspectRatio,
       fps,
       audio,
     });
@@ -380,6 +495,8 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
 
     // The shared material normalizer resolves the exact five video controls persisted below.
     const videoOptions = material.videoOptions ?? undefined;
+    // …and the image shape (#642), from the same normalizer, persisted the same way.
+    const imageOptions = material.imageOptions ?? undefined;
 
     // consistencyGuardian (Phase 2): block obvious money-wasters BEFORE the spend
     // commit (a CHARACTER with no refs, a deleted @mention, a cross-project i2v
@@ -396,9 +513,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
     // OPT-6 P2: reject an admin-disabled model BEFORE the spend commit. This is
     // ADDITIVE narrowing — the typed superRefine above stays the authority over
     // which (model,params) may spend; this only subtracts a turned-off model.
-    // Fail-closed-to-typed-menu on a DB fault (resolveDisabledModels → empty set).
-    const disabled = await resolveDisabledModels();
-    if (isModelDisabled(model, disabled)) {
+    // #647 T6 修复轮 P1-3:开关读不到 ⇒ **不许扣款**。旧版把 DB 故障翻译成空集合
+    // (「什么都没关」),于是「库里全禁用 + 查询瞬时失败」这一刻钱照花。结果不明就不前进。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) return { error: registry.error };
+    if (isModelDisabled(model, registry.disabled)) {
       return { error: "That model is currently turned off — pick another." };
     }
 
@@ -417,6 +536,19 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       videoOptions: videoOptions ?? null,
     });
     const displayedCost = displayCredits(cost);
+
+    // #645 T4(判官 r1 P0-2):资产详情页那条路带的是普通幂等键,落不进下面 canvas/cowork
+    // 的分支,所以它的价格重核在这里 —— 与那两条同一条规矩:**商家看到的数字是授权的
+    // 一部分**,对不上就在 create/reserve 之前停住,绝不静默按新价扣。
+    if (trustedAssetRequest && trustedAssetRequest.expectedCredits !== displayedCost) {
+      return {
+        error: priceChangedError(
+          trustedAssetRequest.expectedCredits,
+          displayedCost,
+          "Reopen this image to load the current price, then try again.",
+        ),
+      };
+    }
 
     // Prepare pg-boss before opening the money transaction, but do not return early on failure:
     // a concurrent same-action winner may already exist by the time we acquire the project lock.
@@ -452,7 +584,8 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           // Factory's exact attempt + logical-cell content binding is decided under the SAME
           // owner/project advisory lock as create+reserve. No time window and no all-status index:
           // an exact attempt is reused forever; a new attempt may create only after every prior
-          // logical-cell job FAILED; content never changes across attempts (FAILED included).
+          // logical-cell job ENDED WITHOUT DELIVERING (failed OR cancelled — #602 T3);
+          // content never changes across attempts (a prior ending included).
           const history = await tx.genJob.findMany({
             where: {
               ownerId,
@@ -493,7 +626,11 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
           // their already-authorized job regardless of later price changes.
           if (trustedCanvasRequest && trustedCanvasRequest.expectedCredits !== displayedCost) {
             return {
-              error: `The confirmed price changed from ${trustedCanvasRequest.expectedCredits} to ${displayedCost} credits. Refresh Canvas to load the current price, then review and send again.`,
+              error: priceChangedError(
+                trustedCanvasRequest.expectedCredits,
+                displayedCost,
+                "Refresh Canvas to load the current price, then review and send again.",
+              ),
             };
           }
         }
@@ -538,6 +675,9 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             threadId: threadId ?? null, // cowork tag — keeps this job out of the GenSpace/Assets/Editor views
             queueJobId,
             ...(videoOptions ? { videoOptions } : {}),
+            // #642: the frozen image shape — the worker reads it back, and a later
+            // "edit this image" inherits from it. Video jobs get null (normalizer drops it).
+            ...(imageOptions ? { imageOptions } : {}),
             // Phase C: persist the @mention→variant bindings so the worker conditions on
             // the right variant. Image-only (the shared material normalizer drops it for video).
             // Omitted when empty → column stays null (old/bare/video gens unchanged).
@@ -667,7 +807,25 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
   const imageModel = activeImageModel();
   const videoModel = activeVideoModel();
   const defaults = videoDefaults(videoModel as GenVideoModel);
+  const videoOpts = GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel];
+  // #645 T4:整张按秒价目表,由**收费函数本人**逐档算出来 —— 选择器显示的每一个数字都
+  // 是 startGen 到时会预扣的那个数字,不是界面另算的一份。
+  const videoCreditsBySpec: Record<string, number> = {};
+  for (const resolution of videoOpts.resolutions) {
+    for (const seconds of videoOpts.durations) {
+      videoCreditsBySpec[`${resolution}:${seconds}`] = displayCredits(pricedGenCredits({
+        kind: "VIDEO",
+        model: videoModel,
+        count: 1,
+        videoOptions: { seconds, resolution },
+      }));
+    }
+  }
   return {
+    videoDurations: [...videoOpts.durations],
+    videoResolutions: [...videoOpts.resolutions],
+    videoI2vDefaultAspect: videoDefaults(videoModel as GenVideoModel, { hasSourceImage: true }).aspectRatio,
+    videoCreditsBySpec,
     image: publicModelAlias("image", imageModel),
     video: publicModelAlias("video", videoModel),
     imageCredits: displayCredits(pricedGenCredits({
@@ -684,6 +842,8 @@ export async function getActiveGenModels(): Promise<ActiveGenModels> {
     })),
     videoDefaults: defaults,
     videoAspectRatios: [...GEN_VIDEO_MODEL_OPTIONS[videoModel as GenVideoModel].aspectRatios],
+    imageAspectRatios: [...GEN_IMAGE_MODEL_OPTIONS[imageModel as GenModel].aspectRatios],
+    imageDefaultAspect: imageDefaults(imageModel as GenModel).aspectRatio,
   };
 }
 

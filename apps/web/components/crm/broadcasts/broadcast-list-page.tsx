@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import { AlertCircle, ArrowLeft, ArrowRight, Megaphone, Plus, RefreshCw, Unplug } from "lucide-react";
 import { listBroadcastRuns } from "@/lib/customer-broadcast-ui-actions";
 import type { getMemberDirectory } from "@/lib/customer-broadcast-gateway";
@@ -14,7 +15,6 @@ import {
   errorMessage,
   isDenialErrorCode,
   purposeLabel,
-  roleLabel,
   runStatusPresentation,
 } from "./broadcast-format";
 
@@ -60,10 +60,10 @@ export default function BroadcastListPage({
   }
 
   const directory = initialDirectory.ok ? initialDirectory.resource : null;
-  const selfRole = directory?.self.role ?? null;
   const nameFor = (membershipId: string): string =>
     directory?.members.find((m) => m.membershipId === membershipId)?.displayName ?? `Member ${membershipId.slice(0, 6)}`;
-  const isOwner = selfRole === "owner";
+  const selfRoles = directory ? (directory.self.roles ?? [directory.self.role]) : [];
+  const canManage = orgRolesAllow(selfRoles, "broadcast.manage");
 
   async function refresh() {
     setLoading(true);
@@ -106,10 +106,10 @@ export default function BroadcastListPage({
             <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={loading} aria-label="Refresh">
               <RefreshCw className={loading ? "animate-spin" : undefined} />Refresh
             </Button>
-            {isOwner ? (
+            {canManage ? (
               <Button asChild><Link href="/crm/broadcasts/new"><Plus />New broadcast</Link></Button>
             ) : (
-              <Button disabled title="Only an owner can create a broadcast."><Plus />New broadcast</Button>
+              <Button disabled title="Broadcast management access is required."><Plus />New broadcast</Button>
             )}
           </div>
         </header>
@@ -119,9 +119,9 @@ export default function BroadcastListPage({
           <span>No messaging channel is connected in this workspace. Broadcasts here run as simulated sends only — no message reaches a real customer, and provider quota (messaging tier) reads as unavailable.</span>
         </div>
 
-        {!isOwner ? (
+        {!canManage ? (
           <p className="mt-4 rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm leading-6 text-muted-foreground">
-            You are signed in as {selfRole ? roleLabel(selfRole).toLowerCase() : "a non-owner"}. You can review broadcasts, but only an owner can create, freeze, confirm, or run one.
+            You can review broadcasts, but your current access cannot create, freeze, confirm, or run one.
           </p>
         ) : null}
 
@@ -134,9 +134,9 @@ export default function BroadcastListPage({
             <Megaphone className="mx-auto size-8 text-muted-foreground" />
             <h2 className="mt-4 text-lg font-semibold">No broadcasts yet</h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              {isOwner ? "Create your first broadcast to choose a segment and template, then run a simulated send." : "No broadcast has been created in this workspace yet."}
+              {canManage ? "Create your first broadcast to choose a segment and template, then run a simulated send." : "No broadcast has been created in this workspace yet."}
             </p>
-            {isOwner ? (
+            {canManage ? (
               <Button asChild className="mt-5"><Link href="/crm/broadcasts/new"><Plus />New broadcast</Link></Button>
             ) : null}
           </section>

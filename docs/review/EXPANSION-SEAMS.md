@@ -84,7 +84,7 @@
 **Recipe — add a PROVIDER (worked example: `byteplus.ts`, the fal→BytePlus migration):**
 1. Implement `GenerationProvider` (`generate` + `generateVideo`; types in `packages/core/src/refgen.ts`). Providers download outputs and return bytes; the worker stores them content-addressed.
 2. Honor the charge contract: pre-charge failures throw plain (retryable); anything after the provider billed throws `chargedError` (terminal). Batch = all-or-nothing (a paid-for-but-missing output is never silently dropped).
-3. Reject unsupported request shapes PRE-spend (fal rejects `refVideoUrl`; BytePlus rejects `tailImageUrl` — defense in depth on top of the zod gate).
+3. Reject unsupported request shapes PRE-spend (fal rejects `refVideoUrl`; BytePlus rejects `tailImageUrl`+`refVideoUrl` together — first+last frames and reference video are mutually exclusive scenarios — defense in depth on top of the zod gate).
 4. Add an env branch in `createGenerationProvider()` that THROWS if its key is missing; anything unrecognized stays mock ($0) so a misconfigured prod can't silently burn money.
 5. Absorb async/polling INSIDE the provider (poll timeout < `GEN_QUEUE_POLICY.expireInSeconds`); the worker interface stays synchronous.
 

@@ -1,41 +1,27 @@
-# 本地复现 CI 四关（check / test / web-build / lint）
+# 本地质量检查
 
-CI 因账单封锁或 Actions 宕机而完全没有启动步骤时，合并前必须在 PR 的精确 head 上复现
-四个 job，并保留完整、非敏感日志与退出码。任何命令非零都算红；billing zero-step 只能记为
-“未运行”，不能记为绿色。
-
-`.github/workflows/ci.yml` 与本 runbook 都只调用 `scripts/ci/run-job.sh`。各 job 的内部命令
-只维护在该脚本，不在这里复制。
-
-## 前置条件
-
-- Node.js 22。
-- `package.json` 的 `packageManager` 所钉版本（当前为 pnpm 10.0.0）。
-- test job 使用隔离的 PostgreSQL 16 数据库，库名必须以 `_test` 结尾。
-
-本地 Docker 数据库可这样准备；创建命令是幂等的：
+GitHub 与本地使用同一个质量入口：
 
 ```bash
-node --version
-pnpm --version
-docker compose up -d postgres
-docker compose exec postgres sh -lc \
-  "psql -U fikirtive -tAc \"SELECT 1 FROM pg_database WHERE datname='fikirtive_test'\" | grep -qx 1 || createdb -U fikirtive fikirtive_test"
-export DATABASE_URL='postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test'
+pnpm install --frozen-lockfile
+pnpm quality
 ```
 
-若机器仍使用旧卷，数据库用户可能是 `artlio`；只替换上面两处数据库用户名，不得改成真实或
-生产数据库。runner 会在 migration 前再次拒绝任何库名不以 `_test` 结尾的 URL，且不会打印
-URL 内容。
+`pnpm quality` 会依次验证 package build、数据库 migration 与 schema 漂移、测试、
+TypeScript、lint、Otto skill 边界、资金毛利不变量、破坏性 migration，以及 Next.js
+production build。任一步失败，整项质量检查失败。
 
-## 四个精确 job
+## 本地数据库
 
-```bash
-bash scripts/ci/run-job.sh check
-bash scripts/ci/run-job.sh test
-bash scripts/ci/run-job.sh web-build
-bash scripts/ci/run-job.sh lint
+本机需有可连接的 PostgreSQL 16。默认连接为：
+
+```text
+postgresql://fikirtive:fikirtive@localhost:5432/fikirtive_test
 ```
 
-四条命令必须分别为零退出。将每条命令的完整非敏感日志、日志 hash、精确 head/base、Node/pnpm
-版本和 disposable test DB 证据写入 PR；之后仍须按项目 merge 纪律取得适用的明确批准。
+脚本拒绝基础数据库名不以 `_test` 结尾的连接；本地运行时，它还会建立一个独立的
+临时测试库，并在结束时删除。要使用另一台测试数据库，可传入安全的 `DATABASE_URL`。
+若为了诊断而要保留本次临时数据库，设置 `FIKIRTIVE_KEEP_TEST_DB=1`。
+
+Draft PR 不运行这项较重检查；PR 转为 Ready 后，GitHub 只运行一个名为 `quality` 的
+required check。不要把多个重复 job 或第二套本地命令再加回来。

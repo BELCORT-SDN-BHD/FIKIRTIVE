@@ -2,10 +2,13 @@
 import { useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
+import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
 
 /** Does this card offer its per-card actions (Info, More like this, Detail, Make video, and
  *  the attached prompt bar)? A card is actionable once it has resolved media AND a generation
@@ -14,7 +17,7 @@ import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineag
  *  exactly the drift #550 is about. Used for video cards too: the fields it reads
  *  (status/url/generationId) mean the same thing on both. */
 export function imageNodeActionable(d: { status?: string; url?: string; generationId?: string }): boolean {
-  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const terminal = isTerminalCardStatus(d.status);
   return !!d.url && !terminal && !!d.generationId;
 }
 
@@ -26,10 +29,23 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     generationId?: string;
     skin?: string;
     lineage?: CanvasNodeLineage | null;
-    sourceNodeId?: string | null;
+    /** The card this one's paid job was made FROM — the one fact "Made from" reads (#603 T4). */
+    madeFromNodeId?: string | null;
+    /** Batch identity as the server settled it — what the A/B badge reads (#603 T4). */
+    batchIndex?: number | null;
+    batchSize?: number | null;
+    /** A board read has returned this card. Until it has, the three columns above are only what
+     *  the press asked for, and this card may not speak them (#605 r1 P1-1). */
+    serverKnown?: unknown;
+    /** Opens the lineage tree for the picked card (#605 T6). Supplied by FlowCanvas. */
+    onOpenLineage?: () => void;
     onAnimate?: () => void;
-    onEvolve?: (id: string, prompt: string) => void;
-    onVariant?: (id: string) => void;
+    onEvolve?: (id: string, prompt: string, aspect?: string) => void;
+    onVariant?: (id: string, aspect?: string) => void;
+    /** #643 T2：一张新图默认交付的形状 = 这张卡自己记着的形状（「改这张图」不改形状）。 */
+    imageShape?: string;
+    /** 服务端解析的形状菜单。缺席 ⇒ 不渲染选择器（仍按默认形状出图）。 */
+    imageShapeOptions?: readonly string[];
     onDelete?: () => void;
     onOpenDetail?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
@@ -51,6 +67,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
   // the merchant edits it in place. Re-seeded whenever the card's stored prompt changes.
   const [evolvePrompt, setEvolvePrompt] = useState(originalPrompt);
   const [promptSeed, setPromptSeed] = useState(originalPrompt);
+  // #643 T2：这条 bar 会交付的形状。种子是这张卡自己的形状 —— 商家什么都不动就等于
+  // 「和这张一样」，动了就按他动的那一格来。卡的形状变了（板子重读）就重新播种。
+  const [evolveShape, setEvolveShape] = useState(d.imageShape);
+  const [shapeSeed, setShapeSeed] = useState(d.imageShape);
   const [infoOpen, setInfoOpen] = useState(false);
   // This card's own bar belongs to THIS card, so it is only on screen while this card is the
   // only one picked. With two neighbouring cards picked, the two bars used to overlap and the
@@ -62,14 +82,21 @@ export function ImageNode({ data, id, selected }: NodeProps) {
     setPromptSeed(originalPrompt);
     setEvolvePrompt(originalPrompt);
   }
+  if (shapeSeed !== d.imageShape) {
+    setShapeSeed(d.imageShape);
+    setEvolveShape(d.imageShape);
+  }
   // The info panel belongs to the single picked card; anything else closes it. Render-phase
   // "adjust state when a prop changes" (React docs pattern) — not setState-in-effect.
   if (wasSolo !== soloSelected) {
     setWasSolo(soloSelected);
     if (!soloSelected) setInfoOpen(false);
   }
-  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const terminal = isTerminalCardStatus(d.status);
   const actionable = imageNodeActionable(d);
+  // Only a card a board read has answered for wears a letter. What a press ASKED for is not
+  // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
+  const letter = canvasBatchLetter(canvasRecordedFacts(d));
   const canEvolve = actionable && !!d.onEvolve && !d.directToolsLocked;
   const canVariant = actionable && !!d.onVariant && !d.directToolsLocked && !!originalPrompt;
   const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
@@ -100,6 +127,21 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             Info
           </button>
         )}
+        {/* T6: the card's whole story — what made it, what it made, who came out of the same
+            press. Unlike Info it is offered on a card that FAILED too: what a merchant most
+            wants to know about a card that did not work is where it came from (#605). */}
+        {d.onOpenLineage && (
+          <button
+            type="button"
+            aria-label="Show what this card came from"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="What made this card, and what it made"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
+          >
+            Lineage
+          </button>
+        )}
         {/* D6: the one and only way a card reaches Otto. Clicking the picture used to do it
             silently; now the merchant asks for it, and the whole picked set goes at once (#604). */}
         {canSendToOtto && (
@@ -123,8 +165,9 @@ export function ImageNode({ data, id, selected }: NodeProps) {
             className="al-btn al-btn-glass al-btn-sm nodrag nopan"
             disabled={writeLock.locked}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onVariant?.(id); }}
-            title={writeLock.locked ? writeLock.reason : `Make another one like this${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
+            // #643 T2：形状用这张卡上正显示的那一格 —— 同一张卡上的两个按钮不许交付两种形状。
+            onClick={(e) => { e.stopPropagation(); if (!writeLock.locked) d.onVariant?.(id, evolveShape); }}
+            title={writeLock.locked ? writeLock.reason : `Make another one like this${evolveShape ? ` · ${evolveShape}` : ""}${d.evolveCostHint ? ` · ${d.evolveCostHint}` : ""}`}
           >
             More like this
           </button>
@@ -196,7 +239,7 @@ export function ImageNode({ data, id, selected }: NodeProps) {
                 e.preventDefault();
                 const text = evolvePrompt.trim();
                 if (!text) return;
-                d.onEvolve?.(id, text);
+                d.onEvolve?.(id, text, evolveShape);
               }}
             >
               <input
@@ -208,6 +251,19 @@ export function ImageNode({ data, id, selected }: NodeProps) {
                 onPointerDown={(e) => e.stopPropagation()}
                 style={{ flex: 1, minWidth: 0, border: "none", background: "none", outline: "none", font: "inherit" }}
               />
+              {/* #643 T2: same shape as this card unless the merchant picks another one. What is
+                  on screen here is exactly what the next paid image will be made in. */}
+              {d.imageShapeOptions && evolveShape && (
+                <div className="nodrag nopan" onPointerDown={(e) => e.stopPropagation()}>
+                  <ImageShapePicker
+                    compact
+                    value={evolveShape}
+                    options={d.imageShapeOptions}
+                    onChange={setEvolveShape}
+                    title="The shape the new image will be made in — same cost in every shape"
+                  />
+                </div>
+              )}
               <button
                 type="submit"
                 aria-label="Make a new image from this edited prompt"
@@ -239,6 +295,10 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
         Image
+        {/* The A/B letter, read off the recorded batch position and nothing else — dragging B
+            above A does not swap them, because a coordinate never said which one this is
+            (#603 T4 · #605 T6). Only a press that really made two has an A and a B. */}
+        {letter && <span className="cv-nodeletter">{letter}</span>}
       </span>
     {/* The picture is a picture, not a button: clicking it picks the card up and nothing else
         (#604 · spec #599 D6). Everything the card can DO lives on its toolbar above. */}
@@ -246,10 +306,18 @@ export function ImageNode({ data, id, selected }: NodeProps) {
       className="al-panel"
       style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
+      {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
+          `in-flight || !url → spinner`, so any card that reached this renderer without a picture
+          — a done row whose media no longer resolves, a face this component did not know — span
+          for ever (F21). Only the two in-flight faces spin now; everything else without media says
+          which resting state it is in, and `missing` is the board's own word for "the work exists,
+          this card cannot show it". */}
       {terminal ? (
-        <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
-      ) : d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={d.skin === "gb"} kind="image" onRefresh={d.onRefresh} />
+        <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
+      ) : isInFlightCardFace(d.status) ? (
+        <GeneratingBody gb={d.skin === "gb"} kind="image" queued={d.status === "queued"} onRefresh={d.onRefresh} />
+      ) : !d.url ? (
+        <FailedBody status="missing" onRefresh={d.onRefresh} />
       ) : (
         <img
           src={d.url}

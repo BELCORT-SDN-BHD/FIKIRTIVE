@@ -1,6 +1,12 @@
 import "server-only";
 
-import { newId } from "@fikirtive/core";
+import {
+  effectiveOrgRoles,
+  newId,
+  orgRolesAllow,
+  type OrgCapability,
+  type OrgRole,
+} from "@fikirtive/core";
 import { broadcastPurposeFromTemplateClassification } from "./customer-broadcast-purpose";
 import {
   canonicalHash,
@@ -253,7 +259,7 @@ export type WorkflowCompilation = {
   validationErrorsJson: unknown;
 };
 
-type ActiveOwnerMembership = { id: string; role: "owner" };
+type ActiveWorkflowMembership = { id: string; roles: OrgRole[] };
 type CompiledCustomerAction = {
   key: string;
   action: {
@@ -553,10 +559,11 @@ export function workflowLifecycleService(
   const issueId = options.id ?? newId;
   const now = () => new Date(clock().getTime());
 
-  async function requireOwnerMembership(
+  async function requireWorkflowPermission(
     tx: Prisma.TransactionClient,
     principal: CustomerWorkflowPrincipal,
-  ): Promise<ActiveOwnerMembership> {
+    capability: Extract<OrgCapability, "workflow.read" | "workflow.manage">,
+  ): Promise<ActiveWorkflowMembership> {
     if (
       !principal ||
       typeof principal.ownerId !== "string" ||
@@ -569,14 +576,17 @@ export function workflowLifecycleService(
       where: {
         id: principal.membershipId,
         orgId: principal.ownerId,
-        role: "owner",
         status: "active",
         deletedAt: null,
       },
-      select: { id: true, role: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
-    if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
-    return { id: membership.id, role: "owner" };
+    if (!membership) fail("ACTION_DENIED");
+    const roles = effectiveOrgRoles(
+      (membership.roles ?? []).map((assignment) => assignment.role),
+    );
+    if (!orgRolesAllow(roles, capability)) fail("ACTION_DENIED");
+    return { id: membership.id, roles };
   }
 
   const routineReadSelect = {
@@ -690,7 +700,7 @@ export function workflowLifecycleService(
     const cursor = optionalCursor(input.cursor);
     const take = limit(input.limit);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       if (workflowDefinitionId) {
         await assertDefinitionFilter(tx, principal.ownerId, workflowDefinitionId);
       }
@@ -737,7 +747,7 @@ export function workflowLifecycleService(
   ) {
     const routineId = requiredString(input?.routineId);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       const row = await tx.routine.findFirst({
         where: { id: routineId, ownerId: principal.ownerId },
         select: routineReadSelect,
@@ -775,7 +785,7 @@ export function workflowLifecycleService(
     const cursor = optionalCursor(input?.cursor);
     const take = limit(input?.limit);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       if (parent.routineId) await assertRoutineFilter(tx, principal.ownerId, parent.routineId);
       if (parent.workflowDefinitionId) {
         await assertDefinitionFilter(tx, principal.ownerId, parent.workflowDefinitionId);
@@ -855,7 +865,7 @@ export function workflowLifecycleService(
     const cursor = optionalCursor(input?.cursor);
     const take = limit(input?.limit);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       if (parent.routineId) await assertRoutineFilter(tx, principal.ownerId, parent.routineId);
       if (parent.workflowDefinitionId) {
         await assertDefinitionFilter(tx, principal.ownerId, parent.workflowDefinitionId);
@@ -951,7 +961,7 @@ export function workflowLifecycleService(
     const cursor = optionalCursor(input.cursor);
     const take = limit(input.limit);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       const filter: Prisma.BusinessHoursPolicyWhereInput = {
         ownerId: principal.ownerId,
         ...(status ? { status } : {}),
@@ -1012,7 +1022,7 @@ export function workflowLifecycleService(
   ) {
     const businessHoursPolicyId = requiredString(input?.businessHoursPolicyId);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       const row = await tx.businessHoursPolicy.findFirst({
         where: { id: businessHoursPolicyId, ownerId: principal.ownerId },
         select: {
@@ -1235,7 +1245,7 @@ export function workflowLifecycleService(
       fail("INVALID_ARGUMENT");
     }
     return db.$transaction(async (tx) => {
-      const membership = await requireOwnerMembership(tx, principal);
+      const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       const row = await tx.workflowDefinition.create({
         data: {
           id: issueId(),
@@ -1260,7 +1270,7 @@ export function workflowLifecycleService(
   ) {
     const workflowDefinitionId = requiredString(input?.workflowDefinitionId);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       const row = await tx.workflowDefinition.findFirst({
         where: { id: workflowDefinitionId, ownerId: principal.ownerId },
       });
@@ -1275,7 +1285,7 @@ export function workflowLifecycleService(
   ) {
     const take = limit(input.limit);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       return tx.workflowDefinition.findMany({
         where: { ownerId: principal.ownerId },
         orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
@@ -1292,7 +1302,7 @@ export function workflowLifecycleService(
     const expectedRowRevision = revision(input?.expectedRowRevision);
     const name = requiredString(input?.name, 256);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.manage");
       const changed = await tx.workflowDefinition.updateMany({
         where: {
           id: workflowDefinitionId,
@@ -1325,7 +1335,7 @@ export function workflowLifecycleService(
     const workflowDefinitionId = requiredString(input?.workflowDefinitionId);
     const expectedRowRevision = revision(input?.expectedRowRevision);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.manage");
       await tx.$queryRaw`SELECT "id" FROM "WorkflowDefinition" WHERE "id" = ${workflowDefinitionId} AND "ownerId" = ${principal.ownerId} FOR UPDATE`;
       const definition = await tx.workflowDefinition.findFirst({
         where: { id: workflowDefinitionId, ownerId: principal.ownerId },
@@ -1363,7 +1373,7 @@ export function workflowLifecycleService(
   ) {
     const workflowDefinitionId = requiredString(input?.workflowDefinitionId);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.manage");
       const definition = await tx.workflowDefinition.findFirst({
         where: { id: workflowDefinitionId, ownerId: principal.ownerId, status: { not: "archived" } },
         select: { id: true },
@@ -1380,7 +1390,7 @@ export function workflowLifecycleService(
     const workflowDefinitionId = requiredString(input?.workflowDefinitionId);
     const rulesSource = workflowRulesSource(input?.rulesSource);
     return db.$transaction(async (tx) => {
-      const membership = await requireOwnerMembership(tx, principal);
+      const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       await tx.$queryRaw`SELECT "id" FROM "WorkflowDefinition" WHERE "id" = ${workflowDefinitionId} AND "ownerId" = ${principal.ownerId} FOR UPDATE`;
       const definition = await tx.workflowDefinition.findFirst({
         where: { id: workflowDefinitionId, ownerId: principal.ownerId, status: { not: "archived" } },
@@ -1430,7 +1440,7 @@ export function workflowLifecycleService(
     const workflowDefinitionId = requiredString(input?.workflowDefinitionId);
     const take = limit(input?.limit);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.read");
       const definition = await tx.workflowDefinition.findFirst({
         where: { id: workflowDefinitionId, ownerId: principal.ownerId },
         select: { id: true },
@@ -1452,7 +1462,7 @@ export function workflowLifecycleService(
     const workflowRevisionId = requiredString(input?.workflowRevisionId);
     const expectedRowRevision = revision(input?.expectedRowRevision);
     return db.$transaction(async (tx) => {
-      await requireOwnerMembership(tx, principal);
+      await requireWorkflowPermission(tx, principal, "workflow.manage");
       const row = await tx.workflowRevision.findFirst({
         where: {
           id: workflowRevisionId,
@@ -1526,7 +1536,7 @@ export function workflowLifecycleService(
     const scopeHash = routineScopeHash(input?.scopeJson);
     const summaryPolicy = summaryPolicyJson(input?.summaryPolicyJson);
     return db.$transaction(async (tx) => {
-      const membership = await requireOwnerMembership(tx, principal);
+      const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       const definition = await tx.workflowDefinition.findFirst({
         where: {
           id: workflowDefinitionId,
@@ -1583,7 +1593,7 @@ export function workflowLifecycleService(
     const routineId = requiredString(input?.routineId);
     const expectedRowRevision = revision(input?.expectedRowRevision);
     return db.$transaction(async (tx) => {
-      const membership = await requireOwnerMembership(tx, principal);
+      const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       await tx.$queryRaw`SELECT "id" FROM "Routine" WHERE "id" = ${routineId} AND "ownerId" = ${principal.ownerId} FOR UPDATE`;
       const routine = await tx.routine.findFirst({
         where: { id: routineId, ownerId: principal.ownerId },
@@ -1650,7 +1660,7 @@ export function workflowLifecycleService(
     const expectedRowRevision = revision(input?.expectedRowRevision);
     const reasonCode = requiredToken(input?.reasonCode);
     return db.$transaction(async (tx) => {
-      const membership = await requireOwnerMembership(tx, principal);
+      const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       await tx.$queryRaw`SELECT "id" FROM "Routine" WHERE "id" = ${routineId} AND "ownerId" = ${principal.ownerId} FOR UPDATE`;
       const current = await tx.routine.findFirst({ where: { id: routineId, ownerId: principal.ownerId } });
       if (!current) fail("RESOURCE_NOT_FOUND");
@@ -1692,7 +1702,7 @@ export function workflowLifecycleService(
     const scopeHash = routineScopeHash(input?.scopeJson);
     const summaryPolicy = summaryPolicyJson(input?.summaryPolicyJson);
     return db.$transaction(async (tx) => {
-      const membership = await requireOwnerMembership(tx, principal);
+      const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       await tx.$queryRaw`SELECT "id" FROM "Routine" WHERE "id" = ${routineId} AND "ownerId" = ${principal.ownerId} FOR UPDATE`;
       const old = await tx.routine.findFirst({ where: { id: routineId, ownerId: principal.ownerId } });
       if (!old) fail("RESOURCE_NOT_FOUND");

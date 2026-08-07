@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { INTERNAL_PER_DISPLAY, pricedGenCredits } from "@fikirtive/core";
+import {
+  INTERNAL_PER_DISPLAY, pricedGenCredits,
+  GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, imageOutputSize,
+} from "@fikirtive/core";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 const mockRequireOwner = vi.fn();
@@ -77,14 +80,16 @@ const {
   getActiveGenModels,
   startCanvasGen,
   startCoworkGen,
+  startAssetGen,
   startGen,
 } = await import("../gen-actions");
 const { canvasActionKey } = await import("../batch-idempotency");
 
 const prevDefaultVideoModel = process.env.OTTO_DEFAULT_VIDEO_MODEL;
 
-beforeEach(() => {
-  vi.clearAllMocks();
+/** 每例的干净起点。抽成具名函数是为了让「一个用例里连跑八格」的循环能在每一轮
+ *  重新布好替身（`vi.clearAllMocks()` 会把 mockResolvedValue 一起清掉）。 */
+function resetStartGenMocks(): void {
   process.env.OTTO_DEFAULT_VIDEO_MODEL = "seedance-2-fast";
   mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
   mockIsImpersonating.mockResolvedValue(false);
@@ -111,7 +116,12 @@ beforeEach(() => {
     options: { id?: string },
   ) => options.id ?? null);
   mockCheckCast.mockResolvedValue(null);
-  mockResolveDisabledModels.mockResolvedValue(new Set());
+  mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetStartGenMocks();
 });
 
 afterEach(() => {
@@ -367,6 +377,69 @@ describe("startGen", () => {
     expect(db.genJobCreate).not.toHaveBeenCalled();
     expect(db.reserveCredits).not.toHaveBeenCalled();
     expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  // ── #645 T4(判官 r1 P0-2)—— 资产详情页的付费入口 ────────────────────────────
+  //
+  // 详情页会把价格显示给商家看,然后按那个价扣钱。中间隔着一次网络往返和一个可能开了
+  // 很久的面板 —— 价格在这期间改了,商家就是「按旧价签字、按新价扣款」。Canvas / Otto /
+  // Campaign 三条路都有价格重核,唯独这条没有。这里用**同一套** expectedCredits 绑定补上:
+  // 面板把屏幕上那个价随请求带上,服务端算出来不符就拒,一分钱不动。
+  describe("#645 T4:资产详情入口的价格绑定(与 Canvas/Otto 同一套机制)", () => {
+    const assetRequest = (over: Record<string, unknown> = {}) => ({
+      expectedCredits: 1,
+      projectId: "p1",
+      prompt: "product hero",
+      entityIds: [],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: "regen-gen1-123",
+      ...over,
+    });
+
+    it("显示价与当前价不符 ⇒ 在 create/reserve 之前拒绝,并给一句人话", async () => {
+      const result = await startAssetGen(assetRequest({ expectedCredits: 2 }));
+      expect(result).toEqual({
+        error: "The confirmed price changed from 2 to 1 credits. Reopen this image to load the current price, then try again.",
+      });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+      expect(mockBossSend).not.toHaveBeenCalled();
+    });
+
+    it("显示价与当前价一致 ⇒ 照常建单并预扣", async () => {
+      const result = await startAssetGen(assetRequest());
+      expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
+        orgId: "org_ref",
+        refId: "job_ref",
+        cost: 1 * INTERNAL_PER_DISPLAY,
+      });
+    });
+
+    it("视频档位同理:面板报 11cr 而当前是 27cr(商家改了时长)⇒ 拒绝", async () => {
+      const result = await startAssetGen(assetRequest({
+        kind: "video",
+        model: "seedance-2-fast",
+        durationSeconds: 12,
+        resolution: "720p",
+        expectedCredits: 11,
+        idempotencyKey: "anim-gen1-123",
+      }));
+      expect(result).toEqual({
+        error: "The confirmed price changed from 11 to 27 credits. Reopen this image to load the current price, then try again.",
+      });
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+
+    it("不带 expectedCredits 一律出界 —— 这条路不许绕过绑定", async () => {
+      for (const bad of [{}, { expectedCredits: "1" }, { expectedCredits: -1 }, { expectedCredits: Number.NaN }]) {
+        const result = await startAssetGen({ ...assetRequest(), ...bad, expectedCredits: (bad as Record<string, unknown>).expectedCredits });
+        expect(result).toEqual({ error: "That generation request is out of bounds." });
+      }
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
   });
 
   it("requires Canvas to bind the price the owner approved", async () => {
@@ -710,6 +783,53 @@ describe("startGen", () => {
     expect(db.reserveCredits).toHaveBeenCalledTimes(1);
   });
 
+  it("lets a NEW attempt start after the merchant cancelled the previous one (#602 T3)", async () => {
+    // THE GUARD (#599 D4). A new attempt on the same logical cell may only be created once every
+    // prior job for that cell has ENDED WITHOUT DELIVERING. That rule was spelled as
+    // `status !== "FAILED"`, i.e. "failed is the only ending that frees the cell" — true only
+    // while cancelling wrote the word FAILED. The moment cancel became its own word, a cancelled
+    // job read as "still live" and the merchant's next press was deduped back onto the dead job:
+    // they press Generate, nothing new is ever made, and the id they get back is a job that will
+    // never produce anything. Nothing about money changes here — a cancelled job was already
+    // refunded, and the fresh attempt reserves for itself exactly as any first attempt does.
+    const logical = `batch:${"9".repeat(32)}:attempt:`;
+    const key = `${logical}${"e".repeat(32)}`;
+    const cancelled = {
+      id: "job_cancelled_by_the_merchant",
+      status: "CANCELLED",
+      idempotencyKey: `${logical}${"f".repeat(32)}`,
+      prompt: "same material",
+      model: "seedream",
+      kind: "IMAGE",
+      count: 1,
+      entityIds: ["entity-1"],
+      variantSel: null,
+      sourceGenerationId: null,
+      tailGenerationId: null,
+      referenceVideoGenerationId: null,
+      shotId: null,
+      videoOptions: null,
+    };
+    db.genJobFindMany.mockResolvedValue([cancelled]);
+
+    const result = await startGen({
+      projectId: "p1",
+      prompt: "same material",
+      entityIds: ["entity-1"],
+      count: 1,
+      kind: "image",
+      model: "seedream",
+      idempotencyKey: key,
+    });
+
+    // A NEW job — never the cancelled one handed back as if it were still going to deliver.
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.genJobCreate).toHaveBeenCalledTimes(1);
+    // Money is untouched by the guard: the fresh attempt reserves once, like any first attempt.
+    expect(db.reserveCredits).toHaveBeenCalledTimes(1);
+    expect(db.refundReservation).not.toHaveBeenCalled();
+  });
+
   it("reuses an exact factory attempt even after its job FAILED — delayed duplicate is never a retry", async () => {
     const key = `batch:${"a".repeat(32)}:attempt:${"b".repeat(32)}`;
     expect(key).toHaveLength(79);
@@ -767,7 +887,7 @@ describe("startGen", () => {
       videoOptions: null,
     }]);
     mockCheckCast.mockResolvedValue({ error: "entity is now unavailable", report: { findings: [] } });
-    mockResolveDisabledModels.mockResolvedValue(new Set(["seedream"]));
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set(["seedream"]) });
 
     const result = await startGen({
       projectId: "p1",
@@ -870,13 +990,14 @@ describe("startGen", () => {
     });
 
     expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
-    // flat-priced seedance-2-fast 720p/5s = 8 displayed credits for ONE clip. The client fans a
-    // multi-clip request out as N single-clip jobs, so startGen must reserve for count=1 — pricing
-    // the raw count here would double-charge the first clip of every fan-out.
+    // flat-priced seedance-2-fast 720p/5s = 11 displayed credits for ONE clip (#644 裁决
+    // 2026-08-06). The client fans a multi-clip request out as N single-clip jobs, so startGen
+    // must reserve for count=1 — pricing the raw count here would double-charge the first clip
+    // of every fan-out.
     expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
       orgId: "org_ref",
       refId: "job_ref",
-      cost: 8 * INTERNAL_PER_DISPLAY,
+      cost: 11 * INTERNAL_PER_DISPLAY,
     });
     expect(db.genJobCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ kind: "VIDEO", count: 1 }),
@@ -884,7 +1005,64 @@ describe("startGen", () => {
     }));
   });
 
-  it("reserves the 14-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {
+  it("#645 T4:新开的每一档都按 Founder 表预扣 —— 卡面报的价就是真扣的价", async () => {
+    // 全表逐档跑真 startGen,断言 reserveCredits 收到的正是那张已裁价目表上的数。
+    // 界面报价走的是 getActiveGenModels().videoCreditsBySpec(同一个 pricedGenCredits),
+    // 上面那条测试已经把两者钉在一起 —— 于是「显示的」与「扣的」不可能分家。
+    const table: Record<string, number> = {
+      "720p:4": 9, "720p:5": 11, "720p:6": 14, "720p:7": 16, "720p:8": 18, "720p:9": 20,
+      "720p:10": 22, "720p:11": 25, "720p:12": 27, "720p:13": 29, "720p:14": 31, "720p:15": 33,
+      "480p:4": 5, "480p:5": 6, "480p:6": 7, "480p:7": 8, "480p:8": 9, "480p:9": 10,
+      "480p:10": 11, "480p:11": 13, "480p:12": 14, "480p:13": 15, "480p:14": 16, "480p:15": 17,
+    };
+    for (const [key, displayed] of Object.entries(table)) {
+      const [resolution, secondsRaw] = key.split(":");
+      db.reserveCredits.mockClear();
+      const result = await startGen({
+        projectId: "p1",
+        prompt: "a product spin",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-fast",
+        durationSeconds: Number(secondsRaw),
+        resolution: resolution!,
+        idempotencyKey: `video-tier-${key}`,
+      });
+      expect(result, key).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(db.reserveCredits, key).toHaveBeenCalledWith(db.prisma, {
+        orgId: "org_ref",
+        refId: "job_ref",
+        cost: displayed * INTERNAL_PER_DISPLAY,
+      });
+    }
+  });
+
+  it("#645 T4:界外的档位在花钱之前就被拒(3 秒 / 16 秒 / 1080p)", async () => {
+    for (const bad of [
+      { durationSeconds: 3, resolution: "720p" },
+      { durationSeconds: 16, resolution: "720p" },
+      { durationSeconds: 5, resolution: "1080p" },
+    ]) {
+      db.reserveCredits.mockClear();
+      db.genJobCreate.mockClear();
+      const result = await startGen({
+        projectId: "p1",
+        prompt: "a product spin",
+        entityIds: [],
+        count: 1,
+        kind: "video",
+        model: "seedance-2-fast",
+        ...bad,
+        idempotencyKey: `video-bad-${bad.durationSeconds}-${bad.resolution}`,
+      });
+      expect(result, JSON.stringify(bad)).toHaveProperty("error");
+      expect(db.reserveCredits, JSON.stringify(bad)).not.toHaveBeenCalled();
+      expect(db.genJobCreate, JSON.stringify(bad)).not.toHaveBeenCalled();
+    }
+  });
+
+  it("reserves the 22-displayed-credit 720p/10s video tier (margin-parity pin)", async () => {
     const result = await startGen({
       projectId: "p1",
       prompt: "longer product spin",
@@ -901,7 +1079,7 @@ describe("startGen", () => {
     expect(db.reserveCredits).toHaveBeenCalledWith(db.prisma, {
       orgId: "org_ref",
       refId: "job_ref",
-      cost: 14 * INTERNAL_PER_DISPLAY,
+      cost: 22 * INTERNAL_PER_DISPLAY,
     });
   });
 
@@ -1244,6 +1422,35 @@ describe("generation read boundaries", () => {
     expect(serialized).not.toMatch(SECRET_TERMS);
   });
 
+  it("#645 T4:按档价目表 = 收费函数本人算的 —— 卡面报价与预扣额不可能分家", async () => {
+    const { pricedGenCredits, displayCredits, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel } =
+      await import("@fikirtive/core");
+    const models = await getActiveGenModels();
+    const opts = GEN_VIDEO_MODEL_OPTIONS[activeVideoModel() as keyof typeof GEN_VIDEO_MODEL_OPTIONS];
+
+    // 菜单原样来自能力表 —— 服务端不另编一份。
+    expect(models.videoDurations).toEqual([...opts.durations]);
+    expect(models.videoResolutions).toEqual([...opts.resolutions]);
+    expect(models.videoAspectRatios).toEqual([...opts.aspectRatios]);
+
+    // 24 档全表逐格对上 pricedGenCredits(startGen 预扣用的就是它)。
+    let checked = 0;
+    for (const resolution of opts.resolutions) {
+      for (const seconds of opts.durations) {
+        const expected = displayCredits(pricedGenCredits({
+          kind: "VIDEO", model: activeVideoModel(), count: 1, videoOptions: { seconds, resolution },
+        }));
+        expect(models.videoCreditsBySpec[`${resolution}:${seconds}`], `${seconds}s ${resolution}`).toBe(expected);
+        checked += 1;
+      }
+    }
+    expect(checked).toBe(24);
+
+    // t2v 默认与 i2v 默认是**两个**值,不许互相顶替。
+    expect(models.videoDefaults.aspectRatio).toBe("16:9");
+    expect(models.videoI2vDefaultAspect).toBe("adaptive");
+  });
+
   it("resolves an opaque image capability before the unchanged create-and-reserve path", async () => {
     const models = await getActiveGenModels();
 
@@ -1297,5 +1504,224 @@ describe("generation read boundaries", () => {
     expect(result?.error).not.toMatch(SECRET_TERMS);
     expect(result?.error).not.toContain("X-Amz-Signature");
     expect(result).not.toHaveProperty("model");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #642 图片形状端到端 —— 服务端全链路(gen-actions → 快照 → worker)
+// ---------------------------------------------------------------------------
+describe("startGen 图片规格快照", () => {
+  const base = {
+    projectId: "p1",
+    prompt: "a poster",
+    entityIds: [],
+    count: 1,
+    kind: "image" as const,
+    model: "seedream",
+  };
+  const createdData = () => db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+  /** 只让「按 generationIds 找源图那一单」这一次查询返回快照;其余 findFirst 照旧 null。 */
+  type GenJobFindFirstArgs = { where?: { generationIds?: unknown } };
+  const sourceSnapshot = (imageOptions: { aspectRatio: string } | null) =>
+    async (args: GenJobFindFirstArgs) =>
+      args?.where?.generationIds !== undefined ? { imageOptions } : null;
+
+  it("商家选的画幅冻结进作业行(不再蒸发)", async () => {
+    const r = await startGen({ ...base, aspectRatio: "9:16", idempotencyKey: "shape-1" });
+    expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "9:16" });
+  });
+
+  it("没选画幅 → 落默认 1:1(与今日方图逐字节一致)", async () => {
+    await startGen({ ...base, idempotencyKey: "shape-2" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("画布入口(startCanvasGen)也真的把画幅带到底 —— T2 接 UI 时链路已经通了", async () => {
+    const r = await startCanvasGen({
+      actionId: "action-shape", expectedCredits: 1, ...base, aspectRatio: "4:3",
+    });
+    expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "4:3" });
+  });
+
+  it("引擎收不下的画幅在花钱之前就被拒(不创建作业、不预扣)", async () => {
+    const r = await startGen({ ...base, aspectRatio: "5:7", idempotencyKey: "shape-3" });
+    expect(r).toEqual({ error: "That generation request is out of bounds." });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("视频作业不写图片快照(两条规格路互不串台)", async () => {
+    await startGen({
+      ...base, kind: "video", model: "seedance-2-fast", aspectRatio: "16:9", idempotencyKey: "shape-4",
+    });
+    expect(createdData().imageOptions).toBeUndefined();
+    expect(createdData().videoOptions).toEqual(expect.objectContaining({ aspectRatio: "16:9" }));
+  });
+
+  it("改这张图 / 再来一张:没另选画幅就继承源图快照里的画幅(形状不被悄悄改掉)", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot({ aspectRatio: "9:16" }));
+    await startGen({ ...base, sourceGenerationId: "gen_src", idempotencyKey: "shape-5" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "9:16" });
+    // 源图查询必须带 tenant 约束
+    const lookup = db.genJobFindFirst.mock.calls.map(([a]) => a as GenJobFindFirstArgs)
+      .find((a) => a?.where?.generationIds !== undefined);
+    expect(lookup?.where).toEqual(expect.objectContaining({ ownerId: "org_ref", kind: "IMAGE" }));
+  });
+
+  it("源图快照读不到(迁移前的老图)→ 诚实回落 1:1,不去反推像素", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot(null));
+    await startGen({ ...base, sourceGenerationId: "gen_old", idempotencyKey: "shape-6" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("源图那一单根本不存在 → 同样回落 1:1(绝不抛、绝不挡住付费路径)", async () => {
+    db.genJobFindFirst.mockImplementation(async () => null);
+    await startGen({ ...base, sourceGenerationId: "gen_missing", idempotencyKey: "shape-7" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("源图快照里是个下线画幅 → 不靠继承绕过契约,回落 1:1", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot({ aspectRatio: "5:7" }));
+    await startGen({ ...base, sourceGenerationId: "gen_legacy", idempotencyKey: "shape-9" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "1:1" });
+  });
+
+  it("商家明确另选了画幅 → 以商家为准,不被源图覆盖", async () => {
+    db.genJobFindFirst.mockImplementation(sourceSnapshot({ aspectRatio: "9:16" }));
+    await startGen({ ...base, sourceGenerationId: "gen_src", aspectRatio: "16:9", idempotencyKey: "shape-8" });
+    expect(createdData().imageOptions).toEqual({ aspectRatio: "16:9" });
+  });
+
+  it("画幅不动价格:八个画幅报出来的预扣完全相同(引擎按张计价)", async () => {
+    const costs: number[] = [];
+    for (const [i, a] of ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"].entries()) {
+      vi.clearAllMocks();
+      db.projectFindFirst.mockResolvedValue({ id: "p1" });
+      db.genJobFindFirst.mockResolvedValue(null);
+      db.genJobFindMany.mockResolvedValue([]);
+      db.genJobCreate.mockResolvedValue({ id: "job_ref" });
+      db.reserveCredits.mockResolvedValue({ ok: true });
+      mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
+      mockIsImpersonating.mockResolvedValue(false);
+      mockCheckCast.mockResolvedValue(null);
+      mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+      mockGetBoss.mockResolvedValue({ send: mockBossSend });
+      mockBossSend.mockImplementation(async (_n: string, _d: unknown, o: { id?: string }) => o.id ?? null);
+      await startGen({ ...base, count: 2, aspectRatio: a, idempotencyKey: `price-${i}` });
+      costs.push(db.reserveCredits.mock.calls[0]?.[1]?.cost as number);
+    }
+    expect(new Set(costs).size).toBe(1);
+    expect(costs[0]).toBe(2 * INTERNAL_PER_DISPLAY);
+  });
+
+  // -------------------------------------------------------------------------
+  // #643 T2 —— 每个付费入口都走完整条链：选的形状 → 请求 → 快照 → 那一格的确切 WxH
+  //
+  // 三个入口是三条不同的路（画布带 actionId、Otto 卡带 cowork: 键、详情页/工厂带自己的键），
+  // 而形状要么在每一条上都到底，要么就是「有的入口能选、有的入口白选」。这里逐条走一遍。
+  // -------------------------------------------------------------------------
+  describe("#643 T2 逐入口端到端：形状 → 快照 → 确切 WxH", () => {
+    const snapshotAspect = () => (createdData().imageOptions as { aspectRatio: string }).aspectRatio;
+
+    it("画布入口(startCanvasGen)：八格逐个走完，快照上的形状对应引擎确切的 WxH", async () => {
+      for (const [i, aspect] of GEN_IMAGE_ASPECTS.entries()) {
+        vi.clearAllMocks();
+        resetStartGenMocks();
+        const r = await startCanvasGen({
+          actionId: `canvas-shape-${i}`, expectedCredits: 1, ...base, aspectRatio: aspect,
+        });
+        expect(r, aspect).toEqual({ id: "job_ref", disposition: "fresh" });
+        expect(snapshotAspect(), aspect).toBe(aspect);
+        // 最后一环：这个形状在执行层就是这个确切像素格（适配器与卡面读的是同一张表）。
+        expect(imageOutputSize(snapshotAspect()), aspect).toEqual(GEN_IMAGE_SIZES[aspect]);
+      }
+    });
+
+    it("Otto 卡入口(startCoworkGen)：卡上冻结的形状原样落进快照 —— 说的 = 做的", async () => {
+      const r = await startCoworkGen({
+        projectId: "p1", threadId: "thread-1", prompt: "approved card", entityIds: [],
+        count: 1, kind: "image", model: "seedream", aspectRatio: "9:16",
+        idempotencyKey: "cowork:card-1",
+      });
+      expect(r).toEqual({ id: "job_ref", disposition: "fresh" });
+      expect(snapshotAspect()).toBe("9:16");
+      expect(imageOutputSize(snapshotAspect())).toEqual({ width: 1620, height: 2880 });
+    });
+
+    it("详情页 / 工厂入口(startGen + 自带幂等键)：同样一路到底", async () => {
+      await startGen({ ...base, aspectRatio: "21:9", idempotencyKey: "regen-g1-123" });
+      expect(snapshotAspect()).toBe("21:9");
+      expect(imageOutputSize(snapshotAspect())).toEqual(GEN_IMAGE_SIZES["21:9"]);
+    });
+
+    it("哪个入口都不许绕过菜单：引擎收不下的形状一律在花钱之前被拒", async () => {
+      const canvas = await startCanvasGen({
+        actionId: "canvas-bad", expectedCredits: 1, ...base, aspectRatio: "5:7",
+      });
+      expect(canvas).toEqual({ error: "That generation request is out of bounds." });
+      const cowork = await startCoworkGen({
+        projectId: "p1", threadId: "thread-1", prompt: "approved card", entityIds: [],
+        count: 1, kind: "image", model: "seedream", aspectRatio: "5:7",
+        idempotencyKey: "cowork:card-1",
+      });
+      expect(cowork).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // #647 T6 ④ —— GenJob.model 的数据库默认值(`@default("seedream")`)与视频作业同表
+  //
+  // 图片与视频住在同一张 GenJob 表里,而这一列的库级默认值是**图片引擎**。任何一处
+  // insert 忘了带 model,落进去的就是一条「视频作业写着图片引擎」的行 —— 后面读它的每
+  // 一条路(计价、结算、worker 派单)都会拿着一个不属于这个 kind 的模型名去做决定。
+  //
+  // 处置分两层:app 层证明**没有一处依赖那个默认值**(下面这两条),迁移层(把默认值
+  // 从 schema 上撤掉)另呈 Founder 亲批 —— 迁移不在本片实施。
+  // -------------------------------------------------------------------------
+  describe("#647 T6 ④ GenJob.model 永远显式落库(不吃库级默认值)", () => {
+    it("视频作业落库时带的是视频引擎,不是默认值 seedream", async () => {
+      await startGen({
+        projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
+        kind: "video", model: "seedance-2-fast", idempotencyKey: "t6-video-1",
+      });
+      const data = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(data["kind"]).toBe("VIDEO");
+      expect(data["model"]).toBe("seedance-2-fast");
+      expect(data["model"]).not.toBe("seedream");
+    });
+
+    it("每一条落库的 GenJob 都自带 model —— insert 里那一格从来不空", async () => {
+      await startGen({
+        projectId: "p1", prompt: "a cat", entityIds: [], count: 1,
+        kind: "image", model: "seedream", idempotencyKey: "t6-image-1",
+      });
+      const imageData = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(Object.keys(imageData)).toContain("model");
+      expect(imageData["model"]).toBe("seedream");
+
+      db.genJobCreate.mockClear();
+      await startGen({
+        projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
+        kind: "video", model: "seedance-2-fast", idempotencyKey: "t6-video-2",
+      });
+      const videoData = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(Object.keys(videoData)).toContain("model");
+      expect(typeof videoData["model"]).toBe("string");
+      expect((videoData["model"] as string).length).toBeGreaterThan(0);
+    });
+
+    it("契约层堵死「视频请求不带 model」:zod 默认值 seedream 不是视频菜单上的一格,进不来", async () => {
+      const r = await startGen({
+        projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
+        kind: "video", idempotencyKey: "t6-video-3",
+      } as never);
+      expect(r).toEqual({ error: "That generation request is out of bounds." });
+      expect(db.genJobCreate).not.toHaveBeenCalled();
+      expect(db.reserveCredits).not.toHaveBeenCalled();
+    });
   });
 });

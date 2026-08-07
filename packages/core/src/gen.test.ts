@@ -1,22 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { GEN_VIDEO_MODELS, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest } from "./gen.js";
+import {
+  GEN_VIDEO_MODELS, GEN_VIDEO_MODEL_INFO, modelFamily, deriveMode, MODEL_FAMILIES, GEN_MODES, genRequest,
+  GEN_IMAGE_ASPECTS, GEN_IMAGE_DEFAULT_ASPECT, GEN_IMAGE_MAX_PIXELS, GEN_IMAGE_MIN_PIXELS,
+  GEN_IMAGE_MODEL_OPTIONS, GEN_IMAGE_SIZES, imageDefaults, imageOutputSize, normalizeImageAspect,
+  type GenImageAspect,
+} from "./gen.js";
 
 describe("modelFamily", () => {
   // every shipping video model resolves to a known family (version-agnostic, by prefix)
+  // #647 T6:菜单收到只剩在产那一台之后,这张表也跟着只剩一行 —— 表与菜单同集由
+  // menu-truth.test.ts 钉着,这里钉的是映射本身。
   const expected: Record<string, string> = {
-    kling: "kling",
-    "kling-2.6": "kling",
-    "kling-3": "kling",
-    "veo3.1-lite": "veo",
-    "veo3.1-fast": "veo",
-    "veo3.1": "veo",
-    "ltx-2": "ltx",
     "seedance-2-fast": "seedance",
-    "pixverse-v6": "pixverse",
-    "grok-imagine": "grok",
-    "wan-2.5": "wan",
-    "hailuo-02": "hailuo",
-    "seedance-2": "seedance",
   };
   it("maps every video model to a family", () => {
     for (const m of GEN_VIDEO_MODELS) {
@@ -27,8 +22,8 @@ describe("modelFamily", () => {
     expect(modelFamily("seedream")).toBe("seedream");
   });
   it("is version-agnostic by prefix (future bumps inherit the family)", () => {
-    expect(modelFamily("kling-4")).toBe("kling");
-    expect(modelFamily("veo4")).toBe("veo");
+    expect(modelFamily("seedance-3-fast")).toBe("seedance");
+    expect(modelFamily("seedream-5")).toBe("seedream");
   });
   it("seedream vs seedance disambiguate (both start with 'seed')", () => {
     expect(modelFamily("seedream")).toBe("seedream");
@@ -138,10 +133,178 @@ describe("genRequest.referenceVideoGenerationId", () => {
   });
 
   it("rejects non-Seedance video jobs with referenceVideoGenerationId", () => {
-    expect(genRequest.safeParse({ ...base, model: "veo3.1-lite", referenceVideoGenerationId: "gen_ref", durationSeconds: 6 }).success).toBe(false);
+    // #647 T6:菜单上已经没有第二台引擎了,所以这一条只能用菜单外的 id 来问 —— 它同时
+    // 证明契约闸对下架/未知模型仍然 fail closed(既非在册模型,也不是参考视频那一台)。
+    expect(genRequest.safeParse({ ...base, model: "veo3.1-lite", referenceVideoGenerationId: "gen_ref", durationSeconds: 5 }).success).toBe(false);
   });
 
   it("rejects 10s reference-video output before spend because the 16cr price is modeled for 5s output", () => {
     expect(genRequest.safeParse({ ...base, referenceVideoGenerationId: "gen_ref", durationSeconds: 10 }).success).toBe(false);
+  });
+});
+
+describe("genRequest.tailGenerationId", () => {
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+
+  it("#646 T5:现役视频模型接受尾帧(引擎支持首+尾帧,闸不再挡)", () => {
+    expect(GEN_VIDEO_MODEL_INFO["seedance-2-fast"].tail).toBe(true);
+    expect(genRequest.safeParse({ ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }).success).toBe(true);
+  });
+
+  it("模型真不支持尾帧时照旧在花钱前挡下(闸本身没松)", () => {
+    // #647 T6:菜单上已经没有「不支持尾帧」的那一格了(唯一在产的那台支持)。闸的判据
+    // 是 `GEN_VIDEO_MODEL_INFO[model]?.tail === true`,所以事实表上查不到的模型一律当
+    // 「不支持」—— 用一个下架 id 来问,正好同时钉住这条 fail-closed 语义。
+    expect((GEN_VIDEO_MODEL_INFO as Record<string, { tail: boolean } | undefined>)["grok-imagine"]).toBeUndefined();
+    const r = genRequest.safeParse({ ...base, model: "grok-imagine", durationSeconds: 6, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" });
+    expect(r.success).toBe(false);
+  });
+
+  // ── #646 修复轮 P0-1:尾帧的跨字段前提 ────────────────────────────────────────
+  // 闸原本只问「这个模型支不支持尾帧」,不问「这一单到底有没有首帧」。worker 解析尾帧
+  // 那一步被 `job.tailGenerationId && sourceAsset` 短路(apps/worker/src/jobs/gen.ts:671):
+  // 首帧缺席 ⇒ tailImageUrl 根本没生成 ⇒ 适配器那道守卫看不见原请求 ⇒ 引擎收到的是一支
+  // 普通视频,商家却按尾帧那一单付了钱。所以前提必须在花钱之前查。
+
+  it("#646 P0-1:尾帧必须伴随首帧来源 —— 光有尾帧的请求在花钱前就被拒", () => {
+    // worker 解析首帧的来源**只有两个**(gen.ts:641-663):显式 sourceGenerationId,
+    // 或 shotId 那一格最新的图。两个都没有 ⇒ 这一单的尾帧到不了引擎。
+    const bare = genRequest.safeParse({ ...base, tailGenerationId: "gen_tail" });
+    expect(bare.success).toBe(false);
+    expect(JSON.stringify(bare.error?.issues)).toMatch(/start frame/);
+    // 两个合法来源都得放行,否则会误伤「画布动画」(只带 shotId)这条真路。
+    expect(genRequest.safeParse({ ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }).success).toBe(true);
+    expect(genRequest.safeParse({ ...base, shotId: "shot_1", tailGenerationId: "gen_tail" }).success).toBe(true);
+  });
+
+  it("#646 P0-1:尾帧与参考视频互斥 —— 同时给出在花钱前就被拒(与适配器同语义)", () => {
+    const r = genRequest.safeParse({
+      ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail",
+      referenceVideoGenerationId: "gen_ref", durationSeconds: 5,
+    });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).toMatch(/reference video/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #642 图片形状端到端 —— 契约 / 校验表 / 像素映射
+// ---------------------------------------------------------------------------
+describe("GEN_IMAGE_MODEL_OPTIONS(图片画幅菜单)", () => {
+  it("菜单就是引擎真支持的八个画幅,默认排第一(1:1,与今日方图一致)", () => {
+    expect(GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios).toEqual([
+      "1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9",
+    ]);
+    expect(imageDefaults("seedream").aspectRatio).toBe("1:1");
+    expect(GEN_IMAGE_DEFAULT_ASPECT).toBe("1:1");
+  });
+  it("每个菜单项都有确切的 WxH 映射(菜单上没有一格是假的)", () => {
+    for (const a of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      expect(GEN_IMAGE_SIZES[a as GenImageAspect]).toBeDefined();
+    }
+    expect(Object.keys(GEN_IMAGE_SIZES).sort()).toEqual([...GEN_IMAGE_ASPECTS].sort());
+  });
+});
+
+describe("GEN_IMAGE_SIZES(引擎约束)", () => {
+  it("每一档总像素都落在引擎的 WxH 区间内", () => {
+    for (const [aspect, { width, height }] of Object.entries(GEN_IMAGE_SIZES)) {
+      const pixels = width * height;
+      expect(pixels, `${aspect} 总像素`).toBeGreaterThanOrEqual(GEN_IMAGE_MIN_PIXELS);
+      expect(pixels, `${aspect} 总像素`).toBeLessThanOrEqual(GEN_IMAGE_MAX_PIXELS);
+    }
+  });
+  it("每一档的实际比例**精确**等于它自称的比例(零容差:约分后必须逐字相等)", () => {
+    // 容差是掩盖器。上一版用 1% 容差,把 1600×2848(约分 50:89,偏 0.125%)当成了 9:16 ——
+    // 商家买的是 9:16,拿到的是一个「差不多」的形状。这里改成整数约分比对,数学上不留缝。
+    const reduce = (a: number, b: number): [number, number] => {
+      const gcd = (x: number, y: number): number => (y === 0 ? x : gcd(y, x % y));
+      const g = gcd(a, b);
+      return [a / g, b / g];
+    };
+    for (const [aspect, { width, height }] of Object.entries(GEN_IMAGE_SIZES)) {
+      const [w, h] = aspect.split(":").map(Number) as [number, number];
+      expect(reduce(width, height), `${aspect} 必须精确约分为它自称的比例`).toEqual(reduce(w, h));
+      const actual = width / height;
+      expect(actual).toBeGreaterThanOrEqual(1 / 16);
+      expect(actual).toBeLessThanOrEqual(16);
+    }
+  });
+  it("1:1 逐字节保持今日的 2048×2048(补齐画幅不改变既有方图行为)", () => {
+    expect(GEN_IMAGE_SIZES["1:1"]).toEqual({ width: 2048, height: 2048 });
+  });
+});
+
+describe("imageOutputSize", () => {
+  it("缺省 / null → 默认画幅的尺寸(方图)", () => {
+    expect(imageOutputSize()).toEqual({ width: 2048, height: 2048 });
+    expect(imageOutputSize(null)).toEqual({ width: 2048, height: 2048 });
+  });
+  it("已知画幅 → 该画幅的确切尺寸", () => {
+    expect(imageOutputSize("9:16")).toEqual({ width: 1620, height: 2880 });
+    expect(imageOutputSize("21:9")).toEqual(GEN_IMAGE_SIZES["21:9"]);
+  });
+  it("未知画幅 → 回落默认(纯函数,永不抛)", () => {
+    expect(imageOutputSize("7:5")).toEqual({ width: 2048, height: 2048 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #643 T2 —— 商家用自己的话说形状,也得落到菜单上的那一格
+// ---------------------------------------------------------------------------
+describe("normalizeImageAspect(商家说法 → 菜单画幅)", () => {
+  it("菜单上的比例原样通过", () => {
+    for (const a of GEN_IMAGE_ASPECTS) expect(normalizeImageAspect(a)).toBe(a);
+  });
+  it("写法差异不算不同的形状(空白 / x / × / 全角冒号)", () => {
+    expect(normalizeImageAspect(" 9 : 16 ")).toBe("9:16");
+    expect(normalizeImageAspect("9x16")).toBe("9:16");
+    expect(normalizeImageAspect("9X16")).toBe("9:16");
+    expect(normalizeImageAspect("9×16")).toBe("9:16");
+    expect(normalizeImageAspect("9:16")).toBe("9:16");
+  });
+  it("人话说的形状也认(竖版 / 横版 / 方图)—— 否则商家的原话会静默掉成方图", () => {
+    expect(normalizeImageAspect("portrait")).toBe("9:16");
+    expect(normalizeImageAspect("Vertical")).toBe("9:16");
+    expect(normalizeImageAspect("landscape")).toBe("16:9");
+    expect(normalizeImageAspect("horizontal")).toBe("16:9");
+    expect(normalizeImageAspect("square")).toBe("1:1");
+  });
+  it("认不出来就是 null —— 绝不猜一个形状替商家做主", () => {
+    expect(normalizeImageAspect(undefined)).toBeNull();
+    expect(normalizeImageAspect(null)).toBeNull();
+    expect(normalizeImageAspect("")).toBeNull();
+    expect(normalizeImageAspect("5:7")).toBeNull();
+    expect(normalizeImageAspect("cinematic")).toBeNull();
+    expect(normalizeImageAspect("1080p")).toBeNull();
+  });
+  it("认出来的每一个值都真的在菜单上(不可能返回引擎收不下的形状)", () => {
+    for (const raw of ["portrait", "landscape", "square", "9x16", "21:9"]) {
+      const v = normalizeImageAspect(raw);
+      expect(v).not.toBeNull();
+      expect(GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios).toContain(v!);
+    }
+  });
+});
+
+describe("genRequest 图片画幅校验(照视频侧 superRefine)", () => {
+  const base = { projectId: "p1", prompt: "a poster", count: 1, kind: "image", model: "seedream", idempotencyKey: "k1" };
+  it("接受菜单上的每一个画幅", () => {
+    for (const a of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      expect(genRequest.safeParse({ ...base, aspectRatio: a }).success, a).toBe(true);
+    }
+  });
+  it("不带画幅仍然合法(默认 1:1,与今日一致)", () => {
+    expect(genRequest.safeParse(base).success).toBe(true);
+  });
+  it("拒绝菜单外的画幅 —— 引擎收不下的值绝不能到 worker 并扣费", () => {
+    expect(genRequest.safeParse({ ...base, aspectRatio: "5:7" }).success).toBe(false);
+    expect(genRequest.safeParse({ ...base, aspectRatio: "1080p" }).success).toBe(false);
+  });
+  it("视频侧画幅校验不受影响(仍按视频模型的选项表)", () => {
+    const v = { projectId: "p1", prompt: "a clip", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+    expect(genRequest.safeParse({ ...v, aspectRatio: "16:9" }).success).toBe(true);
+    // 3:2 在图片菜单里,但视频模型不支持 —— 按 kind 分别校验
+    expect(genRequest.safeParse({ ...v, aspectRatio: "3:2" }).success).toBe(false);
   });
 });

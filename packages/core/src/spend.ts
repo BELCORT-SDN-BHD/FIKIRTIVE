@@ -10,6 +10,8 @@
  */
 import {
   GEN_PRICE_USD_PER_IMAGE,
+  GEN_VIDEO_MODEL_OPTIONS,
+  REFERENCE_VIDEO_COGS_USD,
   videoPriceUsd,
   videoDefaults,
   type GenVideoModel,
@@ -31,7 +33,10 @@ export interface GenSpendInput {
  *  provider call — never NaN). Image: flat per-image × count. */
 export function genSpentUsd(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
-    if (job.model === "seedance-2-fast" && job.referenceVideoGenerationId) return 0.85;
+    // #644 记账真相:整段参考视频的 COGS 基准搬去 gen.ts 与其它成本基准同住,并按官方
+    // token 公式重算($0.85 → $0.78408)。这是**记账**,不是收费 —— 收费仍是下面
+    // pricedGenCredits 里的 REFERENCE_VIDEO_CREDITS(16cr),本次一格没动。
+    if (job.model === "seedance-2-fast" && job.referenceVideoGenerationId) return REFERENCE_VIDEO_COGS_USD;
     const d = videoDefaults(job.model as GenVideoModel);
     return videoPriceUsd(job.model as GenVideoModel, {
       seconds: job.videoOptions?.seconds ?? d.seconds,
@@ -67,37 +72,87 @@ export const CREDITS_PER_USD = 100;
 /** Display denomination: 1 user-facing credit = 10 internal = $0.10. Charges are whole
  *  displayed credits (×10 internal) so per-action costs read as small round numbers. */
 export const INTERNAL_PER_DISPLAY = 10;
-const USD_PER_DISPLAY_CREDIT = 0.1;
 
-/** Displayed credits from a USD amount: round UP to the $0.10 unit, min 1 (never
- *  under-charge, never zero). */
-function displayedFromUsd(usd: number): number {
-  return Math.max(1, Math.ceil(usd / USD_PER_DISPLAY_CREDIT));
-}
-
-/** Video models whose credit charge is a flat per-resolution number (BytePlus Seedance,
- *  priced by final locked costing, not the record-only COGS). All other models charge
- *  displayedFromUsd(true cost). */
+/** 收费用**按秒/按档的价目表**的视频模型(BytePlus Seedance —— 价来自 Founder 已裁的
+ *  价目表,不是 record-only 的 COGS)。#647 T6 之后,菜单上只剩这一台;这个集合仍然独立
+ *  存在,因为「在菜单上」与「已经有一个清得了毛利地板的价」是两回事 —— 上架一台新引擎
+ *  绝不能因为进了菜单就自动可售。不在这个集合里的 = 卖不了,只能落护栏价。 */
 export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
 
-/** Flat video charge table for Seedance 2.0 Fast:
- *  720p 5s → 8cr, 720p 10s → 14cr, whole-clip reference video → 16cr.
- *  Unknown/higher resolution stays at the 16cr guardrail. */
-export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "720p": 8, "1080p": 16 };
-export const VIDEO_CREDITS_720P_10S = 14;
+/**
+ * **Seedance 2.0 Fast 的按秒价目表**(#645 T4,Founder 裁决 2026-08-06,留档:
+ * https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378)。
+ *
+ * 计价模型:**按秒计价,显示 credits 进位取整**。480p = 1.1cr/秒、720p = 2.2cr/秒。
+ * 这里存的是「每 10 秒多少显示 credits」的**整数**分子,于是全表可以纯整数算出来 ——
+ * 1.1 和 2.2 在 IEEE754 里都不是精确值,拿它们直接乘会让某些时长差一格 credit,
+ * 而差一格 credit 就是 quote / reserve / settle 三处对不上。
+ *
+ * 这张表替掉了 #644 的「每分辨率一个数 + 10 秒特例」两行结构 —— 5s=11cr / 10s=22cr
+ * 是那次裁决的数,按秒公式复算得一模一样(video-tiers.test.ts 有逐字回归钉板),
+ * 所以扩容没有动任何一个已裁的数字。
+ */
+export const SEEDANCE_DISPLAY_CREDITS_PER_10S: Record<string, number> = { "480p": 11, "720p": 22 };
+
+/**
+ * 一档视频的显示 credits。**返回 null = 这一档不按秒计价**,调用方必须落到护栏价,
+ * 有两种情形:
+ *   ① 分辨率不在按秒表上(1080p / 未知);
+ *   ② 秒数**不属于这个模型开出来的档位**。
+ *
+ * ② 的判据是**档位归属**,不是「正整数」——
+ * **价格只定义在 Founder 裁过的那些格上;格外不 round、不外推,只有护栏。**
+ * 三种错法都被这一条挡住:
+ *   - `0.4s` 若 round 成 0 ⇒ 0 credits,而 `reserveCredits` 对 cost<=0 直接跳过
+ *     (packages/db/src/credits.ts),那是一条**免费**的付费任务;
+ *   - `4.4s` 若 round 成 4 ⇒ 9cr,一个从没被裁过的价;
+ *   - `3s` / `16s` 是**正整数**,但同样不在已裁的十二格里,按公式外推会得到
+ *     7cr / 36cr —— 同样是替 Founder 发明价格。
+ * 档位归属一次覆盖三者:非整数、0、负数、NaN、∞ 都不可能命中 durations 表。
+ *
+ * 判据的**单一事实来源**是能力表 `GEN_VIDEO_MODEL_OPTIONS[model].durations` ——
+ * 菜单上开了哪几档,就只有那几档有价。这里刻意不抄一份 [4..15] 字面量:抄一份,
+ * T6 或未来任何一次改档就会让「卖什么」和「收多少」分家。
+ *
+ * 为什么防线必须长在钱函数自己身上:新请求那一侧有 zod `.int()` 与档位校验拦着,
+ * 但 `GenJob.videoOptions` 是**无约束 JSON**,worker 结算后重算展示价的两条路
+ * (apps/worker/src/jobs/gen.ts 的 GEN_RESULT 两处)直达这里,那条路上没有 zod。
+ *
+ * 纯整数运算:seconds 与 per10s 都是整数,+9 再整除 10 就是向上取整,不经过任何小数 ——
+ * 浮点差一格 credit 的路在这里根本不存在。
+ */
+export function seedanceDisplayCredits(model: string, resolution: string, seconds: number): number | null {
+  const per10s = SEEDANCE_DISPLAY_CREDITS_PER_10S[resolution];
+  if (per10s === undefined) return null;
+  const ruledDurations = GEN_VIDEO_MODEL_OPTIONS[model as GenVideoModel]?.durations;
+  if (!ruledDurations?.includes(seconds)) return null;
+  return Math.floor((seconds * per10s + 9) / 10);
+}
+
+/** 不按秒计价的兜底档:1080p(Fast 给不了,留作护栏)与任何未知分辨率都收 16cr。
+ *  #644/#645 都没动这一格 —— 它是「宁可贵,不许贱卖」的最后一道。 */
+export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "1080p": 16 };
 export const REFERENCE_VIDEO_CREDITS = 16;
 
 export function pricedGenCredits(job: GenSpendInput): number {
   if (job.kind === "VIDEO") {
     if (isFlatPricedVideoModel(job.model)) {
       if (job.referenceVideoGenerationId) return REFERENCE_VIDEO_CREDITS * INTERNAL_PER_DISPLAY;
-      const r = job.videoOptions?.resolution ?? "720p";
-      const seconds = job.videoOptions?.seconds ?? 5;
-      if (r === "720p" && seconds >= 10) return VIDEO_CREDITS_720P_10S * INTERNAL_PER_DISPLAY;
-      return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // BytePlus: flat per resolution
+      const d = videoDefaults(job.model as GenVideoModel);
+      const r = job.videoOptions?.resolution ?? d.resolution;
+      const seconds = job.videoOptions?.seconds ?? d.seconds;
+      const perSecond = seedanceDisplayCredits(job.model, r, seconds); // #645 T4: 按秒计价的档
+      if (perSecond !== null) return perSecond * INTERNAL_PER_DISPLAY;
+      return (VIDEO_CREDITS_BY_RESOLUTION[r] ?? 16) * INTERNAL_PER_DISPLAY; // 1080p / 未知 → 护栏价
     }
-    return displayedFromUsd(genSpentUsd(job)) * INTERNAL_PER_DISPLAY; // fal models: per-model USD cost (restores correct scaling)
+    // #647 T6:走到这里的只可能是**菜单外的模型** —— 下架前存下的历史行。
+    // 旧写法是 `displayedFromUsd(genSpentUsd(job))`,靠那 12 台假引擎各自抄来的费率反推价;
+    // 引擎下架、费率随之作废(videoRateUsdPerSec 回 0),那条路会算出 1cr —— 一条视频卖
+    // 一毛钱。同一条护栏语义(「宁可贵,不许贱卖」)在这里也必须成立:算不出价就落护栏价。
+    // 新的付费请求永远到不了这一行(契约闸 + assertSpendableModel 只放行在产那一台),
+    // 所以这只是历史行读价时的兜底。
+    return (VIDEO_CREDITS_BY_RESOLUTION[job.videoOptions?.resolution ?? ""] ?? 16) * INTERNAL_PER_DISPLAY;
   }
   return job.count * INTERNAL_PER_DISPLAY; // 1 displayed credit per image
 }
@@ -115,8 +170,11 @@ export function displayCredits(internal: number): number {
  *
  *  20 DISPLAYED credits = 20 × INTERNAL_PER_DISPLAY internal — the #543 Founder decision
  *  (2026-07-31): enough for one complete Otto experience (a full conversation + image +
- *  critique ≈ 9.5 displayed, one 5s video = 8 displayed), and it lands only AFTER the
- *  merchant verifies their email.
+ *  critique ≈ 9.5 displayed, one 5s video = 8 displayed at the time), and it lands only
+ *  AFTER the merchant verifies their email.
+ *  NOTE (#644 裁决 2026-08-06):5s 视频已由 8 → 11 显示 credits,所以 20cr 不再同时够
+ *  「一整场对话 + 一条视频」(9.5 + 11 ≈ 20.5)。赠额本身是 #543 的 Founder 决定,本次
+ *  一格没动 —— 是否跟着调是另一次裁决。
  *
  *  Supersedes the closed-beta seed (1000 → 100 in #66 → 20 here). It is granted
  *  idempotently in the org-bootstrap path under the stable key "signup:<orgId>"; the key

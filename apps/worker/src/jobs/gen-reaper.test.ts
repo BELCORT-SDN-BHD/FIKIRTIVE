@@ -28,7 +28,9 @@ const m = vi.hoisted(() => {
   return { prisma, genJobFindMany, genJobUpdate, genJobUpdateMany, chatMessageFindFirst, chatMessageCreate, creditLedgerFindFirst, refundReservation, settleCredits, queryRaw };
 });
 
-vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
+vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits, // #601: the delivery path ends by writing the job's canvas cards. Stubbed so these suites
+  // exercise the money path they are about, not a swallowed canvas error.
+  settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })) }));
 // import-time deps the reaper does not exercise:
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
@@ -217,8 +219,11 @@ describe("reapStaleGenJobs — committed-but-stuck resume scan (Codex 2026-07-03
     m.creditLedgerFindFirst.mockResolvedValueOnce({ id: "rf1" }); // a REFUND finalizer exists
     const n = await reapStaleGenJobs();
     expect(n).toBe(1); // transitioned out of stuck (to terminal FAILED) — counted as handled
-    const failed = m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
+    // The free-delivery guard's terminal write is conditional on the row still being in flight
+    // like every other terminal write in gen.ts (#602 r2, judge P1-2).
+    const failed = m.genJobUpdateMany.mock.calls.find((c) => c[0]?.data?.status === "FAILED");
     expect(failed).toBeTruthy();
+    expect(failed![0].where).toMatchObject({ status: { in: ["QUEUED", "GENERATING"] } });
     expect(m.genJobUpdate.mock.calls.find((c) => c[0]?.data?.status === "DONE")).toBeFalsy();
     expect(m.settleCredits).not.toHaveBeenCalled();
     expect(m.refundReservation).not.toHaveBeenCalled(); // already refunded — never refund twice

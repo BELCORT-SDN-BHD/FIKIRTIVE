@@ -247,25 +247,18 @@ describe("runAsUser × runAsTenant nesting", () => {
     });
   });
 
-  it("DIFFERENT tenant: degrades to tenant-direct and LOSES the actor (documented trade)", () => {
+  it("DIFFERENT tenant: rejects the switch and preserves the user frame", () => {
     const p = userPrincipal("a");
     runAsUser(p, () => {
-      runAsTenant("org_other", () => {
-        expect(getPrincipal()).toEqual({
-          kind: "system",
-          reason: "tenant-direct",
-          ownerId: "org_other",
-        });
-      });
-      // the user frame is restored — the degradation is scoped to the nested call
+      let entered = false;
+      expect(() =>
+        runAsTenant("org_other", () => {
+          entered = true;
+        }),
+      ).toThrow(/cannot switch tenant/i);
+      expect(entered).toBe(false);
       expect(getPrincipal()).toEqual(p);
     });
-  });
-
-  it("never throws on the different-tenant path (#463 carries, it does not enforce)", () => {
-    expect(() =>
-      runAsUser(userPrincipal("a"), () => runAsTenant("org_other", () => undefined)),
-    ).not.toThrow();
   });
 
   it("a system frame nested inside a user frame still names itself, tenant-less", () => {

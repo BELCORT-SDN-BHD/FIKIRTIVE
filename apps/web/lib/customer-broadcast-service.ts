@@ -1,8 +1,15 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { newId } from "@fikirtive/core";
-import { contactMatchesRules, validateSegmentRuleGroup, type SegmentContactFacts } from "@fikirtive/core";
+import {
+  contactMatchesRules,
+  effectiveOrgRoles,
+  newId,
+  orgRolesAllow,
+  validateSegmentRuleGroup,
+  type OrgRole,
+  type SegmentContactFacts,
+} from "@fikirtive/core";
 import {
   evaluateSendEligibility,
   prisma as defaultDb,
@@ -33,13 +40,9 @@ import { resolveActiveProviderConnectionId } from "./channel-connection-resolve"
  * SEND_PATH_UNAVAILABLE in submitBroadcastRun (unchanged from M2). See the M3 static
  * no-second-real-send-path test for the machine proof of "no real provider entry point".
  *
- * RBAC NOTE: §14.2 lists "C5 broadcast creator/approver/org-role 的 exact capability matrix"
- * as Founder-Unknown, with an explicit instruction: "未决期间所有 mutation default deny". Every
- * mutation below (create/freeze/confirm/cancel/execute) is therefore restricted to role "owner"
- * ONLY (the most conservative available choice) until the Founder decides the real matrix.
- * Reads stay open to every active role, matching customer-inbox-service.ts's read pattern
- * (the "default deny" instruction is scoped to "mutation" only). The UI shows non-owner viewers
- * the controls disabled with an inline explanation, but the server here is the sole enforcer.
+ * RBAC uses positive capabilities. Read paths require broadcast.read; mutations require
+ * broadcast.manage. Today only the owner bundle contains broadcast.manage, but callers are never
+ * denied merely because of a role name—the permission bundle is the authority.
  */
 
 export const CUSTOMER_BROADCAST_ERROR_CODES = {
@@ -86,10 +89,9 @@ const BROADCAST_PURPOSE_CLASS = "proactive_non_transactional" as const;
 // The four axes, in the fixed order a skip reason is derived from (first non-pass wins).
 const AXIS_ORDER = ["consentStop", "doNotDisturb", "providerRefusal", "frequency"] as const;
 
-type ActiveRole = "owner" | "admin" | "member";
 type DatabaseClient = typeof defaultDb | Prisma.TransactionClient;
+type ActiveMembership = { id: string; roles: OrgRole[] };
 
-const ACTIVE_ROLES = new Set<ActiveRole>(["owner", "admin", "member"]);
 const MAX_TEXT = 512;
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 50;
@@ -260,23 +262,24 @@ export function createCustomerBroadcastService(
   async function activeMembership(
     client: DatabaseClient,
     principal: CustomerBroadcastPrincipal,
-  ): Promise<{ id: string; role: ActiveRole } | null> {
+  ): Promise<ActiveMembership | null> {
     if (!isNonEmptyString(principal?.ownerId) || !isNonEmptyString(principal?.membershipId)) {
       fail("NOT_AUTHORIZED");
     }
     const row = await client.membership.findFirst({
       where: { id: principal.membershipId, orgId: principal.ownerId, status: "active", deletedAt: null },
-      select: { id: true, role: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
-    if (!row || !ACTIVE_ROLES.has(row.role as ActiveRole)) return null;
-    return { id: row.id, role: row.role as ActiveRole };
+    if (!row) return null;
+    const roles = effectiveOrgRoles((row.roles ?? []).map((assignment) => assignment.role));
+    return roles.length > 0 ? { id: row.id, roles } : null;
   }
 
   async function requireReadMembership(
     principal: CustomerBroadcastPrincipal,
-  ): Promise<{ id: string; role: ActiveRole }> {
+  ): Promise<ActiveMembership> {
     const membership = await activeMembership(db, principal);
-    if (!membership) fail("ACTION_DENIED");
+    if (!membership || !orgRolesAllow(membership.roles, "broadcast.read")) fail("ACTION_DENIED");
     return membership;
   }
 
@@ -287,11 +290,11 @@ export function createCustomerBroadcastService(
    * — matching customer-inbox-service.ts's IMPERSONATION_READ_ONLY intent via ACTION_DENIED
    * (this file does not carry the audit-log surface inbox uses, so it fails closed instead).
    */
-  async function requireOwnerMutationMembership(
+  async function requireMutationMembership(
     principal: CustomerBroadcastPrincipal,
-  ): Promise<{ id: string; role: ActiveRole }> {
+  ): Promise<ActiveMembership> {
     const membership = await activeMembership(db, principal);
-    if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+    if (!membership || !orgRolesAllow(membership.roles, "broadcast.manage")) fail("ACTION_DENIED");
     if (principal.impersonating) fail("ACTION_DENIED");
     return membership;
   }
@@ -506,7 +509,7 @@ export function createCustomerBroadcastService(
     principal: CustomerBroadcastPrincipal,
     input: CreateBroadcastRunInput,
   ) {
-    await requireOwnerMutationMembership(principal);
+    await requireMutationMembership(principal);
     rejectClientPurpose(input);
     const channelScopeId = requiredString(input?.channelScopeId, MAX_TEXT);
     const channel = requiredToken(input?.channel, 64);
@@ -521,7 +524,7 @@ export function createCustomerBroadcastService(
         // caller demoted from owner between the outer check above and this write must not slip
         // a broadcast run through on the stale outer read.
         const membership = await activeMembership(tx, principal);
-        if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+        if (!membership || !orgRolesAllow(membership.roles, "broadcast.manage")) fail("ACTION_DENIED");
         const scope = await tx.channelScope.findFirst({
           where: { id: channelScopeId, ownerId: principal.ownerId, channel },
           select: { id: true },
@@ -618,7 +621,7 @@ export function createCustomerBroadcastService(
    * verdict fresh; nothing here authorizes a send.
    */
   async function freezeAudience(principal: CustomerBroadcastPrincipal, input: FreezeAudienceInput) {
-    await requireOwnerMutationMembership(principal);
+    await requireMutationMembership(principal);
     const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
     const expectedRevision = revision(input?.expectedRevision);
     const segmentId = requiredString(input?.segmentId, MAX_TEXT);
@@ -626,7 +629,7 @@ export function createCustomerBroadcastService(
 
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "broadcast.manage")) fail("ACTION_DENIED");
       const run = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
       if (!BROADCAST_STATUSES_ALLOWING_FREEZE.has(run.status)) fail("ACTION_DENIED");
       if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
@@ -661,6 +664,7 @@ export function createCustomerBroadcastService(
         const snapshot = { ...verdict, evaluatedAt: verdict.checkedAt };
         await tx.broadcastAudienceMember.upsert({
           where: {
+            ownerId: principal.ownerId,
             ownerId_broadcastRunId_contactIdentityId: {
               ownerId: principal.ownerId,
               broadcastRunId,
@@ -730,14 +734,14 @@ export function createCustomerBroadcastService(
   }
 
   async function confirmBroadcastRun(principal: CustomerBroadcastPrincipal, input: ConfirmBroadcastRunInput) {
-    await requireOwnerMutationMembership(principal);
+    await requireMutationMembership(principal);
     const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
     const expectedRevision = revision(input?.expectedRevision);
     const at = now();
 
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "broadcast.manage")) fail("ACTION_DENIED");
       const run = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
       if (!BROADCAST_STATUSES_ALLOWING_CONFIRM.has(run.status)) fail("ACTION_DENIED");
       if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
@@ -753,14 +757,14 @@ export function createCustomerBroadcastService(
   }
 
   async function cancelBroadcastRun(principal: CustomerBroadcastPrincipal, input: CancelBroadcastRunInput) {
-    await requireOwnerMutationMembership(principal);
+    await requireMutationMembership(principal);
     const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
     const expectedRevision = revision(input?.expectedRevision);
     const at = now();
 
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "broadcast.manage")) fail("ACTION_DENIED");
       const run = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
       if (!BROADCAST_STATUSES_ALLOWING_CANCEL.has(run.status)) fail("ACTION_DENIED");
       if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
@@ -786,7 +790,7 @@ export function createCustomerBroadcastService(
     principal: CustomerBroadcastPrincipal,
     input: SubmitBroadcastRunInput,
   ): Promise<never> {
-    await requireOwnerMutationMembership(principal);
+    await requireMutationMembership(principal);
     const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
     await requireBroadcastRun(db, principal.ownerId, broadcastRunId);
     // Deliberately no adapter call, no eligibility re-read, no frequency write: D8/C6
@@ -923,7 +927,7 @@ export function createCustomerBroadcastService(
     principal: CustomerBroadcastPrincipal,
     input: ExecuteBroadcastRunInput,
   ) {
-    await requireOwnerMutationMembership(principal);
+    await requireMutationMembership(principal);
     const broadcastRunId = requiredString(input?.broadcastRunId, MAX_TEXT);
     const expectedRevision = revision(input?.expectedRevision);
     const at = now();
@@ -971,7 +975,7 @@ export function createCustomerBroadcastService(
     // demoted between the outer guard and here must not slip execution through).
     const claimed = await db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership || membership.role !== "owner") fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "broadcast.manage")) fail("ACTION_DENIED");
       const run = await requireBroadcastRun(tx, principal.ownerId, broadcastRunId);
       if (run.status === "completed") return { run, alreadyComplete: true as const };
       if (run.status === "executing") {

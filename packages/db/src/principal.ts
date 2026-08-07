@@ -34,6 +34,7 @@ export type SystemReason =
   | "stripe-webhook"
   | "meta-data-deletion"
   | "worker-heartbeat"
+  | "worker-job-dispatch"
   | "worker-reaper-tick"
   | "gen-reaper"
   | "refgen-reaper"
@@ -53,7 +54,7 @@ export type SystemReason =
  * recorded only as `impersonatedByBaUserId`.
  *
  * The two role axes are NEVER merged (packages/core/src/org-roles.ts:1-2 forbids it):
- * `orgRole` is the per-org membership axis (owner|admin|member). The platform-staff axis
+ * `orgRole` is the compatibility primary role on the per-org membership axis. The platform-staff axis
  * (`Role`: super-admin|ops|finance|moderator|viewer) is NOT carried here — it belongs to
  * requireRole and the admin console, not to tenant scoping.
  *
@@ -80,8 +81,8 @@ export type Principal =
       subjectEmail: string;
       /** The org being acted upon (the subject org). */
       ownerId: string;
-      /** `Membership.role` in `ownerId`. Null is reachable — see `subjectUserId`. */
-      orgRole: "owner" | "admin" | "member" | null;
+      /** Compatibility `Membership.role` in `ownerId`. Authorization uses MembershipRole. */
+      orgRole: "owner" | "admin" | "member" | "creator" | "approver" | null;
       /**
        * `Membership.id` of the acting member in `ownerId` — the same id the CRM gateways
        * already hand their services, carried here so a reader needs no second query.
@@ -200,11 +201,9 @@ export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
  * Nested inside a `kind: "user"` frame for the SAME tenant, the user frame PASSES THROUGH
  * unchanged: re-stating the tenant a request already belongs to must not cost the actor.
  *
- * Nested inside a user frame for a DIFFERENT tenant it degrades to a `"tenant-direct"` system
- * frame, which LOSES the attribution — the frame then names the tenant but no longer names who
- * acted. That is the deliberate trade (carrying a user identity under someone else's tenant
- * would be worse than carrying none), and it never throws: #463 enforces nothing, it only
- * carries. Wiring this into a decision is #464's job.
+ * Nested inside a user frame for a DIFFERENT tenant it throws before entering the callback.
+ * The principal now drives tenant enforcement, so silently replacing an authenticated user with
+ * a system frame would turn an identity mismatch into a cross-tenant escape hatch.
  *
  * CALLERS: pass an `async` callback and `await` INSIDE it. A bare `prisma.x.op(…)` returns a lazy
  * PrismaPromise — this function would return it and pop the frame before an outer `await`
@@ -216,7 +215,12 @@ export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
  */
 export function runAsTenant<T>(ownerId: string, fn: () => T): T {
   const current = store.getStore();
-  if (current?.kind === "user" && current.ownerId === ownerId) return store.run(current, fn);
+  if (current?.kind === "user") {
+    if (current.ownerId !== ownerId) {
+      throw new Error("[principal] user frame cannot switch tenant");
+    }
+    return store.run(current, fn);
+  }
   const reason: SystemReason = current?.kind === "system" ? current.reason : "tenant-direct";
   return store.run(Object.freeze({ kind: "system" as const, reason, ownerId }), fn);
 }

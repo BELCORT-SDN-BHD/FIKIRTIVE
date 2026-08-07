@@ -427,11 +427,11 @@ describe("C6-M1 historical Restrict behavior", () => {
   it("prevents deleting the actual Organization, ChannelScope, and ChannelConnection references", async () => {
     await prisma.messageDeliveryEvent.create({ data: deliveryEvent("event-restrict") });
 
-    await expect(prisma.channelScope.delete({ where: { id: SCOPE_A } })).rejects.toMatchObject({
+    await expect(prisma.channelScope.delete({ where: { id: SCOPE_A, ownerId: ORG_A } })).rejects.toMatchObject({
       code: "P2003",
     });
     await expect(
-      prisma.channelConnection.delete({ where: { id: CONNECTION_A } }),
+      prisma.channelConnection.delete({ where: { id: CONNECTION_A, ownerId: ORG_A } }),
     ).rejects.toMatchObject({ code: "P2003" });
     await expect(prisma.organization.delete({ where: { id: ORG_A } })).rejects.toMatchObject({
       code: "P2003",

@@ -9,12 +9,15 @@
  */
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
-import { newId } from "@fikirtive/core";
+import { newId, referenceBudget } from "@fikirtive/core";
 import { prisma } from "@fikirtive/db";
 import type { OttoContext } from "../context.js";
 import {
   proposeInput,
   buildProposeCard,
+  buildReferenceBudgetNotes,
+  withReferenceBudget,
+  GenerationUnavailableError,
   type ProposeInput,
   type CardPayload,
   type ProposeCardResult,
@@ -22,7 +25,30 @@ import {
 
 // Re-export types + pure helper so consumers can import from either file
 export type { CardPayload, ProposeCardResult };
-export { buildProposeCard };
+export { buildProposeCard, GenerationUnavailableError };
+
+/**
+ * #619 E-5：**逐个** @元素有多少张活参考照，顺序 = 卡上的 `entityIds` 顺序。
+ *
+ * 口径逐字照抄 worker 的选片查询（`apps/worker/src/jobs/gen.ts:497-501`）：被 @ 的变体
+ * 数该变体的图，否则数 base 图（`variantSel[id] ?? null`）。返回的是**数组**而不是总数 ——
+ * round-robin 是按元素轮着取的，把它先加成一个总数就丢掉了算法要的输入。
+ * 真正的截断计算交给 `referenceBudget`（`@fikirtive/core`，worker 规则的唯一副本）。
+ */
+async function countLiveReferenceImagesPerEntity(
+  ownerId: string,
+  entityIds: string[],
+  variantSel: Record<string, string>,
+): Promise<number[]> {
+  if (entityIds.length === 0) return [];
+  return Promise.all(
+    entityIds.map((entityId) =>
+      prisma.referenceImage.count({
+        where: { entityId, variantId: variantSel[entityId] ?? null, ownerId, deletedAt: null },
+      }),
+    ),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Execute function (DB side) — exported separately for direct unit-testing
@@ -31,7 +57,7 @@ export { buildProposeCard };
 export async function executePropose(
   input: ProposeInput,
   runContext: Pick<RunContext<OttoContext>, "context">,
-): Promise<{ cardId: string; shownPriceDisplay: number }> {
+): Promise<{ cardId: string; shownPriceDisplay: number } | { error: string }> {
   if (!runContext) throw new Error("OttoContext required");
   const ctx = runContext.context as OttoContext;
 
@@ -45,7 +71,40 @@ export async function executePropose(
     ownedEntityIds = owned.map((e) => e.id);
   }
 
-  const { cardPayload, shownPriceDisplay } = buildProposeCard(input, ctx, ownedEntityIds);
+  // #647 T6:唯一那台引擎被后台关掉时,`buildProposeCard` 抛 GenerationUnavailableError。
+  // 接住它、把它的 message 原样交回对话 —— 一张 GEN_CARD 都不落库(下面的 create 根本
+  // 走不到)。别的异常照旧上抛:那是真故障,不该被翻译成一句「关掉了」。
+  let built: ProposeCardResult;
+  try {
+    built = buildProposeCard(input, ctx, ownedEntityIds);
+  } catch (e) {
+    if (e instanceof GenerationUnavailableError) return { error: e.message };
+    throw e;
+  }
+  const { cardPayload, shownPriceDisplay } = built;
+
+  // #619 E-5：截断与「只用第一张挂图」都必须在**批准前**出现在卡面上，不是事后在
+  // 详情页解释。数的是卡上最终留下的元素（buildProposeCard 已做归属过滤与 i2v 清空）——
+  // 那也正是 GenJob 会带走、worker 会照着取图的那一份。
+  const usesAttachedImage = cardPayload.kind === "image" && !!cardPayload.sourceGenerationId;
+  const attachedImageCount = ctx.sourceGenerationIds?.length ?? (ctx.sourceGenerationId ? 1 : 0);
+  const finalPayload = withReferenceBudget(
+    cardPayload,
+    buildReferenceBudgetNotes({
+      budget: referenceBudget({
+        kind: cardPayload.kind,
+        perEntityLiveCounts: await countLiveReferenceImagesPerEntity(
+          ctx.orgId,
+          cardPayload.entityIds,
+          cardPayload.variantSel,
+        ),
+        hasBaseImage: usesAttachedImage,
+        attachedImageCount,
+      }),
+      attachedImageCount,
+      usesAttachedImage,
+    }),
+  );
 
   // Persist GEN_CARD (match coworkTurn row shape)
   const last = await prisma.chatMessage.findFirst({
@@ -64,7 +123,7 @@ export async function executePropose(
       kind: "GEN_CARD",
       seq: (last?.seq ?? 0) + 1,
       text: "",
-      payload: { ...cardPayload, ...(input.goal ? { goal: input.goal } : {}) },
+      payload: { ...finalPayload, ...(input.goal ? { goal: input.goal } : {}) },
     },
   });
 

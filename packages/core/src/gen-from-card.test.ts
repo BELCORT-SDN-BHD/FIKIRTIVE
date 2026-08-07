@@ -17,7 +17,7 @@ function videoCardPayload(overrides?: Record<string, unknown>) {
   return {
     kind: "video",
     structuredPrompt: "a bright sunny day",
-    model: "kling",
+    model: "seedance-2-fast",
     params: { durationSeconds: 5, resolution: null, aspectRatio: null, audio: null },
     ...overrides,
   };
@@ -48,8 +48,30 @@ describe("buildGenRequestFromCard — image card, no overrides", () => {
     expect(req.idempotencyKey).toBe("cowork:card_789");
     expect(req).not.toHaveProperty("durationSeconds");
     expect(req).not.toHaveProperty("resolution");
-    expect(req).not.toHaveProperty("aspectRatio");
     expect(req).not.toHaveProperty("audio");
+  });
+
+  // ---- #643 T2:卡上冻结的形状必须原样进付费请求 -------------------------
+  it("卡上带形状 ⇒ 付费请求体逐字带同一个形状(卡面说的 = 引擎做的)", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      cardPayload: imageCardPayload({ params: { count: 1, aspectRatio: "9:16" } }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req.aspectRatio).toBe("9:16");
+  });
+
+  it("卡上没形状 ⇒ 请求体不带形状(由服务端继承/默认解释,不在这里编一个)", () => {
+    const result = buildGenRequestFromCard({
+      ...BASE_ARGS,
+      cardPayload: imageCardPayload({ params: { count: 1 } }),
+      variantSel: {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.req).not.toHaveProperty("aspectRatio");
   });
 
   it("uses count=1 when params.count is absent", () => {
@@ -113,10 +135,10 @@ describe("buildGenRequestFromCard — video card", () => {
     expect(result.req.aspectRatio).toBe("16:9");
   });
 
-  it("includes audio field only for audio-toggle models (kling-2.6 has audioToggle:true)", () => {
+  it("includes audio field only for audio-toggle models (seedance-2-fast has audioToggle:true)", () => {
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
-      cardPayload: videoCardPayload({ model: "kling-2.6", params: { audio: true } }),
+      cardPayload: videoCardPayload({ model: "seedance-2-fast", params: { audio: true } }),
       variantSel: {},
     });
     expect(result.ok).toBe(true);
@@ -124,7 +146,10 @@ describe("buildGenRequestFromCard — video card", () => {
     expect(result.req).toHaveProperty("audio");
   });
 
-  it("omits audio field for always-silent models (kling audioToggle:false)", () => {
+  it("#647 T6:菜单外的模型(下架前铸的老卡)不带 audio —— 事实表上查不到就不许假设", () => {
+    // 这条测试的前身用 kling 演「一台永远静音的引擎」。那台引擎已经下架,菜单上不再有
+    // 「不可切声音」的一格;同一行代码的语义现在是 fail closed:模型不在菜单上,
+    // audioToggle 一律按 false 走,绝不替一台我们已经不认识的引擎决定声音开关。
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
       cardPayload: videoCardPayload({ model: "kling", params: { audio: null } }),
@@ -151,17 +176,17 @@ describe("buildGenRequestFromCard — video card", () => {
 
 describe("buildGenRequestFromCard — overrides applied (web path)", () => {
   it("overrides.model wins over card model", () => {
-    // Use a video card (multiple video models exist) so override precedence is genuinely
-    // exercised — GEN_MODELS has a single image model ("seedream"), which can't show it.
+    // 真实场景(#647 T6 之后):一张下架前铸的老视频卡,重放时 override 成在产那一台。
+    // 构造器是纯的 —— 它只负责让 override 赢;模型合不合法由下游 startGen 的契约闸判。
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
       cardPayload: videoCardPayload({ model: "kling" }),
       variantSel: {},
-      overrides: { model: "veo3.1" }, // differs from the card → override must win
+      overrides: { model: "seedance-2-fast" }, // differs from the card → override must win
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.req.model).toBe("veo3.1");
+    expect(result.req.model).toBe("seedance-2-fast");
   });
 
   it("overrides.count wins for image card", () => {
@@ -179,7 +204,7 @@ describe("buildGenRequestFromCard — overrides applied (web path)", () => {
   it("overrides.durationSeconds wins for video card", () => {
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
-      cardPayload: videoCardPayload({ model: "kling", params: { durationSeconds: 5 } }),
+      cardPayload: videoCardPayload({ model: "seedance-2-fast", params: { durationSeconds: 5 } }),
       variantSel: {},
       overrides: { durationSeconds: 10 },
     });
@@ -191,7 +216,7 @@ describe("buildGenRequestFromCard — overrides applied (web path)", () => {
   it("overrides.resolution wins for video card", () => {
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
-      cardPayload: videoCardPayload({ model: "kling-2.6", params: { resolution: null } }),
+      cardPayload: videoCardPayload({ model: "seedance-2-fast", params: { resolution: null } }),
       variantSel: {},
       overrides: { resolution: null },
     });
@@ -328,11 +353,11 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
   });
 
   it("produces exact request shape for a video card with audio toggle", () => {
-    // kling-2.6 has audioToggle: true
+    // seedance-2-fast has audioToggle: true
     const cardPayload = {
       kind: "video",
       structuredPrompt: "a cinematic shot",
-      model: "kling-2.6",
+      model: "seedance-2-fast",
       params: { durationSeconds: 5, resolution: null, aspectRatio: null, audio: true },
       entityIds: [],
       variantSel: {},
@@ -359,7 +384,7 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
       entityIds: [],
       count: 1,
       kind: "video",
-      model: "kling-2.6",
+      model: "seedance-2-fast",
       durationSeconds: 5,
       resolution: null,
       aspectRatio: null,

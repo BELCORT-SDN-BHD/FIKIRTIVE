@@ -7,8 +7,10 @@
 import { z } from "zod";
 import {
   suggestModel,
+  generationUnavailableMessage,
   videoPriceUsd,
   videoDefaults,
+  VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
@@ -17,8 +19,12 @@ import {
   MAX_GEN_COUNT,
   displayCredits,
   pricedGenCredits,
+  imageOutputSize,
+  imageAspectHonoured,
+  normalizeImageAspect,
   EXECUTED_SPEC,
   type GenVideoModel,
+  type ReferenceBudget,
 } from "@fikirtive/core";
 import type { OttoContext } from "../context.js";
 
@@ -94,6 +100,23 @@ export type ProposeCardResult = {
   shownPriceDisplay: number;
 };
 
+/**
+ * 这一类创作现在**没有可用引擎**(后台把唯一那台关掉了)—— #647 T6。
+ *
+ * 为什么是抛,而不是返回一张标着「不可用」的卡:一张卡就是一个可以点下去的承诺。
+ * 造不出真卡的时候唯一诚实的产物是**没有卡**,而抛异常让这件事 fail closed ——
+ * 将来任何一个新入口忘了接住它,商家看到的是一个错误,而不是一张确认不了的付费卡。
+ *
+ * `message` 就是给商家看的那句话(English sentence case,不出现任何引擎/供应商名)。
+ */
+export class GenerationUnavailableError extends Error {
+  constructor(readonly kind: "image" | "video") {
+    // 措辞的单一来源在 @fikirtive/core —— 四个铸卡入口共用一份(#647 T6 修复轮 P1-1)。
+    super(generationUnavailableMessage(kind));
+    this.name = "GenerationUnavailableError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 有效规格 —— 卡面文案的唯一真相来源
 // ---------------------------------------------------------------------------
@@ -115,6 +138,20 @@ export { EXECUTED_SPEC } from "@fikirtive/core";
 // ---------------------------------------------------------------------------
 
 /**
+ * 片子形状那一格的卡面说法(#645 T4)。
+ *
+ * `adaptive` **不是一个具体形状** —— 引擎会跟着首帧自己挑。所以卡面绝不能把它印成
+ * 「16:9」之类的具体值(那就是卡面承诺了一件引擎没答应的事),也不该印生硬的 "adaptive"。
+ * 它的真实含义正好就是「和你给的图同一个形状」,于是就这么说。
+ */
+export function videoAspectChip(aspectRatio: string | undefined, hasSourceImage: boolean): string {
+  if (aspectRatio === VIDEO_ASPECT_ADAPTIVE) {
+    return hasSourceImage ? "Same shape as your reference" : "Shape picked to fit";
+  }
+  return aspectRatio ?? (hasSourceImage ? "Same shape as your reference" : "Default shape");
+}
+
+/**
  * 卡面规格条目（脱敏）。与 `reason` 同事实，但只从 `params` 取值，
  * 因此结构上不可能带出引擎名；并且只输出 `EXECUTED_SPEC` 认定执行层真会采纳的控制项，
  * 因此不可能承诺一件执行层做不到的事。这是卡面规格的**唯一一次**派生。
@@ -123,27 +160,77 @@ export function buildSpecChips(
   kind: "image" | "video",
   params: CardPayload["params"],
   hasSourceImage: boolean,
+  usesAttachedImage = false,
 ): string[] {
   const chips: string[] = [];
   if (kind === "video") {
     if (EXECUTED_SPEC.video.aspectHonoured) {
-      chips.push(params.aspectRatio ?? (hasSourceImage ? "Same shape as your reference" : "Default shape"));
+      chips.push(videoAspectChip(params.aspectRatio, hasSourceImage));
     }
     if (EXECUTED_SPEC.video.durationHonoured && typeof params.durationSeconds === "number") {
       chips.push(`${params.durationSeconds}s`);
     }
     if (EXECUTED_SPEC.video.resolutionHonoured && params.resolution) chips.push(params.resolution);
-    // 声音：audioHonoured 为 false 时这一条不出现 —— 没接通就不承诺。接通那天改
-    // EXECUTED_SPEC 一处，卡面自动开始说真话。
+    // 声音：#646 T5 接通后这一条照实出现。判据仍然只有 EXECUTED_SPEC 一处 —— 哪天执行层
+    // 又断了，改那一处，卡面立刻停止承诺。
     if (EXECUTED_SPEC.video.audioHonoured) chips.push(params.audio ? "With sound" : "No sound");
   } else {
-    // 图片：执行层固定输出方图，所以卡面报的就是它真会产出的尺寸，而不是商家要的画幅。
-    const { width, height } = EXECUTED_SPEC.image.outputSize;
+    // 图片：判据是**这一趟真正会跑的那个适配器**会不会兑现画幅(imageAspectHonoured),
+    // 不是那个「现役适配器能不能」的静态标志 —— 选中不发规格的备用路时,卡面必须闭嘴
+    // (判官 r1 P2)。兑现不了就按执行层实际会产出的默认(方图)报尺寸。
+    const honoured = imageAspectHonoured();
+    const { width, height } = imageOutputSize(honoured ? params.aspectRatio : undefined);
     chips.push(`${width} × ${height}`);
-    if (EXECUTED_SPEC.image.aspectHonoured && params.aspectRatio) chips.push(params.aspectRatio);
+    if (honoured && params.aspectRatio) chips.push(params.aspectRatio);
     chips.push(params.count === 1 ? "1 image" : `${params.count} images`);
+    // #619：商家挂的那张图现在真的随卡进引擎（付费请求带 sourceGenerationId），
+    // 所以卡面必须在批准前说出来。这一条只在卡真的带着图时出现 —— 界面上出现的
+    // 每一句都得是执行层真会做的事（#608）。
+    if (usesAttachedImage) chips.push("Uses your attached image");
   }
   return chips;
+}
+
+/**
+ * #619 参考照片预算 —— 花钱**之前**说清楚这一趟真会用上几张。
+ *
+ * 数字不在这里算：`referenceBudget`（`@fikirtive/core`）是 worker 选片规则的唯一副本，
+ * 且由 `apps/worker/src/jobs/gen-reference-budget.test.ts` 拿真 `handleGen` 发出去的
+ * `inputImageUrls` 长度逐例对表。这里只负责把它说成人话。
+ *
+ * 两句话各管一件事，都不许静默：
+ *   - 引擎上限截掉了元素照片 → 说清「真会用几张 / 商家一共给了几张」（含底图，因为底图
+ *     也是引擎真收到的一张）；
+ *   - 挂了不止一张图 → 说清哪张是底图，其余只参与理解（付费请求的底图字段是单值）。
+ */
+export function buildReferenceBudgetNotes(input: {
+  budget: ReferenceBudget;
+  attachedImageCount: number;
+  usesAttachedImage: boolean;
+}): string[] {
+  const notes: string[] = [];
+  if (input.budget.truncated) {
+    notes.push(
+      `This run will use ${input.budget.used} of your ${input.budget.total} reference photos.`,
+    );
+  }
+  if (input.usesAttachedImage && input.attachedImageCount > 1) {
+    notes.push(
+      `You attached ${input.attachedImageCount} images — the first one is the base image; the others only informed this plan.`,
+    );
+  }
+  return notes;
+}
+
+/**
+ * 把参考照片披露并进已铸好的卡面。一旦有照片上不了车，这张卡就是 `downgraded` ——
+ * 前端只在 `downgraded` 为 true 时渲染 `downgradeNote`（`OttoPlanCard.tsx`），
+ * 所以两者必须一起写。纯展示：不改价、不改选型、不改 payload 的任何付费字段。
+ */
+export function withReferenceBudget(payload: CardPayload, notes: string[]): CardPayload {
+  if (notes.length === 0) return payload;
+  const merged = [payload.downgradeNote, ...notes].filter(Boolean).join(" ");
+  return { ...payload, downgraded: true, downgradeNote: merged };
 }
 
 /** 商家提出的、可能被执行层打折的诉求。 */
@@ -175,11 +262,16 @@ export function buildDowngradeNote(
   if (requested.aspect && !(kind === "video" && requested.aspect === params.aspectRatio)) {
     asked.push(requested.aspect);
     if (kind === "image") {
-      // 执行层不接受图片画幅：如实说出它真会产出的方图尺寸。
-      const { width, height } = EXECUTED_SPEC.image.outputSize;
-      instead.push(`a square ${width} × ${height} image`);
+      // 如实说出这张卡真会产出的尺寸（卡上没带画幅、或这一趟的适配器不兑现 ⇒ 默认方图）。
+      const { width, height } = imageOutputSize(imageAspectHonoured() ? params.aspectRatio : undefined);
+      instead.push(width === height ? `a square ${width} × ${height} image` : `a ${width} × ${height} image`);
     } else {
-      instead.push(params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"));
+      // #645 T4：adaptive 同样如实说成「跟着你的图走」，不冒充一个具体形状。
+      instead.push(
+        params.aspectRatio === VIDEO_ASPECT_ADAPTIVE
+          ? (hasSourceImage ? "the shape of your reference" : "a shape picked to fit")
+          : params.aspectRatio ?? (hasSourceImage ? "the shape of your reference" : "the default shape"),
+      );
     }
   }
   if (asked.length > 0) {
@@ -213,15 +305,20 @@ export function buildProposeCard(
   ownedEntityIds: string[],
 ): ProposeCardResult {
   // Step 1: kind is the PLANNER'S decision — an attached reference no longer forces video.
-  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame ONLY for a video plan;
-  // for an image plan it is a vision reference the planner already SAW (buildOttoContext)
-  // and is NOT threaded into the gen request (no silent image-to-image).
+  // A reference (ctx.sourceGenerationId) becomes an i2v start-frame for a video plan; for an
+  // image plan it rides along as the PRIMARY reference the image engine actually receives
+  // (#619 Founder 决议：挂图 + 要图片 = 引擎真收到这张图。worker 把它 unshift 到参考数组
+  // 第 0 位 —— apps/worker/src/jobs/gen.ts F09 —— 与详情页 edit 走的是同一条活路)。
+  // `hasSourceImage` 仍然只说 i2v：它驱动选型与 @元素清空，那两件事对图片方案不变
+  // （图片方案照旧保留商家 @ 的元素，参考图与元素图一起进引擎）。
   let kind = input.kind;
   let entityIds = input.entityIds;
   let variantSel = input.variantSel;
   const isRefVideo = kind === "video" && !!ctx.referenceVideoGenerationId;
   const isI2V = kind === "video" && !!ctx.sourceGenerationId && !isRefVideo;
   const hasSourceImage = isI2V;
+  /** 图片方案带着商家挂的那张图（付费请求的编辑底图）。 */
+  const usesAttachedImage = kind === "image" && !!ctx.sourceGenerationId;
 
   if (isI2V) {
     // i2v conditions on the start frame, not on entity refs (preserve prior behavior)
@@ -240,7 +337,9 @@ export function buildProposeCard(
     variantSel = filteredVarSel;
   }
 
-  // Step 3: model selection
+  // Step 3: model selection.
+  // #647 T6:null = 这一类的唯一引擎被后台关掉了。这里不给「降级卡」也不给「零元卡」——
+  // 直接抛,由入口翻译成一句人话,一张卡都不落库(见 GenerationUnavailableError)。
   const sm = suggestModel({
     kind,
     desiredAspect: input.desiredAspect,
@@ -250,6 +349,7 @@ export function buildProposeCard(
     hasTail: false,
     disabled: new Set(ctx.disabledModels),
   });
+  if (!sm) throw new GenerationUnavailableError(kind);
 
   if (isRefVideo) {
     const opts = GEN_VIDEO_MODEL_OPTIONS[REFERENCE_VIDEO_MODEL];
@@ -304,6 +404,8 @@ export function buildProposeCard(
   // When this image card is the first step of a two-step video plan (forVideo=true),
   // estimate the follow-on video cost so the card can show the full plan total.
   // Errors are silently swallowed — videoStep is best-effort and must never break the card.
+  // #647 T6:视频引擎被关掉时 `vm` 是 null —— 这张图片卡照铸(图片引擎还开着),只是
+  // 不再替一条现在做不了的片子报价。卡面上少一行,好过多一行做不到的承诺。
   let videoStep: { estimatedCredits: number } | undefined;
   if (kind === "image" && input.forVideo) {
     try {
@@ -316,7 +418,7 @@ export function buildProposeCard(
         hasTail: false,
         disabled: new Set(ctx.disabledModels),
       });
-      const videoEstCredits = displayCredits(
+      const videoEstCredits = vm === null ? null : displayCredits(
         pricedGenCredits({
           kind: "VIDEO",
           model: vm.model,
@@ -328,18 +430,23 @@ export function buildProposeCard(
           },
         }),
       );
-      videoStep = { estimatedCredits: videoEstCredits };
+      if (videoEstCredits !== null) videoStep = { estimatedCredits: videoEstCredits };
     } catch {
       // Best-effort — omit videoStep on any error
     }
   }
 
-  // Step 4.7: 执行层收不下的诉求也是降级 —— 必须显式披露，不得静默。
+  // Step 4.7: 商家要的画幅没落到这张卡上,也是降级 —— 必须显式披露,不得静默。
   // suggestModel 只知道「这个模型能不能」，不知道「执行层会不会真用」，所以这两项
-  // 在这里按 EXECUTED_SPEC 补齐：图片的画幅根本到不了执行层；声音开关没接通。
+  // 在这里补齐。判据是**这张卡真会交付什么**,两种情况都算掉了:
+  //   ① 这一趟真正会跑的适配器根本不采纳画幅(imageAspectHonoured 说了不算数);
+  //   ② 采纳,但这条路没把商家的画幅放上卡(卡上的画幅 ≠ 他要的)。
   // 纯展示：不改 params、不改选型、不改报价。
+  // #643 T2：比对前先归一商家的写法。`portrait` 和 `9:16` 是同一个形状，逐字比对会把一次
+  // **已经兑现**的请求误报成降级 —— 那句披露会变成噪音，商家学会忽略它，真降级也就跟着被忽略。
   const imageAspectDropped =
-    kind === "image" && !!input.desiredAspect && !EXECUTED_SPEC.image.aspectHonoured;
+    kind === "image" && !!input.desiredAspect &&
+    (!imageAspectHonoured() || normalizeImageAspect(input.desiredAspect) !== sm.params.aspectRatio);
   const audioNotHonoured =
     kind === "video" && typeof input.desiredAudio === "boolean" && !EXECUTED_SPEC.video.audioHonoured;
   const requested: RequestedSpec = {
@@ -355,7 +462,7 @@ export function buildProposeCard(
     model: sm.model,
     params: sm.params,
     reason: sm.reason,
-    specChips: buildSpecChips(kind, sm.params, hasSourceImage),
+    specChips: buildSpecChips(kind, sm.params, hasSourceImage, usesAttachedImage),
     downgraded,
     ...(downgraded
       ? { downgradeNote: buildDowngradeNote(kind, requested, sm.params, hasSourceImage) }
@@ -366,8 +473,9 @@ export function buildProposeCard(
     estimatedPriceUsd: price,
     estimatedCredits,
     ...(videoStep ? { videoStep } : {}),
-    // isI2V ⇒ kind==="video" && !!ctx.sourceGenerationId, so the non-null assertion is sound.
-    ...(isI2V ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
+    // isI2V | usesAttachedImage ⇒ !!ctx.sourceGenerationId, so the non-null assertion is sound.
+    // video ⇒ i2v 起始帧；image ⇒ 引擎的编辑底图（第一参考）。两条路都真的送图。
+    ...(isI2V || usesAttachedImage ? { sourceGenerationId: ctx.sourceGenerationId! } : {}),
     // isRefVideo ⇒ kind==="video" && !!ctx.referenceVideoGenerationId, so the non-null assertion is sound.
     ...(isRefVideo ? { referenceVideoGenerationId: ctx.referenceVideoGenerationId! } : {}),
   };

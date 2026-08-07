@@ -2,13 +2,11 @@
  * factory-batch — the B3 factory batch ORCHESTRATION core (W-B3-F-P, spec §5.2).
  *
  * Headless batch orchestration over the ONE existing spend authority, `startGen`.
- * This file is deliberately a plain module (no server-action directive) and NOT
- * parity scanner (scripts/check-parity.mjs discoverActionSurfaces) does not treat
- * its exports as server actions — only the two thin wrappers in factory-actions.ts
- * are the owner-scoped action surface. Keeping the loop here lets tests drive it
+ * This file is deliberately a plain module (no server-action directive). Only the two
+ * thin wrappers in factory-actions.ts are the owner-scoped action surface. Keeping the loop here lets tests drive it
  * with an injected `startGen` (a stub for behaviour, the real one for the ledger).
  *
- * MONEY SAFETY (money-safety-review, B0-16 "零新钱路复用现有管线"):
+ * MONEY SAFETY (零新钱路复用现有管线):
  *   - This layer NEVER touches credits. It does not import or call
  *     reserveCredits / settleCredits / refundReservation, never creates a GenJob,
  *     never calls a provider. Each cell's reserve (same-tx with the GenJob insert)
@@ -38,9 +36,10 @@ import {
   factoryAttemptKey,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
+  FACTORY_HISTORY_SELECT,
   type FactoryAttemptKey,
+  type FactoryHistoryRow,
   type FactoryMaterial,
-  type StoredFactoryMaterial,
 } from "./batch-idempotency";
 
 /** Batch size ceiling. A money-safety guard: an unbounded batch would let one
@@ -95,7 +94,8 @@ export type StartGenPort = (
   req: Record<string, unknown>,
 ) => Promise<
   | { id: string; disposition: "fresh" | "reused" }
-  | { error: string; disposition?: "conflict" }
+  // `retryable` = 结果不明、花钱之前就停住了(#656 P1)。这一层照旧只把错误原样呈上去。
+  | { error: string; disposition?: "conflict" | "retryable" }
 >;
 
 export interface OrchestrateDeps {
@@ -156,30 +156,6 @@ export interface BatchInterruption {
 }
 
 export type BatchFailure = { error: string; partial?: BatchInterruption };
-
-type FactoryHistoryRow = StoredFactoryMaterial & {
-  id: string;
-  status: string;
-  idempotencyKey: string | null;
-};
-
-const FACTORY_HISTORY_SELECT = {
-  id: true,
-  status: true,
-  idempotencyKey: true,
-  prompt: true,
-  model: true,
-  kind: true,
-  count: true,
-  entityIds: true,
-  variantSel: true,
-  sourceGenerationId: true,
-  tailGenerationId: true,
-  referenceVideoGenerationId: true,
-  shotId: true,
-  threadId: true,
-  videoOptions: true,
-} as const;
 
 /** Exact persisted request shape, shared with startGen's lock-time binding. Callers pass
  *  genCellError first so a video model is valid before video defaults are resolved. */
@@ -633,7 +609,12 @@ async function tagJobToBatch(
   }
 }
 
-/** Six-state rollup for a batch: read the grouped jobs' live statuses and count them. */
+/** Rollup for a batch: read the grouped jobs' live statuses and count them.
+ *
+ *  Every GenStatus gets its own line, `cancelled` included (#602 T3) — a rollup where the parts
+ *  do not add up to `total` is a rollup that cannot be read. While cancelling wrote FAILED, a
+ *  cancelled cell was counted as a failure; unnamed, it would have vanished from the counts
+ *  instead, which is the same problem wearing the opposite face. */
 export interface BatchStatus {
   batchId: string;
   /** GenJob status counts among the batch's grouped jobs. */
@@ -641,6 +622,7 @@ export interface BatchStatus {
   generating: number;
   done: number;
   failed: number;
+  cancelled: number;
   total: number;
 }
 
@@ -660,6 +642,7 @@ export async function batchCellStatuses(
     generating: count("GENERATING"),
     done: count("DONE"),
     failed: count("FAILED"),
+    cancelled: count("CANCELLED"),
     total: jobs.length,
   };
 }

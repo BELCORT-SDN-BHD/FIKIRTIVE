@@ -39,7 +39,7 @@ vi.mock("../queue", () => ({
   })),
 }));
 vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
-vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => new Set()) }));
+vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
 const { startGen } = await import("../gen-actions");
 const { cancelGenJob } = await import("../cowork-actions");
@@ -71,11 +71,11 @@ async function jobs(ownerId: string, projectId: string) {
 // The worker's terminal outcomes, via the SAME ledger fns the worker calls.
 async function workerSettle(ownerId: string, jobId: string) {
   await prisma.$transaction((tx) => settleCredits(tx, { orgId: ownerId, refId: jobId }));
-  await prisma.genJob.update({ where: { id: jobId }, data: { status: "DONE", spent: true, finishedAt: new Date() } });
+  await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "DONE", spent: true, finishedAt: new Date() } });
 }
 async function workerRefund(ownerId: string, jobId: string) {
   await prisma.$transaction((tx) => refundReservation(tx, { orgId: ownerId, refId: jobId }));
-  await prisma.genJob.update({ where: { id: jobId }, data: { status: "FAILED", error: "provider failed", finishedAt: new Date() } });
+  await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "FAILED", error: "provider failed", finishedAt: new Date() } });
 }
 function asOwner(ownerId: string) {
   mockRequireOwner.mockResolvedValue({ ownerId, email: `${ownerId}@fikirtive.test` });
@@ -127,13 +127,13 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain image bat
 });
 
 describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job", () => {
-  it("a seedance-2-fast 720p/10s job reserves exactly the 14-displayed-credit quote and settles the same", async () => {
+  it("a seedance-2-fast 720p/10s job reserves exactly the 22-displayed-credit quote and settles the same", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
     const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 10, resolution: "720p" } });
-    expect(quote).toBe(14 * IMG); // flat 720p/10s tier
+    expect(quote).toBe(22 * IMG); // flat 720p/10s tier(#644 裁决 2026-08-06:14 → 22 显示 credits)
 
     const res = idOf(await startGen({
       projectId, prompt: "product spin, longer take", entityIds: [], count: 1,
@@ -299,8 +299,8 @@ describe("W-B3-E-P ledger — across INDEPENDENT jobs: reserved == settled + ref
     const j1 = idOf(await startGen(mk({ count: 1 })));                                              // 10 — settles
     const j2 = idOf(await startGen(mk({ count: 2, prompt: "cell two" })));                          // 20 — fails
     const j3 = idOf(await startGen(mk({ count: 4, prompt: "cell three" })));                        // 40 — fails
-    const j4 = idOf(await startGen(mk({ count: 1, kind: "video", model: "seedance-2-fast", durationSeconds: 5, resolution: "720p", prompt: "cell four" }))); // 80 — settles
-    expect((await account(ownerId)).reserved).toBe(10 + 20 + 40 + 80);
+    const j4 = idOf(await startGen(mk({ count: 1, kind: "video", model: "seedance-2-fast", durationSeconds: 5, resolution: "720p", prompt: "cell four" }))); // 110 — settles
+    expect((await account(ownerId)).reserved).toBe(10 + 20 + 40 + 110);
 
     await workerSettle(ownerId, j1.id);
     await workerRefund(ownerId, j2.id);
@@ -321,14 +321,14 @@ describe("W-B3-E-P ledger — across INDEPENDENT jobs: reserved == settled + ref
     const reserved = rows.filter((r) => r.kind === "RESERVE").reduce((s, r) => s + r.reservedDelta, 0);
     const settled = settles.reduce((s, r) => s - r.reservedDelta, 0);
     const refunded = refunds.reduce((s, r) => s - r.reservedDelta, 0);
-    expect(reserved).toBe(150);
-    expect(settled).toBe(90);
+    expect(reserved).toBe(180);
+    expect(settled).toBe(120);
     expect(refunded).toBe(60);
     expect(reserved).toBe(settled + refunded);
 
     const acct = await account(ownerId);
     expect(acct.reserved).toBe(0);
-    expect(acct.balance).toBe(1000 - 90); // charged for the successes only
+    expect(acct.balance).toBe(1000 - 120); // charged for the successes only
   });
 });
 
@@ -362,8 +362,9 @@ describe("W-B3-E-P ledger — EP-A4 route ④: cancel (the stop button)", () => 
     const acct = await account(ownerId);
     expect(acct.balance).toBe(1000); // fully restored
     expect(acct.reserved).toBe(0);
-    const job = await prisma.genJob.findUniqueOrThrow({ where: { id: res.id } });
-    expect(job.status).toBe("FAILED");
+    const job = await prisma.genJob.findUniqueOrThrow({ where: { id: res.id, ownerId } });
+    // 取消有自己的词(#602 T3);这条测试守的是钱,而钱路一个字节没变。
+    expect(job.status).toBe("CANCELLED");
     expect(job.error).toBe("Cancelled by you");
 
     // double-click on the stop button: at-most-once refund
@@ -380,7 +381,7 @@ describe("W-B3-E-P ledger — EP-A4 route ④: cancel (the stop button)", () => 
     const res = idOf(await startGen({ projectId, prompt: "too late", entityIds: [], count: 1, kind: "image", model: "seedream", idempotencyKey: `late-${randomUUID().slice(0, 8)}` }));
 
     // the worker claimed it (QUEUED → GENERATING) before the user clicked stop
-    await prisma.genJob.update({ where: { id: res.id }, data: { status: "GENERATING", startedAt: new Date() } });
+    await prisma.genJob.update({ where: { id: res.id, ownerId }, data: { status: "GENERATING", startedAt: new Date() } });
 
     const result = await cancelGenJob({ jobId: res.id });
     expect(result).toEqual({ alreadyStarted: true }); // honest "too late" — never a fake refund

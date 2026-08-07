@@ -48,8 +48,10 @@ export async function startRefGen(raw: unknown): Promise<{ id: string } | { erro
   // OPT-6 P2: reject an admin-disabled model before the spend commit (additive
   // narrowing; refGenRequest.enum stays the authority). seedream is the only
   // refgen model today, so this is the image-toggle in the reference path.
-  const disabled = await resolveDisabledModels();
-  if (isModelDisabled(model, disabled)) {
+  // #647 T6 修复轮 P1-3:开关读不到 ⇒ 不许扣款(空集合等于替 Founder 把开关打开)。
+  const registry = await resolveDisabledModels();
+  if ("error" in registry) return registry;
+  if (isModelDisabled(model, registry.disabled)) {
     return { error: "Image generation is currently turned off." };
   }
 
@@ -179,8 +181,10 @@ export async function setBaseAsset(entityId: string, assetId: string): Promise<{
 async function dispatchVariantJob(ownerId: string, entityId: string, variantId: string, prompt: string): Promise<{ jobId: string } | { error: string }> {
   // OPT-6 P2: the variant path bypasses startRefGen — enforce disable here too.
   // dispatchVariantJob always uses model:"seedream", so this is the seedream toggle.
-  const disabled = await resolveDisabledModels();
-  if (isModelDisabled("seedream", disabled)) {
+  // #647 T6 修复轮 P1-3:同上 —— 变体这条路同样不许在开关状态不明时扣款。
+  const registry = await resolveDisabledModels();
+  if ("error" in registry) return registry;
+  if (isModelDisabled("seedream", registry.disabled)) {
     return { error: "Image generation is currently turned off." };
   }
   const active = await prisma.refGenJob.findFirst({

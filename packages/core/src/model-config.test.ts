@@ -2,10 +2,12 @@ import { describe, it, expect, afterEach } from "vitest";
 import { activeImageModel, activeVideoModel, assertSpendableModel } from "./model-config.js";
 import { isFlatPricedVideoModel } from "./spend.js";
 
-// 宪法 5:每个收费点毛利率 ≥45%。非 flat 定价的视频模型按真实成本上取整收费(≈零毛利),
-// 所以 spend 闸必须拒绝它们 —— 哪怕 OTTO_DEFAULT_VIDEO_MODEL 明确选中了它。
+// 宪法 5:每个收费点毛利率 ≥45%。没有已裁价目表的视频模型收不出毛利,所以 spend 闸必须
+// 拒绝它们 —— 哪怕 OTTO_DEFAULT_VIDEO_MODEL 明确选中了它。
+// #647 T6 之后,下面这些 id 连菜单都不在了,于是它们**更早**就被 `isKnownModelId` 挡下 ——
+// 断言不变(一律 ok:false),只是拦下它们的那道闸从第三道提前到了第一道。
 describe("margin floor — video spend gate refuses models without a flat (floored) price", () => {
-  it("rejects veo3.1-lite even when the env explicitly selects it", () => {
+  it("rejects a retired id even when the env explicitly selects it", () => {
     const r = assertSpendableModel("veo3.1-lite", "video", { OTTO_DEFAULT_VIDEO_MODEL: "veo3.1-lite" });
     expect(r.ok).toBe(false);
   });
@@ -32,9 +34,11 @@ describe("activeVideoModel", () => {
     expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "not-a-model" })).toBe("seedance-2-fast");
   });
   it("degrades a NON-flat env override to the flat default (no split-brain: the UI must never advertise a model the spend gate rejects)", () => {
-    // 2026-07-04 对抗审查:此前 activeVideoModel 会照单返回 veo3.1-lite/kling-2.6 等
-    // 非 flat 模型,而新毛利闸拒绝它们 —— UI 供货、扣款全拒。现在 env 选了没有毛利
-    // 地板的模型时直接降级到 flat 默认,闸只作兜底。
+    // 2026-07-04 对抗审查:此前 activeVideoModel 会照单返回没有毛利地板的模型,
+    // 而新毛利闸拒绝它们 —— UI 供货、扣款全拒。现在 env 选了没有毛利地板的模型时
+    // 直接降级到 flat 默认,闸只作兜底。
+    // #647 T6:这里用的三个 id 已经下架,所以现在是被「不在菜单上」这一条挡回默认,
+    // 结论(降级到 seedance-2-fast,绝不 split-brain)逐字不变。
     expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "veo3.1-lite" })).toBe("seedance-2-fast");
     expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "kling-2.6" })).toBe("seedance-2-fast");
     expect(activeVideoModel({ OTTO_DEFAULT_VIDEO_MODEL: "veo3.1" })).toBe("seedance-2-fast");

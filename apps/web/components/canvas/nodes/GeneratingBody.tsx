@@ -3,6 +3,7 @@
 // making the asset + an indeterminate progress bar + the honest money line
 // ("billed only when it finishes" — no fabricated credit number). The legacy
 // skin keeps the plain centered text so the old look is untouched (strangler).
+import type { TerminalCardStatus } from "@/lib/canvas-card-status";
 function OttoCloud() {
   return (
     <svg width="30" height="27" viewBox="0 0 120 110" aria-hidden>
@@ -44,45 +45,75 @@ function RefreshButton({ onRefresh }: { onRefresh?: () => void }) {
   );
 }
 
-/** Terminal state for a card whose gen didn't deliver. "failed" is a hard fail (the worker
- *  FAILED + refunded the job, so it's safe to say "not charged"); "timeout" is soft — the
- *  client stopped polling but the worker may still settle it, so it invites a check-back
- *  rather than claiming failure. Without this, a FAILED/timed-out node showed GeneratingBody
- *  forever (the eternal spinner, F21). "missing" means the job is terminal but
- *  the preview URL could not be resolved, so do not claim a refund. */
-export function FailedBody({ status, onRefresh }: { status: "failed" | "timeout" | "missing"; onRefresh?: () => void }) {
+/** ONE FACE PER RESTING STATE — a card that has stopped being made says which ending it reached.
+ *
+ *  "failed" is a hard fail (the worker FAILED + refunded the job, so it's safe to say "not
+ *  charged"); "cancelled" is the merchant's own decision, not a failure, so it says nothing about
+ *  money it cannot prove and offers nothing to retry; "timeout" is soft — the client stopped
+ *  polling but the worker may still settle it, so it invites a check-back rather than claiming
+ *  failure; "missing" means the job finished but the preview URL could not be resolved, so do not
+ *  claim a refund; "unknown" is the fallback (#602 T3) — the card has no account of itself, and
+ *  saying so with a way to look again beats a spinner that will never stop (F21). Without this
+ *  whole family, a card that stopped showed GeneratingBody for ever. */
+export function FailedBody({ status, onRefresh }: { status: TerminalCardStatus; onRefresh?: () => void }) {
   const timeout = status === "timeout";
   const missing = status === "missing";
+  const cancelled = status === "cancelled";
+  const unknown = status === "unknown";
   return (
     <div style={{ display: "grid", placeItems: "center", height: "100%", padding: 12, textAlign: "center", gap: 6 }}>
-      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{timeout ? "⏳" : "⚠️"}</div>
+      <div style={{ fontSize: 20, opacity: 0.5 }} aria-hidden>{timeout ? "⏳" : cancelled ? "⃠" : unknown ? "？" : "⚠️"}</div>
       <div style={{ fontSize: 12.5, fontWeight: 600, opacity: 0.8 }}>
-        {timeout ? "Still working…" : missing ? "Preview missing" : "That didn't finish"}
+        {timeout
+          ? "Still working…"
+          : missing
+            ? "Preview missing"
+            : cancelled
+              ? "Cancelled"
+              : unknown
+                ? "Status unknown"
+                : "That didn't finish"}
       </div>
       <div style={{ fontSize: 11.5, opacity: 0.55, lineHeight: 1.4 }}>
         {timeout
           ? "This is taking longer than usual — check back in a moment."
           : missing
             ? "The job finished, but this card could not load the media."
-            : "You weren't charged. Try again."}
+            : cancelled
+              ? "This generation was cancelled."
+              : unknown
+                ? "We can't tell what happened to this one. Check again to reload it."
+                : "You weren't charged. Try again."}
       </div>
-      {(timeout || missing) && <RefreshButton onRefresh={onRefresh} />}
+      {(timeout || missing || unknown) && <RefreshButton onRefresh={onRefresh} />}
     </div>
   );
 }
 
-export function GeneratingBody({ gb, kind, onRefresh }: { gb?: boolean; kind: "image" | "video"; onRefresh?: () => void }) {
+/** The card while work really is happening — and only then (#602 T3).
+ *
+ *  `queued` and `generating` are two different claims and the card must not confuse them: knowing
+ *  a job exists is not knowing it started, and "Otto is making this" about a job still waiting in
+ *  line is an assertion with nothing behind it. The queued face says the true thing instead. */
+export function GeneratingBody({
+  gb,
+  kind,
+  queued,
+  onRefresh,
+}: { gb?: boolean; kind: "image" | "video"; queued?: boolean; onRefresh?: () => void }) {
   if (!gb) {
     return (
       <div style={{ display: "grid", placeItems: "center", height: "100%", opacity: 0.6, gap: 8 }}>
-        <span>{kind === "video" ? "Rendering…" : "Generating…"}</span>
+        <span>{queued ? "In the queue…" : kind === "video" ? "Rendering…" : "Generating…"}</span>
         <RefreshButton onRefresh={onRefresh} />
       </div>
     );
   }
   return (
     <div className="cv-gen">
-      <span className="cv-gen-otto"><OttoCloud /> Otto is making this</span>
+      <span className="cv-gen-otto">
+        <OttoCloud /> {queued ? "In the queue — Otto starts shortly" : "Otto is making this"}
+      </span>
       <div className="cv-gen-bar" />
       <div className="cv-gen-meta">billed only when it finishes</div>
       <RefreshButton onRefresh={onRefresh} />

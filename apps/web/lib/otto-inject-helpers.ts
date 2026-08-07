@@ -42,17 +42,45 @@ export function errorJobIds(messages: OttoUiMessage[]): Set<string> {
   return ids;
 }
 
-export type CardState = "idle" | "working" | "done" | "failed";
+/** Is this durable TURN_ERROR payload the mark a merchant's own cancel leaves (#602 T3)? */
+export function cancelledTurnPayload(payload: unknown): boolean {
+  return !!payload && typeof payload === "object" && (payload as { cancelled?: unknown }).cancelled === true;
+}
+
+/**
+ * The genJobIds whose terminal message says the MERCHANT stopped it (#602 T3 · spec #599 D4).
+ *
+ * A job's terminal thread message is a TURN_ERROR whatever ended it — that kind carries the
+ * per-job unique index, so cancelling cannot get a kind of its own without making two terminal
+ * messages possible. Every cancel therefore read as a failure: after a reload the plan card went
+ * red, said "This one didn't come through", and offered "Try again" for work the merchant chose
+ * to stop. `cancelGenJob` marks its message; this is the reader of that mark.
+ */
+export function cancelledJobIds(messages: OttoUiMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const m of messages) {
+    const meta = m.metadata;
+    if (meta?.kind === "TURN_ERROR" && meta.genJobId && cancelledTurnPayload(meta.payload)) {
+      ids.add(meta.genJobId);
+    }
+  }
+  return ids;
+}
+
+export type CardState = "idle" | "working" | "done" | "failed" | "cancelled";
 
 /** The plan card's lifecycle derived from durable data (never optimistic-only).
- *  Order matters: a terminal result/error always wins over "working". */
+ *  Order matters: a terminal result/error always wins over "working", and a cancel outranks the
+ *  failure it is carried by — the same TURN_ERROR is in both sets (#602 T3). */
 export function deriveCardState(args: {
   genJobId: string | null;
   submitted: boolean;
   results: Set<string>;
   errors: Set<string>;
+  cancelled?: Set<string>;
 }): CardState {
-  const { genJobId, submitted, results, errors } = args;
+  const { genJobId, submitted, results, errors, cancelled } = args;
+  if (genJobId && cancelled?.has(genJobId)) return "cancelled";
   if (genJobId && errors.has(genJobId)) return "failed";
   if (genJobId && results.has(genJobId)) return "done";
   if (genJobId || submitted) return "working";

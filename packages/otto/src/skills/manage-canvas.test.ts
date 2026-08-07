@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
 import { executeManageCanvas, manageCanvasSkill, isInFlightPaidNode, VIEW_NODE_CAP } from "./manage-canvas.js";
 import type { OttoContext, CanvasNodeView } from "../context.js";
 
@@ -26,7 +27,8 @@ function node(over: Partial<CanvasNodeView> = {}): CanvasNodeView {
   return {
     id: "n-1", type: "text", x: 80, y: 80, w: 240, h: 120,
     text: "hello", prompt: null, generationId: null, status: "done",
-    sourceNodeId: null, url: null, ...over,
+    genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
+    url: null, ...over,
   };
 }
 
@@ -65,7 +67,9 @@ describe("view", () => {
       truncated: false,
       nodes: [{
         id: "a", type: "image", status: "done", x: 80, y: 80, w: 240, h: 120,
-        text: "hello", prompt: null, generationId: "g1", sourceNodeId: null, hasMedia: true,
+        text: "hello", prompt: null, generationId: "g1", hasMedia: true,
+        // The two relationships, under their own names (#603 T4).
+        genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
       }],
     });
   });
@@ -106,15 +110,15 @@ describe("place — $0 hard line", () => {
     expect(res.error).toContain("generationId");
     expect(place).not.toHaveBeenCalled();
   });
-  it("places an existing generation with derivation link + explicit position", async () => {
+  it("places an existing generation at an explicit position", async () => {
     const place = vi.fn(async () => ({ id: "new-2" }));
     await executeManageCanvas(
-      { action: "place", type: "image", generationId: "g7", sourceNodeId: "n-src", x: 420, y: 80, prompt: "warmer light" },
+      { action: "place", type: "image", generationId: "g7", x: 420, y: 80, prompt: "warmer light" },
       { context: makeCtx({ place }) },
     );
     expect(place).toHaveBeenCalledWith({
       type: "image", x: 420, y: 80, w: 320, h: 320, prompt: "warmer light",
-      generationId: "g7", sourceNodeId: "n-src",
+      generationId: "g7",
     });
   });
 });
@@ -140,7 +144,10 @@ describe("edit_text / resolve — pass-through to the shared actions", () => {
 });
 
 describe("remove — in-flight paid cards are UI-only, pre-check is fail-closed (debt-37, v2)", () => {
-  const inFlight = node({ id: "n-hot", type: "video", status: "pending", url: null, generationId: null });
+  // A board read returns the card FACE. `generating` is what a running job's card actually says
+  // (#602 T3) — the fixture used to say `pending`, a row word no read ever returns, so this whole
+  // guard was being exercised against a value the product cannot produce.
+  const inFlight = node({ id: "n-hot", type: "video", status: "generating", url: null, generationId: null });
   it("HARD-refuses an in-flight paid card and directs the user to the canvas (no model self-confirm)", async () => {
     const list = vi.fn(async () => [inFlight]);
     const remove = vi.fn(async () => ({ ok: true as const }));
@@ -174,12 +181,24 @@ describe("remove — in-flight paid cards are UI-only, pre-check is fail-closed 
     expect(res).toEqual({ ok: true });
     expect(remove).toHaveBeenCalledWith("n-done");
   });
-  it("isInFlightPaidNode mirrors the human UI guard (useCanvasGen.isInFlightPaidGen)", () => {
-    expect(isInFlightPaidNode({ type: "video", status: "pending", url: null })).toBe(true);
+  it("isInFlightPaidNode IS the human UI guard — same function, not a copy of it (#602 r2)", () => {
+    // The words this reads are CARD FACES: it is handed a board read (`canvas.list()`), and a
+    // board read returns faces. The old hand-kept copy tested `pending`, a stored ROW word that
+    // no board read has returned since the faces split queued/generating apart — so Otto could
+    // delete a merchant's in-flight PAID card with no refusal at all.
+    expect(isInFlightPaidNode({ type: "image", status: "queued", url: null })).toBe(true);
+    expect(isInFlightPaidNode({ type: "video", status: "generating", url: null })).toBe(true);
+    // The browser stopped watching, but the job may still be running — still costly to delete.
     expect(isInFlightPaidNode({ type: "image", status: "timeout", url: null })).toBe(true);
-    expect(isInFlightPaidNode({ type: "image", status: "failed", url: null })).toBe(false); // terminal, refunded
-    expect(isInFlightPaidNode({ type: "image", status: "pending", url: "https://cdn/x.png" })).toBe(false);
-    expect(isInFlightPaidNode({ type: "text", status: "pending", url: null })).toBe(false);
+    // Every resting face is an answer: the warning would be false.
+    for (const settled of ["failed", "cancelled", "missing", "unknown", "done"]) {
+      expect(isInFlightPaidNode({ type: "image", status: settled, url: null }), settled).toBe(false);
+    }
+    expect(isInFlightPaidNode({ type: "image", status: "generating", url: "https://cdn/x.png" })).toBe(false);
+    expect(isInFlightPaidNode({ type: "text", status: "generating", url: null })).toBe(false);
+    // …and it is literally the shared definition, so the two can never drift again.
+    expect(isInFlightPaidNode).toBeTypeOf("function");
+    expect(canvasCardIsInFlightPaid({ type: "image", status: "queued", url: null })).toBe(true);
   });
 });
 
@@ -200,7 +219,8 @@ describe("C1 $0 sub-journey: empty board → place → derivation visible (Otto 
           id, type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
           text: input.text ?? null, prompt: input.prompt ?? null,
           generationId: input.generationId ?? null, status: "done",
-          sourceNodeId: input.sourceNodeId ?? null, url: input.generationId ? "https://cdn/g.png" : null,
+          genJobId: null, batchIndex: null, batchSize: null, madeFromNodeId: null,
+          url: input.generationId ? "https://cdn/g.png" : null,
         });
         return { id };
       },
@@ -228,25 +248,32 @@ describe("C1 $0 sub-journey: empty board → place → derivation visible (Otto 
     const note = (await executeManageCanvas({ action: "place", type: "text", text: "hero shot ideas" }, { context: ctx })) as { id: string };
     await executeManageCanvas({ action: "edit_text", nodeId: note.id, text: "hero shot — warm light" }, { context: ctx });
 
-    // 3. Place an ALREADY-generated image, then a derived variant pointing back at it.
+    // 3. Place two ALREADY-generated images. Otto cannot declare that one came from the other:
+    //     parentage is the paid job's own record, and placing a finished picture is not one
+    //     (#603 T4).
     const base = (await executeManageCanvas(
       { action: "place", type: "image", generationId: "gen-base", prompt: "latte on marble" },
       { context: ctx },
     )) as { id: string };
-    const derived = (await executeManageCanvas(
-      { action: "place", type: "image", generationId: "gen-derived", sourceNodeId: base.id, prompt: "same, golden hour", x: 420 },
+    await executeManageCanvas(
+      { action: "place", type: "image", generationId: "gen-derived", prompt: "same, golden hour", x: 420 },
       { context: ctx },
-    )) as { id: string };
+    );
 
-    // 4. Derivation is VISIBLE in the view (source→result link, C1 关键旅程收口).
+    // 4. The view carries the relationships the SERVER recorded, under their own names.
     const view = (await executeManageCanvas({ action: "view" }, { context: ctx })) as {
       count: number;
-      nodes: Array<{ id: string; text: string | null; sourceNodeId: string | null; hasMedia: boolean }>;
+      nodes: Array<{
+        id: string; text: string | null; hasMedia: boolean;
+        genJobId: string | null; batchIndex: number | null; batchSize: number | null;
+        madeFromNodeId: string | null;
+      }>;
     };
     expect(view.count).toBe(3);
     expect(view.nodes.find((n) => n.id === note.id)?.text).toBe("hero shot — warm light");
-    expect(view.nodes.find((n) => n.id === derived.id)?.sourceNodeId).toBe(base.id);
     expect(view.nodes.find((n) => n.id === base.id)?.hasMedia).toBe(true);
+    // Nothing on this board was made from anything: the model is told exactly that.
+    expect(view.nodes.every((n) => n.madeFromNodeId === null)).toBe(true);
 
     // 5. Remove the note — the board keeps the media pair.
     await executeManageCanvas({ action: "remove", nodeId: note.id }, { context: ctx });

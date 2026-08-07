@@ -43,7 +43,10 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       //    column is a DateTime? (next-auth convention): a timestamp means verified. Set-once —
       //    a later convergence never overwrites an earlier stamp (the `emailVerified: null`
       //    filter no-ops once set), so the moment-of-verification is preserved.
-      let user = await prisma.user.findUnique({ where: { email }, select: { id: true, emailVerified: true } });
+      let user = await prisma.user.findUnique({
+        where: { email },
+        select: { id: true, emailVerified: true },
+      });
       if (!user) {
         user = await prisma.user.create({
           data: { email, name: input.name ?? null, image: input.image ?? null, emailVerified: new Date() },
@@ -56,12 +59,23 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       if (isFounderAdmin(email)) {
         await prisma.$transaction(async (tx) => {
           await tx.user.updateMany({ where: { email, role: { not: "super-admin" } }, data: { role: "super-admin" } });
+          await tx.userRole.upsert({
+            where: { userId_role: { userId: user.id, role: "super-admin" } },
+            create: { userId: user.id, role: "super-admin" },
+            update: {},
+          });
           // Mirror the canonical role onto ba_user.role in the same tx so the admin plugin's
           // HTTP gate cannot drift from requireRole's canonical User.role view.
           await tx.betterAuthUser.updateMany({ where: { email }, data: { role: "super-admin" } });
-          await tx.membership.upsert({
+          const membership = await tx.membership.upsert({
             where: { userId_orgId: { userId: user.id, orgId: FOUNDER_OWNER_ID } },
             create: { id: newId(), userId: user.id, orgId: FOUNDER_OWNER_ID, role: "owner" },
+            update: {},
+            select: { id: true },
+          });
+          await tx.membershipRole.upsert({
+            where: { membershipId_role: { membershipId: membership.id, role: "owner" } },
+            create: { membershipId: membership.id, role: "owner" },
             update: {},
           });
         });

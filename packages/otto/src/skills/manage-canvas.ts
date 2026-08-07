@@ -2,8 +2,17 @@
  * manageCanvas — $0 canvas skill (W-B3-A, parity debts 33-37 + 60 / E1-01).
  *
  * Lets Otto see and arrange the project's creative canvas: view every node (with status,
- * prompt, and derivation links), place text notes or ALREADY-generated media, edit text
- * notes, stamp a node's terminal display state, and remove nodes.
+ * prompt, which paid press it came out of, and what it was actually made from), place text
+ * notes or ALREADY-generated media, edit text notes, stamp a node's terminal display state,
+ * and remove nodes.
+ *
+ * WHAT OTTO IS TOLD ABOUT RELATIONSHIPS (#603 T4 · spec #599 D5). The view used to hand the
+ * model a single `sourceNodeId` and call it "the node this one derives from". For a plain
+ * four-image press that field held the batch's own anchor, so Otto was told the 2nd, 3rd and 4th
+ * pictures were descendants of the 1st and planned on that — a family that never existed. Two
+ * separate facts go over now, each with its own name: `genJobId` + `batchIndex` + `batchSize`
+ * say "these came out of one press together", and `madeFromNodeId` — written only from the paid
+ * job's own recorded source — says "this one was built on that one".
  *
  * Single action layer (宪法 7 / Seam 9): every operation goes through the injected
  * `ctx.canvas` port — thin closures over the SAME owner-gated $0 server actions the human
@@ -19,6 +28,7 @@
  * the canvas (v2, codex TR1 item 2 — no model self-confirmation; 宪法 11 protective rail).
  */
 import { z } from "zod";
+import { canvasCardIsInFlightPaid } from "@fikirtive/core/canvas-card-status";
 import { defineOttoSkill } from "../skill.js";
 import type { RunContext } from "@openai/agents";
 import type { OttoContext, CanvasNodeView } from "../context.js";
@@ -43,12 +53,6 @@ const params = z.object({
     .max(80)
     .optional()
     .describe("place: id of an EXISTING owned generation to show. resolve: the generation that settled a node."),
-  sourceNodeId: z
-    .string()
-    .min(1)
-    .max(80)
-    .optional()
-    .describe("place: the node this one derives from (draws the source→result link)."),
   x: z.number().optional(),
   y: z.number().optional(),
   w: z.number().positive().max(4000).optional(),
@@ -77,18 +81,27 @@ function toModelNode(n: CanvasNodeView) {
     text: n.text,
     prompt: n.prompt,
     generationId: n.generationId,
-    sourceNodeId: n.sourceNodeId,
+    // SAME PRESS ≠ MADE FROM. The first three say which paid press this card came out of and
+    // where in that press it sits; the last is the only parentage there is (#603 T4).
+    genJobId: n.genJobId,
+    batchIndex: n.batchIndex,
+    batchSize: n.batchSize,
+    madeFromNodeId: n.madeFromNodeId,
     hasMedia: !!n.url,
   };
 }
 
-/** Mirror of the human UI's in-flight-paid-gen delete guard (useCanvasGen.isInFlightPaidGen):
- *  an image/video node with no media yet and a non-terminal status may be a PAID job still
- *  running — deleting it hides the card without refunding or stopping the job. */
+/** Is this node a PAID job still in flight — deleting it hides the card without refunding or
+ *  stopping the job?
+ *
+ *  This USED to be a hand-kept mirror of the human UI's guard, spelled `pending || timeout`. It
+ *  was wrong the moment the card faces gained `queued`/`generating` (#602 T3): a board read hands
+ *  this function a FACE, and `pending` is a stored ROW word that no board read has ever returned
+ *  since. Otto could therefore delete a merchant's in-flight paid card without so much as a
+ *  refusal. A mirror that can drift is not a guard, so both callers now ask the SAME function in
+ *  `@fikirtive/core` (#602 r2, judge P1-3). */
 export function isInFlightPaidNode(node: Pick<CanvasNodeView, "type" | "status" | "url">): boolean {
-  if (node.type !== "image" && node.type !== "video") return false;
-  if (node.url) return false;
-  return node.status === "pending" || node.status === "timeout";
+  return canvasCardIsInFlightPaid(node);
 }
 
 export async function executeManageCanvas(
@@ -132,7 +145,6 @@ export async function executeManageCanvas(
         ...(input.text !== undefined ? { text: input.text } : {}),
         ...(input.prompt !== undefined ? { prompt: input.prompt } : {}),
         ...(input.generationId ? { generationId: input.generationId } : {}),
-        ...(input.sourceNodeId ? { sourceNodeId: input.sourceNodeId } : {}),
       });
       if ("error" in placed) return { ok: false, error: placed.error };
       return { ok: true, id: placed.id };
@@ -185,8 +197,8 @@ export const manageCanvasSkill = defineOttoSkill({
   reach: "internal",
   description:
     "See and arrange the project's creative canvas ($0 — never generates media or spends credits). " +
-    "view: all nodes with status, prompts, and source→result derivation links. " +
-    "place: add a text note, or show an ALREADY-generated image/video (needs generationId; link derivation via sourceNodeId). " +
+    "view: all nodes with status, prompts, which paid press each came out of (genJobId + batchIndex + batchSize — cards of one press are siblings, not parent and children), and madeFromNodeId, the only card a node was actually built on. " +
+    "place: add a text note, or show an ALREADY-generated image/video (needs generationId). " +
     "edit_text: change a text note. resolve: stamp a node's terminal display state. " +
     "remove: delete a settled node (a card whose generation is still in flight can only be removed by the user, by hand on the canvas). " +
     "To CREATE new images/videos, use generate instead.",

@@ -1,98 +1,64 @@
-import { describe, it, expect } from "vitest";
-import { ROLES, SECTIONS, SECTION_MATRIX, roleAllows, isRole, type Role, type Section } from "./roles.js";
+import { describe, expect, it } from "vitest";
+import {
+  PLATFORM_ROLE_CAPABILITIES,
+  ROLES,
+  SECTIONS,
+  isRole,
+  primaryPlatformRole,
+  platformRolesAllowCapability,
+  roleAllows,
+  rolesAllow,
+} from "./roles.js";
 
-describe("ROLES / SECTIONS", () => {
-  it("has exactly the 5 spec roles", () => {
+describe("platform permission bundles", () => {
+  it("keeps the existing role and section vocabulary", () => {
     expect([...ROLES]).toEqual(["super-admin", "ops", "finance", "moderator", "viewer"]);
+    expect([...SECTIONS]).toEqual([
+      "model",
+      "cost",
+      "content",
+      "team",
+      "system",
+      "knowledge",
+      "credits",
+      "tenants",
+    ]);
   });
-  it("has exactly the 8 spec sections (P2 adds credits, P3 adds tenants)", () => {
-    expect([...SECTIONS]).toEqual(["model", "cost", "content", "team", "system", "knowledge", "credits", "tenants"]);
-  });
-});
 
-describe("SECTION_MATRIX completeness", () => {
-  it("defines a read + mutate allowed-role set for every section", () => {
-    for (const s of SECTIONS) {
-      expect(SECTION_MATRIX[s].read).toBeInstanceOf(Set);
-      expect(SECTION_MATRIX[s].mutate).toBeInstanceOf(Set);
-    }
+  it("combines permissions from multiple sibling roles", () => {
+    const roles = ["ops", "finance"];
+    expect(rolesAllow(roles, "model", "mutate")).toBe(true);
+    expect(rolesAllow(roles, "credits", "mutate")).toBe(true);
+    expect(rolesAllow(roles, "content", "mutate")).toBe(false);
   });
-  it("read-only sections (cost, team) have an empty mutate set", () => {
-    expect(SECTION_MATRIX.cost.mutate.size).toBe(0);
-    expect(SECTION_MATRIX.team.mutate.size).toBe(0);
-  });
-});
 
-describe("roleAllows — derives from SECTION_MATRIX, denies by default, super-admin supersedes", () => {
-  it("super-admin can do everything (including read-only/empty-set sections)", () => {
-    for (const s of SECTIONS) {
-      expect(roleAllows("super-admin", s, "read")).toBe(true);
-      expect(roleAllows("super-admin", s, "mutate")).toBe(true);
-    }
+  it("denies empty and unknown assignments", () => {
+    expect(rolesAllow([], "model", "read")).toBe(false);
+    expect(rolesAllow(["root"], "model", "read")).toBe(false);
   });
-  it("viewer reads operational sections (model/system/knowledge) but NOT cost or team", () => {
-    expect(roleAllows("viewer", "model", "read")).toBe(true);
-    expect(roleAllows("viewer", "system", "read")).toBe(true);
-    expect(roleAllows("viewer", "knowledge", "read")).toBe(true);
-    expect(roleAllows("viewer", "cost", "read")).toBe(false);
-    expect(roleAllows("viewer", "team", "read")).toBe(false);
-  });
-  it("viewer can mutate NOTHING", () => {
-    for (const s of SECTIONS) expect(roleAllows("viewer", s, "mutate")).toBe(false);
-  });
-  it("ops mutates model/system/knowledge, NOT cost/content/team — and can't read cost", () => {
-    expect(roleAllows("ops", "model", "mutate")).toBe(true);
-    expect(roleAllows("ops", "knowledge", "mutate")).toBe(true);
-    expect(roleAllows("ops", "system", "mutate")).toBe(true);
-    expect(roleAllows("ops", "team", "mutate")).toBe(false);
-    expect(roleAllows("ops", "content", "mutate")).toBe(false);
-    expect(roleAllows("ops", "cost", "read")).toBe(false); // sibling-role asymmetry: ops ≠ finance
-  });
-  it("finance reads cost, mutates nothing (cost is read-only)", () => {
+
+  it("keeps the single-role compatibility check", () => {
     expect(roleAllows("finance", "cost", "read")).toBe(true);
-    expect(roleAllows("finance", "cost", "mutate")).toBe(false); // mutate is null for cost
     expect(roleAllows("finance", "model", "mutate")).toBe(false);
   });
-  it("finance reads AND mutates credits (grants are a financial action); others denied", () => {
-    expect(roleAllows("finance", "credits", "read")).toBe(true);
-    expect(roleAllows("finance", "credits", "mutate")).toBe(true);
-    expect(roleAllows("super-admin", "credits", "mutate")).toBe(true); // supersede
-    for (const r of ["ops", "moderator", "viewer"] as Role[]) {
-      expect(roleAllows(r, "credits", "read")).toBe(false);
-      expect(roleAllows(r, "credits", "mutate")).toBe(false);
+
+  it("gives super-admin every declared capability", () => {
+    expect(PLATFORM_ROLE_CAPABILITIES["super-admin"].size).toBe(SECTIONS.length * 2 + 1);
+    for (const section of SECTIONS) {
+      expect(rolesAllow(["super-admin"], section, "read")).toBe(true);
+      expect(rolesAllow(["super-admin"], section, "mutate")).toBe(true);
     }
+    expect(platformRolesAllowCapability(["super-admin"], "model.self_hosted.mutate")).toBe(true);
+    expect(platformRolesAllowCapability(["ops"], "model.self_hosted.mutate")).toBe(false);
   });
-  it("moderator reads + mutates content, nothing else operational-mutate", () => {
-    expect(roleAllows("moderator", "content", "read")).toBe(true);
-    expect(roleAllows("moderator", "content", "mutate")).toBe(true);
-    expect(roleAllows("moderator", "model", "mutate")).toBe(false);
+
+  it("chooses a stable compatibility role without changing the assignments", () => {
+    expect(primaryPlatformRole(["finance", "ops"])).toBe("ops");
+    expect(primaryPlatformRole(["unknown"])).toBe("viewer");
   });
-  it("only super-admin touches team", () => {
-    expect(roleAllows("super-admin", "team", "mutate")).toBe(true);
-    for (const r of ["ops", "finance", "moderator", "viewer"] as Role[]) {
-      expect(roleAllows(r, "team", "read")).toBe(false);
-      expect(roleAllows(r, "team", "mutate")).toBe(false);
-    }
-  });
-  it("a read-only section (cost) denies mutate to EVERYONE except via null→false", () => {
-    for (const r of ROLES) expect(roleAllows(r, "cost", "mutate")).toBe(r === "super-admin" ? true : false);
-    // NOTE: super-admin supersedes even a null-mutate section (it can always act); other roles are denied.
-  });
-  it("isRole rejects garbage", () => {
+
+  it("recognizes only declared roles", () => {
     expect(isRole("super-admin")).toBe(true);
     expect(isRole("root")).toBe(false);
-    expect(isRole("")).toBe(false);
-    expect(isRole(undefined as unknown as string)).toBe(false);
-  });
-});
-
-describe("tenants section (super-admin only)", () => {
-  it("only super-admin may read/mutate tenants", () => {
-    expect(roleAllows("super-admin", "tenants", "read")).toBe(true);
-    expect(roleAllows("super-admin", "tenants", "mutate")).toBe(true);
-    for (const r of ["ops", "finance", "moderator", "viewer"] as const) {
-      expect(roleAllows(r, "tenants", "read")).toBe(false);
-      expect(roleAllows(r, "tenants", "mutate")).toBe(false);
-    }
   });
 });

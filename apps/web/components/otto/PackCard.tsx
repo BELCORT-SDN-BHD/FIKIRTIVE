@@ -164,13 +164,17 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
             const desc = c.p.structuredPrompt || (isVideo ? "A short video" : "An image");
             const isDone = doneCardIds.has(c.cardId) || c.cardState === "done" || c.cardState === "working";
             const isFailed = c.cardState === "failed";
+            // The merchant stopped this one. Not a failure, so no dimming and no red word
+            // — without its own branch it fell through to the "queued" row and sat there
+            // for ever, which is the pack's version of the eternal spinner (#602 r2).
+            const isCancelled = c.cardState === "cancelled";
             const isGenerating = c.cardState === "idle" && running && idleCards.findIndex((ic) => ic.cardId === c.cardId) === currentIdx;
 
             return (
               <div
                 key={c.cardId}
                 className="flex items-center gap-3 rounded-[14px] bg-card px-3 py-2.5"
-                style={{ opacity: isFailed ? 0.6 : 1 }}
+                style={{ opacity: isFailed || isCancelled ? 0.6 : 1 }}
               >
                 {/* Icon bubble: --brand-soft in .fk.gb-skin = neutral gray #ECECEA = .gb --accent */}
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-[8px] bg-accent text-foreground">
@@ -185,7 +189,9 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
                   </div>
                 </div>
                 <div className="shrink-0 text-[0.75rem]">
-                  {isFailed ? (
+                  {isCancelled ? (
+                    <span className="text-muted-foreground">cancelled</span>
+                  ) : isFailed ? (
                     <span className="text-[var(--error-soft-foreground)]">failed</span>
                   ) : isDone ? (
                     <span className="text-[var(--success)]">✓</span>

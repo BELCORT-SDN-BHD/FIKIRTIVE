@@ -47,14 +47,19 @@ describe("isInFlightPaidGen (paid-aware delete-guard predicate)", () => {
   // A paid GenJob that hasn't resolved to media yet: deleting the card won't refund it and
   // re-running mints a fresh per-click idempotencyKey → a SECOND charge. The delete confirm
   // must warn for exactly these nodes.
-  it("true for a still-generating image (pending, no url)", () => {
-    expect(isInFlightPaidGen({ type: "image", status: "pending" })).toBe(true);
+  // The card FACE, not the stored row word (#602 T3): a card being made reads as queued while its
+  // job waits and generating once it runs, and both are "paid and unresolved".
+  it("true for a still-generating image (generating, no url)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "generating" })).toBe(true);
+  });
+  it("true for an image whose job is only queued (accepted, not started)", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "queued" })).toBe(true);
   });
   it("true for a timed-out video (client gave up; job may still settle server-side)", () => {
     expect(isInFlightPaidGen({ type: "video", status: "timeout" })).toBe(true);
   });
   it("false once resolved to media (has url)", () => {
-    expect(isInFlightPaidGen({ type: "image", status: "pending", url: "https://r2/x.png" })).toBe(false);
+    expect(isInFlightPaidGen({ type: "image", status: "generating", url: "https://r2/x.png" })).toBe(false);
     expect(isInFlightPaidGen({ type: "video", status: "done", url: "https://tos/v.mp4" })).toBe(false);
   });
   it("false for a failed gen (terminal → already refunded, safe to delete)", () => {
@@ -64,7 +69,13 @@ describe("isInFlightPaidGen (paid-aware delete-guard predicate)", () => {
     expect(isInFlightPaidGen({ type: "video", status: "missing" })).toBe(false);
   });
   it("false for a text node (never paid)", () => {
-    expect(isInFlightPaidGen({ type: "text", status: "pending" })).toBe(false);
+    expect(isInFlightPaidGen({ type: "text", status: "generating" })).toBe(false);
+  });
+  it("false for a cancelled gen — the merchant stopped it, and it was refunded then", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "cancelled" })).toBe(false);
+  });
+  it("false for a card whose state is unknown — nothing is running to warn about", () => {
+    expect(isInFlightPaidGen({ type: "image", status: "unknown" })).toBe(false);
   });
 });
 
@@ -144,6 +155,29 @@ describe("startCanvasAction", () => {
     expect(retainCanvasActionIdentity("rejected")).toBe(false);
     expect(retainCanvasActionIdentity("accepted")).toBe(false);
     expect(retainCanvasActionIdentity("unknown")).toBe(true);
+  });
+
+  /**
+   * #656 P1 —— 「暂时失败,再试一次同一个动作」不是拒绝。
+   *
+   * 服务端在花钱之前遇到一次读故障时,它给的是「结果不明」而不是判决。这一格若被当成
+   * 确定性拒绝,这个 tab 就会把耐久回执删掉;商家下一次点击拿到的是**新**动作 id,而旧任务
+   * 可能还活着 —— 一次动作两笔钱。所以这一格必须保住动作身份。
+   */
+  it("keeps the action identity when the server says the outcome is unknown and retryable", async () => {
+    const fail = vi.fn();
+    const outcome = vi.fn();
+    m.startCanvasGen.mockResolvedValueOnce({
+      error: "We couldn't confirm the shape of the image you're editing — retry this same action.",
+      disposition: "retryable",
+    });
+
+    await expect(startCanvasAction({ actionId: "a" }, fail, outcome)).resolves.toBeNull();
+
+    expect(fail).toHaveBeenLastCalledWith(
+      "We couldn't confirm the shape of the image you're editing — retry this same action.",
+    );
+    expect(retainCanvasActionIdentity(outcome.mock.lastCall![0])).toBe(true);
   });
 });
 
@@ -248,6 +282,16 @@ describe("poll (F21)", () => {
     const onDone = vi.fn();
     await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
     expect(onDone).toHaveBeenCalledWith([], "failed", []);
+  });
+
+  it("reports 'cancelled' when the job was cancelled, never the soft 'still working' (#612)", async () => {
+    // Without this branch the tab keeps polling a job that has stopped, and eight minutes later
+    // tells the merchant to check back on something nobody is making.
+    m.getGenJob.mockResolvedValue({ status: "CANCELLED", urls: [], generationIds: [] });
+    const onDone = vi.fn();
+    await poll("j", onDone, cancelled, { intervalMs: 0, maxPolls: 5 });
+    expect(onDone).toHaveBeenCalledWith([], "cancelled", []);
+    expect(onDone).toHaveBeenCalledTimes(1);
   });
 
   it("reports 'missing' when the job is DONE but no media URL resolves", async () => {

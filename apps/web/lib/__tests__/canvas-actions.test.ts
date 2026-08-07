@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
+const { mockSettleCanvasCards, mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, mockProjectFindFirst, mockThreadFindFirst, mockGenerationFindFirst, mockGenerationFindMany, mockCanvasNodeFindFirst, mockGenJobFindFirst, mockGenJobFindMany, mockLedgerFindMany, mockOrganizationFindFirst, mockGetGenerationThumbs, mockNewId, mockPlaceCanvasJobNode, mockTombstoneCanvasNode } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockFindMany: vi.fn(),
   mockCreate: vi.fn(),
@@ -19,6 +19,7 @@ const { mockOwner, mockFindMany, mockCreate, mockUpdateMany, mockDeleteMany, moc
   mockNewId: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
   mockTombstoneCanvasNode: vi.fn(),
+  mockSettleCanvasCards: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
@@ -38,6 +39,9 @@ vi.mock("@fikirtive/db", () => ({
     creditLedger: { findMany: mockLedgerFindMany },
     organization: { findFirst: mockOrganizationFindFirst },
   },
+  // #601 r2: the board read no longer repairs a delivered job itself — it calls the ONE
+  // settlement the worker calls. Mocked here so these unit cases can prove the delegation.
+  settleCanvasCardsForGenJob: mockSettleCanvasCards,
 }));
 // Only newId is stubbed. The credit conversion stays REAL: a test that hand-rolls
 // internal→displayed would happily agree with a broken conversion (#547 B4 reads the ledger).
@@ -68,19 +72,23 @@ beforeEach(() => {
   mockGenerationFindMany.mockResolvedValue([]);
   mockLedgerFindMany.mockResolvedValue([]);
   mockOrganizationFindFirst.mockResolvedValue({ settings: {} });
+  mockSettleCanvasCards.mockResolvedValue({ status: "settled", nodeIds: [], created: 0, updated: 0 });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
     type: string; x: number; y: number; w: number; h: number; prompt?: string | null;
     generationId?: string | null; genJobId: string; status?: string;
-    sourceNodeId?: string | null; threadId?: string | null;
+    batchIndex?: number | null; batchSize?: number | null;
+    layoutAnchorNodeId?: string | null; madeFromNodeId?: string | null; threadId?: string | null;
   }) => ({
     inserted: true,
     node: {
       id: mockNewId(), type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
       text: null, prompt: input.prompt ?? null, generationId: input.generationId ?? null,
       genJobId: input.genJobId, status: input.status ?? "done",
-      sourceNodeId: input.sourceNodeId ?? null, threadId: input.threadId ?? null,
+      batchIndex: input.batchIndex ?? null, batchSize: input.batchSize ?? null,
+      layoutAnchorNodeId: input.layoutAnchorNodeId ?? null,
+      madeFromNodeId: input.madeFromNodeId ?? null, threadId: input.threadId ?? null,
     },
   }));
   mockUpdateMany.mockResolvedValue({ count: 1 });
@@ -107,7 +115,8 @@ describe("listCanvasNodes", () => {
       {
         id: "node-1", type: "video", x: 0, y: 0, w: 320, h: 320, text: null,
         prompt: "a cup steaming", generationId: "gen-1", genJobId: "job-1",
-        status: "done", sourceNodeId: "node-0", threadId: null,
+        status: "done", batchIndex: 0, batchSize: 1,
+        layoutAnchorNodeId: null, madeFromNodeId: "node-0", threadId: null,
       },
     ]);
     mockGenJobFindMany.mockResolvedValue([
@@ -141,7 +150,6 @@ describe("listCanvasNodes", () => {
       costCredits: 8,
       batchSize: 1,
       batchPosition: 1,
-      madeFromSource: true,
     });
     // Owner-scoped, every table: a merchant can only ever read their own workspace's record.
     expect(mockLedgerFindMany).toHaveBeenCalledWith(
@@ -154,20 +162,21 @@ describe("listCanvasNodes", () => {
     );
   });
   it("tells a batch's cards apart from a card made from another card (review P2-2)", async () => {
-    // Two cards of ONE "make 2 images" press. Both store the batch's first card in
-    // sourceNodeId as their layout anchor, and neither was made FROM the other — the paid job
-    // recorded no source generation at all.
+    // Two cards of ONE "make 2 images" press. The sibling records the batch anchor it was laid
+    // out around, in the column that means exactly that — and neither was made FROM the other.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
     mockFindMany.mockResolvedValue([
       {
         id: "node-primary", type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
         prompt: "two takes", generationId: "gen-1", genJobId: "job-1",
-        status: "done", sourceNodeId: null, threadId: null,
+        status: "done", batchIndex: 0, batchSize: 2,
+        layoutAnchorNodeId: null, madeFromNodeId: null, threadId: null,
       },
       {
         id: "node-sibling", type: "image", x: 340, y: 0, w: 320, h: 320, text: null,
         prompt: "two takes", generationId: "gen-2", genJobId: "job-1",
-        status: "done", sourceNodeId: "node-primary", threadId: null,
+        status: "done", batchIndex: 1, batchSize: 2,
+        layoutAnchorNodeId: "node-primary", madeFromNodeId: null, threadId: null,
       },
     ]);
     mockGenJobFindMany.mockResolvedValue([
@@ -182,9 +191,15 @@ describe("listCanvasNodes", () => {
       "gen-2": { src: "/files/u1/two.png", kind: "image" },
     });
 
-    const rows = await listCanvasNodes("p1") as Array<{ id: string; lineage: { madeFromSource: boolean; batchSize: number; batchPosition: number | null } | null }>;
+    const rows = await listCanvasNodes("p1") as Array<{
+      id: string;
+      madeFromNodeId: string | null;
+      layoutAnchorNodeId: string | null;
+      lineage: { batchSize: number; batchPosition: number | null } | null;
+    }>;
 
-    expect(rows.map((row) => row.lineage?.madeFromSource)).toEqual([false, false]);
+    expect(rows.map((row) => row.madeFromNodeId)).toEqual([null, null]);
+    expect(rows.map((row) => row.layoutAnchorNodeId)).toEqual([null, "node-primary"]);
     // What they ARE is same-batch cards, and the record still says which is which.
     expect(rows.map((row) => [row.lineage?.batchPosition, row.lineage?.batchSize])).toEqual([[1, 2], [2, 2]]);
   });
@@ -199,7 +214,8 @@ describe("listCanvasNodes", () => {
     const board = [{
       id: "node-1", type: "image", x: 0, y: 0, w: 320, h: 320, text: null,
       prompt: "a cup steaming", generationId: "gen-1", genJobId: "job-1",
-      status: "done", sourceNodeId: null, threadId: null,
+      status: "done", batchIndex: 0, batchSize: 1,
+      layoutAnchorNodeId: null, madeFromNodeId: null, threadId: null,
     }];
     /** The board's OWN job read stays healthy; only the lineage-shaped one is broken. */
     const breakLineageJobRead = () => {
@@ -251,7 +267,7 @@ describe("listCanvasNodes", () => {
         generationId: null,
         genJobId: "job-1",
         status: "timeout",
-        sourceNodeId: null,
+        batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
         threadId: null,
       },
     ]);
@@ -269,10 +285,11 @@ describe("listCanvasNodes", () => {
     expect(mockGenJobFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: ["job-1"] }, ownerId: "u1", projectId: "p1" } }),
     );
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-1", ownerId: "u1", projectId: "p1", status: "timeout", generationId: null },
-      data: { status: "done", generationId: "gen-1" },
-    });
+    // #613 T2d: the ROW is nobody's business here. What the merchant sees above is resolved for
+    // display only; the row itself is written by the job's completion path and, if that fell over,
+    // by the backfill sweep. Opening a board settles nothing and writes nothing.
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it("recovers stale promptbar nodes from the first displayable job generation", async () => {
@@ -290,7 +307,7 @@ describe("listCanvasNodes", () => {
         generationId: null,
         genJobId: "job-1",
         status: "pending",
-        sourceNodeId: null,
+        batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
         threadId: null,
       },
     ]);
@@ -306,18 +323,16 @@ describe("listCanvasNodes", () => {
       }),
     ]);
     expect(mockGetGenerationThumbs).toHaveBeenCalledWith("u1", expect.arrayContaining(["gen-missing", "gen-good"]));
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-1", ownerId: "u1", projectId: "p1", status: "pending", generationId: null },
-      data: { status: "done", generationId: "gen-good" },
-    });
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("recovers missing sibling nodes for a completed multi-variant canvas job", async () => {
+  it("leaves a batch with missing cards alone — it places nothing and settles nothing", async () => {
+    // The read path used to plan and place the missing siblings itself, with its own idea of where
+    // they go and what they hang off. That second opinion is what made an open tab produce a
+    // different board from a closed one (#601 r2 P2②). #601 T2b replaced it with a call to the ONE
+    // settlement; #613 T2d removes even that — a board read is a read.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
-    mockNewId
-      .mockReturnValueOnce("node-sib-1")
-      .mockReturnValueOnce("node-sib-2")
-      .mockReturnValueOnce("node-sib-3");
     mockFindMany.mockResolvedValue([
       {
         id: "node-primary",
@@ -331,7 +346,7 @@ describe("listCanvasNodes", () => {
         generationId: null,
         genJobId: "job-1",
         status: "pending",
-        sourceNodeId: null,
+        batchIndex: null, batchSize: null, layoutAnchorNodeId: null, madeFromNodeId: null,
         threadId: "thread-1",
       },
     ]);
@@ -340,94 +355,33 @@ describe("listCanvasNodes", () => {
     ]);
     mockGetGenerationThumbs.mockResolvedValue({
       "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
-      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
-      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
-      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
     });
 
-    await expect(listCanvasNodes("p1")).resolves.toEqual([
-      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
-      expect.objectContaining({ id: "node-sib-1", generationId: "gen-2", status: "done", url: "/files/u1/two.jpeg", x: 440, y: 50 }),
-      expect.objectContaining({ id: "node-sib-2", generationId: "gen-3", status: "done", url: "/files/u1/three.jpeg", x: 100, y: 390 }),
-      expect.objectContaining({ id: "node-sib-3", generationId: "gen-4", status: "done", url: "/files/u1/four.jpeg", x: 440, y: 390 }),
-    ]);
-    expect(mockUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-primary", ownerId: "u1", projectId: "p1", status: "pending", generationId: null },
-      data: { status: "done", generationId: "gen-1" },
-    });
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        ownerId: "u1",
-        projectId: "p1",
-        generationId: "gen-2",
-        genJobId: "job-1",
-        status: "done",
-        threadId: "thread-1",
-        x: 440,
-        y: 50,
-    }));
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(2, expect.objectContaining({ generationId: "gen-3", x: 100, y: 390 }));
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(3, expect.objectContaining({ generationId: "gen-4", x: 440, y: 390 }));
+    await listCanvasNodes("p1");
+
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("does not create duplicate siblings when another reload already claimed the primary repair", async () => {
+  it("does not ask the settlement for a job whose board already matches it either", async () => {
+    // The board that needs nothing and the board that needs everything now cost the same: a read.
     mockProjectFindFirst.mockResolvedValue({ id: "p1" });
-    mockUpdateMany.mockResolvedValue({ count: 0 });
     mockFindMany.mockResolvedValue([
       {
-        id: "node-primary",
-        type: "image",
-        x: 100,
-        y: 50,
-        w: 320,
-        h: 320,
-        text: null,
-        prompt: "four variants",
-        generationId: null,
-        genJobId: "job-1",
-        status: "pending",
-        sourceNodeId: null,
-        threadId: "thread-1",
+        id: "node-1",
+        type: "image", x: 0, y: 0, w: 320, h: 320, text: null, prompt: "one",
+        generationId: "gen-1", genJobId: "job-1", status: "done",
+        batchIndex: 0, batchSize: 1, layoutAnchorNodeId: null, madeFromNodeId: null, threadId: null,
       },
     ]);
-    mockGenJobFindMany.mockResolvedValue([
-      { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] },
-    ]);
-    mockGetGenerationThumbs.mockResolvedValue({
-      "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
-      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
-      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
-      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
-    });
-    for (const [index, generationId] of ["gen-2", "gen-3", "gen-4"].entries()) {
-      mockPlaceCanvasJobNode.mockResolvedValueOnce({
-        inserted: false,
-        node: {
-          id: `node-existing-${index + 2}`,
-          type: "image",
-          x: index % 2 === 0 ? 440 : 100,
-          y: index < 1 ? 50 : 390,
-          w: 320,
-          h: 320,
-          text: null,
-          prompt: "four variants",
-          generationId,
-          genJobId: "job-1",
-          status: "done",
-          sourceNodeId: "node-primary",
-          threadId: "thread-1",
-        },
-      });
-    }
+    mockGenJobFindMany.mockResolvedValue([{ id: "job-1", status: "DONE", generationIds: ["gen-1"] }]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/one.jpeg", kind: "image" } });
 
-    await expect(listCanvasNodes("p1")).resolves.toEqual([
-      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
-      expect.objectContaining({ id: "node-existing-2", generationId: "gen-2", url: "/files/u1/two.jpeg" }),
-      expect.objectContaining({ id: "node-existing-3", generationId: "gen-3", url: "/files/u1/three.jpeg" }),
-      expect.objectContaining({ id: "node-existing-4", generationId: "gen-4", url: "/files/u1/four.jpeg" }),
-    ]);
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({ generationId: "gen-2" }));
+    await listCanvasNodes("p1");
+
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -488,7 +442,7 @@ describe("listCanvasNodes selects threadId", () => {
   });
 });
 
-describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId owner-scoped", () => {
+describe("createCanvasNode attribution — generationId/genJobId owner-scoped", () => {
   beforeEach(() => mockProjectFindFirst.mockResolvedValue({ id: "p1" }));
 
   it("nulls a generationId the caller does not own", async () => {
@@ -512,25 +466,23 @@ describe("createCanvasNode attribution — generationId/genJobId/sourceNodeId ow
     }));
   });
 
-  it("keeps sourceNodeId and genJobId only when they belong to the same owner+project", async () => {
-    mockCanvasNodeFindFirst.mockResolvedValue({ id: "source-mine" });
+  it("keeps genJobId only when it belongs to the same owner+project, and takes no source from the caller", async () => {
     mockGenJobFindFirst.mockResolvedValue({ id: "job-mine" });
     mockCreate.mockResolvedValue({ id: "node-1" });
 
     await createCanvasNode({
       projectId: "p1", type: "video", x: 0, y: 0, w: 1, h: 1,
-      sourceNodeId: "source-mine", genJobId: "job-mine",
+      genJobId: "job-mine",
     });
 
-    expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: "source-mine", ownerId: "u1", projectId: "p1" },
-    }));
     expect(mockGenJobFindFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: "job-mine", ownerId: "u1", projectId: "p1" },
     }));
     expect(mockPlaceCanvasJobNode).toHaveBeenCalledWith(expect.objectContaining({
-      sourceNodeId: "source-mine", genJobId: "job-mine",
+      genJobId: "job-mine",
     }));
+    // Parentage is the paid job's own record; no caller may name it (#603 T4).
+    expect(mockPlaceCanvasJobNode.mock.calls[0]![0]).not.toHaveProperty("sourceNodeId");
   });
 
   it("reuses a paid job's primary node after a lost create response", async () => {
@@ -577,7 +529,7 @@ describe("resolveCanvasNode", () => {
     mockGenerationFindFirst.mockResolvedValue({ id: "g1" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "done", generationId: "g1" })).resolves.toEqual({ ok: true, applied: true });
 
     expect(mockCanvasNodeFindFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -599,10 +551,24 @@ describe("resolveCanvasNode", () => {
     );
     expect(mockUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "node-1", ownerId: "u1", projectId: "p1", status: { not: "deleted" } },
+        // The late-write barrier (#612 r2): a resolve may only change a card that is still in
+        // one of the states a browser owns, and may never erase or re-point a paid output. A
+        // report from a tab that has fallen behind therefore matches no row at all.
+        where: { id: "node-1", ownerId: "u1", projectId: "p1", status: { in: ["pending", "timeout"] }, generationId: null },
         data: { status: "done", generationId: "g1" },
       }),
     );
+  });
+
+  it("tells the caller its report was refused, and what the card actually says", async () => {
+    // #612 r2: silence here is what let a stale tab paint "Still working…" over a settled card.
+    mockCanvasNodeFindFirst
+      .mockResolvedValueOnce({ id: "node-1", projectId: "p1" })
+      .mockResolvedValueOnce({ status: "failed" });
+    mockUpdateMany.mockResolvedValue({ count: 0 }); // the barrier matched no row
+
+    await expect(resolveCanvasNode("p1", "node-1", { status: "timeout" }))
+      .resolves.toEqual({ ok: true, applied: false, status: "failed" });
   });
 
   it("does not resolve a paid job node to an unrelated same-project generation", async () => {
@@ -632,7 +598,7 @@ describe("resolveCanvasNode", () => {
     mockCanvasNodeFindFirst.mockResolvedValue({ id: "node-1", projectId: "p1" });
     mockUpdateMany.mockResolvedValue({ count: 1 });
 
-    await expect(resolveCanvasNode("p1", "node-1", { status: "failed" })).resolves.toEqual({ ok: true });
+    await expect(resolveCanvasNode("p1", "node-1", { status: "failed" })).resolves.toEqual({ ok: true, applied: true });
 
     expect(mockGenerationFindFirst).not.toHaveBeenCalled();
     expect(mockUpdateMany).toHaveBeenCalledWith(
