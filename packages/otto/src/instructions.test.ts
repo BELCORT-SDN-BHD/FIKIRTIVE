@@ -218,14 +218,105 @@ describe("ottoInstructions — #498 verbal approval honesty (generate)", () => {
   });
 });
 
-describe("ottoInstructions — #541 confirming is a button press, never a word", () => {
+describe("ottoInstructions — #541 approving happens on the card, never by a word", () => {
   // Founder production repro (2026-07-31): despite the #498 rule, Otto still said
   // 'Just say "make it" and I\'ll get it going!' — the runtime then correctly refused the
   // words. Ruling: the only next-step instruction Otto may give for a pending card is to
-  // press the Confirm button on the card.
-  it("names pressing the Confirm button on the card as the only way work starts", () => {
-    expect(ottoInstructions).toMatch(/press the Confirm button on the card/);
+  // act on the card itself.
+  it("names approving on the card as the only way work starts", () => {
+    expect(ottoInstructions).toMatch(/approve it on the card/i);
     expect(ottoInstructions).toMatch(/ONLY thing that ever starts the work/i);
+  });
+
+  // ── r1 judge P1-1 · load-bearing pin ───────────────────────────────────────────
+  // The r1 judge caught this test family checking only that a sentence EXISTS, never
+  // that the prompt agrees with itself. It didn't: the generate section ordered Otto to
+  // name a button, while "Honesty & limits" banned naming any button — one prompt, two
+  // opposite orders, and `runtime.ts` ships exactly this string. Worse, the button it
+  // named ("Confirm") does not exist: the real card reads "Review cost ·" first and only
+  // then "Confirm generate ·". Naming a label Otto cannot see is the very #541 disease.
+  //
+  // This pin is the contradiction detector, not a string presence check: if anyone ever
+  // re-introduces a named button in the spend path, the blanket ban must carry a matching
+  // exception, or this goes red.
+  it("does not order Otto to name a UI button it cannot see (no hardcoded labels)", () => {
+    // No label from the real confirm flow may be quoted as something to press. These are
+    // the labels the app actually renders today (OttoPlanCard / TemplateModal /
+    // AddAssetDialog); an exact-label pin lives in apps/web where the components are.
+    for (const label of ["Confirm button", "Review cost", "Confirm generate", "Approve button"]) {
+      expect(ottoInstructions, `must not tell the user to press "${label}"`).not.toContain(label);
+    }
+  });
+
+  it("keeps the button-naming ban and the spend path from contradicting each other", () => {
+    const bansNamingButtons = /Never tell the user to click a specific button or UI element/.test(
+      ottoInstructions,
+    );
+    // The spend path must still be able to point at the card — that is the Founder's
+    // ruling. So the blanket ban has to carry an explicit, narrow carve-out for the card
+    // Otto itself put in the conversation. Ban with no carve-out + a card instruction =
+    // the contradiction the judge found.
+    const carvesOutOttosOwnCard =
+      /exception is a card you yourself put in this conversation/i.test(ottoInstructions);
+    const tellsUserToActOnCard = /approve it on the card/i.test(ottoInstructions);
+    if (bansNamingButtons && tellsUserToActOnCard) {
+      expect(
+        carvesOutOttosOwnCard,
+        "the prompt both bans naming UI and tells the user to act on the card — the ban must carve out Otto's own card, or the two orders contradict",
+      ).toBe(true);
+    }
+    // And the carve-out must not become a licence to name the label anyway.
+    if (carvesOutOttosOwnCard) {
+      expect(ottoInstructions).toMatch(/never name the button on it/i);
+    }
+  });
+
+  // ── r1 judge P1-2 · load-bearing pin ───────────────────────────────────────────
+  // "words … never spend credits" was flatly false: every conversation turn is metered
+  // (otto-actions.ts reserves `otto-turn:<userMessageId>`), and the prompt says so itself
+  // in the spending section. The true boundary is narrower: typing never starts a
+  // GENERATION and never spends what a generation costs — but talking is not free.
+  // One definition, used by both the ban and its positive control — a second copy would
+  // let the two drift apart, which is how a ban quietly stops catching anything.
+  const ABSOLUTE_FREE_TYPING_CLAIMS = [
+    /\bwords?\b[^.!?\n]{0,40}\bnever\s+spends?\s+credits\b/i,
+    /\b(?:typing|talking|words?|chatting|a\s+message)\b[^.!?\n]{0,40}\b(?:never|doesn['’]t|does\s+not|won['’]t)\s+(?:costs?|spends?)\s+(?:you\s+)?(?:any\s+)?credits\b/i,
+    /\b(?:typing|talking|chatting)\b[^.!?\n]{0,20}\bis\s+free\b/i,
+  ];
+
+  it("never claims words are free, and states the real boundary instead", () => {
+    for (const claim of ABSOLUTE_FREE_TYPING_CLAIMS) {
+      expect(ottoInstructions, `absolute free-typing claim ${claim} must not appear`).not.toMatch(
+        claim,
+      );
+    }
+    // The accurate replacement must be present: words don't start a generation / don't
+    // spend a GENERATION's credits — stated without claiming a turn is free.
+    expect(ottoInstructions).toMatch(/never spends what a generation costs/i);
+    // And the prompt must keep telling the truth that a turn does cost.
+    expect(ottoInstructions).toMatch(/Talking to you costs credits/);
+  });
+
+  it("the free-typing ban actually catches the wording it is meant to stop", () => {
+    const falseClaims = [
+      // the exact r1 sentence:
+      "words never start it and never spend credits",
+      "typing never costs credits",
+      "talking to me doesn't cost credits",
+      "chatting is free",
+      "a message never costs you any credits",
+      "words will never spend credits",
+    ];
+    for (const claim of falseClaims) {
+      expect(
+        ABSOLUTE_FREE_TYPING_CLAIMS.some((pattern) => pattern.test(claim)),
+        `false claim "${claim}" must be caught`,
+      ).toBe(true);
+    }
+    // Positive control the other way: the true, narrower sentence must survive the ban.
+    const trueBoundary =
+      "No words start it, and typing never spends what a generation costs — though a conversation turn has its own cost.";
+    expect(ABSOLUTE_FREE_TYPING_CLAIMS.some((pattern) => pattern.test(trueBoundary))).toBe(false);
   });
 
   // #559-style conservative safety lint: these are auditable banned wording families,
