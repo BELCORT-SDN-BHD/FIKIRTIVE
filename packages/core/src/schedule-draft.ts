@@ -29,6 +29,36 @@ export const SCHEDULE_CHANNEL_CAPS: Record<
   x: { label: "X", maxMediaCount: 0, supportsFirstComment: false },
 };
 
+/** Everything still missing before a DRAFT may be approved (spec §五), in the order the composer
+ *  presents the fields. Empty ⇒ approvable. Each entry is a finished merchant-facing sentence.
+ *
+ *  ONE rule, ONE set of sentences, both write paths: the server action (approveScheduledPost) and
+ *  the composer's "Approve & schedule" button read this. They used to diverge in the worst possible
+ *  way (#695) — the button gated on BOTH conditions but explained only the first, so picking an
+ *  account made the hint vanish and left the button silently greyed out with nothing on screen
+ *  about the image that was actually missing. Pure, so it lives here with validateScheduleDraft. */
+export function scheduleApproveBlockers(input: {
+  channel: string;
+  hasTarget: boolean;
+  mediaCount: number;
+}): string[] {
+  const blockers: string[] = [];
+  if (!input.hasTarget) blockers.push("Pick which account to post to before approving.");
+  // X supports text-only posts; Meta (IG/FB) organic publish is media-first in this slice, so the
+  // ≥1-media requirement follows the channel's own cap (X's is 0) instead of naming X. An unknown
+  // channel gets no media sentence — its own rejection is isScheduleChannel's job, not this one's.
+  const caps = isScheduleChannel(input.channel) ? SCHEDULE_CHANNEL_CAPS[input.channel] : null;
+  if (caps && caps.maxMediaCount > 0 && input.mediaCount === 0) {
+    // Instagram is image-only (#229) — "or video" would mislead an IG owner into adding one.
+    blockers.push(
+      input.channel === "instagram"
+        ? "Add at least one image before approving."
+        : "Add at least one image or video before approving.",
+    );
+  }
+  return blockers;
+}
+
 export type ScheduleDraftInput = {
   channel: string;
   caption: string;

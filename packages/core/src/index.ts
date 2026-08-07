@@ -119,6 +119,7 @@ export {
   isScheduleChannel,
   isValidScheduleTimeZone,
   parseScheduleInstant,
+  scheduleApproveBlockers,
   validateScheduleDraft,
   type ScheduleChannel,
   type ScheduleDraftInput,

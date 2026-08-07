@@ -7,6 +7,7 @@ import {
   isScheduleChannel,
   newId,
   parseScheduleInstant,
+  scheduleApproveBlockers,
   SCHEDULE_CHANNEL_CAPS,
   type ScheduledPostStatus,
 } from "@fikirtive/core";
@@ -324,14 +325,15 @@ export async function approveScheduledPost(
   if (unconfirmed) {
     return { error: "This post may already be live — please review it before publishing again." };
   }
-  // Consent needs a resolved target that the owner actually owns.
-  if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
-  // X supports text-only posts; Meta (IG/FB) organic publish is media-first in this slice, so the
-  // ≥1-media requirement forks by channel (X exempt) — else a text-only X post could never be approved.
-  if (!post.media.length && post.channel !== "x") {
-    // Instagram is image-only (#229) — "or video" would mislead an IG owner into adding one.
-    return { error: post.channel === "instagram" ? "Add at least one image before approving." : "Add at least one image or video before approving." };
-  }
+  // Consent needs a resolved target the owner actually owns, and (outside text-only channels) at
+  // least one media row. Both conditions AND both sentences come from the shared pure rule so the
+  // composer's "Approve & schedule" button can gate and EXPLAIN itself with the same truth (#695).
+  const approveBlockers = scheduleApproveBlockers({
+    channel: post.channel,
+    hasTarget: !!post.metaTargetId,
+    mediaCount: post.media.length,
+  });
+  if (approveBlockers.length > 0) return { error: approveBlockers[0]! };
   if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
   const caps = SCHEDULE_CHANNEL_CAPS[post.channel];
   if (post.media.length > caps.maxMediaCount) {

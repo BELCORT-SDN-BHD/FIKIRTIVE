@@ -9,6 +9,8 @@ import { classifyMetaGraphError } from "./meta-errors";
 import { fetchOwnerInsights, type AccountInsights } from "./meta-insights";
 import { isImpersonating } from "@/lib/better-auth/compat";
 
+/** `status` is Meta's raw numeric `account_status` — machine truth, never merchant-facing copy.
+ *  Anything showing it to a merchant must go through describeMetaAdAccountStatus (#693). */
 export type MetaAdAccount = { id: string; name: string; currency: string; status: string };
 
 /** Enforces auth itself; NEVER accept ownerId from the caller. */

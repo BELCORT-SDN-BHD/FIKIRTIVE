@@ -26,7 +26,10 @@ import {
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
-import { CHANNEL_META, channelMeta } from "@/lib/channels/channel-meta";
+import { CONNECTABLE_CHANNEL_META, channelMeta } from "@/lib/channels/channel-meta";
+// Subpath, not the `@fikirtive/core` barrel: this file is client-reachable, and the barrel pulls in
+// Node-capable modules (pinned by lib/__tests__/client-core-imports.test.ts). schedule-draft is pure.
+import { scheduleApproveBlockers } from "@fikirtive/core/schedule-draft";
 import type { ChannelId, ChannelCapabilities } from "@/lib/channels/types";
 import {
   partsInTz,
@@ -306,7 +309,7 @@ export function OttoSchedule({
     [targets],
   );
   const connectedChannels = useMemo(
-    () => CHANNEL_META.filter((c) => postableChannelIds.has(c.id)),
+    () => CONNECTABLE_CHANNEL_META.filter((c) => postableChannelIds.has(c.id)),
     [postableChannelIds],
   );
 
@@ -319,7 +322,7 @@ export function OttoSchedule({
   function openNew() {
     setComposer({
       mode: "create",
-      channel: connectedChannels[0]?.id ?? CHANNEL_META[0]?.id ?? "instagram",
+      channel: connectedChannels[0]?.id ?? CONNECTABLE_CHANNEL_META[0]?.id ?? "instagram",
       caption: "",
       media: [],
       dateKey: dayKey(partsInTz(new Date(), defaultTz)),
@@ -440,7 +443,10 @@ export function OttoSchedule({
       {composer && (
         <Composer
           seed={composer}
-          channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : CHANNEL_META.map((c) => c.id)}
+          // Nothing connected yet ⇒ offer the channels a merchant can actually connect, never
+          // "all of them" (#694): the old fallback put X in front of brand-new merchants, whose
+          // Connect button led to a Connections row with nothing to press.
+          channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : CONNECTABLE_CHANNEL_META.map((c) => c.id)}
           targets={targets}
           mediaChoices={mediaChoices}
           onClose={() => setComposer(null)}
@@ -469,7 +475,8 @@ function ChannelFilterBar({
 }) {
   const opts: { key: ChannelFilter; label: string }[] = [
     { key: "all", label: "All" },
-    ...CHANNEL_META.map((c) => ({ key: c.id, label: c.label })),
+    // Same filter as the composer (#694): a channel nobody can connect can't have posts to filter.
+    ...CONNECTABLE_CHANNEL_META.map((c) => ({ key: c.id, label: c.label })),
   ];
   return (
     <div className="inline-flex gap-1.5">
@@ -625,9 +632,15 @@ function PlanCard({
   const [error, setError] = useState<string | null>(null);
   const groups = useMemo(() => groupByDay(posts), [posts]);
 
-  // Only posts that CAN be approved (have a target + media) count toward "Approve all".
+  // Only posts that CAN be approved count toward "Approve all" — same shared rule the server
+  // enforces and the composer explains (#695), not a third hand-written copy of it.
   const approvable = useMemo(
-    () => posts.filter((p) => p.metaTargetId && p.media.length > 0),
+    () =>
+      posts.filter(
+        (p) =>
+          scheduleApproveBlockers({ channel: p.channel, hasTarget: !!p.metaTargetId, mediaCount: p.media.length })
+            .length === 0,
+      ),
     [posts],
   );
 
@@ -1141,7 +1154,15 @@ function Composer({
   // Approve = DRAFT→SCHEDULED, which the server rejects without a resolved owner-owned target AND
   // at least one media item. Gate BOTH in the UI so "Approve & schedule" never fires create-then-
   // fail-approval and leaves an orphan draft behind (#123): require a target AND media before approve.
-  const canApprove = editable && !!metaTargetId && (maxMedia === 0 || media.length > 0);
+  //
+  // #695 — the gate and the EXPLANATION now come from the same shared rule the server enforces
+  // (scheduleApproveBlockers). Previously the button gated on both conditions but only ever
+  // explained the account one, so picking an account made the hint disappear and left the button
+  // silently greyed out — the missing image was never mentioned anywhere on screen.
+  const approveBlockers = editable
+    ? scheduleApproveBlockers({ channel, hasTarget: !!metaTargetId, mediaCount: media.length })
+    : [];
+  const canApprove = editable && approveBlockers.length === 0;
 
   function toggleMedia(genId: string) {
     setMedia((cur) => {
@@ -1369,6 +1390,17 @@ function Composer({
 
         {error && <div role="alert" className="text-[12.5px] text-[var(--error-soft-foreground)]">{error}</div>}
 
+        {/* #695 — what "Approve & schedule" is still waiting for, on screen for as long as it is
+            greyed out. A title attribute alone was invisible to anyone not hovering (and to screen
+            readers), and it only ever covered the first of the two conditions. */}
+        {approveBlockers.length > 0 && (
+          <div role="status" className="text-[12.5px] text-muted-foreground flex flex-col gap-0.5">
+            {approveBlockers.map((b) => (
+              <span key={b}>{b}</span>
+            ))}
+          </div>
+        )}
+
         <DialogFooter className="flex-wrap">
           {seed.mode === "edit" && status && status !== "CANCELLED" && status !== "PUBLISHED" && (
             <Button variant="ghost" size="sm" className="mr-auto text-[var(--error-soft-foreground)]" disabled={busy} onClick={cancelPost}>
@@ -1382,7 +1414,7 @@ function Composer({
             variant="default"
             size="sm"
             disabled={busy || !canApprove}
-            title={editable && !metaTargetId ? "Pick an account to approve" : undefined}
+            title={approveBlockers.length > 0 ? approveBlockers.join(" ") : undefined}
             onClick={() => persist(true)}
           >
             {busy ? "Saving…" : "Approve & schedule"}

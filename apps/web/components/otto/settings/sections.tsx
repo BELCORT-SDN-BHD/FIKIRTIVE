@@ -7,6 +7,7 @@ import { setAdsAutonomy } from "@/lib/otto-client-actions";
 import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
+import { isConnectableChannel } from "@/lib/channels/channel-meta";
 
 export type ChannelState = {
   id: string;
@@ -134,7 +135,11 @@ export function buildSettingsSections(args: {
           kind: "custom",
           id: "manage",
           render: () => {
-            const connectedCount = channels.filter((c) => c.status === "connected").length;
+            // #694 — count only what a merchant can actually connect today. The registry also
+            // carries X, which has no connect flow, so "2 of 3 connected" told a fully connected
+            // merchant they were still one short.
+            const connectable = channels.filter((c) => isConnectableChannel(c.id));
+            const connectedCount = connectable.filter((c) => c.status === "connected").length;
             return (
               <div
                 style={{
@@ -147,7 +152,7 @@ export function buildSettingsSections(args: {
                 <div>
                   <div className="cv-set-lbl">Publishing channels</div>
                   <div className="cv-set-hint">
-                    {connectedCount} of {channels.length} connected
+                    {connectedCount} of {connectable.length} connected
                   </div>
                 </div>
                 <a className="cv-set-btn" href="/otto?view=connections">
