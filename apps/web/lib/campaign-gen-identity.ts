@@ -10,7 +10,8 @@
  * a credit — startGen remains the sole spend authority.
  */
 import { createHash } from "node:crypto";
-import { stableCellLogicalPrefix } from "./factory-batch";
+import { factoryLogicalPrefix } from "./batch-idempotency";
+import { stableCellLogicalPrefix, MAX_BATCH_CELLS } from "./factory-batch";
 
 /**
  * The batch id is DERIVED on the server from (campaignId, projectId), never supplied by the
@@ -40,4 +41,18 @@ export function campaignEntryLogicalPrefix(
   entryId: string,
 ): string {
   return stableCellLogicalPrefix(deriveCampaignBatchId(campaignId, projectId), entryId);
+}
+
+/**
+ * The POSITIONAL key prefixes the same campaign batch used before per-entry stable ids existed.
+ *
+ * Those rows carry a cell INDEX, not an entry id (factory-batch's migration path says so in as
+ * many words), so no reader can prove which entry a positional row paid for. Any caller asking
+ * "was this entry charged?" must therefore treat a batch with positional history as "possibly,
+ * and I cannot tell" — the same fail-closed stance factory-batch already takes when old and new
+ * material cannot be matched one to one.
+ */
+export function campaignLegacyCellPrefixes(campaignId: string, projectId: string): string[] {
+  const batchId = deriveCampaignBatchId(campaignId, projectId);
+  return Array.from({ length: MAX_BATCH_CELLS }, (_, index) => factoryLogicalPrefix(batchId, index));
 }

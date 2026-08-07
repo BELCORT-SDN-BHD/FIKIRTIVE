@@ -49,14 +49,22 @@ const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const {
   deleteCampaign,
+  removeCampaignEntry,
   setCampaignStatus,
   unapproveCampaignEntry,
   updateCampaign,
 } = await import("@/lib/campaign-actions");
 const { getCampaign, listCampaigns } = await import("@/lib/campaign-view-data");
 const { quoteCampaignGeneration } = await import("@/lib/campaign-generation-confirm");
-const { campaignEntryLogicalPrefix, deriveCampaignBatchId } = await import("@/lib/campaign-gen-identity");
+const {
+  campaignEntryLogicalPrefix,
+  campaignLegacyCellPrefixes,
+  deriveCampaignBatchId,
+} = await import("@/lib/campaign-gen-identity");
 const { orchestrateBatch } = await import("@/lib/factory-batch");
+const { underCampaignApprovalLock } = await import("@/lib/campaign-approval-lock");
+const { dispatchedCampaignEntryIds } = await import("@/lib/campaign-dispatch-history");
+const { runAsUser } = await import("@fikirtive/db/principal");
 
 function asUser(email: string) { mockAuth.mockResolvedValue({ user: { email } }); }
 async function ensureUser(email: string) {
@@ -74,6 +82,12 @@ function testId(): string {
   }
   return out;
 }
+
+/** The single refusal both paid-set exits give, because the reason is the same one. */
+const ALREADY_DISPATCHED =
+  "This entry has already been sent for generation, so it can't be taken out of the plan. Its generation and credits stay in your history.";
+const CHECK_UNKNOWN =
+  "We couldn't check this entry's generation history — nothing was changed. Please retry.";
 
 let orgA: string, orgB: string;
 
@@ -130,6 +144,61 @@ async function readCampaign(id: string, ownerId: string) {
 function entryStatuses(planJson: unknown): Record<string, string> {
   const entries = (planJson as { entries?: Array<{ id: string; status: string }> }).entries ?? [];
   return Object.fromEntries(entries.map((entry) => [entry.id, entry.status]));
+}
+
+async function entryIds(campaignId: string): Promise<string[]> {
+  const plan = (await readCampaign(campaignId, orgA))?.planJson as { entries: Array<{ id: string }> };
+  return plan.entries.map((entry) => entry.id);
+}
+
+/** A project that has hosted this campaign's generation batch — grouped into the campaign
+ *  unless the caller is exercising what happens after the merchant un-groups it. */
+async function seedBatchProject(campaignId: string, options: { grouped?: boolean } = {}) {
+  const projectId = `prj_${randomUUID()}`;
+  await prisma.project.create({
+    data: {
+      id: projectId,
+      ownerId: orgA,
+      name: "Paid project",
+      campaignId: options.grouped === false ? null : campaignId,
+    },
+  });
+  // orchestrateBatch always writes this row before it dispatches a single cell, so it is the
+  // durable record of "this project once ran this campaign's batch".
+  await prisma.generationBatch.create({
+    data: {
+      id: deriveCampaignBatchId(campaignId, projectId),
+      ownerId: orgA,
+      projectId,
+      name: "campaign batch",
+    },
+  });
+  return projectId;
+}
+
+async function seedGenJob(projectId: string, idempotencyKey: string) {
+  await prisma.genJob.create({
+    data: {
+      id: `gj_${randomUUID()}`, ownerId: orgA, projectId, prompt: "already paid",
+      model: "seedream", kind: "IMAGE", count: 1, idempotencyKey,
+    },
+  });
+}
+
+/** An entry that has been through startGen — i.e. one the merchant has already paid for. */
+async function seedPaidEntry(
+  campaignId: string,
+  entryId: string,
+  options: { grouped?: boolean; legacyPositional?: boolean } = {},
+) {
+  const projectId = await seedBatchProject(campaignId, options);
+  await seedGenJob(
+    projectId,
+    options.legacyPositional
+      ? `${campaignLegacyCellPrefixes(campaignId, projectId)[3]}${"b".repeat(32)}`
+      : `${campaignEntryLogicalPrefix(campaignId, projectId, entryId)}${"a".repeat(32)}`,
+  );
+  return projectId;
 }
 
 beforeEach(() => { asUser(A_EMAIL); });
@@ -286,6 +355,21 @@ describe("#710 delete is a soft delete: gone from the merchant's view, intact in
     expect(await deleteCampaign({ campaignId: id })).toMatchObject({ ok: true, idempotent: false });
     expect(await deleteCampaign({ campaignId: id })).toMatchObject({ ok: true, idempotent: true });
   });
+
+  // #744 判官 r1 P3 — pin the whole matrix, not the one status the first test happened to use.
+  // Delete is deliberately allowed from every status: it is a soft delete that keeps the record,
+  // and a status that could not be deleted would be another door that only opens inwards.
+  it.each(["DRAFT", "ACTIVE", "DONE", "CANCELLED"])(
+    "deletes a %s campaign and leaves its row behind with deletedAt set",
+    async (status) => {
+      const id = await seedCampaign(orgA, { status });
+      expect(await deleteCampaign({ campaignId: id })).toMatchObject({ ok: true, idempotent: false });
+      const row = await readCampaign(id, orgA);
+      expect(row?.status).toBe(status);
+      expect(row?.deletedAt).toBeInstanceOf(Date);
+      expect(await getCampaign(id)).toEqual({ error: "Campaign not found." });
+    },
+  );
 });
 
 describe("#712 approval can be undone — but never after the money has moved", () => {
@@ -336,19 +420,9 @@ describe("#712 approval can be undone — but never after the money has moved", 
   it("refuses to un-approve an entry that has already been dispatched for generation", async () => {
     const entryId = testId();
     const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
-    const projectId = `prj_${randomUUID()}`;
-    await prisma.project.create({ data: { id: projectId, ownerId: orgA, name: "Paid project", campaignId: id } });
-    await prisma.genJob.create({
-      data: {
-        id: `gj_${randomUUID()}`, ownerId: orgA, projectId, prompt: "already paid",
-        model: "seedream", kind: "IMAGE", count: 1,
-        idempotencyKey: `${campaignEntryLogicalPrefix(id, projectId, entryId)}${"a".repeat(32)}`,
-      },
-    });
+    await seedPaidEntry(id, entryId);
 
-    expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toEqual({
-      error: "This entry has already been sent for generation, so its approval can't be undone. Its generation and credits stay in your history.",
-    });
+    expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toEqual({ error: ALREADY_DISPATCHED });
     expect(entryStatuses((await readCampaign(id, orgA))?.planJson)).toEqual({ [entryId]: "approved" });
   });
 
@@ -377,6 +451,221 @@ describe("#712 approval can be undone — but never after the money has moved", 
   });
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// #744 判官 r1 P1-1 — the guard must sit on BOTH exits from the paid set.
+// Deleting an approved entry removes it from the confirm quote exactly as undoing its approval
+// does, so a guard on one and not the other is a guard on nothing.
+describe("#744 P1-1 remove is the same door as undo, and carries the same lock", () => {
+  it("refuses to remove an entry that has already been dispatched, and the plan is untouched", async () => {
+    const paid = testId();
+    const other = testId();
+    const id = await seedCampaign(orgA, {
+      entries: [
+        { id: paid, date: "2026-08-25", status: "approved" },
+        { id: other, date: "2026-08-26", status: "proposed" },
+      ],
+    });
+    await seedPaidEntry(id, paid);
+
+    expect(await removeCampaignEntry({ campaignId: id, entryId: paid })).toEqual({ error: ALREADY_DISPATCHED });
+    // Not "the call returned an error" — the persisted plan still has both entries.
+    expect(await entryIds(id)).toEqual([paid, other]);
+    expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[paid]).toBe("approved");
+  });
+
+  it("still removes an entry nothing was ever charged for", async () => {
+    const keep = testId();
+    const drop = testId();
+    const id = await seedCampaign(orgA, {
+      entries: [
+        { id: keep, date: "2026-08-25", status: "approved" },
+        { id: drop, date: "2026-08-26", status: "approved" },
+      ],
+    });
+
+    expect(await removeCampaignEntry({ campaignId: id, entryId: drop })).toMatchObject({ ok: true });
+    expect(await entryIds(id)).toEqual([keep]);
+  });
+
+  it("greys both buttons out on the page for an entry that is already generated", async () => {
+    const paid = testId();
+    const free = testId();
+    const id = await seedCampaign(orgA, {
+      entries: [
+        { id: paid, date: "2026-08-25", status: "approved" },
+        { id: free, date: "2026-08-26", status: "approved" },
+      ],
+    });
+    await seedPaidEntry(id, paid);
+
+    const detail = await getCampaign(id);
+    expect("ok" in detail && detail.campaign.dispatchedEntryIds).toEqual([paid]);
+  });
+});
+
+describe("#744 P2 the dispatch check cannot be dodged by grouping, age, or a broken read", () => {
+  it("still sees the charge after the project is un-grouped from the campaign", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+    // The merchant paid inside this project, then took the project out of the campaign. The
+    // credits did not come back, so neither exit may pretend the entry is free to remove.
+    await seedPaidEntry(id, entryId, { grouped: false });
+
+    expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toEqual({ error: ALREADY_DISPATCHED });
+    expect(await removeCampaignEntry({ campaignId: id, entryId })).toEqual({ error: ALREADY_DISPATCHED });
+    expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[entryId]).toBe("approved");
+  });
+
+  it("refuses when the batch carries pre-stable-id positional history it cannot attribute", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+    // Old rows record a cell INDEX, not an entry id. "That charge wasn't mine" is unprovable,
+    // so the honest answer is to refuse rather than to guess in the merchant's disfavour.
+    await seedPaidEntry(id, entryId, { legacyPositional: true });
+
+    expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toEqual({ error: ALREADY_DISPATCHED });
+    expect(await removeCampaignEntry({ campaignId: id, entryId })).toEqual({ error: ALREADY_DISPATCHED });
+    expect(await entryIds(id)).toEqual([entryId]);
+  });
+
+  it("never reports a failed history read as 'nothing was charged'", async () => {
+    // The rule pinned where it lives: a stubbed client whose history read throws must make the
+    // helper THROW, never return an empty set. An empty set is the answer "this entry is free to
+    // take back", and handing that out on a failed read is how paid history gets rewritten
+    // (#656 的教训:读故障按结果不明处理).
+    const broken = {
+      project: { findMany: async () => [{ id: "prj_1" }] },
+      generationBatch: { findMany: async () => { throw new Error("history read unavailable"); } },
+      genJob: { findFirst: async () => null },
+    } as unknown as Parameters<typeof dispatchedCampaignEntryIds>[0];
+
+    await expect(dispatchedCampaignEntryIds(broken, orgA, testId(), ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]))
+      .rejects.toThrow("history read unavailable");
+  });
+
+  it("refuses — and changes nothing — when a read inside the guarded transaction throws", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+
+    // A real fault, no patching: the call runs inside an ambient tenant frame belonging to
+    // someone else, so the tenant guard throws on the first read the guarded transaction makes.
+    // This is the #738 shape — a call site that reached the database in the wrong context — and
+    // both exits must answer "unknown" and leave the plan untouched rather than sail on.
+    const foreignFrame = {
+      kind: "user" as const,
+      subjectUserId: null,
+      subjectEmail: B_EMAIL,
+      ownerId: orgB,
+      orgRole: null,
+      membershipId: null,
+      impersonating: false,
+      impersonatedByBaUserId: null,
+    };
+
+    expect(await runAsUser(foreignFrame, () => unapproveCampaignEntry({ campaignId: id, entryId })))
+      .toEqual({ error: CHECK_UNKNOWN });
+    expect(await runAsUser(foreignFrame, () => removeCampaignEntry({ campaignId: id, entryId })))
+      .toEqual({ error: CHECK_UNKNOWN });
+
+    expect(await entryIds(id)).toEqual([entryId]);
+    expect(entryStatuses((await readCampaign(id, orgA))?.planJson)[entryId]).toBe("approved");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// #744 判官 r1 P1-2 — the interleaving the judge named, woven by hand.
+//
+// Both tests drive the REAL gate (`underCampaignApprovalLock`, the one the confirm action
+// injects around startGen) against the REAL undo action. What stands in for startGen is the
+// callback the gate protects: it writes the GenJob whose existence IS the charge, at the exact
+// moment the judge asked about — inside the window between "confirm read this as approved" and
+// "confirm spent the credits".
+describe("#744 P1-2 an undo racing a dispatch has only two legal endings", () => {
+  async function raceState(campaignId: string, projectId: string, entryId: string) {
+    const charged = await prisma.genJob.count({
+      where: {
+        ownerId: orgA,
+        projectId,
+        idempotencyKey: { startsWith: campaignEntryLogicalPrefix(campaignId, projectId, entryId) },
+      },
+    });
+    const status = entryStatuses((await readCampaign(campaignId, orgA))?.planJson)[entryId];
+    return { charged: charged > 0, approved: status === "approved" };
+  }
+
+  it("undo arriving inside the dispatch window loses, and the entry stays approved AND charged", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+    const projectId = await seedBatchProject(id);
+
+    let openWindow = () => {};
+    const windowOpen = new Promise<void>((resolve) => { openWindow = resolve; });
+    let closeWindow = () => {};
+    const windowClosed = new Promise<void>((resolve) => { closeWindow = resolve; });
+
+    const dispatching = underCampaignApprovalLock(
+      prisma,
+      {
+        ownerId: orgA,
+        campaignId: id,
+        stillApproved: (planJson) => entryStatuses(planJson)[entryId] === "approved",
+      },
+      async () => {
+        // Past the re-read, holding the lock, credits not yet spent — the exact window.
+        openWindow();
+        await windowClosed;
+        await seedGenJob(projectId, `${campaignEntryLogicalPrefix(id, projectId, entryId)}${"c".repeat(32)}`);
+        return { id: "charged", disposition: "fresh" as const };
+      },
+    );
+
+    await windowOpen;
+    const undoing = unapproveCampaignEntry({ campaignId: id, entryId });
+    // Long enough for the undo to reach the lock and block on it. Without the shared lock it
+    // would sail past, flip the entry to proposed, and the charge below would land anyway.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    closeWindow();
+
+    const [dispatchResult, undoResult] = await Promise.all([dispatching, undoing]);
+    expect(dispatchResult).toEqual({ id: "charged", disposition: "fresh" });
+    expect(undoResult).toEqual({ error: ALREADY_DISPATCHED });
+
+    const state = await raceState(id, projectId, entryId);
+    expect(state).toEqual({ charged: true, approved: true });
+    // The one state that must never exist, asserted as itself.
+    expect(state.charged && !state.approved).toBe(false);
+  });
+
+  it("undo arriving first wins, and the dispatch that follows spends nothing", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+    const projectId = await seedBatchProject(id);
+
+    expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toMatchObject({ ok: true });
+
+    let dispatched = false;
+    const result = await underCampaignApprovalLock(
+      prisma,
+      {
+        ownerId: orgA,
+        campaignId: id,
+        stillApproved: (planJson) => entryStatuses(planJson)[entryId] === "approved",
+      },
+      async () => {
+        dispatched = true;
+        await seedGenJob(projectId, `${campaignEntryLogicalPrefix(id, projectId, entryId)}${"d".repeat(32)}`);
+        return { id: "charged", disposition: "fresh" as const };
+      },
+    );
+
+    expect(dispatched).toBe(false);
+    expect(result).toMatchObject({ disposition: "conflict" });
+    const state = await raceState(id, projectId, entryId);
+    expect(state).toEqual({ charged: false, approved: false });
+    expect(state.charged && !state.approved).toBe(false);
+  });
+});
+
 describe("tenant boundary — org B cannot reach into org A's campaign", () => {
   it("refuses every lifecycle write from the other tenant and leaves org A's row untouched", async () => {
     const entryId = testId();
@@ -389,6 +678,7 @@ describe("tenant boundary — org B cannot reach into org A's campaign", () => {
     expect(await updateCampaign({ campaignId: id, patch: { name: "Owned by B" } })).toEqual({ error: "Campaign not found." });
     expect(await setCampaignStatus({ campaignId: id, status: "CANCELLED" })).toEqual({ error: "Campaign not found." });
     expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toEqual({ error: "Campaign not found." });
+    expect(await removeCampaignEntry({ campaignId: id, entryId })).toEqual({ error: "Campaign not found." });
     expect(await deleteCampaign({ campaignId: id })).toEqual({ error: "Campaign not found." });
 
     const row = await readCampaign(id, orgA);

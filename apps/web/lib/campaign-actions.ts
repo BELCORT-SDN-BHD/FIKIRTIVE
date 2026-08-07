@@ -7,7 +7,11 @@ import { prisma, Prisma } from "@fikirtive/db";
 import { z } from "zod";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { requireOwner } from "./auth-guard";
-import { campaignEntryLogicalPrefix } from "./campaign-gen-identity";
+import { campaignApprovalLockKey } from "./campaign-approval-lock";
+import {
+  campaignEntryWasDispatched,
+  type DispatchHistoryClient,
+} from "./campaign-dispatch-history";
 import {
   CAMPAIGN_STATUSES,
   CAMPAIGN_STATUS_LABELS,
@@ -22,6 +26,11 @@ const GENERIC_CREATE_ERROR = "Couldn't save that campaign — please retry the s
 const GENERIC_UPDATE_ERROR = "Couldn't update that campaign — please try again.";
 const CAMPAIGN_NOT_FOUND = "Campaign not found.";
 const CAMPAIGN_STALE = "Campaign changed — reload and try again.";
+/** Both moves that shrink the paid set say the same thing, because the reason is the same. */
+const ENTRY_ALREADY_DISPATCHED =
+  "This entry has already been sent for generation, so it can't be taken out of the plan. Its generation and credits stay in your history.";
+const PAID_SET_CHANGE_UNKNOWN =
+  "We couldn't check this entry's generation history — nothing was changed. Please retry.";
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/;
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -576,21 +585,24 @@ const updateEntrySchema = entryTargetSchema.extend({ patch: entryPatchSchema }).
 
 type MutationResult = { plan: CampaignPlan; idempotent: boolean } | CampaignActionError;
 
-async function saveMutatedPlan(input: {
-  ownerId: string;
-  campaignId: string;
-  mutate: (plan: CampaignPlan, period: { start: string; end: string }) => MutationResult;
-}): Promise<CampaignPlanResult> {
-  let campaign;
-  try {
-    campaign = await prisma.campaign.findFirst({
-      where: { id: input.campaignId, ownerId: input.ownerId, deletedAt: null },
-      select: { planJson: true, startAt: true, endAt: true, updatedAt: true },
-    });
-  } catch {
-    return { error: "Couldn't load that campaign — please try again." };
-  }
-  if (!campaign) return { error: "Campaign not found." };
+type PlanClient = Pick<typeof prisma, "campaign"> & DispatchHistoryClient;
+
+/** Read-mutate-write for planJson, optimistic on `updatedAt` so a concurrent writer loses
+ *  rather than overwrites. `db` is the ambient client for plain edits and the transaction
+ *  client when the caller is holding the campaign approval lock. */
+async function applyPlanMutation(
+  db: PlanClient,
+  input: {
+    ownerId: string;
+    campaignId: string;
+    mutate: (plan: CampaignPlan, period: { start: string; end: string }) => MutationResult;
+  },
+): Promise<CampaignPlanResult> {
+  const campaign = await db.campaign.findFirst({
+    where: { id: input.campaignId, ownerId: input.ownerId, deletedAt: null },
+    select: { planJson: true, startAt: true, endAt: true, updatedAt: true },
+  });
+  if (!campaign) return { error: CAMPAIGN_NOT_FOUND };
 
   const parsedPlan = campaignPlanSchema.safeParse(campaign.planJson);
   if (!parsedPlan.success) return { error: "Campaign plan is invalid." };
@@ -601,22 +613,77 @@ async function saveMutatedPlan(input: {
   if ("error" in next) return next;
   if (next.idempotent) return { ok: true, idempotent: true, payload: next.plan };
 
+  const { count } = await db.campaign.updateMany({
+    where: {
+      id: input.campaignId,
+      ownerId: input.ownerId,
+      deletedAt: null,
+      updatedAt: campaign.updatedAt,
+    },
+    data: { planJson: next.plan as unknown as Prisma.InputJsonObject },
+  });
+  if (!count) return { error: CAMPAIGN_STALE };
+  return { ok: true, idempotent: false, payload: next.plan };
+}
+
+async function saveMutatedPlan(input: {
+  ownerId: string;
+  campaignId: string;
+  mutate: (plan: CampaignPlan, period: { start: string; end: string }) => MutationResult;
+}): Promise<CampaignPlanResult> {
+  let result: CampaignPlanResult;
   try {
-    const { count } = await prisma.campaign.updateMany({
-      where: {
-        id: input.campaignId,
-        ownerId: input.ownerId,
-        deletedAt: null,
-        updatedAt: campaign.updatedAt,
-      },
-      data: { planJson: next.plan as unknown as Prisma.InputJsonObject },
-    });
-    if (!count) return { error: "Campaign changed — reload and try again." };
+    result = await applyPlanMutation(prisma, input);
   } catch {
     return { error: GENERIC_UPDATE_ERROR };
   }
-  revalidatePath("/campaign");
-  return { ok: true, idempotent: false, payload: next.plan };
+  if ("ok" in result && !result.idempotent) revalidatePath("/campaign");
+  return result;
+}
+
+/**
+ * The ONE door for the two moves that shrink the paid set: undo an approval, and remove an
+ * entry outright. Both take an approved entry out of the confirm page's quote, so both need the
+ * same two protections, and they get them here rather than in two hand-kept copies — #744's
+ * judge found the undo guarded and the remove wide open, which is precisely the failure a
+ * second copy invites.
+ *
+ *   1. ALREADY PAID FOR → refused. Once an entry has been dispatched its generation and its
+ *      credits are history; the plan may not be rewritten to say otherwise.
+ *   2. RACING A DISPATCH → serialized. The dispatch-history read and the plan write happen in
+ *      ONE transaction holding the campaign approval lock, the same lock each paid dispatch
+ *      takes, so "confirm already read this as approved" cannot squeeze between them.
+ *
+ * Any failure of the lock or the history read aborts the transaction: nothing is written, and
+ * the merchant is told the outcome is unknown rather than being handed a silent success.
+ */
+async function mutatePaidSetEntry(input: {
+  ownerId: string;
+  campaignId: string;
+  entryId: string;
+  mutate: (plan: CampaignPlan, period: { start: string; end: string }) => MutationResult;
+}): Promise<CampaignPlanResult> {
+  const lockKey = campaignApprovalLockKey(input.campaignId);
+  let result: CampaignPlanResult;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0::bigint))`;
+      const dispatched = await campaignEntryWasDispatched(
+        tx,
+        input.ownerId,
+        input.campaignId,
+        input.entryId,
+      );
+      if (dispatched) return { error: ENTRY_ALREADY_DISPATCHED };
+      return applyPlanMutation(tx, input);
+    });
+  } catch {
+    // The lock, the history read or the write fell over. All three roll back together, so the
+    // plan is untouched — say so, and never treat an unreadable history as "nothing was paid".
+    return { error: PAID_SET_CHANGE_UNKNOWN };
+  }
+  if ("ok" in result && !result.idempotent) revalidatePath("/campaign");
+  return result;
 }
 
 export async function proposeCampaignEntry(raw: unknown): Promise<CampaignPlanResult> {
@@ -689,6 +756,13 @@ export async function updateCampaignEntry(raw: unknown): Promise<CampaignPlanRes
   });
 }
 
+/**
+ * Delete a plan entry.
+ *
+ * Removing an approved entry takes it out of the confirm page's quote exactly as undoing its
+ * approval does, so it goes through the SAME guarded door — otherwise the money guard would sit
+ * on one exit with the other one propped open (#744 判官 r1 P1-1).
+ */
 export async function removeCampaignEntry(raw: unknown): Promise<CampaignPlanResult> {
   "use server";
   const gate = await requireOwner();
@@ -697,9 +771,10 @@ export async function removeCampaignEntry(raw: unknown): Promise<CampaignPlanRes
   const parsed = entryTargetSchema.safeParse(raw);
   if (!parsed.success) return { error: "That campaign change isn't valid." };
 
-  return saveMutatedPlan({
+  return mutatePaidSetEntry({
     ownerId: gate.ownerId,
     campaignId: parsed.data.campaignId,
+    entryId: parsed.data.entryId,
     mutate: (plan) => {
       if (!plan.entries.some((entry) => entry.id === parsed.data.entryId)) {
         return { plan, idempotent: true };
@@ -736,52 +811,12 @@ export async function approveCampaignEntry(raw: unknown): Promise<CampaignPlanRe
 }
 
 /**
- * Has this plan entry already been dispatched for generation — i.e. has money already moved
- * for it?
- *
- * The campaign confirm path dispatches each approved entry under a stable per-entry factory
- * identity (campaign-gen-identity), so a GenJob whose idempotencyKey carries that prefix is
- * proof this entry went through startGen's reserve. The batch id is derived per (campaign,
- * project), so every project grouped under this campaign is checked — including soft-deleted
- * ones, whose jobs were charged just the same.
- *
- * Returns `null` when the read itself failed. The caller must treat that as "outcome unknown"
- * and refuse, never as "no". #656 的教训:读故障按结果不明处理,不按「没有」处理。
- */
-async function entryHasDispatchedGeneration(
-  ownerId: string,
-  campaignId: string,
-  entryId: string,
-): Promise<boolean | null> {
-  try {
-    const projects = await prisma.project.findMany({
-      where: { ownerId, campaignId },
-      select: { id: true },
-    });
-    for (const project of projects) {
-      const dispatched = await prisma.genJob.findFirst({
-        where: {
-          ownerId,
-          projectId: project.id,
-          idempotencyKey: { startsWith: campaignEntryLogicalPrefix(campaignId, project.id, entryId) },
-        },
-        select: { id: true },
-      });
-      if (dispatched) return true;
-    }
-    return false;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Take an entry back out of the approved set (#712).
  *
  * Approval is what the confirm page prices, so this is the merchant's only way to change their
  * mind about a costed item without destroying the creative brief they wrote. It edits ONLY
- * planJson — no ledger row, generation or job is touched — and it is refused outright once the
- * entry has been dispatched, because that generation and its credits are already history.
+ * planJson — no ledger row, generation or job is touched — and it goes through the same guarded
+ * door as remove, so both refuse an entry whose generation has already been dispatched.
  */
 export async function unapproveCampaignEntry(raw: unknown): Promise<CampaignPlanResult> {
   "use server";
@@ -792,25 +827,10 @@ export async function unapproveCampaignEntry(raw: unknown): Promise<CampaignPlan
   if (!parsed.success) return { error: "That campaign change isn't valid." };
   const { campaignId, entryId } = parsed.data;
 
-  // Owner-scoped existence check first, so another tenant's probe cannot tell an id that exists
-  // from one that does not by watching which error comes back.
-  const campaign = await loadOwnedCampaign(gate.ownerId, campaignId);
-  if (campaign === "unavailable") return { error: "Couldn't load that campaign — please try again." };
-  if (!campaign) return { error: CAMPAIGN_NOT_FOUND };
-
-  const dispatched = await entryHasDispatchedGeneration(gate.ownerId, campaignId, entryId);
-  if (dispatched === null) {
-    return { error: "We couldn't check this entry's generation history — nothing was changed. Please retry." };
-  }
-  if (dispatched) {
-    return {
-      error: "This entry has already been sent for generation, so its approval can't be undone. Its generation and credits stay in your history.",
-    };
-  }
-
-  return saveMutatedPlan({
+  return mutatePaidSetEntry({
     ownerId: gate.ownerId,
     campaignId,
+    entryId,
     mutate: (plan) => {
       const index = plan.entries.findIndex((entry) => entry.id === entryId);
       if (index < 0) return { error: "Campaign entry not found." };

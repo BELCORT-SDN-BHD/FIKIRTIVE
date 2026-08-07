@@ -200,9 +200,15 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
       const result = await deleteCampaign({ campaignId: campaign.id });
       if (!("ok" in result)) {
         setConfirmingDelete(false);
-        return setError(result.error);
+        setError(result.error);
+        // A refusal leaves the page exactly as it was, so it must leave the BUTTONS as they were
+        // too. Returning here without clearing `busy` froze every control on a page the merchant
+        // was still allowed to use (#744 判官 r1 P2).
+        setBusy(null);
+        return;
       }
-      // Deleted campaigns are not readable any more, so stay off this page entirely.
+      // Deleted campaigns are not readable any more, so stay off this page entirely. `busy` stays
+      // set on purpose: the navigation is already under way and nothing here is actionable again.
       window.location.assign("/campaign");
     } catch {
       setError("The delete request could not finish. Please retry.");
@@ -345,6 +351,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
   }
 
   const entries = campaign.plan?.entries ?? [];
+  const dispatchedEntryIds = new Set(campaign.dispatchedEntryIds);
   const approvedCount = entries.filter((entry) => entry.status === "approved").length;
   const proposalReady = proposal.date && proposal.hook.trim() && proposal.brief.trim();
 
@@ -453,6 +460,10 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                   </div>
                 ) : entries.map((entry) => {
                   const draft = drafts[entry.id] ?? entry;
+                  // Already generated = already paid for. The server refuses to take such an
+                  // entry back out of the plan, so the page must not offer a button whose only
+                  // possible outcome is that refusal (#744 判官 r1 P1-1).
+                  const generated = dispatchedEntryIds.has(entry.id);
                   return (
                     <article key={entry.id} className="rounded-xl border border-border bg-muted/25 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -476,7 +487,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                           Save entry
                         </Button>
                         {entry.status === "approved" ? (
-                          <Button size="sm" type="button" variant="secondary" onClick={() => unapproveEntry(entry)} disabled={busy !== null}>
+                          <Button size="sm" type="button" variant="secondary" onClick={() => unapproveEntry(entry)} disabled={busy !== null || generated}>
                             {busy === `unapprove:${entry.id}` ? <LoaderCircle className="animate-spin" /> : <Undo2 />}
                             Undo approval
                           </Button>
@@ -486,11 +497,17 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                             Mark approved
                           </Button>
                         )}
-                        <Button size="sm" type="button" variant="ghost" onClick={() => removeEntry(entry)} disabled={busy !== null}>
+                        <Button size="sm" type="button" variant="ghost" onClick={() => removeEntry(entry)} disabled={busy !== null || generated}>
                           <Trash2 />
                           Remove
                         </Button>
                       </div>
+                      {generated ? (
+                        <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                          Already generated, so it stays in this plan — its generation and the credits
+                          it used are part of your history.
+                        </p>
+                      ) : null}
                     </article>
                   );
                 })}

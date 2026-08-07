@@ -53,6 +53,7 @@ import {
   campaignVideoAspectForFormat,
   type CampaignGenKind,
 } from "./campaign-format-shape";
+import { underCampaignApprovalLock } from "./campaign-approval-lock";
 import {
   orchestrateBatch,
   quoteCell,
@@ -60,6 +61,7 @@ import {
   type BatchInterruption,
   type BatchResult,
   type GenCell,
+  type StartGenPort,
 } from "./factory-batch";
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -312,8 +314,30 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   const batchId = deriveCampaignBatchId(campaignId, projectId);
   const attemptId = newId();
 
+  // #744 判官 r1 P1-2 — every checked above was read BEFORE the loop below starts spending, and
+  // the merchant can undo or remove an approval while it runs. So each cell's dispatch is taken
+  // under the campaign approval lock, which re-reads the persisted plan and re-derives this same
+  // fingerprint from it: a dispatch either beats the undo (and the undo is then refused, because
+  // the job it can see proves the charge) or loses to it (and never runs). The single injected
+  // port is the whole change — orchestrateBatch's loop and startGen's money transaction are
+  // untouched, and startGen remains the only thing that may reserve a credit.
+  const guardedStartGen: StartGenPort = (req) =>
+    underCampaignApprovalLock(
+      prisma,
+      {
+        ownerId,
+        campaignId,
+        stillApproved: (planJson) => {
+          const live = approvedEntriesFromPlan(planJson);
+          return quoteCampaignGenCells(live, buildCampaignGenCells(live, models)).contentFingerprint
+            === quote.contentFingerprint;
+        },
+      },
+      () => startGen(req),
+    );
+
   const result = await orchestrateBatch(
-    { startGen, prisma },
+    { startGen: guardedStartGen, prisma },
     { ownerId, projectId, batchId, attemptId, name: `${campaign.name} — campaign generation`, cells },
   );
   if ("error" in result) return { ...result, quote };

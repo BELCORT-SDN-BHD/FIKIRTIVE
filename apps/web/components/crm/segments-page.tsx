@@ -822,8 +822,8 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
             </DialogDescription>
           </DialogHeader>
           <p className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
-            Any automation still targeting this segment stops running until you point it at another
-            one. Nothing is sent to a stale audience.
+            Any automation still targeting this segment stops sending and records why, until you
+            point it at another one. Nothing goes out to an audience you removed.
           </p>
           {deleteError ? (
             <p className="rounded-xl bg-error-soft px-4 py-3 text-sm text-error-soft-foreground" role="alert">
