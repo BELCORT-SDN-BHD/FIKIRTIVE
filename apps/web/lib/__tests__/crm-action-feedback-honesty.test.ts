@@ -522,3 +522,35 @@ describe("Routine authorization is driven by the server read, not by this page l
     expect(dom.textContent).toContain("Define this authorization");
   });
 });
+
+describe("an archived workflow does not claim a still-active Routine stopped (#721)", () => {
+  it("names the Routines archiving did not stop", async () => {
+    const dom = await render(
+      createElement(
+        WorkflowDetailPage,
+        workflowProps({ status: "archived", routines: [persistedRoutine("active")] }),
+      ),
+    );
+    const summary = statusSummaryText(dom);
+    expect(summary).toContain("Archived");
+    expect(summary).toContain("did not stop 1 Routine");
+    expect(summary).not.toBe("Archived — this workflow cannot run.");
+  });
+
+  it("says plainly that an archived workflow cannot run when nothing is active", async () => {
+    const dom = await render(
+      createElement(WorkflowDetailPage, workflowProps({ status: "archived", routines: [] })),
+    );
+    expect(statusSummaryText(dom)).toBe("Archived — this workflow cannot run.");
+  });
+
+  it("does not claim anything about Routines it could not read", async () => {
+    const dom = await render(
+      createElement(WorkflowDetailPage, workflowProps({ status: "archived", routinesFailed: true })),
+    );
+    const summary = statusSummaryText(dom);
+    expect(summary).toContain("Archived");
+    expect(summary).toContain("could not load");
+    expect(summary).not.toContain("did not stop");
+  });
+});

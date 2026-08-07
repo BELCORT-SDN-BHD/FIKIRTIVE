@@ -176,8 +176,16 @@ export default function WorkflowDetailPage({
     !archived,
   );
   const ruleSummary = summarizeRuleSource(selectedRevision?.rulesSource ?? rulesSource);
+  // #721 — archiving stops new runs; it never kills or pauses a Routine (physical contract
+  // §4.4 / §8: "archive does not stop an active Routine"). The archive dialog makes the
+  // merchant acknowledge that Routine by Routine, so this line must not then claim the
+  // workflow "cannot run" while an authorized Routine is still allowed to act.
   const statusSummary = archived
-    ? "Archived — this workflow cannot run."
+    ? routineReadError
+      ? "Archived — no new runs can start. Routine status could not load, so whether a Routine is still active is unknown."
+      : activeRoutineCount > 0
+        ? `Archived — this workflow cannot start new runs. Archiving did not stop ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"}, which can still act.`
+        : "Archived — this workflow cannot run."
     : routineReadError
       ? "Routine status could not load."
       : activeRoutineCount > 0
