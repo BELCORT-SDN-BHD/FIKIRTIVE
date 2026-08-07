@@ -29,21 +29,46 @@ export const SCHEDULE_CHANNEL_CAPS: Record<
   x: { label: "X", maxMediaCount: 0, supportsFirstComment: false },
 };
 
+export type ScheduleApproveInput = {
+  channel: string;
+  /** The post's stored account id — null/empty when nobody has picked one yet. */
+  targetId: string | null | undefined;
+  mediaCount: number;
+  /**
+   * The account ids connected RIGHT NOW on this post's channel — the same list the server re-reads
+   * from the channel adapter at approve time. Omit (or pass null) ONLY when the caller genuinely
+   * hasn't read it yet: "not loaded" is not "not connected", and reporting it as such would scare a
+   * merchant whose connection is fine. A stored id is worthless on its own — a merchant who
+   * disconnected still has the old id sitting in the draft (#741 r1 P1).
+   */
+  connectedTargetIds?: readonly string[] | null;
+};
+
 /** Everything still missing before a DRAFT may be approved (spec §五), in the order the composer
  *  presents the fields. Empty ⇒ approvable. Each entry is a finished merchant-facing sentence.
  *
- *  ONE rule, ONE set of sentences, both write paths: the server action (approveScheduledPost) and
- *  the composer's "Approve & schedule" button read this. They used to diverge in the worst possible
- *  way (#695) — the button gated on BOTH conditions but explained only the first, so picking an
- *  account made the hint vanish and left the button silently greyed out with nothing on screen
- *  about the image that was actually missing. Pure, so it lives here with validateScheduleDraft. */
-export function scheduleApproveBlockers(input: {
-  channel: string;
-  hasTarget: boolean;
-  mediaCount: number;
-}): string[] {
+ *  ONE rule, ONE set of sentences, every surface: the server action (approveScheduledPost), the
+ *  composer's "Approve & schedule" button, and the plan card's "Approve all" summary read this.
+ *  They used to diverge in the worst possible way (#695) — the button gated on BOTH conditions but
+ *  explained only the first, so picking an account made the hint vanish and left the button
+ *  silently greyed out with nothing on screen about the image that was actually missing.
+ *  Pure, so it lives here with validateScheduleDraft. */
+export function scheduleApproveBlockers(input: ScheduleApproveInput): string[] {
   const blockers: string[] = [];
-  if (!input.hasTarget) blockers.push("Pick which account to post to before approving.");
+  // `undefined` (caller hasn't looked) and `[]` (looked, found nothing connected) are different
+  // facts and must produce different copy — hence the explicit null check rather than `?.length`.
+  const live = input.connectedTargetIds ?? null;
+  const targetId = input.targetId || null;
+  if (live && live.length === 0) {
+    // Nothing to post to at all — reconnecting is the only way forward.
+    blockers.push("Connect your account before approving.");
+  } else if (!targetId) {
+    blockers.push("Pick which account to post to before approving.");
+  } else if (live && !live.includes(targetId)) {
+    // An id the draft remembers but the connection no longer offers: the merchant disconnected, or
+    // that page/account is gone. Same sentence the server answers with, so the UI can say it first.
+    blockers.push("That account isn't one of your connected channels.");
+  }
   // X supports text-only posts; Meta (IG/FB) organic publish is media-first in this slice, so the
   // ≥1-media requirement follows the channel's own cap (X's is 0) instead of naming X. An unknown
   // channel gets no media sentence — its own rejection is isScheduleChannel's job, not this one's.

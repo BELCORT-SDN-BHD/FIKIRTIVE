@@ -121,6 +121,7 @@ export {
   parseScheduleInstant,
   scheduleApproveBlockers,
   validateScheduleDraft,
+  type ScheduleApproveInput,
   type ScheduleChannel,
   type ScheduleDraftInput,
   type NormalizedScheduleDraft,

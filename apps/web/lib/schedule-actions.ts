@@ -328,9 +328,12 @@ export async function approveScheduledPost(
   // Consent needs a resolved target the owner actually owns, and (outside text-only channels) at
   // least one media row. Both conditions AND both sentences come from the shared pure rule so the
   // composer's "Approve & schedule" button can gate and EXPLAIN itself with the same truth (#695).
+  // The live connection list isn't read yet at this point — that costs a Graph call, so it stays
+  // where it always was (below, after the cheap checks). Passing no `connectedTargetIds` says
+  // exactly that: "not looked at yet", never "nothing connected".
   const approveBlockers = scheduleApproveBlockers({
     channel: post.channel,
-    hasTarget: !!post.metaTargetId,
+    targetId: post.metaTargetId,
     mediaCount: post.media.length,
   });
   if (approveBlockers.length > 0) return { error: approveBlockers[0]! };
@@ -361,13 +364,20 @@ export async function approveScheduledPost(
     return { error: IG_IMAGE_ONLY_ERROR };
   }
 
+  // The live connection re-read: the stored metaTargetId is only what the draft REMEMBERS, and a
+  // merchant who disconnected still carries it. Same rule object as above, now with the real list —
+  // so this stage's two refusals are the same sentences the composer shows in advance (#741 r1 P1),
+  // and the order (nothing connected → that account isn't yours) is unchanged. No adapter means
+  // nothing can be connected on this channel, which is exactly the empty-list case.
   const adapter = channelRegistry[post.channel];
-  if (!adapter) return { error: "Connect your account before approving." };
-  const targets = await adapter.listTargets(gate.ownerId);
-  if (!targets.length) return { error: "Connect your account before approving." };
-  if (!targets.some((t) => t.id === post.metaTargetId)) {
-    return { error: "That account isn't one of your connected channels." };
-  }
+  const targets = adapter ? await adapter.listTargets(gate.ownerId) : [];
+  const liveTargetBlockers = scheduleApproveBlockers({
+    channel: post.channel,
+    targetId: post.metaTargetId,
+    mediaCount: post.media.length,
+    connectedTargetIds: targets.map((t) => t.id),
+  });
+  if (liveTargetBlockers.length > 0) return { error: liveTargetBlockers[0]! };
 
   try {
     // Atomic transition: pin the status we read + validated (post.status) AND updatedAt in the
