@@ -13,7 +13,7 @@
  * Conditioning = the @mentioned entities' reference images, resolved here from
  * the job's entityIds (D19 trust boundary).
  */
-import { prisma, settleCredits, refundReservation, type GenJob } from "@fikirtive/db";
+import { prisma, settleCredits, refundReservation, settleCanvasCardsForGenJob, type GenJob } from "@fikirtive/db";
 import { runAsSystem, runAsTenant } from "@fikirtive/db/principal";
 import {
   storageKey,
@@ -21,12 +21,14 @@ import {
   GEN_RETRY_LIMIT,
   GEN_QUEUE,
   videoDefaults,
+  imageDefaults,
   MAX_CONDITIONING_IMAGES,
   REF_VIDEO_MIN_SECONDS,
   REF_VIDEO_MAX_SECONDS,
   genSpentUsd,
   pricedGenCredits,
   displayCredits,
+  genJobEndedWithoutDelivering,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -157,6 +159,44 @@ async function appendCoworkResult(
   }
 }
 
+// #601 T2b / #612 T2c: the LAST step of a FINISHED job — write that job's cards on the canvas
+// board, so a merchant who closed the tab comes back to every output they paid for, and to a
+// definite ending for the work that never arrived instead of a card that spins for ever. Same
+// contract as appendCoworkResult above and deliberately placed next to it at every call site: it
+// runs ONLY after the job row is terminal and its charge is settled or refunded, it reads/writes
+// no money column, no ledger, no provider, and it can never throw into the completion path. A
+// failure is swallowed — a charge cannot be taken back, a card can be written again. What writes
+// a DELIVERED job's cards again is NOT this path: once the job is DONE no redelivery and no
+// stale-job scan will ever look at it, so the retry is the worker's canvas backfill sweep
+// (apps/worker/src/jobs/canvas-backfill.ts). That sweep looks at DELIVERED jobs only, so a
+// terminal card this call could not write is repaired by the board reader instead — which makes
+// it T2d's business: whichever slice removes that read-time repair owes the terminal cards a
+// backstop of their own (findCanvasSettlementBacklog is where it would go).
+// Idempotent: settleCanvasCardsForGenJob no-ops on a board that already says this.
+async function settleCanvasBoard(job: { id: string; ownerId: string }): Promise<void> {
+  try {
+    await settleCanvasCardsForGenJob(job.id, job.ownerId);
+  } catch (e) {
+    console.warn(`[gen] ${job.id}: canvas settlement failed (non-fatal):`, e instanceof Error ? e.message : e);
+  }
+}
+
+/**
+ * A job's own status is decided ONCE, by whoever gets there first (#602 r2, judge P1-2).
+ *
+ * Every terminal write below is conditional on the row still being in flight, and this is the
+ * list it is conditional on. The reason is a race the whole file is otherwise careful about:
+ * `handleGen` snapshots the job row at the top and then runs a long sequence of gates against
+ * that snapshot. A merchant can press Cancel anywhere in that window — `cancelGenJob` matches
+ * QUEUED, writes CANCELLED and refunds — and an UNCONDITIONAL terminal write afterwards would
+ * silently rewrite their decision to FAILED and post "I couldn't finish that one" on top of it.
+ * (No double refund either way: `refundReservation` is idempotent on `refund:<jobId>`. What was
+ * lost was the truth about who stopped the job.)
+ *
+ * The same shape the reaper has always used, applied to the two writes that lacked it.
+ */
+const GEN_IN_FLIGHT_STATUSES = ["QUEUED", "GENERATING"] as const;
+
 /** Finish a job whose outputs are already COMMITTED (generationIds recorded — and the commit
  *  tx settles atomically with that write, so committed ⟹ charged-and-settled): idempotent
  *  attach → DONE + settle (no-op if already) → GEN_RESULT → otto resume. Shared by handleGen's
@@ -180,12 +220,19 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
   });
   if (refunded) {
     console.warn(`[gen] ${job.id}: outputs recorded but a REFUND won the finalizer — failing closed, not delivering`);
-    await prisma.genJob.update({
-      where: { id: job.id },
+    // Guarded like every other terminal write in this file (#602 r2, judge P1-2). A committed job
+    // is GENERATING, so no cancel can be racing it — but "this particular terminal write happens
+    // to be unreachable by that race" is a fact that rots, and one unconditional status write is
+    // all it takes to overwrite somebody else's truth later.
+    const { count } = await prisma.genJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] } },
       data: { status: "FAILED", error: "outputs were recorded but the charge was refunded — not delivering (free-delivery guard)", finishedAt: new Date() },
     });
     // accurate terminal message (idempotent via the genJobId unique index): refund won → not charged
-    await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+    if (count > 0) {
+      await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+    }
+    await settleCanvasBoard(job);
     return;
   }
   if (job.shotId) await attachBestEffort(job.id, job.shotId, job.generationIds);
@@ -206,6 +253,7 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
     await settleCredits(tx, { orgId: job.ownerId, refId: job.id });
   });
   await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
+  await settleCanvasBoard(job);
   await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
 }
 
@@ -213,19 +261,33 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
  *  Used by every pre-commit fail-closed branch (no outputs recorded) so a merchant is
  *  never charged for a generation they didn't receive. refundReservation is idempotent
  *  and no-ops when there's no open reservation (a historical/pre-credits job) or the
- *  job was already settled — so this is always safe to call. */
+ *  job was already settled — so this is always safe to call.
+ *
+ *  CONDITIONAL: `count === 0` means someone else already ended this job (a cancel, the reaper, a
+ *  concurrent delivery). They wrote the truth and did their own money and messaging; this path
+ *  says nothing further — but it still settles the board, so the card learns whatever ending did
+ *  land. */
 async function failClosedWithRefund(
   job: { id: string; ownerId: string; threadId: string | null; kind: string; model: string },
   error: string,
 ): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    await tx.genJob.update({ where: { id: job.id }, data: { status: "FAILED", error, finishedAt: new Date() } });
-    await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+  const ended = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.genJob.updateMany({
+      where: { id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] } },
+      data: { status: "FAILED", error, finishedAt: new Date() },
+    });
+    if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+    return count > 0;
   });
   // Tell the cowork UI the turn is over (idempotent via the genJobId unique index).
   // Without a terminal message the client polls forever on a stuck "making this…".
   // Generic, reassuring text; the specific reason stays in GenJob.error for ops.
-  await appendCoworkResult(job, "TURN_ERROR", [], "I couldn't finish that one — and you weren't charged. Want to try again?");
+  // Only when WE ended it: the winner posted its own terminal message, and a cancel's message
+  // must not be replaced by an apology for a failure that did not happen.
+  if (ended) {
+    await appendCoworkResult(job, "TURN_ERROR", [], "I couldn't finish that one — and you weren't charged. Want to try again?");
+  }
+  await settleCanvasBoard(job);
 }
 
 /** Proactive reaper: a job the worker hung/crashed on during its FINAL attempt can sit in
@@ -285,6 +347,7 @@ export async function reapStaleGenJobs(): Promise<number> {
         });
         if (failedClosed) {
           await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+          await settleCanvasBoard(job);
           reaped++;
         }
       });
@@ -317,6 +380,7 @@ export async function reapStaleGenJobs(): Promise<number> {
         });
         if (failedClosed) {
           await appendCoworkResult(job, "TURN_ERROR", [], "That one didn't start in time — the generator may be busy. You weren't charged; please try again.");
+          await settleCanvasBoard(job);
           reaped++;
         }
       });
@@ -360,7 +424,9 @@ export async function reapStaleGenJobs(): Promise<number> {
 }
 
 export async function handleGen(data: GenJobData, retryCount: number): Promise<void> {
-  const job = await prisma.genJob.findUnique({ where: { id: data.genJobId } });
+  const job = await runAsSystem("worker-job-dispatch", async () =>
+    prisma.genJob.findUnique({ where: { id: data.genJobId } }),
+  );
   if (!job) {
     console.error(`[gen] job ${data.genJobId} missing — dropping`);
     return;
@@ -389,7 +455,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
     try {
       // RESUME FIRST: outputs already stored + recorded (generationIds) on a prior
       // delivery → finish the idempotent attach + DONE, never re-spending. Runs BEFORE
-      // the FAILED short-circuit and the project/shot validation, so a deleted shot or
+      // the terminal short-circuit and the project/shot validation, so a deleted shot or
       // a wrongly-FAILED-but-committed job still completes (attachToShot no-ops if the
       // shot is gone; the candidate generations remain, reusable) (#2/#3).
       if (job.generationIds.length > 0) {
@@ -397,18 +463,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         await resumeCommittedGenJob(job);
         return;
       }
-      if (job.status === "FAILED") return; // terminal with no recorded outputs — nothing to resume
-
-      // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was
-      // queued must FAIL WITHOUT SPENDING. Runs AFTER the resume short-circuit (a
-      // committed job still finishes — its money already spent) and BEFORE the spend
-      // claim + provider call. Fail-closed-to-typed-menu: a DB fault → empty set →
-      // the job proceeds (the typed gate that admitted it is the authority).
-      const disabled = await workerDisabledModels();
-      if (isModelDisabled(job.model, disabled)) {
-        await failClosedWithRefund(job,"this model was turned off before the job ran — not spending");
-        return; // terminal, no throw → no retry, no spend
-      }
+      // Terminal with no recorded outputs — nothing to resume. This asks "did it END", not "did it
+      // FAIL" (#602 T3): a message pg-boss still delivers for a job the merchant cancelled would
+      // otherwise walk on into the pre-spend gates below, and a deleted project there would
+      // fail-close it — overwriting CANCELLED with FAILED and posting "I couldn't finish that
+      // one" for something they stopped on purpose. (No double refund either way:
+      // refundReservation is idempotent on `refund:<jobId>` — but the merchant would have been
+      // told a lie about their own decision.)
+      if (genJobEndedWithoutDelivering(job.status)) return;
 
       const project = await prisma.project.findFirst({ where: { id: job.projectId, ownerId: job.ownerId, deletedAt: null } });
       if (!project) {
@@ -457,8 +519,32 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         });
         // Only when WE failed it closed (not when an active winner still owns it): tell the
         // cowork UI the turn is over so it stops polling on a stuck "making this…".
-        if (failedClosed) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+        if (failedClosed) {
+          await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again. You weren't charged.");
+          await settleCanvasBoard(job);
+        }
         return;
+      }
+
+      // OPT-6 P2 (highest-trust): a job whose model was admin-disabled AFTER it was queued
+      // must FAIL WITHOUT SPENDING. Still before any provider call — but now AFTER the claim.
+      //
+      // #647 T6 修复轮 r2 P1-R2-1:这道闸原本站在 claim **前面**,而 r1 把它的失败语义从
+      // 「回空集合」改成「抛 PLAIN」之后,那个位置就成了一条 exactly-once 的洞:
+      // 一个**重复** delivery 只要在这里读失败,抛出去的错就会落进通用 catch,而 catch 的
+      // requeue 会把状态写回 QUEUED —— 那一行可能正被另一个 delivery 拿着调 provider。
+      // 于是活跃 winner 被打回 QUEUED、重投再 claim 再调 provider = 同一单付两次。
+      //
+      // 挪到 claim 之后,这条路就不存在了:能走到这里的,一定是**刚刚亲手赢下 claim** 的那个
+      // delivery,这一行就是它的。requeue 自己的行天经地义,而输掉 claim 的 delivery 早在上面
+      // 那个分支返回了 —— 它连读都不会读。
+      //
+      // 抛的仍然是 PLAIN:落进 catch ⇒ requeue、预扣挂着、零 provider 调用;重试用尽才终态 +
+      // 退款。「不知道有没有被关」绝不许当成「没被关」往下走 —— 往下走一步就是真花钱。
+      const disabled = await workerDisabledModels();
+      if (isModelDisabled(job.model, disabled)) {
+        await failClosedWithRefund(job,"this model was turned off before the job ran — not spending");
+        return; // terminal, no throw → no retry, no spend
       }
 
       // resolve conditioning PER @mentioned entity, scoped to the variant it selected
@@ -589,6 +675,15 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           imageUrl = (await storage.presignedGet(storageKey(sourceAsset.ownerId, sourceAsset.contentHash, sourceAsset.ext), 3600)) ?? "";
           if (provider.name !== "mock" && !imageUrl) throw new Error("source image unreachable — refusing to spend on i2v");
         }
+        // #646: an end frame with NO start frame used to fall through the `&& sourceAsset`
+        // guard below — the tail silently vanished and the merchant was charged for an
+        // ordinary clip. `genRequest` now rejects that shape at enqueue, so this only catches
+        // a job queued before that rule; either way it must never spend. Permanent (a retry
+        // can't grow a start frame), so fail closed with the refund, like its siblings above.
+        if (job.tailGenerationId && !sourceAsset) {
+          await failClosedWithRefund(job, "an end frame needs a start frame — pick a source image, or a shot that has one");
+          return;
+        }
         // optional end frame (last-frame i2v): interpolate source→tail. Resolved
         // server-side from an owned id, and only meaningful with a start image.
         let tailImageUrl = "";
@@ -655,7 +750,14 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
           if (provider.name !== "mock" && !srcUrl) throw new Error("edit source image unreachable — refusing to spend");
           if (srcUrl) inputImageUrls.unshift(srcUrl);
         }
-        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel });
+        // #642: the shape the merchant bought, frozen onto the job at enqueue. A legacy row
+        // (or a malformed snapshot) has none → the model's default square, which is exactly
+        // what those runs produced before the column existed.
+        const io = job.imageOptions as { aspectRatio?: unknown } | null;
+        const aspectRatio = typeof io?.aspectRatio === "string"
+          ? io.aspectRatio
+          : imageDefaults(job.model as GenModel).aspectRatio;
+        outputs = await provider.generate({ prompt: job.prompt, inputImageUrls, count: job.count, model: job.model as GenModel, aspectRatio });
       }
       spent = true; // the paid call has returned — past here, a failure must not retry
       if (outputs.length !== job.count) {
@@ -748,6 +850,7 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       await prisma.genJob.update({ where: { id: job.id }, data: { status: "DONE", progress: 100, finishedAt: new Date(), error: "" } });
       console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
       await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
+      await settleCanvasBoard(job);
       await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
     } catch (err) {
       // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a
@@ -770,12 +873,17 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         // and the finalizer unique index makes refund safe even against a racing settle.
         // A post-charge failure still records spent=true + spentUsd so "paid but not
         // delivered" stays auditable (told apart from a free pre-charge failure).
+        // CONDITIONAL, like every other terminal write here (#602 r2, judge P1-2): a throw from a
+        // gate that runs BEFORE the QUEUED→GENERATING claim reaches this branch on the last retry
+        // while the row may still be QUEUED — so a cancel that landed meanwhile must not be
+        // rewritten to FAILED. `count === 0` means someone else already ended the job and did
+        // their own refund; ours would be a no-op anyway (idempotent on `refund:<jobId>`).
         await prisma.$transaction(async (tx) => {
-          await tx.genJob.update({
-            where: { id: job.id },
+          const { count } = await tx.genJob.updateMany({
+            where: { id: job.id, ownerId: job.ownerId, status: { in: [...GEN_IN_FLIGHT_STATUSES] } },
             data: { status: "FAILED", error: message, finishedAt: new Date(), spent: spent || charged, ...((spent || charged) ? { spentUsd: genSpentUsd({ kind: job.kind, model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }) } : {}) },
           });
-          await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
+          if (count > 0) await refundReservation(tx, { orgId: job.ownerId, refId: job.id });
         });
       } else {
         // recoverable pre-charge retry — requeue and keep the hold (the resume path
@@ -791,7 +899,13 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         if (requeued.count === 0) console.error(`[gen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
       }
       // user-facing chat text stays generic; the sanitized provider error is kept in GenJob.error (ops/DB)
-      if (final) await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
+      if (final) {
+        await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
+        // #612 T2c: this is the ordinary way a generation ends badly (the provider, or storing
+        // what it returned). The card settles to that ending BEFORE the rethrow below, which
+        // pg-boss needs — and, like every other call site, after the money transaction.
+        await settleCanvasBoard(job);
+      }
       // rethrow SANITIZED: pg-boss serializes the thrown error into its own job.output,
       // so throwing the raw `err` would re-leak any signed URL/argv it carries there.
       throw new Error(message);

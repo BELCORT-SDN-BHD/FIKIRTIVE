@@ -114,7 +114,7 @@ const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
 const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
 const IMG = 1;
-const VID = 8;
+const VID = 11; // seedance-2-fast 720p/5s(#644 Founder 裁决 2026-08-06:8 → 11 显示 credits)
 const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);
 
 let failPrompts = new Set<string>();
@@ -203,6 +203,9 @@ beforeEach(() => {
       kind: (req.kind as "image" | "video") ?? "image",
       count: req.count as number,
       entityIds: req.entityIds as string[] | undefined,
+      // #643 T2：形状是真 startGen 材料的一部分，替身漏掉它就会比真库宽容，
+      // 「换了形状还当成同一份内容」这类缺陷永远测不出来。
+      aspectRatio: req.aspectRatio as string | undefined,
     });
     const priors = [...h.store.jobs.values()].filter(
       (job) =>
@@ -294,6 +297,74 @@ describe("quoteCampaignGeneration — server-recomputed price + content binding"
     expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toEqual({ error: "Campaign not found." });
     h.requireOwner.mockResolvedValue({ error: "Not authorized." });
     expect(await quoteCampaignGeneration(CAMPAIGN_ID)).toEqual({ error: "Not authorized." });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #643 T2 —— 商家在计划里写的格式名，就是他要的东西的形状
+// ---------------------------------------------------------------------------
+describe("战役格式 → 交付形状(#643 T2)", () => {
+  const cellsFor = async (formats: string[]) => {
+    seedCampaign(formats.map((format, i) => entry(`E${i + 1}`, { format, brief: `brief ${i} letters` })));
+    seedProject();
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    return h.startGen.mock.calls.map((call) => call[0] as Record<string, unknown>);
+  };
+
+  it("竖版格式（story）⇒ 9:16 —— 不再交付一张横竖不分的方图", async () => {
+    const [req] = await cellsFor(["story"]);
+    expect(req!.kind).toBe("image");
+    expect(req!.aspectRatio).toBe("9:16");
+  });
+
+  it("Feed / 方图格式 ⇒ 1:1", async () => {
+    const reqs = await cellsFor(["feed", "post", "carousel"]);
+    expect(reqs.map((r) => r.aspectRatio)).toEqual(["1:1", "1:1", "1:1"]);
+  });
+
+  it("横版格式（banner）⇒ 16:9", async () => {
+    const [req] = await cellsFor(["banner"]);
+    expect(req!.aspectRatio).toBe("16:9");
+  });
+
+  it("表上没有的格式 ⇒ 默认方图（不去猜商家的意图）", async () => {
+    const [req] = await cellsFor(["something_new"]);
+    expect(req!.aspectRatio).toBe("1:1");
+  });
+
+  it("#645 T4：竖版片子位（reel）交付 9:16；名字没说形状的片子格式仍由视频侧默认档决定", async () => {
+    // #645 T4：片子侧现在也有形状映射 —— "reel" 是平台上的竖版位，所以它交付 9:16。
+    // 名字没说形状的片子格式（video）仍然不带形状，由视频侧的默认档决定。
+    const [reel, plain] = await cellsFor(["reel", "video"]);
+    expect(reel!.kind).toBe("video");
+    expect(reel!.aspectRatio).toBe("9:16");
+    expect(plain!.kind).toBe("video");
+    expect(plain!.aspectRatio).toBeUndefined();
+  });
+
+  it("商家复核页看到的形状 = 真发出去的形状（同一个值，不是两次推导）", async () => {
+    seedCampaign([entry("E1", { format: "story" }), entry("E2", { format: "banner" })]);
+    seedProject();
+    const quote = await currentQuote();
+    expect(quote.lines.map((line) => line.aspectRatio)).toEqual(["9:16", "16:9"]);
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    const sent = h.startGen.mock.calls.map((call) => (call[0] as Record<string, unknown>).aspectRatio);
+    expect(sent).toEqual(quote.lines.map((line) => line.aspectRatio));
+  });
+
+  it("形状进内容指纹：复核之后形状被改掉，确认必须被挡下", async () => {
+    seedCampaign([entry("E1", { format: "story" })]);
+    seedProject();
+    const reviewed = await reviewedRequest();
+
+    // 商家复核的是竖版；此刻计划被改成了方图位。
+    seedCampaign([entry("E1", { format: "feed" })]);
+    const res = await confirmCampaignGeneration(reviewed);
+    expect("error" in res && res.error).toMatch(/changed since you reviewed it/);
+    expect(h.startGen).not.toHaveBeenCalled();
   });
 });
 
@@ -510,7 +581,7 @@ describe("confirmCampaignGeneration — price consent", () => {
     const res = await confirmCampaignGeneration(
       rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
     );
-    expect("error" in res && res.error).toMatch(/was 1, now 8 credits/i);
+    expect("error" in res && res.error).toMatch(new RegExp(`was 1, now ${VID} credits`, "i"));
     expect(h.startGen).not.toHaveBeenCalled();
   });
 });

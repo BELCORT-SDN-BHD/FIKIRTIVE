@@ -1,7 +1,12 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { newId } from "@fikirtive/core";
+import {
+  effectiveOrgRoles,
+  newId,
+  orgRolesAllow,
+  type OrgRole,
+} from "@fikirtive/core";
 import { evaluateSendEligibility, prisma as defaultDb, type Prisma } from "@fikirtive/db";
 import { resolveActiveProviderConnectionId } from "./channel-connection-resolve";
 
@@ -138,8 +143,8 @@ export type NormalizedInboundMessageInput = {
   occurredAt?: Date;
 };
 
-type ActiveRole = "owner" | "admin" | "member";
 type DatabaseClient = typeof defaultDb | Prisma.TransactionClient;
+type ActiveMembership = { id: string; roles: OrgRole[] };
 
 type MutationResult<T> = {
   ok: true;
@@ -152,7 +157,6 @@ type MutationResult<T> = {
   };
 };
 
-const ACTIVE_ROLES = new Set<ActiveRole>(["owner", "admin", "member"]);
 const CONVERSATION_VIEWS = new Set<CustomerConversationView>([
   "all",
   "mine",
@@ -251,7 +255,7 @@ export function createCustomerInboxService(
   async function activeMembership(
     client: DatabaseClient,
     principal: CustomerInboxPrincipal,
-  ): Promise<{ id: string; role: ActiveRole } | null> {
+  ): Promise<ActiveMembership | null> {
     if (!isNonEmptyString(principal?.ownerId) || !isNonEmptyString(principal?.membershipId)) {
       fail("NOT_AUTHORIZED");
     }
@@ -262,10 +266,11 @@ export function createCustomerInboxService(
         status: "active",
         deletedAt: null,
       },
-      select: { id: true, role: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
-    if (!row || !ACTIVE_ROLES.has(row.role as ActiveRole)) return null;
-    return { id: row.id, role: row.role as ActiveRole };
+    if (!row) return null;
+    const roles = effectiveOrgRoles((row.roles ?? []).map((assignment) => assignment.role));
+    return roles.length > 0 ? { id: row.id, roles } : null;
   }
 
   async function auditImpersonation(
@@ -292,9 +297,9 @@ export function createCustomerInboxService(
   async function requireReadMembership(
     principal: CustomerInboxPrincipal,
     operation: string,
-  ): Promise<{ id: string; role: ActiveRole }> {
+  ): Promise<ActiveMembership> {
     const membership = await activeMembership(db, principal);
-    if (!membership) fail("ACTION_DENIED");
+    if (!membership || !orgRolesAllow(membership.roles, "inbox.read")) fail("ACTION_DENIED");
     if (principal.impersonating) {
       await auditImpersonation(principal, operation, "read");
     }
@@ -304,9 +309,9 @@ export function createCustomerInboxService(
   async function requireWriteMembership(
     principal: CustomerInboxPrincipal,
     operation: string,
-  ): Promise<{ id: string; role: ActiveRole }> {
+  ): Promise<ActiveMembership> {
     const membership = await activeMembership(db, principal);
-    if (!membership) fail("ACTION_DENIED");
+    if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
     if (principal.impersonating) {
       await auditImpersonation(principal, operation, "write_denied");
       fail("IMPERSONATION_READ_ONLY");
@@ -330,20 +335,22 @@ export function createCustomerInboxService(
     client: DatabaseClient,
     ownerId: string,
     membershipId: string,
-  ): Promise<{ id: string; role: ActiveRole }> {
+  ): Promise<ActiveMembership> {
     const row = await client.membership.findFirst({
       where: { id: membershipId, orgId: ownerId, status: "active", deletedAt: null },
-      select: { id: true, role: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
-    if (!row || !ACTIVE_ROLES.has(row.role as ActiveRole)) fail("RESOURCE_NOT_FOUND");
-    return { id: row.id, role: row.role as ActiveRole };
+    if (!row) fail("RESOURCE_NOT_FOUND");
+    const roles = effectiveOrgRoles((row.roles ?? []).map((assignment) => assignment.role));
+    if (!orgRolesAllow(roles, "inbox.reply")) fail("RESOURCE_NOT_FOUND");
+    return { id: row.id, roles };
   }
 
   function requireMemberAssignment(
-    membership: { id: string; role: ActiveRole },
+    membership: ActiveMembership,
     assigneeMembershipId: string | null,
   ): void {
-    if (membership.role === "member" && assigneeMembershipId !== membership.id) {
+    if (!orgRolesAllow(membership.roles, "inbox.manage") && assigneeMembershipId !== membership.id) {
       fail("ACTION_DENIED");
     }
   }
@@ -495,14 +502,10 @@ export function createCustomerInboxService(
       for (;;) {
         const pageWhere: Prisma.CustomerConversationWhereInput = cursor
           ? {
-              AND: [
-                where,
-                {
-                  OR: [
-                    { lastActivityAt: { lt: cursor.lastActivityAt } },
-                    { lastActivityAt: cursor.lastActivityAt, id: { lt: cursor.id } },
-                  ],
-                },
+              ...where,
+              OR: [
+                { lastActivityAt: { lt: cursor.lastActivityAt } },
+                { lastActivityAt: cursor.lastActivityAt, id: { lt: cursor.id } },
               ],
             }
           : where;
@@ -635,7 +638,8 @@ export function createCustomerInboxService(
     const conversationId = requiredString(input?.conversationId, 256);
     const conversation = await requireConversation(db, principal.ownerId, conversationId);
     const memberMayAct =
-      membership.role !== "member" || conversation.assigneeMembershipId === membership.id;
+      orgRolesAllow(membership.roles, "inbox.manage") ||
+      conversation.assigneeMembershipId === membership.id;
 
     // C5-M2 §7 wiring: replace the four c5_not_read_in_m2 placeholders with the live
     // four-axis evaluator, called for the conversation's exact channel identity.
@@ -767,7 +771,7 @@ export function createCustomerInboxService(
     try {
       return await db.$transaction(async (tx) => {
         const membership = await activeMembership(tx, principal);
-        if (!membership) fail("ACTION_DENIED");
+        if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
         const conversation = await requireConversation(tx, principal.ownerId, conversationId);
         requireMemberAssignment(membership, conversation.assigneeMembershipId);
         if (conversation.automationState === "otto_active") fail("TAKEOVER_REQUIRED");
@@ -852,12 +856,13 @@ export function createCustomerInboxService(
         : requiredString(input?.targetMembershipId, 256);
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership) fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       const target = targetMembershipId
         ? await requireAssignableMembership(tx, principal.ownerId, targetMembershipId)
         : null;
-      if (membership.role === "member") {
+      if (!orgRolesAllow(membership.roles, "inbox.manage")) {
         if (!target || target.id !== membership.id || current.assigneeMembershipId !== null) {
           fail("ACTION_DENIED");
         }
@@ -884,8 +889,9 @@ export function createCustomerInboxService(
     const expectedRevision = revision(input?.expectedRevision);
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership) fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       requireMemberAssignment(membership, current.assigneeMembershipId);
       if (current.automationState !== "otto_active") fail("ACTION_DENIED");
       return commitConversationEvent(tx, {
@@ -911,8 +917,9 @@ export function createCustomerInboxService(
     const note = boundedOptionalString(input?.note, MAX_NOTE);
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership) fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       requireMemberAssignment(membership, current.assigneeMembershipId);
       const target = await requireAssignableMembership(
         tx,
@@ -943,8 +950,9 @@ export function createCustomerInboxService(
     if (input?.status !== "open" && input?.status !== "closed") fail("INVALID_ARGUMENT");
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership) fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
+      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
       requireMemberAssignment(membership, current.assigneeMembershipId);
       if (current.status === input.status) fail("INVALID_ARGUMENT");
       return commitConversationEvent(tx, {
@@ -962,13 +970,13 @@ export function createCustomerInboxService(
     input: RequestAutomationResumeInput,
   ) {
     const caller = await requireWriteMembership(principal, "requestAutomationResume");
-    if (caller.role === "member") fail("ACTION_DENIED");
+    if (!orgRolesAllow(caller.roles, "inbox.manage")) fail("ACTION_DENIED");
     const conversationId = requiredString(input?.conversationId, 256);
     const expectedRevision = revision(input?.expectedRevision);
     const note = boundedOptionalString(input?.note, MAX_NOTE);
     return db.$transaction(async (tx) => {
       const membership = await activeMembership(tx, principal);
-      if (!membership || membership.role === "member") fail("ACTION_DENIED");
+      if (!membership || !orgRolesAllow(membership.roles, "inbox.manage")) fail("ACTION_DENIED");
       const current = await requireConversation(tx, principal.ownerId, conversationId);
       return commitConversationEvent(tx, {
         principal,
@@ -988,7 +996,7 @@ export function createCustomerInboxService(
     input: CreateMessageTemplateInput,
   ) {
     const caller = await requireWriteMembership(principal, "createMessageTemplate");
-    if (caller.role === "member") fail("ACTION_DENIED");
+    if (!orgRolesAllow(caller.roles, "inbox.manage")) fail("ACTION_DENIED");
     const channelScopeId = requiredString(input?.channelScopeId, 256);
     const channel = requiredString(input?.channel, 64);
     const name = requiredString(input?.name, MAX_TEMPLATE_NAME);
@@ -997,7 +1005,7 @@ export function createCustomerInboxService(
     try {
       return await db.$transaction(async (tx) => {
         const membership = await activeMembership(tx, principal);
-        if (!membership || membership.role === "member") fail("ACTION_DENIED");
+        if (!membership || !orgRolesAllow(membership.roles, "inbox.manage")) fail("ACTION_DENIED");
         const scope = await tx.channelScope.findFirst({
           where: { id: channelScopeId, ownerId: principal.ownerId, channel },
           select: { id: true },
@@ -1038,7 +1046,7 @@ export function createCustomerInboxService(
     input: CreateMessageTemplateVersionInput,
   ) {
     const caller = await requireWriteMembership(principal, "createMessageTemplateVersion");
-    if (caller.role === "member") fail("ACTION_DENIED");
+    if (!orgRolesAllow(caller.roles, "inbox.manage")) fail("ACTION_DENIED");
     const templateId = requiredString(input?.templateId, 256);
     const body = requiredString(input?.body, MAX_TEXT);
     if (!Array.isArray(input?.variables) || input.variables.length > MAX_VARIABLES) {
@@ -1057,7 +1065,7 @@ export function createCustomerInboxService(
     try {
       return await db.$transaction(async (tx) => {
         const membership = await activeMembership(tx, principal);
-        if (!membership || membership.role === "member") fail("ACTION_DENIED");
+        if (!membership || !orgRolesAllow(membership.roles, "inbox.manage")) fail("ACTION_DENIED");
         const template = await tx.customerMessageTemplate.findFirst({
           where: { id: templateId, ownerId: principal.ownerId, archivedAt: null },
           select: { id: true },
@@ -1260,7 +1268,7 @@ export function createCustomerInboxService(
     input: SubmitTemplateReviewInput,
   ): Promise<never> {
     const membership = await requireWriteMembership(principal, "submitTemplateReview");
-    if (membership.role === "member") fail("ACTION_DENIED");
+    if (!orgRolesAllow(membership.roles, "inbox.manage")) fail("ACTION_DENIED");
     const templateVersionId = requiredString(input?.templateVersionId, 256);
     revision(input?.reviewRevision);
     const versionRow = await db.customerMessageTemplateVersion.findFirst({

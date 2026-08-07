@@ -7,12 +7,21 @@ import {
   type ActiveGenModels,
 } from "../../lib/gen-actions";
 import { createCanvasNode, resolveCanvasNode } from "../../lib/canvas-actions";
+import { canvasCardIsInFlightPaid, isTerminalCardStatus } from "@/lib/canvas-card-status";
 import {
   CANVAS_IMAGE_DEFAULT_COUNT,
   canvasGenCostQuote,
   clampImageVariantCount,
 } from "@/lib/canvas-gen-costs";
 import { canvasBatchSlotOffset } from "@/lib/canvas-batch-layout";
+import {
+  clampVideoSpec,
+  defaultVideoSpec,
+  videoSpecCredits,
+  videoSpecMenu,
+  type VideoSpec,
+  type VideoSpecMenu,
+} from "@/lib/video-spec";
 
 type Pos = { x: number; y: number; w: number; h: number };
 type OnNode = (node: {
@@ -22,17 +31,30 @@ type OnNode = (node: {
   status: string;
   url?: string;
   prompt: string;
-  sourceNodeId?: string;
   generationId?: string;
   genJobId?: string;
-  variantIndex?: number;
-  variantCount?: number;
+  /**
+   * WHAT THIS CALLBACK NO LONGER CARRIES (#605 r1 judge P1-1): which of the batch this card is,
+   * how big the batch is, and what it was made from. It used to pass all three, taken from the
+   * REQUEST — and the board wrote them onto the card, where the lineage tree, the A/B badge, the
+   * same-batch frame and the compare gate read them as settled facts. They are not: the paid job
+   * settles them, the row the server just wrote carries nulls, and a press can end up smaller
+   * than it was asked for or with a derivation that resolves to nothing. The board read brings
+   * them once they exist.
+   */
 }) => void;
 
 export type CanvasImageGenOptions = {
   actionId?: string;
   sourceGenerationId?: string;
   sourceNodeId?: string;
+  /**
+   * #643 T2 —— 这次出图要交付的形状，就是界面上显示的那一格。
+   *
+   * 缺省时不发：服务端按底图快照继承 / 落默认形状。但界面上只要显示了一个形状，这里就
+   * 一定带着它 —— 「显示的」与「发出去的」不许有第二个来源。
+   */
+  aspectRatio?: string;
   /** Exact accepted request material used only when resuming a browser receipt. */
   resumeModel?: string;
   resumeThreadId?: string | null;
@@ -45,8 +67,44 @@ type CanvasVideoResumeOptions = {
   approvedCredits?: number;
 };
 
+/**
+ * #645 T4 —— 这条片子要交付的规格,就是界面上显示的那一档。
+ *
+ * 缺省时不发:服务端落这个模型的默认档。但界面上只要显示了一档规格,这里就一定带着它 ——
+ * 「显示的」与「发出去的」不许有第二个来源。规格会改价,所以带规格的调用必须同时带上
+ * 服务端为**这一档**报的价(`approvedCredits`),否则预扣额与卡面价格就分家了。
+ */
+export type CanvasVideoGenOptions = {
+  spec?: VideoSpec;
+};
+
 function isConfirmedCreditQuote(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/** 服务端解析的图片形状菜单 + 商家没选时会交付的那一格。 */
+export type CanvasImageShapes = {
+  options: string[];
+  defaultAspect: string;
+};
+
+/** 服务端解析的视频规格菜单 + 两条路各自的默认档(t2v / 带首帧的 i2v)。 */
+export type CanvasVideoSpecs = {
+  menu: VideoSpecMenu;
+  t2vDefault: VideoSpec;
+  i2vDefault: VideoSpec;
+  /** 按档查价(显示 credits);表上没有这一档 ⇒ null。 */
+  creditsFor: (spec: VideoSpec) => number | null;
+};
+
+/** 回执里记着的那一档规格;回执早于 #645(没记规格)⇒ null,按服务端默认档走。 */
+function receiptVideoSpec(receipt: StoredCanvasActionReceipt): VideoSpec | null {
+  if (typeof receipt.videoSeconds !== "number" || typeof receipt.videoResolution !== "string") return null;
+  return {
+    seconds: receipt.videoSeconds,
+    resolution: receipt.videoResolution,
+    aspectRatio: receipt.aspectRatio ?? "",
+  };
 }
 
 export type CanvasGenProgress = {
@@ -62,12 +120,17 @@ export function freshCanvasActionId(): string {
 }
 
 type AcceptedCanvasGen = { id: string; disposition: "fresh" | "reused" };
-export type CanvasStartOutcome = "accepted" | "rejected" | "refunded" | "unknown";
+export type CanvasStartOutcome = "accepted" | "rejected" | "refunded" | "retryable" | "unknown";
 
 /** Only an outcome-unknown request keeps its stable action identity for a safe replay.
- * Accepted work is already durable; deterministic rejection/refund authorizes a new action. */
+ * Accepted work is already durable; deterministic rejection/refund authorizes a new action.
+ *
+ * `retryable` is the server SAYING the outcome is unknown ("nothing was charged, retry this same
+ * action") rather than the browser inferring it from a dead connection. It is the same class of
+ * answer and must keep the same identity: dropping the receipt here would hand the next click a
+ * FRESH actionId while the earlier job may still be alive — one action, two charges (#656 P1). */
 export function retainCanvasActionIdentity(outcome: CanvasStartOutcome): boolean {
-  return outcome === "unknown";
+  return outcome === "unknown" || outcome === "retryable";
 }
 
 export type StoredCanvasActionReceipt = {
@@ -85,6 +148,12 @@ export type StoredCanvasActionReceipt = {
   variantSel?: Record<string, string>;
   sourceGenerationId?: string;
   sourceNodeId?: string;
+  /** #643 T2：形状是商家授权内容的一部分，所以刷新后重放的必须是同一个形状。 */
+  aspectRatio?: string;
+  /** #645 T4：视频规格同理 —— 而且它**会改价**，所以重放必须连规格带价格一起原样重发，
+   *  否则刷新后重放的可能是一档更贵/更便宜的片子，与商家当时按下去的那一档不是同一件事。 */
+  videoSeconds?: number;
+  videoResolution?: string;
 };
 
 const CANVAS_RECEIPT_PREFIX = "fikirtive:canvas-action:v1:";
@@ -240,7 +309,13 @@ export async function startCanvasAction(
     if (response !== null && typeof response === "object") {
       const result = response as { id?: unknown; disposition?: unknown; error?: unknown; refunded?: unknown };
       if (typeof result.error === "string") {
-        onOutcome?.(result.refunded === true ? "refunded" : "rejected");
+        // A `retryable` refusal is an outcome-unknown answer, not a verdict — it keeps this
+        // action's identity so the retry replays the same durable server key (#656 P1).
+        onOutcome?.(
+          result.refunded === true ? "refunded"
+            : result.disposition === "retryable" ? "retryable"
+              : "rejected",
+        );
         onError(result.error);
         return null;
       }
@@ -298,18 +373,92 @@ export async function createNodeWithRetry(
 }
 
 /**
- * A canvas node representing a PAID generation still in flight — an image/video gen
- * node that hasn't resolved to media yet (status "pending"/"timeout", no url).
- * Deleting one does NOT refund (its GenJob already reserved and will settle) and
- * re-running starts a fresh paid action → a SECOND charge. The delete
- * confirm uses this to warn before the owner reflexively removes a stuck-looking
- * card and reclicks. "failed" is terminal (already refunded) and "done"/url-present
- * is finished — both safe to delete.
+ * A canvas node representing a PAID generation still in flight. The delete confirm uses this to
+ * warn before the owner reflexively removes a stuck-looking card and reclicks — deleting one does
+ * NOT refund, and re-running mints a fresh paid action.
+ *
+ * The rule itself lives in `@fikirtive/core` because Otto's `remove` refusal must ask exactly the
+ * same question, and its hand-kept mirror had already drifted (#602 r2, judge P1-3).
  */
 export function isInFlightPaidGen(node: { type: string; status?: string; url?: string | null }): boolean {
-  if (node.type !== "image" && node.type !== "video") return false;
-  if (node.url) return false;
-  return node.status === "pending" || node.status === "timeout";
+  return canvasCardIsInFlightPaid(node);
+}
+
+/**
+ * What this tab may draw on a card after telling the server what it saw (#612 r3).
+ *
+ * Three states, one positive licence. `accepted` is the ONLY outcome that lets this tab draw its
+ * own report as truth. `refused` means the server has a settled answer and hands it over.
+ * `unknown` means nobody knows: paint nothing and let the board's read bring the answer.
+ */
+export type CanvasResolveOutcome =
+  | { kind: "accepted"; paint: string }
+  | { kind: "refused"; paint: string | null }
+  /** The card is gone. Taking it off the board needs no media and no further answer (#612 r4). */
+  | { kind: "removed" }
+  | { kind: "unknown" };
+
+/** How many times a lost answer is asked for again before the board read takes over. */
+const CANVAS_RESOLVE_ATTEMPTS = 3;
+/** Grows per attempt. Short: the board's own re-read is running behind this the whole time. */
+const CANVAS_RESOLVE_RETRY_MS = 400;
+
+/**
+ * Report a card's state to the server, and answer with what this tab may PAINT.
+ *
+ * THE RULE, and it is one rule rather than a list of cases (#612 r3, judge P1② round two): a tab
+ * may draw its own report as truth only when the server SAYS it took it. Two rounds of review
+ * found this one branch at a time — first a refusal being painted anyway, then an `{error}` answer
+ * and a lost response being read as consent — which is what a wrong shape looks like from the
+ * outside. So there is now a single positive licence and everything else is `unknown`.
+ *
+ * What "unknown" costs a merchant is nothing: the card keeps exactly what they are already looking
+ * at, and the answer arrives from the server. The convergence has two legs and neither is this
+ * tab's guess — the report is asked again a bounded number of times (a lost RESPONSE may mean the
+ * write landed, or that a settlement overtook it; only the server can say which), and the board's
+ * own re-read loop stays running for as long as the card is unresolved, so the settlement's answer
+ * lands on the board whenever it happens. That loop is keyed on `isInFlightPaidGen`, which is why
+ * an unpainted card keeps it alive.
+ *
+ * An `{error}` answer is NOT retried: those are deterministic refusals (the card is gone, the
+ * generation is not this job's), and asking again just spends another round trip to hear it twice.
+ */
+export async function applyCanvasResolve(
+  projectId: string,
+  nodeId: string,
+  input: { status: string; generationId?: string },
+  options: { attempts?: number; wait?: (ms: number) => Promise<void> } = {},
+): Promise<CanvasResolveOutcome> {
+  const attempts = Math.max(1, options.attempts ?? CANVAS_RESOLVE_ATTEMPTS);
+  const wait = options.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let answer: Awaited<ReturnType<typeof resolveCanvasNode>>;
+    try {
+      answer = await resolveCanvasNode(projectId, nodeId, input);
+    } catch (e) {
+      console.warn(
+        `[canvas] card resolve did not come back (attempt ${attempt}/${attempts}):`,
+        e instanceof Error ? e.message : e,
+      );
+      if (attempt < attempts) {
+        await wait(CANVAS_RESOLVE_RETRY_MS * attempt);
+        continue;
+      }
+      return { kind: "unknown" };
+    }
+    if ("error" in answer) {
+      console.warn(`[canvas] card resolve refused: ${answer.error}`);
+      return { kind: "unknown" };
+    }
+    if (answer.applied) return { kind: "accepted", paint: input.status };
+    // A tombstone is not a state to draw — it is a card to take away, and taking it away is the
+    // one thing this tab can finish on its own (#612 r4).
+    if (answer.status === "deleted") return { kind: "removed" };
+    // Otherwise only an ending this tab can draw unaided. "done" needs a picture this poll does
+    // not have, so the board read is what delivers it.
+    return { kind: "refused", paint: isTerminalCardStatus(answer.status) ? answer.status : null };
+  }
+  return { kind: "unknown" };
 }
 
 export async function poll(
@@ -343,6 +492,9 @@ export async function poll(
     opts.onProgress?.(progress, job.status);
     if (job.status === "DONE") return onDone(job.urls, job.urls.length ? "done" : "missing", job.generationIds ?? []);
     if (job.status === "FAILED") return onDone([], "failed", []);
+    // A cancelled job has its own ending (#612 · #599 D4). Without this the open tab keeps
+    // polling a job that stopped, and eventually shows the soft "still working" copy for it.
+    if (job.status === "CANCELLED") return onDone([], "cancelled", []);
     await new Promise((r) => setTimeout(r, intervalMs));
   }
   // Client-side give-up ≠ failure: the worker may still finish and settle. Report a distinct
@@ -367,6 +519,12 @@ export function useCanvasGen(
    * board once per card (r3 review P2-1). Nothing here spends: it reports that a job settled.
    */
   onBatchSettled?: () => void,
+  /**
+   * This card is GONE — the server says it was deleted (in another tab, or by Otto). Take it off
+   * the board; nothing else can. Board reads omit tombstones, so a card kept here after its row
+   * became a tombstone is a card that can never be corrected by a later read (#612 r4).
+   */
+  onRemoved?: (nodeId: string) => void,
 ) {
   const cancelledRef = useRef(false);
   const resumedReceiptIdsRef = useRef(new Set<string>());
@@ -387,7 +545,21 @@ export function useCanvasGen(
         typeof (response as { video?: unknown }).video !== "string" ||
         !(response as { video: string }).video ||
         !isConfirmedCreditQuote((response as { imageCredits?: unknown }).imageCredits) ||
-        !isConfirmedCreditQuote((response as { videoCredits?: unknown }).videoCredits)
+        !isConfirmedCreditQuote((response as { videoCredits?: unknown }).videoCredits) ||
+        // #643 T2：形状菜单和默认形状必须真的到齐，否则选择器会拿一个空菜单或一个
+        // 界面自己编的默认值去渲染 —— 那就是「显示的」与「会交付的」第二次分家。
+        !Array.isArray((response as { imageAspectRatios?: unknown }).imageAspectRatios) ||
+        (response as { imageAspectRatios: unknown[] }).imageAspectRatios.length === 0 ||
+        typeof (response as { imageDefaultAspect?: unknown }).imageDefaultAspect !== "string" ||
+        !(response as { imageDefaultAspect: string }).imageDefaultAspect ||
+        // #645 T4：规格菜单与按档价目表同样必须真的到齐 —— 少了它们，选择器会拿空菜单渲染，
+        // 或者更糟：拿一个界面自己编的价格去当预扣额。
+        !Array.isArray((response as { videoDurations?: unknown }).videoDurations) ||
+        (response as { videoDurations: unknown[] }).videoDurations.length === 0 ||
+        !Array.isArray((response as { videoResolutions?: unknown }).videoResolutions) ||
+        (response as { videoResolutions: unknown[] }).videoResolutions.length === 0 ||
+        (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec === null ||
+        typeof (response as { videoCreditsBySpec?: unknown }).videoCreditsBySpec !== "object"
       ) {
         throw new Error("Unexpected generation model response");
       }
@@ -398,6 +570,21 @@ export function useCanvasGen(
   const quoteCosts = useCallback(async (imageCount = CANVAS_IMAGE_DEFAULT_COUNT) => (
     canvasGenCostQuote(await ensureModels(), imageCount)
   ), [ensureModels]);
+  /** #643 T2：形状菜单只有一个来源 —— 服务端解析的那份。界面一格都不写死。 */
+  const imageShapes = useCallback(async (): Promise<CanvasImageShapes> => {
+    const models = await ensureModels();
+    return { options: models.imageAspectRatios, defaultAspect: models.imageDefaultAspect };
+  }, [ensureModels]);
+  /** #645 T4：视频规格菜单与价目表同理 —— 一个来源,界面一格都不写死、一分钱都不自己算。 */
+  const videoSpecs = useCallback(async (): Promise<CanvasVideoSpecs> => {
+    const models = await ensureModels();
+    return {
+      menu: videoSpecMenu(models),
+      t2vDefault: defaultVideoSpec(models),
+      i2vDefault: defaultVideoSpec(models, { hasSourceImage: true }),
+      creditsFor: (spec) => videoSpecCredits(models, spec),
+    };
+  }, [ensureModels]);
   // A paid-gen kickoff that fails before any card is placed (out of credits, model disabled,
   // guardian block, or a node-create that never recovered) must tell the user — otherwise they
   // see nothing, assume the app broke, and re-click as a fresh action → a real
@@ -463,6 +650,7 @@ export function useCanvasGen(
       entityIds,
       ...(vsel && { variantSel: vsel }),
       ...(options.sourceGenerationId && { sourceGenerationId: options.sourceGenerationId }),
+      ...(options.aspectRatio && { aspectRatio: options.aspectRatio }),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -480,6 +668,7 @@ export function useCanvasGen(
       ...(vsel ? { variantSel: vsel } : {}),
       ...(options.sourceGenerationId ? { sourceGenerationId: options.sourceGenerationId } : {}),
       ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
+      ...(options.aspectRatio ? { aspectRatio: options.aspectRatio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -500,7 +689,6 @@ export function useCanvasGen(
       prompt,
       genJobId: started.id,
       status: "pending",
-      ...(options.sourceNodeId && { sourceNodeId: options.sourceNodeId }),
       ...(requestThreadId ? { threadId: requestThreadId } : {}),
     });
     if ("error" in created) {
@@ -511,31 +699,47 @@ export function useCanvasGen(
     const createdPos = persistedNodePos(created, pos);
     onNode({
       id: created.id,
+      // The card the browser puts down knows ONE thing: a job was accepted. Whether it has
+      // started is the job row's to say, and the board read brings that word seconds later — so
+      // this says queued, which is true either way, and never "making this now" (#602 T3).
+      // The stored row stays `pending`; queued/generating are faces, not row words.
+      status: "queued",
       type: "image",
       pos: createdPos,
-      status: "pending",
       prompt,
       genJobId: started.id,
-      variantIndex: 0,
-      variantCount: safeCount,
-      ...(options.sourceNodeId && { sourceNodeId: options.sourceNodeId }),
     });
     poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       if (status !== "done" || urls.length === 0) {
-        void resolveCanvasNode(projectId, created.id, { status });
-        onResolve(created.id, null, status);
+        const outcome = await applyCanvasResolve(projectId, created.id, { status });
+        if (outcome.kind === "accepted") onResolve(created.id, null, outcome.paint);
+        else if (outcome.kind === "removed") onRemoved?.(created.id);
+        else {
+          if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+          onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
+        }
         return;
       }
       // primary card → first variant
       const primaryGenerationId = generationIds[0];
       if (!primaryGenerationId) {
-        void resolveCanvasNode(projectId, created.id, { status: "missing" });
-        onResolve(created.id, null, "missing");
+        const outcome = await applyCanvasResolve(projectId, created.id, { status: "missing" });
+        if (outcome.kind === "accepted") onResolve(created.id, null, outcome.paint);
+        else if (outcome.kind === "removed") onRemoved?.(created.id);
+        else {
+          if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+          onBatchSettled?.();
+        }
         return;
       }
-      void resolveCanvasNode(projectId, created.id, { status: "done", generationId: primaryGenerationId });
-      onResolve(created.id, urls[0], "done", primaryGenerationId);
+      const anchor = await applyCanvasResolve(projectId, created.id, { status: "done", generationId: primaryGenerationId });
+      // Only an accepted report may put this tab's picture on the card. Anything else keeps what
+      // the merchant is looking at; the siblings below still belong on the board, and the batch's
+      // own board read at the end of this loop is what brings the server's answer.
+      if (anchor.kind === "accepted") onResolve(created.id, urls[0], "done", primaryGenerationId);
+      else if (anchor.kind === "removed") onRemoved?.(created.id);
+      else if (anchor.kind === "refused" && anchor.paint) onResolve(created.id, null, anchor.paint);
       // one sibling card per remaining variant, laid out in a 2×2 cluster. Each
       // is a plain canvas-node placement of an already-generated (already-charged)
       // Generation — createCanvasNode is not a spend path.
@@ -547,13 +751,10 @@ export function useCanvasGen(
         const sy = createdPos.y + slot.dy;
         const generationId = generationIds[i];
         if (!generationId) continue;
-        // TWO different facts used to share one name. The BATCH ANCHOR is the card this sibling
-        // is laid out around; the placement path stores it in CanvasNode.sourceNodeId and
-        // derives it itself, so it is passed here only to match what the server would compute.
-        // The SOURCE is what this card was made FROM — a plain batch has none, its cards came
-        // out of one press together. Sending the anchor on as a source drew every batch as a
-        // family tree and told the merchant "Made from" about a card that made nothing.
-        const batchAnchorNodeId = options.sourceNodeId ?? created.id;
+        // The browser says WHERE, never WHO (#603 T4). It used to send a "source node" along with
+        // each sibling — the batch's own anchor — into the one column that also meant "made
+        // from", and the server enforced it. Both facts are the paid job's to state now: the
+        // server reads this card's position and its batch's anchor off the job itself.
         const sib = await createCanvasNode({
           projectId,
           type: "image",
@@ -565,7 +766,6 @@ export function useCanvasGen(
           generationId,
           genJobId: started.id,
           status: "done",
-          sourceNodeId: batchAnchorNodeId,
           ...(requestThreadId ? { threadId: requestThreadId } : {}),
         });
         if ("error" in sib) continue;
@@ -583,9 +783,6 @@ export function useCanvasGen(
           prompt,
           generationId,
           genJobId: started.id,
-          variantIndex: i,
-          variantCount: generationIds.length,
-          ...(options.sourceNodeId ? { sourceNodeId: options.sourceNodeId } : {}),
         });
         onResolve(sib.id, urls[i], "done", generationId);
       }
@@ -601,7 +798,7 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, onRemoved, loadModelsForAction]);
 
   const animate = useCallback(async (
     sourceGenerationId: string,
@@ -610,9 +807,13 @@ export function useCanvasGen(
     pos: Pos,
     actionId?: string,
     resume: CanvasVideoResumeOptions = {},
+    options: CanvasVideoGenOptions = {},
   ): Promise<boolean> => {
     let video: string;
     let approvedCredits: number;
+    // #645 T4：带首帧 ⇒ 形状默认 adaptive（引擎跟着首帧走）。规格只有在界面真的显示过
+    // 一档时才带上；重放时用回执里记着的那一档，不是刷新后的默认值。
+    let spec: VideoSpec | null = null;
     if (typeof resume.model === "string") {
       if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
         fail("Generation settings couldn't be confirmed — please try again.");
@@ -620,11 +821,18 @@ export function useCanvasGen(
       }
       video = resume.model;
       approvedCredits = resume.approvedCredits;
+      spec = options.spec ?? null;
     } else {
       const models = await loadModelsForAction();
       if (!models) return false;
       video = models.video;
-      approvedCredits = models.videoCredits;
+      spec = options.spec ? clampVideoSpec(models, options.spec, { hasSourceImage: true }) : null;
+      const quoted = spec ? videoSpecCredits(models, spec) : models.videoCredits;
+      if (!isConfirmedCreditQuote(quoted)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      approvedCredits = quoted;
     }
     const stableActionId = actionId ?? freshCanvasActionId();
     const requestThreadId = resume.threadId !== undefined
@@ -639,6 +847,7 @@ export function useCanvasGen(
       kind: "video" as const,
       model: video,
       sourceGenerationId,
+      ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
       ...(requestThreadId && { threadId: requestThreadId }),
     };
     const receipt: StoredCanvasActionReceipt = {
@@ -653,103 +862,7 @@ export function useCanvasGen(
       threadId: requestThreadId,
       sourceGenerationId,
       sourceNodeId,
-    };
-    const receiptClaim = claimCanvasActionReceipt(receipt);
-    if (receiptClaim !== "ok") {
-      fail(receiptClaimError(receiptClaim));
-      return false;
-    }
-    const startOutcome = { current: "unknown" as CanvasStartOutcome };
-    const started = await startCanvasAction(req, fail, (outcome) => { startOutcome.current = outcome; });
-    if (!started) {
-      if (!retainCanvasActionIdentity(startOutcome.current)) clearCanvasActionReceipt(receipt);
-      return false;
-    }
-    void onBalanceRefresh?.();
-    const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", sourceNodeId, ...(requestThreadId ? { threadId: requestThreadId } : {}) });
-    if ("error" in created) { fail("Your video is generating — the card didn't appear yet. Refresh Canvas to recover it without paying again."); return false; }
-    clearCanvasActionReceipt(receipt);
-    const createdPos = persistedNodePos(created, pos);
-    onNode({
-      id: created.id,
-      type: "video",
-      pos: createdPos,
-      status: "pending",
-      prompt,
-      sourceNodeId,
-      genJobId: started.id,
-      variantIndex: 0,
-      variantCount: 1,
-    });
-    poll(started.id, (urls, status, generationIds) => {
-      void onBalanceRefresh?.();
-      const generationId = generationIds[0];
-      const resolvedStatus = status === "done" && !generationId ? "missing" : status;
-      void resolveCanvasNode(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
-      onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
-      // A video job is a batch of one: it has settled the moment its card carries media.
-      if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
-    }, cancelledRef, {
-      projectId,
-      onProgress: (progress, status) => onProgress?.({
-        nodeId: created.id,
-        genJobId: started.id,
-        progress,
-        status,
-      }),
-    });
-    return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
-
-  // Phase 3: text-to-video. The same paid video path as animate(), minus the
-  // source frame — the gate allows video without sourceGenerationId (it's the
-  // Gen-space path) and the provider uses the model's t2v endpoint. Video is
-  // always count=1 (the shared startGen authority forces it). New spend entry, existing spend logic.
-  const generateVideoFromText = useCallback(async (
-    prompt: string,
-    pos: Pos,
-    actionId?: string,
-    resume: CanvasVideoResumeOptions = {},
-  ): Promise<boolean> => {
-    let video: string;
-    let approvedCredits: number;
-    if (typeof resume.model === "string") {
-      if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
-        fail("Generation settings couldn't be confirmed — please try again.");
-        return false;
-      }
-      video = resume.model;
-      approvedCredits = resume.approvedCredits;
-    } else {
-      const models = await loadModelsForAction();
-      if (!models) return false;
-      video = models.video;
-      approvedCredits = models.videoCredits;
-    }
-    const stableActionId = actionId ?? freshCanvasActionId();
-    const requestThreadId = resume.threadId !== undefined
-      ? resume.threadId
-      : activeThreadId ?? null;
-    const req = {
-      actionId: stableActionId,
-      expectedCredits: approvedCredits,
-      projectId,
-      prompt,
-      count: 1,
-      kind: "video" as const,
-      model: video,
-      ...(requestThreadId && { threadId: requestThreadId }),
-    };
-    const receipt: StoredCanvasActionReceipt = {
-      version: 1,
-      projectId,
-      actionId: stableActionId,
-      operation: "video",
-      prompt,
-      pos,
-      model: video,
-      approvedCredits,
-      threadId: requestThreadId,
+      ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
     };
     const receiptClaim = claimCanvasActionReceipt(receipt);
     if (receiptClaim !== "ok") {
@@ -771,17 +884,22 @@ export function useCanvasGen(
       id: created.id,
       type: "video",
       pos: createdPos,
-      status: "pending",
+      // Queued, not "making this now" — see the image path above (#602 T3).
+      status: "queued",
       prompt,
       genJobId: started.id,
-      variantIndex: 0,
-      variantCount: 1,
     });
-    poll(started.id, (urls, status, generationIds) => {
+    poll(started.id, async (urls, status, generationIds) => {
       void onBalanceRefresh?.();
       const generationId = generationIds[0];
       const resolvedStatus = status === "done" && !generationId ? "missing" : status;
-      void resolveCanvasNode(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      if (outcome.kind === "removed") { onRemoved?.(created.id); return; }
+      if (outcome.kind !== "accepted") {
+        if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+        onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
+        return;
+      }
       onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
       // A video job is a batch of one: it has settled the moment its card carries media.
       if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
@@ -795,7 +913,120 @@ export function useCanvasGen(
       }),
     });
     return true;
-  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, loadModelsForAction]);
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, onRemoved, loadModelsForAction]);
+
+  // Phase 3: text-to-video. The same paid video path as animate(), minus the
+  // source frame — the gate allows video without sourceGenerationId (it's the
+  // Gen-space path) and the provider uses the model's t2v endpoint. Video is
+  // always count=1 (the shared startGen authority forces it). New spend entry, existing spend logic.
+  const generateVideoFromText = useCallback(async (
+    prompt: string,
+    pos: Pos,
+    actionId?: string,
+    resume: CanvasVideoResumeOptions = {},
+    options: CanvasVideoGenOptions = {},
+  ): Promise<boolean> => {
+    let video: string;
+    let approvedCredits: number;
+    // #645 T4：t2v 没有首帧，所以形状默认是模型的 t2v 默认档（16:9），不是 adaptive。
+    let spec: VideoSpec | null = null;
+    if (typeof resume.model === "string") {
+      if (!resume.model || !isConfirmedCreditQuote(resume.approvedCredits)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      video = resume.model;
+      approvedCredits = resume.approvedCredits;
+      spec = options.spec ?? null;
+    } else {
+      const models = await loadModelsForAction();
+      if (!models) return false;
+      video = models.video;
+      spec = options.spec ? clampVideoSpec(models, options.spec) : null;
+      const quoted = spec ? videoSpecCredits(models, spec) : models.videoCredits;
+      if (!isConfirmedCreditQuote(quoted)) {
+        fail("Generation settings couldn't be confirmed — please try again.");
+        return false;
+      }
+      approvedCredits = quoted;
+    }
+    const stableActionId = actionId ?? freshCanvasActionId();
+    const requestThreadId = resume.threadId !== undefined
+      ? resume.threadId
+      : activeThreadId ?? null;
+    const req = {
+      actionId: stableActionId,
+      expectedCredits: approvedCredits,
+      projectId,
+      prompt,
+      count: 1,
+      kind: "video" as const,
+      model: video,
+      ...(spec ? { durationSeconds: spec.seconds, resolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
+      ...(requestThreadId && { threadId: requestThreadId }),
+    };
+    const receipt: StoredCanvasActionReceipt = {
+      version: 1,
+      projectId,
+      actionId: stableActionId,
+      operation: "video",
+      prompt,
+      pos,
+      model: video,
+      approvedCredits,
+      threadId: requestThreadId,
+      ...(spec ? { videoSeconds: spec.seconds, videoResolution: spec.resolution, aspectRatio: spec.aspectRatio } : {}),
+    };
+    const receiptClaim = claimCanvasActionReceipt(receipt);
+    if (receiptClaim !== "ok") {
+      fail(receiptClaimError(receiptClaim));
+      return false;
+    }
+    const startOutcome = { current: "unknown" as CanvasStartOutcome };
+    const started = await startCanvasAction(req, fail, (outcome) => { startOutcome.current = outcome; });
+    if (!started) {
+      if (!retainCanvasActionIdentity(startOutcome.current)) clearCanvasActionReceipt(receipt);
+      return false;
+    }
+    void onBalanceRefresh?.();
+    const created = await createNodeWithRetry({ projectId, type: "video", ...pos, prompt, genJobId: started.id, status: "pending", ...(requestThreadId ? { threadId: requestThreadId } : {}) });
+    if ("error" in created) { fail("Your video is generating — the card didn't appear yet. Refresh Canvas to recover it without paying again."); return false; }
+    clearCanvasActionReceipt(receipt);
+    const createdPos = persistedNodePos(created, pos);
+    onNode({
+      id: created.id,
+      type: "video",
+      pos: createdPos,
+      // Queued, not "making this now" — see the image path above (#602 T3).
+      status: "queued",
+      prompt,
+      genJobId: started.id,
+    });
+    poll(started.id, async (urls, status, generationIds) => {
+      void onBalanceRefresh?.();
+      const generationId = generationIds[0];
+      const resolvedStatus = status === "done" && !generationId ? "missing" : status;
+      const outcome = await applyCanvasResolve(projectId, created.id, { status: resolvedStatus, ...(generationId ? { generationId } : {}) });
+      if (outcome.kind === "removed") { onRemoved?.(created.id); return; }
+      if (outcome.kind !== "accepted") {
+        if (outcome.kind === "refused" && outcome.paint) onResolve(created.id, null, outcome.paint);
+        onBatchSettled?.(); // convergence: the board read brings whatever the server settles on
+        return;
+      }
+      onResolve(created.id, urls[0] ?? null, resolvedStatus, generationId);
+      // A video job is a batch of one: it has settled the moment its card carries media.
+      if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
+    }, cancelledRef, {
+      projectId,
+      onProgress: (progress, status) => onProgress?.({
+        nodeId: created.id,
+        genJobId: started.id,
+        progress,
+        status,
+      }),
+    });
+    return true;
+  }, [projectId, onNode, onResolve, activeThreadId, fail, onBalanceRefresh, onProgress, onBatchSettled, onRemoved, loadModelsForAction]);
 
   useEffect(() => {
     let stopped = false;
@@ -831,6 +1062,8 @@ export function useCanvasGen(
                 ? { sourceGenerationId: receipt.sourceGenerationId }
                 : {}),
               ...(receipt.sourceNodeId ? { sourceNodeId: receipt.sourceNodeId } : {}),
+              // #643 T2：重放的必须是商家当时看着按下去的那个形状，不是刷新后的默认值。
+              ...(receipt.aspectRatio ? { aspectRatio: receipt.aspectRatio } : {}),
             },
           );
           continue;
@@ -847,6 +1080,8 @@ export function useCanvasGen(
             receipt.pos,
             receipt.actionId,
             { model: receipt.model, threadId: receipt.threadId, approvedCredits: receipt.approvedCredits },
+            // #645 T4：重放的必须是商家当时看着按下去的那一档规格，不是刷新后的默认档。
+            { ...(receiptVideoSpec(receipt) ? { spec: receiptVideoSpec(receipt)! } : {}) },
           );
           continue;
         }
@@ -855,6 +1090,7 @@ export function useCanvasGen(
           receipt.pos,
           receipt.actionId,
           { model: receipt.model, threadId: receipt.threadId, approvedCredits: receipt.approvedCredits },
+          { ...(receiptVideoSpec(receipt) ? { spec: receiptVideoSpec(receipt)! } : {}) },
         );
       }
     })();
@@ -862,5 +1098,5 @@ export function useCanvasGen(
     return () => { stopped = true; };
   }, [animate, generateImage, generateVideoFromText, projectId]);
 
-  return { generateImage, animate, generateVideoFromText, quoteCosts, cancelledRef };
+  return { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes, videoSpecs, cancelledRef };
 }

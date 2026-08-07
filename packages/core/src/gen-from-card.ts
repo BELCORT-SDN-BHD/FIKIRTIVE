@@ -93,7 +93,12 @@ export function buildGenRequestFromCard(args: {
           aspectRatio: ov?.aspectRatio ?? params.aspectRatio ?? null,
           ...(audioToggle ? { audio: ov?.audio ?? params.audio ?? null } : {}),
         }
-      : {}),
+      // #643 T2：图片卡上冻结的形状必须原样进付费请求。这条分支原本什么都不带，所以
+      // 卡面即使写了形状，引擎也收不到它 —— 「说的」和「做的」在这一行分家。
+      // 卡上没形状时仍然不带（服务端按底图继承 / 默认解释，不在这里编一个值）。
+      : (ov?.aspectRatio ?? params.aspectRatio)
+        ? { aspectRatio: ov?.aspectRatio ?? params.aspectRatio }
+        : {}),
     idempotencyKey: `cowork:${cardId}`,
   };
 

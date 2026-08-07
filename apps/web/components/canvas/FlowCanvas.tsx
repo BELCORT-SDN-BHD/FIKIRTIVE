@@ -40,6 +40,19 @@ import {
   type CanvasRect,
 } from "@/lib/canvas-batch-layout";
 import { buildCanvasLineageEdges, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
+import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
+import type { CanvasImageShapes, CanvasVideoSpecs } from "@/components/canvas/useCanvasGen";
+import type { VideoSpec } from "@/lib/video-spec";
+import {
+  canvasBatchFrameLabel,
+  canvasBatchGroups,
+  canvasComparePair,
+  canvasRecordedFacts,
+} from "@/lib/canvas-batch-identity";
+import { buildCanvasLineageTree } from "@/lib/canvas-lineage-tree";
+import { CanvasLineagePanel } from "./CanvasLineagePanel";
+import { CanvasComparePanel, type CanvasCompareCard } from "./CanvasComparePanel";
 import { canvasBatchDeleteCopy, canvasBatchSelection, mergeReloadedCanvasNodes } from "@/lib/canvas-selection";
 import { DEFAULT_CANVAS_NODE_LOCK_REASON } from "@/lib/canvas-node-lock";
 import { canvasComposerReferenceForNode, type OttoComposerReference } from "@/lib/canvas-chat-reference";
@@ -50,8 +63,28 @@ import {
   type CanvasMediaDimensions,
 } from "@/lib/canvas-node-size";
 
-type CanvasFlowNode = Node & { threadId: string | null; sourceNodeId?: string | null };
+type CanvasFlowNode = Node & {
+  threadId: string | null;
+  /** Which paid press produced this card — the key every same-batch frame groups on. */
+  genJobId?: string | null;
+  /** The card this one's paid job was made FROM — the only thing that draws a line (#603 T4). */
+  madeFromNodeId?: string | null;
+  /** Batch identity as the server settled it. Position and size, never a coordinate or a count. */
+  batchIndex?: number | null;
+  batchSize?: number | null;
+};
 const CANVAS_CARD_SIDE = 320;
+/**
+ * #643 T2 —— 一张卡默认会交付的形状：它自己记着的那一格（板子读回来的 lineage），
+ * 记不到就退回输入条当前的形状。纯函数：只看传进来的这张卡，不碰任何 ref。
+ */
+function recordedImageShape(
+  node: { data?: unknown } | undefined,
+  fallback: string | null,
+): string | undefined {
+  const lineage = (node?.data as { lineage?: CanvasNodeLineage | null } | undefined)?.lineage;
+  return (lineage?.settings.aspectRatio || fallback) ?? undefined;
+}
 /** What a card calls itself when it takes keyboard focus (#604 r2 P3). */
 function canvasNodeAriaLabel(n: { type?: string; data?: unknown }): string {
   const kind = n.type === "video" ? "Video card" : n.type === "text" ? "Text card" : "Image card";
@@ -92,7 +125,98 @@ type FlowCanvasProps = {
 };
 
 // Must be stable (defined outside component) per ReactFlow requirements
-const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode };
+/**
+ * The frame drawn around the cards of ONE paid press (#603 T4 · spec #599 D5).
+ *
+ * A merchant who writes one sentence and gets four pictures got four pictures — not a mother and
+ * three daughters. The board used to say the second, third and fourth "came from" the first and
+ * drew the lines to prove it. Same batch is a frame; made from is a line; they are different
+ * things and now they look different. Purely decoration: never picked, never dragged, never
+ * deleted, and always behind the cards it holds.
+ */
+export function BatchFrameNode({ data }: { data: { label: string } }) {
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: "100%",
+        height: "100%",
+        borderRadius: 18,
+        border: "1px dashed var(--muted-foreground, #9ca3af)",
+        opacity: 0.55,
+        pointerEvents: "none",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          // Top-RIGHT, not top-left: every card wears its own type pill above its left corner,
+          // and a frame label there lands on top of the first card's pill.
+          top: -10,
+          right: 12,
+          zIndex: 1,
+          padding: "0 8px",
+          borderRadius: 999,
+          background: "var(--card, #fff)",
+          font: "500 10px/16px ui-monospace, monospace",
+          color: "var(--muted-foreground, #6b7280)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {data.label}
+      </span>
+    </div>
+  );
+}
+
+const nodeTypes = { image: ImageNode, video: VideoNode, text: TextNode, batchFrame: BatchFrameNode };
+
+/** A board read that came back as a list of cards this component can actually place. */
+type CanvasBoardRead =
+  | { rows: Array<CanvasNodeDTO & { url?: string | null }> }
+  /** Anything else at all. The board keeps its cards; the tree says it cannot confirm them. */
+  | { unavailable: true };
+
+/** Everything a card must carry for the board to place it. Anything short of this is not a card. */
+function isPlaceableCanvasRow(row: unknown): boolean {
+  if (typeof row !== "object" || row === null) return false;
+  const card = row as Record<string, unknown>;
+  return typeof card.id === "string" && card.id.length > 0
+    && typeof card.type === "string"
+    && ["x", "y", "w", "h"].every((key) => Number.isFinite(card[key]));
+}
+
+/**
+ * One board read, with every way it can fail folded into one answer.
+ *
+ * The two reads answer a refusal as `{ error }`; a transport failure throws; and a read can also
+ * come back as something that is not a list of cards at all. All three used to be handled
+ * differently and two of them badly (#605 r1 judge P2-1): a thrown read was swallowed whole, so
+ * the tree carried on drawing relationships nobody had confirmed since; `null` threw again inside
+ * the caller; and a non-list object was first declared readable and only then blew up mid-render,
+ * leaving the previous relationships on screen with no sign anything was wrong.
+ *
+ * So the shape is checked here, once, and a read is either a list of placeable cards or it is
+ * unavailable. Fail-closed: the cards are paid work and stay on the board, but nothing is said
+ * about how they relate until a read can actually say it.
+ */
+async function readCanvasBoard(
+  skin: "gb" | undefined,
+  projectId: string,
+): Promise<CanvasBoardRead> {
+  let answer: unknown;
+  try {
+    answer = skin === "gb"
+      ? await syncOttoCanvasNodes(projectId)
+      : await listCanvasNodes(projectId);
+  } catch {
+    return { unavailable: true };
+  }
+  if (!Array.isArray(answer) || !answer.every(isPlaceableCanvasRow)) return { unavailable: true };
+  return { rows: answer as Array<CanvasNodeDTO & { url?: string | null }> };
+}
+/** How far the same-batch frame stands off the cards it holds. */
+const BATCH_FRAME_PAD = 14;
 const CANVAS_REF_MAX_BYTES = 10 * 1024 * 1024;
 
 export default function FlowCanvas({
@@ -131,6 +255,17 @@ export default function FlowCanvas({
   // How many images one Generate makes. Founder default is still 1; the merchant can ask
   // for up to the cap and the price shown next to Generate follows the choice (#547 A2).
   const [imageCount, setImageCount] = useState<number>(CANVAS_IMAGE_DEFAULT_COUNT);
+  // #643 T2：这次出图的形状。菜单与默认值都来自服务端（`imageShapes`）—— 界面一格都不写死，
+  // 所以商家看见的每一格都是引擎真给得了的，且选中的那一格就是会交付的那一格。
+  const [imageShapeMenu, setImageShapeMenu] = useState<CanvasImageShapes | null>(null);
+  const [imageShape, setImageShape] = useState<string | null>(null);
+  // #645 T4：这条片子的规格（长度 / 清晰度 / 形状）。菜单、默认档与每一档的价格都来自
+  // 服务端解析（`videoSpecs`）—— 界面一格都不写死，一分钱都不自己算。
+  // t2v 与 Animate 各记各的：前者默认 16:9，后者默认 Adaptive（跟着首帧走），两条路的
+  // 默认值不同，混用一个 state 就会把其中一条悄悄改成另一条的默认值。
+  const [videoSpecMenu, setVideoSpecMenu] = useState<CanvasVideoSpecs | null>(null);
+  const [t2vSpec, setT2vSpec] = useState<VideoSpec | null>(null);
+  const [animateSpec, setAnimateSpec] = useState<VideoSpec | null>(null);
   // Making a video costs credits — clicking "Make video" opens a confirm first.
   // Holds the source image node id awaiting confirm; null = no dialog.
   const [pendingAnimateId, setPendingAnimateId] = useState<string | null>(null);
@@ -140,6 +275,15 @@ export default function FlowCanvas({
   const [customMotion, setCustomMotion] = useState("");
   // Dragging an image file over the canvas (drop = upload it as an image node).
   const [dragOver, setDragOver] = useState(false);
+  // The lineage tree — "where did this card come from?" — for whichever single card is picked
+  // (#605 T6). Display state only: it opens on request and reads the facts already on the board.
+  const [lineageOpen, setLineageOpen] = useState(false);
+  // The last board read failed, so nothing on screen can be confirmed as current. The tree says
+  // "unavailable" rather than keep drawing relationships from a snapshot that may be stale
+  // (#605 验收③, fail closed). Cleared by the next read that lands.
+  const [lineageUnavailable, setLineageUnavailable] = useState(false);
+  // Two cards being looked at side by side. Holds their ids; null = no comparison open.
+  const [compareIds, setCompareIds] = useState<[string, string] | null>(null);
   // bumped on successful generation submit to remount MentionInput cleared
   const [composerKey, setComposerKey] = useState(0);
   // double-submit guard
@@ -155,6 +299,16 @@ export default function FlowCanvas({
   const nodeDataRef = useRef<Record<string, { generationId?: string; pos: { x: number; y: number } }>>({});
   const referenceHandlerRef = useRef<typeof onReferenceInChat>(onReferenceInChat);
   const flowRef = useRef<ReactFlowInstance<CanvasFlowNode, Edge> | null>(null);
+  /**
+   * Cards taken off THIS board because they are deleted (#612 r5).
+   *
+   * A read already in flight left before the deletion and still carries the card, so it puts it
+   * back when it lands — and a captured TERMINAL row is not in flight, which stops the re-read
+   * loop with a deleted card on screen for good. This memory is what makes deletion outrank a
+   * snapshot whenever that snapshot departed. Per board: a fresh load's reads are all taken after
+   * the deletion, and reads omit tombstones, so nothing needs to survive a reload.
+   */
+  const removedNodeIdsRef = useRef<Set<string>>(new Set());
   const reloadRef = useRef<(() => Promise<void>) | null>(null);
   // Counts board reads so a late answer from an overtaken read can be recognised and dropped.
   const reloadSeqRef = useRef(0);
@@ -341,6 +495,9 @@ export default function FlowCanvas({
     }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
+    // #645 T4：规格会改价（10 秒的片子是 5 秒的两倍钱），所以它是商家授权内容的一部分 ——
+    // 选完 5 秒再改成 10 秒是**另一个**动作，不是同一个动作的重试。因此它进材料。
+    const spec = videoSpecMenu ? animateSpec : null;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
@@ -348,6 +505,7 @@ export default function FlowCanvas({
       sourceNodeId: id,
       sourceGenerationId: entry.generationId,
       prompt: motionPrompt,
+      spec,
     });
     if (videoActionRef.current?.material !== material) {
       videoActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -364,6 +522,8 @@ export default function FlowCanvas({
         // The video belongs beside the image it was made from.
         spawnRect(1, id),
         actionId,
+        {},
+        { ...(spec ? { spec } : {}) },
       );
       if (
         accepted
@@ -376,7 +536,7 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, projectId, spawnRect]);
+  }, [activeThreadId, costQuote, projectId, spawnRect, animateSpec, videoSpecMenu]);
 
   // Build a stable per-node onOpenDetail that reads generationId at call time
   const onOpenDetailByNode = useRef<Record<string, () => void>>({});
@@ -468,21 +628,44 @@ export default function FlowCanvas({
   // stable delete
   const deleteNode = useCallback((id: string) => {
     if (directToolsLockedRef.current) return;
+    // The merchant's own deletion races an in-flight read exactly the same way (#612 r5).
+    removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => n.id !== id));
     void deleteCanvasNode(projectId, id);
   }, [projectId]);
+
+  /**
+   * Take a card off THIS board because the server says it is already gone (#612 r4).
+   *
+   * Deliberately not `deleteNode`: there is nothing to delete — the tombstone exists, written by
+   * whoever removed the card (another tab, or Otto). This is the local half only, and it is the
+   * only thing that can end a card whose row a board read will never return again.
+   */
+  const removeCanvasNodeLocally = useCallback((id: string) => {
+    removedNodeIdsRef.current.add(id);
+    setNodes((ns) => ns.filter((n) => n.id !== id));
+  }, []);
 
   // Remove a whole selection (#547 B6). Same per-card server action as the single ✕ —
   // batching is a UI convenience, not a new deletion path.
   const deleteNodes = useCallback((ids: string[]) => {
     if (directToolsLockedRef.current || ids.length === 0) return;
     const removing = new Set(ids);
+    for (const id of removing) removedNodeIdsRef.current.add(id);
     setNodes((ns) => ns.filter((n) => !removing.has(n.id)));
     for (const id of ids) void deleteCanvasNode(projectId, id);
   }, [projectId]);
 
   const clearSelection = useCallback(() => {
     setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)));
+  }, []);
+
+  /** Open the lineage tree. It is always about the card that is picked, so this only reveals it. */
+  const openLineage = useCallback(() => setLineageOpen(true), []);
+
+  /** Following a line in the tree picks that card on the board — the tree stays open on it. */
+  const pickLineageCard = useCallback((id: string) => {
+    setNodes((ns) => ns.map((n) => (n.selected === (n.id === id) ? n : { ...n, selected: n.id === id })));
   }, []);
 
   /** Save every selected card that has media. Uses the same `<a download>` the Detail panel
@@ -532,8 +715,26 @@ export default function FlowCanvas({
     );
   }, [getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto]);
 
+  /**
+   * Put down the card a press has just been accepted for.
+   *
+   * WHAT IT DELIBERATELY DOES NOT RECORD (#605 r1 judge P1-1): which of the batch this is, how big
+   * the batch is, and what it was made from. Those are the paid job's to settle, and at this
+   * moment nobody has — the row the server just wrote carries nulls in all three. They used to be
+   * written here from the REQUEST, and the tree, the A/B badge, the batch frame and the compare
+   * gate read them straight back, so a card that was still queueing already told the merchant it
+   * was "A of a batch of 2, made from that one". The card goes down saying the one thing that is
+   * true — a job was accepted, this is queued — and the board read brings the rest.
+   */
   const onNewNode = useCallback(
-    (n: { id: string; type: "image" | "video"; pos: { x: number; y: number; w: number; h: number }; status: string; prompt: string; sourceNodeId?: string }) => {
+    (n: {
+      id: string;
+      type: "image" | "video";
+      pos: { x: number; y: number; w: number; h: number };
+      status: string;
+      prompt: string;
+      genJobId?: string;
+    }) => {
       nodeDataRef.current[n.id] = { pos: { x: n.pos.x, y: n.pos.y } };
       setNodes((ns) => [
         ...ns,
@@ -546,9 +747,6 @@ export default function FlowCanvas({
               status: n.status,
               prompt: n.prompt,
               skin,
-              // The card it came from, so the lineage line can be drawn straight away
-              // instead of only after the next board reload (#547 B4).
-              sourceNodeId: n.sourceNodeId ?? null,
               onDelete: () => setPendingDeleteId(n.id),
               onRefresh: requestReload,
               onMediaSize: getOnMediaSize(n.id),
@@ -558,7 +756,10 @@ export default function FlowCanvas({
           },
           style: { width: n.pos.w, height: n.pos.h, boxShadow: `0 0 0 2px ${convoColor(activeThreadId ?? null)}` },
           threadId: activeThreadId ?? null,
-          sourceNodeId: n.sourceNodeId ?? null,
+          genJobId: n.genJobId ?? null,
+          madeFromNodeId: null,
+          batchIndex: null,
+          batchSize: null,
         },
       ]);
       scheduleFitView();
@@ -567,7 +768,7 @@ export default function FlowCanvas({
   );
 
   const onGenError = useCallback((msg: string) => { toast.error(msg); }, []);
-  const { generateImage, animate, generateVideoFromText, quoteCosts } = useCanvasGen(
+  const { generateImage, animate, generateVideoFromText, quoteCosts, imageShapes, videoSpecs } = useCanvasGen(
     projectId,
     onNewNode,
     onResolve,
@@ -576,10 +777,28 @@ export default function FlowCanvas({
     onBalanceRefresh,
     undefined,
     scheduleLineageReload,
+    removeCanvasNodeLocally,
   );
   const refreshCostQuote = useCallback(() => {
     void quoteCosts().then(setCostQuote).catch(() => setCostQuote(null));
-  }, [quoteCosts]);
+    // #643 T2：形状菜单和价格一起取。菜单读不到就不渲染选择器（选不了形状仍然能出图，
+    // 服务端按默认形状交付）—— 界面绝不用一份自己编的菜单顶上。
+    void imageShapes()
+      .then((shapes) => {
+        setImageShapeMenu(shapes);
+        setImageShape((current) => current ?? shapes.defaultAspect);
+      })
+      .catch(() => setImageShapeMenu(null));
+    // #645 T4：视频规格菜单 + 按档价目表，与图片形状同一条路。取不到就不渲染规格选择器
+    // （仍然能出片，服务端按默认档交付）—— 界面绝不用一份自己编的菜单或价格顶上。
+    void videoSpecs()
+      .then((specs) => {
+        setVideoSpecMenu(specs);
+        setT2vSpec((current) => current ?? specs.t2vDefault);
+        setAnimateSpec((current) => current ?? specs.i2vDefault);
+      })
+      .catch(() => setVideoSpecMenu(null));
+  }, [quoteCosts, imageShapes, videoSpecs]);
   // keep animateFnRef current (in an effect — refs must not be written during render)
   useEffect(() => { animateFnRef.current = animate; }, [animate]);
 
@@ -599,6 +818,9 @@ export default function FlowCanvas({
       // charge), so it is part of the action's material — asking for 4 after asking for 1 is
       // a different action, not a retry of the same one.
       const count = clampImageVariantCount(imageCount);
+      // #643 T2：形状和张数一样，是商家授权内容的一部分 —— 要竖版之后再要方图是**另一个**
+      // 动作，不是同一个动作的重试。所以它进材料。
+      const aspectRatio = imageShapeMenu ? imageShape : null;
       const material = JSON.stringify({
         projectId,
         threadId: activeThreadId ?? null,
@@ -609,6 +831,7 @@ export default function FlowCanvas({
           Object.entries(variantSel).sort(([left], [right]) => left.localeCompare(right)),
         ),
         count,
+        aspectRatio,
       });
       if (imageActionRef.current?.material !== material) {
         imageActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -619,7 +842,10 @@ export default function FlowCanvas({
         promptIds,
         variantSel,
         count,
-        { actionId: imageActionRef.current.actionId },
+        {
+          actionId: imageActionRef.current.actionId,
+          ...(aspectRatio ? { aspectRatio } : {}),
+        },
       );
       if (accepted) {
         imageActionRef.current = null;
@@ -634,7 +860,7 @@ export default function FlowCanvas({
       submittingRef.current = false;
       setSubmitting(false);
     }
-  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCount, projectId, prompt, promptIds, spawnRect, variantSel]);
+  }, [activeThreadId, closeComposer, costQuote, directToolsLocked, generateImage, imageCount, imageShape, imageShapeMenu, projectId, prompt, promptIds, spawnRect, variantSel]);
 
   /**
    * "More like this" / the edited prompt on a selected image card (#547 A3 · A4).
@@ -647,7 +873,7 @@ export default function FlowCanvas({
    */
   const evolveActionRef = useRef<{ material: string; actionId: string } | null>(null);
   const evolveBusyRef = useRef(false);
-  const runImageEvolve = useCallback(async (id: string, rawPrompt: string): Promise<boolean> => {
+  const runImageEvolve = useCallback(async (id: string, rawPrompt: string, aspect?: string): Promise<boolean> => {
     if (directToolsLockedRef.current) return false;
     const text = rawPrompt.trim();
     if (!text) return false;
@@ -662,6 +888,10 @@ export default function FlowCanvas({
       return false;
     }
     evolveBusyRef.current = true;
+    // #643 T2：「改这张图 / 再来一张」默认交付**和这张一样的形状**（那张卡自己记着的形状；
+    // 记录不到的老图就是默认方图，那也正是它们当年真的形状）。商家在卡上换了形状，就带
+    // 他换的那一格 —— 换形状是另一个动作，所以它进材料。
+    const aspectRatio = aspect ?? null;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
@@ -670,6 +900,7 @@ export default function FlowCanvas({
       sourceGenerationId: entry.generationId,
       prompt: text,
       count: 1,
+      aspectRatio,
     });
     if (evolveActionRef.current?.material !== material) {
       evolveActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -683,7 +914,12 @@ export default function FlowCanvas({
         [],
         {},
         1,
-        { actionId, sourceGenerationId: entry.generationId, sourceNodeId: id },
+        {
+          actionId,
+          sourceGenerationId: entry.generationId,
+          sourceNodeId: id,
+          ...(aspectRatio ? { aspectRatio } : {}),
+        },
       );
       if (
         accepted
@@ -697,19 +933,24 @@ export default function FlowCanvas({
     }
   }, [activeThreadId, costQuote, generateImage, projectId, spawnRect]);
 
-  const handleEvolve = useCallback((id: string, text: string) => {
-    void runImageEvolve(id, text);
+  const handleEvolve = useCallback((id: string, text: string, aspect?: string) => {
+    void runImageEvolve(id, text, aspect);
   }, [runImageEvolve]);
 
-  const handleVariant = useCallback((id: string) => {
+  /** 事件处理里按 id 取同一件事（渲染期不许读 ref —— 那是 React 的规矩，也是本仓库的 lint 闸）。 */
+  const nodeImageShape = useCallback((id: string): string | undefined => (
+    recordedImageShape(nodesRef.current.find((n) => n.id === id), imageShape)
+  ), [imageShape]);
+
+  const handleVariant = useCallback((id: string, aspect?: string) => {
     const node = nodesRef.current.find((n) => n.id === id);
     const prompt = typeof node?.data?.prompt === "string" ? node.data.prompt : "";
     if (!prompt.trim()) {
       toast.error("This image has no saved description to build on.");
       return;
     }
-    void runImageEvolve(id, prompt);
-  }, [runImageEvolve]);
+    void runImageEvolve(id, prompt, aspect ?? nodeImageShape(id));
+  }, [runImageEvolve, nodeImageShape]);
 
   // Add an empty text node (display-only, no spend) — the canvas toolbar's text tool.
   const addTextNode = useCallback(async () => {
@@ -803,11 +1044,14 @@ export default function FlowCanvas({
     }
     videoBusyRef.current = true;
     setVideoSubmitting(true);
+    // #645 T4：同 runAnimate —— 规格改价，所以它进材料。
+    const spec = videoSpecMenu ? t2vSpec : null;
     const material = JSON.stringify({
       projectId,
       threadId: activeThreadId ?? null,
       kind: "video",
       prompt,
+      spec,
     });
     if (videoActionRef.current?.material !== material) {
       videoActionRef.current = { material, actionId: freshCanvasActionId() };
@@ -818,6 +1062,8 @@ export default function FlowCanvas({
         prompt,
         spawnRect(),
         actionId,
+        {},
+        { ...(spec ? { spec } : {}) },
       );
       if (
         accepted
@@ -830,7 +1076,7 @@ export default function FlowCanvas({
       videoBusyRef.current = false;
       setVideoSubmitting(false);
     }
-  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect]);
+  }, [activeThreadId, costQuote, directToolsLocked, generateVideoFromText, projectId, spawnRect, t2vSpec, videoSpecMenu]);
 
   /** "More like this" / an edited prompt on a VIDEO card. Video always keeps its explicit
    *  cost confirm (founder rule), so this seeds the same dialog instead of spending. */
@@ -889,12 +1135,21 @@ export default function FlowCanvas({
     // A read that a NEWER read has already overtaken describes the board as it was before that
     // newer read: applying it puts back what the newer answer just corrected (r3 review P2-1).
     const seq = ++reloadSeqRef.current;
-    const rows = skin === "gb"
-      ? await syncOttoCanvasNodes(projectId)
-      : await listCanvasNodes(projectId);
+    // Every way a read can fail — refused, never arrived, or answered with something that is not
+    // a list of cards — is one answer here, and it is handled once below.
+    const read = await readCanvasBoard(skin, projectId);
     if (seq !== reloadSeqRef.current) return;
-    if ("error" in (rows as object)) return;
-    const mapped = (rows as Array<CanvasNodeDTO & { url?: string | null }>).map((r) => {
+    // WHETHER THE BOARD'S HISTORY IS CURRENTLY KNOWABLE (#605 T6). A failed read leaves every
+    // card alone — they are paid work, and this read failing says nothing about them — but it
+    // does mean no relationship on screen can be confirmed right now, and the lineage tree has
+    // to say so instead of carrying on from the last snapshot.
+    //
+    // Deferred with queueMicrotask for the same reason OttoConnections defers its load: `reload`
+    // is invoked from an effect, and although this line runs after an await, the effect lint
+    // does not follow the await across the helper and reads it as a synchronous setState.
+    queueMicrotask(() => setLineageUnavailable(!("rows" in read)));
+    if (!("rows" in read)) return;
+    const mapped = read.rows.map((r) => {
       nodeDataRef.current[r.id] = { generationId: r.generationId ?? undefined, pos: { x: r.x, y: r.y } };
       const nodeSize = (r.type === "image" || r.type === "video")
         ? canvasMediaNodeSize({ width: r.mediaWidth, height: r.mediaHeight }, { w: r.w, h: r.h })
@@ -904,11 +1159,16 @@ export default function FlowCanvas({
         type: r.type,
         position: { x: r.x, y: r.y },
         data: withNodeActionLock({
-          // A node with a resolved media URL is finished — show the image. Canvas
-          // nodes persist status "pending" and aren't updated to "done" in the DB,
-          // so without this a completed generation re-renders as "generating
-          // forever" on reload (founder bug: image loads forever).
-          status: r.url ? "done" : r.status,
+          // This card came OUT of a board read, so the server has answered for it. If a later
+          // read stops returning it, that is a deletion rather than a read running behind
+          // (#612 r4) — reads omit tombstones, so nothing else could ever say so.
+          serverKnown: true,
+          // The board read already answered this (#602 r2, judge P2). A local
+          // `r.url ? "done" : r.status` used to sit here, from when rows persisted
+          // "pending" and were never updated — a second derivation that happened to
+          // agree, until it did not. `canvasCardFace` is the one derivation and it
+          // has already weighed the URL; re-deciding it here is how forks start.
+          status: r.status,
           url: r.url ?? undefined,
           generationId: r.generationId ?? undefined,
           prompt: r.prompt,
@@ -916,7 +1176,9 @@ export default function FlowCanvas({
           skin,
           // Traceability the card carries with it: when, with what, at what cost, from what.
           lineage: r.lineage ?? null,
-          sourceNodeId: r.sourceNodeId ?? null,
+          madeFromNodeId: r.madeFromNodeId ?? null,
+          batchIndex: r.batchIndex ?? null,
+          batchSize: r.batchSize ?? null,
           onDelete: () => setPendingDeleteId(r.id),
           onRefresh: requestReload,
           onChange: r.type === "text" ? (t: string) => onTextChange(r.id, t) : undefined,
@@ -927,18 +1189,24 @@ export default function FlowCanvas({
         }),
         style: { width: nodeSize.w, height: nodeSize.h, boxShadow: `0 0 0 2px ${convoColor(r.threadId ?? null)}` },
         threadId: r.threadId ?? null,
-        sourceNodeId: r.sourceNodeId ?? null,
+        genJobId: r.genJobId ?? null,
+        madeFromNodeId: r.madeFromNodeId ?? null,
+        batchIndex: r.batchIndex ?? null,
+        batchSize: r.batchSize ?? null,
       } as CanvasFlowNode;
     });
     // Merge, not replace: keep any node that's still generating locally (server may not have
     // its URL yet) so a reload never clobbers an in-flight promptbar gen, and keep whatever the
     // merchant has selected — the board reloads on a timer, and a selection that vanishes
     // mid-action is the board undoing their work (review P2-1).
-    setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped));
+    setNodes((prev) => mergeReloadedCanvasNodes(prev, mapped, removedNodeIdsRef.current));
   }, [skin, projectId, onTextChange, getOnAnimate, getOnMediaSize, getOnOpenDetail, sendSelectionToOtto, requestReload, withNodeActionLock]);
   // keep reloadRef current (in an effect — refs must not be written during render);
   // declared before the consumers below, so it runs first within any commit.
   useEffect(() => { reloadRef.current = reload; }, [reload]);
+
+  // A different board has different cards; nothing removed here means anything there.
+  useEffect(() => { removedNodeIdsRef.current = new Set(); }, [projectId]);
 
   // Initial load + project-level reload. Under gb this bridges every chat in the project.
   useEffect(() => { void reload(); }, [reload]);
@@ -1049,7 +1317,17 @@ export default function FlowCanvas({
     url: pendingDeleteNode.data?.url as string | undefined,
   });
   const showGraph = canvasReady && (!directToolsLocked || nodes.length > 0 || dragOver);
-  const videoCostLabel = costQuote ? creditsLabel(costQuote.videoCredits) : "checking exact cost";
+  // #645 T4：视频按档计价，所以价格必须跟着商家**这一刻选中的那一档**走。价格永远来自
+  // 服务端那张按档价目表（`creditsFor`），界面自己不算 —— 报不出这一档的价就如实说
+  // "checking exact cost"，绝不拿默认档的价格顶上（那就是显示一个价、扣另一个价）。
+  const specCredits = (spec: VideoSpec | null): number | null =>
+    (videoSpecMenu && spec ? videoSpecMenu.creditsFor(spec) : costQuote?.videoCredits ?? null);
+  const specCostLabel = (spec: VideoSpec | null): string => {
+    const credits = specCredits(spec);
+    return typeof credits === "number" ? creditsLabel(credits) : "checking exact cost";
+  };
+  const t2vCostLabel = specCostLabel(t2vSpec);
+  const animateCostLabel = specCostLabel(animateSpec);
   // Image generation has no confirm dialog (founder 2026-07-06, constitutional exception ①
   // "balance is the gate"), so the cost must be visible AT the input before submit (宪法 3).
   // The composer's price follows the chosen number of images, from the same clamp the paid
@@ -1060,7 +1338,9 @@ export default function FlowCanvas({
   // A card's own bar makes ONE image built on that card, so it is priced by the single-image
   // quote — one source, no second price for the same action (#550 ②, #547 A4).
   const evolveCostHint = genCostHint(costQuote?.imageCredits);
-  const remakeCostHint = genCostHint(costQuote?.videoCredits);
+  // 视频卡的「More like this」是去开 t2v 确认框的,所以这里报的必须是**那个框会用的那一档**
+  // 的价 —— 报默认档就会出现「卡上说 11、框里收 27」。价格仍然只有服务端那一个来源。
+  const remakeCostHint = genCostHint(specCredits(t2vSpec) ?? costQuote?.videoCredits);
   const directToolTitle = directToolsLocked ? directToolsLockedReason : undefined;
   const nodesOnBoard = filterNodesByConvo(nodes, activeThreadId, filterToConvo);
   // How many cards are picked right now. A card's own toolbar is about THAT card, so it only
@@ -1075,24 +1355,92 @@ export default function FlowCanvas({
     // WHICH card had focus (#604 r2 P3). Says what it is, and what it was asked for.
     ariaLabel: canvasNodeAriaLabel(n),
     data: n.type === "image"
-      ? { ...withNodeActionLock(n.data), selectedCount, onEvolve: handleEvolve, onVariant: handleVariant, evolveCostHint }
+      ? {
+          ...withNodeActionLock(n.data),
+          selectedCount,
+          onEvolve: handleEvolve,
+          onVariant: handleVariant,
+          evolveCostHint,
+          onOpenLineage: openLineage,
+          // #643 T2: the shape a new take of THIS card will be delivered in — this card's own
+          // recorded shape, so "make another one like this" keeps the shape by default. The menu
+          // comes from the server; the card writes down nothing itself.
+          imageShape: recordedImageShape(n, imageShape),
+          imageShapeOptions: imageShapeMenu?.options,
+        }
       : n.type === "video"
-        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint }
+        ? { ...withNodeActionLock(n.data), selectedCount, onRemake: handleVideoRemake, remakeCostHint, onOpenLineage: openLineage }
         : withNodeActionLock(n.data),
   }));
+  // T6: the four recorded columns, read off the board exactly once, for everything that talks
+  // about relationships — the same-batch frame, the lines between cards, the tree, the compare
+  // gate and the two sides of a comparison. No coordinate and no array order is in here, and
+  // neither is anything a card SAYS about itself before a board read has answered for it: a card
+  // the browser has only just put down carries nulls, whatever the press it belongs to asked for
+  // (#605 r1 judge P1-1 · spec #599 D5/D8).
+  const lineageFacts = visibleNodes.map((n) => {
+    const d = n.data as {
+      prompt?: string | null;
+      serverKnown?: unknown;
+      genJobId?: string | null;
+      batchIndex?: number | null;
+      batchSize?: number | null;
+      madeFromNodeId?: string | null;
+    };
+    return {
+      id: n.id,
+      type: n.type ?? null,
+      prompt: d.prompt ?? null,
+      ...canvasRecordedFacts({
+        serverKnown: d.serverKnown,
+        genJobId: n.genJobId ?? d.genJobId ?? null,
+        batchIndex: n.batchIndex ?? d.batchIndex ?? null,
+        batchSize: n.batchSize ?? d.batchSize ?? null,
+        madeFromNodeId: n.madeFromNodeId ?? d.madeFromNodeId ?? null,
+      }),
+    };
+  });
+  // B4 twin: the SAME-BATCH frame. One press, one frame, read from what the press recorded —
+  // never from how many cards are still on the board, and never from where they sit. Deleting two
+  // of a batch of four leaves a frame that still says "Batch of 4", because that is what was
+  // bought (#603 T4).
+  const batchFrames: CanvasFlowNode[] = canvasBatchGroups(lineageFacts).flatMap((group) => {
+    const members = group.memberIds
+      .map((id) => visibleNodes.find((n) => n.id === id))
+      .filter((n): n is CanvasFlowNode => !!n);
+    if (members.length < 2) return [];
+    const box = members.map((n) => ({
+      x: n.position.x,
+      y: n.position.y,
+      w: Number(n.style?.width ?? CANVAS_CARD_SIDE),
+      h: Number(n.style?.height ?? CANVAS_CARD_SIDE),
+    }));
+    const minX = Math.min(...box.map((b) => b.x));
+    const minY = Math.min(...box.map((b) => b.y));
+    const maxX = Math.max(...box.map((b) => b.x + b.w));
+    const maxY = Math.max(...box.map((b) => b.y + b.h));
+    return [{
+      id: `batch-frame:${group.genJobId}`,
+      type: "batchFrame",
+      position: { x: minX - BATCH_FRAME_PAD, y: minY - BATCH_FRAME_PAD },
+      data: { label: canvasBatchFrameLabel(group.batchSize) },
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      deletable: false,
+      zIndex: -1,
+      style: { width: maxX - minX + BATCH_FRAME_PAD * 2, height: maxY - minY + BATCH_FRAME_PAD * 2 },
+      threadId: null,
+    } as CanvasFlowNode];
+  });
+
   // B4: draw the trail. A video and the image it came from, or an image and the image it was
   // evolved from, are joined by a line instead of sitting next to each other unexplained.
-  // A batch's cards are NOT joined: they share a layout anchor, not a parent (review P2-2).
-  // `lineage` is passed through EXACTLY as it is: a card the board read carries an explicit null
-  // when the server had no record (say nothing), while a card this browser just placed has no
-  // lineage field at all (this session's own action vouches for it). Flattening the two — which
-  // `?? null` did — is the difference between drawing nothing and drawing a whole false batch.
+  // ONE recorded fact decides it (#603 T4): the card this one's paid job was made FROM. A batch's
+  // cards are never joined — they came out of one press together, and where they SIT is a
+  // separate fact that no longer travels in the same field.
   const lineageEdges: Edge[] = buildCanvasLineageEdges(
-    visibleNodes.map((n) => ({
-      id: n.id,
-      sourceNodeId: (n.sourceNodeId ?? (n.data as { sourceNodeId?: string | null })?.sourceNodeId) ?? null,
-      lineage: (n.data as { lineage?: CanvasNodeLineage | null })?.lineage,
-    })),
+    lineageFacts.map((card) => ({ id: card.id, madeFromNodeId: card.madeFromNodeId })),
   ).map((edge) => ({
     ...edge,
     selectable: false,
@@ -1100,6 +1448,46 @@ export default function FlowCanvas({
     focusable: false,
     style: { stroke: "var(--muted-foreground)", strokeWidth: 1.5, opacity: 0.55 },
   }));
+
+  const selectedCards = visibleNodes.filter((n) => n.selected === true);
+  // The tree is about ONE card. With none or several picked it has nothing to be about, which
+  // the panel says in words rather than by picking one of them itself.
+  const lineageFocusId = selectedCards.length === 1 ? selectedCards[0]!.id : null;
+  const lineageTree = lineageFocusId ? buildCanvasLineageTree(lineageFacts, lineageFocusId) : null;
+  // May these two be shown side by side, and which of them is A? Both answers come from the
+  // recorded facts, so neither the picking order nor the layout can change them (#605 验收②).
+  const comparePair = selectedCards.length === 2
+    ? canvasComparePair(
+      lineageFacts.find((card) => card.id === selectedCards[0]!.id)!,
+      lineageFacts.find((card) => card.id === selectedCards[1]!.id)!,
+    )
+    : null;
+  const compareCard = (id: string): CanvasCompareCard | null => {
+    const node = visibleNodes.find((n) => n.id === id);
+    if (!node) return null;
+    return {
+      id,
+      type: node.type ?? null,
+      url: (node.data as { url?: string | null })?.url ?? null,
+      prompt: (node.data as { prompt?: string | null })?.prompt ?? null,
+    };
+  };
+  // What is open right now: the pair the merchant asked for, re-checked against the facts on
+  // every render. A card removed or changed under an open comparison closes it rather than
+  // leaving two pictures on screen under labels that no longer hold.
+  const openComparePair = compareIds
+    ? (() => {
+      const [first, second] = compareIds;
+      const left = lineageFacts.find((card) => card.id === first);
+      const right = lineageFacts.find((card) => card.id === second);
+      if (!left || !right) return null;
+      const pair = canvasComparePair(left, right);
+      if (!pair) return null;
+      const leftCard = compareCard(pair.left.id);
+      const rightCard = compareCard(pair.right.id);
+      return leftCard && rightCard ? { pair, left: leftCard, right: rightCard } : null;
+    })()
+    : null;
 
   // B6: what a multi-card selection can do. React Flow owns the selection itself; this is
   // only what the batch bar needs to offer.
@@ -1164,7 +1552,7 @@ export default function FlowCanvas({
           <ReactFlow
             style={{ width: "100%", height: "100%", minHeight: 0 }}
             onInit={(instance) => { flowRef.current = instance; setFlowReady(true); }}
-            nodes={visibleNodes}
+            nodes={[...batchFrames, ...visibleNodes]}
             edges={lineageEdges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
@@ -1196,6 +1584,26 @@ export default function FlowCanvas({
           readOnlyReason={directToolsLocked ? directToolsLockedReason : undefined}
         />
       )}
+      {/* The lineage tree (#605 T6). Opened from a card, about that card, and closed by the
+          merchant — never in the way of the board unless it was asked for. */}
+      {lineageOpen && (
+        <CanvasLineagePanel
+          tree={lineageTree}
+          unavailable={lineageUnavailable}
+          onPick={pickLineageCard}
+          onClose={() => setLineageOpen(false)}
+        />
+      )}
+      {/* Two cards side by side. The pair is re-checked against the recorded facts on every
+          render, so a comparison can never outlive the facts that justified it. */}
+      {openComparePair && (
+        <CanvasComparePanel
+          pair={openComparePair.pair}
+          left={openComparePair.left}
+          right={openComparePair.right}
+          onClose={() => setCompareIds(null)}
+        />
+      )}
       {skin === "gb" ? (
         // Every bottom-anchored control lives in ONE column (#604 r2): composer, then the
         // multi-card bar, then the tool row. Stacked rows cannot cover each other, which
@@ -1224,27 +1632,44 @@ export default function FlowCanvas({
                   onSubmit={() => void handleGenerate()}
                 />
               </div>
-              {/* A2: how many images this one Generate makes. The price beside it follows the
-                  choice, so the merchant sees the real total before pressing anything. */}
-              <div
-                role="group"
-                aria-label="How many images to make"
-                style={{ display: "flex", gap: 2, alignItems: "center" }}
-              >
-                {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className={imageCount === n ? "al-btn al-btn-sm al-btn-primary" : "al-btn al-btn-sm"}
-                    aria-pressed={imageCount === n}
-                    aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
-                    title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
-                    style={{ minWidth: 30, paddingInline: 8 }}
-                    onClick={() => setImageCount(n)}
-                  >
-                    {n}
-                  </button>
-                ))}
+              {/* One row for "what this Generate will make": how many, and what shape. Both are
+                  answers to the same question, so they sit together rather than as two stray
+                  full-width rows in the composer's column (#643 T2). */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                {/* A2: how many images this one Generate makes. The price beside it follows the
+                    choice, so the merchant sees the real total before pressing anything. */}
+                <div
+                  role="group"
+                  aria-label="How many images to make"
+                  style={{ display: "flex", gap: 2, alignItems: "center" }}
+                >
+                  {Array.from({ length: CANVAS_IMAGE_MAX_VARIANT_COUNT }, (_, i) => i + 1).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={imageCount === n ? "al-btn al-btn-sm al-btn-primary" : "al-btn al-btn-sm"}
+                      aria-pressed={imageCount === n}
+                      aria-label={n === 1 ? "Make 1 image" : `Make ${n} images`}
+                      title={n === 1 ? "Make 1 image" : `Make ${n} images in one go`}
+                      style={{ minWidth: 30, paddingInline: 8 }}
+                      onClick={() => setImageCount(n)}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+                {/* #643 T2: the shape this Generate will deliver. The menu is whatever the server
+                    says the engine can make — nothing is written down here — and the selected one
+                    is exactly what the request carries. Costs the same in every shape. */}
+                {imageShapeMenu && imageShape && (
+                  <ImageShapePicker
+                    compact
+                    value={imageShape}
+                    options={imageShapeMenu.options}
+                    onChange={setImageShape}
+                    title="The shape these images will be made in — same cost in every shape"
+                  />
+                )}
               </div>
               <span className="text-[0.75rem] text-muted-foreground" style={{ whiteSpace: "nowrap" }} title="Charged when you press Generate">{composerCostHint}</span>
               <button className="al-btn al-btn-primary al-btn-sm" type="submit" disabled={!costQuote || submitting || !prompt.trim()}>Generate</button>
@@ -1268,6 +1693,20 @@ export default function FlowCanvas({
             // wraps rather than getting clipped when the pane is narrow (#513).
             <div className="cv-batchbar" role="toolbar" aria-label="Selected cards">
               <span className="text-[0.8125rem]" style={{ whiteSpace: "nowrap" }}>{selection.count} selected</span>
+              {/* Side by side, and only for what the recorded facts allow: the two cards of a
+                  press that really made two. Any two cards of a batch of four have no A and no B,
+                  and a card beside the card it was made from is a different thing to put on
+                  screen — neither is offered here (#605 验收② · r1 P1-2 · #603 T4). */}
+              {comparePair && (
+                <button
+                  type="button"
+                  className="al-btn al-btn-sm"
+                  title="Look at these two side by side"
+                  onClick={() => setCompareIds([comparePair.left.id, comparePair.right.id])}
+                >
+                  Compare
+                </button>
+              )}
               {/* D6: the whole picked set goes over to Otto together, one reference each, when
                   the merchant asks for it — never as a side effect of clicking a card (#604). */}
               <button
@@ -1474,10 +1913,21 @@ export default function FlowCanvas({
           <DialogHeader>
             <DialogTitle>Make a video from this image?</DialogTitle>
             <DialogDescription>
-              Pick how it should move, then confirm. Cost: {videoCostLabel}. No charge until you confirm.
+              Pick how it should move, then confirm. Cost: {animateCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2.5">
+            {/* #645 T4 — the spec this clip will be made in. Shape defaults to Adaptive here:
+                with a source image the engine follows that image instead of being told a ratio. */}
+            {videoSpecMenu && animateSpec && (
+              <VideoSpecPicker
+                value={animateSpec}
+                menu={videoSpecMenu.menu}
+                onChange={setAnimateSpec}
+                disabled={videoSubmitting}
+                hasSourceImage
+              />
+            )}
             <div className="flex gap-2">
               {([["gentle", "Gentle"], ["dynamic", "Dynamic"], ["custom", "Custom"]] as const).map(([key, label]) => (
                 <button
@@ -1529,7 +1979,7 @@ export default function FlowCanvas({
           <DialogHeader>
             <DialogTitle>Make a video from a prompt</DialogTitle>
             <DialogDescription>
-              Describe the video you want — no source image needed. Cost: {videoCostLabel}. No charge until you confirm.
+              Describe the video you want — no source image needed. Cost: {t2vCostLabel}. No charge until you confirm.
             </DialogDescription>
           </DialogHeader>
           <textarea
@@ -1539,6 +1989,16 @@ export default function FlowCanvas({
             rows={3}
             className="resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"
           />
+          {/* #645 T4 — the spec this clip will be made in. No source image here, so the shape
+              default is the model's own t2v default (16:9), not Adaptive. */}
+          {videoSpecMenu && t2vSpec && (
+            <VideoSpecPicker
+              value={t2vSpec}
+              menu={videoSpecMenu.menu}
+              onChange={setT2vSpec}
+              disabled={videoSubmitting}
+            />
+          )}
           <DialogFooter>
             <Button variant="ghost" disabled={videoSubmitting} onClick={() => { setT2vOpen(false); setT2vPrompt(""); }}>Cancel</Button>
             <Button

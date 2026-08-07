@@ -1,9 +1,8 @@
-# docs/ — thin navigation only
+# docs/ 导航
 
-> 本文件只提供导航,不描述 current status、优先级、批准或执行顺序。不要在这里重建第二份索引。
->
-> - 仓库根 **`AGENTS.md`** — 任何 agent 的项目入口与阅读顺序。
-> - **`docs/BLUEPRINT.md`** — 产品宪法与不可协商边界。
-> - **`docs/ops/ROUTE-B-MASTER-PLAN-2026-07-12.md`** — 现有阶段计划载体;实时任务状态与依赖在 GitHub。
->
-> 任何 dated report/spec 只有在当前 GitHub task 明确链接时才是 task evidence。
+- `docs/BLUEPRINT.md`：长期产品北极星。
+- `docs/references/README.md`：产品与 feature 参考资料入口。
+- `docs/adr/`：已经落实或需要长期解释的工程架构决定。
+- 其他 research、design、spec、plan、report 与 history：默认是参考资料，只有当前任务明确选择后才进入上下文。
+
+本目录不记录 current status、优先级、批准或执行顺序。当前任务范围在开工时根据 Founder 指令、live code 与相关 references 具体化。

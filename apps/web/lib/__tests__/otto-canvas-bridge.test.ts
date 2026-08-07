@@ -9,12 +9,14 @@ const {
   mockChatThreadFindMany,
   mockGenJobFindMany,
   mockExecuteRaw,
+  mockQueryRaw,
   mockGetGenerationThumbs,
   mockPlaceCanvasJobNode,
   mockNewId,
   mockGenerationFindMany,
   mockLedgerFindMany,
   mockOrganizationFindFirst,
+  mockSettleCanvasCards,
 } = vi.hoisted(() => ({
   mockOwner: vi.fn(),
   mockProjectFindFirst: vi.fn(),
@@ -24,12 +26,14 @@ const {
   mockChatThreadFindMany: vi.fn(),
   mockGenJobFindMany: vi.fn(),
   mockExecuteRaw: vi.fn(),
+  mockQueryRaw: vi.fn(),
   mockGetGenerationThumbs: vi.fn(),
   mockPlaceCanvasJobNode: vi.fn(),
   mockNewId: vi.fn(),
   mockGenerationFindMany: vi.fn(),
   mockLedgerFindMany: vi.fn(),
   mockOrganizationFindFirst: vi.fn(),
+  mockSettleCanvasCards: vi.fn(),
 }));
 
 vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
@@ -61,7 +65,18 @@ vi.mock("@fikirtive/db", () => ({
     creditLedger: { findMany: mockLedgerFindMany },
     organization: { findFirst: mockOrganizationFindFirst },
     $executeRaw: mockExecuteRaw,
+    $queryRaw: mockQueryRaw,
+    // #613 r3: the in-flight placement now runs in its own transaction so the advisory lock is a
+    // SEPARATE statement from the guarded INSERT. The stub hands the same spies through, so the
+    // order and the separation of those statements stay visible to the assertions below.
+    $transaction: (run: (tx: unknown) => Promise<unknown>) =>
+      run({ $executeRaw: mockExecuteRaw, $queryRaw: mockQueryRaw }),
   },
+  // #601 r2: the chat-side reader no longer repairs a delivered job itself — it calls the ONE
+  // settlement the canvas reader and the worker call.
+  settleCanvasCardsForGenJob: mockSettleCanvasCards,
+  CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS: 2_000,
+  CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS: 4_000,
 }));
 
 import { syncOttoCanvasNodes } from "../otto-canvas-bridge";
@@ -78,6 +93,8 @@ beforeEach(() => {
   mockLedgerFindMany.mockResolvedValue([]);
   mockOrganizationFindFirst.mockResolvedValue({ settings: {} });
   mockExecuteRaw.mockResolvedValue(1);
+  mockQueryRaw.mockResolvedValue([{}]);
+  mockSettleCanvasCards.mockResolvedValue({ status: "settled", nodeIds: [], created: 0, updated: 0 });
   mockGetGenerationThumbs.mockResolvedValue({});
   mockNewId.mockReturnValue("node-1");
   mockPlaceCanvasJobNode.mockImplementation(async (input: {
@@ -119,7 +136,10 @@ describe("syncOttoCanvasNodes project scoping", () => {
       expect.objectContaining({
         id: "node-1",
         generationId: null,
-        status: "pending",
+        // The job belongs to another project, so THIS read cannot see it — and a card whose job
+        // nobody can find is `unknown`, never "still being made" (#602 T3). Saying pending here
+        // was the eternal spinner in its purest form.
+        status: "unknown",
         url: null,
       }),
     ]);
@@ -154,7 +174,13 @@ describe("syncOttoCanvasNodes project scoping", () => {
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
-  it("bridges GEN_RESULT generations from every live thread in the project", async () => {
+  it("writes nothing for a live thread's GEN_RESULT job — it neither settles nor places", async () => {
+    // #601 r3 (judge P2②): this reader used to write a delivered batch itself — one card per
+    // output, left to right — and its own writes then told the shared pre-check the board was
+    // finished, so the settlement never saw the job. A merchant got a 1×4 row with a chat open
+    // and the settlement's 2×2 grid without one. T2b made it call the ONE settlement instead;
+    // #613 T2d removes the call too — the job's own completion path (and the backfill sweep behind
+    // it) writes those cards, whether or not anyone has this chat open.
     mockChatThreadFindMany.mockResolvedValue([
       {
         id: "thread-1",
@@ -173,29 +199,14 @@ describe("syncOttoCanvasNodes project scoping", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     mockGenJobFindMany.mockResolvedValueOnce([
-      { id: "job-1", generationIds: ["gen-1"] },
-      { id: "job-2", generationIds: ["gen-2"] },
+      { id: "job-1", status: "DONE", generationIds: ["gen-1"] },
+      { id: "job-2", status: "DONE", generationIds: ["gen-2"] },
     ]);
 
     await syncOttoCanvasNodes("p1");
 
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(2);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      ownerId: "u1",
-      projectId: "p1",
-      generationId: "gen-1",
-      genJobId: "job-1",
-      threadId: "thread-1",
-      type: "image",
-    }));
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      ownerId: "u1",
-      projectId: "p1",
-      generationId: "gen-2",
-      genJobId: "job-2",
-      threadId: "thread-2",
-      type: "video",
-    }));
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
   it("never recreates a job after its in-flight Canvas anchor was deleted", async () => {
@@ -213,10 +224,11 @@ describe("syncOttoCanvasNodes project scoping", () => {
       ])
       .mockResolvedValueOnce([]);
     mockGenJobFindMany.mockResolvedValueOnce([
-      { id: "job-1", generationIds: ["gen-1"] },
+      { id: "job-1", status: "DONE", generationIds: ["gen-1"] },
     ]);
 
     await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([]);
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
     expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
@@ -265,14 +277,21 @@ describe("syncOttoCanvasNodes project scoping", () => {
         type: "video",
         genJobId: "job-1",
         generationId: null,
-        status: "pending",
+        // The job is QUEUED, so the card says queued — not "making this now" (#602 T3).
+        status: "queued",
         url: null,
         threadId: "thread-1",
       }),
     ]);
-    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    // TWO statements, not one (#613 r3, judge P1). The lock is taken on its own so the INSERT
+    // that follows reads a snapshot taken AFTER it was granted — that is what stops a second
+    // racing reload from inserting a duplicate anchor it cannot yet see.
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
     expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining([
       "canvas-job-placement:u1:p1:job-1",
+    ]));
+    expect(mockExecuteRaw.mock.calls[0]).not.toEqual(expect.arrayContaining(["job-1", "thread-1"]));
+    expect(mockExecuteRaw.mock.calls[1]).toEqual(expect.arrayContaining([
       "p1",
       "video",
       "job-1",
@@ -325,7 +344,7 @@ describe("syncOttoCanvasNodes project scoping", () => {
       expect.objectContaining({
         id: "node-pending",
         genJobId: "job-fallback",
-        status: "pending",
+        status: "queued",
       }),
     ]);
     expect(mockChatThreadFindMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -338,14 +357,13 @@ describe("syncOttoCanvasNodes project scoping", () => {
     expect(mockGenJobFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { ownerId: "u1", projectId: "p1", OR: [{ idempotencyKey: { in: ["cowork:card-1"] } }] },
     }));
-    expect(mockExecuteRaw.mock.calls[0]).toEqual(expect.arrayContaining(["job-fallback"]));
+    expect(mockExecuteRaw.mock.calls[1]).toEqual(expect.arrayContaining(["job-fallback"]));
   });
 
-  it("recovers missing sibling nodes for a completed multi-variant promptbar job", async () => {
-    mockNewId
-      .mockReturnValueOnce("node-sib-1")
-      .mockReturnValueOnce("node-sib-2")
-      .mockReturnValueOnce("node-sib-3");
+  it("leaves a batch with missing cards alone — it settles nothing and patches nothing", async () => {
+    // Whether a chat was open must not change the board a merchant gets (#601 r2 P2②). T2b made
+    // this reader delegate to the one settlement; #613 T2d makes it read, full stop — the board is
+    // the job's own to finish, and the backfill sweep is behind it if that write fell over.
     mockCanvasFindMany.mockResolvedValue([
       {
         id: "node-primary",
@@ -366,79 +384,30 @@ describe("syncOttoCanvasNodes project scoping", () => {
     mockGenJobFindMany.mockResolvedValue([
       { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] },
     ]);
-    mockGetGenerationThumbs.mockResolvedValue({
-      "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
-      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
-      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
-      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
-    });
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/one.jpeg", kind: "image" } });
 
-    await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([
-      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
-      expect.objectContaining({ id: "node-sib-1", generationId: "gen-2", status: "done", url: "/files/u1/two.jpeg", x: 440, y: 50 }),
-      expect.objectContaining({ id: "node-sib-2", generationId: "gen-3", status: "done", url: "/files/u1/three.jpeg", x: 100, y: 390 }),
-      expect.objectContaining({ id: "node-sib-3", generationId: "gen-4", status: "done", url: "/files/u1/four.jpeg", x: 440, y: 390 }),
-    ]);
-    expect(mockCanvasUpdateMany).toHaveBeenCalledWith({
-      where: { id: "node-primary", ownerId: "u1", projectId: "p1", status: "pending", generationId: null },
-      data: { status: "done", generationId: "gen-1" },
-    });
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
-    expect(mockPlaceCanvasJobNode).toHaveBeenNthCalledWith(1, expect.objectContaining({
-        ownerId: "u1",
-        projectId: "p1",
-        generationId: "gen-2",
-        genJobId: "job-1",
-        status: "done",
-        sourceNodeId: "node-primary",
-        threadId: "thread-1",
-        x: 440,
-        y: 50,
-    }));
+    await syncOttoCanvasNodes("p1");
+
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockCanvasUpdateMany).not.toHaveBeenCalled();
+    expect(mockPlaceCanvasJobNode).not.toHaveBeenCalled();
   });
 
-  it("still delegates missing siblings to the idempotent placement layer when another reload repaired the primary", async () => {
-    mockCanvasUpdateMany.mockResolvedValue({ count: 0 });
+  it("does not ask the settlement for a job whose board already matches it either", async () => {
     mockCanvasFindMany.mockResolvedValue([
       {
-        id: "node-primary",
-        type: "image",
-        x: 100,
-        y: 50,
-        w: 320,
-        h: 320,
-        text: null,
-        prompt: "four variants",
-        generationId: null,
-        genJobId: "job-1",
-        status: "pending",
-        sourceNodeId: null,
-        threadId: "thread-1",
+        id: "node-1",
+        type: "image", x: 0, y: 0, w: 320, h: 320, text: null, prompt: "one",
+        generationId: "gen-1", genJobId: "job-1", status: "done", sourceNodeId: null, threadId: null,
       },
     ]);
-    mockGenJobFindMany.mockResolvedValue([
-      { id: "job-1", status: "DONE", generationIds: ["gen-1", "gen-2", "gen-3", "gen-4"] },
-    ]);
-    mockGetGenerationThumbs.mockResolvedValue({
-      "gen-1": { src: "/files/u1/one.jpeg", kind: "image" },
-      "gen-2": { src: "/files/u1/two.jpeg", kind: "image" },
-      "gen-3": { src: "/files/u1/three.jpeg", kind: "image" },
-      "gen-4": { src: "/files/u1/four.jpeg", kind: "image" },
-    });
+    mockGenJobFindMany.mockResolvedValue([{ id: "job-1", status: "DONE", generationIds: ["gen-1"] }]);
+    mockGetGenerationThumbs.mockResolvedValue({ "gen-1": { src: "/files/u1/one.jpeg", kind: "image" } });
 
-    await expect(syncOttoCanvasNodes("p1")).resolves.toEqual([
-      expect.objectContaining({ id: "node-primary", generationId: "gen-1", status: "done", url: "/files/u1/one.jpeg" }),
-      expect.objectContaining({ generationId: "gen-2", genJobId: "job-1" }),
-      expect.objectContaining({ generationId: "gen-3", genJobId: "job-1" }),
-      expect.objectContaining({ generationId: "gen-4", genJobId: "job-1" }),
-    ]);
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledTimes(3);
-    expect(mockPlaceCanvasJobNode).toHaveBeenCalledWith(expect.objectContaining({
-      ownerId: "u1",
-      projectId: "p1",
-      genJobId: "job-1",
-      generationId: "gen-2",
-    }));
+    await syncOttoCanvasNodes("p1");
+
+    expect(mockSettleCanvasCards).not.toHaveBeenCalled();
+    expect(mockCanvasUpdateMany).not.toHaveBeenCalled();
   });
 });
 

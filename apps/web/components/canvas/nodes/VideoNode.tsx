@@ -2,10 +2,12 @@
 import { useRef, useState } from "react";
 import { Handle, NodeToolbar, Position, type NodeProps } from "@xyflow/react";
 import { GeneratingBody, FailedBody } from "./GeneratingBody";
+import { isInFlightCardFace, isTerminalCardStatus, type TerminalCardStatus } from "@/lib/canvas-card-status";
 import { NodeResize } from "./NodeResize";
 import { NodeLineagePanel } from "./NodeLineagePanel";
 import { getCanvasNodeWriteLock } from "@/lib/canvas-node-lock";
 import { canvasNodeHasSource, type CanvasNodeLineage } from "@/lib/canvas-lineage";
+import { canvasBatchLetter, canvasRecordedFacts } from "@/lib/canvas-batch-identity";
 
 export function VideoNode({ data, id, selected }: NodeProps) {
   const d = data as {
@@ -15,7 +17,16 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     generationId?: string;
     skin?: string;
     lineage?: CanvasNodeLineage | null;
-    sourceNodeId?: string | null;
+    /** The card this one's paid job was made FROM — the one fact "Made from" reads (#603 T4). */
+    madeFromNodeId?: string | null;
+    /** Batch identity as the server settled it — what the A/B badge reads (#603 T4). */
+    batchIndex?: number | null;
+    batchSize?: number | null;
+    /** A board read has returned this card. Until it has, the three columns above are only what
+     *  the press asked for, and this card may not speak them (#605 r1 P1-1). */
+    serverKnown?: unknown;
+    /** Opens the lineage tree for the picked card (#605 T6). Supplied by FlowCanvas. */
+    onOpenLineage?: () => void;
     onDelete?: () => void;
     onOpenDetail?: () => void;
     /** Hands the whole picked set to Otto as references — an explicit press, never a click on
@@ -34,8 +45,11 @@ export function VideoNode({ data, id, selected }: NodeProps) {
     remakeCostHint?: string;
   };
   const gb = d.skin === "gb";
+  // Only a card a board read has answered for wears a letter. What a press ASKED for is not
+  // what it settled, so a card that is still queueing says nothing about its batch (#605 r1 P1-1).
+  const letter = canvasBatchLetter(canvasRecordedFacts(d));
   const writeLock = getCanvasNodeWriteLock(d);
-  const terminal = d.status === "failed" || d.status === "timeout" || d.status === "missing";
+  const terminal = isTerminalCardStatus(d.status);
   const viewable = !!d.url && !terminal;
   const actionable = viewable && !!d.generationId;
   const canSendToOtto = actionable && !!d.onSendToOtto && !d.directToolsLocked;
@@ -90,6 +104,21 @@ export function VideoNode({ data, id, selected }: NodeProps) {
             onClick={(e) => { e.stopPropagation(); setInfoOpen((open) => !open); }}
           >
             Info
+          </button>
+        )}
+        {/* T6: the card's whole story — what made it, what it made, who came out of the same
+            press. Offered on a card that failed too: where it came from is exactly what a
+            merchant wants to know about a card that did not work (#605). */}
+        {d.onOpenLineage && (
+          <button
+            type="button"
+            aria-label="Show what this card came from"
+            className="al-btn al-btn-glass al-btn-sm nodrag nopan"
+            title="What made this card, and what it made"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); d.onOpenLineage?.(); }}
+          >
+            Lineage
           </button>
         )}
         {/* D6: the one and only way a card reaches Otto. Clicking the video used to do it
@@ -212,6 +241,9 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       <span className="cv-nodelabel">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
         Video
+        {/* The recorded A/B letter — position in the press, never position on the board
+            (#603 T4 · #605 T6). */}
+        {letter && <span className="cv-nodeletter">{letter}</span>}
       </span>
     {/* The video is a video, not a button: clicking it picks the card up (and the play control
         still just plays it). Everything the card can DO lives on its toolbar above (#604 · D6). */}
@@ -219,10 +251,18 @@ export function VideoNode({ data, id, selected }: NodeProps) {
       className="al-panel"
       style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 14 }}
     >
+      {/* NO MEDIA IS NOT "BEING MADE" (#602 r2, judge P1-3). The old fallback here was
+          `in-flight || !url → spinner`, so any card that reached this renderer without a picture
+          — a done row whose media no longer resolves, a face this component did not know — span
+          for ever (F21). Only the two in-flight faces spin now; everything else without media says
+          which resting state it is in, and `missing` is the board's own word for "the work exists,
+          this card cannot show it". */}
       {terminal ? (
-        <FailedBody status={d.status as "failed" | "timeout" | "missing"} onRefresh={d.onRefresh} />
-      ) : d.status === "pending" || !d.url ? (
-        <GeneratingBody gb={gb} kind="video" onRefresh={d.onRefresh} />
+        <FailedBody status={d.status as TerminalCardStatus} onRefresh={d.onRefresh} />
+      ) : isInFlightCardFace(d.status) ? (
+        <GeneratingBody gb={gb} kind="video" queued={d.status === "queued"} onRefresh={d.onRefresh} />
+      ) : !d.url ? (
+        <FailedBody status="missing" onRefresh={d.onRefresh} />
       ) : gb ? (
         // gb: clean poster (first frame) + centered play button, like the mockup —
         // no raw browser chrome until the owner presses play. Display-only.

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { GEN_PRICE_USD_PER_IMAGE, buildGenRequestFromCard } from "@fikirtive/core";
+import { GEN_PRICE_USD_PER_IMAGE, GEN_IMAGE_MODEL_OPTIONS, buildGenRequestFromCard } from "@fikirtive/core";
 // I1: pure-helper tests import from propose.helpers — no DB mock needed for these
-import { buildProposeCard, EXECUTED_SPEC } from "./propose.helpers.js";
+import { buildProposeCard, buildSpecChips, EXECUTED_SPEC } from "./propose.helpers.js";
+import { imageAspectHonoured } from "@fikirtive/core";
 // executePropose (DB-side) still imported from propose.ts
 import { executePropose, proposeSkill } from "./propose.js";
 import type { OttoContext } from "../context.js";
@@ -17,6 +18,10 @@ vi.mock("@fikirtive/db", () => ({
     chatMessage: {
       findFirst: vi.fn(),
       create: vi.fn(),
+    },
+    // #619 E-5: the pre-spend reference-budget count (read-only)
+    referenceImage: {
+      count: vi.fn(),
     },
     // must NEVER be called — no GenJob creation in propose
     genJob: {
@@ -110,10 +115,10 @@ describe("buildProposeCard — pure helper", () => {
   });
 
   // Test 2: video-model is locked to the single active model (product decision: one video
-  // model, no picker — see review-fixes F1). suggestModel ignores the `disabled` set for
-  // SELECTION; admin-disable is still enforced at spend time (assertSpendableModel /
-  // isModelDisabled in startGen), not by swapping the proposed model.
-  it("video model is locked to the active model regardless of the disabled set", () => {
+  // model, no picker — see review-fixes F1). #647 T6 改了这一条的后半段:关掉那台引擎
+  // 不再「照铸不误、留给 spend 闸拦」,而是**根本铸不出卡**(空态见文件末尾的 T6 段)。
+  // 这里留下的是仍然成立的那一半:别的输入组合都不会把选中的模型换掉。
+  it("video model is locked to the active model (no picker — selection never varies with input)", () => {
     const baseInput = {
       kind: "video" as const,
       structuredPrompt: "A cat walks across a sunlit room",
@@ -121,18 +126,16 @@ describe("buildProposeCard — pure helper", () => {
       variantSel: {},
     };
 
-    // Capture the active model (no disabled list)
-    const defaultCtx = makeCtx({ disabledModels: [] });
-    const { cardPayload: defaultCard } = buildProposeCard(baseInput, defaultCtx, []);
-    const defaultModel = defaultCard.model;
+    const ctx = makeCtx({ disabledModels: [] });
+    const { cardPayload: defaultCard } = buildProposeCard(baseInput, ctx, []);
+    const { cardPayload: shapedCard } = buildProposeCard(
+      { ...baseInput, desiredAspect: "9:16", desiredDuration: 10, desiredAudio: false },
+      ctx,
+      [],
+    );
 
-    // Disabling that model does NOT change the proposed model — selection is locked to the
-    // single active video model; the disabled gate fires later, at the spend boundary.
-    const disabledCtx = makeCtx({ disabledModels: [defaultModel] });
-    const { cardPayload: disabledCard } = buildProposeCard(baseInput, disabledCtx, []);
-
-    expect(disabledCard.kind).toBe("video");
-    expect(disabledCard.model).toBe(defaultModel);
+    expect(defaultCard.kind).toBe("video");
+    expect(shapedCard.model).toBe(defaultCard.model);
   });
 
   // Test 3: cardPayload does not carry ownerId/threadId from ctx (these are identity fields
@@ -171,12 +174,16 @@ describe("buildProposeCard — pure helper", () => {
     expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
   });
 
-  // Test 4b: DECOUPLE — an IMAGE plan + reference stays an image (NOT forced to video),
-  // keeps its owned entity refs, and does NOT thread sourceGenerationId into the gen request.
-  it("decouple: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId NOT in payload", () => {
+  // Test 4b (#619, Founder 决议 2026-08-02): 挂图 + 要图片 = 引擎真收到这张图。
+  //
+  // 这条断言过去锁的是相反的语义（"sourceGenerationId NOT in payload"）—— 界面对商家说
+  // "Tell Otto what to do with this image"，付费请求里却没有那张图。决议推翻它：kind 仍由
+  // 商家的话决定（挂图不再强制变视频、@ 的元素照旧保留），但那张图必须随卡走，
+  // 下游（gen-from-card → GenJob → worker → 引擎请求体）本来就无条件透传。
+  it("#619: kind=image + sourceGenerationId → stays image, entities kept, sourceGenerationId IS in payload", () => {
     const ctx = makeCtx({ sourceGenerationId: "gen-abc123" });
     const input = {
-      kind: "image" as const, // user wants an image in the reference's style
+      kind: "image" as const, // user wants an image built from the reference
       structuredPrompt: "A product shot in this style",
       entityIds: ["entity-1"],
       variantSel: { "entity-1": "variant-1" },
@@ -186,9 +193,59 @@ describe("buildProposeCard — pure helper", () => {
     expect(cardPayload.kind).toBe("image");
     expect(cardPayload.entityIds).toEqual(["entity-1"]);
     expect(cardPayload.variantSel).toEqual({ "entity-1": "variant-1" });
-    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBeUndefined();
-    // image tier pricing (1 credit/image), not video
+    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
+    // image tier pricing (1 credit/image), not video — carrying the reference costs nothing extra
     expect(cardPayload.estimatedCredits).toBe(1);
+  });
+
+  // 卡面披露（E-4）：带图这件事必须在批准前看得见，而且只在真带图时出现。
+  it("#619: an image card that carries the attached reference says so on its face", () => {
+    const withRef = buildProposeCard(
+      { kind: "image", structuredPrompt: "swap the background for a beach", entityIds: [], variantSel: {} },
+      makeCtx({ sourceGenerationId: "gen-abc123" }),
+      [],
+    ).cardPayload;
+    expect(withRef.specChips).toContain("Uses your attached image");
+
+    const withoutRef = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
+      makeCtx(),
+      [],
+    ).cardPayload;
+    expect(withoutRef.specChips).not.toContain("Uses your attached image");
+  });
+
+  // 说的与做的同步（F 断言 1+2）：卡上写的那张图，执行层组请求体时必须原样拿到。
+  it("#619: the attached image survives into the paid request the execution layer builds", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "keep the product, beach background", entityIds: [], variantSel: {} },
+      makeCtx({ sourceGenerationId: "gen-abc123" }),
+      [],
+    );
+    const built = buildGenRequestFromCard({
+      cardPayload,
+      projectId: "proj-test",
+      threadId: "thread-test",
+      cardId: "card_1",
+      prompt: "keep the product, beach background",
+      entityIds: [],
+      variantSel: {},
+    });
+    expect(built.ok).toBe(true);
+    expect((built as { ok: true; req: Record<string, unknown> }).req["sourceGenerationId"]).toBe("gen-abc123");
+  });
+
+  // 挂了图但要视频的既有语义不动：图仍是 i2v 起始帧，元素照旧清空。
+  it("#619 does not disturb the video path: an attached image is still the i2v start frame", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "animate this", entityIds: ["entity-1"], variantSel: {} },
+      makeCtx({ sourceGenerationId: "gen-abc123" }),
+      ["entity-1"],
+    );
+    expect(cardPayload.kind).toBe("video");
+    expect(cardPayload.entityIds).toEqual([]);
+    expect((cardPayload as Record<string, unknown>)["sourceGenerationId"]).toBe("gen-abc123");
+    expect(cardPayload.specChips).not.toContain("Uses your attached image");
   });
 
   it("reference video: kind=video + referenceVideoGenerationId → present in payload, image tier untouched", () => {
@@ -307,6 +364,7 @@ describe("executePropose — mock DB", () => {
   let mockPrisma: {
     entity: { findMany: ReturnType<typeof vi.fn> };
     chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
     genJob: { create: ReturnType<typeof vi.fn> };
   };
 
@@ -319,6 +377,7 @@ describe("executePropose — mock DB", () => {
     (mockPrisma.entity.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
     (mockPrisma.chatMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 5 });
     (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (mockPrisma.referenceImage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
   });
 
   // Test 6: execute persists GEN_CARD with correct shape, returns cardId + shownPriceDisplay
@@ -349,13 +408,14 @@ describe("executePropose — mock DB", () => {
 
     // return value has the right shape
     expect(result).toHaveProperty("cardId");
-    expect(typeof result.cardId).toBe("string");
-    expect(result.cardId.length).toBeGreaterThan(0);
+    const minted = result as { cardId: string; shownPriceDisplay: number };
+    expect(typeof minted.cardId).toBe("string");
+    expect(minted.cardId.length).toBeGreaterThan(0);
     expect(result).toHaveProperty("shownPriceDisplay");
-    expect(typeof result.shownPriceDisplay).toBe("number");
+    expect(typeof minted.shownPriceDisplay).toBe("number");
 
     // M1: shownPriceDisplay must be positive (guards against regression to 0/NaN)
-    expect(result.shownPriceDisplay).toBeGreaterThan(0);
+    expect(minted.shownPriceDisplay).toBeGreaterThan(0);
   });
 
   // Test 7: genJob.create is NEVER called
@@ -402,6 +462,131 @@ describe("executePropose — mock DB", () => {
     expect(createArg.data["ownerId"]).toBe("org-A");
     expect(createArg.data["threadId"]).toBe("thread-from-ctx");
   });
+
+  // -------------------------------------------------------------------------
+  // #619 E-5 —— 截断必须在**花钱之前**出现在卡面上。
+  // 引擎一次只收 MAX_CONDITIONING_IMAGES 张 @元素参考照；过去是静默截断，商家批准、
+  // 扣完钱，才在详情页发现有元素根本没上车。
+  // -------------------------------------------------------------------------
+
+  /** 取这一次 create 写进去的 payload。 */
+  function persistedPayload(): Record<string, unknown> {
+    const createArg = (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mock.calls[0]![0] as {
+      data: { payload: Record<string, unknown> };
+    };
+    return createArg.data.payload;
+  }
+
+  it("#619: 17 live reference photos on a 10-image engine → the card says so BEFORE approval", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }, { id: "e2" }]);
+    // two @mentioned elements carrying 9 + 8 live photos = 17
+    mockPrisma.referenceImage.count
+      .mockResolvedValueOnce(9)
+      .mockResolvedValueOnce(8);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "the whole cast on a beach", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("This run will use 10 of your 17 reference photos.");
+  });
+
+  // 复审抓到的实数缺陷:底图是 unshift 进去的,不占元素的 10 张名额
+  // (apps/worker/src/jobs/gen.ts:650-659),所以带挂图时引擎真收到的是 11 张,
+  // 商家给的也是 18 张 —— 卡面过去照旧只会说「10 of your 17」,两个数都不对。
+  it("#619: attached base image + 17 element photos → 11 of 18, not 10 of 17", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }, { id: "e2" }]);
+    mockPrisma.referenceImage.count.mockResolvedValueOnce(9).mockResolvedValueOnce(8);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "the whole cast, on this beach", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen-1", sourceGenerationIds: ["gen-1"] }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgradeNote"]).toContain("This run will use 11 of your 18 reference photos.");
+  });
+
+  // 挂图 + 元素刚好压线:元素没被截,底图仍额外上车 —— 没有截断就不许编一句提醒。
+  it("#619: attached base image + exactly 10 element photos → nothing is truncated, so nothing is claimed", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }, { id: "e2" }]);
+    mockPrisma.referenceImage.count.mockResolvedValueOnce(5).mockResolvedValueOnce(5);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "both of them, on this beach", entityIds: ["e1", "e2"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", sourceGenerationId: "gen-1", sourceGenerationIds: ["gen-1"] }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
+  });
+
+  // 视频分支的 provider.generateVideo 根本不收 inputImageUrls
+  // (apps/worker/src/jobs/gen.ts:636-644),元素图一张都到不了视频引擎 ——
+  // 那就一个参考照数字都不许报,而不是报一个错的。
+  it("#619: a reference-video card never claims a reference-photo count (elements don't reach the video engine)", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(17);
+
+    await executePropose(
+      { kind: "video", structuredPrompt: "move like this", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap", referenceVideoGenerationId: "gen_vid" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["kind"]).toBe("video");
+    expect(String(payload["downgradeNote"] ?? "")).not.toContain("reference photos");
+  });
+
+  it("#619: within the engine limit → no truncation sentence is invented", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(3);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "a hero shot", entityIds: ["e1"], variantSel: {} },
+      { context: makeCtx({ orgId: "org-cap" }) },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["downgraded"]).toBe(false);
+    expect(payload["downgradeNote"]).toBeUndefined();
+  });
+
+  it("#619: the count follows the worker — a @mentioned variant is counted, not the base", async () => {
+    mockPrisma.entity.findMany.mockResolvedValue([{ id: "e1" }]);
+    mockPrisma.referenceImage.count.mockResolvedValue(2);
+
+    await executePropose(
+      { kind: "image", structuredPrompt: "her, on a beach", entityIds: ["e1"], variantSel: { e1: "var-1" } },
+      { context: makeCtx({ orgId: "org-var" }) },
+    );
+
+    expect(mockPrisma.referenceImage.count).toHaveBeenCalledWith({
+      where: { entityId: "e1", variantId: "var-1", ownerId: "org-var", deletedAt: null },
+    });
+  });
+
+  it("#619: several attached images → the card names which one is the base, and still carries it", async () => {
+    await executePropose(
+      { kind: "image", structuredPrompt: "like these, but on a beach", entityIds: [], variantSel: {} },
+      {
+        context: makeCtx({
+          sourceGenerationId: "gen-1",
+          sourceGenerationIds: ["gen-1", "gen-2", "gen-3"],
+        }),
+      },
+    );
+
+    const payload = persistedPayload();
+    expect(payload["sourceGenerationId"]).toBe("gen-1");
+    expect(payload["downgraded"]).toBe(true);
+    expect(payload["downgradeNote"]).toContain("You attached 3 images");
+    expect(payload["specChips"]).toContain("Uses your attached image");
+  });
 });
 
 describe("propose requires-gate + goal", () => {
@@ -447,30 +632,33 @@ describe("propose requires-gate + goal", () => {
 describe("#580 card spec chips — engine-free by construction", () => {
   const ENGINE_WORDS = /seedance|seedream|veo|kling|ltx|pixverse|grok|wan|hailuo/i;
 
-  it("video: specChips carry shape, length and quality — and no engine name", () => {
+  it("video: specChips carry shape, length, quality and sound — and no engine name", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a 5s clip", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     );
-    expect(cardPayload.specChips).toEqual(["16:9", "5s", "720p"]);
+    // #646 T5：声音接通执行层后多出这一格,措辞仍然不带引擎名。
+    expect(cardPayload.specChips).toEqual(["16:9", "5s", "720p", "With sound"]);
     expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 
   it("image: specChips report the size execution really produces, plus how many", () => {
+    // #643 T2：卡上现在总带着一个形状（没提就是默认方图），所以形状也在卡面上说出口 ——
+    // 商家在付费前看见的就是他会拿到的那一格。
     const one = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {} },
       makeCtx(),
       [],
     ).cardPayload;
-    expect(one.specChips).toEqual(["2048 × 2048", "1 image"]);
+    expect(one.specChips).toEqual(["2048 × 2048", "1:1", "1 image"]);
 
     const pack = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, count: 3 },
       makeCtx(),
       [],
     ).cardPayload;
-    expect(pack.specChips).toEqual(["2048 × 2048", "3 images"]);
+    expect(pack.specChips).toEqual(["2048 × 2048", "1:1", "3 images"]);
     expect(pack.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
   });
 
@@ -488,12 +676,14 @@ describe("#580 card spec chips — engine-free by construction", () => {
   });
 
   it("no engine name reaches any merchant-facing field of the payload", () => {
+    // #645 T4：7s / 1:1 现在都真给得了，所以要触发披露必须用引擎真做不到的值（30s / 2:3）。
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredDuration: 7, desiredAspect: "1:1" },
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredDuration: 30, desiredAspect: "2:3" },
       makeCtx(),
       [],
     );
     expect(cardPayload.specChips.join(" ")).not.toMatch(ENGINE_WORDS);
+    expect(cardPayload.downgradeNote).toBeDefined();
     expect(cardPayload.downgradeNote).not.toMatch(ENGINE_WORDS);
   });
 });
@@ -516,31 +706,141 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     return (built as { ok: true; req: Record<string, unknown> }).req;
   }
 
-  it("图片：画幅根本进不了执行层，所以卡面一个比例都不许承诺", () => {
+  it("图片(#643 T2)：商家要的画幅真的落到卡上、也真的进了付费请求体", () => {
+    // T1 之后执行层已经认画幅（EXECUTED_SPEC.image.aspectHonoured=true）；T2 把 Otto 这条路
+    // 上「选型那一步丢掉 desiredAspect」的断点接上。卡面的判据仍然是「这张卡真会交付什么」。
     const { cardPayload } = buildProposeCard(
       { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
       makeCtx(),
       [],
     );
-    // 执行层拿到的请求体里没有画幅 —— 这就是「做的」。
+    // 「做的」：付费请求体里逐字带着这个形状。
     const req = genRequestFor(cardPayload);
-    expect(req).not.toHaveProperty("aspectRatio");
-    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(false);
-    // 于是「说的」也不许出现比例。
-    expect(cardPayload.specChips.some((chip) => /\d+\s*:\s*\d+/.test(chip))).toBe(false);
-    expect(cardPayload.specChips).toContain("2048 × 2048");
+    expect(req.aspectRatio).toBe("9:16");
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    // 「说的」：卡面报的是这一格真会产出的尺寸，并把形状说出口 —— 不再是写死的方图。
+    expect(cardPayload.specChips).toContain("9:16");
+    expect(cardPayload.specChips).toContain("1620 × 2880");
+    // 兑现了就不是降级，不许无中生有地报警。
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
   });
 
-  it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来", () => {
+  it("图片：商家要的画幅满足不了 —— 必须在付费前显式说出来(执行层翻真也不许把这句话弄丢)", () => {
+    expect(EXECUTED_SPEC.image.aspectHonoured).toBe(true);
+    // 5:7 不在引擎菜单上（八格之外），所以这一趟真会交付的是默认方图 —— 这句必须说出口。
     const { cardPayload } = buildProposeCard(
-      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "9:16" },
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "5:7" },
       makeCtx(),
       [],
     );
+    expect(cardPayload.params.aspectRatio).toBe("1:1");
     expect(cardPayload.downgraded).toBe(true);
     expect(cardPayload.downgradeNote).toBe(
-      "You asked for 9:16 — this will be a square 2048 × 2048 image.",
+      "You asked for 5:7 — this will be a square 2048 × 2048 image.",
     );
+  });
+
+  it("图片(#643 T2)：商家的人话形状也一路落地(portrait ⇒ 9:16，卡面与请求体同口径)", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: "portrait" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.params.aspectRatio).toBe("9:16");
+    expect(genRequestFor(cardPayload).aspectRatio).toBe("9:16");
+    expect(cardPayload.specChips).toContain("9:16");
+    expect(cardPayload.downgraded).toBe(false);
+  });
+
+  it("图片(#643 T2)：八格全通 —— 每一格都是卡面声称 = 请求体携带 = 那一格的确切尺寸", () => {
+    for (const aspect of GEN_IMAGE_MODEL_OPTIONS.seedream.aspectRatios) {
+      const { cardPayload } = buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect: aspect },
+        makeCtx(),
+        [],
+      );
+      const size = EXECUTED_SPEC.image.outputSizes[aspect as keyof typeof EXECUTED_SPEC.image.outputSizes];
+      expect(cardPayload.params.aspectRatio, aspect).toBe(aspect);
+      expect(genRequestFor(cardPayload).aspectRatio, aspect).toBe(aspect);
+      expect(cardPayload.specChips, aspect).toEqual([`${size.width} × ${size.height}`, aspect, "1 image"]);
+      expect(cardPayload.downgraded, aspect).toBe(false);
+    }
+  });
+
+  // ── 正向锁(判官 r1 P2):披露**永不越过**接线事实 ──────────────────────────
+  //
+  // 反向(「没接通就不许承诺」)上面两条已经锁住。这一条锁正向:凡卡面声称兑现的,
+  // 付费请求体里必须真有;凡请求体不带规格的,卡面必须不声称。两条一起构成双条件,
+  // 于是 T2 把画幅接进 Otto 那天,这里会**自动**开始要求卡面说新话 —— 谁也不能只改
+  // 一半(只改文案不接线,或只接线不改文案)。
+  it("正向锁:穿过 card→request 全链 —— 卡面声称 ⟺ 请求体真带规格", () => {
+    const ratioChip = (chips: string[]) => chips.find((chip) => /^\d+\s*:\s*\d+$/.test(chip)) ?? null;
+
+    for (const desiredAspect of [undefined, "9:16", "4:3", "1:1"]) {
+      const { cardPayload } = buildProposeCard(
+        { kind: "image", structuredPrompt: "a poster", entityIds: [], variantSel: {}, desiredAspect },
+        makeCtx(),
+        [],
+      );
+      const req = genRequestFor(cardPayload);
+      const claimed = ratioChip(cardPayload.specChips);
+      const carried = typeof req.aspectRatio === "string" ? req.aspectRatio : null;
+
+      // ① 声称了就必须真带,且逐字相同(不许卡面说 9:16、请求体发 1:1)。
+      if (claimed !== null) {
+        expect(carried, `卡面声称 ${claimed},请求体必须真带这个规格`).toBe(claimed);
+      }
+      // ② 请求体不带规格 ⇒ 卡面一个比例都不许出现。
+      if (carried === null) {
+        expect(claimed, "请求体没带规格,卡面就不许声称任何比例").toBeNull();
+      }
+      // ③ 商家提了、而这一趟交付不了 ⇒ 必须在付费前显式披露,绝不静默。
+      if (desiredAspect && carried !== desiredAspect) {
+        expect(cardPayload.downgraded, `${desiredAspect} 没兑现就必须披露`).toBe(true);
+        expect(cardPayload.downgradeNote).toBeTruthy();
+      }
+    }
+  });
+
+  it("正向锁:选中备用适配器(丢弃画幅的那条路)时,卡面不得声称已兑现", () => {
+    const prev = process.env.GENERATION_PROVIDER;
+    process.env.GENERATION_PROVIDER = "fal";
+    try {
+      // 即便卡上带着画幅(T2 之后的形状),只要真正会跑这一单的适配器不发规格,
+      // 卡面就不许把它当成已兑现的承诺。
+      expect(imageAspectHonoured()).toBe(false);
+      expect(buildSpecChips("image", { aspectRatio: "9:16", count: 1 }, false))
+        .toEqual(["2048 × 2048", "1 image"]);
+    } finally {
+      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prev;
+    }
+  });
+
+  it("正向锁:现役适配器(发确切 WxH)下,卡面照实承诺", () => {
+    const prev = process.env.GENERATION_PROVIDER;
+    process.env.GENERATION_PROVIDER = "byteplus";
+    try {
+      expect(imageAspectHonoured()).toBe(true);
+      expect(buildSpecChips("image", { aspectRatio: "9:16", count: 1 }, false))
+        .toEqual(["1620 × 2880", "9:16", "1 image"]);
+    } finally {
+      if (prev === undefined) delete process.env.GENERATION_PROVIDER;
+      else process.env.GENERATION_PROVIDER = prev;
+    }
+  });
+
+  it("图片：一旦卡上真的带了商家要的画幅，卡面就照实承诺它，也不再报降级", () => {
+    // T2 把 desiredAspect 接上之后走的就是这条路。这里直接喂一张带画幅的卡,
+    // 证明文案层已经准备好说真话 —— 尺寸随画幅走,不再是写死的方图。
+    expect(buildSpecChips("image", { aspectRatio: "9:16", count: 1 }, false))
+      .toEqual(["1620 × 2880", "9:16", "1 image"]);
+    expect(buildSpecChips("image", { aspectRatio: "21:9", count: 2 }, false))
+      .toEqual(["3136 × 1344", "21:9", "2 images"]);
+    // 卡面报的尺寸与适配器真发出去的 size 是同一份表。
+    expect(buildSpecChips("image", { aspectRatio: "4:3", count: 1 }, false)[0])
+      .toBe(`${EXECUTED_SPEC.image.outputSizes["4:3"].width} × ${EXECUTED_SPEC.image.outputSizes["4:3"].height}`);
   });
 
   it("图片：没提画幅就不是降级 —— 不许无中生有地报警", () => {
@@ -553,20 +853,29 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     expect(cardPayload.downgradeNote).toBeUndefined();
   });
 
-  it("视频：声音开关没接到执行层，卡面既不说 With sound 也不说 No sound", () => {
-    const { cardPayload } = buildProposeCard(
+  it("#646 T5 视频：声音开关接通执行层后，卡面照实说 With sound / No sound，也不再报降级", () => {
+    expect(EXECUTED_SPEC.video.audioHonoured).toBe(true);
+    const muted = buildProposeCard(
       { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredAudio: false },
       makeCtx(),
       [],
-    );
-    expect(EXECUTED_SPEC.video.audioHonoured).toBe(false);
-    expect(cardPayload.specChips.join(" ")).not.toMatch(/sound/i);
-    // 商家明确提了声音，而这个开关到不了执行层 —— 是降级，必须说出口。
-    expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toMatch(/Sound isn't something I can set here yet/);
+    ).cardPayload;
+    expect(muted.params.audio).toBe(false);
+    expect(muted.specChips).toContain("No sound");
+    // 商家要静音、执行层真会静音 —— 这不是降级,不许再报警。
+    expect(muted.downgraded).toBe(false);
+    expect(muted.downgradeNote).toBeUndefined();
+
+    const loud = buildProposeCard(
+      { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {}, desiredAudio: true },
+      makeCtx(),
+      [],
+    ).cardPayload;
+    expect(loud.specChips).toContain("With sound");
+    expect(loud.downgraded).toBe(false);
   });
 
-  it("视频：时长/画幅/清晰度是真的会传到执行层的，所以卡面照旧承诺", () => {
+  it("视频：时长/画幅/清晰度/声音是真的会传到执行层的，所以卡面照旧承诺", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a clip", entityIds: [], variantSel: {} },
       makeCtx(),
@@ -576,10 +885,12 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
     expect(req.aspectRatio).toBe(cardPayload.params.aspectRatio);
     expect(req.durationSeconds).toBe(cardPayload.params.durationSeconds);
     expect(req.resolution).toBe(cardPayload.params.resolution);
+    expect(req.audio).toBe(cardPayload.params.audio);
     expect(cardPayload.specChips).toEqual([
       cardPayload.params.aspectRatio,
       `${cardPayload.params.durationSeconds}s`,
       cardPayload.params.resolution,
+      cardPayload.params.audio ? "With sound" : "No sound",
     ]);
   });
 
@@ -592,32 +903,46 @@ describe("#580 P1-2 卡面规格 = 执行规格（跨层机器闸）", () => {
 
 describe("#580 downgrade disclosure — never silent", () => {
   it("a length we can't do is stated in the merchant's own terms", () => {
+    // #645 T4：7 秒现在是真给得了的一档，所以夹具换成引擎上限之外的 30 秒。
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "a 7s clip", entityIds: [], variantSel: {}, desiredDuration: 7 },
+      { kind: "video", structuredPrompt: "a 30s clip", entityIds: [], variantSel: {}, desiredDuration: 30 },
       makeCtx(),
       [],
     );
     expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toBe("You asked for 7s — this will be 5s.");
+    expect(cardPayload.downgradeNote).toBe("You asked for 30s — this will be 5s.");
   });
 
   it("a shape we can't do is stated too", () => {
+    // #645 T4：1:1 现在是菜单上的一格，所以夹具换成引擎给不了的 2:3。
     const { cardPayload } = buildProposeCard(
-      { kind: "video", structuredPrompt: "a square clip", entityIds: [], variantSel: {}, desiredAspect: "1:1" },
+      { kind: "video", structuredPrompt: "a 2:3 clip", entityIds: [], variantSel: {}, desiredAspect: "2:3" },
       makeCtx(),
       [],
     );
     expect(cardPayload.downgraded).toBe(true);
-    expect(cardPayload.downgradeNote).toBe("You asked for 1:1 — this will be 16:9.");
+    expect(cardPayload.downgradeNote).toBe("You asked for 2:3 — this will be 16:9.");
   });
 
   it("both at once read as one sentence", () => {
+    const { cardPayload } = buildProposeCard(
+      { kind: "video", structuredPrompt: "a 2:3 30s clip", entityIds: [], variantSel: {}, desiredDuration: 30, desiredAspect: "2:3" },
+      makeCtx(),
+      [],
+    );
+    expect(cardPayload.downgradeNote).toBe("You asked for 30s and 2:3 — this will be 5s and 16:9.");
+  });
+
+  it("#645 T4：7 秒 / 1:1 现在是真给得了的档 —— 一句降级都不该出现", () => {
     const { cardPayload } = buildProposeCard(
       { kind: "video", structuredPrompt: "a square 7s clip", entityIds: [], variantSel: {}, desiredDuration: 7, desiredAspect: "1:1" },
       makeCtx(),
       [],
     );
-    expect(cardPayload.downgradeNote).toBe("You asked for 7s and 1:1 — this will be 5s and 16:9.");
+    expect(cardPayload.downgraded).toBe(false);
+    expect(cardPayload.downgradeNote).toBeUndefined();
+    expect(cardPayload.params.durationSeconds).toBe(7);
+    expect(cardPayload.params.aspectRatio).toBe("1:1");
   });
 
   it("a plan that honours the request carries no note at all", () => {
@@ -649,5 +974,99 @@ describe("#580 downgrade disclosure — never silent", () => {
     expect(buildDowngradeNote("video", {}, { count: 1 }, false)).toBe(
       "Some of what you asked for isn't available here — the details above are what you'll get.",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #647 T6 —— 引擎被关掉时的诚实空态
+//
+// 在这之前:后台关掉唯一那台视频引擎,Otto 仍然铸出一张写着价钱、点得下去的 GEN_CARD;
+// 商家点「确认」,spend 闸才把他打回来。卡是 $0 铸的,可它在商家眼里是一个承诺。
+// 现在:铸不出来就说铸不出来 —— 一行英文人话,一张卡都不落库。
+// ---------------------------------------------------------------------------
+describe("#647 T6 唯一引擎被关掉 ⇒ 诚实空态,绝不落一张付费卡", () => {
+  let mockPrisma: {
+    entity: { findMany: ReturnType<typeof vi.fn> };
+    chatMessage: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+    referenceImage: { count: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const db = await import("@fikirtive/db");
+    mockPrisma = db.prisma as unknown as typeof mockPrisma;
+    (mockPrisma.entity.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (mockPrisma.chatMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({ seq: 5 });
+    (mockPrisma.chatMessage.create as ReturnType<typeof vi.fn>).mockResolvedValue({});
+    (mockPrisma.referenceImage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+  });
+
+  it("纯层:视频引擎全被关 ⇒ buildProposeCard 抛 GenerationUnavailableError(造不出卡就不造)", async () => {
+    const { GenerationUnavailableError } = await import("./propose.helpers.js");
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    expect(() =>
+      buildProposeCard({ kind: "video", structuredPrompt: "a cat walks", entityIds: [], variantSel: {} }, ctx, []),
+    ).toThrow(GenerationUnavailableError);
+  });
+
+  it("纯层:图片引擎被关 ⇒ 同样抛(同一个 disabled,同一条规矩)", async () => {
+    const { GenerationUnavailableError } = await import("./propose.helpers.js");
+    const ctx = makeCtx({ disabledModels: ["seedream"] });
+    expect(() =>
+      buildProposeCard({ kind: "image", structuredPrompt: "a cat", entityIds: [], variantSel: {} }, ctx, []),
+    ).toThrow(GenerationUnavailableError);
+  });
+
+  it("入口:executePropose 返回一句英文人话,并且**一张 GEN_CARD 都没落库**", async () => {
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    const result = await executePropose(
+      { kind: "video", structuredPrompt: "a cat walks", entityIds: [], variantSel: {} },
+      { context: ctx },
+    );
+    expect(result).toEqual({ error: "Video generation is turned off right now." });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("入口:图片侧同样,措辞是 English sentence case,不出现引擎名", async () => {
+    const ctx = makeCtx({ disabledModels: ["seedream"] });
+    const result = await executePropose(
+      { kind: "image", structuredPrompt: "a cat", entityIds: [], variantSel: {} },
+      { context: ctx },
+    );
+    expect(result).toEqual({ error: "Image generation is turned off right now." });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+    // 引擎保密:空态文案里不许出现任何供应商/模型名
+    expect(JSON.stringify(result)).not.toMatch(/seedream|seedance|byteplus|fal|kling|veo/iu);
+  });
+
+  it("入口:proposePack 整包一起空 —— 不许先落几张再半路报错", async () => {
+    const { executeProposePack } = await import("./propose-pack.js");
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    const result = await executeProposePack(
+      {
+        packTitle: "Launch pack",
+        items: [
+          { kind: "video", structuredPrompt: "a cat walks", entityIds: [], variantSel: {} },
+          { kind: "video", structuredPrompt: "a dog runs", entityIds: [], variantSel: {} },
+        ],
+      },
+      { context: ctx },
+    );
+    expect(result).toEqual({ error: "Video generation is turned off right now." });
+    expect(mockPrisma.chatMessage.create).not.toHaveBeenCalled();
+  });
+
+  it("只关掉一台不影响另一台:视频关了,图片卡照铸", async () => {
+    const { GEN_VIDEO_MODELS } = await import("@fikirtive/core");
+    const ctx = makeCtx({ disabledModels: [...GEN_VIDEO_MODELS] });
+    const result = await executePropose(
+      { kind: "image", structuredPrompt: "a cat", entityIds: [], variantSel: {} },
+      { context: ctx },
+    );
+    expect(result).toHaveProperty("cardId");
+    expect(mockPrisma.chatMessage.create).toHaveBeenCalledTimes(1);
   });
 });

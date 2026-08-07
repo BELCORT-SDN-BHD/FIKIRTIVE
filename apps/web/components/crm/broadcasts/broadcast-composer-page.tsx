@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { AlertCircle, ArrowLeft, LoaderCircle, Megaphone, Unplug } from "lucide-react";
+import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import { createBroadcastRun } from "@/lib/customer-broadcast-ui-actions";
 import type { getBroadcastComposerOptions, getMemberDirectory } from "@/lib/customer-broadcast-gateway";
 import { Button } from "@/components/ui/button";
@@ -55,13 +56,14 @@ export default function BroadcastComposerPage({
   }
   const options: Options | null = initialOptions.ok ? initialOptions.resource : null;
   const directory = initialDirectory.ok ? initialDirectory.resource : null;
-  const isOwner = directory?.self.role === "owner";
+  const selfRoles = directory ? (directory.self.roles ?? [directory.self.role]) : [];
+  const canManage = orgRolesAllow(selfRoles, "broadcast.manage");
 
-  if (!isOwner) {
+  if (!canManage) {
     return (
       <Notice
-        title="Only an owner can create a broadcast"
-        message="You can review broadcasts, but creating, freezing, confirming, or running one is limited to an owner account."
+        title="Broadcast management access is required"
+        message="You can review broadcasts, but your current access cannot create, freeze, confirm, or run one."
       />
     );
   }

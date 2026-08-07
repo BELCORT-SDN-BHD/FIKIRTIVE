@@ -7,8 +7,13 @@ import type { OttoContext, CanvasNodeView } from "../context.js";
 // W-B3-D anchor sub-journeys (组件级证据, Otto-executor path + stateful fake ports). Like the
 // manage-canvas C1 test, these prove the executor can drive the whole $0 journey through ctx ports
 // alone — no startGen, no credits, no provider anywhere. Server-action truth is covered by the web
-// action tests; the cold-start honesty copy (A1 gate4 threshold) is asserted web-side against
-// HOOK_COLDSTART_NOTE (apps/web/.../studio-factory/data.ts).
+// action tests.
+//
+// #606 (D7 · T7): the cold-start honesty copy (A1 gate4 threshold) used to be asserted web-side
+// against HOOK_COLDSTART_NOTE in the north-star prototype fixtures. Those fixtures had no route
+// mounting them — the string was never on a merchant-visible surface — and went out with the rest
+// of the prototype tree. The gate4 threshold itself is UNMET, not met-and-untested: when the
+// cold-start note ships on a real surface it needs its own assertion there.
 
 function makeCtx(over: Partial<OttoContext>): OttoContext {
   return {
@@ -84,7 +89,8 @@ describe("I1 $0 sub-journey: capture an idea → Suggest 3 ideas → turn one in
           store.push({
             id, type: input.type, x: input.x, y: input.y, w: input.w, h: input.h,
             text: input.text ?? null, prompt: input.prompt ?? null, generationId: input.generationId ?? null,
-            status: "done", sourceNodeId: input.sourceNodeId ?? null, url: null,
+            status: "done", genJobId: null, batchIndex: null, batchSize: null,
+            madeFromNodeId: null, url: null,
           });
           return { id };
         },

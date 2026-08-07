@@ -91,43 +91,27 @@ describe("canvasBatchLabel", () => {
 });
 
 /**
- * "Made from" vs "made alongside" (round-1 review P2-2).
+ * "Made from" vs "made alongside" (round-1 review P2-2 · #603 T4).
  *
- * CanvasNode.sourceNodeId carries TWO different things: the card a generation was really made
- * from (image → video, or an edited prompt), and the anchor card a batch's siblings are laid
- * out around. Only the first is parentage. The paid job itself settles which one it is —
- * GenJob.sourceGenerationId is set only when the job was actually conditioned on another
- * card's output — so the record decides, not the column.
+ * These two used to share one column, `CanvasNode.sourceNodeId`: the card a generation was
+ * really made from (image → video, an edited prompt) AND the anchor a batch's siblings are laid
+ * out around. Telling them apart needed a SECOND server field to vote on which meaning this row
+ * happened to carry, and a failed read of that field turned a whole batch into a family tree.
+ * The two facts now live in two columns, so there is nothing left to disambiguate:
+ * `madeFromNodeId` is written only from the paid job's own recorded source.
  */
 describe("canvasNodeHasSource", () => {
-  const madeFrom = { madeFromSource: true };
-  const sameBatch = { madeFromSource: false };
-
   it("says yes for a video made from an image", () => {
-    expect(canvasNodeHasSource({ sourceNodeId: "img", lineage: madeFrom })).toBe(true);
+    expect(canvasNodeHasSource({ madeFromNodeId: "img" })).toBe(true);
   });
 
-  it("says no for a batch sibling that merely sits with the batch's first card", () => {
-    expect(canvasNodeHasSource({ sourceNodeId: "primary", lineage: sameBatch })).toBe(false);
+  it("says no for a batch sibling — standing beside the anchor is not coming out of it", () => {
+    expect(canvasNodeHasSource({ layoutAnchorNodeId: "primary" } as never)).toBe(false);
   });
 
   it("says no for a card with nothing to point at", () => {
-    expect(canvasNodeHasSource({ sourceNodeId: null, lineage: madeFrom })).toBe(false);
+    expect(canvasNodeHasSource({ madeFromNodeId: null })).toBe(false);
     expect(canvasNodeHasSource({})).toBe(false);
-  });
-
-  it("trusts this session's own source action before the server record arrives", () => {
-    // A just-placed 'Make video' card has no record FIELD at all, and the browser only sets
-    // sourceNodeId when it passed that card's generation to the paid call.
-    expect(canvasNodeHasSource({ sourceNodeId: "img" })).toBe(true);
-    expect(canvasNodeHasSource({ sourceNodeId: "img", lineage: undefined })).toBe(true);
-  });
-
-  it("claims no parent when the server answered and had no record to give", () => {
-    // An explicit null is the SERVER speaking: no record, or a lineage read that failed. Since
-    // sourceNodeId doubles as a batch's layout anchor, believing it here turns one bad read into
-    // a whole batch of parentage the merchant never created. Say nothing instead.
-    expect(canvasNodeHasSource({ sourceNodeId: "primary", lineage: null })).toBe(false);
   });
 });
 
@@ -140,7 +124,6 @@ describe("canvasLineageRows", () => {
         costCredits: 8,
         batchSize: 1,
         batchPosition: 1,
-        madeFromSource: true,
       },
       { hasSource: true },
     );
@@ -160,7 +143,6 @@ describe("canvasLineageRows", () => {
       costCredits: null,
       batchSize: 1,
       batchPosition: null,
-      madeFromSource: false,
     });
 
     expect(rows).toEqual([{ label: "Cost", value: "Cost not recorded" }]);
@@ -170,60 +152,68 @@ describe("canvasLineageRows", () => {
 describe("buildCanvasLineageEdges", () => {
   it("joins a video to the image it was made from", () => {
     expect(buildCanvasLineageEdges([
-      { id: "img", sourceNodeId: null },
-      { id: "vid", sourceNodeId: "img", lineage: { madeFromSource: true } },
+      { id: "img", madeFromNodeId: null },
+      { id: "vid", madeFromNodeId: "img" },
     ])).toEqual([{ id: "lineage-img-vid", source: "img", target: "vid" }]);
   });
 
   it("chains an evolved image back through its whole ancestry", () => {
     const edges = buildCanvasLineageEdges([
-      { id: "a", sourceNodeId: null },
-      { id: "b", sourceNodeId: "a", lineage: { madeFromSource: true } },
-      { id: "c", sourceNodeId: "b", lineage: { madeFromSource: true } },
+      { id: "a", madeFromNodeId: null },
+      { id: "b", madeFromNodeId: "a" },
+      { id: "c", madeFromNodeId: "b" },
     ]);
 
     expect(edges.map((edge) => [edge.source, edge.target])).toEqual([["a", "b"], ["b", "c"]]);
   });
 
   it("leaves one batch's cards unjoined — they are siblings, not parent and child", () => {
-    // Four images from ONE "make 4" press. Each sibling row stores the batch's first card as
-    // its layout anchor, which used to be drawn as "this one came from that one".
+    // Four images from ONE "make 4" press. Each sibling records the batch's anchor as the card
+    // it was laid out around, and that fact is in a column this function does not read at all.
     const batch = ["b", "c", "d"].map((id) => ({
       id,
-      sourceNodeId: "a",
-      lineage: { madeFromSource: false },
+      layoutAnchorNodeId: "a",
+      madeFromNodeId: null,
     }));
 
-    expect(buildCanvasLineageEdges([{ id: "a", sourceNodeId: null }, ...batch])).toEqual([]);
+    expect(buildCanvasLineageEdges([{ id: "a", madeFromNodeId: null }, ...batch])).toEqual([]);
   });
 
-  it("draws nothing at all when the batch's records could not be read", () => {
-    // Same four images from one press, but the server's lineage read came back empty for every
-    // row. Each row still carries the batch's layout anchor in sourceNodeId, so an optimistic
-    // reading of a null record invents a family tree out of one failed read (r2 review P2-2).
-    const batch = ["b", "c", "d"].map((id) => ({ id, sourceNodeId: "a", lineage: null }));
+  it("draws every card of an EDITED batch back to the picture it was built on", () => {
+    // "More like this" on card `src`, four images out. All four really were made from `src` —
+    // that is a fact of the paid job, so every card of the batch carries it — while their
+    // arrangement around the batch anchor stays in its own column and draws nothing.
+    const batch = ["b", "c", "d"].map((id) => ({ id, madeFromNodeId: "src", layoutAnchorNodeId: "a" }));
 
-    expect(buildCanvasLineageEdges([{ id: "a", sourceNodeId: null }, ...batch])).toEqual([]);
+    const edges = buildCanvasLineageEdges([
+      { id: "src", madeFromNodeId: null },
+      { id: "a", madeFromNodeId: "src" },
+      ...batch,
+    ]);
+
+    expect(edges.map((edge) => [edge.source, edge.target])).toEqual([
+      ["src", "a"], ["src", "b"], ["src", "c"], ["src", "d"],
+    ]);
   });
 
-  it("still joins a card this browser just made, before any record exists", () => {
-    // "Make video" places the new card with no lineage FIELD; the line has to appear now, not
-    // after the next board read (r2 review: 完成即见谱系).
+  it("still joins a card this browser just made, before any board read", () => {
+    // "Make video" places the new card carrying the card it was built on, so the line appears
+    // now rather than after the next board read (r2 review: 完成即见谱系).
     expect(buildCanvasLineageEdges([
-      { id: "img", sourceNodeId: null },
-      { id: "vid", sourceNodeId: "img" },
+      { id: "img", madeFromNodeId: null },
+      { id: "vid", madeFromNodeId: "img" },
     ])).toEqual([{ id: "lineage-img-vid", source: "img", target: "vid" }]);
   });
 
   it("never draws a line to a card that is not on the board", () => {
     expect(buildCanvasLineageEdges([
-      { id: "vid", sourceNodeId: "deleted-image", lineage: { madeFromSource: true } },
+      { id: "vid", madeFromNodeId: "deleted-image" },
     ])).toEqual([]);
   });
 
   it("ignores a card that points at itself", () => {
     expect(buildCanvasLineageEdges([
-      { id: "a", sourceNodeId: "a", lineage: { madeFromSource: true } },
+      { id: "a", madeFromNodeId: "a" },
     ])).toEqual([]);
   });
 });

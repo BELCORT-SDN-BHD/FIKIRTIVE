@@ -24,9 +24,8 @@
  *    receipt logic: `interactive` / `approval-resume` / `eval` carry the full
  *    skill toolset at OTTO_MAX_STEPS; `worker-verdict` carries ZERO tools at a
  *    single step (the tool-less verdict contract — do NOT add tools to it).
- *  - production build must not import a CLI model driver — fenced by
- *    scripts/check-otto-cli-fence.mjs (subscription credentials never enter the
- *    service image).
+ *  - production composition never imports a CLI model driver; subscription credentials
+ *    must not enter the service image.
  */
 import { Agent, run, MaxTurnsExceededError } from "@openai/agents";
 import type { AgentInputItem, Model, RunStreamEvent, RunState } from "@openai/agents";

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import {
   AlertCircle,
   ArrowLeft,
@@ -42,7 +43,6 @@ import {
   isDenialErrorCode,
   memberDisplay,
   purposeLabel,
-  roleLabel,
   runStatusPresentation,
   sendStatePresentation,
   skipReasonCopy,
@@ -150,8 +150,8 @@ export default function BroadcastDetailPage({
   }
 
   const directory = initialDirectory.ok ? initialDirectory.resource : null;
-  const isOwner = directory?.self.role === "owner";
-  const selfRole = directory?.self.role ?? null;
+  const selfRoles = directory ? (directory.self.roles ?? [directory.self.role]) : [];
+  const canManage = orgRolesAllow(selfRoles, "broadcast.manage");
   const options = initialOptions.ok ? initialOptions.resource : null;
   const campaign = initialRun.ok ? initialRun.resource.campaign : null;
   const createdByName =
@@ -221,10 +221,10 @@ export default function BroadcastDetailPage({
   const simulatedSentCount = rows.filter((row) => row.sendState === "simulated_sent").length;
   const skippedCount = rows.filter((row) => row.sendState === "skipped_ineligible").length;
 
-  const canFreeze = isOwner && (run.status === "draft" || run.status === "audience_frozen");
-  const canConfirm = isOwner && run.status === "audience_frozen";
-  const canExecute = isOwner && (run.status === "confirmed" || run.status === "executing");
-  const canCancel = isOwner && (run.status === "draft" || run.status === "audience_frozen" || run.status === "confirmed");
+  const canFreeze = canManage && (run.status === "draft" || run.status === "audience_frozen");
+  const canConfirm = canManage && run.status === "audience_frozen";
+  const canExecute = canManage && (run.status === "confirmed" || run.status === "executing");
+  const canCancel = canManage && (run.status === "draft" || run.status === "audience_frozen" || run.status === "confirmed");
 
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
@@ -279,10 +279,10 @@ export default function BroadcastDetailPage({
           <span>Provider messaging tier (quota preflight / quality downgrade): <strong>unavailable</strong>. No channel is connected, so this workbench runs simulated sends only — no message reaches a real customer and no quota is consumed.</span>
         </div>
 
-        {!isOwner ? (
+        {!canManage ? (
           <p className="mt-4 flex items-start gap-2 rounded-xl border border-border bg-secondary/40 px-4 py-3 text-sm leading-6 text-muted-foreground">
             <Lock className="mt-0.5 size-4 shrink-0" />
-            You are signed in as {selfRole ? roleLabel(selfRole).toLowerCase() : "a non-owner"}. Freeze, confirm, and run are owner-only; the controls below are shown but disabled. The server enforces this regardless of the UI.
+            Your current access can review this broadcast but cannot freeze, confirm, run, or cancel it. The server enforces the same capability check.
           </p>
         ) : null}
 

@@ -16,20 +16,57 @@ import { TENANT_MODELS, TENANT_GUARD_EXEMPT } from "./tenant-guard.js";
 
 const SCHEMA = path.resolve(__dirname, "../prisma/schema.prisma");
 
-/** schema.prisma 里所有声明了 ownerId 标量字段的模型名。 */
-function ownerIdModels(): string[] {
+type ModelShape = { body: string; ownerScoped: boolean };
+
+function schemaModels(): Map<string, ModelShape> {
   const src = fs.readFileSync(SCHEMA, "utf8");
-  const models: string[] = [];
-  let current: string | null = null;
-  for (const line of src.split("\n")) {
-    const m = line.match(/^model\s+(\w+)\s/);
-    if (m) { current = m[1]!; continue; }
-    if (line.match(/^\s+ownerId\s/) && current) {
-      if (!models.includes(current)) models.push(current);
-    }
-    if (line.startsWith("}")) current = null;
+  const models = new Map<string, ModelShape>();
+  for (const match of src.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)) {
+    const body = match[2] ?? "";
+    models.set(match[1]!, { body, ownerScoped: /^\s*ownerId\s+/m.test(body) });
   }
   return models;
+}
+
+/** schema.prisma 里所有声明了 ownerId 标量字段的模型名。 */
+function ownerIdModels(): string[] {
+  return [...schemaModels()]
+    .filter(([, model]) => model.ownerScoped)
+    .map(([name]) => name);
+}
+
+function ownerScopedRelations(): Array<{
+  child: string;
+  field: string;
+  parent: string;
+  relationFields: string[];
+}> {
+  const models = schemaModels();
+  const relations: Array<{
+    child: string;
+    field: string;
+    parent: string;
+    relationFields: string[];
+  }> = [];
+
+  for (const [child, model] of models) {
+    if (!model.ownerScoped) continue;
+    for (const match of model.body.matchAll(
+      /^\s*(\w+)\s+(\w+)(?:\?|\[\])?\s+@relation\(([\s\S]*?)\)/gm,
+    )) {
+      const [, field, parent, relationArgs = ""] = match;
+      if (!models.get(parent!)?.ownerScoped) continue;
+      const fields = relationArgs.match(/fields:\s*\[([^\]]+)\]/)?.[1];
+      if (!fields) continue;
+      relations.push({
+        child,
+        field: field!,
+        parent: parent!,
+        relationFields: fields.split(",").map((value) => value.trim()),
+      });
+    }
+  }
+  return relations;
 }
 
 describe("tenant-guard coverage — every ownerId model is guarded or explicitly exempt", () => {
@@ -65,5 +102,18 @@ describe("tenant-guard coverage — every ownerId model is guarded or explicitly
     for (const model of [...TENANT_MODELS, ...Object.keys(TENANT_GUARD_EXEMPT)]) {
       expect(models, `"${model}" is listed in tenant-guard.ts but has no ownerId in schema.prisma (renamed/removed?)`).toContain(model);
     }
+  });
+
+  it("every direct relation between owner-scoped models carries ownerId", () => {
+    const relations = ownerScopedRelations();
+    const inspected = relations.map(({ child, field }) => `${child}.${field}`);
+    expect(inspected).toContain("Generation.project");
+    expect(inspected).toContain("ChatMessage.thread");
+    expect(inspected).toContain("QrAsset.link");
+
+    const unsafe = relations
+      .filter(({ relationFields }) => !relationFields.includes("ownerId"))
+      .map(({ child, field, parent }) => `${child}.${field} -> ${parent}`);
+    expect(unsafe, "owner-scoped relations must use a tenant-qualified foreign key").toEqual([]);
   });
 });

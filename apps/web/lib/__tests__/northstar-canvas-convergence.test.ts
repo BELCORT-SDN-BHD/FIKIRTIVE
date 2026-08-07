@@ -16,7 +16,7 @@
  * 全程没有真实生成:付费路径 useCanvasGen 被替换成一个把回调交出来的假件,任何一条断言都
  * 花不出一个积分。
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, createElement, useEffect, type ReactElement } from "react";
@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => ({
   uploadReference: vi.fn(),
   getMyAccount: vi.fn(),
   quoteCosts: vi.fn(),
+  imageShapes: vi.fn(),
+  videoSpecs: vi.fn(),
   generateImage: vi.fn(),
   // The controlled entry's own dependencies — the @ reference chain starts at the session,
   // so this file drives the real entry instead of hand-feeding the workspace a prop.
@@ -147,6 +149,9 @@ vi.mock("@/components/canvas/useCanvasGen", () => ({
     animate: vi.fn(),
     generateVideoFromText: vi.fn(),
     quoteCosts: mocks.quoteCosts,
+    // #643 T2: 形状菜单来自服务端解析，测试替身也必须给得出，否则选择器渲染不出来。
+    imageShapes: mocks.imageShapes,
+    videoSpecs: mocks.videoSpecs,
     cancelledRef: { current: false },
   }),
   isInFlightPaidGen: (node: { type: string; status?: string; url?: string | null }) =>
@@ -252,6 +257,14 @@ const sizedRect = () => ({
 beforeEach(() => {
   mocks.boardRead.mockResolvedValue([]);
   mocks.quoteCosts.mockResolvedValue({ imageCredits: 8, videoCredits: 80 });
+  mocks.imageShapes.mockResolvedValue({ options: ["1:1", "9:16", "16:9", "4:3", "3:4", "3:2", "2:3", "21:9"], defaultAspect: "1:1" });
+  mocks.videoSpecs.mockResolvedValue({
+    menu: { durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], resolutions: ["720p", "480p"], aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] },
+    t2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "16:9" },
+    i2vDefault: { seconds: 5, resolution: "720p", aspectRatio: "adaptive" },
+    creditsFor: ({ seconds, resolution }: { seconds: number; resolution: string }) =>
+      Math.ceil((seconds * (resolution === "480p" ? 11 : 22)) / 10),
+  });
   mocks.generateImage.mockResolvedValue(true);
   mocks.getMyAccount.mockResolvedValue({ balance: 1240 });
   mocks.requireOwner.mockResolvedValue({ email: "owner@example.com", ownerId: "owner-1" });
@@ -302,12 +315,14 @@ function select(ids: string[]): void {
 }
 
 /**
- * 手搓板退场(#600 验收①)。
+ * 手搓板退场(#600 验收① → #606 T7 收尾)。
  *
  * 改前:受控 Entry 直接 import 并渲染 `components/northstar/create/canvas-page`。第一条断言
  * 在改前是红的,也是「合体真的发生了」唯一不能靠外观蒙混的证据。后两条从来不曾变红,是
- * 防回归守卫:路由文件在基线里就没引用过手搓板,新壳则是本次才出现的文件。手搓板文件本身
- * 留在树里(D7 · T7 才退役),所以只断言「这条路上没人再引用它」。
+ * 防回归守卫:路由文件在基线里就没引用过手搓板,新壳则是本次才出现的文件。
+ *
+ * T7 把手搓板整个文件从树里删掉,所以断言从「这条路上没人再引用它」升级为「它不存在了」——
+ * 第二块画布实现无处可回来。同一条也守住它的运行时 `immersive-canvas-runtime`。
  */
 describe("the hand-rolled board no longer renders on this page", () => {
   const HANDMADE_BOARD = "northstar/create/canvas-page";
@@ -322,6 +337,11 @@ describe("the hand-rolled board no longer renders on this page", () => {
 
   it("is not reached through the new workspace", () => {
     expect(source("components/canvas/NorthstarCanvasWorkspace.tsx")).not.toContain(HANDMADE_BOARD);
+  });
+
+  it("is gone from the tree, along with the runtime that only it used", () => {
+    expect(existsSync(resolve(WEB_ROOT, "components/northstar/create/canvas-page.tsx"))).toBe(false);
+    expect(existsSync(resolve(WEB_ROOT, "components/canvas/immersive-canvas-runtime.ts"))).toBe(false);
   });
 });
 

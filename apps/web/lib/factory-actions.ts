@@ -8,8 +8,8 @@
  * Both are thin: requireOwner + anti-impersonation guard (mirrors startGen) + a typed
  * request, then hand off to orchestrateBatch, which loops the EXISTING spend authority
  * `startGen` per cell. This file adds NO spend authority, NO provider call, NO credit
- * mutation — every dollar still flows through startGen's per-cell reserve/settle/refund
- * (money-safety-review; B0-16 零新钱路). genRequest (inside startGen) stays the sole
+ * mutation — every dollar still flows through startGen's per-cell reserve/settle/refund.
+ * genRequest (inside startGen) stays the sole
  * (model,params) spend gate; the zod schemas here only shape the batch envelope.
  */
 import { revalidatePath } from "next/cache";
@@ -72,8 +72,7 @@ const bulkGridInput = z
 
 type Err = { error: string };
 
-/** Shared owner-scoped batch runner. Private (NOT exported) so the parity scanner
- *  treats only the two actions below as action surfaces. */
+/** Shared owner-scoped batch runner. The two exported actions below are the public surface. */
 async function runBatch(
   batchId: string,
   attemptId: string,

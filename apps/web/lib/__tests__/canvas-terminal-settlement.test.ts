@@ -1,0 +1,572 @@
+/**
+ * #612 T2c — what a merchant sees when a job ends badly, and what a CLOSED TAB may still do.
+ *
+ * Two halves, both against a REAL database with the real server actions running:
+ *
+ *  1. THE LATE-WRITE BARRIER (a confirmed defect on main). A tab the merchant closed keeps
+ *     polling until its own patience runs out, then reports "timeout" for the card it placed.
+ *     That report can arrive long after the server settled the whole batch — and it used to be
+ *     applied as written: the card was knocked from `done` back to `timeout` AND its
+ *     `generationId` was erased. The merchant's paid picture came off the card; what put it back
+ *     on screen was a read-time fallback that hands EVERY orphaned card the batch's FIRST output,
+ *     so a four-image batch showed image 1 four times and images 2–4 nowhere. A report about an
+ *     older state of the world must never undo a settled one.
+ *
+ *  2. TERMINAL SETTLEMENT. A job that ends failed or cancelled has its cards written by the
+ *     SERVER, once, with one name per terminal — so an abandoned board stops spinning without a
+ *     browser having to be there, and "cancelled" reads as cancelled rather than as a failure.
+ *
+ * Harness: only the session is mocked (same dialect as canvas-settlement-browser-absent.test.ts)
+ * — requireOwner, Prisma, the media store and the real server actions all run.
+ */
+import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+
+const mockAuth = vi.fn();
+vi.mock("@/lib/better-auth/compat", () => ({ auth: mockAuth }));
+vi.mock("@/lib/allowlist", () => {
+  function allowed(email: string | null | undefined): boolean {
+    if (!email) return false;
+    const list = `${process.env.AUTH_ALLOWED_EMAILS ?? ""}`.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+    return list.includes(email.toLowerCase());
+  }
+  return { allowed, isFounderAdmin: () => false, isAllowedEmail: allowed };
+});
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+
+const { requireOwner } = await import("@/lib/auth-guard");
+const { prisma, settleCanvasCardsForGenJob, findCanvasSettlementBacklog } = await import("@fikirtive/db");
+const { storage } = await import("@/lib/storage");
+const { listCanvasNodes, resolveCanvasNode, deleteCanvasNode } = await import("@/lib/canvas-actions");
+const { syncOttoCanvasNodes } = await import("@/lib/otto-canvas-bridge");
+const { mergeReloadedCanvasNodes } = await import("@/lib/canvas-selection");
+const { placeCanvasJobNode } = await import("@/lib/canvas-node-placement");
+const { canvasCardRowAdvances } = await import("@/lib/canvas-card-status");
+const { isInFlightPaidGen } = await import("@/components/canvas/useCanvasGen");
+
+const EMAIL = `canvas612-${randomUUID()}@fikirtive.test`;
+let ownerId: string;
+let projectId: string;
+
+beforeAll(async () => {
+  process.env.AUTH_ALLOWED_EMAILS = EMAIL;
+  await prisma.user.upsert({ where: { email: EMAIL }, update: {}, create: { id: `usr_${randomUUID()}`, email: EMAIL } });
+  mockAuth.mockResolvedValue({ user: { email: EMAIL } });
+  const gate = await requireOwner();
+  if ("error" in gate) throw new Error(gate.error);
+  ownerId = gate.ownerId;
+});
+
+beforeEach(async () => {
+  projectId = `prj_${randomUUID()}`;
+  await prisma.project.create({ data: { id: projectId, ownerId, name: "Terminal board" } });
+});
+
+afterAll(async () => {
+  await prisma.canvasNode.deleteMany({ where: { ownerId } });
+});
+
+/** A real paid output: bytes in the store, plus the Asset + Generation the worker commits. */
+async function seedStoredGeneration(): Promise<string> {
+  const bytes = new Uint8Array(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)));
+  const { contentHash } = await storage.put(ownerId, bytes, "png");
+  const asset = await prisma.asset.create({
+    data: {
+      id: `ast_${randomUUID()}`, ownerId, contentHash, ext: "png",
+      mime: "image/png", sizeBytes: BigInt(bytes.byteLength), source: "GENERATED",
+    },
+  });
+  const generation = await prisma.generation.create({
+    data: { id: `gen_${randomUUID()}`, ownerId, projectId, assetId: asset.id, source: "GENERATED", entitySnapshot: {} },
+  });
+  return generation.id;
+}
+
+async function seedDoneJob(outputs: number): Promise<{ jobId: string; generationIds: string[] }> {
+  const generationIds: string[] = [];
+  for (let i = 0; i < outputs; i += 1) generationIds.push(await seedStoredGeneration());
+  const jobId = `gjb_${randomUUID()}`;
+  await prisma.genJob.create({
+    data: {
+      id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+      count: outputs, status: "DONE", generationIds, spent: true, spentUsd: 0.12,
+      startedAt: new Date(), finishedAt: new Date(),
+    },
+  });
+  return { jobId, generationIds };
+}
+
+/** A job that ended badly, exactly as the worker leaves it: terminal, refunded, no outputs. */
+async function seedTerminalJob(status: "FAILED" | "CANCELLED"): Promise<string> {
+  const jobId = `gjb_${randomUUID()}`;
+  await prisma.genJob.create({
+    data: {
+      id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+      count: 1, status, generationIds: [], spent: false,
+      startedAt: new Date(), finishedAt: new Date(),
+      error: status === "FAILED" ? "provider said no" : "",
+    },
+  });
+  return jobId;
+}
+
+/** The in-flight card the browser placed before the tab was closed. */
+async function seedPendingAnchor(jobId: string): Promise<string> {
+  const id = `cnd_${randomUUID()}`;
+  await prisma.canvasNode.create({
+    data: {
+      id, ownerId, projectId, type: "image", x: 100, y: 50, w: 320, h: 320,
+      prompt: "a cup steaming", genJobId: jobId, status: "pending",
+    },
+  });
+  return id;
+}
+
+async function boardRows() {
+  return prisma.canvasNode.findMany({ where: { ownerId, projectId }, orderBy: [{ y: "asc" }, { x: "asc" }] });
+}
+
+/** What the merchant actually sees: one entry per visible card, output index and picture. */
+async function visibleBoard(outputs: readonly string[]) {
+  const cards = await listCanvasNodes(projectId);
+  expect(Array.isArray(cards)).toBe(true);
+  return (cards as Array<{ status: string; generationId: string | null; url?: string | null }>).map((card) => ({
+    status: card.status,
+    carries: card.generationId ? `output-${outputs.indexOf(card.generationId)}` : "nothing",
+    hasPicture: typeof card.url === "string" && card.url.length > 0,
+  }));
+}
+
+describe("a closed tab reporting back late", () => {
+  it("cannot take the merchant's paid picture off a settled card", async () => {
+    const { jobId, generationIds } = await seedDoneJob(2);
+    await seedPendingAnchor(jobId);
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+
+    const settled = await boardRows();
+    expect(settled).toHaveLength(2);
+    const stranded = settled.find((row) => row.generationId === generationIds[1]);
+    expect(stranded).toBeDefined();
+
+    // The tab the merchant closed gives up waiting and reports what IT last knew.
+    await resolveCanvasNode(projectId, stranded!.id, { status: "timeout" });
+
+    const after = await boardRows();
+    // The card still carries the output the merchant paid for, still finished.
+    expect(after.map((row) => ({ status: row.status, generationId: row.generationId })))
+      .toEqual(settled.map((row) => ({ status: row.status, generationId: row.generationId })));
+    // …and the board still shows BOTH pictures, each exactly once. Before the barrier the
+    // orphaned card fell back to the batch's first output, so output-0 appeared twice.
+    expect(await visibleBoard(generationIds)).toEqual([
+      { status: "done", carries: "output-0", hasPicture: true },
+      { status: "done", carries: "output-1", hasPicture: true },
+    ]);
+  });
+
+  it("cannot fail a settled card either", async () => {
+    const { jobId, generationIds } = await seedDoneJob(1);
+    await seedPendingAnchor(jobId);
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+    const settled = await boardRows();
+
+    await resolveCanvasNode(projectId, settled[0]!.id, { status: "failed" });
+
+    expect(await boardRows()).toEqual(settled);
+    expect(await visibleBoard(generationIds)).toEqual([
+      { status: "done", carries: "output-0", hasPicture: true },
+    ]);
+  });
+
+  // #612 r2 (cross-family review P1): the first barrier keyed on "does this card carry an output".
+  // A settled FAILED or CANCELLED card carries none — that is what the terminal projection writes
+  // — so those rows stayed writable and a stale report could still reopen a finished card.
+  it.each([
+    ["FAILED", "failed"],
+    ["CANCELLED", "cancelled"],
+  ])("cannot reopen a card the server already settled as %s", async (jobStatus, cardStatus) => {
+    const jobId = await seedTerminalJob(jobStatus as "FAILED" | "CANCELLED");
+    const cardId = await seedPendingAnchor(jobId);
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+    const settled = await boardRows();
+    expect(settled[0]!.status).toBe(cardStatus);
+
+    // The tab the merchant closed gives up waiting and reports what IT last knew.
+    await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+
+    expect(await boardRows()).toEqual(settled);
+  });
+
+  it("still lets a card nobody has settled reach its own terminal", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+
+    await expect(resolveCanvasNode(projectId, cardId, { status: "timeout" })).resolves.toEqual({ ok: true, applied: true });
+
+    const [row] = await boardRows();
+    expect(row?.status).toBe("timeout");
+    expect(row?.generationId).toBeNull();
+  });
+});
+
+/**
+ * #612 r4 (cross-family review P1) — the card another tab deleted.
+ *
+ * Deletion was INVISIBLE to everything that converges a card: the resolve looked past tombstones
+ * and answered "Node not found", which r3 correctly filed as `unknown` and therefore painted
+ * nothing; the board read omits tombstones; the merge re-appended the card it could no longer
+ * see; and a retained pending card is exactly what keeps the 5-second re-read running. A durable
+ * tombstone can never come back as a visible row, so the loop had nothing left to converge ON —
+ * the merchant watched a card being made that no longer existed, for ever.
+ *
+ * These cases run the whole seam against a REAL database: delete through the real action, ask the
+ * real resolve, take the real board read, and fold it in with the real merge.
+ */
+describe("a card another tab deleted", () => {
+  /** A card as this tab holds it on the board. */
+  type BoardCard = { id: string; data: { status: string; url: string | null; serverKnown?: boolean } };
+
+  /** The board as this tab holds it: cards a server read has already acknowledged. */
+  function held(rows: Array<{ id: string; status: string; url?: string | null }>): BoardCard[] {
+    return rows.map((row) => ({
+      id: row.id,
+      data: { status: row.status, url: row.url ?? null, serverKnown: true },
+    }));
+  }
+
+  /** A board read, in the shape FlowCanvas folds in — the row's face verbatim, because the read
+   *  already decided it (#602 r2: FlowCanvas no longer re-derives from the URL either). */
+  function readAsNodes(cards: unknown): BoardCard[] {
+    expect(Array.isArray(cards)).toBe(true);
+    return (cards as Array<{ id: string; status: string; url?: string | null }>).map((row) => ({
+      id: row.id,
+      data: { status: row.status, url: row.url ?? null, serverKnown: true },
+    }));
+  }
+
+  it("answers the deletion instead of pretending the card was never there", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    // The merchant removes the card in their other tab — the real action, a durable tombstone.
+    expect(await deleteCanvasNode(projectId, cardId)).toEqual({ ok: true });
+
+    // This tab's poll gives up and reports what it last knew.
+    await expect(resolveCanvasNode(projectId, cardId, { status: "timeout" }))
+      .resolves.toEqual({ ok: true, applied: false, status: "deleted" });
+  });
+
+  it("still says 'not found' for a card that never existed at all", async () => {
+    await expect(resolveCanvasNode(projectId, `cnd_${randomUUID()}`, { status: "timeout" }))
+      .resolves.toEqual({ error: "Node not found." });
+  });
+
+  it("converges to the card being gone, never to a card that is still being made", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    const onScreen = held([{ id: cardId, status: "pending" }]);
+    await deleteCanvasNode(projectId, cardId);
+
+    // The board read that the 5-second loop takes: the tombstone is not in it.
+    const board = await listCanvasNodes(projectId);
+    expect((board as unknown[]).length).toBe(0);
+
+    // Folding that read in must let the card GO. Re-appending it is what kept the spinner alive.
+    expect(mergeReloadedCanvasNodes(onScreen, readAsNodes(board))).toEqual([]);
+  });
+
+  // #612 r5 (cross-family review): the live race left in r4. Removal does not invalidate a board
+  // read that is ALREADY IN FLIGHT — that read left before the deletion, so it still carries the
+  // card, and it carries it with the `serverKnown` stamp of its own snapshot. Landing after the
+  // local removal it puts the card back. If the row it captured is TERMINAL, the card is no
+  // longer in flight, so the board's re-read loop stops with it on screen: a ghost of a deleted
+  // card, permanently. (A captured PENDING row heals on the next read; the terminal one is the
+  // trap.) Deletion therefore has to outrank every snapshot, whenever that snapshot departed.
+  it("keeps a deleted card gone even when a read that left before the deletion lands after it", async () => {
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    // A board read departs HERE and captures the card in a terminal state.
+    const readInFlight = readAsNodes([{ id: cardId, status: "failed", url: null }]);
+    // This is what makes the capture a trap rather than a blip: nothing re-reads for it.
+    expect(isInFlightPaidGen({ type: "image", status: "failed", url: null })).toBe(false);
+
+    // The merchant removes the card in their other tab; this tab learns it and takes it off.
+    await deleteCanvasNode(projectId, cardId);
+    expect(await resolveCanvasNode(projectId, cardId, { status: "timeout" }))
+      .toEqual({ ok: true, applied: false, status: "deleted" });
+    const removedHere = new Set([cardId]);
+
+    // …and only NOW does the read that left earlier land.
+    expect(mergeReloadedCanvasNodes([], readInFlight, removedHere)).toEqual([]);
+  });
+
+  it("cannot overwrite a card that was deleted before the write landed", async () => {
+    // The narrow window inside the resolve itself: the lookup found a live card, the tombstone
+    // was written, and only then did the update run. It matches nothing by construction — the
+    // write predicate admits `pending` and `timeout` only — and the answer becomes the deletion.
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+    await deleteCanvasNode(projectId, cardId);
+    const tombstoned = await prisma.canvasNode.findMany({ where: { ownerId, projectId } });
+
+    await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+
+    expect(await prisma.canvasNode.findMany({ where: { ownerId, projectId } })).toEqual(tombstoned);
+  });
+
+  it("is harmless to ask again when a write landed but its answer was lost", async () => {
+    // The other half of the bounded retry: the first attempt DID write, its response never came
+    // back, and the second attempt writes the same thing to the same row.
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, prompt: "a cup steaming", kind: "IMAGE", model: "seedream",
+        count: 1, status: "GENERATING", generationIds: [], startedAt: new Date(),
+      },
+    });
+    const cardId = await seedPendingAnchor(jobId);
+
+    const first = await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+    const afterFirst = await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: { id: true, status: true, generationId: true } });
+    const second = await resolveCanvasNode(projectId, cardId, { status: "timeout" });
+
+    expect(first).toEqual({ ok: true, applied: true });
+    expect(second).toEqual({ ok: true, applied: true });
+    expect(await prisma.canvasNode.findMany({ where: { ownerId, projectId }, select: { id: true, status: true, generationId: true } }))
+      .toEqual(afterFirst);
+  });
+
+  it("still protects a card this tab has just placed and no read has seen yet", async () => {
+    // The other population, and the reason the rule cannot simply be "drop what is not in the
+    // read": a card created a moment ago is legitimately absent from a read already in flight.
+    const justPlaced: BoardCard[] = [{ id: `cnd_${randomUUID()}`, data: { status: "pending", url: null } }];
+
+    const merged = mergeReloadedCanvasNodes(justPlaced, readAsNodes(await listCanvasNodes(projectId)));
+
+    expect(merged).toEqual(justPlaced);
+  });
+});
+
+describe("a job that ended badly", () => {
+  it("leaves a failed card the merchant can read, without a browser being there", async () => {
+    const jobId = await seedTerminalJob("FAILED");
+    await seedPendingAnchor(jobId);
+
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+
+    const [row] = await boardRows();
+    expect(row?.status).toBe("failed");
+    expect(row?.generationId).toBeNull();
+    expect(await visibleBoard([])).toEqual([{ status: "failed", carries: "nothing", hasPicture: false }]);
+  });
+
+  it("shows a cancelled job as cancelled, not as a failure", async () => {
+    const jobId = await seedTerminalJob("CANCELLED");
+    await seedPendingAnchor(jobId);
+
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+
+    const [row] = await boardRows();
+    expect(row?.status).toBe("cancelled");
+    expect(await visibleBoard([])).toEqual([{ status: "cancelled", carries: "nothing", hasPicture: false }]);
+  });
+
+  it("writes the same terminal however many times it is settled, and never twice differently", async () => {
+    const jobId = await seedTerminalJob("FAILED");
+    await seedPendingAnchor(jobId);
+
+    const first = await settleCanvasCardsForGenJob(jobId, ownerId);
+    const settled = await boardRows();
+    const second = await settleCanvasCardsForGenJob(jobId, ownerId);
+
+    expect(first).toMatchObject({ status: "settled", updated: 1 });
+    expect(second).toMatchObject({ status: "settled", updated: 0 });
+    expect(await boardRows()).toEqual(settled);
+  });
+
+  it("never touches a card that already carries a paid output", async () => {
+    // A legacy shape the free-delivery guard can still produce: outputs on the row, terminal job.
+    const { jobId, generationIds } = await seedDoneJob(1);
+    await seedPendingAnchor(jobId);
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+    const delivered = await boardRows();
+    await prisma.genJob.update({ where: { id: jobId, ownerId }, data: { status: "FAILED" } });
+
+    await settleCanvasCardsForGenJob(jobId, ownerId);
+
+    expect(await boardRows()).toEqual(delivered);
+    expect(delivered[0]?.generationId).toBe(generationIds[0]);
+  });
+
+  it("honours a card the merchant deleted while the job was running", async () => {
+    const jobId = await seedTerminalJob("FAILED");
+    const cardId = await seedPendingAnchor(jobId);
+    await prisma.canvasNode.update({ where: { id: cardId, ownerId }, data: { status: "deleted" } });
+    const deleted = await boardRows();
+
+    const outcome = await settleCanvasCardsForGenJob(jobId, ownerId);
+
+    expect(outcome.status).toBe("suppressed");
+    expect(await boardRows()).toEqual(deleted);
+  });
+});
+
+/**
+ * #613 T2d — WHEN THE ENDING'S OWN WRITE FELL OVER, and no browser fixes it any more.
+ *
+ * The terminal write is best-effort (it runs after the refund, and must never be able to undo it),
+ * so it can fail. Until T2d the card was quietly corrected by the board READER on the way past;
+ * that repair is now deleted, so the whole rescue has to come from the backfill sweep. These cases
+ * reproduce the failed write by its observable result — the card is still `pending` for a job that
+ * ended long ago — and require:
+ *
+ *   1. opening the board changes NOTHING in the database, and
+ *   2. the sweep alone brings the card to that job's real ending, with nothing else running.
+ */
+describe("a terminal card the server never managed to write", () => {
+  /** The backstop, exactly as the worker's sweep runs it: the scan names it, one settlement writes it. */
+  async function backstop(jobId: string): Promise<boolean> {
+    const due = await findCanvasSettlementBacklog({ now: new Date(), graceMs: 0, limit: 200 });
+    const board = due.find((job) => job.id === jobId);
+    if (board) await settleCanvasCardsForGenJob(board.id, board.ownerId);
+    return !!board;
+  }
+
+  it.each([
+    ["FAILED" as const, "failed"],
+    ["CANCELLED" as const, "cancelled"],
+  ])("is repaired by the backstop alone after a %s job, never by opening the board", async (jobStatus, cardStatus) => {
+    const jobId = await seedTerminalJob(jobStatus);
+    await seedPendingAnchor(jobId);
+    // Roll the ending back past the sweep's grace period: the completion path is long done.
+    await prisma.genJob.update({
+      where: { id: jobId, ownerId },
+      data: { finishedAt: new Date(Date.now() - 30 * 60_000) },
+    });
+
+    // Opening the board — both readers — writes nothing at all.
+    const untouched = await boardRows();
+    await listCanvasNodes(projectId);
+    await syncOttoCanvasNodes(projectId);
+    expect(await boardRows()).toEqual(untouched);
+    expect(untouched.map((row) => row.status)).toEqual(["pending"]);
+
+    // The sweep is the only thing left that can fix it — and it does.
+    expect(await backstop(jobId)).toBe(true);
+    expect((await boardRows()).map((row) => row.status)).toEqual([cardStatus]);
+    expect(await visibleBoard([])).toEqual([{ status: cardStatus, carries: "nothing", hasPicture: false }]);
+
+    // Once, not once per tick.
+    const settled = await boardRows();
+    expect(await backstop(jobId)).toBe(false);
+    expect(await boardRows()).toEqual(settled);
+  });
+
+  it("still tells the merchant the truth on a board the sweep has not reached yet", async () => {
+    // The row says "pending" and the job says FAILED. A read may not write, but it must not lie
+    // either: the display projection reads the job, so the merchant sees the ending immediately.
+    const jobId = await seedTerminalJob("FAILED");
+    await seedPendingAnchor(jobId);
+
+    const untouched = await boardRows();
+    expect(await visibleBoard([])).toEqual([{ status: "failed", carries: "nothing", hasPicture: false }]);
+    expect(await boardRows()).toEqual(untouched);
+  });
+});
+
+/**
+ * #602 r3 (judge P2) — the OTHER guarded write, proved the same way.
+ *
+ * `placeCanvasJobNode` reads the card it is about to bind (`status: { not: "deleted" }`) and then
+ * writes it. r2 added the same tombstone predicate to that write; the test beside it MOCKED the
+ * write, so it proved the WHERE was passed, not that the database enforces it.
+ *
+ * The window the guard exists for is between that read and that write. Today's callers all hold
+ * the job's advisory lock, so it cannot open on its own — it is forced here by blocking the
+ * placement on `ChatThread` (which it reads for attribution, after finding the card and before
+ * writing it), deleting the card from a second connection meanwhile, and letting it go. The real,
+ * planned UPDATE then runs against a row the database says is deleted, and must change nothing.
+ */
+describe("the placement's own write refuses a card deleted after it was found", () => {
+  async function waitForLockWait(): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*)::bigint AS n FROM pg_stat_activity
+         WHERE wait_event_type = 'Lock' AND state = 'active'`;
+      if (Number(rows[0]!.n) > 0) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("the placement never blocked on the table lock — the race was not forced");
+  }
+
+  it("reports the card as suppressed and leaves the tombstone alone", async () => {
+    const threadId = `thr_${randomUUID()}`;
+    await prisma.chatThread.create({ data: { id: threadId, ownerId, projectId, title: "board" } });
+    const generationId = await seedStoredGeneration();
+    const jobId = `gjb_${randomUUID()}`;
+    await prisma.genJob.create({
+      data: {
+        id: jobId, ownerId, projectId, threadId, prompt: "a cup steaming", kind: "IMAGE",
+        model: "seedream", count: 1, status: "DONE", generationIds: [generationId], finishedAt: new Date(),
+      },
+    });
+    // Live when the placement looks it up — this is the row it plans to bind and flip to done.
+    const cardId = await seedPendingAnchor(jobId);
+
+    const blocker = prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe('LOCK TABLE "ChatThread" IN ACCESS EXCLUSIVE MODE');
+      await waitForLockWait();
+      await tx.$executeRawUnsafe(`UPDATE "CanvasNode" SET "status" = 'deleted' WHERE "id" = $1`, cardId);
+    }, { timeout: 20_000, maxWait: 20_000 });
+
+    const [placement] = await Promise.all([
+      placeCanvasJobNode({
+        ownerId, projectId, genJobId: jobId, type: "image",
+        x: 100, y: 50, w: 320, h: 320, text: null, prompt: "a cup steaming",
+        generationId, status: "done", threadId,
+      }),
+      blocker,
+    ]);
+
+    // The write ran and matched nothing, so the placement reports the deletion rather than
+    // resurrecting the card — a tombstone is a durable owner instruction, not a lost update.
+    //
+    // `scope: "generation"` is what proves the GUARD answered rather than the tombstone pre-check
+    // at the top of the function: that pre-check sees a tombstone carrying no generationId — which
+    // is exactly the row seeded here — and reports `scope: "job"`. Getting "generation" back means
+    // the card was still live when it ran, and the write is what refused.
+    expect(placement).toEqual({ suppressed: true, scope: "generation" });
+    const after = await prisma.canvasNode.findFirstOrThrow({ where: { id: cardId, ownerId }, select: { status: true, generationId: true } });
+    expect(after.status).toBe("deleted");
+    expect(after.generationId).toBeNull();
+    expect(canvasCardRowAdvances("deleted", "done")).toBe(false);
+  }, 30_000);
+});

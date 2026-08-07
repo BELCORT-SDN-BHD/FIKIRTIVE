@@ -1,7 +1,7 @@
 "use server";
 
 import { prisma } from "@fikirtive/db";
-import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES } from "@fikirtive/core";
+import { storageKey, newId, resolveUploadMime, MEDIA_SNIFF_BYTES, GEN_IMAGE_ASPECTS } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { storage, kindOf, extFromFilename } from "./storage";
 
@@ -19,6 +19,12 @@ export type GenerationDTO = {
   prompt: string;
   favorite: boolean;
   sourceGenerationId: string | null;
+  /**
+   * #643 T2 —— 这张图**当初就是按这个形状交付的**，取自产出它那一单的规格快照
+   * （`GenJob.imageOptions`），不是从像素反推。快照读不到（T1 迁移之前的老图）就是 null，
+   * 面板据此如实说「和这张一样的形状」而不是编一个比例出来。
+   */
+  imageAspect: string | null;
 };
 
 export async function getGeneration(
@@ -44,7 +50,7 @@ export async function getGeneration(
   // generation and carried a sourceGenerationId (i.e., this was an i2v result).
   const job = await prisma.genJob.findFirst({
     where: { generationIds: { has: generationId }, ownerId },
-    select: { sourceGenerationId: true, generationIds: true },
+    select: { sourceGenerationId: true, generationIds: true, imageOptions: true },
   });
 
   const { asset } = gen;
@@ -82,7 +88,17 @@ export async function getGeneration(
     prompt: gen.promptText,
     favorite: gen.favorite,
     sourceGenerationId: job?.sourceGenerationId ?? null,
+    imageAspect: snapshotImageAspect(job?.imageOptions),
   };
+}
+
+/** 快照里的形状，且必须仍在今天的菜单上 —— 一个已下线的旧形状不得靠这条路回到付费请求里。 */
+function snapshotImageAspect(imageOptions: unknown): string | null {
+  if (imageOptions === null || typeof imageOptions !== "object" || Array.isArray(imageOptions)) return null;
+  const aspect = (imageOptions as { aspectRatio?: unknown }).aspectRatio;
+  return typeof aspect === "string" && (GEN_IMAGE_ASPECTS as readonly string[]).includes(aspect)
+    ? aspect
+    : null;
 }
 
 /**

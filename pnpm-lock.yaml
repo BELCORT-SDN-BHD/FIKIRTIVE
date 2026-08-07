@@ -224,6 +224,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@fikirtive/core':
+        specifier: workspace:*
+        version: link:../core
       '@prisma/adapter-pg':
         specifier: 7.8.0
         version: 7.8.0

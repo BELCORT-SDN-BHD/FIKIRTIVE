@@ -13,7 +13,7 @@ import { saveCroppedGeneration } from "@/lib/asset-actions";
 import { setFavorite } from "@/lib/asset-actions";
 import { deleteGeneration } from "@/lib/actions";
 import {
-  startGen,
+  startAssetGen,
   getGenJob,
   getActiveGenModels,
   type ActiveGenModels,
@@ -24,7 +24,17 @@ import { Button, IcX, IcPlay, IcRetry } from "@/components/ds";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button as UiButton } from "@/components/ui/button";
 import { MentionInput } from "@/components/MentionInput";
+import { ImageShapePicker } from "@/components/gen/ImageShapePicker";
+import { VideoSpecPicker } from "@/components/gen/VideoSpecPicker";
+import {
+  clampVideoSpec,
+  defaultVideoSpec,
+  videoSpecCredits,
+  videoSpecMenu as videoSpecMenuOf,
+  type VideoSpec,
+} from "@/lib/video-spec";
 import { creditsLabel } from "@/lib/credit-format";
+import { assetSpendControlDisabled, type AssetSpendStatus } from "@/lib/asset-detail-status";
 import type { EntityDTO } from "@/lib/types";
 
 type GenDTO = {
@@ -37,6 +47,8 @@ type GenDTO = {
   prompt: string;
   favorite: boolean;
   sourceGenerationId: string | null;
+  /** #643 T2：这张图当初交付时的形状（快照，非像素反推）。老图读不到 ⇒ null。 */
+  imageAspect: string | null;
 };
 
 type PanelState = "loading" | "ready" | "error";
@@ -93,13 +105,19 @@ export default function DetailPanel({
   // Variant switcher (25)
   const [selectedIdx, setSelectedIdx] = useState(0);
 
-  // Aspect picker (17)
-  const [chosenAspect, setChosenAspect] = useState<string>("");
+  // #645 T4 — the VIDEO spec (length / quality / shape), used by Animate only. Animate always
+  // starts from THIS image, so the shape seeds to Adaptive: the engine follows the source frame
+  // rather than being told a ratio it would have to crop or pad to.
+  const [videoSpec, setVideoSpec] = useState<VideoSpec | null>(null);
+  // #643 T2 —— the IMAGE shape, used by Regenerate and by the edit composer. Seeded from the
+  // shape this very image was delivered in, so "do it again" / "edit this" keep the shape by
+  // default; the merchant can pick another one and what is on screen is what gets made.
+  const [chosenImageAspect, setChosenImageAspect] = useState<string>("");
 
   // Edit @composer (24)
   const [editPrompt, setEditPrompt] = useState("");
   const [editIds, setEditIds] = useState<string[]>([]);
-  const [editStatus, setEditStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
+  const [editStatus, setEditStatus] = useState<AssetSpendStatus>("idle");
   const [composerKey, setComposerKey] = useState(() => String(Date.now()));
 
   // Crop (16)
@@ -110,8 +128,8 @@ export default function DetailPanel({
   const [cropStatus, setCropStatus] = useState<"idle" | "saving" | "done" | "failed">("idle");
 
   // Action states
-  const [regenStatus, setRegenStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
-  const [animStatus, setAnimStatus] = useState<"idle" | "running" | "done" | "failed" | "timeout">("idle");
+  const [regenStatus, setRegenStatus] = useState<AssetSpendStatus>("idle");
+  const [animStatus, setAnimStatus] = useState<AssetSpendStatus>("idle");
   const [copied, setCopied] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const regenBusyRef = useRef(false);
@@ -164,12 +182,19 @@ export default function DetailPanel({
 
   useEffect(() => {
     if (!activeModels) return;
-    const initialAspect =
-      activeModels.videoDefaults.aspectRatio ||
-      activeModels.videoAspectRatios[0] ||
-      "";
-    if (initialAspect) queueMicrotask(() => setChosenAspect((current) => current || initialAspect));
+    // 带首帧的那条路(Animate)⇒ 形状默认 Adaptive。菜单与默认档都来自服务端解析。
+    const initial = defaultVideoSpec(activeModels, { hasSourceImage: true });
+    queueMicrotask(() => setVideoSpec((current) => current ?? initial));
   }, [activeModels]);
+
+  // #643 T2：图片形状的种子 = 这张图**当初交付时的形状**（快照，不是从像素反推）；
+  // 快照读不到（T1 之前的老图）就用服务端的默认形状 —— 那正是那些老图当年真的形状。
+  // 换看另一张图（gen.id 变了）就重新播种，不把上一张的形状带过来。
+  useEffect(() => {
+    if (!activeModels) return;
+    const seed = gen?.imageAspect || activeModels.imageDefaultAspect;
+    if (seed) queueMicrotask(() => setChosenImageAspect(seed));
+  }, [activeModels, gen?.id, gen?.imageAspect]);
 
   // Clear edit composer on generation change
   useEffect(() => {
@@ -203,7 +228,11 @@ export default function DetailPanel({
   const selectedGenId = gen ? (gen.variants[selectedIdx]?.id ?? gen.id) : generationId;
   const targetProjectId = gen?.projectId ?? projectId;
   const imageCost = activeModels?.imageCredits ?? null;
-  const videoCost = activeModels?.videoCredits ?? null;
+  // #645 T4：视频按档计价，所以这里报的必须是**选中那一档**的价（服务端那张按档价目表），
+  // 不是默认档的价 —— 显示一个价、扣另一个价是这条线上最贵的一类缺陷。
+  const videoCost = activeModels
+    ? (videoSpec ? videoSpecCredits(activeModels, videoSpec) : activeModels.videoCredits)
+    : null;
   const imageCostLabel = imageCost == null ? "checking exact cost" : creditsLabel(imageCost);
   const videoCostLabel = videoCost == null ? "checking exact cost" : creditsLabel(videoCost);
 
@@ -229,7 +258,7 @@ export default function DetailPanel({
     if ("error" in result) applyLocal(!next); // revert
   }, [gen, favorite, selectedGenId, readOnly]);
 
-  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "timeout"> => {
+  const pollJob = useCallback(async (jobId: string): Promise<"done" | "failed" | "cancelled" | "timeout"> => {
     // ~8 min at 2.5s — mirrors the canvas poll() window (useCanvasGen.ts). Video gens can
     // legitimately exceed the old ~4-min cap; the worker settles late jobs regardless of this
     // client poll. A client-side give-up is a "timeout" (still working), NOT a "failed": surfacing
@@ -241,6 +270,11 @@ export default function DetailPanel({
       if (!job) return "failed";
       if (job.status === "DONE") return "done";
       if (job.status === "FAILED") return "failed";
+      // A cancel is its own ending, not a failure (#602 T3 · r2 judge P2). It stops the poll —
+      // before, CANCELLED was unrecognised here and this loop ran its full ~8-minute budget on a
+      // job that had already stopped — and it gets its own word, so the button that comes back
+      // does not say "Failed — retry?" about something the merchant chose to stop.
+      if (job.status === "CANCELLED") return "cancelled";
       await new Promise((r) => setTimeout(r, 2500));
     }
     return "timeout";
@@ -269,13 +303,18 @@ export default function DetailPanel({
     regenBusyRef.current = true;
     try {
       setRegenStatus("running");
-      const { image } = await ensureModels(); // F18: server-resolved model
-      const result = await startGen({
+      const models = await ensureModels(); // F18: server-resolved model
+      // #643 T2：形状是屏幕上正显示的那一格 —— 重做一张不会悄悄换掉形状。
+      const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
+      // #645 T4(判官 r1 P0-2)：同 Animate —— 屏幕上那个价随请求发出去，服务端重核。
+      const result = await startAssetGen({
+        expectedCredits: models.imageCredits,
         projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
         kind: "image",
-        model: image,
+        model: models.image,
+        ...(aspectRatio ? { aspectRatio } : {}),
         idempotencyKey: `regen-${generationId}-${Date.now()}`,
       });
       if ("error" in result) {
@@ -303,7 +342,7 @@ export default function DetailPanel({
     } finally {
       regenBusyRef.current = false;
     }
-  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly]);
+  }, [gen, generationId, targetProjectId, pollJob, reloadFromJob, readOnly, chosenImageAspect]);
 
   const handleAnimate = useCallback(async () => {
     if (readOnly) return;
@@ -314,19 +353,25 @@ export default function DetailPanel({
       const models = await ensureModels();
       const vm = models.video;
       const vd = models.videoDefaults;
-      // Use user's chosen aspect ratio if set; fall back to videoDefaults
-      const effectiveAspect = chosenAspect || vd.aspectRatio;
-      const result = await startGen({
+      // #645 T4：发出去的就是选择器上显示的那一档 —— 规格夹回菜单，夹不住就回默认档
+      // （绝不把一个菜单外的值送进付费请求）。没有选择器时按服务端默认档交付。
+      const spec = clampVideoSpec(models, videoSpec ?? undefined, { hasSourceImage: true });
+      // #645 T4(判官 r1 P0-2)：屏幕上那个价是商家授权的一部分，所以它随请求一起发出去。
+      // 服务端自己算一遍，不符就在扣款前拒绝 —— 与 Canvas / Otto 同一套绑定。
+      const quoted = videoSpecCredits(models, spec);
+      if (quoted == null) { if (!cancelledRef.current) setAnimStatus("failed"); return; }
+      const result = await startAssetGen({
+        expectedCredits: quoted,
         projectId: targetProjectId,
         prompt: gen.prompt,
         count: 1,
         kind: "video",
         model: vm,
         sourceGenerationId: selectedGenId,
-        durationSeconds: vd.seconds,
-        resolution: vd.resolution,
+        durationSeconds: spec.seconds,
+        resolution: spec.resolution,
         audio: vd.audio,
-        ...(effectiveAspect ? { aspectRatio: effectiveAspect } : {}),
+        ...(spec.aspectRatio ? { aspectRatio: spec.aspectRatio } : {}),
         idempotencyKey: `anim-${selectedGenId}-${Date.now()}`,
       });
       if ("error" in result) {
@@ -348,7 +393,7 @@ export default function DetailPanel({
     } finally {
       animBusyRef.current = false;
     }
-  }, [gen, selectedGenId, targetProjectId, pollJob, chosenAspect, reloadFromJob, readOnly]);
+  }, [gen, selectedGenId, targetProjectId, pollJob, videoSpec, reloadFromJob, readOnly]);
 
   const handleCopyLink = useCallback(async () => {
     if (!gen) return;
@@ -431,14 +476,20 @@ export default function DetailPanel({
     editBusyRef.current = true;
     try {
       setEditStatus("running");
-      const { image } = await ensureModels(); // F18: server-resolved model
-      const result = await startGen({
+      const models = await ensureModels(); // F18: server-resolved model
+      // #643 T2：编辑同样交付屏幕上显示的那一格。服务端在没收到形状时会按底图快照继承，
+      // 这里显式带上是为了让「屏幕上写的」与「引擎收到的」永远是同一个值。
+      const aspectRatio = chosenImageAspect || gen.imageAspect || models.imageDefaultAspect;
+      // #645 T4(判官 r1 P0-2)：编辑框也显示价格，所以它同样带绑定。
+      const result = await startAssetGen({
+        expectedCredits: models.imageCredits,
         projectId: targetProjectId,
         prompt: editPrompt.trim(),
         entityIds: editIds,
         count: 1,
         kind: "image",
-        model: image,
+        model: models.image,
+        ...(aspectRatio ? { aspectRatio } : {}),
         // F09: condition the edit on the image the user is actually viewing (the selected
         // variant), so a paid "edit this" result relates to the displayed image instead of
         // being an unconditioned fresh generation. Owned id resolved server-side (D19).
@@ -464,7 +515,7 @@ export default function DetailPanel({
     } finally {
       editBusyRef.current = false;
     }
-  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly]);
+  }, [gen, editPrompt, editIds, editStatus, targetProjectId, pollJob, reloadFromJob, selectedGenId, readOnly, chosenImageAspect]);
 
   const runConfirmedAction = useCallback(() => {
     const action = confirmAction;
@@ -516,8 +567,9 @@ export default function DetailPanel({
   // Compute active URL to display
   const displayUrl = gen ? (gen.urls[selectedIdx] ?? gen.url) : null;
 
-  // Aspect ratios for picker (only show if model has options) — F18: server-resolved model
-  const aspectRatios = activeModels?.videoAspectRatios ?? [];
+  // #645 T4：视频规格菜单（只在模型暴露时渲染）— F18: server-resolved model
+  const videoSpecMenu = activeModels ? videoSpecMenuOf(activeModels) : null;
+  const imageAspectRatios = activeModels?.imageAspectRatios ?? [];
 
   return (
     // Faux-viewport overlay — absolute inside the canvas container, not fixed
@@ -638,26 +690,40 @@ export default function DetailPanel({
               <p style={{ margin: 0, fontSize: 14, color: "var(--muted-foreground)", lineHeight: 1.5 }}>{gen.prompt}</p>
             )}
 
-            {/* Aspect picker (17): for image-to-video Animate when model has aspect ratios */}
-            {gen.kind === "image" && aspectRatios.length > 0 && (
+            {/* #643 T2 — Image shape: what Regenerate and the edit composer below will deliver.
+                Seeded from the shape this image was made in, so neither one silently reshapes it.
+                Same cost in every shape. */}
+            {gen.kind === "image" && imageAspectRatios.length > 0 && chosenImageAspect && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Aspect</span>
-                <div className="al-seg" role="tablist" aria-label="Aspect ratio">
-                  {aspectRatios.map((ar) => (
-                    <button
-                      key={ar}
-                      role="tab"
-                      type="button"
-                      aria-selected={chosenAspect === ar}
-                      className={`al-seg-item${chosenAspect === ar ? " al-seg-item-active" : ""}`}
-                      disabled={readOnly}
-                      title={readOnlyReason}
-                      onClick={() => setChosenAspect(ar)}
-                    >
-                      {ar}
-                    </button>
-                  ))}
-                </div>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Image shape</span>
+                <ImageShapePicker
+                  compact
+                  label="Image shape"
+                  value={chosenImageAspect}
+                  options={imageAspectRatios}
+                  onChange={setChosenImageAspect}
+                  disabled={readOnly}
+                  title="The shape a new image made here will have — same cost in every shape"
+                />
+              </div>
+            )}
+
+            {/* Video spec (#645 T4): length, quality and shape of the clip Animate will make.
+                Labelled apart from the image shape above so the two shape controls on one panel
+                cannot be confused for each other (#643 T2). The shape defaults to Adaptive —
+                Animate always starts from this image, so the engine follows it rather than
+                being told a ratio. The price below follows the chosen spec. */}
+            {gen.kind === "image" && videoSpec && videoSpecMenu && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted-foreground)", flexShrink: 0 }}>Video spec</span>
+                <VideoSpecPicker
+                  compact
+                  value={videoSpec}
+                  menu={videoSpecMenu}
+                  onChange={setVideoSpec}
+                  disabled={readOnly}
+                  hasSourceImage
+                />
               </div>
             )}
 
@@ -681,7 +747,7 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcRetry size={14} />}
                   onClick={() => requestSpendConfirm("regen")}
-                  disabled={readOnly || regenStatus === "running" || regenStatus === "timeout"}
+                  disabled={assetSpendControlDisabled(regenStatus, readOnly)}
                   title={readOnlyReason}
                 >
                   {regenStatus === "running"
@@ -690,6 +756,8 @@ export default function DetailPanel({
                     ? "New version ready"
                     : regenStatus === "timeout"
                     ? "Still processing — check the library"
+                    : regenStatus === "cancelled"
+                    ? "Cancelled"
                     : regenStatus === "failed"
                     ? "Failed — retry?"
                     : "Regenerate"}
@@ -703,7 +771,7 @@ export default function DetailPanel({
                   size="sm"
                   icon={<IcPlay size={14} />}
                   onClick={() => requestSpendConfirm("animate")}
-                  disabled={readOnly || animStatus === "running" || animStatus === "timeout"}
+                  disabled={assetSpendControlDisabled(animStatus, readOnly)}
                   title={readOnlyReason}
                 >
                   {animStatus === "running"
@@ -712,6 +780,8 @@ export default function DetailPanel({
                     ? "Video ready"
                     : animStatus === "timeout"
                     ? "Still processing — check the library"
+                    : animStatus === "cancelled"
+                    ? "Cancelled"
                     : animStatus === "failed"
                     ? "Failed — retry?"
                     : "Animate"}
@@ -775,7 +845,7 @@ export default function DetailPanel({
                     variant="primary"
                     size="sm"
                     onClick={requestEditSubmit}
-                    disabled={readOnly || editStatus === "running" || editStatus === "timeout" || !editPrompt.trim()}
+                    disabled={assetSpendControlDisabled(editStatus, readOnly) || !editPrompt.trim()}
                     title={readOnlyReason}
                   >
                     {editStatus === "running"
@@ -784,6 +854,8 @@ export default function DetailPanel({
                       ? "Edit ready!"
                       : editStatus === "timeout"
                       ? "Still processing — check the library"
+                      : editStatus === "cancelled"
+                      ? "Cancelled"
                       : editStatus === "failed"
                       ? "Failed"
                       : "Send"}

@@ -11,12 +11,12 @@ import {
   REFGEN_MODELS,
   ROLES,
   SECTION_MATRIX,
+  familyModes,
   modelFamily,
   type Role,
   type Section,
 } from "@fikirtive/core";
 // Founder-only platform admin read model; every query below is bounded and metadata-first.
-// eslint-disable-next-line no-restricted-imports
 import { prisma } from "@fikirtive/db";
 import { listDirectives } from "@/lib/cowork-knowledge";
 import { listConversations } from "@/lib/conversation-admin";
@@ -251,6 +251,40 @@ function tenantRisk(status: string, balance: number, lastActiveAt: string | null
 
 function formatDateForSort(date: Date | null | undefined) {
   return (date ?? new Date(0)).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// 知识格的真值集合 —— #647 T6 修复轮 P1-2
+// ---------------------------------------------------------------------------
+//
+// 后台那块「Directive cells N/M」的表,分子分母必须出自**同一个**集合。分母早已是
+// `familyModes()` 派生的五个真格;分子以前数的是库里全部历史行,于是 T6 之前的 13 条种子
+// 还在时会显示 13/5 —— 一个越界的分数,而且界面上没有那 8 个格子可点,Founder 连改都改不了。
+//
+// 纯函数、单独导出,是为了让这条口径**可测**:测试可以直接喂一批「真格 + 下架家族旧行 +
+// 跨 kind 旧行」进来,断言计数只数真格。旧行本身不动 —— 无视一条永远读不到的旧行,
+// 和删掉数据,是两回事。
+
+/** 后台真会渲染、读路真会取值的那几格,键为 `family:mode`。 */
+export function realDirectiveCellKeys(): Set<string> {
+  return new Set(MODEL_FAMILIES.flatMap((family) => familyModes(family).map((mode) => `${family}:${mode}`)));
+}
+
+/** 一行算不算「已填」——口径与 T6 之前逐字一致:启用 + 文本非空;**外加**必须落在真格上。 */
+function isFilledRealCell(row: { family: string; mode: string; directive: string; enabled: boolean }, real: Set<string>): boolean {
+  return real.has(`${row.family}:${row.mode}`) && row.enabled && row.directive.trim().length > 0;
+}
+
+/** 已填的真格数。分母是 `realDirectiveCellKeys().size`,所以这个数永远 ≤ 分母。 */
+export function countFilledRealCells(rows: readonly { family: string; mode: string; directive: string; enabled: boolean }[]): number {
+  const real = realDirectiveCellKeys();
+  return rows.filter((row) => isFilledRealCell(row, real)).length;
+}
+
+/** 至少有一个已填真格的家族 —— 家族覆盖率用它,口径与上面同一条(旧行刷不上去)。 */
+export function seededRealFamilies(rows: readonly { family: string; mode: string; directive: string; enabled: boolean }[]): Set<string> {
+  const real = realDirectiveCellKeys();
+  return new Set(rows.filter((row) => isFilledRealCell(row, real)).map((row) => row.family));
 }
 
 export async function getAdminV2Data(): Promise<AdminV2Data> {
@@ -705,8 +739,12 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
   ];
   const directives = await listDirectives();
   const directivesByKey = new Map(directives.map((row) => [`${row.family}:${row.mode}`, row]));
+  // #647 T6:知识格从 9 家族 × 5 模式 = 45 格,收缩成**真会被读到的那几格**。
+  // 家族随假引擎下架从 9 掉到 2;跨 kind 的组合(图像家族 × t2v 之类)本来就永远取不到
+  // 值 —— 后台可以把它填满,引擎一辈子看不见。`familyModes` 按在册模型现算,所以上架/
+  // 下架一台引擎,这张网格当场跟着变,不需要有人记得回来改一个数。
   const directiveCells = MODEL_FAMILIES.flatMap((family) =>
-    GEN_MODES.map((mode) => {
+    familyModes(family).map((mode) => {
       const row = directivesByKey.get(`${family}:${mode}`);
       return {
         family,
@@ -720,10 +758,14 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       };
     }),
   );
-  const filledDirectives = directives.filter((row) => row.enabled && row.directive.trim()).length;
-  const seededFamilies = new Set(
-    directives.filter((row) => row.enabled && row.directive.trim()).map((row) => row.family),
-  );
+  // #647 T6 修复轮 P1-2:已填计数与总数必须**同源**。
+  // 旧写法数的是库里的全部历史行,而总数早已收成五个真格 —— 于是一个完全合法的历史状态
+  // (T6 之前的 13 条种子还躺在库里)会在后台显示 13/5,而那 8 条在界面上连格子都没有,
+  // 想改都改不了。后台正是 Founder 用来判断「知识库调好了没有」的那块表,表上出现一个
+  // 越界的分数,就是这块表在骗人。旧行留在库里被无视即可 —— 无视一条读不到的旧行,
+  // 和删掉数据,是两回事。
+  const filledDirectives = countFilledRealCells(directives);
+  const seededFamilies = seededRealFamilies(directives);
   const routedFamilies = Array.from(
     new Set((GEN_VIDEO_MODELS as readonly string[]).map((id) => modelFamily(id)).filter(Boolean)),
   ) as string[];
@@ -819,7 +861,9 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
       provider,
       modelCount: modelIds.length,
       enabledModelCount: modelIds.filter((id) => !disabledModels.has(id)).length,
-      directiveCells: MODEL_FAMILIES.length * GEN_MODES.length,
+      // 计数就是那张网格本身的长度 —— 不再是「家族数 × 模式数」这个第二份推导
+      // (两份推导正是「说的」与「做的」失同步的老来源)。
+      directiveCells: directiveCells.length,
       filledDirectiveCells: filledDirectives,
       coveredFamilies: routedFamilies.filter((family) => seededFamilies.has(family)).length,
       routedFamilies: routedFamilies.length,

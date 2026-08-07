@@ -10,6 +10,7 @@
  */
 import { deflateSync, crc32 } from "node:zlib";
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo, GenVideoModel } from "@fikirtive/core";
+import { imageOutputSize } from "@fikirtive/core";
 import { BytePlusProvider } from "./byteplus.js";
 
 /** A tiny valid 1s mp4 (256×160 solid) the mock returns for i2v — real enough
@@ -19,12 +20,10 @@ const MOCK_MP4_B64 =
 
 /* ---------------- mock (deterministic, offline) ---------------- */
 
-/** Encode an 8×8 solid-colour RGB PNG — a real, decodable image with no deps
- *  beyond node:zlib. Colour derives from the seed so mock outputs are
+/** Encode a solid-colour RGB PNG at the given size — a real, decodable image with no
+ *  deps beyond node:zlib. Colour derives from the seed so mock outputs are
  *  visually distinct and their hashes differ (distinct content keys). */
-function solidPng(seed: number): Uint8Array {
-  const w = 8;
-  const h = 8;
+function solidPng(seed: number, w: number, h: number): Uint8Array {
   const r = (seed * 73) % 256;
   const g = (seed * 151) % 256;
   const b = (seed * 211) % 256;
@@ -61,14 +60,32 @@ function solidPng(seed: number): Uint8Array {
   );
 }
 
+/** #642: the mock renders the real GEN_IMAGE_SIZES entry reduced to its lowest integer terms
+ *  and scaled by this factor — so the offline shape is EXACT by construction (not "close"),
+ *  and stays a few dozen pixels. The default square lands back on 8×8, byte-identical to the
+ *  pre-#642 mock. Without a shaped mock, the fixed 8×8 square hid every shape defect from the
+ *  worker/web tests, which all run on this provider. */
+const MOCK_RATIO_SCALE = 8;
+
+/** Reduce a real output size to its lowest integer terms (2880×1620 → 16×9). */
+function reducedRatio(width: number, height: number): { width: number; height: number } {
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const g = gcd(width, height) || 1;
+  return { width: width / g, height: height / g };
+}
+
 export class MockProvider implements GenerationProvider {
   readonly name = "mock";
   async generate(req: GenerationRequest): Promise<GeneratedImage[]> {
     // deterministic per (prompt, conditioning, index) so a re-run is stable;
     // distinct seeds → distinct bytes → distinct content hashes
     const base = hashSeed(req.prompt + "|" + req.inputImageUrls.join(","));
+    const real = imageOutputSize(req.aspectRatio);
+    const ratio = reducedRatio(real.width, real.height);
+    const w = ratio.width * MOCK_RATIO_SCALE;
+    const h = ratio.height * MOCK_RATIO_SCALE;
     return Array.from({ length: req.count }, (_, i) => ({
-      bytes: solidPng(base + i + 1),
+      bytes: solidPng(base + i + 1, w, h),
       ext: "png",
     }));
   }
@@ -90,12 +107,54 @@ function hashSeed(s: string): number {
 
 /* ---------------- fal (prod, real money) ---------------- */
 
-/** Mark an error raised AFTER the provider has already been billed (the fal
- *  sync POST returned ok, then parsing/downloading the result failed). The
- *  worker must terminal-fail on these — a retry would POST again and double-
- *  charge. Pre-charge failures (POST !ok, network) stay unmarked and retry. */
+/** Mark an error the merchant's engine spend must be assumed to cover. The house
+ *  rule (settled across the #664/#665 judge chain): a failure may stay PLAIN
+ *  (retryable) ONLY where it is provable the engine never ran; anything already
+ *  billed — or whose outcome is unknown — is a chargedError the worker must
+ *  terminal-fail, because a retry re-POSTs and double-charges.
+ *
+ *  fal.run is a SYNC endpoint: the POST itself is the billing event (its response
+ *  carries the finished asset). So on this provider only a 4xx is provably free
+ *  (rate limit / validation / auth rejected the request before the model ran).
+ *  A network throw on the POST is NOT free — the request may have reached the
+ *  engine and run, with only the response lost — and neither is a 5xx. */
 export function chargedError(message: string): Error {
   return Object.assign(new Error(message), { charged: true as const });
+}
+
+/** The one paid POST both fal paths make, with the charge boundary applied to
+ *  EVERY way it can die — image and video are the same sync endpoint shape, so
+ *  they get the same yardstick from one place. Returns the ok response; the
+ *  caller owns everything past it (all of which is already post-charge).
+ *
+ *  PLAIN (retryable) is reachable only via 4xx. Callers must not re-inspect the
+ *  status: the classification lives here. */
+async function falPaidPost(kind: "image" | "video", modelId: string, apiKey: string, body: unknown): Promise<Response> {
+  const res = await fetch(`https://fal.run/${modelId}`, {
+    method: "POST",
+    headers: { Authorization: `Key ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch((e: unknown) => {
+    // No response at all (connection reset, DNS, socket closed mid-flight). On a
+    // SYNC endpoint the request may already have reached the engine and run — we
+    // simply lost the reply. Outcome unknown ⇒ billed. Same yardstick as byteplus's
+    // "submit returned 2xx but the receipt was unreadable" (#664): what we cannot
+    // prove didn't spend, we treat as spent, because a retry POSTs a second time.
+    const detail = e instanceof Error ? e.message : String(e);
+    console.error(`generation provider ${kind} request got no response:`, { modelId, error: detail });
+    throw chargedError(`generation provider ${kind} request got no response (${detail}); outcome unknown, treated as billed`);
+  });
+  if (res.ok) return res;
+  const detail = await res.text().catch(() => "");
+  console.error(`generation provider ${kind} request failed:`, { modelId, status: res.status, detail: detail.slice(0, 300) });
+  // 4xx — the endpoint rejected the request BEFORE running the model (rate limit,
+  // validation, auth). This is the only provably-free failure on a sync endpoint,
+  // so it is the only one that stays PLAIN and lets the worker retry.
+  if (res.status >= 400 && res.status < 500) throw new Error(`generation provider ${kind} request failed (${res.status})`);
+  // 5xx (and any other non-2xx) — a server-side error cannot prove the model didn't
+  // run: a gateway timeout or upstream 500 can land AFTER execution. Outcome unknown
+  // ⇒ terminal and charged, never a retry that risks a second charge.
+  throw chargedError(`generation provider ${kind} request failed (${res.status}); outcome unknown, treated as billed`);
 }
 
 /** fal model ids — text-to-image vs image-conditioned edit. v1: Seedream,
@@ -113,105 +172,40 @@ const EXT_BY_CONTENT_TYPE: Record<string, string> = {
   "image/webp": "webp",
 };
 
-/** Per-model fal video wiring (the model-neutral table — mirrors LTX Studio's
- *  lineup). Endpoints + the param NAMES each model uses (verified against each
- *  model's fal API page). `imageParam` = i2v source frame. End frame (tail):
- *  Kling/Seedance take it on the i2v endpoint via `tailParam`; Veo uses a separate
- *  first→last endpoint (first_frame_url/last_frame_url); a model with neither has
- *  none. Optional controls (`audioParam`/`resolutionParam`/`aspectParam`/`fpsParam`)
- *  are sent only when the model has the param AND the request provides a value —
- *  so each model carries exactly its real settings. `durationUnit` = how the chosen
- *  seconds are encoded: "str"=Kling "5", "s"=Veo "6s", "num"=Seedance/LTX 6. All
- *  return { video: { url } }. Allowed values per control live in @fikirtive/core's
- *  GEN_VIDEO_MODEL_OPTIONS. `durationUnit "none"` = a fixed-length endpoint with NO
- *  duration param (Hailuo 02 Pro is 6s-only) — the worker omits duration entirely. */
+/** Per-model fal video wiring — endpoints + the param NAMES the model uses (verified
+ *  against its fal API page). `imageParam` = i2v source frame; `tailParam` = end frame on
+ *  the same i2v endpoint. Optional controls (`audioParam`/`resolutionParam`/`aspectParam`)
+ *  are sent only when the model has the param AND the request provides a value — so each
+ *  model carries exactly its real settings. All return { video: { url } }. Allowed values
+ *  per control live in @fikirtive/core's GEN_VIDEO_MODEL_OPTIONS.
+ *
+ *  #647 T6:这张表原本有 13 行,其中 12 行(Kling / Veo / LTX / PixVerse / Grok / Wan /
+ *  Hailuo / Seedance 2.0 全档)对应的模型从来没有在生产出过一条片。菜单删了而这里不删,
+ *  就等于给菜单外的 id 留着一条能真的把钱花出去的路 —— 所以两边一起删(gen.ts 的
+ *  GEN_VIDEO_MODELS 有同一条纪律)。随之退场的还有三样只为那 12 台存在的东西:
+ *  Veo 专用的 first→last 独立端点、LTX 专用的 fps 参数、以及 duration 的四种编码方式
+ *  (Kling 的字符串 "5"、Veo 的 "6s"、Hailuo 的「没有 duration 参数」)。 */
 type VideoCfg = {
   t2v: string;
   i2v: string;
-  firstLast?: string;
   imageParam: string;
   tailParam?: string;
-  audioParam?: string;       // omit = always silent (Kling 2.5) OR audio not toggleable (Wan)
+  audioParam?: string;
   resolutionParam?: string;
   aspectParam?: string;
-  fpsParam?: string;
-  durationUnit: "str" | "s" | "num" | "none";
 };
 
 const GA = "generate_audio", RES = "resolution", ASP = "aspect_ratio";
 
 const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
-  "kling": {
-    t2v: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video",
-    i2v: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
-    imageParam: "image_url", tailParam: "tail_image_url", durationUnit: "str", // silent
-  },
-  "veo3.1-lite": {
-    t2v: "fal-ai/veo3.1/lite", i2v: "fal-ai/veo3.1/lite/image-to-video",
-    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
-  },
-  "ltx-2": {
-    t2v: "fal-ai/ltx-2/text-to-video", i2v: "fal-ai/ltx-2/image-to-video",
-    imageParam: "image_url", audioParam: GA, resolutionParam: RES, fpsParam: "fps", durationUnit: "num",
-  },
-  "kling-2.6": {
-    t2v: "fal-ai/kling-video/v2.6/pro/text-to-video",
-    i2v: "fal-ai/kling-video/v2.6/pro/image-to-video",
-    imageParam: "start_image_url", tailParam: "end_image_url", audioParam: GA, durationUnit: "str",
-  },
-  "kling-3": {
-    t2v: "fal-ai/kling-video/v3/pro/text-to-video",
-    i2v: "fal-ai/kling-video/v3/pro/image-to-video",
-    imageParam: "start_image_url", tailParam: "end_image_url", audioParam: GA, durationUnit: "str",
-  },
-  "veo3.1-fast": {
-    t2v: "fal-ai/veo3.1/fast", i2v: "fal-ai/veo3.1/fast/image-to-video",
-    firstLast: "fal-ai/veo3.1/fast/first-last-frame-to-video",
-    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
-  },
   "seedance-2-fast": {
     // ByteDance's own fal namespace (no fal-ai/ prefix — unlike Seedream).
-    // durationUnit "num" (integer) is verified by a real spend test — fal accepts
-    // the int despite the schema page rendering the enum as strings. Don't "fix"
-    // it to "str" without re-testing.
+    // duration is sent as an INTEGER — verified by a real spend test; fal accepts the int
+    // despite the schema page rendering the enum as strings. Don't "fix" it to a string
+    // without re-testing.
     t2v: "bytedance/seedance-2.0/fast/text-to-video",
     i2v: "bytedance/seedance-2.0/fast/image-to-video",
-    imageParam: "image_url", tailParam: "end_image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "num",
-  },
-  "veo3.1": {
-    t2v: "fal-ai/veo3.1", i2v: "fal-ai/veo3.1/image-to-video",
-    firstLast: "fal-ai/veo3.1/first-last-frame-to-video",
-    imageParam: "image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "s",
-  },
-  "wan-2.5": {
-    // native audio is always on (not a boolean toggle — the fal audio_url param is for
-    // supplying a custom track, so we don't wire audioParam). 480p/720p/1080p tiers.
-    t2v: "fal-ai/wan-25-preview/text-to-video", i2v: "fal-ai/wan-25-preview/image-to-video",
-    imageParam: "image_url", resolutionParam: RES, durationUnit: "str", // schema: duration is a string enum "5"/"10"
-  },
-  "pixverse-v6": {
-    // i2v schema (fal OpenAPI): duration=integer, audio toggle="generate_audio_switch",
-    // NO aspect_ratio, NO end_image_url. End-frame is a separate /transition endpoint
-    // (params unverified) so tail is off (GEN_VIDEO_MODEL_INFO tail:false).
-    t2v: "fal-ai/pixverse/v6/text-to-video", i2v: "fal-ai/pixverse/v6/image-to-video",
-    imageParam: "image_url", audioParam: "generate_audio_switch", resolutionParam: RES, durationUnit: "num",
-  },
-  "grok-imagine": {
-    // xAI's own fal namespace (no fal-ai/ prefix — the fal-ai/ id 404s). duration=integer.
-    t2v: "xai/grok-imagine-video/text-to-video", i2v: "xai/grok-imagine-video/image-to-video",
-    imageParam: "image_url", resolutionParam: RES, durationUnit: "num", // 480p/720p, no audio/tail
-  },
-  "hailuo-02": {
-    // Pro endpoint: fixed 6s @ 1080p — schema has NO duration/resolution params, only
-    // prompt/image_url/end_image_url. End frame via tailParam on the same i2v endpoint.
-    t2v: "fal-ai/minimax/hailuo-02/pro/text-to-video", i2v: "fal-ai/minimax/hailuo-02/pro/image-to-video",
-    imageParam: "image_url", tailParam: "end_image_url", durationUnit: "none",
-  },
-  "seedance-2": {
-    // full tier of seedance-2-fast — ByteDance's own fal namespace (no fal-ai/ prefix).
-    // durationUnit "num" matches the fast variant (verified there by a real spend test).
-    t2v: "bytedance/seedance-2.0/text-to-video", i2v: "bytedance/seedance-2.0/image-to-video",
-    imageParam: "image_url", tailParam: "end_image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP, durationUnit: "num",
+    imageParam: "image_url", tailParam: "end_image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP,
   },
 };
 
@@ -226,22 +220,20 @@ export class FalProvider implements GenerationProvider {
     const modelId = conditioned ? ids.edit : ids.t2i;
 
     // fal sync endpoint blocks until the images are ready — the worker job is
-    // already the async boundary, so no nested queue poll needed
-    const res = await fetch(`https://fal.run/${modelId}`, {
-      method: "POST",
-      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: req.prompt,
-        num_images: req.count,
-        ...(conditioned ? { image_urls: req.inputImageUrls } : {}),
-      }),
+    // already the async boundary, so no nested queue poll needed.
+    //
+    // #642 shape: req.aspectRatio is deliberately NOT sent here. This legacy fallback's
+    // size parameter is not confirmed against the provider's own schema, and this file's
+    // standing rule is: do NOT invent a param until it's confirmed in the provider docs
+    // (same treatment as the video audio flag). Declared honestly rather than pretended —
+    // EXECUTED_SPEC.image.fallbackAdapterAspectHonoured is false, and index.test.ts asserts
+    // both the declaration and this request body agree. The PROD path is the active
+    // adapter (byteplus), which does carry the exact WxH.
+    const res = await falPaidPost("image", modelId, this.apiKey, {
+      prompt: req.prompt,
+      num_images: req.count,
+      ...(conditioned ? { image_urls: req.inputImageUrls } : {}),
     });
-    if (!res.ok) {
-      // pre-charge failure (the model never ran) — safe for the worker to retry
-      const detail = await res.text().catch(() => "");
-      console.error("generation provider image request failed:", { modelId, status: res.status, detail: detail.slice(0, 300) });
-      throw new Error(`generation provider image request failed (${res.status})`);
-    }
     // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
     // past here must terminal-fail (chargedError), never retry-and-re-charge.
     try {
@@ -285,29 +277,16 @@ export class FalProvider implements GenerationProvider {
     if (req.tailImageUrl && !i2v) throw new Error("generation provider needs a start image for an end frame"); // pre-POST, no spend
 
     let modelId: string;
-    const body: Record<string, unknown> = { prompt: req.prompt };
-    // a fixed-length endpoint (durationUnit "none", e.g. Hailuo 02 Pro) takes NO duration
-    // param — sending one can 422. Everyone else encodes the chosen seconds their way.
-    if (cfg.durationUnit !== "none") {
-      body.duration = cfg.durationUnit === "str" ? String(req.durationSeconds)
-        : cfg.durationUnit === "s" ? `${req.durationSeconds}s`
-        : req.durationSeconds;
-    }
+    const body: Record<string, unknown> = { prompt: req.prompt, duration: req.durationSeconds };
     // optional controls — sent only when the model has the param and the request
     // provides a value (so each model carries exactly its real settings)
     if (cfg.audioParam && req.audio != null) body[cfg.audioParam] = req.audio;
     if (cfg.resolutionParam && req.resolution) body[cfg.resolutionParam] = req.resolution;
     if (cfg.aspectParam && req.aspectRatio) body[cfg.aspectParam] = req.aspectRatio;
-    if (cfg.fpsParam && req.fps) body[cfg.fpsParam] = req.fps;
     if (req.tailImageUrl) {
       // an end frame was requested — route to the model's tail mechanism
-      if (cfg.firstLast) {
-        // Veo: a dedicated first→last endpoint with its own param names
-        modelId = cfg.firstLast;
-        body.first_frame_url = req.imageUrl;
-        body.last_frame_url = req.tailImageUrl;
-      } else if (cfg.tailParam) {
-        // Kling/Seedance: same i2v endpoint, end frame alongside the start
+      if (cfg.tailParam) {
+        // same i2v endpoint, end frame alongside the start
         modelId = cfg.i2v;
         body[cfg.imageParam] = req.imageUrl;
         body[cfg.tailParam] = req.tailImageUrl;
@@ -322,17 +301,7 @@ export class FalProvider implements GenerationProvider {
     } else {
       modelId = cfg.t2v;
     }
-    const res = await fetch(`https://fal.run/${modelId}`, {
-      method: "POST",
-      headers: { Authorization: `Key ${this.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      // pre-charge failure (the model never ran) — safe for the worker to retry
-      const detail = await res.text().catch(() => "");
-      console.error("generation provider video request failed:", { modelId, status: res.status, detail: detail.slice(0, 300) });
-      throw new Error(`generation provider video request failed (${res.status})`);
-    }
+    const res = await falPaidPost("video", modelId, this.apiKey, body);
     // res.ok ⇒ the sync endpoint ran the model: we've been billed. A failure
     // past here must terminal-fail (chargedError), never retry-and-re-charge.
     try {

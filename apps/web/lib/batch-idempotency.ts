@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { videoDefaults, type GenVideoModel } from "@fikirtive/core";
+import {
+  canvasMaterialWithoutRepair,
+  imageDefaults,
+  videoDefaults,
+  type GenModel,
+  type GenVideoModel,
+} from "@fikirtive/core";
 
 const HASH_HEX_LENGTH = 32;
 const FACTORY_KEY_RE = /^batch:([0-9a-f]{32}):attempt:([0-9a-f]{32})$/;
@@ -22,6 +28,11 @@ export interface FactoryVideoOptions extends Record<string, string | number | bo
   audio: boolean;
 }
 
+/** #642: the image shape frozen at enqueue — mirrors FactoryVideoOptions. */
+export interface FactoryImageOptions extends Record<string, string> {
+  aspectRatio: string;
+}
+
 export interface FactoryMaterial {
   prompt: string;
   model: string;
@@ -35,6 +46,7 @@ export interface FactoryMaterial {
   shotId: string | null;
   threadId: string | null;
   videoOptions: FactoryVideoOptions | null;
+  imageOptions: FactoryImageOptions | null;
 }
 
 export interface FactoryMaterialInput {
@@ -56,11 +68,16 @@ export interface FactoryMaterialInput {
   audio?: boolean | null;
 }
 
-export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "variantSel" | "threadId"> & {
+export type StoredFactoryMaterial = Omit<FactoryMaterial, "videoOptions" | "imageOptions" | "variantSel" | "threadId"> & {
+  /** The database row whose repair record is allowed to describe this material. */
+  id: string;
   variantSel: unknown;
   videoOptions: unknown;
   /** Legacy/non-Canvas readers may omit the column; absence is the same as null. */
   threadId?: string | null;
+  /** #642: rows enqueued before the column existed have no value; absence is the same as
+   *  null, which canonicalizes to the default (square) shape those rows really produced. */
+  imageOptions?: unknown;
 };
 
 function shortHash(scope: string, value: string): string {
@@ -122,7 +139,12 @@ function canonicalVariantSel(value: unknown): unknown {
 export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMaterial {
   const videoOptions: FactoryVideoOptions | null = (() => {
     if (input.kind !== "video") return null;
-    const defaults = videoDefaults(input.model as GenVideoModel);
+    // #645 T4(判官 r1 P1-1):**有首帧的片子形状缺省 adaptive** —— 引擎跟着首帧走,
+    // 而不是被一个 t2v 默认值(16:9)悄悄改成别的画幅,把商家的竖版首帧裁成横版。
+    // 「有首帧」的口径与 core 的契约闸一致(gen.ts 的 tail 校验):worker 解析起始帧
+    // 只认这两处 —— 显式的 sourceGenerationId,或能拿到该镜头最新静帧的 shotId。
+    const hasSourceImage = !!input.sourceGenerationId || !!input.shotId;
+    const defaults = videoDefaults(input.model as GenVideoModel, { hasSourceImage });
     return {
       seconds: input.durationSeconds ?? defaults.seconds,
       resolution: input.resolution ?? defaults.resolution,
@@ -131,6 +153,13 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
       audio: input.audio ?? defaults.audio,
     };
   })();
+
+  // #642: the image shape, resolved once here so the persisted snapshot, the money
+  // material binding, and the worker's provider call all read the same value. Absent →
+  // the model's default (1:1), which is byte-for-byte what image jobs produced before.
+  const imageOptions: FactoryImageOptions | null = input.kind === "image"
+    ? { aspectRatio: input.aspectRatio ?? imageDefaults(input.model as GenModel).aspectRatio }
+    : null;
 
   return {
     prompt: input.prompt,
@@ -145,7 +174,54 @@ export function normalizeFactoryMaterial(input: FactoryMaterialInput): FactoryMa
     shotId: input.shotId ?? null,
     threadId: input.threadId ?? null,
     videoOptions,
+    imageOptions,
   };
+}
+
+/**
+ * The EXACT column set `factoryMaterialMatches` reads, as one Prisma projection.
+ *
+ * 它住在比对器旁边,是因为两者必须同生共死:投影漏掉哪一列,Prisma 结果里那一列就
+ * **根本不存在**,比对器只能按缺省解释它 —— 于是「同一个请求」被判成「不同内容」,
+ * 商家的重试被永久拒绝(方向安全,但功能坏掉)。#642 修复轮 r1 P1 就是这么发生的:
+ * 这份清单当时有两份手抄副本(startGen 一份、工厂批量一份),新增的规格列只补进了一份。
+ *
+ * 一份清单,两个读者。加一列只需要改这里一处。
+ */
+export const FACTORY_HISTORY_SELECT = {
+  id: true,
+  status: true,
+  idempotencyKey: true,
+  prompt: true,
+  model: true,
+  kind: true,
+  count: true,
+  entityIds: true,
+  variantSel: true,
+  sourceGenerationId: true,
+  tailGenerationId: true,
+  referenceVideoGenerationId: true,
+  shotId: true,
+  threadId: true,
+  videoOptions: true,
+  imageOptions: true,
+} as const;
+
+/** A history row read through FACTORY_HISTORY_SELECT. */
+export type FactoryHistoryRow = StoredFactoryMaterial & {
+  id: string;
+  status: string;
+  idempotencyKey: string | null;
+};
+
+/** #642 legacy equivalence. An IMAGE row enqueued before the shape column existed carries
+ *  null — and those runs really did produce the default square, so null and an explicit
+ *  default shape are the SAME material. Without this, every pre-migration attempt replay
+ *  would read as a material conflict (an idempotency regression, not a shape change). */
+function canonicalImageOptions(value: unknown, kind: "IMAGE" | "VIDEO"): unknown {
+  if (kind !== "IMAGE") return null;
+  if (value == null) return { aspectRatio: imageDefaults("seedream").aspectRatio };
+  return value;
 }
 
 function canonicalJson(value: unknown): string {
@@ -161,6 +237,7 @@ function canonicalJson(value: unknown): string {
  *  identity. entityIds are order-sensitive and preserve duplicates because the worker consumes
  *  them in order; JSON object key order is irrelevant. */
 export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: FactoryMaterial): boolean {
+  if (typeof prior.id !== "string" || prior.id.length === 0) return false;
   return (
     prior.prompt === expected.prompt &&
     prior.model === expected.model &&
@@ -173,6 +250,10 @@ export function factoryMaterialMatches(prior: StoredFactoryMaterial, expected: F
     prior.referenceVideoGenerationId === expected.referenceVideoGenerationId &&
     prior.shotId === expected.shotId &&
     (prior.threadId ?? null) === expected.threadId &&
-    canonicalJson(prior.videoOptions ?? null) === canonicalJson(expected.videoOptions)
+    canonicalJson(canvasMaterialWithoutRepair(prior.videoOptions, prior.id)) ===
+      canonicalJson(canvasMaterialWithoutRepair(expected.videoOptions, prior.id)) &&
+    // kind equality is asserted above, so both sides canonicalize under the same kind.
+    canonicalJson(canonicalImageOptions(prior.imageOptions, expected.kind)) ===
+      canonicalJson(canonicalImageOptions(expected.imageOptions, expected.kind))
   );
 }

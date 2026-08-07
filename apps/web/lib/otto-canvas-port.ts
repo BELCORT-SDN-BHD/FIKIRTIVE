@@ -30,7 +30,6 @@ type PlaceInput = {
   text?: string;
   prompt?: string;
   generationId?: string;
-  sourceNodeId?: string;
 };
 
 export function makeOttoCanvasPort(ownerId: string, projectId: string) {
@@ -56,7 +55,7 @@ export function makeOttoCanvasPort(ownerId: string, projectId: string) {
       if (!(await nodeInProject(id))) return { error: "Node not found." };
       return updateTextNode(projectId, id, text);
     },
-    resolve: (id: string, input: { status: "done" | "failed" | "timeout" | "missing"; generationId?: string }) =>
+    resolve: (id: string, input: { status: "done" | "failed" | "cancelled" | "timeout" | "missing"; generationId?: string }) =>
       resolveCanvasNode(projectId, id, input),
     remove: async (id: string) => {
       if (!(await nodeInProject(id))) return { error: "Node not found." };

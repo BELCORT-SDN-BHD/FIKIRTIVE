@@ -14,6 +14,25 @@ import { withTenantGuard } from "./tenant-guard.js";
 
 export * from "../generated/prisma/client.js";
 export { reserveCredits, settleCredits, refundReservation, grantCredits, grantCreditsTx, InsufficientCredits, type CreditGrantSource } from "./credits.js";
+// #601: the server writes a finished job's canvas cards. Not a spend path — see the file header.
+export {
+  settleCanvasCardsForGenJob,
+  findCanvasSettlementBacklog,
+  noteCanvasRepairFailure,
+  clearCanvasRepairRecord,
+  canvasJobPlacementLockKey,
+  canvasRepairLockKey,
+  canvasRepairWaitMs,
+  CANVAS_REPAIR_JSON_KEY,
+  CANVAS_REPAIR_WAIT_BASE_MS,
+  CANVAS_REPAIR_WAIT_MAX_MS,
+  CANVAS_SETTLEMENT_DEFAULT_LOCK_TIMEOUT_MS,
+  CANVAS_SETTLEMENT_DEFAULT_STATEMENT_TIMEOUT_MS,
+  type CanvasSettlementOutcome,
+  type CanvasSettlementTimeoutOptions,
+  type CanvasSettlementBacklogJob,
+  type CanvasRepairRecord,
+} from "./canvas-settlement.js";
 export * from "./consent-fold.js";
 export * from "./consent-runtime.js";
 export * from "./send-eligibility.js";

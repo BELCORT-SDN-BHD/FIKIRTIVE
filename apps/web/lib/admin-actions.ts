@@ -9,7 +9,17 @@
  */
 import { revalidatePath } from "next/cache";
 import { prisma } from "@fikirtive/db";
-import { newId, FOUNDER_OWNER_ID, modelDirectiveInput, DIRECTIVE_SEED, runtimeConfigInput, isKnownModelId, roleSchema } from "@fikirtive/core";
+import {
+  newId,
+  FOUNDER_OWNER_ID,
+  modelDirectiveInput,
+  DIRECTIVE_SEED,
+  runtimeConfigInput,
+  isKnownModelId,
+  roleSchema,
+  primaryPlatformRole,
+  platformRolesAllowCapability,
+} from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
 
 /** Upsert one (family, mode) directive cell + append a revision snapshot (R6) +
@@ -104,8 +114,9 @@ export async function saveRuntimeConfig(raw: unknown): Promise<{ ok: true } | { 
   const { key, value } = parsed.data;
 
   if (key === "cowork_provider" && value.provider === "modal") {
-    // §① provider=modal is super-admin only (uncensored-planner content/ToS surface)
-    if (gate.role !== "super-admin") return { error: "Only a super-admin can switch to the self-hosted (modal) planner." };
+    if (!platformRolesAllowCapability(gate.roles, "model.self_hosted.mutate")) {
+      return { error: "You don't have access to the self-hosted planner." };
+    }
     // write-time credential check: never persist a provider the web env can't build
     if (!process.env.MODAL_LLM_ENDPOINT || !process.env.MODAL_LLM_KEY) {
       return { error: "MODAL_LLM_ENDPOINT / MODAL_LLM_KEY are not set in this environment — can't switch to modal." };
@@ -170,14 +181,28 @@ export async function saveModelEnabled(raw: unknown): Promise<{ ok: true } | { e
 export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("team", "mutate");
   if ("error" in gate) return gate;
-  const v = raw as { userId?: unknown; role?: unknown };
+  const v = raw as { userId?: unknown; role?: unknown; roles?: unknown };
   if (typeof v?.userId !== "string" || !v.userId) return { error: "Missing user." };
-  const parsedRole = roleSchema.safeParse(v.role);
-  if (!parsedRole.success) return { error: "Unknown role." };
-  const role = parsedRole.data;
+  const requested = Array.isArray(v.roles) ? v.roles : [v.role];
+  const parsedRoles = requested.map((role) => roleSchema.safeParse(role));
+  if (
+    parsedRoles.length === 0 ||
+    parsedRoles.some((result) => !result.success)
+  ) {
+    return { error: "Unknown role." };
+  }
+  const roles = [
+    ...new Set(
+      parsedRoles.flatMap((result) => (result.success ? [result.data] : [])),
+    ),
+  ];
+  const role = primaryPlatformRole(roles);
 
   // self-escalation / self-lockout guard: a super-admin cannot change their own role.
-  const target = await prisma.user.findUnique({ where: { id: v.userId }, select: { id: true, email: true, role: true } });
+  const target = await prisma.user.findUnique({
+    where: { id: v.userId },
+    select: { id: true, email: true, role: true, roles: { select: { role: true } } },
+  });
   if (!target) return { error: "User not found." };
   if (target.email && gate.email && target.email.toLowerCase() === gate.email.toLowerCase()) {
     return { error: "You can't change your own role." };
@@ -186,10 +211,25 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
   try {
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: target.id }, data: { role } });
+      await tx.userRole.deleteMany({ where: { userId: target.id } });
+      await tx.userRole.createMany({
+        data: roles.map((assignedRole) => ({ userId: target.id, role: assignedRole })),
+      });
       // mirror onto ba_user.role (the admin plugin's gate reads this column, by email join)
       if (target.email) await tx.betterAuthUser.updateMany({ where: { email: target.email.toLowerCase() }, data: { role } });
       await tx.actionEvent.create({
-        data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "rbac.role.set", payload: { targetUserId: target.id, targetEmail: target.email, from: target.role, to: role, via: gate.email } },
+        data: {
+          id: newId(),
+          ownerId: FOUNDER_OWNER_ID,
+          type: "rbac.role.set",
+          payload: {
+            targetUserId: target.id,
+            targetEmail: target.email,
+            from: target.roles.map((assignment) => assignment.role),
+            to: roles,
+            via: gate.email,
+          },
+        },
       });
     });
   } catch {
