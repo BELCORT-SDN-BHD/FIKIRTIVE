@@ -1,13 +1,28 @@
-import { RANGES } from "./analytics-view";
+import { RANGES, currencyCode } from "./analytics-view";
 import type { OwnerAdPerformance } from "./meta-performance";
+
+/** Heading for the run of ads whose currency Meta never reported. */
+const UNKNOWN_CURRENCY_LABEL = "Currency not reported";
 
 export type PerAdMetric = { label: string; value: string };
 export type PerAdDisplayRow = {
   adId: string; name: string;
+  /** ISO code this row's money is in, or null when Meta reported none. */
+  currency: string | null;
+  /** Set on the FIRST row of each currency run, so the list reads as separate runs rather than
+   *  one ranking (#692). null on the rest, and on every row when there is a single known
+   *  currency — one currency needs no heading, but an unknown run always gets named. */
+  groupLabel: string | null;
   creative: { imageUrl: string | null; isVideo: boolean };
   metrics: PerAdMetric[];
 };
-export type PerAdView = { rows: PerAdDisplayRow[]; stamp: string; truncatedNote: string | null };
+export type PerAdView = {
+  rows: PerAdDisplayRow[];
+  stamp: string;
+  truncatedNote: string | null;
+  /** Says out loud that the runs are not one ranking, when more than one currency is present. */
+  currencyNote: string | null;
+};
 
 // Parses a Meta numeric string; null for null/""/non-numeric — never a stray "NaN" on screen
 // (a garbage string must render "—", not "NaN"/"NaN×"/"NaN%": anti-fabrication rule).
@@ -18,9 +33,16 @@ function parse(s: string | null): number | null {
 }
 
 const num = (s: string | null): string => { const n = parse(s); return n == null ? "—" : n.toLocaleString("en-US"); };
-const dec = (s: string | null): string => { const n = parse(s); return n == null ? "—" : String(n); }; // trims trailing zeros, no currency symbol
+const dec = (s: string | null): string => { const n = parse(s); return n == null ? "—" : String(n); }; // trims trailing zeros
 const pct = (s: string | null): string => { const n = parse(s); return n == null ? "—" : `${n}%`; };
 const roas = (s: string | null): string => { const n = parse(s); return n == null ? "—" : `${n}×`; };
+// Money carries the ad account's currency code (#692). A missing value stays "—" — a lone
+// currency code with no figure behind it would be worse than saying nothing.
+const money = (s: string | null, currency: string | null): string => {
+  const text = dec(s);
+  const code = currencyCode(currency);
+  return text === "—" || !code ? text : `${code} ${text}`;
+};
 
 function rangeLabel(preset: string): string {
   // getAdPerformance's datePreset is the Meta preset form ("last_30d"); RANGES.preset matches it
@@ -37,21 +59,43 @@ function fmtDate(iso: string): string {
 /** Shape the owner's per-ad performance into a display model. Pure — no fetch, no I/O.
  *  Every number stays as Meta returned it (no invented values); null → "—". */
 export function buildPerAdView(perf: OwnerAdPerformance): PerAdView {
-  const rows: PerAdDisplayRow[] = perf.ads.map((a) => ({
-    adId: a.adId,
-    name: a.creative?.title || a.adName || "Untitled ad",
-    creative: { imageUrl: a.creative?.imageUrl ?? null, isVideo: !!a.creative?.videoId },
-    metrics: [
-      { label: "Spend", value: dec(a.metrics.spend ?? null) },
-      { label: "Reach", value: num(a.metrics.reach ?? null) },
-      { label: "CTR", value: pct(a.metrics.ctr ?? null) },
-      { label: "CPC", value: dec(a.metrics.cpc ?? null) },
-      { label: "ROAS", value: roas(a.metrics.purchaseRoas ?? null) },
-    ],
-  }));
+  // fetchOwnerAdPerformance already emits the ads grouped into per-currency runs; here we only
+  // mark where each run starts. Known currencies get a heading once there is more than one run;
+  // an unknown run is headed even when it is the only one, so a bare figure is never unexplained.
+  const runKeys = perf.ads.map((a) => currencyCode(a.currency ?? null));
+  const runCount = new Set(runKeys).size;
+
+  const rows: PerAdDisplayRow[] = perf.ads.map((a, i) => {
+    const key = runKeys[i]!;
+    const startsRun = i === 0 || runKeys[i - 1] !== key;
+    const named = runCount > 1 || key === "";
+    return {
+      adId: a.adId,
+      name: a.creative?.title || a.adName || "Untitled ad",
+      currency: a.currency ?? null,
+      groupLabel: startsRun && named ? (key === "" ? UNKNOWN_CURRENCY_LABEL : key) : null,
+      creative: { imageUrl: a.creative?.imageUrl ?? null, isVideo: !!a.creative?.videoId },
+      metrics: [
+        { label: "Spend", value: money(a.metrics.spend ?? null, a.currency ?? null) },
+        { label: "Reach", value: num(a.metrics.reach ?? null) },
+        { label: "CTR", value: pct(a.metrics.ctr ?? null) },
+        { label: "CPC", value: money(a.metrics.cpc ?? null, a.currency ?? null) },
+        { label: "ROAS", value: roas(a.metrics.purchaseRoas ?? null) },
+      ],
+    };
+  });
+
   return {
     rows,
     stamp: `Meta · ${rangeLabel(perf.datePreset)} · fetched ${fmtDate(perf.fetchedAt)}`,
-    truncatedNote: perf.truncated ? `Showing your top ${perf.ads.length} ads by spend.` : null,
+    // With several currencies "top N by spend" is only true inside each run — say so rather
+    // than letting the note imply one league table.
+    truncatedNote: perf.truncated
+      ? `Showing your top ${perf.ads.length} ads by spend${runCount > 1 ? " within each currency" : ""}.`
+      : null,
+    currencyNote:
+      runCount > 1
+        ? "Your ad accounts use more than one currency, so ads are grouped by currency and never ranked against each other."
+        : null,
   };
 }

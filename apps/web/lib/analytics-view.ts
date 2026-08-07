@@ -23,6 +23,13 @@ export type Kpi = {
    * shape itself refuses to produce a single cross-currency number.
    */
   values: string[];
+  /**
+   * The one entry of `values` whose currency Meta never reported, or null when there is none
+   * (including for counts, and for the "—" no-data placeholder). It names the exact line the
+   * UI must caveat: a bare number with no caveat anywhere reads as an ordinary total, which is
+   * the second half of #692.
+   */
+  unknownCurrencyValue: string | null;
   delta: { dir: "up" | "down" | "flat"; text: string } | null;
 };
 
@@ -46,8 +53,9 @@ function compact(n: number): string {
 
 /** A usable ISO-4217 code is exactly 3 ASCII letters. Anything else (null, "") means the
  *  currency is unknown — we then show a bare number rather than invent a code. Unknown is
- *  its own bucket, so it never merges with a known-currency subtotal. */
-function currencyKey(code: string | null): string {
+ *  its own bucket, so it never merges with a known-currency subtotal. Exported so the per-ad
+ *  view applies exactly the same test (one authority for "is this a usable currency code"). */
+export function currencyCode(code: string | null): string {
   return typeof code === "string" && /^[A-Za-z]{3}$/.test(code) ? code.toUpperCase() : "";
 }
 
@@ -77,19 +85,25 @@ function sumByCurrency(
   for (const a of accounts) {
     const v = pick(a.metrics);
     if (v == null) continue;
-    const key = currencyKey(a.currency);
+    const key = currencyCode(a.currency);
     out.set(key, (out.get(key) ?? 0) + v);
   }
   return out;
 }
 
-/** One display line per currency, ordered by code so the card is deterministic. No
- *  contributing account at all → the "—" placeholder the empty state already used. */
-function moneyValues(byCurrency: Map<string, number>, digits: number): string[] {
-  if (byCurrency.size === 0) return ["—"];
-  return [...byCurrency.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([code, total]) => money(total, code, digits));
+/** One display line per currency, ordered by code so the card is deterministic. No contributing
+ *  account at all → the "—" placeholder the empty state already used (no data, NOT an unknown
+ *  currency). `unknown` names the line whose currency Meta never reported, so the UI can caveat
+ *  that exact line however many lines there are. */
+function moneyValues(
+  byCurrency: Map<string, number>,
+  digits: number,
+): { values: string[]; unknown: string | null } {
+  if (byCurrency.size === 0) return { values: ["—"], unknown: null };
+  const entries = [...byCurrency.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  const values = entries.map(([code, total]) => money(total, code, digits));
+  const unknownIndex = entries.findIndex(([code]) => code === "");
+  return { values, unknown: unknownIndex === -1 ? null : values[unknownIndex]! };
 }
 
 // --- deltas -----------------------------------------------------------------
@@ -129,28 +143,28 @@ export function buildKpis(series: DailyMetric[], accounts: readonly AccountTotal
   const reach = series.reduce((s, d) => s + d.reach, 0);
   const clicks = series.reduce((s, d) => s + d.clicks, 0);
 
-  const spendValues = moneyValues(sumByCurrency(accounts, (m) => num(m.spend)), 2);
+  const spend = moneyValues(sumByCurrency(accounts, (m) => num(m.spend)), 2);
 
   // Estimated purchase value = Σ over accounts of (spend × purchaseRoas), skipping an
   // account when either side is null/unparseable. Rounded integer with thousands
   // separators, prefixed with the account's currency code. "—" when no account has both.
   const salesRaw = sumByCurrency(accounts, (m) => {
-    const spend = num(m.spend);
+    const accountSpend = num(m.spend);
     const roas = num(m.purchaseRoas);
-    return spend == null || roas == null ? null : spend * roas;
+    return accountSpend == null || roas == null ? null : accountSpend * roas;
   });
-  const salesValues = moneyValues(
+  const sales = moneyValues(
     new Map([...salesRaw].map(([code, total]) => [code, Math.round(total)])),
     0,
   );
 
   return [
-    { label: "Reach", values: [compact(reach)], delta: seriesDelta(series, (d) => d.reach) },
-    { label: "Engagement", values: [compact(clicks)], delta: seriesDelta(series, (d) => d.clicks) },
+    { label: "Reach", values: [compact(reach)], unknownCurrencyValue: null, delta: seriesDelta(series, (d) => d.reach) },
+    { label: "Engagement", values: [compact(clicks)], unknownCurrencyValue: null, delta: seriesDelta(series, (d) => d.clicks) },
     // Spend/Sales deltas null in Phase A: totals are a single aggregate per account,
     // not a series, so there's no older half to compare against.
-    { label: "Spend", values: spendValues, delta: null },
-    { label: "Sales (est.)", values: salesValues, delta: null },
+    { label: "Spend", values: spend.values, unknownCurrencyValue: spend.unknown, delta: null },
+    { label: "Sales (est.)", values: sales.values, unknownCurrencyValue: sales.unknown, delta: null },
   ];
 }
 

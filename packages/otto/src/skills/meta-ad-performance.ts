@@ -30,6 +30,9 @@ export const metaAdPerformanceSkill = defineOttoSkill({
   description:
     "Read the user's PER-AD Meta performance (each ad's spend/reach/CTR/CPC/ROAS + its creative image & copy) " +
     "so you can tell which specific ads/creatives are winning vs losing. Read-only, $0, no approval. " +
+    "Each ad carries its ad account's currency code — always state it with any money figure, and never rank, " +
+    "add or compare spend/CPC across ads in different currencies (rate-driven, not performance). Ratio metrics " +
+    "(CTR, ROAS) ARE comparable across currencies. " +
     "Numbers are point-in-time — always cite the datePreset + fetchedAt. If organic is pending_permission, " +
     "say organic post performance isn't available yet (awaiting Meta permission) — never invent organic numbers.",
   parameters: metaAdPerformanceInput,

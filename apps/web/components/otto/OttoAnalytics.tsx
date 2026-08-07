@@ -139,16 +139,23 @@ export function OttoAnalytics({
                     ad-account currencies, shown side by side and never added together. */}
                 <div className="mt-1">
                   {(data.empty ? ["—"] : k.values).map((v) => (
-                    <div
-                      key={v}
-                      className={
-                        "font-bold tracking-[-0.02em] " +
-                        (!data.empty && k.values.length > 1
-                          ? "text-[20px] leading-[1.25]"
-                          : "text-[26px]")
-                      }
-                    >
-                      {v}
+                    <div key={v}>
+                      <div
+                        className={
+                          "font-bold tracking-[-0.02em] " +
+                          (!data.empty && k.values.length > 1
+                            ? "text-[20px] leading-[1.25]"
+                            : "text-[26px]")
+                        }
+                      >
+                        {v}
+                      </div>
+                      {/* Name the bare line right where it sits, however many lines there are. */}
+                      {!data.empty && v === k.unknownCurrencyValue && (
+                        <div className="text-[11.5px] text-muted-foreground font-medium">
+                          Currency not reported
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -182,6 +189,15 @@ export function OttoAnalytics({
             <div className="text-[12px] text-muted-foreground mt-2">
               Your ad accounts use more than one currency, so spend and sales are shown per currency
               — never added together or converted.
+            </div>
+          )}
+
+          {/* #692 r1: a bare figure gets its explanation whether or not any other line exists —
+              a lone unlabelled number is the case that reads most like an ordinary total. */}
+          {!data.empty && data.kpis.some((k) => k.unknownCurrencyValue !== null) && (
+            <div className="text-[12px] text-muted-foreground mt-2">
+              Meta didn&apos;t report a currency for one of your ad accounts, so the figure marked
+              &ldquo;Currency not reported&rdquo; is shown without one.
             </div>
           )}
 
