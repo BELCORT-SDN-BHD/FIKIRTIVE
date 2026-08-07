@@ -17,8 +17,10 @@
  *      (startRefGen)、变体生成(createVariant → dispatchVariantJob)。
  *   ② 指路必须是活的:文案点名的去处,必须真的挂在全局导航上。这条封的是「换一句好听的
  *      死指针」—— 光把 "reply" 改成 "contact billing support" 一样红。
- *   ③ 词法钉板:"beta credits" 这个说法在整个代码库里不得再出现(docs/ 是历史档案,
- *      按考古保留,不在扫描范围)。断言 ① 封的是行为,③ 封的是「另起一处再写一遍」。
+ *   ③ 词法钉板:**运行时与源码零残留** —— apps/ 与 packages/ 全文(含注释)不得再出现
+ *      这个说法。豁免两处,都是有意的:docs/ 是历史档案(记录产品当年说过什么,改了就等于
+ *      毁审计线索),以及本文件自身(封禁清单必须写得出被禁词)。注释一并封死,是因为注释
+ *      正是过期概念被下一个人抄进新文案的载体。断言 ① 封的是行为,③ 封的是「另起一处再写一遍」。
  *   ④ 标点钉板:同一句 "Otto hit a snag" 在三处曾经两种破折号,商家实际读到的是 ASCII "-"。
  *      按仓库惯例归一到 em dash,并锁住三处一致。
  */
@@ -175,12 +177,16 @@ describe("#699 the top-up destination the copy names is live navigation", () => 
 });
 
 // ---------------------------------------------------------------------------
-// ③ "beta credits" is dead everywhere in the code
+// ③ the beta framing is dead in everything that ships
 // ---------------------------------------------------------------------------
-describe("#699 nothing in the codebase calls them beta credits", () => {
+describe("#699 nothing in apps/ or packages/ calls them beta credits", () => {
   const SCAN_ROOTS = ["apps", "packages"];
   const SKIP_DIR = /^(node_modules|\.next|dist|generated|coverage|\.turbo)$/;
-  // this file has to spell the banned phrase out in order to ban it.
+  /** The ban is on the whole file, comments included: a comment is how a retired concept gets
+   *  carried forward into the next person's copy. The one exemption is this file — a ban list
+   *  has to be able to write down the words it bans. docs/ is out of scope on purpose: those
+   *  are historical records of what the product once said, and rewriting them would destroy
+   *  the audit trail rather than fix anything. */
   const SELF = path.basename(__filename);
 
   function walk(dir: string): string[] {
@@ -191,16 +197,9 @@ describe("#699 nothing in the codebase calls them beta credits", () => {
     });
   }
 
-  /** Comments may record what the copy used to say — that is how the repo keeps a fix
-   *  explainable (see CHAT_SPEND_NOTE). What must never come back is the phrase in code
-   *  that can reach a merchant, so the ban is enforced on everything except comments. */
-  function withoutComments(source: string): string {
-    return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  }
-
-  it("no source file uses the phrase", () => {
+  it("no shipped file carries the phrase, in code or in a comment", () => {
     const offenders = SCAN_ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root)))
-      .filter((file) => /beta\s+credits/i.test(withoutComments(readFileSync(file, "utf8"))))
+      .filter((file) => /beta[\s_-]*credit/i.test(readFileSync(file, "utf8")))
       .map((file) => path.relative(REPO_ROOT, file));
 
     expect(offenders, `these still say "beta credits":\n${offenders.join("\n")}`).toEqual([]);

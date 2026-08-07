@@ -413,7 +413,7 @@ afterAll(async () => {
   await purge((ownerId) => prisma.campaign.deleteMany({ where: { ownerId } }));
   await purge((ownerId) => prisma.actionEvent.deleteMany({ where: { ownerId } }));
   // IDENTITY rows requireOwner bootstrapped for this run (auth-guard.ts:88 — Organization +
-  // Membership + CreditAccount + the beta CreditLedger grant). Scoped to THIS run's two
+  // Membership + CreditAccount + the signup CreditLedger grant). Scoped to THIS run's two
   // random identities only; nothing outside them is ever touched. Credits → membership →
   // org → user, so no FK blocks the next step.
   await purge((orgId) => prisma.creditLedger.deleteMany({ where: { orgId } }));
