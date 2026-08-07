@@ -16,8 +16,11 @@ const projectId = `idem-test-${randomUUID()}`;
 const fail = (m) => { throw new Error(m); };
 const isP2002 = (e) => typeof e === "object" && e !== null && e.code === "P2002";
 
+// `model` is explicit (#675): the GenJob.model column no longer carries a database default, so
+// an insert that omits it is rejected outright. "seedream" is exactly what this script used to
+// get from that default — the four inserts below keep the behaviour they have always had.
 const base = (idempotencyKey, status) => ({
-  id: randomUUID(), ownerId: OWNER, projectId, prompt: "test", idempotencyKey, status,
+  id: randomUUID(), ownerId: OWNER, projectId, prompt: "test", model: "seedream", idempotencyKey, status,
 });
 
 let passed = false;
