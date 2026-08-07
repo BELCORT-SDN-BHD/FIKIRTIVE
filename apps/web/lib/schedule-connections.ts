@@ -122,18 +122,29 @@ export function approvalFor(
  * that must NOT offer a connect button ("checking" and "unavailable") cannot be collapsed back
  * into the empty case by a later edit.
  */
+/**
+ * One row of the Account dropdown, already reduced to what rendering needs. Deliberately NOT the
+ * `OwnerTarget` (#741 r3 P2): handing the screen the real account objects hands it everything it
+ * needs to hand-roll "is this account still good" — `picker.options.some(t => t.id === targetId)`
+ * is a two-second edit away, and that edit is precisely how this screen grew a second judgement
+ * point three rounds running. A `{ value, label }` cannot answer that question at all.
+ */
+export type AccountOption = { value: string; label: string };
+
 export type AccountPicker =
   | { phase: "checking" }
   | { phase: "unavailable" }
   | { phase: "none" }
-  | { phase: "ready"; options: OwnerTarget[] };
+  | { phase: "ready"; options: readonly AccountOption[] };
 
 export function accountPicker(accounts: ConnectedAccounts, channel: string): AccountPicker {
   if (!isConnectableChannel(channel)) return { phase: "unavailable" };
   const state = read(accounts);
   if (state.phase === "loading") return { phase: "checking" };
-  const options = state.targets.filter((t) => t.channel === channel);
-  return options.length > 0 ? { phase: "ready", options } : { phase: "none" };
+  const matching = state.targets.filter((t) => t.channel === channel);
+  return matching.length > 0
+    ? { phase: "ready", options: matching.map((t) => ({ value: t.id, label: t.name })) }
+    : { phase: "none" };
 }
 
 /** Channels with at least one real publishable target. Empty while the answer is unknown. */

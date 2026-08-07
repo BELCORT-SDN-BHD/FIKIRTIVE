@@ -105,7 +105,7 @@ import {
   revokeSharePreview,
 } from "../schedule-actions";
 import { sharePreviewTokenDigest } from "../share-preview";
-import { ACCOUNTS_UNREADABLE_ERROR } from "@fikirtive/core";
+import { ACCOUNTS_UNREADABLE_ERROR, scheduleApproveBlockers } from "@fikirtive/core";
 import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
 import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 
@@ -684,6 +684,36 @@ describe("approveScheduledPost", () => {
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #741 判官 r3 [P2] —— 反向断言改成逐字比对:服务端拒的那句话,必须就是共享规则的第一句
+  // (拿规则本身算出来对照,不是再抄一份字符串;composer 提前告诉商家的也是同一句)。
+  it("服务端的拒绝语逐字等于 scheduleApproveBlockers 的第一句,不是另抄的一份", async () => {
+    const cases: { over: Record<string, unknown>; targetId: string; connected: string[]; mediaCount: number }[] = [
+      { over: {}, targetId: "page-1", connected: [], mediaCount: 1 },
+      { over: { metaTargetId: "not-mine" }, targetId: "not-mine", connected: ["page-1"], mediaCount: 1 },
+      { over: { media: [] }, targetId: "page-1", connected: ["page-1"], mediaCount: 0 },
+    ];
+    for (const { over, targetId, connected, mediaCount } of cases) {
+      vi.clearAllMocks();
+      mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "a@b.co" });
+      mockIsImpersonating.mockResolvedValue(false);
+      mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, asset: { mime: "image/png" } })),
+      );
+      mockPublishAttemptFindFirst.mockResolvedValue(null);
+      mockIgListTargets.mockResolvedValue({ targets: connected.map((id) => ({ id, name: id })) });
+      mockFindFirst.mockResolvedValue(draftReady(over));
+
+      const expected = scheduleApproveBlockers({
+        channel: "instagram",
+        targetId,
+        mediaCount,
+        connectedTargetIds: connected,
+      })[0]!;
+      expect(await approveScheduledPost("p1")).toEqual({ error: expected });
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+    }
   });
 
   // #741 判官 r3 [P1] —— 连接读失败 ≠ 没连账号。两种情形都拒(fail closed,不变),但理由必须是真的:

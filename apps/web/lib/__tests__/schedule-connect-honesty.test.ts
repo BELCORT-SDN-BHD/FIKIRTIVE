@@ -22,6 +22,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { scheduleApproveBlockers } from "@fikirtive/core/schedule-draft";
+import { CHECKING_ACCOUNTS_BLOCKER } from "../schedule-connections";
 import { buildStuffItems } from "../stuff-items";
 import { DEFAULT_SETTINGS } from "../owner-settings";
 import type { AccountInfo } from "../account-actions";
@@ -975,17 +977,62 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
       .filter((f) => !APPROVE_RULE_CALLERS.has(f.rel) && f.code.includes("scheduleApproveBlockers"))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);
-    // 反面:这两处必须真的在用它,不能空手过关。
-    for (const rel of APPROVE_RULE_CALLERS) {
-      expect(files.find((f) => f.rel === rel)?.code).toContain("scheduleApproveBlockers");
+  });
+
+  // #741 判官 r3 [P2]:上一版这条只匹配**变量名恰好叫 targets** 的 .filter/.some/.find。
+  // 于是 `t.some(...)`、`picker.options.some(...)`、`targets?.some(...)` 全都能重拼出一个
+  // 判定点还照样过关。围栏改成认「形状」而不是认「名字」:任意表达式上的 some/find/filter/
+  // includes/indexOf,只要参数里出现 targetId / metaTargetId,就是在自己判「这个账号还算不算数」。
+  const REBUILT_TARGET_JUDGEMENT = /\.\s*(some|find|filter|includes|indexOf)\s*\([^;]{0,120}?(targetId|metaTargetId)/;
+  // 豁免必须逐条讲得出「这是另一个问题」或「这就是权威本身」。**组件永远没有资格上这张名单**
+  // —— 一旦某个组件需要豁免,那正是又开了一个判定点,该改设计而不是加行。
+  // (schedule-actions.ts 不在名单上,而且不该在:服务端也是把真实名单交给
+  //  scheduleApproveBlockers 去判,自己不比对 —— 名单越短,说明判定点越少。)
+  const TARGET_JUDGEMENT_ALLOWLIST = new Map([
+    ["lib/schedule-connections.ts", "客户端单一状态源:所有界面判定的唯一出处"],
+    ["lib/channels/meta-publish-adapter.ts", "发布时解析页面 token —— publish 路径自己的权威,不是界面判定"],
+    ["lib/meta-plan-card.ts", "此处 targetId 是广告对象 id,与发布账号无关(另一个问题)"],
+  ]);
+
+  it("围栏认得出「换个变量名重拼判定」的各种自然写法", () => {
+    for (const sample of [
+      "const ok = t.some((x) => x.id === metaTargetId);",
+      "const ok = picker.options.some((o) => o.value === targetId);",
+      "const ok = targets?.some((t) => t.id === targetId);",
+      "const mine = list.filter((c) => c.id === post.metaTargetId);",
+      "const hit = ids.includes(metaTargetId);",
+    ]) {
+      expect(REBUILT_TARGET_JUDGEMENT.test(sample)).toBe(true);
+    }
+    // 反例:把 targetId 交给单一状态源去判,不是自己判 —— 不许误伤。
+    expect(
+      REBUILT_TARGET_JUDGEMENT.test("posts.map((p) => approvalFor(accounts, { targetId: p.metaTargetId }))"),
+    ).toBe(false);
+    expect(REBUILT_TARGET_JUDGEMENT.test("const match = rows.find((r) => r.id === prev.id);")).toBe(false);
+  });
+
+  it("apps/web 里没有第二处「这个账号还算不算数」的判定", () => {
+    const offenders = files
+      .filter((f) => !TARGET_JUDGEMENT_ALLOWLIST.has(f.rel) && REBUILT_TARGET_JUDGEMENT.test(f.code))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  it("豁免名单本身承重:没有组件在名单上,也没有过期的行", () => {
+    for (const rel of TARGET_JUDGEMENT_ALLOWLIST.keys()) {
+      // 过期行会让围栏悄悄变松,所以每一行都必须指向一个真实存在、且真的会被规则命中的文件。
+      const hit = files.find((f) => f.rel === rel);
+      expect(hit, `豁免名单里的 ${rel} 已不存在`).toBeTruthy();
+      expect(REBUILT_TARGET_JUDGEMENT.test(hit!.code), `${rel} 已不需要豁免,请删掉这一行`).toBe(true);
+      expect(rel.startsWith("components/"), `组件永远没有资格被豁免:${rel}`).toBe(false);
     }
   });
 
-  it("Schedule 屏不许自己拼「账号还算不算数」的判定,只能问单一状态源", () => {
+  it("Schedule 屏连账号对象的类型都碰不到 —— 拿不到原料就拼不出判定", () => {
     const schedule = files.find((f) => f.rel === "components/otto/OttoSchedule.tsx")!.code;
-    expect(schedule).toContain("approvalFor");
-    // 自己 filter 一遍 targets 再拿去比对 —— 就是又生出一个判定点。
-    expect(schedule).not.toMatch(/targets\s*\.\s*(filter|some|find)\s*\(/);
+    // accountPicker 交出的是渲染用的 { value, label };屏里若出现 OwnerTarget 这个类型,
+    // 就说明有人又把原始账号名单递进了组件。(\b 让 listOwnerTargets 这个动作名不被误伤。)
+    expect(schedule).not.toMatch(/\bOwnerTarget\b/);
     expect(schedule).not.toMatch(/metaTargetId\s*&&\s*p?\.?media\.length/);
     expect(schedule).not.toContain("Pick an account to approve");
   });
@@ -1004,5 +1051,68 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
     expect(connections).toContain("UNAVAILABLE_PUBLISHING_CHANNEL_IDS");
     expect(schedule).toContain("CONNECTABLE_CHANNEL_META");
     expect(sections).toMatch(/isConnectableChannel|CONNECTABLE_CHANNEL/);
+  });
+
+  // ── 反向断言:从「符号出现过」升级成「话真的这样走上了屏幕」 ──────────────────
+  //
+  // #741 判官 r3 [P2]:`expect(schedule).toContain("approvalFor")` 这种反向断言,留一个
+  // 没用的 import 就能空转。下面两条改成成对的行为断言:**屏幕源码里没有这句话** +
+  // **这句话确实出现在 DOM 上** ⇒ 它只可能是从共享权威那儿走过来的。
+  describe("反向断言:句子确实是从单一权威走到屏幕上的", () => {
+    const scheduleSrc = files.find((f) => f.rel === "components/otto/OttoSchedule.tsx")!.code;
+
+    it("「正在查」这句只住在单一状态源里,却出现在屏幕上", async () => {
+      expect(scheduleSrc).not.toContain("Checking your connected accounts");
+
+      mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+      mocks.listOwnerTargets.mockReturnValue(new Promise(() => {}));
+      mocks.listScheduledPosts.mockResolvedValue([
+        postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
+      ]);
+      await renderSchedule();
+
+      expect(document.body.textContent).toContain(CHECKING_ACCOUNTS_BLOCKER);
+    });
+
+    it("缺项句与共享规则逐字相同 —— 屏里没有这串字面量,DOM 上却一字不差", async () => {
+      const expected = scheduleApproveBlockers({
+        channel: "instagram",
+        targetId: IG_TARGET.id,
+        mediaCount: 0,
+        connectedTargetIds: [IG_TARGET.id],
+      });
+      expect(expected.length).toBeGreaterThan(0);
+      for (const sentence of expected) expect(scheduleSrc).not.toContain(sentence);
+
+      mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+      mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+      mocks.listScheduledPosts.mockResolvedValue([
+        postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft", media: [] }),
+      ]);
+      await renderSchedule();
+
+      const planText = buttonByText("Approve all", document.body).closest("div")?.parentElement?.textContent ?? "";
+      for (const sentence of expected) expect(planText).toContain(sentence);
+    });
+
+    it("服务端拒绝语与商家提前听到的那句,来自同一份规则", async () => {
+      // 服务端的拒绝(schedule-actions.test.ts 逐条钉过)与这里的提前告知,都是
+      // scheduleApproveBlockers 的第一句 —— 拿规则本身对照,而不是抄一份字符串来比。
+      const first = scheduleApproveBlockers({
+        channel: "instagram",
+        targetId: null,
+        mediaCount: 1,
+        connectedTargetIds: [],
+      })[0]!;
+
+      mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+      mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+      mocks.listScheduledPosts.mockResolvedValue([
+        postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft", metaTargetId: null }),
+      ]);
+      await renderSchedule();
+
+      expect(document.body.textContent).toContain(first);
+    });
   });
 });

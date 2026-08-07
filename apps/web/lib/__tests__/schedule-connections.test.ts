@@ -114,7 +114,20 @@ describe("派生视图与状态同源", () => {
     expect(accountPicker(ACCOUNTS_LOADING, "instagram")).toEqual({ phase: "checking" });
     expect(accountPicker(connected([]), "instagram")).toEqual({ phase: "none" });
     expect(accountPicker(connected([FB]), "instagram")).toEqual({ phase: "none" });
-    expect(accountPicker(connected([IG, FB]), "instagram")).toEqual({ phase: "ready", options: [IG] });
+    expect(accountPicker(connected([IG, FB]), "instagram")).toEqual({
+      phase: "ready",
+      options: [{ value: IG.id, label: IG.name }],
+    });
+  });
+
+  // #741 r3 [P2]:选择器交出去的是**渲染用的视图**,不是账号对象本身。拿不到 id/channel,
+  // 组件就没法用 `picker.options.some(t => t.id === targetId)` 重新拼出一个判定点 ——
+  // 这正是同族病三轮的复发方式。
+  it("ready 交出的是 { value, label },没有任何可以拿去比对的原始字段", () => {
+    const picker = accountPicker(connected([IG]), "instagram");
+    if (picker.phase !== "ready") throw new Error("expected ready");
+    expect(Object.keys(picker.options[0]!).sort()).toEqual(["label", "value"]);
+    expect(JSON.stringify(picker.options)).not.toContain("channel");
   });
 
   it("可发布渠道在还没读到时是空的,不假装谁连着", () => {

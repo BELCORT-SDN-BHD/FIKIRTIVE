@@ -1347,8 +1347,8 @@ function Composer({
                   className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] font-semibold disabled:opacity-60"
                 >
                   <option value="">Choose an account…</option>
-                  {picker.options.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
+                  {picker.options.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
                 </select>
               )}
