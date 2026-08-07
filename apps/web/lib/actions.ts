@@ -79,9 +79,15 @@ async function ingestFile(ownerId: string, file: File) {
   };
 }
 
-function assetUpsert(ownerId: string, ingested: Awaited<ReturnType<typeof ingestFile>>) {
+/** `db` is the ambient client or a transaction client — the caller decides whether this
+ *  upsert has to commit together with the rows around it (#698). */
+function assetUpsert(
+  db: Pick<typeof prisma, "asset">,
+  ownerId: string,
+  ingested: Awaited<ReturnType<typeof ingestFile>>,
+) {
   const { ext, mime, sizeBytes, originalFilename } = ingested.create;
-  return prisma.asset.upsert({
+  return db.asset.upsert({
     where: {
       ownerId_contentHash: { ownerId, contentHash: ingested.contentHash },
     },
@@ -381,24 +387,56 @@ export async function createEntity(formData: FormData) {
   if (!name) return { error: "Name is required." };
   if (!ENTITY_TYPES.has(type)) return { error: "Unknown entity type." };
 
-  const entity = await prisma.entity.create({
-    data: { id: newId(), ownerId, name, type: type as EntityType },
-  });
-  let firstAssetId: string | null = null;
-  for (const [i, file] of files.entries()) {
-    const asset = await assetUpsert(ownerId, await ingestFile(ownerId, file));
-    if (i === 0) firstAssetId = asset.id;
-    // content-addressed upload dedups identical files to one Asset, so the same
-    // image picked twice would attach the same asset twice — the live-uniqueness
-    // index (ReferenceImage_live_entity_asset_variant_key) rejects the dup with
-    // P2002; skip it (already attached) rather than 500 the upload.
-    await createRefSkippingDup({ id: newId(), ownerId, entityId: entity.id, assetId: asset.id, position: i });
+  // #698 — the element and its images live or die together. The old order created the
+  // Entity FIRST, so any later failure (a storage blip, a refused Asset write) left a
+  // nameless tile in the merchant's Library with no image and no message: every retry
+  // added one more. Bytes go to content-addressed storage first (idempotent, safe to
+  // repeat), then EVERY row write commits in one transaction.
+  const ingested: Awaited<ReturnType<typeof ingestFile>>[] = [];
+  try {
+    for (const file of files) ingested.push(await ingestFile(ownerId, file));
+  } catch (e) {
+    console.error("[entity.create] upload failed:", e instanceof Error ? e.message : e);
+    return { error: "Couldn't upload those images. Please try again." };
   }
-  // the first reference becomes the locked base (same invariant as addReferenceImages + the migration backfill)
-  if (firstAssetId) await prisma.entity.update({ where: { id: entity.id }, data: { baseAssetId: firstAssetId } });
-  await logAction(ownerId, "entity.create", null, { entityId: entity.id, name, type, refCount: files.length });
+
+  const entityId = newId();
+  try {
+    await prisma.$transaction(async (tx) => {
+      await tx.entity.create({ data: { id: entityId, ownerId, name, type: type as EntityType } });
+      let firstAssetId: string | null = null;
+      // content-addressed upload dedups identical files to ONE Asset, so the same image
+      // picked twice would attach that asset twice — the live-uniqueness index
+      // (ReferenceImage_live_entity_asset_variant_key) rejects the dup with P2002, and
+      // inside a transaction that P2002 aborts the whole upload. The entity is brand new
+      // here, so its only possible duplicate is a repeat within THIS pick: skip it up
+      // front instead of letting the database raise (createRefSkippingDup's swallow only
+      // works outside a transaction).
+      const attached = new Set<string>();
+      for (const item of ingested) {
+        const asset = await assetUpsert(tx, ownerId, item);
+        firstAssetId ??= asset.id;
+        if (attached.has(asset.id)) continue;
+        await tx.referenceImage.create({
+          data: { id: newId(), ownerId, entityId, assetId: asset.id, position: attached.size },
+        });
+        attached.add(asset.id);
+      }
+      // the first reference becomes the locked base (same invariant as addReferenceImages + the migration backfill)
+      if (firstAssetId) {
+        await tx.entity.update({
+          where: { id_ownerId: { id: entityId, ownerId } },
+          data: { baseAssetId: firstAssetId },
+        });
+      }
+    });
+  } catch (e) {
+    console.error("[entity.create] persist failed:", e instanceof Error ? e.message : e);
+    return { error: "Couldn't add this to your library. Please try again." };
+  }
+  await logAction(ownerId, "entity.create", null, { entityId, name, type, refCount: files.length });
   revalidatePath("/", "layout");
-  return { id: entity.id };
+  return { id: entityId };
 }
 
 export async function updateEntity(
@@ -483,7 +521,9 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
   const { ownerId } = gate;
   const entity = await prisma.entity.findFirst({ where: { id: entityId, ownerId, deletedAt: null } });
   if (!entity) return { error: "Entity not found." };
-  const existing = await prisma.referenceImage.count({ where: { entityId, deletedAt: null } });
+  // #698 — the tenant has to be named here too: the count runs unframed, and an ownerId-less
+  // filter is refused before it can report how much room is left.
+  const existing = await prisma.referenceImage.count({ where: { ownerId, entityId, deletedAt: null } });
   const files = acceptRefFiles(formData, existing);
   if (files.length === 0) return { error: "No valid images — PNG, JPG or WebP, ≤ 10 MB, up to 10 per element." };
   const last = await prisma.referenceImage.findFirst({
@@ -492,7 +532,7 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
   });
   let position = (last?.position ?? -1) + 1;
   for (const file of files) {
-    const asset = await assetUpsert(ownerId, await ingestFile(ownerId, file));
+    const asset = await assetUpsert(prisma, ownerId, await ingestFile(ownerId, file));
     // re-uploading an already-attached image dedups to the same Asset → the
     // live-uniqueness index rejects the dup with P2002; skip it (already attached).
     await createRefSkippingDup({ id: newId(), ownerId, entityId, assetId: asset.id, position: position++ });
@@ -505,7 +545,14 @@ export async function addReferenceImages(entityId: string, formData: FormData) {
       orderBy: { position: "asc" },
       select: { assetId: true },
     });
-    if (first) await prisma.entity.update({ where: { id: entityId }, data: { baseAssetId: first.assetId } });
+    // #698 — name the tenant in the key: an unframed `where: { id }` carries no ownerId,
+    // and the guard refuses it, so "Upload photo" died right after landing the images.
+    if (first) {
+      await prisma.entity.update({
+        where: { id_ownerId: { id: entityId, ownerId } },
+        data: { baseAssetId: first.assetId },
+      });
+    }
   }
   await logAction(ownerId, "entity.update", null, { entityId, addedRefs: files.length });
   revalidatePath("/", "layout");
