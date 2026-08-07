@@ -243,48 +243,75 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
   // 只改真卡的标签、别处留着旧字符串时照样绿 —— 拼接式设计不可救。组件行为归
   // 组件自己的测试管,不跨包。
 
-  // 1) 通用按钮点名检测器 —— 对整份提示词跑,零命中。
-  const BUTTON_NAMING_PATTERNS = [
-    // "Confirm button" / "Review cost button" / "Launch button" —— 任何专名 + button
-    /\b[A-Z][a-zA-Z]*(?: [A-Za-z]+)? button\b/,
-    // 引号包裹的标签点名:press "X" / click 'X' / tap “X”
-    /\b(?:press|click|tap|hit|push)\b[^.!?\n]{0,20}["'“”‘’]/i,
-    // "the X button" 小写变体
-    /\bthe\s+[a-z]+(?:\s+[a-z]+)?\s+button\b/i,
+  // ── r3 → r4:词汇封闭(断路器二级)──────────────────────────────────────────
+  // r3 的检测器仍是**句式枚举**,判官逐一穿透:"click Launch" / "press Review cost" /
+  // "press the button labelled Launch" / 三词标签,全都不含 r3 正则要求的形状。
+  // 根因裁定(编排者):**用正则追捕无穷英文句式是打不赢的军备竞赛**。
+  //
+  // r4 换设计:**白名单剥离 + 词汇封闭**。先把「已知允许」的句子原文整句剥掉,
+  // 剩下的文本里 UI 交互词表**一次都不许出现**。这样不再需要预测句式 ——
+  // 任何点名写法都必然用到 button/click/press/tap 之一,剥离后即命中。
+  //
+  // 白名单是精确原文,不是正则:句子被删或被改动 ⇒ 剥离变成 no-op ⇒ 残留词命中 ⇒ 红;
+  // 同时下面的肯定式存在断言也会红。两条独立路径兜底。
+  const UI_VOCAB_ALLOWED = [
+    // ① 按钮指路两句(r2 判官已认可,提示词侧一字未动)——它们必须提到 button 才能下禁令。
+    "Point at the card, never at a button label — the card walks the user through its own cost check, and you cannot see what its buttons say.",
+    "Never tell the user to click a specific button or UI element — describe the outcome they want instead.",
+    "The one exception is a card you yourself put in this conversation: you may tell the user to act on that card (approve it, change it, cancel it), because you know it is there — but never name the button on it, because you still cannot see its label.",
+    // ② main 的画布文案把 "press" 当**名词**用(一次付费生成),不是 UI 控件。
+    //    #603/#605 的批次血缘段。留在词表里会误伤,故按原文剥离;
+    //    main 改写这句时这里会红 —— 那正是应该复核的时刻。
+    "Cards sharing a `genJobId` came out of ONE press together — `batchIndex` says which of that press this one is and `batchSize` how many it made.",
+    // ③ 「你看不见 app 的按钮」这句自陈能力边界,本身要点名 buttons。
+    "You cannot see the user's screen, the app's buttons, system logs, your own code, or infrastructure.",
   ];
 
-  it("names no UI button anywhere in the prompt (generic rule, not a label allowlist)", () => {
-    for (const pattern of BUTTON_NAMING_PATTERNS) {
-      const hit = ottoInstructions.match(pattern);
-      expect(
-        hit,
-        `按钮点名 ${pattern} 命中「${hit?.[0] ?? ""}」—— 提示词不许点名任何按钮标签,Otto 看不见它们`,
-      ).toBeNull();
+  // 封闭词表:UI 交互动词 + 控件名词。不枚举句式,只封词。
+  const UI_VOCAB = /\b(?:button|buttons|click|clicks|clicked|clicking|press|presses|pressed|pressing|tap|taps|tapped|tapping)\b/i;
+
+  function stripAllowed(text: string, allowed: string[]): string {
+    return allowed.reduce((acc, sentence) => acc.replaceAll(sentence, ""), text);
+  }
+
+  it("uses no UI-interaction vocabulary outside the sentences explicitly allowed to", () => {
+    const stripped = stripAllowed(ottoInstructions, UI_VOCAB_ALLOWED);
+    const hit = stripped.match(UI_VOCAB);
+    expect(
+      hit,
+      `提示词在白名单之外出现了 UI 交互词「${hit?.[0] ?? ""}」—— 词汇封闭:任何点名按钮的写法都会用到这些词`,
+    ).toBeNull();
+  });
+
+  it("the closed vocabulary catches every escape the r3 detector let through", () => {
+    // 判官 r3 点名的四种穿透 + r1/r2 原句。逐条按「加进提示词后是否命中」验。
+    const escapes = [
+      "click Launch",
+      "press Review cost",
+      "press the button labelled Launch",
+      "tap the Confirm generate now button", // 三词标签
+      "press the Confirm button on the card",
+      "tell them to press the Launch button",
+      'press "Confirm generate" to start',
+      "hit the button when ready", // 含 button
+      "clicking the card's control starts it",
+    ];
+    for (const escape of escapes) {
+      const stripped = stripAllowed(`${ottoInstructions}\n${escape}`, UI_VOCAB_ALLOWED);
+      expect(UI_VOCAB.test(stripped), `逃逸写法 "${escape}" 必须被词汇封闭逮住`).toBe(true);
     }
   });
 
-  it("the button-naming detector actually catches naming, including labels that don't exist yet", () => {
-    const namings = [
-      "press the Confirm button on the card",
-      "tell them to press the Launch button", // 从未存在过的新标签也要被逮住
-      "click the Review cost button",
-      'press "Confirm generate" to start',
-      "tap the Approve button",
-      "hit 'Go' when you're ready",
-    ];
-    for (const naming of namings) {
-      expect(
-        BUTTON_NAMING_PATTERNS.some((pattern) => pattern.test(naming)),
-        `按钮点名 "${naming}" 必须被通用检测器逮住`,
-      ).toBe(true);
-    }
-    // 反向:指向卡片本身、不点名标签的说法必须放行。
+  it("the closed vocabulary leaves label-free card guidance alone", () => {
+    // 反向:指向卡片本身、不点名控件的说法加进去仍然绿。
     const safe = [
       "tell them to approve it on the card to start",
       "the only next-step instruction you may give is to approve it on the card itself",
+      "say that the card is waiting for their confirmation",
     ];
     for (const sentence of safe) {
-      expect(BUTTON_NAMING_PATTERNS.some((pattern) => pattern.test(sentence))).toBe(false);
+      const stripped = stripAllowed(`${ottoInstructions}\n${sentence}`, UI_VOCAB_ALLOWED);
+      expect(UI_VOCAB.test(stripped), `不点名的说法 "${sentence}" 不该被逮`).toBe(false);
     }
   });
 
@@ -308,57 +335,58 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(ottoInstructions).toContain("Talking to you costs credits");
   });
 
-  // 3) 禁语族扩容 —— 免费打字 + 金额比较。
-  // r2 判官 P1-2:「typing never spends what a generation costs」仍是错误的金额保证 ——
-  // 一轮对话实测可抵三张图(credit-format.ts 的 #555 实测记录),比较句不成立。
-  // r3 裁定:删掉一切金额比较句式,真话只留两层(文字不启动生成 / 对话按轮计费)。
-  const FALSE_MONEY_CLAIMS = [
-    /\bwords?\b[^.!?\n]{0,40}\bnever\s+spends?\s+credits\b/i,
-    /\b(?:typing|talking|words?|chatting|a\s+message)\b[^.!?\n]{0,40}\b(?:never|doesn['’]t|does\s+not|won['’]t)\s+(?:costs?|spends?)\s+(?:you\s+)?(?:any\s+)?credits\b/i,
-    /\b(?:typing|talking|chatting)\b[^.!?\n]{0,20}\bis\s+free\b/i,
-    // 金额比较句式:拿对话的花费去比生成的花费(任何方向都禁)
-    /\b(?:never\s+)?spends?\s+what\s+a\s+generation\s+costs\b/i,
-    /\b(?:typing|talking|chatting|a\s+turn|a\s+conversation|words?)\b[^.!?\n]{0,40}\b(?:cheaper|less\s+than|costs?\s+less|more\s+than)\b/i,
+  // 3) 金额词汇封闭 —— 同一把尺子。
+  // r3 判官 P1-1::223 残留 "a turn can cost as much as making an image",与 :147 新立的
+  // never compare 自相矛盾,而 r3 的句式正则不认 "as much as"。同一个军备竞赛问题。
+  // r4 裁定:提示词里的钱话只留 canonical 句 + 两层生成边界;零数字、零比较、零 free。
+  const MONEY_ALLOWED = [
+    // canonical 钱句(#555 唯一披露口径)
+    "Talking to you costs credits.",
+    // 生成边界:文字不启动、批准前不计生成费
+    "no words start it, whatever the user types, and nothing is charged for making an image or video until that approval happens",
+    // 既有的、说明生成要批准才花钱的那句
+    "Making an image or a video costs credits and never happens without the user approving that specific card first.",
   ];
 
-  it("makes no money claim about typing beyond the two true layers", () => {
-    for (const claim of FALSE_MONEY_CLAIMS) {
-      const hit = ottoInstructions.match(claim);
-      expect(hit, `错误金额保证 ${claim} 命中「${hit?.[0] ?? ""}」`).toBeNull();
-    }
+  // 封闭词表:比较词 + 免费词 + 单价词。不枚举句式,只封词。
+  const MONEY_VOCAB =
+    /\b(?:as much as|as expensive as|more than|less than|cheaper|costlier|dearer|free of charge|for free|is free|costs nothing|per image|per video|per turn|per generation)\b/i;
+
+  it("keeps the canonical money sentence, and makes no comparison or free claim anywhere else", () => {
+    // 先肯定式:canonical 句必须在场。
+    expect(ottoInstructions).toContain("Talking to you costs credits.");
+    const stripped = stripAllowed(ottoInstructions, MONEY_ALLOWED);
+    const hit = stripped.match(MONEY_VOCAB);
+    expect(
+      hit,
+      `提示词在白名单之外出现了金额比较/免费词「${hit?.[0] ?? ""}」—— 钱话只留 canonical 句与两层生成边界`,
+    ).toBeNull();
   });
 
-  it("the money-claim ban catches both the free-typing family and the comparison family", () => {
+  it("the money vocabulary catches the comparison and free-typing families", () => {
     const falseClaims = [
-      // r1 原句:
-      "words never start it and never spend credits",
-      "typing never costs credits",
-      "talking to me doesn't cost credits",
-      "chatting is free",
-      "a message never costs you any credits",
-      "words will never spend credits",
-      // r2 原句(金额比较):
-      "typing never spends what a generation costs",
-      "and typing never spends what a generation costs.",
-      // 比较句的其他方向:
+      // r3 判官点名的残留原句:
+      "Talking to you costs credits — a turn can cost as much as making an image.",
+      // r2 原句族:
       "a conversation costs less than an image",
       "talking is cheaper than generating",
       "a turn costs less than a video",
+      // r1 原句族:
+      "chatting is free",
+      "typing costs nothing",
+      "replying is free of charge",
+      // 单价化:
+      "it is 1 credit per image",
     ];
     for (const claim of falseClaims) {
-      expect(
-        FALSE_MONEY_CLAIMS.some((pattern) => pattern.test(claim)),
-        `错误金额保证 "${claim}" 必须被逮住`,
-      ).toBe(true);
+      const stripped = stripAllowed(`${ottoInstructions}\n${claim}`, MONEY_ALLOWED);
+      expect(MONEY_VOCAB.test(stripped), `错误金额话 "${claim}" 必须被逮住`).toBe(true);
     }
-    // 反向:r3 允许的两层真话必须放行。
-    const trueLayers = [
-      "nothing is charged for making an image or video until that approval happens",
-      "A conversation turn has its own cost either way",
-    ];
-    for (const sentence of trueLayers) {
-      expect(FALSE_MONEY_CLAIMS.some((pattern) => pattern.test(sentence))).toBe(false);
-    }
+  });
+
+  it("the money vocabulary leaves the two allowed true layers alone", () => {
+    const stripped = stripAllowed(ottoInstructions, MONEY_ALLOWED);
+    expect(MONEY_VOCAB.test(stripped)).toBe(false);
   });
 
   // #559-style conservative safety lint: these are auditable banned wording families,
