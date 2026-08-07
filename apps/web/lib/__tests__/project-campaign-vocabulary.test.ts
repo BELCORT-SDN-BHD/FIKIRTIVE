@@ -25,6 +25,7 @@ const { setCoworkBriefMock } = vi.hoisted(() => ({ setCoworkBriefMock: vi.fn() }
 vi.mock("@/lib/cowork-actions", () => ({ setCoworkBrief: setCoworkBriefMock }));
 
 import { OttoNav } from "@/components/otto/OttoNav";
+import { OttoOnboarding } from "@/components/otto/OttoOnboarding";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -170,5 +171,23 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
         "We offer: The summer collection. Audience: First-time home buyers. " +
         "Posts on: TikTok. Budget vibe: $500/month",
     });
+  });
+});
+
+describe("#546 — the rest of the Otto surface stops calling a Project a campaign", () => {
+  it("the getting-started card counts down to the merchant's first project", async () => {
+    // Same drift, same surface: a brand-new merchant reads this card next to a button
+    // that now says "New project". Promising a "first campaign" here would send them
+    // hunting on /campaign for work Otto filed as a Project.
+    const dom = await render(
+      createElement(OttoOnboarding, { onGoToStuff: vi.fn(), onGoToMemory: vi.fn() }),
+    );
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    });
+
+    expect(dom.textContent).toContain("Two quick things before your first project");
+    expect(dom.textContent).toMatch(/consistent across every project/);
+    expect(dom.textContent).not.toMatch(/campaign/i);
   });
 });

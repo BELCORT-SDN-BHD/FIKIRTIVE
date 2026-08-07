@@ -42,7 +42,7 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
     {
       icon: <Users size={20} />,
       label: "Add a character or product",
-      hint: "Otto keeps them consistent across every campaign",
+      hint: "Otto keeps them consistent across every project",
       onClick: onGoToStuff,
     },
     {
@@ -68,7 +68,7 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
             Get Otto ready
           </div>
           <div className="text-[0.75rem] text-muted-foreground mt-[2px]">
-            Two quick things before your first campaign
+            Two quick things before your first project
           </div>
         </div>
         <button
