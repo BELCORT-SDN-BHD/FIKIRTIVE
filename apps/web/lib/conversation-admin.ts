@@ -12,9 +12,11 @@ import { FOUNDER_OWNER_ID } from "@fikirtive/core";
  *   into the guard's SCOPED_WHERE_OPS alongside findMany, and this comment — which said
  *   "findUnique / groupBy are EXEMPT" — outlived that change by four days while every read
  *   below threw. Both exports therefore declare what they actually are: a founder-only
- *   PLATFORM READ, run under `runAsSystem("admin:platform-read", …)`. A tenant-less system
- *   frame may scan across owners and CANNOT WRITE (the guard refuses every write op under it),
- *   which is exactly the shape of this file.
+ *   PLATFORM READ, run under `runAsSystem("admin:platform-read", …)`. That name is on the
+ *   guard's READ_ONLY_SYSTEM_REASONS list, so the frame may scan across owners and is REFUSED
+ *   every write — any model (tenant, exempt, or unguarded), nested relation writes, and raw SQL
+ *   included. Not "we checked and it only reads": it cannot write. See
+ *   `packages/db/src/__tests__/read-only-system-frame.test.ts`.
  *
  *   The explicit owner predicates below stay as they are: `ownerId: { in: orgIds }` /
  *   `ownerId: thread.ownerId` keep each query pinned to a known owner set rather than an

@@ -126,7 +126,7 @@ describe("test-seed system context", () => {
       await prisma.user.count();
       return getPrincipal();
     });
-    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
+    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null, readOnly: false });
     expect(getPrincipal()).toBeUndefined();
   });
 });
@@ -146,7 +146,7 @@ describe("bootstrapPersonalOrg runs under a named system identity", () => {
       await bootstrapPersonalOrg(userId, MERCHANT_EMAIL);
       return getPrincipal();
     });
-    expect(after).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
+    expect(after).toEqual({ kind: "system", reason: "test-seed", ownerId: null, readOnly: false });
     expect(getPrincipal()).toBeUndefined();
   });
 

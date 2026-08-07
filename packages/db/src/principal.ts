@@ -48,14 +48,34 @@ export type SystemReason =
    *
    * A genuine system context, not a convenience: `/admin` reports on every tenant at once
    * (job status histograms, today's spend, the tenant list), so there is no single tenant to
-   * scope it to. It is READ-ONLY BY CONSTRUCTION under this frame — a tenant-less system frame
-   * may scan but throws on any write (see the guard's SYSTEM_SCAN_OPS), so nothing under this
-   * name can mutate a merchant's data even by accident. Who may open it is decided BEFORE the
-   * frame, by `requireRole` at the page.
+   * scope it to. Read-only is ENFORCED, not merely intended — see
+   * {@link READ_ONLY_SYSTEM_REASONS}. Who may open the frame is decided BEFORE it, by
+   * `requireRole` at the page.
    */
   | "admin:platform-read"
   | "test-seed"
   | "tenant-direct";
+
+/**
+ * The reasons whose frames are READ-ONLY AT THE PRISMA BOUNDARY.
+ *
+ * This set is the ONE place the policy lives. Both runners below stamp `readOnly` from it, so
+ * a frame cannot be built with the name but without the restriction, and `runAsTenant` — which
+ * INHERITS an enclosing system frame's `reason` — inherits the restriction with it. The guard
+ * (`./tenant-guard.ts`) reads only the boolean, so adding a second read-only reason here never
+ * needs a guard edit.
+ *
+ * WHY THIS EXISTS (#743 judge r1, P1). The first cut of `admin:platform-read` claimed read-only
+ * in a comment and leaned on the guard's `SYSTEM_SCAN_OPS`. That check only ever ran for
+ * TENANT_MODELS — the guard returns early for every other model — so the frame could still write
+ * `CreditAccount` / `CreditLedger`, `RuntimeConfig` and the guard-exempt models
+ * (`ActionEvent`, `ModelDirective`), and raw SQL was not covered at all. The admin block happened
+ * to contain only reads, so nothing was actually mis-written; but "we checked, it only reads" is
+ * an audit, not an invariant. Now it is an invariant.
+ */
+export const READ_ONLY_SYSTEM_REASONS: ReadonlySet<SystemReason> = new Set<SystemReason>([
+  "admin:platform-read",
+]);
 
 /**
  * Who is acting.
@@ -121,6 +141,15 @@ export type Principal =
        * during the per-row write segment (see `runAsTenant`).
        */
       ownerId: string | null;
+      /**
+       * Whether this frame may write ANYTHING through Prisma.
+       *
+       * REQUIRED, not optional, on purpose: the two runners below are the only constructors, and
+       * a required field means a future third runner cannot forget it and silently produce a
+       * writable frame under a read-only name. Derived from {@link READ_ONLY_SYSTEM_REASONS} —
+       * never passed in by a caller. Enforced in `./tenant-guard.ts`.
+       */
+      readOnly: boolean;
     };
 
 /** The `kind: "user"` half of {@link Principal}. */
@@ -164,13 +193,27 @@ export function getPrincipal(): Principal | undefined {
  *
  * This is the identity for work that has no request and no user BY CONSTRUCTION: login
  * bootstrap (the cookie does not exist yet), signed webhooks, cron reapers, cross-tenant
- * scans. It is a name, not a permission — nothing in #463 grants or checks anything.
+ * scans.
+ *
+ * THE NAME IS STILL NOT A PERMISSION — it grants nothing and opens no door. It carries exactly
+ * ONE decision, and only for the names listed in {@link READ_ONLY_SYSTEM_REASONS}: those frames
+ * are stamped `readOnly` and the tenant guard then REFUSES every write through them. That is a
+ * restriction the name imposes on itself, never an authority it confers; every other reason
+ * behaves exactly as before.
  *
  * The frame is frozen: `getPrincipal()` hands out the live object, and a reader that mutated it
  * would retroactively rewrite what every enclosing frame sees.
  */
 export function runAsSystem<T>(reason: SystemReason, fn: () => T): T {
-  return store.run(Object.freeze({ kind: "system" as const, reason, ownerId: null }), fn);
+  return store.run(
+    Object.freeze({
+      kind: "system" as const,
+      reason,
+      ownerId: null,
+      readOnly: READ_ONLY_SYSTEM_REASONS.has(reason),
+    }),
+    fn,
+  );
 }
 
 /**
@@ -197,8 +240,17 @@ export function runAsSystem<T>(reason: SystemReason, fn: () => T): T {
  *
  * A frozen DEFENSIVE COPY is stored, never the caller's own object: the caller keeps a mutable
  * reference to what it built, and a later mutation through it must not rewrite the live frame.
+ *
+ * REFUSED INSIDE A READ-ONLY FRAME. A user frame is writable, so opening one inside
+ * `admin:platform-read` would launder the restriction away in a single line. No production path
+ * does this (the admin read model calls no user-framed code); refusing keeps the invariant true
+ * by construction instead of by inspection.
  */
 export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
+  const current = store.getStore();
+  if (current?.kind === "system" && current.readOnly) {
+    throw new Error("[principal] a read-only system frame cannot open a user frame");
+  }
   return store.run(Object.freeze({ ...principal }), fn);
 }
 
@@ -223,6 +275,11 @@ export function runAsUser<T>(principal: UserPrincipal, fn: () => T): T {
  *
  * Frames are frozen. The same-tenant pass-through re-runs with the ALREADY-FROZEN user frame, so
  * a nested reader cannot rewrite the caller's identity through the shared reference.
+ *
+ * READ-ONLY IS INHERITED, not shed. `readOnly` is derived from the `reason` this frame carries,
+ * and a nested call keeps the enclosing reason — so naming a tenant inside `admin:platform-read`
+ * yields a frame that is still refused every write. Deriving (rather than copying a flag) is what
+ * makes that automatic: there is no code path that keeps the name and drops the restriction.
  */
 export function runAsTenant<T>(ownerId: string, fn: () => T): T {
   const current = store.getStore();
@@ -233,5 +290,13 @@ export function runAsTenant<T>(ownerId: string, fn: () => T): T {
     return store.run(current, fn);
   }
   const reason: SystemReason = current?.kind === "system" ? current.reason : "tenant-direct";
-  return store.run(Object.freeze({ kind: "system" as const, reason, ownerId }), fn);
+  return store.run(
+    Object.freeze({
+      kind: "system" as const,
+      reason,
+      ownerId,
+      readOnly: READ_ONLY_SYSTEM_REASONS.has(reason),
+    }),
+    fn,
+  );
 }

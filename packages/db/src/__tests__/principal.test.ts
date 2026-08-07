@@ -69,10 +69,11 @@ describe("principal store instance identity", () => {
       PRINCIPAL_STORE_SYMBOL
     ] as AsyncLocalStorage<Principal>;
     // Enter through the raw pinned store; read through the module's public API.
-    const seen = pinned.run({ kind: "system", reason: "test-seed", ownerId: null }, () =>
-      getPrincipal(),
+    const seen = pinned.run(
+      { kind: "system", reason: "test-seed", ownerId: null, readOnly: false },
+      () => getPrincipal(),
     );
-    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
+    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null, readOnly: false });
   });
 });
 
@@ -92,7 +93,7 @@ describe("no ambient context", () => {
 describe("runAsSystem", () => {
   it("carries the reason with no tenant scope", () => {
     runAsSystem("gen-reaper", () => {
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false });
     });
   });
 
@@ -100,7 +101,7 @@ describe("runAsSystem", () => {
     await runAsSystem("stripe-webhook", async () => {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 1));
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "stripe-webhook", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "stripe-webhook", ownerId: null, readOnly: false });
     });
   });
 });
@@ -108,12 +109,12 @@ describe("runAsSystem", () => {
 describe("runAsTenant — the two-phase reaper shape", () => {
   it("nested in a system frame: keeps the reason, adds the tenant", () => {
     runAsSystem("refgen-reaper", () => {
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null, readOnly: false });
       runAsTenant("org_a", () => {
-        expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: "org_a" });
+        expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: "org_a", readOnly: false });
       });
       // the scan segment is restored, still tenant-less
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null, readOnly: false });
     });
   });
 
@@ -130,7 +131,7 @@ describe("runAsTenant — the two-phase reaper shape", () => {
 
   it("with no ambient frame it names itself tenant-direct", () => {
     runAsTenant("org_a", () => {
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "tenant-direct", ownerId: "org_a" });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "tenant-direct", ownerId: "org_a", readOnly: false });
     });
   });
 
@@ -228,7 +229,7 @@ describe("runAsUser", () => {
 
     expect(a).toMatchObject({ kind: "user", ownerId: "org_a" });
     expect(b).toMatchObject({ kind: "user", ownerId: "org_b" });
-    expect(system).toEqual({ kind: "system", reason: "worker-heartbeat", ownerId: null });
+    expect(system).toEqual({ kind: "system", reason: "worker-heartbeat", ownerId: null, readOnly: false });
     expect(none).toBeUndefined();
     expect(getPrincipal()).toBeUndefined();
   });
@@ -264,7 +265,7 @@ describe("runAsUser × runAsTenant nesting", () => {
   it("a system frame nested inside a user frame still names itself, tenant-less", () => {
     runAsUser(userPrincipal("a"), () => {
       runAsSystem("gen-reaper", () => {
-        expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null });
+        expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false });
       });
       expect(getPrincipal()?.kind).toBe("user");
     });
