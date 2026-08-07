@@ -81,6 +81,64 @@ describe("fetchOwnerAdPerformance", () => {
     expect(h.update).not.toHaveBeenCalled();
   });
 
+  // #692 判官 r1 [P1]: the per-ad chain dropped currency exactly like the KPI chain did —
+  // it asked me/adaccounts for `id,account_id` only, then ranked every ad across accounts by
+  // raw `spend`. MYR 20 outranking SGD 30 (or vice versa) is not a fact about anything.
+  describe("#692 r1: per-ad currency", () => {
+    const adRow = (adId: string, spend: string) => ({
+      adId, adName: adId, spend, impressions: null, reach: null, frequency: null,
+      clicks: null, ctr: null, cpc: "0.12", cpm: null, purchaseRoas: null,
+    });
+
+    it("asks Meta for the ad accounts' currency", async () => {
+      h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
+      h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", currency: "MYR" }] });
+      h.getAdInsights.mockResolvedValue([]);
+      await fetchOwnerAdPerformance("o1", "last_30d");
+      expect(h.metaGraphGet.mock.calls[0]![2].fields).toContain("currency");
+    });
+
+    it("carries each ad's account currency onto the row (null when Meta reported none)", async () => {
+      h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
+      h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", currency: "MYR" }, { id: "act_2" }] });
+      h.getAdInsights.mockImplementation(async (_t: string, acct: string) =>
+        acct === "act_1" ? [adRow("a1", "10")] : [adRow("b1", "5")]);
+      h.getAdCreative.mockResolvedValue(null);
+      const r = await fetchOwnerAdPerformance("o1", "last_30d");
+      if (!("ads" in r)) throw new Error("unexpected");
+      expect(r.ads.find((a) => a.adId === "a1")!.currency).toBe("MYR");
+      expect(r.ads.find((a) => a.adId === "b1")!.currency).toBeNull();
+    });
+
+    it("never orders ads across currencies by raw spend — each currency is its own run", async () => {
+      h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
+      h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", currency: "MYR" }, { id: "act_2", currency: "SGD" }] });
+      // Raw-magnitude sorting would interleave these: SGD 30, MYR 20, SGD 9, MYR 8.
+      h.getAdInsights.mockImplementation(async (_t: string, acct: string) =>
+        acct === "act_1" ? [adRow("myr_hi", "20"), adRow("myr_lo", "8")]
+                         : [adRow("sgd_hi", "30"), adRow("sgd_lo", "9")]);
+      h.getAdCreative.mockResolvedValue(null);
+      const r = await fetchOwnerAdPerformance("o1", "last_30d");
+      if (!("ads" in r)) throw new Error("unexpected");
+      expect(r.ads.map((a) => a.adId)).toEqual(["myr_hi", "myr_lo", "sgd_hi", "sgd_lo"]);
+    });
+
+    it("the MAX_ADS cap can't let one currency crowd another out entirely", async () => {
+      h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
+      h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", currency: "MYR" }, { id: "act_2", currency: "SGD" }] });
+      // MYR alone would fill the cap, and every MYR figure is numerically larger than every SGD one.
+      const myr = Array.from({ length: MAX_ADS + 10 }, (_, i) => adRow(`myr_${i}`, String(1000 + i)));
+      const sgd = [adRow("sgd_1", "3"), adRow("sgd_2", "2")];
+      h.getAdInsights.mockImplementation(async (_t: string, acct: string) => (acct === "act_1" ? myr : sgd));
+      h.getAdCreative.mockResolvedValue(null);
+      const r = await fetchOwnerAdPerformance("o1", "last_30d");
+      if (!("ads" in r)) throw new Error("unexpected");
+      expect(r.ads).toHaveLength(MAX_ADS);
+      expect(r.ads.some((a) => a.currency === "SGD")).toBe(true);
+      expect(r.truncated).toBe(true);
+    });
+  });
+
   it("organic is { posts: [] } when organic scope is granted", async () => {
     h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read,pages_read_engagement" });
     h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1" }] });

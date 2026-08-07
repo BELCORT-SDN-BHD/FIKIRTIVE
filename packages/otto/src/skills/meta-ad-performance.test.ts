@@ -22,4 +22,20 @@ describe("executeMetaAdPerformance", () => {
     expect(r.organic).toEqual({ status: "pending_permission" });
     expect((r.ads as unknown[]).length).toBe(1);
   });
+
+  // #692 判官 r1: Otto retells these numbers in chat, so the currency has to reach it too —
+  // and it must be told never to rank MYR spend against SGD spend.
+  it("passes each ad's currency through to chat", async () => {
+    const ctx = { metaPerformance: { getAds: async () => ({ ads: [
+      { adId: "a1", adName: "One", accountId: "act_1", currency: "MYR", metrics: { spend: "10" }, creative: null },
+      { adId: "b1", adName: "Two", accountId: "act_2", currency: "SGD", metrics: { spend: "30" }, creative: null },
+    ], truncated: false, organic: { posts: [] }, datePreset: "last_30d", fetchedAt: "t" }) } };
+    const r = await executeMetaAdPerformance({ datePreset: "last_30d" }, { context: ctx as never });
+    expect(JSON.stringify(r)).toContain("MYR");
+    expect(JSON.stringify(r)).toContain("SGD");
+  });
+
+  it("the tool description forbids comparing money across currencies", () => {
+    expect(metaAdPerformanceSkill.description.toLowerCase()).toContain("currency");
+  });
 });

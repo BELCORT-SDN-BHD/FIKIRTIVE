@@ -194,6 +194,45 @@ describe("buildKpis — currency (#692)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #692 判官 r1 [P2]: a bare number needs saying-so on its OWN line. Keying the
+// explanation off "more than one line" left a single unknown bucket — one bare
+// number, no caveat anywhere — reading exactly like a normal total.
+describe("buildKpis — naming the unknown-currency line (#692 r1)", () => {
+  it("names the bare line when the ONLY account has no currency", () => {
+    const spend = buildKpis([], [acct(null, { spend: "10" })])[2] as Kpi;
+    expect(spend.values).toEqual(["10.00"]);
+    expect(spend.unknownCurrencyValue).toBe("10.00");
+  });
+
+  it("names the bare line when it sits beside a known-currency subtotal", () => {
+    const spend = buildKpis([], [acct(null, { spend: "10" }), acct("MYR", { spend: "5" })])[2] as Kpi;
+    expect(spend.unknownCurrencyValue).toBe("10.00");
+    expect(spend.values).toContain(spend.unknownCurrencyValue!);
+  });
+
+  it("names it on Sales (est.) too, not just Spend", () => {
+    const sales = buildKpis([], [acct(null, { spend: "10", purchaseRoas: "2" })])[3] as Kpi;
+    expect(sales.values).toEqual(["20"]);
+    expect(sales.unknownCurrencyValue).toBe("20");
+  });
+
+  it("is null when every account's currency is known", () => {
+    const kpis = buildKpis([], [acct("MYR", { spend: "10" }), acct("SGD", { spend: "5" })]);
+    expect(kpis[2]!.unknownCurrencyValue).toBeNull();
+    expect(kpis[3]!.unknownCurrencyValue).toBeNull();
+  });
+
+  it("is null for counts, and null when there is no money data at all", () => {
+    const kpis = buildKpis([day("2026-06-01", 500, 40)], []);
+    expect(kpis[0]!.unknownCurrencyValue).toBeNull(); // Reach
+    expect(kpis[1]!.unknownCurrencyValue).toBeNull(); // Engagement
+    // "—" means no data, NOT an unknown currency
+    expect(kpis[2]!.values).toEqual(["—"]);
+    expect(kpis[2]!.unknownCurrencyValue).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 describe("buildKpis — deltas via series halving", () => {
   it("delta null for Reach & Engagement when series has < 14 points", () => {
     const kpis = buildKpis(seriesOf(new Array(13).fill(100)), []);
