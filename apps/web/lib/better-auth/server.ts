@@ -10,7 +10,7 @@ import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
-import { isRevokedEmail } from "@/lib/allowlist";
+import { isAllowedEmail, isRevokedEmail } from "@/lib/allowlist";
 import { admitSelfSignup, signupsPaused, SIGNUPS_PAUSED_MESSAGE } from "@/lib/signup-gate";
 
 /** #543 — the one Better Auth path that self-service registration owns. Anything that is not
@@ -199,6 +199,12 @@ export const auth = betterAuth({
         // is the auth-email queue (lib/better-auth/sender.ts), which has already checked access
         // and the per-address budget before minting anything. So delivery is simply awaited here:
         // there is no request waiting on it to await.
+        //
+        // The access check is repeated anyway, and the repetition is deliberate: it makes the
+        // ENDPOINT invite-only rather than only the queue in front of it, so no future caller of
+        // `auth.api.signInMagicLink` can mail an address nobody invited. Its cost is invisible —
+        // it is a background query behind an answer the merchant already has.
+        if (!(await isAllowedEmail(email))) return;
         await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
       },
     }),
