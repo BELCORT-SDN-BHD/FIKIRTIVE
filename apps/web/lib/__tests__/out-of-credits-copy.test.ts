@@ -17,16 +17,19 @@
  *      (startRefGen)、变体生成(createVariant → dispatchVariantJob)。
  *   ② 指路必须是活的:文案点名的去处,必须真的挂在全局导航上。这条封的是「换一句好听的
  *      死指针」—— 光把 "reply" 改成 "contact billing support" 一样红。
- *   ③ 词法钉板:**运行时与源码零残留** —— apps/ 与 packages/ 全文(含注释)不得再出现
- *      这个说法。豁免两处,都是有意的:docs/ 是历史档案(记录产品当年说过什么,改了就等于
- *      毁审计线索),以及本文件自身(封禁清单必须写得出被禁词)。注释一并封死,是因为注释
- *      正是过期概念被下一个人抄进新文案的载体。断言 ① 封的是行为,③ 封的是「另起一处再写一遍」。
+ *   ③ 词法钉板:**运行时与源码零残留** —— apps/ 与 packages/ 下**每一个 tracked 文件**全文
+ *      都不得再出现这个说法,不分后缀:注释、CSS、JSON、SVG、SQL 迁移、schema.prisma 一律算。
+ *      过期概念在样式表注释里和在 .ts 里一样能被下一个人抄进新文案,按后缀挑着扫等于自己
+ *      开天窗。豁免两处,都是有意的:docs/ 是历史档案(记录产品当年说过什么,改了就等于毁
+ *      审计线索),以及本文件自身(封禁清单必须写得出被禁词)—— 后者按**完整相对路径**豁免,
+ *      不按文件名,免得任何同名新文件跟着白拿豁免。断言 ① 封的是行为,③ 封的是「另起一处再写一遍」。
  *   ④ 标点钉板:同一句 "Otto hit a snag" 在三处曾经两种破折号,商家实际读到的是 ASCII "-"。
  *      按仓库惯例归一到 em dash,并锁住三处一致。
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { INTERNAL_PER_DISPLAY } from "@fikirtive/core";
 
@@ -180,27 +183,37 @@ describe("#699 the top-up destination the copy names is live navigation", () => 
 // ③ the beta framing is dead in everything that ships
 // ---------------------------------------------------------------------------
 describe("#699 nothing in apps/ or packages/ calls them beta credits", () => {
-  const SCAN_ROOTS = ["apps", "packages"];
-  const SKIP_DIR = /^(node_modules|\.next|dist|generated|coverage|\.turbo)$/;
-  /** The ban is on the whole file, comments included: a comment is how a retired concept gets
-   *  carried forward into the next person's copy. The one exemption is this file — a ban list
-   *  has to be able to write down the words it bans. docs/ is out of scope on purpose: those
-   *  are historical records of what the product once said, and rewriting them would destroy
-   *  the audit trail rather than fix anything. */
-  const SELF = path.basename(__filename);
+  /** The ban covers EVERY tracked file under apps/ and packages/ — not only the ones that look
+   *  like source. A retired concept travels just as well in a CSS comment, a JSON fixture, an
+   *  SVG label, a SQL migration or schema.prisma as it does in a .ts file, and whatever carries
+   *  it is what the next person copies into new copy. So there is no extension allow-list:
+   *  everything tracked is read as text, and a binary simply never matches the pattern.
+   *
+   *  Exactly one exemption, matched on the full repo-relative path — a ban list has to be able
+   *  to write down the words it bans. Matching the path rather than the basename means a new
+   *  file that happens to share this name is still scanned.
+   *
+   *  docs/ is out of scope on purpose: those are historical records of what the product once
+   *  said, and rewriting them would destroy the audit trail rather than fix anything. */
+  const GUARD_ITSELF = "apps/web/lib/__tests__/out-of-credits-copy.test.ts";
 
-  function walk(dir: string): string[] {
-    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-      if (entry.isDirectory()) return SKIP_DIR.test(entry.name) ? [] : walk(path.join(dir, entry.name));
-      if (entry.name === SELF) return [];
-      return /\.(tsx?|jsx?|mjs)$/.test(entry.name) ? [path.join(dir, entry.name)] : [];
-    });
-  }
+  it("no tracked file carries the phrase — code, comment, stylesheet, schema or asset", () => {
+    const tracked = execFileSync("git", ["ls-files", "-z", "apps", "packages"], {
+      cwd: REPO_ROOT,
+      maxBuffer: 64 * 1024 * 1024,
+    })
+      .toString("utf8")
+      .split("\0")
+      .filter(Boolean);
 
-  it("no shipped file carries the phrase, in code or in a comment", () => {
-    const offenders = SCAN_ROOTS.flatMap((root) => walk(path.join(REPO_ROOT, root)))
-      .filter((file) => /beta[\s_-]*credit/i.test(readFileSync(file, "utf8")))
-      .map((file) => path.relative(REPO_ROOT, file));
+    // a scan over an empty list would be vacuously green — pin that it really enumerated.
+    expect(tracked.length, "git ls-files returned (almost) nothing — the scan proves nothing")
+      .toBeGreaterThan(500);
+    expect(tracked, "the guard's own path no longer resolves — the exemption is stale").toContain(GUARD_ITSELF);
+
+    const offenders = tracked
+      .filter((relative) => relative !== GUARD_ITSELF)
+      .filter((relative) => /beta[\s_-]*credit/i.test(readFileSync(path.join(REPO_ROOT, relative), "utf8")));
 
     expect(offenders, `these still say "beta credits":\n${offenders.join("\n")}`).toEqual([]);
   });
