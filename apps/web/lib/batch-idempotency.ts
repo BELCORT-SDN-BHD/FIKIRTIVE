@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   canvasMaterialWithoutRepair,
+  genJobEndedWithoutDelivering,
   imageDefaults,
   videoDefaults,
   type GenModel,
@@ -237,6 +238,32 @@ function canonicalJson(value: unknown): string {
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+/**
+ * 一个逻辑格**这一趟会不会被收钱**,只判一次(#708)。
+ *
+ *   - `conflict` —— 历史里有材料对不上的行:这一格根本不会被受理,收 0;
+ *   - `reused` —— 历史里有一单还没「结束且什么都没交付」:复用那一单,收 0;
+ *   - `fresh` —— 没有历史,或历史全都结束且没交付:这一趟真会新建 + 预扣,收全价。
+ *
+ * 为什么必须只有一份:报价与派发原本各判各的 —— 派发这边知道「已经生成过的条目不再收费」,
+ * 报价那边不知道,于是确认卡把一笔实收 1 credit 的动作报成 12 credits,并拿这个数去比
+ * 余额、去禁用按钮,把商家挡在一笔他其实付得起的动作外面(#708)。判据抄成两份,
+ * 「说的」与「做的」就一定会分家。
+ *
+ * 纯函数:只读历史行,不写库、不动钱。它**不是**预扣授权 —— startGen 在项目锁里重判一次,
+ * 那一次才算数;这里的结果只用于「花钱之前如实告诉商家会扣多少」。
+ */
+export type FactoryDisposition = "fresh" | "reused" | "conflict";
+
+export function factoryHistoryDisposition(
+  history: readonly FactoryHistoryRow[],
+  expected: FactoryMaterial,
+): FactoryDisposition {
+  if (history.some((prior) => !factoryMaterialMatches(prior, expected))) return "conflict";
+  if (history.some((prior) => !genJobEndedWithoutDelivering(prior.status))) return "reused";
+  return "fresh";
 }
 
 /** Full material binding. FAILED rows are deliberately not special: status never weakens content

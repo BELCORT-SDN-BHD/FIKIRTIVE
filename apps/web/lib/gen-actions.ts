@@ -49,6 +49,7 @@ import {
 } from "./campaign-approval-lock";
 import {
   canvasActionKey,
+  factoryHistoryDisposition,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
   parseCanvasActionKey,
@@ -170,7 +171,10 @@ function factoryHistoryVerdict(
   attempt: FactoryAttemptKey,
   material: FactoryMaterial,
 ): StartGenResult | null {
-  if (history.some((prior) => !factoryMaterialMatches(prior, material))) {
+  // 判据只有一份(#708):`factoryHistoryDisposition` 同时是报价那一侧「这一格会不会收钱」
+  // 的依据,所以确认卡说的和这里做的不可能分家。
+  const disposition = factoryHistoryDisposition(history, material);
+  if (disposition === "conflict") {
     return {
       error: "That batchId is already in use for different content — start a new batch with a fresh id.",
       disposition: "conflict",

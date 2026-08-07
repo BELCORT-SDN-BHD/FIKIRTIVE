@@ -18,8 +18,12 @@ import {
 import { displayCredits } from "@fikirtive/core/spend";
 import {
   confirmCampaignGeneration,
+  quoteCampaignGeneration,
   type CampaignGenQuote,
+  type CampaignGenQuoteLine,
   type CampaignGenQuoteResult,
+  type CampaignVideoMenu,
+  type CampaignVideoSpec,
   type ConfirmCampaignGenerationResult,
 } from "@/lib/campaign-generation-confirm";
 import type { BatchInterruption } from "@/lib/factory-batch";
@@ -33,15 +37,24 @@ import { CampaignNav } from "./campaign-nav";
 
 type DetailResult = Awaited<ReturnType<typeof getCampaign>>;
 type QuoteResult = CampaignGenQuoteResult;
-type QuoteSnapshot = { ok: true; quote: CampaignGenQuote } | { error: string };
+type QuoteSnapshot = {
+  quote: CampaignGenQuote | null;
+  balanceDisplayCredits: number;
+  videoMenu: CampaignVideoMenu | null;
+};
 type BatchResult = Extract<ConfirmCampaignGenerationResult, { ok: true }>["result"];
 
 export function campaignGenerationResultTitle(
-  result: Pick<BatchResult, "dispatched" | "failed">,
+  result: Pick<BatchResult, "dispatched" | "failed" | "reused">,
   interruption: Pick<BatchInterruption, "current"> | null,
-): "Generation did not start" | "Generation partly started" | "Generation started" {
+): "Generation did not start" | "Generation partly started" | "Generation started" | "Everything was already generated" {
   const currentUnknown = interruption?.current === "unknown";
-  if (result.dispatched === 0 && !currentUnknown) return "Generation did not start";
+  if (result.dispatched === 0 && !currentUnknown) {
+    // #708 同源症状 ①：对一份**已经做完**的工作说「没开始」，读起来像失败。什么都没派发
+    // 有两种完全不同的原因，标题必须分开说：一件也没做成 vs 早就做完了。
+    if (result.failed === 0 && result.reused > 0 && !interruption) return "Everything was already generated";
+    return "Generation did not start";
+  }
   if (interruption || result.failed > 0) return "Generation partly started";
   return "Generation started";
 }
@@ -88,24 +101,76 @@ function ConfirmWorkspace({
     [campaign.plan],
   );
   const [quoteSnapshot, setQuoteSnapshot] = useState<QuoteSnapshot>(
-    "ok" in initialQuote ? { ok: true, quote: initialQuote.quote } : initialQuote,
+    "ok" in initialQuote
+      ? {
+          quote: initialQuote.quote,
+          balanceDisplayCredits: initialQuote.balanceDisplayCredits,
+          videoMenu: initialQuote.videoMenu,
+        }
+      : { quote: null, balanceDisplayCredits: 0, videoMenu: null },
   );
 
   // Quote lines are the server-authoritative review snapshot. Do not filter them through the
   // separately loaded detail snapshot: those reads happen in parallel and could observe
   // different plan versions. Optional hook/platform labels may come from detail; paid content
   // always renders from line.brief and is bound by the quote fingerprint.
-  const approvedLines = "ok" in quoteSnapshot ? quoteSnapshot.quote.lines : [];
-  const totalDisplayCredits = "ok" in quoteSnapshot ? quoteSnapshot.quote.totalDisplayCredits : 0;
-  const contentFingerprint = "ok" in quoteSnapshot ? quoteSnapshot.quote.contentFingerprint : "";
-  const balanceDisplayCredits = "ok" in initialQuote ? initialQuote.balanceDisplayCredits : 0;
+  const approvedLines = quoteSnapshot.quote?.lines ?? [];
+  // #708：这是「真会离开余额的数」—— 已经生成过的条目服务端已计 0。总额、余额判断与
+  // 按钮禁用全部读它，所以商家再也不会被一个他不用付的差额挡在门外。
+  const totalDisplayCredits = quoteSnapshot.quote?.totalDisplayCredits ?? 0;
+  const contentFingerprint = quoteSnapshot.quote?.contentFingerprint ?? "";
+  const reusedCount = quoteSnapshot.quote?.reusedCount ?? 0;
+  const blockedCount = quoteSnapshot.quote?.blockedCount ?? 0;
+  const balanceDisplayCredits = quoteSnapshot.balanceDisplayCredits;
+  const videoMenu = quoteSnapshot.videoMenu;
   const insufficientCredits = balanceDisplayCredits < totalDisplayCredits;
+  const hasVideoLines = approvedLines.some((line) => line.kind === "video");
+  const nothingLeftToGenerate = approvedLines.length > 0 && reusedCount === approvedLines.length;
 
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
+  const [quoting, setQuoting] = useState(false);
   const [error, setError] = useState<string | null>("error" in initialQuote ? initialQuote.error : null);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [interruption, setInterruption] = useState<BatchInterruption | null>(null);
+
+  // Every choice that can move the price re-asks the SERVER for the price. The browser never
+  // computes or adjusts a credit number — it only renders the one the server just sent, and
+  // confirmation is blocked while a re-quote is in flight so a stale number can never be signed.
+  async function requote(nextProjectId: string, nextVideoSpec: CampaignVideoSpec | null) {
+    setQuoting(true);
+    try {
+      const response = await quoteCampaignGeneration(campaignId, {
+        projectId: nextProjectId || null,
+        videoSpec: nextVideoSpec,
+      });
+      if ("error" in response) {
+        setError(response.error);
+        return;
+      }
+      setQuoteSnapshot({
+        quote: response.quote,
+        balanceDisplayCredits: response.balanceDisplayCredits,
+        videoMenu: response.videoMenu,
+      });
+      setError(null);
+    } catch {
+      setError("We couldn't refresh the price. Try again before confirming.");
+    } finally {
+      setQuoting(false);
+    }
+  }
+
+  function chooseProject(nextProjectId: string) {
+    setProjectId(nextProjectId);
+    // 「已经生成过」是**这个项目里**的事实：换项目就是换一套历史，价必须重新问一遍。
+    void requote(nextProjectId, videoMenu?.selected ?? null);
+  }
+
+  function chooseVideoSpec(next: Partial<CampaignVideoSpec>) {
+    if (!videoMenu) return;
+    void requote(projectId, { ...videoMenu.selected, ...next });
+  }
 
   // The server derives the stable batch id, stable per-entry identities, and a fresh attempt id.
   // The browser returns only the server-rendered total + opaque content fingerprint; it never
@@ -123,9 +188,10 @@ function ConfirmWorkspace({
         projectId,
         expectedTotalCredits: totalDisplayCredits,
         expectedContentFingerprint: contentFingerprint,
+        videoSpec: videoMenu?.selected ?? null,
       });
       if (!("ok" in response)) {
-        if (response.quote) setQuoteSnapshot({ ok: true, quote: response.quote });
+        if (response.quote) setQuoteSnapshot((prev) => ({ ...prev, quote: response.quote ?? prev.quote }));
         if (response.partial) {
           setResult(response.partial.partial);
           setInterruption(response.partial);
@@ -133,7 +199,7 @@ function ConfirmWorkspace({
         setError(response.error);
         return;
       }
-      setQuoteSnapshot({ ok: true, quote: response.quote });
+      setQuoteSnapshot((prev) => ({ ...prev, quote: response.quote }));
       setResult(response.result);
       setInterruption(null);
     } catch {
@@ -199,7 +265,18 @@ function ConfirmWorkspace({
           <CardContent className="grid gap-3">
             {zeroDispatchConfirmed ? (
               <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-                <strong>Nothing was charged.</strong> The server confirmed that no new generation job was dispatched.
+                {/* #708 同源症状 ①：什么都没派发，可能是「一件也没做成」，也可能是
+                    「早就做完了」。两句话必须分开说，否则一份完成的工作会被读成失败。 */}
+                {result.failed === 0 && result.reused > 0 ? (
+                  <>
+                    <strong>Nothing new was charged.</strong> Every item here was already generated, so this run
+                    reserved nothing.
+                  </>
+                ) : (
+                  <>
+                    <strong>Nothing was charged.</strong> The server confirmed that no new generation job was dispatched.
+                  </>
+                )}
               </div>
             ) : interruption ? (
               <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
@@ -274,18 +351,41 @@ function ConfirmWorkspace({
                       <Badge variant="outline">{line.kind === "video" ? <VideoIcon className="size-3" /> : <ImageIcon className="size-3" />}{line.kind}</Badge>
                       {/* #643 T2: the format the merchant planned and the shape it will actually
                           be delivered in, side by side — one server-derived value, shown before
-                          anything is charged. */}
+                          anything is charged. Video lines carry the full spec in their chips
+                          below (#709), so the shape is not printed twice. */}
                       <span className="text-xs text-muted-foreground">
-                        {entry?.platform} · {entry?.format}{line.aspectRatio ? ` · ${line.aspectRatio}` : ""}
+                        {entry?.platform} · {entry?.format}
+                        {line.kind === "image" && line.aspectRatio ? ` · ${line.aspectRatio}` : ""}
                       </span>
                     </span>
-                    <span className="text-sm font-semibold">{line.displayCredits} {line.displayCredits === 1 ? "credit" : "credits"}</span>
+                    <LinePrice line={line} />
                   </div>
                   <p className="mt-3 text-sm font-semibold">{entry?.hook || "Untitled entry"}</p>
                   <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{line.brief}</p>
+                  {/* #709: what this item will actually be — length, resolution, shape, sound.
+                      Server-derived from the very same resolved spec that is priced, frozen into
+                      the job, and sent to the engine. */}
+                  {line.specChips.length > 0 ? (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {line.specChips.map((chip) => (
+                        <span
+                          key={chip}
+                          className="rounded-[7px] border border-border bg-card px-[7px] py-[2px] font-mono text-[11px] text-muted-foreground"
+                        >
+                          {chip}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                   <p className="mt-2 text-xs text-muted-foreground">
                     Capability: {line.kind === "video" ? "Video" : "Image"}
                   </p>
+                  {line.charge === "blocked" ? (
+                    <p className="mt-2 text-xs text-destructive">
+                      This entry changed since it was last generated, so it will not start. Undo the edit, or generate
+                      it into a different project.
+                    </p>
+                  ) : null}
                 </div>
               );
             })}
@@ -301,13 +401,49 @@ function ConfirmWorkspace({
             <CardContent className="grid gap-4">
               <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
                 Destination project
-                <Select value={projectId} onValueChange={setProjectId}>
+                <Select value={projectId} onValueChange={chooseProject}>
                   <SelectTrigger><SelectValue placeholder="Choose a project" /></SelectTrigger>
                   <SelectContent>
                     {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </label>
+              {/* #709: the video tier is a choice again, not a hidden default. Both menus come
+                  from the live model config, and picking one re-asks the server for the price. */}
+              {hasVideoLines && videoMenu && videoMenu.resolutions.length > 0 ? (
+                <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
+                  Video resolution
+                  <Select
+                    value={videoMenu.selected.resolution}
+                    disabled={busy || quoting}
+                    onValueChange={(resolution) => chooseVideoSpec({ resolution })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {videoMenu.resolutions.map((resolution) => (
+                        <SelectItem key={resolution} value={resolution}>{resolution}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              ) : null}
+              {hasVideoLines && videoMenu && videoMenu.durations.length > 0 ? (
+                <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
+                  Video length
+                  <Select
+                    value={String(videoMenu.selected.durationSeconds)}
+                    disabled={busy || quoting}
+                    onValueChange={(seconds) => chooseVideoSpec({ durationSeconds: Number(seconds) })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {videoMenu.durations.map((seconds) => (
+                        <SelectItem key={seconds} value={String(seconds)}>{seconds}s</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+              ) : null}
               <div className="flex items-baseline justify-between border-t border-border pt-3">
                 <span className="text-sm text-muted-foreground">Total</span>
                 <span className="text-2xl font-semibold tracking-tight">
@@ -320,6 +456,24 @@ function ConfirmWorkspace({
                   {balanceDisplayCredits} {balanceDisplayCredits === 1 ? "credit" : "credits"}
                 </span>
               </div>
+              {/* #708: say where the difference went. A total that is smaller than the sum of the
+                  lines is only honest if the merchant can see why. */}
+              {nothingLeftToGenerate ? (
+                <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
+                  Everything in this plan is already generated. Confirming again will not charge you.
+                </div>
+              ) : reusedCount > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {reusedCount} {reusedCount === 1 ? "item is" : "items are"} already generated, so this run only
+                  charges for the rest.
+                </p>
+              ) : null}
+              {blockedCount > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  {blockedCount} {blockedCount === 1 ? "item" : "items"} changed since it was generated and will not
+                  start, so nothing is charged for {blockedCount === 1 ? "it" : "them"}.
+                </p>
+              ) : null}
               {insufficientCredits ? (
                 <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
                   <p>
@@ -330,9 +484,16 @@ function ConfirmWorkspace({
                   </Link>
                 </div>
               ) : null}
-              <Button type="button" className="w-full" disabled={busy || !projectId || insufficientCredits} onClick={() => confirm()}>
-                {busy ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
-                Confirm · {totalDisplayCredits} {totalDisplayCredits === 1 ? "credit" : "credits"}
+              <Button
+                type="button"
+                className="w-full"
+                disabled={busy || quoting || !projectId || insufficientCredits}
+                onClick={() => confirm()}
+              >
+                {busy || quoting ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
+                {totalDisplayCredits === 0
+                  ? "Confirm · no charge"
+                  : `Confirm · ${totalDisplayCredits} ${totalDisplayCredits === 1 ? "credit" : "credits"}`}
               </Button>
               <Button asChild variant="ghost" className="w-full">
                 <Link href={`/campaign/${campaignId}`}><ArrowLeft />Back without generating</Link>
@@ -380,6 +541,30 @@ function EmptyState({ icon, title, body, campaignId }: { icon: React.ReactNode; 
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * 一行条目的价钱(#708)。写的必须是**这一趟真会收的钱**:已经生成过的条目收 0,
+ * 内容改过、这一趟不会被受理的条目也收 0。全价照旧说出来 —— 商家有权知道差额从哪来,
+ * 而不是看见一个没解释的 0。
+ */
+function LinePrice({ line }: { line: Pick<CampaignGenQuoteLine, "charge" | "displayCredits" | "fullDisplayCredits"> }) {
+  if (line.charge === "new") {
+    return (
+      <span className="text-sm font-semibold">
+        {line.displayCredits} {line.displayCredits === 1 ? "credit" : "credits"}
+      </span>
+    );
+  }
+  return (
+    <span className="flex shrink-0 flex-col items-end">
+      <span className="text-sm font-semibold">0 credits</span>
+      <span className="text-xs text-muted-foreground">
+        {line.charge === "reused" ? "Already generated" : "Will not start"} · normally {line.fullDisplayCredits}{" "}
+        {line.fullDisplayCredits === 1 ? "credit" : "credits"}
+      </span>
+    </span>
   );
 }
 

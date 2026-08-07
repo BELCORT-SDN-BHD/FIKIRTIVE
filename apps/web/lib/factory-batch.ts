@@ -34,6 +34,7 @@ import { pricedGenCredits, GEN_MODELS, GEN_VIDEO_MODELS, type GenSpendInput } fr
 import type { PrismaClient } from "@fikirtive/db";
 import {
   factoryAttemptKey,
+  factoryHistoryDisposition,
   factoryLogicalPrefix,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
@@ -41,6 +42,7 @@ import {
   type FactoryAttemptKey,
   type FactoryHistoryRow,
   type FactoryMaterial,
+  type FactoryVideoOptions,
 } from "./batch-idempotency";
 
 /** Batch size ceiling. A money-safety guard: an unbounded batch would let one
@@ -235,6 +237,80 @@ function stableCellScope(batchId: string, stableId: string): string {
  *  answer "never dispatched" for work that really was charged. */
 export function stableCellLogicalPrefix(batchId: string, stableId: string): string {
   return factoryLogicalPrefix(stableCellScope(batchId, stableId), 0);
+}
+
+/**
+ * 这个格**真会跑的那份视频规格**(#709)——`normalizeFactoryMaterial` 解析默认值之后的结果,
+ * 也正是落进 `GenJob.videoOptions` 的那份快照、`pricedGenCredits` 拿去算钱的那份输入。
+ *
+ * 卡面报规格必须读它,而不是读 `cell` 上那几个可能为空的字段:名字没说形状的片子格式
+ * (`video`)在 cell 上根本没有 aspectRatio,照 cell 显示就是「一个规格字段都不显示」——
+ * 那正是 #709 的现象。图片返回 null(形状走 imageOptions,不归这里管)。PURE。
+ */
+export function cellVideoSpec(cell: GenCell): FactoryVideoOptions | null {
+  return cellMaterial(cell).videoOptions;
+}
+
+/** 一个格这一趟的收费预判。`new` 会被收 `credits`;`reused` / `blocked` 收 0。 */
+export interface CellChargePreview {
+  index: number;
+  disposition: "new" | "reused" | "blocked" | "text";
+  /** 这一趟真会被预扣的内部 credits —— reused / blocked / text 一律 0。 */
+  credits: number;
+}
+
+export interface BatchChargePreview {
+  cells: CellChargePreview[];
+  /** 只把 `new` 的格加起来 —— 这就是确认下去真会离开余额的那个数。 */
+  totalCredits: number;
+}
+
+/**
+ * 确认之前,如实预判这一批**真会收多少钱**(#708)。READ-only、$0:不建任务、不预扣、
+ * 不叫 provider,只读 owner+project 范围内的历史行。
+ *
+ * 为什么它必须住在这里:身份解析(稳定 id / 迁移期位置键)与材料比对是 `orchestrateBatch`
+ * 派发时走的那一套,报价若自己另写一套,就会再一次「说的与做的分家」。这里复用的是
+ * **同一个** `prepareStableCellPlan` + `cellMaterial` + `factoryHistoryDisposition`。
+ *
+ * 它**不是**预扣授权:startGen 在项目锁里重判一次,那一次才算数。所以预判与真实结果之间
+ * 的竞态(报价后那一单恰好失败/完成)不会让钱出错 —— 调用方拿报价总额与确认时重算的总额
+ * 对签,对不上就 fail closed 让商家重看。
+ */
+export async function previewBatchCharges(
+  db: Pick<PrismaClient, "genJob">,
+  args: OrchestrateArgs,
+): Promise<BatchChargePreview | { error: string }> {
+  const prepared = await prepareStableCellPlan(db, args);
+  if ("error" in prepared) return prepared;
+
+  const cells: CellChargePreview[] = [];
+  for (let i = 0; i < args.cells.length; i++) {
+    const cell = args.cells[i];
+    if (cell.type === "text") {
+      cells.push({ index: i, disposition: "text", credits: 0 });
+      continue;
+    }
+    if (genCellError(cell)) {
+      cells.push({ index: i, disposition: "blocked", credits: 0 });
+      continue;
+    }
+    const identity = prepared.identityByIndex.get(i) ?? factoryAttemptKey(args.batchId, i, args.attemptId);
+    const history = prepared.historyByIndex.get(i) ?? (await db.genJob.findMany({
+      where: {
+        ownerId: args.ownerId,
+        projectId: args.projectId,
+        idempotencyKey: { startsWith: identity.logicalPrefix },
+      },
+      orderBy: { createdAt: "desc" },
+      select: FACTORY_HISTORY_SELECT,
+    }) as FactoryHistoryRow[]);
+    const disposition = factoryHistoryDisposition(history, cellMaterial(cell, args.threadId));
+    if (disposition === "fresh") cells.push({ index: i, disposition: "new", credits: quoteCell(cell) });
+    else if (disposition === "reused") cells.push({ index: i, disposition: "reused", credits: 0 });
+    else cells.push({ index: i, disposition: "blocked", credits: 0 });
+  }
+  return { cells, totalCredits: cells.reduce((sum, cell) => sum + cell.credits, 0) };
 }
 
 /** The persisted key is still the reserved 79-char factory family parsed by startGen. */

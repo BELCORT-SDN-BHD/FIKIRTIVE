@@ -120,7 +120,7 @@ const {
   factoryMaterialMatches,
   parseFactoryAttemptKey,
 } = await import("../batch-idempotency");
-const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
+const { INTERNAL_PER_DISPLAY, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel } = await import("@fikirtive/core");
 const {
   applyCampaignApprovalGate,
   campaignApprovalGateFor,
@@ -132,6 +132,8 @@ const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
 const IMG = 1;
 const VID = 11; // seedance-2-fast 720p/5s(#644 Founder 裁决 2026-08-06:8 → 11 显示 credits)
+// #645 T4 价目表(Founder 裁决 2026-08-06):480p = 半价档,5 秒 = 6 显示 credits。
+const VID_480 = 6;
 const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);
 
 let failPrompts = new Set<string>();
@@ -223,10 +225,19 @@ function rawRequest(expectedTotalCredits: number, expectedContentFingerprint = V
   return { campaignId: CAMPAIGN_ID, projectId: PROJECT_ID, expectedTotalCredits, expectedContentFingerprint };
 }
 
-async function currentQuote() {
-  const quoted = await quoteCampaignGeneration(CAMPAIGN_ID);
+type QuoteOptions = {
+  projectId?: string | null;
+  videoSpec?: { resolution: string; durationSeconds: number } | null;
+};
+
+async function currentQuoteResult(options?: QuoteOptions) {
+  const quoted = await quoteCampaignGeneration(CAMPAIGN_ID, options);
   if (!("ok" in quoted)) throw new Error(quoted.error);
-  return quoted.quote;
+  return quoted;
+}
+
+async function currentQuote(options?: QuoteOptions) {
+  return (await currentQuoteResult(options)).quote;
 }
 
 async function reviewedRequest(over: Partial<ReturnType<typeof rawRequest>> = {}) {
@@ -282,6 +293,9 @@ beforeEach(() => {
       // #643 T2：形状是真 startGen 材料的一部分，替身漏掉它就会比真库宽容，
       // 「换了形状还当成同一份内容」这类缺陷永远测不出来。
       aspectRatio: req.aspectRatio as string | undefined,
+      // #709 同理：档位（时长/分辨率）也是材料的一部分，是**冻结形状**里那两格。
+      resolution: req.resolution as string | undefined,
+      durationSeconds: req.durationSeconds as number | undefined,
     });
     const priors = [...h.store.jobs.values()].filter(
       (job) =>
@@ -763,17 +777,253 @@ describe("confirmCampaignGeneration — order-independent exactly-once + migrati
   });
 });
 
+// ---------------------------------------------------------------------------
+// #708 —— 卡上写的那个数，就是确认之后真会离开余额的那个数
+// ---------------------------------------------------------------------------
+describe("#708 战役确认卡报的是真会收的钱", () => {
+  it("已生成的条目计 0：实收 1 credit 的动作不再被报成 12 credits", async () => {
+    seedCampaign([
+      entry("V1", { format: "reel", brief: "reel brief with letters" }),
+      entry("P1", { brief: "old post with letters" }),
+    ]);
+    seedProject();
+    const first = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in first)) throw new Error(first.error);
+    expect(first.result.dispatched).toBe(2);
+
+    // 计划里换掉那张图：片子已经生成过（复用、不再收费），图是全新的。
+    seedCampaign([
+      entry("V1", { format: "reel", brief: "reel brief with letters" }),
+      entry("P2", { brief: "brand new post with letters" }),
+    ]);
+
+    const quote = await currentQuote({ projectId: PROJECT_ID });
+    expect(quote.lines.map((line) => line.charge)).toEqual(["reused", "new"]);
+    expect(quote.lines.map((line) => line.displayCredits)).toEqual([0, IMG]);
+    // 全价照旧说得出口 —— 商家有权知道那 11 credits 的差额是怎么回事。
+    expect(quote.lines.map((line) => line.fullDisplayCredits)).toEqual([VID, IMG]);
+    expect(quote.reusedCount).toBe(1);
+    expect(quote.blockedCount).toBe(0);
+    expect(quote.totalDisplayCredits).toBe(IMG); // 修前:VID + IMG = 12
+  });
+
+  it("确认之后真会扣的,就是卡上那个数(报价 == 这一趟的预扣)", async () => {
+    seedCampaign([
+      entry("V1", { format: "reel", brief: "reel brief with letters" }),
+      entry("P1", { brief: "old post with letters" }),
+    ]);
+    seedProject();
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("first confirm failed");
+
+    seedCampaign([
+      entry("V1", { format: "reel", brief: "reel brief with letters" }),
+      entry("P2", { brief: "brand new post with letters" }),
+    ]);
+    const quote = await currentQuote({ projectId: PROJECT_ID });
+    const res = await confirmCampaignGeneration(
+      rawRequest(quote.totalDisplayCredits, quote.contentFingerprint),
+    );
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 1, reused: 1, failed: 0 });
+    // BatchResult.totalCredits = 这一趟真正预扣的内部 credits。
+    expect(res.result.totalCredits).toBe(quote.totalDisplayCredits * INTERNAL_PER_DISPLAY);
+  });
+
+  it("余额只够那笔新费用时,报价与余额同侧 —— 商家不再被一个他不用付的差额挡住", async () => {
+    seedCampaign([
+      entry("V1", { format: "reel", brief: "reel brief with letters" }),
+      entry("P1", { brief: "old post with letters" }),
+    ]);
+    seedProject();
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("first confirm failed");
+
+    seedCampaign([
+      entry("V1", { format: "reel", brief: "reel brief with letters" }),
+      entry("P2", { brief: "brand new post with letters" }),
+    ]);
+    h.store.creditAccounts.set(OWNER, 5 * INTERNAL_PER_DISPLAY);
+    const quoted = await currentQuoteResult({ projectId: PROJECT_ID });
+    expect(quoted.balanceDisplayCredits).toBe(5);
+    expect(quoted.quote.totalDisplayCredits).toBeLessThanOrEqual(quoted.balanceDisplayCredits);
+  });
+
+  it("内容改过、这一趟不会被受理的条目也计 0(收不了的钱不许报出来)", async () => {
+    seedCampaign([entry("E1", { brief: "original brief with letters" })]);
+    seedProject();
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("first confirm failed");
+
+    seedCampaign([entry("E1", { brief: "edited brief with letters" })]);
+    const quote = await currentQuote({ projectId: PROJECT_ID });
+    expect(quote.lines[0].charge).toBe("blocked");
+    expect(quote.blockedCount).toBe(1);
+    expect(quote.totalDisplayCredits).toBe(0);
+  });
+
+  it("目的项目未知时按全价报 —— 宁可多报,绝不少报", async () => {
+    seedCampaign([entry("E1", { brief: "already generated letters" })]);
+    seedProject();
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("first confirm failed");
+
+    const blind = await currentQuote();
+    expect(blind.lines[0].charge).toBe("new");
+    expect(blind.totalDisplayCredits).toBe(IMG);
+  });
+
+  it("换目的项目会重新报价 —— 另一个项目里没有这份历史,价就该回到全价", async () => {
+    seedCampaign([entry("E1", { brief: "already generated letters" })]);
+    seedProject();
+    seedProject(CAMPAIGN_ID, OWNER, "prj_other");
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("first confirm failed");
+
+    expect((await currentQuote({ projectId: PROJECT_ID })).totalDisplayCredits).toBe(0);
+    expect((await currentQuote({ projectId: "prj_other" })).totalDisplayCredits).toBe(IMG);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #709 —— 11 credits 买的是哪一档，卡上得有字；半价档要选得到
+// ---------------------------------------------------------------------------
+describe("#709 战役确认卡说清片子的规格,并且能选半价档", () => {
+  it("视频行写明形状 / 时长 / 分辨率 / 声音 —— 修前一个规格字段都没有", async () => {
+    seedCampaign([entry("V1", { format: "reel" }), entry("V2", { format: "video" })]);
+    const quote = await currentQuote();
+    expect(quote.lines[0].specChips).toEqual(["9:16", "5s", "720p", "With sound"]);
+    // 名字没说形状的片子格式(video)走默认档形状 —— 那个形状也必须被说出口，
+    // 而不是像修前那样卡上一个字都没有。
+    expect(quote.lines[1].specChips).toEqual(["16:9", "5s", "720p", "With sound"]);
+    expect(quote.lines.map((line) => line.displayCredits)).toEqual([VID, VID]);
+  });
+
+  it("图片行不重复第二套规格话术(形状已在 aspectRatio 上说过)", async () => {
+    seedCampaign([entry("E1", { format: "story" })]);
+    const quote = await currentQuote();
+    expect(quote.lines[0].specChips).toEqual([]);
+    expect(quote.lines[0].aspectRatio).toBe("9:16");
+  });
+
+  it("选 480p 半价档:报价按中央价目表减半,而且这一档真送进付费请求", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    seedProject();
+    const videoSpec = { resolution: "480p", durationSeconds: 5 };
+    const quote = await currentQuote({ projectId: PROJECT_ID, videoSpec });
+    expect(quote.totalDisplayCredits).toBe(VID_480);
+    expect(quote.lines[0].specChips).toEqual(["9:16", "5s", "480p", "With sound"]);
+
+    const res = await confirmCampaignGeneration({
+      ...rawRequest(quote.totalDisplayCredits, quote.contentFingerprint),
+      videoSpec,
+    });
+    if (!("ok" in res)) throw new Error(res.error);
+    const req = h.startGen.mock.calls[0]![0] as Record<string, unknown>;
+    expect(req.resolution).toBe("480p");
+    expect(req.durationSeconds).toBe(5);
+    expect(res.result.totalCredits).toBe(VID_480 * INTERNAL_PER_DISPLAY);
+  });
+
+  it("时长也选得到,价按秒表走(10s 720p = 已裁的 22 credits)", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    const quote = await currentQuote({ videoSpec: { resolution: "720p", durationSeconds: 10 } });
+    expect(quote.totalDisplayCredits).toBe(22);
+    expect(quote.lines[0].specChips).toContain("10s");
+  });
+
+  it("档位菜单与默认档来自中央配置,不是这条路自己发明的", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    const menu = (await currentQuoteResult()).videoMenu;
+    const options = GEN_VIDEO_MODEL_OPTIONS[activeVideoModel() as keyof typeof GEN_VIDEO_MODEL_OPTIONS];
+    expect(menu.resolutions).toEqual(options.resolutions);
+    expect(menu.durations).toEqual(options.durations);
+    expect(menu.selected).toEqual({
+      resolution: options.defaults?.resolution,
+      durationSeconds: options.defaults?.seconds,
+    });
+  });
+
+  it("菜单外的档一律拒绝,绝不悄悄回落默认档然后按另一个价收钱", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    seedProject();
+    const offMenu = { resolution: "1080p", durationSeconds: 5 };
+    expect(await quoteCampaignGeneration(CAMPAIGN_ID, { videoSpec: offMenu }))
+      .toMatchObject({ error: expect.stringMatching(/isn't available/i) });
+
+    const reviewed = await currentQuote();
+    const res = await confirmCampaignGeneration({
+      ...rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
+      videoSpec: offMenu,
+    });
+    expect("error" in res && res.error).toMatch(/isn't available/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+  });
+
+  it("档位进内容指纹:复核的是 720p、确认送的是 480p,必须被挡在花钱之前", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    seedProject();
+    const reviewed = await currentQuote();
+    const cheaper = await currentQuote({ videoSpec: { resolution: "480p", durationSeconds: 5 } });
+    expect(cheaper.contentFingerprint).not.toBe(reviewed.contentFingerprint);
+
+    const res = await confirmCampaignGeneration({
+      ...rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
+      videoSpec: { resolution: "480p", durationSeconds: 5 },
+    });
+    expect("error" in res && res.error).toMatch(/plan changed since you reviewed/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+  });
+
+  it("确认冻结档位:那一单的快照留在 720p,事后改档不动它,也不再收一次钱(#657 先例)", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    seedProject();
+    const reviewed = await currentQuote();
+    if (!("ok" in (await confirmCampaignGeneration(rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint))))) {
+      throw new Error("first confirm failed");
+    }
+    const frozen = [...h.store.jobs.values()][0]!;
+    expect(frozen.videoOptions).toMatchObject({ resolution: "720p", seconds: 5 });
+
+    const cheaper = await currentQuote({
+      projectId: PROJECT_ID,
+      videoSpec: { resolution: "480p", durationSeconds: 5 },
+    });
+    // 冻结的那一单是 720p：换档 = 换内容，这一趟不会被受理，收 0。
+    expect(cheaper.lines[0].charge).toBe("blocked");
+    expect(cheaper.totalDisplayCredits).toBe(0);
+
+    const res = await confirmCampaignGeneration({
+      ...rawRequest(cheaper.totalDisplayCredits, cheaper.contentFingerprint),
+      videoSpec: { resolution: "480p", durationSeconds: 5 },
+    });
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 0, failed: 1, totalCredits: 0 });
+    expect(h.store.jobs.size).toBe(1);
+    expect([...h.store.jobs.values()][0]!.videoOptions).toMatchObject({ resolution: "720p", seconds: 5 });
+  });
+});
+
 describe("confirmCampaignGeneration — price consent", () => {
-  it("refuses a stale reviewed total before dispatch", async () => {
+  it("refuses to charge more than the reviewed total before dispatch", async () => {
     seedCampaign([entry("E1"), entry("E2")]);
     seedProject();
     const quote = await currentQuote();
-    const stale = await confirmCampaignGeneration(rawRequest(5, quote.contentFingerprint));
+    const stale = await confirmCampaignGeneration(rawRequest(1, quote.contentFingerprint));
     expect("error" in stale && stale.error).toMatch(/changed since you reviewed it/i);
     expect(h.startGen).not.toHaveBeenCalled();
     const ok = await confirmCampaignGeneration(rawRequest(quote.totalDisplayCredits, quote.contentFingerprint));
     if (!("ok" in ok)) throw new Error(ok.error);
     expect(ok.result.dispatched).toBe(2);
+  });
+
+  it("#708:收得比批准的少永远放行 —— 否则耐久重试永远走不通", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+    const reviewed = await currentQuote();
+    if (!("ok" in (await confirmCampaignGeneration(rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint))))) {
+      throw new Error("first confirm failed");
+    }
+    // 重放同一份已复核的请求:此刻真会收的是 0(两条都复用),批准的是 2。
+    const replay = await confirmCampaignGeneration(rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint));
+    if (!("ok" in replay)) throw new Error(replay.error);
+    expect(replay.result).toMatchObject({ dispatched: 0, reused: 2, totalCredits: 0 });
+    expect(h.store.jobs.size).toBe(2);
   });
 
   it("catches a post-review format flip", async () => {
@@ -943,9 +1193,13 @@ describe("money-safety static guards", () => {
   });
 
   it("never claims zero charge from an unconfirmed client transport failure", () => {
-    const catchBlock = clientCode.match(/catch\s*\{([\s\S]*?)\}\s*finally/)?.[1] ?? "";
-    expect(catchBlock).toMatch(/couldn't confirm the result/i);
-    expect(catchBlock).not.toMatch(/nothing was charged/i);
+    // 卡面上不止一个 catch/finally(#709 的重报价也有一个),所以判据是**每一个** catch
+    // 都不许宣称没扣钱,并且确认那条路上确实有那句「结果不明」。只看第一个 catch 会在
+    // 有人新增一个更早的 catch 时判到错的块上。
+    const catchBlocks = [...clientCode.matchAll(/catch\s*\{([\s\S]*?)\}\s*finally/g)].map((match) => match[1]);
+    expect(catchBlocks.length).toBeGreaterThan(0);
+    expect(catchBlocks.some((block) => /couldn't confirm the result/i.test(block))).toBe(true);
+    for (const block of catchBlocks) expect(block).not.toMatch(/nothing was charged/i);
     expect(clientCode).toMatch(/zeroDispatchConfirmed/);
   });
 });
