@@ -173,6 +173,7 @@ export default function SegmentsPage({ initialState }: { initialState: ListResul
 
 function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [segments, setSegments] = useState<SegmentItem[]>(initialState.segments);
+  const [totalContactCount, setTotalContactCount] = useState(initialState.totalContactCount);
   const [selectedId, setSelectedId] = useState<string | null>(initialState.segments[0]?.id ?? null);
   const [selectedRequest, setSelectedRequest] = useState<SettledPreview | null>(null);
   const [selectedRetry, setSelectedRetry] = useState(0);
@@ -269,7 +270,10 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
       syncing = true;
       try {
         const result = await listSegments();
-        if (!stopped && isSuccess(result)) setSegments(result.segments);
+        if (!stopped && isSuccess(result)) {
+          setSegments(result.segments);
+          setTotalContactCount(result.totalContactCount);
+        }
       } catch {
         // Keep the last truthful view; the next bounded poll or window focus retries.
       } finally {
@@ -393,6 +397,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 
       const recovered = result.segments.find((segment) => segment.id === retryFence.segmentId);
       setSegments(result.segments);
+      setTotalContactCount(result.totalContactCount);
       setNextSegmentId(result.nextSegmentId);
       setNextSegmentProof(result.nextSegmentProof);
       setRetryFence(null);
@@ -441,6 +446,10 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
             </p>
           </div>
           <div className="flex gap-3">
+            <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
+              <p className="text-xs text-muted-foreground">Contacts</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{totalContactCount}</p>
+            </div>
             <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
               <p className="text-xs text-muted-foreground">Saved</p>
               <p className="mt-1 text-xl font-semibold tabular-nums">{segments.length}</p>
@@ -752,11 +761,11 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   );
 }
 
-function ContactPreview({ preview }: { preview: PreviewSuccess }) {
+export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
-        {preview.matchedCount} matched · {preview.contactableCount} contactable · {preview.knownOptOutCount} known opt-out excluded
+        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} contactable · {preview.knownOptOutCount} known opt-out excluded
       </p>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
         Unknown consent stays included. Do not disturb is checked at send time and does not filter this segment.
@@ -769,7 +778,13 @@ function ContactPreview({ preview }: { preview: PreviewSuccess }) {
           No connected contacts match these rules.
         </p>
       ) : (
-        <ul className="mt-4 grid gap-2">
+        <>
+          {preview.contacts.length < preview.matchedCount ? (
+            <p className="mt-4 text-xs text-muted-foreground">
+              Showing the first {preview.contacts.length} of {preview.matchedCount} matched contacts.
+            </p>
+          ) : null}
+          <ul className={`grid gap-2 ${preview.contacts.length < preview.matchedCount ? "mt-2" : "mt-4"}`}>
           {preview.contacts.map((contact) => (
             <li key={contact.id} className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
               <div className="min-w-0">
@@ -783,7 +798,8 @@ function ContactPreview({ preview }: { preview: PreviewSuccess }) {
               </Badge>
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
     </div>
   );
