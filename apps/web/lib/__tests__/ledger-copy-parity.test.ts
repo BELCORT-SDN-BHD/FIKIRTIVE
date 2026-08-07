@@ -48,7 +48,8 @@ vi.mock("@fikirtive/db", () => ({
 
 const { getMyAccount } = await import("@/lib/account-actions");
 const { getSpendOverview } = await import("@/lib/spend-history-data");
-const { buildSpendHistory } = await import("@/lib/spend-history");
+const { buildSpendHistory, spendDirectionOf, countCharges } = await import("@/lib/spend-history");
+const { makeOttoSpendingPort } = await import("@/lib/otto-spending-port");
 const { SpendHistory } = await import("@/components/billing/SpendHistory");
 
 const TZ = "UTC";
@@ -219,6 +220,37 @@ describe("#683 both merchant entrances read the same mapping", () => {
       expect(settingsLabels.get(id), `account settings label for ${id}`).toBe(expected);
     }
   });
+
+  // Judge r1 P2②: the first two entrances were nailed and the THIRD — what Otto is handed —
+  // was covered by a fixture copied by hand into packages/otto, so re-wording a label on the
+  // way out of the web app would not have turned anything red. This runs the REAL port (the
+  // one lib/otto-actions.ts installs on ctx.spending), over the same ledger rows.
+  it("hands Otto's spending port the same words, row for row", async () => {
+    const [spend, otto] = await Promise.all([getSpendOverview(), makeOttoSpendingPort().overview()]);
+    if ("error" in spend) throw new Error("unexpected error");
+    if ("error" in otto) throw new Error("unexpected error");
+
+    expect(otto.entries).toHaveLength(spend.entries.length);
+    for (const [i, entry] of spend.entries.entries()) {
+      expect(otto.entries[i].at, `port row ${i} is the same ledger row`).toBe(entry.at);
+      expect(otto.entries[i].label, `port label for row ${i}`).toBe(entry.label);
+      expect(otto.entries[i].category, `port category for row ${i}`).toBe(entry.category);
+    }
+    // Every label Otto can quote is one of the shared mapping's words.
+    expect(new Set(otto.entries.map((e) => e.label))).toEqual(
+      new Set(Object.values(EXPECTED_LABEL)),
+    );
+  });
+
+  it("never hands Otto an internal note either", async () => {
+    const otto = await makeOttoSpendingPort().overview();
+    if ("error" in otto) throw new Error("unexpected error");
+
+    const everythingOttoCanSee = JSON.stringify(otto);
+    for (const note of INTERNAL_NOTES) {
+      expect(everythingOttoCanSee).not.toContain(note);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -253,6 +285,46 @@ describe("#684 a top-up or a grant is never counted as a charge", () => {
 
     expect(markup).not.toMatch(/4 credit charges/);
     expect(markup).toMatch(/2 of them are charges/);
+  });
+
+  // Judge r1 P2③: the copy tests went through the rendered markup, so nothing referenced the
+  // judgment itself and the "negative but still pending" branch had no test at all — flipping
+  // an open hold to "charge" stayed green. These name every branch, on the function.
+  describe("the judgment the copy counts by", () => {
+    it("calls an OPEN hold a hold, and keeps it out of the charge count", () => {
+      const openHold = { delta: -12, pending: true };
+
+      expect(spendDirectionOf(openHold)).toBe("hold");
+      expect(countCharges([openHold])).toBe(0);
+    });
+
+    it("calls a settled deduction a charge", () => {
+      expect(spendDirectionOf({ delta: -3, pending: false })).toBe("charge");
+      expect(countCharges([{ delta: -3, pending: false }])).toBe(1);
+    });
+
+    it("calls a top-up or a grant an addition", () => {
+      expect(spendDirectionOf({ delta: 500, pending: false })).toBe("addition");
+      expect(countCharges([{ delta: 500, pending: false }])).toBe(0);
+    });
+
+    it("calls a hold that came back in full unchanged", () => {
+      expect(spendDirectionOf({ delta: 0, pending: false })).toBe("unchanged");
+      expect(countCharges([{ delta: 0, pending: false }])).toBe(0);
+    });
+
+    it("counts exactly the charges in a mixed window — an open hold is not one of them", () => {
+      const window = [
+        { delta: -3, pending: false },   // settled charge
+        { delta: -12, pending: true },   // still on hold
+        { delta: 500, pending: false },  // top-up
+        { delta: 20, pending: false },   // grant
+        { delta: 0, pending: false },    // refunded in full
+        { delta: -11, pending: false },  // settled charge
+      ];
+
+      expect(countCharges(window)).toBe(2);
+    });
   });
 
   it("does not call a fully refunded hold a charge", () => {

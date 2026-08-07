@@ -29,7 +29,7 @@
  * task and decides "settled" from the presence of a SETTLE/REFUND row, not from its amount.
  * The two differ in WHICH rows they show; the WORDS for a row come from here for both.
  */
-import { displayCredits } from "@fikirtive/core";
+import { displayCredits, creditDirection, type CreditDirection } from "@fikirtive/core";
 import { formatCredits } from "./credit-format";
 import { partsInTz, formatDayLabel, formatTime } from "./schedule-view";
 
@@ -123,17 +123,15 @@ export function spendLabelOf(
 }
 
 /**
- * What one entry did to the merchant's credits (#684). A top-up or a grant ADDS credits and
- * is not a charge; an open hold is not a charge YET — its amount is the reservation ceiling
- * and the real cost is only known once it settles (the same rule readSpending totals by); a
- * hold that was refunded in full moved no money at all.
+ * What one entry did to the merchant's credits (#684) — a name for this page's field shape,
+ * over the ONE judgment in @fikirtive/core. The rules live there because Otto's readSpending
+ * has to reach the same verdict and packages/otto cannot import a web module; a copy here
+ * would be exactly the second opinion this fix exists to remove.
  */
-export type SpendDirection = "charge" | "hold" | "addition" | "unchanged";
+export type SpendDirection = CreditDirection;
 
 export function spendDirectionOf(entry: Pick<SpendEntry, "delta" | "pending">): SpendDirection {
-  if (entry.delta > 0) return "addition";
-  if (entry.delta === 0) return "unchanged";
-  return entry.pending ? "hold" : "charge";
+  return creditDirection(entry.delta, entry.pending);
 }
 
 /** How many of these entries are real charges — the only number allowed to be called

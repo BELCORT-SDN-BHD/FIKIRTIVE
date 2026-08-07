@@ -118,7 +118,7 @@ import {
 } from "./crm-actions";
 import { getContact, listContacts, searchContacts, type CrmContactRow } from "./crm-view-data";
 import { listChannelScopes } from "./customer-inbox-gateway";
-import { getSpendOverview } from "./spend-history-data";
+import { makeOttoSpendingPort } from "./otto-spending-port";
 
 // mapOttoUsage re-exported from @fikirtive/otto so existing callers that import
 // it from this module continue to work (the canonical source is @fikirtive/otto).
@@ -302,33 +302,8 @@ function makeOttoChannelScopesPort(): NonNullable<OttoContext["channelScopes"]> 
   };
 }
 
-// #555 read parity: the SAME owner-scoped read the Billing spend-history section renders.
-// READ-ONLY by construction — the port exposes one function that cannot reserve, settle,
-// refund, grant, adjust, or top up, and it never accepts owner identity (getSpendOverview
-// resolves the session itself). Entries are projected to the flat shape ctx.spending declares
-// so packages/otto never imports a web type.
-function makeOttoSpendingPort(): NonNullable<OttoContext["spending"]> {
-  return {
-    overview: async () => {
-      const result = await getSpendOverview();
-      if ("error" in result) return { error: result.error };
-      return {
-        ok: true as const,
-        balance: result.balance,
-        reserved: result.reserved,
-        window: result.window,
-        entries: result.entries.map((entry) => ({
-          category: entry.category,
-          label: entry.label,
-          credits: entry.delta,
-          at: entry.at,
-          pending: entry.pending,
-          ...(entry.detail ? { detail: entry.detail } : {}),
-        })),
-      };
-    },
-  };
-}
+// #555 read parity: the spending port lives in lib/otto-spending-port.ts so a test can run the
+// REAL projection over the same ledger rows the two page reads use (#683 judge r1 P2②).
 
 function orderedUniqueIds(ids: Array<string | null | undefined>): string[] {
   const seen = new Set<string>();
