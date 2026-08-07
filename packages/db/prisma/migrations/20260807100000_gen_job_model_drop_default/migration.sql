@@ -1,0 +1,40 @@
+-- #675 GenJob.model 陈旧默认值清除(方案 A,Founder 2026-08-07 批;分析见 PR #668 第 ④ 节)。
+--
+-- 只改一列的默认值,**零数据变更** —— 不动任何已有行,不删列、不改列型、不加约束、不加索引。
+--
+-- 为什么撤:`GenJob` 一张表同时装图片作业与视频作业,而这一列的库级默认值是**图片**引擎
+-- `seedream`。任何一处 insert 漏带 `model`,库不会拒绝,它会安静地补上一个图片引擎 ——
+-- 落进去的是一条「视频作业写着图片引擎」的行。它不报错、不留痕,只在下游读的时候变成一条
+-- 自相矛盾的记录。默认值唯一的作用,就是把「漏写」这个 bug 藏起来。
+--
+-- 为什么现在撤是安全的(前置已就绪,#668 已合并,本次在现场逐条复核):
+--   ① app 层唯一那处 GenJob insert —— `apps/web/lib/gen-actions.ts` 的 `tx.genJob.create`
+--      —— 显式带 `model`;产品代码里没有第二处 `genJob.create/createMany`,也没有任何
+--      raw SQL 往这张表插行;
+--   ② 契约闸 `genRequest`(`packages/core/src/gen.ts`)在视频请求漏带 `model` 时,zod 的
+--      默认值 `"seedream"` 不在视频菜单 `GEN_VIDEO_MODELS`(现只有 `seedance-2-fast`)上,
+--      superRefine 当场拒收。
+--   所以这个默认值在**生产与 CI 路径上零读者**,撤掉它不改变任何在产行为。
+--
+-- 措辞校准(跨族判官 r1 P2):最初这里写的是「没有任何读者」,不准确。仓库的一次性验证
+-- 脚本区 `scripts/` 不受 typecheck 保护、也不在 CI 路径上,其中
+-- `scripts/archive/local-cowork-idempotency-verify.mjs` 的 `base()` 确实曾靠这个默认值落行
+--(四处 insert)。该脚本已在同一 PR 里补上显式 `model: "seedream"` —— 与它此前从默认值
+-- 拿到的值逐字相同,行为不变。`scripts/` 下其余六个写 GenJob 的脚本本来就显式带 `model`。
+--
+-- 补一句实况,免得这条注释又变成一个过期事实:那个归档脚本**当前跑不到底**,但卡点与本次
+-- 迁移无关 —— 它在 insert 之后的 `genJob.count` 上被租户守卫拦下(该守卫晚于脚本加入,
+-- 脚本没带 ownerId 过滤)。本次只补 `model`,不顺手改那处 —— 它是既有缺陷,不属本票范围。
+--
+-- 撤掉之后的行为变化只有一条,而且是想要的那条:漏写 `model` 从「安静地写错」变成「立刻
+-- 报错」(列本身 NOT NULL,漏写 → 23502 not_null_violation)。fail closed。
+--
+-- `RefGenJob.model` 的同名默认值**保留不动**:那张表只装图片作业,`seedream` 就是它的真值,
+-- 不存在错位(#668 分析结论)。
+--
+-- 非破坏性:DROP DEFAULT 不销毁任何数据,`scripts/check-destructive-migrations.sh` 的
+-- 数据丢失级 DDL 清单(DROP TABLE / DROP COLUMN / TRUNCATE / DELETE FROM)不含它 ——
+-- 该脚本注释里也写明「索引/默认值/非唯一约束的 DROP 不是数据丢失,不拦」。故无需
+-- DESTRUCTIVE-OK 确认行。
+
+ALTER TABLE "GenJob" ALTER COLUMN "model" DROP DEFAULT;
