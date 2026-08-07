@@ -25,7 +25,6 @@ function row(over: Partial<SpendLedgerRow> & { id: string }): SpendLedgerRow {
   return {
     kind: "RESERVE",
     source: "SYSTEM",
-    reason: "",
     refId: null,
     balanceDelta: 0,
     reservedDelta: 0,
@@ -147,8 +146,8 @@ describe("buildSpendHistory", () => {
 
   it("keeps top-ups positive and never merges rows that have no refId", () => {
     const rows: SpendLedgerRow[] = [
-      row({ id: "g2", kind: "GRANT", source: "PURCHASE", reason: "stripe top-up", balanceDelta: 1000, createdAt: new Date("2026-07-30T12:00:00.000Z") }),
-      row({ id: "g1", kind: "GRANT", source: "PURCHASE", reason: "stripe top-up", balanceDelta: 500, createdAt: new Date("2026-07-30T11:00:00.000Z") }),
+      row({ id: "g2", kind: "GRANT", source: "PURCHASE", balanceDelta: 1000, createdAt: new Date("2026-07-30T12:00:00.000Z") }),
+      row({ id: "g1", kind: "GRANT", source: "PURCHASE", balanceDelta: 500, createdAt: new Date("2026-07-30T11:00:00.000Z") }),
     ];
 
     const entries = buildSpendHistory(rows, new Map(), TZ);
@@ -184,7 +183,7 @@ describe("Billing spend history section", () => {
     [
       row({ id: "s1", kind: "SETTLE", refId: "otto-stream:m1", balanceDelta: 87, reservedDelta: -120, createdAt: new Date("2026-07-30T13:15:20.000Z") }),
       row({ id: "r1", kind: "RESERVE", refId: "otto-stream:m1", balanceDelta: -120, reservedDelta: 120, createdAt: new Date("2026-07-30T13:15:07.000Z") }),
-      row({ id: "g1", kind: "GRANT", source: "PURCHASE", reason: "stripe top-up", balanceDelta: 1000, createdAt: new Date("2026-07-30T12:00:00.000Z") }),
+      row({ id: "g1", kind: "GRANT", source: "PURCHASE", balanceDelta: 1000, createdAt: new Date("2026-07-30T12:00:00.000Z") }),
     ],
     new Map(),
     TZ,
@@ -218,20 +217,31 @@ describe("Billing spend history section", () => {
 // Round-1 review P1①: this PR exists because the product said one thing and did another.
 // The list is a 50-task window, so the page has to name its own cut.
 describe("the spend-history window is described honestly", () => {
-  it("admits the truncation when older activity exists", () => {
-    const summary = windowSummary({ taskLimit: 50, returned: 50, hasMore: true });
+  // One settled charge and one top-up: the count called "charges" must be 1, not 2 (#684).
+  const mixed = buildSpendHistory(
+    [
+      row({ id: "s1", kind: "SETTLE", refId: "otto-stream:m1", balanceDelta: 87, reservedDelta: -120, createdAt: new Date("2026-07-30T13:15:20.000Z") }),
+      row({ id: "r1", kind: "RESERVE", refId: "otto-stream:m1", balanceDelta: -120, reservedDelta: 120, createdAt: new Date("2026-07-30T13:15:07.000Z") }),
+      row({ id: "g1", kind: "GRANT", source: "PURCHASE", balanceDelta: 1000, createdAt: new Date("2026-07-30T12:00:00.000Z") }),
+    ],
+    new Map(),
+    TZ,
+  );
 
-    expect(summary).toContain("Showing the last 50 charges");
+  it("admits the truncation when older activity exists", () => {
+    const summary = windowSummary({ taskLimit: 50, returned: 50, hasMore: true }, mixed);
+
+    expect(summary).toContain("Showing your last 50 credit entries");
     expect(summary).toMatch(/older activity isn’t listed here yet/i);
     expect(summary).not.toMatch(/\ball\b/i);
   });
 
   it("claims completeness only when the window really holds everything", () => {
-    expect(windowSummary({ taskLimit: 50, returned: 12, hasMore: false })).toBe(
-      "All 12 credit charges on this workspace, newest first.",
+    expect(windowSummary({ taskLimit: 50, returned: 12, hasMore: false }, mixed)).toBe(
+      "All 12 credit entries on this workspace, newest first. 1 of them is a charge.",
     );
-    expect(windowSummary({ taskLimit: 50, returned: 1, hasMore: false })).toBe(
-      "Your 1 credit charge so far.",
+    expect(windowSummary({ taskLimit: 50, returned: 1, hasMore: false }, [mixed[1]])).toBe(
+      "Your 1 credit entry so far. No charges yet.",
     );
   });
 
@@ -245,7 +255,7 @@ describe("the spend-history window is described honestly", () => {
       window: { taskLimit: 50, returned: 50, hasMore: true },
     }));
 
-    expect(markup).toContain("Showing the last 50 charges");
+    expect(markup).toContain("Showing your last 50 credit entries");
   });
 });
 

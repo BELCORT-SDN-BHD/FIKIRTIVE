@@ -93,8 +93,10 @@ async function recentSpendLedgerRows(
       ],
     },
     orderBy: { createdAt: "desc" },
+    // The ledger's internal operator note is NOT selected: no merchant-facing word is derived
+    // from it, so it never enters this read at all (#683).
     select: {
-      id: true, kind: true, source: true, reason: true, refId: true,
+      id: true, kind: true, source: true, refId: true,
       balanceDelta: true, reservedDelta: true, createdAt: true,
     },
   });
