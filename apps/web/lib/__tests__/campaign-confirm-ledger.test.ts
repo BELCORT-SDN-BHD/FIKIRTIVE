@@ -32,11 +32,12 @@ vi.mock("../cowork-guardian", () => ({ checkCast: vi.fn(async () => null) }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => ({ disabled: new Set<string>() })) }));
 
 const { confirmCampaignGeneration, quoteCampaignGeneration } = await import("../campaign-generation-confirm");
-const { prisma, settleCredits } = await import("@fikirtive/db");
+const { prisma, settleCredits, refundReservation } = await import("@fikirtive/db");
 
 const IMG = 1; // one image cell = 1 displayed credit
 const VID_720_5S = 11; // #644 裁决 2026-08-06
 const VID_480_5S = 6; // #645 T4 价目表(Founder 裁决 2026-08-06):480p 半价档,5 秒 = 6
+const SPEC_480 = { resolution: "480p", durationSeconds: 5 };
 
 // ULID-shaped campaign ids (the action's own schema requires them).
 function campaignId(): string {
@@ -94,12 +95,13 @@ async function account(ownerId: string) {
   return prisma.creditAccount.findUniqueOrThrow({ where: { orgId: ownerId } });
 }
 
-/** 这一趟真正被预扣走的内部 credits —— 直接读账本,不读任何返回值。 */
+/** 这一趟真正被预扣走的内部 credits —— 直接读账本,不读任何返回值。
+ *  一行都没有时必须是 0,不是 -0(`toBe` 分得清这两个)。 */
 async function reservedThisRun(ownerId: string, since: Date): Promise<number> {
   const rows = await prisma.creditLedger.findMany({
     where: { orgId: ownerId, kind: "RESERVE", createdAt: { gte: since } },
   });
-  return -rows.reduce((sum, row) => sum + row.balanceDelta, 0);
+  return rows.reduce((sum, row) => sum - row.balanceDelta, 0);
 }
 
 /** worker 的成功结算,走它自己那个函数。 */
@@ -111,10 +113,42 @@ async function workerSettle(ownerId: string, jobId: string) {
   });
 }
 
+/** worker 的失败结算(退款 + FAILED),同样走它自己那个函数。 */
+async function workerRefund(ownerId: string, jobId: string) {
+  await prisma.$transaction((tx) => refundReservation(tx, { orgId: ownerId, refId: jobId }));
+  await prisma.genJob.update({
+    where: { id: jobId, ownerId },
+    data: { status: "FAILED", error: "provider failed", finishedAt: new Date() },
+  });
+}
+
 async function quoteFor(id: string, options: Record<string, unknown>) {
   const quoted = await quoteCampaignGeneration(id, options);
   if (!("ok" in quoted)) throw new Error(quoted.error);
   return quoted;
+}
+
+/**
+ * 商家**看着卡确认**的那份请求(#708 修复轮 P1-1):价格、内容、以及他复核时会被交付的
+ * 那一组条目,三样一起签。少收放行,少交付要重新问。
+ */
+function signed(
+  world: { campaignId: string; projectId: string },
+  quoted: Awaited<ReturnType<typeof quoteFor>>,
+  over: Record<string, unknown> = {},
+) {
+  return {
+    campaignId: world.campaignId,
+    projectId: world.projectId,
+    expectedTotalCredits: quoted.quote.totalDisplayCredits,
+    expectedContentFingerprint: quoted.quote.contentFingerprint,
+    expectedDeliveryFingerprint: quoted.quote.deliveryFingerprint,
+    ...over,
+  };
+}
+
+async function jobCount(ownerId: string) {
+  return prisma.genJob.count({ where: { ownerId } });
 }
 
 beforeEach(() => {
@@ -135,12 +169,7 @@ describe("#708 战役确认卡:卡上写的数 == 账本真扣的数", () => {
     const firstQuote = await quoteFor(world.campaignId, { projectId: world.projectId });
     expect(firstQuote.quote.totalDisplayCredits).toBe(VID_720_5S + IMG);
     const firstStart = new Date();
-    const first = await confirmCampaignGeneration({
-      campaignId: world.campaignId,
-      projectId: world.projectId,
-      expectedTotalCredits: firstQuote.quote.totalDisplayCredits,
-      expectedContentFingerprint: firstQuote.quote.contentFingerprint,
-    });
+    const first = await confirmCampaignGeneration(signed(world, firstQuote));
     if (!("ok" in first)) throw new Error(first.error);
     expect(await reservedThisRun(world.ownerId, firstStart))
       .toBe(firstQuote.quote.totalDisplayCredits * INTERNAL_PER_DISPLAY);
@@ -161,12 +190,7 @@ describe("#708 战役确认卡:卡上写的数 == 账本真扣的数", () => {
     expect(secondQuote.quote.totalDisplayCredits).toBe(IMG); // 修前:12
 
     const secondStart = new Date();
-    const second = await confirmCampaignGeneration({
-      campaignId: world.campaignId,
-      projectId: world.projectId,
-      expectedTotalCredits: secondQuote.quote.totalDisplayCredits,
-      expectedContentFingerprint: secondQuote.quote.contentFingerprint,
-    });
+    const second = await confirmCampaignGeneration(signed(world, secondQuote));
     if (!("ok" in second)) throw new Error(second.error);
     expect(second.result).toMatchObject({ dispatched: 1, reused: 1, failed: 0 });
 
@@ -193,12 +217,7 @@ describe("#708 战役确认卡:卡上写的数 == 账本真扣的数", () => {
       data: { balance: 200 * INTERNAL_PER_DISPLAY },
     });
     const seeded = await quoteFor(world.campaignId, { projectId: world.projectId });
-    const seedRun = await confirmCampaignGeneration({
-      campaignId: world.campaignId,
-      projectId: world.projectId,
-      expectedTotalCredits: seeded.quote.totalDisplayCredits,
-      expectedContentFingerprint: seeded.quote.contentFingerprint,
-    });
+    const seedRun = await confirmCampaignGeneration(signed(world, seeded));
     if (!("ok" in seedRun)) throw new Error(seedRun.error);
     await workerSettle(world.ownerId, seedRun.result.cells[0].jobId!);
 
@@ -217,15 +236,84 @@ describe("#708 战役确认卡:卡上写的数 == 账本真扣的数", () => {
     expect(quoted.quote.totalDisplayCredits).toBeLessThanOrEqual(quoted.balanceDisplayCredits);
 
     const start = new Date();
-    const res = await confirmCampaignGeneration({
-      campaignId: world.campaignId,
-      projectId: world.projectId,
-      expectedTotalCredits: quoted.quote.totalDisplayCredits,
-      expectedContentFingerprint: quoted.quote.contentFingerprint,
-    });
+    const res = await confirmCampaignGeneration(signed(world, quoted));
     if (!("ok" in res)) throw new Error(res.error);
     expect(res.result.dispatched).toBe(1);
     expect(await reservedThisRun(world.ownerId, start)).toBe(IMG * INTERNAL_PER_DISPLAY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #708 修复轮 P1-1 —— 全真账本:交付缩水时,一分钱都不许离开余额
+// ---------------------------------------------------------------------------
+describe("#708 修复轮 P1-1 全真账本:少付不等于少交付", () => {
+  it("复核之后掉队的条目:账本 RESERVE 增量 0、余额与预扣不变、GenJob 数不变", async () => {
+    const world = await seedWorld(200, [
+      { id: "V1", format: "reel", brief: "A vertical clip of the Raya collection" },
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+    ]);
+
+    // ① 商家在这一页复核:两条都会交付,片子 720p,合计 12。
+    const reviewed = await quoteFor(world.campaignId, { projectId: world.projectId });
+    expect(reviewed.quote.totalDisplayCredits).toBe(VID_720_5S + IMG);
+    expect(reviewed.quote.lines.map((line) => line.charge)).toEqual(["new", "new"]);
+
+    // ② 另一个标签页先按 480p 确认了同一份计划 —— 片子被冻结在 480p;
+    //    那张图这一趟没做成,worker 走自己的退款路把它退了并置 FAILED。
+    const otherTab = await quoteFor(world.campaignId, { projectId: world.projectId, videoSpec: SPEC_480 });
+    const other = await confirmCampaignGeneration(signed(world, otherTab, { videoSpec: SPEC_480 }));
+    if (!("ok" in other)) throw new Error(other.error);
+    await workerRefund(world.ownerId, other.result.cells[1].jobId!);
+
+    // ③ 回到这一页重算:片子这一条已经不会开始了,图还是新的 —— 总额从 12 掉到 1。
+    const now = await quoteFor(world.campaignId, { projectId: world.projectId });
+    expect(now.quote.lines.map((line) => line.charge)).toEqual(["blocked", "new"]);
+    expect(now.quote.totalDisplayCredits).toBe(IMG);
+    // 内容一个字没改 —— 旧的两道闸(总额上限、内容指纹)都拦不住它。
+    expect(now.quote.contentFingerprint).toBe(reviewed.quote.contentFingerprint);
+    expect(now.quote.deliveryFingerprint).not.toBe(reviewed.quote.deliveryFingerprint);
+
+    const before = await account(world.ownerId);
+    const jobsBefore = await jobCount(world.ownerId);
+    const start = new Date();
+
+    const res = await confirmCampaignGeneration(signed(world, reviewed));
+
+    // 先看账本 —— 这条断言先红,红出来的就是「修前真的花掉了多少」。
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
+    const after = await account(world.ownerId);
+    expect(after.balance).toBe(before.balance);
+    expect(after.reserved).toBe(before.reserved);
+    expect(await jobCount(world.ownerId)).toBe(jobsBefore);
+    expect("error" in res && res.error).toMatch(/can no longer be created as reviewed/i);
+  });
+
+  it("合法复用放行:重放同一份签名 —— 派发 0 / 复用 2 / 收 0,交付指纹逐字相同", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+      { id: "P2", format: "post", brief: "A second still for the same feed" },
+    ]);
+    const reviewed = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const request = signed(world, reviewed);
+
+    const first = await confirmCampaignGeneration(request);
+    if (!("ok" in first)) throw new Error(first.error);
+    expect(first.result.dispatched).toBe(2);
+
+    const before = await account(world.ownerId);
+    const start = new Date();
+
+    const replay = await confirmCampaignGeneration(request);
+
+    if (!("ok" in replay)) throw new Error(replay.error);
+    expect(replay.result).toMatchObject({ dispatched: 0, reused: 2, failed: 0, totalCredits: 0 });
+    // 复用照常交付,所以交付面逐字不动 —— 少收放行这条路一格没被收窄。
+    expect(replay.quote.deliveryFingerprint).toBe(reviewed.quote.deliveryFingerprint);
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
+    const after = await account(world.ownerId);
+    expect(after.balance).toBe(before.balance);
+    expect(after.reserved).toBe(before.reserved);
+    expect(await jobCount(world.ownerId)).toBe(2);
   });
 });
 
@@ -242,13 +330,7 @@ describe("#709 选了 480p 的战役:卡上写半价档,账本扣的就是那个
     expect(quoted.videoMenu.resolutions).toContain("480p");
 
     const start = new Date();
-    const res = await confirmCampaignGeneration({
-      campaignId: world.campaignId,
-      projectId: world.projectId,
-      expectedTotalCredits: quoted.quote.totalDisplayCredits,
-      expectedContentFingerprint: quoted.quote.contentFingerprint,
-      videoSpec,
-    });
+    const res = await confirmCampaignGeneration(signed(world, quoted, { videoSpec }));
     if (!("ok" in res)) throw new Error(res.error);
 
     // 报价 == 预扣。
@@ -277,12 +359,7 @@ describe("#709 选了 480p 的战役:卡上写半价档,账本扣的就是那个
     expect(quoted.videoMenu.selected).toEqual({ resolution: "720p", durationSeconds: 5 });
 
     const start = new Date();
-    const res = await confirmCampaignGeneration({
-      campaignId: world.campaignId,
-      projectId: world.projectId,
-      expectedTotalCredits: quoted.quote.totalDisplayCredits,
-      expectedContentFingerprint: quoted.quote.contentFingerprint,
-    });
+    const res = await confirmCampaignGeneration(signed(world, quoted));
     if (!("ok" in res)) throw new Error(res.error);
     expect(await reservedThisRun(world.ownerId, start)).toBe(VID_720_5S * INTERNAL_PER_DISPLAY);
   });
