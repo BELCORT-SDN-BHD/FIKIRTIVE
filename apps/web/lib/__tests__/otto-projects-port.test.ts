@@ -3,8 +3,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // W-B3-D v2 (小节审 review #271 comment 4952217527): the ctx.projects port's remove() carries the
 // Otto-only EMPTY-PROJECT hard gate — deleteProject physically destroys the project's Generations
 // (settled PAID media included, no refund), and the human UI fronts that with a type-the-full-name
-// confirm the Otto path lacks. So: any live Generation in the campaign ⇒ deterministic hard refusal
-// directing the user to the UI's by-hand confirm; only an EMPTY campaign passes through. Fail-closed
+// confirm the Otto path lacks. So: any live Generation in the Project ⇒ deterministic hard refusal
+// directing the user to the UI's by-hand confirm; only an EMPTY Project passes through. Fail-closed
 // on a failing count read. The gate lives in the port, NOT in deleteProject — the human UI's
 // legitimate type-to-confirm hard delete is untouched.
 
@@ -39,18 +39,19 @@ beforeEach(() => {
 });
 
 describe("remove — empty-project hard gate (deterministic, no model self-confirmation)", () => {
-  it("a campaign holding SETTLED PAID generations is refused and never reaches deleteProject", async () => {
+  it("a project holding SETTLED PAID generations is refused and never reaches deleteProject", async () => {
     // Fixture narrative: 3 live Generations produced by charged GenJobs (settled spend) — the exact
     // asset class deleteProject would physically destroy with no refund.
     mockGenerationCount.mockResolvedValue(3);
     const res = (await port().remove("proj-paid")) as { error: string };
     expect(res.error).toContain("paid work");
-    expect(res.error).toContain("by hand on the campaigns page");
+    expect(res.error).toContain("by hand from the project's menu in the sidebar");
+    expect(res.error).not.toMatch(/\bcampaigns?\b|\/campaign\b/i);
     expect(res.error).toContain("type");
     expect(mockDeleteProject).not.toHaveBeenCalled();
   });
 
-  it("a campaign holding ANY live generation (e.g. a single upload/crop) is refused too", async () => {
+  it("a project holding ANY live generation (e.g. a single upload/crop) is refused too", async () => {
     // The gate is count > 0 on ANY live Generation — not just paid ones (uploads/crops land in the
     // same Library read; deleting them via a one-liner is equally silent destruction).
     mockGenerationCount.mockResolvedValue(1);
@@ -63,7 +64,7 @@ describe("remove — empty-project hard gate (deterministic, no model self-confi
     });
   });
 
-  it("an EMPTY campaign (zero live generations) passes through to the guarded deleteProject", async () => {
+  it("an EMPTY project (zero live generations) passes through to the guarded deleteProject", async () => {
     mockGenerationCount.mockResolvedValue(0);
     mockDeleteProject.mockResolvedValue({ ok: true });
     const res = await port().remove("proj-empty");
@@ -75,6 +76,7 @@ describe("remove — empty-project hard gate (deterministic, no model self-confi
     mockGenerationCount.mockRejectedValue(new Error("db down"));
     const res = (await port().remove("proj-any")) as { error: string };
     expect(res.error).toContain("won't delete");
+    expect(res.error).not.toMatch(/\bcampaigns?\b|\/campaign\b/i);
     expect(mockDeleteProject).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 /**
  * otto-new-conversation-routing.test.ts — real jsdom render + click/route tests for two
- * Otto entry flows from #513 group D (New campaign direct-build-direct-enter, and the
+ * Otto entry flows from #513 group D (New project direct-build-direct-enter — renamed
+ * from "New campaign" by #546, and the
  * always-visible header "New conversation" button), plus the #522 round-3 popstate fix
  * (Back/Forward through a client-pushed URL must resync activeThreadId, not just `view`).
  *
@@ -15,7 +16,7 @@
  *
  * OttoNav and OttoView are stubbed to thin, prop-driven stand-ins — their own internal
  * rendering has its own suites; what's under test here is OttoApp's own routing/state
- * logic (handleNewCampaign, handleNewChat, the popstate listener).
+ * logic (handleNewProject, handleNewChat, the popstate listener).
  */
 import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -51,11 +52,11 @@ vi.mock("@/lib/otto-client-actions", () => ({
 }));
 
 vi.mock("@/components/otto/OttoNav", () => ({
-  OttoNav: ({ onNewCampaign }: { onNewCampaign: () => Promise<boolean> }) =>
+  OttoNav: ({ onNewProject }: { onNewProject: () => Promise<boolean> }) =>
     createElement(
       "button",
-      { type: "button", "data-testid": "nav-new-campaign", onClick: () => { void onNewCampaign(); } },
-      "New campaign",
+      { type: "button", "data-testid": "nav-new-project", onClick: () => { void onNewProject(); } },
+      "New project",
     ),
 }));
 
@@ -184,7 +185,7 @@ function currentUrl(): string {
 function baseProps(over: Partial<OttoAppProps> = {}): OttoAppProps {
   return {
     projectId: "proj_1",
-    projects: [{ id: "proj_1", name: "Test campaign" }],
+    projects: [{ id: "proj_1", name: "Test project" }],
     activeProjectId: "proj_1",
     sidebarThreads: [],
     initialActiveThreadId: null,
@@ -203,15 +204,17 @@ function baseProps(over: Partial<OttoAppProps> = {}): OttoAppProps {
   };
 }
 
-describe("Otto \"New campaign\" direct-build-direct-enter", () => {
-  it("creates the campaign and navigates straight into it — no stale thread/new carried over", async () => {
+describe("Otto \"New project\" direct-build-direct-enter", () => {
+  it("creates the project and navigates straight into it — no stale thread/new carried over", async () => {
     createProjectMock.mockResolvedValue({ id: "proj_new" });
     window.history.pushState(null, "", "/otto?project=proj_1&thread=thr_existing");
 
     const dom = await render(createElement(OttoApp, baseProps()));
-    await click(dom.querySelector('[data-testid="nav-new-campaign"]')!);
+    await click(dom.querySelector('[data-testid="nav-new-project"]')!);
 
-    expect(createProjectMock).toHaveBeenCalledWith("New campaign");
+    // #546 F-04: the entry builds a Project and must SAY project — "New campaign" here
+    // was the literal DB name merchants saw while /campaign stayed empty.
+    expect(createProjectMock).toHaveBeenCalledWith("New project");
     expect(locationAssignSpy).toHaveBeenCalledWith("/otto?project=proj_new");
   });
 
@@ -220,7 +223,7 @@ describe("Otto \"New campaign\" direct-build-direct-enter", () => {
     createProjectMock.mockImplementation(() => new Promise((resolve) => { resolveCreate = resolve; }));
 
     const dom = await render(createElement(OttoApp, baseProps()));
-    const button = dom.querySelector('[data-testid="nav-new-campaign"]')!;
+    const button = dom.querySelector('[data-testid="nav-new-project"]')!;
 
     await click(button); // starts the in-flight create
     await click(button); // fired again before the first resolves

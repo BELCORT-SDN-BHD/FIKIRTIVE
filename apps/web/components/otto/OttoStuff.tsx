@@ -218,7 +218,7 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
               Library
             </h1>
             <p className="mt-1 mb-0 max-w-[560px] text-[0.9375rem] text-muted-foreground leading-[1.5]">
-              Everything you and Otto have made or saved across every campaign.
+              Everything you and Otto have made or saved across every project.
             </p>
           </div>
           <Button size="sm" onClick={() => setAddOpen(true)} className="shrink-0">
