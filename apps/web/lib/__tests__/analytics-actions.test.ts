@@ -104,6 +104,36 @@ describe("getAnalytics — ready payload", () => {
     expect(res.empty).toBe(false);
   });
 
+  it("#692: a single-currency owner sees the spend total prefixed with that currency", async () => {
+    mockFetchInsights.mockResolvedValue({
+      accounts: [
+        { accountId: "act_1", name: "A", currency: "MYR", metrics: { ...zeroMetrics, spend: "48.75" } },
+        { accountId: "act_2", name: "B", currency: "MYR", metrics: { ...zeroMetrics, spend: "33.10" } },
+      ],
+    });
+    const res = await getAnalytics({ range: "30d" });
+    if (res.state !== "ready") throw new Error("unreachable");
+    expect(res.kpis[2]!.values).toEqual(["MYR 81.85"]);
+  });
+
+  it("#692: two ad accounts in different currencies are NEVER added into one number", async () => {
+    mockFetchInsights.mockResolvedValue({
+      accounts: [
+        { accountId: "act_1", name: "A", currency: "MYR", metrics: { ...zeroMetrics, spend: "48.75", purchaseRoas: "3.1" } },
+        { accountId: "act_2", name: "B", currency: "SGD", metrics: { ...zeroMetrics, spend: "33.10", purchaseRoas: "2.9" } },
+      ],
+    });
+    const res = await getAnalytics({ range: "30d" });
+    if (res.state !== "ready") throw new Error("unreachable");
+    const spend = res.kpis[2]!;
+    const sales = res.kpis[3]!;
+    expect(spend.values).toEqual(["MYR 48.75", "SGD 33.10"]);
+    // 48.75 + 33.10 = 81.85 — the number the old code showed. It must be gone.
+    expect(spend.values.join(" ")).not.toContain("81.85");
+    expect(sales.values).toHaveLength(2);
+    expect(sales.values.every((v) => /^[A-Z]{3} /.test(v))).toBe(true);
+  });
+
   it("passes the resolved preset to BOTH fetchers, scoped to the session owner", async () => {
     await getAnalytics({ range: "90d" });
     expect(mockFetchInsights).toHaveBeenCalledWith("o1", "last_90d");

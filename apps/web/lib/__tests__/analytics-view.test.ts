@@ -6,6 +6,7 @@ import {
   buildInsightText,
   type RangeKey,
   type Kpi,
+  type AccountTotals,
 } from "../analytics-view";
 import type { DailyMetric, AccountMetrics } from "../meta-graph";
 
@@ -29,6 +30,12 @@ const emptyTotals = (over: Partial<AccountMetrics> = {}): AccountMetrics => ({
   cpm: null,
   purchaseRoas: null,
   ...over,
+});
+
+// One ad account's totals plus the currency they are denominated in (#692).
+const acct = (currency: string | null, over: Partial<AccountMetrics> = {}): AccountTotals => ({
+  currency,
+  metrics: emptyTotals(over),
 });
 
 // build a series of `n` days with constant reach/clicks, dates ascending from 2026-06-01
@@ -64,64 +71,125 @@ describe("buildKpis — cards, order, formatting", () => {
     const kpis = buildKpis(series, []);
     const reach = kpis[0] as Kpi;
     const eng = kpis[1] as Kpi;
-    expect(reach.value).toBe("1,200"); // 1200 → thousands separator
-    expect(eng.value).toBe("100"); // 100 < 1000 → raw
+    expect(reach.values).toEqual(["1,200"]); // 1200 → thousands separator
+    expect(eng.values).toEqual(["100"]); // 100 < 1000 → raw
   });
 
   it("compact formatting: 48200 → 48.2K, 3140 → 3,140, 950 → 950", () => {
     // 48200 reach
-    expect((buildKpis([day("d", 48200, 0)], [])[0] as Kpi).value).toBe("48.2K");
+    expect((buildKpis([day("d", 48200, 0)], [])[0] as Kpi).values).toEqual(["48.2K"]);
     // 3140 reach
-    expect((buildKpis([day("d", 3140, 0)], [])[0] as Kpi).value).toBe("3,140");
+    expect((buildKpis([day("d", 3140, 0)], [])[0] as Kpi).values).toEqual(["3,140"]);
     // 950 reach (< 1000 → raw)
-    expect((buildKpis([day("d", 950, 0)], [])[0] as Kpi).value).toBe("950");
+    expect((buildKpis([day("d", 950, 0)], [])[0] as Kpi).values).toEqual(["950"]);
     // exactly 1000 → thousands separator, not K
-    expect((buildKpis([day("d", 1000, 0)], [])[0] as Kpi).value).toBe("1,000");
+    expect((buildKpis([day("d", 1000, 0)], [])[0] as Kpi).values).toEqual(["1,000"]);
     // exactly 10000 → K format
-    expect((buildKpis([day("d", 10000, 0)], [])[0] as Kpi).value).toBe("10.0K");
+    expect((buildKpis([day("d", 10000, 0)], [])[0] as Kpi).values).toEqual(["10.0K"]);
   });
 
-  it("Spend = sum of totals[].spend as float 2dp, no currency prefix", () => {
-    const totals = [emptyTotals({ spend: "120.5" }), emptyTotals({ spend: "299.5" })];
-    const spend = buildKpis([], totals)[2] as Kpi;
-    expect(spend.value).toBe("420.00");
+  it("Spend = sum of the accounts' spend, 2dp, prefixed with their currency code", () => {
+    const accounts = [acct("MYR", { spend: "120.5" }), acct("MYR", { spend: "299.5" })];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(spend.values).toEqual(["MYR 420.00"]);
   });
 
-  it("Spend = — when every totals.spend is null", () => {
-    const totals = [emptyTotals(), emptyTotals()];
-    expect((buildKpis([], totals)[2] as Kpi).value).toBe("—");
+  it("Spend groups thousands: MYR 1,234.56", () => {
+    const spend = buildKpis([], [acct("MYR", { spend: "1234.56" })])[2] as Kpi;
+    expect(spend.values).toEqual(["MYR 1,234.56"]);
   });
 
-  it("Spend with no totals rows at all = —", () => {
-    expect((buildKpis([], [])[2] as Kpi).value).toBe("—");
+  it("Spend = — when every account's spend is null", () => {
+    const accounts = [acct("MYR"), acct("MYR")];
+    expect((buildKpis([], accounts)[2] as Kpi).values).toEqual(["—"]);
   });
 
-  it("Sales (est.) = Σ (spend × roas) per account, rounded int with separators", () => {
-    const totals = [
-      emptyTotals({ spend: "100", purchaseRoas: "2" }), // 200
-      emptyTotals({ spend: "50", purchaseRoas: "3" }), // 150
+  it("Spend with no accounts at all = —", () => {
+    expect((buildKpis([], [])[2] as Kpi).values).toEqual(["—"]);
+  });
+
+  it("Sales (est.) = Σ (spend × roas) per account, rounded int with separators + currency", () => {
+    const accounts = [
+      acct("MYR", { spend: "100", purchaseRoas: "2" }), // 200
+      acct("MYR", { spend: "50", purchaseRoas: "3" }), // 150
     ];
-    // 100*2 + 50*3 = 350
-    expect((buildKpis([], totals)[3] as Kpi).value).toBe("350");
+    // 100*2 + 50*3 = 350, all in MYR
+    expect((buildKpis([], accounts)[3] as Kpi).values).toEqual(["MYR 350"]);
   });
 
   it("Sales (est.) skips an account missing either spend or roas", () => {
-    const totals = [
-      emptyTotals({ spend: "1000", purchaseRoas: "2" }), // 2000
-      emptyTotals({ spend: "500", purchaseRoas: null }), // skipped (no roas)
-      emptyTotals({ spend: null, purchaseRoas: "4" }), // skipped (no spend)
+    const accounts = [
+      acct("MYR", { spend: "1000", purchaseRoas: "2" }), // 2000
+      acct("MYR", { spend: "500", purchaseRoas: null }), // skipped (no roas)
+      acct("MYR", { spend: null, purchaseRoas: "4" }), // skipped (no spend)
     ];
     // only the first account counts → 2000, formatted with separator
-    expect((buildKpis([], totals)[3] as Kpi).value).toBe("2,000");
+    expect((buildKpis([], accounts)[3] as Kpi).values).toEqual(["MYR 2,000"]);
   });
 
   it("Sales (est.) = — when no account has both spend & roas", () => {
-    const totals = [emptyTotals({ spend: "100" }), emptyTotals({ purchaseRoas: "3" })];
-    expect((buildKpis([], totals)[3] as Kpi).value).toBe("—");
+    const accounts = [acct("MYR", { spend: "100" }), acct("MYR", { purchaseRoas: "3" })];
+    expect((buildKpis([], accounts)[3] as Kpi).values).toEqual(["—"]);
   });
 
-  it("Sales (est.) = — when totals is empty", () => {
-    expect((buildKpis([], [])[3] as Kpi).value).toBe("—");
+  it("Sales (est.) = — when there are no accounts", () => {
+    expect((buildKpis([], [])[3] as Kpi).values).toEqual(["—"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #692: money must never be shown without its currency, and two ad accounts in
+// DIFFERENT currencies must never be added into one number — there is no honest
+// exchange rate here, so each currency gets its own subtotal.
+describe("buildKpis — currency (#692)", () => {
+  it("Spend: two currencies produce one subtotal each, never a single sum", () => {
+    const accounts = [acct("MYR", { spend: "100" }), acct("SGD", { spend: "50" })];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(spend.values).toEqual(["MYR 100.00", "SGD 50.00"]);
+    // the cross-currency sum (150) must appear nowhere
+    expect(spend.values.join(" ")).not.toContain("150");
+  });
+
+  it("Sales (est.): two currencies produce one subtotal each, never a single sum", () => {
+    const accounts = [
+      acct("MYR", { spend: "100", purchaseRoas: "2" }), // MYR 200
+      acct("SGD", { spend: "50", purchaseRoas: "3" }), // SGD 150
+    ];
+    const sales = buildKpis([], accounts)[3] as Kpi;
+    expect(sales.values).toEqual(["MYR 200", "SGD 150"]);
+    expect(sales.values.join(" ")).not.toContain("350");
+  });
+
+  it("three currencies → three subtotals, ordered deterministically by code", () => {
+    const accounts = [
+      acct("SGD", { spend: "5" }),
+      acct("USD", { spend: "7" }),
+      acct("MYR", { spend: "9" }),
+      acct("SGD", { spend: "1" }),
+    ];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(spend.values).toEqual(["MYR 9.00", "SGD 6.00", "USD 7.00"]);
+  });
+
+  it("an account whose currency Meta did not report shows a bare number and is kept apart", () => {
+    const accounts = [acct(null, { spend: "10" }), acct("MYR", { spend: "5" })];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(spend.values).toHaveLength(2);
+    expect(spend.values).toContain("MYR 5.00");
+    expect(spend.values).toContain("10.00");
+    expect(spend.values.join(" ")).not.toContain("15.00");
+  });
+
+  it("a blank currency string is treated as unknown, not as a currency code", () => {
+    const spend = buildKpis([], [acct("", { spend: "10" })])[2] as Kpi;
+    expect(spend.values).toEqual(["10.00"]);
+  });
+
+  it("Reach and Engagement stay single-line — they are counts, not money", () => {
+    const accounts = [acct("MYR", { spend: "100" }), acct("SGD", { spend: "50" })];
+    const kpis = buildKpis([day("2026-06-01", 500, 40)], accounts);
+    expect(kpis[0]!.values).toHaveLength(1);
+    expect(kpis[1]!.values).toHaveLength(1);
   });
 });
 
@@ -163,9 +231,9 @@ describe("buildKpis — deltas via series halving", () => {
   });
 
   it("Spend and Sales (est.) deltas are always null in Phase A", () => {
-    const totals = [emptyTotals({ spend: "100.0", purchaseRoas: "3.0" })];
+    const accounts = [acct("MYR", { spend: "100.0", purchaseRoas: "3.0" })];
     // even with 14 points of series, spend/sales deltas stay null
-    const kpis = buildKpis(seriesOf(new Array(14).fill(100)), totals);
+    const kpis = buildKpis(seriesOf(new Array(14).fill(100)), accounts);
     expect(kpis[2]!.delta).toBeNull(); // Spend
     expect(kpis[3]!.delta).toBeNull(); // Sales (est.)
   });

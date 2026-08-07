@@ -47,6 +47,35 @@ describe("getMetaInsights", () => {
     expect(JSON.stringify(res)).not.toContain("accessTokenEnc");
   });
 
+  it("#692: carries each ad account's currency alongside its metrics", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique.mockResolvedValue({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch
+      // /me/adaccounts — two accounts, two currencies
+      .mockResolvedValueOnce(jsonRes({ data: [
+        { account_id: "1", name: "Kaia Cafe", currency: "MYR", id: "act_1" },
+        { account_id: "2", name: "Night Market", currency: "SGD", id: "act_2" },
+      ] }))
+      .mockResolvedValueOnce(jsonRes({ data: [{ spend: "120.50" }] }))
+      .mockResolvedValueOnce(jsonRes({ data: [{ spend: "40.00" }] }));
+    const res = await getMetaInsights("last_30d");
+    if (!("accounts" in res)) throw new Error("expected accounts");
+    expect(res.accounts.map((a) => a.currency)).toEqual(["MYR", "SGD"]);
+    // the ad-account read must actually ASK Meta for currency, or it can never arrive
+    expect(String(mockFetch.mock.calls[0]![0])).toContain("currency");
+  });
+
+  it("#692: an ad account Meta reports no currency for carries null, never a guessed code", async () => {
+    const { encryptToken } = await import("../token-encryption");
+    mockFindUnique.mockResolvedValue({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });
+    mockFetch
+      .mockResolvedValueOnce(jsonRes({ data: [{ account_id: "1", name: "No currency", id: "act_1" }] }))
+      .mockResolvedValueOnce(jsonRes({ data: [{ spend: "9.99" }] }));
+    const res = await getMetaInsights("last_30d");
+    if (!("accounts" in res)) throw new Error("expected accounts");
+    expect(res.accounts[0]!.currency).toBeNull();
+  });
+
   it("returns needsReconnect on a Graph auth error", async () => {
     const { encryptToken } = await import("../token-encryption");
     mockFindUnique.mockResolvedValue({ accessTokenEnc: encryptToken("LONGTOKEN"), status: "active" });

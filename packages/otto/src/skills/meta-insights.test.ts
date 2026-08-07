@@ -101,6 +101,21 @@ describe("executeMetaInsights — connected", () => {
     expect(JSON.stringify(out)).toContain("64312");
   });
 
+  it("#692: passes each account's currency through so Otto can name it in chat", async () => {
+    const accounts = [
+      { accountId: "act_1", name: "Kaia Cafe", currency: "MYR", metrics: { spend: "48.75" } },
+      { accountId: "act_2", name: "Night Market", currency: "SGD", metrics: { spend: "33.10" } },
+    ];
+    const ctx = makeCtx({ metaInsights: { get: async () => ({ accounts }) } });
+    const out = await executeMetaInsights({ datePreset: "last_30d" }, makeRunCtx(ctx));
+    expect(JSON.stringify(out)).toContain("MYR");
+    expect(JSON.stringify(out)).toContain("SGD");
+  });
+
+  it("#692: the tool description tells the model each account carries its own currency", () => {
+    expect(metaInsightsSkill.description.toLowerCase()).toContain("currency");
+  });
+
   it("returns a graceful message when no accounts returned", async () => {
     const ctx = makeCtx({
       metaInsights: { get: async () => ({ accounts: [] }) },
