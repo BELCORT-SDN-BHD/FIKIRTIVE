@@ -16,11 +16,26 @@ function addressKey(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** Drop addresses nobody has written to for a window. `/send-verification-email` is a public
+ *  endpoint, so without this the map grows one entry per address anyone ever submits and never
+ *  gives one back. Runs at most once per window. */
+let lastSweep = 0;
+function sweepAddressCaps(now: number): void {
+  if (now - lastSweep < WINDOW_MS) return;
+  lastSweep = now;
+  for (const [key, stamps] of addressAttempts) {
+    const live = stamps.filter((t) => now - t < WINDOW_MS);
+    if (live.length === 0) addressAttempts.delete(key);
+    else addressAttempts.set(key, live);
+  }
+}
+
 /** Per-address outbound cap — UNCHANGED at 5 auth emails per address per hour. It runs on the
  *  BACKGROUND side so that not even a branch on it exists in the request path. */
 function consumeAddressCap(email: string): boolean {
   const key = addressKey(email);
   const now = Date.now();
+  sweepAddressCaps(now);
   const recent = (addressAttempts.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
   if (recent.length >= MAX_PER_ADDRESS_PER_WINDOW) {
     addressAttempts.set(key, recent);
@@ -187,6 +202,7 @@ export async function sendAuthEmail(message: {
  *  needs a fresh one cannot wait an hour out. */
 export function __resetAuthEmailCapsForTests(): void {
   addressAttempts.clear();
+  lastSweep = 0;
 }
 
 /** TEST/SHUTDOWN ONLY. Settle every job already queued. Awaiting this from a request path would
