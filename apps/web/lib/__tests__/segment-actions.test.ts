@@ -176,6 +176,9 @@ describe("previewSegment", () => {
           contactable: true,
         },
       ],
+      // #715 — the preview frames its match count against the same owner total the
+      // contacts list publishes, so the two pages can't disagree.
+      totalContactCount: 2,
       unavailableFacts: { lastOrderAt: true, tags: true },
     });
     expect(mockSegmentCreate).not.toHaveBeenCalled();
@@ -326,6 +329,7 @@ describe("listSegments", () => {
           createdAt: "2026-07-14T00:00:00.000Z",
         },
       ],
+      totalContactCount: 2,
       unavailableFacts: { lastOrderAt: true, tags: true },
     });
   });
