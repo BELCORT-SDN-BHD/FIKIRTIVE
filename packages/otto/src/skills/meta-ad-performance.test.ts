@@ -35,7 +35,17 @@ describe("executeMetaAdPerformance", () => {
     expect(JSON.stringify(r)).toContain("SGD");
   });
 
-  it("the tool description forbids comparing money across currencies", () => {
-    expect(metaAdPerformanceSkill.description.toLowerCase()).toContain("currency");
+  // #692 r2 [P2]: pin the PROMISE, not the word. A description that merely says "currency"
+  // somewhere would pass while telling the model nothing about what it may not do.
+  it("the tool description forbids ranking/adding/comparing money across currencies", () => {
+    const d = metaAdPerformanceSkill.description;
+    expect(d).toContain("never rank, add or compare spend/CPC across ads in different currencies");
+    expect(d).toContain("always state it with any money figure");
+  });
+
+  it("the tool description still allows ratio metrics to be compared across currencies", () => {
+    expect(metaAdPerformanceSkill.description).toContain(
+      "Ratio metrics (CTR, ROAS) ARE comparable across currencies",
+    );
   });
 });

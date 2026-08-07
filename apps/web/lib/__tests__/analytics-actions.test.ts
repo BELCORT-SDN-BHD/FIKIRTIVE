@@ -113,7 +113,7 @@ describe("getAnalytics — ready payload", () => {
     });
     const res = await getAnalytics({ range: "30d" });
     if (res.state !== "ready") throw new Error("unreachable");
-    expect(res.kpis[2]!.values).toEqual(["MYR 81.85"]);
+    expect(res.kpis[2]!.values.map((v) => v.text)).toEqual(["MYR 81.85"]);
   });
 
   it("#692: two ad accounts in different currencies are NEVER added into one number", async () => {
@@ -127,11 +127,26 @@ describe("getAnalytics — ready payload", () => {
     if (res.state !== "ready") throw new Error("unreachable");
     const spend = res.kpis[2]!;
     const sales = res.kpis[3]!;
-    expect(spend.values).toEqual(["MYR 48.75", "SGD 33.10"]);
+    expect(spend.values.map((v) => v.text)).toEqual(["MYR 48.75", "SGD 33.10"]);
     // 48.75 + 33.10 = 81.85 — the number the old code showed. It must be gone.
-    expect(spend.values.join(" ")).not.toContain("81.85");
+    expect(spend.values.map((v) => v.text).join(" ")).not.toContain("81.85");
     expect(sales.values).toHaveLength(2);
-    expect(sales.values.every((v) => /^[A-Z]{3} /.test(v))).toBe(true);
+    expect(sales.values.every((v) => /^[A-Z]{3} /.test(v.text))).toBe(true);
+  });
+
+  it("#692 r2: two accounts with no currency stay two named lines, never pooled", async () => {
+    mockFetchInsights.mockResolvedValue({
+      accounts: [
+        { accountId: "act_1", name: "Kaia Cafe", currency: null, metrics: { ...zeroMetrics, spend: "48.75" } },
+        { accountId: "act_2", name: "Night Market", currency: null, metrics: { ...zeroMetrics, spend: "33.10" } },
+      ],
+    });
+    const res = await getAnalytics({ range: "30d" });
+    if (res.state !== "ready") throw new Error("unreachable");
+    const spend = res.kpis[2]!;
+    expect(spend.values.map((v) => v.text)).toEqual(["48.75", "33.10"]);
+    expect(spend.values.map((v) => v.accountName)).toEqual(["Kaia Cafe", "Night Market"]);
+    expect(spend.values.map((v) => v.text).join(" ")).not.toContain("81.85");
   });
 
   it("passes the resolved preset to BOTH fetchers, scoped to the session owner", async () => {

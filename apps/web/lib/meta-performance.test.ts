@@ -123,19 +123,57 @@ describe("fetchOwnerAdPerformance", () => {
       expect(r.ads.map((a) => a.adId)).toEqual(["myr_hi", "myr_lo", "sgd_hi", "sgd_lo"]);
     });
 
-    it("the MAX_ADS cap can't let one currency crowd another out entirely", async () => {
+    // #692 r2 [P2]: pin the EXACT round-robin quota, not just "SGD shows up at all".
+    // MYR has 30 ads (all numerically larger), SGD has 2, cap is 25. Taking turns:
+    // depth 0 → myr_29, sgd_0 (2 taken); depth 1 → myr_28, sgd_1 (4 taken); SGD is then
+    // exhausted, so depths 2..22 add one MYR each (21 more) → 25 taken, MYR 23 / SGD 2.
+    // Output is emitted run by run: the 23 MYR ads spend-desc, then the 2 SGD ads spend-desc.
+    it("the MAX_ADS cap is filled by exact round-robin quota, in run order", async () => {
       h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
       h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", currency: "MYR" }, { id: "act_2", currency: "SGD" }] });
-      // MYR alone would fill the cap, and every MYR figure is numerically larger than every SGD one.
-      const myr = Array.from({ length: MAX_ADS + 10 }, (_, i) => adRow(`myr_${i}`, String(1000 + i)));
-      const sgd = [adRow("sgd_1", "3"), adRow("sgd_2", "2")];
+      const myr = Array.from({ length: 30 }, (_, i) => adRow(`myr_${i}`, String(1000 + i)));
+      const sgd = [adRow("sgd_0", "3"), adRow("sgd_1", "2")];
       h.getAdInsights.mockImplementation(async (_t: string, acct: string) => (acct === "act_1" ? myr : sgd));
       h.getAdCreative.mockResolvedValue(null);
       const r = await fetchOwnerAdPerformance("o1", "last_30d");
       if (!("ads" in r)) throw new Error("unexpected");
-      expect(r.ads).toHaveLength(MAX_ADS);
-      expect(r.ads.some((a) => a.currency === "SGD")).toBe(true);
+
+      expect(MAX_ADS).toBe(25); // the arithmetic above is pinned to this cap
+      const expected = [
+        ...Array.from({ length: 23 }, (_, i) => `myr_${29 - i}`), // 1029 down to 1007
+        "sgd_0",
+        "sgd_1",
+      ];
+      expect(r.ads.map((a) => a.adId)).toEqual(expected);
+      expect(r.ads.filter((a) => a.currency === "MYR")).toHaveLength(23);
+      expect(r.ads.filter((a) => a.currency === "SGD")).toHaveLength(2);
       expect(r.truncated).toBe(true);
+    });
+
+    // #692 r2 [P1]: "Meta didn't say" is not a currency two accounts can share.
+    it("two accounts with NO currency are never ranked against each other", async () => {
+      h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
+      h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", name: "Kaia Cafe" }, { id: "act_2", name: "Night Market" }] });
+      // A raw ranking would interleave: b_hi(30), a_hi(20), b_lo(9), a_lo(8).
+      h.getAdInsights.mockImplementation(async (_t: string, acct: string) =>
+        acct === "act_1" ? [adRow("a_hi", "20"), adRow("a_lo", "8")]
+                         : [adRow("b_hi", "30"), adRow("b_lo", "9")]);
+      h.getAdCreative.mockResolvedValue(null);
+      const r = await fetchOwnerAdPerformance("o1", "last_30d");
+      if (!("ads" in r)) throw new Error("unexpected");
+      expect(r.ads.map((a) => a.adId)).toEqual(["a_hi", "a_lo", "b_hi", "b_lo"]);
+      expect(r.ads.map((a) => a.accountName)).toEqual(["Kaia Cafe", "Kaia Cafe", "Night Market", "Night Market"]);
+    });
+
+    it("carries the ad account NAME so an unlabelled run can say which account it is", async () => {
+      h.findUnique.mockResolvedValue({ ownerId: "o1", accessTokenEnc: "x", scope: "ads_read" });
+      h.metaGraphGet.mockResolvedValue({ data: [{ id: "act_1", currency: "MYR", name: "Kaia Cafe" }] });
+      h.getAdInsights.mockResolvedValue([adRow("a1", "10")]);
+      h.getAdCreative.mockResolvedValue(null);
+      const r = await fetchOwnerAdPerformance("o1", "last_30d");
+      if (!("ads" in r)) throw new Error("unexpected");
+      expect(r.ads[0]!.accountName).toBe("Kaia Cafe");
+      expect(h.metaGraphGet.mock.calls[0]![2].fields).toContain("name");
     });
   });
 

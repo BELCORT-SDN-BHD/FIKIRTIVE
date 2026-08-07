@@ -4,10 +4,10 @@ import type { OwnerAdPerformance } from "./meta-performance";
 
 const base: OwnerAdPerformance = {
   ads: [
-    { adId: "a1", adName: "Ad One", accountId: "act_1", currency: "MYR",
+    { adId: "a1", adName: "Ad One", accountId: "act_1", accountName: "Kaia Cafe", currency: "MYR",
       metrics: { spend: "612", reach: "41200", ctr: "2.1", cpc: "0.28", cpm: null, frequency: null, clicks: null, impressions: null, purchaseRoas: "3.4" },
       creative: { imageUrl: "http://i", body: "b", title: "Raya Reel", videoId: null } },
-    { adId: "a2", adName: "Ad Two", accountId: "act_1", currency: "MYR",
+    { adId: "a2", adName: "Ad Two", accountId: "act_1", accountName: "Kaia Cafe", currency: "MYR",
       metrics: { spend: "388", reach: "33100", ctr: "0.4", cpc: "1.12", cpm: null, frequency: null, clicks: null, impressions: null, purchaseRoas: null },
       creative: { imageUrl: null, body: null, title: null, videoId: "v9" } },
   ],
@@ -52,7 +52,7 @@ describe("buildPerAdView", () => {
     const garbage: OwnerAdPerformance = {
       ...base,
       ads: [
-        { adId: "a3", adName: "Ad Three", accountId: "act_1", currency: "MYR",
+        { adId: "a3", adName: "Ad Three", accountId: "act_1", accountName: "Kaia Cafe", currency: "MYR",
           metrics: { spend: "n/a", reach: "n/a", ctr: "n/a", cpc: "n/a", cpm: null, frequency: null, clicks: null, impressions: null, purchaseRoas: "n/a" },
           creative: { imageUrl: null, body: null, title: null, videoId: null } },
       ],
@@ -72,8 +72,8 @@ describe("buildPerAdView", () => {
 // #692 判官 r1 [P1]: per-ad money rendered bare, and the whole list was ONE
 // cross-account ranking by raw spend — MYR 20 placed above SGD 30 states nothing true.
 describe("buildPerAdView — currency (#692 r1)", () => {
-  const ad = (adId: string, currency: string | null) => ({
-    adId, adName: adId, accountId: "act_1", currency,
+  const ad = (adId: string, currency: string | null, accountId = "act_1", accountName: string | null = "Kaia Cafe") => ({
+    adId, adName: adId, accountId, accountName, currency,
     metrics: { spend: "10", reach: "500", ctr: "2.5", cpc: "0.12", cpm: null, frequency: null, clicks: null, impressions: null, purchaseRoas: "3.1" },
     creative: null,
   });
@@ -100,10 +100,28 @@ describe("buildPerAdView — currency (#692 r1)", () => {
     expect(view.currencyNote!.toLowerCase()).toContain("currency");
   });
 
-  it("an unknown-currency run is always named, even when it is the only one", () => {
+  it("an unlabelled run is always headed — and names its account — even when it is the only one", () => {
     const view = buildPerAdView(perf([ad("a1", null), ad("a2", null)]));
-    expect(view.rows[0]!.groupLabel).toBe("Currency not reported");
+    expect(view.rows[0]!.groupLabel).toBe("Currency not reported — Kaia Cafe");
     expect(view.rows[1]!.groupLabel).toBeNull();
+  });
+
+  // #692 r2 [P1]: two accounts Meta reported no currency for are NOT in one currency.
+  it("two unlabelled accounts are two runs, each headed with its own account", () => {
+    const view = buildPerAdView(perf([
+      ad("a1", null, "act_1", "Kaia Cafe"),
+      ad("b1", null, "act_2", "Night Market"),
+    ]));
+    expect(view.rows.map((r) => r.groupLabel)).toEqual([
+      "Currency not reported — Kaia Cafe",
+      "Currency not reported — Night Market",
+    ]);
+    expect(view.currencyNote).toBeTruthy();
+  });
+
+  it("an unlabelled run with no account name falls back to the account id", () => {
+    const view = buildPerAdView(perf([ad("a1", null, "act_77", null)]));
+    expect(view.rows[0]!.groupLabel).toBe("Currency not reported — act_77");
   });
 
   it("truncation stops claiming one cross-currency ranking once currencies differ", () => {

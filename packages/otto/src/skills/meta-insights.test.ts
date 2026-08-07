@@ -113,8 +113,12 @@ describe("executeMetaInsights — connected", () => {
     expect(JSON.stringify(out)).toContain("SGD");
   });
 
-  it("#692: the tool description tells the model each account carries its own currency", () => {
-    expect(metaInsightsSkill.description.toLowerCase()).toContain("currency");
+  // #692 r2 [P2]: pin the promise, not the word "currency".
+  it("#692: the tool description forbids adding or comparing money across currencies", () => {
+    const d = metaInsightsSkill.description;
+    expect(d).toContain("Each account carries its own currency code");
+    expect(d).toContain("never add or compare money across accounts in different currencies");
+    expect(d).toContain("report one subtotal per currency instead");
   });
 
   it("returns a graceful message when no accounts returned", async () => {

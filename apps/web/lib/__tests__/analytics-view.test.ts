@@ -32,11 +32,20 @@ const emptyTotals = (over: Partial<AccountMetrics> = {}): AccountMetrics => ({
   ...over,
 });
 
-// One ad account's totals plus the currency they are denominated in (#692).
-const acct = (currency: string | null, over: Partial<AccountMetrics> = {}): AccountTotals => ({
-  currency,
-  metrics: emptyTotals(over),
-});
+// One ad account's totals plus the currency they are denominated in (#692). The account's own
+// identity travels with them because an UNKNOWN currency is only ever one account's own figure
+// (#692 r2) — two accounts Meta reported no currency for are not thereby in the same currency.
+const acct = (
+  currency: string | null,
+  over: Partial<AccountMetrics> = {},
+  accountId = "act_1",
+  name = "Kaia Cafe",
+): AccountTotals => ({ accountId, name, currency, metrics: emptyTotals(over) });
+
+const texts = (k: Kpi): string[] => k.values.map((v) => v.text);
+/** The lines this card admits it cannot label, as "<figure> @ <account>". */
+const unlabelled = (k: Kpi): string[] =>
+  k.values.filter((v) => v.accountName !== null).map((v) => `${v.text} @ ${v.accountName}`);
 
 // build a series of `n` days with constant reach/clicks, dates ascending from 2026-06-01
 const seriesOf = (values: number[]): DailyMetric[] =>
@@ -71,41 +80,41 @@ describe("buildKpis — cards, order, formatting", () => {
     const kpis = buildKpis(series, []);
     const reach = kpis[0] as Kpi;
     const eng = kpis[1] as Kpi;
-    expect(reach.values).toEqual(["1,200"]); // 1200 → thousands separator
-    expect(eng.values).toEqual(["100"]); // 100 < 1000 → raw
+    expect(texts(reach)).toEqual(["1,200"]); // 1200 → thousands separator
+    expect(texts(eng)).toEqual(["100"]); // 100 < 1000 → raw
   });
 
   it("compact formatting: 48200 → 48.2K, 3140 → 3,140, 950 → 950", () => {
     // 48200 reach
-    expect((buildKpis([day("d", 48200, 0)], [])[0] as Kpi).values).toEqual(["48.2K"]);
+    expect(texts(buildKpis([day("d", 48200, 0)], [])[0] as Kpi)).toEqual(["48.2K"]);
     // 3140 reach
-    expect((buildKpis([day("d", 3140, 0)], [])[0] as Kpi).values).toEqual(["3,140"]);
+    expect(texts(buildKpis([day("d", 3140, 0)], [])[0] as Kpi)).toEqual(["3,140"]);
     // 950 reach (< 1000 → raw)
-    expect((buildKpis([day("d", 950, 0)], [])[0] as Kpi).values).toEqual(["950"]);
+    expect(texts(buildKpis([day("d", 950, 0)], [])[0] as Kpi)).toEqual(["950"]);
     // exactly 1000 → thousands separator, not K
-    expect((buildKpis([day("d", 1000, 0)], [])[0] as Kpi).values).toEqual(["1,000"]);
+    expect(texts(buildKpis([day("d", 1000, 0)], [])[0] as Kpi)).toEqual(["1,000"]);
     // exactly 10000 → K format
-    expect((buildKpis([day("d", 10000, 0)], [])[0] as Kpi).values).toEqual(["10.0K"]);
+    expect(texts(buildKpis([day("d", 10000, 0)], [])[0] as Kpi)).toEqual(["10.0K"]);
   });
 
   it("Spend = sum of the accounts' spend, 2dp, prefixed with their currency code", () => {
     const accounts = [acct("MYR", { spend: "120.5" }), acct("MYR", { spend: "299.5" })];
     const spend = buildKpis([], accounts)[2] as Kpi;
-    expect(spend.values).toEqual(["MYR 420.00"]);
+    expect(texts(spend)).toEqual(["MYR 420.00"]);
   });
 
   it("Spend groups thousands: MYR 1,234.56", () => {
     const spend = buildKpis([], [acct("MYR", { spend: "1234.56" })])[2] as Kpi;
-    expect(spend.values).toEqual(["MYR 1,234.56"]);
+    expect(texts(spend)).toEqual(["MYR 1,234.56"]);
   });
 
   it("Spend = — when every account's spend is null", () => {
     const accounts = [acct("MYR"), acct("MYR")];
-    expect((buildKpis([], accounts)[2] as Kpi).values).toEqual(["—"]);
+    expect(texts(buildKpis([], accounts)[2] as Kpi)).toEqual(["—"]);
   });
 
   it("Spend with no accounts at all = —", () => {
-    expect((buildKpis([], [])[2] as Kpi).values).toEqual(["—"]);
+    expect(texts(buildKpis([], [])[2] as Kpi)).toEqual(["—"]);
   });
 
   it("Sales (est.) = Σ (spend × roas) per account, rounded int with separators + currency", () => {
@@ -114,7 +123,7 @@ describe("buildKpis — cards, order, formatting", () => {
       acct("MYR", { spend: "50", purchaseRoas: "3" }), // 150
     ];
     // 100*2 + 50*3 = 350, all in MYR
-    expect((buildKpis([], accounts)[3] as Kpi).values).toEqual(["MYR 350"]);
+    expect(texts(buildKpis([], accounts)[3] as Kpi)).toEqual(["MYR 350"]);
   });
 
   it("Sales (est.) skips an account missing either spend or roas", () => {
@@ -124,16 +133,16 @@ describe("buildKpis — cards, order, formatting", () => {
       acct("MYR", { spend: null, purchaseRoas: "4" }), // skipped (no spend)
     ];
     // only the first account counts → 2000, formatted with separator
-    expect((buildKpis([], accounts)[3] as Kpi).values).toEqual(["MYR 2,000"]);
+    expect(texts(buildKpis([], accounts)[3] as Kpi)).toEqual(["MYR 2,000"]);
   });
 
   it("Sales (est.) = — when no account has both spend & roas", () => {
     const accounts = [acct("MYR", { spend: "100" }), acct("MYR", { purchaseRoas: "3" })];
-    expect((buildKpis([], accounts)[3] as Kpi).values).toEqual(["—"]);
+    expect(texts(buildKpis([], accounts)[3] as Kpi)).toEqual(["—"]);
   });
 
   it("Sales (est.) = — when there are no accounts", () => {
-    expect((buildKpis([], [])[3] as Kpi).values).toEqual(["—"]);
+    expect(texts(buildKpis([], [])[3] as Kpi)).toEqual(["—"]);
   });
 });
 
@@ -145,9 +154,9 @@ describe("buildKpis — currency (#692)", () => {
   it("Spend: two currencies produce one subtotal each, never a single sum", () => {
     const accounts = [acct("MYR", { spend: "100" }), acct("SGD", { spend: "50" })];
     const spend = buildKpis([], accounts)[2] as Kpi;
-    expect(spend.values).toEqual(["MYR 100.00", "SGD 50.00"]);
+    expect(texts(spend)).toEqual(["MYR 100.00", "SGD 50.00"]);
     // the cross-currency sum (150) must appear nowhere
-    expect(spend.values.join(" ")).not.toContain("150");
+    expect(texts(spend).join(" ")).not.toContain("150");
   });
 
   it("Sales (est.): two currencies produce one subtotal each, never a single sum", () => {
@@ -156,8 +165,8 @@ describe("buildKpis — currency (#692)", () => {
       acct("SGD", { spend: "50", purchaseRoas: "3" }), // SGD 150
     ];
     const sales = buildKpis([], accounts)[3] as Kpi;
-    expect(sales.values).toEqual(["MYR 200", "SGD 150"]);
-    expect(sales.values.join(" ")).not.toContain("350");
+    expect(texts(sales)).toEqual(["MYR 200", "SGD 150"]);
+    expect(texts(sales).join(" ")).not.toContain("350");
   });
 
   it("three currencies → three subtotals, ordered deterministically by code", () => {
@@ -168,21 +177,21 @@ describe("buildKpis — currency (#692)", () => {
       acct("SGD", { spend: "1" }),
     ];
     const spend = buildKpis([], accounts)[2] as Kpi;
-    expect(spend.values).toEqual(["MYR 9.00", "SGD 6.00", "USD 7.00"]);
+    expect(texts(spend)).toEqual(["MYR 9.00", "SGD 6.00", "USD 7.00"]);
   });
 
   it("an account whose currency Meta did not report shows a bare number and is kept apart", () => {
     const accounts = [acct(null, { spend: "10" }), acct("MYR", { spend: "5" })];
     const spend = buildKpis([], accounts)[2] as Kpi;
     expect(spend.values).toHaveLength(2);
-    expect(spend.values).toContain("MYR 5.00");
-    expect(spend.values).toContain("10.00");
-    expect(spend.values.join(" ")).not.toContain("15.00");
+    expect(texts(spend)).toContain("MYR 5.00");
+    expect(texts(spend)).toContain("10.00");
+    expect(texts(spend).join(" ")).not.toContain("15.00");
   });
 
   it("a blank currency string is treated as unknown, not as a currency code", () => {
     const spend = buildKpis([], [acct("", { spend: "10" })])[2] as Kpi;
-    expect(spend.values).toEqual(["10.00"]);
+    expect(texts(spend)).toEqual(["10.00"]);
   });
 
   it("Reach and Engagement stay single-line — they are counts, not money", () => {
@@ -194,41 +203,93 @@ describe("buildKpis — currency (#692)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// #692 判官 r1 [P2]: a bare number needs saying-so on its OWN line. Keying the
-// explanation off "more than one line" left a single unknown bucket — one bare
-// number, no caveat anywhere — reading exactly like a normal total.
-describe("buildKpis — naming the unknown-currency line (#692 r1)", () => {
-  it("names the bare line when the ONLY account has no currency", () => {
-    const spend = buildKpis([], [acct(null, { spend: "10" })])[2] as Kpi;
-    expect(spend.values).toEqual(["10.00"]);
-    expect(spend.unknownCurrencyValue).toBe("10.00");
+// #692 判官 r1 [P2] + r2 [P1]: a bare figure needs saying-so ON ITS OWN LINE, and
+// "unknown currency" is never a currency two accounts can share — Meta not telling us
+// what account A is in says nothing about account B, so they may not be pooled.
+describe("buildKpis — the lines we cannot label (#692 r1/r2)", () => {
+  it("names the bare line, and the account it came from, when the ONLY account has no currency", () => {
+    const spend = buildKpis([], [acct(null, { spend: "10" }, "act_1", "Kaia Cafe")])[2] as Kpi;
+    expect(texts(spend)).toEqual(["10.00"]);
+    expect(spend.values[0]!.currency).toBeNull();
+    expect(unlabelled(spend)).toEqual(["10.00 @ Kaia Cafe"]);
   });
 
   it("names the bare line when it sits beside a known-currency subtotal", () => {
-    const spend = buildKpis([], [acct(null, { spend: "10" }), acct("MYR", { spend: "5" })])[2] as Kpi;
-    expect(spend.unknownCurrencyValue).toBe("10.00");
-    expect(spend.values).toContain(spend.unknownCurrencyValue!);
+    const accounts = [acct(null, { spend: "10" }, "act_1", "Kaia Cafe"), acct("MYR", { spend: "5" }, "act_2", "Night Market")];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(unlabelled(spend)).toEqual(["10.00 @ Kaia Cafe"]);
   });
 
   it("names it on Sales (est.) too, not just Spend", () => {
-    const sales = buildKpis([], [acct(null, { spend: "10", purchaseRoas: "2" })])[3] as Kpi;
-    expect(sales.values).toEqual(["20"]);
-    expect(sales.unknownCurrencyValue).toBe("20");
+    const sales = buildKpis([], [acct(null, { spend: "10", purchaseRoas: "2" }, "act_1", "Kaia Cafe")])[3] as Kpi;
+    expect(texts(sales)).toEqual(["20"]);
+    expect(unlabelled(sales)).toEqual(["20 @ Kaia Cafe"]);
   });
 
-  it("is null when every account's currency is known", () => {
-    const kpis = buildKpis([], [acct("MYR", { spend: "10" }), acct("SGD", { spend: "5" })]);
-    expect(kpis[2]!.unknownCurrencyValue).toBeNull();
-    expect(kpis[3]!.unknownCurrencyValue).toBeNull();
+  it("no line is flagged when every account's currency is known", () => {
+    const kpis = buildKpis([], [acct("MYR", { spend: "10" }), acct("SGD", { spend: "5" }, "act_2", "Night Market")]);
+    expect(unlabelled(kpis[2]!)).toEqual([]);
+    expect(unlabelled(kpis[3]!)).toEqual([]);
+    expect(kpis[2]!.values.map((v) => v.currency)).toEqual(["MYR", "SGD"]);
   });
 
-  it("is null for counts, and null when there is no money data at all", () => {
+  it("counts are never flagged, and \u2014 means no data, not an unknown currency", () => {
     const kpis = buildKpis([day("2026-06-01", 500, 40)], []);
-    expect(kpis[0]!.unknownCurrencyValue).toBeNull(); // Reach
-    expect(kpis[1]!.unknownCurrencyValue).toBeNull(); // Engagement
-    // "—" means no data, NOT an unknown currency
-    expect(kpis[2]!.values).toEqual(["—"]);
-    expect(kpis[2]!.unknownCurrencyValue).toBeNull();
+    expect(unlabelled(kpis[0]!)).toEqual([]); // Reach
+    expect(unlabelled(kpis[1]!)).toEqual([]); // Engagement
+    expect(texts(kpis[2]!)).toEqual(["\u2014"]);
+    expect(unlabelled(kpis[2]!)).toEqual([]);
+  });
+
+  // r2 [P1] — the fix that was missing: one shared "unknown" bucket silently pooled them.
+  it("TWO accounts with no currency are NEVER pooled — one line each, each named", () => {
+    const accounts = [
+      acct(null, { spend: "10" }, "act_1", "Kaia Cafe"),
+      acct(null, { spend: "5" }, "act_2", "Night Market"),
+    ];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(texts(spend)).toEqual(["10.00", "5.00"]);
+    // 15.00 would assert the two accounts share a currency. Nothing here knows that.
+    expect(texts(spend).join(" ")).not.toContain("15.00");
+    expect(unlabelled(spend)).toEqual(["10.00 @ Kaia Cafe", "5.00 @ Night Market"]);
+  });
+
+  it("Sales (est.) keeps two unknown accounts apart too", () => {
+    const accounts = [
+      acct(null, { spend: "10", purchaseRoas: "2" }, "act_1", "Kaia Cafe"), // 20
+      acct(null, { spend: "5", purchaseRoas: "3" }, "act_2", "Night Market"), // 15
+    ];
+    const sales = buildKpis([], accounts)[3] as Kpi;
+    expect(texts(sales)).toEqual(["20", "15"]);
+    expect(texts(sales).join(" ")).not.toContain("35");
+    expect(unlabelled(sales)).toEqual(["20 @ Kaia Cafe", "15 @ Night Market"]);
+  });
+
+  it("two unknown accounts with the SAME figure still stay two distinct lines", () => {
+    const accounts = [
+      acct(null, { spend: "10" }, "act_1", "Kaia Cafe"),
+      acct(null, { spend: "10" }, "act_2", "Night Market"),
+    ];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(spend.values).toHaveLength(2);
+    expect(unlabelled(spend)).toEqual(["10.00 @ Kaia Cafe", "10.00 @ Night Market"]);
+  });
+
+  it("known currencies come first, then each unaccountable line, ordered by account", () => {
+    const accounts = [
+      acct(null, { spend: "1" }, "act_9", "Zed"),
+      acct("SGD", { spend: "2" }, "act_3", "Sing"),
+      acct(null, { spend: "3" }, "act_2", "Alpha"),
+      acct("MYR", { spend: "4" }, "act_1", "Kaia Cafe"),
+    ];
+    const spend = buildKpis([], accounts)[2] as Kpi;
+    expect(texts(spend)).toEqual(["MYR 4.00", "SGD 2.00", "3.00", "1.00"]);
+    expect(unlabelled(spend)).toEqual(["3.00 @ Alpha", "1.00 @ Zed"]);
+  });
+
+  it("an account with a blank name falls back to its id so the line is still identifiable", () => {
+    const spend = buildKpis([], [acct(null, { spend: "10" }, "act_77", "  ")])[2] as Kpi;
+    expect(unlabelled(spend)).toEqual(["10.00 @ act_77"]);
   });
 });
 
