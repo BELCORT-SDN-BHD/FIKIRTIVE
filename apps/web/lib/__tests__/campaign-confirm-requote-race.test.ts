@@ -128,6 +128,7 @@ function pageProps(): PageProps {
         },
         createdAt: "2026-07-23T00:00:00.000Z",
         updatedAt: "2026-07-23T00:00:00.000Z",
+        dispatchedEntryIds: [],
         grouped: {
           projects: [
             { id: "project-1", name: "First project", createdAt: "2026-07-23T00:00:00.000Z" },
