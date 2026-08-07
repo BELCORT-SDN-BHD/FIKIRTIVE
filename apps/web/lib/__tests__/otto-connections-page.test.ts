@@ -140,7 +140,8 @@ describe("Connections page groups by merchant task (#518)", () => {
       meta: {
         connected: true,
         status: "active",
-        accounts: [{ id: "act_1", name: "Acme Ads", currency: "MYR", status: "ACTIVE" }],
+        // account_status is Meta's numeric code — 1 = the account is running (#693).
+        accounts: [{ id: "act_1", name: "Acme Ads", currency: "MYR", status: "1" }],
         canWrite: true,
         adsAutonomy: "ASK",
         adsWritesPaused: false,
@@ -340,5 +341,93 @@ describe("Connections page explains a failed Meta connect (#511)", () => {
     const dom = await renderConnections();
 
     expect(dom.querySelector('[role="alert"]')).toBeNull();
+  });
+});
+
+// #693 — the ad-account rows printed Meta's raw account_status code at the merchant
+// ("MYR · 1"), and a suspended account looked like "MYR · 2" — the one fact that actually
+// matters ("my ad account is stopped") never reached the screen. Same family as #683:
+// an internal code shown to the merchant. The page must read the single status mapping
+// (lib/meta-ad-account-status.ts) and never render a bare code.
+describe("Connections page speaks plain English about ad-account status (#693)", () => {
+  function mockAccounts(accounts: { id: string; name: string; currency: string; status: string }[]) {
+    mocks.getAccountViewData.mockResolvedValue({
+      settings: {},
+      channels: CONNECTED_CHANNELS,
+      packs: [],
+      adsAutonomy: "ASK",
+      canPublish: true,
+      meta: { connected: true, status: "active", accounts, canWrite: true, adsAutonomy: "ASK", adsWritesPaused: false },
+    });
+    mocks.getMetaInsights.mockResolvedValue({ accounts: [] });
+  }
+
+  /** The one row for this ad account — innermost matching div, ancestors excluded. */
+  function accountRow(dom: HTMLElement, name: string): HTMLElement {
+    const candidates = Array.from(dom.querySelectorAll<HTMLElement>("div")).filter((el) =>
+      el.textContent?.includes(name),
+    );
+    const row = candidates.at(-1);
+    if (!row) throw new Error(`no ad-account row for "${name}"`);
+    return row;
+  }
+
+  it("a running account reads as words, never as the code the screenshot showed", async () => {
+    mockAccounts([{ id: "act_qa_1", name: "Kaia Cafe QA Ads", currency: "MYR", status: "1" }]);
+
+    const dom = await renderConnections();
+    const text = dom.textContent ?? "";
+
+    // The exact string from the ticket's screenshot.
+    expect(text).not.toContain("MYR · 1");
+    expect(text).toContain("MYR · Active");
+  });
+
+  it("a suspended account says so, and says what it means for the merchant's ads", async () => {
+    mockAccounts([{ id: "act_qa_1", name: "Night Market QA Ads", currency: "SGD", status: "2" }]);
+
+    const dom = await renderConnections();
+    const text = dom.textContent ?? "";
+
+    expect(text).not.toContain("SGD · 2");
+    expect(text).toContain("Disabled");
+    // "Disabled" alone is still a word the merchant has to interpret — the consequence is spelled out.
+    expect(text.toLowerCase()).toContain("ads");
+  });
+
+  it("a code we don't recognise is admitted, not printed and not guessed at", async () => {
+    mockAccounts([{ id: "act_qa_1", name: "Future State Ads", currency: "MYR", status: "202" }]);
+
+    const dom = await renderConnections();
+    const row = accountRow(dom, "Future State Ads");
+
+    expect(row.textContent).toContain("Unknown status");
+    expect(row.textContent).not.toContain("202");
+  });
+
+  it("no ad-account row anywhere ends in a bare status code", async () => {
+    mockAccounts([
+      { id: "act_1", name: "Kaia Cafe QA Ads", currency: "MYR", status: "1" },
+      { id: "act_2", name: "Night Market QA Ads", currency: "SGD", status: "3" },
+      { id: "act_3", name: "Grace Period Ads", currency: "MYR", status: "9" },
+      { id: "act_4", name: "Closed Ads", currency: "MYR", status: "101" },
+    ]);
+
+    const dom = await renderConnections();
+    const text = dom.textContent ?? "";
+
+    // The shape the bug produced: "<CURRENCY> · <digits>".
+    expect(text).not.toMatch(/[A-Z]{3}\s·\s\d/);
+  });
+
+  it("shows nothing rather than an invented status when Meta reported none", async () => {
+    mockAccounts([{ id: "act_1", name: "Silent Ads", currency: "MYR", status: "" }]);
+
+    const dom = await renderConnections();
+    const row = accountRow(dom, "Silent Ads");
+
+    expect(row.textContent).toContain("MYR");
+    expect(row.textContent).not.toContain("·");
+    expect(row.textContent).not.toContain("Unknown status");
   });
 });
