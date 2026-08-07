@@ -6,6 +6,8 @@ const {
   mockRequireOwner,
   mockIsImpersonating,
   mockContactFindMany,
+  mockConsentProjectionFindMany,
+  mockConsentEventFindMany,
   mockSegmentFindMany,
   mockSegmentFindFirst,
   mockSegmentCreate,
@@ -16,6 +18,8 @@ const {
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
   mockContactFindMany: vi.fn(),
+  mockConsentProjectionFindMany: vi.fn(),
+  mockConsentEventFindMany: vi.fn(),
   mockSegmentFindMany: vi.fn(),
   mockSegmentFindFirst: vi.fn(),
   mockSegmentCreate: vi.fn(),
@@ -29,6 +33,8 @@ vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonatin
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     contact: { findMany: mockContactFindMany },
+    consentStateProjection: { findMany: mockConsentProjectionFindMany },
+    consentEvent: { findMany: mockConsentEventFindMany },
     segment: {
       findMany: mockSegmentFindMany,
       findFirst: mockSegmentFindFirst,
@@ -73,7 +79,6 @@ const contacts = [
     id: "contact-1",
     name: "Amina",
     totalOrdersMyr: "1200.50",
-    marketingConsent: "opt_in",
     doNotDisturb: false,
     identities: [{ channel: "whatsapp" }, { channel: "email" }],
   },
@@ -81,11 +86,23 @@ const contacts = [
     id: "contact-2",
     name: "Bo",
     totalOrdersMyr: "800",
-    marketingConsent: "opt_out",
     doNotDisturb: false,
     identities: [{ channel: "email" }],
   },
 ];
+
+/** #726 — consent comes from the projection authority, never from a Contact column. */
+function projection(contactId: string, state: string, extra: Record<string, string> = {}) {
+  return {
+    contactId,
+    state,
+    evidenceStatus: "verified",
+    lastEventId: `${contactId}-last-event`,
+    ...extra,
+  };
+}
+
+const consentProjections = [projection("contact-2", "effective_revoke")];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -95,6 +112,8 @@ beforeEach(() => {
   mockRequireOwner.mockResolvedValue({ ownerId: "owner-1" });
   mockIsImpersonating.mockResolvedValue(false);
   mockContactFindMany.mockResolvedValue(contacts);
+  mockConsentProjectionFindMany.mockResolvedValue(consentProjections);
+  mockConsentEventFindMany.mockResolvedValue([]);
   mockSegmentFindMany.mockResolvedValue([]);
   mockSegmentFindFirst.mockResolvedValue(null);
   mockSegmentCreate.mockResolvedValue({
@@ -152,7 +171,6 @@ describe("previewSegment", () => {
         id: true,
         name: true,
         totalOrdersMyr: true,
-        marketingConsent: true,
         doNotDisturb: true,
         identities: {
           where: { ownerId: "owner-1", deletedAt: null },
@@ -168,12 +186,17 @@ describe("previewSegment", () => {
       matchedCount: 1,
       contactableCount: 1,
       knownOptOutCount: 0,
+      // Bo clears the spend threshold and is a known opt-out: the consent rule is what
+      // removed him, and the merchant is told so instead of reading a bare "0" (#726).
+      excludedByConsentCount: 1,
+      reportedOptOutCount: 0,
       contacts: [
         {
           id: "contact-1",
           name: "Amina",
           channels: ["email", "whatsapp"],
           contactable: true,
+          reportedOptOut: false,
         },
       ],
       // #715 — the preview frames its match count against the same owner total the
@@ -217,7 +240,6 @@ describe("previewSegment", () => {
         id: "contact-3",
         name: "Chen",
         totalOrdersMyr: "900",
-        marketingConsent: "unknown",
         doNotDisturb: false,
         identities: [{ channel: "whatsapp" }],
       },
@@ -225,10 +247,13 @@ describe("previewSegment", () => {
         id: "contact-4",
         name: "Dina",
         totalOrdersMyr: "700",
-        marketingConsent: "opt_in",
         doNotDisturb: true,
         identities: [{ channel: "whatsapp" }],
       },
+    ]);
+    mockConsentProjectionFindMany.mockResolvedValue([
+      ...consentProjections,
+      projection("contact-4", "verified_grant"),
     ]);
 
     const result = await previewSegment({
@@ -253,13 +278,56 @@ describe("previewSegment", () => {
         match: "all",
         rules: [{ kind: "contactability", value: "contactable" }],
       }),
-    ).resolves.toMatchObject({ matchedCount: 3, contactableCount: 3, knownOptOutCount: 0 });
+    ).resolves.toMatchObject({
+      matchedCount: 3,
+      contactableCount: 3,
+      knownOptOutCount: 0,
+      // #726 — "0 known opt-out excluded" used to be printed even when the rule had just
+      // removed someone. It now counts what the rule actually kept out.
+      excludedByConsentCount: 1,
+    });
     await expect(
       previewSegment({
         match: "all",
         rules: [{ kind: "contactability", value: "not_contactable" }],
       }),
     ).resolves.toMatchObject({ matchedCount: 1, contactableCount: 0, knownOptOutCount: 1 });
+  });
+
+  it("marks an opt-out the merchant recorded himself without ever excluding him", async () => {
+    // #716 — the projection is still `unknown` (a merchant assertion is not verified evidence),
+    // and its last event is that assertion. The page has to show it, not swallow it.
+    mockConsentProjectionFindMany.mockResolvedValue([
+      projection("contact-1", "unknown", { evidenceStatus: "asserted" }),
+    ]);
+    mockConsentEventFindMany.mockResolvedValue([{ id: "contact-1-last-event" }]);
+
+    const result = await previewSegment({
+      match: "all",
+      rules: [{ kind: "contactability", value: "contactable" }],
+    });
+
+    expect(mockConsentEventFindMany).toHaveBeenCalledWith({
+      where: {
+        ownerId: "owner-1",
+        id: { in: ["contact-1-last-event"] },
+        action: "revoke",
+        actorKind: "merchant",
+        evidenceStatus: "asserted",
+      },
+      select: { id: true },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      matchedCount: 2,
+      contactableCount: 2,
+      excludedByConsentCount: 0,
+      reportedOptOutCount: 1,
+      contacts: expect.arrayContaining([
+        expect.objectContaining({ id: "contact-1", contactable: true, reportedOptOut: true }),
+        expect.objectContaining({ id: "contact-2", contactable: true, reportedOptOut: false }),
+      ]),
+    });
   });
 
   it("rejects a spend threshold the Decimal(14,2) facts cannot represent exactly", async () => {
@@ -326,6 +394,8 @@ describe("listSegments", () => {
           matchedCount: 1,
           contactableCount: 1,
           knownOptOutCount: 0,
+          excludedByConsentCount: 1,
+          reportedOptOutCount: 0,
           createdAt: "2026-07-14T00:00:00.000Z",
         },
       ],

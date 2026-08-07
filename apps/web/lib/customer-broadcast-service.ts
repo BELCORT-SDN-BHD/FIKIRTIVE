@@ -20,6 +20,12 @@ import {
   type SendEligibilityResult,
 } from "@fikirtive/db";
 import {
+  countExcludedByConsent,
+  isKnownOptOut,
+  NO_CONSENT_RECORD,
+  readContactConsentTruth,
+} from "./consent-authority";
+import {
   broadcastPurposeFromTemplateClassification,
   type BroadcastPurpose,
 } from "./customer-broadcast-purpose";
@@ -131,6 +137,22 @@ export type PreviewAudienceEligibilityInput = {
 type AudienceCandidate = {
   contactId: string;
   contactIdentityId: string;
+};
+
+/**
+ * What the consent authority did to this audience, so freeze and preview can say it out loud
+ * (#726): who it kept out, and who it kept in on the merchant's own unverified record (#716).
+ */
+export type AudienceConsentSummary = {
+  /** Reachable contacts this segment would have selected but for their known opt-out. */
+  excludedByConsent: number;
+  /** Reachable contacts in this audience whose only opt-out is the merchant's own record. */
+  reportedOptOutKept: number;
+};
+
+type ResolvedSegmentAudience = {
+  candidates: AudienceCandidate[];
+  consent: AudienceConsentSummary;
 };
 
 function fail(code: CustomerBroadcastErrorCode): never {
@@ -349,6 +371,11 @@ export function createCustomerBroadcastService(
    * only an estimate: the frozen verdict snapshot and the execution-time live re-read are what
    * actually gate a send. The dead `Contact.doNotDisturb` read is gone too — DND is a separate
    * axis carried honestly in each member's verdict, never a silent estimate filter.
+   *
+   * #726 finished that repayment on the other side of the seam: the projection read and the
+   * "known opt-out" predicate now live in consent-authority.ts, which the segments page reads
+   * too — so a contact the segments page says it excluded can never reappear here, and the two
+   * pages report the exclusion with the same arithmetic.
    */
   async function resolveSegmentAudience(
     client: DatabaseClient,
@@ -356,7 +383,7 @@ export function createCustomerBroadcastService(
     segmentId: string,
     channel: string,
     purpose: BroadcastPurpose,
-  ): Promise<AudienceCandidate[]> {
+  ): Promise<ResolvedSegmentAudience> {
     const segment = await client.segment.findFirst({
       where: { id: segmentId, ownerId, deletedAt: null },
       select: { rulesJson: true },
@@ -365,28 +392,24 @@ export function createCustomerBroadcastService(
     const validated = validateSegmentRuleGroup(segment.rulesJson);
     if (!validated.ok) fail("INVALID_ARGUMENT");
 
-    const contacts = await client.contact.findMany({
-      where: { ownerId, deletedAt: null },
-      select: {
-        id: true,
-        totalOrdersMyr: true,
-        identities: { where: { ownerId, channel, deletedAt: null }, select: { id: true, channel: true } },
-      },
-    });
-
-    // Consent authority for the estimate: only a known effective_revoke (per this channel +
-    // broadcast purpose) is treated as "not contactable". Everything else — including a contact
-    // with no projection row yet — stays contactable so unknown permission is flagged + kept.
-    const revoked = await client.consentStateProjection.findMany({
-      where: { ownerId, channel, purpose, state: "effective_revoke" },
-      select: { contactId: true },
-    });
-    const revokedContactIds = new Set(revoked.map((row) => row.contactId));
+    const [contacts, consent] = await Promise.all([
+      client.contact.findMany({
+        where: { ownerId, deletedAt: null },
+        select: {
+          id: true,
+          totalOrdersMyr: true,
+          identities: { where: { ownerId, channel, deletedAt: null }, select: { id: true, channel: true } },
+        },
+      }),
+      readContactConsentTruth(client, ownerId, { channel, purpose }),
+    ]);
 
     const evaluatedAt = now().toISOString();
     const candidates: AudienceCandidate[] = [];
+    const reachable: Array<{ knownOptOut: boolean; matched: boolean; facts: SegmentContactFacts }> = [];
+    let reportedOptOutKept = 0;
     for (const contact of contacts) {
-      const contactable = !revokedContactIds.has(contact.id);
+      const truth = consent.get(contact.id) ?? NO_CONSENT_RECORD;
       const facts: SegmentContactFacts = {
         lifetimeSpendMyr:
           contact.totalOrdersMyr === null || contact.totalOrdersMyr === undefined
@@ -395,15 +418,26 @@ export function createCustomerBroadcastService(
         channels: [channel],
         // Translated for the segment "contactability" rule only: a not-known-revoked contact
         // reads as opt_in so unknown permission stays in the estimate (flag + keep, B0-44).
-        marketingConsent: contactable ? "opt_in" : "opt_out",
+        marketingConsent: isKnownOptOut(truth) ? "opt_out" : "opt_in",
         doNotDisturb: false,
       };
-      if (!contactMatchesRules(facts, validated.value, { evaluatedAt })) continue;
+      const matched = contactMatchesRules(facts, validated.value, { evaluatedAt });
+      if (contact.identities.length > 0) {
+        reachable.push({ knownOptOut: isKnownOptOut(truth), matched, facts });
+      }
+      if (!matched) continue;
+      if (truth.reportedOptOut && contact.identities.length > 0) reportedOptOutKept += 1;
       for (const identity of contact.identities) {
         candidates.push({ contactId: contact.id, contactIdentityId: identity.id });
       }
     }
-    return candidates;
+    return {
+      candidates,
+      consent: {
+        excludedByConsent: countExcludedByConsent(reachable, validated.value, evaluatedAt),
+        reportedOptOutKept,
+      },
+    };
   }
 
   async function listBroadcastRuns(
@@ -474,7 +508,8 @@ export function createCustomerBroadcastService(
       channel,
     );
 
-    const candidates = (await resolveSegmentAudience(db, principal.ownerId, segmentId, channel, purpose)).slice(0, take);
+    const audience = await resolveSegmentAudience(db, principal.ownerId, segmentId, channel, purpose);
+    const candidates = audience.candidates.slice(0, take);
     const providerConnectionId = await resolveActiveProviderConnectionId(
       db,
       principal.ownerId,
@@ -497,7 +532,7 @@ export function createCustomerBroadcastService(
       // §3.2 unknown-not-culled: every matched candidate stays included regardless of verdict.
       members.push({ ...candidate, verdict, includedByMerchant: true });
     }
-    return { candidateCount: candidates.length, members, purpose };
+    return { candidateCount: candidates.length, members, purpose, consent: audience.consent };
   }
 
   /**
@@ -634,13 +669,14 @@ export function createCustomerBroadcastService(
       if (!BROADCAST_STATUSES_ALLOWING_FREEZE.has(run.status)) fail("ACTION_DENIED");
       if (run.revision !== expectedRevision) fail("CAS_CONFLICT");
 
-      const candidates = await resolveSegmentAudience(
+      const audience = await resolveSegmentAudience(
         tx,
         principal.ownerId,
         segmentId,
         run.channel,
         run.purpose as BroadcastPurpose,
       );
+      const candidates = audience.candidates;
       const providerConnectionId = await resolveActiveProviderConnectionId(
         tx,
         principal.ownerId,
@@ -729,7 +765,13 @@ export function createCustomerBroadcastService(
         where: { ownerId: principal.ownerId, broadcastRunId },
         orderBy: [{ id: "asc" }],
       });
-      return { ok: true as const, resource, members, change: { revision: nextRevision, kind: "audience_frozen" } };
+      return {
+        ok: true as const,
+        resource,
+        members,
+        consent: audience.consent,
+        change: { revision: nextRevision, kind: "audience_frozen" },
+      };
     });
   }
 

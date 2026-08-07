@@ -150,6 +150,8 @@ function makeOttoSegmentsPort() {
         matchedCount: result.matchedCount,
         contactableCount: result.contactableCount,
         knownOptOutCount: result.knownOptOutCount,
+        excludedByConsentCount: result.excludedByConsentCount,
+        reportedOptOutCount: result.reportedOptOutCount,
         contacts: result.contacts,
       };
     },

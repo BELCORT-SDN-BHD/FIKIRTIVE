@@ -47,6 +47,13 @@ type DraftRule =
   | { id: number; kind: "tag"; tag: string }
   | { id: number; kind: "contactability"; value: "contactable" | "not_contactable" };
 
+/**
+ * #716 — the one sentence this page never said. A merchant who records an opt-out on a contact,
+ * or imports one in a CSV, has to be told here what that record does and does not do.
+ */
+const KNOWN_OPT_OUT_RULE_NOTE =
+  "Known opt-out means the customer opted out through their own channel. An opt-out you recorded yourself keeps the contact in the list, marked reported opt-out — open the contact to see its consent history.";
+
 type DraftGroup = { match: "all" | "any"; rules: DraftRule[] };
 type SettledPreview = { key: string; result: PreviewSuccess | null; error: string | null };
 type DraftPreviewRequest = SettledPreview & { status: "loading" | "settled" };
@@ -363,6 +370,8 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         matchedCount: preview.matchedCount,
         contactableCount: preview.contactableCount,
         knownOptOutCount: preview.knownOptOutCount,
+        excludedByConsentCount: preview.excludedByConsentCount,
+        reportedOptOutCount: preview.reportedOptOutCount,
       };
       setSegments((current) =>
         attempt.operation === "update"
@@ -765,10 +774,13 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
-        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} contactable · {preview.knownOptOutCount} known opt-out excluded
+        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} contactable · {preview.excludedByConsentCount} known opt-out excluded
+        {preview.reportedOptOutCount > 0
+          ? ` · ${preview.reportedOptOutCount} reported opt-out still included`
+          : ""}
       </p>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        Unknown consent stays included. Do not disturb is checked at send time and does not filter this segment.
+        Unknown consent stays included. {KNOWN_OPT_OUT_RULE_NOTE} Do not disturb is checked at send time and does not filter this segment.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}
@@ -793,8 +805,12 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
                   {contact.channels.length > 0 ? contact.channels.join(" · ") : "No live identity"}
                 </p>
               </div>
-              <Badge variant={contact.contactable ? "success" : "warning"}>
-                {contact.contactable ? "Included" : "Known opt-out excluded"}
+              <Badge variant={contact.contactable && !contact.reportedOptOut ? "success" : "warning"}>
+                {contact.contactable
+                  ? contact.reportedOptOut
+                    ? "Included · reported opt-out"
+                    : "Included"
+                  : "Known opt-out excluded"}
               </Badge>
             </li>
           ))}
@@ -905,18 +921,21 @@ function RuleValueEditor({ rule, onChange }: { rule: DraftRule; onChange: (rule:
       );
     case "contactability":
       return (
-        <Select
-          value={rule.value}
-          onValueChange={(value) => onChange({ ...rule, value: value as "contactable" | "not_contactable" })}
-        >
-          <SelectTrigger className="w-full" aria-label="Consent selection value">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="contactable">Not known opt-out</SelectItem>
-            <SelectItem value="not_contactable">Known opt-out</SelectItem>
-          </SelectContent>
-        </Select>
+        <div>
+          <Select
+            value={rule.value}
+            onValueChange={(value) => onChange({ ...rule, value: value as "contactable" | "not_contactable" })}
+          >
+            <SelectTrigger className="w-full" aria-label="Consent selection value">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="contactable">Not known opt-out</SelectItem>
+              <SelectItem value="not_contactable">Known opt-out</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{KNOWN_OPT_OUT_RULE_NOTE}</p>
+        </div>
       );
   }
 }
