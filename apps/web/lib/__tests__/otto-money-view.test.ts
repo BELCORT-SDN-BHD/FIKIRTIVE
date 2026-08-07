@@ -1,5 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { toOttoInsightAccounts, toOttoAdRows } from "../otto-money-view";
+import {
+  expectClosedAccountShape,
+  expectClosedAdShape,
+  isFinishedMoney,
+  looksNumeric,
+  ACCOUNT_KEYS,
+  AD_KEYS,
+  MONEY_KEYS,
+  METRIC_KEYS,
+} from "./otto-money-contract";
 import type { AccountInsights } from "../meta-insights";
 import type { OwnerAdRow } from "../meta-performance";
 
@@ -29,13 +39,6 @@ const ad = (
   metrics: metrics(over), creative: null,
 });
 
-/** Every leaf value in the payload, so a shape assertion can't be dodged by nesting. */
-function leaves(value: unknown, path = ""): { path: string; value: unknown }[] {
-  if (value === null || typeof value !== "object") return [{ path, value }];
-  if (Array.isArray(value)) return value.flatMap((v, i) => leaves(v, `${path}[${i}]`));
-  return Object.entries(value).flatMap(([k, v]) => leaves(v, path ? `${path}.${k}` : k));
-}
-
 // ---------------------------------------------------------------------------
 // #692 r3 [P1] — the load-bearing pin. Three rounds of telling the model "don't add
 // these" failed. What reaches the model must not BE addable: every money figure crosses
@@ -46,23 +49,18 @@ describe("Otto money boundary — no summable amount reaches the model (#692 r3)
     account("act_2", "Night Market", "SGD", { spend: "33.10", cpc: "0.20", cpm: "3.00" }),
   ];
 
-  it("no money field survives as a number or a bare numeric string", () => {
-    const out = toOttoInsightAccounts(twoCurrencies);
-    for (const { path, value } of leaves(out)) {
-      const isMoneyPath = /(^|\.)money\./.test(path) || /spend|cpc|cpm/i.test(path);
-      if (!isMoneyPath) continue;
-      expect(typeof value).toBe("string");
-      // a bare numeric string is exactly what could be parsed back and summed
-      expect(String(value)).not.toMatch(/^-?[\d,]+(\.\d+)?$/);
-    }
+  // #692 r4: a CLOSED key set, not a name match. "Does this field look like money?" fails open
+  // on the next field nobody imagined; an enumerated contract fails closed and drags whoever
+  // adds a field into this list, where a reviewer sees it.
+  it("every account object matches the closed contract exactly — key sets, value classes, money format", () => {
+    for (const a of toOttoInsightAccounts(twoCurrencies)) expectClosedAccountShape(a);
   });
 
-  it("the account object exposes no `spend`, `cpc` or `cpm` key of its own", () => {
+  it("the enumerated key sets are the ones this payload actually has", () => {
     const out = toOttoInsightAccounts(twoCurrencies);
-    const keys = leaves(out).map((l) => l.path);
-    expect(keys.some((k) => /\.metrics\.spend$/.test(k))).toBe(false);
-    expect(keys.some((k) => /\.metrics\.cpc$/.test(k))).toBe(false);
-    expect(keys.some((k) => /\.metrics\.cpm$/.test(k))).toBe(false);
+    expect(Object.keys(out[0]!).sort()).toEqual([...ACCOUNT_KEYS]);
+    expect(Object.keys(out[0]!.money).sort()).toEqual([...MONEY_KEYS]);
+    expect(Object.keys(out[0]!.metrics).sort()).toEqual([...METRIC_KEYS]);
   });
 
   it("known currencies arrive as finished text carrying their code", () => {
@@ -103,9 +101,11 @@ describe("Otto money boundary — accounts with no reported currency (#692 r3)",
     expect(out[0]!.moneyBucket).not.toBe(out[1]!.moneyBucket);
   });
 
-  it("their figures are still not bare numbers the model could add", () => {
+  it("their figures are finished text, and the pooled total appears nowhere", () => {
     const out = toOttoInsightAccounts(twoUnknown);
-    expect(out[0]!.money.spend).not.toMatch(/^-?[\d,]+(\.\d+)?$/);
+    for (const a of out) expectClosedAccountShape(a);
+    expect(isFinishedMoney(out[0]!.money.spend)).toBe(true);
+    expect(looksNumeric(out[0]!.money.spend)).toBe(false);
     expect(JSON.stringify(out)).not.toContain("2230"); // 1240 + 990
   });
 
@@ -117,12 +117,12 @@ describe("Otto money boundary — accounts with no reported currency (#692 r3)",
 
 // ---------------------------------------------------------------------------
 describe("Otto money boundary — per-ad rows (#692 r3)", () => {
-  it("per-ad money is finished text too, and no numeric spend survives", () => {
+  it("per-ad rows match the SAME closed contract — one validator, both paths", () => {
     const out = toOttoAdRows([ad("a1", "act_1", "Kaia Cafe", "MYR", { spend: "31.20", cpc: "0.11" })]);
+    expectClosedAdShape(out[0]);
     expect(out[0]!.money.spend).toBe("MYR 31.20");
     expect(out[0]!.money.cpc).toBe("MYR 0.11");
-    const keys = leaves(out).map((l) => l.path);
-    expect(keys.some((k) => /\.metrics\.spend$/.test(k))).toBe(false);
+    expect(Object.keys(out[0]!).sort()).toEqual([...AD_KEYS]);
   });
 
   it("carries hasSpend so the diagnosis can still tell a live ad from a dormant one", () => {
@@ -149,5 +149,48 @@ describe("Otto money boundary — per-ad rows (#692 r3)", () => {
     expect(out[0]!.metrics.ctr).toBe("3.14");
     expect(out[0]!.metrics.purchaseRoas).toBe("3.8");
     expect(out[0]!.creative).toBeNull();
+  });
+
+  it("a real creative object still satisfies the contract", () => {
+    const withCreative: OwnerAdRow = {
+      ...ad("a1", "act_1", "Kaia Cafe", "MYR"),
+      // a genuine Meta video id is all digits — the contract must not mistake it for money
+      creative: { imageUrl: "https://img/1.png", body: "Try it", title: "Iced Latte", videoId: "1234567890" },
+    };
+    expectClosedAdShape(toOttoAdRows([withCreative])[0]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #692 r4: the contract's own predicates, so the pin cannot pass by being lax. These are the
+// exact strings a lax matcher waves through — the previous "doesn't look like a bare number"
+// rule accepted every one of them.
+describe("the money format predicate (#692 r4)", () => {
+  it("accepts only the three finished forms", () => {
+    expect(isFinishedMoney("MYR 612")).toBe(true);
+    expect(isFinishedMoney("MYR 1,234.56")).toBe(true);
+    expect(isFinishedMoney("1240 (currency not reported — Kaia Cafe)")).toBe(true);
+    expect(isFinishedMoney("—")).toBe(true);
+  });
+
+  it("rejects everything a merchant could read as a plain amount", () => {
+    for (const bad of ["+48.75", "48.75", "1e3", " 48.75", "48.75 ", "1,240", "-12", "myr 612", "MYR", "612 MYR", ""]) {
+      expect(isFinishedMoney(bad), `${JSON.stringify(bad)} must not pass as finished money`).toBe(false);
+    }
+  });
+
+  it("rejects non-strings outright — a number is never finished money", () => {
+    for (const bad of [48.75, 0, null, undefined, {}, ["MYR 1"]]) {
+      expect(isFinishedMoney(bad)).toBe(false);
+    }
+  });
+
+  it("looksNumeric catches the forms a naive regex misses", () => {
+    for (const n of ["+48.75", "1e3", " 48.75 ", "1,240", "0", "-12"]) {
+      expect(looksNumeric(n), `${JSON.stringify(n)} is usable as a number`).toBe(true);
+    }
+    for (const t of ["MYR 612", "—", "", "  ", "Kaia Cafe"]) {
+      expect(looksNumeric(t), `${JSON.stringify(t)} is not a number`).toBe(false);
+    }
   });
 });
