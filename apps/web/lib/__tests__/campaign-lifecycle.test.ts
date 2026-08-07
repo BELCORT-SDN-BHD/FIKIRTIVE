@@ -62,7 +62,13 @@ const {
   deriveCampaignBatchId,
 } = await import("@/lib/campaign-gen-identity");
 const { orchestrateBatch } = await import("@/lib/factory-batch");
-const { underCampaignApprovalLock } = await import("@/lib/campaign-approval-lock");
+const {
+  applyCampaignApprovalGate,
+  campaignApprovalGateRefusal,
+  campaignApprovalLockKey,
+  CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+  CAMPAIGN_PLAN_CHANGED_MID_DISPATCH,
+} = await import("@/lib/campaign-approval-lock");
 const { dispatchedCampaignEntryIds } = await import("@/lib/campaign-dispatch-history");
 const { runAsUser } = await import("@fikirtive/db/principal");
 
@@ -573,14 +579,51 @@ describe("#744 P2 the dispatch check cannot be dodged by grouping, age, or a bro
 });
 
 // ────────────────────────────────────────────────────────────────────────────
-// #744 判官 r1 P1-2 — the interleaving the judge named, woven by hand.
+// #744 判官 r1 P1-2 / r2 P1 — the interleaving the judge named, woven by hand.
 //
-// Both tests drive the REAL gate (`underCampaignApprovalLock`, the one the confirm action
-// injects around startGen) against the REAL undo action. What stands in for startGen is the
-// callback the gate protects: it writes the GenJob whose existence IS the charge, at the exact
-// moment the judge asked about — inside the window between "confirm read this as approved" and
-// "confirm spent the credits".
+// These tests drive the REAL gate (`applyCampaignApprovalGate` — the call gen-actions makes as
+// the FIRST statement of startGen's create+reserve+enqueue transaction) against the REAL undo
+// action. What stands in for startGen is the SHAPE of that transaction: one real database
+// transaction that runs the gate and then writes the GenJob whose existence IS the charge.
+// Where gen-actions puts that call is pinned separately and behaviourally — gen-actions.test.ts
+// proves the lock is taken inside the money transaction before the project lock and that a
+// refusal reaches neither genJob.create nor reserveCredits; campaign-generation-confirm.test.ts
+// pins the wiring statically.
+//
+// r2's finding was about PLACEMENT, not presence: the gate used to hold the lock in an OUTER
+// transaction wrapped around startGen, which opens its own. That outer transaction could time
+// out and release the lock while the charge was still uncommitted, and an undo could then take
+// the lock, see no GenJob, and write "proposed" — `charged && !approved`. The first test asserts
+// that window shut as itself: while the charge is written and NOT yet committed, the lock is
+// still held and the undo is still waiting.
 describe("#744 P1-2 an undo racing a dispatch has only two legal endings", () => {
+  /** The gate the confirm action attaches to every paid campaign dispatch, in miniature: is
+   *  this entry still approved in the plan as PERSISTED right now? */
+  function approvalGate(campaignId: string, entryId: string) {
+    return {
+      ownerId: orgA,
+      campaignId,
+      stillApproved: (planJson: unknown) => entryStatuses(planJson)[entryId] === "approved",
+    };
+  }
+
+  /** The charge, written by whichever transaction is passed in. */
+  async function writeCharge(
+    tx: Pick<typeof prisma, "genJob">,
+    campaignId: string,
+    projectId: string,
+    entryId: string,
+    salt: string,
+  ) {
+    await tx.genJob.create({
+      data: {
+        id: `gj_${randomUUID()}`, ownerId: orgA, projectId, prompt: "already paid",
+        model: "seedream", kind: "IMAGE", count: 1,
+        idempotencyKey: `${campaignEntryLogicalPrefix(campaignId, projectId, entryId)}${salt.repeat(32)}`,
+      },
+    });
+  }
+
   async function raceState(campaignId: string, projectId: string, entryId: string) {
     const charged = await prisma.genJob.count({
       where: {
@@ -593,7 +636,7 @@ describe("#744 P1-2 an undo racing a dispatch has only two legal endings", () =>
     return { charged: charged > 0, approved: status === "approved" };
   }
 
-  it("undo arriving inside the dispatch window loses, and the entry stays approved AND charged", async () => {
+  it("cannot be squeezed between the lock and the charge — the undo waits for the charging transaction", async () => {
     const entryId = testId();
     const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
     const projectId = await seedBatchProject(id);
@@ -603,31 +646,38 @@ describe("#744 P1-2 an undo racing a dispatch has only two legal endings", () =>
     let closeWindow = () => {};
     const windowClosed = new Promise<void>((resolve) => { closeWindow = resolve; });
 
-    const dispatching = underCampaignApprovalLock(
-      prisma,
-      {
-        ownerId: orgA,
-        campaignId: id,
-        stillApproved: (planJson) => entryStatuses(planJson)[entryId] === "approved",
-      },
-      async () => {
-        // Past the re-read, holding the lock, credits not yet spent — the exact window.
+    // startGen's money transaction: gate first, then the charge, all in ONE transaction.
+    const charging = prisma.$transaction(
+      async (tx) => {
+        await applyCampaignApprovalGate(tx, approvalGate(id, entryId));
+        await writeCharge(tx, id, projectId, entryId, "c");
+        // Charge written, NOT yet committed — the exact moment r2 named.
         openWindow();
         await windowClosed;
-        await seedGenJob(projectId, `${campaignEntryLogicalPrefix(id, projectId, entryId)}${"c".repeat(32)}`);
-        return { id: "charged", disposition: "fresh" as const };
+        return "charged" as const;
       },
+      { timeout: 30_000 },
     );
 
     await windowOpen;
-    const undoing = unapproveCampaignEntry({ campaignId: id, entryId });
-    // Long enough for the undo to reach the lock and block on it. Without the shared lock it
-    // would sail past, flip the entry to proposed, and the charge below would land anyway.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    closeWindow();
+    let undoSettled = false;
+    const undoing = unapproveCampaignEntry({ campaignId: id, entryId })
+      .then((result) => { undoSettled = true; return result; });
+    // Long enough for the undo to reach the lock and block on it.
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
-    const [dispatchResult, undoResult] = await Promise.all([dispatching, undoing]);
-    expect(dispatchResult).toEqual({ id: "charged", disposition: "fresh" });
+    // THE INVARIANT, asserted at the moment it has to hold — the charge exists and is not yet
+    // committed. (1) nobody else can take the campaign lock, because the transaction that will
+    // commit the charge is holding it; (2) so the undo is still waiting rather than deciding on
+    // a history it cannot see. With the lock in an outer transaction, both flip.
+    const [{ free }] = await prisma.$queryRaw<Array<{ free: boolean }>>`
+      SELECT pg_try_advisory_xact_lock(hashtextextended(${campaignApprovalLockKey(id)}, 0::bigint)) AS free`;
+    expect(free).toBe(false);
+    expect(undoSettled).toBe(false);
+
+    closeWindow();
+    const [dispatchResult, undoResult] = await Promise.all([charging, undoing]);
+    expect(dispatchResult).toBe("charged");
     expect(undoResult).toEqual({ error: ALREADY_DISPATCHED });
 
     const state = await raceState(id, projectId, entryId);
@@ -644,24 +694,52 @@ describe("#744 P1-2 an undo racing a dispatch has only two legal endings", () =>
     expect(await unapproveCampaignEntry({ campaignId: id, entryId })).toMatchObject({ ok: true });
 
     let dispatched = false;
-    const result = await underCampaignApprovalLock(
-      prisma,
-      {
-        ownerId: orgA,
-        campaignId: id,
-        stillApproved: (planJson) => entryStatuses(planJson)[entryId] === "approved",
-      },
-      async () => {
+    let refusal: unknown = null;
+    try {
+      await prisma.$transaction(async (tx) => {
+        await applyCampaignApprovalGate(tx, approvalGate(id, entryId));
         dispatched = true;
-        await seedGenJob(projectId, `${campaignEntryLogicalPrefix(id, projectId, entryId)}${"d".repeat(32)}`);
-        return { id: "charged", disposition: "fresh" as const };
-      },
-    );
+        await writeCharge(tx, id, projectId, entryId, "d");
+      });
+    } catch (error) {
+      refusal = campaignApprovalGateRefusal(error);
+      if (refusal === null) throw error;
+    }
 
     expect(dispatched).toBe(false);
-    expect(result).toMatchObject({ disposition: "conflict" });
+    expect(refusal).toEqual({ error: CAMPAIGN_PLAN_CHANGED_MID_DISPATCH, disposition: "conflict" });
     const state = await raceState(id, projectId, entryId);
     expect(state).toEqual({ charged: false, approved: false });
+    expect(state.charged && !state.approved).toBe(false);
+  });
+
+  it("refuses the charge — before it is written — when the plan cannot be re-read under the lock", async () => {
+    const entryId = testId();
+    const id = await seedCampaign(orgA, { entries: [{ id: entryId, date: "2026-08-25", status: "approved" }] });
+    const projectId = await seedBatchProject(id);
+
+    // "We could not check" is not "it was fine". The gate runs before create/reserve, so a
+    // failed check stops the charge instead of guessing that the approval still stands.
+    let dispatched = false;
+    let refusal: unknown = null;
+    try {
+      await prisma.$transaction(async (tx) => {
+        await applyCampaignApprovalGate(
+          { $executeRaw: tx.$executeRaw.bind(tx), campaign: { findFirst: async () => { throw new Error("plan re-read unavailable"); } } } as never,
+          approvalGate(id, entryId),
+        );
+        dispatched = true;
+        await writeCharge(tx, id, projectId, entryId, "e");
+      });
+    } catch (error) {
+      refusal = campaignApprovalGateRefusal(error);
+      if (refusal === null) throw error;
+    }
+
+    expect(dispatched).toBe(false);
+    expect(refusal).toEqual({ error: CAMPAIGN_APPROVAL_CHECK_UNKNOWN, disposition: "retryable" });
+    const state = await raceState(id, projectId, entryId);
+    expect(state).toEqual({ charged: false, approved: true });
     expect(state.charged && !state.approved).toBe(false);
   });
 });

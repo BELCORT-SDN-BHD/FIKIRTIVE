@@ -53,7 +53,7 @@ import {
   campaignVideoAspectForFormat,
   type CampaignGenKind,
 } from "./campaign-format-shape";
-import { underCampaignApprovalLock } from "./campaign-approval-lock";
+import { attachCampaignApprovalGate } from "./campaign-approval-lock";
 import {
   orchestrateBatch,
   quoteCell,
@@ -314,17 +314,19 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   const batchId = deriveCampaignBatchId(campaignId, projectId);
   const attemptId = newId();
 
-  // #744 判官 r1 P1-2 — every checked above was read BEFORE the loop below starts spending, and
-  // the merchant can undo or remove an approval while it runs. So each cell's dispatch is taken
-  // under the campaign approval lock, which re-reads the persisted plan and re-derives this same
-  // fingerprint from it: a dispatch either beats the undo (and the undo is then refused, because
-  // the job it can see proves the charge) or loses to it (and never runs). The single injected
-  // port is the whole change — orchestrateBatch's loop and startGen's money transaction are
-  // untouched, and startGen remains the only thing that may reserve a credit.
+  // #744 判官 r1 P1-2 / r2 P1 — everything checked above was read BEFORE the loop below starts
+  // spending, and the merchant can undo or remove an approval while it runs. So each cell's
+  // request carries the campaign approval gate, and startGen applies it INSIDE the transaction
+  // that commits that cell's charge: it re-reads the persisted plan under the campaign lock and
+  // re-derives this same fingerprint from it. A dispatch either beats the undo — and the undo is
+  // then refused, because the job it can now see proves the charge — or loses to it and never
+  // runs. Because the lock belongs to the charging transaction, an undo cannot land in between:
+  // the lock is released by the same COMMIT that makes the charge visible.
+  // This layer still opens no transaction and still spends nothing itself; startGen remains the
+  // only thing that may reserve a credit, and the gate can only ever refuse it.
   const guardedStartGen: StartGenPort = (req) =>
-    underCampaignApprovalLock(
-      prisma,
-      {
+    startGen(
+      attachCampaignApprovalGate(req, {
         ownerId,
         campaignId,
         stillApproved: (planJson) => {
@@ -332,8 +334,7 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
           return quoteCampaignGenCells(live, buildCampaignGenCells(live, models)).contentFingerprint
             === quote.contentFingerprint;
         },
-      },
-      () => startGen(req),
+      }),
     );
 
   const result = await orchestrateBatch(

@@ -16,6 +16,7 @@ vi.mock("next/cache", () => ({ revalidatePath }));
 
 const db = vi.hoisted(() => {
   const projectFindFirst = vi.fn();
+  const campaignFindFirst = vi.fn();
   const chatMessageFindFirst = vi.fn();
   const chatThreadFindFirst = vi.fn();
   const genJobFindFirst = vi.fn();
@@ -28,6 +29,7 @@ const db = vi.hoisted(() => {
   const executeRaw = vi.fn();
   const prisma = {
     project: { findFirst: projectFindFirst },
+    campaign: { findFirst: campaignFindFirst },
     chatMessage: { findFirst: chatMessageFindFirst },
     chatThread: { findFirst: chatThreadFindFirst },
     genJob: { findFirst: genJobFindFirst, findMany: genJobFindMany, create: genJobCreate, update: genJobUpdate },
@@ -38,6 +40,7 @@ const db = vi.hoisted(() => {
   return {
     prisma,
     projectFindFirst,
+    campaignFindFirst,
     chatMessageFindFirst,
     chatThreadFindFirst,
     genJobFindFirst,
@@ -84,6 +87,11 @@ const {
   startGen,
 } = await import("../gen-actions");
 const { canvasActionKey } = await import("../batch-idempotency");
+const {
+  attachCampaignApprovalGate,
+  CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+  CAMPAIGN_PLAN_CHANGED_MID_DISPATCH,
+} = await import("../campaign-approval-lock");
 
 const prevDefaultVideoModel = process.env.OTTO_DEFAULT_VIDEO_MODEL;
 
@@ -94,6 +102,7 @@ function resetStartGenMocks(): void {
   mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
   mockIsImpersonating.mockResolvedValue(false);
   db.projectFindFirst.mockResolvedValue({ id: "p1" });
+  db.campaignFindFirst.mockResolvedValue({ planJson: { entries: [] } });
   db.chatMessageFindFirst.mockResolvedValue({
     threadId: "thread-1",
     payload: { estimatedCredits: 1 },
@@ -108,6 +117,7 @@ function resetStartGenMocks(): void {
   db.reserveCredits.mockResolvedValue({ ok: true });
   db.refundReservation.mockResolvedValue({ ok: true });
   db.executeRaw.mockResolvedValue(undefined);
+  db.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => fn(db.prisma));
   mockGetBoss.mockResolvedValue({ send: mockBossSend });
   // pg-boss returns the caller-supplied deterministic id on a successful insert.
   mockBossSend.mockImplementation(async (
@@ -1723,5 +1733,133 @@ describe("startGen 图片规格快照", () => {
       expect(db.genJobCreate).not.toHaveBeenCalled();
       expect(db.reserveCredits).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// #744 判官 r2 P1 — WHERE the campaign approval gate runs.
+//
+// The gate itself is not new; its placement is. It used to be taken in an OUTER transaction
+// wrapped around startGen, which opens its own transaction to create + reserve + enqueue. That
+// outer transaction could time out and release the campaign lock while the charge was still
+// uncommitted — long enough for an undo to take the lock, see no GenJob and write "proposed",
+// after which the charge committed anyway: `charged && !approved`.
+//
+// The invariant these tests pin: the transaction that COMMITS the charge is the one holding the
+// campaign lock, it takes that lock before the project lock (campaign → project, no cycle), and
+// every way the gate can fail stops the charge before create/reserve.
+describe("startGen — the campaign approval gate runs inside the money transaction", () => {
+  const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+  function gatedRequest(gate: { stillApproved: (planJson: unknown) => boolean }) {
+    return attachCampaignApprovalGate(
+      {
+        projectId: "p1", prompt: "campaign cell", entityIds: [], count: 1,
+        kind: "image" as const, model: "seedream", idempotencyKey: "campaign-cell-1",
+      },
+      { ownerId: "org_ref", campaignId: CAMPAIGN_ID, stillApproved: gate.stillApproved },
+    );
+  }
+
+  it("takes the campaign lock first, inside the SAME transaction that creates and reserves", async () => {
+    const order: string[] = [];
+    db.prisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      order.push("tx:begin");
+      const result = await fn(db.prisma);
+      order.push("tx:commit");
+      return result;
+    });
+    db.executeRaw.mockImplementation(async (_strings: TemplateStringsArray, key: string) => {
+      order.push(`lock:${key}`);
+      return 0;
+    });
+    db.campaignFindFirst.mockImplementation(async () => {
+      order.push("plan:re-read");
+      return { planJson: { entries: [] } };
+    });
+    db.genJobCreate.mockImplementation(async () => {
+      order.push("genJob.create");
+      return { id: "job_ref" };
+    });
+    db.reserveCredits.mockImplementation(async () => {
+      order.push("reserve");
+      return { ok: true };
+    });
+
+    const result = await startGen(gatedRequest({ stillApproved: () => true }));
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    // Everything between begin and commit — the lock is released by the commit that makes the
+    // charge visible, so an undo can never see one without the other.
+    expect(order).toEqual([
+      "tx:begin",
+      `lock:campaign-approval:${CAMPAIGN_ID}`,
+      "plan:re-read",
+      "lock:project:p1",
+      "genJob.create",
+      "reserve",
+      "tx:commit",
+    ]);
+  });
+
+  it("refuses — creating nothing and reserving nothing — when the plan no longer approves it", async () => {
+    const result = await startGen(gatedRequest({ stillApproved: () => false }));
+
+    expect(result).toEqual({ error: CAMPAIGN_PLAN_CHANGED_MID_DISPATCH, disposition: "conflict" });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the lock cannot be taken — 'we could not check' is not 'it was fine'", async () => {
+    db.executeRaw.mockRejectedValueOnce(new Error("advisory lock unavailable"));
+
+    const result = await startGen(gatedRequest({ stillApproved: () => true }));
+
+    expect(result).toEqual({ error: CAMPAIGN_APPROVAL_CHECK_UNKNOWN, disposition: "retryable" });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+    expect(mockBossSend).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the persisted plan cannot be re-read under the lock", async () => {
+    db.campaignFindFirst.mockRejectedValue(new Error("plan re-read unavailable"));
+
+    const result = await startGen(gatedRequest({ stillApproved: () => true }));
+
+    expect(result).toEqual({ error: CAMPAIGN_APPROVAL_CHECK_UNKNOWN, disposition: "retryable" });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("refuses when re-deriving the approval fingerprint throws", async () => {
+    const result = await startGen(gatedRequest({
+      stillApproved: () => { throw new Error("fingerprint recompute failed"); },
+    }));
+
+    expect(result).toEqual({ error: CAMPAIGN_APPROVAL_CHECK_UNKNOWN, disposition: "retryable" });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the campaign itself is gone, rather than dispatching against nothing", async () => {
+    db.campaignFindFirst.mockResolvedValue(null);
+
+    const result = await startGen(gatedRequest({ stillApproved: () => true }));
+
+    expect(result).toEqual({ error: CAMPAIGN_PLAN_CHANGED_MID_DISPATCH, disposition: "conflict" });
+    expect(db.genJobCreate).not.toHaveBeenCalled();
+    expect(db.reserveCredits).not.toHaveBeenCalled();
+  });
+
+  it("leaves every other caller alone: no gate, no campaign lock, no plan read", async () => {
+    const result = await startGen({
+      projectId: "p1", prompt: "ordinary gen", entityIds: [], count: 1,
+      kind: "image", model: "seedream", idempotencyKey: "ordinary-1",
+    });
+
+    expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
+    expect(db.executeRaw.mock.calls.map((call) => call[1])).toEqual(["project:p1"]);
+    expect(db.campaignFindFirst).not.toHaveBeenCalled();
   });
 });
