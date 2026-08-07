@@ -233,95 +233,132 @@ describe("ottoInstructions — #541 approving happens on the card, never by a wo
     expect(ottoInstructions).toMatch(/ONLY thing that ever starts the work/i);
   });
 
-  // ── r1 judge P1-1 · load-bearing pin ───────────────────────────────────────────
-  // The r1 judge caught this test family checking only that a sentence EXISTS, never
-  // that the prompt agrees with itself. It didn't: the generate section ordered Otto to
-  // name a button, while "Honesty & limits" banned naming any button — one prompt, two
-  // opposite orders, and `runtime.ts` ships exactly this string. Worse, the button it
-  // named ("Confirm") does not exist: the real card reads "Review cost ·" first and only
-  // then "Confirm generate ·". Naming a label Otto cannot see is the very #541 disease.
-  //
-  // This pin is the contradiction detector, not a string presence check: if anyone ever
-  // re-introduces a named button in the spend path, the blanket ban must carry a matching
-  // exception, or this goes red.
-  it("does not order Otto to name a UI button it cannot see (no hardcoded labels)", () => {
-    // No label from the real confirm flow may be quoted as something to press. These are
-    // the labels the app actually renders today (OttoPlanCard / TemplateModal /
-    // AddAssetDialog); an exact-label pin lives in apps/web where the components are.
-    for (const label of ["Confirm button", "Review cost", "Confirm generate", "Approve button"]) {
-      expect(ottoInstructions, `must not tell the user to press "${label}"`).not.toContain(label);
+  // ── r2 → r3: 钉板降复杂度 ──────────────────────────────────────────────────────
+  // r2 的钉板「太聪明反而不承重」,判官三条全指这一点。r3 由编排者直接下调设计,
+  // 全部收进本文件,自含、肯定式、通用规则:
+  //  1. 通用按钮点名检测器(不是枚举标签 —— 新造的 "Launch button" 也要红);
+  //  2. 肯定式存在断言(直接 expect,不许包在 if 里 —— 删句必红);
+  //  3. 禁语族扩容(免费打字 + 金额比较句式)。
+  // 同时删掉 apps/web 那份跨包拼接式钉板:它把 4 个组件源码 join 后才全局检查,
+  // 只改真卡的标签、别处留着旧字符串时照样绿 —— 拼接式设计不可救。组件行为归
+  // 组件自己的测试管,不跨包。
+
+  // 1) 通用按钮点名检测器 —— 对整份提示词跑,零命中。
+  const BUTTON_NAMING_PATTERNS = [
+    // "Confirm button" / "Review cost button" / "Launch button" —— 任何专名 + button
+    /\b[A-Z][a-zA-Z]*(?: [A-Za-z]+)? button\b/,
+    // 引号包裹的标签点名:press "X" / click 'X' / tap “X”
+    /\b(?:press|click|tap|hit|push)\b[^.!?\n]{0,20}["'“”‘’]/i,
+    // "the X button" 小写变体
+    /\bthe\s+[a-z]+(?:\s+[a-z]+)?\s+button\b/i,
+  ];
+
+  it("names no UI button anywhere in the prompt (generic rule, not a label allowlist)", () => {
+    for (const pattern of BUTTON_NAMING_PATTERNS) {
+      const hit = ottoInstructions.match(pattern);
+      expect(
+        hit,
+        `按钮点名 ${pattern} 命中「${hit?.[0] ?? ""}」—— 提示词不许点名任何按钮标签,Otto 看不见它们`,
+      ).toBeNull();
     }
   });
 
-  it("keeps the button-naming ban and the spend path from contradicting each other", () => {
-    const bansNamingButtons = /Never tell the user to click a specific button or UI element/.test(
-      ottoInstructions,
-    );
-    // The spend path must still be able to point at the card — that is the Founder's
-    // ruling. So the blanket ban has to carry an explicit, narrow carve-out for the card
-    // Otto itself put in the conversation. Ban with no carve-out + a card instruction =
-    // the contradiction the judge found.
-    const carvesOutOttosOwnCard =
-      /exception is a card you yourself put in this conversation/i.test(ottoInstructions);
-    const tellsUserToActOnCard = /approve it on the card/i.test(ottoInstructions);
-    if (bansNamingButtons && tellsUserToActOnCard) {
+  it("the button-naming detector actually catches naming, including labels that don't exist yet", () => {
+    const namings = [
+      "press the Confirm button on the card",
+      "tell them to press the Launch button", // 从未存在过的新标签也要被逮住
+      "click the Review cost button",
+      'press "Confirm generate" to start',
+      "tap the Approve button",
+      "hit 'Go' when you're ready",
+    ];
+    for (const naming of namings) {
       expect(
-        carvesOutOttosOwnCard,
-        "the prompt both bans naming UI and tells the user to act on the card — the ban must carve out Otto's own card, or the two orders contradict",
+        BUTTON_NAMING_PATTERNS.some((pattern) => pattern.test(naming)),
+        `按钮点名 "${naming}" 必须被通用检测器逮住`,
       ).toBe(true);
     }
-    // And the carve-out must not become a licence to name the label anyway.
-    if (carvesOutOttosOwnCard) {
-      expect(ottoInstructions).toMatch(/never name the button on it/i);
+    // 反向:指向卡片本身、不点名标签的说法必须放行。
+    const safe = [
+      "tell them to approve it on the card to start",
+      "the only next-step instruction you may give is to approve it on the card itself",
+    ];
+    for (const sentence of safe) {
+      expect(BUTTON_NAMING_PATTERNS.some((pattern) => pattern.test(sentence))).toBe(false);
     }
   });
 
-  // ── r1 judge P1-2 · load-bearing pin ───────────────────────────────────────────
-  // "words … never spend credits" was flatly false: every conversation turn is metered
-  // (otto-actions.ts reserves `otto-turn:<userMessageId>`), and the prompt says so itself
-  // in the spending section. The true boundary is narrower: typing never starts a
-  // GENERATION and never spends what a generation costs — but talking is not free.
-  // One definition, used by both the ban and its positive control — a second copy would
-  // let the two drift apart, which is how a ban quietly stops catching anything.
-  const ABSOLUTE_FREE_TYPING_CLAIMS = [
+  // 2) 肯定式存在断言 —— 直接 expect,没有 if。任一句被删都会红。
+  it("keeps the button-naming ban itself in the prompt", () => {
+    expect(ottoInstructions).toContain(
+      "Never tell the user to click a specific button or UI element",
+    );
+  });
+
+  it("keeps the narrow carve-out for Otto's own card, and its no-label rider", () => {
+    expect(ottoInstructions).toContain("exception is a card you yourself put in this conversation");
+    expect(ottoInstructions).toContain("never name the button on it");
+  });
+
+  it("keeps the card-approval instruction that the carve-out exists for", () => {
+    expect(ottoInstructions).toContain("approve it on the card");
+  });
+
+  it("keeps the truth that a conversation turn costs credits", () => {
+    expect(ottoInstructions).toContain("Talking to you costs credits");
+  });
+
+  // 3) 禁语族扩容 —— 免费打字 + 金额比较。
+  // r2 判官 P1-2:「typing never spends what a generation costs」仍是错误的金额保证 ——
+  // 一轮对话实测可抵三张图(credit-format.ts 的 #555 实测记录),比较句不成立。
+  // r3 裁定:删掉一切金额比较句式,真话只留两层(文字不启动生成 / 对话按轮计费)。
+  const FALSE_MONEY_CLAIMS = [
     /\bwords?\b[^.!?\n]{0,40}\bnever\s+spends?\s+credits\b/i,
     /\b(?:typing|talking|words?|chatting|a\s+message)\b[^.!?\n]{0,40}\b(?:never|doesn['’]t|does\s+not|won['’]t)\s+(?:costs?|spends?)\s+(?:you\s+)?(?:any\s+)?credits\b/i,
     /\b(?:typing|talking|chatting)\b[^.!?\n]{0,20}\bis\s+free\b/i,
+    // 金额比较句式:拿对话的花费去比生成的花费(任何方向都禁)
+    /\b(?:never\s+)?spends?\s+what\s+a\s+generation\s+costs\b/i,
+    /\b(?:typing|talking|chatting|a\s+turn|a\s+conversation|words?)\b[^.!?\n]{0,40}\b(?:cheaper|less\s+than|costs?\s+less|more\s+than)\b/i,
   ];
 
-  it("never claims words are free, and states the real boundary instead", () => {
-    for (const claim of ABSOLUTE_FREE_TYPING_CLAIMS) {
-      expect(ottoInstructions, `absolute free-typing claim ${claim} must not appear`).not.toMatch(
-        claim,
-      );
+  it("makes no money claim about typing beyond the two true layers", () => {
+    for (const claim of FALSE_MONEY_CLAIMS) {
+      const hit = ottoInstructions.match(claim);
+      expect(hit, `错误金额保证 ${claim} 命中「${hit?.[0] ?? ""}」`).toBeNull();
     }
-    // The accurate replacement must be present: words don't start a generation / don't
-    // spend a GENERATION's credits — stated without claiming a turn is free.
-    expect(ottoInstructions).toMatch(/never spends what a generation costs/i);
-    // And the prompt must keep telling the truth that a turn does cost.
-    expect(ottoInstructions).toMatch(/Talking to you costs credits/);
   });
 
-  it("the free-typing ban actually catches the wording it is meant to stop", () => {
+  it("the money-claim ban catches both the free-typing family and the comparison family", () => {
     const falseClaims = [
-      // the exact r1 sentence:
+      // r1 原句:
       "words never start it and never spend credits",
       "typing never costs credits",
       "talking to me doesn't cost credits",
       "chatting is free",
       "a message never costs you any credits",
       "words will never spend credits",
+      // r2 原句(金额比较):
+      "typing never spends what a generation costs",
+      "and typing never spends what a generation costs.",
+      // 比较句的其他方向:
+      "a conversation costs less than an image",
+      "talking is cheaper than generating",
+      "a turn costs less than a video",
     ];
     for (const claim of falseClaims) {
       expect(
-        ABSOLUTE_FREE_TYPING_CLAIMS.some((pattern) => pattern.test(claim)),
-        `false claim "${claim}" must be caught`,
+        FALSE_MONEY_CLAIMS.some((pattern) => pattern.test(claim)),
+        `错误金额保证 "${claim}" 必须被逮住`,
       ).toBe(true);
     }
-    // Positive control the other way: the true, narrower sentence must survive the ban.
-    const trueBoundary =
-      "No words start it, and typing never spends what a generation costs — though a conversation turn has its own cost.";
-    expect(ABSOLUTE_FREE_TYPING_CLAIMS.some((pattern) => pattern.test(trueBoundary))).toBe(false);
+    // 反向:r3 允许的两层真话必须放行。
+    const trueLayers = [
+      "nothing is charged for making an image or video until that approval happens",
+      "A conversation turn has its own cost either way",
+    ];
+    for (const sentence of trueLayers) {
+      expect(FALSE_MONEY_CLAIMS.some((pattern) => pattern.test(sentence))).toBe(false);
+    }
   });
 
   // #559-style conservative safety lint: these are auditable banned wording families,
