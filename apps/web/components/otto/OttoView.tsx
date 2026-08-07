@@ -16,7 +16,7 @@ import { OttoAnalytics } from "./OttoAnalytics";
 import { OttoSchedule } from "./OttoSchedule";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import { OttoOnboarding } from "./OttoOnboarding";
-import { shouldShowOttoOnboarding } from "@/lib/otto-onboarding";
+import { ottoOnboardingFacts, shouldShowOttoOnboarding } from "@/lib/otto-onboarding";
 import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
@@ -66,6 +66,11 @@ interface OttoViewProps {
   onboardingDismissed?: boolean;
   /** Persist that dismissal against the workspace. */
   onDismissOnboarding?: () => void;
+  /** #679 — how many conversations this SHOP has, across every project. Required and named for
+   *  its scope, not defaulted: `threads` is the open project's list only, and quietly falling
+   *  back to it is exactly how an established shop opening a fresh project met the first-run
+   *  card again. */
+  shopConversationCount: number;
 }
 
 type ThreadComposerReference = OttoComposerReference & { threadId: string };
@@ -104,6 +109,7 @@ export function OttoView({
   skin,
   onboardingDismissed = false,
   onDismissOnboarding,
+  shopConversationCount,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -210,19 +216,17 @@ export function OttoView({
 
   // Otto view — front door when no active thread, conversation when one is selected
   const showFrontDoor = !activeThread;
-  // #679 — the two tiles now stand for real workspace facts (entities are owner-scoped, brand
-  // memory is owner-scoped), so the card can tick one off instead of vanishing the moment
-  // either is done. `dismissed` comes from the org row, not from this browser.
-  const hasStuff = entities.length > 0;
-  const hasBrandMemory = memory.length > 0;
-  const showOnboarding =
-    showFrontDoor &&
-    shouldShowOttoOnboarding({
-      dismissed: onboardingDismissed,
-      hasStuff,
-      hasBrandMemory,
-      hasStartedWork: threads.length > 0,
-    });
+  // #679 — the two tiles now stand for real workspace facts (entities and brand memory are both
+  // owner-scoped), so the card can tick one off instead of vanishing the moment either is done.
+  // `dismissed` comes from the org row, not from this browser, and the "already working" fact is
+  // shop-wide, not project-wide.
+  const onboardingFacts = ottoOnboardingFacts({
+    dismissed: onboardingDismissed,
+    entityCount: entities.length,
+    brandMemoryCount: memory.length,
+    shopConversationCount,
+  });
+  const showOnboarding = showFrontDoor && shouldShowOttoOnboarding(onboardingFacts);
 
   return (
     <div
@@ -280,8 +284,8 @@ export function OttoView({
           style={{ "--otto-onboarding-left": chatCollapsed ? "24px" : "calc(clamp(360px, 38%, 520px) + 24px)" } as React.CSSProperties}
         >
           <OttoOnboarding
-            hasStuff={hasStuff}
-            hasBrandMemory={hasBrandMemory}
+            hasStuff={onboardingFacts.hasStuff}
+            hasBrandMemory={onboardingFacts.hasBrandMemory}
             onGoToStuff={() => onViewChange("library")}
             onGoToMemory={() => onViewChange("memory")}
             onDismiss={() => onDismissOnboarding?.()}

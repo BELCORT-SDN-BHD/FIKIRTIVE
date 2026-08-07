@@ -29,6 +29,29 @@ export type OttoOnboardingFacts = {
   hasStartedWork: boolean;
 };
 
+/**
+ * Turn what the page loaded into the four facts. This exists so the SCOPE of each count is
+ * named at the one place that decides — `shopConversationCount`, not "the threads I happen to
+ * have in scope". The first cut of this fix read the open project's thread list, so an
+ * established shop that started a brand-new project met the first-run card all over again; the
+ * page had already loaded every conversation the shop has, it just was not the list the
+ * component reached for.
+ */
+export function ottoOnboardingFacts(input: {
+  dismissed: boolean;
+  entityCount: number;
+  brandMemoryCount: number;
+  /** Conversations across the WHOLE shop, every project — never one project's. */
+  shopConversationCount: number;
+}): OttoOnboardingFacts {
+  return {
+    dismissed: input.dismissed,
+    hasStuff: input.entityCount > 0,
+    hasBrandMemory: input.brandMemoryCount > 0,
+    hasStartedWork: input.shopConversationCount > 0,
+  };
+}
+
 /** Both tasks done — the card has nothing left to ask for. */
 export function ottoOnboardingComplete(facts: Pick<OttoOnboardingFacts, "hasStuff" | "hasBrandMemory">): boolean {
   return facts.hasStuff && facts.hasBrandMemory;

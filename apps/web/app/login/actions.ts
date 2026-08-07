@@ -1,10 +1,8 @@
 "use server";
 
 import { headers } from "next/headers";
-import { EmailSendError } from "@/lib/email";
 import { auth } from "@/lib/better-auth/server";
 import {
-  MAGIC_LINK_DELIVERY_FAILED_MESSAGE,
   MAGIC_LINK_INVALID_EMAIL_MESSAGE,
   MAGIC_LINK_SUCCESS_MESSAGE,
   MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
@@ -36,17 +34,15 @@ export async function requestMagicLink(input: {
     });
     return { status: "success", message: MAGIC_LINK_SUCCESS_MESSAGE };
   } catch (error) {
-    // #678 — there is no rate-limit branch here on purpose. The per-address cap is enforced in
-    // the sender, which suppresses the email and returns normally, so a capped request lands on
-    // the `success` return above with the SAME bytes as a delivered one. Re-introducing a
-    // distinct answer here re-opens the account-existence oracle this ticket closed.
-    if (error instanceof EmailSendError) {
-      return {
-        status: "error",
-        reason: "delivery_failed",
-        message: MAGIC_LINK_DELIVERY_FAILED_MESSAGE,
-      };
-    }
+    // #678 r2 — there is no rate-limit branch and no delivery-failure branch here, on purpose.
+    // Neither the per-address cap nor the mail provider is on this path any more: sendMagicLink
+    // hands the job to the background and returns, so a capped request, a 429 from the provider
+    // and a delivered link all land on the `success` return above with the SAME bytes.
+    // Re-introducing a branch for either re-opens the account-existence oracle this ticket
+    // closed — the second time round it was the TIMING and the transport outcome, not the copy.
+    //
+    // What can still reach here is a genuine server fault (database down, Better Auth internal,
+    // the per-IP cap), which happens identically for an address with an account and one without.
     console.error("[better-auth] Magic-link request failed.", error);
     return {
       status: "error",

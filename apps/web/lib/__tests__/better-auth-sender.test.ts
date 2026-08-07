@@ -4,52 +4,82 @@ import path from "node:path";
 
 const DEV_FILE = path.join(process.cwd(), "..", "..", ".data", "last-magic-link.txt");
 
-describe("sendAuthEmail", () => {
+const job = (over: Record<string, unknown> = {}) => ({
+  to: "a@x.test",
+  subject: "S",
+  url: "https://x.test/verify?t=1",
+  intro: "Sign in",
+  deliverIf: () => true,
+  ...over,
+});
+
+describe("dispatchAuthEmail", () => {
   beforeEach(() => { delete process.env.RESEND_API_KEY; vi.stubEnv("NODE_ENV", "test"); });
   afterEach(async () => { await rm(DEV_FILE, { force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-  it("writes the link to the dev file when RESEND_API_KEY is unset", async () => {
-    const { sendAuthEmail } = await import("@/lib/better-auth/sender");
-    await sendAuthEmail({ to: "a@x.test", subject: "S", url: "https://x.test/verify?t=1", intro: "Sign in" });
+  it("returns synchronously — the caller never awaits delivery", async () => {
+    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+    // The dev transport writes the link to a file; that write is still to come at this point.
+    expect(dispatchAuthEmail(job({ to: "sync@x.test" }))).toBeUndefined();
+    await expect(readFile(DEV_FILE, "utf8")).rejects.toThrow();
+    await authEmailDispatchesSettled();
     expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/verify?t=1");
   });
 
-  // #678 — the cap is UNCHANGED (5 per address per hour); what changed is that being over it is
-  // no longer something the caller — and therefore the merchant — can tell apart from a normal
-  // send. Both halves are asserted here, because relaxing either one is a regression: the first
-  // would re-open the account-existence oracle, the second would uncap outbound mail.
-  it("stops sending after 5 per address per hour — the gate itself is untouched", async () => {
-    const { sendAuthEmail } = await import("@/lib/better-auth/sender");
-    const send = (n: number) =>
-      sendAuthEmail({ to: "rl@x.test", subject: "S", url: `https://x.test/link/${n}`, intro: "i" });
+  it("delivers nothing when the address has no access, having travelled the same path", async () => {
+    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+    const deliverIf = vi.fn(async () => false);
+    dispatchAuthEmail(job({ to: "stranger@x.test", deliverIf }));
+    await authEmailDispatchesSettled();
+    expect(deliverIf).toHaveBeenCalledTimes(1); // same job, same handover …
+    await expect(readFile(DEV_FILE, "utf8")).rejects.toThrow(); // … nothing written
+  });
 
-    for (let i = 1; i <= 5; i++) await send(i);
+  // The cap is UNCHANGED at 5 per address per hour. What changed is that being over it is not
+  // observable from a request: it now happens on the background side, after the answer.
+  it("stops sending after 5 per address per hour — the gate itself is untouched", async () => {
+    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // One at a time: concurrent dispatches would land in the dev file in any order.
+    for (let i = 1; i <= 5; i++) {
+      dispatchAuthEmail(job({ to: "rl@x.test", url: `https://x.test/link/${i}` }));
+      await authEmailDispatchesSettled();
+    }
     expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/link/5");
 
-    await send(6);
+    dispatchAuthEmail(job({ to: "rl@x.test", url: "https://x.test/link/6" }));
+    await authEmailDispatchesSettled();
     // The 6th link never left the building: the dev transport still holds the 5th.
     expect(await readFile(DEV_FILE, "utf8")).toBe("https://x.test/link/5");
   });
 
-  it("returns normally when over the cap, so no caller can render a rate-limit answer", async () => {
+  it("logs the cap for the operator, with no address in the line", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { sendAuthEmail } = await import("@/lib/better-auth/sender");
-    const send = () => sendAuthEmail({ to: "quiet@x.test", subject: "S", url: "u", intro: "i" });
-
-    for (let i = 0; i < 5; i++) await send();
-    // RED before #678: this rejected with MagicLinkRateLimitError, and login/actions.ts turned
-    // that into "Too many sign-in links requested — try again in an hour." — copy that only an
-    // address WITH access could ever produce.
-    await expect(send()).resolves.toBeUndefined();
-    await expect(send()).resolves.toBeUndefined();
-
-    // The operator still learns about it, and the log carries no address (#575 log discipline).
+    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+    for (let i = 0; i < 6; i++) dispatchAuthEmail(job({ to: "quiet@x.test", url: "u" }));
+    await authEmailDispatchesSettled();
     expect(warn).toHaveBeenCalled();
     for (const [line] of warn.mock.calls) expect(String(line)).not.toContain("quiet@x.test");
   });
 
-  it("exports no rate-limit error type or copy for a caller to surface", async () => {
+  it("swallows a transport failure into an operator log — it never reaches the caller", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("NODE_ENV", "production");
+    const fetchMock = vi.fn(async () => new Response("rate limited", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { dispatchAuthEmail, authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+    expect(dispatchAuthEmail(job({ to: "boom@x.test" }))).toBeUndefined();
+    await authEmailDispatchesSettled();
+
+    const lines = error.mock.calls.map((c) => c.join(" "));
+    expect(lines.some((l) => l.includes("auth email delivery failed"))).toBe(true);
+    for (const line of lines) expect(line).not.toContain("boom@x.test");
+  });
+
+  it("exports no error type or copy a caller could surface", async () => {
     const sender = await import("@/lib/better-auth/sender");
-    expect(Object.keys(sender)).toEqual(["sendAuthEmail"]);
+    expect(Object.keys(sender).sort()).toEqual(["authEmailDispatchesSettled", "dispatchAuthEmail"]);
   });
 });

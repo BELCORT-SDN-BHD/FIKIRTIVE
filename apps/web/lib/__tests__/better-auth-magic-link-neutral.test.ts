@@ -1,5 +1,22 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * The two endpoint-level parity cases that used to live here — "a stranger's magic-link request
+ * answers exactly like an owner's" and "a stranger's password request is indistinguishable from
+ * invalid credentials" — moved to `auth-enumeration-structural.test.ts` (#678 r2).
+ *
+ * They had to move because they can no longer be honestly asserted here. This file stubs the
+ * database down to a single `allowedEmail.findUnique`, which was enough while our own before-hook
+ * turned a stranger away before Better Auth's adapter was ever touched. That short-circuit WAS
+ * the defect: an address with no account cost one query, an address with an account cost a token
+ * write plus a wait on the email network, and the difference was readable on the clock. Both
+ * doors now run Better Auth's real flow for every address, so proving parity needs the real
+ * adapter — a stubbed one can only prove that the stub was consulted.
+ *
+ * What stays here is the one claim that never needed the adapter: a removed merchant's
+ * password-reset request must not put mail in flight.
+ */
+
 const mockAllowedEmailFindUnique = vi.fn();
 const mockSend = vi.fn();
 
@@ -22,82 +39,50 @@ beforeAll(() => {
   process.env.AUTH_ALLOWED_EMAILS = "";
 });
 
+async function resetPasswordFor(email: string) {
+  const { auth } = await import("@/lib/better-auth/server");
+  const { authEmailDispatchesSettled } = await import("@/lib/better-auth/sender");
+  const context = await auth.$context;
+  const sendResetPassword = context.options.emailAndPassword?.sendResetPassword;
+  expect(sendResetPassword).toBeTypeOf("function");
+  if (!sendResetPassword) throw new Error("sendResetPassword is not configured");
+
+  await expect(
+    sendResetPassword({
+      user: {
+        id: "some-user",
+        email,
+        emailVerified: true,
+        name: "Someone",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      url: "http://localhost:3100/reset-password/token",
+      token: "token",
+    }),
+  ).resolves.toBeUndefined();
+  // #678 r2 — the hook hands the job over and returns; the decision happens after. Asserting
+  // before this settles would pass for the wrong reason.
+  await authEmailDispatchesSettled();
+}
+
 describe("Better Auth enumeration-safe responses", () => {
   beforeEach(() => {
     mockAllowedEmailFindUnique.mockReset();
     mockSend.mockReset();
-  });
-
-  it("returns the normal success shape without creating or sending for a non-allowlisted email", async () => {
-    mockAllowedEmailFindUnique.mockResolvedValueOnce(null);
-    const { auth } = await import("@/lib/better-auth/server");
-
-    const response = await auth.handler(
-      new Request("http://localhost:3100/api/better-auth/sign-in/magic-link", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin: "http://localhost:3100",
-        },
-        body: JSON.stringify({
-          email: "stranger@example.com",
-          callbackURL: "/",
-        }),
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: true });
-    expect(mockSend).not.toHaveBeenCalled();
-  });
-
-  it("makes a non-allowlisted password request indistinguishable from invalid credentials", async () => {
-    mockAllowedEmailFindUnique.mockResolvedValueOnce(null);
-    const { auth } = await import("@/lib/better-auth/server");
-
-    const response = await auth.handler(
-      new Request("http://localhost:3100/api/better-auth/sign-in/email", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin: "http://localhost:3100",
-        },
-        body: JSON.stringify({
-          email: "stranger@example.com",
-          password: "not-the-password",
-        }),
-      }),
-    );
-
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({
-      code: "INVALID_EMAIL_OR_PASSWORD",
-      message: "Invalid email or password",
-    });
+    mockSend.mockResolvedValue(undefined);
   });
 
   it("does not send a reset email for a non-allowlisted existing user", async () => {
-    mockAllowedEmailFindUnique.mockResolvedValueOnce(null);
-    const { auth } = await import("@/lib/better-auth/server");
-    const context = await auth.$context;
-    const sendResetPassword = context.options.emailAndPassword?.sendResetPassword;
-    expect(sendResetPassword).toBeTypeOf("function");
-    if (!sendResetPassword) throw new Error("sendResetPassword is not configured");
-
-    await expect(
-      sendResetPassword({
-        user: {
-          id: "removed-user",
-          email: "removed@example.com",
-          emailVerified: true,
-          name: "Removed",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
-        url: "http://localhost:3100/reset-password/token",
-        token: "token",
-      }),
-    ).resolves.toBeUndefined();
+    mockAllowedEmailFindUnique.mockResolvedValue(null);
+    await resetPasswordFor("removed@example.com");
     expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("still sends one for a merchant who does have access", async () => {
+    mockAllowedEmailFindUnique.mockResolvedValue({ status: "active" });
+    await resetPasswordFor("owner@example.com");
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    expect(mockSend.mock.calls[0][0].to).toBe("owner@example.com");
   });
 });

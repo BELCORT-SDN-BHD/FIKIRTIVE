@@ -45,7 +45,7 @@ beforeAll(() => {
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
 const { getOwnerSettings, setOwnerSetting } = await import("@/lib/owner-settings-actions");
-const { shouldShowOttoOnboarding, ottoOnboardingComplete } = await import("@/lib/otto-onboarding");
+const { shouldShowOttoOnboarding, ottoOnboardingComplete, ottoOnboardingFacts } = await import("@/lib/otto-onboarding");
 
 async function asUser(email: string | null) {
   mockAuth.mockResolvedValue(email ? { user: { email } } : null);
@@ -164,6 +164,39 @@ describe("#679 — who the card is for, decided from workspace facts", () => {
     expect(ottoOnboardingComplete({ hasStuff: true, hasBrandMemory: false })).toBe(false);
     expect(ottoOnboardingComplete({ hasStuff: false, hasBrandMemory: true })).toBe(false);
     expect(ottoOnboardingComplete({ hasStuff: true, hasBrandMemory: true })).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────
+describe("#679 — 'already working' is asked of the SHOP, never of one project", () => {
+  // The review caught the first cut of this fix reading the OPEN project's thread list. A shop
+  // with months of work behind it that starts a brand-new project has nothing in that project,
+  // so the first-run card came straight back — the very defect the ticket is about, one step in.
+  it("an established shop opening an empty new project is NOT shown the first-run card", () => {
+    const facts = ottoOnboardingFacts({
+      dismissed: false,
+      entityCount: 0,
+      brandMemoryCount: 0,
+      shopConversationCount: 37, // months of conversations, none of them in THIS project
+    });
+    expect(facts.hasStartedWork).toBe(true);
+    expect(shouldShowOttoOnboarding(facts)).toBe(false);
+  });
+
+  it("a genuinely new shop with no conversation anywhere still gets its first run", () => {
+    const facts = ottoOnboardingFacts({
+      dismissed: false,
+      entityCount: 0,
+      brandMemoryCount: 0,
+      shopConversationCount: 0,
+    });
+    expect(shouldShowOttoOnboarding(facts)).toBe(true);
+  });
+
+  it("maps each count onto the fact it stands for", () => {
+    expect(
+      ottoOnboardingFacts({ dismissed: true, entityCount: 2, brandMemoryCount: 0, shopConversationCount: 0 }),
+    ).toEqual({ dismissed: true, hasStuff: true, hasBrandMemory: false, hasStartedWork: false });
   });
 });
 

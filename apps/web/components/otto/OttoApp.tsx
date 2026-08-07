@@ -716,6 +716,9 @@ export function OttoApp({
           onUseInOtto={handleUseInOtto}
           onboardingDismissed={onboardingHidden}
           onDismissOnboarding={handleDismissOnboarding}
+          // Every conversation this SHOP has, across every project (the page loads them for the
+          // sidebar) — not just the open project's. See OttoView for why the distinction matters.
+          shopConversationCount={sidebarThreadList.length}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
           skin={skin}
