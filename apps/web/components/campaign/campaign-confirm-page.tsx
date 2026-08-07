@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -47,12 +47,22 @@ type BatchResult = Extract<ConfirmCampaignGenerationResult, { ok: true }>["resul
 export function campaignGenerationResultTitle(
   result: Pick<BatchResult, "dispatched" | "failed" | "reused">,
   interruption: Pick<BatchInterruption, "current"> | null,
-): "Generation did not start" | "Generation partly started" | "Generation started" | "Everything was already generated" {
+  /** #708 修复轮 P2-1：复用的那些条目是**真做完了**，还是还在跑。默认按「做完了」处理，
+   *  调用方拿得到状态时必须传真值——一单还在跑的片子不许被写成已完成。 */
+  reusedAllDone = true,
+):
+  | "Generation did not start"
+  | "Generation partly started"
+  | "Generation started"
+  | "Everything was already generated"
+  | "Everything is already being made" {
   const currentUnknown = interruption?.current === "unknown";
   if (result.dispatched === 0 && !currentUnknown) {
     // #708 同源症状 ①：对一份**已经做完**的工作说「没开始」，读起来像失败。什么都没派发
-    // 有两种完全不同的原因，标题必须分开说：一件也没做成 vs 早就做完了。
-    if (result.failed === 0 && result.reused > 0 && !interruption) return "Everything was already generated";
+    // 有两种完全不同的原因，标题必须分开说：一件也没做成 vs 早就在做/做完了。
+    if (result.failed === 0 && result.reused > 0 && !interruption) {
+      return reusedAllDone ? "Everything was already generated" : "Everything is already being made";
+    }
     return "Generation did not start";
   }
   if (interruption || result.failed > 0) return "Generation partly started";
@@ -119,6 +129,7 @@ function ConfirmWorkspace({
   // 按钮禁用全部读它，所以商家再也不会被一个他不用付的差额挡在门外。
   const totalDisplayCredits = quoteSnapshot.quote?.totalDisplayCredits ?? 0;
   const contentFingerprint = quoteSnapshot.quote?.contentFingerprint ?? "";
+  const deliveryFingerprint = quoteSnapshot.quote?.deliveryFingerprint ?? "";
   const reusedCount = quoteSnapshot.quote?.reusedCount ?? 0;
   const blockedCount = quoteSnapshot.quote?.blockedCount ?? 0;
   const balanceDisplayCredits = quoteSnapshot.balanceDisplayCredits;
@@ -130,22 +141,31 @@ function ConfirmWorkspace({
   const [projectId, setProjectId] = useState(projects[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [quoting, setQuoting] = useState(false);
+  // 报价与当前选择已经对不上(上一次重报价失败)。此时确认按钮必须锁住 —— 否则就是
+  // 「当前项目配旧项目的报价」(#708 修复轮 P2-2)。
+  const [quoteStale, setQuoteStale] = useState(false);
   const [error, setError] = useState<string | null>("error" in initialQuote ? initialQuote.error : null);
   const [result, setResult] = useState<BatchResult | null>(null);
   const [interruption, setInterruption] = useState<BatchInterruption | null>(null);
+  // 请求序号栅栏（与 crm/segments-page 的 previewSequence 同一形状）：并发重报价的响应
+  // 可以乱序返回，只有**最后一次发出**的那一次有资格写快照、清错、解禁按钮。
+  const quoteSequence = useRef(0);
 
   // Every choice that can move the price re-asks the SERVER for the price. The browser never
   // computes or adjusts a credit number — it only renders the one the server just sent, and
   // confirmation is blocked while a re-quote is in flight so a stale number can never be signed.
   async function requote(nextProjectId: string, nextVideoSpec: CampaignVideoSpec | null) {
+    const sequence = ++quoteSequence.current;
     setQuoting(true);
     try {
       const response = await quoteCampaignGeneration(campaignId, {
         projectId: nextProjectId || null,
         videoSpec: nextVideoSpec,
       });
+      if (sequence !== quoteSequence.current) return; // 过期响应：更晚的一次已经在路上
       if ("error" in response) {
         setError(response.error);
+        setQuoteStale(true);
         return;
       }
       setQuoteSnapshot({
@@ -153,11 +173,15 @@ function ConfirmWorkspace({
         balanceDisplayCredits: response.balanceDisplayCredits,
         videoMenu: response.videoMenu,
       });
+      setQuoteStale(false);
       setError(null);
     } catch {
+      if (sequence !== quoteSequence.current) return;
       setError("We couldn't refresh the price. Try again before confirming.");
+      setQuoteStale(true);
     } finally {
-      setQuoting(false);
+      // 只有最新那一次才解禁 —— 一个先返回的旧请求不得让按钮在新价到达之前变亮。
+      if (sequence === quoteSequence.current) setQuoting(false);
     }
   }
 
@@ -188,6 +212,8 @@ function ConfirmWorkspace({
         projectId,
         expectedTotalCredits: totalDisplayCredits,
         expectedContentFingerprint: contentFingerprint,
+        // #708 修复轮 P1-1：他复核过的**交付面**也一起签。少收放行，少交付要重新问。
+        expectedDeliveryFingerprint: deliveryFingerprint,
         videoSpec: videoMenu?.selected ?? null,
       });
       if (!("ok" in response)) {
@@ -249,7 +275,8 @@ function ConfirmWorkspace({
     const reservedThisRun = displayCredits(result.totalCredits);
     const currentUnknown = interruption?.current === "unknown";
     const zeroDispatchConfirmed = result.dispatched === 0 && !currentUnknown;
-    const resultTitle = campaignGenerationResultTitle(result, interruption);
+    const reusedAllDone = approvedLines.every((line) => line.charge !== "reused" || line.reuseState === "done");
+    const resultTitle = campaignGenerationResultTitle(result, interruption, reusedAllDone);
 
     return (
       <Shell>
@@ -269,8 +296,8 @@ function ConfirmWorkspace({
                     「早就做完了」。两句话必须分开说，否则一份完成的工作会被读成失败。 */}
                 {result.failed === 0 && result.reused > 0 ? (
                   <>
-                    <strong>Nothing new was charged.</strong> Every item here was already generated, so this run
-                    reserved nothing.
+                    <strong>Nothing new was charged.</strong> Every item here is {reusedSummaryPhrase(approvedLines)},
+                    so this run reserved nothing.
                   </>
                 ) : (
                   <>
@@ -301,7 +328,11 @@ function ConfirmWorkspace({
                     <p className="mt-1 truncate text-xs text-muted-foreground">{line?.brief}</p>
                     {cell.error ? <p className="mt-1 text-xs text-destructive">{friendlyCellError(cell.error)}</p> : null}
                   </div>
-                  <CellStatus status={cell.status} credits={displayCredits(cell.credits)} />
+                  <CellStatus
+                    status={cell.status}
+                    credits={displayCredits(cell.credits)}
+                    reuseState={line?.reuseState ?? null}
+                  />
                 </div>
               );
             })}
@@ -401,7 +432,7 @@ function ConfirmWorkspace({
             <CardContent className="grid gap-4">
               <label className="grid gap-2 text-xs font-semibold text-muted-foreground">
                 Destination project
-                <Select value={projectId} onValueChange={chooseProject}>
+                <Select value={projectId} disabled={busy || quoting} onValueChange={chooseProject}>
                   <SelectTrigger><SelectValue placeholder="Choose a project" /></SelectTrigger>
                   <SelectContent>
                     {projects.map((project) => <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>)}
@@ -460,12 +491,12 @@ function ConfirmWorkspace({
                   lines is only honest if the merchant can see why. */}
               {nothingLeftToGenerate ? (
                 <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
-                  Everything in this plan is already generated. Confirming again will not charge you.
+                  Everything in this plan is {reusedSummaryPhrase(approvedLines)}. Confirming again will not charge you.
                 </div>
               ) : reusedCount > 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  {reusedCount} {reusedCount === 1 ? "item is" : "items are"} already generated, so this run only
-                  charges for the rest.
+                  {reusedCount} {reusedCount === 1 ? "item is" : "items are"} {reusedSummaryPhrase(approvedLines)}, so
+                  this run only charges for the rest.
                 </p>
               ) : null}
               {blockedCount > 0 ? (
@@ -487,7 +518,7 @@ function ConfirmWorkspace({
               <Button
                 type="button"
                 className="w-full"
-                disabled={busy || quoting || !projectId || insufficientCredits}
+                disabled={busy || quoting || quoteStale || !projectId || insufficientCredits}
                 onClick={() => confirm()}
               >
                 {busy || quoting ? <LoaderCircle className="animate-spin" /> : <Sparkles />}
@@ -545,11 +576,32 @@ function EmptyState({ icon, title, body, campaignId }: { icon: React.ReactNode; 
 }
 
 /**
- * 一行条目的价钱(#708)。写的必须是**这一趟真会收的钱**:已经生成过的条目收 0,
+ * 复用条目的对客说法(#708 修复轮 P2-1)。**复用不等于做完** —— 判据把 QUEUED / GENERATING /
+ * DONE 都算复用(都不再收钱),但只有 DONE 才是做好了。文案照服务端给的真实状态分档,
+ * 与收费判据同源;状态不明时只说「已经在做了」,不宣称完成。
+ */
+export function reusedLabel(reuseState: CampaignGenQuoteLine["reuseState"]): string {
+  return reuseState === "done" ? "Already generated" : "Already being made";
+}
+
+/** 汇总说法,同一条判据:只要还有一单在跑,就不许把整批说成「已生成」。 */
+export function reusedSummaryPhrase(lines: Pick<CampaignGenQuoteLine, "charge" | "reuseState">[]): string {
+  const reused = lines.filter((line) => line.charge === "reused");
+  return reused.some((line) => line.reuseState !== "done")
+    ? "already generated or still being made"
+    : "already generated";
+}
+
+/**
+ * 一行条目的价钱(#708)。写的必须是**这一趟真会收的钱**:已经生成过或还在做的条目收 0,
  * 内容改过、这一趟不会被受理的条目也收 0。全价照旧说出来 —— 商家有权知道差额从哪来,
  * 而不是看见一个没解释的 0。
  */
-function LinePrice({ line }: { line: Pick<CampaignGenQuoteLine, "charge" | "displayCredits" | "fullDisplayCredits"> }) {
+function LinePrice({
+  line,
+}: {
+  line: Pick<CampaignGenQuoteLine, "charge" | "displayCredits" | "fullDisplayCredits" | "reuseState">;
+}) {
   if (line.charge === "new") {
     return (
       <span className="text-sm font-semibold">
@@ -561,8 +613,8 @@ function LinePrice({ line }: { line: Pick<CampaignGenQuoteLine, "charge" | "disp
     <span className="flex shrink-0 flex-col items-end">
       <span className="text-sm font-semibold">0 credits</span>
       <span className="text-xs text-muted-foreground">
-        {line.charge === "reused" ? "Already generated" : "Will not start"} · normally {line.fullDisplayCredits}{" "}
-        {line.fullDisplayCredits === 1 ? "credit" : "credits"}
+        {line.charge === "reused" ? reusedLabel(line.reuseState) : "Will not start"} · normally{" "}
+        {line.fullDisplayCredits} {line.fullDisplayCredits === 1 ? "credit" : "credits"}
       </span>
     </span>
   );
@@ -576,7 +628,15 @@ function friendlyCellError(raw: string): string {
   return raw;
 }
 
-function CellStatus({ status, credits }: { status: "queued" | "reused" | "text" | "error"; credits: number }) {
+function CellStatus({
+  status,
+  credits,
+  reuseState,
+}: {
+  status: "queued" | "reused" | "text" | "error";
+  credits: number;
+  reuseState: CampaignGenQuoteLine["reuseState"];
+}) {
   if (status === "queued") {
     return (
       <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-info-soft-foreground">
@@ -585,9 +645,17 @@ function CellStatus({ status, credits }: { status: "queued" | "reused" | "text" 
     );
   }
   if (status === "reused") {
+    // #708 修复轮 P2-1：一单还在跑的片子不许被写成「已完成」。状态来自服务端的复用判据。
+    if (reuseState !== "done") {
+      return (
+        <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-info-soft-foreground">
+          <LoaderCircle className="size-4 animate-spin" /> {reusedLabel(reuseState)} · 0 cr
+        </span>
+      );
+    }
     return (
       <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-success-soft-foreground">
-        <CheckCircle2 className="size-4" /> Already done · 0 cr
+        <CheckCircle2 className="size-4" /> {reusedLabel(reuseState)} · 0 cr
       </span>
     );
   }

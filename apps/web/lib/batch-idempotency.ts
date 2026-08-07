@@ -257,13 +257,39 @@ function canonicalJson(value: unknown): string {
  */
 export type FactoryDisposition = "fresh" | "reused" | "conflict";
 
+/**
+ * 「还有一单没结束、也没交付」的那一行 —— **复用判据唯一的一处定义**。
+ *
+ * 复用的意思只有一个:那一单还活着,所以这一趟不再新建、不再收钱。它**不代表做完了**
+ * —— QUEUED / GENERATING 的片子还在跑(#708 修复轮 P2-1)。谁想知道「做完没有」,读
+ * 这一行的 `status`,不要另写一套判据。
+ */
+function stillLivePrior(history: readonly FactoryHistoryRow[]): FactoryHistoryRow | null {
+  return history.find((prior) => !genJobEndedWithoutDelivering(prior.status)) ?? null;
+}
+
 export function factoryHistoryDisposition(
   history: readonly FactoryHistoryRow[],
   expected: FactoryMaterial,
 ): FactoryDisposition {
   if (history.some((prior) => !factoryMaterialMatches(prior, expected))) return "conflict";
-  if (history.some((prior) => !genJobEndedWithoutDelivering(prior.status))) return "reused";
+  if (stillLivePrior(history)) return "reused";
   return "fresh";
+}
+
+/**
+ * `factoryHistoryDisposition` 判成 `reused` 时,**被复用的就是这一行**(#708 修复轮 P2-1)。
+ *
+ * 同一个判据的两种问法:上面那个答「收不收钱」,这个答「收不了钱是因为哪一单」。所以卡面
+ * 想说「已经做好了」还是「还在做」,读的是同一份历史、同一条判据 —— 不可能与收费口径分家。
+ * 材料对不上(conflict)时没有可复用的那一单,返回 null。PURE。
+ */
+export function factoryReusedPrior(
+  history: readonly FactoryHistoryRow[],
+  expected: FactoryMaterial,
+): FactoryHistoryRow | null {
+  if (history.some((prior) => !factoryMaterialMatches(prior, expected))) return null;
+  return stillLivePrior(history);
 }
 
 /** Full material binding. FAILED rows are deliberately not special: status never weakens content

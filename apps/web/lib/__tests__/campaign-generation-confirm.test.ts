@@ -120,7 +120,8 @@ const {
   factoryMaterialMatches,
   parseFactoryAttemptKey,
 } = await import("../batch-idempotency");
-const { INTERNAL_PER_DISPLAY, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel } = await import("@fikirtive/core");
+const { INTERNAL_PER_DISPLAY, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel, buildSpecChips } =
+  await import("@fikirtive/core");
 const {
   applyCampaignApprovalGate,
   campaignApprovalGateFor,
@@ -238,6 +239,21 @@ async function currentQuoteResult(options?: QuoteOptions) {
 
 async function currentQuote(options?: QuoteOptions) {
   return (await currentQuoteResult(options)).quote;
+}
+
+type ReviewedQuote = Awaited<ReturnType<typeof currentQuote>>;
+
+/**
+ * 商家**看着卡确认**的那份请求(#708 修复轮 P1-1):价格、内容、以及他复核时会被交付的
+ * 那一组条目,三样一起签。`rawRequest` 保留原样,代表「没经过确认卡」的调用方 —— 那一路
+ * 按最严处理,是另一条断言。
+ */
+function signedRequest(quote: ReviewedQuote, over: Record<string, unknown> = {}) {
+  return {
+    ...rawRequest(quote.totalDisplayCredits, quote.contentFingerprint),
+    expectedDeliveryFingerprint: quote.deliveryFingerprint,
+    ...over,
+  };
 }
 
 async function reviewedRequest(over: Partial<ReturnType<typeof rawRequest>> = {}) {
@@ -988,14 +1004,184 @@ describe("#709 战役确认卡说清片子的规格,并且能选半价档", () =
     expect(cheaper.lines[0].charge).toBe("blocked");
     expect(cheaper.totalDisplayCredits).toBe(0);
 
-    const res = await confirmCampaignGeneration({
-      ...rawRequest(cheaper.totalDisplayCredits, cheaper.contentFingerprint),
-      videoSpec: { resolution: "480p", durationSeconds: 5 },
-    });
+    // #708 修复轮 P1-1：卡上已经如实写着「这条不会开始」，商家是被问过的 —— 他签的就是
+    // 这一组交付面，所以确认得下去。没签交付面的调用方走的是另一条路（一律拒），见下面
+    // 那个 describe。
+    const res = await confirmCampaignGeneration(
+      signedRequest(cheaper, { videoSpec: { resolution: "480p", durationSeconds: 5 } }),
+    );
     if (!("ok" in res)) throw new Error(res.error);
     expect(res.result).toMatchObject({ dispatched: 0, failed: 1, totalCredits: 0 });
     expect(h.store.jobs.size).toBe(1);
     expect([...h.store.jobs.values()][0]!.videoOptions).toMatchObject({ resolution: "720p", seconds: 5 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #708 修复轮 P1-1 —— 少付不等于少交付
+// ---------------------------------------------------------------------------
+describe("#708 修复轮 P1-1 少付不等于少交付", () => {
+  const REEL = "A vertical clip with letters";
+  const POST = "A festive still with letters";
+  const SPEC_480 = { resolution: "480p", durationSeconds: 5 };
+
+  /**
+   * 判官 r1 的那条路,原样搭出来:
+   *   ① 商家在这一页复核 —— 两条都会交付,片子是 720p 那一档,合计 12 credits;
+   *   ② 另一个标签页先按 480p 确认了同一份计划 —— 片子被冻结在 480p;那张图当时没做成
+   *      (FAILED,已退款),所以它这一趟还是新的;
+   *   ③ 回到这一页重算:片子这一条已经**不会开始**了,图还是新的 —— 总额从 12 掉到 1。
+   * 修之前:1 ≤ 12,价格闸一路放行,商家为一份缩水的交付付了钱,而且从没被问过。
+   */
+  async function shrunkDelivery() {
+    seedCampaign([entry("V1", { format: "reel", brief: REEL }), entry("P1", { brief: POST })]);
+    seedProject();
+    const reviewed = await currentQuote({ projectId: PROJECT_ID });
+    expect(reviewed.lines.map((line) => line.charge)).toEqual(["new", "new"]);
+    expect(reviewed.totalDisplayCredits).toBe(VID + IMG);
+
+    const otherTab = await currentQuote({ projectId: PROJECT_ID, videoSpec: SPEC_480 });
+    const first = await confirmCampaignGeneration(signedRequest(otherTab, { videoSpec: SPEC_480 }));
+    if (!("ok" in first)) throw new Error(first.error);
+    [...h.store.jobs.values()].find((job) => job.prompt === POST)!.status = "FAILED";
+
+    const now = await currentQuote({ projectId: PROJECT_ID });
+    expect(now.lines.map((line) => line.charge)).toEqual(["blocked", "new"]);
+    expect(now.totalDisplayCredits).toBe(IMG);
+    // 内容一个字没改 —— 所以旧的两道闸(总额上限、内容指纹)都拦不住它。
+    expect(now.contentFingerprint).toBe(reviewed.contentFingerprint);
+    expect(now.deliveryFingerprint).not.toBe(reviewed.deliveryFingerprint);
+
+    h.startGen.mockClear();
+    return { reviewed, jobsBefore: h.store.jobs.size };
+  }
+
+  it("复核之后掉队的条目:停在花钱之前,一格都不派发", async () => {
+    const { reviewed, jobsBefore } = await shrunkDelivery();
+
+    const res = await confirmCampaignGeneration(signedRequest(reviewed));
+
+    expect("error" in res && res.error).toMatch(/can no longer be created as reviewed/i);
+    expect("error" in res && res.error).toMatch(/nothing was started and nothing was charged/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(jobsBefore);
+  });
+
+  it("没带交付面签名的调用方按最严处理:只要有条目不会开始,一律拒", async () => {
+    const { reviewed, jobsBefore } = await shrunkDelivery();
+
+    const res = await confirmCampaignGeneration(
+      rawRequest(reviewed.totalDisplayCredits, reviewed.contentFingerprint),
+    );
+
+    expect("error" in res && res.error).toMatch(/can no longer be created as reviewed/i);
+    expect(h.startGen).not.toHaveBeenCalled();
+    expect(h.store.jobs.size).toBe(jobsBefore);
+  });
+
+  it("复核时就已如实告知的掉队条目:签的是同一组交付面,确认得下去", async () => {
+    await shrunkDelivery();
+    // 商家看着更新后的卡重新复核:片子那行写着「不会开始」,图会交付。他签的就是这一组。
+    const rechecked = await currentQuote({ projectId: PROJECT_ID });
+
+    const res = await confirmCampaignGeneration(signedRequest(rechecked));
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 1, failed: 1 });
+    expect(res.result.totalCredits).toBe(IMG * INTERNAL_PER_DISPLAY);
+  });
+
+  it("合法复用不动交付面:重放同一份签名 —— 派发 0 / 复用 2 / 收 0,交付指纹逐字相同", async () => {
+    seedCampaign([
+      entry("E1", { brief: "material A with letters" }),
+      entry("E2", { brief: "material B with letters" }),
+    ]);
+    seedProject();
+    const reviewed = await currentQuote({ projectId: PROJECT_ID });
+    const signed = signedRequest(reviewed);
+
+    const first = await confirmCampaignGeneration(signed);
+    if (!("ok" in first)) throw new Error(first.error);
+    expect(first.result.dispatched).toBe(2);
+
+    const replay = await confirmCampaignGeneration(signed);
+    if (!("ok" in replay)) throw new Error(replay.error);
+    expect(replay.result).toMatchObject({ dispatched: 0, reused: 2, failed: 0, totalCredits: 0 });
+    expect(replay.quote.lines.map((line) => line.charge)).toEqual(["reused", "reused"]);
+    expect(replay.quote.deliveryFingerprint).toBe(reviewed.deliveryFingerprint);
+    expect(h.store.jobs.size).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #709 修复轮 P1-2 —— 指纹覆盖面 = 卡面承诺面
+// ---------------------------------------------------------------------------
+describe("#709 修复轮 P1-2 指纹覆盖面 = 卡面承诺面", () => {
+  it("卡面承诺的是**整份**解析后的规格 —— 含 audio 与解析出来的默认画幅", async () => {
+    // 名字没说形状的片子格式:cell 上根本没有 aspectRatio,解析之后才有。
+    seedCampaign([entry("V1", { format: "video" })]);
+    const spec = (await currentQuote()).lines[0].promisedSpec;
+
+    expect(spec).toEqual({
+      aspectRatio: "16:9",
+      count: 1,
+      resolution: "720p",
+      durationSeconds: 5,
+      // 这台在产引擎不开放帧率控制,解析结果就是 0(= 不指定)。它照样进指纹:承诺面收窄
+      // 靠的是「整份都在里面」,不是靠挑出卡上说得出口的那几格。
+      fps: 0,
+      audio: true,
+    });
+  });
+
+  it("卡上说得出口的每一格都从 promisedSpec 派生,不是第二次推导", async () => {
+    seedCampaign([entry("V1", { format: "reel" }), entry("E1", { format: "story" })]);
+    const quote = await currentQuote();
+
+    expect(quote.lines[0].specChips).toEqual(buildSpecChips("video", quote.lines[0].promisedSpec, false));
+    expect(quote.lines[1].aspectRatio).toBe(quote.lines[1].promisedSpec.aspectRatio);
+    expect(quote.lines[1].promisedSpec).toEqual({ aspectRatio: "9:16", count: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #708 修复轮 P2-1 —— 复用不等于做完
+// ---------------------------------------------------------------------------
+describe("#708 修复轮 P2-1 复用不等于做完", () => {
+  async function reusedLineAfterFirstRun(status: string) {
+    seedCampaign([entry("E1", { brief: "one reusable material with letters" })]);
+    seedProject();
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("first confirm failed");
+    [...h.store.jobs.values()][0]!.status = status;
+    return (await currentQuote({ projectId: PROJECT_ID })).lines[0];
+  }
+
+  it("还在跑的那一单:复用不收钱,但状态是「还在做」,不是「已完成」", async () => {
+    for (const status of ["QUEUED", "GENERATING"]) {
+      h.store.jobs.clear();
+      const line = await reusedLineAfterFirstRun(status);
+      expect(line.charge).toBe("reused");
+      expect(line.displayCredits).toBe(0);
+      expect(line.reuseState).toBe("in_progress");
+    }
+  });
+
+  it("真做完了(DONE)才算做完", async () => {
+    const line = await reusedLineAfterFirstRun("DONE");
+    expect(line.charge).toBe("reused");
+    expect(line.reuseState).toBe("done");
+  });
+
+  it("没复用的行不带这一格 —— 新建与被挡下的条目都是 null", async () => {
+    seedCampaign([entry("E1", { brief: "brand new material with letters" })]);
+    seedProject();
+    const fresh = await currentQuote({ projectId: PROJECT_ID });
+    expect(fresh.lines[0]).toMatchObject({ charge: "new", reuseState: null });
+
+    if (!("ok" in (await confirmCampaignGeneration(await reviewedRequest())))) throw new Error("confirm failed");
+    seedCampaign([entry("E1", { brief: "edited material with letters" })]);
+    const blocked = await currentQuote({ projectId: PROJECT_ID });
+    expect(blocked.lines[0]).toMatchObject({ charge: "blocked", reuseState: null });
   });
 });
 
@@ -1190,6 +1376,22 @@ describe("money-safety static guards", () => {
     );
     expect(confirmCode).not.toMatch(creditAccountWrite);
     expect(batchCode).not.toMatch(creditAccountWrite);
+  });
+
+  it("#709 修复轮 P1-2 钉板:内容指纹整份哈希卡面承诺的规格,不许挑字段", () => {
+    // 这一条是结构性的,不是文字洁癖:漏掉 audio / 默认画幅那一版之所以能过测试,正是因为
+    // 「卡上说什么」与「指纹哈什么」是两份各自维护的字段清单。整份哈希之后两者不可能分家,
+    // 而这个钉板保证没有人再把它拆回去。
+    const payload = confirmCode.slice(
+      confirmCode.indexOf("const fingerprintPayload"),
+      confirmCode.indexOf("const contentFingerprint"),
+    );
+    expect(payload).toContain("canonicalSpec(line.promisedSpec)");
+    expect(payload).not.toMatch(/cell\.(aspectRatio|resolution|durationSeconds|fps|audio)/);
+    expect(confirmCode).toMatch(/function canonicalSpec[\s\S]*?Object\.entries\(spec\)/);
+    // 卡面那两格也必须从同一份规格派生,否则「承诺面」又会长出第二个来源。
+    expect(confirmCode).toContain("specChips: campaignSpecChips(cell, promisedSpec)");
+    expect(confirmCode).toContain('aspectRatio: kind === "image" ? promisedSpec.aspectRatio : null');
   });
 
   it("never claims zero charge from an unconfirmed client transport failure", () => {

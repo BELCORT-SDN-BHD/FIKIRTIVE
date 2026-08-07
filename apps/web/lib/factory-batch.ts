@@ -30,19 +30,26 @@
  *   - GenerationBatch grouping is a pure metadata write (GenJob.batchId soft-ref,
  *     schema.prisma:465) done AFTER startGen returns — it moves no money.
  */
-import { pricedGenCredits, GEN_MODELS, GEN_VIDEO_MODELS, type GenSpendInput } from "@fikirtive/core";
+import {
+  imageDefaults,
+  pricedGenCredits,
+  GEN_MODELS,
+  GEN_VIDEO_MODELS,
+  type GenModel,
+  type GenSpendInput,
+} from "@fikirtive/core";
 import type { PrismaClient } from "@fikirtive/db";
 import {
   factoryAttemptKey,
   factoryHistoryDisposition,
   factoryLogicalPrefix,
   factoryMaterialMatches,
+  factoryReusedPrior,
   normalizeFactoryMaterial,
   FACTORY_HISTORY_SELECT,
   type FactoryAttemptKey,
   type FactoryHistoryRow,
   type FactoryMaterial,
-  type FactoryVideoOptions,
 } from "./batch-idempotency";
 
 /** Batch size ceiling. A money-safety guard: an unbounded batch would let one
@@ -240,15 +247,48 @@ export function stableCellLogicalPrefix(batchId: string, stableId: string): stri
 }
 
 /**
- * 这个格**真会跑的那份视频规格**(#709)——`normalizeFactoryMaterial` 解析默认值之后的结果,
- * 也正是落进 `GenJob.videoOptions` 的那份快照、`pricedGenCredits` 拿去算钱的那份输入。
+ * 这个格**真会跑的那份完整规格**(#709;#709 修复轮 P1-2 从 video-only 扩到整份)——
+ * `normalizeFactoryMaterial` 解析默认值之后的结果,也正是落进 `GenJob.videoOptions` /
+ * `GenJob.imageOptions` 的那份快照、`pricedGenCredits` 拿去算钱的那份输入。
  *
  * 卡面报规格必须读它,而不是读 `cell` 上那几个可能为空的字段:名字没说形状的片子格式
  * (`video`)在 cell 上根本没有 aspectRatio,照 cell 显示就是「一个规格字段都不显示」——
- * 那正是 #709 的现象。图片返回 null(形状走 imageOptions,不归这里管)。PURE。
+ * 那正是 #709 的现象。
+ *
+ * 它是**一整份**,不是挑出来的几个字段:卡面说得出口的每一项都在里面,承诺面因此可以
+ * 被整份哈希(见 campaign-generation-confirm 的内容指纹)。挑字段的那一版漏掉了 audio
+ * 与解析后的默认画幅 —— 同模型同价下声音或画幅一变,旧指纹照样通过(判官 r1 P1-2)。
  */
-export function cellVideoSpec(cell: GenCell): FactoryVideoOptions | null {
-  return cellMaterial(cell).videoOptions;
+export interface CellResolvedSpec {
+  /** 解析后的画幅 —— 视频读 videoOptions,图片读 imageOptions。永远有值。 */
+  aspectRatio: string;
+  count: number;
+  /** 以下只有视频有。字段名与 `buildSpecChips` 的入参同名,卡面因此不做第二次翻译。 */
+  resolution?: string;
+  durationSeconds?: number;
+  fps?: number;
+  audio?: boolean;
+}
+
+/** 这个格解析之后真会跑的整份规格。PURE。 */
+export function cellResolvedSpec(cell: GenCell): CellResolvedSpec {
+  const material = cellMaterial(cell);
+  const video = material.videoOptions;
+  if (video) {
+    return {
+      aspectRatio: video.aspectRatio,
+      count: material.count,
+      resolution: video.resolution,
+      durationSeconds: video.seconds,
+      fps: video.fps,
+      audio: video.audio,
+    };
+  }
+  // 图片:`normalizeFactoryMaterial` 对 IMAGE 一定给得出 imageOptions(缺省 = 模型默认方图)。
+  return {
+    aspectRatio: material.imageOptions?.aspectRatio ?? imageDefaults(material.model as GenModel).aspectRatio,
+    count: material.count,
+  };
 }
 
 /** 一个格这一趟的收费预判。`new` 会被收 `credits`;`reused` / `blocked` 收 0。 */
@@ -257,6 +297,14 @@ export interface CellChargePreview {
   disposition: "new" | "reused" | "blocked" | "text";
   /** 这一趟真会被预扣的内部 credits —— reused / blocked / text 一律 0。 */
   credits: number;
+  /**
+   * 只有 `reused` 有值:被复用的那一单**做完没有**(#708 修复轮 P2-1)。
+   *
+   * 复用只说明「不再收钱」,不说明「已经做好」—— 判据把 QUEUED / GENERATING / DONE 都算
+   * 复用。卡面照这一格说话,于是一单还在跑的片子不会被写成已完成。判据与收费判据同源:
+   * 同一份历史、同一个 `factoryReusedPrior`。
+   */
+  reuseState?: "in_progress" | "done";
 }
 
 export interface BatchChargePreview {
@@ -305,10 +353,20 @@ export async function previewBatchCharges(
       orderBy: { createdAt: "desc" },
       select: FACTORY_HISTORY_SELECT,
     }) as FactoryHistoryRow[]);
-    const disposition = factoryHistoryDisposition(history, cellMaterial(cell, args.threadId));
+    const expected = cellMaterial(cell, args.threadId);
+    const disposition = factoryHistoryDisposition(history, expected);
     if (disposition === "fresh") cells.push({ index: i, disposition: "new", credits: quoteCell(cell) });
-    else if (disposition === "reused") cells.push({ index: i, disposition: "reused", credits: 0 });
-    else cells.push({ index: i, disposition: "blocked", credits: 0 });
+    else if (disposition === "reused") {
+      // #708 修复轮 P2-1:复用的是**哪一单**,决定卡面能不能说「已经做好了」。
+      // 同一份历史、同一条判据 —— 不再新写一套「做完没有」的规则。
+      const prior = factoryReusedPrior(history, expected);
+      cells.push({
+        index: i,
+        disposition: "reused",
+        credits: 0,
+        reuseState: prior?.status === "DONE" ? "done" : "in_progress",
+      });
+    } else cells.push({ index: i, disposition: "blocked", credits: 0 });
   }
   return { cells, totalCredits: cells.reduce((sum, cell) => sum + cell.credits, 0) };
 }

@@ -9,6 +9,8 @@ vi.mock("@/lib/campaign-generation-confirm", () => ({
 
 import CampaignConfirmPage, {
   campaignGenerationResultTitle,
+  reusedLabel,
+  reusedSummaryPhrase,
 } from "@/components/campaign/campaign-confirm-page";
 import CampaignListPage from "@/components/campaign/campaign-list-page";
 
@@ -27,7 +29,9 @@ function imageLine(over: Partial<QuoteLine> = {}): QuoteLine {
     displayCredits: 1,
     fullDisplayCredits: 1,
     charge: "new",
+    reuseState: null,
     aspectRatio: "1:1",
+    promisedSpec: { aspectRatio: "1:1", count: 1 },
     specChips: [],
     ...over,
   };
@@ -96,6 +100,7 @@ function confirmProps(
         totalDisplayCredits,
         count: (over.lines ?? [null]).length,
         contentFingerprint: "a".repeat(64),
+        deliveryFingerprint: "b".repeat(64),
         reusedCount: over.reusedCount ?? 0,
         blockedCount: over.blockedCount ?? 0,
       },
@@ -170,9 +175,11 @@ describe("#708 已生成的条目不再把商家挡在门外", () => {
     entryId: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
     kind: "video",
     charge: "reused",
+    reuseState: "done",
     displayCredits: 0,
     fullDisplayCredits: 11,
-    aspectRatio: "9:16",
+    aspectRatio: null,
+    promisedSpec: { aspectRatio: "9:16", count: 1, resolution: "720p", durationSeconds: 5, fps: 0, audio: true },
     specChips: ["9:16", "5s", "720p", "With sound"],
   });
   const freshImage = imageLine({ displayCredits: 1, fullDisplayCredits: 1 });
@@ -208,6 +215,54 @@ describe("#708 已生成的条目不再把商家挡在门外", () => {
 
     expect(markup).toContain("Will not start");
     expect(markup).toContain("This entry changed since it was last generated");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #708 修复轮 P2-1 —— 复用不等于做完:还在跑的片子不许被写成已完成
+// ---------------------------------------------------------------------------
+describe("#708 修复轮 P2-1 在飞的复用条目说的是「还在做」", () => {
+  const inFlight = imageLine({
+    entryId: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+    kind: "video",
+    charge: "reused",
+    reuseState: "in_progress",
+    displayCredits: 0,
+    fullDisplayCredits: 11,
+    aspectRatio: null,
+    promisedSpec: { aspectRatio: "9:16", count: 1, resolution: "720p", durationSeconds: 5, fps: 0, audio: true },
+    specChips: ["9:16", "5s", "720p", "With sound"],
+  });
+  const done = imageLine({ charge: "reused", reuseState: "done", displayCredits: 0, fullDisplayCredits: 1 });
+
+  it("行文案分档:做完了才叫 already generated,在跑的说 already being made", () => {
+    expect(reusedLabel("done")).toBe("Already generated");
+    expect(reusedLabel("in_progress")).toBe("Already being made");
+    // 状态不明按「还在做」说 —— 不确定的时候不许宣称完成。
+    expect(reusedLabel(null)).toBe("Already being made");
+  });
+
+  it("在飞的那一行:卡上写 already being made,不写 already generated", () => {
+    const markup = renderConfirm(50, 0, { lines: [inFlight], reusedCount: 1 });
+
+    expect(markup).toContain("Already being made");
+    expect(markup).not.toContain("Already generated");
+    expect(markup).not.toContain("Already done");
+  });
+
+  it("汇总也分档:只要还有一单在跑,整批就不许被说成已生成", () => {
+    expect(reusedSummaryPhrase([done, done])).toBe("already generated");
+    expect(reusedSummaryPhrase([done, inFlight])).toBe("already generated or still being made");
+
+    const markup = renderConfirm(50, 0, { lines: [inFlight, done], reusedCount: 2 });
+    expect(markup).toContain("Everything in this plan is already generated or still being made");
+  });
+
+  it("全部真做完时,原来那句话一个字不变", () => {
+    const markup = renderConfirm(50, 0, { lines: [done], reusedCount: 1 });
+
+    expect(markup).toContain("Everything in this plan is already generated. Confirming again will not charge you.");
+    expect(markup).not.toContain("still being made");
   });
 });
 
@@ -267,6 +322,12 @@ describe("campaign generation result title", () => {
     [{ dispatched: 0, failed: 0, reused: 2 }, { current: "not_started" as const }, "Generation did not start"],
   ])("derives the title from the server-confirmed outcome", (result, interruption, expected) => {
     expect(campaignGenerationResultTitle(result, interruption)).toBe(expected);
+  });
+
+  it("#708 修复轮 P2-1:复用的那些还在跑时,标题说的是「还在做」而不是「已生成」", () => {
+    const allReused = { dispatched: 0, failed: 0, reused: 2 };
+    expect(campaignGenerationResultTitle(allReused, null, true)).toBe("Everything was already generated");
+    expect(campaignGenerationResultTitle(allReused, null, false)).toBe("Everything is already being made");
   });
 });
 

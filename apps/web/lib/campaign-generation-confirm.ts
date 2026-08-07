@@ -71,7 +71,7 @@ import {
 } from "./campaign-format-shape";
 import { attachCampaignApprovalGate } from "./campaign-approval-lock";
 import {
-  cellVideoSpec,
+  cellResolvedSpec,
   orchestrateBatch,
   previewBatchCharges,
   quoteCell,
@@ -79,6 +79,7 @@ import {
   type BatchChargePreview,
   type BatchInterruption,
   type BatchResult,
+  type CellResolvedSpec,
   type GenCell,
   type StartGenPort,
 } from "./factory-batch";
@@ -198,6 +199,12 @@ function approvedEntriesFromPlan(planJson: unknown): ApprovedCampaignEntry[] {
  */
 export type CampaignLineCharge = "new" | "reused" | "blocked";
 
+/**
+ * 复用的那一单**做完没有**(#708 修复轮 P2-1)。复用只说明「不再收钱」,不说明「已经做好」——
+ * QUEUED / GENERATING 的片子还在跑。文案照这一格说话,判据与收费判据同源。
+ */
+export type CampaignReuseState = "in_progress" | "done";
+
 /** One line of the server-recomputed quote — display credits for the UI. */
 export interface CampaignGenQuoteLine {
   entryId: string;
@@ -210,13 +217,26 @@ export interface CampaignGenQuoteLine {
    *  「本来 N credits,这次不收」,而不是让商家以为这条目免费。 */
   fullDisplayCredits: number;
   charge: CampaignLineCharge;
+  /** 仅 `charge === "reused"` 时有值:被复用的那一单现在是在跑还是已经做完。 */
+  reuseState: CampaignReuseState | null;
   /** #643 T2 —— 这个条目真会交付的形状（图片；视频为 null）。确认页显示它，付费请求带的
-   *  是同一个值：商家复核的形状就是引擎收到的形状。 */
+   *  是同一个值：商家复核的形状就是引擎收到的形状。派生自 `promisedSpec`。 */
   aspectRatio: string | null;
+  /**
+   * **卡面承诺面**(#709 修复轮 P1-2)—— 这一格真会跑的完整规格,解析默认值之后的那一份,
+   * 也正是落进 `GenJob` 快照、`pricedGenCredits` 计价用的那一份。
+   *
+   * 它是这一行**唯一**的规格定义:`specChips` 与 `aspectRatio` 从它派生,内容指纹**整份**
+   * 哈希它。所以「卡上会说出口的字段集」与「进指纹的字段集」结构上不可能分家 —— 将来解析器
+   * 多产出一个字段、卡上多说一句话,指纹自动跟上。
+   *
+   * 修之前指纹只哈希 `cell.aspectRatio`(可能为空)与 `cell.resolution`,完全漏掉 audio 与
+   * 默认画幅:同模型同价下默认画幅或声音一变,旧指纹照样通过,交付的却不是卡上那个东西。
+   */
+  promisedSpec: CellResolvedSpec;
   /** #709 —— 这个条目真会跑的规格,写成人话(`5s` / `720p` / `9:16` / `With sound`)。
-   *  与 Otto 细节卡读**同一份** `buildSpecChips`(@fikirtive/core),取值来自这一格解析
-   *  之后的 videoOptions —— 也就是落库快照与计价用的那一份。图片行为空数组(形状已在
-   *  `aspectRatio` 上说过,不重复一遍)。 */
+   *  与 Otto 细节卡读**同一份** `buildSpecChips`(@fikirtive/core),取值来自 `promisedSpec`。
+   *  图片行为空数组(形状已在 `aspectRatio` 上说过,不重复一遍)。 */
   specChips: string[];
 }
 
@@ -225,32 +245,38 @@ export interface CampaignGenQuote {
   /** sum in displayed credits — the "N credits" on the Confirm button. */
   totalDisplayCredits: number;
   count: number;
-  /** Server-derived, order-independent hash of approved ids + briefs + models + unit prices. */
+  /** Server-derived, order-independent hash of approved ids + briefs + models + unit prices
+   *  + **每一格完整的卡面承诺规格**。 */
   contentFingerprint: string;
+  /**
+   * **交付面**的服务端指纹(#708 修复轮 P1-1):这一趟真会被交付的条目 id 集合。
+   *
+   * 为什么价格上限一条闸不够:复用会让价合法地变低,所以「少收放行」是对的;但**被挡下的
+   * 条目也收 0**,于是「另一个标签页先用别的规格确认了」这一路会让交付缩水而总额同样变低,
+   * 旧的价格闸一路放行 —— 商家为一份缩水的交付付了钱,而且从没被问过。
+   *
+   * 复用(reused)照常交付,所以 new↔reused 的合法翻转**不动**这个指纹;只有条目从「会交付」
+   * 变成「不会交付」才动它,那一刻必须停下来让商家重新看一眼。
+   */
+  deliveryFingerprint: string;
   /** 已生成、这一趟不会再收费的条目数(#708)。卡面据此如实说明差额去哪了。 */
   reusedCount: number;
   /** 内容改过、这一趟不会被受理的条目数(#708)。 */
   blockedCount: number;
 }
 
-/** 这一格的规格,写成商家看得懂的几个词 —— 取值是**解析之后**的 videoOptions,也就是
- *  落库快照与 `pricedGenCredits` 用的那一份(#709)。 */
-function campaignSpecChips(cell: GenCell): string[] {
+/** 这一格的规格,写成商家看得懂的几个词 —— 取值是 `promisedSpec`,也就是落库快照与
+ *  `pricedGenCredits` 用的那一份(#709)。 */
+function campaignSpecChips(cell: GenCell, spec: CellResolvedSpec): string[] {
   if ((cell.kind ?? "image") !== "video") return [];
-  const spec = cellVideoSpec(cell);
-  if (!spec) return [];
-  return buildSpecChips(
-    "video",
-    {
-      aspectRatio: spec.aspectRatio,
-      resolution: spec.resolution,
-      durationSeconds: spec.seconds,
-      audio: spec.audio,
-      count: 1,
-    },
-    // 战役这条路没有首帧图（cell 不带 sourceGenerationId/shotId），所以形状不是「跟着首帧走」。
-    false,
-  );
+  // 战役这条路没有首帧图（cell 不带 sourceGenerationId/shotId），所以形状不是「跟着首帧走」。
+  return buildSpecChips("video", spec, false);
+}
+
+/** 键序无关的规范化,让指纹只随**值**变化。整份枚举 —— 不点名任何字段,所以规格里将来
+ *  多出一项,它自动进指纹。 */
+function canonicalSpec(spec: CellResolvedSpec): string {
+  return JSON.stringify(Object.entries(spec).sort(([left], [right]) => (left < right ? -1 : 1)));
 }
 
 /** Server-side quote + approval-content binding (§7.2.1). Every number is `quoteCell` =
@@ -271,6 +297,9 @@ function quoteCampaignGenCells(
     const predicted = charges?.cells[index];
     const charge: CampaignLineCharge =
       predicted == null || predicted.disposition === "text" ? "new" : predicted.disposition;
+    // 卡面承诺面 —— 这一行**唯一**的规格定义。展示、计价、指纹全部从它出发。
+    const promisedSpec = cellResolvedSpec(cell);
+    const kind = (cell.kind ?? "image") as CampaignGenKind;
     return {
       entry: entries[index],
       cell,
@@ -278,29 +307,32 @@ function quoteCampaignGenCells(
       line: {
         entryId: entries[index].id,
         brief: entries[index].brief,
-        kind: (cell.kind ?? "image") as CampaignGenKind,
+        kind,
         displayCredits: displayCredits(charge === "new" ? internalCredits : 0),
         fullDisplayCredits: displayCredits(internalCredits),
         charge,
-        aspectRatio: cell.aspectRatio ?? null,
-        specChips: campaignSpecChips(cell),
+        reuseState: charge === "reused" ? predicted?.reuseState ?? "in_progress" : null,
+        aspectRatio: kind === "image" ? promisedSpec.aspectRatio : null,
+        promisedSpec,
+        specChips: campaignSpecChips(cell, promisedSpec),
       },
     };
   });
   const lines = priced.map(({ line }) => line);
-  // 形状与档位进指纹：商家复核的是「这个条目会交付什么、什么规格」，那它们就必须是被批准的
-  // 内容的一部分。不进指纹的话，复核之后形状/档位被改掉仍然能确认过去 —— 那正是
-  // 「说的 ≠ 做的」的入口。**复用与否不进指纹**：那是历史状态，不是被批准的内容；
-  // 它的漂移由总额对签(quote == reserve)挡住。
+  // **指纹覆盖面 = 卡面承诺面**(#709 修复轮 P1-2)。整份哈希 `promisedSpec`，而不是挑几个
+  // 可能为空的原始字段：卡上说得出口的每一个规格字段都在里面，将来卡上多说一句，指纹自动
+  // 跟上。修之前只哈希 `cell.aspectRatio` / `cell.resolution`，漏掉 audio 与默认画幅 ——
+  // 同模型同价下默认画幅或声音一变，旧指纹照样通过，交付的却不是卡上那个东西。
+  //
+  // **复用与否不进内容指纹**：那是历史状态，不是被批准的内容。它分两条闸管 ——
+  // 少收由总额上限管，交付缩水由下面的 `deliveryFingerprint` 管。
   const fingerprintPayload = priced
-    .map(({ entry, cell, internalCredits }) => [
+    .map(({ entry, cell, internalCredits, line }) => [
       entry.id,
       entry.brief,
       cell.model ?? "seedream",
-      cell.aspectRatio ?? "",
       internalCredits,
-      cell.resolution ?? "",
-      cell.durationSeconds ?? 0,
+      canonicalSpec(line.promisedSpec),
     ] as const)
     .sort(([leftId], [rightId]) => (leftId < rightId ? -1 : leftId > rightId ? 1 : 0));
   const contentFingerprint = createHash("sha256")
@@ -308,11 +340,21 @@ function quoteCampaignGenCells(
     .update("\0")
     .update(JSON.stringify(fingerprintPayload))
     .digest("hex");
+  // 交付面：这一趟真会被交付的条目。reused 照常交付,所以 new↔reused 不动它;
+  // 一个条目从「会交付」变成「不会交付」(blocked)才动它 —— 那一刻必须重新征求同意。
+  const deliveryFingerprint = createHash("sha256")
+    .update("campaign-generation-delivery-v1")
+    .update("\0")
+    .update(JSON.stringify(
+      lines.filter((line) => line.charge !== "blocked").map((line) => line.entryId).sort(),
+    ))
+    .digest("hex");
   return {
     lines,
     totalDisplayCredits: lines.reduce((sum, line) => sum + line.displayCredits, 0),
     count: cells.length,
     contentFingerprint,
+    deliveryFingerprint,
     reusedCount: lines.filter((line) => line.charge === "reused").length,
     blockedCount: lines.filter((line) => line.charge === "blocked").length,
   };
@@ -442,6 +484,9 @@ const confirmInputSchema = z
     expectedTotalCredits: z.number().int().min(0),
     /** Opaque server-rendered approval-content binding; client content is never accepted. */
     expectedContentFingerprint: z.string().regex(FINGERPRINT_PATTERN),
+    /** #708 修复轮 P1-1：商家复核时**会被交付的那一组条目**的服务端指纹。少收放行，
+     *  但少交付必须重新征求同意；缺省(旧客户端)时按「一个条目都不许掉队」处理。 */
+    expectedDeliveryFingerprint: z.string().regex(FINGERPRINT_PATTERN).optional(),
     /** #709：商家在卡上选的片子档位。它是商家自己的选择，所以可以由客户端提出 —— 但价格
      *  由服务端按**这一档**重算，且必须与他复核过的总额、指纹逐字对上，否则一格都不派发。 */
     videoSpec: videoSpecSchema.nullish(),
@@ -471,7 +516,8 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
 
   const parsed = confirmInputSchema.safeParse(raw);
   if (!parsed.success) return { error: "That generation request is out of bounds." };
-  const { campaignId, projectId, expectedTotalCredits, expectedContentFingerprint } = parsed.data;
+  const { campaignId, projectId, expectedTotalCredits, expectedContentFingerprint, expectedDeliveryFingerprint } =
+    parsed.data;
 
   // Owner-scoped campaign load — the persisted plan is the ONLY source of what will generate.
   const campaign = await prisma.campaign.findFirst({
@@ -524,6 +570,28 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   if (quote.totalDisplayCredits > expectedTotalCredits) {
     return {
       error: `This plan or its price changed since you reviewed it (was ${expectedTotalCredits}, now ${quote.totalDisplayCredits} credits). Refresh and confirm again.`,
+      quote,
+    };
+  }
+  // #708 修复轮 P1-1:**少付不等于少交付**。价格上限单独一条闸是不够的 —— 被挡下的条目
+  // 同样收 0,于是「另一个标签页先用别的规格确认了」这一路会让交付缩水而总额同样变低,
+  // 价格闸一路放行,商家为一份缩水的交付付了钱、而且从没被问过(判官 r1 P1)。
+  //
+  // 交付面必须逐字对上:复用照常交付(new↔reused 不动它),只有条目从「会交付」变成
+  // 「不会交付」才对不上,那一刻停在花钱之前,让商家看着更新后的卡重新决定。
+  //
+  // 没带交付指纹的调用方(没经过确认卡)按最严处理:一个条目都不许掉队。带了的,就逐字
+  // 对签他复核过的那一组 —— 卡上明说过「这条不会开始」的条目,他是被问过的,可以确认;
+  // 复核之后才掉队的,一律停下来重新问一次。
+  const deliveryChanged = expectedDeliveryFingerprint == null
+    ? quote.blockedCount > 0
+    : quote.deliveryFingerprint !== expectedDeliveryFingerprint;
+  if (deliveryChanged) {
+    const missing = quote.blockedCount;
+    return {
+      error: missing > 0
+        ? `${missing} ${missing === 1 ? "item" : "items"} in this plan can no longer be created as reviewed, so nothing was started and nothing was charged. Review the updated plan before confirming.`
+        : "What this plan will deliver changed since you reviewed it, so nothing was started and nothing was charged. Review the updated plan before confirming.",
       quote,
     };
   }

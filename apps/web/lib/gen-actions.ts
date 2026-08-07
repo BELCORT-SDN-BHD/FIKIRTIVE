@@ -26,7 +26,6 @@ import {
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
   imageDefaults,
-  genJobEndedWithoutDelivering,
   type GenModel,
   type GenVideoModel,
   type GenJobData,
@@ -51,6 +50,7 @@ import {
   canvasActionKey,
   factoryHistoryDisposition,
   factoryMaterialMatches,
+  factoryReusedPrior,
   normalizeFactoryMaterial,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
@@ -190,7 +190,10 @@ function factoryHistoryVerdict(
   // Generate, wait, and nothing is ever made. Money is untouched by this line: a cancelled job
   // was refunded when it was cancelled, and the fresh attempt below reserves for itself exactly
   // as any first attempt does.
-  const stillLive = history.find((prior) => !genJobEndedWithoutDelivering(prior.status));
+  // 判据只有一处(#708 修复轮 P2-1):`factoryReusedPrior` 就是 `factoryHistoryDisposition`
+  // 里那条「还有一单没结束且没交付」的规则本身,报价那一侧读的也是它 —— 于是「这一趟复用
+  // 哪一单」在报价与派发两边不可能给出两个答案。conflict / exact 已在上面返回。
+  const stillLive = factoryReusedPrior(history, material);
   if (stillLive) return { id: stillLive.id, disposition: "reused" };
   return null;
 }
