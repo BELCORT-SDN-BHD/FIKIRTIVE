@@ -9,6 +9,7 @@ import {
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "./better-auth/compat";
+import { memberDirectoryService } from "./member-directory-service";
 import {
   CustomerInboxError,
   customerInboxService,
@@ -135,6 +136,22 @@ export async function listTemplates(input: ListTemplatesInput = {}) {
 // workspace's connected channel accounts instead of a free-text scope id.
 export async function listChannelScopes() {
   return runRead((principal) => customerInboxService.listChannelScopes(principal));
+}
+
+/**
+ * #725 — the same read-only member directory the broadcast workbench already uses (#27), so
+ * Inbox assignment can name teammates instead of asking the merchant to type a membership id
+ * that no screen in the product shows. The principal comes from the authenticated session, and
+ * the directory service independently re-checks `members.read` on top of this gateway's
+ * `inbox.read` gate: neither tenant scope nor capability is widened by reusing it here.
+ */
+export async function getMemberDirectory() {
+  return runRead((principal) =>
+    memberDirectoryService.listMemberDirectory({
+      ownerId: principal.ownerId,
+      membershipId: principal.membershipId,
+    }),
+  );
 }
 
 export async function saveConversationDraft(input: SaveConversationDraftInput) {

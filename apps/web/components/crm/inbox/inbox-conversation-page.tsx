@@ -26,6 +26,7 @@ import {
   setConversationStatus,
   takeOverConversation,
 } from "@/lib/customer-inbox-ui-actions";
+import type { getMemberDirectory } from "@/lib/customer-inbox-gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +51,8 @@ type HistorySuccess = Extract<HistoryResult, { ok: true }>;
 type HistoryMessage = HistorySuccess["resource"]["messages"][number];
 type HistoryEvent = HistorySuccess["resource"]["events"][number];
 type PreflightResult = Awaited<ReturnType<typeof getConversationPreflight>>;
+type DirectoryResult = Awaited<ReturnType<typeof getMemberDirectory>>;
+type DirectoryMember = Extract<DirectoryResult, { ok: true }>["resource"]["members"][number];
 
 export type ConversationInitialState = {
   conversation: ConversationResult;
@@ -81,13 +84,21 @@ function DetailUnavailable() {
 export default function InboxConversationPage({
   conversationId,
   initialState,
+  initialDirectory,
 }: {
   conversationId: string;
   initialState: ConversationInitialState;
+  initialDirectory: DirectoryResult;
 }) {
   if (!initialState.conversation.ok) {
     if (isDenialErrorCode(initialState.conversation.error)) return <DetailUnavailable />;
-    return <DetailErrorState conversationId={conversationId} code={initialState.conversation.error} />;
+    return (
+      <DetailErrorState
+        conversationId={conversationId}
+        code={initialState.conversation.error}
+        initialDirectory={initialDirectory}
+      />
+    );
   }
   return (
     <ConversationWorkspace
@@ -95,6 +106,7 @@ export default function InboxConversationPage({
       initialConversation={initialState.conversation.resource}
       initialHistory={initialState.history}
       initialPreflight={initialState.preflight}
+      initialDirectory={initialDirectory}
     />
   );
 }
@@ -104,7 +116,15 @@ export default function InboxConversationPage({
  *  since that data never loaded) and offer Retry with the stable error code visible.
  *  A successful retry re-fetches history/preflight alongside the conversation and mounts
  *  the real workspace, same as the initial server-side read would have. */
-function DetailErrorState({ conversationId, code }: { conversationId: string; code: string }) {
+function DetailErrorState({
+  conversationId,
+  code,
+  initialDirectory,
+}: {
+  conversationId: string;
+  code: string;
+  initialDirectory: DirectoryResult;
+}) {
   const [currentCode, setCurrentCode] = useState(code);
   const [retrying, setRetrying] = useState(false);
   const [loaded, setLoaded] = useState<{
@@ -140,6 +160,7 @@ function DetailErrorState({ conversationId, code }: { conversationId: string; co
         initialConversation={loaded.conversation}
         initialHistory={loaded.history}
         initialPreflight={loaded.preflight}
+        initialDirectory={initialDirectory}
       />
     );
   }
@@ -172,11 +193,13 @@ function ConversationWorkspace({
   initialConversation,
   initialHistory,
   initialPreflight,
+  initialDirectory,
 }: {
   conversationId: string;
   initialConversation: ConversationResource;
   initialHistory: HistoryResult;
   initialPreflight: PreflightResult;
+  initialDirectory: DirectoryResult;
 }) {
   const [conversation, setConversation] = useState<ConversationResource>(initialConversation);
   const [historyResult, setHistoryResult] = useState<HistoryResult>(initialHistory);
@@ -415,6 +438,18 @@ function ConversationWorkspace({
   const identity = conversation.contactIdentity;
   const assignee = conversation.assigneeMembership;
 
+  // #725 — the same read-only member directory the broadcast workbench already reads (#27).
+  // A membership the directory doesn't contain is never given a fabricated name: it is
+  // described as a member who is no longer listed, and the internal id stays off screen.
+  const directory = initialDirectory.ok ? initialDirectory.resource : null;
+  const members: DirectoryMember[] = directory?.members ?? [];
+  const memberName = (membershipId: string | null | undefined): string | null =>
+    members.find((member) => member.membershipId === membershipId)?.displayName ?? null;
+  const assigneeLabel = assignee
+    ? `Assigned to ${memberName(assignee.id) ?? "a team member who is no longer listed"} · ${assignee.role}`
+    : "Unassigned";
+  const directoryUnavailable = !initialDirectory.ok || members.length === 0;
+
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
       <div className="mx-auto max-w-6xl">
@@ -473,7 +508,7 @@ function ConversationWorkspace({
 
         <div className="mt-6 grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="grid content-start gap-5">
-            <HistoryPanel historyResult={historyResult} onRetry={refresh} />
+            <HistoryPanel historyResult={historyResult} onRetry={refresh} resolveMemberName={memberName} />
 
             <Card>
               <CardHeader><CardTitle>Reply draft</CardTitle><CardDescription>Internal only — see the note below.</CardDescription></CardHeader>
@@ -496,13 +531,32 @@ function ConversationWorkspace({
 
           <div className="grid content-start gap-5">
             <Card>
-              <CardHeader><CardTitle>Assignment &amp; status</CardTitle><CardDescription>Team-member lookup isn&apos;t available yet — enter the exact membership ID.</CardDescription></CardHeader>
+              <CardHeader><CardTitle>Assignment &amp; status</CardTitle><CardDescription>Pick a teammate by name. Assigning pauses nothing on its own.</CardDescription></CardHeader>
               <CardContent className="grid gap-4">
                 <div className="rounded-lg bg-muted/45 p-3 text-sm">
-                  {assignee ? `Assigned to membership ${assignee.id} · ${assignee.role}` : "Unassigned"}
+                  {assigneeLabel}
                 </div>
                 <div className="grid gap-2">
-                  <Input value={targetMembershipId} onChange={(event) => setTargetMembershipId(event.target.value)} placeholder="Membership ID" aria-label="Membership ID" disabled={actionsDisabled} />
+                  {directoryUnavailable ? (
+                    <p className="text-sm text-muted-foreground">
+                      The team-member list could not be loaded, so this conversation cannot be assigned right now.
+                    </p>
+                  ) : (
+                    <select
+                      className="min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm disabled:opacity-50"
+                      aria-label="Assign to"
+                      value={targetMembershipId}
+                      onChange={(event) => setTargetMembershipId(event.target.value)}
+                      disabled={actionsDisabled}
+                    >
+                      <option value="">Select a teammate…</option>
+                      {members.map((member) => (
+                        <option key={member.membershipId} value={member.membershipId}>
+                          {member.displayName}{member.isSelf ? " (you)" : ""} · {member.role}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !targetMembershipId.trim()} onClick={() => void doAssign(targetMembershipId.trim())}>
                       {busy === "assign" ? <LoaderCircle className="animate-spin" /> : <UserPlus />}Assign
@@ -516,7 +570,7 @@ function ConversationWorkspace({
                   <label className="text-xs font-semibold text-muted-foreground">Hand off with a note</label>
                   <Input value={handoffNote} onChange={(event) => setHandoffNote(event.target.value)} maxLength={1000} placeholder="Note for the next teammate (optional)" aria-label="Hand-off note" disabled={actionsDisabled} />
                   <Button type="submit" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !targetMembershipId.trim()}>
-                    {busy === "handoff" ? <LoaderCircle className="animate-spin" /> : <UserCheck />}Hand off to membership ID above
+                    {busy === "handoff" ? <LoaderCircle className="animate-spin" /> : <UserCheck />}Hand off to the selected teammate
                   </Button>
                 </form>
                 <div className="border-t border-border pt-3">
@@ -629,9 +683,11 @@ function Composer({
 function HistoryPanel({
   historyResult,
   onRetry,
+  resolveMemberName,
 }: {
   historyResult: HistoryResult;
   onRetry: () => void;
+  resolveMemberName: (membershipId: string) => string | null;
 }) {
   if (!historyResult.ok) {
     return (
@@ -662,7 +718,7 @@ function HistoryPanel({
           {events.length === 0 ? (
             <p className="text-sm text-muted-foreground">No control events recorded yet.</p>
           ) : (
-            events.map((event) => <EventRow key={event.id} event={event} />)
+            events.map((event) => <EventRow key={event.id} event={event} resolveMemberName={resolveMemberName} />)
           )}
         </CardContent>
       </Card>
@@ -685,10 +741,16 @@ function MessageBubble({ message }: { message: HistoryMessage }) {
   );
 }
 
-function EventRow({ event }: { event: HistoryEvent }) {
+function EventRow({
+  event,
+  resolveMemberName,
+}: {
+  event: HistoryEvent;
+  resolveMemberName: (membershipId: string) => string | null;
+}) {
   return (
     <div className="rounded-lg border border-border p-3 text-sm">
-      <p>{eventDescription(event)}</p>
+      <p>{eventDescription(event, resolveMemberName)}</p>
       <p className="mt-1 text-xs text-muted-foreground">{dateTimeLabel(event.createdAt)}</p>
     </div>
   );
