@@ -7,7 +7,7 @@ export function streamTurnErrorId(): string {
 }
 
 export function streamTurnErrorText(errorId: string): string {
-  return `Otto hit a snag - please try again. Reference: ${errorId}`;
+  return `Otto hit a snag — please try again. Reference: ${errorId}`;
 }
 
 export async function persistStreamTurnError(args: {

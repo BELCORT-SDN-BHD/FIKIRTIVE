@@ -475,7 +475,7 @@ describe("POST /api/otto/stream", () => {
 
     expect(streamedError).toEqual({
       kind: "error",
-      text: expect.stringMatching(/^Otto hit a snag - please try again\. Reference: OTTO-/),
+      text: expect.stringMatching(/^Otto hit a snag — please try again\. Reference: OTTO-/),
     });
     expect(streamedError?.text).not.toContain("provider detail");
     expect(log).toHaveBeenCalledWith(

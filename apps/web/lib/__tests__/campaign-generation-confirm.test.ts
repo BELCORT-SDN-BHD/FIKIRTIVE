@@ -193,7 +193,7 @@ beforeEach(() => {
 
   // Faithful model of startGen's owner+project-scoped, lock-time factory verdict.
   h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
-    if (failPrompts.has(req.prompt as string)) return { error: "You've used up your beta credits." };
+    if (failPrompts.has(req.prompt as string)) return { error: "Not enough credits." };
     const key = req.idempotencyKey as string;
     const parsed = parseFactoryAttemptKey(key);
     if (!parsed) return { error: "not a factory key" };
