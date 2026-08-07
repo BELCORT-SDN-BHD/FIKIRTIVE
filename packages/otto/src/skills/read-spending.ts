@@ -12,9 +12,15 @@
  * HONESTY: the history covers the most recent `taskLimit` items, not all time. The port reports
  * that window and this skill passes it through, so an answer can never claim to cover every
  * charge ever made. Totals are computed HERE, in code, rather than left to the model to add up.
+ *
+ * ONE VOCABULARY WITH /billing (#684): the list is credit ENTRIES, not charges — top-ups and
+ * grants are in it and they add credits. Which entries count as charges is decided by
+ * `creditDirection` in @fikirtive/core, the same judgment the Billing page's own "N of them
+ * are charges" sentence uses, so Otto and the page can never disagree about the word.
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
+import { creditDirection } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -56,10 +62,12 @@ function round1(n: number): number {
  * `charged`/`byCategory` (a merchant asks "how much did I spend", not "what was the delta"),
  * while credits added stay separate so the two are never netted into one confusing figure.
  *
- * A `pending` entry is a HOLD, not a charge: its amount is the reservation ceiling and the
- * real cost is only known when it settles. It is totalled separately under `onHold` and left
- * out of `charged`/`byCategory`, so "what have I spent" can never be answered with money the
- * merchant has not actually spent (round-2 review P1②).
+ * WHICH BUCKET an entry lands in is not decided here: `creditDirection` (@fikirtive/core)
+ * decides it, and /billing's charge count asks the same function. A `pending` entry is a
+ * HOLD, not a charge — its amount is the reservation ceiling and the real cost is only known
+ * when it settles — so it is totalled under `onHold` and left out of `charged`/`byCategory`,
+ * and "what have I spent" can never be answered with money the merchant has not actually
+ * spent (round-2 review P1②).
  */
 export function summariseSpending(entries: readonly SpendingEntry[]): SpendingTotals {
   let charged = 0;
@@ -67,16 +75,19 @@ export function summariseSpending(entries: readonly SpendingEntry[]): SpendingTo
   let added = 0;
   const byCategory: Record<string, number> = {};
   for (const entry of entries) {
-    if (entry.credits < 0) {
-      const amount = -entry.credits;
-      if (entry.pending) {
-        onHold += amount;
-        continue;
-      }
-      charged += amount;
-      byCategory[entry.category] = (byCategory[entry.category] ?? 0) + amount;
-    } else {
-      added += entry.credits;
+    switch (creditDirection(entry.credits, entry.pending)) {
+      case "charge":
+        charged += -entry.credits;
+        byCategory[entry.category] = (byCategory[entry.category] ?? 0) + -entry.credits;
+        break;
+      case "hold":
+        onHold += -entry.credits;
+        break;
+      case "addition":
+        added += entry.credits;
+        break;
+      case "unchanged":
+        break;
     }
   }
   for (const key of Object.keys(byCategory)) byCategory[key] = round1(byCategory[key]!);
@@ -114,13 +125,16 @@ export const readSpendingSkill = defineOttoSkill({
     "already added up for you — do not re-add them — where totals.charged is money actually " +
     "SPENT (settled only), totals.onHold is money merely HELD by unfinished work (never add it " +
     "to the spent figure; mention it as not settled yet), totals.added is credits added, and " +
-    "totals.byCategory breaks the SETTLED spend down; entries, newest first, each with a plain " +
-    "category (Chat = one conversation turn with you, Review = the automatic check after a " +
-    "generation, Image, Video, Research, Top-up), a signed credits amount (negative = charged), " +
-    "the time, and pending:true when that one is a hold rather than a settled charge. " +
+    "totals.byCategory breaks the SETTLED spend down; entries are credit ENTRIES, newest first — " +
+    "not all of them are charges, since top-ups and grants ADD credits and sit in the same list — " +
+    "each with a plain category (Chat = one conversation turn with you, Review = the automatic " +
+    "check after a generation, Image, Video, Research, Top-up, Credits added), a signed credits " +
+    "amount (negative = charged, positive = added), the time, and pending:true when that one is a " +
+    "hold rather than a settled charge. " +
     "IMPORTANT: `window` says how far back this reaches — it covers the most recent " +
-    "window.taskLimit items only. If window.hasMore is true there are OLDER charges not included, " +
-    "so say your figures cover their recent charges, never 'everything you have ever spent'.",
+    "window.taskLimit items only. If window.hasMore is true there are OLDER credit entries not " +
+    "included, so say your figures cover their recent credit activity, never 'everything you have " +
+    "ever spent'.",
   parameters: params,
   execute: executeReadSpending,
 });

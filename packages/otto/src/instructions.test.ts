@@ -274,6 +274,29 @@ describe("ottoInstructions — #555 credits and spending", () => {
     }
   });
 
+  // #684: the list readSpending returns holds top-ups and grants, which ADD credits. /billing
+  // now calls it "credit entries" and counts the charges inside it; instructions that keep
+  // calling the whole list "charges" hand the merchant a second story from the same numbers —
+  // exactly the split #683 closed for row labels.
+  it("calls the readSpending list credit entries, not charges", () => {
+    expect(ottoInstructions).toMatch(/`entries` are their recent credit entries/);
+    expect(ottoInstructions).toMatch(/NOT all of them are charges/);
+    expect(ottoInstructions).toMatch(/ADD credits and are not charges at all/);
+    expect(ottoInstructions).toMatch(/OLDER credit entries that are not in it/);
+  });
+
+  const WHOLE_LIST_CALLED_CHARGES = [
+    /\bOLDER charges\b/,
+    /\brecent charges\b/i,
+    /\bentries\b[^.]*\bare the recent charges\b/i,
+  ];
+
+  it("never calls the whole entry list charges", () => {
+    for (const wording of WHOLE_LIST_CALLED_CHARGES) {
+      expect(ottoInstructions, `wording ${wording} calls additions charges`).not.toMatch(wording);
+    }
+  });
+
   // Positive control: a banned family nobody has tested is a banned family that may match
   // nothing at all. These are the rewrites the round-3 review said would escape a phrase list.
   it("the completeness ban actually catches the rewrites, not just the original wording", () => {

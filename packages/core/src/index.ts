@@ -150,3 +150,6 @@ export * from "./canvas-card-status.js";
 // 执行层真会做什么 —— 卡面文案(otto)与现役适配器请求体断言(generation)钉在同一份声明上。
 // 纯数据,无 node/network 依赖,可留在主 barrel。
 export { EXECUTED_SPEC, imageAspectHonoured } from "./executed-spec.js";
+// 「这一条是扣款、进账,还是还没结算的占用」只判一次:/billing、账务设置页与 Otto 的
+// readSpending 三个对客口径共用它,web 与 otto 不再各写一套(#684)。
+export { creditDirection, type CreditDirection } from "./credit-direction.js";
