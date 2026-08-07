@@ -28,9 +28,9 @@
 
 ## 代码地图（CodeGraph）
 
-- 唯一持图树是主检出（`git worktree list` 第一条 working tree）。orchestrator 做全局调查时在主检出上 CodeGraph-first。
+- 唯一持图树是主检出 `/Users/winnin/Desktop/FIKIRTIVE`。orchestrator 做全局调查时在主检出上 CodeGraph-first。
 - 主检出会落后 `origin/main`。查图前先核对它的 HEAD，落后就 `git -C <主检出> pull --ff-only`（它历来零本地提交，watcher 随后自动跟上索引）。树新鲜与图新鲜要一起验，缺一不可。
-- 查图前必须先跑 `codegraph status` 验明地图身份：输出带 worktree 警告或不是 fresh，就不得用图。`query` 与 `callers` 在未索引的 worktree 里会零警告返回别的树的结果。
+- 查图前必须先跑 `codegraph status` 验明地图身份：输出带 worktree 警告或不是 fresh，就不得用图。嵌在主检出目录内的 worktree（`.claude/worktrees/*`）里，`query` 与 `callers` 会零警告返回主检出的结果。
 - worker 与判官在自己的 worktree 一律诚实回退到 `rg` 与直接读文件；不跑 `codegraph init`，不借主检出的图。
 - 主检出以外的目录出现 `.codegraph/` 就是错误，就地删除。
 - lock、watchdog 或 sync 报错之后必须重新 `codegraph status` 才能声称 fresh；daemon 还在不等于图是新的。
