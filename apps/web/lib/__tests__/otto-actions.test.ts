@@ -3221,10 +3221,12 @@ describe("buildOttoContext — the money boundary, end to end (#692 r4)", () => 
     { accountId: "act_4", name: "Fourth Stall", currency: null, metrics: { ...RAW_METRICS, spend: "990" } },
   ];
 
+  // #692 r5: real Meta identifiers are long runs of digits — the fixture uses that shape so the
+  // contract is exercised against real data, not against ids invented to be easy on it.
   const MIXED_ADS = MIXED_ACCOUNTS.map((a, i) => ({
-    adId: `ad_${i}`, adName: `Ad ${i}`, accountId: a.accountId, accountName: a.name,
+    adId: `2385123456789012${i}`, adName: `Ad ${i}`, accountId: a.accountId, accountName: a.name,
     currency: a.currency, metrics: a.metrics,
-    creative: { imageUrl: null, body: null, title: null, videoId: null },
+    creative: { imageUrl: null, body: null, title: `2026080${i}`, videoId: `12345678901234${i}` },
   }));
 
   const ctxFor = async () => {

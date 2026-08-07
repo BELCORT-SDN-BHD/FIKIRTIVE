@@ -4,7 +4,7 @@ import {
   expectClosedAccountShape,
   expectClosedAdShape,
   isFinishedMoney,
-  looksNumeric,
+  isMetricValue,
   ACCOUNT_KEYS,
   AD_KEYS,
   MONEY_KEYS,
@@ -105,7 +105,6 @@ describe("Otto money boundary — accounts with no reported currency (#692 r3)",
     const out = toOttoInsightAccounts(twoUnknown);
     for (const a of out) expectClosedAccountShape(a);
     expect(isFinishedMoney(out[0]!.money.spend)).toBe(true);
-    expect(looksNumeric(out[0]!.money.spend)).toBe(false);
     expect(JSON.stringify(out)).not.toContain("2230"); // 1240 + 990
   });
 
@@ -151,13 +150,33 @@ describe("Otto money boundary — per-ad rows (#692 r3)", () => {
     expect(out[0]!.creative).toBeNull();
   });
 
-  it("a real creative object still satisfies the contract", () => {
-    const withCreative: OwnerAdRow = {
-      ...ad("a1", "act_1", "Kaia Cafe", "MYR"),
-      // a genuine Meta video id is all digits — the contract must not mistake it for money
-      creative: { imageUrl: "https://img/1.png", body: "Try it", title: "Iced Latte", videoId: "1234567890" },
+  // #692 r5 — the anti-false-positive pin, stated positively. Real Meta identifiers are long
+  // runs of digits, top to bottom: ad id, ad-account id, video id. A contract that flagged them
+  // for LOOKING numeric would be unusable against real data — an id resembling a number is a
+  // fact about ids, not a leak. This case must stay GREEN.
+  it("real Meta-shaped identifiers — all digits — pass the contract untouched", () => {
+    const realistic: OwnerAdRow = {
+      adId: "23851234567890123",
+      adName: "20260807_launch_v3",
+      accountId: "act_1234567890123456",
+      accountName: "998 Kopitiam",
+      currency: "MYR",
+      metrics: { ...metrics(), spend: "1240" },
+      creative: { imageUrl: "https://img/1.png", body: "Try it", title: "Iced Latte", videoId: "1234567890123456" },
     };
-    expectClosedAdShape(toOttoAdRows([withCreative])[0]);
+    const out = toOttoAdRows([realistic])[0]!;
+    expectClosedAdShape(out);
+    // the ids survive verbatim — nothing was rewritten to dodge a numeric-shape rule
+    expect(out.adId).toBe("23851234567890123");
+    expect(out.accountId).toBe("act_1234567890123456");
+    expect(out.creative!.videoId).toBe("1234567890123456");
+    expect(out.money.spend).toBe("MYR 1240");
+  });
+
+  it("an account whose name is all digits is still named, not mangled", () => {
+    const out = toOttoInsightAccounts([account("act_9", "998", null, { spend: "5" })])[0]!;
+    expectClosedAccountShape(out);
+    expect(out.money.spend).toBe("5 (currency not reported — 998)");
   });
 });
 
@@ -185,12 +204,20 @@ describe("the money format predicate (#692 r4)", () => {
     }
   });
 
-  it("looksNumeric catches the forms a naive regex misses", () => {
-    for (const n of ["+48.75", "1e3", " 48.75 ", "1,240", "0", "-12"]) {
-      expect(looksNumeric(n), `${JSON.stringify(n)} is usable as a number`).toBe(true);
+  it("rejects a malformed amount — a broken number is not a number", () => {
+    for (const bad of ["MYR ,", "MYR 1,,2", "MYR 1,23", "MYR ,123", "MYR .5", "MYR -", "MYR",
+                       ", (currency not reported — Kaia Cafe)",
+                       "1,,2 (currency not reported — Kaia Cafe)"]) {
+      expect(isFinishedMoney(bad), `${JSON.stringify(bad)} must not pass as finished money`).toBe(false);
     }
-    for (const t of ["MYR 612", "—", "", "  ", "Kaia Cafe"]) {
-      expect(looksNumeric(t), `${JSON.stringify(t)} is not a number`).toBe(false);
+  });
+
+  it("isMetricValue admits exactly what a count or ratio can be", () => {
+    for (const ok of [null, undefined, 0, 2.76, "0", "18342", "2.76", "1,240"]) {
+      expect(isMetricValue(ok), `${JSON.stringify(ok)} is a metric value`).toBe(true);
+    }
+    for (const bad of ["", "  ", "Kaia Cafe", "MYR 612", true, {}, Number.NaN]) {
+      expect(isMetricValue(bad), `${JSON.stringify(bad)} is not a metric value`).toBe(false);
     }
   });
 });
