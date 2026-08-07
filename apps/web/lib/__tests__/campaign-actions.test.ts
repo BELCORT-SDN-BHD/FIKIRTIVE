@@ -15,6 +15,10 @@ const {
   mockPostUpdateMany,
   mockGenerationFindFirst,
   mockGenerationUpdateMany,
+  mockProjectFindMany,
+  mockGenerationBatchFindMany,
+  mockGenJobFindFirst,
+  mockExecuteRaw,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
@@ -29,6 +33,10 @@ const {
   mockPostUpdateMany: vi.fn(),
   mockGenerationFindFirst: vi.fn(),
   mockGenerationUpdateMany: vi.fn(),
+  mockProjectFindMany: vi.fn(),
+  mockGenerationBatchFindMany: vi.fn(),
+  mockGenJobFindFirst: vi.fn(),
+  mockExecuteRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -37,15 +45,22 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     $transaction: mockTransaction,
+    $executeRaw: mockExecuteRaw,
     campaign: {
       create: mockCampaignCreate,
       findFirst: mockCampaignFindFirst,
       updateMany: mockCampaignUpdateMany,
     },
     trendSnapshot: { create: mockTrendCreate },
-    project: { findFirst: mockProjectFindFirst, updateMany: mockProjectUpdateMany },
+    project: {
+      findFirst: mockProjectFindFirst,
+      findMany: mockProjectFindMany,
+      updateMany: mockProjectUpdateMany,
+    },
     scheduledPost: { findFirst: mockPostFindFirst, updateMany: mockPostUpdateMany },
     generation: { findFirst: mockGenerationFindFirst, updateMany: mockGenerationUpdateMany },
+    generationBatch: { findMany: mockGenerationBatchFindMany },
+    genJob: { findFirst: mockGenJobFindFirst },
   },
 }));
 
@@ -65,6 +80,7 @@ import {
   proposeCampaignEntry,
   removeCampaignEntry,
   setCampaignGrouping,
+  unapproveCampaignEntry,
   updateCampaignEntry,
 } from "../campaign-actions";
 
@@ -106,10 +122,26 @@ beforeEach(() => {
   mockProjectUpdateMany.mockResolvedValue({ count: 1 });
   mockPostUpdateMany.mockResolvedValue({ count: 1 });
   mockGenerationUpdateMany.mockResolvedValue({ count: 1 });
+  mockProjectFindMany.mockResolvedValue([]);
+  mockGenerationBatchFindMany.mockResolvedValue([]);
+  mockGenJobFindFirst.mockResolvedValue(null);
+  mockExecuteRaw.mockResolvedValue(0);
+  // The transaction client must carry the SAME surface as the ambient one: the paid-set moves
+  // (undo / remove) do their dispatch-history read and their plan write inside one transaction
+  // holding the campaign approval lock, so a tx client that only knows `create` would make those
+  // paths untestable here rather than proven.
   mockTransaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
     fn({
-      campaign: { create: mockCampaignCreate },
+      $executeRaw: mockExecuteRaw,
+      campaign: {
+        create: mockCampaignCreate,
+        findFirst: mockCampaignFindFirst,
+        updateMany: mockCampaignUpdateMany,
+      },
       trendSnapshot: { create: mockTrendCreate },
+      project: { findMany: mockProjectFindMany },
+      generationBatch: { findMany: mockGenerationBatchFindMany },
+      genJob: { findFirst: mockGenJobFindFirst },
     }),
   );
 });
@@ -264,6 +296,22 @@ describe("Campaign plan entry actions", () => {
     const replay = await removeCampaignEntry({ campaignId: CAMPAIGN_ID, entryId: ENTRY_ID });
     expect(replay).toMatchObject({ ok: true, idempotent: true });
     expect(mockCampaignUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #744 判官 r1 P1 — both moves that shrink the paid set must go through the same guarded
+  // transaction: take the campaign approval lock, read the dispatch history, THEN write. Asserted
+  // on the calls themselves so a future refactor cannot quietly drop the lock from one of them.
+  it.each([
+    ["remove", () => removeCampaignEntry({ campaignId: CAMPAIGN_ID, entryId: ENTRY_ID })],
+    ["undo", () => unapproveCampaignEntry({ campaignId: CAMPAIGN_ID, entryId: ENTRY_ID })],
+  ])("takes the campaign approval lock before %s writes the plan", async (_name, run) => {
+    await run();
+    expect(mockTransaction).toHaveBeenCalled();
+    expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    expect(mockExecuteRaw.mock.calls[0][0].join("?")).toContain("pg_advisory_xact_lock");
+    expect(mockExecuteRaw.mock.calls[0][1]).toBe(`campaign-approval:${CAMPAIGN_ID}`);
+    // The history read happens inside that same transaction, before any write.
+    expect(mockProjectFindMany).toHaveBeenCalled();
   });
 
   it("returns zero bytes and never mutates another tenant's Campaign", async () => {

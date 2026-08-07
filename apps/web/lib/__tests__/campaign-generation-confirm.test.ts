@@ -28,7 +28,17 @@ const h = vi.hoisted(() => {
   });
 
   type PrefixClause = { idempotencyKey: { startsWith: string } };
+  // #744 判官 r1 P1-2 — every paid dispatch now runs inside the campaign approval lock, which
+  // re-reads the PERSISTED plan and re-derives the approval fingerprint from it. The fake client
+  // therefore has to serve a transaction and the lock statement; `advisoryLocks` records the keys
+  // so the tests can prove the gate was taken and not merely present.
+  const advisoryLocks: string[] = [];
   const prisma = {
+    $transaction: async (run: (tx: unknown) => unknown) => run(prisma),
+    $executeRaw: async (_strings: TemplateStringsArray, key: string) => {
+      advisoryLocks.push(key);
+      return 0;
+    },
     campaign: {
       findFirst: async ({ where }: { where: { id: string; ownerId: string; deletedAt: null } }) => {
         const row = store.campaigns.get(where.id);
@@ -89,6 +99,7 @@ const h = vi.hoisted(() => {
   return {
     store,
     prisma,
+    advisoryLocks,
     startGen: vi.fn(),
     requireOwner: vi.fn(),
     isImpersonating: vi.fn(async () => false),
@@ -365,6 +376,54 @@ describe("战役格式 → 交付形状(#643 T2)", () => {
     const res = await confirmCampaignGeneration(reviewed);
     expect("error" in res && res.error).toMatch(/changed since you reviewed it/);
     expect(h.startGen).not.toHaveBeenCalled();
+  });
+});
+
+// #744 判官 r1 P1-2, the confirm side of the gate.
+//
+// The pre-dispatch fingerprint check happens ONCE, before the loop. Everything the loop then
+// spends is spent against a plan that may already have moved. These prove the per-cell gate:
+// the persisted plan is re-read under the campaign approval lock immediately before each cell,
+// so an undo that lands mid-batch stops every cell that has not been charged yet.
+describe("confirmCampaignGeneration — an undo landing mid-batch stops the rest", () => {
+  it("charges the cell already dispatched and refuses every later one, spending nothing more", async () => {
+    seedCampaign([entry("E1"), entry("E2"), entry("E3")]);
+    seedProject();
+    const reviewed = await reviewedRequest();
+
+    // The merchant presses Undo on E3 while the batch is running: the persisted plan changes
+    // after E1 has been dispatched and before E2 is.
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
+      if (h.startGen.mock.calls.length === 1) {
+        seedCampaign([entry("E1"), entry("E2"), entry("E3", { status: "proposed" })]);
+      }
+      return { id: `job-${String(req.prompt)}`, disposition: "fresh" as const };
+    });
+
+    const res = await confirmCampaignGeneration(reviewed);
+    if (!("ok" in res)) throw new Error(res.error);
+
+    // One cell charged, the other two refused at the gate — not dispatched, not charged.
+    expect(h.startGen).toHaveBeenCalledTimes(1);
+    expect(res.result.dispatched).toBe(1);
+    expect(res.result.failed).toBe(2);
+    expect(res.result.cells.filter((cell) => cell.status === "error").map((cell) => cell.credits))
+      .toEqual([0, 0]);
+    expect(res.result.cells[1].error).toMatch(/approved list changed while this was starting/);
+  });
+
+  it("takes the campaign approval lock once per cell, and only that lock", async () => {
+    h.advisoryLocks.length = 0;
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+    h.startGen.mockResolvedValue({ id: "job", disposition: "fresh" as const });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(h.advisoryLocks).toEqual([
+      `campaign-approval:${CAMPAIGN_ID}`,
+      `campaign-approval:${CAMPAIGN_ID}`,
+    ]);
   });
 });
 
@@ -672,6 +731,7 @@ describe("money-safety static guards", () => {
     readFileSync(path.resolve(__dirname, "../campaign-generation-confirm.ts"), "utf8"),
   );
   const batchCode = stripComments(readFileSync(path.resolve(__dirname, "../factory-batch.ts"), "utf8"));
+  const lockCode = stripComments(readFileSync(path.resolve(__dirname, "../campaign-approval-lock.ts"), "utf8"));
   const clientCode = readFileSync(
     path.resolve(__dirname, "../../components/campaign/campaign-confirm-page.tsx"),
     "utf8",
@@ -682,7 +742,32 @@ describe("money-safety static guards", () => {
     expect(banned.test(confirmCode)).toBe(false);
     expect(banned.test(batchCode)).toBe(false);
     expect(/from\s+["']\.\/gen-actions["']/.test(confirmCode)).toBe(true);
-    expect(/orchestrateBatch\s*\(\s*\{\s*startGen\s*,\s*prisma\s*\}/.test(confirmCode)).toBe(true);
+  });
+
+  // #744 判官 r1 P1-2 — the batch is handed a GUARDED port instead of startGen directly. The
+  // guarantee this file has always pinned is unchanged and is now pinned tighter: the wrapper
+  // adds the approval lock and nothing else, and the ONE thing it can call to spend is the real
+  // startGen. A wrapper that quietly grew a second spend path would fail here.
+  it("hands the batch a lock-guarded port whose only spend call is the real startGen", () => {
+    expect(confirmCode).toMatch(
+      /orchestrateBatch\(\s*\{\s*startGen:\s*guardedStartGen,\s*prisma\s*\}/,
+    );
+    expect(confirmCode).toMatch(
+      /const guardedStartGen: StartGenPort = \(req\) =>\s*underCampaignApprovalLock\(/,
+    );
+    // Exactly one call of the real startGen, and it is inside the guard's dispatch callback.
+    expect(confirmCode.match(/(?<![A-Za-z])startGen\(/g)).toHaveLength(1);
+    expect(confirmCode).toMatch(/\(\)\s*=>\s*startGen\(req\),/);
+  });
+
+  it("keeps the approval lock a lock — it re-reads and serializes, it never spends", () => {
+    // The lock module is allowed the one thing this layer otherwise bans — a transaction — because
+    // that IS the gate. Everything that could move money stays banned, so the serialization point
+    // cannot quietly become a second spend path.
+    const bannedInLock = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|provider\s*\.|\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/;
+    expect(bannedInLock.test(lockCode)).toBe(false);
+    expect(lockCode).toMatch(/pg_advisory_xact_lock/);
+    expect(lockCode).toMatch(/stillApproved\(campaign\.planJson\)/);
   });
 
   it("keeps the balance addition read-only and owner-scoped", () => {
