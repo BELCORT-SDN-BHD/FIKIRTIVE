@@ -15,11 +15,24 @@
  */
 import { describe, it, expect } from "vitest";
 import { prisma } from "../index.js";
-import { runAsSystem, runAsTenant, runAsUser, type UserPrincipal } from "../principal.js";
+import {
+  getPrincipal,
+  runAsSystem,
+  runAsTenant,
+  runAsUser,
+  type UserPrincipal,
+} from "../principal.js";
 
 const ADMIN = "admin:platform-read";
-/** The message every refusal carries, so a test cannot pass on some unrelated throw. */
-const REFUSED = /refused under the read-only system frame/;
+/**
+ * The message every refusal carries, so a test cannot pass on some unrelated throw.
+ *
+ * `system` is optional only so the r2→r3 red run is honestly attributable: r3 widened the
+ * refusal to any read-only frame (a user frame can now inherit one) and dropped the word from
+ * the message. Matching both spellings keeps the r2-era cases green on r2, so every test that
+ * goes red there is red for a REAL escape and not for a rename.
+ */
+const REFUSED = /refused under the read-only (system )?frame/;
 
 function merchantPrincipal(ownerId: string): UserPrincipal {
   return {
@@ -123,14 +136,195 @@ describe("#743 — a read-only system frame writes NOTHING, whatever the model",
     ).rejects.toThrow(REFUSED);
   });
 
-  it("refuses to open a writable USER frame from inside itself", async () => {
+  it("keeps refusing after a USER frame is opened inside it", async () => {
     await expect(
       runAsSystem(ADMIN, async () =>
         runAsUser(merchantPrincipal("org_a"), async () =>
           prisma.project.updateMany({ where: { id: "p1" }, data: { name: "renamed" } }),
         ),
       ),
-    ).rejects.toThrow(/read-only system frame cannot open a user frame/);
+    ).rejects.toThrow(REFUSED);
+  });
+});
+
+/**
+ * #743 judge r2, ESCAPE 1 — a nested frame used to be derived from its own name alone, so any
+ * `runAsSystem("gen-reaper", …)` inside the admin frame came out writable. `readOnly` is now
+ * MONOTONIC: every runner derives it through `inheritedReadOnly`, which unions in whatever the
+ * caller was already under. These pin the union, not one runner's special case.
+ */
+describe("#743 r2 — read-only is monotonic: no nested frame can drop it", () => {
+  const write = () => prisma.runtimeConfig.updateMany({ where: {}, data: { valueJson: {} } });
+
+  it.each([
+    ["gen-reaper", "gen-reaper"],
+    ["worker-job-dispatch", "worker-job-dispatch"],
+    ["stripe-webhook", "stripe-webhook"],
+    ["test-seed", "test-seed"],
+  ] as const)("runAsSystem(%s) nested inside the admin frame stays read-only", async (_label, reason) => {
+    await expect(
+      runAsSystem(ADMIN, async () => runAsSystem(reason, async () => write())),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("runAsTenant nested inside the admin frame stays read-only", async () => {
+    await expect(
+      runAsSystem(ADMIN, async () => runAsTenant("org_a", async () => write())),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("runAsUser nested inside the admin frame stays read-only", async () => {
+    await expect(
+      runAsSystem(ADMIN, async () => runAsUser(merchantPrincipal("org_a"), async () => write())),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("stays read-only three frames deep, whatever the names on the way down", async () => {
+    await expect(
+      runAsSystem(ADMIN, async () =>
+        runAsSystem("gen-reaper", async () =>
+          runAsTenant("org_a", async () =>
+            runAsUser(merchantPrincipal("org_a"), async () => write()),
+          ),
+        ),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses raw SQL through a nested writable-sounding frame too", async () => {
+    await expect(
+      runAsSystem(ADMIN, async () =>
+        runAsSystem("gen-reaper", async () => prisma.$queryRaw`SELECT 1`),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("does NOT leak the restriction outward — a sibling frame afterwards still writes", async () => {
+    await runAsSystem(ADMIN, async () => prisma.creditAccount.findMany({ take: 1 }));
+    await expect(
+      runAsSystem("gen-reaper", async () =>
+        prisma.actionEvent.deleteMany({ where: { id: "never_exists" } }),
+      ),
+    ).resolves.toEqual({ count: 0 });
+  });
+});
+
+/**
+ * #743 judge r2, ESCAPE 2 — a SYNCHRONOUS callback hands back Prisma's LAZY promise, and the
+ * frame popped before anything called `.then()`, so the guard's hook ran with no frame at all.
+ * Every test above passes an `async` callback, which is precisely why the whole class went
+ * unnoticed. These are the twins: same writes, synchronous callbacks.
+ */
+describe("#743 r2 — a synchronous callback cannot outrun the frame", () => {
+  it("refuses a tenant-model write returned lazily from a sync callback", async () => {
+    await expect(
+      runAsSystem(ADMIN, () =>
+        prisma.project.updateMany({ where: { id: "p1" }, data: { name: "renamed" } }),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses a non-tenant write returned lazily from a sync callback", async () => {
+    await expect(
+      runAsSystem(ADMIN, () =>
+        prisma.runtimeConfig.updateMany({ where: {}, data: { valueJson: { probe: true } } }),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses an exempt-model create returned lazily from a sync callback", async () => {
+    await expect(
+      runAsSystem(ADMIN, () =>
+        prisma.actionEvent.create({
+          data: { id: "evt_sync_probe", ownerId: "founder", type: "probe" },
+        }),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses a money-table write returned lazily from a sync callback", async () => {
+    await expect(
+      runAsSystem(ADMIN, () =>
+        prisma.creditAccount.updateMany({ where: { orgId: "founder" }, data: { balance: 999999 } }),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses raw SQL returned lazily from a sync callback", async () => {
+    await expect(
+      runAsSystem(ADMIN, () => prisma.$executeRawUnsafe(`UPDATE "CreditAccount" SET balance = 0`)),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses through a sync callback in a NESTED frame (both escapes at once)", async () => {
+    await expect(
+      runAsSystem(ADMIN, () =>
+        runAsSystem("gen-reaper", () =>
+          prisma.runtimeConfig.updateMany({ where: {}, data: { valueJson: { probe: true } } }),
+        ),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+
+  it("refuses through a sync callback under runAsTenant and runAsUser", async () => {
+    await expect(
+      runAsSystem(ADMIN, () =>
+        runAsTenant("org_a", () =>
+          prisma.project.updateMany({ where: { id: "p1" }, data: { name: "x" } }),
+        ),
+      ),
+    ).rejects.toThrow(REFUSED);
+    await expect(
+      runAsSystem(ADMIN, () =>
+        runAsUser(merchantPrincipal("org_a"), () =>
+          prisma.project.updateMany({ where: { id: "p1" }, data: { name: "x" } }),
+        ),
+      ),
+    ).rejects.toThrow(REFUSED);
+  });
+});
+
+/**
+ * The judge's two r2 probes, transcribed as tests so r3 (and everyone after) re-runs them for
+ * free. They assert what the probe MEASURED — the ambient frame at the moment the extension hook
+ * fires — rather than only the end effect.
+ */
+describe("#743 r2 — the judge's probes, as regression pinboards", () => {
+  /** What the guard's hook would see: "none" | "readonly" | "writable". */
+  function observed(): "none" | "readonly" | "writable" {
+    const p = getPrincipal();
+    if (!p) return "none";
+    return p.readOnly ? "readonly" : "writable";
+  }
+
+  it("probe 1: admin → gen-reaper reports readonly, not writable", () => {
+    runAsSystem(ADMIN, () => {
+      expect(observed()).toBe("readonly");
+      runAsSystem("gen-reaper", () => {
+        expect(observed()).toBe("readonly");
+      });
+      expect(observed()).toBe("readonly");
+    });
+    // and the same name on its own is untouched
+    runAsSystem("gen-reaper", () => expect(observed()).toBe("writable"));
+  });
+
+  it("probe 2: a sync callback's lazy promise dispatches INSIDE the frame", async () => {
+    let seenAtDispatch: string | null = null;
+    // A thenable that records the ambient frame at the moment `.then` is called — exactly what a
+    // lazy PrismaPromise does when the client finally dispatches its request.
+    const lazy = {
+      then(resolve: (v: unknown) => void) {
+        seenAtDispatch = observed();
+        resolve("done");
+      },
+    };
+
+    await runAsSystem(ADMIN, () => lazy);
+
+    expect(seenAtDispatch, "the frame had already popped when the request dispatched").toBe(
+      "readonly",
+    );
   });
 });
 
