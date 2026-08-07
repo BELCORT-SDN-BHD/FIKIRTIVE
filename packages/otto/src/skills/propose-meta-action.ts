@@ -15,7 +15,7 @@ import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
 const NOT_CONNECTED =
-  "Meta isn't connected yet. Ask the user to open Connections and click Connect Meta, then try again.";
+  "Meta isn't connected yet. Ask the user to open Connections and connect Instagram or Facebook, then try again.";
 const META_UNREACHABLE =
   "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 

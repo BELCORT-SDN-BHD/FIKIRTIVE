@@ -481,7 +481,7 @@ export default function RoutineAuthorizationPanel({
             <div className="mt-5 grid grid-cols-3 gap-5">
               <label className="grid gap-2 text-sm font-semibold">Actions per run<Input type="number" min="1" step="1" value={maxActions} onChange={(event) => setMaxActions(event.target.value)} /></label>
               <label className="grid gap-2 text-sm font-semibold">Recipients per run<Input type="number" min="1" step="1" value={maxRecipients} onChange={(event) => setMaxRecipients(event.target.value)} /></label>
-              <label className="grid gap-2 text-sm font-semibold">Authorization expires<Input type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label>
+              <label className="grid gap-2 text-sm font-semibold">Authorization expires (required)<Input type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label>
             </div>
 
             <div className="mt-5 flex items-start gap-3 rounded-xl border border-border bg-secondary/20 px-4 py-3"><CircleHelp className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><p className="text-sm leading-6 text-muted-foreground"><strong className="text-foreground">Summary policy:</strong> show a bounded summary in workflow activity after every run. A summary is not a delivery receipt.</p></div>

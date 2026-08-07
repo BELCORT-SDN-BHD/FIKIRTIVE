@@ -211,7 +211,7 @@ const TOOL_STEP_LABELS: Record<string, string> = {
   // W-B3-D (home/ideas/library/brand debt):
   manageProjects: "Organizing your projects",
   manageEntities: "Updating your elements",
-  manageLibrary: "Looking through your Library",
+  manageLibrary: "Looking through your saved media",
   manageBrandMemory: "Updating your brand memory",
   proposeIdeas: "Thinking up ideas",
   // setTitle stays silent (internal housekeeping).

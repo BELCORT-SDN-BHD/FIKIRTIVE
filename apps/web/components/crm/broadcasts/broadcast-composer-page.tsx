@@ -122,19 +122,18 @@ export default function BroadcastComposerPage({
 
         <form className="mt-8 grid gap-6" onSubmit={onSubmit}>
           {options.channelScopes.length === 0 ? (
-            // #495 — a zero-channel workspace gets a guided next step here instead of an
-            // empty dropdown dead end; Create stays disabled until a channel account exists.
+            // #495/#541 — a zero-channel workspace gets an honest empty state instead of an
+            // empty dropdown. No CTA into Connections: Messaging has no connect button there
+            // yet, so that button was a dead end. Create stays disabled until a channel
+            // account exists.
             <div className="grid gap-2">
               <span className="text-sm font-semibold">Channel account</span>
               <div className="rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center">
                 <Unplug className="mx-auto size-6 text-muted-foreground" />
                 <p className="mt-3 text-sm font-semibold">No messaging channel is connected in this workspace yet</p>
                 <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                  A broadcast goes out through a connected channel account. Connect one first, then come back to finish this broadcast.
+                  A broadcast goes out through a connected channel account. Messaging channels are not available to connect yet.
                 </p>
-                <Button asChild size="sm" variant="secondary" className="mt-4">
-                  <Link href="/otto?view=connections">Connect a channel</Link>
-                </Button>
               </div>
             </div>
           ) : (

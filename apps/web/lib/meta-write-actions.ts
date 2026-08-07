@@ -13,7 +13,7 @@ export async function setAdsAutonomy(mode: "ASK" | "AUTO"): Promise<{ ok: true }
   // gate (ASK→AUTO lets Otto spend without per-action approval). Exit impersonation to change it.
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad autonomy." };
   const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsAutonomy: mode } });
-  if (updated.count === 0) return { error: "Connect Meta before changing ad-spend autonomy." };
+  if (updated.count === 0) return { error: "Connect Instagram or Facebook before changing ad-spend autonomy." };
   return { ok: true };
 }
 
@@ -23,7 +23,7 @@ export async function setAdsWritesPaused(paused: boolean): Promise<{ ok: true } 
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad-write controls." };
   const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsWritesPaused: paused } });
-  if (updated.count === 0) return { error: "Connect Meta before changing ad-write controls." };
+  if (updated.count === 0) return { error: "Connect Instagram or Facebook before changing ad-write controls." };
   return { ok: true };
 }
 

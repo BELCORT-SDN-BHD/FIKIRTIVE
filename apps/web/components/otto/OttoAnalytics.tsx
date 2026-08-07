@@ -249,7 +249,7 @@ function ConnectPanel({
     <div className="rounded-[16px] border border-border bg-card p-[18px] text-center flex flex-col items-center gap-3 py-14">
       <CoralCloud size={40} />
       <div className="text-[1.5rem] font-bold tracking-[-0.02em]">
-        {isConnect ? "Connect Meta to see your numbers" : "Reconnect Meta"}
+        {isConnect ? "Connect Instagram or Facebook to see your numbers" : "Reconnect Meta"}
       </div>
       <div className="text-[13px] text-muted-foreground" style={{ maxWidth: 360 }}>
         Analytics reads your reach, spend and results straight from Meta — read-only.
@@ -259,7 +259,7 @@ function ConnectPanel({
         onClick={() => onNavigate("connections")}
         className="mt-1 h-[38px] rounded-[11px] bg-[#0A0A0A] text-white text-[13.5px] font-semibold px-4"
       >
-        {isConnect ? "Connect Meta" : "Reconnect"}
+        {isConnect ? "Open Connections" : "Reconnect"}
       </button>
     </div>
   );

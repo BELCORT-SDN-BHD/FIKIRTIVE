@@ -205,12 +205,10 @@ function TemplatesWorkspace({
               <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
                 <Unplug className="mx-auto size-6 text-muted-foreground" />
                 <p className="mt-3 text-sm font-semibold">No messaging channel is connected in this workspace yet</p>
+                {/* #541 — no CTA into Connections: Messaging has no connect button there yet. */}
                 <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                  Connect a channel first — then come back here to create templates for it.
+                  Messaging channels are not available to connect yet. Templates open up once a channel can be connected.
                 </p>
-                <Button asChild size="sm" variant="secondary" className="mt-4">
-                  <Link href="/otto?view=connections">Connect a channel</Link>
-                </Button>
               </div>
             </CardContent>
           </Card>

@@ -213,14 +213,19 @@ describe("workflow and Inbox links", () => {
     expect(markup).toContain("Aisha");
   });
 
-  it("links the Inbox no-channel explanation to Connections", () => {
+  it("keeps the Inbox no-channel explanation honest with no dead-end Connections CTA (#541)", () => {
     const markup = renderToStaticMarkup(createElement(
       InboxListPage,
       { initialState: { ok: true, resource: [] } } as unknown as ComponentProps<typeof InboxListPage>,
     ));
 
-    expect(markup).toContain('href="/otto?view=connections"');
-    expect(markup).toContain("Connect a channel");
+    // #541 — Connections has no Connect button for Messaging (WhatsApp is "Not available
+    // yet"), so pointing merchants there was a dead end. The banner must say the truth
+    // instead and must not link to Connections.
+    expect(markup).toContain("No messaging channel is connected in this workspace yet");
+    expect(markup).toContain("Messaging channels are not available to connect yet");
+    expect(markup).not.toContain('href="/otto?view=connections"');
+    expect(markup).not.toContain("Connect a channel");
   });
 
   it("keeps the workflow missing-id copy non-enumerable and reassuring", () => {

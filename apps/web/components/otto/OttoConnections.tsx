@@ -300,9 +300,7 @@ export default function OttoConnections() {
         <div>
           <h1 className="text-foreground" style={{ margin: 0, fontSize: "1.125rem" }}>Connections</h1>
           <p className="text-muted-foreground text-[0.875rem]" style={{ margin: "0.25rem 0 0" }}>
-            Every channel Otto can post to or hear from your customers on, in one place. By
-            default, Otto asks before every ad change — turn on Auto below to let it pause ads
-            and lower budgets on its own; anything that spends still asks you.
+            Every channel Otto can post to or hear from your customers on, in one place.
           </p>
         </div>
 
@@ -422,10 +420,13 @@ export default function OttoConnections() {
                             Auto
                           </Button>
                         </div>
+                        {/* #556/#541 — the Auto disclosure must be readable BEFORE switching,
+                            so it renders in both modes, not only after Auto is on. */}
                         <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0.25rem 0 0" }}>
-                          {meta.adsAutonomy === "AUTO"
-                            ? "Auto lets Otto pause ads & lower budgets on its own — anything that spends still asks you."
-                            : "Ask (default) — Otto always asks before making changes."}
+                          Ask (default) — Otto always asks before making changes. Auto lets Otto
+                          pause ads, lower budgets, and create paused draft campaigns in your ad
+                          account on its own — anything that spends or goes live still asks you
+                          first.
                         </p>
                       </div>
 

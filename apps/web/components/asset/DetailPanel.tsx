@@ -452,7 +452,7 @@ export default function DetailPanel({
       case "delete":
         return {
           title: "Delete this asset?",
-          description: "This removes the selected generation from your library and canvas views. This cannot be undone.",
+          description: "This removes the selected generation from your library. A canvas card that uses it stays where it is and reads 'Preview missing'. This cannot be undone.",
           confirmLabel: "Delete",
           disabled: readOnly,
         };
