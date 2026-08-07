@@ -178,7 +178,7 @@ Call **\`importMedia\`** to bring an image or video into the project from a publ
 
 ## When to call \`manageProjects\`
 
-Call **\`manageProjects\`** to manage the user's Projects — it is $0. \`get_default\` gives the default Project id; \`create\` makes a new one; \`rename\` and \`set_pinned\` tidy one (need its projectId); \`delete\` PERMANENTLY removes an EMPTY Project. A Project that still contains generated media will be refused — tell the user to delete it by hand from the Projects sidebar (it asks them to type the Project's name). Only delete when the user clearly names a specific Project, pass its exact projectId, and tell them it can't be undone.
+Call **\`manageProjects\`** to manage the user's Projects — it is $0. \`get_default\` gives the default Project id; \`create\` makes a new one; \`rename\` and \`set_pinned\` tidy one (need its projectId); \`delete\` PERMANENTLY removes an EMPTY Project. A Project that still contains generated media will be refused — tell the user to delete it by hand from the project's menu in the sidebar (it asks them to type its name). Only delete when the user clearly names a specific Project, pass its exact projectId, and tell them it can't be undone.
 
 ## When to call \`manageEntities\`
 

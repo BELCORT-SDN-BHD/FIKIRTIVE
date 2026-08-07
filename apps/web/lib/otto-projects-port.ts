@@ -38,14 +38,14 @@ export function makeOttoProjectsPort(ownerId: string) {
         liveGenerations = await prisma.generation.count({ where: { projectId, ownerId, deletedAt: null } });
       } catch {
         // Fail-closed: can't verify it's empty ⇒ refuse (never "couldn't check, delete anyway").
-        return { error: "I couldn't verify that Project is empty, so I won't delete it. Please try again, or delete it by hand from the Projects sidebar." };
+        return { error: "I couldn't verify that project is empty, so I won't delete it. Please try again, or delete it by hand from the project's menu in the sidebar." };
       }
       if (liveGenerations > 0) {
         return {
           error:
-            "That Project still contains generated media (paid work would be permanently destroyed with no refund), " +
-            "so I can't delete it from here. Please delete it by hand from the Projects sidebar — it will ask you to type " +
-            "the Project's name to confirm. I can only delete an empty Project.",
+            "That project still contains generated media (paid work would be permanently destroyed with no refund), " +
+            "so I can't delete it from here. Please delete it by hand from the project's menu in the sidebar — it will " +
+            "ask you to type the project's name to confirm. I can only delete an empty project.",
         };
       }
       return deleteProject(projectId);

@@ -152,10 +152,10 @@ describe("#546 F-06 — the per-project brief is a Project brief, not a brand br
     expect(audience).toBeTruthy();
     expect(platform).toBeTruthy();
     expect(budget).toBeTruthy();
-    expect(dom.textContent).toContain("Offer for this Project");
-    expect(dom.textContent).toContain("Audience for this Project");
-    expect(dom.textContent).toContain("Where this Project will run");
-    expect(dom.textContent).toContain("Budget for this Project");
+    expect(dom.textContent).toContain("Offer for this project");
+    expect(dom.textContent).toContain("Audience for this project");
+    expect(dom.textContent).toContain("Where this project will run");
+    expect(dom.textContent).toContain("Budget for this project");
     expect(dom.textContent).not.toContain("What you sell / offer");
 
     await typeInto(offer!, "The summer collection");

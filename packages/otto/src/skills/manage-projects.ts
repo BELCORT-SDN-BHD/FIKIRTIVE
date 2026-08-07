@@ -79,7 +79,7 @@ export async function executeManageProjects(
       // generations — settled paid media is UI-only deletion (type-to-confirm door). That refusal
       // surfaces here verbatim; there is no confirm parameter to override it.
       if (!input.projectId) {
-        return { ok: false, error: "delete needs the exact `projectId` of the Project to remove — I won't guess which one." };
+        return { ok: false, error: "delete needs the exact `projectId` of the project to remove — I won't guess which one." };
       }
       const r = await projects.remove(input.projectId);
       return "error" in r ? { ok: false, error: r.error } : { ok: true };
@@ -101,7 +101,7 @@ export const manageProjectsSkill = defineOttoSkill({
     "rename: rename a Project (needs projectId + name). set_pinned: pin/unpin (needs projectId + pinned). " +
     "delete: PERMANENTLY remove an EMPTY Project (needs the exact projectId; irreversible — only when the user " +
     "clearly asks, and tell them it can't be undone). A Project that still contains generated media is refused " +
-    "here — the user deletes it by hand from the Projects sidebar, which asks them to type the Project's name.",
+    "here — the user deletes it by hand from the project's menu in the sidebar, which asks them to type its name.",
   parameters: params,
   execute: executeManageProjects,
 });

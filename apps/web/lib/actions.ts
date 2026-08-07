@@ -149,8 +149,9 @@ async function findReusableEmptyDefaultProject(ownerId: string, name: string): P
 }
 
 /** Idempotent: returns the owner's oldest non-deleted project, or creates one with the
- *  standard "New project" placeholder name if none exist (used by /otto and Otto's
- *  projects port). #546 F-18: no more pre-seeded "My Videos" — the bootstrap project is
+ *  standard "New project" placeholder name if none exist (used by /otto, the immersive
+ *  canvas entry, and Otto's projects port). #546 F-18: no pre-seeded "My Videos" — the
+ *  bootstrap project is
  *  indistinguishable from one the merchant created themselves: it auto-titles from its
  *  first conversation and is reused by the rail's New-project entry while still empty.
  *  Never throws — the caller surfaces any auth failure via the {error} contract. */

@@ -102,14 +102,14 @@ describe("delete — PERMANENT, never guesses (debt-05)", () => {
     const gated = vi.fn(async () => ({
       error:
         "That project still contains generated media (paid work would be permanently destroyed with no refund), " +
-        "so I can't delete it from here. Please delete it by hand from the Projects sidebar — it will ask you to type " +
-        "the project's name to confirm. I can only delete an empty project.",
+        "so I can't delete it from here. Please delete it by hand from the project's menu in the sidebar — it will " +
+        "ask you to type the project's name to confirm. I can only delete an empty project.",
     }));
     const res = (await executeManageProjects({ action: "delete", projectId: "p-media" }, { context: makeCtx({ remove: gated }) })) as {
       ok: boolean; error: string;
     };
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("by hand from the Projects sidebar");
+    expect(res.error).toContain("by hand from the project's menu in the sidebar");
     expect(res.error).toContain("empty project");
     expect(res.error).not.toMatch(/\bcampaigns?\b|\/campaign\b/i);
   });

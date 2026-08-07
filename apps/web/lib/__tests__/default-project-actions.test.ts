@@ -295,6 +295,21 @@ describe("createProject", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/", "layout");
   });
 
+  it("does not rename the bootstrap project when the blank canvas entry reuses it", async () => {
+    // The northstar home's "New canvas" button calls createProject("") ⇒ cleanName
+    // "Untitled Project". Reuse is matched across every placeholder name, so it lands on
+    // the same empty bootstrap row — but only a "New project" request canonicalizes the
+    // name, so the merchant's sidebar row must not flip to "Untitled Project".
+    (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_bootstrap", name: "New project", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
+
+    await expect(createProject("")).resolves.toEqual({ id: "p_bootstrap" });
+
+    expect(prisma.project.create).not.toHaveBeenCalled();
+    expect(prisma.project.updateMany).not.toHaveBeenCalled();
+    expect(prisma.actionEvent.create).not.toHaveBeenCalled();
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
   it("fails closed if the legacy row changes before its canonical rename", async () => {
     (prisma.project.findMany as Mock).mockResolvedValue([{ id: "p_legacy", name: "New campaign", editJson: null, coworkBrief: null, brandId: null, campaignId: null }]);
     (prisma.project.updateMany as Mock).mockResolvedValue({ count: 0 });

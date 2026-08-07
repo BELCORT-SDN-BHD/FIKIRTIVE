@@ -30,8 +30,9 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
   if ("error" in owner) redirect("/login");
   const { ownerId } = owner;
 
-  // Multi-project (campaign = project): ensure at least one project exists, then
-  // pick the active one from ?project= (must be owned) or default to the oldest.
+  // Multi-project navigation (#546: a Project is never a Campaign — the Campaign object
+  // is independent, see CONTEXT.md): ensure at least one project exists, then pick the
+  // active one from ?project= (must be owned) or default to the oldest.
   const ensured = await getOrCreateDefaultProject();
   if ("error" in ensured) redirect("/login");
   const projects = await getProjects(ownerId);

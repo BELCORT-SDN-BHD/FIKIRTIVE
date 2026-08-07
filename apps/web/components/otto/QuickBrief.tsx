@@ -84,10 +84,10 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
           style={{ borderWidth: "1.5px" }}
         >
           <p className="m-0 text-[0.75rem] text-muted-foreground/70">
-            Use this for the offer, audience, channel, and budget in this Project. Shop-wide identity and catalog facts live in Brand memory.
+            Use this for the offer, audience, channel, and budget in this project. Shop-wide identity and catalog facts live in Brand memory.
           </p>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">Offer for this Project</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">Offer for this project</label>
             <input
               id="qb-offer"
               type="text"
@@ -99,7 +99,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Audience for this Project</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-audience">Audience for this project</label>
             <input
               id="qb-audience"
               type="text"
@@ -111,7 +111,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where this Project will run</label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-platform">Where this project will run</label>
             <input
               id="qb-platform"
               type="text"
@@ -123,7 +123,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
             />
           </div>
           <div>
-            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget for this Project <span className="font-normal normal-case">(optional)</span></label>
+            <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-budget">Budget for this project <span className="font-normal normal-case">(optional)</span></label>
             <input
               id="qb-budget"
               type="text"

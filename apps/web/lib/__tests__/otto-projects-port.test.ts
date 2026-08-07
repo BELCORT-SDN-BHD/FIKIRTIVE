@@ -45,7 +45,7 @@ describe("remove — empty-project hard gate (deterministic, no model self-confi
     mockGenerationCount.mockResolvedValue(3);
     const res = (await port().remove("proj-paid")) as { error: string };
     expect(res.error).toContain("paid work");
-    expect(res.error).toContain("by hand from the Projects sidebar");
+    expect(res.error).toContain("by hand from the project's menu in the sidebar");
     expect(res.error).not.toMatch(/\bcampaigns?\b|\/campaign\b/i);
     expect(res.error).toContain("type");
     expect(mockDeleteProject).not.toHaveBeenCalled();
