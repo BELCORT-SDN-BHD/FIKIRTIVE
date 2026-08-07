@@ -475,7 +475,10 @@ model GenJob {
   // v1 additive: nullable soft-ref for GenerationBatch grouping (no FK, no backfill)
   batchId            String?
   kind               GenKind   @default(IMAGE)
-  model              String    @default("seedream")
+  /// 无库级默认值(#675,方案 A):这张表同时装图片与视频作业,而默认值只能是其中一种
+  /// 引擎。漏写时补一个图片引擎 = 安静地落一条「视频作业写着图片引擎」的行。撤掉之后
+  /// 漏写在插入时立刻报错。RefGenJob 的同名列保留默认值 —— 那张表只装图片作业。
+  model              String
   count              Int       @default(1)
   /// 视频生成的每模型设置（duration/resolution/aspectRatio/fps/audio）；worker 传给 provider
   videoOptions       Json?

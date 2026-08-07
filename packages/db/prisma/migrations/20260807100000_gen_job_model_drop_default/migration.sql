@@ -1,0 +1,30 @@
+-- #675 GenJob.model 陈旧默认值清除(方案 A,Founder 2026-08-07 批;分析见 PR #668 第 ④ 节)。
+--
+-- 只改一列的默认值,**零数据变更** —— 不动任何已有行,不删列、不改列型、不加约束、不加索引。
+--
+-- 为什么撤:`GenJob` 一张表同时装图片作业与视频作业,而这一列的库级默认值是**图片**引擎
+-- `seedream`。任何一处 insert 漏带 `model`,库不会拒绝,它会安静地补上一个图片引擎 ——
+-- 落进去的是一条「视频作业写着图片引擎」的行。它不报错、不留痕,只在下游读的时候变成一条
+-- 自相矛盾的记录。默认值唯一的作用,就是把「漏写」这个 bug 藏起来。
+--
+-- 为什么现在撤是安全的(前置已就绪,#668 已合并,本次在现场逐条复核):
+--   ① app 层唯一那处 GenJob insert —— `apps/web/lib/gen-actions.ts` 的 `tx.genJob.create`
+--      —— 显式带 `model`;全仓没有第二处 `genJob.create/createMany`,也没有任何 raw SQL
+--      往这张表插行;
+--   ② 契约闸 `genRequest`(`packages/core/src/gen.ts`)在视频请求漏带 `model` 时,zod 的
+--      默认值 `"seedream"` 不在视频菜单 `GEN_VIDEO_MODELS`(现只有 `seedance-2-fast`)上,
+--      superRefine 当场拒收。
+--   所以这个默认值今天**没有任何读者**,撤掉它不改变任何在产行为。
+--
+-- 撤掉之后的行为变化只有一条,而且是想要的那条:漏写 `model` 从「安静地写错」变成「立刻
+-- 报错」(列本身 NOT NULL,漏写 → 23502 not_null_violation)。fail closed。
+--
+-- `RefGenJob.model` 的同名默认值**保留不动**:那张表只装图片作业,`seedream` 就是它的真值,
+-- 不存在错位(#668 分析结论)。
+--
+-- 非破坏性:DROP DEFAULT 不销毁任何数据,`scripts/check-destructive-migrations.sh` 的
+-- 数据丢失级 DDL 清单(DROP TABLE / DROP COLUMN / TRUNCATE / DELETE FROM)不含它 ——
+-- 该脚本注释里也写明「索引/默认值/非唯一约束的 DROP 不是数据丢失,不拦」。故无需
+-- DESTRUCTIVE-OK 确认行。
+
+ALTER TABLE "GenJob" ALTER COLUMN "model" DROP DEFAULT;
