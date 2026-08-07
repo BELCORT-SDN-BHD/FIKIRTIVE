@@ -35,7 +35,8 @@ import { prisma, Prisma } from "@fikirtive/db";
 import { newId, storageKey, storageKeyToSrc, suggestModel, generationUnavailableMessage, normalizeImageAspect, GEN_VIDEO_MODEL_OPTIONS, type GenVideoModel } from "@fikirtive/core";
 import { buildProposeCard } from "@fikirtive/otto";
 import type { OttoContext, StoryboardCardPayload } from "@fikirtive/otto";
-import { requireOwner } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { resolveDisabledModels } from "./model-registry";
 
 export type ChildFrameCard = {
@@ -232,17 +233,22 @@ export async function getStoryboardVideoOptions(): Promise<
 > {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<
+  { durations: number[] } | Err
+> => {
 
-  // #647 T6 修复轮 P1-3:开关读不到 ⇒ 同样不报档位表(不知道能不能做,就别端出一份菜单)。
-  const registry = await resolveDisabledModels();
-  if ("error" in registry) return registry;
-  const disabledModels = Array.from(registry.disabled);
-  const model = selectedVideoModel(disabledModels);
-  // #647 T6:引擎关掉时不许再报一份根本交付不了的档位表 —— 那是拿一份真的能力表
-  // 去装点一个做不到的功能。明说不可用。
-  if (!model) return VIDEO_UNAVAILABLE;
-  const durations = GEN_VIDEO_MODEL_OPTIONS[model].durations;
-  return { durations };
+    // #647 T6 修复轮 P1-3:开关读不到 ⇒ 同样不报档位表(不知道能不能做,就别端出一份菜单)。
+    const registry = await resolveDisabledModels();
+    if ("error" in registry) return registry;
+    const disabledModels = Array.from(registry.disabled);
+    const model = selectedVideoModel(disabledModels);
+    // #647 T6:引擎关掉时不许再报一份根本交付不了的档位表 —— 那是拿一份真的能力表
+    // 去装点一个做不到的功能。明说不可用。
+    if (!model) return VIDEO_UNAVAILABLE;
+    const durations = GEN_VIDEO_MODEL_OPTIONS[model].durations;
+    return { durations };
+  });
 }
 
 /** 铸一张子 GEN_CARD($0):定价走 buildProposeCard,payload 加 storyboardCardId+shotId 回链。
@@ -370,123 +376,126 @@ export async function prepareStoryboardFirstFrames(
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ children: ChildFrameCard[]; totalCredits: number } | Err> => {
+    const { ownerId } = gate;
 
-  const card = await loadCard(parsed.data.cardId, ownerId);
-  if (!card) return { error: "Card not found." };
+    const card = await loadCard(parsed.data.cardId, ownerId);
+    if (!card) return { error: "Card not found." };
 
-  const children: ChildFrameCard[] = [];
-  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
-  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
+    const children: ChildFrameCard[] = [];
+    let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+    let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-  await prisma.$transaction(async (tx) => {
-    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
-    // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
-    const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-      select: { payload: true, threadId: true },
-    });
-    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
-    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
-    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
-    // "Card not found.".
-    if (!fresh?.payload) {
-      cardVanished = true;
-      return;
-    }
-    const payload = fresh.payload as unknown as StoryboardCardPayload;
-
-    // R4① dataflow rule: NOTHING computed before the lock may flow into a write. Model
-    // config, the owned-entity set (R4 的点名实例), and the thread id are (re)derived HERE —
-    // after the lock, from the FRESH payload — so a set that changed while we waited for
-    // the lock (an entity created/deleted, an admin model toggle) is picked up, never a
-    // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
-    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
-    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
-    const registry = await resolveDisabledModels();
-    if ("error" in registry) { unavailable = registry; return; }
-    const disabledModels = Array.from(registry.disabled);
-    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-    unavailable = unavailableFor("image", disabledModels);
-    if (unavailable) return;
-    const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
-    const ownedIds = await ownedEntityIdsFor(tx, ownerId, allEntityIds);
-    const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
-    const parent = { id: card.id, threadId: fresh.threadId };
-
-    // Build the next shots array, mutating ONLY firstFrameCardId on target shots.
-    const nextShots: Shot[] = [];
-    let changed = false;
-
-    for (const shot of payload.shots) {
-      // Has an image already → skip entirely (no mint, no change).
-      if (shot.firstFrameGenerationId) {
-        nextShots.push(shot);
-        continue;
+    await prisma.$transaction(async (tx) => {
+      await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
+      // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
+      const fresh = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
+        select: { payload: true, threadId: true },
+      });
+      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+      // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+      // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+      // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+      // "Card not found.".
+      if (!fresh?.payload) {
+        cardVanished = true;
+        return;
       }
+      const payload = fresh.payload as unknown as StoryboardCardPayload;
 
-      // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
-      // call minting uses (mintChild), so the reuse comparison is against what a fresh mint
-      // would really produce (prompt AND the frozen shape). buildProposeCard is pure ($0) —
-      // this adds no I/O.
-      const shotOwnedIds = ownedIds.filter((id) => (shot.entityIds ?? []).includes(id));
-      const { cardPayload: wouldBe } = buildProposeCard(
-        {
-          kind: "image",
-          structuredPrompt: shot.firstFramePrompt,
-          entityIds: shot.entityIds ?? [],
-          variantSel: {},
-          count: 1,
-          desiredAspect: firstFrameAspect(ctx.disabledModels),
-        },
-        ctx,
-        shotOwnedIds,
-      );
+      // R4① dataflow rule: NOTHING computed before the lock may flow into a write. Model
+      // config, the owned-entity set (R4 的点名实例), and the thread id are (re)derived HERE —
+      // after the lock, from the FRESH payload — so a set that changed while we waited for
+      // the lock (an entity created/deleted, an admin model toggle) is picked up, never a
+      // pre-lock snapshot. (Same sourcing as buildOttoContext; entity read runs in-lock.)
+      // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+      // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+      const registry = await resolveDisabledModels();
+      if ("error" in registry) { unavailable = registry; return; }
+      const disabledModels = Array.from(registry.disabled);
+      // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+      unavailable = unavailableFor("image", disabledModels);
+      if (unavailable) return;
+      const allEntityIds = [...new Set(payload.shots.flatMap((s) => s.entityIds ?? []))];
+      const ownedIds = await ownedEntityIdsFor(tx, ownerId, allEntityIds);
+      const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
+      const parent = { id: card.id, threadId: fresh.threadId };
 
-      // Already points at a child → try to reuse it.
-      if (shot.firstFrameCardId) {
-        const existing = await tx.chatMessage.findFirst({
-          where: { id: shot.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
-          select: { id: true, payload: true, genJobId: true },
-        });
-        if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
-          // Fresh → REUSE, do not mint. Compute spent (genJobId OR idempotency job).
-          const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
-          const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
-          children.push({
-            shotId: shot.shotId,
-            childCardId: existing.id,
-            estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
-            structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : shot.firstFramePrompt,
-            entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
-            spent,
-          });
+      // Build the next shots array, mutating ONLY firstFrameCardId on target shots.
+      const nextShots: Shot[] = [];
+      let changed = false;
+
+      for (const shot of payload.shots) {
+        // Has an image already → skip entirely (no mint, no change).
+        if (shot.firstFrameGenerationId) {
           nextShots.push(shot);
           continue;
         }
-        // Missing, or stale in prompt or in shape → mint a replacement.
+
+        // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
+        // call minting uses (mintChild), so the reuse comparison is against what a fresh mint
+        // would really produce (prompt AND the frozen shape). buildProposeCard is pure ($0) —
+        // this adds no I/O.
+        const shotOwnedIds = ownedIds.filter((id) => (shot.entityIds ?? []).includes(id));
+        const { cardPayload: wouldBe } = buildProposeCard(
+          {
+            kind: "image",
+            structuredPrompt: shot.firstFramePrompt,
+            entityIds: shot.entityIds ?? [],
+            variantSel: {},
+            count: 1,
+            desiredAspect: firstFrameAspect(ctx.disabledModels),
+          },
+          ctx,
+          shotOwnedIds,
+        );
+
+        // Already points at a child → try to reuse it.
+        if (shot.firstFrameCardId) {
+          const existing = await tx.chatMessage.findFirst({
+            where: { id: shot.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+            select: { id: true, payload: true, genJobId: true },
+          });
+          if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
+            // Fresh → REUSE, do not mint. Compute spent (genJobId OR idempotency job).
+            const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
+            const p = (existing.payload ?? {}) as { structuredPrompt?: string; entityIds?: string[]; estimatedCredits?: number };
+            children.push({
+              shotId: shot.shotId,
+              childCardId: existing.id,
+              estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
+              structuredPrompt: typeof p.structuredPrompt === "string" ? p.structuredPrompt : shot.firstFramePrompt,
+              entityIds: Array.isArray(p.entityIds) ? p.entityIds : (shot.entityIds ?? []),
+              spent,
+            });
+            nextShots.push(shot);
+            continue;
+          }
+          // Missing, or stale in prompt or in shape → mint a replacement.
+        }
+
+        // Mint a fresh child for this shot.
+        const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwnedIds);
+        children.push(child);
+        nextShots.push({ ...shot, firstFrameCardId: child.childCardId });
+        changed = true;
       }
 
-      // Mint a fresh child for this shot.
-      const child = await mintChild(tx, parent, shot, ownerId, ctx, shotOwnedIds);
-      children.push(child);
-      nextShots.push({ ...shot, firstFrameCardId: child.childCardId });
-      changed = true;
-    }
+      if (changed) {
+        await tx.chatMessage.update({
+          where: { id: card.id },
+          data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
+        });
+      }
+    });
 
-    if (changed) {
-      await tx.chatMessage.update({
-        where: { id: card.id },
-        data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
-      });
-    }
+    if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+    if (unavailable) return unavailable; // #647 T6 fail-closed surface
+    const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
+    return { children, totalCredits };
   });
-
-  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
-  if (unavailable) return unavailable; // #647 T6 fail-closed surface
-  const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
-  return { children, totalCredits };
 }
 
 // ---------------------------------------------------------------------------
@@ -508,126 +517,129 @@ export async function regenShotFirstFrameCard(
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ child: ChildFrameCard } | Err> => {
+    const { ownerId } = gate;
 
-  const card = await loadCard(parsed.data.cardId, ownerId);
-  if (!card) return { error: "Card not found." };
+    const card = await loadCard(parsed.data.cardId, ownerId);
+    if (!card) return { error: "Card not found." };
 
-  // Read-only pre-check (rejection path writes nothing); the mint path re-finds and
-  // re-validates the target on the FRESH payload inside the lock.
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-  if (!cur.shots.some((s) => s.shotId === parsed.data.shotId)) {
-    return { error: "That shot no longer exists." };
-  }
-
-  let child: ChildFrameCard | null = null;
-  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
-  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
-
-  await prisma.$transaction(async (tx) => {
-    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
-    const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-      select: { payload: true, threadId: true },
-    });
-    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
-    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
-    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
-    // "Card not found.".
-    if (!fresh?.payload) {
-      cardVanished = true;
-      return;
+    // Read-only pre-check (rejection path writes nothing); the mint path re-finds and
+    // re-validates the target on the FRESH payload inside the lock.
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    if (!cur.shots.some((s) => s.shotId === parsed.data.shotId)) {
+      return { error: "That shot no longer exists." };
     }
-    const payload = fresh.payload as unknown as StoryboardCardPayload;
 
-    // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
-    // pre-lock flows into a write); the owned-entity read below already runs in-lock on the
-    // fresh target's entityIds.
-    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
-    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
-    const registry = await resolveDisabledModels();
-    if ("error" in registry) { unavailable = registry; return; }
-    const disabledModels = Array.from(registry.disabled);
-    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-    unavailable = unavailableFor("image", disabledModels);
-    if (unavailable) return;
-    const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
-    const parent = { id: card.id, threadId: fresh.threadId };
+    let child: ChildFrameCard | null = null;
+    let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+    let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-    const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
-    if (!target) return; // vanished mid-flight → no writes; caller returns error below.
-
-    // The WOULD-BE-MINTED card — the SAME pure buildProposeCard call minting uses (mintChild),
-    // built on the SAME in-lock owned-entity read. Single source of truth for the reuse
-    // comparison: prompt AND the frozen shape (#656 P2).
-    const ownedAll = await ownedEntityIdsFor(tx, ownerId, target.entityIds ?? []);
-    const { cardPayload: wouldBe } = buildProposeCard(
-      {
-        kind: "image",
-        structuredPrompt: target.firstFramePrompt,
-        entityIds: target.entityIds ?? [],
-        variantSel: {},
-        count: 1,
-        desiredAspect: firstFrameAspect(disabledModels),
-      },
-      ctx,
-      ownedAll,
-    );
-
-    // Reuse-if-fresh: an existing child that still matches the would-be card AND is
-    // unspent → reuse it, do NOT mint (repeated open/cancel would otherwise orphan $0
-    // cards). A spent or stale (prompt- or shape-drifted / missing) child → mint fresh.
-    if (target.firstFrameCardId) {
-      const existing = await tx.chatMessage.findFirst({
-        where: { id: target.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
-        select: { id: true, payload: true, genJobId: true },
+    await prisma.$transaction(async (tx) => {
+      await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
+      const fresh = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
+        select: { payload: true, threadId: true },
       });
-      if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
-        const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
-        if (!spent) {
-          const p = (existing.payload ?? {}) as {
-            structuredPrompt?: string;
-            entityIds?: string[];
-            estimatedCredits?: number;
-          };
-          child = {
-            shotId: target.shotId,
-            childCardId: existing.id,
-            estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
-            structuredPrompt:
-              typeof p.structuredPrompt === "string" ? p.structuredPrompt : target.firstFramePrompt,
-            entityIds: Array.isArray(p.entityIds) ? p.entityIds : (target.entityIds ?? []),
-            spent: false,
-          };
-          // Child already registered on the shot; nothing to write. No genId touch.
-          return;
-        }
-        // spent → fall through to mint a fresh replacement.
+      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+      // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+      // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+      // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+      // "Card not found.".
+      if (!fresh?.payload) {
+        cardVanished = true;
+        return;
       }
-      // missing / stale prompt or shape → fall through to mint.
-    }
+      const payload = fresh.payload as unknown as StoryboardCardPayload;
 
-    child = await mintChild(tx, parent, target, ownerId, ctx, ownedAll);
-    const newChildId = child.childCardId;
+      // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
+      // pre-lock flows into a write); the owned-entity read below already runs in-lock on the
+      // fresh target's entityIds.
+      // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+      // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+      const registry = await resolveDisabledModels();
+      if ("error" in registry) { unavailable = registry; return; }
+      const disabledModels = Array.from(registry.disabled);
+      // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+      unavailable = unavailableFor("image", disabledModels);
+      if (unavailable) return;
+      const ctx = minimalCtx(ownerId, fresh.threadId, disabledModels);
+      const parent = { id: card.id, threadId: fresh.threadId };
 
-    const nextShots = payload.shots.map((s) => {
-      if (s.shotId !== parsed.data.shotId) return s;
-      // Replace firstFrameCardId ONLY. NEVER touch firstFrameGenerationId — the old
-      // image stays valid until sync overwrites the genId when the new frame lands.
-      return { ...s, firstFrameCardId: newChildId };
+      const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
+      if (!target) return; // vanished mid-flight → no writes; caller returns error below.
+
+      // The WOULD-BE-MINTED card — the SAME pure buildProposeCard call minting uses (mintChild),
+      // built on the SAME in-lock owned-entity read. Single source of truth for the reuse
+      // comparison: prompt AND the frozen shape (#656 P2).
+      const ownedAll = await ownedEntityIdsFor(tx, ownerId, target.entityIds ?? []);
+      const { cardPayload: wouldBe } = buildProposeCard(
+        {
+          kind: "image",
+          structuredPrompt: target.firstFramePrompt,
+          entityIds: target.entityIds ?? [],
+          variantSel: {},
+          count: 1,
+          desiredAspect: firstFrameAspect(disabledModels),
+        },
+        ctx,
+        ownedAll,
+      );
+
+      // Reuse-if-fresh: an existing child that still matches the would-be card AND is
+      // unspent → reuse it, do NOT mint (repeated open/cancel would otherwise orphan $0
+      // cards). A spent or stale (prompt- or shape-drifted / missing) child → mint fresh.
+      if (target.firstFrameCardId) {
+        const existing = await tx.chatMessage.findFirst({
+          where: { id: target.firstFrameCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+          select: { id: true, payload: true, genJobId: true },
+        });
+        if (existing && firstFrameChildMatches((existing.payload ?? {}) as ExistingFrameChild, wouldBe)) {
+          const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
+          if (!spent) {
+            const p = (existing.payload ?? {}) as {
+              structuredPrompt?: string;
+              entityIds?: string[];
+              estimatedCredits?: number;
+            };
+            child = {
+              shotId: target.shotId,
+              childCardId: existing.id,
+              estimatedCredits: typeof p.estimatedCredits === "number" ? p.estimatedCredits : 0,
+              structuredPrompt:
+                typeof p.structuredPrompt === "string" ? p.structuredPrompt : target.firstFramePrompt,
+              entityIds: Array.isArray(p.entityIds) ? p.entityIds : (target.entityIds ?? []),
+              spent: false,
+            };
+            // Child already registered on the shot; nothing to write. No genId touch.
+            return;
+          }
+          // spent → fall through to mint a fresh replacement.
+        }
+        // missing / stale prompt or shape → fall through to mint.
+      }
+
+      child = await mintChild(tx, parent, target, ownerId, ctx, ownedAll);
+      const newChildId = child.childCardId;
+
+      const nextShots = payload.shots.map((s) => {
+        if (s.shotId !== parsed.data.shotId) return s;
+        // Replace firstFrameCardId ONLY. NEVER touch firstFrameGenerationId — the old
+        // image stays valid until sync overwrites the genId when the new frame lands.
+        return { ...s, firstFrameCardId: newChildId };
+      });
+
+      await tx.chatMessage.update({
+        where: { id: card.id },
+        data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
+      });
     });
 
-    await tx.chatMessage.update({
-      where: { id: card.id },
-      data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
-    });
+    if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+    if (unavailable) return unavailable; // #647 T6 fail-closed surface
+    if (!child) return { error: "That shot no longer exists." };
+    return { child };
   });
-
-  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
-  if (unavailable) return unavailable; // #647 T6 fail-closed surface
-  if (!child) return { error: "That shot no longer exists." };
-  return { child };
 }
 
 // ---------------------------------------------------------------------------
@@ -697,139 +709,144 @@ export async function syncStoryboardMedia(
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<
+  { payload: StoryboardCardPayload; frames: Record<string, string>; videos: Record<string, string> } | Err
+> => {
+    const { ownerId } = gate;
 
-  const card = await loadCard(parsed.data.cardId, ownerId);
-  if (!card) return { error: "Card not found." };
+    const card = await loadCard(parsed.data.cardId, ownerId);
+    if (!card) return { error: "Card not found." };
 
-  // 修复轮 v3 (NODE-282-R2①): the ENTIRE read half — candidate sampling + write-set
-  // derivation — runs INSIDE the card lock, derived from the freshly re-read payload.
-  // v2 sampled against the pre-lock `cur` snapshot and only applied the (stale) write-set
-  // after locking, so a racing regen could swap a shot's pointer A→B between sample and
-  // apply — sync would then write A's generation onto (or cascade-drop) a shot that now
-  // points at B. Post-lock derivation makes that impossible: sync only ever acts on the
-  // children the FRESH pointers reference. A no-op sync stages nothing and writes nothing.
-  // fresh 为 null（卡在锁前被删/变更）即 fail-closed 零写返回 "Card not found."，无 cur 回落（R3①）。
-  const payload = await prisma.$transaction(async (tx) => {
-    // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
-    // racing a prepare/regen RMW could clobber a just-written — possibly already
-    // CONFIRMED — child pointer, orphaning a charged card; the next prepare would then
-    // mint (and charge) AGAIN for the same shot. Locking makes race == serial semantics.
-    await lockCardTx(tx, card.id);
-    const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-      select: { payload: true },
-    });
-    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-    // THREAD died (live-thread relation filter above) between the outer load and the lock →
-    // return the null sentinel (ZERO writes); NO fallback to the pre-lock `cur` snapshot.
-    // The caller surfaces "Card not found.".
-    if (!fresh?.payload) return null;
-    const p = fresh.payload as unknown as StoryboardCardPayload;
+    // 修复轮 v3 (NODE-282-R2①): the ENTIRE read half — candidate sampling + write-set
+    // derivation — runs INSIDE the card lock, derived from the freshly re-read payload.
+    // v2 sampled against the pre-lock `cur` snapshot and only applied the (stale) write-set
+    // after locking, so a racing regen could swap a shot's pointer A→B between sample and
+    // apply — sync would then write A's generation onto (or cascade-drop) a shot that now
+    // points at B. Post-lock derivation makes that impossible: sync only ever acts on the
+    // children the FRESH pointers reference. A no-op sync stages nothing and writes nothing.
+    // fresh 为 null（卡在锁前被删/变更）即 fail-closed 零写返回 "Card not found."，无 cur 回落（R3①）。
+    const payload = await prisma.$transaction(async (tx) => {
+      // Same card-writer serialization: a sync (frame-replace CASCADE drops video keys)
+      // racing a prepare/regen RMW could clobber a just-written — possibly already
+      // CONFIRMED — child pointer, orphaning a charged card; the next prepare would then
+      // mint (and charge) AGAIN for the same shot. Locking makes race == serial semantics.
+      await lockCardTx(tx, card.id);
+      const fresh = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
+        select: { payload: true },
+      });
+      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+      // THREAD died (live-thread relation filter above) between the outer load and the lock →
+      // return the null sentinel (ZERO writes); NO fallback to the pre-lock `cur` snapshot.
+      // The caller surfaces "Card not found.".
+      if (!fresh?.payload) return null;
+      const p = fresh.payload as unknown as StoryboardCardPayload;
 
-    // Collect finished writes from the FRESH (post-lock) payload. Candidate rules are
-    // identical in shape for the two media classes (≤8 shots, so the per-shot lookups are
-    // bounded; child/job/result reads are worker-written rows — a job flipping DONE
-    // mid-sync is simply picked up by the next sync, inert here):
-    //  • FRAME: a shot with a firstFrameCardId. Resolve its child's DONE generationId; stage a
-    //    frame write iff that id exists AND DIFFERS from the shot's current firstFrameGenerationId.
-    //    Covers first landing (no genId yet → write) and replace-overwrite (a regen's new frame
-    //    lands → overwrites the old genId).
-    //  • VIDEO: a shot with a videoCardId. Resolve its child's DONE generationId; stage a video
-    //    write iff that id exists AND DIFFERS from the shot's current videoGenerationId.
-    // FAILED/queued/generating/missing children resolve to null → inert (no write). A write only
-    // ever REPLACES the genId value; it never deletes the key.
-    const frameWrites: Record<string, string> = {}; // shotId → new firstFrameGenerationId
-    const videoWrites: Record<string, string> = {}; // shotId → new videoGenerationId
-    // CASCADE set (spec §3c): shots whose staged frame write REPLACES an existing DIFFERENT
-    // firstFrameGenerationId (the shot HAD a genId and the new one differs — NOT a first-ever
-    // write). The source frame changed, so the old video no longer represents the shot → its
-    // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
-    // first-ever frame write (no prior genId) does NOT cascade.
-    const cascadeShots = new Set<string>();
-    for (const shot of p.shots) {
-      if (shot.firstFrameCardId) {
-        const job = await doneJobFor(tx, shot.firstFrameCardId, ownerId);
-        if (job) {
-          const genId = await firstGenerationIdOf(tx, job.id, ownerId);
-          if (genId && genId !== shot.firstFrameGenerationId) {
-            frameWrites[shot.shotId] = genId;
-            // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
-            if (shot.firstFrameGenerationId) cascadeShots.add(shot.shotId);
+      // Collect finished writes from the FRESH (post-lock) payload. Candidate rules are
+      // identical in shape for the two media classes (≤8 shots, so the per-shot lookups are
+      // bounded; child/job/result reads are worker-written rows — a job flipping DONE
+      // mid-sync is simply picked up by the next sync, inert here):
+      //  • FRAME: a shot with a firstFrameCardId. Resolve its child's DONE generationId; stage a
+      //    frame write iff that id exists AND DIFFERS from the shot's current firstFrameGenerationId.
+      //    Covers first landing (no genId yet → write) and replace-overwrite (a regen's new frame
+      //    lands → overwrites the old genId).
+      //  • VIDEO: a shot with a videoCardId. Resolve its child's DONE generationId; stage a video
+      //    write iff that id exists AND DIFFERS from the shot's current videoGenerationId.
+      // FAILED/queued/generating/missing children resolve to null → inert (no write). A write only
+      // ever REPLACES the genId value; it never deletes the key.
+      const frameWrites: Record<string, string> = {}; // shotId → new firstFrameGenerationId
+      const videoWrites: Record<string, string> = {}; // shotId → new videoGenerationId
+      // CASCADE set (spec §3c): shots whose staged frame write REPLACES an existing DIFFERENT
+      // firstFrameGenerationId (the shot HAD a genId and the new one differs — NOT a first-ever
+      // write). The source frame changed, so the old video no longer represents the shot → its
+      // videoCardId + videoGenerationId are dropped (key-omission) in the same transaction. A
+      // first-ever frame write (no prior genId) does NOT cascade.
+      const cascadeShots = new Set<string>();
+      for (const shot of p.shots) {
+        if (shot.firstFrameCardId) {
+          const job = await doneJobFor(tx, shot.firstFrameCardId, ownerId);
+          if (job) {
+            const genId = await firstGenerationIdOf(tx, job.id, ownerId);
+            if (genId && genId !== shot.firstFrameGenerationId) {
+              frameWrites[shot.shotId] = genId;
+              // Cascade only when REPLACING a prior genId — never on the first-ever frame write.
+              if (shot.firstFrameGenerationId) cascadeShots.add(shot.shotId);
+            }
+          }
+        }
+        if (shot.videoCardId) {
+          const job = await doneJobFor(tx, shot.videoCardId, ownerId);
+          if (job) {
+            const genId = await firstGenerationIdOf(tx, job.id, ownerId);
+            if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
           }
         }
       }
-      if (shot.videoCardId) {
-        const job = await doneJobFor(tx, shot.videoCardId, ownerId);
-        if (job) {
-          const genId = await firstGenerationIdOf(tx, job.id, ownerId);
-          if (genId && genId !== shot.videoGenerationId) videoWrites[shot.shotId] = genId;
+
+      // Nothing staged → pure read: return the fresh payload, no DB write.
+      const hasStaged =
+        Object.keys(frameWrites).length > 0 ||
+        Object.keys(videoWrites).length > 0 ||
+        cascadeShots.size > 0;
+      if (!hasStaged) return p;
+
+      const nextShots = p.shots.map((s) => {
+        const frameGen = frameWrites[s.shotId];
+        const videoGen = videoWrites[s.shotId];
+        if (!frameGen && !videoGen) return s;
+        // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
+        // and this WINS over any video write staged for the SAME shot in this pass. A video that
+        // just landed for the OLD source frame is dropped too: it was built off the outdated
+        // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
+        // videoGenerationId (key-omission), and do NOT apply the staged video write.
+        if (cascadeShots.has(s.shotId)) {
+          const rest = { ...s };
+          delete rest.videoCardId;
+          delete rest.videoGenerationId;
+          return { ...rest, firstFrameGenerationId: frameGen! };
         }
-      }
-    }
-
-    // Nothing staged → pure read: return the fresh payload, no DB write.
-    const hasStaged =
-      Object.keys(frameWrites).length > 0 ||
-      Object.keys(videoWrites).length > 0 ||
-      cascadeShots.size > 0;
-    if (!hasStaged) return p;
-
-    const nextShots = p.shots.map((s) => {
-      const frameGen = frameWrites[s.shotId];
-      const videoGen = videoWrites[s.shotId];
-      if (!frameGen && !videoGen) return s;
-      // CASCADE PRECEDENCE (spec §3c): when a shot's frame is REPLACED, drop its video keys —
-      // and this WINS over any video write staged for the SAME shot in this pass. A video that
-      // just landed for the OLD source frame is dropped too: it was built off the outdated
-      // frame, so it no longer represents the shot. So: cascade ⇒ omit videoCardId +
-      // videoGenerationId (key-omission), and do NOT apply the staged video write.
-      if (cascadeShots.has(s.shotId)) {
-        const rest = { ...s };
-        delete rest.videoCardId;
-        delete rest.videoGenerationId;
-        return { ...rest, firstFrameGenerationId: frameGen! };
-      }
-      const next = { ...s };
-      if (frameGen) next.firstFrameGenerationId = frameGen;
-      if (videoGen) next.videoGenerationId = videoGen;
+        const next = { ...s };
+        if (frameGen) next.firstFrameGenerationId = frameGen;
+        if (videoGen) next.videoGenerationId = videoGen;
+        return next;
+      });
+      const next = { ...p, shots: nextShots };
+      await tx.chatMessage.update({
+        where: { id: card.id },
+        data: { payload: next as unknown as Prisma.InputJsonObject },
+      });
       return next;
     });
-    const next = { ...p, shots: nextShots };
-    await tx.chatMessage.update({
-      where: { id: card.id },
-      data: { payload: next as unknown as Prisma.InputJsonObject },
-    });
-    return next;
+
+    if (payload === null) return { error: "Card not found." }; // R3① fail-closed surface
+
+    // Resolve URLs for EVERY shot that now has a genId (old or just written), for both media
+    // classes, via the SAME owner-scoped Generation→asset→storage mechanism. Cascade-dropped
+    // video keys are already gone from `payload`, so they naturally contribute no video url.
+    const frameGenByShot = new Map<string, string>();
+    const videoGenByShot = new Map<string, string>();
+    for (const shot of payload.shots) {
+      if (shot.firstFrameGenerationId) frameGenByShot.set(shot.shotId, shot.firstFrameGenerationId);
+      if (shot.videoGenerationId) videoGenByShot.set(shot.shotId, shot.videoGenerationId);
+    }
+    const urlByGenId = await resolveMediaUrls(ownerId, [
+      ...frameGenByShot.values(),
+      ...videoGenByShot.values(),
+    ]);
+    const frames: Record<string, string> = {};
+    for (const [shotId, genId] of frameGenByShot) {
+      const url = urlByGenId[genId];
+      if (url) frames[shotId] = url; // a deleted generation → omit, don't error
+    }
+    const videos: Record<string, string> = {};
+    for (const [shotId, genId] of videoGenByShot) {
+      const url = urlByGenId[genId];
+      if (url) videos[shotId] = url; // a deleted generation → omit, don't error
+    }
+
+    return { payload, frames, videos };
   });
-
-  if (payload === null) return { error: "Card not found." }; // R3① fail-closed surface
-
-  // Resolve URLs for EVERY shot that now has a genId (old or just written), for both media
-  // classes, via the SAME owner-scoped Generation→asset→storage mechanism. Cascade-dropped
-  // video keys are already gone from `payload`, so they naturally contribute no video url.
-  const frameGenByShot = new Map<string, string>();
-  const videoGenByShot = new Map<string, string>();
-  for (const shot of payload.shots) {
-    if (shot.firstFrameGenerationId) frameGenByShot.set(shot.shotId, shot.firstFrameGenerationId);
-    if (shot.videoGenerationId) videoGenByShot.set(shot.shotId, shot.videoGenerationId);
-  }
-  const urlByGenId = await resolveMediaUrls(ownerId, [
-    ...frameGenByShot.values(),
-    ...videoGenByShot.values(),
-  ]);
-  const frames: Record<string, string> = {};
-  for (const [shotId, genId] of frameGenByShot) {
-    const url = urlByGenId[genId];
-    if (url) frames[shotId] = url; // a deleted generation → omit, don't error
-  }
-  const videos: Record<string, string> = {};
-  for (const [shotId, genId] of videoGenByShot) {
-    const url = urlByGenId[genId];
-    if (url) videos[shotId] = url; // a deleted generation → omit, don't error
-  }
-
-  return { payload, frames, videos };
 }
 
 // ---------------------------------------------------------------------------
@@ -863,137 +880,140 @@ export async function prepareStoryboardVideos(
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ children: ChildFrameCard[]; totalCredits: number } | Err> => {
+    const { ownerId } = gate;
 
-  const card = await loadCard(parsed.data.cardId, ownerId);
-  if (!card) return { error: "Card not found." };
+    const card = await loadCard(parsed.data.cardId, ownerId);
+    if (!card) return { error: "Card not found." };
 
-  const children: ChildFrameCard[] = [];
-  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
-  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
+    const children: ChildFrameCard[] = [];
+    let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+    let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-  await prisma.$transaction(async (tx) => {
-    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
-    // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
-    const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-      select: { payload: true, threadId: true },
-    });
-    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
-    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
-    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
-    // "Card not found.".
-    if (!fresh?.payload) {
-      cardVanished = true;
-      return;
-    }
-    const payload = fresh.payload as unknown as StoryboardCardPayload;
-
-    // R4① dataflow rule: model config derived AFTER the lock (nothing computed pre-lock
-    // flows into a write). Video children are i2v (no entity refs) — no owned-entity lookup;
-    // the per-shot ctx below is built from the FRESH thread id + this in-lock config.
-    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
-    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
-    const registry = await resolveDisabledModels();
-    if ("error" in registry) { unavailable = registry; return; }
-    const disabledModels = Array.from(registry.disabled);
-    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-    unavailable = unavailableFor("video", disabledModels);
-    if (unavailable) return;
-    const parent = { id: card.id, threadId: fresh.threadId };
-
-    // Build the next shots array, mutating ONLY videoCardId on target shots.
-    const nextShots: Shot[] = [];
-    let changed = false;
-
-    for (const shot of payload.shots) {
-      // Not eligible: no first frame (frameless — skip silently), or already has a video.
-      if (!shot.firstFrameGenerationId || shot.videoGenerationId) {
-        nextShots.push(shot);
-        continue;
+    await prisma.$transaction(async (tx) => {
+      await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
+      // Re-read the parent payload INSIDE the tx (RMW) so a concurrent edit can't be clobbered.
+      const fresh = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
+        select: { payload: true, threadId: true },
+      });
+      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+      // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+      // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+      // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+      // "Card not found.".
+      if (!fresh?.payload) {
+        cardVanished = true;
+        return;
       }
+      const payload = fresh.payload as unknown as StoryboardCardPayload;
 
-      // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
-      const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
-      ctx.sourceGenerationId = shot.firstFrameGenerationId;
+      // R4① dataflow rule: model config derived AFTER the lock (nothing computed pre-lock
+      // flows into a write). Video children are i2v (no entity refs) — no owned-entity lookup;
+      // the per-shot ctx below is built from the FRESH thread id + this in-lock config.
+      // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+      // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+      const registry = await resolveDisabledModels();
+      if ("error" in registry) { unavailable = registry; return; }
+      const disabledModels = Array.from(registry.disabled);
+      // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+      unavailable = unavailableFor("video", disabledModels);
+      if (unavailable) return;
+      const parent = { id: card.id, threadId: fresh.threadId };
 
-      // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
-      // call minting uses (mintVideoChild). This is the single source of truth for the reuse
-      // comparison: we compare an existing child against what a fresh mint would produce, NOT
-      // against the raw shot fields. Crucially, wouldBe.params.durationSeconds is the SNAPPED
-      // value (suggestModel snaps shot.durationSeconds to the model's option list), so a child
-      // minted at the snapped duration matches even when shot.durationSeconds is off-menu (P2:
-      // no snap-mismatch churn). buildProposeCard is pure ($0) — this adds no I/O.
-      const { cardPayload: wouldBe } = buildProposeCard(
-        {
-          kind: "video",
-          structuredPrompt: shot.videoPrompt,
-          entityIds: [],
-          variantSel: {},
-          count: 1,
-          desiredDuration: shot.durationSeconds,
-        },
-        ctx,
-        [],
-      );
+      // Build the next shots array, mutating ONLY videoCardId on target shots.
+      const nextShots: Shot[] = [];
+      let changed = false;
 
-      // Already points at a video child → try to reuse it.
-      if (shot.videoCardId) {
-        const existing = await tx.chatMessage.findFirst({
-          where: { id: shot.videoCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
-          select: { id: true, payload: true, genJobId: true },
-        });
-        const ep = (existing?.payload ?? {}) as ExistingVideoChild;
-        // Match the existing child against the would-be card on ALL of: structuredPrompt,
-        // sourceGenerationId, params.durationSeconds (snapped-vs-snapped), and model (shared
-        // videoChildMatches helper — same rule regen uses). A full match means a fresh mint
-        // would produce an identical spend — so reusing it is exact.
-        // MONEY CORRECTION (P1 kill-shot): reuse a fully-matching child REGARDLESS of spent.
-        // Videos take minutes; videoGenerationId lands only when DONE, so a mid-flight re-entry
-        // (double-click / re-open) sees a SPENT-but-pending child. The OLD code minted a fresh
-        // child on spent → confirm charged it → the SAME shot got two children and two charges.
-        // Now: matching+spent → surface it with spent:true (excluded from totalCredits, UI skips)
-        // and DO NOT mint, DO NOT swap the pointer, DO NOT write the parent for this shot. This
-        // makes aggregate-prepare idempotent under double-click / mid-flight re-entry. We mint a
-        // fresh replacement ONLY when there is no child or the match fails (genuinely stale inputs).
-        if (existing && videoChildMatches(ep, wouldBe)) {
-          const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
-          children.push({
-            shotId: shot.shotId,
-            childCardId: existing.id,
-            estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
-            structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
-            entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
-            spent,
-          });
+      for (const shot of payload.shots) {
+        // Not eligible: no first frame (frameless — skip silently), or already has a video.
+        if (!shot.firstFrameGenerationId || shot.videoGenerationId) {
           nextShots.push(shot);
           continue;
         }
-        // Missing or any mismatch (genuinely stale inputs) → mint a replacement (pointer swap below).
+
+        // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
+        const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
+        ctx.sourceGenerationId = shot.firstFrameGenerationId;
+
+        // The WOULD-BE-MINTED card for THIS shot — computed via the SAME pure buildProposeCard
+        // call minting uses (mintVideoChild). This is the single source of truth for the reuse
+        // comparison: we compare an existing child against what a fresh mint would produce, NOT
+        // against the raw shot fields. Crucially, wouldBe.params.durationSeconds is the SNAPPED
+        // value (suggestModel snaps shot.durationSeconds to the model's option list), so a child
+        // minted at the snapped duration matches even when shot.durationSeconds is off-menu (P2:
+        // no snap-mismatch churn). buildProposeCard is pure ($0) — this adds no I/O.
+        const { cardPayload: wouldBe } = buildProposeCard(
+          {
+            kind: "video",
+            structuredPrompt: shot.videoPrompt,
+            entityIds: [],
+            variantSel: {},
+            count: 1,
+            desiredDuration: shot.durationSeconds,
+          },
+          ctx,
+          [],
+        );
+
+        // Already points at a video child → try to reuse it.
+        if (shot.videoCardId) {
+          const existing = await tx.chatMessage.findFirst({
+            where: { id: shot.videoCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+            select: { id: true, payload: true, genJobId: true },
+          });
+          const ep = (existing?.payload ?? {}) as ExistingVideoChild;
+          // Match the existing child against the would-be card on ALL of: structuredPrompt,
+          // sourceGenerationId, params.durationSeconds (snapped-vs-snapped), and model (shared
+          // videoChildMatches helper — same rule regen uses). A full match means a fresh mint
+          // would produce an identical spend — so reusing it is exact.
+          // MONEY CORRECTION (P1 kill-shot): reuse a fully-matching child REGARDLESS of spent.
+          // Videos take minutes; videoGenerationId lands only when DONE, so a mid-flight re-entry
+          // (double-click / re-open) sees a SPENT-but-pending child. The OLD code minted a fresh
+          // child on spent → confirm charged it → the SAME shot got two children and two charges.
+          // Now: matching+spent → surface it with spent:true (excluded from totalCredits, UI skips)
+          // and DO NOT mint, DO NOT swap the pointer, DO NOT write the parent for this shot. This
+          // makes aggregate-prepare idempotent under double-click / mid-flight re-entry. We mint a
+          // fresh replacement ONLY when there is no child or the match fails (genuinely stale inputs).
+          if (existing && videoChildMatches(ep, wouldBe)) {
+            const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
+            children.push({
+              shotId: shot.shotId,
+              childCardId: existing.id,
+              estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
+              structuredPrompt: typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : shot.videoPrompt,
+              entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+              spent,
+            });
+            nextShots.push(shot);
+            continue;
+          }
+          // Missing or any mismatch (genuinely stale inputs) → mint a replacement (pointer swap below).
+        }
+
+        // Mint a fresh video child for this shot (no child, or a real mismatch).
+        const child = await mintVideoChild(tx, parent, shot, ownerId, ctx);
+        children.push(child);
+        // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video (if any)
+        // stays valid until sync overwrites the genId when the new clip is DONE.
+        nextShots.push({ ...shot, videoCardId: child.childCardId });
+        changed = true;
       }
 
-      // Mint a fresh video child for this shot (no child, or a real mismatch).
-      const child = await mintVideoChild(tx, parent, shot, ownerId, ctx);
-      children.push(child);
-      // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video (if any)
-      // stays valid until sync overwrites the genId when the new clip is DONE.
-      nextShots.push({ ...shot, videoCardId: child.childCardId });
-      changed = true;
-    }
+      if (changed) {
+        await tx.chatMessage.update({
+          where: { id: card.id },
+          data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
+        });
+      }
+    });
 
-    if (changed) {
-      await tx.chatMessage.update({
-        where: { id: card.id },
-        data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
-      });
-    }
+    if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+    if (unavailable) return unavailable; // #647 T6 fail-closed surface
+    const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
+    return { children, totalCredits };
   });
-
-  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
-  if (unavailable) return unavailable; // #647 T6 fail-closed surface
-  const totalCredits = children.filter((c) => !c.spent).reduce((sum, c) => sum + c.estimatedCredits, 0);
-  return { children, totalCredits };
 }
 
 // ---------------------------------------------------------------------------
@@ -1021,125 +1041,128 @@ export async function regenShotVideoCard(
 
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ child: ChildFrameCard } | Err> => {
+    const { ownerId } = gate;
 
-  const card = await loadCard(parsed.data.cardId, ownerId);
-  if (!card) return { error: "Card not found." };
+    const card = await loadCard(parsed.data.cardId, ownerId);
+    if (!card) return { error: "Card not found." };
 
-  // Read-only pre-checks (rejection paths write nothing); the mint path re-finds and
-  // re-validates the target — incl. its frame — on the FRESH payload inside the lock.
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-  const target0 = cur.shots.find((s) => s.shotId === parsed.data.shotId);
-  if (!target0) return { error: "That shot no longer exists." };
-  // A video needs a source frame — refuse a frameless shot (no i2v source), no write.
-  if (!target0.firstFrameGenerationId) {
-    return { error: "This shot needs a first frame before you can make a video." };
-  }
-
-  let child: ChildFrameCard | null = null;
-  let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
-  let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
-
-  await prisma.$transaction(async (tx) => {
-    await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
-    const fresh = await tx.chatMessage.findFirst({
-      where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
-      select: { payload: true, threadId: true },
-    });
-    // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
-    // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
-    // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
-    // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
-    // "Card not found.".
-    if (!fresh?.payload) {
-      cardVanished = true;
-      return;
+    // Read-only pre-checks (rejection paths write nothing); the mint path re-finds and
+    // re-validates the target — incl. its frame — on the FRESH payload inside the lock.
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    const target0 = cur.shots.find((s) => s.shotId === parsed.data.shotId);
+    if (!target0) return { error: "That shot no longer exists." };
+    // A video needs a source frame — refuse a frameless shot (no i2v source), no write.
+    if (!target0.firstFrameGenerationId) {
+      return { error: "This shot needs a first frame before you can make a video." };
     }
-    const payload = fresh.payload as unknown as StoryboardCardPayload;
 
-    // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
-    // pre-lock flows into a write).
-    // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
-    // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
-    const registry = await resolveDisabledModels();
-    if ("error" in registry) { unavailable = registry; return; }
-    const disabledModels = Array.from(registry.disabled);
-    // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
-    unavailable = unavailableFor("video", disabledModels);
-    if (unavailable) return;
-    const parent = { id: card.id, threadId: fresh.threadId };
+    let child: ChildFrameCard | null = null;
+    let cardVanished = false; // R3①: set when the in-lock re-read finds the card gone
+    let unavailable: Err | null = null; // #647 T6: 引擎被关 → 零写入 + 诚实空态
 
-    const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
-    // Vanished OR lost its frame mid-flight → no writes; caller returns error below.
-    if (!target || !target.firstFrameGenerationId) return;
-
-    // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
-    const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
-    ctx.sourceGenerationId = target.firstFrameGenerationId;
-
-    // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
-    // uses (mintVideoChild). Single source of truth for the reuse comparison; its
-    // params.durationSeconds is the SNAPPED value (never the raw shot field).
-    const { cardPayload: wouldBe } = buildProposeCard(
-      {
-        kind: "video",
-        structuredPrompt: target.videoPrompt,
-        entityIds: [],
-        variantSel: {},
-        count: 1,
-        desiredDuration: target.durationSeconds,
-      },
-      ctx,
-      [],
-    );
-
-    // Reuse-if-fresh: an existing UNSPENT child that still matches the would-be card → reuse
-    // it, do NOT mint (repeated open/cancel would otherwise orphan $0 cards). A spent or
-    // mismatched (stale/missing) child → mint fresh (explicit user redo).
-    if (target.videoCardId) {
-      const existing = await tx.chatMessage.findFirst({
-        where: { id: target.videoCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
-        select: { id: true, payload: true, genJobId: true },
+    await prisma.$transaction(async (tx) => {
+      await lockCardTx(tx, card.id); // NODE-282①: serialize concurrent prepares/regens on this card
+      const fresh = await tx.chatMessage.findFirst({
+        where: { id: card.id, ownerId, kind: "STORYBOARD_CARD", deletedAt: null, thread: { deletedAt: null, ownerId } },
+        select: { payload: true, threadId: true },
       });
-      const ep = (existing?.payload ?? {}) as ExistingVideoChild;
-      if (existing && videoChildMatches(ep, wouldBe)) {
-        const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
-        if (!spent) {
-          child = {
-            shotId: target.shotId,
-            childCardId: existing.id,
-            estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
-            structuredPrompt:
-              typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : target.videoPrompt,
-            entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
-            spent: false,
-          };
-          // Child already registered on the shot; nothing to write. No genId touch.
-          return;
-        }
-        // spent → fall through to mint a fresh replacement.
+      // R3①+R5① fail-closed: the card vanished (deleted / kind changed / payload gone) OR its
+      // THREAD died (soft-deleted / re-owned — the where above carries the live-thread relation
+      // filter) between the outer load and the lock → ZERO writes, and NO fallback to the
+      // pre-lock `cur` snapshot — a stale snapshot must never drive writes. Caller surfaces
+      // "Card not found.".
+      if (!fresh?.payload) {
+        cardVanished = true;
+        return;
       }
-      // missing / mismatch → fall through to mint.
-    }
+      const payload = fresh.payload as unknown as StoryboardCardPayload;
 
-    child = await mintVideoChild(tx, parent, target, ownerId, ctx);
-    const newChildId = child.childCardId;
+      // R4① dataflow rule: model config + thread id derived AFTER the lock (nothing computed
+      // pre-lock flows into a write).
+      // #647 T6 修复轮 P1-3:锁内读开关 —— **读不到就当场退出**(零写入)。
+      // 旧版把 DB 故障翻译成空集合(「什么都没关」),于是开关成了一个查询一抖就自动打开的锁。
+      const registry = await resolveDisabledModels();
+      if ("error" in registry) { unavailable = registry; return; }
+      const disabledModels = Array.from(registry.disabled);
+      // #647 T6:读到了,接着问这一类创作还有没有引擎。没有同样当场退出:零子卡、一句人话。
+      unavailable = unavailableFor("video", disabledModels);
+      if (unavailable) return;
+      const parent = { id: card.id, threadId: fresh.threadId };
 
-    const nextShots = payload.shots.map((s) => {
-      if (s.shotId !== parsed.data.shotId) return s;
-      // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video stays
-      // valid until sync overwrites the genId when the new clip lands.
-      return { ...s, videoCardId: newChildId };
+      const target = payload.shots.find((s) => s.shotId === parsed.data.shotId);
+      // Vanished OR lost its frame mid-flight → no writes; caller returns error below.
+      if (!target || !target.firstFrameGenerationId) return;
+
+      // Per-shot ctx: the shot's first frame is the i2v source for THIS video.
+      const ctx = minimalCtx(ownerId, parent.threadId, disabledModels);
+      ctx.sourceGenerationId = target.firstFrameGenerationId;
+
+      // The WOULD-BE-MINTED card — computed via the SAME pure buildProposeCard call minting
+      // uses (mintVideoChild). Single source of truth for the reuse comparison; its
+      // params.durationSeconds is the SNAPPED value (never the raw shot field).
+      const { cardPayload: wouldBe } = buildProposeCard(
+        {
+          kind: "video",
+          structuredPrompt: target.videoPrompt,
+          entityIds: [],
+          variantSel: {},
+          count: 1,
+          desiredDuration: target.durationSeconds,
+        },
+        ctx,
+        [],
+      );
+
+      // Reuse-if-fresh: an existing UNSPENT child that still matches the would-be card → reuse
+      // it, do NOT mint (repeated open/cancel would otherwise orphan $0 cards). A spent or
+      // mismatched (stale/missing) child → mint fresh (explicit user redo).
+      if (target.videoCardId) {
+        const existing = await tx.chatMessage.findFirst({
+          where: { id: target.videoCardId, ownerId, kind: "GEN_CARD", deletedAt: null },
+          select: { id: true, payload: true, genJobId: true },
+        });
+        const ep = (existing?.payload ?? {}) as ExistingVideoChild;
+        if (existing && videoChildMatches(ep, wouldBe)) {
+          const spent = existing.genJobId != null || (await spentOf(tx, existing.id, ownerId));
+          if (!spent) {
+            child = {
+              shotId: target.shotId,
+              childCardId: existing.id,
+              estimatedCredits: typeof ep.estimatedCredits === "number" ? ep.estimatedCredits : 0,
+              structuredPrompt:
+                typeof ep.structuredPrompt === "string" ? ep.structuredPrompt : target.videoPrompt,
+              entityIds: Array.isArray(ep.entityIds) ? ep.entityIds : [],
+              spent: false,
+            };
+            // Child already registered on the shot; nothing to write. No genId touch.
+            return;
+          }
+          // spent → fall through to mint a fresh replacement.
+        }
+        // missing / mismatch → fall through to mint.
+      }
+
+      child = await mintVideoChild(tx, parent, target, ownerId, ctx);
+      const newChildId = child.childCardId;
+
+      const nextShots = payload.shots.map((s) => {
+        if (s.shotId !== parsed.data.shotId) return s;
+        // Replace videoCardId ONLY. NEVER touch videoGenerationId — the old video stays
+        // valid until sync overwrites the genId when the new clip lands.
+        return { ...s, videoCardId: newChildId };
+      });
+
+      await tx.chatMessage.update({
+        where: { id: card.id },
+        data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
+      });
     });
 
-    await tx.chatMessage.update({
-      where: { id: card.id },
-      data: { payload: { ...payload, shots: nextShots } as unknown as Prisma.InputJsonObject },
-    });
+    if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
+    if (unavailable) return unavailable; // #647 T6 fail-closed surface
+    if (!child) return { error: "That shot no longer exists." };
+    return { child };
   });
-
-  if (cardVanished) return { error: "Card not found." }; // R3① fail-closed surface
-  if (unavailable) return unavailable; // #647 T6 fail-closed surface
-  if (!child) return { error: "That shot no longer exists." };
-  return { child };
 }

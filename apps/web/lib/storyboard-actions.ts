@@ -10,7 +10,8 @@ import { prisma, Prisma } from "@fikirtive/db";
 import { newId } from "@fikirtive/core";
 import { MAX_STORYBOARD_SHOTS } from "@fikirtive/otto";
 import type { StoryboardCardPayload } from "@fikirtive/otto";
-import { requireOwner } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import {
   applyEditShotPrompt,
   applyAddShot,
@@ -64,12 +65,15 @@ export async function editShotPrompt(raw: unknown): Promise<Ok | Err> {
     return { error: "That edit isn't valid." };
   }
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { cardId, index, firstFramePrompt, videoPrompt, durationSeconds } = parsed.data;
-  const card = await loadCard(cardId, gate.ownerId);
-  if (!card) return { error: "Card not found." };
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-  if (index >= cur.shots.length) return { error: "That shot no longer exists." };
-  return persist(cardId, applyEditShotPrompt(cur, index, { firstFramePrompt, videoPrompt, durationSeconds }));
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<Ok | Err> => {
+    const { cardId, index, firstFramePrompt, videoPrompt, durationSeconds } = parsed.data;
+    const card = await loadCard(cardId, gate.ownerId);
+    if (!card) return { error: "Card not found." };
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    if (index >= cur.shots.length) return { error: "That shot no longer exists." };
+    return persist(cardId, applyEditShotPrompt(cur, index, { firstFramePrompt, videoPrompt, durationSeconds }));
+  });
 }
 
 const addInput = z.object({
@@ -83,13 +87,16 @@ export async function addShot(raw: unknown): Promise<Ok | Err> {
   const parsed = addInput.safeParse(raw);
   if (!parsed.success) return { error: "That shot isn't valid." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { cardId, title, firstFramePrompt, videoPrompt } = parsed.data;
-  const card = await loadCard(cardId, gate.ownerId);
-  if (!card) return { error: "Card not found." };
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-  if (cur.shots.length >= MAX_STORYBOARD_SHOTS) return { error: `A storyboard can have at most ${MAX_STORYBOARD_SHOTS} shots.` };
-  // shotId 在 ACTION 层铸造(纯 edit 层保持确定性)——F4 付费写回按它定位镜头。
-  return persist(cardId, applyAddShot(cur, { shotId: newId(), title, firstFramePrompt, videoPrompt }));
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<Ok | Err> => {
+    const { cardId, title, firstFramePrompt, videoPrompt } = parsed.data;
+    const card = await loadCard(cardId, gate.ownerId);
+    if (!card) return { error: "Card not found." };
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    if (cur.shots.length >= MAX_STORYBOARD_SHOTS) return { error: `A storyboard can have at most ${MAX_STORYBOARD_SHOTS} shots.` };
+    // shotId 在 ACTION 层铸造(纯 edit 层保持确定性)——F4 付费写回按它定位镜头。
+    return persist(cardId, applyAddShot(cur, { shotId: newId(), title, firstFramePrompt, videoPrompt }));
+  });
 }
 
 const deleteInput = z.object({ cardId: cardIdSchema, index: z.number().int().min(0) });
@@ -98,13 +105,16 @@ export async function deleteShot(raw: unknown): Promise<Ok | Err> {
   const parsed = deleteInput.safeParse(raw);
   if (!parsed.success) return { error: "That delete isn't valid." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { cardId, index } = parsed.data;
-  const card = await loadCard(cardId, gate.ownerId);
-  if (!card) return { error: "Card not found." };
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-  if (index >= cur.shots.length) return { error: "That shot no longer exists." };
-  if (cur.shots.length <= 1) return { error: "A storyboard needs at least one shot." };
-  return persist(cardId, applyDeleteShot(cur, index));
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<Ok | Err> => {
+    const { cardId, index } = parsed.data;
+    const card = await loadCard(cardId, gate.ownerId);
+    if (!card) return { error: "Card not found." };
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    if (index >= cur.shots.length) return { error: "That shot no longer exists." };
+    if (cur.shots.length <= 1) return { error: "A storyboard needs at least one shot." };
+    return persist(cardId, applyDeleteShot(cur, index));
+  });
 }
 
 const reorderInput = z.object({ cardId: cardIdSchema, order: z.array(z.number().int().min(0)).min(1) });
@@ -113,11 +123,14 @@ export async function reorderShots(raw: unknown): Promise<Ok | Err> {
   const parsed = reorderInput.safeParse(raw);
   if (!parsed.success) return { error: "That reorder isn't valid." };
   const gate = await requireOwner(); if ("error" in gate) return gate;
-  const { cardId, order } = parsed.data;
-  const card = await loadCard(cardId, gate.ownerId);
-  if (!card) return { error: "Card not found." };
-  const cur = (card.payload ?? {}) as StoryboardCardPayload;
-  const next = applyReorderShots(cur, order);
-  if (next === cur) return { error: "That reorder isn't valid." }; // 非合法排列 → 纯函数原样返回
-  return persist(cardId, next);
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<Ok | Err> => {
+    const { cardId, order } = parsed.data;
+    const card = await loadCard(cardId, gate.ownerId);
+    if (!card) return { error: "Card not found." };
+    const cur = (card.payload ?? {}) as StoryboardCardPayload;
+    const next = applyReorderShots(cur, order);
+    if (next === cur) return { error: "That reorder isn't valid." }; // 非合法排列 → 纯函数原样返回
+    return persist(cardId, next);
+  });
 }

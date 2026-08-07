@@ -67,7 +67,10 @@ const {
 
 // db mock exposes reserveCredits/settleCredits so the $0 assertion can prove they're never called.
 vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {}, reserveCredits: mockReserve, settleCredits: mockSettle }));
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("../queue", () => ({ getBoss: mockGetBoss }));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
 
