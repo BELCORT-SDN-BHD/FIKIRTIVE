@@ -6,6 +6,7 @@ import { prisma, type Prisma } from "@fikirtive/db";
 import { z } from "zod";
 import type { CampaignPlan } from "./campaign-actions";
 import { requireOwner } from "./auth-guard";
+import { dispatchedCampaignEntryIds } from "./campaign-dispatch-history";
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const CAMPAIGN_DRAFT_CONTEXT = "fikirtive:campaign-draft:v1";
@@ -99,6 +100,10 @@ export type CampaignGroupedBroadcast = {
 };
 
 export type CampaignDetailRow = CampaignListRow & {
+  /** Plan entries whose generation has already been dispatched — and therefore already cost
+   *  credits. The page greys out Undo approval and Remove for these instead of letting the
+   *  merchant press a button the server will refuse (#744 判官 r1 P1-1). */
+  dispatchedEntryIds: string[];
   grouped: {
     projects: CampaignGroupedProject[];
     scheduledPosts: CampaignGroupedPost[];
@@ -269,6 +274,14 @@ export async function getCampaign(id: string): Promise<
       }),
     ]);
 
+    // Presentation only. It never decides whether a change is allowed — the server actions
+    // re-check under the campaign approval lock — so a read failure here greys out nothing
+    // rather than failing the whole page.
+    const planned = publicCampaign(row).plan?.entries.map((entry) => entry.id) ?? [];
+    const dispatchedEntryIds = planned.length === 0
+      ? []
+      : [...await dispatchedCampaignEntryIds(prisma, gate.ownerId, id, planned).catch(() => new Set<string>())];
+
     const publicProjects = projects.map((project) => ({
       id: project.id,
       name: project.name,
@@ -294,6 +307,7 @@ export async function getCampaign(id: string): Promise<
       ok: true,
       campaign: {
         ...publicCampaign(row),
+        dispatchedEntryIds,
         grouped: {
           projects: publicProjects.filter((_, index) => projects[index].campaignId === id),
           scheduledPosts: publicPosts.filter((_, index) => scheduledPosts[index].campaignId === id),
