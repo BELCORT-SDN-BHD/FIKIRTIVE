@@ -6,9 +6,13 @@ export const MAGIC_LINK_DELIVERY_FAILED_MESSAGE =
 export const MAGIC_LINK_UNKNOWN_FAILED_MESSAGE =
   "We couldn't send a sign-in link. Try again.";
 
+/** #678 — there is deliberately NO "rate_limited" reason. Being over the per-address hourly
+ *  cap is reachable only for an address that has access (server.ts answers everything else with
+ *  the neutral success body before the sender is ever called), so a distinct rate-limit answer
+ *  IS an account-existence oracle. The cap still stops the email; the merchant reads the same
+ *  neutral success either way. See lib/better-auth/sender.ts. */
 export type MagicLinkFailureReason =
   | "invalid_email"
-  | "rate_limited"
   | "delivery_failed"
   | "unknown";
 

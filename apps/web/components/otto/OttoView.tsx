@@ -16,6 +16,7 @@ import { OttoAnalytics } from "./OttoAnalytics";
 import { OttoSchedule } from "./OttoSchedule";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import { OttoOnboarding } from "./OttoOnboarding";
+import { shouldShowOttoOnboarding } from "@/lib/otto-onboarding";
 import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
@@ -61,6 +62,10 @@ interface OttoViewProps {
   onToggleChat?: () => void;
   /** Re-skin flag (?skin=gb) — enables the chat→canvas bridge on the canvas. */
   skin?: "gb";
+  /** #679 — the workspace's own "Get Otto ready" dismissal, read server-side. */
+  onboardingDismissed?: boolean;
+  /** Persist that dismissal against the workspace. */
+  onDismissOnboarding?: () => void;
 }
 
 type ThreadComposerReference = OttoComposerReference & { threadId: string };
@@ -97,6 +102,8 @@ export function OttoView({
   chatCollapsed = false,
   onToggleChat,
   skin,
+  onboardingDismissed = false,
+  onDismissOnboarding,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -203,15 +210,23 @@ export function OttoView({
 
   // Otto view — front door when no active thread, conversation when one is selected
   const showFrontDoor = !activeThread;
-  const isFirstRun =
+  // #679 — the two tiles now stand for real workspace facts (entities are owner-scoped, brand
+  // memory is owner-scoped), so the card can tick one off instead of vanishing the moment
+  // either is done. `dismissed` comes from the org row, not from this browser.
+  const hasStuff = entities.length > 0;
+  const hasBrandMemory = memory.length > 0;
+  const showOnboarding =
     showFrontDoor &&
-    entities.length === 0 &&
-    memory.length === 0 &&
-    threads.length === 0;
+    shouldShowOttoOnboarding({
+      dismissed: onboardingDismissed,
+      hasStuff,
+      hasBrandMemory,
+      hasStartedWork: threads.length > 0,
+    });
 
   return (
     <div
-      className={`otto-workspace${chatCollapsed ? " otto-chat-collapsed" : ""}${isFirstRun ? " otto-workspace-first-run" : ""}`}
+      className={`otto-workspace${chatCollapsed ? " otto-chat-collapsed" : ""}${showOnboarding ? " otto-workspace-first-run" : ""}`}
       style={{ position: "relative", flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "row", overflow: "hidden" }}
     >
       <style>{`
@@ -259,14 +274,17 @@ export function OttoView({
           }
         }
       `}</style>
-      {isFirstRun && (
+      {showOnboarding && (
         <div
           className="otto-onboarding-overlay"
           style={{ "--otto-onboarding-left": chatCollapsed ? "24px" : "calc(clamp(360px, 38%, 520px) + 24px)" } as React.CSSProperties}
         >
           <OttoOnboarding
+            hasStuff={hasStuff}
+            hasBrandMemory={hasBrandMemory}
             onGoToStuff={() => onViewChange("library")}
             onGoToMemory={() => onViewChange("memory")}
+            onDismiss={() => onDismissOnboarding?.()}
           />
         </div>
       )}

@@ -3,7 +3,6 @@
 import { headers } from "next/headers";
 import { EmailSendError } from "@/lib/email";
 import { auth } from "@/lib/better-auth/server";
-import { MagicLinkRateLimitError } from "@/lib/better-auth/sender";
 import {
   MAGIC_LINK_DELIVERY_FAILED_MESSAGE,
   MAGIC_LINK_INVALID_EMAIL_MESSAGE,
@@ -37,13 +36,10 @@ export async function requestMagicLink(input: {
     });
     return { status: "success", message: MAGIC_LINK_SUCCESS_MESSAGE };
   } catch (error) {
-    if (error instanceof MagicLinkRateLimitError) {
-      return {
-        status: "error",
-        reason: "rate_limited",
-        message: error.message,
-      };
-    }
+    // #678 — there is no rate-limit branch here on purpose. The per-address cap is enforced in
+    // the sender, which suppresses the email and returns normally, so a capped request lands on
+    // the `success` return above with the SAME bytes as a delivered one. Re-introducing a
+    // distinct answer here re-opens the account-existence oracle this ticket closed.
     if (error instanceof EmailSendError) {
       return {
         status: "error",
