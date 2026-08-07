@@ -180,9 +180,12 @@ export function createCustomerBroadcastReportService(
       orderBy: [{ id: "asc" }],
       select: { id: true, sendState: true, skipReason: true },
     });
-    const attemptedMembers = members.filter((member) => member.sendState === "simulated_sent");
-    const receipts = await reconciliation.readReceipts(principal.ownerId, run.channel, attemptedMembers);
+    // #719: read a receipt for every member, exactly as the recipient cards do, so the
+    // reconciliation summary and the per-recipient badges cannot disagree. Members with no
+    // sending attempt come back as "not applicable" and count toward no bucket.
+    const receipts = await reconciliation.readReceipts(principal.ownerId, run.channel, members);
     const axes = aggregateDeliveryAxes(receipts, true);
+    const attemptedCount = members.filter((member) => member.sendState === "simulated_sent").length;
     const loadedAt = new Date(clock().getTime()).toISOString();
     const byReason: Record<string, number> = {};
     for (const member of members) {
@@ -199,7 +202,7 @@ export function createCustomerBroadcastReportService(
       sending: {
         authority: "C5_BROADCAST_AUDIENCE_MEMBER",
         freshness: { lastDataLoadedAt: loadedAt },
-        attempted: known(attemptedMembers.length),
+        attempted: known(attemptedCount),
         pending: known(members.filter((member) => member.sendState === "pending").length),
         skipped: {
           ...known(members.filter((member) => member.sendState === "skipped_ineligible").length),

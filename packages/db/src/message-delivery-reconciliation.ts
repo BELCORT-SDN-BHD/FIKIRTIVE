@@ -6,11 +6,17 @@ export type DeliveryLifecycle = (typeof DELIVERY_LIFECYCLES)[number];
 export const RECONCILIATION_STATUSES = ["converged", "pending", "conflict", "timeout_unknown"] as const;
 export type ReconciliationStatus = (typeof RECONCILIATION_STATUSES)[number];
 
+// #719: a member that never had a sending attempt has no provider obligation, so there is
+// nothing to reconcile — it is not "pending". Read-time only: never written to
+// MessageDeliveryState, whose vocabulary stays RECONCILIATION_STATUSES.
+export const RECONCILIATION_NOT_APPLICABLE = "not_applicable";
+export type ReconciliationView = ReconciliationStatus | typeof RECONCILIATION_NOT_APPLICABLE;
+
 export type DeliveryReceiptView = {
   logicalSendRef: string;
   channel: string;
   lifecycle: DeliveryLifecycle;
-  reconciliation: ReconciliationStatus;
+  reconciliation: ReconciliationView;
   simulatedAttempt: boolean;
   lastProviderEventAt: string | null;
   lastReconciledAt: string | null;
@@ -88,6 +94,22 @@ export function reconcileDeliveryReceipt(
 ): DeliveryReceiptView {
   const reconciledAt = asDate(clock()).toISOString();
   const ordered = [...input.events].sort(eventOrder);
+
+  // No attempt and no provider fact: nothing was ever owed a receipt. A fact that does exist
+  // is still reconciled below, so a real outcome is never hidden behind "not applicable".
+  if (!input.attempted && ordered.length === 0) {
+    return {
+      logicalSendRef: input.logicalSendRef,
+      channel: input.channel,
+      lifecycle: "unknown",
+      reconciliation: RECONCILIATION_NOT_APPLICABLE,
+      simulatedAttempt: input.simulatedAttempt,
+      lastProviderEventAt: null,
+      lastReconciledAt: reconciledAt,
+      reason: "NO_SENDING_ATTEMPT",
+    };
+  }
+
   const usePrior = ordered.length > 0 && input.priorState && isLifecycle(input.priorState.lifecycle);
   let lifecycle: DeliveryLifecycle = usePrior ? input.priorState!.lifecycle as DeliveryLifecycle : "unknown";
   let conflictReason = usePrior && input.priorState!.reconciliation === "conflict"

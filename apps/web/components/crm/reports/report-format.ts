@@ -97,12 +97,18 @@ export function reconciliationPresentation(status: string): { label: string; var
       return { label: "Conflict", variant: "destructive" };
     case "timeout_unknown":
       return { label: "Timeout unknown", variant: "warning" };
-    default:
+    case "not_applicable":
+      return { label: "Not applicable", variant: "outline" };
+    case "pending":
       return { label: "Pending", variant: "warning" };
+    default:
+      return { label: status.replaceAll("_", " "), variant: "outline" };
   }
 }
 
 const RECEIPT_REASON_COPY: Record<string, string> = {
+  NO_SENDING_ATTEMPT:
+    "No sending attempt reached this recipient, so there is nothing to reconcile.",
   SIMULATED_ATTEMPT_NO_EXTERNAL_FACT:
     "This was a simulated attempt, so no external provider fact exists.",
   EXTERNAL_RESPONSE_TIMEOUT:
