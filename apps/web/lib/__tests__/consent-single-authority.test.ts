@@ -371,6 +371,10 @@ describe("#726 the segment's promise and the frozen audience are the same list",
     });
     if (!("ok" in excluded)) throw new Error(excluded.error);
     expect(excluded.contacts.map((contact) => contact.id).sort()).toEqual([CHANDRA, HANA, DEVI, GRACE].sort());
+    // The consent history on Chandra's profile has nothing to show — there are no events behind
+    // this exclusion — so the row the merchant is looking at has to name the reason itself.
+    const rows = renderToStaticMarkup(createElement(ContactPreview, { preview: excluded }));
+    expect(rows).toContain("Excluded · opted out before consent history");
 
     // And re-recording the same opt-out on the profile cannot be the act that releases it.
     const frozen = await freezeOnce("freeze-legacy", SEGMENT_WHATSAPP);

@@ -234,6 +234,10 @@ function publicContacts(contacts: EvaluatedContact[]) {
     channels,
     contactable,
     reportedOptOut: consent.reportedOptOut,
+    // Which of the excluded are held out by the pre-ledger fence. The consent history on the
+    // contact profile cannot explain this one — there are no events behind it — so the row the
+    // merchant is already looking at has to say it itself (R-010 §4.6.5: visible, not hidden).
+    unresolvedLegacyOptOut: consent.unresolvedLegacyOptOut,
   }));
 }
 

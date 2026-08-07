@@ -783,7 +783,7 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
         Unknown consent stays included. {KNOWN_OPT_OUT_RULE_NOTE} Do not disturb is checked at send time and does not filter this segment.
         {preview.unresolvedLegacyOptOutCount > 0
-          ? ` ${preview.unresolvedLegacyOptOutCount} of them opted out before consent history was kept, so they stay out until the customer opts in again — open the contact to see what was recorded.`
+          ? ` ${preview.unresolvedLegacyOptOutCount} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
           : ""}
       </p>
       {/*
@@ -822,7 +822,9 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
                   ? contact.reportedOptOut
                     ? "Included · reported opt-out"
                     : "Included"
-                  : "Known opt-out excluded"}
+                  : contact.unresolvedLegacyOptOut
+                    ? "Excluded · opted out before consent history"
+                    : "Known opt-out excluded"}
               </Badge>
             </li>
           ))}

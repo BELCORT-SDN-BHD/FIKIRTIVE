@@ -63,6 +63,8 @@ export type CrmSegmentContact = {
   contactable: boolean;
   /** The merchant recorded an opt-out for this contact; it is not verified consent. */
   reportedOptOut: boolean;
+  /** Held out by an opt-out recorded before this contact had a consent history. */
+  unresolvedLegacyOptOut: boolean;
 };
 
 /** CRM Contact read model (B0-59/60/C1). Dates are ISO strings across the package seam. */

@@ -195,6 +195,7 @@ describe("previewSegment", () => {
           channels: ["email", "whatsapp"],
           contactable: true,
           reportedOptOut: false,
+          unresolvedLegacyOptOut: false,
         },
       ],
       // #715 — the preview frames its match count against the same owner total the
