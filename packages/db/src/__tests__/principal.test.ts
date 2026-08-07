@@ -52,6 +52,17 @@ function userPrincipal(suffix: string): UserPrincipal {
 }
 
 /**
+ * The frame as STORED, given the identity a caller passed in.
+ *
+ * A caller hands `runAsUser` identity only; the runner stamps the frame policy (#743 r2). Spelled
+ * out here rather than hidden in a loose matcher so these assertions keep failing if the stamp
+ * ever goes missing — an unstamped frame reads as writable, which is the whole hazard.
+ */
+function storedUserFrame(p: UserPrincipal, readOnly = false) {
+  return { ...p, readOnly };
+}
+
+/**
  * Both cases below DERIVE their handle from the documented string key rather than importing a
  * symbol from the module, so the "the module pins its store under `fikirtive.principal.als`"
  * contract is pinned by them directly. (A third case used to assert
@@ -148,7 +159,7 @@ describe("runAsUser", () => {
     const p = userPrincipal("a");
     await runAsUser(p, async () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
-      expect(getPrincipal()).toEqual(p);
+      expect(getPrincipal()).toEqual(storedUserFrame(p));
     });
     expect(getPrincipal()).toBeUndefined();
   });
@@ -199,7 +210,7 @@ describe("runAsUser", () => {
               // service phase: more awaits before anyone reads the identity
               await new Promise((resolve) => setTimeout(resolve, 1));
               seen.push(getPrincipal()?.ownerId);
-              expect(getPrincipal()).toEqual(principal);
+              expect(getPrincipal()).toEqual(storedUserFrame(principal));
             });
           })().then(settle, fail);
         });
@@ -240,11 +251,11 @@ describe("runAsUser × runAsTenant nesting", () => {
     const p = userPrincipal("a");
     runAsUser(p, () => {
       runAsTenant("org_a", () => {
-        expect(getPrincipal()).toEqual(p);
+        expect(getPrincipal()).toEqual(storedUserFrame(p));
         expect(getPrincipal()?.kind).toBe("user");
       });
       // and the user frame is intact afterwards
-      expect(getPrincipal()).toEqual(p);
+      expect(getPrincipal()).toEqual(storedUserFrame(p));
     });
   });
 
@@ -258,7 +269,7 @@ describe("runAsUser × runAsTenant nesting", () => {
         }),
       ).toThrow(/cannot switch tenant/i);
       expect(entered).toBe(false);
-      expect(getPrincipal()).toEqual(p);
+      expect(getPrincipal()).toEqual(storedUserFrame(p));
     });
   });
 

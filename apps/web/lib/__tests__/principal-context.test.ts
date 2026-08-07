@@ -221,6 +221,9 @@ describe("the gateway lane — the ambient USER principal (design contract §2-v
       membershipId: membership.id,
       impersonating: false,
       impersonatedByBaUserId: null, // #463 never carries the impersonator id (②-D)
+      // #743 r2: the gateway hands runAsUser an IDENTITY; the runner stamps the frame policy.
+      // Nothing here is inside a read-only frame, so the merchant's own work stays writable.
+      readOnly: false,
     });
     // the frame is scoped to the service call; the gateway's caller is left as it was
     expect(getPrincipal()).toBeUndefined();

@@ -252,15 +252,19 @@ function withReadOnlyFrameGuard<T extends object>(client: T): T {
     query: {
       async $allOperations({ model, operation, args, query }: any) {
         const principal = getPrincipal();
-        if (principal?.kind !== "system" || !principal.readOnly) return query(args);
+        // Read `readOnly` off ANY frame, not just a system one. Since #743 r2 the restriction is
+        // inherited by every nested frame including a user frame, so keying on `kind === "system"`
+        // would let exactly the frame that inherited it slip through.
+        if (!principal?.readOnly) return query(args);
+        const frame = principal.kind === "system" ? principal.reason : `user:${principal.ownerId}`;
         if (model === undefined) {
           throw new Error(
-            `[tenant-guard] ${operation} is raw SQL — refused under the read-only system frame "${principal.reason}"`,
+            `[tenant-guard] ${operation} is raw SQL — refused under the read-only frame "${frame}"`,
           );
         }
         if (WRITE_OPS.has(operation)) {
           throw new Error(
-            `[tenant-guard] ${model}.${operation} is a write — refused under the read-only system frame "${principal.reason}"`,
+            `[tenant-guard] ${model}.${operation} is a write — refused under the read-only frame "${frame}"`,
           );
         }
         return query(args);
