@@ -3,6 +3,10 @@ import {
   type SegmentContactFacts,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
+import type { Prisma } from "@fikirtive/db";
+// The pure R-010 fold module, NOT the package root: importing it never constructs a Prisma
+// client, so a caller's unit test can keep mocking `@fikirtive/db` as just a fake client
+// without having to restate the consent rule (which is the very duplication #716 removed).
 import {
   contactConsentTruth,
   CRM_CONSENT_SCOPE,
@@ -11,8 +15,7 @@ import {
   type ConsentScope,
   type ConsentState,
   type ContactConsentTruth,
-  type Prisma,
-} from "@fikirtive/db";
+} from "@fikirtive/db/consent-fold";
 
 /**
  * #716 / #726 — the single predicate deciding whether a contact has opted out.

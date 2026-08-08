@@ -229,6 +229,10 @@ describe("previewSegment", () => {
   });
 
   it("preserves the locked All and Any matching semantics", async () => {
+    // Nobody here has opted out, so this test measures the boolean semantics and nothing else.
+    // (It used to lean on Bo's opt-out to make "any" two, which #806 turned into a consent
+    // question — the wrong thing for a test about `all` vs `any` to depend on.)
+    mockConsentProjectionFindMany.mockResolvedValue([]);
     const leaves = [
       { kind: "lifetime_spend" as const, comparison: "at_least" as const, amountMyr: 1000 },
       { kind: "channel" as const, channel: "email" },
@@ -270,17 +274,26 @@ describe("previewSegment", () => {
       rules: [{ kind: "lifetime_spend", comparison: "at_least", amountMyr: 0 }],
     });
 
+    // #806 — this rule never mentions consent, and that used to be the same as no protection:
+    // Bo (a known opt-out) was selected and merely labelled. The consent authority is a gate
+    // now, so he is out of the selection and reported as excluded. Unknown consent (Amina,
+    // Chen) and Do Not Disturb (Dina) are untouched — they are still selected, which is the
+    // property this test was written to protect.
     expect(result).toMatchObject({
       ok: true,
-      matchedCount: 4,
+      matchedCount: 3,
       contactableCount: 3,
-      knownOptOutCount: 1,
+      knownOptOutCount: 0,
+      excludedByConsentCount: 1,
       contacts: expect.arrayContaining([
-        expect.objectContaining({ id: "contact-2", contactable: false }),
+        expect.objectContaining({ id: "contact-1", contactable: true }),
         expect.objectContaining({ id: "contact-3", contactable: true }),
         expect.objectContaining({ id: "contact-4", contactable: true }),
       ]),
     });
+    expect(
+      (result as { contacts: Array<{ id: string }> }).contacts.some((c) => c.id === "contact-2"),
+    ).toBe(false);
 
     await expect(
       previewSegment({
