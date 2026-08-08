@@ -96,10 +96,16 @@ const AXIS_REASON_COPY: Record<string, string> = {
   effective_revoke: "The customer has opted out (STOP). A send would need a D5 two-confirm override, which is unavailable.",
   consent_unknown_d5_eligible: "Consent is unknown. A send would need a D5 two-confirm override, which is unavailable.",
   consent_unknown_unconfirmed_automatic_hard_block: "Consent is unknown — a hard block for automated sends.",
-  // #806 — the same sentence the Segments page already uses for this customer, so the two
-  // surfaces explain one fact with one wording.
-  unresolved_legacy_opt_out: "The customer opted out before consent history was kept, so they stay out until they opt in again.",
-  legacy_mirror_unreadable: "The earlier opt-out record could not be read, so sending fails closed.",
+  // #806 — every clause states only what the ledger holds, the rule #768 arrived at for this
+  // exact customer (see CRM_PRE_LEDGER_OPT_OUT_NOTE). "An opt-out was recorded" is passive on
+  // purpose: R-010 fixes the legacy carrier at `legacy_unknown / unresolved` and forbids
+  // guessing who recorded it. No "again" either — that would presuppose a first opt-in the
+  // ledger cannot see. The release clause is the note's own, word for word.
+  unresolved_legacy_opt_out:
+    "An opt-out was recorded for this contact before consent history began, so sending stays closed until the customer opts in through their own channel.",
+  // Says only what happened: a read failed. This reason also fires for a contact who has no
+  // pre-ledger record at all, so it must not describe one.
+  legacy_mirror_unreadable: "Part of the consent record could not be read, so sending fails closed.",
   dnd_set: "The customer is on Do Not Disturb.",
   permanent_recipient_block: "The provider has permanently refused this recipient.",
   account_level_block: "The provider has suspended this account.",

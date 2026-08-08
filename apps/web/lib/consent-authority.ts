@@ -54,6 +54,38 @@ export function consentFact(truth: ContactConsentTruth): "opt_in" | "opt_out" | 
   return truth.state === "verified_grant" ? "opt_in" : "unknown";
 }
 
+/** R-010 channel-token normalization, applied identically wherever a channel becomes a fact. */
+function normalizedChannel(value: string): string | null {
+  const channel = value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(channel) ? channel : null;
+}
+
+/**
+ * The `channels` fact a segment rule sees for one contact: every live channel that contact has.
+ *
+ * #806 r2 — this construction is shared because the two selecting call sites disagreed without it.
+ * The broadcast used to hand the matcher `[<the run's channel>]`, which is not a fact about the
+ * contact at all, and the two sides then answered `selectedIntoAudience` differently for the same
+ * person: on `any(channel is email, contact is a known opt-out)`, a fenced customer holding BOTH
+ * an Email and a WhatsApp identity reads as "matched on email, not selected because of consent"
+ * on the segments page, but a WhatsApp run — seeing only `["whatsapp"]` — reads the same rules as
+ * "the merchant deliberately asked for opt-outs" and froze her in as a kept member. The very
+ * defect #806 exists to close, reappearing through a channel fact rather than a consent one.
+ *
+ * A rule fact describes the CONTACT. Which identities a run may actually send to is a separate
+ * question, answered separately by each caller (the broadcast still targets — and still counts
+ * over — only identities on its own channel).
+ */
+export function contactChannelFacts(identities: readonly { channel: string }[]): string[] {
+  return [
+    ...new Set(
+      identities
+        .map((identity) => normalizedChannel(identity.channel))
+        .filter((channel): channel is string => channel !== null),
+    ),
+  ].sort();
+}
+
 /**
  * The one gate every audience-selecting path goes through (#806): the segments page's match and
  * the broadcast's candidate list.

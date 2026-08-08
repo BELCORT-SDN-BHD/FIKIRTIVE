@@ -122,10 +122,12 @@ const CONTACTABLE = {
   rules: [{ kind: "contactability" as const, value: "contactable" as const }],
 };
 /**
- * A perfectly legal segment that never asks about contactability. The fence is only ever consulted
- * by translating it into the `marketingConsent` FACT (`segment-actions.evaluateContact`,
- * `customer-broadcast-service`), so a rule set that does not test that fact never consults it — and
- * the fenced customer is selected. This is the shape that disproved r4's "kept out of audiences".
+ * A perfectly legal segment that never asks about contactability. When #768 shipped, the fence was
+ * only ever consulted by translating it into the `marketingConsent` FACT, so a rule set that did
+ * not test that fact never consulted it and the fenced customer WAS selected — the shape that
+ * disproved r4's "kept out of audiences". #806 turned the fence into a gate
+ * (`consent-authority.selectedIntoAudience`), so she is no longer selected here; the case below is
+ * kept, inverted, as the permanent proof of which way this shape now resolves.
  */
 const CHANNEL_ONLY = {
   match: "all" as const,
@@ -394,25 +396,31 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     expect(profile).toContain("Opted out before consent history");
   });
 
-  it("promises only the classification it can keep: a channel-only segment still selects her", async () => {
+  it("keeps the promise it made: a channel-only segment no longer selects her (#806)", async () => {
     actAs(ORG_A);
 
-    // The world r4's wording denied. A segment whose rules never mention contactability never
-    // consults the fence — the fence reaches the matcher ONLY as the `marketingConsent` fact — so
-    // the fenced customer is selected here, and a broadcast would freeze her in with
-    // `includedByMerchant: true`. The note therefore may not promise she is kept out of audiences.
+    // The world r4's wording denied, now closed. When #768 wrote this note the fence reached the
+    // matcher ONLY as the `marketingConsent` fact, so a rule set that never mentions
+    // contactability selected her anyway and a broadcast froze her in with
+    // `includedByMerchant: true`. #806 made the fence a gate, so this shape resolves the other
+    // way — and the case stays here, inverted, so nothing can quietly re-open it.
     const channelOnly = await previewSegment(CHANNEL_ONLY);
     if (!("ok" in channelOnly)) throw new Error(channelOnly.error);
-    const selected = channelOnly.contacts.find((contact) => contact.id === CHANDRA);
-    expect(selected).toBeDefined();
-    expect(selected?.unresolvedLegacyOptOut).toBe(true);
+    expect(channelOnly.contacts.find((contact) => contact.id === CHANDRA)).toBeUndefined();
+    // Not silently dropped: she is reported as held out by the consent authority, and as one of
+    // the ones the pre-ledger fence is holding.
+    expect(channelOnly.excludedByConsentCount).toBeGreaterThanOrEqual(1);
+    expect(channelOnly.unresolvedLegacyOptOutCount).toBeGreaterThanOrEqual(1);
 
-    // What IS true at the layer the note now names: wherever segment rules are evaluated, she is
-    // counted as opted out — that is exactly the fact the matcher was handed.
-    expect(selected?.contactable).toBe(false);
+    // The one selection she still belongs to is the one a merchant deliberately built out of
+    // opt-outs — unchanged, and still the reason the note says "counts as opted out" rather than
+    // promising she is kept out of every audience.
     const excluded = await previewSegment(NOT_CONTACTABLE);
     if (!("ok" in excluded)) throw new Error(excluded.error);
-    expect(excluded.contacts.map((contact) => contact.id)).toContain(CHANDRA);
+    const stillListed = excluded.contacts.find((contact) => contact.id === CHANDRA);
+    expect(stillListed).toBeDefined();
+    expect(stillListed?.unresolvedLegacyOptOut).toBe(true);
+    expect(stillListed?.contactable).toBe(false);
 
     const profile = await contactProfileMarkup(CHANDRA);
     expect(profile).toContain(FENCE_NOTE);

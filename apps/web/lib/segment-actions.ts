@@ -13,6 +13,7 @@ import { prisma, type Prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
 import {
   consentFact,
+  contactChannelFacts,
   contactConsentTruth,
   countExcludedByConsent,
   isKnownOptOut,
@@ -154,19 +155,10 @@ function asLifetimeSpend(value: unknown): number | undefined {
   return Number.isFinite(amount) && amount >= 0 ? amount : undefined;
 }
 
-function asChannel(value: string): string | null {
-  const channel = value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
-  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(channel) ? channel : null;
-}
-
 function evaluateContact(row: ContactRow, truth: ContactConsentTruth): EvaluatedContact {
-  const channels = [
-    ...new Set(
-      row.identities
-        .map((identity) => asChannel(identity.channel))
-        .filter((channel): channel is string => channel !== null),
-    ),
-  ].sort();
+  // #806 r2 — shared with the broadcast audience, which used to build this fact from its own
+  // run channel instead of the contact's. Two constructions meant two answers for one person.
+  const channels = contactChannelFacts(row.identities);
   // Segment selection is not a send gate. R-010 keeps unknown consent in the merchant's
   // selected audience, and DND is enforced later by B7. Only a known opt-out is excluded
   // from this estimate — read through the one authority the broadcast freeze and the

@@ -19,6 +19,7 @@ import {
   type SendEligibilityResult,
 } from "@fikirtive/db";
 import {
+  contactChannelFacts,
   contactConsentTruth,
   countExcludedByConsent,
   isKnownOptOut,
@@ -418,7 +419,11 @@ export function createCustomerBroadcastService(
           totalOrdersMyr: true,
           // Never an authority of its own: the pre-ledger fence can only hold a contact OUT.
           marketingConsent: true,
-          identities: { where: { ownerId, channel, deletedAt: null }, select: { id: true, channel: true } },
+          // #806 r2 — EVERY live identity, not just this run's channel. A segment rule's
+          // `channels` fact describes the contact; narrowing it to the run's channel made this
+          // side answer the shared gate differently from the segments page (see
+          // `contactChannelFacts`). Which identities this run may send to is filtered below.
+          identities: { where: { ownerId, deletedAt: null }, select: { id: true, channel: true } },
         },
       }),
       readContactConsentTruth(client, ownerId, { channel, purpose }),
@@ -439,7 +444,8 @@ export function createCustomerBroadcastService(
           contact.totalOrdersMyr === null || contact.totalOrdersMyr === undefined
             ? undefined
             : Number(contact.totalOrdersMyr),
-        channels: [channel],
+        // The contact's own live channels, built by the one shared construction (#806 r2).
+        channels: contactChannelFacts(contact.identities),
         // Translated for the segment "contactability" rule only: a not-known-revoked contact
         // reads as opt_in so unknown permission stays in the estimate (flag + keep, B0-44).
         marketingConsent: optedOut ? "opt_out" : "opt_in",
@@ -448,15 +454,19 @@ export function createCustomerBroadcastService(
       // #806: the consent authority is the GATE here, not merely a fact the rules may consult.
       // A segment that names only the channel used to admit a known opt-out — including one held
       // out by the pre-ledger fence — into the frozen audience, shown as a kept member. Same
-      // function the segments page selects with, so neither side can admit whom the other drops.
+      // function AND the same facts the segments page selects with, so neither side can admit
+      // whom the other drops.
       const selected = selectedIntoAudience(truth, facts, validated.value, evaluatedAt);
+      // This run can only speak about — and only send to — identities on its own channel. That
+      // is a targeting question, deliberately kept out of the selection facts above.
+      const sendTargets = contact.identities.filter((identity) => identity.channel === channel);
       // Only contacts this run can reach are counted: an audience summary must describe the
       // audience, not the address book.
-      if (contact.identities.length === 0) continue;
+      if (sendTargets.length === 0) continue;
       reachable.push({ truth, selected, facts });
       if (!selected) continue;
       if (truth.reportedOptOut && !optedOut) reportedOptOutKept += 1;
-      for (const identity of contact.identities) {
+      for (const identity of sendTargets) {
         candidates.push({ contactId: contact.id, contactIdentityId: identity.id });
       }
     }

@@ -35,6 +35,7 @@ const { createCustomerBroadcastService } = await import("../customer-broadcast-s
 const { ContactPreview } = await import("@/components/crm/segments-page");
 const { ConsentExclusionNote } = await import("@/components/crm/broadcasts/broadcast-detail-page");
 const { axisReasonCopy, skipReasonCopy } = await import("@/components/crm/broadcasts/broadcast-format");
+const { reasonCodeCopy } = await import("@/components/crm/workflows/workflow-format");
 
 const SUITE = `p2cons-${randomUUID().slice(0, 8)}`;
 const ORG_A = `${SUITE}-org-a`;
@@ -51,6 +52,7 @@ const SEGMENT_WHATSAPP = `${SUITE}-segment-whatsapp`;
 const SEGMENT_EVERYONE = `${SUITE}-segment-everyone`;
 const SEGMENT_OPTED_OUT = `${SUITE}-segment-opted-out`;
 const SEGMENT_WHATSAPP_ONLY = `${SUITE}-segment-whatsapp-only`;
+const SEGMENT_MIXED_ANY = `${SUITE}-segment-mixed-any`;
 const NOW = new Date("2026-08-08T00:00:00.000Z");
 
 /** Names read like the walkthrough's, so a failure names a person, not an id. */
@@ -98,6 +100,21 @@ const OPTED_OUT_ONLY = {
 const WHATSAPP_ONLY = {
   match: "all" as const,
   rules: [{ kind: "channel" as const, channel: "whatsapp" }],
+};
+/**
+ * #806 r1 判官 — the shape that split the two call sites apart. Legal rules, mixed Any: "anyone on
+ * Email, or anyone who is a known opt-out". For a fenced customer who holds BOTH an Email and a
+ * WhatsApp identity the two branches disagree, so the answer depends entirely on which channel
+ * facts the evaluator was handed — and a WhatsApp run used to be handed `["whatsapp"]` instead of
+ * the contact's own channels. The segments page then excluded her on the Email branch while the
+ * broadcast admitted her on the opt-out branch: "excluded on the page, Kept in the freeze" again.
+ */
+const MIXED_ANY = {
+  match: "any" as const,
+  rules: [
+    { kind: "channel" as const, channel: "email" },
+    { kind: "contactability" as const, value: "not_contactable" as const },
+  ],
 };
 
 const broadcast = createCustomerBroadcastService({ clock: () => NOW, id: () => `${SUITE}-gen-${randomUUID()}` });
@@ -217,6 +234,14 @@ beforeAll(async () => {
   await prisma.contactIdentity.create({
     data: { id: `${MEI}-identity`, ownerId: ORG_B, contactId: MEI, channel: "whatsapp", externalId: "+60199999999" },
   });
+  // #806 r1 判官 — Chandra is reachable on TWO channels. Her second identity is what makes the
+  // mixed-Any segment answer differently depending on whose channel facts the gate is handed,
+  // which is the divergence r2 closes. No existing count moves: she is a known opt-out, so every
+  // consent-aware selection in this file already leaves her out, and a WhatsApp run can still
+  // only target her WhatsApp identity.
+  await prisma.contactIdentity.create({
+    data: { id: `${CHANDRA}-identity-email`, ownerId: ORG_A, contactId: CHANDRA, channel: "email", externalId: "chandra@fikirtive.test" },
+  });
 
   // Devi opted out herself through the unsubscribe link — verified customer evidence.
   await recordConsentEvent({
@@ -331,6 +356,15 @@ beforeAll(async () => {
         name: "Everyone on WhatsApp",
         phrase: "All of: channel is whatsapp",
         rulesJson: WHATSAPP_ONLY,
+        kind: "custom",
+        createdAt: NOW,
+      },
+      {
+        id: SEGMENT_MIXED_ANY,
+        ownerId: ORG_A,
+        name: "On Email, or a known opt-out",
+        phrase: "Any of: channel is email or contact is a known opt-out",
+        rulesJson: MIXED_ANY,
         kind: "custom",
         createdAt: NOW,
       },
@@ -619,14 +653,73 @@ describe("#806 a segment that never mentions consent cannot put a known opt-out 
     };
     expect(verdict.consentStop).toMatchObject({ status: "block", reason: "unresolved_legacy_opt_out" });
 
-    // And the block says why in words, not in a machine token — the same sentence the segments
-    // page already uses for this customer.
-    expect(axisReasonCopy(verdict.consentStop?.reason)).toBe(
-      "The customer opted out before consent history was kept, so they stay out until they opt in again.",
+    // And the block says why in words, not a machine token — under #768's rule that every clause
+    // may state only what the ledger can prove. r1 of this PR pinned a sentence that broke it
+    // twice ("The customer opted out" guesses an actor R-010 fixes at `legacy_unknown`; "again"
+    // presupposes a first opt-in the ledger cannot see), so the bans are pinned here too.
+    const copy = axisReasonCopy(verdict.consentStop?.reason);
+    expect(copy).toBe(
+      "An opt-out was recorded for this contact before consent history began, so sending stays closed until the customer opts in through their own channel.",
     );
+    expect(copy).not.toContain("The customer opted out");
+    expect(copy).not.toContain("again");
     expect(skipReasonCopy("consentStop:unresolved_legacy_opt_out")).toContain(
-      "opted out before consent history was kept",
+      "An opt-out was recorded for this contact before consent history began",
     );
+    // A read that failed is described as a read that failed — this reason also fires for a
+    // contact who has no pre-ledger record at all, so it may not describe one.
+    const unreadable = axisReasonCopy("legacy_mirror_unreadable");
+    expect(unreadable).toBe("Part of the consent record could not be read, so sending fails closed.");
+    expect(unreadable).not.toContain("opt");
+
+    // A Routine reaches the merchant through a different formatter, and it was printing the raw
+    // code. Both new reasons are sentences on that path too, with no machine token left in them.
+    for (const reason of ["unresolved_legacy_opt_out", "legacy_mirror_unreadable"]) {
+      const workflowCopy = reasonCodeCopy(`consentStop:${reason}`);
+      expect(workflowCopy, reason).not.toContain(reason);
+      expect(workflowCopy, reason).not.toMatch(/[a-z]_[a-z]/);
+      expect(workflowCopy, reason).toMatch(/[.!]$/);
+    }
+  });
+
+  it("gives one customer one answer on both call sites, whatever channel the run sends from", async () => {
+    // #806 r1 判官's reproduction. Chandra is fenced and holds Email + WhatsApp. On these rules
+    // the two branches disagree about her, so the answer is decided entirely by the `channels`
+    // fact — and a WhatsApp run used to substitute its own channel for the contact's, taking the
+    // "known opt-out" branch and freezing her in as a kept member while the page excluded her on
+    // the Email branch. Both sides now read the contact's own channels.
+    actAs(ORG_A);
+    const preview = await previewSegment(MIXED_ANY);
+    if (!("ok" in preview)) throw new Error(preview.error);
+    const frozen = await freezeOnce("freeze-mixed-any", SEGMENT_MIXED_ANY);
+    const delivered = new Set(frozen.members.map((member) => member.contactId));
+
+    expect(preview.contacts.some((contact) => contact.id === CHANDRA)).toBe(false);
+    expect(delivered.has(CHANDRA)).toBe(false);
+    const written = await prisma.broadcastAudienceMember.findMany({
+      where: { ownerId: ORG_A, broadcastRunId: frozen.resource.id },
+      select: { contactId: true },
+    });
+    expect(written.some((member) => member.contactId === CHANDRA)).toBe(false);
+
+    // Held out, and said out loud on both surfaces with the same arithmetic. (The two counts are
+    // equal here because the only contact the authority holds out of these rules — Chandra — is
+    // reachable on the run's channel, so both populations contain her.)
+    expect(preview.excludedByConsentCount).toBe(1);
+    expect(preview.unresolvedLegacyOptOutCount).toBe(1);
+    expect(frozen.consent.excludedByConsent).toBe(preview.excludedByConsentCount);
+    expect(frozen.consent.unresolvedLegacyOptOut).toBe(preview.unresolvedLegacyOptOutCount);
+
+    // The branch the merchant really did ask for still works: Hana, Devi and Grace are known
+    // opt-outs with no Email identity, so only the `not_contactable` branch selects them — a
+    // deliberate choice, unchanged. John is the fourth on the page and unreachable by WhatsApp.
+    expect(preview.matchedCount).toBe(4);
+    for (const optedOut of [HANA, DEVI, GRACE]) {
+      expect(preview.contacts.some((contact) => contact.id === optedOut)).toBe(true);
+      expect(delivered.has(optedOut)).toBe(true);
+    }
+    expect(delivered.has(JOHN)).toBe(false);
+    expect(frozen.members).toHaveLength(3);
   });
 
   it("runs the gate inside each tenant's own fence", async () => {
