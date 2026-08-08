@@ -207,6 +207,9 @@ describe("#735 — the audit stream answers WHO", () => {
   });
 
   it("says nothing rather than blaming the founder when no actor was recorded", async () => {
+    // The empty payload is the HISTORICAL shape of this event: #756 made new `impersonate.stop`
+    // rows name their operator, and deliberately did not rewrite the rows already written. So
+    // actor-less rows outlive the fix, and the read model must keep saying so out loud.
     const id = await makeEvent("founder", "impersonate.stop", {});
     const data = await getAdminV2Data();
     const row = data.audit.find((r) => r.id === id);

@@ -31,7 +31,7 @@ function isProvisioningRefusal(e: unknown): boolean {
  *  unverified identity still performs zero work), and the idempotency / founder-atomicity /
  *  allowlist-ordering constraints are all unchanged. (#538 narrowed never-throw to the single
  *  carve-out documented above; every other failure is still swallowed as non-fatal.) */
-export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean }): Promise<void> {
+export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean; sessionId?: string | null }): Promise<void> {
   if (!input.emailVerified) return; // never converge (esp. founder super-admin promote) on an unverified identity
   const email = input.email.toLowerCase();
   await runAsSystem("auth:converge-identity", async () => {
@@ -107,7 +107,49 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // The bare "founder" literal here is what made the audit page read as though the founder
       // himself signed in every time a merchant did; it is the shared constant now, so the next
       // reader sees an org id rather than a name.
-      await Promise.resolve(prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } } })).catch(() => {});
+      //
+      // #737 — IDEMPOTENT, like every other step above it. One login calls this function more
+      // than once by construction (Better Auth fires it from the user-create hook AND the
+      // session-create hook, tens of milliseconds apart), and a second verification click or a
+      // racing tab fires it again. The account, the personal org and the welcome grant all
+      // already survived that; only the audit write did not, so one login was recorded twice —
+      // and anything later counted off this table (sign-in frequency, a lockout threshold)
+      // doubled with it.
+      //
+      // THE KEY IS THE SESSION, because the session IS the sign-in. Better Auth mints exactly
+      // one session row per successful sign-in and hands its id to the session-create hook, so
+      // `signin:<sessionId>` identifies the EVENT: every convergence belonging to that one login
+      // computes the same key, and two genuinely separate logins can never collide however close
+      // together they happen. (A wall-clock window would have keyed a USER rather than an event:
+      // two real logins a few seconds apart would fold into one row, and the DB-level dedupe
+      // below — correct in itself — would make the swallowed one unrecoverable.)
+      //
+      // The key is the row's own primary key, so the DEDUPE IS THE DATABASE: `skipDuplicates`
+      // becomes ON CONFLICT DO NOTHING, which two racing requests cannot both win and which
+      // NEVER rewrites the row already there (the first moment stands as recorded). Same shape
+      // as the welcome grant's `signup:<orgId>` key one step above.
+      //
+      // NO SESSION, NO SIGN-IN ROW — and `sessionId` is only ever passed when the session that
+      // was just created IS a sign-in (see signin-session.ts; impersonation and the
+      // password-change rotation deliberately pass null).
+      //
+      // The other two callers converge without a session at all: the user-create hook and
+      // afterEmailVerification. Neither is a login of its own — each is the FIRST HALF of one
+      // login whose session-create convergence writes that login's single row. Concretely, a
+      // first-time magic-link sign-in creates the user (verified) and then the session, so this
+      // function ran twice tens of milliseconds apart and, before this fix, appended twice.
+      //
+      // Self-service registration never reached this line even before: it is held at
+      // `requireEmailVerification`, so the account exists with emailVerified false and the gate
+      // on the FIRST line of this function returns before any of the above runs.
+      if (input.sessionId) {
+        await Promise.resolve(
+          prisma.actionEvent.createMany({
+            data: [{ id: `signin:${input.sessionId}`, ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } }],
+            skipDuplicates: true,
+          }),
+        ).catch(() => {});
+      }
     } catch (e) {
       // The one deliberate exception to never-throws (#538): a provisioning refusal is a
       // security decision, not a convergence hiccup, and must not be downgraded here either.
