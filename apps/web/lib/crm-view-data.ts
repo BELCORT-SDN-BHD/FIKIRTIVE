@@ -2,6 +2,7 @@
 
 import { prisma } from "@fikirtive/db";
 import { requireOwner } from "@/lib/auth-guard";
+import { contactConsentTruth } from "./consent-authority";
 import { ownedContactsWhere } from "./crm-contact-scope";
 import { isCrmLifecycleStage, type CrmLifecycleStage } from "./crm-identity";
 
@@ -18,6 +19,15 @@ export type CrmConsentState = {
   stateSourceKind: string | null;
   evidenceStatus: string | null;
   lastReceivedAt: Date | null;
+  /**
+   * #752 — the pre-ledger fence, read from the SAME predicate segment selection reads
+   * (`contactConsentTruth`), so a contact this product keeps out of every audience is never
+   * described as "Unknown" on the page the merchant opens to check.
+   *
+   * The ledger genuinely knows nothing about this contact (`state` stays `unknown`), so the
+   * badge cannot come from `state` alone — the honest sentence needs both halves of the fact.
+   */
+  unresolvedLegacyOptOut: boolean;
 };
 
 export type CrmConsentEventRow = {
@@ -77,6 +87,10 @@ function contactSelect(ownerId: string) {
     doNotDisturb: true,
     totalOrdersMyr: true,
     createdAt: true,
+    // Never an authority of its own (#726) and never a source of a badge on its own: it is fed
+    // to `contactConsentTruth`, which can only hold a contact OUT, never let one in. Same read,
+    // same direction, same one predicate the segments page and the broadcast freeze use (#752).
+    marketingConsent: true,
     identities: {
       where: { ownerId, deletedAt: null },
       select: { id: true, channel: true, externalId: true, handle: true, label: true },
@@ -106,6 +120,7 @@ type DbContactRow = {
   doNotDisturb: boolean;
   totalOrdersMyr: null | string | number | { toString(): string };
   createdAt: Date;
+  marketingConsent: string | null;
   identities: CrmIdentityRow[];
   consentStateProjections: Array<{
     state: string;
@@ -121,6 +136,12 @@ function presentContact(row: DbContactRow): CrmContactRow {
     projection?.state === "verified_grant" || projection?.state === "effective_revoke"
       ? projection.state
       : "unknown";
+  // One predicate, not a second copy of it: `contactConsentTruth` is the same function segment
+  // selection calls, in the same whatsapp × marketing scope these pages already display.
+  const truth = contactConsentTruth(
+    { state, unresolvedLegacyOptOut: false, reportedOptOut: false },
+    row.marketingConsent,
+  );
   return {
     id: row.id,
     name: row.name,
@@ -130,10 +151,11 @@ function presentContact(row: DbContactRow): CrmContactRow {
     firstTouchAt: row.firstTouchAt,
     lastSeenAt: row.lastSeenAt,
     consentState: {
-      state,
+      state: truth.state,
       stateSourceKind: projection?.stateSourceKind ?? null,
       evidenceStatus: projection?.evidenceStatus ?? null,
       lastReceivedAt: projection?.lastReceivedAt ?? null,
+      unresolvedLegacyOptOut: truth.unresolvedLegacyOptOut,
     },
     doNotDisturb: row.doNotDisturb,
     totalOrdersMyr: row.totalOrdersMyr == null ? null : row.totalOrdersMyr.toString(),
