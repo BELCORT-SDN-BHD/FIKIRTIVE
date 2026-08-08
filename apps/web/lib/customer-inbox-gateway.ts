@@ -9,7 +9,7 @@ import {
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "./better-auth/compat";
-import { memberDirectoryService } from "./member-directory-service";
+import { MemberDirectoryError, memberDirectoryService } from "./member-directory-service";
 import {
   CustomerInboxError,
   customerInboxService,
@@ -90,6 +90,11 @@ async function runRead<T>(
     return { ok: true, resource: await runAsUser(ambient, () => operation(service)) };
   } catch (error) {
     if (error instanceof CustomerInboxError) return { ok: false, error: error.code };
+    // MemberDirectoryError shares the NOT_AUTHORIZED/ACTION_DENIED codes; surface them the same
+    // way. Its own members.read re-check runs after this gateway's inbox.read check, so a
+    // membership edited between the two lands here — and the conversation route reads through a
+    // single Promise.all, where a throw would take the whole page down instead of one panel.
+    if (error instanceof MemberDirectoryError) return { ok: false, error: error.code };
     throw error;
   }
 }
