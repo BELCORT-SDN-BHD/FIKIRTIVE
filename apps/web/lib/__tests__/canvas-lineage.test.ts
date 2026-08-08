@@ -15,7 +15,7 @@ import { normalizeFactoryMaterial } from "../batch-idempotency";
  *  (round-1 review P1-1: the panel read `durationSeconds`, production stores `seconds`). */
 const STORED_VIDEO_OPTIONS = normalizeFactoryMaterial({
   prompt: "a cup steaming",
-  model: "seedance-2-fast",
+  model: "seedance-2-mini",
   kind: "video",
   count: 1,
   durationSeconds: 10,

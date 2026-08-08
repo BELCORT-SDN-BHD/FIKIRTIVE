@@ -198,13 +198,20 @@ type VideoCfg = {
 const GA = "generate_audio", RES = "resolution", ASP = "aspect_ratio";
 
 const VIDEO_CFG: Record<GenVideoModel, VideoCfg> = {
-  "seedance-2-fast": {
+  "seedance-2-mini": {
     // ByteDance's own fal namespace (no fal-ai/ prefix — unlike Seedream).
     // duration is sent as an INTEGER — verified by a real spend test; fal accepts the int
     // despite the schema page rendering the enum as strings. Don't "fix" it to a string
     // without re-testing.
-    t2v: "bytedance/seedance-2.0/fast/text-to-video",
-    i2v: "bytedance/seedance-2.0/fast/image-to-video",
+    //
+    // #769: the mini tier's own fal routes, NOT the fast ones renamed. Both were read off
+    // fal's public model pages on 2026-08-08 (fal.ai/models/bytedance/seedance-2.0/mini/
+    // {text,image}-to-video) — this file's standing rule is that a route/param is only
+    // written down once the provider confirms it, so the tier swap had to be looked up
+    // rather than derived. The i2v page lists the same controls this row already sends
+    // (image_url / end_image_url / resolution / duration / generate_audio).
+    t2v: "bytedance/seedance-2.0/mini/text-to-video",
+    i2v: "bytedance/seedance-2.0/mini/image-to-video",
     imageParam: "image_url", tailParam: "end_image_url", audioParam: GA, resolutionParam: RES, aspectParam: ASP,
   },
 };

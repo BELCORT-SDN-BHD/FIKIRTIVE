@@ -74,7 +74,7 @@ function genCard() {
     id: "gen-card-1",
     threadId: "t-1",
     payload: {
-      kind: "video", model: "seedance-2-fast", structuredPrompt: "a cat walks",
+      kind: "video", model: "seedance-2-mini", structuredPrompt: "a cat walks",
       entityIds: [], variantSel: {}, params: { count: 1, durationSeconds: 5, resolution: "720p" }, estimatedCredits: 11,
     },
     genJobId: null,
@@ -149,16 +149,16 @@ describe("#647 T6 修复轮 P1-3:读得到时行为逐字不变(可用性只在�
   });
 
   it("查询正常返回禁用行 ⇒ 仍是「被关掉」那一句(与读不到区分开)", async () => {
-    mockOverlayFindMany.mockResolvedValue([{ modelId: "seedance-2-fast" }]);
+    mockOverlayFindMany.mockResolvedValue([{ modelId: "seedance-2-mini" }]);
     const r = await getStoryboardVideoOptions();
     expect(r).toEqual({ error: "Video generation is turned off right now." });
   });
 
   it("查询正常时 resolver 只回在册 id(未知 id 照旧在解析边界被丢掉)", async () => {
-    mockOverlayFindMany.mockResolvedValue([{ modelId: "seedance-2-fast" }, { modelId: "kling" }, { modelId: "" }]);
+    mockOverlayFindMany.mockResolvedValue([{ modelId: "seedance-2-mini" }, { modelId: "kling" }, { modelId: "" }]);
     const r = await resolveDisabledModels();
     expect("disabled" in r).toBe(true);
     if (!("disabled" in r)) return;
-    expect([...r.disabled]).toEqual(["seedance-2-fast"]);
+    expect([...r.disabled]).toEqual(["seedance-2-mini"]);
   });
 });

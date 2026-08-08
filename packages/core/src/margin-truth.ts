@@ -86,47 +86,25 @@ export type AcceptedFloorException = {
   source: string;
 };
 
-/** #645 T4 裁决留档(Founder,2026-08-06)。 */
-const RULING_645 = "https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378";
-
 /**
- * **Founder 已裁接受的地板豁免**(#645,2026-08-06)。
- *
- * 720p 的按秒价(2.2cr/秒)在 5 / 10 / 15 秒这三个整点上**不产生进位余量** —— 收费正好
- * 是 11 / 22 / 33cr。按 16:9 记(921,600px)它们是 45.02%,清地板;但同一档的 4:3 / 3:4
- * (927,408px)与 21:9(926,100px)更贵,按**最差比例**建模后落到 44.67%,低于 45.0%
- * 地板 0.33 个点。Founder 于 2026-08-06 明示接受这三档(留档见 `source`),理由是这三个
- * 时长是主力档、已裁的 11/22cr 一个数不动,而 0.33 个点的缺口只在少数比例上出现。
+ * **Founder 已裁接受的地板豁免**。
  *
  * 这张名单同样被两头钉死(闸里的 A1–A4 规则):跌破却不在名单上 → 红;在名单上却已经
  * 清了地板 → 红;条目缺字段或指向不存在的档位 → 红;同一档同时出现在两张名单上 → 红。
+ *
+ * **现在是空的。** 上一批(#645,2026-08-06,留档
+ * https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378)挂着 720p 的 5 / 10 / 15 秒
+ * 三档:2.2cr/秒在这三个整点上不产生进位余量(收费正好 11 / 22 / 33cr),而按**最差比例**
+ * (4:3 / 3:4,927,408px)建模的成本让它们落到 44.67%,差地板 0.33 个点,Founder 明示接受。
+ *
+ * #769(2026-08-08)换引擎之后这三档**不再跌破**:牌价从 fast 的 $5.60/M 降到 mini 的
+ * $3.50/M,同样的收费(11 / 22 / 33cr,一格没动)对上的成本变成 $0.3804 / $0.7608 /
+ * $1.1411,毛利率 65.42%。缺口不是被豁免掉的,是被成本降没的 —— 按规则 2(「在名单上却
+ * 已经清了地板 → 红」)这三条必须清掉,留着就是让一条不再成立的豁免继续挂在账上。
+ * 清空之后没有任何一档需要豁免。全表 27 档的最低毛利率是 **65.0%**(图片与参考图这两档;
+ * 视频档最低的是 720p 5/10/15 秒的 65.42%),离 45% 地板还有 20 个点。
  */
-export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [
-  {
-    tier: "video:seedance-2-fast:5:720p",
-    ratios: ["4:3", "3:4", "21:9"],
-    margin: 0.4467,
-    reason: "720p 5 秒 = 11cr 整,按秒价无进位余量;最差比例(4:3/3:4)成本 $0.6086 ⇒ 44.67%。已裁的 11cr 不动。",
-    ruledOn: "2026-08-06",
-    source: RULING_645,
-  },
-  {
-    tier: "video:seedance-2-fast:10:720p",
-    ratios: ["4:3", "3:4", "21:9"],
-    margin: 0.4467,
-    reason: "720p 10 秒 = 22cr 整,同样无进位余量;最差比例成本 $1.2172 ⇒ 44.67%。已裁的 22cr 不动。",
-    ruledOn: "2026-08-06",
-    source: RULING_645,
-  },
-  {
-    tier: "video:seedance-2-fast:15:720p",
-    ratios: ["4:3", "3:4", "21:9"],
-    margin: 0.4467,
-    reason: "720p 15 秒 = 33cr 整(新开的最长档),无进位余量;最差比例成本 $1.8258 ⇒ 44.67%。",
-    ruledOn: "2026-08-06",
-    source: RULING_645,
-  },
-];
+export const BELOW_FLOOR_FOUNDER_ACCEPTED: readonly AcceptedFloorException[] = [];
 
 /** 取某一档的已裁豁免;不在名单上返回 undefined。纯函数。 */
 export function acceptedExceptionFor(tier: string): AcceptedFloorException | undefined {
@@ -159,7 +137,7 @@ export function marginRow(id: string, label: string, chargeUsd: number, cogsUsd:
 
 const videoJob = (seconds: number, resolution: string): GenSpendInput => ({
   kind: "VIDEO",
-  model: "seedance-2-fast",
+  model: "seedance-2-mini",
   count: 1,
   videoOptions: { seconds, resolution, audio: true },
 });
@@ -215,7 +193,7 @@ export const MARGIN_TRUTH_SKUS: readonly MarginSku[] = [
   },
   ...sellableVideoSkus(),
   {
-    id: "video:seedance-2-fast:ref",
+    id: "video:seedance-2-mini:ref",
     label: "整段参考视频(6 秒参考上限 + 5 秒出片)",
     charge: () => pricedGenCredits({ ...videoJob(5, "720p"), referenceVideoGenerationId: "ref" }) / CREDITS_PER_USD,
     cogs: () => genSpentUsd({ ...videoJob(5, "720p"), referenceVideoGenerationId: "ref" }),

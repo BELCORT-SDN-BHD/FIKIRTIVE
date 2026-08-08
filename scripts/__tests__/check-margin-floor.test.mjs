@@ -55,8 +55,8 @@ import {
 
 // ── structural sanity: floor constant + E1-06 costing entry present ──
 assert.equal(MARGIN_FLOOR, 0.45, "constitutional floor is 45%");
-assert.ok(COGS_INPUTS["video:seedance-2-fast:ref"], "E1-06 reference-video COGS input registered");
-assert.ok(COGS_INPUTS["image:seedream"] && COGS_INPUTS["video:seedance-2-fast:5:720p"] && COGS_INPUTS["video:seedance-2-fast:10:720p"]);
+assert.ok(COGS_INPUTS["video:seedance-2-mini:ref"], "E1-06 reference-video COGS input registered");
+assert.ok(COGS_INPUTS["image:seedream"] && COGS_INPUTS["video:seedance-2-mini:5:720p"] && COGS_INPUTS["video:seedance-2-mini:10:720p"]);
 
 // ── P1: the two independent cost sources are pinned to each other ──
 const TODAY = "2026-08-06";
@@ -210,7 +210,7 @@ assert.equal(evaluateFloorDecisions([okRow], [], TODAY).ok, true);
 for (const seconds of [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
   for (const res of ["480p", "720p"]) {
     assert.ok(
-      COGS_INPUTS[`video:seedance-2-fast:${seconds}:${res}`],
+      COGS_INPUTS[`video:seedance-2-mini:${seconds}:${res}`],
       `#645: sellable tier ${seconds}s ${res} must carry a certified COGS input`,
     );
   }

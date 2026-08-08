@@ -1,6 +1,6 @@
 // Does a real generated video carry an audio track? Downloads the most recent prod
 // video generation FOR ONE MODEL and ffprobes it. Defaults to the in-production video
-// engine (seedance-2-fast) so the answer is about that engine and not whatever clip
+// engine (seedance-2-mini) so the answer is about that engine and not whatever clip
 // happened to be generated last; pass another model key, or `all` for no filter.
 // The model actually probed is printed, so the result is never ambiguous. Run via:
 //   railway run --service worker -- node scripts/tools/check-video-audio.mjs [model|all]
@@ -15,8 +15,8 @@ const { createStorage } = await import("../../packages/storage/dist/index.js");
 const { storageKey } = await import("../../packages/core/dist/index.js");
 
 // Generation.modelRef is written by the worker straight from GenJob.model, so it is the
-// engine key ("seedance-2-fast"). `all` drops the filter for spot-checking anything else.
-const MODEL = process.argv[2] ?? "seedance-2-fast";
+// engine key ("seedance-2-mini"). `all` drops the filter for spot-checking anything else.
+const MODEL = process.argv[2] ?? "seedance-2-mini";
 const gen = await prisma.generation.findFirst({
   where: {
     source: "GENERATED", deletedAt: null,

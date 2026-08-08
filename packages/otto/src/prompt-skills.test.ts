@@ -20,7 +20,7 @@ describe("prompt-skilled families (D/E decision 6 — sole prompt authority)", (
     // What reaches the spend path is the card's menu key (GEN_MODELS / GEN_VIDEO_MODELS),
     // NOT the provider id — modelFamily() resolves that key to a family.
     for (const m of GEN_MODELS) expect(familyHasPromptSkill(modelFamily(m))).toBe(true); // only "seedream"
-    expect(familyHasPromptSkill(modelFamily("seedance-2-fast"))).toBe(true);             // the in-service video engine
+    expect(familyHasPromptSkill(modelFamily("seedance-2-mini"))).toBe(true);             // the in-service video engine
     expect(familyHasPromptSkill(modelFamily("kling"))).toBe(false);                      // 已下架 → 认不出家族 → 后备
     expect(familyHasPromptSkill(modelFamily("veo3.1-fast"))).toBe(false);
   });

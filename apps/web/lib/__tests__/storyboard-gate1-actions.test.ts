@@ -189,7 +189,7 @@ function mockResolvedDefaults() {
   // GEN_VIDEO_MODEL_OPTIONS 查表(via importOriginal),所以模型名必须是菜单上真有的一格 ——
   // 写一个下架 id 会让 options 读到 undefined。
   mockSuggestModel.mockReturnValue({
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     params: { durationSeconds: 5, count: 1 },
     reason: "",
     downgraded: false,
@@ -249,7 +249,7 @@ function wireLoads(parent: ReturnType<typeof card>, children: Record<string, { p
  */
 function useVideoShape(aspectRatio: string) {
   mockSuggestModel.mockReturnValue({
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     params: { durationSeconds: 5, count: 1, aspectRatio },
     reason: "",
     downgraded: false,
@@ -570,7 +570,7 @@ describe("首帧图形状(#643 T2)", () => {
 
   it("片子是 16:9 ⇒ 首帧就按 16:9 铸（不再默认方图）", async () => {
     mockSuggestModel.mockReturnValue({
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       params: { durationSeconds: 5, aspectRatio: "16:9", count: 1 },
       reason: "", downgraded: false, requested: {},
     });
@@ -583,7 +583,7 @@ describe("首帧图形状(#643 T2)", () => {
 
   it("视频侧换成竖版 ⇒ 首帧自动跟着换（形状不写死在这个文件里）", async () => {
     mockSuggestModel.mockReturnValue({
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       params: { durationSeconds: 5, aspectRatio: "9:16", count: 1 },
       reason: "", downgraded: false, requested: {},
     });
@@ -603,7 +603,7 @@ describe("首帧图形状(#643 T2)", () => {
 
   it("视频那一格不在图片菜单上 ⇒ 同样不发明值（引擎收不下的形状到不了付费请求）", async () => {
     mockSuggestModel.mockReturnValue({
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       params: { durationSeconds: 5, aspectRatio: "adaptive", count: 1 },
       reason: "", downgraded: false, requested: {},
     });
@@ -615,7 +615,7 @@ describe("首帧图形状(#643 T2)", () => {
 
   it("重出一张首帧走的是同一条形状口径", async () => {
     mockSuggestModel.mockReturnValue({
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       params: { durationSeconds: 5, aspectRatio: "16:9", count: 1 },
       reason: "", downgraded: false, requested: {},
     });
@@ -1453,7 +1453,7 @@ describe("getStoryboardVideoOptions — $0 读取模型时长", () => {
     );
     expect(res).not.toHaveProperty("model");
     // durations come from the REAL GEN_VIDEO_MODEL_OPTIONS table (not hardcoded)
-    expect(res.durations).toEqual([...GEN_VIDEO_MODEL_OPTIONS["seedance-2-fast"].durations]);
+    expect(res.durations).toEqual([...GEN_VIDEO_MODEL_OPTIONS["seedance-2-mini"].durations]);
     // $0: no writes at all
     expect(mockChatCreate).not.toHaveBeenCalled();
     expect(mockChatUpdate).not.toHaveBeenCalled();
@@ -1513,7 +1513,7 @@ function mockVideoProposeCard() {
     ) => ({
       cardPayload: {
         kind: "video",
-        model: "seedance-2-fast",
+        model: "seedance-2-mini",
         params: { count: 1, durationSeconds: snapDuration(input.desiredDuration) },
         structuredPrompt: input.structuredPrompt,
         entityIds: input.entityIds,
@@ -1632,7 +1632,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -1656,7 +1656,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     // duration mismatch: child payload duration 8 != would-be (snapped) duration 5
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 8 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 8 } },
         genJobId: null,
       },
     });
@@ -1678,7 +1678,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     // source mismatch: child was built off an OLD frame id
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", model: "seedance-2-fast", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "OLD-frame", model: "seedance-2-mini", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -1700,7 +1700,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -1728,7 +1728,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -1752,7 +1752,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     wireLoads(card(p), {
       "vchild-0": {
         // child was minted at the SNAPPED duration (5), NOT the raw 7
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -1809,7 +1809,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: "gj-1", // best-effort link present → spent (charged), video still pending
       },
     });
@@ -1838,7 +1838,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     wireLoads(card(p), {
       "vchild-0": {
         // SPENT (charged, video still pending) but its prompt has genuinely drifted since.
-        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: "gj-spent",
       },
     });
@@ -1893,7 +1893,7 @@ describe("prepareStoryboardVideos — $0 铸视频子卡(闸②)", () => {
     };
     wireLoads(card(p), {
       "vchild-1": {
-        payload: { structuredPrompt: "vp1", sourceGenerationId: "ffgen1", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp1", sourceGenerationId: "ffgen1", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: "gj-spent-1", // best-effort link present → spent
       },
     });
@@ -2159,7 +2159,7 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 }, estimatedCredits: 5 },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 }, estimatedCredits: 5 },
         genJobId: null,
       },
     });
@@ -2183,7 +2183,7 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     p.shots[0].videoCardId = "vchild-0";
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 } },
         genJobId: null,
       },
     });
@@ -2209,7 +2209,7 @@ describe("regenShotVideoCard — $0 重出视频子卡", () => {
     p.shots[0].videoGenerationId = "vid-OLD"; // an old landed video exists
     wireLoads(card(p), {
       "vchild-0": {
-        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "seedance-2-fast", params: { durationSeconds: 5 } },
+        payload: { structuredPrompt: "vp0-OLD-DRIFTED", sourceGenerationId: "ffgen0", model: "seedance-2-mini", params: { durationSeconds: 5 } },
         genJobId: "gj-spent", // spent AND drifted
       },
     });

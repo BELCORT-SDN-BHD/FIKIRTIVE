@@ -17,7 +17,7 @@ function videoCardPayload(overrides?: Record<string, unknown>) {
   return {
     kind: "video",
     structuredPrompt: "a bright sunny day",
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     params: { durationSeconds: 5, resolution: null, aspectRatio: null, audio: null },
     ...overrides,
   };
@@ -135,10 +135,10 @@ describe("buildGenRequestFromCard — video card", () => {
     expect(result.req.aspectRatio).toBe("16:9");
   });
 
-  it("includes audio field only for audio-toggle models (seedance-2-fast has audioToggle:true)", () => {
+  it("includes audio field only for audio-toggle models (seedance-2-mini has audioToggle:true)", () => {
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
-      cardPayload: videoCardPayload({ model: "seedance-2-fast", params: { audio: true } }),
+      cardPayload: videoCardPayload({ model: "seedance-2-mini", params: { audio: true } }),
       variantSel: {},
     });
     expect(result.ok).toBe(true);
@@ -182,11 +182,11 @@ describe("buildGenRequestFromCard — overrides applied (web path)", () => {
       ...BASE_ARGS,
       cardPayload: videoCardPayload({ model: "kling" }),
       variantSel: {},
-      overrides: { model: "seedance-2-fast" }, // differs from the card → override must win
+      overrides: { model: "seedance-2-mini" }, // differs from the card → override must win
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.req.model).toBe("seedance-2-fast");
+    expect(result.req.model).toBe("seedance-2-mini");
   });
 
   it("overrides.count wins for image card", () => {
@@ -204,7 +204,7 @@ describe("buildGenRequestFromCard — overrides applied (web path)", () => {
   it("overrides.durationSeconds wins for video card", () => {
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
-      cardPayload: videoCardPayload({ model: "seedance-2-fast", params: { durationSeconds: 5 } }),
+      cardPayload: videoCardPayload({ model: "seedance-2-mini", params: { durationSeconds: 5 } }),
       variantSel: {},
       overrides: { durationSeconds: 10 },
     });
@@ -216,7 +216,7 @@ describe("buildGenRequestFromCard — overrides applied (web path)", () => {
   it("overrides.resolution wins for video card", () => {
     const result = buildGenRequestFromCard({
       ...BASE_ARGS,
-      cardPayload: videoCardPayload({ model: "seedance-2-fast", params: { resolution: null } }),
+      cardPayload: videoCardPayload({ model: "seedance-2-mini", params: { resolution: null } }),
       variantSel: {},
       overrides: { resolution: null },
     });
@@ -353,11 +353,11 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
   });
 
   it("produces exact request shape for a video card with audio toggle", () => {
-    // seedance-2-fast has audioToggle: true
+    // seedance-2-mini has audioToggle: true
     const cardPayload = {
       kind: "video",
       structuredPrompt: "a cinematic shot",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       params: { durationSeconds: 5, resolution: null, aspectRatio: null, audio: true },
       entityIds: [],
       variantSel: {},
@@ -384,7 +384,7 @@ describe("buildGenRequestFromCard — byte-identical deep-equal test", () => {
       entityIds: [],
       count: 1,
       kind: "video",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       durationSeconds: 5,
       resolution: null,
       aspectRatio: null,
@@ -401,7 +401,7 @@ describe("buildGenRequestFromCard — referenceVideoGenerationId", () => {
     const r = buildGenRequestFromCard({
       projectId: "p", threadId: "t", cardId: "c", prompt: "make it move",
       entityIds: [], variantSel: {},
-      cardPayload: { kind: "video", model: "seedance-2-fast", structuredPrompt: "x", params: {}, referenceVideoGenerationId: "gen_vid" },
+      cardPayload: { kind: "video", model: "seedance-2-mini", structuredPrompt: "x", params: {}, referenceVideoGenerationId: "gen_vid" },
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.req.referenceVideoGenerationId).toBe("gen_vid");
@@ -411,7 +411,7 @@ describe("buildGenRequestFromCard — referenceVideoGenerationId", () => {
     const r = buildGenRequestFromCard({
       projectId: "p", threadId: "t", cardId: "c", prompt: "make it move",
       entityIds: [], variantSel: {},
-      cardPayload: { kind: "video", model: "seedance-2-fast", structuredPrompt: "x", params: {} },
+      cardPayload: { kind: "video", model: "seedance-2-mini", structuredPrompt: "x", params: {} },
     });
     expect(r.ok).toBe(true);
     if (r.ok) expect("referenceVideoGenerationId" in r.req).toBe(false);

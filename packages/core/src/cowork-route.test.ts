@@ -107,7 +107,7 @@ describe("suggestModel", () => {
   });
   it("always returns the active video model regardless of hasTail (locked model; tail capability is an accepted tradeoff)", () => {
     // Before: suggestModel would pick a tail-capable model when hasTail=true.
-    // Now: model selection is locked to activeVideoModel() (seedance-2-fast by default;
+    // Now: model selection is locked to activeVideoModel() (seedance-2-mini by default;
     // 2026-07-04: only flat margin-floored models are honored) by product decision — the
     // spend gate only allows the active model. hasTail is accepted but does not reroute
     // to a different model; params are still clamped to the active model's options.
@@ -170,7 +170,7 @@ describe("#647 T6 suggestModel 尊重 disabled(关掉唯一引擎 ⇒ 铸不出�
     const r = suggestModelRaw({ kind: "video", disabled: new Set(["kling", "veo3.1", "某个不存在的 id"]) });
     expect(r).not.toBeNull();
     expect(r?.model).toBe(activeVideoModel());
-    const img = suggestModelRaw({ kind: "image", disabled: new Set(["seedance-2-fast"]) });
+    const img = suggestModelRaw({ kind: "image", disabled: new Set(["seedance-2-mini"]) });
     expect(img).not.toBeNull();
     expect(img?.model).toBe("seedream");
   });

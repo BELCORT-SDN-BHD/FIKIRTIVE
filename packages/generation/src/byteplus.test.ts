@@ -5,7 +5,13 @@ import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.j
 describe("BytePlusProvider — wiring", () => {
   it("maps internal model ids to Ark ids", () => {
     expect(IMAGE_MODEL_MAP["seedream"]).toBe("seedream-5-0-260128");
-    expect(VIDEO_MODEL_MAP["seedance-2-fast"]).toBe("dreamina-seedance-2-0-fast-260128");
+    // #769:版本化 id 取自 ModelArk 模型档案(只读核实,2026-08-08):
+    //   arkcli models get dreamina-seedance-2-0-mini      → id / primary_version = …-260615
+    //   arkcli models versions dreamina-seedance-2-0-mini → 只有 260615 一个版本
+    expect(VIDEO_MODEL_MAP["seedance-2-mini"]).toBe("dreamina-seedance-2-0-mini-260615");
+    // 下架的那一台不许还留着一条能把钱花出去的路(与 GEN_VIDEO_MODELS 同进同退)。
+    expect(VIDEO_MODEL_MAP["seedance-2-fast"]).toBeUndefined();
+    expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini"]);
   });
   it("has a stable provider name", () => {
     expect(new BytePlusProvider("ark-test").name).toBe("byteplus");
@@ -35,12 +41,12 @@ describe("generateVideo (Seedance, async)", () => {
       }
       return bytesRes(); // mp4 download
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-fast", resolution: "720p", aspectRatio: "16:9" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini", resolution: "720p", aspectRatio: "16:9" });
     // Advance through each poll interval
     await vi.runAllTimersAsync();
     const out = await promise;
     expect(out.ext).toBe("mp4");
-    expect(submitBody.model).toBe("dreamina-seedance-2-0-fast-260128");
+    expect(submitBody.model).toBe("dreamina-seedance-2-0-mini-260615");
     expect(submitBody.content[0]).toEqual({ type: "image_url", image_url: { url: "https://r2/frame.png" } });
     // #646 T5: controls ride the STRICT top-level fields, and the prompt text is
     // the merchant's words only — no `--flag` suffix anywhere.
@@ -74,7 +80,7 @@ describe("generateVideo (Seedance, async)", () => {
         return bytesRes();
       });
       const promise = new BytePlusProvider("ark-test").generateVideo({
-        prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds, model: "seedance-2-fast", resolution, aspectRatio,
+        prompt: "roll", imageUrl: "https://r2/frame.png", durationSeconds, model: "seedance-2-mini", resolution, aspectRatio,
       });
       await vi.runAllTimersAsync();
       await promise;
@@ -94,7 +100,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-2")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
     await vi.runAllTimersAsync();
     await promise;
     expect(submitBody.content).toHaveLength(1);
@@ -112,7 +118,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-mute")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast", audio: false });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "a city", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini", audio: false });
     await vi.runAllTimersAsync();
     await promise;
     expect(submitBody.generate_audio).toBe(false);
@@ -126,7 +132,7 @@ describe("generateVideo (Seedance, async)", () => {
       stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
         ? jsonRes({ status, error: { message: "nsfw" } })
         : jsonRes({ id: `cgt-${status}` }));
-      const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+      const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
       let err: any;
       // Attach the rejection handler before advancing timers to avoid an unhandled rejection warning
       const assertion = promise.catch((e) => { err = e; });
@@ -147,7 +153,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-slow")) { polls++; return jsonRes(polls < 70 ? { status: "running" } : { status: "succeeded", content: { video_url: "https://tos/v.mp4" } }); }
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
     await vi.runAllTimersAsync();
     const out = await promise;
     expect(out.ext).toBe("mp4");
@@ -162,7 +168,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-tail")) return jsonRes({ status: "succeeded", content: { video_url: "https://tos/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "morph", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-fast" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "morph", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-mini" });
     await vi.runAllTimersAsync();
     await promise;
     // In first+last mode `role` is REQUIRED on both parts — a roleless pair is a
@@ -178,7 +184,7 @@ describe("generateVideo (Seedance, async)", () => {
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
     let err: any;
     try {
-      await new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-fast" });
+      await new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "https://r2/frame.png", tailImageUrl: "https://r2/end.png", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-mini" });
     } catch (e) { err = e; }
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/end frame/);
@@ -189,7 +195,7 @@ describe("generateVideo (Seedance, async)", () => {
   it("an end frame with no start frame is refused BEFORE any submit — never silently dropped", async () => {
     const calls: string[] = [];
     stubFetch((url) => { calls.push(url); return jsonRes({ id: "should-not-happen" }); });
-    await expect(new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-fast" }))
+    await expect(new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", tailImageUrl: "https://r2/end.png", durationSeconds: 5, model: "seedance-2-mini" }))
       .rejects.toThrow(/needs a start image/);
     expect(calls).toHaveLength(0); // pre-spend
   });
@@ -197,7 +203,7 @@ describe("generateVideo (Seedance, async)", () => {
     stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
       ? jsonRes({ status: "expired" })
       : jsonRes({ id: "cgt-exp" }));
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
     let err: any;
     const assertion = promise.catch((e) => { err = e; });
     await vi.runAllTimersAsync();
@@ -220,7 +226,7 @@ describe("generateVideo (Seedance, async)", () => {
       await assertion;
       return err;
     }
-    const call = () => new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast" });
+    const call = () => new BytePlusProvider("ark-test").generateVideo({ prompt: "x", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini" });
 
     it("弃单超时(任务还在跑,引擎可能照样出片照样计费)", async () => {
       stubFetch((url) => url.includes("/tasks/") && !url.endsWith("tasks")
@@ -367,7 +373,7 @@ describe("generateVideo (Seedance, async)", () => {
       if (url.includes("/tasks/cgt-4")) return jsonRes({ status: "succeeded", content: { video_url: "https://x/v.mp4" } });
       return bytesRes();
     });
-    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "move like this", imageUrl: "", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-fast" });
+    const promise = new BytePlusProvider("ark-test").generateVideo({ prompt: "move like this", imageUrl: "", refVideoUrl: "https://x/ref.mp4", durationSeconds: 5, model: "seedance-2-mini" });
     await vi.runAllTimersAsync();
     await promise;
     const parts = submitBody.content as Array<{ type: string; role?: string; video_url?: { url: string } }>;
@@ -701,13 +707,13 @@ describe("#580 卡面规格 ↔ 现役适配器请求体(lockstep)", () => {
         return bytesRes();
       });
       const promise = new BytePlusProvider("ark-test").generateVideo({
-        prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-fast",
+        prompt: "a clip", imageUrl: "", durationSeconds: 5, model: "seedance-2-mini",
         resolution: "720p", aspectRatio: "16:9", audio: true,
       });
       await vi.runAllTimersAsync();
       await promise;
       expect(submitBody).toEqual({
-        model: "dreamina-seedance-2-0-fast-260128",
+        model: "dreamina-seedance-2-0-mini-260615",
         content: [{ type: "text", text: "a clip" }],
         resolution: "720p",
         duration: 5,

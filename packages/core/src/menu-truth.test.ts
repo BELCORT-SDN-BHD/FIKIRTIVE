@@ -2,7 +2,7 @@
  * #647 T6 假菜单清理 —— 父 spec #641 的收官句「菜单上没有一格是假的」在核心层的钉板。
  *
  * 事实(2026-08-05/06 两路侦察 + #644/#645/#646 三片落地后):
- *   - 真视频引擎**只有一个**:`seedance-2-fast`(BytePlus 直连,在产实付,毛利闸看着)。
+ *   - 真视频引擎**只有一个**:`seedance-2-mini`(BytePlus 直连,在产实付,毛利闸看着)。
  *   - 另外 12 个视频模型全部走 fal 接线,**从来没有在生产出过一条片** —— 菜单上、事实表上、
  *     档位表上、费率表上、fal 接线表上各占一格,后台还各有一个开关,知识库还各占一列家族。
  *     它们是「说的」而没有「做的」的最后一大块。
@@ -30,8 +30,8 @@ import { DIRECTIVE_SEED, modelDirectiveInput } from "./cowork-directives.js";
 import { genSpentUsd, pricedGenCredits, INTERNAL_PER_DISPLAY } from "./spend.js";
 import { ALL_MODEL_IDS } from "./model-registry.js";
 
-/** 下架的 12 格 —— 逐字抄自 #647 票面,与代码里的菜单**独立**。
- *  有人把任何一个悄悄放回菜单,这份清单当场变红。 */
+/** 已下架的视频引擎 —— 前 12 格逐字抄自 #647 票面,末尾一格来自 #769,与代码里的菜单
+ *  **独立**。有人把任何一个悄悄放回菜单,这份清单当场变红。 */
 const RETIRED_VIDEO_MODELS = [
   "kling",
   "veo3.1-lite",
@@ -45,6 +45,9 @@ const RETIRED_VIDEO_MODELS = [
   "wan-2.5",
   "hailuo-02",
   "seedance-2",
+  // #769(2026-08-08 Founder 已裁):战役引擎换 2.0 mini,fast 随之下架。它进这份清单是
+  // 同一条纪律 —— 下架就要五处一起消失,不许在某张表里留一格能把钱花出去的旧 id。
+  "seedance-2-fast",
 ] as const;
 
 /** 被那 12 格带进来的七个家族。真家族只剩 seedream(图)与 seedance(片)。 */
@@ -52,11 +55,11 @@ const RETIRED_FAMILIES = ["kling", "veo", "ltx", "wan", "pixverse", "grok", "hai
 
 // ── 1. 菜单:只剩一格,而且是真的那一格 ──────────────────────────────────────
 describe("#647 T6 视频菜单(真的只有一格)", () => {
-  it("GEN_VIDEO_MODELS 只剩 seedance-2-fast", () => {
-    expect([...GEN_VIDEO_MODELS]).toEqual(["seedance-2-fast"]);
+  it("GEN_VIDEO_MODELS 只剩 seedance-2-mini", () => {
+    expect([...GEN_VIDEO_MODELS]).toEqual(["seedance-2-mini"]);
   });
 
-  it("12 个假模型在**五处声明**里一处不剩", () => {
+  it("下架的模型在**五处声明**里一处不剩", () => {
     for (const id of RETIRED_VIDEO_MODELS) {
       // ①菜单 ②事实表 ③档位表
       expect((GEN_VIDEO_MODELS as readonly string[]), `菜单还有 ${id}`).not.toContain(id);
@@ -76,8 +79,8 @@ describe("#647 T6 视频菜单(真的只有一格)", () => {
 
   it("后台开关表随之收缩:模型总数 = 图片菜单 ∪ 参考图菜单 ∪ 视频菜单,视频只贡献一格", () => {
     for (const id of RETIRED_VIDEO_MODELS) expect(ALL_MODEL_IDS).not.toContain(id);
-    // 只剩 seedream(图片=参考图同名)+ seedance-2-fast
-    expect([...ALL_MODEL_IDS].sort()).toEqual(["seedance-2-fast", "seedream"]);
+    // 只剩 seedream(图片=参考图同名)+ seedance-2-mini
+    expect([...ALL_MODEL_IDS].sort()).toEqual(["seedance-2-mini", "seedream"]);
   });
 
   it("契约闸照旧拒收下架模型(付费请求进不来)", () => {
@@ -107,7 +110,7 @@ describe("#647 T6 知识格(45 → 5:每一格都真会被读到)", () => {
     //
     // 理由:`modelFamily` 按**前缀**认家族,这是它刻意的设计(版本升级自动继承家族,
     // 见函数注释)。`seedance-2` 虽然从菜单上下架了,但 `seedance` 这个家族**还在产**
-    // (`seedance-2-fast` 是唯一那台真引擎)。前缀命中一个真家族不是假菜单 —— 假菜单的定义
+    // (`seedance-2-mini` 是唯一那台真引擎)。前缀命中一个真家族不是假菜单 —— 假菜单的定义
     // 是「菜单上有这一格」,而 `GEN_VIDEO_MODELS` 上早已没有 `seedance-2`(上面第一段钉着)。
     // 换句话说:原来的断言写错了对象,它要的是「下架的家族不再有家族」,不是「下架的 id
     // 一律无家族」。修正后的判据与 `modelFamily` 的设计一致,也与 T6 的真正目标一致。
@@ -195,11 +198,11 @@ describe("#647 T6 历史安全(下架前存下的行还读得动)", () => {
   });
 
   it("零改动:在产那一格的价与规格一格没动(T4 的护栏语义原样)", () => {
-    const d = videoDefaults("seedance-2-fast");
+    const d = videoDefaults("seedance-2-mini");
     expect(d.resolution).toBe("720p");
     expect(d.seconds).toBe(5);
     expect(d.aspectRatio).toBe("16:9");
-    const job = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
+    const job = { kind: "VIDEO" as const, model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
     expect(pricedGenCredits(job)).toBe(11 * INTERNAL_PER_DISPLAY);
     expect(pricedGenCredits({ ...job, videoOptions: { seconds: 5, resolution: "1080p", audio: true } }))
       .toBe(16 * INTERNAL_PER_DISPLAY);

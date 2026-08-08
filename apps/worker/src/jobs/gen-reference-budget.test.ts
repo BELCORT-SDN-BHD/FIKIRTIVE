@@ -241,7 +241,7 @@ describe("#619 E-5 —— 卡面数字 = worker 真正发出去的参考图张�
     m.genJobFindUnique.mockResolvedValue({
       ...imageJob,
       kind: "VIDEO",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       entityIds: ["e0"],
       sourceGenerationId: "gen_src",
     });

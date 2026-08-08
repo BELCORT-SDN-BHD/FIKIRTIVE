@@ -13,6 +13,7 @@ import {
   videoDefaults,
   VIDEO_ASPECT_ADAPTIVE,
   GEN_VIDEO_MODEL_OPTIONS,
+  GEN_VIDEO_MODEL_INFO,
   GEN_PRICE_USD_PER_IMAGE,
   GEN_VIDEO_SECONDS,
   REFERENCE_VIDEO_MODEL,
@@ -315,7 +316,9 @@ export function buildProposeCard(
     sm.params.aspectRatio = input.desiredAspect && opts.aspectRatios.includes(input.desiredAspect) ? input.desiredAspect : d.aspectRatio;
     sm.params.audio = typeof input.desiredAudio === "boolean" ? input.desiredAudio : d.audio;
     sm.params.count = 1;
-    sm.reason = `Seedance 2.0 Fast — ${sm.params.aspectRatio}, ${GEN_VIDEO_SECONDS}s reference video`;
+    // #769:引擎名从事实表取,不再手抄。手抄的那一份在换引擎(fast→mini)时不会跟着变,
+    // 于是内部/审计文案会继续说一台已经不在产的引擎 —— 与 cowork-route 的做法对齐。
+    sm.reason = `${GEN_VIDEO_MODEL_INFO[REFERENCE_VIDEO_MODEL].label} — ${sm.params.aspectRatio}, ${GEN_VIDEO_SECONDS}s reference video`;
     sm.downgraded = sm.downgraded || (input.desiredDuration != null && input.desiredDuration !== GEN_VIDEO_SECONDS);
   }
 

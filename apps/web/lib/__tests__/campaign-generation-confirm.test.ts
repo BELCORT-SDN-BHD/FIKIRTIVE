@@ -211,7 +211,7 @@ const { displayCredits } = await import("@fikirtive/core");
 const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
 const IMG = 1;
-const VID = 11; // seedance-2-fast 720p/5s(#644 Founder 裁决 2026-08-06:8 → 11 显示 credits)
+const VID = 11; // seedance-2-mini 720p/5s(#644 Founder 裁决 2026-08-06:8 → 11 显示 credits)
 // #645 T4 价目表(Founder 裁决 2026-08-06):480p = 半价档,5 秒 = 6 显示 credits。
 const VID_480 = 6;
 const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);

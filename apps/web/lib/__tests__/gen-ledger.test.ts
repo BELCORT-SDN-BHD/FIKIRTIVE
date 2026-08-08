@@ -127,17 +127,17 @@ describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain image bat
 });
 
 describe("W-B3-E-P ledger — EP-A2: quote == reserve == settle, plain video job", () => {
-  it("a seedance-2-fast 720p/10s job reserves exactly the 22-displayed-credit quote and settles the same", async () => {
+  it("a seedance-2-mini 720p/10s job reserves exactly the 22-displayed-credit quote and settles the same", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
 
-    const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 10, resolution: "720p" } });
+    const quote = pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, referenceVideoGenerationId: null, videoOptions: { seconds: 10, resolution: "720p" } });
     expect(quote).toBe(22 * IMG); // flat 720p/10s tier(#644 裁决 2026-08-06:14 → 22 显示 credits)
 
     const res = idOf(await startGen({
       projectId, prompt: "product spin, longer take", entityIds: [], count: 1,
-      kind: "video", model: "seedance-2-fast", durationSeconds: 10, resolution: "720p",
+      kind: "video", model: "seedance-2-mini", durationSeconds: 10, resolution: "720p",
       idempotencyKey: `vid10-${randomUUID().slice(0, 8)}`,
     }));
     expect(res.disposition).toBe("fresh");
@@ -299,7 +299,7 @@ describe("W-B3-E-P ledger — across INDEPENDENT jobs: reserved == settled + ref
     const j1 = idOf(await startGen(mk({ count: 1 })));                                              // 10 — settles
     const j2 = idOf(await startGen(mk({ count: 2, prompt: "cell two" })));                          // 20 — fails
     const j3 = idOf(await startGen(mk({ count: 4, prompt: "cell three" })));                        // 40 — fails
-    const j4 = idOf(await startGen(mk({ count: 1, kind: "video", model: "seedance-2-fast", durationSeconds: 5, resolution: "720p", prompt: "cell four" }))); // 110 — settles
+    const j4 = idOf(await startGen(mk({ count: 1, kind: "video", model: "seedance-2-mini", durationSeconds: 5, resolution: "720p", prompt: "cell four" }))); // 110 — settles
     expect((await account(ownerId)).reserved).toBe(10 + 20 + 40 + 110);
 
     await workerSettle(ownerId, j1.id);

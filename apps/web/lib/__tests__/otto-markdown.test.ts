@@ -53,11 +53,11 @@ describe("OttoMarkdown — rendering (#571 G1: merchants saw literal ** in produ
   });
 
   it("renders an ordered list, italics and inline code", () => {
-    const markup = md("1. first\n2. second\n\n*soft* and `seedance-2-fast`");
+    const markup = md("1. first\n2. second\n\n*soft* and `seedance-2-mini`");
 
     expect(markup).toContain("<ol>");
     expect(markup).toContain("<em>soft</em>");
-    expect(markup).toContain("<code>seedance-2-fast</code>");
+    expect(markup).toContain("<code>seedance-2-mini</code>");
   });
 
   it("renders a fenced code block as <pre><code>", () => {

@@ -1,8 +1,8 @@
 // Real-generation PROD verification — enqueues real generations against production
 // (Neon + the prod worker + prod R2) and confirms each produces output. The worker
 // picks the provider from GENERATION_PROVIDER (prod = byteplus: Seedream image /
-// Seedance video). SPENDS REAL MONEY (~$1.9): t2i x2 + 3x 5s seedance-2-fast 720p
-// (≈$0.60 each, SEEDANCE_COGS_USD_PER_SECOND).
+// Seedance video). SPENDS REAL MONEY (~$1.2): t2i x2 + 3x 5s seedance-2-mini 720p
+// (≈$0.38 each, SEEDANCE_COGS_USD_PER_SECOND; #769 前跑 fast 时是 ≈$0.60 each / ~$1.9).
 // Run AFTER deploy via:  railway run --service worker -- node scripts/tools/prod-real-gen-verify.mjs
 import { interlock } from "./_interlock.mjs";
 interlock({ spends: "~$1.9 — real generations (t2i x2 + i2v + t2v + last-frame i2v, 3x 5s Seedance 720p)", prod: "prod Neon DB + prod worker queue + prod R2" });
@@ -52,15 +52,15 @@ const g2 = await t2i("the same lighthouse, dawn light, calm sea, photoreal");
 step("text-to-image #2 DONE (real Seedream)");
 
 // i2v (Seedance) from g1
-await wait(await enqueue({ projectId: project.id, prompt: "slow cinematic push-in, waves moving", kind: "VIDEO", model: "seedance-2-fast", sourceGenerationId: g1 }), "i2v");
+await wait(await enqueue({ projectId: project.id, prompt: "slow cinematic push-in, waves moving", kind: "VIDEO", model: "seedance-2-mini", sourceGenerationId: g1 }), "i2v");
 step("image-to-video DONE (real Seedance, from the uploaded/generated still)");
 
 // t2v (Seedance) from text
-await wait(await enqueue({ projectId: project.id, prompt: "aerial over a stormy ocean at dusk, cinematic", kind: "VIDEO", model: "seedance-2-fast" }), "t2v");
+await wait(await enqueue({ projectId: project.id, prompt: "aerial over a stormy ocean at dusk, cinematic", kind: "VIDEO", model: "seedance-2-mini" }), "t2v");
 step("text-to-video DONE (real Seedance)");
 
 // last-frame i2v (Seedance, #646 T5 解禁) g1 → g2
-await wait(await enqueue({ projectId: project.id, prompt: "transition from night to dawn", kind: "VIDEO", model: "seedance-2-fast", sourceGenerationId: g1, tailGenerationId: g2 }), "last-frame");
+await wait(await enqueue({ projectId: project.id, prompt: "transition from night to dawn", kind: "VIDEO", model: "seedance-2-mini", sourceGenerationId: g1, tailGenerationId: g2 }), "last-frame");
 step("last-frame image-to-video DONE (real Seedance, start → end)");
 
 await boss.stop();

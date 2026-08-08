@@ -11,7 +11,7 @@ describe("modelFamily", () => {
   // #647 T6:菜单收到只剩在产那一台之后,这张表也跟着只剩一行 —— 表与菜单同集由
   // menu-truth.test.ts 钉着,这里钉的是映射本身。
   const expected: Record<string, string> = {
-    "seedance-2-fast": "seedance",
+    "seedance-2-mini": "seedance",
   };
   it("maps every video model to a family", () => {
     for (const m of GEN_VIDEO_MODELS) {
@@ -27,7 +27,7 @@ describe("modelFamily", () => {
   });
   it("seedream vs seedance disambiguate (both start with 'seed')", () => {
     expect(modelFamily("seedream")).toBe("seedream");
-    expect(modelFamily("seedance-2-fast")).toBe("seedance");
+    expect(modelFamily("seedance-2-mini")).toBe("seedance");
   });
   it("unknown id → undefined (family-neutral fallback, never throws)", () => {
     expect(modelFamily("totally-unknown")).toBeUndefined();
@@ -119,7 +119,7 @@ describe("genRequest.referenceVideoGenerationId", () => {
     prompt: "a cat",
     count: 1,
     kind: "video",
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     idempotencyKey: "k1",
   };
 
@@ -144,10 +144,10 @@ describe("genRequest.referenceVideoGenerationId", () => {
 });
 
 describe("genRequest.tailGenerationId", () => {
-  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+  const base = { projectId: "p1", prompt: "a cat", count: 1, kind: "video", model: "seedance-2-mini", idempotencyKey: "k1" };
 
   it("#646 T5:现役视频模型接受尾帧(引擎支持首+尾帧,闸不再挡)", () => {
-    expect(GEN_VIDEO_MODEL_INFO["seedance-2-fast"].tail).toBe(true);
+    expect(GEN_VIDEO_MODEL_INFO["seedance-2-mini"].tail).toBe(true);
     expect(genRequest.safeParse({ ...base, sourceGenerationId: "gen_src", tailGenerationId: "gen_tail" }).success).toBe(true);
   });
 
@@ -302,7 +302,7 @@ describe("genRequest 图片画幅校验(照视频侧 superRefine)", () => {
     expect(genRequest.safeParse({ ...base, aspectRatio: "1080p" }).success).toBe(false);
   });
   it("视频侧画幅校验不受影响(仍按视频模型的选项表)", () => {
-    const v = { projectId: "p1", prompt: "a clip", count: 1, kind: "video", model: "seedance-2-fast", idempotencyKey: "k1" };
+    const v = { projectId: "p1", prompt: "a clip", count: 1, kind: "video", model: "seedance-2-mini", idempotencyKey: "k1" };
     expect(genRequest.safeParse({ ...v, aspectRatio: "16:9" }).success).toBe(true);
     // 3:2 在图片菜单里,但视频模型不支持 —— 按 kind 分别校验
     expect(genRequest.safeParse({ ...v, aspectRatio: "3:2" }).success).toBe(false);

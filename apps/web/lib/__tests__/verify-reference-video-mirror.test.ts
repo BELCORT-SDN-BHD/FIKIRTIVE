@@ -111,7 +111,7 @@ describe("#663 P2-1 付费验证脚本 ↔ 真实付费路径(镜像)", () => {
     // ── 覆盖边界外的三项适配器常量:这里只钉脚本这一侧,真身在 byteplus.test.ts ──
     expect(body.watermark).toBe(false);
     expect(body.execution_expires_after).toBe(3600);
-    expect(MODEL).toBe("dreamina-seedance-2-0-fast-260128");
+    expect(MODEL).toBe("dreamina-seedance-2-0-mini-260615");
 
     // 字段集合本身也钉住:脚本多发一个字段(真路不发)同样是镜像失真。
     expect(Object.keys(body).sort()).toEqual(

@@ -76,10 +76,10 @@ describe("GenJob.model 的库级默认值", () => {
   it("显式带 model 的 INSERT 照常成立 —— 撤掉的只是默认值,不是这一列", async () => {
     const id = `gen_${randomUUID()}`;
     await prisma.genJob.create({
-      data: { id, ownerId: orgId, projectId, prompt: "an explicit engine", kind: "VIDEO", model: "seedance-2-fast", count: 1 },
+      data: { id, ownerId: orgId, projectId, prompt: "an explicit engine", kind: "VIDEO", model: "seedance-2-mini", count: 1 },
     });
     const row = await prisma.genJob.findFirst({ where: { id, ownerId: orgId }, select: { model: true } });
-    expect(row?.model).toBe("seedance-2-fast");
+    expect(row?.model).toBe("seedance-2-mini");
   });
 
   it("RefGenJob.model 的默认值保留 —— 那张表只装图片作业,seedream 就是它的真值", async () => {
