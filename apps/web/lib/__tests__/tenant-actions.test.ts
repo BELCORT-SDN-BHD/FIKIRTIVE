@@ -570,7 +570,7 @@ describe("grantTenantCredits", () => {
     mockRequireRole.mockResolvedValue(GATE);
     organizationFindFirst.mockResolvedValue({ id: "org_merchant" });
     const res = await grantTenantCredits({ ...VALID_PAYLOAD, displayedAmount: 1001 });
-    expect(res).toEqual({ error: "Credit actions over 1,000 displayed credits require founder approval." });
+    expect(res).toEqual({ error: "Credit actions are capped at 1,000 displayed credits each." });
     expect(mockGrantCredits).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();
   });

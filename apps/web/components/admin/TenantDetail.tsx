@@ -108,7 +108,7 @@ export function TenantDetail({ detail }: { detail: Detail }) {
         return;
       }
       if (Math.abs(displayedAmount) > 1000) {
-        setGrantMsg({ ok: false, text: "Credit actions over 1,000 displayed credits require founder approval." });
+        setGrantMsg({ ok: false, text: "Credit actions are capped at 1,000 displayed credits each." });
         return;
       }
       setGrantBusy(true);
