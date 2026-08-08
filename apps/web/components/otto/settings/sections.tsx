@@ -213,26 +213,10 @@ export function buildSettingsSections(args: {
         },
       ],
     },
-    {
-      id: "notifications",
-      title: "Notifications",
-      fields: [
-        {
-          kind: "toggle",
-          id: "nemail",
-          label: "Email",
-          value: settings.notifyEmail,
-          onToggle: toggle("notifyEmail"),
-        },
-        {
-          kind: "toggle",
-          id: "ninapp",
-          label: "In-app",
-          value: settings.notifyInApp,
-          onToggle: toggle("notifyInApp"),
-        },
-      ],
-    },
+    // #791-2: the "Notifications · Email / In-app" section is gone. Both toggles wrote to
+    // Organization.settings and nothing ever read them — there is no email sender and no
+    // in-app notification channel in the product, so "on" and "off" did exactly the same
+    // thing. It comes back when there is something to switch off.
     {
       id: "schedule",
       title: "Schedule defaults",

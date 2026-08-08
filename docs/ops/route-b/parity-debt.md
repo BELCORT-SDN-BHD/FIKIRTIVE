@@ -99,7 +99,7 @@
 | debt-92 | `customer-inbox-ui-actions.listTemplates` | B0-32 | B5 |
 | debt-93 | `customer-inbox-ui-actions.saveConversationDraft` | B0-31 | B5 |
 | debt-94 | `customer-inbox-ui-actions.assignConversation` | B0-31 | B5 |
-| debt-95 | `customer-inbox-ui-actions.takeOverConversation` | B0-31 | B5 |
+| ~~debt-95~~ | ~~`customer-inbox-ui-actions.takeOverConversation`~~ —— **superseded #810 P3-1**：动作整套移除（按钮随 #791-2 删除，服务端守卫与三层导出于 #810 一并移除），此债已无对象 | B0-31 | B5 |
 | debt-96 | `customer-inbox-ui-actions.handOffConversation` | B0-31 | B5 |
 | debt-97 | `customer-inbox-ui-actions.setConversationStatus` | B0-31 | B5 |
 | debt-98 | `customer-inbox-ui-actions.requestAutomationResume` | B0-31 | B5 |

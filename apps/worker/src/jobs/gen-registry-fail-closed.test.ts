@@ -52,7 +52,6 @@ vi.mock("@fikirtive/db", () => ({
 }));
 vi.mock("../storage.js", () => ({ storage: { presignedGet: vi.fn(), put: vi.fn() } }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: m.workerDisabledModels }));
 
 import { GEN_RETRY_LIMIT } from "@fikirtive/core";

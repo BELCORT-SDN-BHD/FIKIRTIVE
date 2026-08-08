@@ -89,7 +89,6 @@ vi.mock("@fikirtive/db", () => ({
 // import-time deps these reapers never exercise
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 
 import { reapStaleGenJobs } from "./gen.js";
 import { reapStaleLlmReservations } from "./llm-reservation-reaper.js";

@@ -32,7 +32,8 @@ export type TokenUsage = {
 
 /**
  * mapOttoUsage — map an OpenAI Agents SDK RunResult usage object to withLlmBudget's TokenUsage.
- * Pure helper shared by apps/web (ottoTurn) and apps/worker (resumeOttoAfterGen).
+ * Pure helper shared by every metered Otto entry (web ottoTurn / stream / ottoApprove,
+ * worker research).
  *
  * Field provenance (verified against installed @ai-sdk/anthropic@3.0.85 +
  * @openai/agents-extensions@0.11.8): the Anthropic provider returns V3 usage

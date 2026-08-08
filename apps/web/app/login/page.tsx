@@ -61,7 +61,10 @@ export default async function LoginPage({
             {[
               "From idea to a ready-to-post ad pack in minutes",
               "You only pay when a generation finishes, never on errors",
-              "Schedules across Instagram and Facebook — direct publish is coming soon",
+              // #791-5: this used to say "direct publish is coming soon". The publisher is
+              // built and has been for months — six states, idempotent, reconciled. The one
+              // thing missing is Meta's approval, which is what this now says.
+              "Schedules and publishes to Instagram and Facebook once Meta approves your connection",
             ].map((t) => (
               <li key={t} className="flex items-center gap-[11px] text-[14.5px] font-medium text-[#3A3A38]">
                 <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-success-soft text-success-soft-foreground">

@@ -2236,7 +2236,12 @@ model PublishAttempt {
   // no migration: the partial-unique predicate is state='APPLYING', unaffected by the new value.
   startedAt       DateTime      @default(now())
   finishedAt      DateTime?
-  metaPostId      String?       // set when state = 'APPLIED'
+  // The external post id, once this attempt has one. Written while the attempt is STILL 'APPLYING'
+  // (#810 r4 P1-b): the post is live from that instant, so the id must be durable before the claim
+  // is released — the same statement that releases it also decides its terminal state ('APPLIED'
+  // behind a stamped post, 'UNCONFIRMED' when the row moved). Nothing keys off this column; lock 4
+  // reads `state`, recovery reads `creationId`.
+  metaPostId      String?
   // L1 (spec §四D lock 3 + §四F recovery): the IG media container id from step ①/② (create+poll),
   // stored BEFORE the media_publish call. On a crash/redelivery the reaper's reconcile re-checks
   // this exact container (idempotent) rather than rebuilding + re-publishing → never double-posts.

@@ -17,9 +17,22 @@ import { prisma } from "./index.js";
  *  enclosing transaction (so the job is never created), and the action surfaces a
  *  friendly "out of credits" message. */
 export class InsufficientCredits extends Error {
-  constructor(message = "Not enough credits.") {
+  /** INTERNAL credits the reserve asked for, when this came from reserveCredits. */
+  readonly requiredInternal: number | null;
+  /** INTERNAL credits the account actually held at refusal time; null when the account row
+   *  is missing or could not be read. #791-7: the merchant-facing sentence needs the REAL
+   *  balance ("you have 3.9") — reading it here, inside the failing transaction, is the only
+   *  place it is known to be the number the refusal was judged against. */
+  readonly balanceInternal: number | null;
+
+  constructor(
+    message = "Not enough credits.",
+    detail?: { requiredInternal?: number | null; balanceInternal?: number | null },
+  ) {
     super(message);
     this.name = "InsufficientCredits";
+    this.requiredInternal = detail?.requiredInternal ?? null;
+    this.balanceInternal = detail?.balanceInternal ?? null;
   }
 }
 
@@ -38,7 +51,16 @@ export async function reserveCredits(tx: Tx, args: { orgId: string; refId: strin
     where: { orgId, balance: { gte: cost } },
     data: { balance: { decrement: cost }, reserved: { increment: cost } },
   });
-  if (count === 0) throw new InsufficientCredits();
+  if (count === 0) {
+    // #791-7: carry the two numbers the merchant needs to hear. Read-only, and only on the
+    // refusal path — the enclosing transaction is about to roll back either way, so this
+    // adds no write and cannot change the money outcome.
+    const account = await tx.creditAccount.findUnique({ where: { orgId }, select: { balance: true } });
+    throw new InsufficientCredits(undefined, {
+      requiredInternal: cost,
+      balanceInternal: account?.balance ?? null,
+    });
+  }
   await tx.creditLedger.create({
     data: { id: randomUUID(), orgId, balanceDelta: -cost, reservedDelta: cost, kind: "RESERVE", source: "SYSTEM", refId, idempotencyKey: `reserve:${refId}` },
   });

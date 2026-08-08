@@ -115,6 +115,9 @@ vi.mock("@fikirtive/db", () => ({
       updateMany: mockChatMessageUpdateMany,
     },
     genJob: { findFirst: mockGenJobFindFirst },
+    // #791-1: buildOttoContext reads Project.coworkBrief for the per-turn brief injection.
+    // No brief in these fixtures — the point here is the approval path, not the brief.
+    project: { findFirst: async () => null },
     entity: { findMany: mockEntityFindMany },
     generation: { findFirst: mockGenerationFindFirst, findMany: mockGenerationFindMany },
     scheduledPost: { findFirst: mockScheduledPostFindFirst },

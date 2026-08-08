@@ -8,7 +8,10 @@ import { activeMentionQuery, resolveSentEntityIds } from "@/lib/otto-mentions";
 import { QuickBrief } from "@/components/otto/QuickBrief";
 import type { EntityDTO, ChatThreadDTO } from "@/lib/types";
 import { ottoGreeting } from "@/lib/otto-greeting";
-import { CHAT_SPEND_NOTE } from "@/lib/credit-format";
+import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
+import { ExitLink } from "@/components/exits/Exits";
+import { BILLING_HREF } from "@/lib/exits";
+import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
 interface GoalTile {
@@ -85,6 +88,9 @@ const GOAL_TILES: GoalTile[] = [
 
 export interface OttoFrontDoorProps {
   projectId: string;
+  /** Org spendable balance in USD — the same value the cards' afford gate reads.
+   *  Drives the #791-7 early low-balance line below the composer. */
+  balanceUsd?: number;
   entities: EntityDTO[];
   userName: string;
   onThreadStarted: (thread: ChatThreadDTO) => void;
@@ -102,6 +108,7 @@ export interface OttoFrontDoorProps {
 
 export function OttoFrontDoor({
   projectId,
+  balanceUsd,
   entities,
   userName,
   onThreadStarted,
@@ -111,6 +118,16 @@ export function OttoFrontDoor({
   onSeedConsumed,
 }: OttoFrontDoorProps) {
   const [text, setText] = useState("");
+  // #791-7: below one video's price, say so now. Balance arrives in USD (the same value the
+  // cards' afford gate uses); cents are rounded before the 10-cent divide so 0.3/0.1 style
+  // float error can't shift the number the merchant reads.
+  const videoCredits = defaultVideoDisplayCredits();
+  const balanceCredits =
+    balanceUsd === undefined ? null : Math.round(balanceUsd * 100) / INTERNAL_PER_DISPLAY;
+  const lowBalanceNotice =
+    balanceCredits !== null && balanceCredits < videoCredits
+      ? lowBalanceForVideoMessage(balanceCredits, videoCredits)
+      : null;
   // Discover "Use in Otto": pre-fill the composer when a seed arrives (no auto-send), then tell
   // the parent to clear it (F29) so it can't leak into a later unrelated conversation. Repeat-use
   // of the same idea still works: the parent re-sets seedText ("" → prompt is a real change).
@@ -399,12 +416,27 @@ export function OttoFrontDoor({
         {/* Quick brief */}
         <QuickBrief projectId={projectId} />
 
+        {/* #791-7: say it while they still have a choice. Below one video's price is the
+            point where the next thing they ask for cannot be paid for, and being told that
+            here is worth more than being stopped later. Rendered only when the balance is
+            actually known — an unknown balance says nothing. */}
+        {lowBalanceNotice ? (
+          <p className="m-0 text-center text-[0.71875rem] text-muted-foreground">
+            {lowBalanceNotice} <ExitLink href={BILLING_HREF}>Top up in Billing</ExitLink>
+          </p>
+        ) : null}
+
         {/* Trust line */}
         <p className="m-0 flex items-center gap-2 text-center text-[0.71875rem] text-muted-foreground/70">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/otto.svg" width={16} height={16} alt="" style={{ display: "inline", verticalAlign: "middle" }} />
           Otto plans and makes it — creations start only after you confirm on the card. {CHAT_SPEND_NOTE}
         </p>
+
+        {/* #791-9: the hold, said out loud. The balance dips before a reply and partly comes
+            back after it; with nothing explaining either move it reads like an accounting
+            bug, when the real behaviour is more generous than anyone would guess. */}
+        <p className="m-0 text-center text-[0.71875rem] text-muted-foreground/70">{CHAT_HOLD_NOTE}</p>
       </div>
     </div>
   );

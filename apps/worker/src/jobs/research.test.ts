@@ -87,6 +87,10 @@ vi.mock("@fikirtive/core", () => ({
   tavilySearch: vi.fn(() => async () => []),
   braveSearch: vi.fn(() => async () => []),
   searchWithFallback: vi.fn(() => async () => []),
+  // #791-6: sanitizeError (redact.ts) now reaches the shared provider-name scrubber in core.
+  // Real behaviour, not a stub — a mocked-away redaction would let this suite pass while a
+  // provider name reached a persisted error.
+  redactProviderNames: (s: string) => s.replace(/\bbyteplus\b/gi, "generation provider"),
 }));
 
 import { handleResearch } from "./research.js";

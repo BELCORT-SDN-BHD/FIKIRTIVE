@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { genSpentUsd, refgenSpentUsd, pricedGenCredits, pricedRefgenCredits, displayCredits, CREDITS_PER_USD, INTERNAL_PER_DISPLAY, SIGNUP_GRANT_CREDITS } from "./spend.js";
+// #810 P3-2:一轮对话真正会冻结的额度 —— 挡住商家的就是这个数,所以它是「一场对话
+// 花多少」的活权威,不是注释里抄来的实测值。
+import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "./otto-budget.js";
 import { GEN_IMAGE_ASPECTS, GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen.js";
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
 import { MARGIN_FLOOR, marginTruthTable, pendingRulingFor, acceptedExceptionFor } from "./margin-truth.js";
@@ -149,10 +152,38 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
       expect(prices[0]).toBe(count * INTERNAL_PER_DISPLAY);
     }
   });
-  it("signup welcome grant is 20 displayed credits (#543 Founder decision; internal = ×INTERNAL_PER_DISPLAY)", () => {
-    expect(SIGNUP_GRANT_CREDITS).toBe(20 * INTERNAL_PER_DISPLAY);
-    expect(displayCredits(SIGNUP_GRANT_CREDITS)).toBe(20);
+  it("signup welcome grant is 25 displayed credits (#791 Founder decision 2026-08-08; internal = ×INTERNAL_PER_DISPLAY)", () => {
+    expect(SIGNUP_GRANT_CREDITS).toBe(25 * INTERNAL_PER_DISPLAY);
+    expect(displayCredits(SIGNUP_GRANT_CREDITS)).toBe(25);
   });
+
+  // #791-3:注册页承诺的是「a conversation with Otto, an image, and a short video」。
+  // 那句话必须买得起。
+  //
+  // #810 P3-2(跨族判官):这条原本把对话花费写死成 9.5 —— 一个从注释里抄来的实测值。
+  // 抄来的数字防不住漂移:它不随任何计价常量变,所以计价再动一次,这条也只是继续拿
+  // 2026-07 的账去核 2026-08 的价。现在三项**全部**从活的计价权威读:
+  //   · 图与视频:pricedGenCredits(价目表本身);
+  //   · 对话:每一轮真正会从商家余额上冻结的那个数
+  //     (OTTO_CONVERSATION_TURN_RESERVE_INTERNAL)—— 挡住商家的就是它,不是事后结算值。
+  // 「一场对话」= 几轮,是对注册页那句话的读法,写在这里、只此一处。
+  const CONVERSATION_TURNS = 3;
+  it("赠额买得起注册页承诺的那一整轮:一场对话 + 一张图 + 一条 5s 视频", () => {
+    const oneImage = pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null });
+    const oneVideo = pricedGenCredits({
+      kind: "VIDEO", model: "seedance-2-mini", count: 1,
+      videoOptions: { seconds: 5, resolution: "720p" },
+    });
+    const oneConversation = OTTO_CONVERSATION_TURN_RESERVE_INTERNAL * CONVERSATION_TURNS;
+    expect(
+      SIGNUP_GRANT_CREDITS,
+      `赠额 ${displayCredits(SIGNUP_GRANT_CREDITS)} 买不起注册页承诺的那一轮:` +
+        `对话 ${displayCredits(oneConversation)} + 图 ${displayCredits(oneImage)} + 视频 ${displayCredits(oneVideo)}`,
+    ).toBeGreaterThanOrEqual(oneConversation + oneImage + oneVideo);
+  });
+
+  // 注册页那句话本身(数字是算出来的、承诺的正是这三件)钉在 apps/web —— 页面归页面,
+  // 价目表归 core。见 apps/web/lib/__tests__/public-copy-honesty-791.test.ts。
   // #644:记账基准改真后视频两档一度跌到 24.4% / 13.6%,Founder 于 2026-08-06 裁决调价
   // (8→11cr、14→22cr,PR #655 评论留档),两档回到 45.0%,待裁决名单已清空。断言仍是
   // 「≥45%,除非它在 BELOW_FLOOR_PENDING_FOUNDER_RULING 这张**待 Founder 裁决**的名单上」——

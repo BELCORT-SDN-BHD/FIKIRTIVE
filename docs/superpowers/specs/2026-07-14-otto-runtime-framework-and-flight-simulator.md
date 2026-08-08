@@ -1,5 +1,11 @@
 # OTTO 运行框架与 Flight Simulator 设计草案
 
+> **SUPERSEDED（部分）— 2026-08-09，#791-4 / #810**：本文件正文中凡涉及 `worker-verdict` profile 的段落
+> （每次生成完成后自动跑一轮 Otto 问「满意吗」并计费）已不再描述现行系统：该自动 Review 轮已于 #791-4
+> 按 Founder 裁决整轮移除（`otto-resume.ts` 删除、`gen.ts` 两处调用点去掉、profile 下线）。此处只加注记，
+> **正文一字未改** —— 这是当时的设计记录，不是现行规范。
+
+
 > 日期：2026-07-13
 >
 > 性质：**founder 已批 Phase 1 开工（2026-07-14，票 #300，条件=research 闭合+锁输入+验收矩阵）；Phase 2+ 仍按本文件各 phase Done 门与项目治理逐步放行；本文件仍不是部署/花费授权。**

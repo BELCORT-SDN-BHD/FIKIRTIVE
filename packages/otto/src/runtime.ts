@@ -1,9 +1,9 @@
 /**
  * runtime.ts — the OTTO composition root (engine spec §6.2, WO-OTTO-PHASE1 · Phase 1).
  *
- * A BEHAVIOR-PRESERVING seam, not a rewrite: the four production entries (fresh
- * non-stream ottoTurn, stream route, approval-resume ottoApprove, worker-verdict
- * resumeOttoAfterGen) all converge on the SAME application runner (`runOttoTurn`)
+ * A BEHAVIOR-PRESERVING seam, not a rewrite: the production entries (fresh
+ * non-stream ottoTurn, stream route, approval-resume ottoApprove) all converge on
+ * the SAME application runner (`runOttoTurn`)
  * and finalizer projection (`finalizeOttoTurn`), and every billing-relevant value —
  * model binding, billable model id, resolved model policy, usage mapper, cache
  * capabilities, pricing, and the `withLlmBudget` parameters — derives from ONE
@@ -21,9 +21,9 @@
  *    "fixture-no-charge"`, which is the one and only way the runner derives
  *    `paid: false` (withLlmBudget's zero-metering path).
  *  - A profile ONLY limits tools/steps. It never duplicates billing, state, or
- *    receipt logic: `interactive` / `approval-resume` / `eval` carry the full
- *    skill toolset at OTTO_MAX_STEPS; `worker-verdict` carries ZERO tools at a
- *    single step (the tool-less verdict contract — do NOT add tools to it).
+ *    receipt logic: every profile carries the full skill toolset at OTTO_MAX_STEPS.
+ *    (#791-4 removed the tool-less `worker-verdict` profile along with the automatic
+ *    post-generation Review round it existed for.)
  *  - production composition never imports a CLI model driver; subscription credentials
  *    must not enter the service image.
  */
@@ -42,8 +42,8 @@ import { extractText } from "./run-output.js";
 // §6.2 types
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The four run profiles. A profile only limits tools/steps (see createOttoRuntime). */
-export type OttoRunProfile = "interactive" | "approval-resume" | "worker-verdict" | "eval";
+/** The run profiles. A profile only limits tools/steps (see createOttoRuntime). */
+export type OttoRunProfile = "interactive" | "approval-resume" | "eval";
 
 /** The SDK-level model object an Agent binds to (production: the aisdk-adapted
  *  Anthropic model in model.ts; simulator: a fixture/qualified-CLI Model). */
@@ -154,23 +154,20 @@ const defaultRuntimeExecution: OttoRuntimeExecution = Object.freeze({
  *  - interactive / approval-resume / eval: full deps.skills toolset, OTTO_MAX_STEPS.
  *    (approval-resume carries the full set per the frozen B9 recovery rule —
  *    恢复轮全量装载; eval mirrors the production budget, spec §13.3.)
- *  - worker-verdict: ZERO tools, single step (spec §6.2 — the verdict turn speaks
- *    one sentence and must not be able to reach any tool).
  */
 export function createOttoRuntime(deps: OttoRuntimeDeps, profile: OttoRunProfile): OttoRuntime {
-  const verdict = profile === "worker-verdict";
   const agent = new Agent<OttoContext>({
     name: "Otto",
     instructions: ottoInstructions,
     model: deps.modelRuntime.binding,
     modelSettings: { maxTokens: OTTO_OUTPUT_CAP_TOKENS },
-    tools: verdict ? [] : deps.skills.map((s) => s.tool),
+    tools: deps.skills.map((s) => s.tool),
   });
   return Object.freeze({
     profile,
     modelRuntime: deps.modelRuntime,
     agent,
-    maxTurns: verdict ? 1 : OTTO_MAX_STEPS,
+    maxTurns: OTTO_MAX_STEPS,
     traceSink: deps.traceSink,
   });
 }

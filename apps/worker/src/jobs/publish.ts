@@ -34,6 +34,7 @@ import {
   xScopeCanPublish,
   type MetaGraphPort,
   type PublishResult,
+  type ConfirmStillAuthorized,
   type XApiPort,
 } from "@fikirtive/core/server";
 import {
@@ -44,6 +45,7 @@ import {
   PUBLISH_EXECUTION_DEADLINE_MS,
   classifyImageBytes,
   normalizeImageMime,
+  autoPublishEnabled,
   MEDIA_SNIFF_BYTES,
   type CanonicalImageMime,
   type PublishJobData,
@@ -304,10 +306,30 @@ export async function buildMediaUrls(
  */
 export type PublishAuthRefused = { authFailed: true; error: string };
 
+/**
+ * The external send, split away from the slow preparation (#810 r3), carrying the last-moment
+ * authorization gate down to each channel's final irreversible action (#810 r4 P1-a).
+ *
+ * Preparation — reading media, transcoding to JPEG, resolving the page — takes up to
+ * PUBLISH_EXECUTION_DEADLINE_MS. r2 checked the merchant's Auto-publish switch before the claim and
+ * never again, so a merchant who switched it OFF during those seconds still got posted. r3 returned
+ * this thunk so the switch could be re-read right before `send`.
+ *
+ * That still wasn't the last moment. IG's send creates a media container and then polls it for up
+ * to ~30 s before media_publish, so a check at the send() boundary only shrank the window — a
+ * merchant switching off during the poll was still published for. So the gate is no longer asked at
+ * this boundary at all: `send` RECEIVES it and each channel asks it immediately before its own final
+ * action (IG: right before media_publish; FB/X: right before their single POST). One contract, one
+ * reading, correct on every channel — and a slow step added inside any channel later cannot quietly
+ * reopen the window. What remains is the sub-second gap between that question and the call itself,
+ * which is the physical floor.
+ */
+export type PublishPrepared = { send: (confirmStillAuthorized: ConfirmStillAuthorized) => Promise<PublishResult> };
+
 export type PublishExecutor = (
   post: DuePost,
   attemptId: string,
-) => Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused>;
+) => Promise<PublishPrepared | PublishResult | PublishAuthRefused | PublishMediaContractRefused>;
 
 type DuePost = {
   id: string;
@@ -373,7 +395,7 @@ async function authorizeX(ownerId: string): Promise<{ token: string } | { refuse
  *  frozen 闸 file is untouched (E4-16); X only enqueues for owners already Meta-authorized until the
  *  X connect/OAuth flow lands; once a ChannelConnection carries tweet.write + a token, the authorizeX
  *  allow-list (status==="active" ∧ !publishPaused ∧ unexpired) is the actual guard (not a missing route). */
-export async function executeX(post: DuePost): Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
+export async function executeX(post: DuePost): Promise<PublishPrepared | PublishAuthRefused | PublishMediaContractRefused> {
   const auth = await authorizeX(post.ownerId);
   if ("refuse" in auth) return { authFailed: true, error: auth.refuse };
   const mediaCount = await prisma.scheduledPostMedia.count({ where: { scheduledPostId: post.id } });
@@ -381,13 +403,19 @@ export async function executeX(post: DuePost): Promise<PublishResult | PublishAu
     return { mediaContractRefused: true, error: "Publishing media to X isn't available yet — post text only for now." };
   }
   const deadline = AbortSignal.timeout(PUBLISH_EXECUTION_DEADLINE_MS);
-  return publishX(xPortFor(auth.token, deadline), { text: post.caption });
+  // Prepared, not sent (#810 r3). The gate rides INTO publishX (#810 r4 P1-a) rather than being
+  // asked out here, so it is answered immediately before POST /2/tweets whatever else moves in
+  // between.
+  return {
+    send: (confirmStillAuthorized) =>
+      publishX(xPortFor(auth.token, deadline), { text: post.caption, confirmStillAuthorized }),
+  };
 }
 
 /** The real executor. Persists the IG creationId onto the attempt BEFORE media_publish (lock 3).
  *  Channel dispatch (契约6 登记式扩展点): X routes to executeX FIRST; the Meta authorize/resolvePage/
  *  orchestration below is byte-identical (E4-16 核心零语义改动). */
-async function realExecute(post: DuePost, attemptId: string): Promise<PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
+async function realExecute(post: DuePost, attemptId: string): Promise<PublishPrepared | PublishResult | PublishAuthRefused | PublishMediaContractRefused> {
   if (post.channel === "x") return executeX(post);
   // Config/authorization refusals → NEEDS_ATTENTION (M1), and they short-circuit BEFORE any Meta
   // port exists, so no external call is ever made on this path.
@@ -428,15 +456,30 @@ async function realExecute(post: DuePost, attemptId: string): Promise<PublishRes
 
   if (post.channel === "instagram") {
     if (!page.igUserId) return { error: "This page has no connected Instagram business account.", retryable: false };
-    return publishInstagram(port, {
-      igUserId: page.igUserId,
-      mediaUrls: media.urls,
-      caption: post.caption,
-      firstComment: post.firstComment,
-      onCreationId,
-    });
+    // Everything above is PREPARATION (reads, transcode, page resolve) — and so is the container
+    // creation and polling INSIDE publishInstagram. The gate travels all the way down (#810 r4
+    // P1-a) so it is asked immediately before media_publish, the one step the merchant can see.
+    return {
+      send: (confirmStillAuthorized) =>
+        publishInstagram(port, {
+          igUserId: page.igUserId!,
+          mediaUrls: media.urls,
+          caption: post.caption,
+          firstComment: post.firstComment,
+          onCreationId,
+          confirmStillAuthorized,
+        }),
+    };
   }
-  return publishFacebook(port, { pageId: post.metaTargetId, message: post.caption, mediaUrls: media.urls });
+  return {
+    send: (confirmStillAuthorized) =>
+      publishFacebook(port, {
+        pageId: post.metaTargetId!,
+        message: post.caption,
+        mediaUrls: media.urls,
+        confirmStillAuthorized,
+      }),
+  };
 }
 
 /* ── the handler: triple idempotency + six-state ── */
@@ -503,6 +546,54 @@ export async function handlePublish(
       return;
     }
 
+    // The ONE reading of the merchant's switch inside this job, used twice below. Same authority
+    // as the scanner (autoPublishEnabled over the same settings blob) so the two can never drift
+    // into two answers; fail-closed on an unreadable/absent org, because "we could not tell" is
+    // not "yes".
+    const autoPublishStillOn = async (): Promise<boolean> => {
+      const org = await prisma.organization.findUnique({
+        where: { id: post.ownerId },
+        select: { settings: true },
+      });
+      return !!org && autoPublishEnabled(org.settings);
+    };
+    /** Hand the row back to waiting. CAS-scoped so it can never (a) clobber a row another path
+     *  already moved, or (b) — #810 r3 P1-b — snatch a row that ANOTHER worker is mid-publish on:
+     *  a live APPLYING claim means someone is holding it, and flipping it back to SCHEDULED would
+     *  make it editable/cancellable underneath them while they publish the old snapshot. */
+    const handBackToWaiting = () =>
+      prisma.scheduledPost.updateMany({
+        where: {
+          id: post.id,
+          status: "PUBLISHING",
+          metaPostId: null,
+          deletedAt: null,
+          attempts: { none: { state: "APPLYING" } },
+        },
+        data: { status: "SCHEDULED" },
+      });
+
+    // Lock 5 (#810 P1-1) — the merchant's own switch, re-read HERE, one step before anything
+    // external can happen. scanDuePublishPosts checks it too, but the job payload carries only
+    // the post id, so the scan's answer is as old as the queue: switch ON → enqueued → merchant
+    // turns it OFF → this worker (or its 60-second retry) still posts to a live account. A
+    // merchant who withdrew consent watched the post go out anyway. Same authority as the scan
+    // (autoPublishEnabled over the same settings blob) so the two can't drift into two answers;
+    // fail-closed on an unreadable/absent org, because "we could not tell" is not "yes".
+    //
+    // A withdrawal is not a failure: nothing is marked FAILED or NEEDS_ATTENTION and nothing is
+    // retried. The post simply goes back to waiting, which is what it does when the switch is
+    // off in the first place — flip it back on and the next scan picks it up unchanged.
+    if (!(await autoPublishStillOn())) {
+      // A redelivery/retry left the row in PUBLISHING; hand it back rather than let it sit there
+      // claiming to be mid-publish forever.
+      if (post.status === "PUBLISHING") await handBackToWaiting();
+      console.warn(
+        `[publish] ${post.id}: auto-publish is off/unreadable for owner ${post.ownerId} at execution time — treating as withdrawn, NOT publishing (no claim, no Meta call)`,
+      );
+      return;
+    }
+
     // Lock 2: atomic claim = insert PublishAttempt(APPLYING). The partial-unique index
     // (one APPLYING per post) makes a second racing worker's insert P2002 → it skips.
     const attemptId = newId();
@@ -538,10 +629,50 @@ export async function handlePublish(
 
     let result: PublishResult | PublishAuthRefused | PublishMediaContractRefused;
     try {
-      result = await execute(post, attemptId);
+      const prepared = await execute(post, attemptId);
+      if ("send" in prepared) {
+        // Lock 6 (#810 r3 P1-a, moved in r4) — the merchant's switch, asked at the LAST moment.
+        //
+        // r3 read it here, one line before `send`, believing that was the last moment. It wasn't:
+        // IG's send creates the media container and then polls it for up to ~30 s before
+        // media_publish, so a check at this boundary only shrank the window from four minutes to
+        // thirty seconds. The gate is therefore handed to `send` and each channel asks it
+        // immediately before its own final irreversible action, where the remaining gap is
+        // sub-second — the physical floor.
+        result = await prepared.send(autoPublishStillOn);
+      } else {
+        // A prep-time outcome (config refusal / media-contract refusal / non-retryable error).
+        // Nothing was sent, so there is nothing for the switch to stop.
+        result = prepared;
+      }
     } catch (err) {
       // An unexpected throw inside the executor (network/store) — treat as transient.
       result = { error: sanitizeError(err), retryable: true };
+    }
+
+    if ("withdrawn" in result && result.withdrawn) {
+      // The merchant switched Auto-publish off while we were preparing, and the channel refused at
+      // its own final step — so NOTHING was sent. (An IG media container may exist; it is not a
+      // post, the merchant cannot see it, and it simply expires.)
+      //
+      // A withdrawal is not a failure: no FAILED, no NEEDS_ATTENTION, no retry. Release our claim
+      // and hand the row back to waiting, exactly as if the switch had been off all along — flip it
+      // back on and the next scan picks the post up unchanged. Both writes ride ONE transaction so
+      // the row can never be left claimed-but-unowned, and the row CAS carries the same
+      // none-APPLYING clause as handBackToWaiting — by then our own attempt is already released, so
+      // it passes for us while still refusing to snatch a row another worker is holding.
+      await prisma.$transaction(async (tx) => {
+        await tx.publishAttempt.updateMany({
+          where: { id: attemptId, state: "APPLYING" },
+          data: { state: "FAILED", error: result.error, finishedAt: new Date() },
+        });
+        await tx.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null, attempts: { none: { state: "APPLYING" } } },
+          data: { status: "SCHEDULED" },
+        });
+      });
+      console.warn(`[publish] ${post.id}: auto-publish switched off before the final send — NOTHING sent; claim released, post back to SCHEDULED`);
+      return;
     }
 
     if ("authFailed" in result || "mediaContractRefused" in result) {
@@ -565,24 +696,95 @@ export async function handlePublish(
     }
 
     if ("externalId" in result) {
-      // ① success. Stamp the metaPostId ANCHOR durably (lock 1 for any future delivery) + APPLIED.
-      // The CAS keys on metaPostId=null (the anchor), NOT status: even if a racing reaper/cancel moved
-      // the row out of PUBLISHING, we must still record the id — losing it would risk a future
-      // double-post. count !== 1 means the anchor was already set (another path won) → surface it.
-      const [stamped] = await prisma.$transaction([
-        prisma.scheduledPost.updateMany({
-          where: { id: post.id, metaPostId: null },
-          data: { status: "PUBLISHED", metaPostId: result.externalId, lastError: null },
-        }),
-        prisma.publishAttempt.update({
+      // ① success. Two writes, both CAS'd on "this is still OUR round" (#810 r3 P1-b②).
+      //
+      // r2 stamped the post on `metaPostId: null` alone, deliberately ignoring status so the anchor
+      // could never be lost. That blind write is the bug: between our claim and now the merchant may
+      // have edited or cancelled this post, and writing PUBLISHED over a cancelled row tells them
+      // their cancel did nothing. So the post write is CAS'd on the row still being OURS
+      // (PUBLISHING, unstamped, not deleted), and the attempt write is CAS'd on our claim still
+      // being APPLYING.
+      //
+      // Losing either CAS never means "pretend it didn't go out" — it went out. It means we must not
+      // overwrite, must not send again, and must leave a human something true to act on: an
+      // UNCONFIRMED attempt carrying the external id. Lock 4 above refuses every future publish of
+      // this post while that record exists, so the fail-closed direction is "never double-post".
+      // The post is LIVE from here on. The invariant that must hold at every committable instant is
+      // that SOMETHING refuses a second send: our own APPLYING claim (lock 2), or the stamped
+      // metaPostId (lock 1), or an UNCONFIRMED attempt carrying the external id (lock 4).
+      //
+      // r3 broke that invariant across a seam (#810 r4 P1-b): its first transaction committed the
+      // attempt as APPLIED, and only a SECOND transaction created the UNCONFIRMED record. A crash in
+      // between released lock 2 while lock 1 was never taken and lock 4 did not yet exist — all three
+      // gone at once, so a merchant who edited and re-approved the post got it sent twice.
+      //
+      // So it is ONE transaction, and inside it the claim leaves APPLYING exactly once, in the same
+      // statement that gives it the state which replaces it. There is no observable moment where the
+      // claim is released and nothing stands in its place.
+      const externalId = result.externalId;
+      const rowMovedReason =
+        "this post went live, but its row had already moved (edited/cancelled/published) — confirm and link it before publishing again";
+      const claimLostReason =
+        "this post went live, but the publish claim had already been released — confirm and link it before publishing again";
+      const needsAttention =
+        "This post went live but couldn't be recorded — please confirm it before publishing again.";
+
+      const outcome = await prisma.$transaction(async (tx) => {
+        // (1) Write the external id onto our attempt while it is STILL APPLYING. This proves the
+        // claim is ours and takes the row lock for the rest of the transaction, without releasing
+        // lock 2 — so even a crash right here leaves the post guarded.
+        const held = await tx.publishAttempt.updateMany({
+          where: { id: attemptId, state: "APPLYING" },
+          data: { metaPostId: externalId },
+        });
+        if (held.count !== 1) {
+          // Someone else released our claim (a reaper). We are not holding anything, so nothing of
+          // ours is being given up — but the post is live and, with the row unstamped, nothing yet
+          // refuses a second send. Leave the record that does.
+          await tx.publishAttempt.create({
+            data: { id: newId(), scheduledPostId: post.id, state: "UNCONFIRMED", metaPostId: externalId, error: claimLostReason, finishedAt: new Date() },
+          });
+          await tx.scheduledPost.updateMany({
+            where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
+            data: { status: "NEEDS_ATTENTION", lastError: needsAttention },
+          });
+          return "claim-lost" as const;
+        }
+
+        // (2) Is the row still ours? CAS'd on it being PUBLISHING, unstamped and not deleted — r2's
+        // blind write on `metaPostId: null` alone would tell a merchant who cancelled that their
+        // cancel did nothing.
+        const stamped = await tx.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
+          data: { status: "PUBLISHED", metaPostId: externalId, lastError: null },
+        });
+
+        // (3) The ONE write that releases APPLYING, landing directly on the state that replaces it:
+        // APPLIED behind a stamped row (lock 1 now holds), or UNCONFIRMED when the row moved (lock 4
+        // takes over). No intermediate state is ever committed.
+        await tx.publishAttempt.update({
           where: { id: attemptId },
-          data: { state: "APPLIED", metaPostId: result.externalId, finishedAt: new Date() },
-        }),
-      ]);
-      if (stamped.count !== 1) {
-        console.warn(`[publish] ${post.id}: published ${result.externalId} but the post row had already moved (count=${stamped.count}); the attempt records the anchor`);
+          data:
+            stamped.count === 1
+              ? { state: "APPLIED", finishedAt: new Date() }
+              : { state: "UNCONFIRMED", error: rowMovedReason, finishedAt: new Date() },
+        });
+        if (stamped.count === 1) return "published" as const;
+
+        // The row moved out from under us. Surface it only if it still claims to be mid-publish —
+        // never resurrect one the merchant cancelled or edited away.
+        await tx.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
+          data: { status: "NEEDS_ATTENTION", lastError: needsAttention },
+        });
+        return "row-moved" as const;
+      });
+
+      if (outcome === "published") {
+        console.log(`[publish] ${post.id}: PUBLISHED → ${externalId}`);
+        return;
       }
-      console.log(`[publish] ${post.id}: PUBLISHED → ${result.externalId}`);
+      console.error(`[publish] ${post.id}: published ${externalId} but ${outcome} — NOT overwriting the row; recorded UNCONFIRMED so it can never be sent twice`);
       return;
     }
 
@@ -755,17 +957,33 @@ export async function reapStalePublishAttempts(): Promise<number> {
 
 /* ── scheduler: which approved posts are due AND currently authorized to publish ── */
 
-/** Due, approved posts whose connection can publish RIGHT NOW (canPublish + !paused). The
- *  canPublish pre-filter is the steady-state fail-closed: before App Review no connection is
- *  authorized → this returns [] → nothing is enqueued → SCHEDULED posts sit untouched (zero
- *  behavior change). Returns the ids for the scheduler to enqueue. */
+/** Due, approved posts whose connection can publish RIGHT NOW (canPublish + !paused) AND
+ *  whose owner turned Auto-publish ON. Two independent gates, both fail-closed:
+ *
+ *   1. Meta authorization (canPublish + !paused + active) — before App Review no connection
+ *      is authorized → [] → nothing enqueued → SCHEDULED posts sit untouched.
+ *   2. The merchant's own switch (#791-2). Settings has shown an "Auto-publish posts" toggle
+ *      since the schedule shipped, and nothing read it: with the toggle OFF, approved posts
+ *      would still have gone out the moment App Review landed. Reading it here is the whole
+ *      fix — the default is OFF, so a workspace that never opened Settings is never
+ *      auto-published for.
+ *
+ *  Returns the ids for the scheduler to enqueue. */
 export async function scanDuePublishPosts(now: Date = new Date(), limit = 50): Promise<string[]> {
   const authorizedOwners = await prisma.metaConnection.findMany({
     where: { canPublish: true, organicPublishPaused: false, status: "active" },
     select: { ownerId: true },
   });
   if (authorizedOwners.length === 0) return [];
-  const owners = authorizedOwners.map((c) => c.ownerId);
+  const authorizedOwnerIds = Array.from(new Set(authorizedOwners.map((c) => c.ownerId)));
+  // Same blob, same reader (mergeSettings) the Settings screen writes through — a non-boolean
+  // or absent value is OFF, so a malformed blob can never turn auto-publish on.
+  const orgs = await prisma.organization.findMany({
+    where: { id: { in: authorizedOwnerIds } },
+    select: { id: true, settings: true },
+  });
+  const owners = orgs.filter((o) => autoPublishEnabled(o.settings)).map((o) => o.id);
+  if (owners.length === 0) return [];
   const due = await prisma.scheduledPost.findMany({
     where: {
       ownerId: { in: owners },
