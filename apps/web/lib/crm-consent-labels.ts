@@ -41,18 +41,31 @@ export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
  *     does NOT say who recorded it: R-010 fixes the legacy carrier at `legacy_unknown /
  *     unresolved` and forbids guessing an actor, so the opt-out may well be the customer's own act
  *     in an older system — which is precisely why the fence is fail-closed rather than ignorable.
- *  3. "Fikirtive keeps this contact out of audiences until the customer opts in through their own
- *     channel."
- *     Behaviour, not biography: `isKnownOptOut` excludes while the fence stands, and only the
- *     customer's own verified evidence folding to `verified_grant` lifts it (`contactConsentTruth`).
- *     No "again" — that would presuppose an earlier opt-in the ledger cannot see.
+ *  3. "When Fikirtive evaluates segment rules for WhatsApp marketing, it counts this contact as
+ *     opted out until the customer opts in through their own channel."
+ *     A CLASSIFICATION, not a gate — the difference matters, because the gate does not exist.
+ *     The fence reaches the matcher only as a fact: `consentFact` returns `"opt_out"`, and both
+ *     evaluators hand the matcher `marketingConsent: "opt_out"` (`segment-actions.evaluateContact`,
+ *     `customer-broadcast-service`). Nothing downstream re-checks it, so a segment whose rules
+ *     never mention contactability selects this contact anyway, and the broadcast freezes her in
+ *     with `includedByMerchant: true`. The send gate does not save it either: `send-eligibility`
+ *     reads only `ConsentStateProjection`, never the legacy column, so a fenced contact is
+ *     `unknown` there and a `merchant_manual` broadcast gets `risk`, not `block`.
+ *     Scoped to WhatsApp marketing because `contactConsentTruth` applies the fence to no other
+ *     tuple. Only the customer's own verified evidence folding to `verified_grant` clears it. No
+ *     "again" — that would presuppose an earlier opt-in the ledger cannot see.
  *
  * What the note must never do again: deny records on the same screen (r1), claim the customer was
- * silent when another purpose holds her own grant (r2), or claim she "has never" decided, which no
- * `unknown` can establish (r3).
+ * silent when another purpose holds her own grant (r2), claim she "has never" decided, which no
+ * `unknown` can establish (r3), or promise an exclusion the product does not enforce (r4).
+ *
+ * NOTE for whoever fixes the send-side gap (tracked separately): the empty state in
+ * `contact-profile-page.tsx` still says the opt-out "keeps this contact out of audiences", which is
+ * the same r4 claim this constant just dropped. It renders on this very screen for a fenced contact
+ * with no events; it was left alone here only because it is outside this ticket's surface.
  */
 export const CRM_PRE_LEDGER_OPT_OUT_NOTE =
-  "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. Fikirtive keeps this contact out of audiences until the customer opts in through their own channel.";
+  "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. When Fikirtive evaluates segment rules for WhatsApp marketing, it counts this contact as opted out until the customer opts in through their own channel.";
 
 export type CrmConsentBadge = {
   label: string;

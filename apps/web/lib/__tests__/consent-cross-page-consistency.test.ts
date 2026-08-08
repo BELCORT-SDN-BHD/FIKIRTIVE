@@ -88,7 +88,7 @@ const SITI = `${SUITE}-siti`;
  * — an imported constant would silently follow the next rewrite instead of catching it.
  */
 const FENCE_NOTE =
-  "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. Fikirtive keeps this contact out of audiences until the customer opts in through their own channel.";
+  "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. When Fikirtive evaluates segment rules for WhatsApp marketing, it counts this contact as opted out until the customer opts in through their own channel.";
 
 /**
  * Every earlier wording, kept as a permanent regression fence. Each was rejected for claiming
@@ -96,13 +96,21 @@ const FENCE_NOTE =
  *  - r1 denied records that were on the same screen;
  *  - r2 claimed the customer was silent, while another purpose carried her own verified grant;
  *  - r3 claimed she "has never" decided, which the ledger cannot know, and "again" presupposed a
- *    first opt-in it also cannot see.
+ *    first opt-in it also cannot see;
+ *  - r4 promised a gate the product does not have — see the channel-only segment case below.
+ *
+ * `out of audiences until` is deliberately the r4 needle rather than the bare `out of audiences`:
+ * the SAME false promise also lives in `contact-profile-page.tsx`'s empty state ("…keeps this
+ * contact out of audiences predates this history"), which renders on this very screen for a fenced
+ * contact with no events. That copy is outside this ticket's sanctioned two-file surface and is
+ * reported for routing rather than silently changed here — but it is why this needle is narrow.
  */
 const REJECTED_CLAIMS = [
   "No consent facts were recorded",
   "Nothing in this consent history came from the customer",
   "has never opted in or out",
   "opts in again",
+  "out of audiences until",
 ];
 
 /** The segment a merchant uses to look at the people who are held out. */
@@ -113,6 +121,16 @@ const NOT_CONTACTABLE = {
 const CONTACTABLE = {
   match: "all" as const,
   rules: [{ kind: "contactability" as const, value: "contactable" as const }],
+};
+/**
+ * A perfectly legal segment that never asks about contactability. The fence is only ever consulted
+ * by translating it into the `marketingConsent` FACT (`segment-actions.evaluateContact`,
+ * `customer-broadcast-service`), so a rule set that does not test that fact never consults it — and
+ * the fenced customer is selected. This is the shape that disproved r4's "kept out of audiences".
+ */
+const CHANNEL_ONLY = {
+  match: "all" as const,
+  rules: [{ kind: "channel" as const, channel: "whatsapp" }],
 };
 
 function actAs(ownerId: string): void {
@@ -372,6 +390,31 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     // from her, and an opt-out predates the history. Neither denies that she made it herself.
     expect(profile).toContain(FENCE_NOTE);
     expect(profile).toContain("Opted out before consent history");
+  });
+
+  it("promises only the classification it can keep: a channel-only segment still selects her", async () => {
+    actAs(ORG_A);
+
+    // The world r4's wording denied. A segment whose rules never mention contactability never
+    // consults the fence — the fence reaches the matcher ONLY as the `marketingConsent` fact — so
+    // the fenced customer is selected here, and a broadcast would freeze her in with
+    // `includedByMerchant: true`. The note therefore may not promise she is kept out of audiences.
+    const channelOnly = await previewSegment(CHANNEL_ONLY);
+    if (!("ok" in channelOnly)) throw new Error(channelOnly.error);
+    const selected = channelOnly.contacts.find((contact) => contact.id === CHANDRA);
+    expect(selected).toBeDefined();
+    expect(selected?.unresolvedLegacyOptOut).toBe(true);
+
+    // What IS true at the layer the note now names: wherever segment rules are evaluated, she is
+    // counted as opted out — that is exactly the fact the matcher was handed.
+    expect(selected?.contactable).toBe(false);
+    const excluded = await previewSegment(NOT_CONTACTABLE);
+    if (!("ok" in excluded)) throw new Error(excluded.error);
+    expect(excluded.contacts.map((contact) => contact.id)).toContain(CHANDRA);
+
+    const profile = await contactProfileMarkup(CHANDRA);
+    expect(profile).toContain(FENCE_NOTE);
+    for (const claim of REJECTED_CLAIMS) expect(profile).not.toContain(claim);
   });
 
   it("reads the fence through the one shared predicate, not a second copy of it", async () => {
