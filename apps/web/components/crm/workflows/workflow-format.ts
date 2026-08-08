@@ -276,6 +276,8 @@ const ERROR_COPY: Record<string, string> = {
   RESOURCE_NOT_FOUND: "This workflow is not available. It may not exist, or you may not have access.",
   INVALID_ARGUMENT: "Some workflow details are missing or not valid. Check the form fields and try again.",
   CAS_CONFLICT: "This workflow changed in another session. Refresh before trying again.",
+  ROUTINE_KEY_IN_USE:
+    "A Routine with this name already exists on this workflow. Open that Routine below, or choose a different name.",
   IDEMPOTENCY_CONFLICT:
     "This operation conflicts with an earlier workflow action. Nothing was repeated.",
   AUTHORITY_UNAVAILABLE:

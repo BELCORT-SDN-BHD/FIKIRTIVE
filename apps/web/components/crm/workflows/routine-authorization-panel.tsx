@@ -1,9 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   AlertTriangle,
-  ArrowRight,
   Check,
   ChevronDown,
   CircleHelp,
@@ -17,6 +16,7 @@ import {
   activateRoutine,
   createRoutineDraft,
   getRoutine,
+  getRoutineAuthorizationPreview,
   killRoutine,
   listRoutines,
   listWorkflowRevisions,
@@ -38,14 +38,15 @@ import { Switch } from "@/components/ui/switch";
 import {
   dateTimeLabel,
   routineStatusPresentation,
-  shortWorkflowId,
   workflowErrorMessage,
 } from "./workflow-format";
+import {
+  describeAuthorization,
+  type AuthorizationFacts,
+} from "@/lib/routine-authorization-facts";
 
 type RevisionsResult = Awaited<ReturnType<typeof listWorkflowRevisions>>;
 type Revision = Extract<RevisionsResult, { ok: true }>["resource"][number];
-type RoutineDraftResult = Awaited<ReturnType<typeof createRoutineDraft>>;
-type Routine = Extract<RoutineDraftResult, { ok: true }>["resource"];
 type RoutinesResult = Awaited<ReturnType<typeof listRoutines>>;
 type PersistedRoutine = Extract<RoutinesResult, { ok: true }>["resource"]["items"][number];
 type RoutineDetailResult = Awaited<ReturnType<typeof getRoutine>>;
@@ -64,11 +65,6 @@ type EnvelopeDraft = {
   expiresAt: Date;
 };
 
-type SessionEnvelope = {
-  routine: Routine;
-  details: EnvelopeDraft;
-};
-
 const ACTION_OPTIONS: Array<{ value: ActionKind; label: string; description: string }> = [
   { value: "conversation_reply", label: "Reply in a conversation", description: "Prepare a workflow reply for one verified customer conversation." },
   { value: "broadcast_run", label: "Start a broadcast handoff", description: "Prepare the approved broadcast action for an eligible customer." },
@@ -84,6 +80,19 @@ function actionLabel(action: ActionKind): string {
   return ACTION_OPTIONS.find((option) => option.value === action)?.label ?? action;
 }
 
+function ReviewGrid({ rows }: { rows: Array<[string, string]> }) {
+  return (
+    <dl className="grid gap-3 rounded-xl border border-border bg-secondary/25 p-4 text-sm">
+      {rows.map(([label, value]) => (
+        <div key={label} className="grid grid-cols-[120px_1fr] gap-3">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="font-medium">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function EnvelopeReview({ draft, revision }: { draft: EnvelopeDraft; revision: Revision | null }) {
   const audience = [
     draft.contactIds.length ? `${draft.contactIds.length} exact contact ${draft.contactIds.length === 1 ? "reference" : "references"}` : null,
@@ -91,17 +100,27 @@ function EnvelopeReview({ draft, revision }: { draft: EnvelopeDraft; revision: R
   ].filter(Boolean).join(" and ");
 
   return (
-    <dl className="grid gap-3 rounded-xl border border-border bg-secondary/25 p-4 text-sm">
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Rule</dt><dd className="font-medium">Revision {revision?.revision ?? "unknown"}</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Allowed work</dt><dd className="font-medium">{draft.actionKinds.map(actionLabel).join(", ") || "Nothing"}</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Channel</dt><dd className="font-medium">{draft.whatsapp ? "WhatsApp" : "No channel"}</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Audience</dt><dd className="font-medium">{audience || "No contacts or segments"}</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Limits</dt><dd className="font-medium">Up to {draft.maxActions} actions and {draft.maxRecipients} recipients per run</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Budget</dt><dd className="font-medium">0 credits per run · 0 credits per month · no spend allowed</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Expiry</dt><dd className="font-medium">{dateTimeLabel(draft.expiresAt)}</dd></div>
-      <div className="grid grid-cols-[120px_1fr] gap-3"><dt className="text-muted-foreground">Summary</dt><dd className="font-medium">Show a summary in workflow activity after every run</dd></div>
-    </dl>
+    <ReviewGrid
+      rows={[
+        ["Rule", `Revision ${revision?.revision ?? "unknown"}`],
+        ["Allowed work", draft.actionKinds.map(actionLabel).join(", ") || "Nothing"],
+        ["Channel", draft.whatsapp ? "WhatsApp" : "No channel"],
+        ["Audience", audience || "No contacts or segments"],
+        ["Limits", `Up to ${draft.maxActions} actions and ${draft.maxRecipients} recipients per run`],
+        ["Budget", "0 credits per run · 0 credits per month · no spend allowed"],
+        ["Expiry", dateTimeLabel(draft.expiresAt)],
+        ["Summary", "Show a summary in workflow activity after every run"],
+      ]}
+    />
   );
+}
+
+/** #720 判官 r2 / §5.1 — the exact envelope activateRoutine is about to sign, rendered from
+ *  `routine-authorization-facts`, whose rows are derived from the authorization hash's own
+ *  input set. Nothing shown here is assembled by this component, so a hashed field cannot be
+ *  displayed as something else — or omitted. */
+function AuthorizationReview({ facts }: { facts: AuthorizationFacts }) {
+  return <ReviewGrid rows={facts.rows.map((row) => [row.label, row.value] as [string, string])} />;
 }
 
 export default function RoutineAuthorizationPanel({
@@ -129,8 +148,14 @@ export default function RoutineAuthorizationPanel({
   const [mode, setMode] = useState<"activate" | "reauthorize">("activate");
   const [busy, setBusy] = useState<string | null>(null);
   const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [sessionEnvelopes, setSessionEnvelopes] = useState<SessionEnvelope[]>([]);
-  const [pendingDraft, setPendingDraft] = useState<SessionEnvelope | null>(null);
+  // The activation dialog is driven by the authoritative single-Routine read, never by a
+  // summary or by this session's form state — §5.1 requires the merchant to confirm the exact
+  // scope and summary policy that will be authorized.
+  const [activationTarget, setActivationTarget] = useState<{ id: string; rowRevision: number; authorizationHash: string } | null>(null);
+  const [activationFacts, setActivationFacts] = useState<AuthorizationFacts | null>(null);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [reauthorizeTarget, setReauthorizeTarget] = useState<PersistedRoutine | null>(null);
   const [workflowRevisionId, setWorkflowRevisionId] = useState(latestValidRevision?.id ?? "");
   const [routineKey, setRoutineKey] = useState(`${workflowSlug}-routine`.replace(/[^a-z0-9_-]/g, "-"));
   const [actionKinds, setActionKinds] = useState<ActionKind[]>(["complete"]);
@@ -140,23 +165,22 @@ export default function RoutineAuthorizationPanel({
   const [maxActions, setMaxActions] = useState("1");
   const [maxRecipients, setMaxRecipients] = useState("1");
   const [expiresAt, setExpiresAt] = useState("");
-  const [persistedRoutines, setPersistedRoutines] = useState(routines);
   const [selectedRoutineId, setSelectedRoutineId] = useState<string | null>(null);
   const [routineDetail, setRoutineDetail] = useState<RoutineDetail | null>(null);
   const [detailBusy, setDetailBusy] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
 
-  const currentEnvelope = sessionEnvelopes.at(-1) ?? pendingDraft;
-  const currentRoutine = currentEnvelope?.routine ?? null;
-  const currentStatus = currentRoutine ? routineStatusPresentation(currentRoutine.status) : null;
-  const currentIsActive = currentRoutine?.status === "active" && !currentRoutine.killSwitchEngaged;
-  const chain = useMemo(
-    () => sessionEnvelopes.filter((entry) => entry.routine.routineKey === currentRoutine?.routineKey),
-    [currentRoutine?.routineKey, sessionEnvelopes],
-  );
+  // #720 — the server read is the ONLY source of Routine truth here. The panel used to mirror
+  // it into state and drive activation from this session's memory instead, so a Routine that
+  // existed in the database but not in this page load could never be switched on. Every action
+  // below re-reads through onRoutinesChanged rather than patching a local copy.
+  const persistedRoutines = routines;
   const activePersistedCount = persistedRoutines.filter(
     (routine) => routine.status === "active" && !routine.killSwitchEngaged,
   ).length;
+  const anyKillable = persistedRoutines.some(
+    (routine) => !routine.killSwitchEngaged && ["draft", "active", "paused"].includes(routine.status),
+  );
 
   function buildEnvelope(): EnvelopeDraft | null {
     const actions = Number.parseInt(maxActions, 10);
@@ -174,7 +198,7 @@ export default function RoutineAuthorizationPanel({
     ) return null;
     return {
       workflowRevisionId,
-      routineKey: mode === "reauthorize" && currentRoutine ? currentRoutine.routineKey : routineKey,
+      routineKey: mode === "reauthorize" && reauthorizeTarget ? reauthorizeTarget.routineKey : routineKey,
       actionKinds,
       whatsapp,
       contactIds: splitReferences(contactRefs),
@@ -219,11 +243,11 @@ export default function RoutineAuthorizationPanel({
         setErrorCode(result.error);
         return;
       }
-      const envelope = { routine: result.resource, details: draft };
-      setPendingDraft(envelope);
-      setMode("activate");
-      setConfirmationChecked(false);
-      setConfirmationOpen(true);
+      // The draft is a persisted row the moment it is created. Publish it to the list too, so
+      // closing this dialog never leaves the merchant with an invisible Routine holding its key.
+      onRoutinesChanged();
+      // Review what the SERVER stored, not what this form thinks it sent.
+      void reviewActivation(result.resource.id);
     } catch {
       setErrorCode("NETWORK");
     } finally {
@@ -231,71 +255,123 @@ export default function RoutineAuthorizationPanel({
     }
   }
 
-  function prepareReauthorization() {
+  /** Open the human confirmation dialog for one Routine, showing the exact envelope the server
+   *  holds for it. Confirmation stays unavailable until that read lands: a dialog that cannot
+   *  say what it is authorizing must not be able to authorize it. */
+  async function reviewActivation(routineId: string) {
+    setMode("activate");
+    setErrorCode(null);
+    setConfirmationChecked(false);
+    setActivationTarget(null);
+    setActivationFacts(null);
+    setActivationError(null);
+    setConfirmationOpen(true);
+    setActivationLoading(true);
+    try {
+      const result = await getRoutineAuthorizationPreview({ routineId });
+      if (!result.ok) {
+        setActivationError(result.error);
+        return;
+      }
+      const snapshot = result.resource.snapshot as unknown as Record<string, unknown>;
+      setActivationFacts(describeAuthorization(snapshot, result.resource.names));
+      setActivationTarget({
+        id: routineId,
+        rowRevision: result.resource.routineRowRevision,
+        authorizationHash: result.resource.authorizationHash,
+      });
+    } catch {
+      setActivationError("NETWORK");
+    } finally {
+      setActivationLoading(false);
+    }
+  }
+
+  /** The replacement envelope is previewed by the SERVER too, so the merchant reviews the exact
+   *  thing reauthorizeRoutine will hash — and hands that hash back for the server to re-check. */
+  async function prepareReauthorization() {
     const draft = buildEnvelope();
-    if (!draft || !currentRoutine?.authorizationHash) {
+    if (!draft || !reauthorizeTarget?.authorization.authorized) {
       setErrorCode("INVALID_ARGUMENT");
       return;
     }
     setMode("reauthorize");
+    setErrorCode(null);
     setConfirmationChecked(false);
+    setActivationTarget(null);
+    setActivationFacts(null);
+    setActivationError(null);
     setConfirmationOpen(true);
+    setActivationLoading(true);
+    try {
+      const result = await getRoutineAuthorizationPreview({
+        routineId: reauthorizeTarget.id,
+        proposed: {
+          workflowRevisionId: draft.workflowRevisionId,
+          scopeJson: scopeFor(draft),
+          maxCreditsPerRun: 0,
+          maxCreditsPerMonth: 0,
+          summaryPolicyJson: { afterEachRun: "workflow_activity" },
+          expiresAt: draft.expiresAt,
+        },
+      });
+      if (!result.ok) {
+        setActivationError(result.error);
+        return;
+      }
+      setActivationFacts(describeAuthorization(result.resource.snapshot as unknown as Record<string, unknown>, result.resource.names));
+      setActivationTarget({
+        id: reauthorizeTarget.id,
+        rowRevision: reauthorizeTarget.rowRevision,
+        authorizationHash: result.resource.authorizationHash,
+      });
+    } catch {
+      setActivationError("NETWORK");
+    } finally {
+      setActivationLoading(false);
+    }
   }
 
   async function confirmAuthorization() {
-    const draft = mode === "activate" ? pendingDraft?.details ?? null : buildEnvelope();
-    const sourceRoutine = mode === "activate" ? pendingDraft?.routine ?? null : currentRoutine;
-    if (!draft || !sourceRoutine || !confirmationChecked) return;
+    const target = activationTarget;
+    // Fail closed on screen too. The server enforces the same two rules (reviewed-hash match and
+    // an explainable summary policy), so this only saves a round trip — it is not the gate.
+    if (activationFacts === null || activationFacts.unexplained.length > 0) return;
+    const draft = mode === "activate" ? null : buildEnvelope();
+    if (!target || !confirmationChecked) return;
+    if (mode === "reauthorize" && !draft) {
+      setErrorCode("INVALID_ARGUMENT");
+      return;
+    }
     setBusy(mode);
     setErrorCode(null);
     try {
       const result = mode === "activate"
-        ? await activateRoutine({ routineId: sourceRoutine.id, expectedRowRevision: sourceRoutine.rowRevision })
+        ? await activateRoutine({
+            routineId: target.id,
+            expectedRowRevision: target.rowRevision,
+            expectedAuthorizationHash: target.authorizationHash,
+          })
         : await reauthorizeRoutine({
-            routineId: sourceRoutine.id,
-            expectedRowRevision: sourceRoutine.rowRevision,
-            workflowRevisionId: draft.workflowRevisionId,
-            scopeJson: scopeFor(draft),
+            routineId: target.id,
+            expectedRowRevision: target.rowRevision,
+            workflowRevisionId: draft!.workflowRevisionId,
+            scopeJson: scopeFor(draft!),
             maxCreditsPerRun: 0,
             maxCreditsPerMonth: 0,
             summaryPolicyJson: { afterEachRun: "workflow_activity" },
-            expiresAt: draft.expiresAt,
+            expiresAt: draft!.expiresAt,
+            expectedAuthorizationHash: target.authorizationHash,
           });
       if (!result.ok) {
         setErrorCode(result.error);
         return;
       }
-      setSessionEnvelopes((current) => [...current, { routine: result.resource, details: draft }]);
-      setPendingDraft(null);
+      setActivationTarget(null);
+      setActivationFacts(null);
+      setReauthorizeTarget(null);
       setConfirmationOpen(false);
       setSetupOpen(false);
-      onRoutinesChanged();
-    } catch {
-      setErrorCode("NETWORK");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function engageKillSwitch() {
-    if (!currentRoutine || currentRoutine.killSwitchEngaged) return;
-    setBusy("kill");
-    setErrorCode(null);
-    try {
-      const result = await killRoutine({
-        routineId: currentRoutine.id,
-        expectedRowRevision: currentRoutine.rowRevision,
-        reasonCode: "merchant_kill_switch",
-      });
-      if (!result.ok) {
-        setErrorCode(result.error);
-        return;
-      }
-      setSessionEnvelopes((current) => {
-        const next = current.filter((entry) => entry.routine.id !== result.resource.id);
-        return [...next, { routine: result.resource, details: currentEnvelope!.details }];
-      });
-      setPendingDraft(null);
       onRoutinesChanged();
     } catch {
       setErrorCode("NETWORK");
@@ -318,17 +394,8 @@ export default function RoutineAuthorizationPanel({
         setErrorCode(result.error);
         return;
       }
-      setPersistedRoutines((current) => current.map((item) => item.id === routine.id
-        ? {
-            ...item,
-            status: "paused",
-            killSwitchEngaged: true,
-            killedAt: result.resource.killedAt,
-            killReasonCode: result.resource.killReasonCode,
-            rowRevision: result.resource.rowRevision,
-            updatedAt: result.resource.updatedAt,
-          }
-        : item));
+      // No local patch: the re-read is the truth. A failed re-read surfaces as
+      // routineReadError instead of a row that only this browser believes in.
       onRoutinesChanged();
     } catch {
       setErrorCode("NETWORK");
@@ -375,7 +442,7 @@ export default function RoutineAuthorizationPanel({
             A Routine is standing permission for one exact rule revision, scope, budget, expiry, and summary policy. Publishing a rule does not activate it.
           </p>
         </div>
-        {currentStatus ? <Badge variant={currentStatus.variant}>{currentStatus.label}</Badge> : routineReadError ? <Badge variant="outline">Status unavailable</Badge> : activePersistedCount > 0 ? <Badge variant="brand">{activePersistedCount} active</Badge> : <Badge variant="outline">No active Routines</Badge>}
+        {routineReadError ? <Badge variant="outline">Status unavailable</Badge> : activePersistedCount > 0 ? <Badge variant="brand">{activePersistedCount} active</Badge> : <Badge variant="outline">No active Routines</Badge>}
       </div>
 
       {routineReadError ? <div className="mt-5 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><Unplug className="mt-0.5 size-4 shrink-0" /><span><strong>Routine status could not be refreshed.</strong> {routineReadError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(routineReadError)} No authorization is inferred.</span></div> : null}
@@ -393,65 +460,29 @@ export default function RoutineAuthorizationPanel({
           {persistedRoutines.length === 0 ? <p className="rounded-xl border border-dashed border-border bg-card px-5 py-8 text-sm text-muted-foreground">No Routine authorizations exist for this workflow yet.</p> : persistedRoutines.map((routine) => {
             const persistedStatus = routineStatusPresentation(routine.status);
             const canKill = !routine.killSwitchEngaged && ["draft", "active", "paused"].includes(routine.status);
-            return <Card key={routine.id}><CardContent><div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto]"><div><div className="flex flex-wrap items-center gap-2"><Badge variant={persistedStatus.variant}>{persistedStatus.label}</Badge>{routine.killSwitchEngaged ? <Badge variant="destructive">Kill switch engaged</Badge> : null}<Badge variant="outline">Authorization {routine.authorization.revision}</Badge></div><p className="mt-3 font-mono text-xs">{routine.routineKey}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{routine.id}</p><p className="mt-3 text-xs leading-5 text-muted-foreground">Revision {routine.workflowRevision.revision} · {routine.scopeSummary.actionKinds.map(actionLabel).join(", ") || "No actions"} · {routine.scopeSummary.contactCount} contacts · {routine.scopeSummary.segmentCount} segments</p><p className="mt-1 text-xs text-muted-foreground">Updated {dateTimeLabel(routine.updatedAt)}{routine.authorization.expiresAt ? ` · expires ${dateTimeLabel(routine.authorization.expiresAt)}` : ""}</p></div><div className="flex flex-wrap items-start gap-2"><Button type="button" variant="secondary" disabled={detailBusy !== null} onClick={() => void viewPersistedRoutine(routine.id)}>{detailBusy === routine.id ? <LoaderCircle className="animate-spin" /> : null}{selectedRoutineId === routine.id && routineDetail ? "Hide details" : "View authorization"}</Button><Button type="button" variant="destructive" disabled={busy !== null || !canKill} onClick={() => void killPersistedRoutine(routine)}>{busy === routine.id ? <LoaderCircle className="animate-spin" /> : <Power />}{routine.killSwitchEngaged ? "Killed" : "Kill Routine"}</Button></div></div>{selectedRoutineId === routine.id ? <div className="mt-5 border-t border-border pt-5">{detailError ? <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><p className="font-semibold">Authorization details could not be read</p><p className="mt-1">{detailError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(detailError)} Nothing about a missing predecessor is assumed.</p><p className="mt-1 font-mono text-xs">Error code: {detailError}</p></div> : routineDetail ? <div><div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">Exact authorization details</h4><Badge variant="outline">{routineDetail.predecessors.length} superseded {routineDetail.predecessors.length === 1 ? "authorization" : "authorizations"}</Badge></div><p className="mt-2 text-xs leading-5 text-muted-foreground">This is the complete owner-scoped read result, including which contacts, segments, and actions it covers, its budget, summary policy, kill state, and every authorization it replaced, in order.</p><pre className="mt-3 max-h-[520px] overflow-auto rounded-xl bg-[#111114] p-4 text-[11px] leading-5 text-[#F4F4F5]">{JSON.stringify(routineDetail, null, 2)}</pre></div> : <p className="text-sm text-muted-foreground">Reading the exact authorization details…</p>}</div> : null}</CardContent></Card>;
+            // #720 — the on/off control and the activation review live on the server-read row.
+            // A draft is OFF and can be switched on after human confirmation; an active Routine
+            // is ON and switching it off engages its kill switch.
+            const isActive = routine.status === "active" && !routine.killSwitchEngaged;
+            const canSwitch = !routine.killSwitchEngaged && (routine.status === "draft" || routine.status === "active");
+            return <Card key={routine.id}><CardContent><div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto]"><div><div className="flex flex-wrap items-center gap-2"><Badge variant={persistedStatus.variant}>{persistedStatus.label}</Badge>{routine.killSwitchEngaged ? <Badge variant="destructive">Kill switch engaged</Badge> : null}<Badge variant="outline">Authorization {routine.authorization.revision}</Badge></div><p className="mt-3 font-mono text-xs">{routine.routineKey}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{routine.id}</p><p className="mt-3 text-xs leading-5 text-muted-foreground">Revision {routine.workflowRevision.revision} · {routine.scopeSummary.actionKinds.map(actionLabel).join(", ") || "No actions"} · {routine.scopeSummary.contactCount} contacts · {routine.scopeSummary.segmentCount} segments</p><p className="mt-1 text-xs text-muted-foreground">Updated {dateTimeLabel(routine.updatedAt)}{routine.authorization.expiresAt ? ` · expires ${dateTimeLabel(routine.authorization.expiresAt)}` : ""}</p></div><div className="grid content-start gap-3 sm:justify-items-end">{canSwitch ? <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-2"><div><p className="text-sm font-semibold">Routine active</p><p className="text-xs text-muted-foreground">{isActive ? "OFF engages the kill switch" : "ON needs your confirmation"}</p></div><Switch checked={isActive} disabled={busy !== null || (!isActive && disabled)} onCheckedChange={(checked) => { if (checked) void reviewActivation(routine.id); else void killPersistedRoutine(routine); }} aria-label="Routine active" /></div> : null}<div className="flex flex-wrap items-start gap-2">{routine.status === "draft" && !routine.killSwitchEngaged ? <Button type="button" disabled={disabled || busy !== null} onClick={() => void reviewActivation(routine.id)}><ShieldCheck />Review activation</Button> : null}{isActive && routine.authorization.authorized ? <Button type="button" variant="secondary" disabled={disabled || busy !== null} onClick={() => { setReauthorizeTarget(routine); setMode("reauthorize"); setSetupOpen(true); }}><LockKeyhole />Prepare new authorization</Button> : null}<Button type="button" variant="secondary" disabled={detailBusy !== null} onClick={() => void viewPersistedRoutine(routine.id)}>{detailBusy === routine.id ? <LoaderCircle className="animate-spin" /> : null}{selectedRoutineId === routine.id && routineDetail ? "Hide details" : "View authorization"}</Button><Button type="button" variant="destructive" disabled={busy !== null || !canKill} onClick={() => void killPersistedRoutine(routine)}>{busy === routine.id ? <LoaderCircle className="animate-spin" /> : <Power />}{routine.killSwitchEngaged ? "Killed" : "Kill Routine"}</Button></div></div></div>{selectedRoutineId === routine.id ? <div className="mt-5 border-t border-border pt-5">{detailError ? <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><p className="font-semibold">Authorization details could not be read</p><p className="mt-1">{detailError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(detailError)} Nothing about a missing predecessor is assumed.</p><p className="mt-1 font-mono text-xs">Error code: {detailError}</p></div> : routineDetail ? <div><div className="flex flex-wrap items-center gap-2"><h4 className="font-semibold">Exact authorization details</h4><Badge variant="outline">{routineDetail.predecessors.length} superseded {routineDetail.predecessors.length === 1 ? "authorization" : "authorizations"}</Badge></div><p className="mt-2 text-xs leading-5 text-muted-foreground">This is the complete owner-scoped read result, including which contacts, segments, and actions it covers, its budget, summary policy, kill state, and every authorization it replaced, in order.</p><pre className="mt-3 max-h-[520px] overflow-auto rounded-xl bg-[#111114] p-4 text-[11px] leading-5 text-[#F4F4F5]">{JSON.stringify(routineDetail, null, 2)}</pre></div> : <p className="text-sm text-muted-foreground">Reading the exact authorization details…</p>}</div> : null}</CardContent></Card>;
           })}
         </div>
       ) : null}
 
-      {currentRoutine ? (
-        <Card className="mt-5">
-          <CardContent>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant={currentStatus?.variant ?? "outline"}>{currentStatus?.label ?? "Unknown"}</Badge>
-                  {currentRoutine.killSwitchEngaged ? <Badge variant="destructive">Kill switch engaged</Badge> : null}
-                  <Badge variant="outline">Authorization {currentRoutine.authorizationRevision}</Badge>
-                </div>
-                <p className="mt-3 font-mono text-xs text-muted-foreground">{currentRoutine.routineKey} · {currentRoutine.id}</p>
-              </div>
-              <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-2">
-                <div><p className="text-sm font-semibold">Routine active</p><p className="text-xs text-muted-foreground">OFF engages the kill switch</p></div>
-                <Switch checked={currentIsActive} disabled={busy !== null || currentRoutine.killSwitchEngaged} onCheckedChange={(checked) => { if (checked && pendingDraft) { setConfirmationChecked(false); setConfirmationOpen(true); } else if (!checked) void engageKillSwitch(); }} aria-label="Routine active" />
-              </div>
-            </div>
-
-            <div className="mt-5"><EnvelopeReview draft={currentEnvelope!.details} revision={validRevisions.find((revision) => revision.id === currentEnvelope!.details.workflowRevisionId) ?? null} /></div>
-
-            {chain.length > 1 ? (
-              <div className="mt-5">
-                <p className="text-xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">Supersedes chain</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {chain.map((entry, index) => (
-                    <div key={entry.routine.id} className="flex items-center gap-2">
-                      {index > 0 ? <ArrowRight className="size-3.5 text-muted-foreground" /> : null}
-                      <span className="rounded-lg border border-border bg-secondary/30 px-2.5 py-1.5 font-mono text-[11px]">Authorization {entry.routine.authorizationRevision} · {shortWorkflowId(entry.routine.id)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {currentRoutine && !currentRoutine.killSwitchEngaged && ["draft", "active", "paused"].includes(currentRoutine.status) ? (
+      {anyKillable ? (
         <div className="mt-5 rounded-[var(--radius-card)] border-2 border-destructive/45 bg-error-soft p-5">
-          <div className="flex items-start justify-between gap-5">
-            <div className="flex gap-3">
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-destructive text-destructive-foreground"><Power className="size-5" /></span>
-              <div><h3 className="font-semibold text-destructive">Kill this Routine now</h3><p className="mt-1 max-w-xl text-sm leading-6 text-error-soft-foreground">One click engages the fail-safe kill switch. New runs and steps stop; history stays intact. This cannot recall an action already handed to a provider.</p></div>
-            </div>
-            <Button type="button" variant="destructive" disabled={busy !== null} onClick={() => void engageKillSwitch()}>{busy === "kill" ? <LoaderCircle className="animate-spin" /> : <Power />}Kill Routine</Button>
+          <div className="flex gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-destructive text-destructive-foreground"><Power className="size-5" /></span>
+            <div><h3 className="font-semibold text-destructive">Kill switch</h3><p className="mt-1 max-w-xl text-sm leading-6 text-error-soft-foreground">Every Routine above has its own <strong>Kill Routine</strong> button. One click engages the fail-safe kill switch: new runs and steps stop and history stays intact. This cannot recall an action already handed to a provider, and it cannot be undone.</p></div>
           </div>
         </div>
       ) : null}
 
       {!setupOpen ? (
         <div className="mt-5 flex gap-3">
-          {!currentRoutine ? <Button type="button" disabled={disabled || validRevisions.length === 0} onClick={() => { setMode("activate"); setSetupOpen(true); }}><ShieldCheck />Set up a new Routine</Button> : null}
-          {pendingDraft ? <Button type="button" disabled={disabled || busy !== null} onClick={() => { setMode("activate"); setConfirmationChecked(false); setConfirmationOpen(true); }}><ShieldCheck />Review activation</Button> : null}
-          {currentRoutine?.authorizationHash ? <Button type="button" variant="secondary" disabled={disabled || busy !== null} onClick={() => { setMode("reauthorize"); setSetupOpen(true); }}><LockKeyhole />Prepare new authorization</Button> : null}
+          <Button type="button" disabled={disabled || validRevisions.length === 0} onClick={() => { setReauthorizeTarget(null); setMode("activate"); setSetupOpen(true); }}><ShieldCheck />Set up a new Routine</Button>
+          {activationTarget ? <Button type="button" disabled={disabled || busy !== null} onClick={() => void reviewActivation(activationTarget.id)}><ShieldCheck />Review activation</Button> : null}
         </div>
       ) : (
         <Card className="mt-5 border-brand/25">
@@ -463,7 +494,7 @@ export default function RoutineAuthorizationPanel({
 
             <div className="mt-5 grid grid-cols-2 gap-5">
               <label className="grid gap-2 text-sm font-semibold">Rule revision<select className="h-11 rounded-lg border border-input bg-card px-3 text-sm font-normal" value={workflowRevisionId} onChange={(event) => setWorkflowRevisionId(event.target.value)}><option value="">Select a valid revision…</option>{validRevisions.map((revision) => <option key={revision.id} value={revision.id}>Revision {revision.revision}</option>)}</select></label>
-              <label className="grid gap-2 text-sm font-semibold">Routine key<Input value={mode === "reauthorize" && currentRoutine ? currentRoutine.routineKey : routineKey} disabled={mode === "reauthorize"} onChange={(event) => setRoutineKey(event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-"))} placeholder="outside-hours-reply" /></label>
+              <label className="grid gap-2 text-sm font-semibold">Routine key<Input value={mode === "reauthorize" && reauthorizeTarget ? reauthorizeTarget.routineKey : routineKey} disabled={mode === "reauthorize"} onChange={(event) => setRoutineKey(event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-"))} placeholder="outside-hours-reply" /></label>
             </div>
 
             <fieldset className="mt-5"><legend className="text-sm font-semibold">What this Routine may do</legend><div className="mt-3 grid grid-cols-2 gap-3">{ACTION_OPTIONS.map((option) => <label key={option.value} className="flex cursor-pointer gap-3 rounded-xl border border-border bg-secondary/20 p-3"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={actionKinds.includes(option.value)} onChange={() => toggleAction(option.value)} /><span><span className="block text-sm font-semibold">{option.label}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{option.description}</span></span></label>)}</div></fieldset>
@@ -486,7 +517,7 @@ export default function RoutineAuthorizationPanel({
 
             <div className="mt-5 flex items-start gap-3 rounded-xl border border-border bg-secondary/20 px-4 py-3"><CircleHelp className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><p className="text-sm leading-6 text-muted-foreground"><strong className="text-foreground">Summary policy:</strong> show a bounded summary in workflow activity after every run. A summary is not a delivery receipt.</p></div>
 
-            <div className="mt-5 flex justify-end gap-3"><Button type="button" variant="ghost" onClick={() => setSetupOpen(false)}>Cancel</Button><Button type="button" disabled={busy !== null || validRevisions.length === 0} onClick={() => { if (mode === "reauthorize") prepareReauthorization(); else void prepareActivation(); }}>{busy === "draft" ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{mode === "reauthorize" ? "Review new authorization" : "Review and create draft"}</Button></div>
+            <div className="mt-5 flex justify-end gap-3"><Button type="button" variant="ghost" onClick={() => setSetupOpen(false)}>Cancel</Button><Button type="button" disabled={busy !== null || validRevisions.length === 0} onClick={() => { if (mode === "reauthorize") void prepareReauthorization(); else void prepareActivation(); }}>{busy === "draft" ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{mode === "reauthorize" ? "Review new authorization" : "Review and create draft"}</Button></div>
           </CardContent>
         </Card>
       )}
@@ -496,11 +527,39 @@ export default function RoutineAuthorizationPanel({
       <Dialog open={confirmationOpen} onOpenChange={(open) => { if (busy === null) setConfirmationOpen(open); }}>
         <DialogContent className="max-w-[680px]">
           <DialogHeader><DialogTitle>Human confirmation required</DialogTitle><DialogDescription>Only you can {mode === "reauthorize" ? "reauthorize" : "activate"} this Routine. Otto cannot approve, activate, or reauthorize it.</DialogDescription></DialogHeader>
-          {(() => { const draft = mode === "activate" ? pendingDraft?.details ?? null : buildEnvelope(); return draft ? <EnvelopeReview draft={draft} revision={validRevisions.find((revision) => revision.id === draft.workflowRevisionId) ?? null} /> : null; })()}
-          {mode === "reauthorize" && currentRoutine ? <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>This creates a new, unchangeable authorization and revokes authorization {currentRoutine.authorizationRevision}. The new Routine will visibly supersede {currentRoutine.id}.</span></div> : null}
+          {(() => {
+            {
+              // Fail closed: describe the server-built envelope, or say plainly that it could
+              // not be read. Never a placeholder that looks like an authorization.
+              if (activationError) {
+                // 判官 r2 P3 — the merchant reads what happened, not the machine's word for it.
+                return (
+                  <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+                    <p className="font-semibold">This authorization could not be read</p>
+                    <p className="mt-1">{activationError === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(activationError)} Nothing was activated, and nothing about its scope is assumed.</p>
+                  </div>
+                );
+              }
+              if (!activationFacts) {
+                return <p className="text-sm text-muted-foreground">Reading the exact authorization this will activate…</p>;
+              }
+              return (
+                <>
+                  <AuthorizationReview facts={activationFacts} />
+                  {activationFacts.unexplained.length > 0 ? (
+                    <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+                      <p className="font-semibold">Part of this authorization cannot be shown in plain language</p>
+                      <p className="mt-1">This Routine records something this screen cannot explain, so it cannot be activated here. Nothing was activated. Set up a new Routine, or ask support to look at this one.</p>
+                    </div>
+                  ) : null}
+                </>
+              );
+            }
+          })()}
+          {mode === "reauthorize" && reauthorizeTarget ? <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>This creates a new, unchangeable authorization and revokes authorization {reauthorizeTarget.authorization.revision}. The new Routine will visibly supersede {reauthorizeTarget.id}.</span></div> : null}
           {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive"><p className="font-semibold">The Routine action could not finish</p><p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p><p className="mt-1 font-mono text-xs">Error code: {errorCode}</p></div> : null}
           <label className="flex cursor-pointer gap-3 rounded-xl border border-border p-4"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={confirmationChecked} onChange={(event) => setConfirmationChecked(event.target.checked)} /><span><span className="block text-sm font-semibold">I reviewed this exact authorization</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand the scope, zero-credit budget, expiry, and after-run summary policy.</span></span></label>
-          <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null || (activationLoading || !activationFacts || activationFacts.unexplained.length > 0)} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </section>
