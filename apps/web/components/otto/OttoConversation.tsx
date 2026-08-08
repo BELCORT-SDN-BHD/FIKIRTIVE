@@ -429,6 +429,9 @@ export function OttoConversation({
           <div className="bg-background rounded-[14px] border-[1.5px] border-border overflow-hidden shadow-sm">
             <textarea
               id="otto-composer"
+              // #739 — a placeholder is not a name: it disappears on the first keystroke,
+              // so the product's main input must carry its own accessible name.
+              aria-label="Reply to Otto"
               value={text}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}

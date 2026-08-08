@@ -533,7 +533,11 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   --secondary: #F4F4F3;   --secondary-foreground: #0A0A0A;
   --muted: #F4F4F3;       --muted-foreground: #6E6E68;
   --accent: #ECECEA;      --accent-foreground: #0A0A0A;
-  --destructive: #E5484D; --destructive-foreground: #FFFFFF;
+  /* --destructive #E5484D → #D02F35: AA fix (#739). White on the old red was 3.91:1 — under the
+     4.5:1 floor for the small labels destructive buttons carry (Library's "Delete"), and the same
+     literal read 3.82:1 as `text-destructive` on --background. Same hue (358°), one step darker:
+     5.07:1 filled, 4.94:1 as text. Dark value already passes (5.83:1) — unchanged. */
+  --destructive: #D02F35; --destructive-foreground: #FFFFFF;
   --border: #E6E6E3;      --input: #E6E6E3;
   --ring: #EC5828;
 
@@ -546,7 +550,9 @@ h1, h2, h3 { font-family: var(--font-sans); font-weight: 600; letter-spacing: va
   /* --warning-soft-foreground #B45309 → #92400E: AA fix (4.45→6.28:1), design-rules v3 §A1.8,
      founder-approved 2026-07-07. Dark value already passes — unchanged. */
   --warning: #D97706; --warning-soft: #FBF0DD; --warning-soft-foreground: #92400E;
-  --error:   #E5484D; --error-soft:   #FCE9E9; --error-soft-foreground:   #B42B30;
+  /* --error tracks --destructive: same literal, same 3.91:1 failure wherever it is used as
+     small text (SettingsPage) or as a filled banner (impersonation). Moved together (#739). */
+  --error:   #D02F35; --error-soft:   #FCE9E9; --error-soft-foreground:   #B42B30;
   --info:    #3B6FE6; --info-soft:    #E7EEFD; --info-soft-foreground:    #1D4ED8;
 
   --shadow-xs: 0 1px 2px rgba(20 20 24 / 0.05);

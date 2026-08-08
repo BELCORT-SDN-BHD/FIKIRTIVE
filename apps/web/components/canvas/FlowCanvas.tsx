@@ -1983,6 +1983,8 @@ export default function FlowCanvas({
             </DialogDescription>
           </DialogHeader>
           <textarea
+            // #739 (same root) — placeholder-only control; the dialog title is not its name.
+            aria-label="Describe the video you want"
             value={t2vPrompt}
             onChange={(e) => setT2vPrompt(e.target.value)}
             placeholder="e.g. a coffee cup steaming on a wooden table, slow push-in"
