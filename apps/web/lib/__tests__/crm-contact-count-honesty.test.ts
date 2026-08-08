@@ -96,8 +96,27 @@ beforeAll(async () => {
       // cursor breaks the tie by id. (Group size must not divide 50: with 5 per group the
       // boundary lands between groups and the tie-break is never exercised.)
       lastSeenAt: new Date(base + Math.floor(index / 7) * 60_000),
-      marketingConsent: index === 0 ? "opt_out" : "unknown",
+      // #726: the known opt-out is expressed the only way that counts now — the legacy column
+      // stays "unknown" for everyone, and the projection below is what excludes contact 0.
     })),
+  });
+  const optedOut = await prisma.contact.findFirstOrThrow({
+    where: { ownerId, name: "Bulk Contact 000" },
+    select: { id: true },
+  });
+  await prisma.consentStateProjection.create({
+    data: {
+      ownerId,
+      contactId: optedOut.id,
+      channel: "whatsapp",
+      purpose: "marketing",
+      state: "effective_revoke",
+      lastEventId: `evt_${randomUUID()}`,
+      lastReceivedAt: new Date(base),
+      stateActorKind: "customer",
+      stateSourceKind: "unsubscribe_link",
+      evidenceStatus: "verified",
+    },
   });
   // A second tenant's contacts must never leak into either number.
   await prisma.contact.createMany({
