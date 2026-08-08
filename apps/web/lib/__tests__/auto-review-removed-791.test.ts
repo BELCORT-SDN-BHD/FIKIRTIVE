@@ -20,7 +20,8 @@ import path from "node:path";
 
 const repoRoot = path.resolve(__dirname, "../../../..");
 
-/** Tracked files that contain the literal, as `git grep -l` sees them. */
+/** Tracked SHIPPING files that contain the literal, as `git grep -l` sees them.
+ *  Test files are excluded — including this one, which necessarily names what it forbids. */
 function trackedFilesContaining(literal: string): string[] {
   try {
     return execFileSync("git", ["grep", "-l", "-F", "--", literal, "--", "apps", "packages"], {
@@ -28,7 +29,8 @@ function trackedFilesContaining(literal: string): string[] {
       encoding: "utf8",
     })
       .split("\n")
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter((f) => !f.includes("__tests__") && !f.endsWith(".test.ts"));
   } catch {
     return []; // git grep exits 1 when there are no matches
   }
@@ -42,9 +44,7 @@ describe("#791-4 自动 Review 轮整个下线", () => {
         // - spend-history.ts 给历史 ledger 行贴标签;
         // - llm-reservation-reaper.ts 收尾历史上遗留的未结算预扣。
         f !== "apps/web/lib/spend-history.ts" &&
-        f !== "apps/worker/src/jobs/llm-reservation-reaper.ts" &&
-        !f.includes("__tests__") &&
-        !f.endsWith(".test.ts"),
+        f !== "apps/worker/src/jobs/llm-reservation-reaper.ts",
     );
     expect(minting).toEqual([]);
   });

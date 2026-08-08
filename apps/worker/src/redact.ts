@@ -14,7 +14,7 @@
 // the SAME definition this error path does. Imported (not just re-exported) because
 // sanitizeError below calls it; re-exported because this module's callers and tests have
 // always reached it through redact.ts.
-import { redactProviderNames } from "@fikirtive/core";
+import { redactProviderNames } from "@fikirtive/core/provider-secrecy";
 
 export { redactProviderNames };
 

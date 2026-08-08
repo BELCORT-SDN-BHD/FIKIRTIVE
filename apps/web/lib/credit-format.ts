@@ -1,4 +1,7 @@
-import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, displayCredits } from "@fikirtive/core";
+// Subpath imports, not the barrel: this module is reachable from client components, and
+// the barrel is Node-capable (guarded by lib/__tests__/client-core-imports.test.ts).
+import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core/otto-budget";
+import { displayCredits } from "@fikirtive/core/spend";
 
 /**
  * User-facing credit formatting (the money UI's words).

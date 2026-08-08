@@ -11,7 +11,7 @@ import { ottoGreeting } from "@/lib/otto-greeting";
 import { CHAT_HOLD_NOTE, CHAT_SPEND_NOTE, lowBalanceForVideoMessage } from "@/lib/credit-format";
 import { ExitLink } from "@/components/exits/Exits";
 import { BILLING_HREF } from "@/lib/exits";
-import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core";
+import { defaultVideoDisplayCredits, INTERNAL_PER_DISPLAY } from "@fikirtive/core/spend";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 
 interface GoalTile {
