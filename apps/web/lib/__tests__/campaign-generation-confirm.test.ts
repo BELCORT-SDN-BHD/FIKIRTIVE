@@ -120,7 +120,7 @@ const {
   factoryMaterialMatches,
   parseFactoryAttemptKey,
 } = await import("../batch-idempotency");
-const { INTERNAL_PER_DISPLAY, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel, buildSpecChips } =
+const { INTERNAL_PER_DISPLAY, GEN_VIDEO_MODEL_OPTIONS, activeImageModel, activeVideoModel, buildSpecChips } =
   await import("@fikirtive/core");
 const {
   applyCampaignApprovalGate,
@@ -1267,6 +1267,115 @@ describe("#709 修复轮 P1-2 指纹覆盖面 = 卡面承诺面", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #749 判官 r2 P3 —— 指纹覆盖面:行为性证明,不是源码子串
+// ---------------------------------------------------------------------------
+/**
+ * r2 的意见是对的:原来那条「不许改回挑字段」的钉板只看源码字符串,`Object.entries(spec)
+ * .filter(...)` 照样能过。这一组改成行为性的,分两半,合起来把六个字段全盖住:
+ *
+ *   ① **服务端自己算两次**(端到端,零重实现):卡面上能真变的那几格 —— 画幅、分辨率、
+ *      时长 —— 每变一次,服务端给出的内容指纹必须跟着变。画幅那一条是**同价**对照
+ *      (reel 与 video 同模型同价,只有解析出来的画幅不同),所以它单独证明「动的是规格」。
+ *   ② **拿卡面承诺重算一遍**:用这一份 `promisedSpec` 逐字复现服务端的内容指纹。它一旦
+ *      对得上,就证明服务端哈的**正好是整份规格**;然后逐字段各改一次、再加一个将来才会
+ *      有的新字段,都必须让指纹变 —— 于是 count / fps / audio 这三格(这条路上由引擎能力
+ *      表钉死、界面变不出来)也被证到了,而且「将来多一个字段自动进指纹」有了断言。
+ */
+describe("#749 判官 r2 P3 内容指纹覆盖整份卡面承诺", () => {
+  /** 服务端那条公式的同构重算 —— 只在这份测试里存在。它对得上,才说明服务端哈的是整份。 */
+  function contentFingerprintFrom(
+    lines: { entryId: string; brief: string; kind: string; fullDisplayCredits: number; promisedSpec: Record<string, unknown> }[],
+  ): string {
+    const payload = lines
+      .map((line) => [
+        line.entryId,
+        line.brief,
+        line.kind === "video" ? activeVideoModel() : activeImageModel(),
+        line.fullDisplayCredits * INTERNAL_PER_DISPLAY,
+        JSON.stringify(Object.entries(line.promisedSpec).sort(([left], [right]) => (left < right ? -1 : 1))),
+      ] as const)
+      .sort(([leftId], [rightId]) => (leftId < rightId ? -1 : leftId > rightId ? 1 : 0));
+    return createHash("sha256")
+      .update("campaign-generation-content-v1")
+      .update("\0")
+      .update(JSON.stringify(payload))
+      .digest("hex");
+  }
+
+  function linesFor(quote: ReviewedQuote) {
+    return quote.lines.map((line) => ({
+      entryId: line.entryId,
+      brief: line.brief,
+      kind: line.kind as string,
+      fullDisplayCredits: line.fullDisplayCredits,
+      promisedSpec: { ...line.promisedSpec } as Record<string, unknown>,
+    }));
+  }
+
+  it("① 同价对照:只有解析出来的画幅不同,服务端的内容指纹就必须不同", async () => {
+    // reel 与 video 是同一个模型、同一档、同一个价 —— 差的只有格式名解析出来的画幅。
+    seedCampaign([entry("V1", { format: "reel" })]);
+    const portrait = await currentQuote();
+    seedCampaign([entry("V1", { format: "video" })]);
+    const landscape = await currentQuote();
+
+    expect(portrait.lines[0].promisedSpec.aspectRatio).toBe("9:16");
+    expect(landscape.lines[0].promisedSpec.aspectRatio).toBe("16:9");
+    expect(landscape.lines[0].fullDisplayCredits).toBe(portrait.lines[0].fullDisplayCredits);
+    expect(landscape.contentFingerprint).not.toBe(portrait.contentFingerprint);
+  });
+
+  it("① 商家换档:分辨率或时长一变,服务端的内容指纹跟着变", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    const base = await currentQuote();
+    const cheaper = await currentQuote({ videoSpec: { resolution: "480p", durationSeconds: 5 } });
+    const longer = await currentQuote({ videoSpec: { resolution: "720p", durationSeconds: 10 } });
+
+    expect(cheaper.contentFingerprint).not.toBe(base.contentFingerprint);
+    expect(longer.contentFingerprint).not.toBe(base.contentFingerprint);
+    expect(longer.contentFingerprint).not.toBe(cheaper.contentFingerprint);
+  });
+
+  it("② 拿卡面承诺重算,逐字复现服务端的内容指纹 —— 哈的正好是整份规格", async () => {
+    seedCampaign([entry("V1", { format: "reel" }), entry("P1", { format: "story" })]);
+    const quote = await currentQuote();
+
+    expect(contentFingerprintFrom(linesFor(quote))).toBe(quote.contentFingerprint);
+  });
+
+  it.each(["aspectRatio", "count", "resolution", "durationSeconds", "fps", "audio"])(
+    "② 规格里的 %s 变一格,指纹必然变(挑字段的那一版会在这里红)",
+    async (field) => {
+      seedCampaign([entry("V1", { format: "reel" })]);
+      const quote = await currentQuote();
+      const lines = linesFor(quote);
+      // 前提:这一格确实在卡面承诺里 —— 承诺面收窄了这条也要红。
+      expect(Object.keys(lines[0].promisedSpec)).toContain(field);
+      expect(contentFingerprintFrom(lines)).toBe(quote.contentFingerprint);
+
+      const current = lines[0].promisedSpec[field];
+      lines[0].promisedSpec[field] =
+        typeof current === "number" ? current + 1
+          : typeof current === "boolean" ? !current
+            : `${String(current)}-moved`;
+      expect(contentFingerprintFrom(lines)).not.toBe(quote.contentFingerprint);
+    },
+  );
+
+  it("② 将来多出来的字段自动进指纹 —— 不用有人记得回来点名它", async () => {
+    seedCampaign([entry("V1", { format: "reel" })]);
+    const quote = await currentQuote();
+    const lines = linesFor(quote);
+    expect(contentFingerprintFrom(lines)).toBe(quote.contentFingerprint);
+
+    // 一个今天还不存在的规格字段。没人点过它的名,指纹却必须立刻不一样 ——
+    // 「整份哈希」与「挑字段」的差别就在这一条。
+    lines[0].promisedSpec.somethingTheEngineWillAddLater = "on";
+    expect(contentFingerprintFrom(lines)).not.toBe(quote.contentFingerprint);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #708 修复轮 P2-1 —— 复用不等于做完
 // ---------------------------------------------------------------------------
 describe("#708 修复轮 P2-1 复用不等于做完", () => {
@@ -1502,10 +1611,11 @@ describe("money-safety static guards", () => {
     expect(batchCode).not.toMatch(creditAccountWrite);
   });
 
-  it("#709 修复轮 P1-2 钉板:内容指纹整份哈希卡面承诺的规格,不许挑字段", () => {
-    // 这一条是结构性的,不是文字洁癖:漏掉 audio / 默认画幅那一版之所以能过测试,正是因为
-    // 「卡上说什么」与「指纹哈什么」是两份各自维护的字段清单。整份哈希之后两者不可能分家,
-    // 而这个钉板保证没有人再把它拆回去。
+  it("#709 修复轮 P1-2 早期信号:内容指纹整份哈希卡面承诺的规格,不许挑字段", () => {
+    // ⚠️ 这一条**不承重**(#749 判官 r2 P3):它只看源码字符串,把整份换成
+    // `Object.entries(spec).filter(...)` 照样能过 —— 实测如此。真正承重的是
+    // 「#749 判官 r2 P3 内容指纹覆盖整份卡面承诺」那一组行为性断言:同一个 filter 改动
+    // 会让那八条全红。留着它只当早期信号(改错时先在这里看见),别把它当保证。
     const payload = confirmCode.slice(
       confirmCode.indexOf("const fingerprintPayload"),
       confirmCode.indexOf("const contentFingerprint"),
