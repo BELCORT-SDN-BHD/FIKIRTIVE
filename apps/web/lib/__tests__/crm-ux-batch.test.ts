@@ -37,11 +37,23 @@ import BroadcastDetailPage from "@/components/crm/broadcasts/broadcast-detail-pa
 import BroadcastListPage from "@/components/crm/broadcasts/broadcast-list-page";
 import InboxListPage from "@/components/crm/inbox/inbox-list-page";
 import WorkflowMonitoring from "@/components/crm/workflows/workflow-monitoring";
-import { CRM_CONSENT_LABELS } from "@/lib/crm-consent-labels";
+import { CRM_CONSENT_LABELS, crmConsentBadge } from "@/lib/crm-consent-labels";
+import type { CrmConsentState } from "@/lib/crm-view-data";
 import { ottoGreetingName } from "@/lib/otto-greeting";
 
 function source(relativePath: string): string {
   return fs.readFileSync(path.resolve(__dirname, relativePath), "utf8");
+}
+
+function consentState(overrides: Partial<CrmConsentState>): CrmConsentState {
+  return {
+    state: "unknown",
+    stateSourceKind: null,
+    evidenceStatus: null,
+    lastReceivedAt: null,
+    unresolvedLegacyOptOut: false,
+    ...overrides,
+  };
 }
 
 const RUN = {
@@ -89,15 +101,35 @@ describe("CRM consent labels", () => {
     });
   });
 
-  it("is imported by both the contacts list and contact detail", () => {
+  // #752 — the two pages now share the whole badge (label AND variant), not just the label map,
+  // because a state-only badge is what let them say "Unknown" about a customer the segments page
+  // had already excluded. Neither page may derive its own.
+  it("is imported by both the contacts list and contact detail through one shared badge", () => {
     for (const file of [
       "../../components/crm/contacts-page.tsx",
       "../../components/crm/contact-profile-page.tsx",
     ]) {
-      expect(source(file)).toContain(
-        'import { CRM_CONSENT_LABELS } from "@/lib/crm-consent-labels";',
-      );
+      expect(source(file)).toContain("crmConsentBadge");
+      expect(source(file)).toContain('from "@/lib/crm-consent-labels"');
+      expect(source(file)).not.toContain("CRM_CONSENT_LABELS[");
     }
+  });
+
+  it("gives the pre-ledger fence its own words, at the weight of an opt-out", () => {
+    expect(crmConsentBadge(consentState({ unresolvedLegacyOptOut: true }))).toEqual({
+      label: "Opted out before consent history",
+      variant: "destructive",
+    });
+    // Everything else keeps the wording it already had.
+    expect(crmConsentBadge(consentState({}))).toEqual({ label: "Unknown", variant: "warning" });
+    expect(crmConsentBadge(consentState({ state: "verified_grant" }))).toEqual({
+      label: "Verified opt-in",
+      variant: "success",
+    });
+    expect(crmConsentBadge(consentState({ state: "effective_revoke" }))).toEqual({
+      label: "Opted out",
+      variant: "destructive",
+    });
   });
 });
 
