@@ -637,15 +637,19 @@ export function reusedSummaryPhrase(lines: Pick<CampaignGenQuoteLine, "charge" |
  * 知道自己付了多少,也不知道还差几件,那就是沉默。
  *
  * 返回 null = 这一批不是因为丢租约停的(别的失败原因有它们自己的逐格说明)。
+ *
+ * M 数的是**所有零扣费没开始的格**,不只是接管那一种(#749 判官 r5 P2)。接管只是没开始的
+ * 原因之一:同一批里积分不足、被挡下的格同样一件没开始、一分钱没收(`error` 格按定义就是
+ * 零扣费)。只数接管那一种,商家读到的「还差几件」就比实际少 —— 而他正要照这个数决定重新
+ * 确认什么。触发这套说法的仍然是「有格丢了租约」,数的却必须是整批。
  */
 export function campaignLeaseHandoverSummary(
   cells: Pick<BatchResult["cells"][number], "status" | "error">[],
 ): { started: number; notStarted: number } | null {
-  const notStarted = cells.filter((cell) => cell.error === CAMPAIGN_DISPATCH_IN_FLIGHT).length;
-  if (notStarted === 0) return null;
+  if (!cells.some((cell) => cell.error === CAMPAIGN_DISPATCH_IN_FLIGHT)) return null;
   return {
     started: cells.filter((cell) => cell.status === "queued" || cell.status === "reused").length,
-    notStarted,
+    notStarted: cells.filter((cell) => cell.status === "error").length,
   };
 }
 

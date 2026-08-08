@@ -440,4 +440,34 @@ describe("#749 判官 r4 批次被接管时的结果文案", () => {
 
     expect(container!.textContent).not.toContain("Another confirmation took over");
   });
+
+  // #749 判官 r5 P2 —— 混合失败时 M 少报。接管只是**没开始的原因之一**:同一批里积分不足
+  // 的格同样一件没开始、一分钱没收。横幅只数接管那一种,商家读到的「还差几件」就是错的,
+  // 而他正要照着这个数决定重新确认什么。
+  it("混合失败:接管 + 积分不足,「未开始」数的是全部零扣费没开始的格", async () => {
+    mocks.confirm.mockResolvedValue({
+      ...handoverResult(),
+      result: {
+        ...handoverResult().result,
+        cells: [
+          { index: 0, type: "gen" as const, status: "queued" as const, jobId: "job-1", credits: 30 },
+          { index: 1, type: "gen" as const, status: "error" as const, credits: 0, error: "Not enough credits." },
+          { index: 2, type: "gen" as const, status: "error" as const, credits: 0, error: IN_FLIGHT },
+        ],
+        totalCredits: 30,
+        dispatched: 1,
+        reused: 0,
+        failed: 2,
+      },
+    });
+    await render();
+    await act(async () => confirmButton().click());
+
+    const text = container!.textContent ?? "";
+    expect(text).toContain("Another confirmation took over this campaign");
+    expect(text).toContain("1 item was already started and charged");
+    // 修前:只数接管那一格 ⇒ 「1 item was not started」,而 failed 是 2。
+    expect(text).toContain("2 items were not started and were not charged");
+    expect(text).not.toContain("1 item was not started");
+  });
 });

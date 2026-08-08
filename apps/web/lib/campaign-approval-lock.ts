@@ -220,19 +220,28 @@ export async function claimCampaignDispatch(
  * 为什么要续:租约只需要覆盖相邻两格的间隙,于是它可以短到「崩了很快就放」,又不会在一趟
  * 正常派发的中途过期。为什么要确认:万一真过期了、且别人抢了去,这一格必须在花钱之前停住,
  * 而不是继续往一份已经缩水的交付里付钱。
+ *
+ * **写必须是 CAS**(#749 判官 r5 P1)。上面那次读与下面那次写之间是有缝的 —— `afterCharge`
+ * 那个调用点跑在**锁外**(钱事务已经提交,campaign 锁随它一起放开),持有者在这条缝里被暂停
+ * 久到租约过期,闯入者就能合法接管。此时若照 id+ownerId 无条件写下去,就会把接管者的租约
+ * **原地改回自己**,于是两次派发同时以为自己独占这一批,批次级承诺当场作废。所以 where 带上
+ * 自己那把 token:持有者换了人(或已归还成闲置)就一行都不更新,返回 false 让调用方停住。
  */
 export async function renewCampaignDispatchLease(
   tx: DispatchLeaseClient,
   lease: Pick<CampaignDispatchLease, "ownerId" | "batchId" | "attemptId">,
 ): Promise<boolean> {
+  const token = dispatchLeaseToken(lease.attemptId);
   const row = await tx.generationBatch.findFirst({
     where: { id: lease.batchId, ownerId: lease.ownerId },
     select: { id: true, status: true, updatedAt: true },
   });
+  // 读这一步管的是**过期**(CAS 比不出来:过期的租约字面值还是自己那一把);写这一步管的是
+  // **换人**。两样都要,少哪一样都有一条路走通。
   if (!row || campaignDispatchLeaseHolder(row) !== lease.attemptId) return false;
   const { count } = await tx.generationBatch.updateMany({
-    where: { id: lease.batchId, ownerId: lease.ownerId },
-    data: { status: dispatchLeaseToken(lease.attemptId) },
+    where: { id: lease.batchId, ownerId: lease.ownerId, status: token },
+    data: { status: token },
   });
   return count === 1;
 }

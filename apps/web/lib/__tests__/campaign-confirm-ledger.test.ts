@@ -37,7 +37,7 @@ const { prisma, settleCredits, refundReservation } = await import("@fikirtive/db
 // 推导 —— 手抄一份公式就等于测了一个不存在的键。
 const { stableCellLogicalPrefix } = await import("../factory-batch");
 const { deriveCampaignBatchId } = await import("../campaign-gen-identity");
-const { campaignDispatchLeaseHolder, CAMPAIGN_DISPATCH_LEASE_MS, BATCH_IDLE_STATUS } =
+const { campaignDispatchLeaseHolder, renewCampaignDispatchLease, CAMPAIGN_DISPATCH_LEASE_MS, BATCH_IDLE_STATUS } =
   await import("../campaign-approval-lock");
 
 const IMG = 1; // one image cell = 1 displayed credit
@@ -803,5 +803,95 @@ describe("#749 判官 r4 钱一落地就续租", () => {
     expect(atMoveOn!.count).toBeGreaterThanOrEqual(1);
     // 而且那一次写看得见已提交的扣费 —— 它发生在提交之后,不是事务开头那一次。
     expect(atMoveOn!.allSawJob).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #749 判官 r5 P1 —— 续租不许把别人的租约改回自己
+// ---------------------------------------------------------------------------
+/**
+ * 上面那次 `afterCharge` 续租跑在**锁外**(钱事务已经提交,campaign 锁随它一起放开),而续租
+ * 本身是「先读、再写」两步。两步之间持有者若被暂停久到租约过期,闯入者就能合法接管;老持有者
+ * 恢复后那一步写若不问「现在还归不归我」,就会把接管者的租约**原地改回自己** —— 于是两次派发
+ * 同时以为自己独占这一批,批次级承诺当场作废(判官 r5 P1,r5 自己引入的所有权回写竞态)。
+ *
+ * 正确语义是 CAS:换了人就一行都不更新。证据得看**库里那一行**,不看返回值自述。
+ */
+describe("#749 判官 r5 P1 续租的所有权对签", () => {
+  async function seedLeasedBatch(status: string) {
+    const ownerId = `org_${randomUUID()}`;
+    await prisma.organization.create({ data: { id: ownerId } });
+    const batchId = `batch_${randomUUID()}`;
+    await prisma.generationBatch.create({
+      data: { id: batchId, ownerId, name: "campaign generation", status },
+    });
+    return { ownerId, batchId };
+  }
+
+  async function batchStatus(ownerId: string, batchId: string) {
+    return (await prisma.generationBatch.findFirstOrThrow({ where: { id: batchId, ownerId } })).status;
+  }
+
+  /** 持有者读完自己那一行之后停住;这段时间里闯入者接管并提交。落点就是判官说的那条缝。 */
+  function takeOverAfterRead(batchId: string, nextStatus: string) {
+    const delegate = prisma.generationBatch as unknown as Record<string, unknown>;
+    const real = (delegate.findFirst as (args: unknown) => Promise<unknown>).bind(delegate);
+    const once = async (args: unknown) => {
+      delegate.findFirst = real;
+      const row = await real(args);
+      await prisma.$executeRawUnsafe(
+        `UPDATE "GenerationBatch" SET "status" = $1 WHERE "id" = $2`,
+        nextStatus,
+        batchId,
+      );
+      return row;
+    };
+    delegate.findFirst = once;
+    return () => { if (delegate.findFirst === once) delegate.findFirst = real; };
+  }
+
+  it("读到自己的租约之后被别人接管:续租一行也写不进去,租约仍归接管者", async () => {
+    const { ownerId, batchId } = await seedLeasedBatch("dispatching:att-a");
+
+    const restore = takeOverAfterRead(batchId, "dispatching:att-b");
+    let renewed: boolean;
+    try {
+      renewed = await renewCampaignDispatchLease(prisma, { ownerId, batchId, attemptId: "att-a" });
+    } finally {
+      restore();
+    }
+
+    // 修前:A 的 updateMany 只按 id+ownerId 写,B 的租约被原地改回 A —— 两处断言都必红。
+    expect(await batchStatus(ownerId, batchId)).toBe("dispatching:att-b");
+    expect(renewed).toBe(false);
+  });
+
+  it("接管者随后归还成闲置,老持有者也不许把它抢回来", async () => {
+    const { ownerId, batchId } = await seedLeasedBatch("dispatching:att-a");
+
+    const restore = takeOverAfterRead(batchId, BATCH_IDLE_STATUS);
+    let renewed: boolean;
+    try {
+      renewed = await renewCampaignDispatchLease(prisma, { ownerId, batchId, attemptId: "att-a" });
+    } finally {
+      restore();
+    }
+    expect(await batchStatus(ownerId, batchId)).toBe(BATCH_IDLE_STATUS);
+    expect(renewed).toBe(false);
+  });
+
+  it("没人动过就照常续上,而且活性判据真的往前走了(对签不许把续租变成空转)", async () => {
+    const { ownerId, batchId } = await seedLeasedBatch("dispatching:att-a");
+    // 把这一行推回一秒前 —— 续租的全部意义就是把它拉回现在。
+    await prisma.$executeRawUnsafe(
+      `UPDATE "GenerationBatch" SET "updatedAt" = now() - interval '1 second' WHERE "id" = $1`,
+      batchId,
+    );
+    const before = (await prisma.generationBatch.findFirstOrThrow({ where: { id: batchId, ownerId } })).updatedAt;
+
+    expect(await renewCampaignDispatchLease(prisma, { ownerId, batchId, attemptId: "att-a" })).toBe(true);
+    expect(await batchStatus(ownerId, batchId)).toBe("dispatching:att-a");
+    const after = (await prisma.generationBatch.findFirstOrThrow({ where: { id: batchId, ownerId } })).updatedAt;
+    expect(after.getTime()).toBeGreaterThan(before.getTime());
   });
 });
