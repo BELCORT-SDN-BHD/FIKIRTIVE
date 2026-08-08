@@ -260,6 +260,10 @@ describe("broadcast lifecycle actions report their own rejection (#724)", () => 
 
 const MEMBER_SELF = { membershipId: "01KZEKBC0TBG2E8NM5MMV3NJRM", displayName: "Aisyah Rahman", role: "owner", roles: ["owner"], isSelf: true };
 const MEMBER_OTHER = { membershipId: "01KZEKBC0TBG2E8NM5MMV3NJXX", displayName: "Farid Hassan", role: "member", roles: ["member"], isSelf: false };
+// `creator` holds workspace.read + content.create only — no inbox.reply. The server's
+// requireAssignableMembership refuses this target with RESOURCE_NOT_FOUND.
+const MEMBER_CREATOR = { membershipId: "01KZEKBC0TBG2E8NM5MMV3NJYY", displayName: "Lina Chong", role: "creator", roles: ["creator"], isSelf: false };
+const MEMBER_APPROVER = { membershipId: "01KZEKBC0TBG2E8NM5MMV3NJZZ", displayName: "Hakim Yusof", role: "approver", roles: ["approver"], isSelf: false };
 
 const CONVERSATION = {
   id: "conv-1",
@@ -299,7 +303,10 @@ const PREFLIGHT_PASS = {
   },
 };
 
-function inboxProps(assignee: { id: string; role: string } | null): ComponentProps<typeof InboxConversationPage> {
+function inboxProps(
+  assignee: { id: string; role: string } | null,
+  directoryMembers: Array<typeof MEMBER_SELF> = [MEMBER_SELF, MEMBER_OTHER],
+): ComponentProps<typeof InboxConversationPage> {
   return {
     conversationId: "conv-1",
     initialState: {
@@ -324,7 +331,7 @@ function inboxProps(assignee: { id: string; role: string } | null): ComponentPro
       },
       preflight: PREFLIGHT_PASS,
     },
-    initialDirectory: { ok: true, resource: { self: MEMBER_SELF, members: [MEMBER_SELF, MEMBER_OTHER] } },
+    initialDirectory: { ok: true, resource: { self: MEMBER_SELF, members: directoryMembers } },
   } as unknown as ComponentProps<typeof InboxConversationPage>;
 }
 
@@ -364,6 +371,39 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     // No ULID anywhere on screen: 26 chars of Crockford base32 is the shape the走查 hit.
     expect(dom.textContent).not.toMatch(/\b[0-9A-HJKMNP-TV-Z]{26}\b/);
     expect(dom.textContent).not.toContain("Assigned to membership 01KZ");
+  });
+
+  // The server accepts a target only if it holds inbox.reply (customer-inbox-service.ts
+  // requireAssignableMembership → RESOURCE_NOT_FOUND otherwise). Offering creator/approver
+  // teammates in the picker guarantees a failed assignment for a choice the merchant was
+  // invited to make.
+  it("offers only teammates the server will actually accept", async () => {
+    const dom = await render(
+      createElement(
+        InboxConversationPage,
+        inboxProps(null, [MEMBER_SELF, MEMBER_OTHER, MEMBER_CREATOR, MEMBER_APPROVER]),
+      ),
+    );
+
+    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
+    const values = Array.from(picker.options).map((option) => option.value).filter(Boolean);
+    expect(values).toContain(MEMBER_SELF.membershipId);
+    expect(values).toContain(MEMBER_OTHER.membershipId);
+    expect(values).not.toContain(MEMBER_CREATOR.membershipId);
+    expect(values).not.toContain(MEMBER_APPROVER.membershipId);
+    expect(dom.textContent).not.toContain("Lina Chong");
+    expect(dom.textContent).not.toContain("Hakim Yusof");
+    // …and the merchant is told why the list is shorter than the team, rather than left guessing.
+    expect(dom.textContent).toContain("reply in the Inbox");
+  });
+
+  it("says so honestly when nobody in the workspace can take a conversation", async () => {
+    const dom = await render(
+      createElement(InboxConversationPage, inboxProps(null, [MEMBER_CREATOR, MEMBER_APPROVER])),
+    );
+
+    expect(dom.querySelector('select[aria-label="Assign to"]')).toBeNull();
+    expect(dom.textContent).toContain("No teammate in this workspace can take a conversation yet");
   });
 });
 

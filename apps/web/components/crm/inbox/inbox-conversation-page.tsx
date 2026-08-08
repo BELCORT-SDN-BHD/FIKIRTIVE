@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import {
   AlertCircle,
   ArrowLeft,
@@ -448,7 +449,13 @@ function ConversationWorkspace({
   const assigneeLabel = assignee
     ? `Assigned to ${memberName(assignee.id) ?? "a team member who is no longer listed"} · ${assignee.role}`
     : "Unassigned";
-  const directoryUnavailable = !initialDirectory.ok || members.length === 0;
+  // The server accepts an assignment or hand-off target only if that membership can reply in
+  // the Inbox — customer-inbox-service.ts requireAssignableMembership refuses anyone else with
+  // RESOURCE_NOT_FOUND. Offering a creator or approver here would invite the merchant to pick
+  // someone the assignment is guaranteed to reject. Same capability function as the server, so
+  // there is no second copy of the rule to drift.
+  const assignableMembers = members.filter((member) => orgRolesAllow(member.roles, "inbox.reply"));
+  const directoryFailed = !initialDirectory.ok;
 
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
@@ -537,25 +544,33 @@ function ConversationWorkspace({
                   {assigneeLabel}
                 </div>
                 <div className="grid gap-2">
-                  {directoryUnavailable ? (
+                  {directoryFailed ? (
                     <p className="text-sm text-muted-foreground">
                       The team-member list could not be loaded, so this conversation cannot be assigned right now.
                     </p>
+                  ) : assignableMembers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No teammate in this workspace can take a conversation yet. Only teammates who can reply in the
+                      Inbox can be assigned one.
+                    </p>
                   ) : (
-                    <select
-                      className="min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm disabled:opacity-50"
-                      aria-label="Assign to"
-                      value={targetMembershipId}
-                      onChange={(event) => setTargetMembershipId(event.target.value)}
-                      disabled={actionsDisabled}
-                    >
-                      <option value="">Select a teammate…</option>
-                      {members.map((member) => (
-                        <option key={member.membershipId} value={member.membershipId}>
-                          {member.displayName}{member.isSelf ? " (you)" : ""} · {member.role}
-                        </option>
-                      ))}
-                    </select>
+                    <>
+                      <select
+                        className="min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm disabled:opacity-50"
+                        aria-label="Assign to"
+                        value={targetMembershipId}
+                        onChange={(event) => setTargetMembershipId(event.target.value)}
+                        disabled={actionsDisabled}
+                      >
+                        <option value="">Select a teammate…</option>
+                        {assignableMembers.map((member) => (
+                          <option key={member.membershipId} value={member.membershipId}>
+                            {member.displayName}{member.isSelf ? " (you)" : ""} · {member.role}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-muted-foreground">Only teammates who can reply in the Inbox are listed.</p>
+                    </>
                   )}
                   <div className="flex flex-wrap gap-2">
                     <Button type="button" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !targetMembershipId.trim()} onClick={() => void doAssign(targetMembershipId.trim())}>
