@@ -259,6 +259,15 @@ const REASON_COPY: Record<string, string> = {
     "The single-contact broadcast handoff is not connected yet. No message was sent.",
   "consentStop:unknown": "Verified permission is missing, so this action was blocked.",
   "consentStop:effective_revoke": "The customer has opted out, so this action was blocked.",
+  // #806 — a Routine reaches this table through `firstNonPass`, which writes `consentStop:<the
+  // axis reason>`. The send gate learned two new reasons, so both need a sentence here or the
+  // monitoring panel prints the raw code at the merchant. Same wording discipline as the
+  // broadcast formatter and CRM_PRE_LEDGER_OPT_OUT_NOTE: no actor is guessed, no earlier opt-in
+  // is presupposed, and an unreadable record is described as unreadable and nothing more.
+  "consentStop:unresolved_legacy_opt_out":
+    "An opt-out was recorded for this contact before consent history began, so this action was blocked.",
+  "consentStop:legacy_mirror_unreadable":
+    "Part of the consent record could not be read, so this action was blocked.",
   "doNotDisturb:block": "Do not disturb is on for this customer, so this action was blocked.",
   "providerRefusal:block": "The messaging provider has refused this destination.",
   "frequency:block": "The contact frequency limit blocked this action.",

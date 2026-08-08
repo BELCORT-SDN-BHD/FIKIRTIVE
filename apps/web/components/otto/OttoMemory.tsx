@@ -335,6 +335,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
             <div className="flex-1">
               <Textarea
                 className="[field-sizing:fixed] min-h-0"
+                aria-label="Tell Otto about your brand"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
