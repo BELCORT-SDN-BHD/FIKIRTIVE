@@ -11,7 +11,7 @@ import type { EmailMessage, EmailPort } from "./types";
 export function createResendEmailPort(): EmailPort {
   return {
     async send(message: EmailMessage): Promise<void> {
-      const { to, subject, text, from } = message;
+      const { to, subject, text, from, signal } = message;
       const preview = message.devPreview ?? text ?? message.html ?? "";
 
       if (!process.env.RESEND_API_KEY) {
@@ -29,6 +29,9 @@ export function createResendEmailPort(): EmailPort {
 
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
+        // #678 — the caller's deadline. Without it a connection the provider accepts and never
+        // answers hangs here for as long as the socket stays open.
+        signal,
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           from: from ?? process.env.AUTH_EMAIL_FROM ?? "Fikirtive <onboarding@resend.dev>",

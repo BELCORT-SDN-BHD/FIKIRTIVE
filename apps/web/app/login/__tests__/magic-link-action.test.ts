@@ -1,108 +1,110 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { EmailSendError } from "@/lib/email";
-import { MagicLinkRateLimitError } from "@/lib/better-auth/sender";
 
-const mockSignInMagicLink = vi.fn();
-const mockHeaders = vi.fn();
+/**
+ * The login page's server action. What this file pins is narrow and complementary to
+ * `lib/__tests__/auth-enumeration-structural.test.ts` (real Better Auth, real database, real
+ * queue): the CONTRACT this action is allowed to express at all, and the fact that it does
+ * nothing but translate the one request path into that contract.
+ */
 
-vi.mock("@/lib/better-auth/server", () => ({
-  auth: {
-    api: {
-      signInMagicLink: mockSignInMagicLink,
-    },
+const queued: Array<Record<string, unknown>> = [];
+
+vi.mock("@/lib/better-auth/sender", () => ({
+  enqueueAuthEmail: (job: Record<string, unknown>) => {
+    queued.push(job);
   },
 }));
 
-vi.mock("next/headers", () => ({
-  headers: mockHeaders,
-}));
+const mockHeaders = vi.fn();
+vi.mock("next/headers", () => ({ headers: mockHeaders }));
 
 const { requestMagicLink } = await import("../actions");
+const { __resetMagicLinkThrottleForTests } = await import("@/lib/better-auth/magic-link-request");
+
+const NEUTRAL = {
+  status: "success",
+  message: "If this email has access, a sign-in link is on its way — check your inbox.",
+};
+const INVALID = {
+  status: "error",
+  reason: "invalid_email",
+  message: "Enter a valid email address.",
+};
+
+beforeEach(() => {
+  queued.length = 0;
+  __resetMagicLinkThrottleForTests();
+  mockHeaders.mockReset();
+  mockHeaders.mockResolvedValue(new Headers({ "x-forwarded-for": "203.0.113.10" }));
+});
 
 describe("requestMagicLink", () => {
-  beforeEach(() => {
-    mockSignInMagicLink.mockReset();
-    mockHeaders.mockReset();
-    mockHeaders.mockResolvedValue(new Headers({ origin: "http://localhost:3100" }));
+  it("rejects a malformed address before anything is queued", async () => {
+    await expect(requestMagicLink({ email: "not-an-email", callbackURL: "/" })).resolves.toEqual(
+      INVALID,
+    );
+    expect(queued).toHaveLength(0);
   });
 
-  it("rejects an invalid email with a format error before allowlist lookup or send", async () => {
+  it("hands over one opaque job and answers neutrally", async () => {
     await expect(
-      requestMagicLink({ email: "not-an-email", callbackURL: "/" }),
-    ).resolves.toEqual({
-      status: "error",
-      reason: "invalid_email",
-      message: "Enter a valid email address.",
-    });
-
-    expect(mockSignInMagicLink).not.toHaveBeenCalled();
-  });
-
-  it("returns the identical neutral success shape for allowed and non-allowlisted emails", async () => {
-    mockSignInMagicLink.mockResolvedValue({ status: true });
-
-    const blocked = await requestMagicLink({
-      email: "stranger@example.com",
-      callbackURL: "/campaign?tab=plan",
-    });
-    const allowed = await requestMagicLink({
-      email: "owner@example.com",
-      callbackURL: "/campaign?tab=plan",
-    });
-
-    expect(blocked).toEqual(allowed);
-    expect(blocked).toEqual({
-      status: "success",
-      message: "If this email has access, a sign-in link is on its way — check your inbox.",
-    });
-    expect(mockSignInMagicLink).toHaveBeenCalledTimes(2);
-    expect(mockSignInMagicLink).toHaveBeenLastCalledWith({
-      body: {
+      requestMagicLink({ email: " Owner@Example.com ", callbackURL: "/campaign?tab=plan" }),
+    ).resolves.toEqual(NEUTRAL);
+    expect(queued).toEqual([
+      {
+        purpose: "sign-in-link",
         email: "owner@example.com",
         callbackURL: "/campaign?tab=plan",
+        overBudget: false,
       },
-      headers: expect.any(Headers),
-    });
+    ]);
   });
 
-  it("surfaces the exact rate-limit message for an allowed email", async () => {
-    mockSignInMagicLink.mockRejectedValueOnce(new MagicLinkRateLimitError());
-
-    await expect(
-      requestMagicLink({ email: "owner@example.com", callbackURL: "/" }),
-    ).resolves.toEqual({
-      status: "error",
-      reason: "rate_limited",
-      message: "Too many sign-in links requested — try again in an hour.",
-    });
+  it("answers the same for an address with access, one without, and one over the throttle", async () => {
+    const answers: unknown[] = [];
+    answers.push(await requestMagicLink({ email: "owner@example.com", callbackURL: "/" }));
+    answers.push(await requestMagicLink({ email: "stranger@example.com", callbackURL: "/" }));
+    for (let i = 0; i < 6; i++) {
+      answers.push(await requestMagicLink({ email: "owner@example.com", callbackURL: "/" }));
+    }
+    for (const answer of answers) expect(answer).toEqual(NEUTRAL);
+    // Every press handed over a job — r4: an over-budget press that skipped the hand-over did
+    // less work than one inside its budget, which is a clock.
+    expect(queued).toHaveLength(8);
+    // …and the throttle really did bite, so the sameness above is not vacuous.
+    const owner = queued.filter((j) => j.email === "owner@example.com");
+    expect(owner.filter((j) => j.overBudget === false)).toHaveLength(5);
+    expect(owner.filter((j) => j.overBudget === true)).toHaveLength(2);
   });
+});
 
-  it("returns a typed, provider-neutral delivery failure", async () => {
-    mockSignInMagicLink.mockRejectedValueOnce(
-      new EmailSendError("transport detail", "retryable"),
+describe("#678 — the action's whole answer vocabulary is existence-independent", () => {
+  it("keeps no branch a future edit could lean on", async () => {
+    const source = await import("node:fs/promises").then((fs) =>
+      fs.readFile(new URL("../actions.ts", import.meta.url), "utf8"),
     );
-
-    await expect(
-      requestMagicLink({ email: "owner@example.com", callbackURL: "/" }),
-    ).resolves.toEqual({
-      status: "error",
-      reason: "delivery_failed",
-      message: "We couldn't send a sign-in link right now. Try again shortly.",
-    });
+    for (const forbidden of [
+      "rate_limited",
+      "delivery_failed",
+      "Too many sign-in links",
+      "EmailSendError",
+      // r3: the work itself, not just the vocabulary. None of these may appear on this path —
+      // minting the token, asking the allowlist, or touching the database are background work.
+      "signInMagicLink",
+      "isAllowedEmail",
+      "prisma",
+    ]) {
+      expect(source, `login/actions.ts must not reference ${forbidden}`).not.toContain(forbidden);
+    }
   });
 
-  it("returns a typed truthful fallback for unknown send failures", async () => {
-    const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockSignInMagicLink.mockRejectedValueOnce(new Error("unexpected detail"));
-
-    await expect(
-      requestMagicLink({ email: "owner@example.com", callbackURL: "/" }),
-    ).resolves.toEqual({
-      status: "error",
-      reason: "unknown",
-      message: "We couldn't send a sign-in link. Try again.",
-    });
-    expect(log).toHaveBeenCalledOnce();
-    log.mockRestore();
+  it("the contract itself offers only existence-independent reasons", async () => {
+    const contract = await import("@/lib/better-auth/magic-link-contract");
+    expect(Object.keys(contract).sort()).toEqual([
+      "MAGIC_LINK_INVALID_EMAIL_MESSAGE",
+      "MAGIC_LINK_SUCCESS_MESSAGE",
+      "MAGIC_LINK_UNKNOWN_FAILED_MESSAGE",
+      "normalizeMagicLinkEmail",
+    ]);
   });
 });

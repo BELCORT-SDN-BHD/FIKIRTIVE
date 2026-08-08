@@ -17,10 +17,27 @@ import { requireOwner } from "./auth-guard";
 export type ProfileNames = {
   /** The merchant's own display name. "" when never set — the caller decides the fallback. */
   displayName: string;
-  /** The workspace/shop name. Pre-#543 accounts have the merchant's email address here. */
+  /** The workspace/shop name, or "" when the merchant has never set one. See
+   *  {@link workspaceNameOrUnset} for why an address stored here reads as unset. */
   workspaceName: string;
   email: string;
 };
+
+/** #680 — a workspace whose stored name IS the account's own email address has no shop name;
+ *  it has the placeholder bootstrapPersonalOrg used to write for merchants who came in through
+ *  a magic link or an invite (no signup form, so no shop name was ever asked for). Reading it
+ *  as "" is what lets /profile show its "Set your shop name" placeholder instead of presenting
+ *  an address as the answer to "Your shop name — shown across Fikirtive."
+ *
+ *  The comparison is EXACT (case-insensitively) against this account's own address, not a
+ *  general "looks like an email" test: a merchant who deliberately names their shop after some
+ *  other address keeps that name. bootstrapPersonalOrg no longer writes this value, so the
+ *  check exists for rows created before that fix — it reads them honestly without rewriting
+ *  anybody's data. */
+export function workspaceNameOrUnset(storedName: string | null | undefined, email: string): string {
+  const stored = storedName ?? "";
+  return stored.trim().toLowerCase() === email.trim().toLowerCase() ? "" : stored;
+}
 
 /** Read the signed-in merchant's own two names. Fail-closed: an unauthenticated or
  *  unresolvable session gets {error} and never another org's row.
@@ -42,7 +59,7 @@ export async function getMyProfileNames(): Promise<ProfileNames | { error: strin
   ]);
   return {
     displayName: membership?.user.name?.trim() ?? "",
-    workspaceName: organization?.name ?? "",
+    workspaceName: workspaceNameOrUnset(organization?.name, gate.email),
     email: gate.email,
   };
 }

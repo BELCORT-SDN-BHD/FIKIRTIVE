@@ -31,27 +31,42 @@ process.env.AUTH_ALLOWED_EMAILS = "";
 process.env.FOUNDER_ADMIN_EMAILS = "";
 delete process.env.SIGNUPS_PAUSED;
 
-beforeEach(() => {
-  sent.length = 0;
-  delete process.env.SIGNUPS_PAUSED;
-});
-
 const { auth } = await import("@/lib/better-auth/server");
 const { prisma } = await import("@fikirtive/db");
 const { SIGNUP_GRANT_CREDITS } = await import("@fikirtive/core");
+const { authEmailQueueSettled, __configureAuthEmailQueueForTests } = await import(
+  "@/lib/better-auth/sender"
+);
+
+beforeEach(() => {
+  sent.length = 0;
+  delete process.env.SIGNUPS_PAUSED;
+  // #678 — auth emails leave on a background queue that jitters each job and holds its worker
+  // for a fixed floor, so that the arrival time of one merchant's email cannot be read as an
+  // answer about another merchant's address. This file is about the SIGN-UP door, not that
+  // queue (whose own properties are asserted in auth-email-queue-executor), so it takes the
+  // delays out.
+  __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
+});
 
 const PASSWORD = "correct-horse-battery-staple";
 const newEmail = () => `merchant-${randomUUID()}@fikirtive.test`;
 
 /** POST the public sign-up endpoint exactly as the browser form does. */
 async function postSignUp(body: { email: string; password: string; name: string }) {
-  return auth.handler(
+  const res = await auth.handler(
     new Request("http://localhost:3100/api/better-auth/sign-up/email", {
       method: "POST",
       headers: { "content-type": "application/json", origin: "http://localhost:3100" },
       body: JSON.stringify(body),
     }),
   );
+  // #678 — the verification email is handed to a background queue and delivered off the request
+  // path, so the inbox below is only readable once that queue has settled. (Before the queue
+  // existed this happened to work because the rest of the signup flow awaited enough for the
+  // send to slip in; that was luck, not a guarantee.)
+  await authEmailQueueSettled();
+  return res;
 }
 
 /** The verification token Better Auth put in the email it just "sent". */
