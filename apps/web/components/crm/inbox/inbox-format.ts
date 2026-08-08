@@ -56,13 +56,20 @@ export function attentionPresentation(
   return { label: "No open action", variant: "outline" };
 }
 
-export type AutomationState = "disabled" | "otto_active" | "paused_by_human" | string;
+export type AutomationState = "disabled" | "paused_by_human" | string;
 
-/** Fixed badge semantics — driven only by automationState. Never invent a fourth. */
+/** Fixed badge semantics — driven only by automationState. Never invent a state.
+ *
+ *  #791-2: the "Otto handling" badge is gone. Otto has never answered a customer
+ *  conversation — the service says so in its own words ("M2 never writes otto_active"),
+ *  and the only writer of `paused_by_human` is a take-over FROM that state, so it cannot
+ *  occur either. A badge for a state the product cannot reach told merchants their inbox
+ *  was being worked by an assistant that was never there. What is left is what is true:
+ *  every conversation is handled by a person. `paused_by_human` keeps its wording because
+ *  historical rows may carry it and it is honest about what happened. */
 export function controlBadgePresentation(
   state: AutomationState,
-): { label: string; variant: "outline" | "brand" | "warning" } {
-  if (state === "otto_active") return { label: "Otto handling", variant: "brand" };
+): { label: string; variant: "outline" | "warning" } {
   if (state === "paused_by_human") return { label: "Human took over · Otto paused", variant: "warning" };
   return { label: "Manual only", variant: "outline" };
 }

@@ -18,6 +18,9 @@ const m = vi.hoisted(() => {
   const publishAttemptFindFirst = vi.fn();
   const metaConnectionFindMany = vi.fn();
   const metaConnectionFindUnique = vi.fn();
+  // #791-2: the scheduler now also reads the owner's Auto-publish switch out of
+  // Organization.settings — the second, merchant-owned gate in front of publishing.
+  const organizationFindMany = vi.fn();
   const scheduledPostMediaFindMany = vi.fn();
   const generationFindMany = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,6 +28,7 @@ const m = vi.hoisted(() => {
     scheduledPost: { findUnique: scheduledPostFindUnique, updateMany: scheduledPostUpdateMany, findMany: scheduledPostFindMany },
     publishAttempt: { create: publishAttemptCreate, update: publishAttemptUpdate, updateMany: publishAttemptUpdateMany, findMany: publishAttemptFindMany, findUnique: publishAttemptFindUnique, findFirst: publishAttemptFindFirst },
     metaConnection: { findMany: metaConnectionFindMany, findUnique: metaConnectionFindUnique },
+    organization: { findMany: organizationFindMany },
     scheduledPostMedia: { findMany: scheduledPostMediaFindMany },
     generation: { findMany: generationFindMany },
     $transaction: vi.fn(async (arg: unknown) =>
@@ -34,7 +38,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, scheduledPostFindUnique, scheduledPostUpdateMany, scheduledPostFindMany,
     publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindMany, publishAttemptFindUnique, publishAttemptFindFirst,
-    metaConnectionFindMany, metaConnectionFindUnique, scheduledPostMediaFindMany, generationFindMany,
+    metaConnectionFindMany, metaConnectionFindUnique, organizationFindMany, scheduledPostMediaFindMany, generationFindMany,
   };
 });
 
@@ -259,8 +263,12 @@ describe("scanDuePublishPosts — fail-closed steady state", () => {
     expect(m.scheduledPostFindMany).not.toHaveBeenCalled();
   });
 
-  it("returns due post ids for owners whose connection can publish", async () => {
+  it("returns due post ids for owners whose connection can publish AND who turned Auto-publish on", async () => {
     m.metaConnectionFindMany.mockResolvedValue([{ ownerId: "o1" }]);
+    // #791-2: the owner's own Auto-publish switch is now a real gate, so this happy
+    // path has to turn it on. (The switch's own coverage lives in
+    // publish-auto-publish-switch.test.ts.)
+    m.organizationFindMany.mockResolvedValue([{ id: "o1", settings: { autoPublish: true } }]);
     m.scheduledPostFindMany.mockResolvedValue([{ id: "sp1" }, { id: "sp2" }]);
     expect(await scanDuePublishPosts()).toEqual(["sp1", "sp2"]);
     const where = m.scheduledPostFindMany.mock.calls[0]![0].where;

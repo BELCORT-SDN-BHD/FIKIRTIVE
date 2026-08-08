@@ -19,7 +19,8 @@ describe("mergeSettings", () => {
     expect(r.spendCapCredits).toBe(50);
     expect(r.vipMinSpendMyr).toBe(725);
     expect(r.vipRecentOrderDays).toBe(120);
-    expect(r.notifyEmail).toBe(DEFAULT_SETTINGS.notifyEmail);
+    // a known key not supplied keeps its default
+    expect(r.timezone).toBe(DEFAULT_SETTINGS.timezone);
     expect("bogus" in r).toBe(false);
   });
   it("coerces wrong types back to default (fail-safe)", () => {

@@ -44,6 +44,7 @@ import {
   PUBLISH_EXECUTION_DEADLINE_MS,
   classifyImageBytes,
   normalizeImageMime,
+  autoPublishEnabled,
   MEDIA_SNIFF_BYTES,
   type CanonicalImageMime,
   type PublishJobData,
@@ -755,17 +756,33 @@ export async function reapStalePublishAttempts(): Promise<number> {
 
 /* ── scheduler: which approved posts are due AND currently authorized to publish ── */
 
-/** Due, approved posts whose connection can publish RIGHT NOW (canPublish + !paused). The
- *  canPublish pre-filter is the steady-state fail-closed: before App Review no connection is
- *  authorized → this returns [] → nothing is enqueued → SCHEDULED posts sit untouched (zero
- *  behavior change). Returns the ids for the scheduler to enqueue. */
+/** Due, approved posts whose connection can publish RIGHT NOW (canPublish + !paused) AND
+ *  whose owner turned Auto-publish ON. Two independent gates, both fail-closed:
+ *
+ *   1. Meta authorization (canPublish + !paused + active) — before App Review no connection
+ *      is authorized → [] → nothing enqueued → SCHEDULED posts sit untouched.
+ *   2. The merchant's own switch (#791-2). Settings has shown an "Auto-publish posts" toggle
+ *      since the schedule shipped, and nothing read it: with the toggle OFF, approved posts
+ *      would still have gone out the moment App Review landed. Reading it here is the whole
+ *      fix — the default is OFF, so a workspace that never opened Settings is never
+ *      auto-published for.
+ *
+ *  Returns the ids for the scheduler to enqueue. */
 export async function scanDuePublishPosts(now: Date = new Date(), limit = 50): Promise<string[]> {
   const authorizedOwners = await prisma.metaConnection.findMany({
     where: { canPublish: true, organicPublishPaused: false, status: "active" },
     select: { ownerId: true },
   });
   if (authorizedOwners.length === 0) return [];
-  const owners = authorizedOwners.map((c) => c.ownerId);
+  const authorizedOwnerIds = Array.from(new Set(authorizedOwners.map((c) => c.ownerId)));
+  // Same blob, same reader (mergeSettings) the Settings screen writes through — a non-boolean
+  // or absent value is OFF, so a malformed blob can never turn auto-publish on.
+  const orgs = await prisma.organization.findMany({
+    where: { id: { in: authorizedOwnerIds } },
+    select: { id: true, settings: true },
+  });
+  const owners = orgs.filter((o) => autoPublishEnabled(o.settings)).map((o) => o.id);
+  if (owners.length === 0) return [];
   const due = await prisma.scheduledPost.findMany({
     where: {
       ownerId: { in: owners },
