@@ -268,7 +268,7 @@ const VIDEO_PAYLOAD: OttoPlanCardPayload = {
   kind: "video",
   model: "seedance-2-mini",
   params: { aspectRatio: "9:16", resolution: "720p", durationSeconds: 5, audio: true, count: 1 },
-  reason: "Seedance 2.0 Fast — 9:16, 5s",
+  reason: "Seedance 2.0 mini — 9:16, 5s",
   specChips: ["9:16", "5s", "720p", "With sound"],
   downgraded: true,
   downgradeNote: "You asked for 10s — this will be 5s.",

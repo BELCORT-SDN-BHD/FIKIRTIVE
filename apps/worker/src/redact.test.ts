@@ -17,6 +17,9 @@ describe("sanitizeError provider secrecy", () => {
   it("redacts provider names, model references, and signed URLs before persistence", () => {
     const raw = [
       "Seedance 2.0 Fast",
+      // #769:在产引擎的事实表 label 换成了 mini —— Otto 的内部理由文案会原样带上它,
+      // 所以**现役**那一个也必须被挡下,不能只挡住已经退役的写法。
+      "Seedance 2.0 mini",
       "seedance-2-mini",
       "seedream-5-0",
       "BYTEPLUS",
