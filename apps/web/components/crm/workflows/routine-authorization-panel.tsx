@@ -43,7 +43,7 @@ import {
 import {
   describeAuthorization,
   type AuthorizationFacts,
-} from "./routine-authorization-facts";
+} from "@/lib/routine-authorization-facts";
 
 type RevisionsResult = Awaited<ReturnType<typeof listWorkflowRevisions>>;
 type Revision = Extract<RevisionsResult, { ok: true }>["resource"][number];
@@ -151,7 +151,7 @@ export default function RoutineAuthorizationPanel({
   // The activation dialog is driven by the authoritative single-Routine read, never by a
   // summary or by this session's form state — §5.1 requires the merchant to confirm the exact
   // scope and summary policy that will be authorized.
-  const [activationTarget, setActivationTarget] = useState<{ id: string; rowRevision: number } | null>(null);
+  const [activationTarget, setActivationTarget] = useState<{ id: string; rowRevision: number; authorizationHash: string } | null>(null);
   const [activationFacts, setActivationFacts] = useState<AuthorizationFacts | null>(null);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activationLoading, setActivationLoading] = useState(false);
@@ -275,7 +275,11 @@ export default function RoutineAuthorizationPanel({
       }
       const snapshot = result.resource.snapshot as unknown as Record<string, unknown>;
       setActivationFacts(describeAuthorization(snapshot, result.resource.names));
-      setActivationTarget({ id: routineId, rowRevision: result.resource.routineRowRevision });
+      setActivationTarget({
+        id: routineId,
+        rowRevision: result.resource.routineRowRevision,
+        authorizationHash: result.resource.authorizationHash,
+      });
     } catch {
       setActivationError("NETWORK");
     } finally {
@@ -283,22 +287,56 @@ export default function RoutineAuthorizationPanel({
     }
   }
 
-  function prepareReauthorization() {
+  /** The replacement envelope is previewed by the SERVER too, so the merchant reviews the exact
+   *  thing reauthorizeRoutine will hash — and hands that hash back for the server to re-check. */
+  async function prepareReauthorization() {
     const draft = buildEnvelope();
     if (!draft || !reauthorizeTarget?.authorization.authorized) {
       setErrorCode("INVALID_ARGUMENT");
       return;
     }
     setMode("reauthorize");
+    setErrorCode(null);
     setConfirmationChecked(false);
+    setActivationTarget(null);
+    setActivationFacts(null);
+    setActivationError(null);
     setConfirmationOpen(true);
+    setActivationLoading(true);
+    try {
+      const result = await getRoutineAuthorizationPreview({
+        routineId: reauthorizeTarget.id,
+        proposed: {
+          workflowRevisionId: draft.workflowRevisionId,
+          scopeJson: scopeFor(draft),
+          maxCreditsPerRun: 0,
+          maxCreditsPerMonth: 0,
+          summaryPolicyJson: { afterEachRun: "workflow_activity" },
+          expiresAt: draft.expiresAt,
+        },
+      });
+      if (!result.ok) {
+        setActivationError(result.error);
+        return;
+      }
+      setActivationFacts(describeAuthorization(result.resource.snapshot as unknown as Record<string, unknown>, result.resource.names));
+      setActivationTarget({
+        id: reauthorizeTarget.id,
+        rowRevision: reauthorizeTarget.rowRevision,
+        authorizationHash: result.resource.authorizationHash,
+      });
+    } catch {
+      setActivationError("NETWORK");
+    } finally {
+      setActivationLoading(false);
+    }
   }
 
   async function confirmAuthorization() {
-    const target = mode === "activate" ? activationTarget : reauthorizeTarget;
-    // Fail closed: an envelope with a fact we cannot state in plain language is never signable
-    // from this dialog, however many boxes are ticked.
-    if (mode === "activate" && (activationFacts === null || activationFacts.unexplained.length > 0)) return;
+    const target = activationTarget;
+    // Fail closed on screen too. The server enforces the same two rules (reviewed-hash match and
+    // an explainable summary policy), so this only saves a round trip — it is not the gate.
+    if (activationFacts === null || activationFacts.unexplained.length > 0) return;
     const draft = mode === "activate" ? null : buildEnvelope();
     if (!target || !confirmationChecked) return;
     if (mode === "reauthorize" && !draft) {
@@ -309,7 +347,11 @@ export default function RoutineAuthorizationPanel({
     setErrorCode(null);
     try {
       const result = mode === "activate"
-        ? await activateRoutine({ routineId: target.id, expectedRowRevision: target.rowRevision })
+        ? await activateRoutine({
+            routineId: target.id,
+            expectedRowRevision: target.rowRevision,
+            expectedAuthorizationHash: target.authorizationHash,
+          })
         : await reauthorizeRoutine({
             routineId: target.id,
             expectedRowRevision: target.rowRevision,
@@ -319,6 +361,7 @@ export default function RoutineAuthorizationPanel({
             maxCreditsPerMonth: 0,
             summaryPolicyJson: { afterEachRun: "workflow_activity" },
             expiresAt: draft!.expiresAt,
+            expectedAuthorizationHash: target.authorizationHash,
           });
       if (!result.ok) {
         setErrorCode(result.error);
@@ -474,7 +517,7 @@ export default function RoutineAuthorizationPanel({
 
             <div className="mt-5 flex items-start gap-3 rounded-xl border border-border bg-secondary/20 px-4 py-3"><CircleHelp className="mt-0.5 size-4 shrink-0 text-muted-foreground" /><p className="text-sm leading-6 text-muted-foreground"><strong className="text-foreground">Summary policy:</strong> show a bounded summary in workflow activity after every run. A summary is not a delivery receipt.</p></div>
 
-            <div className="mt-5 flex justify-end gap-3"><Button type="button" variant="ghost" onClick={() => setSetupOpen(false)}>Cancel</Button><Button type="button" disabled={busy !== null || validRevisions.length === 0} onClick={() => { if (mode === "reauthorize") prepareReauthorization(); else void prepareActivation(); }}>{busy === "draft" ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{mode === "reauthorize" ? "Review new authorization" : "Review and create draft"}</Button></div>
+            <div className="mt-5 flex justify-end gap-3"><Button type="button" variant="ghost" onClick={() => setSetupOpen(false)}>Cancel</Button><Button type="button" disabled={busy !== null || validRevisions.length === 0} onClick={() => { if (mode === "reauthorize") void prepareReauthorization(); else void prepareActivation(); }}>{busy === "draft" ? <LoaderCircle className="animate-spin" /> : <ShieldCheck />}{mode === "reauthorize" ? "Review new authorization" : "Review and create draft"}</Button></div>
           </CardContent>
         </Card>
       )}
@@ -485,9 +528,9 @@ export default function RoutineAuthorizationPanel({
         <DialogContent className="max-w-[680px]">
           <DialogHeader><DialogTitle>Human confirmation required</DialogTitle><DialogDescription>Only you can {mode === "reauthorize" ? "reauthorize" : "activate"} this Routine. Otto cannot approve, activate, or reauthorize it.</DialogDescription></DialogHeader>
           {(() => {
-            if (mode === "activate") {
-              // Fail closed: describe the stored envelope, or say plainly that it could not be
-              // read. Never a placeholder that looks like an authorization.
+            {
+              // Fail closed: describe the server-built envelope, or say plainly that it could
+              // not be read. Never a placeholder that looks like an authorization.
               if (activationError) {
                 // 判官 r2 P3 — the merchant reads what happened, not the machine's word for it.
                 return (
@@ -512,13 +555,11 @@ export default function RoutineAuthorizationPanel({
                 </>
               );
             }
-            const draft = buildEnvelope();
-            return draft ? <EnvelopeReview draft={draft} revision={validRevisions.find((revision) => revision.id === draft.workflowRevisionId) ?? null} /> : null;
           })()}
           {mode === "reauthorize" && reauthorizeTarget ? <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>This creates a new, unchangeable authorization and revokes authorization {reauthorizeTarget.authorization.revision}. The new Routine will visibly supersede {reauthorizeTarget.id}.</span></div> : null}
           {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive"><p className="font-semibold">The Routine action could not finish</p><p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p><p className="mt-1 font-mono text-xs">Error code: {errorCode}</p></div> : null}
           <label className="flex cursor-pointer gap-3 rounded-xl border border-border p-4"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={confirmationChecked} onChange={(event) => setConfirmationChecked(event.target.checked)} /><span><span className="block text-sm font-semibold">I reviewed this exact authorization</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand the scope, zero-credit budget, expiry, and after-run summary policy.</span></span></label>
-          <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null || (mode === "activate" && (activationLoading || !activationFacts || activationFacts.unexplained.length > 0))} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null || (activationLoading || !activationFacts || activationFacts.unexplained.length > 0)} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </section>

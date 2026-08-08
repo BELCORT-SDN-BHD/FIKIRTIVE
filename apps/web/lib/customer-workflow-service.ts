@@ -49,6 +49,8 @@ import {
   type WorkflowTrigger,
 } from "@fikirtive/db";
 
+import { summaryPolicyFact } from "./routine-authorization-facts";
+
 export const CUSTOMER_WORKFLOW_ERROR_CODES = {
   NOT_AUTHORIZED: "NOT_AUTHORIZED",
   ACTION_DENIED: "ACTION_DENIED",
@@ -59,6 +61,11 @@ export const CUSTOMER_WORKFLOW_ERROR_CODES = {
   // optimistic-lock race. Sharing CAS_CONFLICT made the UI tell merchants to refresh, which
   // never resolves it. Distinct code so the copy can name the real cause.
   ROUTINE_KEY_IN_USE: "ROUTINE_KEY_IN_USE",
+  // #720 判官 r3 P1 — the confirmation page is not a gate unless the SERVER checks it. These two
+  // move fail-closed off the screen and into the authority: a browser calling the server action
+  // directly hits the same refusals the dialog does.
+  AUTHORIZATION_CHANGED: "AUTHORIZATION_CHANGED",
+  SUMMARY_POLICY_UNREADABLE: "SUMMARY_POLICY_UNREADABLE",
   IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_CONFLICT",
   AUTHORITY_UNAVAILABLE: "AUTHORITY_UNAVAILABLE",
   ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED: "ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED",
@@ -136,7 +143,13 @@ export type CreateRoutineDraftInput = {
   expiresAt?: Date | null;
 };
 
-export type ActivateRoutineInput = { routineId: string; expectedRowRevision: number };
+export type ActivateRoutineInput = {
+  routineId: string;
+  expectedRowRevision: number;
+  /** The authorization hash the merchant actually reviewed (from getRoutineAuthorizationPreview).
+   *  REQUIRED: the server recomputes the current hash and refuses if it differs. */
+  expectedAuthorizationHash: string;
+};
 export type KillRoutineInput = {
   routineId: string;
   expectedRowRevision: number;
@@ -192,6 +205,20 @@ export type ListRoutinesInput = {
   limit?: number;
 };
 export type GetRoutineInput = { routineId: string };
+
+/** A preview of the Routine's own authorization, or — with `proposed` — of the replacement
+ *  envelope a reauthorization would create, so both confirmations bind to a server-built hash. */
+export type GetRoutineAuthorizationPreviewInput = {
+  routineId: string;
+  proposed?: {
+    workflowRevisionId: string;
+    scopeJson: unknown;
+    maxCreditsPerRun: number;
+    maxCreditsPerMonth: number;
+    summaryPolicyJson: unknown;
+    expiresAt?: Date | null;
+  };
+};
 export type ListRoutineRunsInput = {
   routineId?: string;
   workflowDefinitionId?: string;
@@ -222,6 +249,8 @@ export type ReauthorizeRoutineInput = {
   maxCreditsPerMonth: number;
   summaryPolicyJson: unknown;
   expiresAt?: Date | null;
+  /** The hash of the REPLACEMENT envelope the merchant reviewed. REQUIRED — see above. */
+  expectedAuthorizationHash: string;
 };
 
 export type CreateWorkflowRunInput = {
@@ -464,6 +493,28 @@ function authorizationHash(material: RoutineAuthorizationMaterial): string {
   } catch (error) {
     return translateCoreError(error);
   }
+}
+
+/**
+ * #720 判官 r3 P1 — the two server-side halves of "you may only authorize what you were shown".
+ *
+ * `requireReviewedAuthorization` is the gate: the caller must hand back the authorization hash
+ * it displayed, and the server recomputes the hash from the CURRENT row before writing. A stale
+ * or absent hash is refused, so calling the server action straight from a browser console gets
+ * the same answer the dialog would give — the confirmation is enforced here, not on screen.
+ *
+ * `requireExplainableSummaryPolicy` uses the SAME `summaryPolicyFact` the dialog renders with
+ * (one function, not a second copy), so "we cannot put this in plain language" means exactly
+ * the same thing to the server and to the page.
+ */
+function requireReviewedAuthorization(material: RoutineAuthorizationMaterial, expected: unknown): string {
+  const current = authorizationHash(material);
+  if (requiredString(expected, 256) !== current) fail("AUTHORIZATION_CHANGED");
+  return current;
+}
+
+function requireExplainableSummaryPolicy(value: unknown): void {
+  if (!summaryPolicyFact(value).explained) fail("SUMMARY_POLICY_UNREADABLE");
 }
 
 /** The exact input the authorization hash is computed over, for the confirmation page to read
@@ -807,29 +858,53 @@ export function workflowLifecycleService(
    */
   async function getRoutineAuthorizationPreview(
     principal: CustomerWorkflowPrincipal,
-    input: GetRoutineInput,
+    input: GetRoutineAuthorizationPreviewInput,
   ) {
     const routineId = requiredString(input?.routineId);
+    const proposed = input?.proposed;
     return db.$transaction(async (tx) => {
       await requireWorkflowPermission(tx, principal, "workflow.read");
       const routine = await tx.routine.findFirst({
         where: { id: routineId, ownerId: principal.ownerId },
       });
       if (!routine) fail("RESOURCE_NOT_FOUND");
+      // A replacement envelope is previewed against the revision IT names, exactly as
+      // reauthorizeRoutine will build it — otherwise the hash shown and the hash checked at
+      // confirm time would be two different things.
+      const revisionId = proposed ? requiredString(proposed.workflowRevisionId) : routine.workflowRevisionId;
       const workflowRevision = await tx.workflowRevision.findFirst({
         where: {
-          id: routine.workflowRevisionId,
+          id: revisionId,
           ownerId: principal.ownerId,
           workflowDefinitionId: routine.workflowDefinitionId,
         },
         select: { revision: true, contentHash: true, dependencyHash: true },
       });
       if (!workflowRevision) fail("AUTHORITY_UNAVAILABLE");
-      const scope = canonicalizeRoutineScope(routine.scopeJson);
+      const envelope = proposed
+        ? {
+            ownerId: routine.ownerId,
+            routineKey: routine.routineKey,
+            workflowDefinitionId: routine.workflowDefinitionId,
+            workflowRevisionId: revisionId,
+            scopeJson: proposed.scopeJson,
+            maxCreditsPerRun: nonNegative(proposed.maxCreditsPerRun),
+            maxCreditsPerMonth: nonNegative(proposed.maxCreditsPerMonth),
+            summaryPolicyJson: proposed.summaryPolicyJson,
+            authorizationRevision: routine.authorizationRevision + 1,
+            expiresAt: optionalDate(proposed.expiresAt),
+          }
+        : routine;
+      const scope = canonicalizeRoutineScope(envelope.scopeJson);
       if (!scope) fail("AUTHORITY_UNAVAILABLE");
       // Throws (→ AUTHORITY_UNAVAILABLE) rather than returning a partial envelope: a
       // confirmation page must never describe an authorization the hash would reject.
-      const snapshot = authorizationSnapshot(authorizationMaterial(routine, workflowRevision));
+      const material = authorizationMaterial(envelope, workflowRevision);
+      const snapshot = authorizationSnapshot(material);
+      // The value the confirmation echoes back. The server recomputes and compares it at
+      // activate/reauthorize time, so this is a receipt for what was shown — never a client
+      // assertion the server trusts.
+      const authorizationHashValue = authorizationHash(material);
 
       const connectionIds = [
         ...new Set(
@@ -872,6 +947,7 @@ export function workflowLifecycleService(
 
       return {
         snapshot,
+        authorizationHash: authorizationHashValue,
         // The CAS base that goes with the envelope just read, so the confirmation cannot be
         // sent against a revision the merchant never saw.
         routineRowRevision: routine.rowRevision,
@@ -1764,8 +1840,15 @@ export function workflowLifecycleService(
       if (routine.maxCreditsPerRun !== 0 || routine.maxCreditsPerMonth !== 0) {
         fail("AUTHORITY_UNAVAILABLE");
       }
+      // The envelope may only be signed if it is the one that was reviewed, and only if this
+      // server can state it in plain language. Both checks run BEFORE the write and are
+      // independent of any UI — a direct server-action call meets them too.
+      requireExplainableSummaryPolicy(routine.summaryPolicyJson);
       const material = authorizationMaterial(routine, workflowRevision);
-      const routineAuthorizationHash = authorizationHash(material);
+      const routineAuthorizationHash = requireReviewedAuthorization(
+        material,
+        input?.expectedAuthorizationHash,
+      );
       const changed = await tx.routine.updateMany({
         where: {
           id: routineId,
@@ -1835,6 +1918,7 @@ export function workflowLifecycleService(
     const expiresAt = optionalDate(input?.expiresAt);
     const scopeHash = routineScopeHash(input?.scopeJson);
     const summaryPolicy = summaryPolicyJson(input?.summaryPolicyJson);
+    requireExplainableSummaryPolicy(input?.summaryPolicyJson);
     return db.$transaction(async (tx) => {
       const membership = await requireWorkflowPermission(tx, principal, "workflow.manage");
       await tx.$queryRaw`SELECT "id" FROM "Routine" WHERE "id" = ${routineId} AND "ownerId" = ${principal.ownerId} FOR UPDATE`;
@@ -1881,7 +1965,10 @@ export function workflowLifecycleService(
         expiresAt,
       };
       const material = authorizationMaterial(draft, workflowRevision);
-      const routineAuthorizationHash = authorizationHash(material);
+      const routineAuthorizationHash = requireReviewedAuthorization(
+        material,
+        input?.expectedAuthorizationHash,
+      );
       const revoked = await tx.routine.updateMany({
         where: {
           id: old.id,

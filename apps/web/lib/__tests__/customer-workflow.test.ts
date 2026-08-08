@@ -10,6 +10,7 @@ import * as gateway from "../customer-workflow-gateway";
 import {
   workflowLifecycleService,
   type CustomerWorkflowPrincipal,
+  type ReauthorizeRoutineInput,
 } from "../customer-workflow-service";
 
 const auth = vi.hoisted(() => ({
@@ -443,10 +444,7 @@ async function createLifecycle(
     maxCreditsPerMonth: 0,
     summaryPolicyJson: { mode: "counts_only" },
   });
-  const activated = await workflows.activateRoutine(principal, {
-    routineId: draft.resource.id,
-    expectedRowRevision: 0,
-  });
+  const activated = await reviewedActivate(principal, draft.resource.id, 0);
   return {
     definition: definition.resource,
     revision: saved.resource,
@@ -455,6 +453,50 @@ async function createLifecycle(
     contactIds,
   };
 }
+
+/**
+ * #720 判官 r3 — activation and reauthorization now REQUIRE the hash of the envelope that was
+ * actually reviewed, and the server recomputes it. Tests therefore go through the same preview
+ * read the confirmation page uses; nothing here can activate without first reading what it is
+ * activating, which is the whole point of the gate.
+ */
+async function reviewedActivate(
+  principal: CustomerWorkflowPrincipal,
+  routineId: string,
+  expectedRowRevision: number,
+) {
+  const preview = await workflows.getRoutineAuthorizationPreview(principal, { routineId });
+  return workflows.activateRoutine(principal, {
+    routineId,
+    expectedRowRevision,
+    expectedAuthorizationHash: preview.authorizationHash,
+  });
+}
+
+async function reviewedReauthorize(
+  principal: CustomerWorkflowPrincipal,
+  input: Omit<ReauthorizeRoutineInput, "expectedAuthorizationHash">,
+) {
+  const preview = await workflows.getRoutineAuthorizationPreview(principal, {
+    routineId: input.routineId,
+    proposed: {
+      workflowRevisionId: input.workflowRevisionId,
+      scopeJson: input.scopeJson,
+      maxCreditsPerRun: input.maxCreditsPerRun,
+      maxCreditsPerMonth: input.maxCreditsPerMonth,
+      summaryPolicyJson: input.summaryPolicyJson,
+      expiresAt: input.expiresAt,
+    },
+  });
+  return workflows.reauthorizeRoutine(principal, {
+    ...input,
+    expectedAuthorizationHash: preview.authorizationHash,
+  });
+}
+
+/** Denial paths that are refused BEFORE the hash is looked at (tenant, permission, row state).
+ *  A deliberately wrong hash keeps those tests honest about which check fired. */
+const UNREVIEWED_HASH = "not-the-hash-the-merchant-saw";
 
 async function dueRun(
   worker: typeof workerA | typeof workerB,
@@ -626,6 +668,138 @@ describe("customer workflow lifecycle and dispatch", () => {
     expect(preview.names.workflowName).toBe(lifecycle.definition.name);
   });
 
+  /**
+   * #720 判官 r3 P1 — the confirmation dialog is not a gate; the SERVER is.
+   *
+   * `activateRoutine` and `reauthorizeRoutine` are server actions a browser can call directly
+   * with nothing but a routine id and a row revision. These tests take exactly that path — the
+   * service functions, no UI anywhere — and prove the refusals live here:
+   *   1. no reviewed hash, or a stale one, is refused (AUTHORIZATION_CHANGED);
+   *   2. a summary policy this server cannot state in plain language is refused
+   *      (SUMMARY_POLICY_UNREADABLE), using the same judgement the dialog renders with.
+   */
+  it("refuses activation that skips the confirmation page, whatever the caller sends", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "bypass",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const draft = await workflows.createRoutineDraft(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      workflowRevisionId: lifecycle.revision.id,
+      routineKey: "routine_bypass_direct",
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: { mode: "counts_only" },
+    });
+
+    // A caller who never opened the confirmation page has no hash to send.
+    await expectCode(
+      workflows.activateRoutine(principalA, {
+        routineId: draft.resource.id,
+        expectedRowRevision: draft.resource.rowRevision,
+        expectedAuthorizationHash: "",
+      }),
+      "INVALID_ARGUMENT",
+    );
+    // A made-up or stale hash is refused too — the server recomputes and compares.
+    await expectCode(
+      workflows.activateRoutine(principalA, {
+        routineId: draft.resource.id,
+        expectedRowRevision: draft.resource.rowRevision,
+        expectedAuthorizationHash: UNREVIEWED_HASH,
+      }),
+      "AUTHORIZATION_CHANGED",
+    );
+    // Nothing was written by either attempt.
+    expect(
+      (await prisma.routine.findFirst({ where: { id: draft.resource.id, ownerId: ORG_A } }))?.status,
+    ).toBe("draft");
+
+    // The hash from the real preview is accepted — the gate blocks bypasses, not merchants.
+    const activated = await reviewedActivate(principalA, draft.resource.id, draft.resource.rowRevision);
+    expect(activated.resource.status).toBe("active");
+  });
+
+  it("refuses to activate a summary policy the server cannot state in plain language", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "unreadable",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const draft = await workflows.createRoutineDraft(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      workflowRevisionId: lifecycle.revision.id,
+      routineKey: "routine_unreadable_policy",
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      // Legal to store and fully hashed — but nothing can describe it to a merchant.
+      summaryPolicyJson: { policy: "x" },
+    });
+
+    await expectCode(
+      reviewedActivate(principalA, draft.resource.id, draft.resource.rowRevision),
+      "SUMMARY_POLICY_UNREADABLE",
+    );
+    expect(
+      (await prisma.routine.findFirst({ where: { id: draft.resource.id, ownerId: ORG_A } }))?.status,
+    ).toBe("draft");
+
+    // Reauthorization refuses the same shape, so it cannot be used as a side door.
+    await expectCode(
+      workflows.reauthorizeRoutine(principalA, {
+        routineId: lifecycle.routine.id,
+        expectedRowRevision: lifecycle.routine.rowRevision,
+        workflowRevisionId: lifecycle.revision.id,
+        scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+        maxCreditsPerRun: 0,
+        maxCreditsPerMonth: 0,
+        summaryPolicyJson: { policy: "x" },
+        expectedAuthorizationHash: UNREVIEWED_HASH,
+      }),
+      "SUMMARY_POLICY_UNREADABLE",
+    );
+  });
+
+  it("refuses a reauthorization whose replacement envelope was never reviewed", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "rebypass",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const replacement = {
+      routineId: lifecycle.routine.id,
+      expectedRowRevision: lifecycle.routine.rowRevision,
+      workflowRevisionId: lifecycle.revision.id,
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: { mode: "counts_only" },
+    };
+    await expectCode(
+      workflows.reauthorizeRoutine(principalA, {
+        ...replacement,
+        expectedAuthorizationHash: UNREVIEWED_HASH,
+      }),
+      "AUTHORIZATION_CHANGED",
+    );
+    // The old authorization is untouched by the refused attempt.
+    expect(
+      (await prisma.routine.findFirst({ where: { id: lifecycle.routine.id, ownerId: ORG_A } }))?.status,
+    ).toBe("active");
+
+    const reauthorized = await reviewedReauthorize(principalA, replacement);
+    expect(reauthorized.resource.authorizationRevision).toBe(2);
+  });
+
   it("requires a real owner for activation and creates a new immutable envelope on reauthorization", async () => {
     const lifecycle = await createLifecycle(
       principalA,
@@ -647,10 +821,11 @@ describe("customer workflow lifecycle and dispatch", () => {
       workflows.activateRoutine(adminA, {
         routineId: secondDraft.resource.id,
         expectedRowRevision: 0,
+        expectedAuthorizationHash: UNREVIEWED_HASH,
       }),
       "ACTION_DENIED",
     );
-    const reauthorized = await workflows.reauthorizeRoutine(principalA, {
+    const reauthorized = await reviewedReauthorize(principalA, {
       routineId: lifecycle.routine.id,
       expectedRowRevision: lifecycle.routine.rowRevision,
       workflowRevisionId: lifecycle.revision.id,
@@ -704,6 +879,7 @@ describe("customer workflow lifecycle and dispatch", () => {
         maxCreditsPerRun: 0,
         maxCreditsPerMonth: 0,
         summaryPolicyJson: { mode: "counts_only" },
+        expectedAuthorizationHash: UNREVIEWED_HASH,
       }),
       "AUTHORITY_UNAVAILABLE",
     );
@@ -1029,7 +1205,7 @@ describe("customer workflow lifecycle and dispatch", () => {
     });
     expect(await prisma.workflowStepExecution.count({ where: { ownerId: ORG_A } })).toBe(1);
 
-    const reauthorized = await workflows.reauthorizeRoutine(principalA, {
+    const reauthorized = await reviewedReauthorize(principalA, {
       routineId: killed.resource.id,
       expectedRowRevision: killed.resource.rowRevision,
       workflowRevisionId: lifecycle.revision.id,
@@ -1633,10 +1809,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       maxCreditsPerMonth: 0,
       summaryPolicyJson: { mode: "counts_only" },
     });
-    const secondRoutine = await workflows.activateRoutine(principalA, {
-      routineId: secondDraft.resource.id,
-      expectedRowRevision: 0,
-    });
+    const secondRoutine = await reviewedActivate(principalA, secondDraft.resource.id, 0);
     const firstInserted = deferred<void>();
     const releaseFirstEnrollment = deferred<void>();
     const secondReachedAdvisoryLock = deferred<void>();
@@ -1748,7 +1921,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       maxCreditsPerMonth: 0,
       summaryPolicyJson: { mode: "counts_only" },
     });
-    const reauthorized = await workflows.reauthorizeRoutine(principalA, {
+    const reauthorized = await reviewedReauthorize(principalA, {
       routineId: lifecycle.routine.id,
       expectedRowRevision: lifecycle.routine.rowRevision,
       workflowRevisionId: lifecycle.revision.id,
@@ -2040,6 +2213,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       workflows.activateRoutine(principalA, {
         routineId: b.routine.id,
         expectedRowRevision: b.routine.rowRevision,
+        expectedAuthorizationHash: UNREVIEWED_HASH,
       }),
       "RESOURCE_NOT_FOUND",
     );
@@ -2131,6 +2305,7 @@ describe("customer workflow lifecycle and dispatch", () => {
       workflows.activateRoutine(principalA, {
         routineId: foreignScopeDraft.resource.id,
         expectedRowRevision: 0,
+        expectedAuthorizationHash: UNREVIEWED_HASH,
       }),
       "AUTHORITY_UNAVAILABLE",
     );

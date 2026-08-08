@@ -5,7 +5,7 @@ import {
   describeAuthorization,
   summaryPolicyFact,
   type ResolvedAuthorizationNames,
-} from "@/components/crm/workflows/routine-authorization-facts";
+} from "@/lib/routine-authorization-facts";
 
 /**
  * PINBOARD (#720 判官 r2) — **hash face == card face.**
@@ -126,6 +126,41 @@ describe("hash face == card face (#720 pinboard)", () => {
     expect(baseline).toContain("Siti");
     expect(baseline).toContain("Regulars");
     expect(baseline).toContain("Kopi Alpha WhatsApp");
+  });
+
+  // 判官 r3 P1-2 — the equivalence classes the previous version collapsed. Nothing in the
+  // schema makes a customer name, a segment name or a channel account's displayName unique, so
+  // "same name" must not mean "same confirmation page". With the hash bound server-side these
+  // are no longer a security hole, but the merchant is still entitled to see the difference.
+  it("distinguishes same-named customers, same-named channel accounts, and different unresolved sets", () => {
+    const sameNameContacts = (ids: [string, string]) =>
+      render(snapshotOf({ scopeJson: { ...MATERIAL.scopeJson, contactIds: ids } }), {
+        ...NAMES,
+        contacts: ids.map((id) => ({ id, name: "Ali" })),
+      });
+    expect(sameNameContacts(["contact-1", "contact-2"])).not.toBe(sameNameContacts(["contact-1", "contact-3"]));
+
+    const sameNameAccount = (connectionId: string) =>
+      render(snapshotOf({ scopeJson: { ...MATERIAL.scopeJson, channelScopes: [{ channel: "whatsapp", providerConnectionId: connectionId }] } }), {
+        ...NAMES,
+        channels: [{ channel: "whatsapp", providerConnectionId: connectionId, accountName: "Front desk" }],
+      });
+    // Two connections that a merchant named identically must still read differently…
+    expect(sameNameAccount("conn-1")).not.toBe(sameNameAccount("conn-2"));
+
+    const unresolvedContacts = (ids: [string, string]) =>
+      render(snapshotOf({ scopeJson: { ...MATERIAL.scopeJson, contactIds: ids } }), {
+        ...NAMES,
+        contacts: ids.map((id) => ({ id, name: null })),
+      });
+    // …and two equally sized sets of unresolvable references are not interchangeable either.
+    expect(unresolvedContacts(["gone-1", "gone-2"])).not.toBe(unresolvedContacts(["gone-3", "gone-4"]));
+  });
+
+  it("shows the whole expiry instant, not a rounded minute", () => {
+    const atMinute = render(snapshotOf({ expiresAt: new Date("2026-12-31T10:30:00.000Z") }));
+    const sameMinuteLaterSecond = render(snapshotOf({ expiresAt: new Date("2026-12-31T10:30:45.000Z") }));
+    expect(sameMinuteLaterSecond).not.toBe(atMinute);
   });
 
   it("counts references it cannot resolve instead of dropping them", () => {

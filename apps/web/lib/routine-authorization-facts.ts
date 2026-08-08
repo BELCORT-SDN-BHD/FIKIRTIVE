@@ -88,22 +88,48 @@ function shortRef(value: unknown): string {
   return text.length > 12 ? `${text.slice(0, 8)}…${text.slice(-4)}` : text;
 }
 
+/** 判官 r3 P1-2 — the hash covers the whole instant, so the merchant sees the whole instant.
+ *  Minute precision hid a difference the signature would still object to. */
 function dateLabel(value: unknown): string {
   if (value === null || value === undefined) return "No expiry — this authorization does not lapse on its own";
   const date = new Date(String(value));
   if (!Number.isFinite(date.getTime())) return `Recorded as ${String(value)}`;
-  return date.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return date.toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    timeZoneName: "short",
+  });
 }
 
-/** Names for a list of exact references, with unresolved ones counted rather than hidden. */
+/**
+ * 判官 r3 P1-2 — a name is not an identity. Nothing in the schema makes a customer name, a
+ * segment name or a channel account's `displayName` unique, so two different authorizations
+ * could read identically while their hashes differ. Every resolved reference therefore carries
+ * its own short reference alongside the name: the name is what the merchant recognises, the
+ * short reference is what makes two of them distinguishable. Unresolved references are listed
+ * the same way rather than collapsed into a count.
+ */
+function namedRef(name: string, id: string): string {
+  return `${name} (${shortRef(id)})`;
+}
+
 function refList(refs: ResolvedRef[], kind: string): string {
   if (refs.length === 0) return `No exact ${kind} references`;
-  const named = refs.filter((ref) => ref.name !== null).map((ref) => ref.name!);
-  const unresolved = refs.length - named.length;
+  const resolved = refs.filter((ref) => ref.name !== null);
+  const unresolved = refs.filter((ref) => ref.name === null);
   const parts: string[] = [];
-  if (named.length > 0) parts.push(named.join(", "));
-  if (unresolved > 0) {
-    parts.push(`${unresolved} ${kind} ${unresolved === 1 ? "reference" : "references"} we could not resolve to a name`);
+  if (resolved.length > 0) {
+    parts.push(resolved.map((ref) => namedRef(ref.name!, ref.id)).join(", "));
+  }
+  if (unresolved.length > 0) {
+    const refsList = unresolved.map((ref) => shortRef(ref.id)).join(", ");
+    parts.push(
+      `${unresolved.length} ${kind} ${unresolved.length === 1 ? "reference" : "references"} we could not resolve to a name (${refsList})`,
+    );
   }
   return parts.join(" · ");
 }
@@ -112,9 +138,10 @@ function channelList(channels: ResolvedChannel[]): string {
   if (channels.length === 0) return "No channel";
   return channels
     .map((entry) => {
-      const account = entry.providerConnectionId === null
-        ? "any connected account"
-        : entry.accountName ?? `one account we could not resolve to a name (${shortRef(entry.providerConnectionId)})`;
+      if (entry.providerConnectionId === null) return `${channelLabel(entry.channel)} — any connected account`;
+      const account = entry.accountName === null
+        ? `an account we could not resolve to a name (${shortRef(entry.providerConnectionId)})`
+        : namedRef(entry.accountName, entry.providerConnectionId);
       return `${channelLabel(entry.channel)} — ${account}`;
     })
     .join(" · ");

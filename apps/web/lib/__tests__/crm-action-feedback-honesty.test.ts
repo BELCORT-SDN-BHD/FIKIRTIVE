@@ -2,6 +2,7 @@
 import { act, createElement, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { orgRolesAllow } from "@fikirtive/core/org-roles";
 
 /**
  * #724 / #725 / #720 / #721 — four QA走查 findings whose common shape is "the screen says
@@ -284,26 +285,35 @@ const CONVERSATION = {
   },
 };
 
-const PREFLIGHT_PASS = {
-  ok: true,
-  resource: {
-    checkedAt: "2026-08-01T00:00:00.000Z",
-    internalCapability: { status: "pass" },
-    connection: { status: "unknown" },
-    d8Carrier: { status: "unknown" },
-    consentStop: { status: "unknown" },
-    doNotDisturb: { status: "unknown" },
-    providerRefusal: { status: "unknown" },
-    frequency: { status: "unknown" },
-    exactApproval: { status: "unknown" },
-    sendEligibility: { status: "unknown" },
-    freshness: {
-      lastProviderEventAt: null,
-      lastHealthCheckedAt: null,
-      lastDataLoadedAt: "2026-08-01T00:00:00.000Z",
+/**
+ * 判官 r3 P2 — preflight is DERIVED here exactly as customer-inbox-service.ts derives it:
+ * `internalCapability` passes only when the reader holds inbox.manage or is the current
+ * assignee. Hard-coding a pass hid the very mismatch under test — a plain member looking at an
+ * UNASSIGNED conversation gets "block", yet the server explicitly lets that member claim it.
+ */
+function preflightFor(self: typeof MEMBER_SELF, assignee: { id: string } | null) {
+  const memberMayAct = orgRolesAllow(self.roles, "inbox.manage") || assignee?.id === self.membershipId;
+  return {
+    ok: true,
+    resource: {
+      checkedAt: "2026-08-01T00:00:00.000Z",
+      internalCapability: { status: memberMayAct ? "pass" : "block" },
+      connection: { status: "unknown" },
+      d8Carrier: { status: "unknown" },
+      consentStop: { status: "unknown" },
+      doNotDisturb: { status: "unknown" },
+      providerRefusal: { status: "unknown" },
+      frequency: { status: "unknown" },
+      exactApproval: { status: "unknown" },
+      sendEligibility: { status: "unknown" },
+      freshness: {
+        lastProviderEventAt: null,
+        lastHealthCheckedAt: null,
+        lastDataLoadedAt: "2026-08-01T00:00:00.000Z",
+      },
     },
-  },
-};
+  };
+}
 
 function inboxProps(
   assignee: { id: string; role: string } | null,
@@ -332,7 +342,7 @@ function inboxProps(
             : [],
         },
       },
-      preflight: PREFLIGHT_PASS,
+      preflight: preflightFor(self, assignee),
     },
     initialDirectory: { ok: true, resource: { self, members: directoryMembers } },
   } as unknown as ComponentProps<typeof InboxConversationPage>;
@@ -343,7 +353,7 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     vi.mocked(assignConversation).mockResolvedValue({ ok: true } as never);
     vi.mocked(getConversation).mockResolvedValue({ ok: true, resource: CONVERSATION } as never);
     vi.mocked(getHistory).mockResolvedValue({ ok: true, resource: { messages: [], events: [] } } as never);
-    vi.mocked(getConversationPreflight).mockResolvedValue(PREFLIGHT_PASS as never);
+    vi.mocked(getConversationPreflight).mockResolvedValue(preflightFor(MEMBER_SELF, null) as never);
 
     const dom = await render(createElement(InboxConversationPage, inboxProps(null)));
 
@@ -440,15 +450,45 @@ describe("Inbox assignment names teammates instead of demanding an internal id (
     expect(buttonWithText(dom, "Assign").disabled).toBe(true);
   });
 
-  it("keeps both actions open for an owner", async () => {
+  it("keeps every action open for an owner, against a teammate who is not already holding it", async () => {
     const dom = await render(
       createElement(InboxConversationPage, inboxProps({ id: MEMBER_OTHER.membershipId, role: "member" })),
     );
     const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
-    await chooseOption(picker, MEMBER_OTHER.membershipId);
+    await chooseOption(picker, MEMBER_SELF.membershipId);
     expect(buttonWithText(dom, "Assign").disabled).toBe(false);
     expect(buttonWithText(dom, "Hand off to the selected teammate").disabled).toBe(false);
     expect(buttonWithText(dom, "Unassign").disabled).toBe(false);
+  });
+
+  // Both server actions refuse a target that already holds the conversation
+  // (INVALID_ARGUMENT), so the person holding it is not offered as somewhere to send it.
+  it("does not offer the teammate who already holds the conversation", async () => {
+    const dom = await render(
+      createElement(InboxConversationPage, inboxProps({ id: MEMBER_OTHER.membershipId, role: "member" })),
+    );
+    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
+    const values = Array.from(picker.options).map((option) => option.value).filter(Boolean);
+    expect(values).not.toContain(MEMBER_OTHER.membershipId);
+    expect(values).toContain(MEMBER_SELF.membershipId);
+    // The panel still names who has it.
+    expect(dom.textContent).toContain("Farid Hassan");
+  });
+
+  // 判官 r3 P2 — the conversation-wide capability gate says "block" for a plain member on an
+  // unassigned conversation, but assignConversation explicitly lets that member claim it. The
+  // claim must not be disabled by a rule that does not govern it.
+  it("lets a plain member claim an unassigned conversation even though preflight blocks replying", async () => {
+    const dom = await render(
+      createElement(InboxConversationPage, inboxProps(null, [MEMBER_SELF, MEMBER_OTHER], MEMBER_OTHER)),
+    );
+    // The conversation-wide gate really is closed for this reader…
+    expect(dom.textContent).toContain("No one has taken this conversation yet");
+    // …and claiming it is still available, because that is a different server rule.
+    const picker = dom.querySelector<HTMLSelectElement>('select[aria-label="Assign to"]')!;
+    expect(picker.disabled).toBe(false);
+    await chooseOption(picker, MEMBER_OTHER.membershipId);
+    expect(buttonWithText(dom, "Assign").disabled).toBe(false);
   });
 
   it("says so honestly when nobody in the workspace can take a conversation", async () => {
@@ -803,26 +843,45 @@ describe("Routine authorization is driven by the server read, not by this page l
  * what keeps a merchant from going and killing a Routine that is still able to act.
  *
  * COVERAGE, STATED HONESTLY: this is a LEXICAL guard over a declared paraphrase set, not a
- * semantic proof, and it cannot be one. It works in two steps — first it removes clauses whose
- * subject is archiving itself (so the TRUE sentence "archiving did not stop them" is allowed),
- * then it looks for a negation near a work verb in what remains. It will miss a paraphrase that
- * uses none of the listed verbs. The paraphrase set below is asserted against the guard itself,
- * so widening the guard is a one-line change with proof; the behavioural authority stays the
- * real-database test, not this word list.
+ * semantic proof, and it cannot be one. It works in two steps — first it removes clauses that
+ * NEGATE archiving as a stopper (so the true sentence "archiving did not stop them" stays
+ * sayable, while the lie "Archiving stops all runs." does not get exempted), then it looks in
+ * what remains for a negation near a work verb, a work verb near a suppressor, or a suppressor
+ * near a work verb.
+ *
+ * KNOWN LIMITS, not fixed here: it reasons over one sentence at a time, so a claim split across
+ * sentences ("Nothing happens after that. Not even a run.") can slip; it only knows the verb and
+ * suppressor lists below, so an unlisted synonym ("dormant", "inert") slips; and it cannot read
+ * an implication ("the workflow is finished"). The paraphrase set is asserted against the guard
+ * itself, so widening it is a one-line change with proof. The behavioural authority is and stays
+ * the real-database test `archiving stops nothing`, never this word list.
  */
-const WORK_VERBS = "run|runs|running|execute|executes|executed|execution|act|acts|acting|start|starts|starting|send|sends|sending|fire|fires|trigger|triggers";
-/** Clauses that make a claim ABOUT archiving ("archiving did not stop it") — true, and allowed. */
-const ARCHIVE_SUBJECT_CLAUSE = /\b(archiv\w*)\b[^.]*?\b(stop|stops|stopped|stopping|kill|kills|killed|pause|pauses|paused)\b[^.]*?(\.|$)/gi;
+const WORK_VERBS = "run|runs|ran|running|execute|executes|executed|execution|act|acts|acting|start|starts|started|starting|send|sends|sending|fire|fires|trigger|triggers";
+const SUPPRESSORS = "stop|stops|stopped|stopping|prevent|prevents|prevented|block|blocks|blocked|halt|halts|halted|disable|disables|disabled|end|ends|ended";
+/**
+ * A clause claiming archiving does NOT stop things — true, and must stay sayable.
+ * 判官 r3 P3: the previous version stripped ANY "archiving … stops …" clause regardless of
+ * polarity, so the outright lie `Archiving stops all runs.` was removed before inspection and
+ * sailed through. The negation is now required for the clause to be exempt.
+ */
+const NEGATED_ARCHIVE_CLAUSE = new RegExp(
+  `\\barchiv\\w*\\b[^.]*?\\b(does not|do not|did not|never|cannot|can'?t|won'?t|will not)\\b[^.]*?\\b(${SUPPRESSORS})\\b[^.]*?(\\.|$)`,
+  "gi",
+);
 
 function claimsArchivingStopsWork(text: string): boolean {
-  const remainder = text.replace(ARCHIVE_SUBJECT_CLAUSE, " ");
-  const negatedWork = new RegExp(`\\b(no|not|never|nothing|none|cannot|can'?t|won'?t|unable)\\b[^.]{0,60}?\\b(${WORK_VERBS})\\b`, "i");
-  const workStopped = new RegExp(`\\b(${WORK_VERBS})\\b[^.]{0,40}?\\b(stopped|halted|blocked|prevented|disabled|off)\\b`, "i");
-  return negatedWork.test(remainder) || workStopped.test(remainder);
+  const remainder = text.replace(NEGATED_ARCHIVE_CLAUSE, " ");
+  const negatedWork = new RegExp(
+    `\\b(no|not|never|nothing|none|cannot|can'?t|won'?t|unable)\\b[^.]{0,60}?\\b(${WORK_VERBS})\\b`,
+    "i",
+  );
+  const workSuppressed = new RegExp(`\\b(${WORK_VERBS})\\b[^.]{0,40}?\\b(${SUPPRESSORS}|off)\\b`, "i");
+  const suppressorOnWork = new RegExp(`\\b(${SUPPRESSORS})\\b[^.]{0,40}?\\b(${WORK_VERBS})\\b`, "i");
+  return negatedWork.test(remainder) || workSuppressed.test(remainder) || suppressorOnWork.test(remainder);
 }
 
-/** Paraphrases of the false claim. The guard must flag every one — including the judge's own
- *  example, which the previous three-phrase blacklist let through. */
+/** Paraphrases of the false claim. The guard must flag every one — including the three the r3
+ *  judge showed slipping past the previous version (marked). */
 const FALSE_ARCHIVE_CLAIMS = [
   "Archived — this workflow cannot run.",
   "Archived — no new runs can start.",
@@ -833,6 +892,9 @@ const FALSE_ARCHIVE_CLAIMS = [
   "Archived — execution is blocked.",
   "Once archived it never acts again.",
   "Archived — it can't send anything.",
+  "Archiving stops all runs.", // r3: polarity hole — an affirmative archiving clause
+  "runs cannot be started once archived", // r3: "started" was outside the verb list
+  "archiving prevents further execution", // r3: suppressor before the work noun
 ];
 
 /** True statements the guard must NOT flag, or it would forbid saying the honest thing. */

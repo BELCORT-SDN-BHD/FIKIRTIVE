@@ -419,11 +419,18 @@ function ConversationWorkspace({
   const preflightOk = preflightResult.ok;
   const capabilityStatus = preflightOk ? preflightResult.resource.internalCapability.status : "unknown";
   const actionsDisabled = capabilityStatus !== "pass";
+  const conversationUnassigned = conversation.assigneeMembership === null;
+  // 判官 r3 P2 — this gate is the server's `requireMemberAssignment` rule (draft, status,
+  // resume, take over). It is NOT the rule for claiming or handing off a conversation, which
+  // assignConversation/handOffConversation judge separately, so the assignment card below
+  // carries its own per-action checks instead of riding this one.
   const actionsDisabledReason =
     capabilityStatus === "block"
-      ? "You can view this conversation, but only the assigned teammate can act on it right now."
+      ? conversationUnassigned
+        ? "No one has taken this conversation yet. Take it below, and then you can draft a reply."
+        : "You can view this conversation, but only the assigned teammate can act on it right now."
       : !preflightOk
-        ? "Actions are disabled until capability can be confirmed — diagnostics could not load."
+        ? "Replying and status changes are disabled until capability can be confirmed — diagnostics could not load."
         : null;
   // Widened to `string`: the service currently types connection.status as the single
   // literal "unknown" (no provider exists yet), which would make a "pass" comparison
@@ -454,7 +461,12 @@ function ConversationWorkspace({
   // RESOURCE_NOT_FOUND. Offering a creator or approver here would invite the merchant to pick
   // someone the assignment is guaranteed to reject. Same capability function as the server, so
   // there is no second copy of the rule to drift.
-  const assignableMembers = members.filter((member) => orgRolesAllow(member.roles, "inbox.reply"));
+  // The server also refuses a target that already holds the conversation (assignConversation and
+  // handOffConversation both fail INVALID_ARGUMENT when target === current assignee), so the
+  // person already holding it is not an option to hand it to.
+  const assignableMembers = members.filter(
+    (member) => orgRolesAllow(member.roles, "inbox.reply") && member.membershipId !== assignee?.id,
+  );
   const directoryFailed = !initialDirectory.ok;
 
   // 判官 r2 P2 — one shared list of legal TARGETS, but each action carries its own actor rule,
@@ -472,13 +484,14 @@ function ConversationWorkspace({
   // assignConversation: reply capability, and without inbox.manage only claiming an unassigned
   // conversation for yourself.
   const canAssignSelected =
-    canReply && selectedTarget !== "" &&
+    canReply && selectedTarget !== "" && selectedTarget !== assignee?.id &&
     (canManageInbox || (selectedTarget === selfMembershipId && assignee === null));
   // The same call with a null target is how unassigning happens, and it is manage-only.
   const canUnassign = canReply && canManageInbox && assignee !== null;
   // handOffConversation: reply capability, and without inbox.manage you must be the one holding
   // the conversation right now.
-  const canHandOffSelected = canReply && selectedTarget !== "" && (canManageInbox || isAssignee);
+  const canHandOffSelected =
+    canReply && selectedTarget !== "" && selectedTarget !== assignee?.id && (canManageInbox || isAssignee);
   const assignmentRuleNote = canManageInbox
     ? null
     : assignee === null
@@ -590,7 +603,7 @@ function ConversationWorkspace({
                         aria-label="Assign to"
                         value={targetMembershipId}
                         onChange={(event) => setTargetMembershipId(event.target.value)}
-                        disabled={actionsDisabled}
+                        disabled={!canReply}
                       >
                         <option value="">Select a teammate…</option>
                         {assignableMembers.map((member) => (
@@ -603,10 +616,10 @@ function ConversationWorkspace({
                     </>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !canAssignSelected} onClick={() => void doAssign(selectedTarget)}>
+                    <Button type="button" size="sm" variant="secondary" disabled={busy !== null || !canAssignSelected} onClick={() => void doAssign(selectedTarget)}>
                       {busy === "assign" ? <LoaderCircle className="animate-spin" /> : <UserPlus />}Assign
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" disabled={actionsDisabled || busy !== null || !canUnassign} onClick={() => void doAssign(null)}>
+                    <Button type="button" size="sm" variant="ghost" disabled={busy !== null || !canUnassign} onClick={() => void doAssign(null)}>
                       {busy === "assign" ? <LoaderCircle className="animate-spin" /> : <UserMinus />}Unassign
                     </Button>
                   </div>
@@ -614,8 +627,8 @@ function ConversationWorkspace({
                 </div>
                 <form className="grid gap-2 border-t border-border pt-3" onSubmit={doHandOff}>
                   <label className="text-xs font-semibold text-muted-foreground">Hand off with a note</label>
-                  <Input value={handoffNote} onChange={(event) => setHandoffNote(event.target.value)} maxLength={1000} placeholder="Note for the next teammate (optional)" aria-label="Hand-off note" disabled={actionsDisabled} />
-                  <Button type="submit" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !canHandOffSelected}>
+                  <Input value={handoffNote} onChange={(event) => setHandoffNote(event.target.value)} maxLength={1000} placeholder="Note for the next teammate (optional)" aria-label="Hand-off note" disabled={!canReply} />
+                  <Button type="submit" size="sm" variant="secondary" disabled={busy !== null || !canHandOffSelected}>
                     {busy === "handoff" ? <LoaderCircle className="animate-spin" /> : <UserCheck />}Hand off to the selected teammate
                   </Button>
                 </form>

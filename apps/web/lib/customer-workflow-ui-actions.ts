@@ -36,6 +36,7 @@ import type {
   CreateWorkflowDefinitionInput,
   GetBusinessHoursPolicyInput,
   GetContactJourneyStatesInput,
+  GetRoutineAuthorizationPreviewInput,
   GetRoutineInput,
   KillRoutineInput,
   ListBusinessHoursPoliciesInput,
@@ -66,7 +67,7 @@ export async function getRoutine(input: GetRoutineInput) {
   return gatewayGetRoutine(input);
 }
 
-export async function getRoutineAuthorizationPreview(input: GetRoutineInput) {
+export async function getRoutineAuthorizationPreview(input: GetRoutineAuthorizationPreviewInput) {
   return gatewayGetRoutineAuthorizationPreview(input);
 }
 
