@@ -9,6 +9,8 @@ import { ottoGreetingNameFromProfile } from "@/lib/otto-greeting";
 import { listMemory } from "@/lib/memory-actions";
 import { listBrandRecords } from "@/lib/brand-record-actions";
 import { getAnalytics } from "@/lib/analytics-actions";
+import { getOwnerSettings } from "@/lib/owner-settings-actions";
+import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import { OttoApp } from "@/components/otto/OttoApp";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +48,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     redirect(`/otto?${next.toString()}`);
   }
 
-  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics, userName] = await Promise.all([
+  const [entities, threadRows, accountResult, memory, records, ads, adJobs, history, allThreadRows, analytics, userName, settingsResult] = await Promise.all([
     getEntities(ownerId),
     getCoworkThreads(ownerId, projectId),
     getMyAccount(),
@@ -64,7 +66,13 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
     // step including the `.catch`: a Prisma fault REJECTS rather than returning {error}, and an
     // un-caught rejection in this Promise.all would take the entire page down (round-2 P2).
     ottoGreetingNameFromProfile(getMyProfileNames),
+    // #679 — the "Get Otto ready" card's dismissal, read from the workspace's own row rather
+    // than from this browser's localStorage. A failed read falls back to the defaults, which
+    // means "not dismissed": showing a card too often is recoverable, hiding one the merchant
+    // never dismissed is not.
+    getOwnerSettings().catch(() => ({ error: "load-failed" } as const)),
   ]);
+  const settings = "error" in settingsResult ? DEFAULT_SETTINGS : settingsResult;
 
   // Open the requested thread (?thread=, if it's in this project) or the most recent.
   let threads = threadRows.map(toChatThreadMetaDTO);
@@ -117,6 +125,7 @@ export default async function OttoPage({ searchParams }: { searchParams: Promise
       history={history}
       ottoStreamEnabled={ottoStreamEnabled}
       initialView={initialView}
+      onboardingDismissed={settings.ottoOnboardingDismissed}
       skin={skin}
     />
   );

@@ -32,6 +32,11 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
+      # `next build` re-runs a TypeScript pass in a child worker, and that worker had grown to
+      # the ~2 GB default heap: it now OOMs on a coin flip, independently of what a PR changed
+      # (measured: this PR's own diff adds 11 MB to a 1,088 MB `tsc` run — under 1%). Raising the
+      # ceiling weakens no gate; the check still runs, and `pnpm -r typecheck` runs before it.
+      NODE_OPTIONS: --max-old-space-size=6144
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fikirtive_test
       BETTER_AUTH_SECRET: fikirtive-ci-only-session-secret-not-for-production
       BETTER_AUTH_URL: http://localhost:3000

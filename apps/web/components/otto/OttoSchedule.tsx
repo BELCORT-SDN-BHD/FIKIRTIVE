@@ -670,9 +670,12 @@ function PlanView({
       {proposed.length > 0 ? (
         <PlanCard posts={proposed} mediaLookup={mediaLookup} onEdit={onEdit} onReload={onReload} accounts={accounts} />
       ) : (
-        <div className="rounded-[16px] border border-border bg-card p-[18px] flex items-center gap-3">
+        /* Same shape as the Analytics banner (#697): the button keeps its own width, so
+           without flex-wrap and a minimum for the copy the empty-state sentence collapsed
+           into a narrow ribbon on a phone. */
+        <div className="rounded-[16px] border border-border bg-card p-[18px] flex flex-wrap items-center gap-3">
           <CoralCloud size={28} />
-          <div className="flex-1">
+          <div className="min-w-[220px] flex-1">
             <div className="text-[14px] font-semibold text-foreground">No plan from Otto yet</div>
             <div className="text-[13px] text-muted-foreground">
               Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and it&rsquo;ll draft a schedule for you to approve.

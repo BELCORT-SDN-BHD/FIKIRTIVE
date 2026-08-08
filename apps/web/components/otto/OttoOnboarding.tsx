@@ -1,57 +1,59 @@
 "use client";
-import React, { useState, useEffect } from "react";
-import { X, Users, Sparkles } from "lucide-react";
-
-const LS_KEY = "otto:onboarded";
+import React from "react";
+import { X, Users, Sparkles, Check } from "lucide-react";
 
 interface OnboardingTile {
   icon: React.ReactNode;
   label: string;
   hint: string;
+  done: boolean;
   onClick?: () => void;
 }
 
 interface OttoOnboardingProps {
+  /** Has the shop saved at least one character or product? Ticks the first tile. */
+  hasStuff: boolean;
+  /** Has the shop taught Otto anything about its brand? Ticks the second tile. */
+  hasBrandMemory: boolean;
   onGoToStuff: () => void;
   onGoToMemory: () => void;
+  /** Persist the dismissal against the merchant's workspace (#679). */
+  onDismiss: () => void;
 }
 
-export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProps) {
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    // Window-guarded localStorage read
-    if (typeof window === "undefined") return;
-    if (window.localStorage.getItem(LS_KEY)) return;
-    const frame = window.requestAnimationFrame(() => {
-      setVisible(true);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
-
-  function dismiss() {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(LS_KEY, "1");
-    }
-    setVisible(false);
-  }
-
-  if (!visible) return null;
-
+/**
+ * #679 — the card no longer decides for itself whether it should exist.
+ *
+ * It used to read and write `localStorage["otto:onboarded"]`, which made it a fact about one
+ * browser rather than about the shop, and it never looked at whether the two things had
+ * actually been done. Visibility is now the caller's call (see lib/otto-onboarding.ts), the
+ * dismissal is persisted server-side against the workspace, and each row says truthfully
+ * whether that task is done.
+ */
+export function OttoOnboarding({
+  hasStuff,
+  hasBrandMemory,
+  onGoToStuff,
+  onGoToMemory,
+  onDismiss,
+}: OttoOnboardingProps) {
   const tiles: OnboardingTile[] = [
     {
       icon: <Users size={20} />,
       label: "Add a character or product",
       hint: "Otto keeps them consistent across every project",
+      done: hasStuff,
       onClick: onGoToStuff,
     },
     {
       icon: <Sparkles size={20} />,
       label: "Teach Otto your brand",
       hint: "Voice, rules, audience — Otto uses it every time",
+      done: hasBrandMemory,
       onClick: onGoToMemory,
     },
   ];
+  const remaining = tiles.filter((t) => !t.done).length;
 
   // leading-[1.5] — design-baseline body line-height (Analytics standard)
   return (
@@ -68,12 +70,14 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
             Get Otto ready
           </div>
           <div className="text-[0.75rem] text-muted-foreground mt-[2px]">
-            Two quick things before your first project
+            {remaining === 1
+              ? "One quick thing before your first project"
+              : "Two quick things before your first project"}
           </div>
         </div>
         <button
           type="button"
-          onClick={dismiss}
+          onClick={onDismiss}
           aria-label="Dismiss getting started"
           className="inline-flex items-center justify-center w-7 h-7 rounded-[14px] border-0 bg-transparent text-muted-foreground/70 cursor-pointer shrink-0"
         >
@@ -91,17 +95,22 @@ export function OttoOnboarding({ onGoToStuff, onGoToMemory }: OttoOnboardingProp
             key={tile.label}
             type="button"
             onClick={tile.onClick}
+            aria-label={tile.done ? `${tile.label} — done` : tile.label}
             className="flex items-start gap-3 px-5 py-4 bg-card border-0 cursor-pointer text-left transition-colors duration-150 hover:bg-accent"
           >
-            <div className="shrink-0 mt-[2px] text-foreground">
-              {tile.icon}
+            <div className={`shrink-0 mt-[2px] ${tile.done ? "text-muted-foreground" : "text-foreground"}`}>
+              {tile.done ? <Check size={20} aria-hidden /> : tile.icon}
             </div>
             <div>
-              <div className="font-semibold text-[0.875rem] text-foreground mb-[2px]">
+              <div
+                className={`font-semibold text-[0.875rem] mb-[2px] ${
+                  tile.done ? "text-muted-foreground line-through" : "text-foreground"
+                }`}
+              >
                 {tile.label}
               </div>
               <div className="text-[0.75rem] text-muted-foreground">
-                {tile.hint}
+                {tile.done ? "Done" : tile.hint}
               </div>
             </div>
           </button>

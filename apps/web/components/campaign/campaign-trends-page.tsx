@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { Archive, LoaderCircle, Save } from "lucide-react";
 import type { listCampaigns } from "@/lib/campaign-view-data";
 import { listTrendSnapshots, saveTrendSnapshot } from "@/lib/trend-actions";
+import { trendSourceLabels } from "@/lib/trend-source-labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,6 +37,7 @@ export default function CampaignTrendsPage({
   const [snapshotId, setSnapshotId] = useState("ok" in initialTrends ? initialTrends.nextSnapshotId : "");
   const [snapshotProof, setSnapshotProof] = useState("ok" in initialTrends ? initialTrends.nextSnapshotProof : "");
   const campaigns = "ok" in initialCampaigns ? initialCampaigns.campaigns : [];
+  const campaignNames = new Map(campaigns.map((campaign) => [campaign.id, campaign.name]));
   const [summary, setSummary] = useState("");
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceDomain, setSourceDomain] = useState("");
@@ -72,6 +75,9 @@ export default function CampaignTrendsPage({
       setSourceTitle("");
       setSourceDomain("");
       setCapturedAt("");
+      // The campaign choice is cleared with the rest of the draft: an unrelated next
+      // conclusion must never inherit the campaign the merchant picked for this one.
+      setCampaignId("none");
       setNotice("Trend conclusion saved to the owner-scoped archive.");
     } catch {
       setError("The trend snapshot could not be saved. Retry the same draft.");
@@ -135,21 +141,34 @@ export default function CampaignTrendsPage({
                   <h2 className="mt-3 text-sm font-semibold">No trend conclusions yet</h2>
                   <p className="mt-2 text-sm text-muted-foreground">Save the first source-labelled conclusion.</p>
                 </div>
-              ) : trends.map((trend) => (
-                <article key={trend.id} className="rounded-xl border border-border p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <p className="text-sm font-semibold leading-6">{trend.summary}</p>
-                    <Badge variant="outline">{dateLabel(trend.capturedAt)}</Badge>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {Array.isArray(trend.sources) ? trend.sources.map((source, index) => {
-                      if (!source || typeof source !== "object" || Array.isArray(source)) return null;
-                      const value = source as { title?: unknown; domain?: unknown };
-                      return <span key={`${trend.id}:${index}`} className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{String(value.title ?? value.domain ?? "Source")}</span>;
-                    }) : null}
-                  </div>
-                </article>
-              ))}
+              ) : trends.map((trend) => {
+                const campaign = trend.campaignId ? campaignNames.get(trend.campaignId) : undefined;
+                return (
+                  <article key={trend.id} className="rounded-xl border border-border p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <p className="text-sm font-semibold leading-6">{trend.summary}</p>
+                      <Badge variant="outline">{dateLabel(trend.capturedAt)}</Badge>
+                    </div>
+                    {trend.campaignId ? (
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        Filed under{" "}
+                        {campaign ? (
+                          <Link href={`/campaign/${trend.campaignId}`} className="font-semibold text-brand-strong underline-offset-4 hover:underline">
+                            {campaign}
+                          </Link>
+                        ) : (
+                          <span className="font-semibold">a campaign that is no longer listed</span>
+                        )}
+                      </p>
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {trendSourceLabels(trend.sources).map((label, index) => (
+                        <span key={`${trend.id}:${index}`} className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{label}</span>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
             </CardContent>
           </Card>
         </div>

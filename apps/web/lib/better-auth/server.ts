@@ -5,7 +5,7 @@ import { magicLink, customSession, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
-import { sendAuthEmail } from "./sender";
+import { enqueueAuthEmail, sendAuthEmail } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
@@ -57,13 +57,17 @@ export const auth = betterAuth({
     sendResetPassword: async ({ user, url }) => {
       // Keep Better Auth's neutral reset response for removed users while still suppressing the
       // email (F17). Session creation independently re-checks access and remains fail-closed.
-      if (!(await isAllowedEmail(user.email))) return;
-      await sendAuthEmail({ to: user.email, subject: "Reset your Fikirtive password", url, intro: "Reset your password" });
+      // #678 — the access lookup AND the delivery both live on the background side: this hook
+      // queues and returns, so the reset response time cannot encode whether the address still
+      // has access or whether the mail provider is healthy.
+      enqueueAuthEmail({ purpose: "password-reset", email: user.email, url });
     },
   },
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
-      await sendAuthEmail({ to: user.email, subject: "Verify your Fikirtive email", url, intro: "Verify your email" });
+      // Same handover as every other auth email (#678): the signup response must not wait on the
+      // mail provider either.
+      enqueueAuthEmail({ purpose: "verify-email", email: user.email, url });
     },
     // #543 — verifying is the last step the merchant should have to take; the link drops
     // them straight into their new workspace. The token is single-use and short-lived, and
@@ -93,6 +97,12 @@ export const auth = betterAuth({
       "/sign-up/email": { window: 60 * 60, max: 5 },
       "/request-password-reset": { window: 60 * 60, max: 5 },
       "/send-verification-email": { window: 60 * 60, max: 5 },
+      // NOTE (#678 r3): there is deliberately NO rule for "/sign-in/magic-link" here. These
+      // rules only run inside `auth.handler`, and that endpoint no longer receives public
+      // traffic — app/api/better-auth/[...all]/route.ts answers it through the same throttled
+      // request path the login page uses (lib/better-auth/magic-link-request.ts), and the only
+      // caller left of Better Auth's own endpoint is our background queue. A rule here would
+      // cap the background, not the public.
     },
   },
   // Deny-by-default allowlist across EVERY method (before any session is issued).
@@ -108,22 +118,32 @@ export const auth = betterAuth({
         if (signupsPaused()) throw new APIError("FORBIDDEN", { message: SIGNUPS_PAUSED_MESSAGE });
         return;
       }
-      if (ctx.path === "/sign-in/magic-link") {
-        if (!(await isAllowedEmail(email))) {
-          // Enumeration-safe parity: the public endpoint returns the same success body without
-          // creating a verification token or attempting delivery for an address without access.
-          return ctx.json({ status: true });
-        }
-      } else if (ctx.path === "/sign-in/email") {
-        if (!(await isAllowedEmail(email))) {
-          // Match Better Auth's native invalid-credential response so the password form cannot
-          // be used as a second allowlist-membership probe.
-          throw new APIError("UNAUTHORIZED", {
-            code: "INVALID_EMAIL_OR_PASSWORD",
-            message: "Invalid email or password",
-          });
-        }
-      } else if (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up")) {
+      if (ctx.path === "/sign-in/magic-link" || ctx.path === "/sign-in/email") {
+        // #678 — DELIBERATELY NO ALLOWLIST DECISION HERE, for both doors. Deciding at the door
+        // is what made the RESPONSE TIME a function of whether the address has an account:
+        //
+        //   magic link — an address without access returned after ONE allowlist query, while an
+        //     address with access went on to write a verification token, query again and wait on
+        //     the email network. Same words, visibly different clock.
+        //   password — an address without access was refused here, skipping Better Auth's own
+        //     dummy password hash (sign-in.mjs hashes the submitted password when no user is
+        //     found, precisely so the two cases cost the same). Our shortcut walked around the
+        //     constant-time path it was imitating.
+        //
+        // Where the access decision lives now: for the magic link, on the background side BEFORE
+        // the token is minted (lib/better-auth/sender.ts) — so this endpoint is only ever reached
+        // for an address that already passed it; for the password door, inside Better Auth's own
+        // credential check, which is constant-time by construction.
+        //
+        // NOTHING IS LOOSENED. Redeeming a magic-link token is still refused twice over —
+        // databaseHooks.user.create.before (assertAllowedEmail) and
+        // databaseHooks.session.create.before (assertAllowedForUserId) both stay fail-closed.
+        // A password sign-in for an address without access still ends in Better Auth's own
+        // INVALID_EMAIL_OR_PASSWORD unless the credential is genuinely correct, in which case
+        // session.create.before refuses the session.
+        return;
+      }
+      if (ctx.path?.startsWith("/sign-in") || ctx.path?.startsWith("/sign-up")) {
         await assertAllowedEmail(email);
       }
     }),
@@ -175,9 +195,15 @@ export const auth = betterAuth({
     magicLink({
       expiresIn: 60 * 15,
       sendMagicLink: async ({ email, url }) => {
-        // Re-check after the before-hook in case access was revoked between the two awaits.
-        // Returning normally keeps the endpoint response neutral while session creation remains
-        // independently fail-closed through databaseHooks.session.create.before.
+        // #678 r3 — this hook is BACKGROUND-ONLY. The single caller of the endpoint that runs it
+        // is the auth-email queue (lib/better-auth/sender.ts), which has already checked access
+        // and the per-address budget before minting anything. So delivery is simply awaited here:
+        // there is no request waiting on it to await.
+        //
+        // The access check is repeated anyway, and the repetition is deliberate: it makes the
+        // ENDPOINT invite-only rather than only the queue in front of it, so no future caller of
+        // `auth.api.signInMagicLink` can mail an address nobody invited. Its cost is invisible —
+        // it is a background query behind an answer the merchant already has.
         if (!(await isAllowedEmail(email))) return;
         await sendAuthEmail({ to: email, subject: "Sign in to Fikirtive", url, intro: "Sign in to Fikirtive" });
       },

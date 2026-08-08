@@ -35,6 +35,7 @@ const APPROVED_EXPORTS = [
   "getBusinessHoursPolicy",
   "getContactJourneyStates",
   "getRoutine",
+  "getRoutineAuthorizationPreview",
   "getWorkflowDefinition",
   "killRoutine",
   "listBusinessHoursPolicies",
@@ -79,7 +80,9 @@ describe("customer-workflow-ui-actions pass-through", () => {
   });
 
   it("passes a human-only mutation input and result through unchanged", async () => {
-    const input = { routineId: "routine-1", expectedRowRevision: 3 };
+    // #720 判官 r3 — activation carries the reviewed authorization hash; the wrapper passes it
+    // through untouched like every other field.
+    const input = { routineId: "routine-1", expectedRowRevision: 3, expectedAuthorizationHash: "reviewed-hash" };
     await expect(customerWorkflowUiActions.activateRoutine(input)).resolves.toEqual({
       ok: true,
       resource: input,

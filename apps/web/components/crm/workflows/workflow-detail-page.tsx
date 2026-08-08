@@ -74,8 +74,8 @@ const STARTER_RULE = [
 
 function UnavailableState() {
   return (
-    <main className="min-h-dvh bg-background px-8 py-10 text-foreground">
-      <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-8 shadow-[var(--shadow-sm)]">
+    <main className="min-h-dvh bg-background px-4 py-10 text-foreground sm:px-6">
+      <section className="mx-auto max-w-xl rounded-[var(--radius-card)] border border-border bg-card p-6 shadow-[var(--shadow-sm)] sm:p-8">
         <span className="grid size-11 place-items-center rounded-xl bg-warning-soft text-warning-soft-foreground"><AlertCircle className="size-5" /></span>
         <p className="mt-5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">CRM Workflows</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">This workflow is not available</h1>
@@ -176,8 +176,24 @@ export default function WorkflowDetailPage({
     !archived,
   );
   const ruleSummary = summarizeRuleSource(selectedRevision?.rulesSource ?? rulesSource);
+  // #721 — archiving is not an off switch in ANY sense. The physical contract (§4.4 / :567 /
+  // :797) says archive neither deletes run history nor stops an active Routine, and
+  // customer-workflow.test.ts ("archiving stops nothing") proves against the real database that
+  // an archived workflow keeps its Routine active AND still gets new runs created for it. So no
+  // branch here may claim archiving prevents runs: that reads as reassurance and is precisely
+  // what would stop a merchant from going and killing a Routine that is still acting.
+  // 判官 r2 P2 — say only what this page can prove. `activeRoutineCount` counts Routines whose
+  // switch is ON (status active, kill switch not engaged). It does NOT establish that they can
+  // currently produce a run: an authorization can still be past its expiry, pinned to a revision
+  // whose fingerprints have drifted, or short of budget. Nor does a zero count establish that no
+  // authorization exists — a killed or revoked Routine still carries its authorization record.
+  // So the copy reports the switch, names archiving's true effect, and stops there.
   const statusSummary = archived
-    ? "Archived — this workflow cannot run."
+    ? routineReadError
+      ? "Archived — Routine status could not load, so whether any Routine here is still switched on is unknown. Archiving alone never stops a Routine."
+      : activeRoutineCount > 0
+        ? `Archived — ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"} here ${activeRoutineCount === 1 ? "is" : "are"} still switched on. Archiving did not stop ${activeRoutineCount === 1 ? "it" : "them"}. Kill each one below to stop it.`
+        : "Archived — no Routine here is switched on. Archiving alone never stops a Routine."
     : routineReadError
       ? "Routine status could not load."
       : activeRoutineCount > 0
@@ -306,16 +322,16 @@ export default function WorkflowDetailPage({
   }
 
   return (
-    <main className="min-h-dvh bg-background px-8 py-9 text-foreground">
+    <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
       <div className="mx-auto max-w-[1280px]">
         <Link href="/crm/workflows" className="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" />Back to workflows</Link>
 
-        <header className="mt-4 flex items-start justify-between gap-8 border-b border-border pb-6">
+        <header className="mt-4 flex flex-col gap-4 border-b border-border pb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><Badge variant={status.variant}>{status.label}</Badge><Badge variant="outline">{definition.definitionKind === "journey" ? "Contact journey" : "Rule"}</Badge>{routineReadError ? <Badge variant="outline">Routine status unavailable</Badge> : activeRoutineCount > 0 ? <Badge variant="brand">{activeRoutineCount} active {activeRoutineCount === 1 ? "Routine" : "Routines"}</Badge> : <Badge variant="outline">No active Routines</Badge>}</div>
-            <h1 className="mt-3 truncate text-3xl font-semibold tracking-[-0.03em]">{definition.name}</h1>
+            <h1 className="mt-3 truncate text-2xl font-semibold tracking-[-0.03em] sm:text-3xl">{definition.name}</h1>
           </div>
-          <div className="flex shrink-0 items-center gap-2"><Button type="button" variant="ghost" disabled={busy !== null} onClick={() => void refresh()}>{busy === "refresh" ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button><ArchiveWorkflowDialog definition={definition} onArchived={(archivedDefinition) => { setDefinition(archivedDefinition); void refreshRoutines(); }} /></div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2"><Button type="button" variant="ghost" disabled={busy !== null} onClick={() => void refresh()}>{busy === "refresh" ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}Refresh</Button><ArchiveWorkflowDialog definition={definition} onArchived={(archivedDefinition) => { setDefinition(archivedDefinition); void refreshRoutines(); }} /></div>
         </header>
 
         <nav className="sticky top-0 z-20 -mx-2 flex gap-1 border-b border-border bg-background/95 px-2 py-3 backdrop-blur" aria-label="Workflow sections">
@@ -386,7 +402,10 @@ export default function WorkflowDetailPage({
           </details>
         </section>
 
-        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel key={`routines-${readGeneration}`} workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
+        {/* #720: NO readGeneration key here. Remounting the panel on every Routine re-read threw
+            away whatever the merchant had open — including the confirmation dialog and the form
+            they were filling in. The panel reads its Routines from this prop instead. */}
+        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
         <div className="mt-12 border-t border-border pt-10"><WorkflowMonitoring key={`monitoring-${readGeneration}`} workflowDefinitionId={definition.id} initialRuns={runsResult} initialJourneys={journeysResult} /></div>
         <div className="mt-12 border-t border-border pt-10 pb-16"><WorkflowRecipesPanel key={`policies-${readGeneration}`} initialPolicies={policiesResult} /></div>
       </div>

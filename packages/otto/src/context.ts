@@ -48,6 +48,12 @@ export type CrmSegmentSummary = {
   matchedCount: number;
   contactableCount: number;
   knownOptOutCount: number;
+  /** Known opt-outs this segment's consent rule kept out — the number the merchant reads. */
+  excludedByConsentCount: number;
+  /** Of those, the ones held out by an opt-out recorded before the consent ledger existed. */
+  unresolvedLegacyOptOutCount: number;
+  /** Contacts kept in on an opt-out the merchant recorded himself (unverified) — #716. */
+  reportedOptOutCount: number;
   createdAt: string;
 };
 
@@ -56,6 +62,10 @@ export type CrmSegmentContact = {
   name: string;
   channels: string[];
   contactable: boolean;
+  /** The merchant recorded an opt-out for this contact; it is not verified consent. */
+  reportedOptOut: boolean;
+  /** Held out by an opt-out recorded before this contact had a consent history. */
+  unresolvedLegacyOptOut: boolean;
 };
 
 /** CRM Contact read model (B0-59/60/C1). Dates are ISO strings across the package seam. */
@@ -350,6 +360,9 @@ export interface OttoContext {
           matchedCount: number;
           contactableCount: number;
           knownOptOutCount: number;
+          excludedByConsentCount: number;
+          unresolvedLegacyOptOutCount: number;
+          reportedOptOutCount: number;
           contacts: CrmSegmentContact[];
         }
       | { error: string }
@@ -364,7 +377,16 @@ export interface OttoContext {
           ok: true;
           idempotent: boolean;
           operation: "create" | "update";
-          segment: Omit<CrmSegmentSummary, "status" | "matchedCount" | "contactableCount" | "knownOptOutCount">;
+          segment: Omit<
+            CrmSegmentSummary,
+            | "status"
+            | "matchedCount"
+            | "contactableCount"
+            | "knownOptOutCount"
+            | "excludedByConsentCount"
+            | "unresolvedLegacyOptOutCount"
+            | "reportedOptOutCount"
+          >;
         }
       | { error: string }
     >;

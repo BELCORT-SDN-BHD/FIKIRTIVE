@@ -108,14 +108,17 @@ describe("#543 signup grant — exactly-once", () => {
     expect(again?.emailVerified?.getTime()).toBe(firstStamp.getTime());
   });
 
-  it("names the workspace after the shop, and falls back to the email when there is no name", async () => {
+  it("names the workspace after the shop, and leaves it unset when no shop name was given", async () => {
     const named = await freshUser("Kedai Kopi Aman");
     const namedOrg = (await bootstrapPersonalOrg(named.id, named.email))!;
     expect((await prisma.organization.findUnique({ where: { id: namedOrg } }))?.name).toBe("Kedai Kopi Aman");
 
+    // #680 — the magic-link/invite door never asks for a shop name, so there is nothing to
+    // write. This used to fall back to the merchant's email address, which /profile then showed
+    // back to them as "Your shop name". Unset is the truthful state; /profile asks for it.
     const anonymous = await freshUser();
     const anonymousOrg = (await bootstrapPersonalOrg(anonymous.id, anonymous.email))!;
-    expect((await prisma.organization.findUnique({ where: { id: anonymousOrg } }))?.name).toBe(anonymous.email);
+    expect((await prisma.organization.findUnique({ where: { id: anonymousOrg } }))?.name).toBe("");
   });
 
   it("never RENAMES an existing workspace on a later bootstrap", async () => {

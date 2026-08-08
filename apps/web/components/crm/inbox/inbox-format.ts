@@ -119,31 +119,39 @@ export function isDenialErrorCode(code: string): boolean {
   return DENIAL_ERROR_CODES.has(code);
 }
 
-function shortId(id: string | null | undefined): string {
-  if (!id) return "unassigned";
-  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
+/** #725 — a membership the member directory doesn't contain (left the workspace, or the
+ *  directory read failed) is described honestly. A display name is never fabricated, and the
+ *  internal membership id is never shown to the merchant: no screen in the product resolves it. */
+function memberPhrase(
+  membershipId: string | null | undefined,
+  resolveMemberName: (membershipId: string) => string | null,
+): string {
+  if (!membershipId) return "a team member";
+  return resolveMemberName(membershipId) ?? "a team member who is no longer listed";
 }
 
-/** Plain-English description of a control/assignment timeline event. Membership
- *  names aren't available from any read this UI can call, so events reference the
- *  membership ID (shortened) rather than fabricating a display name. */
-export function eventDescription(event: {
-  kind: string;
-  fromAssigneeMembershipId: string | null;
-  toAssigneeMembershipId: string | null;
-  fromAutomationState: string | null;
-  toAutomationState: string | null;
-  note: string | null;
-}): string {
+/** Plain-English description of a control/assignment timeline event. Names come from the
+ *  server-read member directory passed in by the caller. */
+export function eventDescription(
+  event: {
+    kind: string;
+    fromAssigneeMembershipId: string | null;
+    toAssigneeMembershipId: string | null;
+    fromAutomationState: string | null;
+    toAutomationState: string | null;
+    note: string | null;
+  },
+  resolveMemberName: (membershipId: string) => string | null,
+): string {
   switch (event.kind) {
     case "assigned":
-      return `Assigned to membership ${shortId(event.toAssigneeMembershipId)}`;
+      return `Assigned to ${memberPhrase(event.toAssigneeMembershipId, resolveMemberName)}`;
     case "unassigned":
       return "Unassigned";
     case "takeover":
       return "A team member took over from Otto";
     case "handoff":
-      return `Handed off to membership ${shortId(event.toAssigneeMembershipId)}${event.note ? ` — "${event.note}"` : ""}`;
+      return `Handed off to ${memberPhrase(event.toAssigneeMembershipId, resolveMemberName)}${event.note ? ` — "${event.note}"` : ""}`;
     case "automation_resume_requested":
       return `Automation resume requested${event.note ? ` — "${event.note}"` : ""} (auto-reply stays off for now)`;
     case "opened":
