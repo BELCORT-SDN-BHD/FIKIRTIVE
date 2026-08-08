@@ -98,6 +98,23 @@ export type CrmContactSummary = {
   }[];
 };
 
+/**
+ * One page of contacts, with the two facts that stop it from passing as the whole list (#742).
+ *
+ * `contacts` is a page — never everything the merchant has. `totalCount` is how many rows the
+ * SAME owner-scoped filter has in total (the number the Contacts page prints as "Showing 50 of
+ * 65 contacts"), `returned` is how many are in this payload, and `hasMore` is true when the rest
+ * were left out. The counts ride WITH the rows because the alternative — handing over the page
+ * and trusting the reader to remember it was cut — is exactly what went wrong.
+ */
+export type CrmContactPage = {
+  ok: true;
+  contacts: CrmContactSummary[];
+  returned: number;
+  totalCount: number;
+  hasMore: boolean;
+};
+
 export type CrmContactDetailSummary = CrmContactSummary & {
   consentEvents: {
     id: string;
@@ -404,13 +421,13 @@ export interface OttoContext {
    * read-only, duplicate matches are suggestions, and consent/DND writes enter the shared runtime. */
   contacts?: {
     list(input?: { lifecycleStage?: "New" | "Active" | "Dormant"; limit?: number }): Promise<
-      { ok: true; contacts: CrmContactSummary[] } | { error: string }
+      CrmContactPage | { error: string }
     >;
     get(contactId: string): Promise<
       { ok: true; contact: CrmContactDetailSummary } | { error: string }
     >;
     search(input: { query: string; lifecycleStage?: "New" | "Active" | "Dormant"; limit?: number }): Promise<
-      { ok: true; contacts: CrmContactSummary[] } | { error: string }
+      CrmContactPage | { error: string }
     >;
     create(input: { name: string; lifecycleStage?: "New" | "Active" | "Dormant" }): Promise<unknown>;
     update(input: {

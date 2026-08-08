@@ -121,7 +121,9 @@ import {
   setContactDndFromOtto,
   updateContact,
 } from "./crm-actions";
-import { getContact, listContacts, searchContacts, type CrmContactRow } from "./crm-view-data";
+import { getContact, listContacts, searchContacts } from "./crm-view-data";
+// #742: the contact-list boundary — the page's counts cross into chat with the rows.
+import { contactForOtto, contactPageForOtto } from "./otto-contact-view";
 import { listChannelScopes } from "./customer-inbox-gateway";
 import { makeOttoSpendingPort } from "./otto-spending-port";
 
@@ -249,26 +251,11 @@ function makeOttoCampaignsPort(): NonNullable<OttoContext["campaigns"]> {
   };
 }
 
-function contactForOtto(contact: CrmContactRow) {
-  return {
-    ...contact,
-    firstTouchAt: contact.firstTouchAt.toISOString(),
-    lastSeenAt: contact.lastSeenAt.toISOString(),
-    createdAt: contact.createdAt.toISOString(),
-    consentState: {
-      ...contact.consentState,
-      lastReceivedAt: contact.consentState.lastReceivedAt?.toISOString() ?? null,
-    },
-  };
-}
-
 function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
   return {
-    list: async (input) => {
-      const result = await listContacts(input);
-      if (!("ok" in result)) return result;
-      return { ok: true as const, contacts: result.contacts.map(contactForOtto) };
-    },
+    // #742: a page crosses as a page. contactPageForOtto carries the owner-scoped total and
+    // the truncation flag over with the rows, so an answer can never quote 50 as the headcount.
+    list: async (input) => contactPageForOtto(await listContacts(input)),
     get: async (contactId) => {
       const result = await getContact(contactId);
       if (!("ok" in result)) return result;
@@ -284,11 +271,7 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
         },
       };
     },
-    search: async (input) => {
-      const result = await searchContacts(input);
-      if (!("ok" in result)) return result;
-      return { ok: true as const, contacts: result.contacts.map(contactForOtto) };
-    },
+    search: async (input) => contactPageForOtto(await searchContacts(input)),
     create: (input) => createContact({ ...input, source: "otto" }),
     update: (input) => updateContact(input),
     importCsv: (input) => importContacts(input),

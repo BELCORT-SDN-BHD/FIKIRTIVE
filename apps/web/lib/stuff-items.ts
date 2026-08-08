@@ -20,6 +20,21 @@ export type StuffItem = {
   productName?: string;
 };
 
+/**
+ * Is this Library item a generation — something a `Generation.id` can name (#704)?
+ *
+ * Two of the three sources are: `gen` (Library history) and `ad` (Otto's ad builds) both put a
+ * real `Generation.id` in `generationId`, so anything keyed by generation id — the schedule's
+ * thumbnail lookup, a post's stored media rows — has to accept both. `entity` is a saved
+ * reference, not a generation, and carries no generation id: it stays out.
+ *
+ * Named here, beside the `source` union it reads, so a fourth source has to face this question
+ * instead of silently joining (or silently missing, which is how ad media lost its thumbnail).
+ */
+export function isGenerationBackedItem(item: StuffItem): item is StuffItem & { generationId: string } {
+  return (item.source === "gen" || item.source === "ad") && !!item.generationId;
+}
+
 export function productImageIndex(records: BrandRecordRow[]): Map<string, string> {
   const idx = new Map<string, string>();
   for (const r of records) {
