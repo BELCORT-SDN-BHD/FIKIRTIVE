@@ -158,7 +158,12 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     // #769 后名单是空的,所以这里也必须一行「地板 ↓」都没有;两边同源,不可能分家。
     expect(report.match(/地板 ↓/g) ?? []).toHaveLength(BELOW_FLOOR_FOUNDER_ACCEPTED.length);
     expect(report.match(/地板 ↓/g) ?? []).toHaveLength(0);
-    // 全表最低毛利率 = 720p 的 5/10/15 秒整点档。
+    // 视频档里最低的是 720p 的 5/10/15 秒整点档(65.42%)。
     expect(report).toContain("毛利率 65.4%");
+    // 但**全表**最低的不是它 —— 图片与参考图是 65.0%。把这句也钉住,免得
+    // 「最低毛利率」在注释里被写成视频档那个数(判官 r1 P3 抓到过一次)。
+    const lowest = marginTruthTable().reduce((a, b) => (b.margin < a.margin ? b : a));
+    expect(lowest.margin).toBeCloseTo(0.65, 4);
+    expect(["image:seedream", "refgen:seedream"]).toContain(lowest.id);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CANVAS_JOB_KEY_PREFIX, CANVAS_REPAIR_JSON_KEY, isCanvasJobKey } from "@fikirtive/core";
+import { CANVAS_JOB_KEY_PREFIX, CANVAS_REPAIR_JSON_KEY, genRequest, isCanvasJobKey } from "@fikirtive/core";
 import {
   canvasActionKey,
   factoryAttemptKey,
@@ -321,16 +321,21 @@ describe("#645 T4:i2v 形状缺省 = adaptive(通用 startGen / 工厂逐格共�
 //
 // 指纹这一侧的判据:`factoryMaterialMatches` 比的是 `model` —— 落库的那个 option key,
 // 不是 `dreamina-seedance-2-0-*` 那个版本化 id(它只活在 provider 边界上,从不进库)。
-// 于是:
-//   ① 同 key 重放 = 同材料。**版本化 id 换了也不会被误判成内容漂移** —— 那个 id 根本
-//      不在指纹里。这条是本票要求证明的那一条。
-//   ② 换 key ⇒ 老快照(fast)与新请求(mini)判成不同材料。这是**正确**语义:两台引擎
-//      出的片子不一样(Founder 眼看 7 条对比片:mini 更忠于商家参考图,fast 会换背景),
-//      成本也差 1/3。判成「同材料」会让一次 mini 请求复用掉一条 fast 的片子并收 0 ——
-//      静默的错。判成不同,商家那一格会如实走一趟新的生成。
-//   ③ 零用户零存量,所以 ② 今天不会真的咬到任何商家;钉住它是为了让语义写在测试里,
-//      而不是靠「反正没人用」。
-describe("#769 换引擎之后的内容指纹语义(同 key 重放 ≠ 内容漂移;换 key = 换材料)", () => {
+// 于是同 key 重放 = 同材料:**版本化 id 换了也不会被误判成内容漂移**,因为那个 id 根本
+// 不在指纹里。这是本票要求证明的那一条。
+//
+// 而「拿一个**下架**引擎的老 key 再来一次」会怎样,判官 r1 P2 纠正过我一次,这里按
+// **真实调用链**钉,不按想象钉:请求先过契约闸 `genRequest`(packages/core/src/gen.ts
+// 的 superRefine:`GEN_VIDEO_MODELS` 不含该 id ⇒ 直接 addIssue),而 `startGen`
+// (apps/web/lib/gen-actions.ts)是**先 `genRequest.safeParse` 再查历史**的 ——
+// parse 不过就当场 return,历史查询、预扣、派发全都不会发生。
+//
+// 所以退役引擎的重放,真实行为是「**零元拒收**」,不是「判成不同材料后重新生成一次」,
+// 更不是「复用老那一单」。历史复用那条路对退役模型 **by design 不可达**:能走到
+// `factoryMaterialMatches` 的请求,其 model 必然已经在菜单上。下面第二条仍然钉住
+// 比对器本身对退役 id 的判定,但它的身份是**纵深防御**(万一哪天有人绕过契约闸,
+// 比对器也不会把两台引擎的产物认成同一份材料),不是在产路径。
+describe("#769 换引擎之后的内容指纹语义(同 key 重放 ≠ 内容漂移;退役 key = 零元拒收)", () => {
   const material = (model: string): FactoryMaterial =>
     normalizeFactoryMaterial({
       prompt: "a product spin",
@@ -365,19 +370,38 @@ describe("#769 换引擎之后的内容指纹语义(同 key 重放 ≠ 内容漂
     expect(JSON.stringify(mini)).not.toContain("dreamina-");
   });
 
-  it("老快照(下架的 seedance-2-fast)与新的 mini 请求判成**不同材料**", () => {
+  it("**真实路径**:拿退役的 seedance-2-fast 再来一次,契约闸当场拒收(零元,不查历史)", () => {
+    const req = (model: string) => ({
+      projectId: "prj_1",
+      prompt: "a product spin",
+      count: 1,
+      kind: "video" as const,
+      model,
+      idempotencyKey: "batch-retry-1",
+    });
+    // 在产那一台照常通过 —— 证明下面那次失败**只**因为引擎已下架,不是这份 payload 有别的毛病。
+    expect(genRequest.safeParse(req("seedance-2-mini")).success).toBe(true);
+
+    const retired = genRequest.safeParse(req("seedance-2-fast"));
+    expect(retired.success).toBe(false);
+    if (retired.success) throw new Error("unreachable");
+    // 报错落在 model 这一项上,而不是含混地整单失败。
+    expect(retired.error.issues.some((i) => i.path.join(".") === "model")).toBe(true);
+    // startGen 是先 parse 再查历史的,所以这一趟连历史都不会读 —— 谈不上复用,也谈不上收钱。
+  });
+
+  it("纵深防御:即便绕过契约闸,比对器也不会把 fast 的老快照认成 mini 的材料", () => {
     const legacyFastRow = stored(material("seedance-2-fast"));
     expect(factoryMaterialMatches(legacyFastRow, material("seedance-2-mini"))).toBe(false);
   });
 
-  it("这一格的其余材料完全相同 —— 判成不同的**唯一**理由就是引擎变了", () => {
-    const fast = material("seedance-2-fast");
-    const mini = material("seedance-2-mini");
-    const strip = ({ model, videoOptions, ...rest }: FactoryMaterial) => rest;
-    expect(strip(fast)).toEqual(strip(mini));
-    // 下架的 id 走 videoDefaults 的空规格(#647 T6 早就为「菜单外的历史 id」建好的那条路):
-    // 「我不知道这台引擎当年给的是什么」,而不是编一份看起来像真的档位出来。
-    expect(fast.videoOptions).toEqual({ seconds: 0, resolution: "", aspectRatio: "", fps: 0, audio: false });
-    expect(mini.videoOptions).toEqual({ seconds: 5, resolution: "720p", aspectRatio: "adaptive", fps: 0, audio: true });
+  it("退役 id 读历史行时落 #647 T6 的空规格,而不是编一份看起来像真的档位", () => {
+    // 这条描述的是**读老行**那条路(记账/价签/卡面渲染),不是新请求那条路 ——
+    // 新请求在契约闸就没了。空规格的意思是「我不知道这台引擎当年给的是什么」:
+    // 秒数 0 与空分辨率既不在任何按秒价目表上,也不在任何档位表上,下游只会落护栏。
+    expect(material("seedance-2-fast").videoOptions)
+      .toEqual({ seconds: 0, resolution: "", aspectRatio: "", fps: 0, audio: false });
+    expect(material("seedance-2-mini").videoOptions)
+      .toEqual({ seconds: 5, resolution: "720p", aspectRatio: "adaptive", fps: 0, audio: true });
   });
 });

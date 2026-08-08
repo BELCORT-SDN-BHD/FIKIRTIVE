@@ -93,6 +93,15 @@ export const COGS_INPUTS = {
   //          field shows 0.0014 / 0.00084 per K (what we pay today). A discount is neither
   //          guaranteed nor auto-renewed, so the floor is only honest against list.
   //
+  //          READ-CHECK (a DIFFERENT model record — do not confuse it with mini's):
+  //          the same two fields on `dreamina-seedance-2-0-fast-260128` give $5.60/M and
+  //          $3.30/M — byte-for-byte the numbers #644 transcribed off the published pricing
+  //          page. Two independent sources agreeing on the RETIRED tier is what confirms
+  //          this way of reading the record; mini's own rates are the $3.50 / $2.10 above.
+  //          Same rate for 480p and 720p; tokens = W × H × 24fps × seconds / 1024. The
+  //          formula still reproduces fast's published worked examples exactly (480p 16:9
+  //          5s = $0.28, 720p 16:9 5s = $0.60 — both at fast's $5.60/M, not mini's).
+  //
   //          ⏰ AND WE NOW HAVE THE DATE. mini's discount is a PROMO that expires
   //          **2026-09-07 14:00 (UTC+8)**, after which the unit price goes ×2.5. That date
   //          is NOT in the API response — it lives only in the provider's docs, so it cannot
@@ -104,12 +113,6 @@ export const COGS_INPUTS = {
   //          discount. What does change is CASH — real spend on video ×2.5 overnight.
   //          That is a runway question for the founder, not a margin question.
   //          (Automatic price-drift alerting is #761's job, deliberately not built here.)
-  //          Read-check: the same fields on `dreamina-seedance-2-0-mini-260615` give
-  //          $5.60/M and $3.30/M — byte-for-byte the numbers #644 transcribed off the
-  //          published pricing page, so this way of reading the record is confirmed.
-  //          Same rate for 480p and 720p; tokens = W × H × 24fps × seconds / 1024. The
-  //          formula still reproduces the published fast examples exactly (480p 16:9 5s =
-  //          $0.28, 720p 16:9 5s = $0.60 at $5.60/M).
   //   PIXELS docs.byteplus.com/en/docs/ModelArk/1520757 (Create task, 2026-07-31, Seedance 2.0
   //          series row — the whole 2.0 series shares it, mini included). Per resolution the
   //          six ratios differ in pixel count, so a tier is a COST RANGE, not a point. The
