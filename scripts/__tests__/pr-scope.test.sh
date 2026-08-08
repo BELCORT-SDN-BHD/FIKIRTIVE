@@ -4,12 +4,21 @@
 #
 # pr-scope.sh decides whether CI runs its gates at all, so a wrong "false" is the
 # worst bug this repository can have: every gate skipped, job green, code merged
-# unchecked. The fixtures below pin all four directions — docs-only, mixed,
-# empty, and hostile paths — plus the exact shape that broke the version this
-# replaced: one code file in front of 2,999 docs files. That list is far larger
-# than a pipe buffer, so the old `printf … | grep -qv '^docs/'` killed its own
-# writer with SIGPIPE, returned 141 under `pipefail`, and reported "docs only".
-# Any reintroduction of an early-exiting consumer turns case 5 red here.
+# unchecked. Two shapes below are the historical ones, kept as fixtures because
+# each of them once produced exactly that:
+#
+#   "code file FIRST"  — the list is far larger than a pipe buffer, so the
+#                        original `printf … | grep -qv '^docs/'` killed its own
+#                        writer with SIGPIPE, returned 141 under `pipefail`, and
+#                        reported "docs only". Reintroducing any early-exiting
+#                        pipeline consumer turns that case red again.
+#   "API ceiling"      — GET /pulls/{n}/files stops at 3,000 files and does not
+#                        say so, so a 3,001-file PR whose code file sorts into
+#                        the dropped tail read as docs-only. Every case that
+#                        passes a total pins the completeness check.
+#
+# Expected totals are written out literally rather than counted from the fixture,
+# so the test cannot agree with a miscount in the script under test.
 #
 # Run: bash scripts/__tests__/pr-scope.test.sh
 
@@ -21,82 +30,97 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 failures=0
+case_no=0
 
+# check <expected> <label> [args-to-pr-scope…]
 check() {
-  local label="$1" expected="$2" actual="$3"
-  if [[ "$actual" == "$expected" ]]; then
-    echo "  ok    $label → $actual"
+  local expected="$1" label="$2"
+  shift 2
+  local actual status=0
+  case_no=$((case_no + 1))
+  actual="$(bash "$scope" "$@" 2>"$tmp/stderr")" || status=$?
+  if [[ "$actual" == "$expected" && "$status" -eq 0 ]]; then
+    printf '  ok    %2d. %s → %s\n' "$case_no" "$label" "$actual"
   else
-    echo "  FAIL  $label → expected $expected, got $actual" >&2
+    printf '  FAIL  %2d. %s → expected %s (exit 0), got %s (exit %s)\n' \
+      "$case_no" "$label" "$expected" "${actual:-<empty>}" "$status" >&2
+    [[ -s "$tmp/stderr" ]] && sed 's/^/          /' "$tmp/stderr" >&2
     failures=$((failures + 1))
   fi
 }
 
+# ── build the large fixtures once ──
+docs_body="$tmp/docs-2998.txt"
+{
+  for i in $(seq 1 2998); do
+    printf 'docs/references/long-directory-name/chapter-%s.md\n' "$i"
+  done
+} >"$docs_body"
+
+{ printf 'apps/web/live.ts\n'; cat "$docs_body"; } >"$tmp/big-code-first.txt"          # 2,999
+{ cat "$docs_body"; printf 'apps/web/live.ts\n'; } >"$tmp/big-code-last.txt"           # 2,999
+{ cat "$docs_body"; printf 'docs/a/chapter-2999.md\n'; } >"$tmp/big-all-docs.txt"      # 2,999
+{ cat "$tmp/big-all-docs.txt"; printf 'docs/a/chapter-3000.md\n'; } >"$tmp/at-ceiling.txt" # 3,000
+
 # ── docs-only diffs may short-circuit ──
 printf 'docs/BLUEPRINT.md\n' >"$tmp/one-doc.txt"
-check "a single docs file" false "$(bash "$scope" "$tmp/one-doc.txt")"
+check false "a single docs file" "$tmp/one-doc.txt" 1
 
 printf 'docs/a.md\ndocs/adr/b.md\ndocs/references/c/d.md\n' >"$tmp/all-docs.txt"
-check "several docs files" false "$(bash "$scope" "$tmp/all-docs.txt")"
+check false "several docs files" "$tmp/all-docs.txt" 3
 
 printf 'docs/my notes (draft) [v2].md\n' >"$tmp/docs-odd-name.txt"
-check "docs path with spaces and brackets" false "$(bash "$scope" "$tmp/docs-odd-name.txt")"
+check false "docs path with spaces and brackets" "$tmp/docs-odd-name.txt" 1
+
+check false "2,999 docs files, complete list" "$tmp/big-all-docs.txt" 2999
 
 # ── anything else must run every gate ──
 printf 'apps/web/live.ts\ndocs/a.md\n' >"$tmp/code-first-small.txt"
-check "mixed, code first" true "$(bash "$scope" "$tmp/code-first-small.txt")"
+check true "mixed, code first" "$tmp/code-first-small.txt" 2
 
 printf 'docs/a.md\napps/web/live.ts\n' >"$tmp/code-last-small.txt"
-check "mixed, code last" true "$(bash "$scope" "$tmp/code-last-small.txt")"
+check true "mixed, code last" "$tmp/code-last-small.txt" 2
 
 printf 'docs/a.md\napps/web/live.ts' >"$tmp/no-trailing-newline.txt"
-check "last line has no trailing newline" true "$(bash "$scope" "$tmp/no-trailing-newline.txt")"
+check true "last line has no trailing newline" "$tmp/no-trailing-newline.txt" 2
 
 printf 'docsite/index.html\n' >"$tmp/docs-prefix.txt"
-check "docs-prefixed directory is NOT docs/" true "$(bash "$scope" "$tmp/docs-prefix.txt")"
+check true "docs-prefixed directory is NOT docs/" "$tmp/docs-prefix.txt" 1
 
 printf 'docs\n' >"$tmp/bare-docs.txt"
-check "a root file literally named docs" true "$(bash "$scope" "$tmp/bare-docs.txt")"
+check true "a root file literally named docs" "$tmp/bare-docs.txt" 1
 
 printf 'apps/web/it'"'"'s a "weird" *name*?.ts\n' >"$tmp/hostile-name.txt"
-check "code path with quotes and glob characters" true "$(bash "$scope" "$tmp/hostile-name.txt")"
+check true "code path with quotes and glob characters" "$tmp/hostile-name.txt" 1
 
-# ── the #809 fixture: 3,000 paths, well past any pipe buffer ──
-{
-  printf 'apps/web/live.ts\n'
-  for i in $(seq 1 2999); do
-    printf 'docs/references/long-directory-name/chapter-%s.md\n' "$i"
-  done
-} >"$tmp/big-code-first.txt"
-check "3,000 paths, code file FIRST (the SIGPIPE shape)" true "$(bash "$scope" "$tmp/big-code-first.txt")"
+check true "2,999 paths, code file FIRST (the SIGPIPE shape)" "$tmp/big-code-first.txt" 2999
+check true "2,999 paths, code file LAST" "$tmp/big-code-last.txt" 2999
 
-{
-  for i in $(seq 1 2999); do
-    printf 'docs/references/long-directory-name/chapter-%s.md\n' "$i"
-  done
-  printf 'apps/web/live.ts\n'
-} >"$tmp/big-code-last.txt"
-check "3,000 paths, code file LAST" true "$(bash "$scope" "$tmp/big-code-last.txt")"
+# ── an incomplete list is never docs-only ──
+check true "list shorter than the PR's changed_files (API dropped the tail)" "$tmp/all-docs.txt" 4
+check true "list longer than the PR's changed_files" "$tmp/all-docs.txt" 2
+check true "3,000 docs paths at the API ceiling, count agrees" "$tmp/at-ceiling.txt" 3000
+check true "3,000 listed but the PR changed 3,001" "$tmp/at-ceiling.txt" 3001
 
-{
-  for i in $(seq 1 3000); do
-    printf 'docs/references/long-directory-name/chapter-%s.md\n' "$i"
-  done
-} >"$tmp/big-all-docs.txt"
-check "3,000 paths, all docs" false "$(bash "$scope" "$tmp/big-all-docs.txt")"
+# ── an unusable total is never docs-only ──
+check true "no total argument at all" "$tmp/all-docs.txt"
+check true "empty total" "$tmp/all-docs.txt" ""
+check true "non-numeric total" "$tmp/all-docs.txt" "abc"
+check true "negative total" "$tmp/all-docs.txt" "-1"
+check true "total with trailing junk" "$tmp/all-docs.txt" "3x"
 
 # ── fail closed: an answer we could not derive is never "false" ──
 : >"$tmp/empty.txt"
-check "empty list" true "$(bash "$scope" "$tmp/empty.txt")"
+check true "empty list" "$tmp/empty.txt" 0
 
 printf '\n\n\n' >"$tmp/blank-lines.txt"
-check "list of blank lines" true "$(bash "$scope" "$tmp/blank-lines.txt")"
+check true "list of blank lines" "$tmp/blank-lines.txt" 3
 
-check "missing file" true "$(bash "$scope" "$tmp/does-not-exist.txt")"
-check "no argument" true "$(bash "$scope")"
+check true "missing file" "$tmp/does-not-exist.txt" 1
+check true "no arguments at all"
 
 if [[ "$failures" -ne 0 ]]; then
-  echo "pr-scope: $failures case(s) failed" >&2
+  echo "pr-scope: $failures of $case_no case(s) failed" >&2
   exit 1
 fi
-echo "pr-scope: all cases passed"
+echo "pr-scope: all $case_no cases passed"
