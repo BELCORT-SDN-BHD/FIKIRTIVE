@@ -135,7 +135,7 @@ describe("#642 worker 透传图片规格", () => {
     m.genJobFindUnique.mockResolvedValue({
       ...imageJob,
       kind: "VIDEO",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       sourceGenerationId: "gen_src",
       imageOptions: { aspectRatio: "9:16" },
       videoOptions: { seconds: 5, resolution: "720p", aspectRatio: "16:9", fps: 0, audio: true },

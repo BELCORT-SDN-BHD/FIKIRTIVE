@@ -49,7 +49,7 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   // 收费一格没动(11 / 22cr),成本 +0.6%,于是这两档从 45.02% 落到 44.67% ——
   // Founder 于 2026-08-06 明示接受,进具名豁免名单(BELOW_FLOOR_FOUNDER_ACCEPTED)。
   it("720p 5s:收 11cr = $1.10,成本 $0.6086,毛利 $0.4914 = 44.67% —— Founder 已裁接受", () => {
-    const r = row("video:seedance-2-fast:5:720p");
+    const r = row("video:seedance-2-mini:5:720p");
     expect(r.chargeUsd).toBeCloseTo(1.1, 6);
     expect(r.cogsUsd).toBeCloseTo(0.6086115, 6);
     expect(r.grossUsd).toBeCloseTo(0.4913885, 6);
@@ -59,7 +59,7 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   });
 
   it("720p 10s:收 22cr = $2.20,成本 $1.2172,毛利 $0.9828 = 44.67% —— Founder 已裁接受", () => {
-    const r = row("video:seedance-2-fast:10:720p");
+    const r = row("video:seedance-2-mini:10:720p");
     expect(r.chargeUsd).toBeCloseTo(2.2, 6);
     expect(r.cogsUsd).toBeCloseTo(1.217223, 6);
     expect(r.grossUsd).toBeCloseTo(0.982777, 6);
@@ -69,7 +69,7 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   });
 
   it("480p 5s(新开的半价档):收 6cr = $0.60,成本 $0.2812,毛利 53.1%", () => {
-    const r = row("video:seedance-2-fast:5:480p");
+    const r = row("video:seedance-2-mini:5:480p");
     expect(r.chargeUsd).toBeCloseTo(0.6, 6);
     expect(r.cogsUsd).toBeCloseTo(0.281232, 6);
     expect(r.margin).toBeCloseTo(0.5313, 4);
@@ -77,7 +77,7 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
   });
 
   it("整段参考视频(6s 参考上限 + 5s 出片):收 16cr = $1.60,成本 $0.78408,毛利 $0.81592 = 51.0%", () => {
-    const r = row("video:seedance-2-fast:ref");
+    const r = row("video:seedance-2-mini:ref");
     expect(r.chargeUsd).toBeCloseTo(1.6, 6);
     expect(r.cogsUsd).toBeCloseTo(0.78408, 6);
     expect(r.grossUsd).toBeCloseTo(0.81592, 6);

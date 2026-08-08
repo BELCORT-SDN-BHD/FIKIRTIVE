@@ -20,8 +20,8 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("workerDisabledModels", () => {
   it("读得到 ⇒ 只留在册 id(未知 id 在解析边界被丢掉,行为不变)", async () => {
-    m.findMany.mockResolvedValue([{ modelId: "seedance-2-fast" }, { modelId: "kling" }, { modelId: "" }]);
-    expect([...(await workerDisabledModels())]).toEqual(["seedance-2-fast"]);
+    m.findMany.mockResolvedValue([{ modelId: "seedance-2-mini" }, { modelId: "kling" }, { modelId: "" }]);
+    expect([...(await workerDisabledModels())]).toEqual(["seedance-2-mini"]);
   });
 
   it("读得到但一行都没有 ⇒ 空集合(什么都没关)", async () => {

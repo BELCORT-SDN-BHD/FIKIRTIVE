@@ -358,8 +358,8 @@ describe("orchestrateBatch — video quote never crashes the batch (NODE-280 ite
     expect(() => quoteCell(genCell("v", { kind: "video" }))).not.toThrow();
     expect(quoteCell(genCell("v", { kind: "video" }))).toBe(0);
     expect(() => quoteCell(genCell("v", { kind: "video", model: "seedream" }))).not.toThrow();
-    // a real video model prices via videoDefaults (seedance-2-fast: 720p/5s flat = 11 displayed)
-    expect(quoteCell(genCell("v", { kind: "video", model: "seedance-2-fast" }))).toBe(11 * INTERNAL_PER_DISPLAY);
+    // a real video model prices via videoDefaults (seedance-2-mini: 720p/5s flat = 11 displayed)
+    expect(quoteCell(genCell("v", { kind: "video", model: "seedance-2-mini" }))).toBe(11 * INTERNAL_PER_DISPLAY);
   });
 
   it("a mid-batch video cell with a missing model becomes a per-cell error — prior/later cells still dispatch (no throw)", async () => {
@@ -380,7 +380,7 @@ describe("orchestrateBatch — video quote never crashes the batch (NODE-280 ite
 });
 
 describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a)", () => {
-  // seedance-2-fast defaults (videoDefaults): 5s / 720p / 16:9 / fps 0 / audio on — the SAME
+  // seedance-2-mini defaults (videoDefaults): 5s / 720p / 16:9 / fps 0 / audio on — the SAME
   // resolved form startGen persists on GenJob.videoOptions.
   const SEEDANCE_DEFAULT_VO = { seconds: 5, resolution: "720p", aspectRatio: "16:9", fps: 0, audio: true };
 
@@ -389,13 +389,13 @@ describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a
     jobs.set("prior-rv", {
       id: "prior-rv", ownerId: OWNER, projectId: PROJECT, batchId: "M1", status: "FAILED",
       idempotencyKey: factoryAttemptKey("M1", 0, ATTEMPT_A).key,
-      prompt: "clip", model: "seedance-2-fast", kind: "VIDEO", count: 1,
+      prompt: "clip", model: "seedance-2-mini", kind: "VIDEO", count: 1,
       referenceVideoGenerationId: "gen_A", videoOptions: SEEDANCE_DEFAULT_VO,
     });
     const { fn, calls } = spyStartGen(jobs, OWNER);
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "M1", attemptId: ATTEMPT_B, cells: [genCell("clip", { kind: "video", model: "seedance-2-fast", referenceVideoGenerationId: "gen_B" })] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M1", attemptId: ATTEMPT_B, cells: [genCell("clip", { kind: "video", model: "seedance-2-mini", referenceVideoGenerationId: "gen_B" })] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 });
@@ -408,13 +408,13 @@ describe("orchestrateBatch — full-field mismatch fail-closed (NODE-280-R2 ①a
     jobs.set("prior-vo", {
       id: "prior-vo", ownerId: OWNER, projectId: PROJECT, batchId: "M2", status: "FAILED",
       idempotencyKey: factoryAttemptKey("M2", 0, ATTEMPT_A).key,
-      prompt: "spin", model: "seedance-2-fast", kind: "VIDEO", count: 1,
+      prompt: "spin", model: "seedance-2-mini", kind: "VIDEO", count: 1,
       videoOptions: SEEDANCE_DEFAULT_VO, // stored at the 5s default
     });
     const { fn, calls } = spyStartGen(jobs, OWNER);
     const res = await orchestrateBatch(
       { startGen: fn, prisma: db },
-      { ownerId: OWNER, projectId: PROJECT, batchId: "M2", attemptId: ATTEMPT_B, cells: [genCell("spin", { kind: "video", model: "seedance-2-fast", durationSeconds: 10 })] },
+      { ownerId: OWNER, projectId: PROJECT, batchId: "M2", attemptId: ATTEMPT_B, cells: [genCell("spin", { kind: "video", model: "seedance-2-mini", durationSeconds: 10 })] },
     );
     if ("error" in res) throw new Error(res.error);
     expect(res.cells[0]).toMatchObject({ status: "error", credits: 0 }); // 10s ≠ stored 5s

@@ -72,7 +72,7 @@ function genCard(kind: "image" | "video") {
     threadId: "t-1",
     payload: {
       kind,
-      model: kind === "video" ? "seedance-2-fast" : "seedream",
+      model: kind === "video" ? "seedance-2-mini" : "seedream",
       structuredPrompt: kind === "video" ? "a cat walks" : "a cat",
       entityIds: [],
       variantSel: {},

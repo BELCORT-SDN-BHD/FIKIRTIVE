@@ -29,7 +29,7 @@ export type GenModel = (typeof GEN_MODELS)[number];
  * 缺一处,「卖什么」和「做什么」当场分家。
  *
  * #769(Founder 已裁 2026-08-08,眼看 7 条真实对比成片后原话「目前来说 mini 就行了」):
- * 这一格从 `seedance-2-fast` **换 key** 到 `seedance-2-mini`,不是在同一个 key 底下悄悄
+ * 这一格从 `seedance-2-mini` **换 key** 到 `seedance-2-mini`,不是在同一个 key 底下悄悄
  * 换后端 id。理由是这张表管的是「我们卖哪一台引擎」,而这个集合正是
  * `FLAT_PRICED_VIDEO_MODELS`「上架一台新引擎绝不能自动可售」那条纪律的锚点 ——
  * 留着 fast 的 key 跑 mini,新引擎就**继承**了老引擎的售价资格,那条纪律当场失效;

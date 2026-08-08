@@ -241,7 +241,7 @@ describe("#642 图片规格快照(imageOptions)", () => {
   });
 
   it("视频作业不落图片快照(两条规格路互不串台)", () => {
-    const v = normalizeFactoryMaterial({ prompt: "clip", model: "seedance-2-fast", kind: "video", count: 1, aspectRatio: "16:9" });
+    const v = normalizeFactoryMaterial({ prompt: "clip", model: "seedance-2-mini", kind: "video", count: 1, aspectRatio: "16:9" });
     expect(v.imageOptions).toBeNull();
     expect((v.videoOptions as { aspectRatio: string }).aspectRatio).toBe("16:9");
   });
@@ -276,7 +276,7 @@ describe("#642 图片规格快照(imageOptions)", () => {
 describe("#645 T4:i2v 形状缺省 = adaptive(通用 startGen / 工厂逐格共用的那一份)", () => {
   const videoInput = (over: Record<string, unknown> = {}) => ({
     prompt: "a product spin",
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     kind: "video" as const,
     count: 1,
     entityIds: [] as string[],

@@ -24,7 +24,7 @@ import {
 import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, VIDEO_CREDITS_BY_RESOLUTION, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S, seedanceDisplayCredits } from "./spend.js";
 import { MARGIN_FLOOR, marginTruthTable, acceptedExceptionFor, BELOW_FLOOR_FOUNDER_ACCEPTED } from "./margin-truth.js";
 
-const MODEL: GenVideoModel = "seedance-2-fast";
+const MODEL: GenVideoModel = "seedance-2-mini";
 
 /** Founder 裁决的全表(4→15 秒),逐格手抄自裁决评论 —— 与代码里的公式**独立**。
  *  公式改一格、或有人把某一档"优化"成别的数,这张表当场变红。 */

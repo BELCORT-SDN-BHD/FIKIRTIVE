@@ -36,7 +36,7 @@ const { startGen } = await import("../gen-actions");
 const { prisma, reserveCredits, settleCredits, refundReservation } = await import("@fikirtive/db");
 
 const IMG = INTERNAL_PER_DISPLAY; // one image cell = 1 displayed credit = 10 internal
-const VID = 11 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/5s = 11 displayed credits (flat-priced video; #644 裁决 2026-08-06)
+const VID = 11 * INTERNAL_PER_DISPLAY; // seedance-2-mini 720p/5s = 11 displayed credits (flat-priced video; #644 裁决 2026-08-06)
 const ATTEMPT_A = "approval-card-a";
 const ATTEMPT_B = "approval-card-b";
 
@@ -494,13 +494,13 @@ describe("W-B3-F-P ledger — FAILED retry requires a new explicit attempt", () 
 });
 
 describe("W-B3-F-P ledger — video cell quote == reserve == settle (NODE-280 item 2)", () => {
-  it("a real video model (seedance-2-fast) reserves exactly its quote and settles the same", async () => {
+  it("a real video model (seedance-2-mini) reserves exactly its quote and settles the same", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
 
-    const res = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells: [{ type: "gen", prompt: "product spin", kind: "video", model: "seedance-2-fast" }] });
+    const res = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells: [{ type: "gen", prompt: "product spin", kind: "video", model: "seedance-2-mini" }] });
     if ("error" in res) throw new Error(res.error);
     expect(res.totalCredits).toBe(VID); // quote = 11 displayed × 10 internal
     expect(res.cells[0]).toMatchObject({ status: "queued", credits: VID });
@@ -544,13 +544,13 @@ describe("W-B3-F-P ledger — video cell quote == reserve == settle (NODE-280 it
 });
 
 describe("W-B3-F-P ledger — video replay after DONE reuses (full-field compare vs REAL persisted row)", () => {
-  it("a DONE seedance-2-fast cell (non-default 10s) replays as reused — the cell-side videoOptions mapping matches what startGen actually persisted", async () => {
+  it("a DONE seedance-2-mini cell (non-default 10s) replays as reused — the cell-side videoOptions mapping matches what startGen actually persisted", async () => {
     const ownerId = await seedOrg(1000);
     asOwner(ownerId);
     const projectId = await seedProject(ownerId);
     const batchId = `bat_${randomUUID()}`;
-    const VID10 = 22 * INTERNAL_PER_DISPLAY; // seedance-2-fast 720p/10s flat = 22 displayed(#644 裁决 2026-08-06)
-    const cells = [{ type: "gen" as const, prompt: "product spin", kind: "video" as const, model: "seedance-2-fast", durationSeconds: 10 }];
+    const VID10 = 22 * INTERNAL_PER_DISPLAY; // seedance-2-mini 720p/10s flat = 22 displayed(#644 裁决 2026-08-06)
+    const cells = [{ type: "gen" as const, prompt: "product spin", kind: "video" as const, model: "seedance-2-mini", durationSeconds: 10 }];
 
     const first = await runBulkGrid({ batchId, projectId, attemptId: ATTEMPT_A, cells });
     if ("error" in first) throw new Error(first.error);

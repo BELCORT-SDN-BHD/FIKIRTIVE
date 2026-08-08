@@ -64,7 +64,7 @@ const job = {
   shotId: null,
   status: "QUEUED",
   kind: "VIDEO",
-  model: "seedance-2-fast",
+  model: "seedance-2-mini",
   prompt: "make it move",
   entityIds: [],
   variantSel: null,

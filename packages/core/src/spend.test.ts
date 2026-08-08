@@ -4,7 +4,7 @@ import { GEN_IMAGE_ASPECTS, GEN_PRICE_USD_PER_IMAGE, videoPriceUsd } from "./gen
 import { REFGEN_PRICE_USD_PER_IMAGE } from "./refgen.js";
 import { MARGIN_FLOOR, marginTruthTable, pendingRulingFor, acceptedExceptionFor } from "./margin-truth.js";
 // Note: video credit charge is split — flat per resolution for BytePlus flat-priced models
-// (seedance-2-fast), USD-formula for all other (fal) models.
+// (seedance-2-mini), USD-formula for all other (fal) models.
 
 describe("genSpentUsd", () => {
   it("image = flat per-image price × count", () => {
@@ -15,15 +15,15 @@ describe("genSpentUsd", () => {
   });
   it("video = videoPriceUsd with the job's resolved options", () => {
     const vo = { seconds: 5, resolution: "720p", audio: true };
-    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: vo }))
-      .toBe(videoPriceUsd("seedance-2-fast", { seconds: 5, resolution: "720p", audio: true, count: 1 }));
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: vo }))
+      .toBe(videoPriceUsd("seedance-2-mini", { seconds: 5, resolution: "720p", audio: true, count: 1 }));
   });
   it("video with null/partial videoOptions falls back to the model's defaults (never NaN)", () => {
-    const v = genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: null });
+    const v = genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: null });
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
   });
-  it("#644/#645 seedance-2-fast COGS = 官方牌价 token 公式,按各档**最差比例**", () => {
+  it("#644/#645 seedance-2-mini COGS = 官方牌价 token 公式,按各档**最差比例**", () => {
     // 官方成品价对照(https://docs.byteplus.com/en/docs/ModelArk/Pricing,2026-08-05 核):
     // 720p 16:9 5s = $0.60、10s = $1.21。旧值 $0.077/s(5s≈$0.39)是 2026-06 资源包折后价,
     // 不是我们随时都拿得到的价 —— 记账基准回到牌价(见 gen.ts byteplusVideoCogsUsd)。
@@ -31,22 +31,22 @@ describe("genSpentUsd", () => {
     // #645 T4:收费是**按档**的(同档六个比例一个价),所以记账基准也按档里最贵的那个比例走
     // ——720p 的 4:3/3:4(927,408px)⇒ $0.1217223/s,比 16:9 的 $0.12096/s 贵 0.6%。
     // 方向永远安全:宁可高记,不许低估(同 REFERENCE_VIDEO_COGS_USD 取上限的理由)。
-    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
       .toBeCloseTo(0.6086115, 6);
-    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
       .toBeCloseTo(1.217223, 6);
     // 480p 是真的半价档,成本也必须按 480p 记(记成 720p 会把它的毛利算错)。
-    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "480p", audio: false } }))
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "480p", audio: false } }))
       .toBeCloseTo(0.281232, 6);
     // 声音开关不改价(2.0 系列),记账基准也必须不随它动。
-    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } }))
+    expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } }))
       .toBeCloseTo(0.6086115, 6);
   });
 
   it("#644 整段参考视频 COGS = 含视频输入档 $3.30/M × (6s 参考上限 + 5s 出片)", () => {
     expect(genSpentUsd({
       kind: "VIDEO",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       count: 1,
       referenceVideoGenerationId: "gen_ref",
       videoOptions: { seconds: 5, resolution: "720p", audio: true },
@@ -66,16 +66,16 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null })).toBe(10);
     expect(pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 4, videoOptions: null })).toBe(40);
   });
-  it("seedance-2-fast CHARGE follows the locked costing model, not the record-only COGS", () => {
+  it("seedance-2-mini CHARGE follows the locked costing model, not the record-only COGS", () => {
     // Money-safety pin: changing the recorded COGS (videoRateUsdPerSec) must NOT change what the
-    // user pays — seedance-2-fast is final-priced in credits.
-    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
+    // user pays — seedance-2-mini is final-priced in credits.
+    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
       .toBe(11 * INTERNAL_PER_DISPLAY);
-    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
+    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
       .toBe(22 * INTERNAL_PER_DISPLAY);
     expect(pricedGenCredits({
       kind: "VIDEO",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       count: 1,
       referenceVideoGenerationId: "gen_ref",
       videoOptions: { seconds: 5, resolution: "720p", audio: false },
@@ -103,15 +103,15 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(CREDITS_PER_USD).toBe(100);
   });
   it("video charge is per-second by resolution: 720p 5s=11cr, 720p 10s=22cr, 480p 5s=6cr, 1080p=16cr", () => {
-    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
+    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
     expect(v("720p")).toBe(110);  // 11 displayed credits(#644 Founder 裁决 2026-08-06,#645 按秒表复算同值)
     expect(v("480p")).toBe(60);   // #645 T4:半价档 1.1cr/秒 ⇒ ceil(5.5) = 6 displayed
     expect(v("1080p")).toBe(160); // 16 displayed credits(护栏价,Fast 给不了 1080p)
-    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } }))
+    expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } }))
       .toBe(220);
   });
-  it("seedance-2-fast: unknown resolution → the 16cr guardrail (never under-charge)", () => {
-    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
+  it("seedance-2-mini: unknown resolution → the 16cr guardrail (never under-charge)", () => {
+    const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
     expect(v("4K")).toBe(160);  // unknown res → guardrail price (16 displayed × 10)
     expect(v("")).toBe(160);
   });

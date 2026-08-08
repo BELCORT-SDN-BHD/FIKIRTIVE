@@ -72,14 +72,14 @@ step(`source image v${img.version} ${img.asset.ext} ${img.asset.sizeBytes}B`);
 {
   const bareLast = await prisma.shot.findFirst({ where: { projectId: project.id, ownerId: OWNER }, orderBy: { number: "desc" } });
   const bare = await prisma.shot.create({ data: { id: newId(), ownerId: OWNER, projectId: project.id, number: (bareLast?.number ?? 0) + 1 } });
-  const j = await waitJob(await enqueue({ projectId: project.id, shotId: bare.id, prompt: "animate nothing", kind: "video", model: "seedance-2-fast" }));
+  const j = await waitJob(await enqueue({ projectId: project.id, shotId: bare.id, prompt: "animate nothing", kind: "video", model: "seedance-2-mini" }));
   if (j.status !== "FAILED") throw new Error(`i2v with no source image ended ${j.status}, expected FAILED`);
   if (j.generationIds.length !== 0) throw new Error("no-source i2v produced output (spent!)");
   step(`no-source i2v terminal-fails without spending: "${j.error}"`);
 }
 
 // 4. animate (i2v) the source frame
-const vidJob = await waitJob(await enqueue({ projectId: project.id, shotId: shot.id, prompt: "the cat slowly turns its head, gentle breeze", kind: "video", model: "seedance-2-fast" }));
+const vidJob = await waitJob(await enqueue({ projectId: project.id, shotId: shot.id, prompt: "the cat slowly turns its head, gentle breeze", kind: "video", model: "seedance-2-mini" }));
 if (vidJob.status !== "DONE") throw new Error(`i2v ${vidJob.status}: ${vidJob.error}`);
 const vid = await latestGen(shot.id);
 if (vid.asset.ext.toLowerCase() !== "mp4") throw new Error(`latest ext ${vid.asset.ext}, expected mp4`);
@@ -104,7 +104,7 @@ step(`i2v video v${vid.version} mp4 attached · shot ATTACHED · ${vid.asset.siz
   const ghost = await prisma.genJob.create({
     data: {
       id: newId(), ownerId: OWNER, projectId: project.id, shotId: shot.id,
-      prompt: "interrupted i2v", entityIds: [], count: 1, model: "seedance-2-fast",
+      prompt: "interrupted i2v", entityIds: [], count: 1, model: "seedance-2-mini",
       kind: "VIDEO", status: "GENERATING", startedAt: staleStartedAt, attempts: 1,
     },
   });
@@ -125,7 +125,7 @@ step(`i2v video v${vid.version} mp4 attached · shot ATTACHED · ${vid.asset.siz
   const lastB = await prisma.shot.findFirst({ where: { projectId: projB.id, ownerId: OWNER }, orderBy: { number: "desc" } });
   const shotB = await prisma.shot.create({ data: { id: newId(), ownerId: OWNER, projectId: projB.id, number: (lastB?.number ?? 0) + 1 } });
   const j = await prisma.genJob.create({
-    data: { id: newId(), ownerId: OWNER, projectId: project.id, shotId: shotB.id, prompt: "x", entityIds: [], count: 1, model: "seedance-2-fast", kind: "VIDEO" },
+    data: { id: newId(), ownerId: OWNER, projectId: project.id, shotId: shotB.id, prompt: "x", entityIds: [], count: 1, model: "seedance-2-mini", kind: "VIDEO" },
   });
   await boss.send(GEN_QUEUE, { genJobId: j.id });
   const row = await waitJob(j.id, 40);

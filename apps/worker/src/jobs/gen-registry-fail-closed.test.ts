@@ -60,7 +60,7 @@ import { handleGen } from "./gen.js";
 
 const job = {
   id: "g1", ownerId: "o1", projectId: "p1", threadId: "t1", shotId: null,
-  status: "QUEUED", kind: "VIDEO", model: "seedance-2-fast", prompt: "make it move",
+  status: "QUEUED", kind: "VIDEO", model: "seedance-2-mini", prompt: "make it move",
   entityIds: [], variantSel: null, count: 1, videoOptions: null, generationIds: [],
   spentUsd: null, sourceGenerationId: null, tailGenerationId: null, referenceVideoGenerationId: null,
 };
@@ -120,7 +120,7 @@ describe("#647 T6 修复轮 P1-3:读得到时行为逐字不变", () => {
   });
 
   it("查询正常且这个模型被关 ⇒ 照旧 fail-closed + 退款,不抛(既有行为)", async () => {
-    m.workerDisabledModels.mockResolvedValue(new Set<string>(["seedance-2-fast"]));
+    m.workerDisabledModels.mockResolvedValue(new Set<string>(["seedance-2-mini"]));
     await expect(handleGen({ genJobId: "g1" }, 0)).resolves.toBeUndefined();
     expect(m.generateVideo).not.toHaveBeenCalled();
     expect(m.refundReservation).toHaveBeenCalled();

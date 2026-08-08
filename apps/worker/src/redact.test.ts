@@ -17,7 +17,7 @@ describe("sanitizeError provider secrecy", () => {
   it("redacts provider names, model references, and signed URLs before persistence", () => {
     const raw = [
       "Seedance 2.0 Fast",
-      "seedance-2-fast",
+      "seedance-2-mini",
       "seedream-5-0",
       "BYTEPLUS",
       "ByteDance",
