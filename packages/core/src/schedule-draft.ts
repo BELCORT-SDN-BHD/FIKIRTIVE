@@ -74,6 +74,13 @@ export const CONNECTION_BLOCKER_COPY: Record<ConnectionBlocker, { approve: strin
 export type PagesReadState = "ok" | "not_connected" | "unreadable" | ConnectionBlocker;
 
 /**
+ * What one channel's connection read found, as carried to every consumer — the human screen AND
+ * Otto. "ok" means the accompanying target list is that channel's whole truth; anything else means
+ * it contributed nothing, and its absence from the list must NOT be read as "nothing connected".
+ */
+export type ChannelReadState = "ok" | "unreadable" | ConnectionBlocker;
+
+/**
  * Classify the FAILURE side of any connection read — pages, ad accounts, insights, objects. Call it
  * once the caller has established the read did not succeed.
  *

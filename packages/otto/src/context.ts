@@ -1,4 +1,5 @@
 import type {
+  ChannelReadState,
   GenRequestInput,
   ProductDraft,
   ScheduleChannel,
@@ -639,11 +640,12 @@ export interface OttoContext {
     update(input: { scheduledPostId: string; patch: ScheduleUpdatePatch }): Promise<{ ok: true } | { error: string }>;
     /** debt-73 (read parity). Owner-scoped list of the schedule, optional [from,to] window. */
     list(input: { from?: string; to?: string }): Promise<ScheduledPostSummary[]>;
-    /** debt-74 (read parity). Owner-scoped connectable publish targets. An empty `targets` list is
-     *  a real answer (nothing connected); `unavailable` means the connection could not be read at
-     *  all. Otto must keep those apart for the same reason the screen must (#741 r3 P1) — telling a
-     *  connected merchant "you have no accounts" is the same lie whichever mouth says it. */
-    listTargets(): Promise<{ targets: ScheduleTarget[] } | { unavailable: true }>;
+    /** debt-74 (read parity). Owner-scoped connectable publish targets, PLUS what the read found
+     *  for each channel (#741 r5 P1). `targets` alone is not an answer: a channel that could not be
+     *  read, or that is connected-but-expired, contributes nothing to the list, and reporting that
+     *  silence as "nothing connected" is the same lie whichever mouth says it. A channel missing
+     *  from `channelStates` was never read. */
+    listTargets(): Promise<{ targets: ScheduleTarget[]; channelStates: Record<string, ChannelReadState> }>;
     /** B0-103 (read parity, $0). Cold-start best-time-to-post suggestions for a channel, read from
      *  the STATIC global seed table (no owner scope — same craft knowledge for everyone), ordered
      *  best-first. Skills reach it ONLY via this port — never Prisma directly. Never writes. */

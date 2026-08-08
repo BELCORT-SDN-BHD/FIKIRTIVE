@@ -10,7 +10,7 @@ import {
   scheduleApproveBlockers,
   ACCOUNTS_UNREADABLE_ERROR,
   SCHEDULE_CHANNEL_CAPS,
-  type ConnectionBlocker,
+  type ChannelReadState,
   type ScheduledPostStatus,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
@@ -495,8 +495,9 @@ export async function listScheduledPosts(
 
 export type OwnerTarget = { id: string; name: string; channel: ChannelId };
 
-/** What this cycle's read found for one channel. "ok" ⇒ the targets below are its whole truth. */
-export type ChannelReadState = "ok" | "unreadable" | ConnectionBlocker;
+/** What this cycle's read found for one channel — the shared vocabulary from core, so the human
+ *  screen and Otto read the same states off the same answer. */
+export type { ChannelReadState };
 
 /**
  * The answer is PER CHANNEL (#741 r5 P1). r4 failed the whole read whenever any single channel

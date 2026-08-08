@@ -125,6 +125,7 @@ export {
   parseScheduleInstant,
   scheduleApproveBlockers,
   validateScheduleDraft,
+  type ChannelReadState,
   type ConnectionBlocker,
   type PagesReadState,
   type ScheduleApproveInput,

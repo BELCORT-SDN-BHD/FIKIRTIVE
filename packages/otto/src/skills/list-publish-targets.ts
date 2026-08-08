@@ -10,7 +10,7 @@
  */
 import type { RunContext } from "@openai/agents";
 import { z } from "zod";
-import { ACCOUNTS_UNREADABLE_ERROR } from "@fikirtive/core";
+import { CONNECTION_BLOCKER_COPY, SCHEDULE_CHANNELS, type ChannelReadState } from "@fikirtive/core";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 
@@ -24,10 +24,33 @@ export async function executeListPublishTargets(
   const ctx = runContext.context as OttoContext;
   if (!ctx?.schedule?.listTargets) return { error: "Scheduling isn't available right now." };
   const res = await ctx.schedule.listTargets();
-  // "Couldn't look" is never reported as "nothing connected" (#741 r3 P1). Same sentence the
-  // approve action refuses with, so Otto and the Schedule screen cannot tell different stories.
-  if ("unavailable" in res) return { unavailable: true, message: ACCOUNTS_UNREADABLE_ERROR };
-  return { targets: res.targets };
+
+  // The list is PER CHANNEL (#741 r5 P1). A channel that could not be read — or that is connected
+  // but expired — contributes nothing to `targets`, and handing Otto the bare list would let it
+  // report that silence as "you have nothing connected there". Every channel that did not answer
+  // "ok" is named, with the same words the human screens use for the same state.
+  // The channel set comes from core's ONE closed list — a second handwritten array here would be
+  // the same "second source of truth" this ticket has been closing all along.
+  const states = res.channelStates ?? {};
+  const incomplete: Record<string, Exclude<ChannelReadState, "ok">> = {};
+  for (const channel of SCHEDULE_CHANNELS) {
+    const state: ChannelReadState = states[channel] ?? "unreadable";
+    if (state !== "ok") incomplete[channel] = state;
+  }
+  if (Object.keys(incomplete).length === 0) return { targets: res.targets };
+
+  const described = Object.entries(incomplete).map(([channel, state]) =>
+    state === "unreadable"
+      ? `${channel}: couldn't be checked just now`
+      : `${channel}: connected, but ${CONNECTION_BLOCKER_COPY[state].status}`,
+  );
+  return {
+    targets: res.targets,
+    incomplete,
+    message:
+      `This list is incomplete — ${described.join("; ")}. ` +
+      "Do NOT tell the user those channels have no connected account; say what is listed above and offer to check again.",
+  };
 }
 
 export const listPublishTargetsSkill = defineOttoSkill({
@@ -38,9 +61,10 @@ export const listPublishTargetsSkill = defineOttoSkill({
   description:
     "List the accounts the user can publish to (their connected Instagram business / Facebook pages) " +
     "so you can choose a valid target when drafting or editing a post. $0 read-only. An empty list means " +
-    "they have not connected a publishable account yet — tell them to connect one. A result with " +
-    "unavailable:true means the connection could NOT be read this time — say you couldn't check and " +
-    "offer to try again; never tell them they have no connected accounts.",
+    "they have not connected a publishable account yet — tell them to connect one. If the result carries " +
+    "`incomplete`, the list is NOT the whole picture: those channels could not be checked or are connected " +
+    "but unusable, so never tell the user they have no account there — repeat the reason given and offer " +
+    "to check again.",
   parameters: params,
   execute: executeListPublishTargets,
 });
