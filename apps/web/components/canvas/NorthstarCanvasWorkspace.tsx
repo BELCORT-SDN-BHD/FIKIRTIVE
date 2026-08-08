@@ -43,6 +43,12 @@ export type ImmersiveCanvasRuntimeContext = {
 
 type SideTab = "chat" | "projects";
 
+/** Labels live here, not in `text-transform` — what is read must equal what is seen (#739). */
+const SIDE_TABS: { id: SideTab; label: string }[] = [
+  { id: "chat", label: "Chat" },
+  { id: "projects", label: "Projects" },
+];
+
 function canvasHref(projectId: string, threadId?: string): string {
   const thread = threadId ? `&thread=${encodeURIComponent(threadId)}` : "";
   return `/northstar-immersive/create/canvas?project=${encodeURIComponent(projectId)}${thread}`;
@@ -90,19 +96,21 @@ export function NorthstarCanvasWorkspace({
             />
           </div>
         </div>
+        {/* #739 — the case belongs in the copy, not in `text-transform`: CSS capitalisation
+            shows "Chat" but leaves the accessible name as the raw key "chat". */}
         <div className="flex gap-1 px-3">
-          {(["chat", "projects"] as SideTab[]).map((tab) => (
+          {SIDE_TABS.map(({ id, label }) => (
             <button
-              key={tab}
+              key={id}
               type="button"
-              onClick={() => setSideTab(tab)}
-              aria-pressed={sideTab === tab}
+              onClick={() => setSideTab(id)}
+              aria-pressed={sideTab === id}
               className={cn(
-                "h-8 flex-1 rounded-[10px] text-xs font-semibold capitalize transition-colors duration-[120ms]",
-                sideTab === tab ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                "h-8 flex-1 rounded-[10px] text-xs font-semibold transition-colors duration-[120ms]",
+                sideTab === id ? "bg-secondary text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
               )}
             >
-              {tab}
+              {label}
             </button>
           ))}
         </div>

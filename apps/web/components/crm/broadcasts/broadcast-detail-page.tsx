@@ -358,6 +358,9 @@ export default function BroadcastDetailPage({
                 <div className="mt-1 grid gap-2 sm:grid-cols-[1fr_auto]">
                   <select
                     className="min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm disabled:opacity-50"
+                    // #739 (same root, found by the family sweep) — the one merchant-facing
+                    // dropdown with neither a wrapping label element nor an aria-label.
+                    aria-label="Audience segment"
                     value={segmentId}
                     onChange={(e) => setSegmentId(e.target.value)}
                     disabled={!canFreeze || busy !== null}

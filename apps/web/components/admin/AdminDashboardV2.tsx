@@ -1325,7 +1325,7 @@ function DirectiveCell({ cell }: { cell: AdminV2Data["otto"]["directives"][numbe
           enabled
         </label>
       </div>
-      <Textarea value={directive} onChange={(event) => setDirective(event.target.value)} rows={4} maxLength={2000} placeholder="family-neutral base (no directive)" className="mt-3 min-h-24 text-sm" />
+      <Textarea value={directive} onChange={(event) => setDirective(event.target.value)} rows={4} maxLength={2000} aria-label={`Directive for ${cell.mode}`} placeholder="family-neutral base (no directive)" className="mt-3 min-h-24 text-sm" />
       <div className="mt-3 grid gap-2 sm:grid-cols-[150px_1fr_auto] sm:items-center">
         <Select value={confidence} onValueChange={setConfidence}>
           <SelectTrigger size="sm" className="w-full bg-card"><span>{confidence}</span></SelectTrigger>
@@ -1386,7 +1386,7 @@ function KnowledgeTextRow({ row }: { row: AdminV2Data["otto"]["knowledge"][numbe
         </div>
         <Badge variant={row.present ? "success" : "warning"}>{row.present ? "stored" : "default"}</Badge>
       </div>
-      <Textarea value={value} onChange={(event) => setValue(event.target.value)} rows={row.key === "planner_system" ? 8 : 4} className="mt-3 min-h-28 text-sm" />
+      <Textarea value={value} onChange={(event) => setValue(event.target.value)} rows={row.key === "planner_system" ? 8 : 4} aria-label={row.title} className="mt-3 min-h-28 text-sm" />
       <div className="mt-3 flex items-center justify-between gap-3">
         <span className="text-xs text-muted-foreground">{message}</span>
         <Button type="button" variant="secondary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving" : "Save"}</Button>

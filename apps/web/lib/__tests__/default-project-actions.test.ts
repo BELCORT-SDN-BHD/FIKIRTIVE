@@ -4,8 +4,8 @@ vi.mock("@/lib/auth-guard", async () => ({ requireOwner: vi.fn(), resolveUserPri
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@fikirtive/db", () => ({
   prisma: {
-    project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
-    chatThread: { count: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
+    project: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+    chatThread: { count: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
     chatMessage: { deleteMany: vi.fn() },
     researchJob: { findFirst: vi.fn(), deleteMany: vi.fn() },
     shot: { count: vi.fn(), findMany: vi.fn(), deleteMany: vi.fn() },
@@ -24,7 +24,13 @@ vi.mock("@fikirtive/db", () => ({
   refundReservation: vi.fn(),
 }));
 
-import { createProject, deleteProject, getOrCreateDefaultProject, setProjectPinned } from "@/lib/actions";
+import {
+  autoTitleProjectIfDefault,
+  createProject,
+  deleteProject,
+  getOrCreateDefaultProject,
+  setProjectPinned,
+} from "@/lib/actions";
 import { requireOwner } from "@/lib/auth-guard";
 import { prisma } from "@fikirtive/db";
 import { refundReservation } from "@fikirtive/db";
@@ -62,6 +68,8 @@ beforeEach(() => {
   (prisma.actionEvent.deleteMany as Mock).mockResolvedValue({ count: 0 });
   (prisma.$executeRaw as Mock).mockResolvedValue(undefined);
   (refundReservation as Mock).mockResolvedValue({ ok: true });
+  (prisma.chatThread.findFirst as Mock).mockResolvedValue(null);
+  (prisma.project.update as Mock).mockResolvedValue({ id: "p1" });
   (prisma.$transaction as Mock).mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma));
 });
 
@@ -97,6 +105,101 @@ describe("getOrCreateDefaultProject", () => {
       }),
     }));
     expect(revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+// #677 (#546 收口余项) — auto-naming had no direct pin. The only test that exercised the
+// journey (otto-new-conversation-routing.test.ts) MOCKS autoTitleProjectIfDefault away, so a
+// merchant's first project could silently stay "New project" forever, or worse pick up the
+// literal word "Untitled", without anything going red. These call the real action.
+describe("autoTitleProjectIfDefault — a new project takes its name from the first conversation", () => {
+  const DEFAULTS = ["New project", "New campaign", "Untitled Project"] as const;
+
+  it.each(DEFAULTS)("renames a still-default %s to the first conversation's title", async (placeholder) => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: placeholder });
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "Ramadan bundle launch" });
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "Ramadan bundle launch" });
+
+    expect(prisma.project.update).toHaveBeenCalledWith({
+      where: { id: "p1" },
+      data: { name: "Ramadan bundle launch" },
+    });
+    expect(prisma.actionEvent.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        ownerId: "o1",
+        projectId: "p1",
+        type: "project.autotitle",
+        payload: { name: "Ramadan bundle launch" },
+      }),
+    }));
+  });
+
+  it("adopts the OLDEST conversation's title, not the newest", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "First one" });
+
+    await autoTitleProjectIfDefault("p1");
+
+    expect(prisma.chatThread.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ ownerId: "o1", projectId: "p1" }),
+      orderBy: { createdAt: "asc" },
+    }));
+  });
+
+  it("truncates an over-long conversation title to 80 chars", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "B".repeat(120) });
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true, name: "B".repeat(80) });
+  });
+
+  it("never copies the literal Untitled onto a project", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "Untitled" });
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+    expect(prisma.project.update).not.toHaveBeenCalled();
+  });
+
+  it("never copies a project placeholder name across either", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "New campaign" });
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+    expect(prisma.project.update).not.toHaveBeenCalled();
+  });
+
+  it("waits when there is no conversation yet, or its title is blank", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "New project" });
+
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue(null);
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+
+    (prisma.chatThread.findFirst as Mock).mockResolvedValue({ title: "   " });
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+
+    expect(prisma.project.update).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent: a project the merchant already named is left alone", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue({ id: "p1", name: "Ramadan bundle launch" });
+
+    await expect(autoTitleProjectIfDefault("p1")).resolves.toEqual({ ok: true });
+
+    expect(prisma.chatThread.findFirst).not.toHaveBeenCalled();
+    expect(prisma.project.update).not.toHaveBeenCalled();
+  });
+
+  it("owner-scoped and fail-closed: another tenant's project is not found and not touched", async () => {
+    (prisma.project.findFirst as Mock).mockResolvedValue(null);
+
+    await expect(autoTitleProjectIfDefault("p_other")).resolves.toEqual({ error: "Project not found." });
+
+    expect(prisma.project.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "p_other", ownerId: "o1", deletedAt: null }),
+    }));
+    expect(prisma.project.update).not.toHaveBeenCalled();
   });
 });
 

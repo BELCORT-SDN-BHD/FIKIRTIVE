@@ -1,4 +1,5 @@
 import { it, expect } from "vitest";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core";
 import { proposeMetaActionSkill, executeProposeMetaAction, proposeMetaAction, proposeMetaActionInput } from "./propose-meta-action.js";
 
 it("gate: free/write/internal → ungated", () => {
@@ -57,22 +58,27 @@ it("input zod schema has no currentValue/moneyClass/approval keys (LLM can't set
   expect(proposeMetaAction).toBe(proposeMetaActionSkill.tool);
 });
 
-it("notConnected → friendly message", async () => {
+// #767:以前这三条只断言文本含 `connect`,而「还没连过」与「连着但过期」两句都含 `connect`
+// —— 答错了也绿。改成各钉各的那一句。
+it("notConnected → 说的就是「还没连过」,且不算 blocked", async () => {
   const ctx = { metaPropose: async () => ({ notConnected: true as const }) };
   const res: any = await executeProposeMetaAction(
     { planTitle: "p", steps: [{ op: "pause", targetId: "s1", intent: {} }] },
     { context: ctx as any },
   );
-  expect(JSON.stringify(res)).toMatch(/connect/i);
+  expect(res.blocked).toBeUndefined();
+  expect(res.message).toMatch(/Meta isn't connected yet/);
 });
 
-it("needsReconnect → friendly message", async () => {
+it("needsReconnect → 共享的「连着但过期」文案,不是「还没连过」", async () => {
   const ctx = { metaPropose: async () => ({ needsReconnect: true as const }) };
   const res: any = await executeProposeMetaAction(
     { planTitle: "p", steps: [{ op: "pause", targetId: "s1", intent: {} }] },
     { context: ctx as any },
   );
-  expect(JSON.stringify(res)).toMatch(/connect/i);
+  expect(res.blocked).toBe("needs_reconnect");
+  expect(res.message).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.status);
+  expect(res.message).not.toMatch(/isn't connected yet/i);
 });
 
 it("missing port → friendly not-connected message", async () => {
@@ -80,5 +86,5 @@ it("missing port → friendly not-connected message", async () => {
     { planTitle: "p", steps: [{ op: "pause", targetId: "s1", intent: {} }] },
     { context: {} as any },
   );
-  expect(JSON.stringify(res)).toMatch(/connect/i);
+  expect(res.message).toMatch(/Meta isn't connected yet/);
 });
