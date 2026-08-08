@@ -22,9 +22,27 @@ export async function auth(): Promise<NextAuthShapedSession> {
   };
 }
 
-/** True when the current request runs under an admin impersonation session. Reads the RAW BA
- *  session (`auth()` above drops the session object). Used to block spend + show the banner. */
-export async function isImpersonating(): Promise<boolean> {
+/** WHO is running the current impersonation, and AS WHOM. Null when this request is not an
+ *  impersonation at all. Reads the RAW BA session (`auth()` above drops the session object).
+ *
+ *  #756 — the yes/no answer below could not be written into an audit row, so the one event that
+ *  had to name the operator (`impersonate.stop`) recorded `payload: {}` — not the wrong person,
+ *  NOBODY. Both ids come from the session Better Auth itself maintains: `impersonatedBy` is
+ *  stamped server-side when impersonation starts and `userId` is the session's own subject, so
+ *  neither is anything a client can supply. Both are BetterAuthUser ids (a different id space
+ *  from `User.id` — the two tables join by email). */
+export type ImpersonationPrincipals = { operatorBaUserId: string; subjectBaUserId: string | null };
+
+export async function currentImpersonation(): Promise<ImpersonationPrincipals | null> {
   const session = await baAuth.api.getSession({ headers: await headers() });
-  return !!(session?.session as { impersonatedBy?: string | null } | undefined)?.impersonatedBy;
+  const raw = session?.session as { impersonatedBy?: string | null; userId?: string | null } | undefined;
+  const operatorBaUserId = raw?.impersonatedBy;
+  if (!operatorBaUserId) return null;
+  return { operatorBaUserId, subjectBaUserId: raw?.userId ?? null };
+}
+
+/** True when the current request runs under an admin impersonation session.
+ *  Used to block spend + show the banner. */
+export async function isImpersonating(): Promise<boolean> {
+  return (await currentImpersonation()) !== null;
 }
