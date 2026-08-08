@@ -182,47 +182,31 @@ export async function claimCampaignDispatch(
     where: { id: lease.batchId, ownerId: lease.ownerId },
     select: { id: true, status: true, updatedAt: true },
   });
-  if (!row) {
-    // 第一次确认:这一行还不存在,连行带租约一起建出来。orchestrateBatch 随后会读到它。
-    try {
-      await tx.generationBatch.create({
-        data: {
-          id: lease.batchId,
-          ownerId: lease.ownerId,
-          projectId: lease.projectId,
-          name: lease.name,
-          status: dispatchLeaseToken(lease.attemptId),
-        },
-        select: { id: true },
-      });
-      return true;
-    } catch (error) {
-      // 建行撞了唯一键 = 有人在这一瞬间抢先建了(锁挡不住不走这把锁的路径)。重读一次,
-      // 按同一条规则再判 —— 抢不到就老老实实认输,绝不覆盖别人的租约。
-      if (typeof error !== "object" || error === null || (error as { code?: string }).code !== "P2002") {
-        throw error;
-      }
-      const again = await tx.generationBatch.findFirst({
-        where: { id: lease.batchId, ownerId: lease.ownerId },
-        select: { id: true, status: true, updatedAt: true },
-      });
-      if (!again) return false; // 存在但不归这个 owner —— 认不了,也不许碰。
-      return takeLeaseOn(tx, again, lease);
-    }
-  }
-  return takeLeaseOn(tx, row, lease);
-}
 
-/** 一行已经存在时的认领判定 + 写入。规则只有一处,建行竞态那一支也走它。
- *  写用 `updateMany` 而不是 `update`:租户守卫要求每一次写都带 ownerId,而 `update` 的
- *  where 只收唯一键 —— 带上 ownerId 是对的,别把守卫绕开(#463 起的租户隔离底线)。 */
-async function takeLeaseOn(
-  tx: DispatchLeaseClient,
-  row: { status: string; updatedAt: Date },
-  lease: CampaignDispatchLease,
-): Promise<boolean> {
+  // 第一次确认:这一行还不存在,连行带租约一起建出来。orchestrateBatch 随后会读到它。
+  //
+  // 这里**不接** P2002 去就地补救:一条语句失败会让整笔 PostgreSQL 事务进入 aborted,
+  // 之后任何查询都只会再报一次错 —— 「在死掉的事务里重读一遍」是写不出来的补救。让它原样
+  // 上抛,调用方回一句「没能确认,什么都没开始,再试一次」,商家重试时这一行已经在了,
+  // 照常走下面那条路。fail-closed,而且不假装自己救回来了。
+  if (!row) {
+    await tx.generationBatch.create({
+      data: {
+        id: lease.batchId,
+        ownerId: lease.ownerId,
+        projectId: lease.projectId,
+        name: lease.name,
+        status: dispatchLeaseToken(lease.attemptId),
+      },
+      select: { id: true },
+    });
+    return true;
+  }
+
   const holder = campaignDispatchLeaseHolder(row);
   if (holder !== null && holder !== lease.attemptId) return false;
+  // 写用 `updateMany` 而不是 `update`:租户守卫要求每一次写都带 ownerId,而 `update` 的
+  // where 只收唯一键 —— 带上 ownerId 是对的,别为了图方便把守卫绕开。
   const { count } = await tx.generationBatch.updateMany({
     where: { id: lease.batchId, ownerId: lease.ownerId },
     data: { status: dispatchLeaseToken(lease.attemptId) },

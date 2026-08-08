@@ -33,6 +33,16 @@ const h = vi.hoisted(() => {
   // therefore has to serve a transaction and the lock statement; `advisoryLocks` records the keys
   // so the tests can prove the gate was taken and not merely present.
   const advisoryLocks: string[] = [];
+  /** 一把按 key 排队的互斥量 —— 建模 `pg_advisory_xact_lock` 的「握到事务结束」。 */
+  const advisoryQueue = new Map<string, Promise<void>>();
+  async function acquireAdvisory(key: string): Promise<() => void> {
+    const ahead = advisoryQueue.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const mine = new Promise<void>((resolve) => { release = resolve; });
+    advisoryQueue.set(key, ahead.then(() => mine));
+    await ahead;
+    return release;
+  }
   const prisma = {
     // #749 判官 r3 P1:开工认领那笔事务的**回滚是承重的** —— 认领与「交付面还对得上吗」
     // 同生共死,面对不上时抛出,租约(以及第一次确认时连带建出的那一行)必须一起消失,
@@ -40,12 +50,26 @@ const h = vi.hoisted(() => {
     // 认领事务只写 batches 这一张表,所以快照它一张就够。
     $transaction: async (run: (tx: unknown) => unknown) => {
       const snapshot = new Map([...store.batches].map(([id, row]) => [id, { ...row }] as const));
+      // 事务里取的 advisory lock 在这里是**真的会排队**的:`pg_advisory_xact_lock` 握到 COMMIT,
+      // 而「认领之所以原子」全靠它。替身若只记录锁名不真排队,两次并发认领就会同时看见
+      // 「这一行还不存在」,于是这条路上最要紧的那个性质根本没被测到。
+      const releases: Array<() => void> = [];
+      const tx = {
+        ...prisma,
+        $executeRaw: async (_strings: TemplateStringsArray, key: string) => {
+          advisoryLocks.push(key);
+          releases.push(await acquireAdvisory(key));
+          return 0;
+        },
+      };
       try {
-        return await run(prisma);
+        return await run(tx);
       } catch (error) {
         store.batches.clear();
         for (const [id, row] of snapshot) store.batches.set(id, row);
         throw error;
+      } finally {
+        for (const release of releases) release();
       }
     },
     $executeRaw: async (_strings: TemplateStringsArray, key: string) => {
@@ -178,10 +202,8 @@ const {
   campaignApprovalGateFor,
   campaignApprovalGateRefusal,
   CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
-  CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH,
   CAMPAIGN_DELIVERY_CHECK_UNKNOWN,
   CAMPAIGN_DISPATCH_IN_FLIGHT,
-  CAMPAIGN_DISPATCH_LEASE_MS,
 } = await import("../campaign-approval-lock");
 const { quoteCell, stableCellLogicalPrefix } = await import("../factory-batch");
 const { displayCredits } = await import("@fikirtive/core");
