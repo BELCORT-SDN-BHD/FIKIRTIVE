@@ -129,13 +129,19 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // NEVER rewrites the row already there (the first moment stands as recorded). Same shape
       // as the welcome grant's `signup:<orgId>` key one step above.
       //
-      // NO SESSION, NO SIGN-IN ROW. The other two callers converge an identity without one: the
-      // user-create hook and afterEmailVerification. Neither is a sign-in — the only shape that
-      // reaches user-create with no session to follow is self-service registration, which is
-      // held at `requireEmailVerification` and has NOT signed in yet. Writing `auth.signin` there
-      // (as this did before) recorded a sign-in that had not happened. Every real door — magic
-      // link, password, Google, and the auto sign-in after verification — mints a session, so
-      // every real sign-in still lands exactly one row.
+      // NO SESSION, NO SIGN-IN ROW — and `sessionId` is only ever passed when the session that
+      // was just created IS a sign-in (see signin-session.ts; impersonation and the
+      // password-change rotation deliberately pass null).
+      //
+      // The other two callers converge without a session at all: the user-create hook and
+      // afterEmailVerification. Neither is a login of its own — each is the FIRST HALF of one
+      // login whose session-create convergence writes that login's single row. Concretely, a
+      // first-time magic-link sign-in creates the user (verified) and then the session, so this
+      // function ran twice tens of milliseconds apart and, before this fix, appended twice.
+      //
+      // Self-service registration never reached this line even before: it is held at
+      // `requireEmailVerification`, so the account exists with emailVerified false and the gate
+      // on the FIRST line of this function returns before any of the above runs.
       if (input.sessionId) {
         await Promise.resolve(
           prisma.actionEvent.createMany({

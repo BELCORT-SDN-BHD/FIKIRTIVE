@@ -58,19 +58,22 @@ describe("convergeIdentity", () => {
     expect(db.userRole.upsert).not.toHaveBeenCalled();
   });
 
-  // Registration is not a sign-in: the user-create hook and afterEmailVerification converge with
-  // no session, and the only shape that reaches them with none to follow is self-service signup
-  // still held at requireEmailVerification.
+  // The REAL no-session shape: Better Auth's user-create hook, which fires for a first-time
+  // magic-link sign-in with the identity ALREADY verified (the plugin creates the user with
+  // emailVerified: true) and the session created a moment later. That second half writes the
+  // login's one row, so this half must write none — before the fix, both halves appended, which
+  // is exactly the pair of rows #737 reported. (Self-service signup is a different shape and is
+  // covered by the unverified early-return test below: it never reaches the audit step at all.)
   it("writes NO sign-in audit when convergence carries no session", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue(null);
-    db.user.create.mockResolvedValue({ id: "usr_nosess", email: "registered@x.test", emailVerified: new Date(), role: "viewer" });
+    db.user.create.mockResolvedValue({ id: "usr_nosess", email: "magic-first@x.test", emailVerified: new Date(), role: "viewer" });
 
-    await convergeIdentity({ email: "registered@x.test", name: "R", emailVerified: true });
+    await convergeIdentity({ email: "magic-first@x.test", name: "R", emailVerified: true });
 
     expect(db.actionEvent.createMany).not.toHaveBeenCalled();
     // The identity still converged — this drops the audit row, not the account.
-    expect(mockBootstrap).toHaveBeenCalledWith("usr_nosess", "registered@x.test");
+    expect(mockBootstrap).toHaveBeenCalledWith("usr_nosess", "magic-first@x.test");
   });
 
   it("does not recreate an assignment from the legacy compatibility role", async () => {
@@ -136,6 +139,9 @@ describe("convergeIdentity", () => {
     db.user.findUnique.mockRejectedValue(new Error("db"));
     await expect(convergeIdentity({ email: "x@x.test", emailVerified: true })).resolves.toBeUndefined();
   });
+  // This IS the self-service-signup shape (#737 r2 correction): `requireEmailVerification` means
+  // the account is created with emailVerified false, so the gate on the first line returns and
+  // NOTHING below it runs — the audit step included. Registration never wrote a sign-in row.
   it("performs NO writes when the identity is unverified (early-return gate)", async () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     await convergeIdentity({ email: "unverified@x.test", emailVerified: false });

@@ -8,6 +8,7 @@ import { prisma } from "@fikirtive/db";
 import { enqueueAuthEmail, sendAuthEmail } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
+import { signinSessionId } from "./signin-session";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
 import { isAllowedEmail, isRevokedEmail } from "@/lib/allowlist";
@@ -184,12 +185,24 @@ export const auth = betterAuth({
         before: async (session) => {
           await assertAllowedForUserId(session.userId);
         },
-        after: async (s) => {
+        after: async (s, ctx) => {
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true, emailVerified: true } });
           // #737 — THE session-create hook is the only caller that passes `sessionId`, and it is
-          // the only one that should: this session is the sign-in, so its id is what makes the
-          // `auth.signin` audit row one-per-login no matter how many times convergence runs.
-          if (u) await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified, sessionId: s.id });
+          // the only one that should: a session is what a sign-in produces, so its id is what
+          // makes the `auth.signin` audit row one-per-login no matter how many times convergence
+          // runs. But `session.create` fires for more than sign-ins — `signinSessionId` returns
+          // null for the two side-effect session creations (impersonation, password-change
+          // rotation), and a null id means this convergence writes no sign-in row at all.
+          // Convergence itself still runs: the identity is real either way.
+          if (u) {
+            await convergeIdentity({
+              email: u.email,
+              name: u.name,
+              image: u.image,
+              emailVerified: u.emailVerified,
+              sessionId: signinSessionId(s, ctx),
+            });
+          }
         },
       },
     },
