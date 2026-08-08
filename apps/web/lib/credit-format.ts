@@ -1,5 +1,7 @@
+import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL, displayCredits } from "@fikirtive/core";
+
 /**
- * User-facing credit formatting (closed-beta money UI).
+ * User-facing credit formatting (the money UI's words).
  *
  * The product shows CREDITS everywhere — never dollars (founder decision 2026-06-26).
  * 1 displayed credit = $0.10 internally (see packages/core spend.ts), but that conversion
@@ -86,3 +88,17 @@ export function lowBalanceForVideoMessage(
  *  promise more than the page delivers). */
 export const CHAT_SPEND_NOTE =
   "Chatting with Otto uses credits — your charges are listed in Billing.";
+
+/** The ONE disclosure of the conversation HOLD (#791-9).
+ *
+ *  A turn reserves a fixed amount before the model is called, settles the actual token cost,
+ *  and refunds the remainder in the same transaction (settleCredits: A = min(actual, held),
+ *  the difference goes back to balance). Merchants were never told any of it — they saw the
+ *  balance dip and partly come back, with nothing explaining either move, which reads like
+ *  an accounting bug. Saying it plainly costs nothing: the real behaviour is more generous
+ *  than what anyone guesses from a silent dip.
+ *
+ *  The number is DERIVED from the hold constant, never typed out — a hand-written "4" would
+ *  become a lie the next time the hold is tuned. */
+export const CHAT_HOLD_NOTE =
+  `Each message holds ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;
