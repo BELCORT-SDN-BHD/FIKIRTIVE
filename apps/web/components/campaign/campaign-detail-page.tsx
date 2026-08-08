@@ -519,7 +519,9 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
             <Card>
               <CardHeader>
                 <CardTitle>Propose a plan entry</CardTitle>
-                <CardDescription>One structured CAMPAIGN_CARD-shaped draft. No free-form chat or dispatch.</CardDescription>
+                {/* #714 — CAMPAIGN_CARD is Otto's internal card contract name. It told the
+                    merchant nothing about what these five boxes are for. */}
+                <CardDescription>One scheduled draft: date, platform, format, opening hook, and what the content should show. Nothing is written for you here, and nothing is sent.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3">
                 <div className="grid gap-3 sm:grid-cols-3">

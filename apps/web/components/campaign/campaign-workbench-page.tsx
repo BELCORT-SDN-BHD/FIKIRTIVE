@@ -52,7 +52,12 @@ export default function CampaignWorkbenchPage({ initialState }: { initialState: 
     }
   }
 
-  const disabled = "error" in initialState || saving || !name.trim() || !goal.trim() || !start || !end;
+  // #714 — the date picker enforces min={start}, but a typed or pasted end date does not go
+  // through it. Both dates are YYYY-MM-DD here, so a plain string compare is the same order
+  // the server's period check uses. This only saves the merchant a round trip: the server
+  // refuses the same input with the same sentence.
+  const backwardsPeriod = Boolean(start && end && end < start);
+  const disabled = "error" in initialState || saving || !name.trim() || !goal.trim() || !start || !end || backwardsPeriod;
 
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
@@ -93,7 +98,19 @@ export default function CampaignWorkbenchPage({ initialState }: { initialState: 
               </label>
               <label className="grid gap-2 text-sm font-semibold">
                 End date
-                <Input type="date" value={end} onChange={(event) => setEnd(event.target.value)} min={start || undefined} />
+                <Input
+                  type="date"
+                  value={end}
+                  onChange={(event) => setEnd(event.target.value)}
+                  min={start || undefined}
+                  aria-invalid={backwardsPeriod || undefined}
+                  aria-describedby={backwardsPeriod ? "campaign-period-error" : undefined}
+                />
+                {backwardsPeriod ? (
+                  <span id="campaign-period-error" className="text-sm font-normal text-destructive">
+                    The campaign end date must be on or after its start date.
+                  </span>
+                ) : null}
               </label>
             </div>
             <label className="grid gap-2 text-sm font-semibold sm:max-w-xs">

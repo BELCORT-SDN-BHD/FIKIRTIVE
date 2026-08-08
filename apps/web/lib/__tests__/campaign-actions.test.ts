@@ -222,6 +222,30 @@ describe("proposeCampaign", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
+  // #714 — bypassing the greyed-out button must land on the same sentence the page shows,
+  // not on "That campaign plan isn't valid.", which points the merchant at nothing.
+  it("names the backwards period instead of refusing the whole plan anonymously", async () => {
+    const base = createInput();
+    await expect(proposeCampaign({
+      ...base,
+      period: { start: "2026-12-31", end: "2026-01-01", tz: "Asia/Kuala_Lumpur" },
+      items: [],
+    })).resolves.toEqual({ error: "The campaign end date must be on or after its start date." });
+    await expect(proposeCampaign({
+      ...base,
+      items: [{ ...proposedEntry(), date: "2026-09-30" }],
+    })).resolves.toEqual({ error: "A plan entry must fall inside the campaign period." });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the generic sentence for input that carries no merchant-facing reason", async () => {
+    const base = createInput();
+    await expect(proposeCampaign({ ...base, goal: "" })).resolves.toEqual({
+      error: "That campaign plan isn't valid.",
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects a forged server-issued id proof", async () => {
     const result = await proposeCampaign({ ...createInput(), campaignProof: "forged" });
     expect(result).toEqual({ error: "Start a new campaign draft and try again." });

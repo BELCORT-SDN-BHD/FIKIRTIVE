@@ -157,6 +157,16 @@ describe("#744 P1-1 an already-generated entry offers no way out of the plan", (
   });
 });
 
+describe("#714 the plan-entry card is described in the merchant's words", () => {
+  it("never prints Otto's internal card contract name, and says what the boxes are for", () => {
+    render();
+    expect(document.body.textContent).not.toContain("CAMPAIGN_CARD");
+    expect(document.body.textContent).toContain(
+      "One scheduled draft: date, platform, format, opening hook, and what the content should show.",
+    );
+  });
+});
+
 describe("#744 P2 a refused delete leaves the page usable", () => {
   it("shows the refusal and lets the merchant press Delete again", async () => {
     m.deleteCampaign.mockResolvedValue({ error: "Campaign not found." });

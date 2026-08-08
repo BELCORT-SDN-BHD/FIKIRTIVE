@@ -201,6 +201,13 @@ function initialEntryId(ownerId: string, campaignId: string, index: number): str
     .toUpperCase();
 }
 
+/** #714 — a refused campaign must say which box is wrong and why. Only the messages this
+ *  file authors (zod `custom` refinements) are merchant copy; zod's built-in length/format
+ *  text is not, so anything else still falls back to the caller's generic sentence. */
+function refusalMessage(error: z.ZodError, fallback: string): string {
+  return error.issues.find((issue) => issue.code === "custom")?.message ?? fallback;
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -281,7 +288,7 @@ export async function proposeCampaign(raw: unknown): Promise<
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
 
   const parsed = proposeInputSchema.safeParse(raw);
-  if (!parsed.success) return { error: "That campaign plan isn't valid." };
+  if (!parsed.success) return { error: refusalMessage(parsed.error, "That campaign plan isn't valid.") };
   const input = parsed.data;
   if (!validCampaignProof(gate.ownerId, input.campaignId, input.campaignProof)) {
     return { error: "Start a new campaign draft and try again." };
@@ -436,7 +443,7 @@ export async function updateCampaign(raw: unknown): Promise<
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
   const parsed = updateCampaignSchema.safeParse(raw);
-  if (!parsed.success) return { error: "That campaign change isn't valid." };
+  if (!parsed.success) return { error: refusalMessage(parsed.error, "That campaign change isn't valid.") };
   const { campaignId, patch } = parsed.data;
 
   const campaign = await loadOwnedCampaign(gate.ownerId, campaignId);
