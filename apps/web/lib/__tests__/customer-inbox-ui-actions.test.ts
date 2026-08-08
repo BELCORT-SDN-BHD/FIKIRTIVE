@@ -155,7 +155,6 @@ describe("customer-inbox-ui-actions wrapper", () => {
       "saveConversationDraft",
       "searchConversations",
       "setConversationStatus",
-      "takeOverConversation",
     ].sort();
     expect(Object.keys(customerInboxUiActions).sort()).toEqual(APPROVED_EXPORTS);
 

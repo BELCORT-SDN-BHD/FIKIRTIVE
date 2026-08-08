@@ -101,7 +101,6 @@ const ERROR_COPY: Record<string, string> = {
   RESOURCE_NOT_FOUND: "This item is not available. It may not exist, or you may not have access.",
   IMPERSONATION_READ_ONLY: "Impersonation is read-only — exit impersonation to make this change.",
   CAS_CONFLICT: "This changed since you last loaded it — reload to see the latest.",
-  TAKEOVER_REQUIRED: "Take over the conversation from Otto before editing the draft.",
   IDEMPOTENCY_CONFLICT: "That request was already recorded differently — reload to check the latest state.",
   SEND_PATH_UNAVAILABLE: "Sending isn't available yet.",
   TEMPLATE_SUBMISSION_UNAVAILABLE: "Template submission isn't available yet.",
@@ -161,6 +160,9 @@ export function eventDescription(
     case "unassigned":
       return "Unassigned";
     case "takeover":
+      // #810 P3-1: the action is gone, the history is not. A workspace that ran a take-over
+      // before it was removed still has the event on its timeline, and the timeline's job is
+      // to say what happened, not what is still possible.
       return "A team member took over from Otto";
     case "handoff":
       return `Handed off to ${memberPhrase(event.toAssigneeMembershipId, resolveMemberName)}${event.note ? ` — "${event.note}"` : ""}`;

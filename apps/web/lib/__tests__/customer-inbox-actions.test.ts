@@ -347,20 +347,21 @@ describe("C4b-M2 capabilities, inactive/unknown memberships, and impersonation",
       draftBaseRevision: null,
       text: "A safe local draft",
     });
-    await inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 });
     await inbox.handOffConversation(member, {
       conversationId: CONVERSATION_OTTO,
-      expectedRevision: 1,
+      expectedRevision: 0,
       targetMembershipId: MEMBER_2,
       note: "Please continue",
     });
     const handedOff = await prisma.customerConversation.findFirstOrThrow({
       where: { ownerId: ORG_A, id: CONVERSATION_OTTO },
     });
+    // #810 P3-1: the hand-off moves the assignee and nothing else. The legacy automationState
+    // is left exactly as it was found — no action in the product writes it any more.
     expect(handedOff).toMatchObject({
       assigneeMembershipId: MEMBER_2,
-      automationState: "paused_by_human",
-      revision: 2,
+      automationState: "otto_active",
+      revision: 1,
     });
     await inbox.setConversationStatus(member, {
       conversationId: CONVERSATION_ASSIGNED,
@@ -512,10 +513,9 @@ describe("C4b-M2 tenant-qualified ID swaps", () => {
   });
 });
 
-describe("C4b-M2 assignment, takeover, draft, and status CAS races", () => {
+describe("C4b-M2 assignment, draft, and status CAS races", () => {
   it.each([
     ["assignment", () => inbox.assignConversation(owner, { conversationId: CONVERSATION_UNASSIGNED, expectedRevision: 0, targetMembershipId: MEMBER })],
-    ["takeover", () => inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 })],
     ["handoff", () => inbox.handOffConversation(member, { conversationId: CONVERSATION_ASSIGNED, expectedRevision: 1, targetMembershipId: MEMBER_2 })],
     ["status", () => inbox.setConversationStatus(owner, { conversationId: CONVERSATION_OWNER, expectedRevision: 0, status: "closed" })],
   ] as Array<[string, () => Promise<unknown>]>)(
@@ -531,7 +531,7 @@ describe("C4b-M2 assignment, takeover, draft, and status CAS races", () => {
   // The CAS check must run before every state precondition: the loser of a revision
   // race (or a stale replay) must learn CAS_CONFLICT, never a misleading
   // ACTION_DENIED/INVALID_ARGUMENT produced by the winner's own effect on the state.
-  it("reports stale assignment, takeover, and handoff replays as revision conflicts", async () => {
+  it("reports stale assignment and handoff replays as revision conflicts", async () => {
     await inbox.assignConversation(owner, {
       conversationId: CONVERSATION_UNASSIGNED,
       expectedRevision: 0,
@@ -545,24 +545,43 @@ describe("C4b-M2 assignment, takeover, draft, and status CAS races", () => {
       }),
       "CAS_CONFLICT",
     );
-    await inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 });
-    await expectCode(
-      inbox.takeOverConversation(member, { conversationId: CONVERSATION_OTTO, expectedRevision: 0 }),
-      "CAS_CONFLICT",
-    );
     await inbox.handOffConversation(member, {
       conversationId: CONVERSATION_OTTO,
-      expectedRevision: 1,
+      expectedRevision: 0,
       targetMembershipId: MEMBER_2,
     });
     await expectCode(
       inbox.handOffConversation(member, {
         conversationId: CONVERSATION_OTTO,
-        expectedRevision: 1,
+        expectedRevision: 0,
         targetMembershipId: MEMBER_2,
       }),
       "CAS_CONFLICT",
     );
+  });
+
+  // #810 P3-1: the server used to refuse a draft on an `otto_active` conversation with
+  // "Take over the conversation from Otto…" — pointing at a button the page no longer has,
+  // for a state nothing in the product writes. A merchant carrying that value from an older
+  // release could not edit their own draft. The stored value is still reported honestly; it
+  // simply stops blocking anyone.
+  it("a conversation still carrying the legacy otto_active value can be drafted in", async () => {
+    const saved = await inbox.saveConversationDraft(member, {
+      conversationId: CONVERSATION_OTTO,
+      conversationBaseRevision: 0,
+      draftBaseRevision: null,
+      text: "Typing my own reply, thanks",
+    });
+    expect(saved).toBeTruthy();
+    const draft = await prisma.customerConversationDraft.findFirstOrThrow({
+      where: { ownerId: ORG_A, conversationId: CONVERSATION_OTTO },
+    });
+    expect(draft.contentJson).toMatchObject({ text: "Typing my own reply, thanks" });
+    // The stored automation value is untouched — the guard is gone, not the history.
+    const conversation = await prisma.customerConversation.findFirstOrThrow({
+      where: { ownerId: ORG_A, id: CONVERSATION_OTTO },
+    });
+    expect(conversation.automationState).toBe("otto_active");
   });
 
   it("reports a stale same-status replay as a revision conflict", async () => {
@@ -783,14 +802,6 @@ describe("C4b-M2 gateway mutation routing", () => {
     ).resolves.toEqual({ ok: false, error: "CAS_CONFLICT" });
   });
 
-  it("takeOverConversation succeeds through the gateway", async () => {
-    const result = await customerInboxGateway.takeOverConversation({
-      conversationId: CONVERSATION_OTTO,
-      expectedRevision: 0,
-    });
-    expect(result).toMatchObject({ ok: true, change: { kind: "takeover" } });
-  });
-
   it("handOffConversation succeeds through the gateway", async () => {
     const result = await customerInboxGateway.handOffConversation({
       conversationId: CONVERSATION_ASSIGNED,
@@ -923,16 +934,6 @@ describe("C4b-M2 role-denial branches", () => {
         conversationBaseRevision: 1,
         draftBaseRevision: null,
         text: "Not my conversation",
-      }),
-      "ACTION_DENIED",
-    );
-  });
-
-  it("denies takeOverConversation to a non-assignee member", async () => {
-    await expectCode(
-      inbox.takeOverConversation(member2, {
-        conversationId: CONVERSATION_OTTO,
-        expectedRevision: 0,
       }),
       "ACTION_DENIED",
     );
