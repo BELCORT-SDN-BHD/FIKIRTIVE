@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
 import type { CreditPack } from "@/lib/billing-actions";
+import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import type { SettingsField, SettingsSection } from "@/components/otto/settings/types";
 
 const mocks = vi.hoisted(() => ({
@@ -200,7 +201,8 @@ describe("billing top-up (decision ③)", () => {
   it("shows a hint instead of a dead Top up link when no packs are configured", () => {
     const balance = fieldById(sections({ connected: true, canPublish: true, packs: [] }), "billing", "balance");
     const markup = renderField("billing", balance);
-    expect(markup).toContain("No credit packs available right now.");
+    // #687 — the sentence is now shared with /billing so one state cannot read two ways.
+    expect(markup).toContain(NO_CREDIT_PACKS_MESSAGE);
     expect(markup).not.toContain(">Top up<");
   });
 });

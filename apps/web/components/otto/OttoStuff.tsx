@@ -9,6 +9,8 @@ import { updateEntity, softDeleteEntity } from "@/lib/actions";
 import { saveBrandRecord } from "@/lib/brand-record-actions";
 import { buildStuffItems } from "@/lib/stuff-items";
 import { getGenerationHistory, type LibraryItem } from "@/lib/library-actions";
+import { ExitLink } from "@/components/exits/Exits";
+import { BRAND_MEMORY_HREF } from "@/lib/exits";
 import { StuffLibrary } from "./stuff/StuffLibrary";
 import { AddAssetDialog } from "./stuff/AddAssetDialog";
 import { useRouter } from "next/navigation";
@@ -310,8 +312,11 @@ export function OttoStuff({ entities, ads, adJobs, records, history, onOpenThrea
             <h2 className="m-0 mb-1 text-[1.125rem] font-semibold text-foreground">Set as product image</h2>
             <p className="mb-4 mt-0 text-[0.875rem] text-muted-foreground">Pick which product this image belongs to.</p>
             {activeProducts.length === 0 ? (
+              // #701 — the path is real (Brand memory → Your products → + Add product); it
+              // just was not a link, so the merchant had to find four levels of it themselves.
               <p className="text-[0.875rem] text-muted-foreground">
-                No products yet — add one in Brand memory first.
+                No products yet —{" "}
+                <ExitLink href={BRAND_MEMORY_HREF}>add one in Brand memory</ExitLink> first.
               </p>
             ) : (
               <div className="flex flex-col gap-1">

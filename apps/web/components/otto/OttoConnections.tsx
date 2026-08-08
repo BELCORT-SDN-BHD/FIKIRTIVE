@@ -7,6 +7,7 @@ import { getAccountViewData } from "@/lib/account-view-data";
 import { UNAVAILABLE_PUBLISHING_CHANNEL_IDS } from "@/lib/channels/channel-meta";
 import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
 import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
+import { supportMailto } from "@/lib/exits";
 import type { ChannelState } from "./settings/sections";
 import { Button } from "@/components/ui/button";
 
@@ -50,7 +51,9 @@ const MESSAGING_CHANNELS: { id: string; label: string }[] = [
 // #573 fail-closed guard). Nothing in the app read that param before, so a merchant whose
 // connect failed landed on an unchanged Connections page with no idea why. New codes will
 // appear, so the unknown branch must still say something true rather than guess a cause.
-type ConnectErrorCopy = { message: string; retry: boolean; rawCode?: string };
+// `contactSupport` marks the branches where the merchant is not the blocker and retrying
+// cannot help — the only open exit is a person, so the page has to hand them one (#686).
+type ConnectErrorCopy = { message: string; retry: boolean; rawCode?: string; contactSupport?: boolean };
 
 function describeConnectError(code: string): ConnectErrorCopy {
   // completeMetaConnect can hand back a whole sentence instead of a code — the
@@ -76,7 +79,13 @@ function describeConnectError(code: string): ConnectErrorCopy {
       return { message: "This connect link couldn’t be verified — these links expire, and they only work for the account that started them.", retry: true };
     case "not_configured":
       // Nothing the merchant can retry their way out of — the server is missing its Meta keys.
-      return { message: "Meta connections aren’t switched on for this server yet. Contact support and we’ll enable it.", retry: false };
+      // #686: this is the hardest dead end in the product (the merchant came here BECAUSE
+      // they wanted to connect Instagram), so the one open exit ships as a real link below.
+      return {
+        message: "Meta connections aren’t switched on for this server yet — we can switch them on for you.",
+        retry: false,
+        contactSupport: true,
+      };
     case "exchange":
       return { message: "Meta didn’t finish the sign-in handshake.", retry: true };
     case "incomplete":
@@ -334,6 +343,13 @@ export default function OttoConnections() {
             {connectError.retry && (
               <Button asChild size="sm" variant="brand">
                 <a href="/api/meta/authorize" style={{ textDecoration: "none" }}>Try again</a>
+              </Button>
+            )}
+            {connectError.contactSupport && (
+              <Button asChild size="sm" variant="brand">
+                <a href={supportMailto("Switch on Meta connections")} style={{ textDecoration: "none" }}>
+                  Email support
+                </a>
               </Button>
             )}
           </div>

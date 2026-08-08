@@ -301,9 +301,12 @@ describe("Connections page explains a failed Meta connect (#511)", () => {
 
     const alert = dom.querySelector('[role="alert"]');
     expect(alert).toBeTruthy();
-    expect(alert!.textContent).toContain("Contact support");
+    expect(alert!.textContent).toContain("aren’t switched on for this server yet");
     // A Try again button here would just fail the same way — the merchant isn't the blocker.
-    expect(alert!.querySelector("a, button")).toBeNull();
+    expect(alert!.querySelector('a[href="/api/meta/authorize"], button')).toBeNull();
+    // #686 — but "the merchant isn't the blocker" is only honest if the product hands over
+    // the one exit that IS open: a live way to reach us, not the words "contact support".
+    expect(alert!.querySelector('a[href^="mailto:"]')).toBeTruthy();
   });
 
   it("does not mistake a code that merely mentions impersonation for the guard's sentence", async () => {
