@@ -34,6 +34,7 @@ const { setContactConsent, importContacts } = await import("../crm-actions");
 const { createCustomerBroadcastService } = await import("../customer-broadcast-service");
 const { ContactPreview } = await import("@/components/crm/segments-page");
 const { ConsentExclusionNote } = await import("@/components/crm/broadcasts/broadcast-detail-page");
+const { axisReasonCopy, skipReasonCopy } = await import("@/components/crm/broadcasts/broadcast-format");
 
 const SUITE = `p2cons-${randomUUID().slice(0, 8)}`;
 const ORG_A = `${SUITE}-org-a`;
@@ -617,6 +618,15 @@ describe("#806 a segment that never mentions consent cannot put a known opt-out 
       consentStop?: { status?: string; reason?: string };
     };
     expect(verdict.consentStop).toMatchObject({ status: "block", reason: "unresolved_legacy_opt_out" });
+
+    // And the block says why in words, not in a machine token — the same sentence the segments
+    // page already uses for this customer.
+    expect(axisReasonCopy(verdict.consentStop?.reason)).toBe(
+      "The customer opted out before consent history was kept, so they stay out until they opt in again.",
+    );
+    expect(skipReasonCopy("consentStop:unresolved_legacy_opt_out")).toContain(
+      "opted out before consent history was kept",
+    );
   });
 
   it("runs the gate inside each tenant's own fence", async () => {

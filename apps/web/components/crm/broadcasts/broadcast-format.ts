@@ -96,6 +96,10 @@ const AXIS_REASON_COPY: Record<string, string> = {
   effective_revoke: "The customer has opted out (STOP). A send would need a D5 two-confirm override, which is unavailable.",
   consent_unknown_d5_eligible: "Consent is unknown. A send would need a D5 two-confirm override, which is unavailable.",
   consent_unknown_unconfirmed_automatic_hard_block: "Consent is unknown — a hard block for automated sends.",
+  // #806 — the same sentence the Segments page already uses for this customer, so the two
+  // surfaces explain one fact with one wording.
+  unresolved_legacy_opt_out: "The customer opted out before consent history was kept, so they stay out until they opt in again.",
+  legacy_mirror_unreadable: "The earlier opt-out record could not be read, so sending fails closed.",
   dnd_set: "The customer is on Do Not Disturb.",
   permanent_recipient_block: "The provider has permanently refused this recipient.",
   account_level_block: "The provider has suspended this account.",
