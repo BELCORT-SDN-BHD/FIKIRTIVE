@@ -23,12 +23,20 @@ export type GenModel = (typeof GEN_MODELS)[number];
  * 知识库各一列家族 —— 一整片「说的」而没有「做的」。菜单上没有一格是假的(#641),
  * 所以它们下架。
  *
- * 留下的 seedance-2-fast 是 BytePlus 直连、在产实付、毛利闸盯着的那一台。
+ * 留下的 seedance-2-mini 是 BytePlus 直连、在产实付、毛利闸盯着的那一台。
  * 要再卖一台:先给它 flat 且清地板的价(FLAT_PRICED_VIDEO_MODELS + 成本输入),
  * 再在这里、事实表、档位表、费率与 @fikirtive/generation 的 VIDEO_CFG 一起加 ——
  * 缺一处,「卖什么」和「做什么」当场分家。
+ *
+ * #769(Founder 已裁 2026-08-08,眼看 7 条真实对比成片后原话「目前来说 mini 就行了」):
+ * 这一格从 `seedance-2-fast` **换 key** 到 `seedance-2-mini`,不是在同一个 key 底下悄悄
+ * 换后端 id。理由是这张表管的是「我们卖哪一台引擎」,而这个集合正是
+ * `FLAT_PRICED_VIDEO_MODELS`「上架一台新引擎绝不能自动可售」那条纪律的锚点 ——
+ * 留着 fast 的 key 跑 mini,新引擎就**继承**了老引擎的售价资格,那条纪律当场失效;
+ * 同时事实表的 label、毛利闸的成本 key 与手抄来源、以及 GenJob 落库的引擎名会全部说谎。
+ * 换 key 之后 `modelFamily()` 仍按前缀归到 seedance 家族,知识库的调教一格不用改。
  */
-export const GEN_VIDEO_MODELS = ["seedance-2-fast"] as const;
+export const GEN_VIDEO_MODELS = ["seedance-2-mini"] as const;
 export type GenVideoModel = (typeof GEN_VIDEO_MODELS)[number];
 
 export const GEN_KINDS = ["image", "video"] as const;
@@ -108,7 +116,7 @@ export const MAX_GEN_COUNT = 4;
 export const MAX_GEN_PROMPT = 2000;
 export const MAX_GEN_ENTITIES = 8;
 export const GEN_VIDEO_SECONDS = 5;
-export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-fast";
+export const REFERENCE_VIDEO_MODEL: GenVideoModel = "seedance-2-mini";
 /** Whole-clip reference video window: Seedance needs ≥2s; the upper bound protects COGS
  *  (BytePlus bills by input duration, our charge is flat per resolution). Enforced in the
  *  composer AND server-side in the worker (via Asset.durationS from ingest's ffprobe). */
@@ -230,7 +238,7 @@ export function normalizeImageAspect(raw?: string | null): GenImageAspect | null
  *  merchant surface), `sound` = generates native audio, `tail` = supports an end frame.
  *  Controls + price live in the two helpers below. */
 export const GEN_VIDEO_MODEL_INFO: Record<GenVideoModel, { label: string; sound: boolean; tail: boolean }> = {
-  "seedance-2-fast": { label: "Seedance 2.0 Fast", sound: true, tail: true }, // #646 T5: first+last frames ARE supported (two role-tagged frames in one task)
+  "seedance-2-mini": { label: "Seedance 2.0 mini", sound: true, tail: true }, // #646 T5: first+last frames ARE supported (two role-tagged frames in one task)
 };
 
 /** Per-model controls — each exposes exactly what its engine accepts. Empty array =
@@ -260,9 +268,13 @@ export type VideoModelOptions = {
  *  不许翻译成 16:9 之类的具体值(那就是又一次替商家做主还不说话)。 */
 export const VIDEO_ASPECT_ADAPTIVE = "adaptive";
 export const GEN_VIDEO_MODEL_OPTIONS: Record<GenVideoModel, VideoModelOptions> = {
-  // #645 T4:引擎真能给的每一档都开出来 —— duration 整数 [4,15]、480p/720p(Fast 无 1080p)、
+  // #645 T4:引擎真能给的每一档都开出来 —— duration 整数 [4,15]、480p/720p(mini 无 1080p)、
   // 六比例 + adaptive。列表顺序 = picker 顺序;默认值显式写在 `defaults` 里,与今日逐字一致。
-  "seedance-2-fast": {
+  // #769:换 fast→mini 时这一整格**逐字不动** —— 2026-08-08 对着 mini 实测过参数面,
+  // resolution / duration / seed / ratio / generate_audio / priority / return_last_frame 全部
+  // 接受并生效,camera_fixed / draft / frames 同样被拒,帧率同为 24fps。抄一份没核过的
+  // 档位表是这个文件明令禁止的事,所以这里是「实测同形」而不是「照抄 fast」。
+  "seedance-2-mini": {
     durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
     resolutions: ["720p", "480p"],
     aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", VIDEO_ASPECT_ADAPTIVE],
@@ -318,10 +330,13 @@ export function videoDefaults(
  * 720p 16:9 @24fps ⇒ 1280 × 720 × 24 / 1024 = 21,600 tokens/秒(720p 9:16 像素数相同,
  * 同值;同档不同比例的像素差 ~1%,不另立档)。
  *
- * 用官方成品价反向校验本公式(三条全中):
+ * 用官方成品价反向校验本公式(三条全中,以 #644 当时在产的 fast 牌价 $5.60/$3.30 为例):
  *   720p 5s  无视频输入 = 108,000 tok × $5.60/M = $0.6048  → 官方 $0.60  ✓
  *   720p 10s 无视频输入 = 216,000 tok × $5.60/M = $1.2096  → 官方 $1.21  ✓
  *   720p 5s  含参考视频 = (4…15 + 5)s × 21,600 × $3.30/M = $0.64…$1.43 → 官方区间 ✓
+ *
+ * **公式与在产引擎无关**:#769 换成 mini 之后校验照旧成立,只是每 M token 的单价换成
+ * mini 的牌价(见下面两个常量)。tokens 的算法、24fps、像素表都是 Seedance 2.0 系列共用的。
  *
  * 只覆盖**现役 720p 档**。480p 等新档随 T4(档位扩容)带各自的官方核验一起进来 ——
  * 这里不给没核过的档位编数字。
@@ -350,15 +365,33 @@ export function seedanceWorstRatioTokensPerSecond(resolution: "480p" | "720p"): 
   const widest = Math.max(...Object.values(SEEDANCE_VIDEO_PIXELS[resolution]).map(([w, h]) => w * h));
   return (widest * BYTEPLUS_VIDEO_FPS) / 1024;
 }
-/** 无视频输入(t2v / i2v)牌价,$/M tokens。 */
-export const BYTEPLUS_USD_PER_MTOKEN = 5.6;
-/** 含视频输入(整段参考视频)牌价,$/M tokens —— 比无视频输入那档更便宜。 */
-export const BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT = 3.3;
+/**
+ * 无视频输入(t2v / i2v)牌价,$/M tokens。
+ *
+ * #769(2026-08-08):在产引擎换 mini,牌价 $5.60/M → **$3.50/M**。
+ * 来源 = ModelArk 模型档案 `dreamina-seedance-2-0-mini-260615` 的 `pricing.charge_items`,
+ * 类型 `NV2VCompletion`(non-video-to-video,即无视频输入那档)的 **`original_price`**
+ * 0.0035 / K tokens。**抄牌价不抄折后价**:同一条记录上 `price` 是 0.0014 / K
+ * ($1.40/M 折后),我们不抄它 —— 折扣既不保证续、也可能静默失效,成本按牌价记才安全。
+ * 同一读法在 fast 的档案上复核过:`NV2VCompletion.original_price` = 0.0056/K = $5.60/M,
+ * 与 #644 手抄自定价页的旧值逐字相同 —— 两个来源互证,读法没有走样。
+ */
+export const BYTEPLUS_USD_PER_MTOKEN = 3.5;
+/**
+ * 含视频输入(整段参考视频)牌价,$/M tokens —— 比无视频输入那档更便宜。
+ *
+ * #769:同一份 mini 档案的 `V2VCompletion.original_price` = 0.0021 / K = **$2.10/M**
+ * (fast 是 0.0033/K = $3.30/M,同样与 #644 的旧值互证)。折后价 $0.84/M 同样不抄。
+ */
+export const BYTEPLUS_USD_PER_MTOKEN_WITH_VIDEO_INPUT = 2.1;
 /**
  * 参考视频输入的**最低计费秒数**(token 地板)。官方「含参考视频 720p 5s」区间下限
- * $0.64 恰好 = (4 + 5) 秒 × 21,600 × $3.30/M,即输入不足 4 秒也按 4 秒计 —— 与引擎
- * 自身 4 秒最短时长一致。我们的参考片窗口是 2–6 秒(REF_VIDEO_MIN/MAX_SECONDS),
+ * $0.64 恰好 = (4 + 5) 秒 × 21,600 × $3.30/M(fast 牌价),即输入不足 4 秒也按 4 秒计
+ * —— 与引擎自身 4 秒最短时长一致。我们的参考片窗口是 2–6 秒(REF_VIDEO_MIN/MAX_SECONDS),
  * 所以这条地板会真的咬到 2–3 秒的参考片。
+ *
+ * #769:mini 与 fast 的最短时长同为 4 秒(档位表 durations 起于 4),这条地板照旧成立;
+ * 单价换成 mini 的那一档,秒数口径不动。
  */
 export const BYTEPLUS_MIN_BILLED_INPUT_SECONDS = 4;
 
@@ -377,14 +410,17 @@ export function byteplusVideoCogsUsd(opts: {
   return (tokens * usdPerMToken) / 1_000_000;
 }
 
-/** 现役视频档(seedance-2-fast @720p 16:9)每秒等效记账成本 = **$0.12096/s**。RECORD-ONLY。
+/** 现役视频档(seedance-2-mini @720p 16:9)每秒等效记账成本 = **$0.0756/s**(#769 前是
+ *  fast 的 $0.12096/s)。RECORD-ONLY。
  *  #645 后它不再是收费/毛利的基准(那条路按最差比例走,见下),只留给整段参考视频那一档。 */
 export const SEEDANCE_720P_COGS_USD_PER_SECOND = byteplusVideoCogsUsd({ outputSeconds: 1 });
 
 /**
  * **每秒记账成本,按各档的最差比例**(#645 T4)。RECORD-ONLY。
- *   720p = 21,736.125 tok/s × $5.60/M = **$0.1217223/s**(4:3 / 3:4)
- *   480p = 10,044     tok/s × $5.60/M = **$0.0562464/s**(21:9)
+ *   720p = 21,736.125 tok/s × $3.50/M = **$0.0760764375/s**(4:3 / 3:4)
+ *   480p = 10,044     tok/s × $3.50/M = **$0.035154/s**(21:9)
+ * (#769 之前是 fast 牌价 $5.60/M ⇒ $0.1217223 / $0.0562464。像素表与 tok/s 一格没动,
+ *  变的只有每 M token 的单价。)
  *
  * 为什么按最差比例记而不是按这一单真实的比例:收费是**按档**的(同一档六个比例一个价),
  * 所以毛利也只能按档判 —— 判据必须是这一档里最贵的那个比例,否则「平均起来是够的」会
@@ -398,13 +434,13 @@ export const SEEDANCE_COGS_USD_PER_SECOND: Record<"480p" | "720p", number> = {
 };
 
 /**
- * 整段参考视频的记账成本 = **$0.78408**,按我们参考片窗口的**上限**保守记
- * (6s 参考输入 + 5s 出片,含视频输入档 $3.30/M)。真实区间 $0.6415(≤4s 参考,吃地板)
- * … $0.78408(6s 参考);记上限,永不低估成本。
+ * 整段参考视频的记账成本 = **$0.49896**,按我们参考片窗口的**上限**保守记
+ * (6s 参考输入 + 5s 出片,mini 含视频输入档 $2.10/M)。真实区间 $0.40824(≤4s 参考,
+ * 吃地板)… $0.49896(6s 参考);记上限,永不低估成本。
  *
  * RECORD-ONLY —— 收费是 spend.ts 的 `REFERENCE_VIDEO_CREDITS`(16cr),与本值无关。
- * 旧值 $0.85 用的是 2026-06 资源包折后价 $3.564/M;牌价里含视频输入那档更便宜,
- * 所以这一档修正后成本反而**降**了。
+ * 沿革:$0.85(2026-06 资源包折后价 $3.564/M)→ #644 改真为 fast 牌价 $3.30/M 的
+ * $0.78408 → #769 换 mini 牌价 $2.10/M 的 $0.49896。收费三次都没动。
  */
 export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
   outputSeconds: GEN_VIDEO_SECONDS,
@@ -424,7 +460,7 @@ export const REFERENCE_VIDEO_COGS_USD = byteplusVideoCogsUsd({
  * 记账是 record-only,而**收费**那一侧(spend.ts)对同一批 id 走的是护栏价,不是 0。
  */
 function videoRateUsdPerSec(model: GenVideoModel, resolution: string): number {
-  if (model === "seedance-2-fast") {
+  if (model === "seedance-2-mini") {
     return SEEDANCE_COGS_USD_PER_SECOND[resolution as "480p" | "720p"] ?? SEEDANCE_COGS_USD_PER_SECOND["720p"];
   }
   return 0;
@@ -544,7 +580,7 @@ export const genRequest = z
     }
     if (v.referenceVideoGenerationId) {
       if (v.kind !== "video") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["referenceVideoGenerationId"], message: "reference video is only valid for video generation" });
-      if (v.model !== REFERENCE_VIDEO_MODEL) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "reference video requires Seedance 2.0 Fast" });
+      if (v.model !== REFERENCE_VIDEO_MODEL) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "reference video requires Seedance 2.0 mini" });
       if (v.durationSeconds != null && v.durationSeconds !== GEN_VIDEO_SECONDS) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["durationSeconds"], message: "reference video output is fixed at 5 seconds" });
       }
