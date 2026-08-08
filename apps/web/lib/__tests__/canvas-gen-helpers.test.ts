@@ -189,7 +189,7 @@ describe("Canvas action recovery receipt", () => {
     operation: "animate",
     prompt: "turn the product slowly",
     pos: { x: 10, y: 20, w: 320, h: 320 },
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     approvedCredits: 8,
     threadId: "thread-1",
     sourceGenerationId: "gen-source",

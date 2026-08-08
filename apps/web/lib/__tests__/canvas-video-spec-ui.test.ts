@@ -222,7 +222,7 @@ function typeInto(el: HTMLInputElement | HTMLTextAreaElement, text: string): voi
   el.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-/** 服务端解析的视频规格菜单 —— 与 GEN_VIDEO_MODEL_OPTIONS["seedance-2-fast"] 同序。 */
+/** 服务端解析的视频规格菜单 —— 与 GEN_VIDEO_MODEL_OPTIONS["seedance-2-mini"] 同序。 */
 const DURATIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const RESOLUTIONS = ["720p", "480p"];
 const ASPECTS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"];

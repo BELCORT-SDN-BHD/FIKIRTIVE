@@ -42,8 +42,16 @@ export async function listCreditPacks(): Promise<CreditPack[]> {
 }
 
 /** Start a one-time Checkout for a pack. requireOwner-gated; the org + credits ride in
- *  client_reference_id + metadata so the webhook can grant without expanding line items. */
-export async function createTopupCheckout(priceId: string): Promise<{ url: string } | { error: string }> {
+ *  client_reference_id + metadata so the webhook can grant without expanding line items.
+ *
+ *  `contactSupport` marks the ONE failure the merchant cannot retry their way out of
+ *  (the server has no base URL to send Stripe back to). BuyPackButton turns that flag
+ *  into a real mailto — before #686 the sentence said "please contact support" and gave
+ *  them nothing to click. Every other error here is retryable and deliberately carries
+ *  no human hand-off. */
+export async function createTopupCheckout(
+  priceId: string,
+): Promise<{ url: string } | { error: string; contactSupport?: true }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to buy credits." };
@@ -59,7 +67,7 @@ export async function createTopupCheckout(priceId: string): Promise<{ url: strin
   if (!price.active || !credits || credits <= 0 || !Number.isInteger(credits)) return { error: "That pack is unavailable." };
 
   const base = process.env.BETTER_AUTH_URL ?? "";
-  if (!base) return { error: "Checkout is unavailable — please contact support." };
+  if (!base) return { error: "Checkout is unavailable — please contact support.", contactSupport: true };
   let session: Awaited<ReturnType<typeof stripe.checkout.sessions.create>>;
   try {
     session = await stripe.checkout.sessions.create({

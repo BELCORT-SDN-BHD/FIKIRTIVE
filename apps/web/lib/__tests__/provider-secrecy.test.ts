@@ -28,7 +28,7 @@ describe("provider secrecy", () => {
     const unsafe = [
       "claude-sonnet-5",
       "Anthropic API error 529",
-      "seedance-2-fast",
+      "seedance-2-mini",
       "BytePlusProvider timeout",
       "即梦",
       "fal.ai/model",

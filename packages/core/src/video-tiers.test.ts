@@ -24,7 +24,7 @@ import {
 import { pricedGenCredits, genSpentUsd, INTERNAL_PER_DISPLAY, CREDITS_PER_USD, VIDEO_CREDITS_BY_RESOLUTION, REFERENCE_VIDEO_CREDITS, SEEDANCE_DISPLAY_CREDITS_PER_10S, seedanceDisplayCredits } from "./spend.js";
 import { MARGIN_FLOOR, marginTruthTable, acceptedExceptionFor, BELOW_FLOOR_FOUNDER_ACCEPTED } from "./margin-truth.js";
 
-const MODEL: GenVideoModel = "seedance-2-fast";
+const MODEL: GenVideoModel = "seedance-2-mini";
 
 /** Founder 裁决的全表(4→15 秒),逐格手抄自裁决评论 —— 与代码里的公式**独立**。
  *  公式改一格、或有人把某一档"优化"成别的数,这张表当场变红。 */
@@ -240,23 +240,25 @@ describe("#645 T4 成本基准 = 官方像素表的**最差比例**(永不低估
     expect(worst("480p")).toBe(428_544);
   });
 
-  it("每秒成本 = 最差像素 × 24fps / 1024 × $5.60/M", () => {
-    expect(BYTEPLUS_USD_PER_MTOKEN).toBe(5.6);
-    // 720p:927,408 × 24 / 1024 = 21,736.125 tok/s → $0.1217223/s
-    expect(SEEDANCE_COGS_USD_PER_SECOND["720p"]).toBeCloseTo(0.1217223, 9);
-    // 480p:428,544 × 24 / 1024 = 10,044 tok/s → $0.0562464/s
-    expect(SEEDANCE_COGS_USD_PER_SECOND["480p"]).toBeCloseTo(0.0562464, 9);
+  it("#769 每秒成本 = 最差像素 × 24fps / 1024 × mini 牌价 $3.50/M", () => {
+    // 像素表与 24fps 是 Seedance 2.0 全系共用的,换 fast→mini 一格没动;
+    // 变的只有每 M token 的牌价:$5.60/M → $3.50/M。
+    expect(BYTEPLUS_USD_PER_MTOKEN).toBe(3.5);
+    // 720p:927,408 × 24 / 1024 = 21,736.125 tok/s → $0.0760764375/s(fast 时代 $0.1217223)
+    expect(SEEDANCE_COGS_USD_PER_SECOND["720p"]).toBeCloseTo(0.0760764375, 9);
+    // 480p:428,544 × 24 / 1024 = 10,044 tok/s → $0.035154/s(fast 时代 $0.0562464)
+    expect(SEEDANCE_COGS_USD_PER_SECOND["480p"]).toBeCloseTo(0.035154, 9);
   });
 
   it("genSpentUsd 按分辨率走各自的每秒成本;未知分辨率回落到**更贵**的 720p(不许低估)", () => {
-    expect(genSpentUsd(videoJob(5, "720p"))).toBeCloseTo(5 * 0.1217223, 9);
-    expect(genSpentUsd(videoJob(5, "480p"))).toBeCloseTo(5 * 0.0562464, 9);
-    expect(genSpentUsd(videoJob(5, "4K"))).toBeCloseTo(5 * 0.1217223, 9);
+    expect(genSpentUsd(videoJob(5, "720p"))).toBeCloseTo(5 * 0.0760764375, 9);
+    expect(genSpentUsd(videoJob(5, "480p"))).toBeCloseTo(5 * 0.035154, 9);
+    expect(genSpentUsd(videoJob(5, "4K"))).toBeCloseTo(5 * 0.0760764375, 9);
   });
 
-  it("零改动:整段参考视频的记账成本仍是 $0.78408(16:9 基准,归 T6)", () => {
+  it("#769 整段参考视频的记账成本 = $0.49896(含视频输入档 $2.10/M,16:9 基准)", () => {
     expect(genSpentUsd({ ...videoJob(5, "720p"), referenceVideoGenerationId: "gen_ref" }))
-      .toBeCloseTo(0.78408, 6);
+      .toBeCloseTo(0.49896, 6);
   });
 });
 
@@ -274,36 +276,31 @@ describe("#645 T4 毛利真值表(2 分辨率 × 12 时长 = 24 行,穷举)", ()
     expect(videoRows).toHaveLength(24);
   });
 
-  it("480p 全表清地板(最低 48.8%)", () => {
+  it("480p 全表清地板(#769 后最低 68.0%)", () => {
     for (const row of FOUNDER_PRICE_TABLE) {
       const r = rows.get(`video:${MODEL}:${row.seconds}:480p`)!;
       expect(r.clearsFloor, `480p ${row.seconds}s 毛利 ${(r.margin * 100).toFixed(2)}%`).toBe(true);
-      expect(r.margin).toBeGreaterThan(0.488);
+      expect(r.margin).toBeGreaterThan(0.68);
     }
   });
 
-  it("720p 只有 5/10/15 秒跌破地板(44.67%),其余因进位有余量", () => {
+  it("#769 720p 全表也清地板了(最低 65.4%)—— fast 时代 5/10/15 秒的 44.67% 缺口被成本降没了", () => {
+    // 换引擎前:2.2cr/秒在 5/10/15 秒三个整点不产生进位余量,按最差比例记成本后落到
+    // 44.67%,靠 Founder 具名豁免撑着。收费一格没动,成本从 $5.60/M 降到 $3.50/M,
+    // 三档回到 65.42% —— 缺口不是被豁免掉的,是被成本降没的。
     const below = FOUNDER_PRICE_TABLE
       .filter((row) => !rows.get(`video:${MODEL}:${row.seconds}:720p`)!.clearsFloor)
       .map((row) => row.seconds);
-    expect(below).toEqual([5, 10, 15]);
-    for (const seconds of below) {
-      expect(rows.get(`video:${MODEL}:${seconds}:720p`)!.margin).toBeCloseTo(0.446717, 5);
+    expect(below).toEqual([]);
+    for (const seconds of [5, 10, 15]) {
+      expect(rows.get(`video:${MODEL}:${seconds}:720p`)!.margin).toBeCloseTo(0.654198, 5);
     }
   });
 
-  it("具名豁免 = 那三档,一格不多一格不少;每条带比例、裁决日期与留档链接", () => {
-    expect(BELOW_FLOOR_FOUNDER_ACCEPTED.map((e) => e.tier).sort()).toEqual([
-      `video:${MODEL}:10:720p`,
-      `video:${MODEL}:15:720p`,
-      `video:${MODEL}:5:720p`,
-    ]);
-    for (const e of BELOW_FLOOR_FOUNDER_ACCEPTED) {
-      expect(e.ratios).toEqual(["4:3", "3:4", "21:9"]);
-      expect(e.ruledOn).toBe("2026-08-06");
-      expect(e.source).toContain("issues/645#issuecomment-5202464378");
-      expect(e.reason.length).toBeGreaterThan(0);
-    }
+  it("#769 具名豁免名单已清空:没有一档还需要豁免", () => {
+    // 名单的第 2 条规则:「在名单上却已经不跌破了 → 红」。三条 #645 豁免(720p 5/10/15s)
+    // 在 mini 成本下全部回到地板之上,所以必须清掉,留着就是一条不再成立的豁免挂在账上。
+    expect(BELOW_FLOOR_FOUNDER_ACCEPTED).toEqual([]);
   });
 
   it("跌破地板的档位 ⇔ 具名豁免名单,两边完全重合(新的违规藏不住)", () => {

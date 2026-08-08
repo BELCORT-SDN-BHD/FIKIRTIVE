@@ -4,7 +4,7 @@
  *
  * Purpose (the "money gate" step of docs/superpowers/plans/2026-07-02-otto-reference-video.md, Task 8):
  *   1. Confirm the exact Ark param shape we ship — `{type:"video_url", video_url:{url}, role:"reference_video"}`
- *      on dreamina-seedance-2-0-fast-260128 — is ACCEPTED (not "invalid role"/"video input not supported").
+ *      on dreamina-seedance-2-0-mini-260615 — is ACCEPTED (not "invalid role"/"video input not supported").
  *   2. Measure the REAL COGS of a reference-video gen so we can check margin vs our fixed reference-video price = 16cr ($1.60).
  *
  * ⚠️ THIS SPENDS REAL MONEY on BytePlus (one video generation). Run ONLY with the founder's explicit go-ahead.
@@ -30,7 +30,7 @@
 import { interlock } from "../../../scripts/tools/_interlock.mjs";
 interlock({ spends: "one real BytePlus (Ark) video generation" });
 const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
-const MODEL = "dreamina-seedance-2-0-fast-260128"; // = VIDEO_MODEL_MAP["seedance-2-fast"]
+const MODEL = "dreamina-seedance-2-0-mini-260615"; // = VIDEO_MODEL_MAP["seedance-2-mini"]
 
 function arg(name, def) {
   const i = process.argv.indexOf(`--${name}`);
@@ -56,7 +56,7 @@ const content = [
 ];
 // #663 P2-1: the paid path NEVER reaches the adapter with an absent aspect ratio. A merchant
 // who picks no shape has it normalised to the model default at enqueue
-// (normalizeFactoryMaterial → videoDefaults("seedance-2-fast").aspectRatio = "16:9", in
+// (normalizeFactoryMaterial → videoDefaults("seedance-2-mini").aspectRatio = "16:9", in
 // apps/web/lib/batch-idempotency.ts), and that value rides all the way into the adapter body
 // as `ratio: "16:9"`. Omitting it here would spend real money verifying a request shape the
 // product does not send. Kept honest by apps/web/lib/__tests__/verify-reference-video-mirror.test.ts,
@@ -66,7 +66,7 @@ const body = {
   content,
   resolution: "720p",
   duration: Number(duration),
-  ratio: "16:9", // = videoDefaults("seedance-2-fast").aspectRatio, the paid path's normalised default
+  ratio: "16:9", // = videoDefaults("seedance-2-mini").aspectRatio, the paid path's normalised default
   generate_audio: true, // = the provider's `req.audio ?? true`
   watermark: false,
   execution_expires_after: 3600,

@@ -40,7 +40,7 @@ describe("FalProvider.generateVideo — 付费边界(POST 2xx 即已计费)", ()
     let err: any;
     try {
       await new FalProvider("test-key").generateVideo({
-        prompt: "x", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-fast",
+        prompt: "x", imageUrl: "https://r2/frame.png", durationSeconds: 5, model: "seedance-2-mini",
       });
     } catch (e) { err = e; }
     return err;

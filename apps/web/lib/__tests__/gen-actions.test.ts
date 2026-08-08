@@ -98,7 +98,7 @@ const prevDefaultVideoModel = process.env.OTTO_DEFAULT_VIDEO_MODEL;
 /** 每例的干净起点。抽成具名函数是为了让「一个用例里连跑八格」的循环能在每一轮
  *  重新布好替身（`vi.clearAllMocks()` 会把 mockResolvedValue 一起清掉）。 */
 function resetStartGenMocks(): void {
-  process.env.OTTO_DEFAULT_VIDEO_MODEL = "seedance-2-fast";
+  process.env.OTTO_DEFAULT_VIDEO_MODEL = "seedance-2-mini";
   mockRequireOwner.mockResolvedValue({ email: "owner@example.test", ownerId: "org_ref" });
   mockIsImpersonating.mockResolvedValue(false);
   db.projectFindFirst.mockResolvedValue({ id: "p1" });
@@ -431,7 +431,7 @@ describe("startGen", () => {
     it("视频档位同理:面板报 11cr 而当前是 27cr(商家改了时长)⇒ 拒绝", async () => {
       const result = await startAssetGen(assetRequest({
         kind: "video",
-        model: "seedance-2-fast",
+        model: "seedance-2-mini",
         durationSeconds: 12,
         resolution: "720p",
         expectedCredits: 11,
@@ -638,7 +638,7 @@ describe("startGen", () => {
       entityIds: [],
       count: 1,
       kind: "video",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       durationSeconds: 5,
       resolution: "720p",
       referenceVideoGenerationId: "gen_ref",
@@ -652,7 +652,7 @@ describe("startGen", () => {
         ownerId: "org_ref",
         projectId: "p1",
         kind: "VIDEO",
-        model: "seedance-2-fast",
+        model: "seedance-2-mini",
         count: 1,
         referenceVideoGenerationId: "gen_ref",
         videoOptions: expect.objectContaining({ seconds: 5, resolution: "720p" }),
@@ -923,7 +923,7 @@ describe("startGen", () => {
       status: "FAILED",
       idempotencyKey: `batch:${"c".repeat(32)}:attempt:${"e".repeat(32)}`,
       prompt: "old prompt",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       kind: "VIDEO",
       count: 1,
       entityIds: ["entity-old"],
@@ -942,7 +942,7 @@ describe("startGen", () => {
       entityIds: ["entity-new"],
       count: 1,
       kind: "video",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       durationSeconds: 5,
       resolution: "720p",
       referenceVideoGenerationId: "ref-new",
@@ -993,14 +993,14 @@ describe("startGen", () => {
       entityIds: [],
       count: 2,
       kind: "video",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       durationSeconds: 5,
       resolution: "720p",
       idempotencyKey: "video-count2-key",
     });
 
     expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
-    // flat-priced seedance-2-fast 720p/5s = 11 displayed credits for ONE clip (#644 裁决
+    // flat-priced seedance-2-mini 720p/5s = 11 displayed credits for ONE clip (#644 裁决
     // 2026-08-06). The client fans a multi-clip request out as N single-clip jobs, so startGen
     // must reserve for count=1 — pricing the raw count here would double-charge the first clip
     // of every fan-out.
@@ -1034,7 +1034,7 @@ describe("startGen", () => {
         entityIds: [],
         count: 1,
         kind: "video",
-        model: "seedance-2-fast",
+        model: "seedance-2-mini",
         durationSeconds: Number(secondsRaw),
         resolution: resolution!,
         idempotencyKey: `video-tier-${key}`,
@@ -1062,7 +1062,7 @@ describe("startGen", () => {
         entityIds: [],
         count: 1,
         kind: "video",
-        model: "seedance-2-fast",
+        model: "seedance-2-mini",
         ...bad,
         idempotencyKey: `video-bad-${bad.durationSeconds}-${bad.resolution}`,
       });
@@ -1079,7 +1079,7 @@ describe("startGen", () => {
       entityIds: [],
       count: 1,
       kind: "video",
-      model: "seedance-2-fast",
+      model: "seedance-2-mini",
       durationSeconds: 10,
       resolution: "720p",
       idempotencyKey: "video-10s-key",
@@ -1564,7 +1564,7 @@ describe("startGen 图片规格快照", () => {
 
   it("视频作业不写图片快照(两条规格路互不串台)", async () => {
     await startGen({
-      ...base, kind: "video", model: "seedance-2-fast", aspectRatio: "16:9", idempotencyKey: "shape-4",
+      ...base, kind: "video", model: "seedance-2-mini", aspectRatio: "16:9", idempotencyKey: "shape-4",
     });
     expect(createdData().imageOptions).toBeUndefined();
     expect(createdData().videoOptions).toEqual(expect.objectContaining({ aspectRatio: "16:9" }));
@@ -1696,11 +1696,11 @@ describe("startGen 图片规格快照", () => {
     it("视频作业落库时带的是视频引擎,不是默认值 seedream", async () => {
       await startGen({
         projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
-        kind: "video", model: "seedance-2-fast", idempotencyKey: "t6-video-1",
+        kind: "video", model: "seedance-2-mini", idempotencyKey: "t6-video-1",
       });
       const data = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
       expect(data["kind"]).toBe("VIDEO");
-      expect(data["model"]).toBe("seedance-2-fast");
+      expect(data["model"]).toBe("seedance-2-mini");
       expect(data["model"]).not.toBe("seedream");
     });
 
@@ -1716,7 +1716,7 @@ describe("startGen 图片规格快照", () => {
       db.genJobCreate.mockClear();
       await startGen({
         projectId: "p1", prompt: "a cat walks", entityIds: [], count: 1,
-        kind: "video", model: "seedance-2-fast", idempotencyKey: "t6-video-2",
+        kind: "video", model: "seedance-2-mini", idempotencyKey: "t6-video-2",
       });
       const videoData = db.genJobCreate.mock.calls[0]?.[0]?.data as Record<string, unknown>;
       expect(Object.keys(videoData)).toContain("model");

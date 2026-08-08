@@ -50,7 +50,7 @@ export const MARGIN_FLOOR = 0.45;
 const FLOOR_EPSILON = 1e-9;
 
 /**
- * Provider COGS, transcribed BY HAND from the provider's own published pricing page —
+ * Provider COGS, transcribed BY HAND from the provider's own published price record —
  * deliberately NOT imported from @fikirtive/core, so a code-side COGS edit can never
  * silence this gate. Keyed by sellable-SKU id (see buildSellableSkus). Do NOT edit these
  * to make the gate pass — a change here is a costing decision (B12/founder), and drift is
@@ -63,9 +63,11 @@ const FLOOR_EPSILON = 1e-9;
  * pack monitoring is parked on the founder's ops list per #641), so the honest costing
  * basis is the LIST price. Video is token-priced:
  *   tokens = (input video seconds + output seconds) × W × H × fps / 1024
- *   720p 16:9 @24fps = 21,600 tokens/s · $5.60/M without video input · $3.30/M with it
- * Cross-checks against the provider's own finished prices: 720p 5s $0.60, 10s $1.21,
- * with-reference 720p 5s $0.64–1.43. All three reproduce exactly.
+ *   720p 16:9 @24fps = 21,600 tokens/s
+ * #769 (2026-08-08): the video engine changed to Seedance 2.0 mini, so the per-M-token rate
+ * changed with it — $3.50/M without video input, $2.10/M with it (was $5.60 / $3.30 on Fast).
+ * The formula, the pixel table and the hand-transcription discipline are untouched; the
+ * per-tier provenance right above each block records where mini's two rates were read.
  */
 export const COGS_INPUTS = {
   "image:seedream": {
@@ -77,46 +79,77 @@ export const COGS_INPUTS = {
     source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — refgen shares the image per-image basis",
   },
   // ── #645 T4: every sellable duration × resolution, costed at the tier's WORST ratio ──
-  // Two published primary sources, both hand-transcribed:
-  //   PRICE  docs.byteplus.com/en/docs/ModelArk/1544106 (Last updated 2026-08-01) —
-  //          dreamina-seedance-2-0-fast-260128, $5.60/M tokens without video input, SAME
-  //          rate for 480p and 720p; tokens = W × H × 24fps × seconds / 1024. The page's own
-  //          worked examples (480p 16:9 5s = $0.28, 720p 16:9 5s = $0.60) reproduce exactly.
+  // #769 (2026-08-08): the engine these tiers run on changed (Seedance 2.0 Fast → 2.0 mini,
+  // founder-ruled after eyeballing 7 real side-by-side clips), so every video COGS below was
+  // re-transcribed at mini's LIST price. The 12 merchant price cells did NOT move — the
+  // margin improvement is ours to keep, and repricing is a separate founder decision.
+  // Two primary sources, both hand-transcribed:
+  //   PRICE  ModelArk model record `dreamina-seedance-2-0-mini-260615`, read read-only with
+  //          `arkcli models get dreamina-seedance-2-0-mini` (2026-08-08). Its `pricing`
+  //          block carries the same two charge items every Seedance 2.0 tier has:
+  //            NV2VCompletion (no video input) original_price 0.0035 / K tokens = $3.50/M
+  //            V2VCompletion  (video input)    original_price 0.0021 / K tokens = $2.10/M
+  //          TRANSCRIBE THE LIST PRICE, NOT THE DISCOUNTED ONE: the same record's `price`
+  //          field shows 0.0014 / 0.00084 per K (what we pay today). A discount is neither
+  //          guaranteed nor auto-renewed, so the floor is only honest against list.
+  //
+  //          READ-CHECK (a DIFFERENT model record — do not confuse it with mini's):
+  //          the same two fields on `dreamina-seedance-2-0-fast-260128` give $5.60/M and
+  //          $3.30/M — byte-for-byte the numbers #644 transcribed off the published pricing
+  //          page. Two independent sources agreeing on the RETIRED tier is what confirms
+  //          this way of reading the record; mini's own rates are the $3.50 / $2.10 above.
+  //          Same rate for 480p and 720p; tokens = W × H × 24fps × seconds / 1024. The
+  //          formula still reproduces fast's published worked examples exactly (480p 16:9
+  //          5s = $0.28, 720p 16:9 5s = $0.60 — both at fast's $5.60/M, not mini's).
+  //
+  //          ⏰ AND WE NOW HAVE THE DATE. mini's discount is a PROMO that expires
+  //          **2026-09-07 14:00 (UTC+8)**, after which the unit price goes ×2.5. That date
+  //          is NOT in the API response — it lives only in the provider's docs, so it cannot
+  //          be re-derived from `arkcli models get` and is written down here on purpose.
+  //          The arithmetic confirms what "×2.5" means: $1.40/M × 2.5 = $3.50/M and
+  //          $0.84/M × 2.5 = $2.10/M — i.e. the promo simply ends and the price returns to
+  //          the LIST rate this table already uses. So THIS TABLE NEEDS NO EDIT on that
+  //          date, and the margin floor is already immune: we have never counted on the
+  //          discount. What does change is CASH — real spend on video ×2.5 overnight.
+  //          That is a runway question for the founder, not a margin question.
+  //          (Automatic price-drift alerting is #761's job, deliberately not built here.)
   //   PIXELS docs.byteplus.com/en/docs/ModelArk/1520757 (Create task, 2026-07-31, Seedance 2.0
-  //          series row). Per resolution the six ratios differ in pixel count, so a tier is a
-  //          COST RANGE, not a point. The floor is only meaningful against the worst of it:
-  //            720p worst = 4:3 / 3:4 at 1112×834 = 927,408 px → 21,736.125 tok/s → $0.1217223/s
+  //          series row — the whole 2.0 series shares it, mini included). Per resolution the
+  //          six ratios differ in pixel count, so a tier is a COST RANGE, not a point. The
+  //          floor is only meaningful against the worst of it:
+  //            720p worst = 4:3 / 3:4 at 1112×834 = 927,408 px → 21,736.125 tok/s → $0.0760764375/s
   //                         (21:9 at 1470×630 = 926,100 px is a hair cheaper; 16:9 = 921,600 px)
-  //            480p worst = 21:9 at 992×432   =   428,544 px → 10,044     tok/s → $0.0562464/s
+  //            480p worst = 21:9 at 992×432   =   428,544 px → 10,044     tok/s → $0.035154/s
+  //                         (480p 16:9 at 864×496 is the same 428,544 px — a tie, not cheaper)
   // Each entry below is that per-second figure × the tier's seconds. Do NOT "fix" one of these
   // to make a tier pass — the cost is the provider's, not ours.
-  "video:seedance-2-fast:4:720p": { cogsUsd: 0.4868892, source: "ModelArk/1544106 + /1520757 — 4s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:5:720p": { cogsUsd: 0.6086115, source: "ModelArk/1544106 + /1520757 — 5s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M; 16:9 would be $0.6048, the provider's own quoted $0.60" },
-  "video:seedance-2-fast:6:720p": { cogsUsd: 0.7303338, source: "ModelArk/1544106 + /1520757 — 6s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:7:720p": { cogsUsd: 0.8520561, source: "ModelArk/1544106 + /1520757 — 7s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:8:720p": { cogsUsd: 0.9737784, source: "ModelArk/1544106 + /1520757 — 8s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:9:720p": { cogsUsd: 1.0955007, source: "ModelArk/1544106 + /1520757 — 9s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:10:720p": { cogsUsd: 1.217223, source: "ModelArk/1544106 + /1520757 — 10s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M; 16:9 would be $1.2096, the provider's own quoted $1.21" },
-  "video:seedance-2-fast:11:720p": { cogsUsd: 1.3389453, source: "ModelArk/1544106 + /1520757 — 11s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:12:720p": { cogsUsd: 1.4606676, source: "ModelArk/1544106 + /1520757 — 12s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:13:720p": { cogsUsd: 1.5823899, source: "ModelArk/1544106 + /1520757 — 13s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:14:720p": { cogsUsd: 1.7041122, source: "ModelArk/1544106 + /1520757 — 14s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:15:720p": { cogsUsd: 1.8258345, source: "ModelArk/1544106 + /1520757 — 15s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $5.60/M" },
-  "video:seedance-2-fast:4:480p": { cogsUsd: 0.2249856, source: "ModelArk/1544106 + /1520757 — 4s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:5:480p": { cogsUsd: 0.281232, source: "ModelArk/1544106 + /1520757 — 5s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M; 16:9 would be $0.28, the provider's own worked example" },
-  "video:seedance-2-fast:6:480p": { cogsUsd: 0.3374784, source: "ModelArk/1544106 + /1520757 — 6s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:7:480p": { cogsUsd: 0.3937248, source: "ModelArk/1544106 + /1520757 — 7s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:8:480p": { cogsUsd: 0.4499712, source: "ModelArk/1544106 + /1520757 — 8s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:9:480p": { cogsUsd: 0.5062176, source: "ModelArk/1544106 + /1520757 — 9s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:10:480p": { cogsUsd: 0.562464, source: "ModelArk/1544106 + /1520757 — 10s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:11:480p": { cogsUsd: 0.6187104, source: "ModelArk/1544106 + /1520757 — 11s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:12:480p": { cogsUsd: 0.6749568, source: "ModelArk/1544106 + /1520757 — 12s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:13:480p": { cogsUsd: 0.7312032, source: "ModelArk/1544106 + /1520757 — 13s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:14:480p": { cogsUsd: 0.7874496, source: "ModelArk/1544106 + /1520757 — 14s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:15:480p": { cogsUsd: 0.843696, source: "ModelArk/1544106 + /1520757 — 15s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $5.60/M" },
-  "video:seedance-2-fast:ref": {
-    cogsUsd: 0.78408,
-    source: "docs.byteplus.com/en/docs/ModelArk/Pricing (2026-08-05) — (6s ref cap + 5s output) × 21,600 tok/s × $3.30/M = $0.78408 (with-video-input rate; our window's worst case)",
+  "video:seedance-2-mini:4:720p": { cogsUsd: 0.30430575, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 4s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:5:720p": { cogsUsd: 0.3803821875, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 5s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M; 16:9 would be $0.3780" },
+  "video:seedance-2-mini:6:720p": { cogsUsd: 0.456458625, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 6s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:7:720p": { cogsUsd: 0.5325350625, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 7s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:8:720p": { cogsUsd: 0.6086115, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 8s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:9:720p": { cogsUsd: 0.6846879375, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 9s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:10:720p": { cogsUsd: 0.760764375, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 10s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M; 16:9 would be $0.7560" },
+  "video:seedance-2-mini:11:720p": { cogsUsd: 0.8368408125, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 11s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:12:720p": { cogsUsd: 0.91291725, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 12s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:13:720p": { cogsUsd: 0.9889936875, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 13s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:14:720p": { cogsUsd: 1.065070125, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 14s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:15:720p": { cogsUsd: 1.1411465625, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 15s × 21,736.125 tok/s (720p worst ratio 4:3, 927,408px) × $3.50/M" },
+  "video:seedance-2-mini:4:480p": { cogsUsd: 0.140616, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 4s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:5:480p": { cogsUsd: 0.17577, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 5s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M; 480p 的 16:9(864×496)与 21:9(992×432)像素数相同,所以这一档没有更便宜的比例" },
+  "video:seedance-2-mini:6:480p": { cogsUsd: 0.210924, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 6s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:7:480p": { cogsUsd: 0.246078, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 7s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:8:480p": { cogsUsd: 0.281232, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 8s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:9:480p": { cogsUsd: 0.316386, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 9s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:10:480p": { cogsUsd: 0.35154, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 10s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:11:480p": { cogsUsd: 0.386694, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 11s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:12:480p": { cogsUsd: 0.421848, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 12s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:13:480p": { cogsUsd: 0.457002, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 13s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:14:480p": { cogsUsd: 0.492156, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 14s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:15:480p": { cogsUsd: 0.52731, source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 NV2VCompletion.original_price + docs/1520757 像素表 — 15s × 10,044 tok/s (480p worst ratio 21:9, 428,544px) × $3.50/M" },
+  "video:seedance-2-mini:ref": {
+    cogsUsd: 0.49896,
+    source: "ModelArk 模型档案 dreamina-seedance-2-0-mini-260615 V2VCompletion.original_price — (6s ref cap + 5s output) × 21,600 tok/s × $2.10/M = $0.49896(含视频输入档;我们参考片窗口的最坏情形)",
   },
 };
 

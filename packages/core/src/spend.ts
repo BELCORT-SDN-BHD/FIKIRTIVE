@@ -36,7 +36,7 @@ export function genSpentUsd(job: GenSpendInput): number {
     // #644 记账真相:整段参考视频的 COGS 基准搬去 gen.ts 与其它成本基准同住,并按官方
     // token 公式重算($0.85 → $0.78408)。这是**记账**,不是收费 —— 收费仍是下面
     // pricedGenCredits 里的 REFERENCE_VIDEO_CREDITS(16cr),本次一格没动。
-    if (job.model === "seedance-2-fast" && job.referenceVideoGenerationId) return REFERENCE_VIDEO_COGS_USD;
+    if (job.model === "seedance-2-mini" && job.referenceVideoGenerationId) return REFERENCE_VIDEO_COGS_USD;
     const d = videoDefaults(job.model as GenVideoModel);
     return videoPriceUsd(job.model as GenVideoModel, {
       seconds: job.videoOptions?.seconds ?? d.seconds,
@@ -76,12 +76,16 @@ export const INTERNAL_PER_DISPLAY = 10;
 /** 收费用**按秒/按档的价目表**的视频模型(BytePlus Seedance —— 价来自 Founder 已裁的
  *  价目表,不是 record-only 的 COGS)。#647 T6 之后,菜单上只剩这一台;这个集合仍然独立
  *  存在,因为「在菜单上」与「已经有一个清得了毛利地板的价」是两回事 —— 上架一台新引擎
- *  绝不能因为进了菜单就自动可售。不在这个集合里的 = 卖不了,只能落护栏价。 */
-export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-fast"]);
+ *  绝不能因为进了菜单就自动可售。不在这个集合里的 = 卖不了,只能落护栏价。
+ *
+ *  #769:换 fast→mini 走的是**换 key**,正是为了让这条纪律真的执行一次 —— 在同一个
+ *  key 底下换后端 id,新引擎就不必进这个集合也能卖,这道闸就只剩一句话。mini 是被
+ *  Founder 单独裁过价(价目表一格不动、毛利闸重跑全绿)之后才写进来的。 */
+export const FLAT_PRICED_VIDEO_MODELS = new Set<string>(["seedance-2-mini"]);
 export function isFlatPricedVideoModel(model: string): boolean { return FLAT_PRICED_VIDEO_MODELS.has(model); }
 
 /**
- * **Seedance 2.0 Fast 的按秒价目表**(#645 T4,Founder 裁决 2026-08-06,留档:
+ * **现役视频引擎的按秒价目表**(#645 T4,Founder 裁决 2026-08-06,留档:
  * https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/issues/645#issuecomment-5202464378)。
  *
  * 计价模型:**按秒计价,显示 credits 进位取整**。480p = 1.1cr/秒、720p = 2.2cr/秒。
@@ -130,7 +134,7 @@ export function seedanceDisplayCredits(model: string, resolution: string, second
   return Math.floor((seconds * per10s + 9) / 10);
 }
 
-/** 不按秒计价的兜底档:1080p(Fast 给不了,留作护栏)与任何未知分辨率都收 16cr。
+/** 不按秒计价的兜底档:1080p(现役引擎给不了,留作护栏)与任何未知分辨率都收 16cr。
  *  #644/#645 都没动这一格 —— 它是「宁可贵,不许贱卖」的最后一道。 */
 export const VIDEO_CREDITS_BY_RESOLUTION: Record<string, number> = { "1080p": 16 };
 export const REFERENCE_VIDEO_CREDITS = 16;

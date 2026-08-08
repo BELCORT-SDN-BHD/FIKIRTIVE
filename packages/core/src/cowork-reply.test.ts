@@ -42,7 +42,7 @@ describe("buildPlannerMessages with quoted", () => {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
     availableRefs: [],
-    modelSummary: "image: seedream; video: seedance-2-fast",
+    modelSummary: "image: seedream; video: seedance-2-mini",
   };
 
   it("without quoted, last message content equals userText", () => {
@@ -136,7 +136,7 @@ describe("buildPlannerMessages with brief", () => {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
     availableRefs: [],
-    modelSummary: "image: seedream; video: seedance-2-fast",
+    modelSummary: "image: seedream; video: seedance-2-mini",
   };
 
   it("with brief, the system message content includes the brief text", () => {
@@ -292,7 +292,7 @@ describe("buildPlannerMessages with images (Phase C vision)", () => {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
     availableRefs: [],
-    modelSummary: "image: seedream; video: seedance-2-fast",
+    modelSummary: "image: seedream; video: seedance-2-mini",
   };
 
   it("with images: user turn content is an array containing a text part + label + image_url parts", () => {
@@ -431,7 +431,7 @@ describe("buildPlannerMessages availableRefs with description", () => {
   const baseArgs = {
     userText: "Make a cat video",
     history: [] as { role: "user" | "assistant"; content: string }[],
-    modelSummary: "image: seedream; video: seedance-2-fast",
+    modelSummary: "image: seedream; video: seedance-2-mini",
   };
 
   it("a ref WITH description renders as id=name(type): <desc> in the system message", () => {

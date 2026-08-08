@@ -18,12 +18,12 @@ export function activeVideoModel(env?: Env): string {
     // letting the UI advertise a model the spend gate would reject on every attempt
     // (split-brain). Selling more models = give them flat floored prices first
     // (FLAT_PRICED_VIDEO_MODELS + costing), not an env flip.
-    console.warn(`[model-config] OTTO_DEFAULT_VIDEO_MODEL=${want} has no margin-floored price — using seedance-2-fast instead`);
+    console.warn(`[model-config] OTTO_DEFAULT_VIDEO_MODEL=${want} has no margin-floored price — using seedance-2-mini instead`);
   }
-  // Default to seedance-2-fast: the one in-service video engine, and the one with a ruled,
+  // Default to seedance-2-mini: the one in-service video engine, and the one with a ruled,
   // margin-floored price list (宪法 5 margin floor). A pre-#644 default charged ~raw cost,
   // so an unset env var silently sold video at cost. Founder overrides via OTTO_DEFAULT_VIDEO_MODEL.
-  return (GEN_VIDEO_MODELS as readonly string[]).includes("seedance-2-fast") ? "seedance-2-fast" : GEN_VIDEO_MODELS[0];
+  return (GEN_VIDEO_MODELS as readonly string[]).includes("seedance-2-mini") ? "seedance-2-mini" : GEN_VIDEO_MODELS[0];
 }
 
 export function assertSpendableModel(
@@ -38,7 +38,7 @@ export function assertSpendableModel(
   // — pricedGenCredits can only fall back to the guardrail. Refuse to spend on it even when
   // the env explicitly selects it. Fail closed.
   if (kind === "video" && !isFlatPricedVideoModel(model)) {
-    return { ok: false, error: "That video model has no margin-floored price yet, so it can't be sold. Pick a flat-priced model (e.g. seedance-2-fast)." };
+    return { ok: false, error: "That video model has no margin-floored price yet, so it can't be sold. Pick a flat-priced model (e.g. seedance-2-mini)." };
   }
   return { ok: true };
 }

@@ -45,44 +45,45 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     expect(r.clearsFloor).toBe(true);
   });
 
-  // #645 T4:成本基准从「720p 16:9」改成「720p 最差比例(4:3/3:4,927,408px)」。
-  // 收费一格没动(11 / 22cr),成本 +0.6%,于是这两档从 45.02% 落到 44.67% ——
-  // Founder 于 2026-08-06 明示接受,进具名豁免名单(BELOW_FLOOR_FOUNDER_ACCEPTED)。
-  it("720p 5s:收 11cr = $1.10,成本 $0.6086,毛利 $0.4914 = 44.67% —— Founder 已裁接受", () => {
-    const r = row("video:seedance-2-fast:5:720p");
+  // #645 T4:成本基准从「720p 16:9」改成「720p 最差比例(4:3/3:4,927,408px)」——这一条没变。
+  // #769:引擎换 mini,牌价 $5.60/M → $3.50/M。**收费一格没动**(仍是已裁的 11 / 22cr),
+  // 所以这两档从 44.67%(靠 Founder 具名豁免撑着)回到 65.42%,豁免名单随之清空。
+  it("720p 5s:收 11cr = $1.10,成本 $0.3804,毛利 $0.7196 = 65.42%", () => {
+    const r = row("video:seedance-2-mini:5:720p");
     expect(r.chargeUsd).toBeCloseTo(1.1, 6);
-    expect(r.cogsUsd).toBeCloseTo(0.6086115, 6);
-    expect(r.grossUsd).toBeCloseTo(0.4913885, 6);
-    expect(r.margin).toBeCloseTo(0.4467, 4);
-    expect(r.clearsFloor).toBe(false);
-    expect(acceptedExceptionFor(r.id)?.ruledOn).toBe("2026-08-06");
+    expect(r.cogsUsd).toBeCloseTo(0.3803821875, 6);
+    expect(r.grossUsd).toBeCloseTo(0.7196178125, 6);
+    expect(r.margin).toBeCloseTo(0.6542, 4);
+    expect(r.clearsFloor).toBe(true);
+    // 不再跌破 ⇒ 不许还挂着豁免(名单第 2 条规则)。
+    expect(acceptedExceptionFor(r.id)).toBeUndefined();
   });
 
-  it("720p 10s:收 22cr = $2.20,成本 $1.2172,毛利 $0.9828 = 44.67% —— Founder 已裁接受", () => {
-    const r = row("video:seedance-2-fast:10:720p");
+  it("720p 10s:收 22cr = $2.20,成本 $0.7608,毛利 $1.4392 = 65.42%", () => {
+    const r = row("video:seedance-2-mini:10:720p");
     expect(r.chargeUsd).toBeCloseTo(2.2, 6);
-    expect(r.cogsUsd).toBeCloseTo(1.217223, 6);
-    expect(r.grossUsd).toBeCloseTo(0.982777, 6);
-    expect(r.margin).toBeCloseTo(0.4467, 4);
-    expect(r.clearsFloor).toBe(false);
-    expect(acceptedExceptionFor(r.id)?.ruledOn).toBe("2026-08-06");
+    expect(r.cogsUsd).toBeCloseTo(0.760764375, 6);
+    expect(r.grossUsd).toBeCloseTo(1.439235625, 6);
+    expect(r.margin).toBeCloseTo(0.6542, 4);
+    expect(r.clearsFloor).toBe(true);
+    expect(acceptedExceptionFor(r.id)).toBeUndefined();
   });
 
-  it("480p 5s(新开的半价档):收 6cr = $0.60,成本 $0.2812,毛利 53.1%", () => {
-    const r = row("video:seedance-2-fast:5:480p");
+  it("480p 5s(半价档):收 6cr = $0.60,成本 $0.1758,毛利 70.7%", () => {
+    const r = row("video:seedance-2-mini:5:480p");
     expect(r.chargeUsd).toBeCloseTo(0.6, 6);
-    expect(r.cogsUsd).toBeCloseTo(0.281232, 6);
-    expect(r.margin).toBeCloseTo(0.5313, 4);
+    expect(r.cogsUsd).toBeCloseTo(0.17577, 6);
+    expect(r.margin).toBeCloseTo(0.70705, 4);
     expect(r.clearsFloor).toBe(true);
   });
 
-  it("整段参考视频(6s 参考上限 + 5s 出片):收 16cr = $1.60,成本 $0.78408,毛利 $0.81592 = 51.0%", () => {
-    const r = row("video:seedance-2-fast:ref");
+  it("整段参考视频(6s 参考上限 + 5s 出片):收 16cr = $1.60,成本 $0.49896,毛利 $1.10104 = 68.815%", () => {
+    const r = row("video:seedance-2-mini:ref");
     expect(r.chargeUsd).toBeCloseTo(1.6, 6);
-    expect(r.cogsUsd).toBeCloseTo(0.78408, 6);
-    expect(r.grossUsd).toBeCloseTo(0.81592, 6);
-    expect(r.margin).toBeCloseTo(0.50995, 4);
-    // 含视频输入走 $3.30/M(低于无视频输入的 $5.60/M),所以修正后这一档反而**变好**了。
+    expect(r.cogsUsd).toBeCloseTo(0.49896, 6);
+    expect(r.grossUsd).toBeCloseTo(1.10104, 6);
+    expect(r.margin).toBeCloseTo(0.68815, 5);
+    // 含视频输入那档 mini 是 $2.10/M(低于无视频输入的 $3.50/M),所以这一档一直是全表最好的之一。
     expect(r.clearsFloor).toBe(true);
   });
 
@@ -153,8 +154,16 @@ describe("#644 毛利真相表(修正后 COGS × 现行收费)", () => {
     console.log(`\n${report}\n`);
     // 24 个视频档 + 图片 + 参考图 + 整段参考视频 = 27 行。
     expect(report.split("\n")).toHaveLength(27 + 1);
-    // 三条已裁豁免行必须**看得见**地标出来 —— 报表不许把它们印得跟过了地板一样。
+    // 跌破地板的行必须**看得见**地标出来 —— 报表不许把它们印得跟过了地板一样。
+    // #769 后名单是空的,所以这里也必须一行「地板 ↓」都没有;两边同源,不可能分家。
     expect(report.match(/地板 ↓/g) ?? []).toHaveLength(BELOW_FLOOR_FOUNDER_ACCEPTED.length);
-    expect(report).toContain("毛利率 44.7%");
+    expect(report.match(/地板 ↓/g) ?? []).toHaveLength(0);
+    // 视频档里最低的是 720p 的 5/10/15 秒整点档(65.42%)。
+    expect(report).toContain("毛利率 65.4%");
+    // 但**全表**最低的不是它 —— 图片与参考图是 65.0%。把这句也钉住,免得
+    // 「最低毛利率」在注释里被写成视频档那个数(判官 r1 P3 抓到过一次)。
+    const lowest = marginTruthTable().reduce((a, b) => (b.margin < a.margin ? b : a));
+    expect(lowest.margin).toBeCloseTo(0.65, 4);
+    expect(["image:seedream", "refgen:seedream"]).toContain(lowest.id);
   });
 });

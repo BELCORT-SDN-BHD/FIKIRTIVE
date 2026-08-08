@@ -612,7 +612,7 @@ async function seedProjects(ownerId, imageAssets, videoAsset, projectCount, gens
         assetId: asset.id,
         source: "GENERATED",
         promptText: `${isVideo ? "Video" : "Image"} QA creative ${g} for ${projectNames[(p - 1) % projectNames.length]}`,
-        modelRef: isVideo ? "seedance-2-fast" : "seedream",
+        modelRef: isVideo ? "seedance-2-mini" : "seedream",
         params: isVideo ? { durationSeconds: 5, aspectRatio: "9:16" } : { aspectRatio: "1:1" },
         entitySnapshot: { entities: entityIds.slice(0, 2).map((entityId) => ({ id: entityId, name: "QA entity" })) },
         version: isAttached ? 1 : 1,
@@ -624,7 +624,7 @@ async function seedProjects(ownerId, imageAssets, videoAsset, projectCount, gens
         shotId: isAttached ? shotIds[g - 1] : null,
         assetId: asset.id,
         promptText: `${isVideo ? "Video" : "Image"} QA creative ${g} for ${projectNames[(p - 1) % projectNames.length]}`,
-        modelRef: isVideo ? "seedance-2-fast" : "seedream",
+        modelRef: isVideo ? "seedance-2-mini" : "seedream",
         params: isVideo ? { durationSeconds: 5, aspectRatio: "9:16" } : { aspectRatio: "1:1" },
         threadId: isAd ? firstThreadId : null,
         favorite: g % 10 === 0,
@@ -694,7 +694,7 @@ async function seedThreads(ownerId, projectId, projectIndex, firstThreadId) {
     idempotencyKey: `qa:${projectId}:running`,
     threadId: firstThreadId,
     kind: "VIDEO",
-    model: "seedance-2-fast",
+    model: "seedance-2-mini",
     count: 1,
     status: "GENERATING",
     progress: 42,
@@ -912,7 +912,7 @@ async function seedAdminSurface() {
   }, { valueJson: { provider: "mock" }, updatedBy: "qa-seed" });
   // #647 T6:这里原本有一条 modelRegistryOverlay disabled 行(veo3.1-lite,"QA disabled
   // model row")。12 台假引擎下架后 knownDisabledSet 会把不在册的 id 过滤掉,这条行只会
-  // 变成一条 inert 数据;而在册 id 只剩 seedream / seedance-2-fast,都是各自 kind 唯一的
+  // 变成一条 inert 数据;而在册 id 只剩 seedream / seedance-2-mini,都是各自 kind 唯一的
   // 在产引擎,seed 里禁任何一个都会真实关掉本地 QA 的对应生成能力(overlay 是平台级
   // 开关,只读 FOUNDER 行)。所以不再预置 disabled 行:「引擎被关掉」的行为由
   // apps/web/lib/__tests__/engine-off-empty-state.test.ts 与 model-registry.test.ts 钉死;
@@ -953,7 +953,7 @@ async function seedAuditEvents() {
     ["directive.seed", { inserted: 4, via: "qa-seed" }],
     // #647 T6:audit 演示行改用在册 id;enabled:true(一次「重新打开」的历史事件)与
     // 「当前没有任何引擎被禁」的 seed 状态自洽 —— 不许出现日志说关了、菜单却亮着的假账。
-    ["model.toggle", { modelId: "seedance-2-fast", enabled: true }],
+    ["model.toggle", { modelId: "seedance-2-mini", enabled: true }],
     ["tenant.invite", { email: "merchant.qa@example.test" }],
     ["generation.outcome", { generationId: id(`${FOUNDER}_project_01_gen_001`), result: "approved", posted: false }],
     ["credits.grant", { orgId: MERCHANT, displayedAmount: 250 }],

@@ -5,7 +5,11 @@ import { chargedError, extFromUrl } from "./index.js";
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 /** internal model id → Ark foundation-model id (verified active on the account). */
 export const IMAGE_MODEL_MAP: Record<string, string> = { seedream: "seedream-5-0-260128" };
-export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-fast": "dreamina-seedance-2-0-fast-260128" };
+/** #769(Founder 已裁 2026-08-08):战役视频引擎从 2.0 Fast 换 2.0 mini。
+ *  版本化 id 取自 ModelArk 模型档案(只读核实):`arkcli models get dreamina-seedance-2-0-mini`
+ *  → `id` / `primary_version` = `dreamina-seedance-2-0-mini-260615`;
+ *  `arkcli models versions dreamina-seedance-2-0-mini` 只回这一个版本 260615。 */
+export const VIDEO_MODEL_MAP: Record<string, string> = { "seedance-2-mini": "dreamina-seedance-2-0-mini-260615" };
 
 export class BytePlusProvider implements GenerationProvider {
   readonly name = "byteplus";

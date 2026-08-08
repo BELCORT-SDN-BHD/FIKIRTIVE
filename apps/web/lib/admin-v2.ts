@@ -33,7 +33,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const GEN_STATUSES = ["QUEUED", "GENERATING", "DONE", "FAILED"] as const;
 const RENDER_STATUSES = ["QUEUED", "RENDERING", "DONE", "FAILED"] as const;
 const ADMIN_SECTIONS: Section[] = ["model", "cost", "content", "team", "system", "knowledge", "credits", "tenants"];
-const BYTEPLUS_MODELS = new Set(["seedream", "seedance-2-fast"]);
+const BYTEPLUS_MODELS = new Set(["seedream", "seedance-2-mini"]);
 
 type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
