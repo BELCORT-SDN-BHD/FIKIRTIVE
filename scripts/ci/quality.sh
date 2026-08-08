@@ -78,8 +78,9 @@ fi
 #   DB_POOL_MAX=4 → 58 passed, 74s
 #   DB_POOL_MAX=6 → 58 passed, 120s
 #   DB_POOL_MAX=10 (old default) → 58 passed, 144s
-# 4 is the smallest ceiling that keeps every lock proof meaningful, and it happened to be
-# the fastest of the four as well.
+# Of the four ceilings measured, 4 is the smallest that keeps every lock proof meaningful,
+# and it happened to be the fastest of the four as well. 3 was never measured, so read this
+# as "smallest measured green value", not as a proven floor.
 export DB_POOL_MAX="${DB_POOL_MAX:-4}"
 
 local_database=""
@@ -153,6 +154,9 @@ fi
 # 1. Pure text fences — grep only, no build, ~1s. Nothing should ever run before these.
 gate "skill-import fence" bash scripts/check-skill-imports.sh
 gate "destructive-migration fence" bash scripts/check-destructive-migrations.sh
+# The gate that decides whether the gates run. Its own self-test therefore goes first
+# among the things that can be checked without a build (#809).
+gate "PR-scope gate self-test" bash scripts/__tests__/pr-scope.test.sh
 
 # 2. The one unavoidable prerequisite: dist + generated Prisma client.
 gate "packages build" pnpm --filter "./packages/*" build

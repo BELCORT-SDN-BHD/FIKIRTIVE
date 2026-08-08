@@ -55,26 +55,31 @@ jobs:
       # check, and `quality` is required — a docs-only PR would sit unmergeable forever.
       # Deciding inside the job means `quality` still reports on every PR, it just finishes
       # in seconds. Fail-safe: anything unexpected (API error, empty list) runs the full gate.
+      #
+      # The decision itself lives in scripts/ci/pr-scope.sh so it can be tested — it is
+      # covered by scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step only
+      # fetches the list and forwards the answer, and it only ever accepts a literal
+      # "false" as permission to skip.
       - name: Scope — does this PR touch anything outside docs/?
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
-          files="$(gh api --paginate \
+          changed="${RUNNER_TEMP:-/tmp}/pr-changed-files.txt"
+          gh api --paginate \
             "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            --jq '.[].filename' 2>/dev/null)" || files=""
-          if [ -z "$files" ]; then
+            --jq '.[].filename' >"$changed" 2>/dev/null || : >"$changed"
+          if [ ! -s "$changed" ]; then
             echo "could not list the PR's files — running every gate"
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "changed files:"
-          echo "$files"
-          if printf '%s\n' "$files" | grep -qv '^docs/'; then
-            echo "code=true" >> "$GITHUB_OUTPUT"
           else
-            echo "code=false" >> "$GITHUB_OUTPUT"
+            echo "changed files:"
+            cat "$changed"
+          fi
+          code="$(bash scripts/ci/pr-scope.sh "$changed")" || code=true
+          [ "$code" = "false" ] || code=true
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "false" ]; then
             echo "docs/** only — every gate below is a no-op for this diff"
           fi
 
