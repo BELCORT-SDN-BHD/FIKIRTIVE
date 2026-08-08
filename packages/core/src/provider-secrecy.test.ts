@@ -161,6 +161,22 @@ describe("#810 流式与整段逐字节一致 —— 判官的两个复现形状
     }
   });
 
+  it("P2(r2):替身字符的词类判断必须与主正则同口径(`iu`)", () => {
+    // 主正则带 `iu`,所以 `\b` 眼里的「词字符」包含 K(U+212A 开尔文号)与 ſ(U+017F 长 s)——
+    // 它们在 `i`+`u` 的大小写折叠下等价于 k / s。于是整段过滤看到 "Kseedance" 是**没有词边界**
+    // 的,一个字不动。判断替身字符时若用不带 flag 的 /\w/,K 会被当成非词字符、换成空格,
+    // 切点凭空造出边界 —— 又回到 P2-1 那类误洗,只是换了个字符。
+    for (const lead of ["K", "\u017F"]) {
+      const text = `${lead}seedance ` + "x".repeat(80);
+      expect(redactProviderNames(text), `整段:${lead}`).toBe(text);
+      // 恰好切在那个字符之后 —— 最能暴露替身判断的位置。
+      expect(streamThroughCuts(text, [1]), `流式切在 ${lead} 之后`).toBe(text);
+      for (const chunkSize of [1, 2, 5, 13, 64]) {
+        expect(streamThrough(text, chunkSize), `${lead} @chunk=${chunkSize}`).toBe(text);
+      }
+    }
+  });
+
   it("生成式穷举:随机拼出来的文本 × 随机切法,一律流式 = 整段", () => {
     // 一段固定语料只能证明它自己。这里把名字、版本号、后缀、空白、合法复合词、以及一段
     // 已经是 generation provider 的字面量随机拼起来 —— 专挑边界:名字紧挨名字(重复折叠)、
@@ -170,6 +186,8 @@ describe("#810 流式与整段逐字节一致 —— 判官的两个复现形状
       "generation provider", "api", "sdk", "model", "provider", "error", "version",
       "2.0", "4.5", "fast", ".pro/v2", "-3", "sonnet", "claude-3", "anthropicapi", "seedanceprovider",
       " ", "  ", "\n", "\t", "x", "AAmy", "store", "the", "false", "myseedreamstore",
+      // 大小写折叠下等价于 k / s 的两个字符 —— 词边界判断最容易两套口径的地方。
+      "K", "\u017F", "K\u017F", "SEEDANCE", "SeeDream", "BytePlus",
       "x".repeat(30), "10.2.3.4", ",", ";", "!", "?", "-", "/", ".", ":", "_",
     ];
     let seed = 810;

@@ -62,12 +62,12 @@ const REDACTED = "generation provider";
 
 /** Collapse a run of adjacent redactions back to one phrase. Bounded like everything else:
  *  a run bridged by more than MAX_GAP whitespace is not one phrase, it is two sentences. */
-const REPEAT_RE = new RegExp(`\\b${REDACTED}(?:\\s{1,${MAX_GAP}}${REDACTED})+\\b`, "gi");
+const REPEAT_RE = new RegExp(`\\b${REDACTED}(?:\\s{1,${MAX_GAP}}${REDACTED})+\\b`, "giu");
 
 /** An already-redacted phrase sitting in the INPUT. Not a secret, but the collapse above can
  *  merge it with a neighbouring redaction, so the streaming filter must never split a run
  *  that contains one. */
-const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "gi");
+const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "giu");
 
 /**
  * The longest stretch of text any alternative above can DECIDE ON — its own match plus the
@@ -85,6 +85,18 @@ const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "gi");
  * (streamed output === whole-text output) rather than trusting the arithmetic alone.
  */
 const MAX_MATCH_SPAN = 64;
+
+/**
+ * "Is this a word character?" — asked with the SAME flags the pattern above is compiled with
+ * (#810 r2 P2). Under `iu`, case folding makes U+212A (KELVIN SIGN) equal to "k" and U+017F
+ * (LATIN SMALL LETTER LONG S) equal to "s", so `\b` treats both as word characters. A plain
+ * `/\w/` disagrees — and the streaming filter used one to pick its stand-in, so "Kseedance"
+ * (which the whole text leaves alone, there being no boundary) was scrubbed the moment a chunk
+ * boundary landed after the K. Two readings of "word character" is the same class of bug as two
+ * readings of "secret": whatever `\b` believes, this must believe.
+ */
+const WORD_CHAR_RE = /\w/iu;
+const WHITESPACE_RE = /\s/u;
 
 /** Replace trade-secret provider/model names while keeping the surrounding text useful. */
 export function redactProviderNames(s: string): string {
@@ -166,7 +178,7 @@ export function createProviderNameFilter(): { push(delta: string): string; flush
   let buffer = "";
 
   /** Same word/non-word class as `c`, but a character no alternative can start with. */
-  const standIn = (c: string): string => (/\w/.test(c) ? "_" : " ");
+  const standIn = (c: string): string => (WORD_CHAR_RE.test(c) ? "_" : " ");
 
   /** How far into `buffer` it is safe to emit, or 0 for "nothing yet". */
   const safeEnd = (): number => {
@@ -175,7 +187,7 @@ export function createProviderNameFilter(): { push(delta: string): string; flush
     // Never cut through the middle of a word. The released head is scrubbed as its own string,
     // and end-of-string is a word boundary — so a cut inside "false" would hand the pattern a
     // "fal" the real text never contains.
-    while (end > 0 && /\w/.test(buffer[end - 1]!) && /\w/.test(buffer[end]!)) end--;
+    while (end > 0 && WORD_CHAR_RE.test(buffer[end - 1]!) && WORD_CHAR_RE.test(buffer[end]!)) end--;
     if (end <= 0) return 0;
     // Scan with the left neighbour's stand-in in front, then translate back to buffer coordinates.
     const probe = prev + buffer;
@@ -189,7 +201,7 @@ export function createProviderNameFilter(): { push(delta: string): string; flush
       // the whitespace through which the repeat-collapse could still recruit a name that has
       // not arrived yet.
       let reach = run.lastStart - prev.length + MAX_MATCH_SPAN;
-      for (let at = runEnd, i = 0; i < MAX_GAP && at < buffer.length && /\s/.test(buffer[at]!); i++, at++) {
+      for (let at = runEnd, i = 0; i < MAX_GAP && at < buffer.length && WHITESPACE_RE.test(buffer[at]!); i++, at++) {
         reach = Math.max(reach, at + 1);
       }
       if (reach >= end) return Math.max(start, 0);
