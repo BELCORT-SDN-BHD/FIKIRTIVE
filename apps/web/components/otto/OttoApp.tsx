@@ -15,6 +15,7 @@ import type { AnalyticsData } from "@/lib/analytics-actions";
 import type { HistoryThumb } from "@/lib/data";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
+import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
 
 const MOBILE_BP = 680;
@@ -116,6 +117,9 @@ export interface OttoAppProps {
   /** Start with a pane collapsed (the canvas home's panes are collapsible). */
   initialNavCollapsed?: boolean;
   initialChatCollapsed?: boolean;
+  /** #679 — has this WORKSPACE dismissed the "Get Otto ready" card? Read server-side from the
+   *  org row, so a new device or a private window gets the same answer. */
+  onboardingDismissed?: boolean;
 }
 
 export type OttoViewKey = "otto" | "stuff" | "library" | "templates" | "discover" | "memory" | "account" | "connections" | "schedule" | "analytics";
@@ -149,6 +153,7 @@ export function OttoApp({
   skin,
   initialNavCollapsed,
   initialChatCollapsed,
+  onboardingDismissed = false,
 }: OttoAppProps) {
   const router = useRouter();
   const [view, setView] = useState<OttoViewKey>(initialView ?? "otto");
@@ -158,6 +163,9 @@ export function OttoApp({
     initialActiveThreadId === undefined ? (initialThreads[0]?.id ?? null) : initialActiveThreadId,
   );
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // #679 — mirrored so the card closes on the click, not a round-trip later. The row is the
+  // authority: a reload (or any other device) reads the server value again.
+  const [onboardingHidden, setOnboardingHidden] = useState(onboardingDismissed);
   const [activity, setActivity] = useState<Set<string>>(new Set());
   const [seedText, setSeedText] = useState<string>("");
   // #513 A组返工 item 1 — closed by default: OttoNav is a slide-over now (see
@@ -317,6 +325,15 @@ export function OttoApp({
     setView(nextView);
     pushViewHistory(viewHref(nextView));
   }, [pushViewHistory, viewHref]);
+
+  // #679 — dismissing the getting-started card is a fact about the shop, so it is written to
+  // the shop's row. The click hides the card immediately; if the write is refused (the only
+  // refusals are "not signed in" and "staff are impersonating you") the card comes back on the
+  // next load, which is honest — nothing was recorded.
+  const handleDismissOnboarding = useCallback(() => {
+    setOnboardingHidden(true);
+    void setOwnerSetting("ottoOnboardingDismissed", true).catch(() => {});
+  }, []);
 
   function handleUseInOtto(prompt: string) {
     setSeedText(prompt);
@@ -697,6 +714,11 @@ export function OttoApp({
           seedText={seedText}
           onSeedConsumed={() => setSeedText("")}
           onUseInOtto={handleUseInOtto}
+          onboardingDismissed={onboardingHidden}
+          onDismissOnboarding={handleDismissOnboarding}
+          // Every conversation this SHOP has, across every project (the page loads them for the
+          // sidebar) — not just the open project's. See OttoView for why the distinction matters.
+          shopConversationCount={sidebarThreadList.length}
           chatCollapsed={chatCollapsed}
           onToggleChat={() => setChatCollapsed((v) => !v)}
           skin={skin}

@@ -19,6 +19,7 @@ import { handleRefGen, reapStaleRefGenJobs } from "./jobs/refgen.js";
 import { handleGen, reapStaleGenJobs } from "./jobs/gen.js";
 import { backfillCanvasBoards } from "./jobs/canvas-backfill.js";
 import { reapStaleLlmReservations } from "./jobs/llm-reservation-reaper.js";
+import { reapExpiredAuthVerifications } from "./jobs/auth-verification-reaper.js";
 import { handleCaption } from "./jobs/caption.js";
 import { handleResearch, reapStaleResearchJobs } from "./jobs/research.js";
 import { handlePublish, reapStalePublishAttempts, scanDuePublishPosts } from "./jobs/publish.js";
@@ -249,6 +250,10 @@ async function main(): Promise<void> {
         if (rn) console.log(`[worker] reaped ${rn} stale refgen job(s)`);
         const ln = await reapStaleLlmReservations();
         if (ln) console.log(`[worker] reaped ${ln} leaked LLM reservation(s)`);
+        // #678: expired sign-in / verification / reset tokens. Nothing consumes them once they
+        // lapse, and nothing used to delete them either, so the table only ever grew.
+        const vn = await reapExpiredAuthVerifications();
+        if (vn) console.log(`[worker] reaped ${vn} expired auth verification row(s)`);
         // Research: a worker SIGKILL'd mid-run (retryLimit:0 → no redelivery) strands the card
         // "Researching…" forever. Credits are already recovered by reapStaleLlmReservations above;
         // this flips the stranded RUNNING job → FAILED + its card → failed (pure UX, $0).

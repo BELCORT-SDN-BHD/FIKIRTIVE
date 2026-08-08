@@ -71,9 +71,10 @@ beforeAll(async () => {
   await asUser(A_EMAIL); const a = await requireOwner(); if ("error" in a) throw new Error(a.error); orgA = a.ownerId;
   await asUser(B_EMAIL); const b = await requireOwner(); if ("error" in b) throw new Error(b.error); orgB = b.ownerId;
   expect(orgA).not.toBe(orgB);
-  // The defect's own starting state: bootstrapPersonalOrg names the workspace after the
-  // merchant's email when no shop name was collected (every pre-#543 account).
-  expect(await orgName(orgA)).toBe(A_EMAIL);
+  // #680 — a merchant who came in without ever being asked for a shop name starts with NO
+  // workspace name. This used to be their email address (the defect's starting state), which
+  // /profile then showed back to them as "Your shop name". See workspace-name-not-email.test.ts.
+  expect(await orgName(orgA)).toBe("");
 });
 
 // ───────────────────────────────────────────────────────────────────────────────
