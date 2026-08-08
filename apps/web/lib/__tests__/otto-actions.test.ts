@@ -2379,6 +2379,39 @@ describe("createEmptyCoworkThread — success", () => {
       }),
     );
   });
+
+  // #677 (#546 收口余项) — the empty-title fallback had no pin: only a normal title and the
+  // 80-char truncation were covered, so a thread row could start carrying "" (a blank entry
+  // in the merchant's conversation list) without a single test going red.
+  it("an empty title falls back to Untitled — never a blank row in the list", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID });
+    mockChatThreadCreate.mockResolvedValue({});
+
+    const res = await createEmptyCoworkThread({ projectId: PROJECT_ID, title: "" });
+
+    expect(res).toEqual({ id: expect.any(String) });
+    expect(mockChatThreadCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ ownerId: OWNER_ID, projectId: PROJECT_ID, title: "Untitled" }),
+      }),
+    );
+  });
+
+  // "Untitled", never "New campaign" (#546): a conversation is not a campaign, and the
+  // project-level placeholder must not leak onto a thread.
+  it("the fallback is exactly Untitled, not a project placeholder name", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID });
+    mockChatThreadCreate.mockResolvedValue({});
+
+    await createEmptyCoworkThread({ projectId: PROJECT_ID, title: "" });
+
+    const { title } = mockChatThreadCreate.mock.calls.at(-1)![0].data as { title: string };
+    expect(title).toBe("Untitled");
+    expect(title).not.toBe("New campaign");
+    expect(title).not.toBe("New project");
+  });
 });
 
 describe("deleteCoworkThread — hard delete", () => {
