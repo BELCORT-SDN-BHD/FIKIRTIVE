@@ -144,6 +144,24 @@ vi.mock("../better-auth/compat", () => ({ isImpersonating: h.isImpersonating }))
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../gen-actions", () => ({ startGen: h.startGen }));
 vi.mock("@fikirtive/db", () => ({ prisma: h.prisma }));
+/**
+ * #749 判官 r3 P3 —— 让**生产实现**真的碰到一个它没见过的规格字段。
+ *
+ * 「将来多一个字段会自动进指纹」这句话,只有让生产的 `canonicalSpec` 与生产的指纹代码
+ * 亲自处理那个字段才算证过。所以这里从**规格的产地**(`cellResolvedSpec`)多塞一格出来 ——
+ * 引擎将来长出一个字段就是这个样子 —— 其余一切原样透传。默认关闭,只有点名的那条用例打开。
+ */
+const specExtras = vi.hoisted(() => ({ extra: null as Record<string, unknown> | null }));
+vi.mock("../factory-batch", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../factory-batch")>();
+  return {
+    ...actual,
+    cellResolvedSpec: (cell: Parameters<typeof actual.cellResolvedSpec>[0]) => {
+      const spec = actual.cellResolvedSpec(cell);
+      return specExtras.extra ? { ...spec, ...specExtras.extra } : spec;
+    },
+  };
+});
 
 const { confirmCampaignGeneration, quoteCampaignGeneration } = await import("../campaign-generation-confirm");
 const {
@@ -363,6 +381,7 @@ beforeEach(() => {
   h.store.jobs.clear();
   failPrompts = new Set();
   lockTimeSurcharge = 0;
+  specExtras.extra = null;
   vi.clearAllMocks();
   h.requireOwner.mockResolvedValue({ email: "o@example.test", ownerId: OWNER });
   h.isImpersonating.mockResolvedValue(false);
@@ -1475,16 +1494,26 @@ describe("#749 判官 r2 P3 内容指纹覆盖整份卡面承诺", () => {
     },
   );
 
-  it("② 将来多出来的字段自动进指纹 —— 不用有人记得回来点名它", async () => {
+  it("③ 将来多出来的字段自动进指纹 —— 由**生产实现**亲自处理,不是测试自己算的", async () => {
+    // 判官 r3 P3:上一版只把新字段加进测试副本、交给测试自写的重算函数,生产的
+    // `canonicalSpec` 根本没碰过它 —— 把生产实现改成「只认当前六个字段」的白名单之后
+    // 那条断言照样绿。这一版从规格的产地多塞一格出来,走的是生产的每一步。
     seedCampaign([entry("V1", { format: "reel" })]);
-    const quote = await currentQuote();
-    const lines = linesFor(quote);
-    expect(contentFingerprintFrom(lines)).toBe(quote.contentFingerprint);
+    const base = await currentQuote();
 
-    // 一个今天还不存在的规格字段。没人点过它的名,指纹却必须立刻不一样 ——
-    // 「整份哈希」与「挑字段」的差别就在这一条。
-    lines[0].promisedSpec.somethingTheEngineWillAddLater = "on";
-    expect(contentFingerprintFrom(lines)).not.toBe(quote.contentFingerprint);
+    specExtras.extra = { somethingTheEngineWillAddLater: "on" };
+    const grown = await currentQuote();
+
+    // 卡面承诺里确实多了这一格,而代码里没有任何一处点过它的名。
+    expect(Object.keys(grown.lines[0].promisedSpec)).toContain("somethingTheEngineWillAddLater");
+    // 服务端**自己**算出来的那个指纹必须跟着变。白名单版会在这里红。
+    expect(grown.contentFingerprint).not.toBe(base.contentFingerprint);
+
+    // 同一格换个值,指纹还得再变一次 —— 它是真进了哈希,不是「多一个键就变」那么巧。
+    specExtras.extra = { somethingTheEngineWillAddLater: "off" };
+    const flipped = await currentQuote();
+    expect(flipped.contentFingerprint).not.toBe(grown.contentFingerprint);
+    expect(flipped.contentFingerprint).not.toBe(base.contentFingerprint);
   });
 });
 
