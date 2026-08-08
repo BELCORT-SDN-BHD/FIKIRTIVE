@@ -63,6 +63,26 @@ describe("#791-8 对外文案不再称 beta", () => {
 describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", () => {
   const signup = readCopy("app/signup/page.tsx");
 
+  /** 把「enough for a full run: …」后面那句承诺拆成一件一件东西。
+   *
+   *  JSX 里这句被折行、夹着 {" "} 与 {starterCredits},所以先还原成一行纯文本:去掉表达式与
+   *  标签、压平空白,再按句号截断、按逗号 / and 拆项。拆出来的是**商家眼睛看到的东西**,
+   *  不是源码形状 —— 只有这样,「承诺了几件」才是断言得了的。 */
+  function promisedItems(): string[] {
+    const flat = signup
+      .replace(/\{[^{}]*\}/g, " ")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&apos;/g, "'")
+      .replace(/\s+/g, " ")
+      .trim();
+    const after = flat.split(/enough for a full run:/i)[1];
+    if (!after) return [];
+    return (after.split(".")[0] ?? "")
+      .split(/,|\band\b/i)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
   it("数字是从赠额常量算出来的,不是打上去的", () => {
     expect(signup).toContain("displayCredits(SIGNUP_GRANT_CREDITS)");
     expect(signup).toMatch(/\{starterCredits\}\s*free credits/);
@@ -70,12 +90,10 @@ describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", 
     expect(signup).not.toMatch(/\d+\s*free credits/);
   });
 
+  // #810 r3 P3:r2 这条只数「, a/an 出现几次」并要求 ≤2 —— 追加 "and analytics" 照样过,
+  // 因为那一项不带冠词。改成真正把承诺**枚举出来**,断言这个集合恰好等于被算过价的三件:
+  // 多一件、少一件、换一件,都在这里先红。
   it("承诺的正好是被算过价的那三件:一场对话、一张图、一条短视频", () => {
-    expect(signup).toMatch(/a conversation with Otto/);
-    expect(signup).toMatch(/an\s*\n?\s*image/);
-    expect(signup).toMatch(/a short video/);
-    // 第四件东西必须先回 packages/core 把它加进「买得起」那条断言,才谈得上写在这里。
-    const promise = signup.slice(signup.indexOf("free credits"), signup.indexOf("free credits") + 240);
-    expect(promise.match(/,\s*an?\s/g)?.length ?? 0).toBeLessThanOrEqual(2);
+    expect(promisedItems()).toEqual(["a conversation with Otto", "an image", "a short video"]);
   });
 });
