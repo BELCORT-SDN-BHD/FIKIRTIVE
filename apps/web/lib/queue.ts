@@ -14,7 +14,12 @@ import { RENDER_DLQ, RENDER_QUEUE, RENDER_QUEUE_POLICY, REFGEN_DLQ, REFGEN_QUEUE
  * never did, and only a restart brought generation back. "Could not connect this
  * time" is a fact about one attempt, not a fact about the queue.
  */
-const globalForBoss = globalThis as unknown as { __fikirtiveBoss?: BossCell };
+// The dev key is renamed along with its shape: it used to hold a bare
+// Promise<PgBoss>, and a hot reload straddling this change must not read that
+// Promise as a cell (it would silently lose the failure bookkeeping). The old key
+// is simply abandoned — its handle closes when the dev process restarts, which is
+// the same one-off that any hot reload already produces. Dev only.
+const globalForBoss = globalThis as unknown as { __fikirtiveBossCell?: BossCell };
 
 async function buildBoss(): Promise<PgBoss> {
   const url = process.env.DATABASE_URL_POOLED || process.env.DATABASE_URL;
@@ -62,8 +67,15 @@ async function buildBoss(): Promise<PgBoss> {
 // Retrying must not mean "one connect attempt per request": a queue that is
 // genuinely down would then make every click pay a full connect timeout. A failed
 // build is dropped from the cache and remembered only for a bounded cooldown that
-// doubles 1s → 2s → 4s … up to 30s, so a sustained outage costs at most one attempt
-// per 30s per process while recovery still needs no restart. A success clears it.
+// doubles 1s → 2s → 4s … up to 30s. A success clears the streak.
+//
+// The recovery bound, stated exactly: the cooldown is measured from when the failed
+// attempt FINISHED, so the worst case is that attempt's own duration plus the cap,
+// and a later request still has to arrive to trigger the retry. With pg-boss
+// 12.18.2's 10s connectionTimeoutMillis default (dist/db.js:13) that upper bound is
+// ≈40s, not 30s — if the queue recovers while a doomed connect is already in flight,
+// that connect must time out first. Both halves are pinned by tests. What matters is
+// that the process heals itself; ≈40s sits comfortably inside that goal.
 const RETRY_BACKOFF_BASE_MS = 1_000;
 const RETRY_BACKOFF_MAX_MS = 30_000;
 
@@ -108,7 +120,7 @@ function acquire(cell: BossCell): Promise<PgBoss> {
 
 export function getBoss(): Promise<PgBoss> {
   if (process.env.NODE_ENV === "development") {
-    return acquire((globalForBoss.__fikirtiveBoss ??= { failures: 0, cooldownUntil: 0 }));
+    return acquire((globalForBoss.__fikirtiveBossCell ??= { failures: 0, cooldownUntil: 0 }));
   }
   return acquire(moduleCell);
 }

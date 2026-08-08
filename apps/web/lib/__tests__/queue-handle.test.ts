@@ -17,7 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   const calls = { construct: 0, start: 0, createQueue: 0, stop: 0 };
-  const control = { failStart: false, failCreateQueue: false, hangStop: false };
+  const control = {
+    failStart: false,
+    failCreateQueue: false,
+    hangStop: false,
+    /** Lets a test make the attempt itself consume time (a real connect timeout does). */
+    onStart: null as null | (() => void),
+  };
   class FakePgBoss {
     constructor() {
       calls.construct += 1;
@@ -27,6 +33,7 @@ const h = vi.hoisted(() => {
     }
     async start() {
       calls.start += 1;
+      control.onStart?.();
       if (control.failStart) throw new Error("pgboss schema does not exist");
     }
     async createQueue() {
@@ -63,8 +70,9 @@ beforeEach(() => {
   h.control.failStart = false;
   h.control.failCreateQueue = false;
   h.control.hangStop = false;
+  h.control.onStart = null;
   vi.stubEnv("DATABASE_URL_POOLED", "postgresql://fake/queue_handle_test");
-  delete (globalThis as { __fikirtiveBoss?: unknown }).__fikirtiveBoss;
+  delete (globalThis as { __fikirtiveBossCell?: unknown }).__fikirtiveBossCell;
   clock = 1_700_000_000_000;
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(clock);
@@ -73,7 +81,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
-  delete (globalThis as { __fikirtiveBoss?: unknown }).__fikirtiveBoss;
+  delete (globalThis as { __fikirtiveBossCell?: unknown }).__fikirtiveBossCell;
 });
 
 describe("getBoss — failure is never cached as a permanent fact (#700)", () => {
@@ -153,7 +161,7 @@ describe("getBoss — retrying is bounded, not one connect attempt per request",
     });
   });
 
-  it("widens the cooldown after each consecutive failure and caps it", async () => {
+  it("widens the cooldown after each consecutive failure", async () => {
     const getBoss = await loadGetBoss();
     h.control.failStart = true;
 
@@ -164,6 +172,7 @@ describe("getBoss — retrying is bounded, not one connect attempt per request",
     await expect(getBoss()).rejects.toThrow();
     expect(h.calls.start).toBe(2);
 
+    // 1.5s in, the second (wider) window is still open — proof it grew.
     tick(1_500);
     await expect(getBoss()).rejects.toThrow(/cooling down/i);
     expect(h.calls.start).toBe(2);
@@ -171,16 +180,60 @@ describe("getBoss — retrying is bounded, not one connect attempt per request",
     tick(600);
     await expect(getBoss()).rejects.toThrow();
     expect(h.calls.start).toBe(3);
+  });
 
-    // Drive the streak past the cap: the window must stop growing at 30s.
-    for (let i = 0; i < 12; i += 1) {
-      tick(30_001);
+  it("caps the window at 30s — a long failure streak never widens it further", async () => {
+    const getBoss = await loadGetBoss();
+    h.control.failStart = true;
+
+    // 13 consecutive failures. Uncapped the window here would be 1000 × 2^12 ≈ 68
+    // minutes; each advance below is past any window, capped or not, so the streak
+    // itself builds identically either way.
+    for (let i = 0; i < 13; i += 1) {
+      tick(2 * 60 * 60_000);
       await expect(getBoss()).rejects.toThrow();
     }
-    const startsBefore = h.calls.start;
-    tick(30_001);
+    expect(h.calls.start).toBe(13);
+
+    // The load-bearing part: at 30s + ε past each failure there must be a REAL new
+    // attempt, round after round. Without the cap the window would still be ~68
+    // minutes and every one of these would be a cooldown refusal instead.
+    for (let round = 0; round < 5; round += 1) {
+      tick(29_000);
+      await expect(getBoss()).rejects.toThrow(/cooling down/i);
+      const before = h.calls.start;
+      tick(1_100);
+      await expect(getBoss()).rejects.toThrow("pgboss schema does not exist");
+      expect(h.calls.start).toBe(before + 1);
+    }
+  });
+
+  it("measures the cooldown from when the failed attempt FINISHED, not when it started", async () => {
+    const getBoss = await loadGetBoss();
+
+    // A real connect failure is not instant: pg-boss 12.18.2 sits on a 10s
+    // connectionTimeoutMillis. This is the other half of the stated recovery
+    // bound — worst case is the doomed attempt's own duration plus the 30s cap.
+    const ATTEMPT_MS = 10_000;
+    h.control.failStart = true;
+    h.control.onStart = () => tick(ATTEMPT_MS);
+
+    const startedAt = clock;
     await expect(getBoss()).rejects.toThrow();
-    expect(h.calls.start).toBe(startsBefore + 1);
+    expect(clock).toBe(startedAt + ATTEMPT_MS);
+    h.control.onStart = null;
+
+    // 10.9s after the attempt STARTED the first 1s window would already be over.
+    // Measured from the finish it is still open, so no new dial-out happens.
+    tick(900);
+    await expect(getBoss()).rejects.toThrow(/cooling down/i);
+    expect(h.calls.start).toBe(1);
+
+    // 1s after it FINISHED, the retry runs.
+    tick(200);
+    h.control.failStart = false;
+    await expect(getBoss()).resolves.toBeDefined();
+    expect(h.calls.start).toBe(2);
   });
 
   it("releases the half-built handle's connection pool when the build fails", async () => {
