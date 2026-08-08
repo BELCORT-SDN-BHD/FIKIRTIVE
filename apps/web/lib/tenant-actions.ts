@@ -225,7 +225,7 @@ export async function grantTenantCredits(raw: unknown): Promise<{ ok: true; dupl
   if (!org) return { error: "Unknown or closed org." }; // NEVER fall back to founder
   const displayedAmount = typeof v?.displayedAmount === "number" ? v.displayedAmount : NaN;
   if (!Number.isInteger(displayedAmount) || displayedAmount === 0 || Math.abs(displayedAmount) > 1_000_000) return { error: "Enter a non-zero whole number of credits (max ±1,000,000)." };
-  if (Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) return { error: "Credit actions over 1,000 displayed credits require founder approval." };
+  if (Math.abs(displayedAmount) > FINANCE_DIRECT_CREDIT_LIMIT) return { error: "Credit actions are capped at 1,000 displayed credits each." };
   const reason = typeof v?.reason === "string" ? v.reason.slice(0, 500) : "";
   const idempotencyKey = typeof v?.idempotencyKey === "string" ? v.idempotencyKey : "";
   if (idempotencyKey.length < 8 || idempotencyKey.length > 100) return { error: "Invalid request." };

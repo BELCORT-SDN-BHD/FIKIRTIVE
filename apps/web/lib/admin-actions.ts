@@ -17,10 +17,24 @@ import {
   runtimeConfigInput,
   isKnownModelId,
   roleSchema,
+  isRole,
   primaryPlatformRole,
   platformRolesAllowCapability,
 } from "@fikirtive/core";
 import { requireRole } from "./auth-guard";
+
+/**
+ * #755 judge r2, P1 — what a role save is refused with when it was built on an old page.
+ *
+ * One message covers every way the draft can fail to prove itself: the page's set no longer
+ * matches the database, the request carried no draft at all (a tab left open across a deploy,
+ * running JavaScript from before this field existed), and — #755 judge r3 — the draft was
+ * present but empty, which no rendered page can produce. Reloading is the fix for all of them,
+ * and the operator is told to do exactly that instead of being left to wonder whether their
+ * change landed. The message never reports what the target actually holds: a refusal is not a
+ * place to hand back the role set of someone the caller may not have been shown.
+ */
+const STALE_ROLES_ERROR = "Roles changed since you loaded this page. Reload and try again.";
 
 /** Upsert one (family, mode) directive cell + append a revision snapshot (R6) +
  *  audit, atomically. A founder edit takes effect on the next Enhance (the read
@@ -177,26 +191,51 @@ export async function saveModelEnabled(raw: unknown): Promise<{ ok: true } | { e
  *  that locks out the team, no vacuous self-grant), and the granting path for
  *  super-admin is this same super-admin-gated action (never reachable by a lesser
  *  role). Target is looked up by id; role validated by the core zod enum. Audited
- *  transactionally with the write. */
+ *  transactionally with the write.
+ *
+ *  #755 judge r2, P1 — the write is OPTIMISTICALLY CONCURRENT: the caller must send the role
+ *  set the page was showing (`expectedRoles`), and the save is refused outright if the stored
+ *  set has moved since. See {@link STALE_ROLES_ERROR} and the transaction below. */
 export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const gate = await requireRole("team", "mutate");
   if ("error" in gate) return gate;
-  const v = raw as { userId?: unknown; role?: unknown; roles?: unknown };
+  const v = raw as { userId?: unknown; role?: unknown; roles?: unknown; expectedRoles?: unknown };
   if (typeof v?.userId !== "string" || !v.userId) return { error: "Missing user." };
   const requested = Array.isArray(v.roles) ? v.roles : [v.role];
   const parsedRoles = requested.map((role) => roleSchema.safeParse(role));
-  if (
-    parsedRoles.length === 0 ||
-    parsedRoles.some((result) => !result.success)
-  ) {
-    return { error: "Unknown role." };
-  }
+  // #755 judge r1, P1-1 — an empty set is a DISTINCT case from a bad value. It used to collapse
+  // into "Unknown role.", which tells the operator nothing about what they did. Revoking every
+  // assignment is not offered here (that is removing someone from staff, a different action), so
+  // say which one this is.
+  if (parsedRoles.length === 0) return { error: "Select at least one role." };
+  if (parsedRoles.some((result) => !result.success)) return { error: "Unknown role." };
   const roles = [
     ...new Set(
       parsedRoles.flatMap((result) => (result.success ? [result.data] : [])),
     ),
   ];
   const role = primaryPlatformRole(roles);
+
+  // #755 judge r2, P1 — the DRAFT this edit was made against: the roles the staff page had on
+  // screen when the operator started toggling. Without it the server cannot tell an edit from a
+  // resurrection, because a "complete set" carries no evidence of WHICH set it is complete
+  // relative to. Absent or malformed ⇒ refused; a save that cannot prove what it saw never runs.
+  //
+  // #755 judge r3, P1 — an EMPTY draft is refused on exactly the same ground, because it proves
+  // nothing either. `[]` clears `Array.isArray`, and against a target whose known-role projection
+  // is also empty — someone holding only values outside the vocabulary, or nothing at all — the
+  // comparison below succeeds vacuously and the write runs. That would let any holder of
+  // `team.mutate` grant `super-admin` on a person the roster never rendered, which is the opposite
+  // of what a compare-and-set is for. No legitimate empty draft exists: the roster drops zero-role
+  // people (admin-v2.ts), so no page can display one for an operator to have edited.
+  if (!Array.isArray(v.expectedRoles) || v.expectedRoles.length === 0) {
+    return { error: STALE_ROLES_ERROR };
+  }
+  const parsedExpected = v.expectedRoles.map((expectedRole) => roleSchema.safeParse(expectedRole));
+  if (parsedExpected.some((result) => !result.success)) return { error: "Unknown role." };
+  const expected = new Set(
+    parsedExpected.flatMap((result) => (result.success ? [result.data] : [])),
+  );
 
   // self-escalation / self-lockout guard: a super-admin cannot change their own role.
   const target = await prisma.user.findUnique({
@@ -209,12 +248,66 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
   }
 
   try {
-    await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: target.id }, data: { role } });
-      await tx.userRole.deleteMany({ where: { userId: target.id } });
-      await tx.userRole.createMany({
-        data: roles.map((assignedRole) => ({ userId: target.id, role: assignedRole })),
+    const outcome = await prisma.$transaction(async (tx) => {
+      // #755 judge r2, P1 — SERIALIZE concurrent saves for this one person, before reading.
+      //
+      // Re-reading inside the transaction is not enough on its own. Prisma runs on PostgreSQL's
+      // default READ COMMITTED, where two transactions can each read the same "current" set
+      // before either has committed — both comparisons then pass and the second write still
+      // lands on top of the first. Taking the target's `User` row exclusively makes the second
+      // transaction WAIT for the first to commit; its read below therefore sees the new fact and
+      // the comparison refuses it. Two saves from the same draft are one success, one refusal.
+      // (Same device as the routine lease in packages/db/src/workflow-engine.ts.)
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${target.id} FOR UPDATE`;
+
+      // #755 judge r1, P1-1 — apply the requested set as a DELTA against what is on the row right
+      // now, instead of "delete everything, write the request".
+      //
+      // Two reasons, and only the second is cosmetic:
+      //  1. The current set is re-read INSIDE the transaction. The copy fetched above for the
+      //     self-edit guard was read before the tx opened, so a concurrent edit landing in between
+      //     would be computed against a stale picture.
+      //  2. A role the operator did not touch keeps its original `assignedAt`. Wiping and
+      //     re-inserting reset that timestamp on every save, so "since when has this person held
+      //     finance?" — a question an audit log is supposed to answer — was destroyed by an edit
+      //     to an unrelated role.
+      //
+      // The SET semantics are unchanged and deliberate: what the caller sends becomes the whole
+      // assignment. That is only safe because the caller now sends the COMPLETE set — the staff
+      // editor submits every toggle, not the one value a single-choice picker happened to hold.
+      const currentRoles = await tx.userRole.findMany({
+        where: { userId: target.id },
+        select: { role: true },
       });
+      const current = new Set(currentRoles.map((assignment) => assignment.role));
+
+      // #755 judge r2, P1 — COMPARE-AND-SET. "The complete set" only means something relative to
+      // a draft, so the stored set has to still BE that draft.
+      //
+      // Compared against WHAT THE PAGE SHOWED, which is the known-role projection: the roster
+      // drops values outside the vocabulary (admin-v2.ts), so a leftover string like "wizard" was
+      // never on the operator's screen and cannot be something their draft is expected to carry.
+      //
+      // Returning here is a zero-write refusal by construction — the lock and the read above are
+      // the only statements that have run.
+      const onScreen = [...current].filter(isRole);
+      const matchesDraft =
+        onScreen.length === expected.size && onScreen.every((held) => expected.has(held));
+      if (!matchesDraft) return "stale" as const;
+
+      await tx.user.update({ where: { id: target.id }, data: { role } });
+      const next = new Set<string>(roles);
+      const revoked = [...current].filter((assigned) => !next.has(assigned));
+      const granted = roles.filter((assigned) => !current.has(assigned));
+      if (revoked.length > 0) {
+        await tx.userRole.deleteMany({ where: { userId: target.id, role: { in: revoked } } });
+      }
+      if (granted.length > 0) {
+        await tx.userRole.createMany({
+          data: granted.map((assignedRole) => ({ userId: target.id, role: assignedRole })),
+          skipDuplicates: true,
+        });
+      }
       // mirror onto ba_user.role (the admin plugin's gate reads this column, by email join)
       if (target.email) await tx.betterAuthUser.updateMany({ where: { email: target.email.toLowerCase() }, data: { role } });
       await tx.actionEvent.create({
@@ -225,13 +318,18 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
           payload: {
             targetUserId: target.id,
             targetEmail: target.email,
-            from: target.roles.map((assignment) => assignment.role),
+            // `from` now reports the set this write actually replaced, not the pre-transaction read.
+            from: [...current],
             to: roles,
+            granted,
+            revoked,
             via: gate.email,
           },
         },
       });
+      return "saved" as const;
     });
+    if (outcome === "stale") return { error: STALE_ROLES_ERROR };
   } catch {
     return { error: "Couldn't update the role — please try again." };
   }

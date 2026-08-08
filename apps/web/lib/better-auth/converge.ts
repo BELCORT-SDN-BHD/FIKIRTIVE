@@ -99,7 +99,15 @@ export async function convergeIdentity(input: { email: string; name?: string | n
         }
       }
       // 4. Audit.
-      await Promise.resolve(prisma.actionEvent.create({ data: { id: newId(), ownerId: "founder", type: "auth.signin", payload: { email } } })).catch(() => {});
+      //
+      // #735 — `ownerId` is the event's DATA SCOPE (a foreign key to Organization), not the
+      // person. A sign-in belongs to the platform-wide stream, hence the founder org; WHO signed
+      // in is `payload.email`, and it comes from the Better Auth identity this function was
+      // handed after the `emailVerified` gate above — never from anything a client supplied.
+      // The bare "founder" literal here is what made the audit page read as though the founder
+      // himself signed in every time a merchant did; it is the shared constant now, so the next
+      // reader sees an org id rather than a name.
+      await Promise.resolve(prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } } })).catch(() => {});
     } catch (e) {
       // The one deliberate exception to never-throws (#538): a provisioning refusal is a
       // security decision, not a convergence hiccup, and must not be downgraded here either.

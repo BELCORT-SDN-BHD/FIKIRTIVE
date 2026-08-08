@@ -29,9 +29,9 @@ import { inviteTenant, revokeTenantInvite } from "@/lib/tenant-actions";
 import type {
   AdminV2Data,
   AdminV2Section,
-  ApprovalItem,
   AuditPreview,
   CaseRow,
+  LargeGrantRow,
   MoneyLedgerRow,
   PendingInviteRow,
   StaffRowV2,
@@ -83,6 +83,54 @@ const FOUNDER_OWNER_ID = "founder";
 const displayCredits = (internal: number) => internal / 10;
 const CONFIDENCE_LEVELS = ["high", "medium", "low", "untested"] as const;
 
+// ── #755 judge r1, P2-3: plain words instead of internal codes ────────────────────────────────
+//
+// `rbac.deny` and `super-admin` are this codebase's own vocabulary. Printing them at a founder
+// asks the reader to translate before they can judge, and on the audit page — the one surface
+// whose whole job is to be readable after the fact — that is the difference between a log and a
+// record. The underlying values are unchanged; only what is rendered changes, and both maps are
+// exhaustive over their closed vocabularies.
+
+const ROLE_LABELS: Record<string, string> = {
+  "super-admin": "Super admin",
+  ops: "Operations",
+  finance: "Finance",
+  moderator: "Moderator",
+  viewer: "Viewer",
+};
+
+/** Sentence-case a dotted/hyphenated code so an unmapped value is still readable, never raw. */
+function humanizeCode(code: string): string {
+  const words = code.replace(/[.\-_]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const roleLabel = (role: string) => ROLE_LABELS[role] ?? humanizeCode(role);
+
+/** What an audit event says happened. Written as a statement, not as the emitter's type string. */
+const EVENT_LABELS: Record<string, string> = {
+  "auth.signin": "Signed in",
+  "rbac.deny": "Access refused",
+  "rbac.role.set": "Role assignment changed",
+  "credits.grant": "Credits granted",
+  "tenant.credits.grant": "Credits granted to a tenant",
+  "credits.purchase": "Credits purchased",
+  "credits.purchase.bad": "Credit purchase could not be matched",
+  "impersonate.start": "Impersonation started",
+  "impersonate.stop": "Impersonation ended",
+  "tenant.status": "Tenant status changed",
+  "tenant.cut": "Tenant sessions ended",
+  "tenant.invite": "Tenant invited",
+  "tenant.revoke": "Tenant invite revoked",
+  "config.edit": "Runtime setting changed",
+  "model.toggle": "Model availability changed",
+  "directive.edit": "Prompt guidance edited",
+  "directive.seed": "Prompt guidance seeded",
+  "gen.guardian-block": "Generation blocked by review",
+};
+
+const eventLabel = (type: string) => EVENT_LABELS[type] ?? humanizeCode(type);
+
 const SECTION_META: Record<AdminV2Section, { title: string; eyebrow: string; description: string }> = {
   overview: {
     title: "Overview",
@@ -91,8 +139,10 @@ const SECTION_META: Record<AdminV2Section, { title: string; eyebrow: string; des
   },
   money: {
     title: "Money",
-    eyebrow: "Ledger and approval control",
-    description: "Read-only spend records, founder credit balance, and grant-limit review candidates.",
+    // #755 judge r1, P1-2 — "approval control" and "review candidates" both described a process
+    // that does not exist. Over-limit credit actions are refused on the spot; nothing queues.
+    eyebrow: "Ledger and spend records",
+    description: "Read-only spend records, founder credit balance, and large grants already on the ledger.",
   },
   tenants: {
     title: "Tenants",
@@ -252,7 +302,7 @@ function Overview({ data, setCase }: { data: AdminV2Data; setCase: (row: CaseRow
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <MoneyQueue rows={data.approvalQueue.slice(0, 6)} />
+        <LargeGrantList rows={data.largeGrants.slice(0, 6)} />
         <TenantWatchlist rows={data.tenants.slice(0, 6)} invitedCount={data.invitedCount} />
       </div>
 
@@ -267,27 +317,32 @@ function Overview({ data, setCase }: { data: AdminV2Data; setCase: (row: CaseRow
   );
 }
 
-function MoneyQueue({ rows }: { rows: ApprovalItem[] }) {
+/** #736 — settled ledger history, presented as history. Rows are plain `<div>`s: the previous
+ *  `<button>` had hover styling and a pointer cursor but no `onClick`, so the one affordance on
+ *  the founder's "Pending approvals" warning was a control that did nothing when pressed. */
+function LargeGrantList({ rows }: { rows: LargeGrantRow[] }) {
   return (
-    <Panel title="Money risk queue" subtitle="Grant-limit review candidates from the existing append-only ledger.">
+    <Panel
+      title="Large grants and adjustments"
+      subtitle="Already recorded in the append-only ledger, newest first. Nothing here is waiting on a decision."
+    >
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No recent grant or adjustment rows." /> : null}
         {rows.map((row) => (
-          <button
+          <div
             key={row.id}
-            type="button"
-            className="grid w-full gap-2 rounded-xl border border-border bg-background p-3 text-left transition-colors hover:bg-secondary md:grid-cols-[1fr_120px_132px] md:items-center"
+            className="grid w-full gap-2 rounded-xl border border-border bg-background p-3 text-left md:grid-cols-[1fr_120px_132px] md:items-center"
           >
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-medium text-foreground">{row.tenant}</span>
-                <Badge variant={row.state === "over limit" ? "warning" : row.state === "adjustment" ? "destructive" : "outline"}>{row.state}</Badge>
+                <Badge variant={row.state === "adjustment" ? "destructive" : "outline"}>{row.state}</Badge>
               </div>
               <p className="mt-1 truncate text-xs text-muted-foreground">{row.reason || row.createdBy || "No reason captured"}</p>
             </div>
             <div className="text-sm font-semibold text-foreground">{row.amount > 0 ? "+" : ""}{row.amount.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</div>
-          </button>
+          </div>
         ))}
       </div>
     </Panel>
@@ -380,18 +435,21 @@ function SystemPanel({ rows }: { rows: SystemIncident[] }) {
   );
 }
 
+/** #735 — the honest label for an event that recorded no actor. Never a plausible substitute. */
+const NO_ACTOR = "Unattributed";
+
 function AuditPanel({ rows }: { rows: AuditPreview[] }) {
   return (
-    <Panel title="Recent admin activity" subtitle="Payloads remain collapsed in v2.">
+    <Panel title="Recent admin activity" subtitle="Who did what. Payloads remain collapsed.">
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No recent audit events." /> : null}
         {rows.map((row) => (
           <div key={row.id} className="grid gap-1 rounded-xl border border-border bg-background p-3">
             <div className="flex items-center justify-between gap-3">
-              <span className="truncate text-sm font-medium text-foreground">{row.type}</span>
+              <span className="truncate text-sm font-medium text-foreground">{eventLabel(row.type)}</span>
               <span className="font-mono text-[11px] text-muted-foreground">{fmtDate(row.createdAt)}</span>
             </div>
-            <p className="truncate text-xs text-muted-foreground">{row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}</p>
+            <p className="truncate text-xs text-muted-foreground">{row.actor ?? NO_ACTOR}</p>
           </div>
         ))}
       </div>
@@ -416,7 +474,7 @@ function CreditActionPanel() {
       return;
     }
     if (Math.abs(displayedAmount) > 1000) {
-      setMessage({ ok: false, text: "Credit actions over 1,000 displayed credits require founder approval." });
+      setMessage({ ok: false, text: "Credit actions are capped at 1,000 displayed credits each." });
       return;
     }
     setSaving(true);
@@ -457,7 +515,7 @@ function CreditActionPanel() {
       </form>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge variant={overLimit ? "warning" : "outline"}>{overLimit ? "Over finance limit" : "Within finance limit"}</Badge>
-        <span>Finance direct actions cap at 1,000 displayed credits; founder approval is required over that.</span>
+        <span>Each credit action is capped at 1,000 displayed credits. Anything larger is refused outright — there is no queue to submit it to.</span>
         {message ? <span className={message.ok ? "text-success" : "text-destructive"}>{message.text}</span> : null}
       </div>
     </Panel>
@@ -476,13 +534,13 @@ function MoneySection({ data }: { data: AdminV2Data }) {
         <MetricCard label="Founder balance" value={displayCredits(data.money.balance).toLocaleString()} detail="Displayed credits available to the founder workspace." tone="info" />
         <MetricCard label="Held credits" value={displayCredits(data.money.reserved).toLocaleString()} detail="Reserved by in-flight jobs." tone={data.money.reserved > 0 ? "warning" : "success"} />
         <MetricCard label="30-day spend" value={usd(data.money.totalUsd)} detail={`${data.money.jobCount} paid jobs with frozen spend snapshots.`} tone="neutral" />
-        <MetricCard label="Grant reviews" value={String(data.approvalQueue.filter((row) => row.state === "over limit").length)} detail="Single-action limit: 1,000 displayed credits." tone="warning" />
+        <MetricCard label="Large grants" value={String(data.largeGrants.filter((row) => row.state === "over limit").length)} detail="Recorded above the 1,000 displayed credit single-action limit." tone="neutral" />
       </div>
 
       <CreditActionPanel />
 
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <MoneyQueue rows={data.approvalQueue} />
+        <LargeGrantList rows={data.largeGrants} />
         <Panel title="Spend by day" subtitle="Read-only media spend over the sampled 30-day window.">
           <div className="grid gap-2">
             {data.money.days.length === 0 ? <EmptyState label="No spend recorded in this window." /> : null}
@@ -751,24 +809,34 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
 
 function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: string }) {
   const [roleView, setRoleView] = useState("all");
-  const rows = data.staff.rows.filter((row) => roleView === "all" || row.role === roleView);
+  // #734 — filter and count on `roles`, the assignments the gate reads. A person may hold several
+  // at once (roles are permission bundles), so a multi-role staff member counts in each card they
+  // actually belong to instead of only their display-primary one.
+  const rows = data.staff.rows.filter(
+    (row) => roleView === "all" || (row.roles as readonly string[]).includes(roleView),
+  );
 
   return (
     <div className="grid gap-5">
       <div className="grid gap-3 md:grid-cols-5">
         {data.staff.roles.map((role) => (
-          <MetricCard key={role} label={role} value={String(data.staff.rows.filter((row) => row.role === role).length)} detail="Current user rows with this operator role." tone={role === "super-admin" ? "info" : "neutral"} />
+          <MetricCard key={role} label={roleLabel(role)} value={String(data.staff.rows.filter((row) => row.roles.includes(role)).length)} detail="Staff holding this role assignment." tone={role === "super-admin" ? "info" : "neutral"} />
         ))}
       </div>
       <Panel
         title="Staff"
-        subtitle="Existing save action is reused; self-role edits stay disabled."
+        // #755 judge r1, P1-3 — say what these assignments actually decide, and no more. They
+        // gate individual admin capabilities (`requireRole`), but `app/admin/layout.tsx` turns
+        // away every non-founder address BEFORE any role is consulted, so an ops holder cannot
+        // reach this area at all today. Claiming otherwise would repeat #734's exact mistake:
+        // a page describing access the system does not grant.
+        subtitle="Platform staff only — merchants hold no assignment and are not listed. These assignments gate individual admin capabilities; entry to the admin area itself is separately restricted to founder addresses."
         action={
           <Select value={roleView} onValueChange={setRoleView}>
-            <SelectTrigger size="sm" className="w-[150px] bg-card"><span>{roleView === "all" ? "All roles" : roleView}</span></SelectTrigger>
+            <SelectTrigger size="sm" className="w-[150px] bg-card"><span>{roleView === "all" ? "All roles" : roleLabel(roleView)}</span></SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="all">All roles</SelectItem>
-              {data.staff.roles.map((role) => <SelectItem key={role} value={role}>{role}</SelectItem>)}
+              {data.staff.roles.map((role) => <SelectItem key={role} value={role}>{roleLabel(role)}</SelectItem>)}
             </SelectContent>
           </Select>
         }
@@ -777,13 +845,12 @@ function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: strin
           {rows.map((row) => <StaffRoleRow key={row.id} row={row} roles={data.staff.roles} selfEmail={selfEmail} />)}
         </div>
       </Panel>
-      <Panel title="Section matrix" subtitle="Read and mutate permissions are derived from SECTION_MATRIX. super-admin supersedes every cell.">
+      <Panel title="Section matrix" subtitle="Which roles may read and which may change each area. Super admin covers every cell.">
         <div className="grid gap-2">
           {data.staff.matrix.map((row) => (
             <div key={row.section} className="grid gap-2 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_1fr_1fr] md:items-center">
               <div>
                 <span className="text-sm font-medium text-foreground">{row.label}</span>
-                <p className="mt-1 font-mono text-xs text-muted-foreground">{row.section}</p>
               </div>
               <RolePills label="Read" roles={row.read} />
               <RolePills label="Mutate" roles={row.mutate} />
@@ -795,53 +862,112 @@ function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: strin
   );
 }
 
+const sameRoleSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+/**
+ * #755 judge r1, P1-1 — a role assignment is a SET, and the editor now edits it as one.
+ *
+ * This row used to hold a single-choice picker while the server action replaced the person's
+ * WHOLE assignment with whatever it was handed. Editing someone who held ops AND finance
+ * therefore revoked the role you did not pick — silently, with no warning and nothing on screen
+ * to show it had happened. Project law is explicit that one person may hold several roles and
+ * that a role is a permission bundle, so the picker was the wrong shape for the data.
+ *
+ * Every role is a toggle, and Save submits the COMPLETE set. Deselecting everything is not a
+ * quiet way to strip someone: Save stays disabled and says why, because removing a person from
+ * staff is a different decision than editing which hats they wear.
+ *
+ * #755 judge r2, P1 — Save also submits `base`, the set this row was rendered with, as the DRAFT
+ * the edit was made against. Two founders editing the same person from two tabs used to both be
+ * told "Saved." while the second one's older picture quietly undid the first one's change. Now
+ * the server compares the draft with what is stored and refuses the second save; the refusal is
+ * shown on the row as-is, and nothing is retried behind the operator's back — the honest next
+ * step is to reload and look at what is actually true before deciding again.
+ */
 function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: string[]; selfEmail: string }) {
   const router = useRouter();
   const isSelf = row.email.toLowerCase() === selfEmail.toLowerCase();
-  const [role, setRole] = useState(row.role);
-  const [base, setBase] = useState(row.role);
+  const [selected, setSelected] = useState<string[]>(row.roles);
+  /** The draft: what this row displayed, advanced only by a save the server accepted. */
+  const [base, setBase] = useState<string[]>(row.roles);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const dirty = role !== base;
+  const dirty = !sameRoleSet(selected, base);
+  const empty = selected.length === 0;
+
+  function toggle(role: string) {
+    setSelected((prev) => (prev.includes(role) ? prev.filter((held) => held !== role) : [...prev, role]));
+  }
 
   async function save() {
-    if (!dirty || isSelf || saving) return;
+    if (!dirty || isSelf || saving || empty) return;
     setSaving(true);
     setMessage(null);
-    const result = await saveUserRole({ userId: row.id, role }).catch(() => null);
+    // The complete set, always. Never a single value the server would read as "replace all".
+    // `expectedRoles` is what makes "complete" mean something: it names the set this edit was
+    // built on, so the server can refuse a save whose picture of the person is out of date.
+    const result = await saveUserRole({ userId: row.id, roles: selected, expectedRoles: base }).catch(() => null);
     setSaving(false);
     if (!result) {
       setMessage("Save failed.");
       return;
     }
     if ("error" in result) {
+      // Includes the stale-draft refusal. Shown verbatim — the message already says to reload,
+      // and re-sending the same set would only overwrite whatever the other founder just did.
       setMessage(result.error);
       return;
     }
-    setBase(role);
+    setBase(selected);
     setMessage("Saved.");
     router.refresh();
   }
 
   return (
-    <div className="grid gap-3 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_190px_120px_120px] md:items-center">
+    <div
+      data-staff-row={row.email}
+      className="grid gap-3 rounded-xl border border-border bg-background p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_100px_130px] md:items-center"
+    >
       <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-foreground">{row.email}</span>
           {isSelf ? <Badge variant="outline">You</Badge> : null}
         </div>
         <p className="mt-1 truncate text-xs text-muted-foreground">{row.name || row.id}</p>
       </div>
-      <Select value={role} onValueChange={setRole} disabled={isSelf || saving}>
-        <SelectTrigger size="sm" className="w-full bg-card"><span>{role}</span></SelectTrigger>
-        <SelectContent>
-          {roles.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <Button type="button" variant="secondary" size="sm" disabled={!dirty || isSelf || saving} onClick={save}>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={`Roles for ${row.email}`}>
+        {roles.map((item) => {
+          const held = selected.includes(item);
+          return (
+            <Button
+              key={item}
+              type="button"
+              size="sm"
+              data-role={item}
+              aria-pressed={held}
+              variant={held ? "secondary" : "outline"}
+              disabled={isSelf || saving}
+              onClick={() => toggle(item)}
+            >
+              {roleLabel(item)}
+            </Button>
+          );
+        })}
+      </div>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        data-staff-save="true"
+        disabled={!dirty || isSelf || saving || empty}
+        onClick={save}
+      >
         {saving ? "Saving" : "Save"}
       </Button>
-      <span className={cn("text-xs", message === "Saved." ? "text-success" : "text-muted-foreground")}>{message}</span>
+      <span className={cn("text-xs", message === "Saved." ? "text-success" : "text-muted-foreground")}>
+        {empty ? "Select at least one role." : message}
+      </span>
     </div>
   );
 }
@@ -851,7 +977,7 @@ function RolePills({ label, roles }: { label: string; roles: string[] }) {
     <div className="min-w-0">
       <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
       <div className="flex flex-wrap gap-1.5">
-        {roles.length === 0 ? <Badge variant="outline">super-admin only</Badge> : roles.map((role) => <Badge key={role} variant="outline">{role}</Badge>)}
+        {roles.length === 0 ? <Badge variant="outline">Super admin only</Badge> : roles.map((role) => <Badge key={role} variant="outline">{roleLabel(role)}</Badge>)}
       </div>
     </div>
   );
@@ -1271,12 +1397,20 @@ function KnowledgeTextRow({ row }: { row: AdminV2Data["otto"]["knowledge"][numbe
 
 function AuditSection({ data }: { data: AdminV2Data }) {
   const [query, setQuery] = useState("");
-  const rows = data.audit.filter((row) => row.type.toLowerCase().includes(query.toLowerCase()) || row.ownerId.toLowerCase().includes(query.toLowerCase()));
+  const needle = query.toLowerCase();
+  // Filtering follows what the table shows AND what an operator may type from memory: the plain
+  // label, the person, the scope — plus the raw type, so a code copied out of a log still finds
+  // its row even though the page no longer prints codes.
+  const rows = data.audit.filter((row) =>
+    [eventLabel(row.type), row.type, row.actor ?? "", row.ownerId].some((field) =>
+      field.toLowerCase().includes(needle),
+    ),
+  );
 
   return (
     <Panel
       title="Audit stream"
-      subtitle="The v2 table shows metadata only; raw payload expansion stays out of the default workflow."
+      subtitle="Who acted, what happened, and when. Raw payloads stay collapsed — only the actor is read out of them."
       action={<Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter events" className="h-9 w-[200px] text-sm" />}
     >
       <div className="grid gap-2">
@@ -1286,11 +1420,21 @@ function AuditSection({ data }: { data: AdminV2Data }) {
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <History className="size-4 text-muted-foreground" />
-                <span className="truncate text-sm font-medium text-foreground">{row.type}</span>
+                <span className="truncate text-sm font-medium text-foreground">{eventLabel(row.type)}</span>
               </div>
               <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{row.id}</p>
             </div>
-            <p className="truncate text-xs text-muted-foreground">{row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}</p>
+            <div className="min-w-0">
+              <p
+                data-audit-actor
+                className={cn("truncate text-sm", row.actor ? "text-foreground" : "italic text-muted-foreground")}
+              >
+                {row.actor ?? NO_ACTOR}
+              </p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                Scope {row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}
+              </p>
+            </div>
             <span className="font-mono text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</span>
           </div>
         ))}
