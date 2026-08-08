@@ -17,12 +17,15 @@ const userRoleCreateMany = vi.fn();
 const userRoleFindMany = vi.fn();
 const betterAuthUserUpdateMany = vi.fn();
 const actionEventCreate = vi.fn();
+// #755 judge r2, P1: the row lock that serializes two saves against the same person.
+const queryRaw = vi.fn();
 
 vi.mock("@fikirtive/db", () => ({
   prisma: {
     user: { findUnique: userFindUnique },
     $transaction: async (fn: (tx: unknown) => unknown) =>
       fn({
+        $queryRaw: queryRaw,
         user: { update: userUpdate },
         userRole: {
           deleteMany: userRoleDeleteMany,
@@ -50,6 +53,8 @@ beforeEach(() => {
   userRoleFindMany.mockResolvedValue([]); // default: nobody holds anything yet
   betterAuthUserUpdateMany.mockReset();
   actionEventCreate.mockReset();
+  queryRaw.mockReset();
+  queryRaw.mockResolvedValue([]);
 });
 
 describe("saveUserRole", () => {
@@ -75,7 +80,7 @@ describe("saveUserRole", () => {
   it("rejects self-escalation (actor changing their own role)", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     userFindUnique.mockResolvedValue({ id: "usr_f", email: "founder@fikirtive.com", role: "super-admin", roles: [{ role: "super-admin" }] });
-    const result = await saveUserRole({ userId: "usr_f", role: "ops" });
+    const result = await saveUserRole({ userId: "usr_f", role: "ops", expectedRoles: ["super-admin"] });
     expect(result).toEqual({ error: "You can't change your own role." });
     expect(userUpdate).not.toHaveBeenCalled();
   });
@@ -83,14 +88,15 @@ describe("saveUserRole", () => {
   it("rejects when the target user is not found", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     userFindUnique.mockResolvedValue(null);
-    const result = await saveUserRole({ userId: "usr_missing", role: "ops" });
+    const result = await saveUserRole({ userId: "usr_missing", role: "ops", expectedRoles: [] });
     expect(result).toEqual({ error: "User not found." });
   });
 
   it("updates User.role and mirrors onto ba_user.role (by email, lowercased)", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     userFindUnique.mockResolvedValue({ id: "usr_2", email: "Operator@x.test", role: "member", roles: [{ role: "viewer" }] });
-    const result = await saveUserRole({ userId: "usr_2", role: "ops" });
+    userRoleFindMany.mockResolvedValue([{ role: "viewer" }]);
+    const result = await saveUserRole({ userId: "usr_2", role: "ops", expectedRoles: ["viewer"] });
     expect(result).toEqual({ ok: true });
     expect(userUpdate).toHaveBeenCalledWith({ where: { id: "usr_2" }, data: { role: "ops" } });
     expect(userRoleCreateMany).toHaveBeenCalledWith({
@@ -106,7 +112,8 @@ describe("saveUserRole", () => {
   it("does NOT call betterAuthUser.updateMany when target has no email", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     userFindUnique.mockResolvedValue({ id: "usr_3", email: null, role: "member", roles: [{ role: "viewer" }] });
-    const result = await saveUserRole({ userId: "usr_3", role: "ops" });
+    userRoleFindMany.mockResolvedValue([{ role: "viewer" }]);
+    const result = await saveUserRole({ userId: "usr_3", role: "ops", expectedRoles: ["viewer"] });
     expect(result).toEqual({ ok: true });
     expect(userUpdate).toHaveBeenCalled();
     expect(betterAuthUserUpdateMany).not.toHaveBeenCalled();
@@ -124,7 +131,7 @@ describe("saveUserRole", () => {
     userRoleFindMany.mockResolvedValue([{ role: "viewer" }]);
 
     expect(
-      await saveUserRole({ userId: "usr_4", roles: ["finance", "ops"] }),
+      await saveUserRole({ userId: "usr_4", roles: ["finance", "ops"], expectedRoles: ["viewer"] }),
     ).toEqual({ ok: true });
     // Only the two NEW roles are inserted, and only the dropped one is deleted — #755 P1-1.
     expect(userRoleCreateMany).toHaveBeenCalledWith({
@@ -141,5 +148,70 @@ describe("saveUserRole", () => {
       where: { id: "usr_4" },
       data: { role: "ops" },
     });
+  });
+});
+
+/**
+ * #755 judge r2, P1 — the compare-and-set, at statement level.
+ *
+ * `admin-role-authority.test.ts` proves the OUTCOME against a real database (a second founder's
+ * stale save is refused and the first founder's grant survives). These pin the MECHANISM: which
+ * statements run, in what order, and — on a refusal — that none of the write statements is issued
+ * at all. "Rolled back" and "never sent" look the same in the final table; only one of them is
+ * what the code does.
+ */
+describe("saveUserRole — optimistic concurrency", () => {
+  const STALE = { error: "Roles changed since you loaded this page. Reload and try again." };
+
+  it("refuses a request that carries no draft, before it even looks the target up", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    expect(await saveUserRole({ userId: "usr_8", roles: ["ops"] })).toEqual(STALE);
+    expect(userFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("refuses a save whose draft no longer matches the stored set, and issues no write", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindUnique.mockResolvedValue({ id: "usr_5", email: "target@x.test", role: "viewer", roles: [{ role: "ops" }] });
+    // Another founder granted moderator after this operator's page was rendered.
+    userRoleFindMany.mockResolvedValue([{ role: "ops" }, { role: "moderator" }]);
+
+    expect(await saveUserRole({ userId: "usr_5", roles: ["finance"], expectedRoles: ["ops"] })).toEqual(STALE);
+
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(userRoleDeleteMany).not.toHaveBeenCalled();
+    expect(userRoleCreateMany).not.toHaveBeenCalled();
+    expect(betterAuthUserUpdateMany).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("locks the target row BEFORE reading the set it compares", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindUnique.mockResolvedValue({ id: "usr_6", email: "target6@x.test", role: "viewer", roles: [{ role: "ops" }] });
+    const order: string[] = [];
+    queryRaw.mockImplementation(async () => {
+      order.push("lock");
+      return [];
+    });
+    userRoleFindMany.mockImplementation(async () => {
+      order.push("read");
+      return [{ role: "ops" }];
+    });
+
+    expect(await saveUserRole({ userId: "usr_6", roles: ["finance"], expectedRoles: ["ops"] })).toEqual({ ok: true });
+    // Reading first would let a second transaction read the same set before the first committed,
+    // so both comparisons would pass and the later write would still land on top of the earlier.
+    expect(order).toEqual(["lock", "read"]);
+  });
+
+  it("compares against what the page could show, not a leftover value it never displayed", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindUnique.mockResolvedValue({ id: "usr_7", email: "target7@x.test", role: "viewer", roles: [{ role: "ops" }] });
+    // "wizard" is outside the role vocabulary: the roster filters it out, so the operator's draft
+    // cannot possibly carry it, and demanding it would refuse every save on this person forever.
+    userRoleFindMany.mockResolvedValue([{ role: "ops" }, { role: "wizard" }]);
+
+    expect(await saveUserRole({ userId: "usr_7", roles: ["ops", "finance"], expectedRoles: ["ops"] })).toEqual({ ok: true });
+    // …and the save still sweeps the dead value out, exactly as it did before.
+    expect(userRoleDeleteMany).toHaveBeenCalledWith({ where: { userId: "usr_7", role: { in: ["wizard"] } } });
   });
 });

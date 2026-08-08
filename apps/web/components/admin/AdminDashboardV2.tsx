@@ -877,11 +877,19 @@ const sameRoleSet = (a: readonly string[], b: readonly string[]) =>
  * Every role is a toggle, and Save submits the COMPLETE set. Deselecting everything is not a
  * quiet way to strip someone: Save stays disabled and says why, because removing a person from
  * staff is a different decision than editing which hats they wear.
+ *
+ * #755 judge r2, P1 — Save also submits `base`, the set this row was rendered with, as the DRAFT
+ * the edit was made against. Two founders editing the same person from two tabs used to both be
+ * told "Saved." while the second one's older picture quietly undid the first one's change. Now
+ * the server compares the draft with what is stored and refuses the second save; the refusal is
+ * shown on the row as-is, and nothing is retried behind the operator's back — the honest next
+ * step is to reload and look at what is actually true before deciding again.
  */
 function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: string[]; selfEmail: string }) {
   const router = useRouter();
   const isSelf = row.email.toLowerCase() === selfEmail.toLowerCase();
   const [selected, setSelected] = useState<string[]>(row.roles);
+  /** The draft: what this row displayed, advanced only by a save the server accepted. */
   const [base, setBase] = useState<string[]>(row.roles);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -897,13 +905,17 @@ function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: strin
     setSaving(true);
     setMessage(null);
     // The complete set, always. Never a single value the server would read as "replace all".
-    const result = await saveUserRole({ userId: row.id, roles: selected }).catch(() => null);
+    // `expectedRoles` is what makes "complete" mean something: it names the set this edit was
+    // built on, so the server can refuse a save whose picture of the person is out of date.
+    const result = await saveUserRole({ userId: row.id, roles: selected, expectedRoles: base }).catch(() => null);
     setSaving(false);
     if (!result) {
       setMessage("Save failed.");
       return;
     }
     if ("error" in result) {
+      // Includes the stale-draft refusal. Shown verbatim — the message already says to reload,
+      // and re-sending the same set would only overwrite whatever the other founder just did.
       setMessage(result.error);
       return;
     }

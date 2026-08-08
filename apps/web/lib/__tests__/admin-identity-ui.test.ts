@@ -182,9 +182,16 @@ describe("#734 — the staff page shows employees, not customers", () => {
       await click(saveButton(row));
 
       expect(mocks.saveUserRole).toHaveBeenCalledTimes(1);
-      const payload = mocks.saveUserRole.mock.calls[0][0] as { userId: string; roles: string[] };
+      const payload = mocks.saveUserRole.mock.calls[0][0] as {
+        userId: string;
+        roles: string[];
+        expectedRoles: string[];
+      };
       expect(payload.userId).toBe("usr_both");
       expect([...payload.roles].sort()).toEqual(["finance", "moderator", "ops"]);
+      // #755 judge r2, P1 — and the draft the edit was made against: what this row was rendered
+      // with, NOT what is now selected. Sending the selection would prove nothing.
+      expect([...payload.expectedRoles].sort()).toEqual(["finance", "ops"]);
     });
 
     it("submits the complete set when a role is removed — the untouched one survives", async () => {
@@ -206,7 +213,9 @@ describe("#734 — the staff page shows employees, not customers", () => {
       await click(saveButton(row));
 
       const payload = mocks.saveUserRole.mock.calls[0][0] as Record<string, unknown>;
-      expect(Object.keys(payload).sort()).toEqual(["roles", "userId"]);
+      // Still an exact key set, so a `role` field cannot creep back in — now with the draft that
+      // makes "the complete set" mean something (#755 judge r2, P1).
+      expect(Object.keys(payload).sort()).toEqual(["expectedRoles", "roles", "userId"]);
     });
 
     it("refuses to submit an empty set instead of quietly stripping every role", async () => {
@@ -225,6 +234,41 @@ describe("#734 — the staff page shows employees, not customers", () => {
       const row = staffRow(dom, FOUNDER);
       expect(roleToggle(row, "ops").disabled).toBe(true);
       expect(saveButton(row).disabled).toBe(true);
+    });
+  });
+
+  // ── #755 judge r2, P1 — what the operator is told when someone else got there first ────────
+  describe("a refused save is shown, not swallowed", () => {
+    const STALE = "Roles changed since you loaded this page. Reload and try again.";
+
+    it("puts the refusal on the row and does not retry it behind the operator's back", async () => {
+      mocks.saveUserRole.mockResolvedValue({ error: STALE });
+      const dom = await render("staff");
+      const row = staffRow(dom, "both@fikirtive.test");
+      await click(roleToggle(row, "moderator"));
+      await click(saveButton(row));
+
+      expect(row.textContent).toContain(STALE);
+      expect(mocks.saveUserRole).toHaveBeenCalledTimes(1);
+      expect(row.textContent).not.toContain("Saved.");
+    });
+
+    it("does not advance the draft, so pressing Save again cannot turn a refusal into a write", async () => {
+      mocks.saveUserRole.mockResolvedValue({ error: STALE });
+      const dom = await render("staff");
+      const row = staffRow(dom, "both@fikirtive.test");
+      await click(roleToggle(row, "moderator"));
+      await click(saveButton(row));
+      await click(saveButton(row));
+
+      expect(mocks.saveUserRole).toHaveBeenCalledTimes(2);
+      // Both attempts prove against the set the PAGE rendered. If the refusal had quietly moved
+      // the draft forward, the second press would sail through the server's comparison and
+      // overwrite whatever the other founder just did — which is the defect, not the fix.
+      for (const call of mocks.saveUserRole.mock.calls) {
+        const payload = call[0] as { expectedRoles: string[] };
+        expect([...payload.expectedRoles].sort()).toEqual(["finance", "ops"]);
+      }
     });
   });
 

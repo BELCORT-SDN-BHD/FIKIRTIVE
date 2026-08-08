@@ -229,7 +229,15 @@ export type StaffRowV2 = {
   name: string;
   /** Every platform role held in `UserRole`. Roles are permission bundles, so this is a set. */
   roles: Role[];
-  /** Single value for the one-role Save control; derived from {@link StaffRowV2.roles}. */
+  /**
+   * The DERIVED single value — `primaryPlatformRole(roles)`, deterministic, always a member of
+   * {@link StaffRowV2.roles}, never a second source of truth.
+   *
+   * #755 judge r2, P3 — this used to be documented as the input to "the one-role Save control".
+   * That control is gone: the staff editor edits the whole set of toggles and reads `roles`
+   * alone. What the field still describes is the COMPATIBILITY columns `saveUserRole` mirrors
+   * (`User.role`, and through it `ba_user.role`, which Better Auth's own admin gate reads).
+   */
   role: Role;
 };
 
@@ -523,7 +531,8 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
         orderBy: { createdAt: "desc" },
         take: 60,
         // #735 — `payload` joins the select because the ACTOR lives in it and nowhere else.
-        // Only the four keys `auditIdentity` names ever leave this function.
+        // Only the two keys {@link auditActor} names ever leave this function (#755 judge r2, P3
+        // — the previous wording still named the four-key `auditIdentity` it replaced).
         select: { id: true, ownerId: true, projectId: true, type: true, payload: true, createdAt: true },
       }),
       // #734 — the roster IS the set of people who hold a platform role, read from the same
