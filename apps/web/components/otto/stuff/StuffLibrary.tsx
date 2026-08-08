@@ -4,11 +4,22 @@ import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { OttoRenameDialog } from "@/components/otto/OttoPromptDialog";
+import { ExitLink } from "@/components/exits/Exits";
+import { BRAND_MEMORY_HREF } from "@/lib/exits";
 import {
   type StuffFilter,
   type StuffItem,
   filterStuffItems,
 } from "@/lib/stuff-items";
+
+/** What a search that found nothing actually means (#701).
+ *
+ *  "Nothing here yet." used to cover both an empty library AND a search miss. In the second
+ *  case it is simply false — the merchant's assets are all still there — and it reads as
+ *  "your stuff is gone". Naming the query back is what tells them which of the two it is. */
+function noMatchesMessage(query: string): string {
+  return `No matches for “${query.trim()}”.`;
+}
 
 const FILTERS: { value: StuffFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -109,6 +120,7 @@ export function StuffLibrary({
   }, [items, search]);
 
   const grid = "grid grid-cols-3 md:grid-cols-5 gap-3";
+  const searching = search.trim() !== "";
 
   if (mode === "picker") {
     return (
@@ -127,7 +139,9 @@ export function StuffLibrary({
           />
         </div>
         {pickable.length === 0 ? (
-          <div className="py-4 text-[0.875rem] text-muted-foreground">No images to pick from.</div>
+          <div className="py-4 text-[0.875rem] text-muted-foreground">
+            {searching ? noMatchesMessage(search) : "No images to pick from."}
+          </div>
         ) : (
           <div className={grid}>
             {pickable.map((item) => (
@@ -189,8 +203,19 @@ export function StuffLibrary({
       </div>
 
       {filtered.length === 0 ? (
+        // #701 — three different facts, three different sentences. A search that found
+        // nothing is not an empty library, and "go to Brand memory" is a link, not directions.
         <div className="py-4 text-[0.875rem] text-muted-foreground">
-          {filter === "products" ? "No product assets yet. Add product knowledge in Brand memory, then link images here." : "Nothing here yet."}
+          {searching ? (
+            noMatchesMessage(search)
+          ) : filter === "products" ? (
+            <>
+              No product assets yet. Add product knowledge in{" "}
+              <ExitLink href={BRAND_MEMORY_HREF}>Brand memory</ExitLink>, then link images here.
+            </>
+          ) : (
+            "Nothing here yet."
+          )}
         </div>
       ) : (
         <div className={grid}>

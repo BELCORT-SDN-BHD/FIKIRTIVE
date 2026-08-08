@@ -6,6 +6,8 @@ import { SpendHistory } from "@/components/billing/SpendHistory";
 import { Card } from "@/components/ui/card";
 import { Wallet } from "lucide-react";
 import { formatCredits } from "@/lib/credit-format";
+import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
+import { SupportExit } from "@/components/exits/Exits";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Billing · Fikirtive" };
@@ -103,8 +105,11 @@ export default async function BillingPage({
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 12px" }}>Top up</h2>
 
         {packs.length === 0 ? (
+          // #687 — one sentence for one state (Settings renders the same constant), and an
+          // exit: a merchant on this page has already decided to pay, so "there is nothing
+          // here" cannot be the last thing the product says to them.
           <div className="text-muted-foreground" style={{ fontSize: 14 }}>
-            No credit packs are available right now.
+            {NO_CREDIT_PACKS_MESSAGE} <SupportExit subject="I want to buy credits" />
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

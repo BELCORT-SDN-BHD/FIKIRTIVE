@@ -6,6 +6,7 @@ import { parseResearchCardPayload, RESEARCH_TIER_LABELS, type ResearchStatusView
 import { approveResearch, getResearchCard } from "@/lib/research-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
+import { TopUpNotice } from "@/components/exits/Exits";
 import { canAffordPack } from "./pack-credit-math";
 
 export interface ResearchCardProps {
@@ -175,10 +176,13 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
         {/* Status area */}
         {status === "planned" ? (
           <div className="flex flex-col gap-2">
-            {insufficient && (
-              <div role="alert" className="text-[0.875rem] text-[var(--error-soft-foreground)]">
-                Not enough credits — top up to run this research.
-              </div>
+            {/* #707 — one notice for one fact, whether the shortfall was visible up front
+                (`!affordable`) or the server refused at confirm time (`insufficient`). It
+                used to be written out twice, both times as text with nowhere to click.
+                The two states never overlap: approving clears `insufficient` first, and a
+                merchant who cannot afford it never reaches Confirm. */}
+            {(insufficient || !affordable) && !confirming && (
+              <TopUpNotice need="run this research" />
             )}
             {confirming ? (
               <>
@@ -202,11 +206,6 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
               >
                 Review cost - {creditsLabel(estimate)}
               </Button>
-            )}
-            {!affordable && !confirming && (
-              <span className="text-[0.75rem] text-[var(--error-soft-foreground)]">
-                Not enough credits — top up to run this research.
-              </span>
             )}
           </div>
         ) : status === "running" ? (

@@ -6,6 +6,7 @@ import { ottoApprove } from "@/lib/otto-client-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { creditsLabel } from "@/lib/credit-format";
+import { TopUpNotice } from "@/components/exits/Exits";
 import { runPackApprovalLoop, type PackApprovalOutcome } from "./approval-chain";
 import type { CardState } from "@/lib/otto-inject-helpers";
 import { packTotalCredits, canAffordPack } from "./pack-credit-math";
@@ -224,8 +225,11 @@ export function PackCard({ packTitle, cards, balanceUsd, onApproved }: PackCardP
               </div>
 
               {!canAfford && (
-                <div role="alert" className="mb-3 text-[0.875rem] text-[var(--error-soft-foreground)]">
-                  Not enough credits to make all {cards.length} — top up or approve individually.
+                // #707 — the batch is out of reach, but the per-card approve gates below are
+                // still there, so the merchant has two real options. Both are named; only
+                // the top-up one needed a link it never had.
+                <div className="mb-3">
+                  <TopUpNotice need={`make all ${cards.length}`} alternative="approve them individually" />
                 </div>
               )}
 
