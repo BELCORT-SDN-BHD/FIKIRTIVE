@@ -614,8 +614,10 @@ export async function handlePublish(
         // only the sub-second gap between this read and the call itself — the physical floor.
         if (!(await autoPublishStillOn())) {
           // Withdrawn, not failed: release our own claim and hand the row back to waiting. Both
-          // writes in one transaction so the row can never be left claimed-but-unowned; the CAS
-          // inside handBackToWaiting sees our attempt already released and no other live claim.
+          // writes ride ONE transaction so the row can never be left claimed-but-unowned, and the
+          // second CAS carries the same none-APPLYING clause as handBackToWaiting above — by then
+          // our own attempt is already released, so it passes for us and still refuses to snatch a
+          // row some other worker is holding.
           await prisma.$transaction(async (tx) => {
             await tx.publishAttempt.updateMany({
               where: { id: attemptId, state: "APPLYING" },
