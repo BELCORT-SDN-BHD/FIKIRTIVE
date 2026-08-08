@@ -67,7 +67,13 @@ async function resetPasswordFor(email: string) {
 }
 
 describe("Better Auth enumeration-safe responses", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    // #678 — the queue jitters each job and holds its worker for a fixed floor so that one
+    // merchant's email arrival cannot be read as an answer about another merchant's address.
+    // This file is about the RESET gate; those delays have their own file
+    // (auth-email-queue-executor), so it takes them out.
+    const { __configureAuthEmailQueueForTests } = await import("@/lib/better-auth/sender");
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
     mockAllowedEmailFindUnique.mockReset();
     mockSend.mockReset();
     mockSend.mockResolvedValue(undefined);

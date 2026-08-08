@@ -25,7 +25,7 @@ describe("the auth-email queue", () => {
     // dev transport's single-file output — so they run the queue serially with no jitter, which
     // keeps the assertions about CONTENT rather than about scheduling. The executor's own
     // properties (concurrency, jitter, deadline) are asserted in auth-email-queue-executor.
-    __configureAuthEmailQueueForTests({ maxConcurrency: 1, jitterMaxMs: 0 });
+    __configureAuthEmailQueueForTests({ maxConcurrency: 1, jitterMaxMs: 0, slotFloorMs: 0 });
   });
   afterEach(async () => {
     const { __configureAuthEmailQueueForTests } = await import("@/lib/better-auth/sender");
@@ -124,6 +124,9 @@ describe("the auth-email queue", () => {
       "AUTH_EMAIL_JITTER_MAX_MS",
       "AUTH_EMAIL_JOB_TIMEOUT_MS",
       "AUTH_EMAIL_MAX_CONCURRENCY",
+      "AUTH_EMAIL_MAX_QUEUED",
+      "AUTH_EMAIL_SLOT_FLOOR_MS",
+      "__authEmailQueueDepthForTests",
       "__configureAuthEmailQueueForTests",
       "__resetAuthEmailCapsForTests",
       "authEmailQueueSettled",

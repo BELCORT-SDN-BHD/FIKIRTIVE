@@ -28,6 +28,7 @@ const {
   __resetMagicLinkThrottleForTests,
   __sweepMagicLinkThrottleForTests,
   __magicLinkThrottleSizeForTests,
+  __magicLinkThrottleBucketForTests,
   MAX_TRACKED_BUCKETS,
 } = await import("@/lib/better-auth/magic-link-request");
 
@@ -127,6 +128,38 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
     expect(queued.map((j) => j.overBudget)).toEqual([
       false, false, false, false, false, true, true, true,
     ]);
+  });
+
+  it("does the same bookkeeping when it refuses as when it grants", () => {
+    // r5 — "same call sequence" was not enough: a full bucket used to SKIP the write a fresh one
+    // performed, and its scan cost grew with how much budget the caller had spent. So the bucket
+    // is a fixed-size ring now: scanned `max` times and written once, every time.
+    const ip = "203.0.113.120";
+    const key = `${ip}|owner@shop.test`;
+
+    press("owner@shop.test", ip);
+    const first = __magicLinkThrottleBucketForTests(key);
+    // Fixed width from the very first press — the scan cannot get more expensive later.
+    expect(first?.stamps).toHaveLength(5);
+
+    for (let i = 0; i < 4; i++) press("owner@shop.test", ip);
+    const full = __magicLinkThrottleBucketForTests(key);
+    expect(full?.stamps).toHaveLength(5);
+    expect(full?.stamps.every((t) => t > 0)).toBe(true);
+
+    // The sixth press is refused — and still writes. RED before r5: the write was skipped, so a
+    // refusal cost strictly less than a grant.
+    const beforeRefusal = __magicLinkThrottleBucketForTests(key);
+    const slot = beforeRefusal?.next ?? 0;
+    const pressedAt = Date.now();
+    press("owner@shop.test", ip);
+    const afterRefusal = __magicLinkThrottleBucketForTests(key);
+    expect(afterRefusal?.stamps).toHaveLength(5);
+    // The ring advanced and the refused press's own timestamp landed in the slot it advanced
+    // past — the same write a granted press performs. (Comparing whole arrays would be flaky:
+    // six presses can share a millisecond, and then the overwritten value is identical.)
+    expect(afterRefusal?.next).toBe((slot + 1) % 5);
+    expect(afterRefusal?.stamps[slot]).toBeGreaterThanOrEqual(pressedAt);
   });
 
   it("sanitises the callback on the over-budget path too", () => {

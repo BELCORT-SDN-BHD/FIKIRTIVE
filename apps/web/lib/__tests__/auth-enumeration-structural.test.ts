@@ -154,9 +154,10 @@ beforeEach(() => {
   __resetMagicLinkThrottleForTests();
   __resetAuthEmailCapsForTests();
   // This file is about the REQUEST path, whose whole claim is that it waits on none of this.
-  // The executor's per-job jitter would only add real seconds to every case here; it has its own
-  // file (auth-email-queue-executor) where it is the thing being asserted.
-  __configureAuthEmailQueueForTests({ jitterMaxMs: 0 });
+  // The executor's per-job jitter and its slot floor would only add real seconds to every case
+  // here; both have their own file (auth-email-queue-executor) where they are the thing being
+  // asserted.
+  __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
 });
 
 // ── ① the request path is blind to what kind of address it was handed ────────────────────────

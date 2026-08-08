@@ -78,37 +78,68 @@ const MAX_PER_CALLER = 60;
  */
 export const MAX_TRACKED_BUCKETS = 20_000;
 
-const buckets = new Map<string, number[]>();
+/**
+ * One bucket is a FIXED-SIZE ring of the last `max` request times, not a growing list of the
+ * ones that were granted.
+ *
+ * The fixed size is what makes the cost of consulting it the same every time. A list that grew
+ * from zero to sixty entries took a different amount of work to scan depending on how much of
+ * its budget the caller had spent, and a full bucket skipped the write a fresh one performed —
+ * so "how expensive was this request" leaked how close the caller was to its limit. A ring of
+ * exactly `max` slots is scanned `max` times and written once, always.
+ *
+ * The window therefore slides on REQUESTS rather than on grants: a caller that keeps pressing
+ * keeps its ring full and stays refused until an hour after it stops, instead of being handed a
+ * slot back the moment its oldest grant ages out. For an abuse cap that is the better of the two
+ * readings, and it is the one that costs the same on every call.
+ */
+type Bucket = { stamps: number[]; next: number };
+
+const buckets = new Map<string, Bucket>();
 
 /**
- * Drop buckets whose timestamps have all aged out. NOT called from `acceptMagicLinkRequest`: a
- * full traversal is O(number of buckets), and running it on the request thread hands an attacker
- * who filled the map an event-loop stall. It rides its own timer instead, and `unref` keeps it
- * from holding a process (or a test run) open.
+ * Drop buckets whose slots have all aged out. NOT called from `acceptMagicLinkRequest`: a full
+ * traversal is O(number of buckets), and running it on the request thread hands an attacker who
+ * filled the map an event-loop stall. It rides its own timer instead, and `unref` keeps it from
+ * holding a process (or a test run) open.
  */
 function sweepExpired(now: number): void {
-  for (const [key, stamps] of buckets) {
-    const live = stamps.filter((t) => now - t < WINDOW_MS);
-    if (live.length === 0) buckets.delete(key);
-    else buckets.set(key, live);
+  for (const [key, bucket] of buckets) {
+    if (bucket.stamps.every((t) => now - t >= WINDOW_MS)) buckets.delete(key);
   }
 }
 
 const sweepTimer: unknown = setInterval(() => sweepExpired(Date.now()), WINDOW_MS);
 (sweepTimer as { unref?: () => void }).unref?.();
 
-/** Constant cost: one Map read, a bounded filter, one delete + one set (the LRU touch), and at
- *  most one eviction. No traversal, and no branch on the address. */
+/** Always called, so the eviction step is part of every request's cost rather than of some.
+ *  Whether it actually removes anything depends on the TOTAL size of the map — a global
+ *  property, not a property of this address or of how much budget this caller has left. */
+function evictOldestWhenFull(): void {
+  if (buckets.size <= MAX_TRACKED_BUCKETS) return;
+  const oldest = buckets.keys().next().value;
+  if (oldest !== undefined) buckets.delete(oldest);
+}
+
+/**
+ * Constant cost, and the SAME constant whether the bucket is empty or full: one Map read, a
+ * fixed `max`-slot scan, one write, one delete + one set (the LRU touch), and one eviction step.
+ * The verdict is computed from the scan and then the write happens regardless — a refused
+ * request performs exactly the work a granted one performs, and only the return value differs.
+ */
 function take(key: string, max: number, now: number): boolean {
-  const recent = (buckets.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
-  const room = recent.length < max;
-  if (room) recent.push(now);
+  const bucket = buckets.get(key) ?? { stamps: new Array<number>(max).fill(0), next: 0 };
+
+  let live = 0;
+  for (let i = 0; i < max; i += 1) if (now - bucket.stamps[i] < WINDOW_MS) live += 1;
+  const room = live < max;
+
+  bucket.stamps[bucket.next] = now;
+  bucket.next = (bucket.next + 1) % max;
+
   buckets.delete(key);
-  buckets.set(key, recent);
-  if (buckets.size > MAX_TRACKED_BUCKETS) {
-    const oldest = buckets.keys().next().value;
-    if (oldest !== undefined) buckets.delete(oldest);
-  }
+  buckets.set(key, bucket);
+  evictOldestWhenFull();
   return room;
 }
 
@@ -174,4 +205,13 @@ export function __sweepMagicLinkThrottleForTests(now: number = Date.now()): void
 /** TEST ONLY. The ceiling is the claim; a test has to be able to see the map to check it. */
 export function __magicLinkThrottleSizeForTests(): number {
   return buckets.size;
+}
+
+/** TEST ONLY. "A refused request does the same work as a granted one" is a claim about what the
+ *  bucket looks like afterwards, so a test has to be able to look. */
+export function __magicLinkThrottleBucketForTests(
+  key: string,
+): { stamps: number[]; next: number } | undefined {
+  const bucket = buckets.get(key);
+  return bucket && { stamps: [...bucket.stamps], next: bucket.next };
 }

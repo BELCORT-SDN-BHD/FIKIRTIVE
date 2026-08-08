@@ -41,11 +41,12 @@ const { authEmailQueueSettled, __configureAuthEmailQueueForTests } = await impor
 beforeEach(() => {
   sent.length = 0;
   delete process.env.SIGNUPS_PAUSED;
-  // #678 — auth emails leave on a background queue that waits a random moment before it starts,
-  // so that the arrival time of one merchant's email cannot be read as an answer about another
-  // merchant's address. This file is about the SIGN-UP door, not that queue (whose own
-  // properties are asserted in auth-email-queue-executor), so it takes the delay out.
-  __configureAuthEmailQueueForTests({ jitterMaxMs: 0 });
+  // #678 — auth emails leave on a background queue that jitters each job and holds its worker
+  // for a fixed floor, so that the arrival time of one merchant's email cannot be read as an
+  // answer about another merchant's address. This file is about the SIGN-UP door, not that
+  // queue (whose own properties are asserted in auth-email-queue-executor), so it takes the
+  // delays out.
+  __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
 });
 
 const PASSWORD = "correct-horse-battery-staple";
