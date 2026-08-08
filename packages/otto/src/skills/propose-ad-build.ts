@@ -13,14 +13,12 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { isConnectionBlocked, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and connect Instagram or Facebook, then try again.";
 const META_UNREACHABLE =
   "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
-
-const NEEDS_PAGE_SCOPE =
-  "I need permission to manage your Facebook Pages. Ask the user to reconnect Meta and grant page management access, then try again.";
 
 export const proposeAdBuildInput = z.object({
   goal: z.string().describe("The strategic goal for this ad (e.g. 'drive traffic to our product page')."),
@@ -81,16 +79,16 @@ export async function executeProposeAdBuild(
 
   const res = await ctx.metaBuild.propose(input);
 
-  if ("notConnected" in res || "needsReconnect" in res) {
+  // #741 r5 P1: "connected but expired" / "connected without Page access" are not "never
+  // connected" — the shared authority answers both, so this skill cannot merge them back in.
+  if (isConnectionBlocked(res)) return ottoConnectionBlockedAnswer(res);
+
+  if ("notConnected" in res) {
     return { message: NOT_CONNECTED };
   }
 
   if ("transientError" in res) {
     return { message: META_UNREACHABLE };
-  }
-
-  if ("needsPageScope" in res) {
-    return { message: NEEDS_PAGE_SCOPE };
   }
 
   if ("invalid" in res) {

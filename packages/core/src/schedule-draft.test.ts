@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { validateScheduleDraft, isScheduleChannel, SCHEDULE_CHANNEL_CAPS } from "./schedule-draft.js";
+import {
+  validateScheduleDraft,
+  isScheduleChannel,
+  SCHEDULE_CHANNEL_CAPS,
+  scheduleApproveBlockers,
+  classifyConnectionFailure,
+  classifyPagesRead,
+} from "./schedule-draft.js";
 
 const BASE = {
   channel: "instagram",
@@ -81,5 +88,137 @@ describe("validateScheduleDraft — channel capabilities", () => {
     expect(ok({ ...BASE, channel: "instagram", firstComment: "first!" }).firstComment).toBe("first!");
     // an empty/whitespace first comment is normalized to null, allowed on any channel
     expect(ok({ ...BASE, channel: "facebook", firstComment: "  " }).firstComment).toBeNull();
+  });
+});
+
+// #695 —— 「Approve & schedule」的前置条件只能有一份真相。
+// 病灶:服务端 approveScheduledPost 按「有账号 + 有媒体」两条规则拒绝,composer 的按钮也
+// 灰在同样两条上,但界面只解释了第一条 —— 账号一选,提示就消失,按钮沉默地灰着,商家
+// 无从知道真正缺的是「至少挑一张图」。这个纯函数就是那份唯一真相:服务端与 composer
+// 都读它,商家看到的句子也来自它,不可能再各说各话。
+describe("scheduleApproveBlockers —— approve 前置条件与话术同源 (#695)", () => {
+  const LIVE = ["ig-1"]; // 当前真实连着的账号
+
+  it("缺账号时给账号那句;账号到位后不再提", () => {
+    expect(scheduleApproveBlockers({ channel: "instagram", targetId: null, mediaCount: 1, connectedTargetIds: LIVE })).toEqual([
+      "Pick which account to post to before approving.",
+    ]);
+    expect(scheduleApproveBlockers({ channel: "instagram", targetId: "ig-1", mediaCount: 1, connectedTargetIds: LIVE })).toEqual([]);
+  });
+
+  it("缺媒体时给媒体那句 —— 正是票面上那句从没被说出口的话", () => {
+    expect(scheduleApproveBlockers({ channel: "instagram", targetId: "ig-1", mediaCount: 0, connectedTargetIds: LIVE })).toEqual([
+      "Add at least one image before approving.",
+    ]);
+    // Instagram 只收图(#229);Facebook 图片视频都收 —— 话术跟着渠道能力走,不能一句通吃。
+    expect(
+      scheduleApproveBlockers({ channel: "facebook", targetId: "fb-1", mediaCount: 0, connectedTargetIds: ["fb-1"] }),
+    ).toEqual(["Add at least one image or video before approving."]);
+  });
+
+  it("两样都缺就两句都给,顺序与 composer 的字段顺序一致", () => {
+    expect(scheduleApproveBlockers({ channel: "instagram", targetId: null, mediaCount: 0, connectedTargetIds: LIVE })).toEqual([
+      "Pick which account to post to before approving.",
+      "Add at least one image before approving.",
+    ]);
+  });
+
+  it("X 是纯文字渠道(maxMediaCount 0),不要求媒体", () => {
+    expect(scheduleApproveBlockers({ channel: "x", targetId: "x-1", mediaCount: 0, connectedTargetIds: ["x-1"] })).toEqual([]);
+    expect(scheduleApproveBlockers({ channel: "x", targetId: null, mediaCount: 0, connectedTargetIds: ["x-1"] })).toEqual([
+      "Pick which account to post to before approving.",
+    ]);
+  });
+
+  it("不认识的渠道不编媒体规则 —— 渠道本身的合法性由 isScheduleChannel 那道闸负责", () => {
+    expect(scheduleApproveBlockers({ channel: "tiktok", targetId: "t-1", mediaCount: 0, connectedTargetIds: ["t-1"] })).toEqual([]);
+  });
+
+  it("每一句都是完整人话,不带字段名或机器码", () => {
+    const sentences = [
+      ...scheduleApproveBlockers({ channel: "instagram", targetId: null, mediaCount: 0, connectedTargetIds: LIVE }),
+      ...scheduleApproveBlockers({ channel: "facebook", targetId: null, mediaCount: 0, connectedTargetIds: ["fb-1"] }),
+      ...scheduleApproveBlockers({ channel: "instagram", targetId: "gone", mediaCount: 0, connectedTargetIds: LIVE }),
+      ...scheduleApproveBlockers({ channel: "instagram", targetId: "gone", mediaCount: 0, connectedTargetIds: [] }),
+    ];
+    expect(sentences.length).toBeGreaterThan(0);
+    for (const sentence of sentences) {
+      expect(sentence).toMatch(/^[A-Z].*\.$/);
+      expect(sentence).not.toMatch(/metaTargetId|mediaCount|maxMediaCount|_/);
+    }
+  });
+});
+
+// #741 判官 r1 [P1] —— 「账户有效」曾经有两套真相。
+// 草稿里存着的那串 id 只是**曾经**挑过的账号:商家断开连接后它还在,界面据此认定「账号有了」
+// 并把批准按钮点亮,服务端 approve 时重读真实连接列表必拒。所以这条规则不能只看「有没有 id」,
+// 必须对照「现在真的连着哪些账号」——服务端读的是同一份事实,界面提前说出同一句话。
+describe("scheduleApproveBlockers —— 账户有效性对照真实连接 (#741 r1 P1)", () => {
+  it("草稿存着的旧 id 不在当前连接列表里:如实说这不是你连着的账号", () => {
+    expect(
+      scheduleApproveBlockers({ channel: "instagram", targetId: "ig-old", mediaCount: 1, connectedTargetIds: ["ig-new"] }),
+    ).toEqual(["That account isn't one of your connected channels."]);
+  });
+
+  it("一个账号都没连:指路去连接,而不是叫人「挑一个」不存在的账号", () => {
+    expect(
+      scheduleApproveBlockers({ channel: "instagram", targetId: "ig-old", mediaCount: 1, connectedTargetIds: [] }),
+    ).toEqual(["Connect your account before approving."]);
+    // 连 id 都没挑过、也一个都没连 —— 同样是「去连接」,不是「去挑」。
+    expect(
+      scheduleApproveBlockers({ channel: "instagram", targetId: null, mediaCount: 1, connectedTargetIds: [] }),
+    ).toEqual(["Connect your account before approving."]);
+  });
+
+  it("陈旧 id 与缺媒体同时存在:两句都给,账号那句在前", () => {
+    expect(
+      scheduleApproveBlockers({ channel: "instagram", targetId: "ig-old", mediaCount: 0, connectedTargetIds: ["ig-new"] }),
+    ).toEqual([
+      "That account isn't one of your connected channels.",
+      "Add at least one image before approving.",
+    ]);
+  });
+
+  it("「还没读到连接列表」不等于「没有连接」—— 不知道就不吓人", () => {
+    // 省略 connectedTargetIds = 调用方还没读(服务端的第一段检查就是这样),此时只判「挑没挑」。
+    expect(scheduleApproveBlockers({ channel: "instagram", targetId: "ig-old", mediaCount: 1 })).toEqual([]);
+    expect(
+      scheduleApproveBlockers({ channel: "instagram", targetId: "ig-old", mediaCount: 1, connectedTargetIds: null }),
+    ).toEqual([]);
+    expect(scheduleApproveBlockers({ channel: "instagram", targetId: null, mediaCount: 1 })).toEqual([
+      "Pick which account to post to before approving.",
+    ]);
+  });
+
+  it("空字符串的 id 当作没挑过,不当成一个「连不上的账号」", () => {
+    expect(
+      scheduleApproveBlockers({ channel: "instagram", targetId: "", mediaCount: 1, connectedTargetIds: ["ig-1"] }),
+    ).toEqual(["Pick which account to post to before approving."]);
+  });
+});
+
+// #741 判官 r5 [P1] —— 分类器必须是穷尽的、且**朝保守方向**兜底。
+// 上游明天多加一种失败形状(这在本仓已经发生过好几次:transientError、needsPageScope 都是
+// 后加的),旧的 `return "not_connected"` 兜底会把它悄悄讲成「你从未连接」——正是这张票
+// 从头到尾在修的那句谎话,只是换成由未来的代码说出口。
+describe("#741 r5 connection failure classification is exhaustive and fail-safe", () => {
+  it("认识的形状各归各位", () => {
+    expect(classifyConnectionFailure({ transientError: true })).toBe("unreadable");
+    expect(classifyConnectionFailure({ needsReconnect: true })).toBe("needs_reconnect");
+    expect(classifyConnectionFailure({ needsPageScope: true })).toBe("needs_page_permission");
+    expect(classifyConnectionFailure({ notConnected: true })).toBe("not_connected");
+  });
+
+  it("不认识的失败形状一律 unreadable,绝不冒充「从未连接」", () => {
+    // 一个臆造的、将来才可能出现的失败形状。
+    expect(classifyConnectionFailure({ needsBusinessVerification: true })).toBe("unreadable");
+    expect(classifyConnectionFailure({})).toBe("unreadable");
+    expect(classifyConnectionFailure({ error: "something new" })).toBe("unreadable");
+  });
+
+  it("pages 读沿用同一套判断", () => {
+    expect(classifyPagesRead({ pages: [] })).toBe("ok");
+    expect(classifyPagesRead({ needsBusinessVerification: true })).toBe("unreadable");
+    expect(classifyPagesRead({ notConnected: true })).toBe("not_connected");
   });
 });

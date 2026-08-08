@@ -14,6 +14,7 @@ import type { OttoContext } from "../context.js";
 import { diagnosePerformance } from "../diagnosis/diagnose-performance.js";
 import { META_EXPERTISE_KB } from "../knowledge/meta-expertise.js";
 import { buildPerformanceCardPayload } from "./meta-expert.helpers.js";
+import { isConnectionBlocked, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and connect Instagram or Facebook, then try again.";
@@ -41,7 +42,10 @@ export async function executeMetaExpert(
   if (!ctx?.metaPerformance) return { message: NOT_CONNECTED };
 
   const res = await ctx.metaPerformance.getAds(input.datePreset);
-  if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  // #741 r5 P1: "connected but expired" is not "never connected" — ask the shared
+  // authority first, so this skill cannot answer both with the same sentence.
+  if (isConnectionBlocked(res)) return ottoConnectionBlockedAnswer(res);
+  if ("notConnected" in res) return { message: NOT_CONNECTED };
   if ("transientError" in res) return { message: META_UNREACHABLE };
   if (res.ads.length === 0) {
     return { message: "Meta is connected, but no ads ran in this window to diagnose yet." };

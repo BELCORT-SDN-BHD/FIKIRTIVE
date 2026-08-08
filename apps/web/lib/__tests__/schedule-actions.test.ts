@@ -105,6 +105,7 @@ import {
   revokeSharePreview,
 } from "../schedule-actions";
 import { sharePreviewTokenDigest } from "../share-preview";
+import { ACCOUNTS_UNREADABLE_ERROR, CONNECTION_BLOCKER_COPY, scheduleApproveBlockers } from "@fikirtive/core";
 import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
 import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 
@@ -130,9 +131,9 @@ beforeEach(() => {
   mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
     args.where.id.in.map((id) => ({ id, asset: { mime: "image/png" } })),
   );
-  mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
-  mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
-  mockXListTargets.mockResolvedValue([]); // no X connection by default (X approve test overrides)
+  mockIgListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+  mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+  mockXListTargets.mockResolvedValue({ targets: [] }); // no X connection by default (X approve test overrides)
   mockPublishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt
   mockShareTokenCreate.mockResolvedValue({}); // B0-28: authority-row write succeeds by default
   mockShareTokenUpdateMany.mockResolvedValue({ count: 0 });
@@ -679,16 +680,111 @@ describe("approveScheduledPost", () => {
 
   it("rejects when the owner has no connected channel (fetchOwnerPages notConnected), no write", async () => {
     mockFindFirst.mockResolvedValue(draftReady());
-    mockIgListTargets.mockResolvedValue([]);
+    mockIgListTargets.mockResolvedValue({ targets: [] });
     const res = await approveScheduledPost("p1");
     expect(res).toHaveProperty("error");
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
+  // #741 判官 r3 [P2] —— 反向断言改成逐字比对:服务端拒的那句话,必须就是共享规则的第一句
+  // (拿规则本身算出来对照,不是再抄一份字符串;composer 提前告诉商家的也是同一句)。
+  it("服务端的拒绝语逐字等于 scheduleApproveBlockers 的第一句,不是另抄的一份", async () => {
+    const cases: { over: Record<string, unknown>; targetId: string; connected: string[]; mediaCount: number }[] = [
+      { over: {}, targetId: "page-1", connected: [], mediaCount: 1 },
+      { over: { metaTargetId: "not-mine" }, targetId: "not-mine", connected: ["page-1"], mediaCount: 1 },
+      { over: { media: [] }, targetId: "page-1", connected: ["page-1"], mediaCount: 0 },
+    ];
+    for (const { over, targetId, connected, mediaCount } of cases) {
+      vi.clearAllMocks();
+      mockRequireOwner.mockResolvedValue({ ownerId: OWNER, email: "a@b.co" });
+      mockIsImpersonating.mockResolvedValue(false);
+      mockGenFindMany.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+        args.where.id.in.map((id) => ({ id, asset: { mime: "image/png" } })),
+      );
+      mockPublishAttemptFindFirst.mockResolvedValue(null);
+      mockIgListTargets.mockResolvedValue({ targets: connected.map((id) => ({ id, name: id })) });
+      mockFindFirst.mockResolvedValue(draftReady(over));
+
+      const expected = scheduleApproveBlockers({
+        channel: "instagram",
+        targetId,
+        mediaCount,
+        connectedTargetIds: connected,
+      })[0]!;
+      expect(await approveScheduledPost("p1")).toEqual({ error: expected });
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+    }
+  });
+
+  // #741 判官 r5 [P1] —— 「连着但用不了」也不是「没连过」。两种都拒(fail closed,不变),
+  // 但对一个连过的商家说「Connect your account before approving.」是假话,而且与连接页矛盾。
+  it("连着但要重新授权:拒绝语说重新连接,不说「你没连账号」", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockResolvedValue({ blocked: "needs_reconnect" });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: CONNECTION_BLOCKER_COPY.needs_reconnect.approve });
+    expect(res).not.toEqual({ error: "Connect your account before approving." });
+    expect(String((res as { error: string }).error)).toMatch(/reconnect/i);
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("连着但缺页面权限:拒绝语说补权限,不说「你没连账号」", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockResolvedValue({ blocked: "needs_page_permission" });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: CONNECTION_BLOCKER_COPY.needs_page_permission.approve });
+    expect(res).not.toEqual({ error: "Connect your account before approving." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #741 判官 r5 [P2] —— 服务端与客户端必须用**同一张优先级表**。旧代码先跑一遍不带连接
+  // 信息的规则并直接返回,于是「连接过期 + 草稿还缺 target/media」时服务端说「Pick…/Add…」,
+  // 而知道连接状态的 composer 说「Reconnect…」——同一时刻同一个商家,两个理由。
+  for (const [name, over, blocker] of [
+    ["缺 target", { metaTargetId: null }, "needs_reconnect"],
+    ["缺 media", { media: [] }, "needs_reconnect"],
+    ["两样都缺", { metaTargetId: null, media: [] }, "needs_page_permission"],
+  ] as const) {
+    it(`连接受阻 + ${name}:服务端先说连接,与 composer 的优先级一致`, async () => {
+      mockFindFirst.mockResolvedValue(draftReady(over));
+      mockIgListTargets.mockResolvedValue({ blocked: blocker });
+      const res = await approveScheduledPost("p1");
+      expect(res).toEqual({ error: CONNECTION_BLOCKER_COPY[blocker].approve });
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+    });
+  }
+
+  it("连接读不到 + 草稿也缺项:先说没查到,而不是先挑草稿的毛病", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ metaTargetId: null, media: [] }));
+    mockIgListTargets.mockResolvedValue({ unavailable: true });
+    expect(await approveScheduledPost("p1")).toEqual({ error: ACCOUNTS_UNREADABLE_ERROR });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #741 判官 r5 [P1] —— 适配器**会抛**:同文件的 listOwnerTargets 早就逐渠道 catch 了,
+  // 批准路径却没有,于是一次网络抖动不是「拒绝并说明」,而是把异常直接抛给调用方。
+  it("适配器直接抛错:批准路径给出结构化退化出口,不把异常抛出去,也不写库", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockRejectedValue(new Error("socket hang up"));
+    await expect(approveScheduledPost("p1")).resolves.toEqual({ error: ACCOUNTS_UNREADABLE_ERROR });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #741 判官 r3 [P1] —— 连接读失败 ≠ 没连账号。两种情形都拒(fail closed,不变),但理由必须是真的:
+  // 说「Connect your account before approving.」等于告诉一个连接好好的商家「你没连」。
+  it("连接列表读不到时:照旧拒绝、照旧不写库,但说的是「没查到」而不是「你没连账号」", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockResolvedValue({ unavailable: true });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: ACCOUNTS_UNREADABLE_ERROR });
+    expect(res).not.toEqual({ error: "Connect your account before approving." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("validates approval against the post channel's own target adapter", async () => {
     mockFindFirst.mockResolvedValue(draftReady({ channel: "facebook" }));
-    mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "IG Page" }]);
-    mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "FB Page" }]);
+    mockIgListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "IG Page" }] });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "FB Page" }] });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     expect(await approveScheduledPost("p1")).toEqual({ ok: true });
     expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
@@ -707,7 +803,7 @@ describe("approveScheduledPost", () => {
     // AND a media X post would become NEEDS_ATTENTION (executeX refuses media) — X publishing impossible.
     mockFindFirst.mockResolvedValue(draftReady({ channel: "x", metaTargetId: "x-acct", media: [] }));
     mockGenFindMany.mockResolvedValue([]);
-    mockXListTargets.mockResolvedValue([{ id: "x-acct", name: "X account" }]);
+    mockXListTargets.mockResolvedValue({ targets: [{ id: "x-acct", name: "X account" }] });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     const res = await approveScheduledPost("p1");
     expect(res).toEqual({ ok: true });
@@ -932,28 +1028,61 @@ describe("listScheduledPosts", () => {
 
 describe("listOwnerTargets", () => {
   it("returns the owner's connectable targets per channel, owner-scoped", async () => {
-    mockIgListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
-    mockFbListTargets.mockResolvedValue([{ id: "page-1", name: "My Page" }]);
+    mockIgListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
     const res = await listOwnerTargets();
     // each adapter is asked for the SESSION owner's targets, never a client id
     expect(mockIgListTargets).toHaveBeenCalledWith(OWNER);
     expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
-    expect(res).toEqual([
+    expect(res.targets).toEqual([
       { id: "page-1", name: "My Page", channel: "instagram" },
       { id: "page-1", name: "My Page", channel: "facebook" },
     ]);
+    expect(res.channelStates).toEqual({ instagram: "ok", facebook: "ok", x: "ok" });
   });
 
-  it("returns [] when the owner has no connected targets (Connect prompt case)", async () => {
-    // adapters return [] on notConnected/needsReconnect/needsPageScope (see fetchOwnerPages mapping)
-    mockIgListTargets.mockResolvedValue([]);
-    mockFbListTargets.mockResolvedValue([]);
-    expect(await listOwnerTargets()).toEqual([]);
+  it("returns an empty list when the owner has no connected targets (Connect prompt case)", async () => {
+    // 只有 notConnected 会走到这里 —— 适配层答 { targets: [] },是一个真答案。
+    mockIgListTargets.mockResolvedValue({ targets: [] });
+    mockFbListTargets.mockResolvedValue({ targets: [] });
+    const res = await listOwnerTargets();
+    expect(res.targets).toEqual([]);
+    expect(res.channelStates.instagram).toBe("ok");
+    expect(res.channelStates.facebook).toBe("ok");
   });
 
-  it("returns [] when not signed in, queries no channel", async () => {
+  // #741 判官 r5 [P1]④ —— 一个渠道读不到,不该把整个排程页拖垮:答案改成**逐渠道**,
+  // 读到的照常给出,读不到的如实标注。这样 X 长期故障也压不垮 Instagram/Facebook。
+  it("单渠道读不到:其余渠道的名单照常给出,只把那一个标成 unreadable", async () => {
+    mockIgListTargets.mockResolvedValue({ unavailable: true });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    const res = await listOwnerTargets();
+    expect(res.targets).toEqual([{ id: "page-1", name: "My Page", channel: "facebook" }]);
+    expect(res.channelStates.instagram).toBe("unreadable");
+    expect(res.channelStates.facebook).toBe("ok");
+  });
+
+  it("单渠道「连着但用不了」:逐渠道标注,名单里不掺它的空", async () => {
+    mockIgListTargets.mockResolvedValue({ blocked: "needs_page_permission" });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    const res = await listOwnerTargets();
+    expect(res.channelStates.instagram).toBe("needs_page_permission");
+    expect(res.targets.every((t) => t.channel !== "instagram")).toBe(true);
+  });
+
+  it("某个适配器直接抛错:也只是那一个渠道 unreadable,整读不塌", async () => {
+    mockIgListTargets.mockRejectedValue(new Error("boom"));
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    const res = await listOwnerTargets();
+    expect(res.channelStates.instagram).toBe("unreadable");
+    expect(res.targets).toEqual([{ id: "page-1", name: "My Page", channel: "facebook" }]);
+  });
+
+  it("没登录:什么都不查,也什么都不断言(没有一个渠道被标成 ok)", async () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
-    expect(await listOwnerTargets()).toEqual([]);
+    const res = await listOwnerTargets();
+    expect(res.targets).toEqual([]);
+    expect(Object.values(res.channelStates)).not.toContain("ok");
     expect(mockIgListTargets).not.toHaveBeenCalled();
     expect(mockFbListTargets).not.toHaveBeenCalled();
   });

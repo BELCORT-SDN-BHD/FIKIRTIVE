@@ -159,7 +159,7 @@ async function renderSchedule() {
 
 beforeEach(() => {
   mocks.listScheduledPosts.mockResolvedValue([]);
-  mocks.listOwnerTargets.mockResolvedValue([IG_TARGET]);
+  mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET], channelStates: { instagram: "ok", facebook: "ok", x: "ok" } });
   mocks.createScheduledPost.mockResolvedValue({ ok: true, id: "post-new" });
   mocks.updateScheduledPost.mockResolvedValue({ ok: true });
   mocks.approveScheduledPost.mockResolvedValue({ ok: true });

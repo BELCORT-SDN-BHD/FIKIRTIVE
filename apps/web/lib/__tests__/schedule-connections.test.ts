@@ -1,0 +1,296 @@
+/**
+ * #741 判官 r2 —— 「已连接账号」收敛为单一状态源。
+ *
+ * 同族病第三轮的病根不是某一处判断写错,而是「已连接账号」在界面里有好几个**生命周期不同**
+ * 的来源:Plan 拿到的是 null,Composer 拿到的是初始 [],而且都只是挂载时的一次性快照。
+ * 于是同一块屏幕上,Approve all 把一条陈旧草稿算作 ready,composer 却指着同一条草稿说
+ * 「你没连账号」—— 一个放行、一个冤枉,同时发生。每多一个消费点就多一种分叉。
+ *
+ * 这里钉的是收敛后的形状本身:显式两态(还没读到 / 读到了,含空列表)+ 一个派生判定函数。
+ * 三条规矩按优先级排:
+ *   ① 渠道根本连不上 → 只给「换渠道」,永远不给连接 CTA;
+ *   ② 还没读到 = 不确定 → 不放行,也不冤枉(不许说「去连账号」);
+ *   ③ 读到了 → 交给服务端同一条规则,商家提前听到的就是服务端会拒绝的那句。
+ */
+import { describe, expect, it } from "vitest";
+import { ACCOUNTS_UNREADABLE_ERROR, CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
+import {
+  ACCOUNTS_LOADING,
+  CHECKING_ACCOUNTS_BLOCKER,
+  accountPicker,
+  accountsUnreadable,
+  approvalFor,
+  autoPublishAllowed,
+  canOfferConnect,
+  channelUnavailableBlocker,
+  isCheckingAccounts,
+  isConnectedTarget,
+  loadedAccounts,
+  markRechecking,
+  postableChannelIds,
+} from "../schedule-connections";
+
+const IG = { id: "ig-1", name: "Kopi Kita", channel: "instagram" };
+const IG_OTHER = { id: "ig-2", name: "Kopi Kita Two", channel: "instagram" };
+const FB = { id: "fb-1", name: "Kopi Kita Page", channel: "facebook" };
+
+/** 一次**完整**的连接读:三件事一起答复(#741 r3/r5)——名单、逐渠道读到了什么、发布权限。
+ *  这个 helper 代表「每个渠道都读成功了」,多数用例不关心发布权限,默认关。 */
+const ALL_OK = { instagram: "ok", facebook: "ok", x: "ok" } as const;
+const connected = (targets: typeof IG[], canPublish = false) =>
+  loadedAccounts({ targets, channelStates: ALL_OK, canPublish });
+
+const READY_POST = { channel: "instagram", targetId: IG.id, mediaCount: 1 };
+
+/** 一句「连接动作」的自然形状 —— 「Connect your…」「Connect an…」「Reconnect…」。
+ *  注意不能拿 /connect/i 一刀切:「Checking your connected accounts…」里的 connected 是
+ *  在描述状态,不是在叫人去做一件事。 */
+const CONNECT_CTA = /\b(re)?connect (your|an|a|the)\b/i;
+
+describe("单一状态源:还没读到 ≠ 没有连接", () => {
+  it("两态互斥且可分辨", () => {
+    expect(isCheckingAccounts(ACCOUNTS_LOADING)).toBe(true);
+    expect(isCheckingAccounts(connected([]))).toBe(false);
+    expect(isCheckingAccounts(connected([IG]))).toBe(false);
+  });
+
+  it("还没读到时不放行,也不断言「去连账号」", () => {
+    const view = approvalFor(ACCOUNTS_LOADING, READY_POST);
+    expect(view.canApprove).toBe(false);
+    expect(view.blockers).toEqual([CHECKING_ACCOUNTS_BLOCKER]);
+    // 这一句是本轮的核心:不确定的时候不许说出任何断言式的假话。
+    expect(view.blockers.join(" ")).not.toMatch(CONNECT_CTA);
+    expect(view.blockers.join(" ")).not.toMatch(/isn't one of your connected/i);
+  });
+
+  it("读到空列表是一个真答案:此时才说「去连账号」", () => {
+    const view = approvalFor(connected([]), READY_POST);
+    expect(view.canApprove).toBe(false);
+    expect(view.blockers).toEqual(["Connect your account before approving."]);
+  });
+
+  it("读到列表且账号还在:放行", () => {
+    expect(approvalFor(connected([IG]), READY_POST)).toEqual({ blockers: [], canApprove: true });
+  });
+
+  it("读到列表但账号已不在(他处断连):如实翻成 blocker", () => {
+    const view = approvalFor(connected([IG_OTHER]), READY_POST);
+    expect(view.canApprove).toBe(false);
+    expect(view.blockers).toEqual(["That account isn't one of your connected channels."]);
+  });
+
+  it("账号按渠道分,别的渠道连着不算数", () => {
+    const view = approvalFor(connected([FB]), READY_POST);
+    expect(view.canApprove).toBe(false);
+    expect(view.blockers).toEqual(["Connect your account before approving."]);
+  });
+
+  it("缺媒体那条规则原样来自共享规则,没有在这里被重写", () => {
+    const view = approvalFor(connected([IG]), { ...READY_POST, mediaCount: 0 });
+    expect(view.blockers).toEqual(["Add at least one image before approving."]);
+  });
+});
+
+describe("连不上的渠道永远不给连接 CTA", () => {
+  const X_POST = { channel: "x", targetId: null, mediaCount: 0 };
+
+  it("只给换渠道指引,不含任何连接动作", () => {
+    for (const accounts of [ACCOUNTS_LOADING, connected([]), connected([IG])]) {
+      const view = approvalFor(accounts, X_POST);
+      expect(view.canApprove).toBe(false);
+      expect(view.blockers).toEqual([channelUnavailableBlocker("x")]);
+      expect(view.blockers.join(" ")).not.toMatch(CONNECT_CTA);
+      expect(view.blockers.join(" ")).not.toMatch(/connect/i);
+      expect(view.blockers.join(" ")).toMatch(/another channel/i);
+    }
+  });
+
+  it("说的是商家看得懂的渠道名,不是内部 id", () => {
+    expect(channelUnavailableBlocker("x")).toContain("X is not available yet");
+    expect(channelUnavailableBlocker("x")).toMatch(/^[A-Z].*\.$/);
+  });
+
+  it("账号选择器给的是「无此选项」,不是「去连一个」", () => {
+    expect(accountPicker(ACCOUNTS_LOADING, "x")).toEqual({ phase: "unavailable" });
+    expect(accountPicker(connected([]), "x")).toEqual({ phase: "unavailable" });
+  });
+});
+
+// ── #741 判官 r5 [P1] 「连着但用不了」与「读不到」各自成状态 ────────────────────
+//
+// 上一轮只有三态,needsReconnect / needsPageScope 被塞进「读到了,是空的」,于是对一个
+// 连过的商家说「你没连过」;而「读不到」被丢弃,屏幕永远停在「正在查」。这一组钉的是:
+// 每一种事实都有自己的落点,而且每一种都说得出口。
+
+describe("连着但用不了:不是没连过,也不是读不到", () => {
+  // IG 与 FB 共用同一个 Meta 连接,所以这类状态本来就是两个渠道一起出现的。
+  const blocked = (state: "needs_reconnect" | "needs_page_permission") =>
+    loadedAccounts({ targets: [], channelStates: { instagram: state, facebook: state }, canPublish: false });
+
+  for (const state of ["needs_reconnect", "needs_page_permission"] as const) {
+    it(`${state}:缺项句来自共享权威,且绝不说「去连账号」`, () => {
+      const view = approvalFor(blocked(state), READY_POST);
+      expect(view.canApprove).toBe(false);
+      expect(view.blockers).toContain(CONNECTION_BLOCKER_COPY[state].approve);
+      expect(view.blockers).not.toContain("Connect your account before approving.");
+    });
+
+    it(`${state}:账号选择器给的是「重新连接」,不是「去连一个」`, () => {
+      expect(accountPicker(blocked(state), "instagram")).toEqual({ phase: "blocked", blocker: state });
+    });
+
+    it(`${state}:屏幕没有资格邀请商家「去连一个」—— 人家连过了`, () => {
+      expect(canOfferConnect(blocked(state))).toBe(false);
+      expect(accountsUnreadable(blocked(state))).toBe(false);
+    });
+  }
+});
+
+describe("读不到:是一个说得出口的答案,不是无尽的「正在查」", () => {
+  const unreadable = loadedAccounts({
+    targets: [],
+    channelStates: { instagram: "unreadable", facebook: "unreadable" },
+    canPublish: false,
+  });
+
+  it("缺项句就是服务端那句「没查到」,既不放行也不冤枉", () => {
+    const view = approvalFor(unreadable, READY_POST);
+    expect(view.canApprove).toBe(false);
+    expect(view.blockers).toEqual([ACCOUNTS_UNREADABLE_ERROR]);
+  });
+
+  it("选择器是「读不到」自己的一态,不会退回「没连账号」", () => {
+    expect(accountPicker(unreadable, "instagram")).toEqual({ phase: "unreadable" });
+  });
+
+  it("既不许邀请去连接,也要让屏幕知道该给重试入口", () => {
+    expect(canOfferConnect(unreadable)).toBe(false);
+    expect(accountsUnreadable(unreadable)).toBe(true);
+  });
+
+  it("名单里没提到的渠道 = 没读过 = 读不到(截断的答案不会被当成空答案)", () => {
+    const partial = loadedAccounts({ targets: [], channelStates: { facebook: "ok" }, canPublish: false });
+    expect(accountPicker(partial, "instagram")).toEqual({ phase: "unreadable" });
+    expect(accountPicker(partial, "facebook")).toEqual({ phase: "none" });
+  });
+
+  it("单渠道读不到不牵连别的渠道:Facebook 读到了就照常回答", () => {
+    const mixed = loadedAccounts({
+      targets: [FB],
+      channelStates: { instagram: "unreadable", facebook: "ok" },
+      canPublish: false,
+    });
+    expect(approvalFor(mixed, { channel: "facebook", targetId: FB.id, mediaCount: 1 })).toEqual({
+      blockers: [],
+      canApprove: true,
+    });
+    expect(approvalFor(mixed, READY_POST).blockers).toEqual([ACCOUNTS_UNREADABLE_ERROR]);
+  });
+});
+
+// ── #741 判官 r5 [P1] 所有渠道结论都必须过同一个带默认值的读取器 ──────────────────
+
+describe("没有旁路:名单不能绕过逐渠道状态", () => {
+  it("渠道读不到时,它的旧账号不算 postable,也不解锁 auto-publish", () => {
+    // 病灶:postableChannelIds 直读扁平 targets,跳过了 channelStates[c] ?? "unreadable"。
+    const accounts = loadedAccounts({
+      targets: [IG],
+      channelStates: { instagram: "unreadable", facebook: "ok" },
+      canPublish: true,
+    });
+    expect([...postableChannelIds(accounts)]).toEqual([]);
+    expect(autoPublishAllowed(accounts)).toBe(false);
+    expect(isConnectedTarget(accounts, "instagram", IG.id)).toBe(false);
+  });
+
+  it("渠道连着但用不了时同理:名单里的旧账号不算数", () => {
+    const accounts = loadedAccounts({
+      targets: [IG],
+      channelStates: { instagram: "needs_reconnect" },
+      canPublish: true,
+    });
+    expect([...postableChannelIds(accounts)]).toEqual([]);
+    expect(autoPublishAllowed(accounts)).toBe(false);
+  });
+
+  it("名单里带了一个服务端根本没报状态的渠道:直接不予采信", () => {
+    const accounts = loadedAccounts({ targets: [IG, FB], channelStates: { facebook: "ok" }, canPublish: true });
+    expect([...postableChannelIds(accounts)]).toEqual(["facebook"]);
+    expect(isConnectedTarget(accounts, "instagram", IG.id)).toBe(false);
+  });
+});
+
+describe("刷新窗口内:上一趟的答案可以继续显示,但不算数", () => {
+  const fresh = loadedAccounts({ targets: [IG], channelStates: ALL_OK, canPublish: true });
+  const rechecking = markRechecking(fresh);
+
+  it("重新检查期间不放行 —— 说的是「正在查」,不是断言", () => {
+    expect(approvalFor(fresh, READY_POST)).toEqual({ blockers: [], canApprove: true });
+    // 病灶:seq 只防旧响应覆写,不防旧快照被读 —— 慢读/悬挂读期间照旧计为 ready。
+    expect(approvalFor(rechecking, READY_POST)).toEqual({
+      blockers: [CHECKING_ACCOUNTS_BLOCKER],
+      canApprove: false,
+    });
+    expect(isConnectedTarget(rechecking, "instagram", IG.id)).toBe(false);
+    expect(autoPublishAllowed(rechecking)).toBe(false);
+  });
+
+  it("但显示保持稳定:不会每 60 秒把商家自己的渠道闪没", () => {
+    expect([...postableChannelIds(rechecking)]).toEqual(["instagram"]);
+    expect(accountPicker(rechecking, "instagram")).toEqual({
+      phase: "ready",
+      options: [{ value: IG.id, label: IG.name }],
+    });
+  });
+
+  it("还没读到过的时候 markRechecking 不改变任何东西", () => {
+    expect(isCheckingAccounts(markRechecking(ACCOUNTS_LOADING))).toBe(true);
+  });
+});
+
+describe("派生视图与状态同源", () => {
+  it("账号选择器四态分明 —— 「还没读到」与「没有」不会被折叠成同一个", () => {
+    expect(accountPicker(ACCOUNTS_LOADING, "instagram")).toEqual({ phase: "checking" });
+    expect(accountPicker(connected([]), "instagram")).toEqual({ phase: "none" });
+    expect(accountPicker(connected([FB]), "instagram")).toEqual({ phase: "none" });
+    expect(accountPicker(connected([IG, FB]), "instagram")).toEqual({
+      phase: "ready",
+      options: [{ value: IG.id, label: IG.name }],
+    });
+  });
+
+  // #741 r3 [P2]:选择器交出去的是**渲染用的视图**,不是账号对象本身。拿不到 id/channel,
+  // 组件就没法用 `picker.options.some(t => t.id === targetId)` 重新拼出一个判定点 ——
+  // 这正是同族病三轮的复发方式。
+  it("ready 交出的是 { value, label },没有任何可以拿去比对的原始字段", () => {
+    const picker = accountPicker(connected([IG]), "instagram");
+    if (picker.phase !== "ready") throw new Error("expected ready");
+    expect(Object.keys(picker.options[0]!).sort()).toEqual(["label", "value"]);
+    expect(JSON.stringify(picker.options)).not.toContain("channel");
+  });
+
+  it("可发布渠道在还没读到时是空的,不假装谁连着", () => {
+    expect([...postableChannelIds(ACCOUNTS_LOADING)]).toEqual([]);
+    expect([...postableChannelIds(connected([IG, FB]))].sort()).toEqual(["facebook", "instagram"]);
+  });
+
+  // #741 r3 [P1]:发布权限曾是屏内**第二套**连接生命周期(自己的 state、自己的读)。
+  // 现在它和账号名单一起构成「一次完整的读」,所以下面这三条其实是同一条规矩的三个面。
+  it("auto-publish 要两件事同时成立:有真发得出去的渠道 + 平台给了发布权限", () => {
+    expect(autoPublishAllowed(connected([IG], true))).toBe(true);
+    expect(autoPublishAllowed(connected([IG], false))).toBe(false);
+    expect(autoPublishAllowed(connected([], true))).toBe(false);
+  });
+
+  it("还没读到就一律不许开 —— 不确定不等于可以", () => {
+    expect(autoPublishAllowed(ACCOUNTS_LOADING)).toBe(false);
+  });
+
+  it("「这个 id 还算数吗」也走同一份状态,不确定时一律为否", () => {
+    expect(isConnectedTarget(ACCOUNTS_LOADING, "instagram", IG.id)).toBe(false);
+    expect(isConnectedTarget(connected([IG]), "instagram", IG.id)).toBe(true);
+    expect(isConnectedTarget(connected([IG]), "instagram", "ig-gone")).toBe(false);
+    expect(isConnectedTarget(connected([IG]), "facebook", IG.id)).toBe(false);
+    expect(isConnectedTarget(connected([IG]), "instagram", null)).toBe(false);
+  });
+});
