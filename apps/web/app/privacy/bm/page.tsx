@@ -35,7 +35,7 @@ export default function PrivacyPageBm() {
         </p>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Fikirtive dikendalikan oleh BELCORT SDN BHD, sebuah syarikat yang berdaftar di Malaysia. Notis ini
-          menerangkan produk sebagaimana ia berfungsi hari ini, semasa fasa beta jemputan sahaja. Ia menerangkan
+          menerangkan produk sebagaimana ia berfungsi hari ini, semasa akses adalah melalui jemputan sahaja. Ia menerangkan
           maklumat yang kami simpan, sebab kami menyimpannya, pihak lain yang memprosesnya, dan cara memintanya
           dibuang.
         </p>

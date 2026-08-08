@@ -117,7 +117,7 @@ export default function PrivacyPage() {
         </p>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. This notice describes the product
-          as it works today, during the invite-only beta. It explains what information we hold, why we hold it, who else
+          as it works today, while access is by invitation only. It explains what information we hold, why we hold it, who else
           processes it, and how to have it removed.
         </p>
 
