@@ -26,11 +26,13 @@ import { requireRole } from "./auth-guard";
 /**
  * #755 judge r2, P1 — what a role save is refused with when it was built on an old page.
  *
- * One message covers both ways the draft can fail to prove itself: the page's set no longer
- * matches the database, and the request carried no draft at all (a tab left open across a
- * deploy, running JavaScript from before this field existed). Reloading is the fix for both,
+ * One message covers every way the draft can fail to prove itself: the page's set no longer
+ * matches the database, the request carried no draft at all (a tab left open across a deploy,
+ * running JavaScript from before this field existed), and — #755 judge r3 — the draft was
+ * present but empty, which no rendered page can produce. Reloading is the fix for all of them,
  * and the operator is told to do exactly that instead of being left to wonder whether their
- * change landed.
+ * change landed. The message never reports what the target actually holds: a refusal is not a
+ * place to hand back the role set of someone the caller may not have been shown.
  */
 const STALE_ROLES_ERROR = "Roles changed since you loaded this page. Reload and try again.";
 
@@ -218,7 +220,17 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
   // screen when the operator started toggling. Without it the server cannot tell an edit from a
   // resurrection, because a "complete set" carries no evidence of WHICH set it is complete
   // relative to. Absent or malformed ⇒ refused; a save that cannot prove what it saw never runs.
-  if (!Array.isArray(v.expectedRoles)) return { error: STALE_ROLES_ERROR };
+  //
+  // #755 judge r3, P1 — an EMPTY draft is refused on exactly the same ground, because it proves
+  // nothing either. `[]` clears `Array.isArray`, and against a target whose known-role projection
+  // is also empty — someone holding only values outside the vocabulary, or nothing at all — the
+  // comparison below succeeds vacuously and the write runs. That would let any holder of
+  // `team.mutate` grant `super-admin` on a person the roster never rendered, which is the opposite
+  // of what a compare-and-set is for. No legitimate empty draft exists: the roster drops zero-role
+  // people (admin-v2.ts), so no page can display one for an operator to have edited.
+  if (!Array.isArray(v.expectedRoles) || v.expectedRoles.length === 0) {
+    return { error: STALE_ROLES_ERROR };
+  }
   const parsedExpected = v.expectedRoles.map((expectedRole) => roleSchema.safeParse(expectedRole));
   if (parsedExpected.some((result) => !result.success)) return { error: "Unknown role." };
   const expected = new Set(

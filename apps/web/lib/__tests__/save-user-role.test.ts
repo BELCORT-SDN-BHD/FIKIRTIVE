@@ -88,7 +88,9 @@ describe("saveUserRole", () => {
   it("rejects when the target user is not found", async () => {
     mockRequireRole.mockResolvedValue(GATE);
     userFindUnique.mockResolvedValue(null);
-    const result = await saveUserRole({ userId: "usr_missing", role: "ops", expectedRoles: [] });
+    // A real draft, so the request reaches the lookup — an empty one is now refused before it
+    // (#755 judge r3), which would prove nothing about the missing-target branch.
+    const result = await saveUserRole({ userId: "usr_missing", role: "ops", expectedRoles: ["viewer"] });
     expect(result).toEqual({ error: "User not found." });
   });
 
@@ -167,6 +169,57 @@ describe("saveUserRole — optimistic concurrency", () => {
     mockRequireRole.mockResolvedValue(GATE);
     expect(await saveUserRole({ userId: "usr_8", roles: ["ops"] })).toEqual(STALE);
     expect(userFindUnique).not.toHaveBeenCalled();
+  });
+
+  /**
+   * #755 judge r3, P1 — an EMPTY draft is not a draft.
+   *
+   * `[]` clears `Array.isArray`, so it used to reach the comparison as a legitimate "the page
+   * showed no roles" claim. Against a target the roster refuses to render — someone holding only
+   * values outside the vocabulary, or nothing at all — the stored projection is empty too, both
+   * sides compare equal, and the save proceeds. That turns the compare-and-set into a grant
+   * primitive: anyone holding `team.mutate` could hand out `super-admin` on a person no page has
+   * ever displayed, with no draft to prove they had looked at anything.
+   *
+   * There is no legitimate empty draft. `admin-v2.ts` drops zero-role people from the roster, so
+   * no page can render one, and the row seeds its draft from what it rendered. An empty array is
+   * therefore exactly as unproven as an absent one, and gets the same refusal in the same place.
+   */
+  it("refuses an empty draft against a target holding only unknown roles, and issues no write", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindUnique.mockResolvedValue({ id: "usr_9", email: "ghost@x.test", role: "member", roles: [{ role: "wizard" }] });
+    // The known-role projection of this target is empty — the roster will not render them at all.
+    userRoleFindMany.mockResolvedValue([{ role: "wizard" }]);
+
+    expect(
+      await saveUserRole({ userId: "usr_9", roles: ["super-admin"], expectedRoles: [] }),
+    ).toEqual(STALE);
+
+    // Refused on the same ground as an absent draft: before the target is ever looked up.
+    expect(userFindUnique).not.toHaveBeenCalled();
+    // …and none of the three places a role lives was touched.
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(userRoleDeleteMany).not.toHaveBeenCalled();
+    expect(userRoleCreateMany).not.toHaveBeenCalled();
+    expect(betterAuthUserUpdateMany).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses an empty draft against a target holding no roles at all, and issues no write", async () => {
+    mockRequireRole.mockResolvedValue(GATE);
+    userFindUnique.mockResolvedValue({ id: "usr_10", email: "nobody@x.test", role: "member", roles: [] });
+    userRoleFindMany.mockResolvedValue([]);
+
+    expect(
+      await saveUserRole({ userId: "usr_10", roles: ["super-admin"], expectedRoles: [] }),
+    ).toEqual(STALE);
+
+    expect(userFindUnique).not.toHaveBeenCalled();
+    expect(userUpdate).not.toHaveBeenCalled();
+    expect(userRoleDeleteMany).not.toHaveBeenCalled();
+    expect(userRoleCreateMany).not.toHaveBeenCalled();
+    expect(betterAuthUserUpdateMany).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
   });
 
   it("refuses a save whose draft no longer matches the stored set, and issues no write", async () => {
