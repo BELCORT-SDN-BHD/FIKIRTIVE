@@ -40,7 +40,9 @@ case_no=0
 
 # fixture <name> <files-json> <changed_files-json>
 fixture() {
-  printf '%s' "$2" >"$tmp/$1.files.json"
+  # $2 is one page of the files endpoint; gh --paginate --slurp wraps pages in
+  # an outer array, so that is what the filter is fed.
+  printf '[%s]' "$2" >"$tmp/$1.files.json"
   printf '{"number":809,"changed_files":%s}' "$3" >"$tmp/$1.pr.json"
 }
 
@@ -61,23 +63,23 @@ check() {
 }
 
 # ── big payloads, built with jq so they are real JSON ──
-jq -nc '[range(2999) | {status:"modified", filename:("docs/references/long/chapter-"+(.|tostring)+".md")}]' >"$tmp/big-docs.files.json"
+jq -nc '[[range(2999) | {status:"modified", filename:("docs/references/long/chapter-"+(.|tostring)+".md")}]]' >"$tmp/big-docs.files.json"
 printf '{"changed_files":2999}' >"$tmp/big-docs.pr.json"
 
-jq -nc '[{status:"modified",filename:"apps/web/live.ts"}] + [range(2998) | {status:"modified", filename:("docs/references/long/chapter-"+(.|tostring)+".md")}]' >"$tmp/big-code-first.files.json"
+jq -nc '[[{status:"modified",filename:"apps/web/live.ts"}] + [range(2998) | {status:"modified", filename:("docs/references/long/chapter-"+(.|tostring)+".md")}]]' >"$tmp/big-code-first.files.json"
 printf '{"changed_files":2999}' >"$tmp/big-code-first.pr.json"
 
-jq -nc '[range(2998) | {status:"modified", filename:("docs/references/long/chapter-"+(.|tostring)+".md")}] + [{status:"modified",filename:"apps/web/live.ts"}]' >"$tmp/big-code-last.files.json"
+jq -nc '[[range(2998) | {status:"modified", filename:("docs/references/long/chapter-"+(.|tostring)+".md")}] + [{status:"modified",filename:"apps/web/live.ts"}]]' >"$tmp/big-code-last.files.json"
 printf '{"changed_files":2999}' >"$tmp/big-code-last.pr.json"
 
-jq -nc '[range(3000) | {status:"modified", filename:("docs/x-"+(.|tostring)+".md")}]' >"$tmp/at-ceiling.files.json"
+jq -nc '[[range(3000) | {status:"modified", filename:("docs/x-"+(.|tostring)+".md")}]]' >"$tmp/at-ceiling.files.json"
 printf '{"changed_files":3000}' >"$tmp/at-ceiling.pr.json"
 
-jq -nc '[range(3000) | {status:"modified", filename:("docs/x-"+(.|tostring)+".md")}]' >"$tmp/truncated.files.json"
+jq -nc '[[range(3000) | {status:"modified", filename:("docs/x-"+(.|tostring)+".md")}]]' >"$tmp/truncated.files.json"
 printf '{"changed_files":3001}' >"$tmp/truncated.pr.json"
 
 # `gh api --paginate` concatenates one array per page.
-printf '%s' '[{"status":"modified","filename":"docs/p1.md"}][{"status":"modified","filename":"docs/p2.md"}]' >"$tmp/paginated.files.json"
+printf '%s' '[[{"status":"modified","filename":"docs/p1.md"}],[{"status":"modified","filename":"docs/p2.md"}]]' >"$tmp/paginated.files.json"
 printf '{"changed_files":2}' >"$tmp/paginated.pr.json"
 
 # ══ docs-only PRs may still short-circuit ══
@@ -223,22 +225,23 @@ fixture entry_null '[null]' 1
 check true entry_null "array element is null"
 
 # ══ malformed payloads are never docs-only ══
-printf '%s' '[{"status":"modified","filename":"docs/a\q.md"}]' >"$tmp/bad_escape.files.json"
+printf '%s' '[[{"status":"modified","filename":"docs/a\q.md"}]]' >"$tmp/bad_escape.files.json"
 printf '{"changed_files":1}' >"$tmp/bad_escape.pr.json"
 check true bad_escape "illegal JSON escape in a filename"
 
-printf '%s' '[{"status":"modified","filename":"docs/a.md"}' >"$tmp/unterminated.files.json"
+printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]' >"$tmp/unterminated.files.json"
 printf '{"changed_files":1}' >"$tmp/unterminated.pr.json"
 check true unterminated "unterminated JSON array"
 
-fixture api_error '{"message":"Not Found","status":"404"}' 1
+printf '%s' '{"message":"Not Found","status":"404"}' >"$tmp/api_error.files.json"
+printf '{"changed_files":1}' >"$tmp/api_error.pr.json"
 check true api_error "files endpoint returned an error object"
 
-printf '%s' '[{"status":"modified","filename":"docs/a.md"}]' >"$tmp/pr_error.files.json"
+printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]]' >"$tmp/pr_error.files.json"
 printf '%s' '{"message":"Not Found"}' >"$tmp/pr_error.pr.json"
 check true pr_error "PR object has no changed_files"
 
-printf '%s' '[{"status":"modified","filename":"docs/a.md"}]' >"$tmp/pr_junk.files.json"
+printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]]' >"$tmp/pr_junk.files.json"
 printf '%s' 'not json at all' >"$tmp/pr_junk.pr.json"
 check true pr_junk "PR payload is not JSON"
 
@@ -301,6 +304,57 @@ else
   failures=$((failures + 1))
 fi
 
+# ══ number encodings: strict JSON first, then value semantics ══
+#
+# jq's reader is lenient where JSON is not: it accepts `01` and hands back 1, so
+# the count arrived already normalised and the text check saw a clean "1". The
+# strict JSON.parse in pr-scope.sh is what rejects it. `1E0` and `1E1`, by
+# contrast, ARE legal JSON; jq resolves them to their value, and the decision
+# only asks whether the count equals the number of entries, so they are honoured
+# as the integers they are.
+printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]]' >"$tmp/lead_zero.files.json"
+printf '{"changed_files":01}' >"$tmp/lead_zero.pr.json"
+check true lead_zero "changed_files written as 01 (not legal JSON)"
+
+printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]]' >"$tmp/exp_one.files.json"
+printf '{"changed_files":1E0}' >"$tmp/exp_one.pr.json"
+check false exp_one "changed_files written as 1E0 against one entry"
+
+jq -nc '[[range(10) | {status:"modified", filename:("docs/d"+(.|tostring)+".md")}]]' >"$tmp/exp_ten.files.json"
+printf '{"changed_files":1E1}' >"$tmp/exp_ten.pr.json"
+check false exp_ten "changed_files written as 1E1 against ten entries"
+
+# ══ a NUL byte is the one thing a Git path cannot contain ══
+node -e 'const z=String.fromCharCode(0);require("fs").writeFileSync(process.argv[1],JSON.stringify([[{status:"modified",filename:"docs/a"+z+".md"}]]))' "$tmp/nul_path.files.json"
+printf '{"changed_files":1}' >"$tmp/nul_path.pr.json"
+check true nul_path "a NUL byte inside a docs/ path"
+
+node -e 'const z=String.fromCharCode(0);require("fs").writeFileSync(process.argv[1],JSON.stringify([[{status:"renamed",filename:"docs/b.md",previous_filename:"docs/a"+z+".md"}]]))' "$tmp/nul_prev.files.json"
+printf '{"changed_files":1}' >"$tmp/nul_prev.pr.json"
+check true nul_prev "a NUL byte inside a rename's previous name"
+
+fixture blank_segment '[{"status":"modified","filename":"docs/ "}]' 1
+check true blank_segment 'path segment is nothing but a space'
+
+fixture blank_segment_mid '[{"status":"modified","filename":"docs/  /a.md"}]' 1
+check true blank_segment_mid 'a middle segment is nothing but spaces'
+
+# ══ without a strict JSON parser we cannot honour the contract at all ══
+case_no=$((case_no + 1))
+printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]]' >"$tmp/nonode.files.json"
+printf '{"changed_files":1}' >"$tmp/nonode.pr.json"
+# A shim that always fails stands in for "node is missing or broken" — the
+# script cannot tell the difference, and must fail closed either way.
+nonode_dir="$tmp/nonode-bin"; mkdir -p "$nonode_dir"
+printf '#!/bin/sh\nexit 127\n' >"$nonode_dir/node"
+chmod +x "$nonode_dir/node"
+if [[ "$(PATH="$nonode_dir:$PATH" bash "$scope" "$tmp/nonode.files.json" "$tmp/nonode.pr.json" 2>/dev/null)" == "true" ]]; then
+  printf '  ok    %2d. node unavailable → true\n' "$case_no"
+else
+  printf '  FAIL  %2d. node unavailable should fail closed\n' "$case_no" >&2
+  failures=$((failures + 1))
+fi
+
 # ══ only the exact bytes "false\n" buy a skip ══
 #
 # The transport used to compare a command substitution against the word "false".
@@ -313,7 +367,7 @@ forged() {
   rm -rf "$dir"; mkdir -p "$dir"
   cp "$scope" "$dir/pr-scope.sh"
   printf '%s\n' "$program" >"$dir/pr-scope.jq"
-  printf '%s' '[{"status":"modified","filename":"docs/a.md"}]' >"$dir/f.json"
+  printf '%s' '[[{"status":"modified","filename":"docs/a.md"}]]' >"$dir/f.json"
   printf '{"changed_files":1}' >"$dir/p.json"
   local actual
   case_no=$((case_no + 1))

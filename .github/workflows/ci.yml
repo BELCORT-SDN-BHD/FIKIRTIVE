@@ -86,13 +86,13 @@ jobs:
           files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
           pr_json="${RUNNER_TEMP:-/tmp}/pr-object.json"
           pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
-          gh api --paginate "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
+          gh api --paginate --slurp "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
           gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
           if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
             echo "could not read the PR from the API — running every gate"
           else
             echo "changed paths (name, then previous name for renames):"
-            jq -r '.[] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
+            jq -r '.[][] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
               "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
           fi
           code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=true

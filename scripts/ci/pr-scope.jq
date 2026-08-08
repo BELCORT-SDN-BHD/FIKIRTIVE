@@ -25,12 +25,19 @@ def known_status:
 
 # A usable path: a non-empty string whose every segment is a real name. Rejects
 # "docs/" and "docs//a.md" (empty segments), "/docs/a.md" (empty leading
-# segment), and any "." or ".." segment. Git emits none of these, so their
-# presence means the payload is not what we think it is.
+# segment), any "." or ".." segment, a segment that is nothing but whitespace,
+# and any NUL byte. Git emits none of these, so their presence means the payload
+# is not what we think it is.
+#
+# NUL specifically: it and "/" are the only two bytes a Git path cannot contain,
+# so a NUL is proof the string did not come from Git. Other control characters
+# are NOT rejected — a newline is a legal path byte, and "docs/we<LF>ird.md" is
+# genuinely a docs file that must keep its short-circuit.
 def path_ok:
   type == "string"
   and length > 0
-  and (split("/") | all(length > 0 and . != "." and . != ".."));
+  and (explode | any(. == 0) | not)
+  and (split("/") | all(length > 0 and . != "." and . != ".." and test("[^[:space:]]")));
 
 def is_docs:
   startswith("docs/");
@@ -65,14 +72,28 @@ def entries:
   else null
   end;
 
-# A count we can actually reason about: a non-negative decimal integer, checked
-# as TEXT. Numeric checks are not enough — jq compares `1.0000000000000000001`
-# unequal to 1 in one context and equal in another, so `floor` agreed with it
-# and the length comparison did not catch it. `tostring` keeps the literal the
-# API sent (jq >= 1.7), so this rejects 1.0, 1.0000000000000000001,
-# 0.9999999999999999999, -1 and 1.5 without depending on float semantics.
+# A count we can actually reason about: a non-negative integer.
+#
+# Checked as TEXT, because numeric checks are not enough — jq compares
+# `1.0000000000000000001` unequal to 1 in one context and equal in another, so
+# `floor` agreed with it and the length comparison did not catch it. jq >= 1.7
+# keeps the FRACTIONAL literal the API sent, which is what makes those forms
+# visible to `tostring` and rejectable here.
+#
+# What jq does NOT keep is the encoding of an integer: it renders 1E0 as "1" and
+# 1.5E1 as "15" (and 1e1 as "1E+1"), so equivalent integer encodings arrive as
+# their value. That is accepted deliberately. These payloads travel through the
+# API and gh, and the decision only ever asks whether the count EQUALS the
+# number of entries — a question about value, not spelling. The exponent branch
+# below exists so `1E1` against ten entries is treated as the ten it is.
+#
+# `01` is a different matter: it is not legal JSON at all, and jq silently
+# normalises it to 1. That is caught before jq runs, by the strict JSON.parse in
+# pr-scope.sh — not here.
+#
+# Rejects: 1.0, 1.5, 1.0000000000000000001, 0.9999999999999999999, -1, 1E-1.
 def whole_number:
-  (type == "number") and (tostring | test("^(0|[1-9][0-9]*)$"));
+  (type == "number") and (tostring | test("^(0|[1-9][0-9]*)([Ee][+]?[0-9]+)?$"));
 
 entries as $entries
 | ( if ($pr | type) == "array" and ($pr | length) == 1 and ($pr[0] | type) == "object"
