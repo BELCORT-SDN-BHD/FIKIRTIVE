@@ -40,6 +40,63 @@ export const SCHEDULE_CHANNEL_CAPS: Record<
 export const ACCOUNTS_UNREADABLE_ERROR =
   "Couldn't check your connected accounts just now — try again in a moment.";
 
+/**
+ * A connection that EXISTS but cannot publish right now (#741 r5 P1).
+ *
+ * This is the third thing a connection read can find, and leaving it out is what made the product
+ * contradict itself: both of these only happen when a MetaConnection row is already there, so the
+ * Connections page says "Connected" / "Reconnect needed" while Schedule was telling the same
+ * merchant to "Connect your account". They HAVE connected. Only a genuinely absent connection
+ * ("notConnected") may ever be reported as an empty list.
+ */
+export type ConnectionBlocker = "needs_reconnect" | "needs_page_permission";
+
+/**
+ * The ONE wording for each of those states, in the two voices the product speaks:
+ *   · `approve` — the "what is still missing" sentence, used by scheduleApproveBlockers below
+ *     (so the server refusal and the composer's advance warning are the same string);
+ *   · `status`  — the short label a connection row / picker shows. `needs_reconnect`'s label is
+ *     deliberately the exact phrase the Connections page already shows, so "one fact, one set of
+ *     words" is something a test can check rather than something a comment claims.
+ */
+export const CONNECTION_BLOCKER_COPY: Record<ConnectionBlocker, { approve: string; status: string }> = {
+  needs_reconnect: {
+    approve: "Reconnect your account before approving — its access expired.",
+    status: "Reconnect needed",
+  },
+  needs_page_permission: {
+    approve: "Reconnect and allow page access before approving.",
+    status: "Page access needed",
+  },
+};
+
+/** What a read of the merchant's Meta Pages found. The vocabulary every surface answers in. */
+export type PagesReadState = "ok" | "not_connected" | "unreadable" | ConnectionBlocker;
+
+/**
+ * Classify the FAILURE side of any connection read — pages, ad accounts, insights, objects. Call it
+ * once the caller has established the read did not succeed.
+ *
+ * This is the single authority that keeps "never connected" and "connected but unusable" apart. It
+ * exists because six separate surfaces had independently written `"notConnected" in res ||
+ * "needsReconnect" in res` and answered both with "Meta isn't connected yet" — one boolean OR per
+ * file, each of them telling a merchant with a live-but-expired connection that they had never
+ * connected at all.
+ */
+export function classifyConnectionFailure(
+  read: Record<string, unknown>,
+): "not_connected" | "unreadable" | ConnectionBlocker {
+  if ("transientError" in read) return "unreadable";
+  if ("needsReconnect" in read) return "needs_reconnect";
+  if ("needsPageScope" in read) return "needs_page_permission";
+  return "not_connected";
+}
+
+/** The same vocabulary for a Meta *pages* read, whose success key is `pages`. */
+export function classifyPagesRead(read: Record<string, unknown>): PagesReadState {
+  return "pages" in read ? "ok" : classifyConnectionFailure(read);
+}
+
 export type ScheduleApproveInput = {
   channel: string;
   /** The post's stored account id — null/empty when nobody has picked one yet. */
@@ -53,6 +110,12 @@ export type ScheduleApproveInput = {
    * disconnected still has the old id sitting in the draft (#741 r1 P1).
    */
   connectedTargetIds?: readonly string[] | null;
+  /**
+   * Set when the connection EXISTS but can't publish right now. It outranks the "connect your
+   * account" sentence, which would otherwise tell a merchant who has connected that they haven't
+   * (#741 r5 P1). Absent/null ⇒ no such obstacle; the target rules below apply as before.
+   */
+  connectionBlocker?: ConnectionBlocker | null;
 };
 
 /** Everything still missing before a DRAFT may be approved (spec §五), in the order the composer
@@ -70,7 +133,10 @@ export function scheduleApproveBlockers(input: ScheduleApproveInput): string[] {
   // facts and must produce different copy — hence the explicit null check rather than `?.length`.
   const live = input.connectedTargetIds ?? null;
   const targetId = input.targetId || null;
-  if (live && live.length === 0) {
+  if (input.connectionBlocker) {
+    // They HAVE connected — the obstacle is the connection's current state, not its absence.
+    blockers.push(CONNECTION_BLOCKER_COPY[input.connectionBlocker].approve);
+  } else if (live && live.length === 0) {
     // Nothing to post to at all — reconnecting is the only way forward.
     blockers.push("Connect your account before approving.");
   } else if (!targetId) {

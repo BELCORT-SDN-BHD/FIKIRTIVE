@@ -6,10 +6,16 @@
  * 账号」,还配一颗 Connect 按钮 —— 商家的连接明明好好的。三种事实(读到了 / 读到了确实是空 /
  * 根本没读到)在适配层就被压成了两种。
  *
- * 这里钉的是三态本身。判断标准只有一条:**这次读有没有得到答案**。
- *   · transientError —— 没得到答案(网络/5xx/限流),唯一的 unavailable;
- *   · notConnected / needsPageScope / needsReconnect —— 都是**确定的答案**:此刻确实没有
- *     可发布的页面,连接页也正是这么写的,所以是真实的空列表,不是失败。
+ * 判官 r5 [P1] 又往下挖了一层:上一轮把 needsReconnect / needsPageScope 也算成「确定的空」,
+ * 同样是假话。这两种情况都发生在 MetaConnection **已存在**时(meta-pages.ts:13-22)——
+ * 商家明明连过,连接页也显示 Connected / Reconnect needed,排程页却说「Connect an account
+ * first」、服务端答「Connect your account before approving.」。同一个产品两套说法。
+ *
+ * 所以是**四**类,判断标准是「这次读得到了什么答案」:
+ *   · pages —— 读到了,这些就是账号;
+ *   · transientError —— 没得到答案(网络/5xx/限流),unavailable;
+ *   · needsReconnect / needsPageScope —— 连着,但此刻用不了(blocked),各有各的如实说法;
+ *   · notConnected —— **唯一**能安全映射成空列表的:确实没连过。
  *   · x —— 读本地库,永远确定。
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -49,12 +55,26 @@ describe("Meta 适配层:三态如实上报", () => {
       expect("targets" in res).toBe(false);
     });
 
-    for (const determinate of [{ notConnected: true }, { needsPageScope: true }, { needsReconnect: true }]) {
-      it(`${channel.id}: ${Object.keys(determinate)[0]} → 确定的空列表(这是真答案,不是失败)`, async () => {
-        mockFetchOwnerPages.mockResolvedValue(determinate);
-        expect(await channel.listTargets(OWNER)).toEqual({ targets: [] });
-      });
-    }
+    it(`${channel.id}: notConnected → 确定的空列表(唯一能安全说「一个都没连」的情况)`, async () => {
+      mockFetchOwnerPages.mockResolvedValue({ notConnected: true });
+      expect(await channel.listTargets(OWNER)).toEqual({ targets: [] });
+    });
+
+    // 判官 r5 [P1]:这两种都发生在连接**已存在**时。说成空列表 = 告诉一个连过的商家
+    // 「你没连过」,而且和连接页的说法对不上。
+    it(`${channel.id}: needsReconnect → 连着但用不了,不是空列表`, async () => {
+      mockFetchOwnerPages.mockResolvedValue({ needsReconnect: true });
+      const res = await channel.listTargets(OWNER);
+      expect(res).toEqual({ blocked: "needs_reconnect" });
+      expect("targets" in res).toBe(false);
+    });
+
+    it(`${channel.id}: needsPageScope → 连着但没有页面权限,不是空列表`, async () => {
+      mockFetchOwnerPages.mockResolvedValue({ needsPageScope: true });
+      const res = await channel.listTargets(OWNER);
+      expect(res).toEqual({ blocked: "needs_page_permission" });
+      expect("targets" in res).toBe(false);
+    });
   }
 });
 

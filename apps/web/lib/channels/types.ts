@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
 
 export type ChannelId = string; // "instagram" | "facebook" | future ids — OPEN, never a closed enum
 export type PostType = "feed-image" | "carousel" | "reel" | "story" | "text-link";
@@ -18,14 +19,19 @@ export type ChannelTarget = { id: string; name: string };
 /**
  * What an adapter can honestly answer when asked "which accounts is this merchant connected to".
  *
- * THREE facts, not two (#741 r3 P1). A read that failed is not an empty list: the Meta adapters
- * used to turn `fetchOwnerPages`'s `{ transientError: true }` into `[]`, so one flaky Graph call
- * travelled all the way to the screen and came out as "you have no connected accounts" — with a
- * Connect button — for a merchant whose connection was fine. `unavailable` carries that "we could
- * not find out" all the way down, so every consumer must decide what to do about not knowing
- * instead of silently inheriting a false answer.
+ * FOUR facts, not two. Two rounds of this ticket were spent discovering that an empty list is a
+ * much stronger claim than it looks — it licenses the whole product to say "you have not connected
+ * anything", so anything else that lands in that branch becomes a lie:
+ *   · `targets`     — we read it; `[]` here means genuinely nothing is connected;
+ *   · `unavailable` — the read FAILED (transient platform error). We do not know (#741 r3 P1);
+ *   · `blocked`     — the connection EXISTS but can't publish right now: its access expired, or it
+ *                     lacks page permission. Saying "connect your account" to this merchant
+ *                     contradicts both the truth and the Connections page (#741 r5 P1).
  */
-export type ChannelTargetsResult = { targets: ChannelTarget[] } | { unavailable: true };
+export type ChannelTargetsResult =
+  | { targets: ChannelTarget[] }
+  | { blocked: ConnectionBlocker }
+  | { unavailable: true };
 
 // Minimal post shape the connect-phase needs (Schedule fleshes this out later).
 export type ChannelPost = {

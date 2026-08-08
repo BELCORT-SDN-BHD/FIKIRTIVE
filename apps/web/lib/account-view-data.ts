@@ -37,15 +37,17 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
       status: META_BACKED_CHANNEL_IDS.includes(c.id)
         ? metaConnectionToStatus(await metaConnPromise)
         : await c.connectionStatus(ownerId).catch(() => "not_connected" as const),
-      // Page names decorate a row whose CLAIM is `status` above (Connected / Reconnect needed /
-      // Not connected) — the row never says "you have no accounts", it falls back to the bare word
-      // "Connected". So an unreadable list drops the names and asserts nothing, same as a rejected
-      // read always has (#741 r3 P1: only the Schedule screen and the approve path turned a failed
-      // read into a claim, and those two now carry `unavailable` explicitly).
-      targets: await c
+      // Page names decorate a row whose CLAIM is `status` above. An unreadable list simply drops
+      // the names and asserts nothing (#741 r3 P1). A BLOCKED connection is different: it is a
+      // fact the merchant needs, and it must reach this row in the same words Schedule uses, or
+      // the product ends up describing one connection two ways (#741 r5 P1).
+      ...(await c
         .listTargets(ownerId)
-        .then((r) => ("targets" in r ? r.targets.map((t) => t.name) : []))
-        .catch(() => [] as string[]),
+        .then((r) => ({
+          targets: "targets" in r ? r.targets.map((t) => t.name) : [],
+          blocker: "blocked" in r ? r.blocked : null,
+        }))
+        .catch(() => ({ targets: [] as string[], blocker: null }))),
     })),
   );
   const [settingsRes, packs, metaConn, channels] = await Promise.all([

@@ -10,13 +10,14 @@ import {
   scheduleApproveBlockers,
   ACCOUNTS_UNREADABLE_ERROR,
   SCHEDULE_CHANNEL_CAPS,
+  type ConnectionBlocker,
   type ScheduledPostStatus,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
-import type { ChannelId } from "./channels/types";
+import type { ChannelId, ChannelTargetsResult } from "./channels/types";
 import { signSharePreviewToken } from "@fikirtive/token-crypto";
 import { sharePreviewTokenDigest } from "./share-preview";
 import { settlePendingApprovalCards } from "./approval-card-settle";
@@ -371,16 +372,21 @@ export async function approveScheduledPost(
   // and the order (nothing connected → that account isn't yours) is unchanged. No adapter means
   // nothing can be connected on this channel, which is exactly the empty-list case.
   const adapter = channelRegistry[post.channel];
-  const liveTargets = adapter ? await adapter.listTargets(gate.ownerId) : { targets: [] };
-  // #741 r3 P1: a read that FAILED is not an empty list. Both outcomes refuse (unchanged — we
-  // never approve a publish we couldn't validate), but the reason has to be true: telling a
-  // merchant whose connection is fine to "connect your account" is the lie this ticket is about.
+  const liveTargets: ChannelTargetsResult = adapter
+    ? await adapter.listTargets(gate.ownerId)
+    : { targets: [] };
+  // #741 r3/r5 P1: a read that FAILED is not an empty list, and a connection that can't publish
+  // right now is not a connection that was never made. All three outcomes refuse (unchanged — we
+  // never approve a publish we couldn't validate), but the reason has to be true. The blocked case
+  // goes through the SAME shared rule as everything else, so the sentence the merchant heard in
+  // advance is byte-for-byte the one they get here.
   if ("unavailable" in liveTargets) return { error: ACCOUNTS_UNREADABLE_ERROR };
   const liveTargetBlockers = scheduleApproveBlockers({
     channel: post.channel,
     targetId: post.metaTargetId,
     mediaCount: post.media.length,
-    connectedTargetIds: liveTargets.targets.map((t) => t.id),
+    connectedTargetIds: "blocked" in liveTargets ? [] : liveTargets.targets.map((t) => t.id),
+    connectionBlocker: "blocked" in liveTargets ? liveTargets.blocked : null,
   });
   if (liveTargetBlockers.length > 0) return { error: liveTargetBlockers[0]! };
 
@@ -489,30 +495,55 @@ export async function listScheduledPosts(
 
 export type OwnerTarget = { id: string; name: string; channel: ChannelId };
 
-/** The whole answer, or the honest admission that there isn't one (#741 r3 P1). */
-export type OwnerTargetsResult = { targets: OwnerTarget[] } | { unavailable: true };
+/** What this cycle's read found for one channel. "ok" ⇒ the targets below are its whole truth. */
+export type ChannelReadState = "ok" | "unreadable" | ConnectionBlocker;
+
+/**
+ * The answer is PER CHANNEL (#741 r5 P1). r4 failed the whole read whenever any single channel
+ * couldn't be read, on the reasoning that a partial list reads downstream as "that channel has
+ * nothing connected". The premise was right; the remedy was too blunt — one channel having a bad
+ * day would blank the entire Schedule screen, including channels that answered perfectly well.
+ * Carrying the per-channel state fixes both: a channel that wasn't read contributes no targets AND
+ * is labelled, so no consumer can mistake its silence for an empty answer.
+ */
+export type OwnerTargetsResult = {
+  /** Only from channels whose state is "ok". */
+  targets: OwnerTarget[];
+  /** Keyed by channel id. A channel absent from this map was never read — treat it as unreadable. */
+  channelStates: Record<string, ChannelReadState>;
+};
 
 /** Owner-scoped list of connectable publish targets for the composer's account picker.
  *  Derives from the owner's OWN connected pages (fetchOwnerPages(gate.ownerId), the same
  *  owner-scoped source the approve path validates against) and cross-joins with each
  *  supported channel via the registry. $0 read.
  *
- *  An empty list is a REAL answer (not connected / needs reconnect / needs the page scope) and the
- *  UI may act on it. A read that failed is not: if ANY channel could not be read, the whole answer
- *  is `unavailable`. A partial list would be worse than no list — the missing channel would read
- *  downstream as "that channel has no connected accounts", which is precisely the false assertion
- *  this ticket exists to remove. */
+ *  Never throws and never omits a channel silently: an adapter that rejects is recorded as
+ *  "unreadable" for that channel alone. */
 export async function listOwnerTargets(): Promise<OwnerTargetsResult> {
   const gate = await requireOwner();
-  if ("error" in gate) return { targets: [] };
+  // No session: we looked at nothing, so we claim nothing. An empty channelStates map reads as
+  // "unread" everywhere downstream — never as "this merchant has no connected accounts".
+  if ("error" in gate) return { targets: [], channelStates: {} };
 
   const out: OwnerTarget[] = [];
+  const channelStates: Record<string, ChannelReadState> = {};
   for (const channel of Object.values(channelRegistry)) {
-    const res = await channel.listTargets(gate.ownerId);
-    if ("unavailable" in res) return { unavailable: true };
+    const res: ChannelTargetsResult = await channel
+      .listTargets(gate.ownerId)
+      .catch(() => ({ unavailable: true }) as const);
+    if ("unavailable" in res) {
+      channelStates[channel.id] = "unreadable";
+      continue;
+    }
+    if ("blocked" in res) {
+      channelStates[channel.id] = res.blocked;
+      continue;
+    }
+    channelStates[channel.id] = "ok";
     for (const t of res.targets) out.push({ id: t.id, name: t.name, channel: channel.id });
   }
-  return { targets: out };
+  return { targets: out, channelStates };
 }
 
 export type PostingTimeSuggestion = { dayOfWeek: number; hourUtc: number; score: number; rationale: string };

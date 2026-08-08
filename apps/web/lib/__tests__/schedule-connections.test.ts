@@ -13,12 +13,15 @@
  *   ③ 读到了 → 交给服务端同一条规则,商家提前听到的就是服务端会拒绝的那句。
  */
 import { describe, expect, it } from "vitest";
+import { ACCOUNTS_UNREADABLE_ERROR, CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
 import {
   ACCOUNTS_LOADING,
   CHECKING_ACCOUNTS_BLOCKER,
   accountPicker,
+  accountsUnreadable,
   approvalFor,
   autoPublishAllowed,
+  canOfferConnect,
   channelUnavailableBlocker,
   isCheckingAccounts,
   isConnectedTarget,
@@ -30,8 +33,11 @@ const IG = { id: "ig-1", name: "Kopi Kita", channel: "instagram" };
 const IG_OTHER = { id: "ig-2", name: "Kopi Kita Two", channel: "instagram" };
 const FB = { id: "fb-1", name: "Kopi Kita Page", channel: "facebook" };
 
-/** 一次**完整**的连接读:两件事一起答复(#741 r3)。多数用例不关心发布权限,默认关。 */
-const connected = (targets: typeof IG[], canPublish = false) => loadedAccounts({ targets, canPublish });
+/** 一次**完整**的连接读:三件事一起答复(#741 r3/r5)——名单、逐渠道读到了什么、发布权限。
+ *  这个 helper 代表「每个渠道都读成功了」,多数用例不关心发布权限,默认关。 */
+const ALL_OK = { instagram: "ok", facebook: "ok", x: "ok" } as const;
+const connected = (targets: typeof IG[], canPublish = false) =>
+  loadedAccounts({ targets, channelStates: ALL_OK, canPublish });
 
 const READY_POST = { channel: "instagram", targetId: IG.id, mediaCount: 1 };
 
@@ -106,6 +112,78 @@ describe("连不上的渠道永远不给连接 CTA", () => {
   it("账号选择器给的是「无此选项」,不是「去连一个」", () => {
     expect(accountPicker(ACCOUNTS_LOADING, "x")).toEqual({ phase: "unavailable" });
     expect(accountPicker(connected([]), "x")).toEqual({ phase: "unavailable" });
+  });
+});
+
+// ── #741 判官 r5 [P1] 「连着但用不了」与「读不到」各自成状态 ────────────────────
+//
+// 上一轮只有三态,needsReconnect / needsPageScope 被塞进「读到了,是空的」,于是对一个
+// 连过的商家说「你没连过」;而「读不到」被丢弃,屏幕永远停在「正在查」。这一组钉的是:
+// 每一种事实都有自己的落点,而且每一种都说得出口。
+
+describe("连着但用不了:不是没连过,也不是读不到", () => {
+  // IG 与 FB 共用同一个 Meta 连接,所以这类状态本来就是两个渠道一起出现的。
+  const blocked = (state: "needs_reconnect" | "needs_page_permission") =>
+    loadedAccounts({ targets: [], channelStates: { instagram: state, facebook: state }, canPublish: false });
+
+  for (const state of ["needs_reconnect", "needs_page_permission"] as const) {
+    it(`${state}:缺项句来自共享权威,且绝不说「去连账号」`, () => {
+      const view = approvalFor(blocked(state), READY_POST);
+      expect(view.canApprove).toBe(false);
+      expect(view.blockers).toContain(CONNECTION_BLOCKER_COPY[state].approve);
+      expect(view.blockers).not.toContain("Connect your account before approving.");
+    });
+
+    it(`${state}:账号选择器给的是「重新连接」,不是「去连一个」`, () => {
+      expect(accountPicker(blocked(state), "instagram")).toEqual({ phase: "blocked", blocker: state });
+    });
+
+    it(`${state}:屏幕没有资格邀请商家「去连一个」—— 人家连过了`, () => {
+      expect(canOfferConnect(blocked(state))).toBe(false);
+      expect(accountsUnreadable(blocked(state))).toBe(false);
+    });
+  }
+});
+
+describe("读不到:是一个说得出口的答案,不是无尽的「正在查」", () => {
+  const unreadable = loadedAccounts({
+    targets: [],
+    channelStates: { instagram: "unreadable", facebook: "unreadable" },
+    canPublish: false,
+  });
+
+  it("缺项句就是服务端那句「没查到」,既不放行也不冤枉", () => {
+    const view = approvalFor(unreadable, READY_POST);
+    expect(view.canApprove).toBe(false);
+    expect(view.blockers).toEqual([ACCOUNTS_UNREADABLE_ERROR]);
+  });
+
+  it("选择器是「读不到」自己的一态,不会退回「没连账号」", () => {
+    expect(accountPicker(unreadable, "instagram")).toEqual({ phase: "unreadable" });
+  });
+
+  it("既不许邀请去连接,也要让屏幕知道该给重试入口", () => {
+    expect(canOfferConnect(unreadable)).toBe(false);
+    expect(accountsUnreadable(unreadable)).toBe(true);
+  });
+
+  it("名单里没提到的渠道 = 没读过 = 读不到(截断的答案不会被当成空答案)", () => {
+    const partial = loadedAccounts({ targets: [], channelStates: { facebook: "ok" }, canPublish: false });
+    expect(accountPicker(partial, "instagram")).toEqual({ phase: "unreadable" });
+    expect(accountPicker(partial, "facebook")).toEqual({ phase: "none" });
+  });
+
+  it("单渠道读不到不牵连别的渠道:Facebook 读到了就照常回答", () => {
+    const mixed = loadedAccounts({
+      targets: [FB],
+      channelStates: { instagram: "unreadable", facebook: "ok" },
+      canPublish: false,
+    });
+    expect(approvalFor(mixed, { channel: "facebook", targetId: FB.id, mediaCount: 1 })).toEqual({
+      blockers: [],
+      canApprove: true,
+    });
+    expect(approvalFor(mixed, READY_POST).blockers).toEqual([ACCOUNTS_UNREADABLE_ERROR]);
   });
 });
 

@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
 
 // #518 — the Connections page (/otto?view=connections) is now the single real page every
 // "Connect a channel" entry point lands on. It must group channels by merchant task
@@ -430,4 +431,34 @@ describe("Connections page speaks plain English about ad-account status (#693)",
     expect(row.textContent).not.toContain("·");
     expect(row.textContent).not.toContain("Unknown status");
   });
+});
+
+// ── #741 判官 r5 [P1] 同一个事实,两块屏幕一套话 ────────────────────────────────
+//
+// 连接页曾经对一个「缺页面权限」的连接只写「Connected」,排程页那边却说「Connect an
+// account first」。这一组钉的是:这类状态在两处用的是同一份 CONNECTION_BLOCKER_COPY,
+// 逐字比对,而不是各写各的。
+
+describe("#741 r5 连着但用不了:连接页与排程页用同一套说法", () => {
+  for (const blocker of ["needs_reconnect", "needs_page_permission"] as const) {
+    it(`${blocker}:行上写的就是共享权威那个标签`, async () => {
+      mocks.getAccountViewData.mockResolvedValue({
+        settings: {},
+        channels: [
+          { id: "instagram", label: "Instagram", status: "connected" as const, targets: [], blocker, connectUrl: "/api/meta/authorize" },
+          { id: "facebook", label: "Facebook", status: "connected" as const, targets: [], blocker, connectUrl: "/api/meta/authorize" },
+        ],
+        packs: [],
+        adsAutonomy: "ASK",
+        canPublish: false,
+        meta: { connected: true },
+      });
+
+      const dom = await renderConnections();
+      const text = dom.textContent ?? "";
+      expect(text).toContain(CONNECTION_BLOCKER_COPY[blocker].status);
+      // 而且不能只剩一个空洞的「Connected」把问题盖过去。
+      expect(text).not.toMatch(/Connected(?!\w)/);
+    });
+  }
 });

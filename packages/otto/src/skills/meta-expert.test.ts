@@ -57,10 +57,13 @@ describe("executeMetaExpert — mock DB + ctx port", () => {
     expect(m.chatMessage.create).not.toHaveBeenCalled();
   });
 
-  it("needsReconnect result → NOT_CONNECTED, no write", async () => {
+  // #741 r5 P1: this used to expect "Meta isn't connected" — a lie to a merchant whose Meta IS
+  // connected and merely expired, and the opposite of what the Connections page tells them.
+  it("needsReconnect result → 说授权过期要重新连接(不是「你还没连」),no write", async () => {
     const ctx = makeCtx({ metaPerformance: { getAds: vi.fn().mockResolvedValue({ needsReconnect: true }) } });
     const res = await executeMetaExpert({ datePreset: "last_30d" }, { context: ctx });
-    expect(res).toEqual({ message: expect.stringContaining("Meta isn't connected") });
+    expect(res).toMatchObject({ blocked: "needs_reconnect" });
+    expect(JSON.stringify(res)).not.toMatch(/isn't connected yet/i);
     expect(m.chatMessage.create).not.toHaveBeenCalled();
   });
 

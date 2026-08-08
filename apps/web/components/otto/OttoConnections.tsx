@@ -5,6 +5,7 @@ import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
 import { UNAVAILABLE_PUBLISHING_CHANNEL_IDS } from "@/lib/channels/channel-meta";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
 import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
 import type { ChannelState } from "./settings/sections";
 import { Button } from "@/components/ui/button";
@@ -128,8 +129,12 @@ function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
 function ChannelRow({ channel }: { channel: ChannelState }) {
   const label = channel.status === "connected" ? "Manage" : channel.status === "needs_reconnect" ? "Reconnect" : "Connect";
   const variant = channel.status === "connected" ? "ghost" : "brand";
-  const hint =
-    channel.status === "connected"
+  // A connection that exists but can't publish outranks the bare "Connected" — and says it in the
+  // words the Schedule screen uses for the same fact, so the merchant never gets two stories
+  // about one connection (#741 r5 P1).
+  const hint = channel.blocker
+    ? CONNECTION_BLOCKER_COPY[channel.blocker].status
+    : channel.status === "connected"
       ? channel.targets.join(", ") || "Connected"
       : channel.status === "needs_reconnect"
         ? "Reconnect needed"

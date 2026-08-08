@@ -105,7 +105,7 @@ import {
   revokeSharePreview,
 } from "../schedule-actions";
 import { sharePreviewTokenDigest } from "../share-preview";
-import { ACCOUNTS_UNREADABLE_ERROR, scheduleApproveBlockers } from "@fikirtive/core";
+import { ACCOUNTS_UNREADABLE_ERROR, CONNECTION_BLOCKER_COPY, scheduleApproveBlockers } from "@fikirtive/core";
 import { IG_IMAGE_ONLY_ERROR } from "../schedule-service";
 import { verifySharePreviewToken } from "@fikirtive/token-crypto";
 
@@ -716,6 +716,27 @@ describe("approveScheduledPost", () => {
     }
   });
 
+  // #741 判官 r5 [P1] —— 「连着但用不了」也不是「没连过」。两种都拒(fail closed,不变),
+  // 但对一个连过的商家说「Connect your account before approving.」是假话,而且与连接页矛盾。
+  it("连着但要重新授权:拒绝语说重新连接,不说「你没连账号」", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockResolvedValue({ blocked: "needs_reconnect" });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: CONNECTION_BLOCKER_COPY.needs_reconnect.approve });
+    expect(res).not.toEqual({ error: "Connect your account before approving." });
+    expect(String((res as { error: string }).error)).toMatch(/reconnect/i);
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("连着但缺页面权限:拒绝语说补权限,不说「你没连账号」", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockResolvedValue({ blocked: "needs_page_permission" });
+    const res = await approveScheduledPost("p1");
+    expect(res).toEqual({ error: CONNECTION_BLOCKER_COPY.needs_page_permission.approve });
+    expect(res).not.toEqual({ error: "Connect your account before approving." });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
   // #741 判官 r3 [P1] —— 连接读失败 ≠ 没连账号。两种情形都拒(fail closed,不变),但理由必须是真的:
   // 说「Connect your account before approving.」等于告诉一个连接好好的商家「你没连」。
   it("连接列表读不到时:照旧拒绝、照旧不写库,但说的是「没查到」而不是「你没连账号」", async () => {
@@ -980,34 +1001,55 @@ describe("listOwnerTargets", () => {
     // each adapter is asked for the SESSION owner's targets, never a client id
     expect(mockIgListTargets).toHaveBeenCalledWith(OWNER);
     expect(mockFbListTargets).toHaveBeenCalledWith(OWNER);
-    expect(res).toEqual({
-      targets: [
-        { id: "page-1", name: "My Page", channel: "instagram" },
-        { id: "page-1", name: "My Page", channel: "facebook" },
-      ],
-    });
+    expect(res.targets).toEqual([
+      { id: "page-1", name: "My Page", channel: "instagram" },
+      { id: "page-1", name: "My Page", channel: "facebook" },
+    ]);
+    expect(res.channelStates).toEqual({ instagram: "ok", facebook: "ok", x: "ok" });
   });
 
   it("returns an empty list when the owner has no connected targets (Connect prompt case)", async () => {
-    // adapters answer { targets: [] } on notConnected/needsReconnect/needsPageScope — a real answer
+    // 只有 notConnected 会走到这里 —— 适配层答 { targets: [] },是一个真答案。
     mockIgListTargets.mockResolvedValue({ targets: [] });
     mockFbListTargets.mockResolvedValue({ targets: [] });
-    expect(await listOwnerTargets()).toEqual({ targets: [] });
+    const res = await listOwnerTargets();
+    expect(res.targets).toEqual([]);
+    expect(res.channelStates.instagram).toBe("ok");
+    expect(res.channelStates.facebook).toBe("ok");
   });
 
-  // #741 判官 r3 [P1] —— 一个渠道读不到,就没有资格说出整份名单:少了 Instagram 的那份名单
-  // 会被下游当成「Instagram 一个账号都没连」,正是这一票要根治的那句谎话。
-  it("任何一个渠道读不到 → 整份答案是「没读到」,不是一份缺斤少两的名单", async () => {
+  // #741 判官 r5 [P1]④ —— 一个渠道读不到,不该把整个排程页拖垮:答案改成**逐渠道**,
+  // 读到的照常给出,读不到的如实标注。这样 X 长期故障也压不垮 Instagram/Facebook。
+  it("单渠道读不到:其余渠道的名单照常给出,只把那一个标成 unreadable", async () => {
     mockIgListTargets.mockResolvedValue({ unavailable: true });
     mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
     const res = await listOwnerTargets();
-    expect(res).toEqual({ unavailable: true });
-    expect("targets" in res).toBe(false);
+    expect(res.targets).toEqual([{ id: "page-1", name: "My Page", channel: "facebook" }]);
+    expect(res.channelStates.instagram).toBe("unreadable");
+    expect(res.channelStates.facebook).toBe("ok");
   });
 
-  it("returns an empty list when not signed in, queries no channel", async () => {
+  it("单渠道「连着但用不了」:逐渠道标注,名单里不掺它的空", async () => {
+    mockIgListTargets.mockResolvedValue({ blocked: "needs_page_permission" });
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    const res = await listOwnerTargets();
+    expect(res.channelStates.instagram).toBe("needs_page_permission");
+    expect(res.targets.every((t) => t.channel !== "instagram")).toBe(true);
+  });
+
+  it("某个适配器直接抛错:也只是那一个渠道 unreadable,整读不塌", async () => {
+    mockIgListTargets.mockRejectedValue(new Error("boom"));
+    mockFbListTargets.mockResolvedValue({ targets: [{ id: "page-1", name: "My Page" }] });
+    const res = await listOwnerTargets();
+    expect(res.channelStates.instagram).toBe("unreadable");
+    expect(res.targets).toEqual([{ id: "page-1", name: "My Page", channel: "facebook" }]);
+  });
+
+  it("没登录:什么都不查,也什么都不断言(没有一个渠道被标成 ok)", async () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
-    expect(await listOwnerTargets()).toEqual({ targets: [] });
+    const res = await listOwnerTargets();
+    expect(res.targets).toEqual([]);
+    expect(Object.values(res.channelStates)).not.toContain("ok");
     expect(mockIgListTargets).not.toHaveBeenCalled();
     expect(mockFbListTargets).not.toHaveBeenCalled();
   });

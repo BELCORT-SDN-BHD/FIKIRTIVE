@@ -1,5 +1,6 @@
 import type { ChannelTargetsResult, ConnectionStatus } from "./types";
 import type { fetchOwnerPages } from "../meta-pages";
+import { classifyPagesRead, type ConnectionBlocker } from "@fikirtive/core/schedule-draft";
 import { getMetaConnection, type MetaConnectionResult } from "../meta-actions";
 
 // Instagram and Facebook connect through the ONE Meta connection — same token, same
@@ -27,20 +28,26 @@ export async function metaStatus(): Promise<ConnectionStatus> {
 }
 
 /**
- * fetchOwnerPages → the adapter's honest answer (#741 r3 P1). Instagram and Facebook read the SAME
- * pages through the SAME connection, so the mapping lives here once.
+ * fetchOwnerPages → the adapter's honest answer. Instagram and Facebook read the SAME pages through
+ * the SAME connection, so the mapping lives here once — and the classification itself lives in
+ * @fikirtive/core, shared with Otto's listMetaPages skill, so the two cannot drift (#741 r5 P1).
  *
- * The dividing line is "did this read produce an answer?", NOT "did it produce pages":
- *   · transientError — network / 5xx / rate limit. We did NOT find out. The only `unavailable`.
- *   · notConnected · needsPageScope · needsReconnect — all DETERMINATE. There is nothing this
- *     merchant can post to right now, the Connections page says exactly that, and the honest next
- *     step really is to (re)connect. A real, empty list.
- * Collapsing the first into the rest is the bug: it told a connected merchant they had no accounts.
+ * `[]` is the strongest thing this function can say: it licenses the product to tell the merchant
+ * they have connected nothing. Exactly one input earns it — `notConnected`, where there genuinely
+ * is no MetaConnection row. `needsReconnect` and `needsPageScope` both happen with a connection
+ * sitting right there (meta-pages.ts reads it first), which is why they get their own class.
  */
 export function metaPagesToTargets(r: Awaited<ReturnType<typeof fetchOwnerPages>>): ChannelTargetsResult {
-  if ("pages" in r) return { targets: r.pages.map((p) => ({ id: p.id, name: p.name })) };
-  if ("transientError" in r) return { unavailable: true };
-  return { targets: [] };
+  switch (classifyPagesRead(r)) {
+    case "ok":
+      return { targets: ("pages" in r ? r.pages : []).map((p) => ({ id: p.id, name: p.name })) };
+    case "unreadable":
+      return { unavailable: true };
+    case "not_connected":
+      return { targets: [] };
+    default:
+      return { blocked: classifyPagesRead(r) as ConnectionBlocker };
+  }
 }
 
 export const notImpl = () => { throw new Error("not implemented (filled by the Schedule/Analytics plan)"); };

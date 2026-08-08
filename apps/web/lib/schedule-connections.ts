@@ -27,10 +27,15 @@
  *   3. LOADED delegates to the shared server-side rule (scheduleApproveBlockers) with the real
  *      list, so the merchant is told in advance exactly what the server would refuse with.
  */
-import type { OwnerTarget } from "./schedule-actions";
-import { isConnectableChannel, channelMeta } from "./channels/channel-meta";
+import type { ChannelReadState, OwnerTarget } from "./schedule-actions";
+import { CONNECTABLE_CHANNEL_META, isConnectableChannel, channelMeta } from "./channels/channel-meta";
 import { canAutoPublish } from "./auto-publish-gate";
-import { scheduleApproveBlockers } from "@fikirtive/core/schedule-draft";
+import {
+  ACCOUNTS_UNREADABLE_ERROR,
+  CONNECTION_BLOCKER_COPY,
+  scheduleApproveBlockers,
+  type ConnectionBlocker,
+} from "@fikirtive/core/schedule-draft";
 
 declare const CONNECTED_ACCOUNTS_BRAND: unique symbol;
 
@@ -49,13 +54,23 @@ export type ConnectedAccounts = { readonly [CONNECTED_ACCOUNTS_BRAND]: "connecte
  * hiding its Connect button ("still loading") while the plan card had already decided the merchant
  * had no accounts. Carrying it inside the same value makes that interleaving unrepresentable.
  */
-export type AccountsRead = { targets: readonly OwnerTarget[]; canPublish: boolean };
+export type AccountsRead = {
+  targets: readonly OwnerTarget[];
+  /** Per channel, what the read found. Absent ⇒ never read ⇒ unreadable (#741 r5 P1). */
+  channelStates: Readonly<Record<string, ChannelReadState>>;
+  canPublish: boolean;
+};
 
 type AccountsState = { phase: "loading" } | ({ phase: "loaded" } & AccountsRead);
 
 const read = (accounts: ConnectedAccounts): AccountsState => accounts as unknown as AccountsState;
 
-/** Nothing read yet. Not "nothing connected" — the two must never be confused. */
+/**
+ * Nothing read yet — the read is in flight. Not "nothing connected", and NOT where a failed read
+ * lands either: a failure is a finished read with a different answer, so the screen leaves this
+ * phase either way. Staying here forever is what made a persistent outage render "Checking…" with
+ * no end and no way out (#741 r5 P1).
+ */
 export const ACCOUNTS_LOADING = { phase: "loading" } as unknown as ConnectedAccounts;
 
 /**
@@ -66,6 +81,19 @@ export const ACCOUNTS_LOADING = { phase: "loading" } as unknown as ConnectedAcco
 export function loadedAccounts(value: AccountsRead): ConnectedAccounts {
   return { phase: "loaded", ...value } as unknown as ConnectedAccounts;
 }
+
+/**
+ * The read never came back at all (the request itself failed). A finished read that learned
+ * nothing: no channel is marked, so every one of them reads as unreadable and the screen says
+ * "we couldn't check" rather than sitting in "Checking…" forever. Built here rather than at the
+ * call site so no screen ever hand-writes a channelStates map — authoring that map is authoring
+ * the truth (#741 r5 P1).
+ */
+export const UNREAD_ACCOUNTS: ConnectedAccounts = loadedAccounts({
+  targets: [],
+  channelStates: {},
+  canPublish: false,
+});
 
 /** True while the answer is still unknown. For UI that must not commit either way yet. */
 export function isCheckingAccounts(accounts: ConnectedAccounts): boolean {
@@ -80,10 +108,52 @@ export function isCheckingAccounts(accounts: ConnectedAccounts): boolean {
 /** Said while the connection read is in flight. Never an assertion about the connection itself. */
 export const CHECKING_ACCOUNTS_BLOCKER = "Checking your connected accounts…";
 
+/**
+ * Said once a read has come back empty-handed. States the fact and that we keep trying — still not
+ * an assertion about the connection. Paired everywhere with a Retry control, because "we couldn't
+ * check" is only honest if the merchant has a way to make us check again (#741 r5 P1).
+ */
+export const ACCOUNTS_CHECK_FAILED = "We couldn't check your connected accounts. Retrying…";
+
+/** The short label for a connection that exists but can't publish — the SAME words the
+ *  Connections page shows, so one fact never gets two names. */
+export function connectionBlockerStatus(blocker: ConnectionBlocker): string {
+  return CONNECTION_BLOCKER_COPY[blocker].status;
+}
+
 /** Said for a channel nobody can connect. Points at the only action that actually exists. */
 export function channelUnavailableBlocker(channel: string): string {
   const label = channelMeta(channel)?.label ?? channel;
   return `${label} is not available yet — move this post to another channel to send it.`;
+}
+
+// ── The one per-channel view everything else is derived from ─────────────────────────────────
+
+/**
+ * What we currently know about ONE channel. Every selector below is a thin reading of this, so a
+ * new consumer cannot invent a fourth interpretation of the same facts.
+ *
+ * Ordering matters and is encoded here once: a channel the product cannot connect at all outranks
+ * every account question (there is nothing to pick and nowhere to send anyone), then "still
+ * looking", then "looked and failed", then "connected but unusable", and only last the real list.
+ */
+export type ChannelConnection =
+  | { phase: "unconnectable" }
+  | { phase: "checking" }
+  | { phase: "unreadable" }
+  | { phase: "blocked"; blocker: ConnectionBlocker }
+  | { phase: "targets"; targets: readonly OwnerTarget[] };
+
+export function channelConnection(accounts: ConnectedAccounts, channel: string): ChannelConnection {
+  if (!isConnectableChannel(channel)) return { phase: "unconnectable" };
+  const state = read(accounts);
+  if (state.phase === "loading") return { phase: "checking" };
+  // A channel missing from the map was never read. Defaulting to "unreadable" is what stops a
+  // truncated answer from being mistaken for an empty one.
+  const found = state.channelStates[channel] ?? "unreadable";
+  if (found === "unreadable") return { phase: "unreadable" };
+  if (found !== "ok") return { phase: "blocked", blocker: found };
+  return { phase: "targets", targets: state.targets.filter((t) => t.channel === channel) };
 }
 
 // ── The one derived judgement ────────────────────────────────────────────────────────────────
@@ -99,18 +169,20 @@ export function approvalFor(
   accounts: ConnectedAccounts,
   post: { channel: string; targetId: string | null | undefined; mediaCount: number },
 ): ApprovalView {
-  if (!isConnectableChannel(post.channel)) {
+  const view = channelConnection(accounts, post.channel);
+  if (view.phase === "unconnectable") {
     return { blockers: [channelUnavailableBlocker(post.channel)], canApprove: false };
   }
-  const state = read(accounts);
-  if (state.phase === "loading") {
-    return { blockers: [CHECKING_ACCOUNTS_BLOCKER], canApprove: false };
-  }
+  if (view.phase === "checking") return { blockers: [CHECKING_ACCOUNTS_BLOCKER], canApprove: false };
+  // Same sentence the server refuses with when its own re-read fails — the merchant hears the one
+  // true reason, and never "you have no account" for a connection we simply could not reach.
+  if (view.phase === "unreadable") return { blockers: [ACCOUNTS_UNREADABLE_ERROR], canApprove: false };
   const blockers = scheduleApproveBlockers({
     channel: post.channel,
     targetId: post.targetId,
     mediaCount: post.mediaCount,
-    connectedTargetIds: state.targets.filter((t) => t.channel === post.channel).map((t) => t.id),
+    connectedTargetIds: view.phase === "targets" ? view.targets.map((t) => t.id) : [],
+    connectionBlocker: view.phase === "blocked" ? view.blocker : null,
   });
   return { blockers, canApprove: blockers.length === 0 };
 }
@@ -134,23 +206,48 @@ export type AccountOption = { value: string; label: string };
 export type AccountPicker =
   | { phase: "checking" }
   | { phase: "unavailable" }
+  | { phase: "unreadable" }
+  | { phase: "blocked"; blocker: ConnectionBlocker }
   | { phase: "none" }
   | { phase: "ready"; options: readonly AccountOption[] };
 
 export function accountPicker(accounts: ConnectedAccounts, channel: string): AccountPicker {
-  if (!isConnectableChannel(channel)) return { phase: "unavailable" };
-  const state = read(accounts);
-  if (state.phase === "loading") return { phase: "checking" };
-  const matching = state.targets.filter((t) => t.channel === channel);
-  return matching.length > 0
-    ? { phase: "ready", options: matching.map((t) => ({ value: t.id, label: t.name })) }
-    : { phase: "none" };
+  const view = channelConnection(accounts, channel);
+  switch (view.phase) {
+    case "unconnectable":
+      return { phase: "unavailable" };
+    case "checking":
+      return { phase: "checking" };
+    case "unreadable":
+      return { phase: "unreadable" };
+    case "blocked":
+      return { phase: "blocked", blocker: view.blocker };
+    default:
+      return view.targets.length > 0
+        ? { phase: "ready", options: view.targets.map((t) => ({ value: t.id, label: t.name })) }
+        : { phase: "none" };
+  }
 }
 
 /** Channels with at least one real publishable target. Empty while the answer is unknown. */
 export function postableChannelIds(accounts: ConnectedAccounts): Set<string> {
   const state = read(accounts);
   return state.phase === "loaded" ? new Set(state.targets.map((t) => t.channel)) : new Set<string>();
+}
+
+/**
+ * Whether the screen knows enough to invite the merchant to connect something. Only true when
+ * EVERY connectable channel gave a real list: "you haven't connected anything" is a claim, and a
+ * channel we couldn't read — or one that is connected but expired — makes it false (#741 r5 P1).
+ */
+export function canOfferConnect(accounts: ConnectedAccounts): boolean {
+  return CONNECTABLE_CHANNEL_META.every((c) => channelConnection(accounts, c.id).phase === "targets");
+}
+
+/** True when a connectable channel's read came back empty-handed — the screen should say so and
+ *  offer to try again, rather than pretending it is still looking. */
+export function accountsUnreadable(accounts: ConnectedAccounts): boolean {
+  return CONNECTABLE_CHANNEL_META.some((c) => channelConnection(accounts, c.id).phase === "unreadable");
 }
 
 /**
@@ -165,9 +262,10 @@ export function autoPublishAllowed(accounts: ConnectedAccounts): boolean {
   return canAutoPublish([...postableChannelIds(accounts)], state.canPublish);
 }
 
-/** Whether a stored target id is still one of the merchant's accounts on that channel. */
+/** Whether a stored target id is still one of the merchant's accounts on that channel. False for
+ *  everything we did not positively read — uncertainty never vouches for an id. */
 export function isConnectedTarget(accounts: ConnectedAccounts, channel: string, targetId: string | null): boolean {
-  const state = read(accounts);
-  if (state.phase !== "loaded" || !targetId) return false;
-  return state.targets.some((t) => t.channel === channel && t.id === targetId);
+  const view = channelConnection(accounts, channel);
+  if (view.phase !== "targets" || !targetId) return false;
+  return view.targets.some((t) => t.id === targetId);
 }

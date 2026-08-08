@@ -30,16 +30,20 @@ import { CONNECTABLE_CHANNEL_META, channelMeta, isConnectableChannel } from "@/l
 // derived judgement built on it (#741 r2). This screen never touches the raw list — the type
 // makes that impossible — so Plan, the composer and "Approve all" cannot drift apart again.
 import {
+  ACCOUNTS_CHECK_FAILED,
   ACCOUNTS_LOADING,
   CHECKING_ACCOUNTS_BLOCKER,
   accountPicker,
+  accountsUnreadable,
   approvalFor,
   autoPublishAllowed,
+  canOfferConnect,
   channelUnavailableBlocker,
-  isCheckingAccounts,
+  connectionBlockerStatus,
   isConnectedTarget,
   loadedAccounts,
   postableChannelIds,
+  UNREAD_ACCOUNTS,
   type ConnectedAccounts,
 } from "@/lib/schedule-connections";
 import type { ChannelId, ChannelCapabilities } from "@/lib/channels/types";
@@ -227,29 +231,30 @@ export function OttoSchedule({
     // "nothing connected" (the next cycle retries, so "Checking…" stays literally true).
     const postsPromise = listScheduledPosts();
     // BOTH platform reads, one answer (#741 r3 P1). The publish permission used to be a second
-    // read on its own timeline; it now rides this one, and the screen only commits to a connection
-    // state once BOTH have answered — so "accounts loaded empty while the permission read is still
-    // in flight" is no longer a state this screen can be in. Cost: getMetaConnection joins the 60s
-    // cycle (one more platform call per refresh), which is the price of one honest answer.
+    // read on its own timeline; it now rides this one, and the screen commits to a connection state
+    // only from this single value — so "accounts loaded empty while the permission read is still in
+    // flight" is not a state this screen can be in. Cost: getMetaConnection joins the 60s cycle
+    // (one more platform call per refresh), which is the price of one honest answer.
+    //
+    // #741 r5 P1: EVERY outcome produces a state, including failure. A failed read is a finished
+    // read whose answer is "we could not find out" (carried per channel), never a reason to sit in
+    // "Checking…" forever and never a reason to keep last cycle's list alive — an old list shown as
+    // if it were current is worse than saying nothing, because the screen would go on counting
+    // those posts ready while the server would refuse them.
     const connectionPromise = Promise.all([
-      listOwnerTargets().catch(() => ({ unavailable: true }) as const),
-      getMetaConnection().then((meta) => ({ meta }), () => null),
+      listOwnerTargets().catch(() => null),
+      getMetaConnection().then(
+        (meta) => !("error" in meta) && meta.canPublish === true,
+        () => false,
+      ),
     ]);
     // Not awaited together with the posts: a slow connection read must not hold the schedule
-    // hostage, and a hung one must leave the screen in "still checking", not in a false answer.
-    void connectionPromise.then(([targetsRes, metaRes]) => {
-      // `unavailable` / a rejected read = the platform did not tell us. Neither may be written down
-      // as a completed read, because a completed read is what licenses the screen to assert "you
-      // have no connected accounts". A getMetaConnection that ANSWERS `{ error }` (no session) is a
-      // real answer — it means no publish permission, not "we couldn't look".
-      if (seq !== reloadSeq.current || "unavailable" in targetsRes || !metaRes) return;
-      const meta = metaRes.meta;
-      setAccounts(
-        loadedAccounts({
-          targets: targetsRes.targets,
-          canPublish: !("error" in meta) && meta.canPublish === true,
-        }),
-      );
+    // hostage. While it is in flight the screen stays in "checking", which is literally true.
+    void connectionPromise.then(([targetsRead, canPublish]) => {
+      if (seq !== reloadSeq.current) return;
+      // The server's answer is spread through WHOLE — this screen never authors a channel state
+      // of its own, and the "request failed" case is a value the authority module owns.
+      setAccounts(targetsRead ? loadedAccounts({ ...targetsRead, canPublish }) : UNREAD_ACCOUNTS);
     });
     const rows = await postsPromise;
     if (seq !== reloadSeq.current) return;
@@ -387,7 +392,7 @@ export function OttoSchedule({
                   {c.label}
                 </span>
               ))
-            ) : !isCheckingAccounts(accounts) ? (
+            ) : canOfferConnect(accounts) ? (
               <button
                 type="button"
                 onClick={() => onNavigate("connections")}
@@ -396,6 +401,19 @@ export function OttoSchedule({
                 <Plus size={13} />
                 Connect a channel
               </button>
+            ) : accountsUnreadable(accounts) ? (
+              // The read came back empty-handed. Say so, and give the merchant the one action that
+              // can change it — a silent retry loop they cannot see or trigger is not an answer.
+              <span role="status" className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
+                {ACCOUNTS_CHECK_FAILED}
+                <button
+                  type="button"
+                  onClick={() => void reload()}
+                  className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
+                >
+                  Retry
+                </button>
+              </span>
             ) : null}
           </div>
           <div className="flex-1" />
@@ -474,6 +492,7 @@ export function OttoSchedule({
             setComposer(null);
             onNavigate("connections");
           }}
+          onRetry={() => void reload()}
           onSaved={async () => {
             setComposer(null);
             await reload();
@@ -1113,6 +1132,7 @@ function Composer({
   mediaChoices,
   onClose,
   onConnect,
+  onRetry,
   onSaved,
 }: {
   seed: ComposerSeed;
@@ -1121,6 +1141,8 @@ function Composer({
   mediaChoices: MediaChoice[];
   onClose: () => void;
   onConnect: () => void;
+  /** Ask for the connection read again — the way out of "we couldn't check" (#741 r5 P1). */
+  onRetry: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [channel, setChannel] = useState<ChannelId>(seed.channel);
@@ -1331,6 +1353,24 @@ function Composer({
               {picker.phase === "checking" ? (
                 <div role="status" className="rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
                   {CHECKING_ACCOUNTS_BLOCKER}
+                </div>
+              ) : picker.phase === "unreadable" ? (
+                // We looked and came back empty-handed. Never the Connect prompt below — we have
+                // no idea whether they are connected, so inviting them to connect is a guess.
+                <div role="status" className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                  <span className="flex-1">{ACCOUNTS_CHECK_FAILED}</span>
+                  <Button variant="secondary" size="sm" type="button" onClick={onRetry}>
+                    Retry
+                  </Button>
+                </div>
+              ) : picker.phase === "blocked" ? (
+                // Connected, but not usable right now. The label is the one the Connections page
+                // shows for the same fact, and the action is the one that actually fixes it.
+                <div role="status" className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                  <span className="flex-1">{connectionBlockerStatus(picker.blocker)}</span>
+                  <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
+                    Reconnect
+                  </Button>
                 </div>
               ) : picker.phase === "none" ? (
                 <div className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">

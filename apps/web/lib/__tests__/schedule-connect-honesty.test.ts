@@ -22,8 +22,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { scheduleApproveBlockers } from "@fikirtive/core/schedule-draft";
-import { CHECKING_ACCOUNTS_BLOCKER } from "../schedule-connections";
+import {
+  ACCOUNTS_UNREADABLE_ERROR,
+  CONNECTION_BLOCKER_COPY,
+  scheduleApproveBlockers,
+} from "@fikirtive/core/schedule-draft";
+import { ACCOUNTS_CHECK_FAILED, CHECKING_ACCOUNTS_BLOCKER } from "../schedule-connections";
 import { buildStuffItems } from "../stuff-items";
 import { DEFAULT_SETTINGS } from "../owner-settings";
 import type { AccountInfo } from "../account-actions";
@@ -71,6 +75,11 @@ const STUFF_ITEMS = buildStuffItems({
 });
 
 const IG_TARGET = { id: "ig-1", name: "Kopi Kita", channel: "instagram" as const };
+
+/** 一次每个渠道都读成功的回答(#741 r5:答案是**逐渠道**的,不是一份整包名单)。 */
+function okTargets(targets: { id: string; name: string; channel: string }[]) {
+  return { targets, channelStates: { instagram: "ok", facebook: "ok", x: "ok" } as const };
+}
 
 function postRow(over: Partial<ScheduledPostRow> = {}): ScheduledPostRow {
   return {
@@ -174,7 +183,7 @@ async function renderSchedule() {
 beforeEach(() => {
   navigated.length = 0;
   mocks.listScheduledPosts.mockResolvedValue([]);
-  mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+  mocks.listOwnerTargets.mockResolvedValue(okTargets([]));
   mocks.createScheduledPost.mockResolvedValue({ ok: true, id: "post-new" });
   mocks.updateScheduledPost.mockResolvedValue({ ok: true });
   mocks.approveScheduledPost.mockResolvedValue({ ok: true });
@@ -223,7 +232,7 @@ describe("#694 全新商家的 composer 只给真能连上的渠道", () => {
   });
 
   it("连上 IG 之后,可选渠道只剩真有投放目标的那一个", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
     await renderSchedule();
     await click(buttonByText("New post"));
@@ -289,7 +298,7 @@ describe("#694 账户页的连接进度不把连不上的渠道算进分母(附�
 
 describe("#695 Approve & schedule 灰着时,商家看得见到底缺什么", () => {
   beforeEach(() => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
   });
 
@@ -390,7 +399,7 @@ describe("#741 r1 断开连接后,界面不再假装账号还在", () => {
   }
 
   it("旧 id 已不在连接列表里:批准禁用,并如实说这不是你连着的账号", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [OTHER_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([OTHER_TARGET]));
     mocks.listScheduledPosts.mockResolvedValue([postRow({ metaTargetId: STALE })]);
     await renderSchedule();
     await openDraft("Morning brew");
@@ -402,7 +411,7 @@ describe("#741 r1 断开连接后,界面不再假装账号还在", () => {
   });
 
   it("一个账号都没连:指路去连接,不是叫人挑一个不存在的账号", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([]));
     mocks.listScheduledPosts.mockResolvedValue([postRow({ metaTargetId: STALE })]);
     await renderSchedule();
     await openDraft("Morning brew");
@@ -412,7 +421,7 @@ describe("#741 r1 断开连接后,界面不再假装账号还在", () => {
   });
 
   it("账号仍然连着:批准照常可用,不误伤", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.listScheduledPosts.mockResolvedValue([postRow({ metaTargetId: IG_TARGET.id })]);
     await renderSchedule();
     await openDraft("Morning brew");
@@ -422,7 +431,7 @@ describe("#741 r1 断开连接后,界面不再假装账号还在", () => {
   });
 
   it("Approve all 不把陈旧账号的帖子计为 ready", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [OTHER_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([OTHER_TARGET]));
     mocks.listScheduledPosts.mockResolvedValue([
       postRow({ id: "p-stale", source: "otto", status: "DRAFT", caption: "Otto draft", metaTargetId: STALE }),
     ]);
@@ -440,7 +449,7 @@ describe("#741 r1 断开连接后,界面不再假装账号还在", () => {
 
 describe("#741 r1 打开一条历史 X 草稿", () => {
   beforeEach(() => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
     mocks.listScheduledPosts.mockResolvedValue([
       postRow({ id: "p-x", channel: "x", caption: "Legacy X draft", metaTargetId: null, media: [] }),
@@ -499,7 +508,7 @@ describe("#741 r1 打开一条历史 X 草稿", () => {
   it("「连得上但还没连」不等于「连不上」:断开后的 IG 草稿仍可留在 IG,不被说成 not available", async () => {
     // 这一条挡的是本次修法自己可能踩的坑:如果把「不在可选列表里」一律当成「渠道不可用」,
     // 商家断开连接后打开自己的 IG 草稿,会看到「Instagram is not available yet」—— 假话。
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([]));
     mocks.getMetaConnection.mockResolvedValue({ connected: false, canPublish: false, needsReconnect: false });
     mocks.listScheduledPosts.mockResolvedValue([
       postRow({ id: "p-ig", channel: "instagram", caption: "Orphan IG draft", metaTargetId: null }),
@@ -523,7 +532,7 @@ describe("#741 r1 打开一条历史 X 草稿", () => {
 
 describe("#741 r1 Approve all 的缺项汇总只报真的缺项", () => {
   beforeEach(() => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
   });
 
@@ -633,12 +642,12 @@ describe("#741 r2 他处断连:下一个刷新周期内草稿自动翻成 blocke
   }
 
   it("一个账号都不剩(全部断开):计数下降,理由改口为「去连账号」", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     await renderSchedule();
     expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
 
     // 商家在别处断开了连接;下一趟刷新才知道 —— 而刷新必须把连接一起重读。
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([]));
     await refreshCycle();
 
     const approveAll = buttonByText("Approve all", document.body);
@@ -648,11 +657,11 @@ describe("#741 r2 他处断连:下一个刷新周期内草稿自动翻成 blocke
   });
 
   it("换成了别的账号:同一草稿翻成「这不是你连着的账号」", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     await renderSchedule();
     expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
 
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [{ id: "ig-2", name: "Another Page", channel: "instagram" as const }] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([{ id: "ig-2", name: "Another Page", channel: "instagram" as const }]));
     await refreshCycle();
 
     expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 0");
@@ -660,7 +669,7 @@ describe("#741 r2 他处断连:下一个刷新周期内草稿自动翻成 blocke
   });
 
   it("刷新是同一条时间线:帖子与连接列表每趟一起重读", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     await renderSchedule();
     const postsAfterMount = mocks.listScheduledPosts.mock.calls.length;
     const targetsAfterMount = mocks.listOwnerTargets.mock.calls.length;
@@ -675,7 +684,7 @@ describe("#741 r2 他处断连:下一个刷新周期内草稿自动翻成 blocke
 
 describe("#741 r2 X 草稿:只指路换渠道,不给一个不存在的连接动作", () => {
   beforeEach(() => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
     mocks.listScheduledPosts.mockResolvedValue([
       postRow({ id: "p-x", channel: "x", caption: "Legacy X draft", metaTargetId: null, media: [] }),
@@ -715,17 +724,21 @@ describe("#741 r2 X 草稿:只指路换渠道,不给一个不存在的连接动�
   });
 });
 
-// ── #741 判官 r3 [P1] 连接读失败 ≠ 没连账号 ────────────────────────────────────
+// ── #741 判官 r3 [P1] 连接读失败 ≠ 没连账号(r5 更新了它的落点) ────────────────
 //
-// 病灶在适配层:一次暂时性的 Graph 故障被转成空列表,屏幕于是**断言**「你没有连接任何账号」
-// 并递上 Connect 按钮 —— 对一个连接好好的商家说的假话。屏幕这一侧的义务是:拿到「读不到」
-// 就停在不确定,不放行、不冤枉,下一趟读到了再改口。
+// r3 病灶在适配层:一次暂时性的 Graph 故障被转成空列表,屏幕于是**断言**「你没有连接任何
+// 账号」并递上 Connect 按钮 —— 对一个连接好好的商家说的假话。这一组钉的仍是那件事:读不到
+// 时不许放行、不许冤枉。r5 只改了「读不到」落在哪个状态:不再是无尽的「正在查」,而是一句
+// 如实的「没查到」加一个重试入口(见下一组)。
 
-describe("#741 r3 连接读失败:整屏停在「正在查」,绝不断言没连账号", () => {
+describe("#741 r3/r5 连接读失败:不放行、不冤枉,也不假装还在查", () => {
   beforeEach(() => {
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
     // 适配层如实上报「这次没读到」(暂时性 Graph 故障),而不是一份空名单。
-    mocks.listOwnerTargets.mockResolvedValue({ unavailable: true });
+    mocks.listOwnerTargets.mockResolvedValue({
+      targets: [],
+      channelStates: { instagram: "unreadable", facebook: "unreadable", x: "ok" },
+    });
     mocks.listScheduledPosts.mockResolvedValue([
       postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
     ]);
@@ -742,14 +755,14 @@ describe("#741 r3 连接读失败:整屏停在「正在查」,绝不断言没连
     });
   }
 
-  it("Plan:不放行,也不冤枉 —— 说的是「正在查」", async () => {
+  it("Plan:不放行,也不冤枉 —— 说的是「没查到」", async () => {
     await renderSchedule();
 
     const approveAll = buttonByText("Approve all", document.body);
     expect(approveAll.textContent).toContain("Approve all 0");
     expect(approveAll.disabled).toBe(true);
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Checking your connected accounts");
+    expect(text).toContain(ACCOUNTS_UNREADABLE_ERROR);
     expect(text).not.toContain("Connect your account before approving.");
     expect(text).not.toContain("That account isn't one of your connected channels.");
   });
@@ -759,7 +772,7 @@ describe("#741 r3 连接读失败:整屏停在「正在查」,绝不断言没连
     await click(buttonByText("Tweak", document.body));
 
     const text = scope().textContent ?? "";
-    expect(text).toContain("Checking your connected accounts");
+    expect(text).toContain(ACCOUNTS_CHECK_FAILED);
     expect(text).not.toContain("Connect an account first");
     expect(
       Array.from(scope().querySelectorAll("button")).filter((b) => (b.textContent ?? "").trim() === "Connect"),
@@ -778,14 +791,14 @@ describe("#741 r3 连接读失败:整屏停在「正在查」,绝不断言没连
 
   it("故障不粘连:下一趟真读到了,屏幕立刻改口给出真答案", async () => {
     await renderSchedule();
-    expect(document.body.textContent).toContain("Checking your connected accounts");
+    expect(document.body.textContent).toContain(ACCOUNTS_CHECK_FAILED);
 
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     await refreshCycle();
 
     const approveAll = buttonByText("Approve all", document.body);
     expect(approveAll.textContent).toContain("Approve all 1");
-    expect(document.body.textContent).not.toContain("Checking your connected accounts");
+    expect(document.body.textContent).not.toContain(ACCOUNTS_CHECK_FAILED);
   });
 });
 
@@ -815,7 +828,7 @@ describe("#741 r3 两个连接读折成一条生命周期", () => {
   }
 
   it("账号读完是空、Meta 读还悬着:整屏还是「正在查」,没有一处抢先断言", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([]));
     mocks.getMetaConnection.mockReturnValue(new Promise(() => {}));
     await renderSchedule();
 
@@ -847,7 +860,7 @@ describe("#741 r3 两个连接读折成一条生命周期", () => {
   });
 
   it("一条时间线:每趟刷新两个读各走一次,没有第二套自己的节奏", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
     await renderSchedule();
     expect(mocks.listOwnerTargets.mock.calls.length).toBe(1);
@@ -860,7 +873,7 @@ describe("#741 r3 两个连接读折成一条生命周期", () => {
   });
 
   it("两个读都答复了才算数:auto-publish 开关也走这同一份状态", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: true, needsReconnect: false });
     await renderSchedule();
 
@@ -869,12 +882,145 @@ describe("#741 r3 两个连接读折成一条生命周期", () => {
   });
 
   it("Meta 读还没答复时 auto-publish 保持关着 —— 不确定不等于可以", async () => {
-    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
     mocks.getMetaConnection.mockReturnValue(new Promise(() => {}));
     await renderSchedule();
 
     const toggle = document.body.querySelector<HTMLButtonElement>('[aria-label="Otto auto-publish"]')!;
     expect(toggle.disabled).toBe(true);
+  });
+});
+
+// ── #741 判官 r5 [P1] 「连着但用不了」不是「没连过」 ────────────────────────────
+//
+// needsReconnect / needsPageScope 都发生在 MetaConnection 已存在时。上一轮把它们算成
+// 「确定的空」,于是排程页对一个连过的商家说「Connect an account first」—— 假话,而且
+// 连接页那边写的是 Connected / Reconnect needed,同一个产品两套说法。
+
+describe("#741 r5 连着但用不了:说重新授权/补权限,不说「你没连过」", () => {
+  beforeEach(() => {
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: true });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
+    ]);
+  });
+
+  it("要重新授权:Plan 的理由说 reconnect,一个字都不提「你没连账号」", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [], channelStates: { instagram: "needs_reconnect", facebook: "needs_reconnect", x: "ok" } });
+    await renderSchedule();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.approve);
+    expect(text).not.toContain("Connect your account before approving.");
+    expect(buttonByText("Approve all", document.body).disabled).toBe(true);
+  });
+
+  it("要重新授权:composer 的账号栏不说「Connect an account first」", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [], channelStates: { instagram: "needs_reconnect", facebook: "needs_reconnect", x: "ok" } });
+    await renderSchedule();
+    await click(buttonByText("Tweak", document.body));
+
+    const text = scope().textContent ?? "";
+    expect(text).not.toContain("Connect an account first");
+    // 与连接页同一套说法(那边显示的就是 Reconnect needed)。
+    expect(text).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.status);
+  });
+
+  it("缺页面权限:说去补权限,同样不诬赖商家没连过", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [], channelStates: { instagram: "needs_page_permission", facebook: "needs_page_permission", x: "ok" } });
+    await renderSchedule();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(CONNECTION_BLOCKER_COPY.needs_page_permission.approve);
+    expect(text).not.toContain("Connect your account before approving.");
+  });
+
+  it("连着但用不了时,Header 不摆「Connect a channel」—— 商家明明连过", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [], channelStates: { instagram: "needs_reconnect", facebook: "needs_reconnect", x: "ok" } });
+    await renderSchedule();
+
+    expect(
+      Array.from(document.body.querySelectorAll("button")).filter((b) =>
+        (b.textContent ?? "").includes("Connect a channel"),
+      ),
+    ).toEqual([]);
+  });
+});
+
+// ── #741 判官 r5 [P1] unavailable 必须有状态、有退化路径、不吃旧快照 ─────────────
+
+describe("#741 r5 读不到时:有状态、有重试入口、不会永远停在 Checking", () => {
+  beforeEach(() => {
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
+    ]);
+  });
+
+  async function refreshCycle() {
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it("首读就失败:不再永远停在「正在查」,而是如实说没查到并给出重试入口", async () => {
+    mocks.listOwnerTargets.mockRejectedValue(new Error("network"));
+    await renderSchedule();
+
+    const text = document.body.textContent ?? "";
+    // 病灶:unavailable 被丢弃 → 状态永远停在 loading → 屏幕永远说「正在查」。
+    expect(text).not.toContain(CHECKING_ACCOUNTS_BLOCKER);
+    expect(text).toContain(ACCOUNTS_CHECK_FAILED);
+    expect(text).toContain(ACCOUNTS_UNREADABLE_ERROR);
+    expect(buttonByText("Retry", document.body)).toBeTruthy();
+  });
+
+  it("重试入口是真的:按下去会重新读一次", async () => {
+    mocks.listOwnerTargets.mockRejectedValue(new Error("network"));
+    await renderSchedule();
+    const before = mocks.listOwnerTargets.mock.calls.length;
+
+    await click(buttonByText("Retry", document.body));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.listOwnerTargets.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("有过成功快照、这趟读失败:绝不按旧快照放行,计数归零并如实说没查到", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET], channelStates: { instagram: "ok", facebook: "ok", x: "ok" } });
+    await renderSchedule();
+    expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
+
+    mocks.listOwnerTargets.mockRejectedValue(new Error("network"));
+    await refreshCycle();
+
+    const approveAll = buttonByText("Approve all", document.body);
+    // 病灶:旧代码在读失败时保留上一状态 —— 拿旧事实当新事实,继续把帖子算作 ready。
+    expect(approveAll.textContent).toContain("Approve all 0");
+    expect(approveAll.disabled).toBe(true);
+    expect(document.body.textContent).toContain(ACCOUNTS_UNREADABLE_ERROR);
+  });
+
+  it("单渠道读不到不拖垮其它渠道:Facebook 照常可批准", async () => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-fb", source: "otto", status: "DRAFT", caption: "FB draft", channel: "facebook", metaTargetId: "fb-1" }),
+    ]);
+    mocks.listOwnerTargets.mockResolvedValue({
+      targets: [{ id: "fb-1", name: "Kopi Kita Page", channel: "facebook" as const }],
+      channelStates: { instagram: "unreadable", facebook: "ok", x: "ok" },
+    });
+    await renderSchedule();
+
+    expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
+    expect(buttonByText("Approve all", document.body).disabled).toBe(false);
   });
 });
 
@@ -1018,6 +1164,19 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
     expect(offenders).toEqual([]);
   });
 
+  // #741 r4 判官是**人工**核过「loadedAccounts 生产构造点唯一且无断言逃逸」的。人工核过的
+  // 结论会随下一次编辑失效,所以这里把它变成机器每次都跑的检查:能把「一次完整的读」写进
+  // 屏幕状态的地方,只有一处。多一处,就多一条可以绕过逐渠道真相的路。
+  it("「已完成的读」只有一个构造点 —— 人工审计变成常驻检查", () => {
+    const callers = files
+      .filter((f) => f.rel !== "lib/schedule-connections.ts" && /\bloadedAccounts\s*\(/.test(f.code))
+      .map((f) => f.rel);
+    expect(callers).toEqual(["components/otto/OttoSchedule.tsx"]);
+    // 而且那一处必须是把服务端答案整份摊开(...read),不是自己拼一份 channelStates。
+    const schedule = files.find((f) => f.rel === "components/otto/OttoSchedule.tsx")!.code;
+    expect(schedule).not.toMatch(/channelStates\s*:/);
+  });
+
   it("豁免名单本身承重:没有组件在名单上,也没有过期的行", () => {
     for (const rel of TARGET_JUDGEMENT_ALLOWLIST.keys()) {
       // 过期行会让围栏悄悄变松,所以每一行都必须指向一个真实存在、且真的会被规则命中的文件。
@@ -1085,7 +1244,7 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
       for (const sentence of expected) expect(scheduleSrc).not.toContain(sentence);
 
       mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
-      mocks.listOwnerTargets.mockResolvedValue({ targets: [IG_TARGET] });
+      mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
       mocks.listScheduledPosts.mockResolvedValue([
         postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft", media: [] }),
       ]);
@@ -1106,7 +1265,7 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
       })[0]!;
 
       mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
-      mocks.listOwnerTargets.mockResolvedValue({ targets: [] });
+      mocks.listOwnerTargets.mockResolvedValue(okTargets([]));
       mocks.listScheduledPosts.mockResolvedValue([
         postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft", metaTargetId: null }),
       ]);

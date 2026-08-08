@@ -8,12 +8,16 @@ import { creditsLabel, formatCredits } from "@/lib/credit-format";
 import type { CreditPack } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
+import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
 
 export type ChannelState = {
   id: string;
   label: string;
   status: "connected" | "needs_reconnect" | "not_connected";
   targets: string[];
+  /** Connected, but not usable right now (#741 r5 P1). Rendered with the SAME words Schedule
+   *  uses for the same fact — see CONNECTION_BLOCKER_COPY in @fikirtive/core. */
+  blocker?: ConnectionBlocker | null;
   connectUrl: string;
 };
 

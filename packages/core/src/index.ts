@@ -115,6 +115,9 @@ export {
 } from "./schedule-state.js";
 export {
   ACCOUNTS_UNREADABLE_ERROR,
+  CONNECTION_BLOCKER_COPY,
+  classifyConnectionFailure,
+  classifyPagesRead,
   SCHEDULE_CHANNELS,
   SCHEDULE_CHANNEL_CAPS,
   isScheduleChannel,
@@ -122,6 +125,8 @@ export {
   parseScheduleInstant,
   scheduleApproveBlockers,
   validateScheduleDraft,
+  type ConnectionBlocker,
+  type PagesReadState,
   type ScheduleApproveInput,
   type ScheduleChannel,
   type ScheduleDraftInput,
