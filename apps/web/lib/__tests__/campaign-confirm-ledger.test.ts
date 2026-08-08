@@ -175,6 +175,27 @@ function whileDispatchWindowOpen(hook: () => Promise<void>) {
   return () => { if (delegate.findFirst === once) delegate.findFirst = real; };
 }
 
+/**
+ * 判官 r3 指出的那条缝:**格与格之间**(#749 判官 r3 P1)。
+ *
+ * `orchestrateBatch` 每派发完一格,就把那个任务打上批次标记(`genJob.updateMany`)—— 那一刻
+ * 这一格的扣费**已经提交**,而下一格还没开始,campaign 锁也已随上一笔事务放开。挂在这里的
+ * 一次性动作,落点正是判官描述的那个窗口。之前那两条测试把闯入点放在「任何一格花钱之前」,
+ * 恰好避开了它。
+ */
+function betweenDispatchedCells(hook: () => Promise<void>) {
+  const delegate = prisma.genJob as unknown as Record<string, unknown>;
+  const real = (delegate.updateMany as (args: unknown) => Promise<unknown>).bind(delegate);
+  const once = async (args: unknown) => {
+    delegate.updateMany = real; // 只在第一格之后闯入一次
+    const tagged = await real(args);
+    await hook();
+    return tagged;
+  };
+  delegate.updateMany = once;
+  return () => { if (delegate.updateMany === once) delegate.updateMany = real; };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -512,6 +533,107 @@ describe("#749 判官 r2 P1 锁内复判:签名之后变了的,一律停在花�
     if (!("ok" in replay)) throw new Error(replay.error);
     expect(replay.result).toMatchObject({ dispatched: 0, reused: 2, failed: 0, totalCredits: 0 });
     expect(await reservedThisRun(world.ownerId, second)).toBe(0);
+    expect(await jobCount(world.ownerId)).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #749 判官 r3 P1 —— 格与格之间的那条缝:批次级承诺要批次级机制
+// ---------------------------------------------------------------------------
+/**
+ * campaign 锁是事务级的,每一格提交时就放开,批次却还在往下派发。两标签页于是能在**格与格
+ * 之间**交错:先付掉共用的那一格,再被人占走另一格。判官的定向复现是
+ * `dispatched: 1, failed: 1, totalCredits: 10` —— 商家为一份缩水的交付付了钱。
+ *
+ * 终态只允许两种:**要么整批做完并如数收费,要么一格没开始且一分钱没动**。
+ * 禁止态就是判官复现出的那一种:部分扣费 + 交付缩水。
+ */
+describe("#749 判官 r3 P1 格间交错:终态只有两种,禁止部分扣费+交付缩水", () => {
+  type ConfirmResult = Awaited<ReturnType<typeof confirmCampaignGeneration>>;
+
+  /** 两个标签页复核的是同一个战役、同一个项目,只有片子档位不同 —— 于是它们争的是同一格。 */
+  async function twoTabs() {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+      { id: "V1", format: "reel", brief: "A vertical clip of the Raya collection" },
+    ]);
+    const at720 = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const at480 = await quoteFor(world.campaignId, { projectId: world.projectId, videoSpec: SPEC_480 });
+    // 图片那一格两边完全相同(它没有档位),片子那一格两边规格不同 —— 这正是判官的场景。
+    expect(at720.quote.lines.map((line) => line.charge)).toEqual(["new", "new"]);
+    expect(at480.quote.lines.map((line) => line.charge)).toEqual(["new", "new"]);
+    return { world, at720, at480 };
+  }
+
+  it("持租的那一批照常做完,闯入的那一次在自己花钱之前被挡住(零扣费)", async () => {
+    const { world, at720, at480 } = await twoTabs();
+    const intruderResults: ConfirmResult[] = [];
+    const intruderStart = new Date();
+
+    // 第一格(图片)扣费已提交、第二格还没开始 —— 判官那条缝。另一个标签页在这里确认。
+    betweenDispatchedCells(async () => {
+      intruderResults.push(await confirmCampaignGeneration(signed(world, at480, { videoSpec: SPEC_480 })));
+    });
+
+    const holderStart = new Date();
+    const holder = await confirmCampaignGeneration(signed(world, at720));
+
+    // ① 持租的那一批整批做完 —— 交付没缩水。
+    if (!("ok" in holder)) throw new Error(holder.error);
+    expect(holder.result).toMatchObject({ dispatched: 2, reused: 0, failed: 0 });
+    expect(await reservedThisRun(world.ownerId, holderStart))
+      .toBe(at720.quote.totalDisplayCredits * INTERNAL_PER_DISPLAY);
+
+    // ② 闯入的那一次一格都没派发,而且一分钱没动。
+    expect(intruderResults).toHaveLength(1);
+    const intruder = intruderResults[0]!;
+    expect("error" in intruder && intruder.error).toMatch(/still starting its items/i);
+    expect(await reservedThisRun(world.ownerId, intruderStart))
+      .toBe(at720.quote.totalDisplayCredits * INTERNAL_PER_DISPLAY); // 只有持租那一批的预扣
+    expect(await jobCount(world.ownerId)).toBe(2); // 两格,都是持租那一批的
+  });
+
+  it("镜像:先认领的是 480p 那一批,720p 那次整批失败且零扣费", async () => {
+    const { world, at720, at480 } = await twoTabs();
+    const intruderResults: ConfirmResult[] = [];
+
+    betweenDispatchedCells(async () => {
+      intruderResults.push(await confirmCampaignGeneration(signed(world, at720)));
+    });
+
+    const holderStart = new Date();
+    const holder = await confirmCampaignGeneration(signed(world, at480, { videoSpec: SPEC_480 }));
+
+    if (!("ok" in holder)) throw new Error(holder.error);
+    expect(holder.result).toMatchObject({ dispatched: 2, reused: 0, failed: 0 });
+    expect(await reservedThisRun(world.ownerId, holderStart))
+      .toBe(at480.quote.totalDisplayCredits * INTERNAL_PER_DISPLAY);
+
+    expect(intruderResults).toHaveLength(1);
+    const intruder = intruderResults[0]!;
+    expect("error" in intruder && intruder.error).toMatch(/still starting its items/i);
+    expect(await jobCount(world.ownerId)).toBe(2);
+    // 片子那一格冻结的是**持租那一批**签的档 —— 没有半份交付。
+    const video = await prisma.genJob.findFirstOrThrow({
+      where: { ownerId: world.ownerId, id: holder.result.cells[1].jobId! },
+    });
+    expect(video.videoOptions).toMatchObject({ resolution: "480p", seconds: 5 });
+  });
+
+  it("租约归还之后照常放行 —— 它挡的是「正在派发」,不是「这个战役」", async () => {
+    const { world, at720, at480 } = await twoTabs();
+
+    const first = await confirmCampaignGeneration(signed(world, at720));
+    if (!("ok" in first)) throw new Error(first.error);
+    expect(first.result.dispatched).toBe(2);
+
+    // 上一批已经归还租约。另一个标签页现在确认:它不会被租约挡住 —— 会被**交付面**挡住,
+    // 因为片子那一格已经用别的档做过了。停在花钱之前,零扣费。
+    const start = new Date();
+    const later = await confirmCampaignGeneration(signed(world, at480, { videoSpec: SPEC_480 }));
+
+    expect("error" in later && later.error).not.toMatch(/still starting its items/i);
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
     expect(await jobCount(world.ownerId)).toBe(2);
   });
 });
