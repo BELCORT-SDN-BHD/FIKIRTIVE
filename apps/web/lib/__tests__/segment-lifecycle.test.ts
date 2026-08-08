@@ -191,6 +191,157 @@ describe("#718 duplicate names are refused so the list stays readable", () => {
   });
 });
 
+const DUPLICATE = "You already have a segment with this name. Choose a different name.";
+
+async function draft() {
+  const list = await listSegments();
+  if (!("ok" in list)) throw new Error(list.error);
+  return { segmentId: list.nextSegmentId, segmentProof: list.nextSegmentProof };
+}
+
+/**
+ * #746 — #718's check reads first and writes second, so two requests can both be told the name
+ * is free before either one writes. The unique index closes that window; these cases are about
+ * what the merchant HEARS when it does, because a database constraint error is not a sentence.
+ *
+ * THE BARRIER (judge r1, P3). `Promise.all` alone does not prove the race: the first request can
+ * finish outright before the second even reads, and then the second is refused by its own
+ * pre-check — the assertions below pass without the index ever being consulted. So both writes
+ * are held at a two-party gate: no create reaches the database until BOTH requests have arrived
+ * at one. Arriving there is itself the proof that both pre-checks read zero — a pre-check that
+ * saw the clash returns the sentence and never gets to a write. `arrived` is asserted, so a run
+ * where only one request made it is a failure with a plain reason, not a quiet pass.
+ */
+function holdBothWrites() {
+  let release!: () => void;
+  const open = new Promise<void>((resolve) => (release = resolve));
+  const state = { arrived: 0, releasedBy: "" };
+  // Fail-safe: if the second request never arrives, let the first through anyway so the suite
+  // reports a failed assertion instead of hanging until the runner's timeout.
+  const failSafe = setTimeout(() => {
+    if (!state.releasedBy) state.releasedBy = "fail-safe";
+    release();
+  }, 10_000);
+
+  const original = prisma.segment.create;
+  const patched = async (args: Parameters<typeof original>[0]) => {
+    if (++state.arrived === 2) {
+      state.releasedBy = "barrier";
+      release();
+    }
+    await open;
+    return original.call(prisma.segment, args);
+  };
+  // Prisma types `create` as a generic that infers its return shape from `args`; a wrapper that
+  // only delays and delegates cannot restate that, so the stub goes back through `unknown`.
+  prisma.segment.create = patched as unknown as typeof original;
+
+  return {
+    state,
+    release() {
+      clearTimeout(failSafe);
+      prisma.segment.create = original;
+    },
+  };
+}
+
+describe("#746 two saves at once still leave one segment, and the loser is told plainly", () => {
+  it("two concurrent creates of one name: one segment saved, one plain refusal, no raw error", async () => {
+    const name = `Race ${randomUUID()}`;
+    const [one, two] = [await draft(), await draft()];
+    const gate = holdBothWrites();
+
+    let results;
+    try {
+      results = await Promise.all([
+        buildSegment({ operation: "create", ...one, name, rules: RULES }),
+        buildSegment({ operation: "create", ...two, name, rules: RULES }),
+      ]);
+    } finally {
+      gate.release();
+    }
+
+    // The race really happened: both pre-checks read zero, and only then was either write let go.
+    expect(gate.state.arrived, "both saves must reach the write for this to be the index's race").toBe(2);
+    expect(gate.state.releasedBy).toBe("barrier");
+
+    expect(results.filter((result) => "ok" in result)).toHaveLength(1);
+    expect(results.filter((result) => "error" in result)).toEqual([{ error: DUPLICATE }]);
+    await expect(
+      prisma.segment.count({ where: { ownerId: orgA, name, deletedAt: null } }),
+    ).resolves.toBe(1);
+  });
+
+  it("a concurrent create that differs only by case is refused too", async () => {
+    const name = `Case race ${randomUUID()}`;
+    const [one, two] = [await draft(), await draft()];
+    const gate = holdBothWrites();
+
+    let results;
+    try {
+      results = await Promise.all([
+        buildSegment({ operation: "create", ...one, name, rules: RULES }),
+        buildSegment({ operation: "create", ...two, name: name.toUpperCase(), rules: RULES }),
+      ]);
+    } finally {
+      gate.release();
+    }
+
+    expect(gate.state.arrived, "both saves must reach the write for this to be the index's race").toBe(2);
+    expect(gate.state.releasedBy).toBe("barrier");
+
+    expect(results.filter((result) => "ok" in result)).toHaveLength(1);
+    expect(results.filter((result) => "error" in result)).toEqual([{ error: DUPLICATE }]);
+    await expect(
+      prisma.segment.count({
+        where: { ownerId: orgA, name: { equals: name, mode: "insensitive" }, deletedAt: null },
+      }),
+    ).resolves.toBe(1);
+  });
+});
+
+/**
+ * #746 judge r1, P2 — the pre-check asks the database "is this name taken?" through Prisma's
+ * `{ equals, mode: "insensitive" }`, which compiles to `name ILIKE $n`. ILIKE is a PATTERN match,
+ * so `%` and `_` typed by the merchant were read as wildcards: with "VIP buyers 4f2…" on file,
+ * the name "VIP %4f2…" matched it and was refused although nobody held it. Names are data, not
+ * patterns, and the index compares them literally — so the pre-check must too.
+ *
+ * Both directions are asserted on purpose. The "allowed" half is the bug being fixed; the
+ * "still refused" half is what pins the fix to reality — if Prisma ever stopped emitting ILIKE,
+ * the escaping would start corrupting exact comparisons, and that half would go red.
+ */
+describe("#746 a name containing % or _ is compared literally, never as a pattern", () => {
+  it("allows a name that only clashes when read as a wildcard pattern", async () => {
+    const token = randomUUID();
+    await createSegment(`VIP buyers ${token}`);
+
+    // As a pattern this matches the row above; as a name it is nobody's.
+    const wildcard = await buildSegment({ operation: "create", ...(await draft()), name: `VIP %${token}`, rules: RULES });
+    expect(wildcard).toMatchObject({ ok: true });
+
+    await createSegment(`AXC ${token}`);
+    const underscore = await buildSegment({ operation: "create", ...(await draft()), name: `A_C ${token}`, rules: RULES });
+    expect(underscore).toMatchObject({ ok: true });
+  });
+
+  it("allows a plain name that an existing wildcard-looking name would match", async () => {
+    const token = randomUUID();
+    await createSegment(`A_C ${token}`);
+
+    const plain = await buildSegment({ operation: "create", ...(await draft()), name: `AXC ${token}`, rules: RULES });
+    expect(plain).toMatchObject({ ok: true });
+  });
+
+  it("still refuses a real duplicate of a name made of %, _ and a backslash", async () => {
+    const name = `50% off A_C back\\slash ${randomUUID()}`;
+    await createSegment(name);
+
+    const clash = await buildSegment({ operation: "create", ...(await draft()), name, rules: RULES });
+    expect(clash).toEqual({ error: DUPLICATE });
+  });
+});
+
 describe("#717 the segment name is bounded on the server, not only in the browser", () => {
   it("refuses a 300-character name and writes nothing", async () => {
     const list = await listSegments();

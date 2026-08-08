@@ -1716,6 +1716,13 @@ model Segment {
   createdAt DateTime @default(now())
   deletedAt DateTime?
 
+  // Segment names are unique per merchant ACROSS EVERY kind, among LIVE rows only, compared
+  // case-insensitively — a PARTIAL, EXPRESSION unique index Prisma cannot express, added in
+  // 20260808100000_segment_name_unique_per_owner/migration.sql (#746):
+  //   ("ownerId", lower("name")) WHERE "deletedAt" IS NULL
+  // `kind` is deliberately NOT in the key: the broadcast composer lists every kind and shows
+  // nothing but the name, so two same-named segments of different kinds are two rows nobody
+  // can tell apart. Soft delete frees the name again; two merchants may use the same name.
   @@index([ownerId, kind, deletedAt])
 }
 

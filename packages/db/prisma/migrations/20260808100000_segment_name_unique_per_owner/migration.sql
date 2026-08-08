@@ -1,0 +1,66 @@
+-- #746 分群重名唯一化(Founder 2026-08-08 亲批)。只加一个唯一索引,不加列、不删行、不改任何值。
+--
+-- 要做实的那句话:**同一个商家的分群列表里,不会出现两张读起来一样的卡。**
+--
+-- #718 已经在应用层拦过一次(segment-actions.ts 的 nameTaken:owner-scoped、忽略大小写、
+-- 排除自身)。那道拦截是"先查后写"——查和写之间有一段真空,两个并发请求可以同时查到
+-- "没人用过这个名字",然后各写一行。应用层再怎么写都关不掉这个窗口,只有数据库自己能:
+-- 唯一索引是在写入那一刻判定的,不存在"查完之后"。所以本迁移不是替换应用层那道拦截,
+-- 是给它补一道谁都绕不过的底。应用层那道仍然留着,它负责在正常情况下把话说得好听
+-- (先问一句,再报"You already have a segment with this name."),索引负责在赛跑时兜住。
+--
+-- 三个选择,逐条说明为什么:
+--
+-- ① 为什么 lower("name") ——「大小写不敏感」
+--    商家眼里 "VIP buyers" 和 "vip buyers" 是同一个分群;数据库默认的 = 会认为它们不同。
+--    索引键落在 lower("name") 上,大小写不同的同一个名字在索引里就是同一个键,第二行写不进来。
+--    lower(text) 在 Postgres 里是 IMMUTABLE 的,可以直接进索引表达式。
+--    不做 btrim:应用层入口已经 trim 过(segment-actions.ts `input.name.trim()`),而且
+--    #718 的比较也是"trim 后的输入 vs 库里的值",这里保持同一口径,不额外发明第二套规则。
+--
+-- ② 为什么**不带** "kind" ——「唯一性要覆盖商家看得见的整个命名空间」(判官 r1,P1)
+--    上一版把 kind 放进了索引键,理由是"和应用层的 kind='custom' 说同一句话"。那个理由站不住:
+--    商家看见的下拉不按 kind 分。广播发起页读的是这个商家的**全部** kind——
+--    customer-broadcast-service.ts getBroadcastComposerOptions 的 segment 查询只过滤
+--    { ownerId, deletedAt: null },没有 kind;broadcast-composer-page.tsx 的 <option> 又只画
+--    {s.name}。所以带 kind 的索引会放行同一商家的 builtin_lifecycle "VIP" 与 custom "VIP" 并存,
+--    发送受众下拉里就是两条一模一样的 "VIP",选错了发错人——正是这条迁移要关掉的那种事。
+--    唯一命名空间必须和商家眼里的命名空间一样大:一个商家、一个名字、一张卡。
+--    应用层那道预检因此同步放宽到全部 kind(segment-actions.ts nameTaken),两边仍是同一句话。
+--    实测过的现状:全仓没有任何 builtin_lifecycle 的播种或写入路径——Segment 的唯一生产写入者
+--    是 segment-actions.ts 的 prisma.segment.create({ kind: "custom" }),没有 seed 脚本、没有
+--    迁移 INSERT,'builtin_lifecycle' 只出现在 schema 注释和一个 db schema 测试里。所以这条索引
+--    今天不会挡住任何播种;将来真要播种内建分群,那批名字本来就必须先躲开商家已有的名字,
+--    否则商家会在下拉里看见两条同名的——这道索引是把那个要求变成硬约束,不是给它添麻烦。
+--
+-- ③ 为什么 WHERE "deletedAt" IS NULL ——「删掉就该把名字还回来」
+--    分群是软删(#718):行留着,给已冻结的广播受众和自动化留痕。但商家的感受是"我删了它",
+--    删完再用同一个名字建一个新的必须成立——现有行为测试 segment-lifecycle.test.ts
+--    "frees the name again once the clashing segment is deleted" 就是这条。全表唯一会把这条
+--    路堵死,所以索引只管活着的行。同款先例:20260714100000 里的
+--    "ContactIdentity_owner_channel_external_live"。
+--
+-- 存量数据(动手前查过,Founder 执行要求 ①):
+--   本地 dev 库 fikirtive:Segment 共 10 行,全部 kind='custom' 且活着,
+--     SELECT "ownerId", lower("name"), count(*) FROM "Segment"
+--      WHERE "deletedAt" IS NULL GROUP BY 1,2 HAVING count(*) > 1;   → 0 行。
+--   fikirtive_513a_dev / fikirtive_dev_test / fikirtive_fix738_test / fikirtive_fix738b_test:
+--     Segment 表 0 行。
+--   跨租户同名是有的(org_qa_lane_a / _b / _c 各有一个 "Contactable customers"),那正是
+--     必须继续合法的形状——索引第一列是 "ownerId",不同商家互不相干。
+--   因此本迁移不带任何清洗语句,也不做自动改名(去重不是机器该替商家做的决定)。
+--
+-- 上线前自查(founder 可直接跑,期望 0 行;非 0 就先决定改名策略再跑迁移):
+--   SELECT "ownerId", lower("name") AS name, count(*), array_agg("id") AS ids
+--     FROM "Segment" WHERE "deletedAt" IS NULL
+--    GROUP BY 1, 2 HAVING count(*) > 1;
+--   若上面有行,本迁移会当场失败并整体回滚(fail closed)——不会留下半套约束,也不会
+--   悄悄改任何商家的数据。生产执行前另需确认备份与恢复方案(#746 评论已载)。
+--
+-- 锁:CREATE UNIQUE INDEX(非 CONCURRENTLY)取 SHARE 锁,期间挡住这张表的写、不挡读。
+-- Segment 表极小(dev 库 10 行,生产尚未公测、零正式用户),以毫秒计。等真有商家在用、
+-- 表长大之后,同样的形状要换成 CREATE UNIQUE INDEX CONCURRENTLY(且不能包在事务里)。
+
+CREATE UNIQUE INDEX IF NOT EXISTS "Segment_owner_lower_name_live"
+    ON "Segment" ("ownerId", lower("name"))
+    WHERE "deletedAt" IS NULL;
