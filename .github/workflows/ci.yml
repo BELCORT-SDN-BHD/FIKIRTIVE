@@ -58,39 +58,55 @@ jobs:
       #
       # The decision itself lives in scripts/ci/pr-scope.sh so it can be tested — it is
       # covered by scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step only
-      # fetches the list and forwards the answer, and it only ever accepts a literal
-      # "false" as permission to skip.
+      # fetches the evidence and forwards the answer.
+      #
+      # Two things it must fetch, not one: the file list, and the PR's own `changed_files`
+      # count. The files endpoint stops at 3,000 files without saying so, so the count is
+      # what proves the list is whole — pr-scope.sh refuses to answer "false" unless the two
+      # agree and stay under that ceiling.
+      #
+      # `set -e` matters here and is not redundant with the `|| code=true` fallbacks. The
+      # fallbacks absorb the failures we predicted — the two `gh` calls and pr-scope.sh
+      # itself — and turn each into "run every gate". `set -e` covers everything we did not
+      # predict, and above all the write to $GITHUB_OUTPUT: without it, a failed write left
+      # the step green with no `code` output at all, which the old `== 'true'` conditions
+      # downstream read as "skip". Now that write failing fails the step, and a failed step
+      # fails the job — merge blocked, which is the safe direction.
       - name: Scope — does this PR touch anything outside docs/?
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           changed="${RUNNER_TEMP:-/tmp}/pr-changed-files.txt"
-          gh api --paginate \
-            "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            --jq '.[].filename' >"$changed" 2>/dev/null || : >"$changed"
+          pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
+          gh api --paginate "$pr/files" --jq '.[].filename' >"$changed" 2>/dev/null || : >"$changed"
+          total="$(gh api "$pr" --jq '.changed_files' 2>/dev/null)" || total=""
           if [ ! -s "$changed" ]; then
             echo "could not list the PR's files — running every gate"
           else
-            echo "changed files:"
+            echo "changed files (the PR reports ${total:-<unknown>} in total):"
             cat "$changed"
           fi
-          code="$(bash scripts/ci/pr-scope.sh "$changed")" || code=true
+          code="$(bash scripts/ci/pr-scope.sh "$changed" "$total")" || code=true
           [ "$code" = "false" ] || code=true
           echo "code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" = "false" ]; then
-            echo "docs/** only — every gate below is a no-op for this diff"
+            echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
           fi
 
-      - if: steps.scope.outputs.code == 'true'
+      # Polarity is deliberate: `!= 'false'` and never `== 'true'`. Only the one string the
+      # step writes on purpose buys a skip; a missing output, an empty output, a skipped or
+      # failed scope step, or any value nobody anticipated all land on "run the gate".
+
+      - if: steps.scope.outputs.code != 'false'
         uses: pnpm/action-setup@v4
-      - if: steps.scope.outputs.code == 'true'
+      - if: steps.scope.outputs.code != 'false'
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - if: steps.scope.outputs.code == 'true'
+      - if: steps.scope.outputs.code != 'false'
         run: pnpm install --frozen-lockfile
 
       # TypeScript's incremental state, for both TS passes `quality` runs over apps/web:
@@ -107,7 +123,7 @@ jobs:
       # `next build` did not move either way (98s both). So expect real savings on push-after-
       # push of the same branch, and none on the first run of a fresh branch.
       - name: Restore TypeScript / Next build cache
-        if: steps.scope.outputs.code == 'true'
+        if: steps.scope.outputs.code != 'false'
         uses: actions/cache@v4
         with:
           path: |
@@ -118,5 +134,5 @@ jobs:
             build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
             build-${{ runner.os }}-node22-
 
-      - if: steps.scope.outputs.code == 'true'
+      - if: steps.scope.outputs.code != 'false'
         run: pnpm quality
