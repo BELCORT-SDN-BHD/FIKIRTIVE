@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { auth } from "@/lib/better-auth/server";
 import { isFounderAdmin } from "@/lib/allowlist";
-import { isImpersonating } from "@/lib/better-auth/compat";
+import { currentImpersonation } from "@/lib/better-auth/compat";
 
 const ORG_STATUS = new Set(["active", "suspended"]);
 const FINANCE_DIRECT_CREDIT_LIMIT = 1_000;
@@ -206,13 +206,39 @@ export async function stopImpersonatingTenant(): Promise<{ ok: true } | { error:
   // gating on requireRole("tenants","mutate") of that session could lock staff OUT of stopping
   // impersonation. Gate on "is this session actually impersonating" instead — Better Auth's
   // stopImpersonating only reverts a session carrying impersonatedBy, which IS the authorization.
-  if (!(await isImpersonating())) return { error: "Not impersonating anyone." };
+  //
+  // #756 — the same read now also NAMES the operator, and it has to happen BEFORE the revert:
+  // afterwards the session is the founder's own again and `impersonatedBy` is gone, so the one
+  // moment this event can be attributed is this one. The gate is unchanged — a session without
+  // an operator is still refused, and this action takes no arguments, so nothing about WHO can
+  // come from the caller.
+  const principals = await currentImpersonation();
+  if (!principals) return { error: "Not impersonating anyone." };
   try {
     await auth.api.stopImpersonating({ headers: await headers() });
   } catch (e) {
     return { error: e instanceof Error ? e.message : "Could not stop impersonation." };
   }
-  await prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "impersonate.stop", payload: {} } }).catch(() => {});
+  // The audit row used to be `payload: {}` — it recorded that an impersonation ended and
+  // nothing about who ended it. `via` is the actor key impersonate.start and every gated admin
+  // write already use, so the audit page names the operator here exactly as it does there; the
+  // raw ids stay alongside it so an unresolvable address leaves the truth on the row instead of
+  // a plausible-looking substitute (#755: unattributed is said out loud, never filled in).
+  const operator = await prisma.betterAuthUser
+    .findUnique({ where: { id: principals.operatorBaUserId }, select: { email: true } })
+    .catch(() => null);
+  await prisma.actionEvent.create({
+    data: {
+      id: newId(),
+      ownerId: FOUNDER_OWNER_ID,
+      type: "impersonate.stop",
+      payload: {
+        via: operator?.email ?? null,
+        operatorBaUserId: principals.operatorBaUserId,
+        baUserId: principals.subjectBaUserId,
+      },
+    },
+  }).catch(() => {});
   return { ok: true };
 }
 

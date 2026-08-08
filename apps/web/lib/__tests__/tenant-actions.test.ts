@@ -12,8 +12,8 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: vi.fn().mockResolvedValue({}) }));
 
 vi.mock("@/lib/allowlist", () => ({ isFounderAdmin: vi.fn() }));
-const mockIsImpersonating = vi.fn();
-vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonating }));
+const mockCurrentImpersonation = vi.fn();
+vi.mock("@/lib/better-auth/compat", () => ({ currentImpersonation: mockCurrentImpersonation }));
 vi.mock("@/lib/better-auth/server", () => ({
   auth: { api: { impersonateUser: vi.fn(), stopImpersonating: vi.fn() } },
 }));
@@ -23,6 +23,7 @@ const membershipUpdateMany = vi.fn();
 const membershipFindMany = vi.fn();
 const userFindMany = vi.fn();
 const baUserFindMany = vi.fn();
+const baUserFindUnique = vi.fn();
 const baUserUpdateMany = vi.fn();
 const baSessionDeleteMany = vi.fn();
 const allowedEmailUpsert = vi.fn();
@@ -45,7 +46,7 @@ vi.mock("@fikirtive/db", () => ({
   prisma: {
     membership: { updateMany: membershipUpdateMany, findMany: membershipFindMany, findFirst: membershipFindFirst },
     user: { findMany: userFindMany },
-    betterAuthUser: { findMany: baUserFindMany, updateMany: baUserUpdateMany },
+    betterAuthUser: { findMany: baUserFindMany, findUnique: baUserFindUnique, updateMany: baUserUpdateMany },
     betterAuthSession: { deleteMany: baSessionDeleteMany },
     allowedEmail: {
       upsert: allowedEmailUpsert,
@@ -86,6 +87,7 @@ beforeEach(() => {
   membershipFindMany.mockReset();
   userFindMany.mockReset();
   baUserFindMany.mockReset();
+  baUserFindUnique.mockReset();
   baUserUpdateMany.mockReset();
   baSessionDeleteMany.mockReset();
   allowedEmailUpsert.mockReset();
@@ -101,11 +103,13 @@ beforeEach(() => {
   // Default: the address is nobody's login yet and owns nothing — the plain "still pending"
   // world. Tests that exercise the activation race override these.
   allowedEmailFindUnique.mockResolvedValue(null);
+  baUserFindUnique.mockResolvedValue(null);
   allowedEmailCreate.mockResolvedValue({});
   userFindMany.mockResolvedValue([]);
   membershipFindFirst.mockResolvedValue(null);
   organizationFindFirst.mockResolvedValue({ id: "orgX" });
   (isFounderAdmin as Mock).mockReset();
+  mockCurrentImpersonation.mockReset();
   authApi.impersonateUser.mockReset();
   authApi.stopImpersonating.mockReset();
 });
@@ -753,7 +757,7 @@ describe("impersonateTenant", () => {
 
 describe("stopImpersonatingTenant", () => {
   it("calls stopImpersonating when the session IS impersonating (F15 — not gated on the viewer's role)", async () => {
-    mockIsImpersonating.mockResolvedValue(true);
+    mockCurrentImpersonation.mockResolvedValue({ operatorBaUserId: "ba_founder", subjectBaUserId: "ba_owner" });
     authApi.stopImpersonating.mockResolvedValue({ ok: true });
     const res = await stopImpersonatingTenant();
     expect(res).toEqual({ ok: true });
@@ -763,10 +767,72 @@ describe("stopImpersonatingTenant", () => {
     );
   });
 
+  // #756 — the row used to carry `payload: {}`. Not "recorded the wrong person": recorded
+  // NOBODY, so the one question the audit exists to answer had no answer here.
+  it("records WHO ended the impersonation, and whom it was of", async () => {
+    mockCurrentImpersonation.mockResolvedValue({ operatorBaUserId: "ba_founder", subjectBaUserId: "ba_owner" });
+    baUserFindUnique.mockResolvedValue({ email: "founder@fikirtive.com" });
+    authApi.stopImpersonating.mockResolvedValue({ ok: true });
+
+    await stopImpersonatingTenant();
+
+    // `via` is the same actor key impersonate.start and every gated admin write use, so the
+    // audit page names the operator here exactly as it does there.
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: "impersonate.stop",
+          payload: { via: "founder@fikirtive.com", operatorBaUserId: "ba_founder", baUserId: "ba_owner" },
+        }),
+      })
+    );
+    // The address is resolved server-side FROM THE SESSION's operator id. Nothing here is
+    // taken from the caller — this action accepts no arguments at all.
+    expect(baUserFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ba_founder" } })
+    );
+  });
+
+  it("reads the operator BEFORE the revert wipes it from the session", async () => {
+    const order: string[] = [];
+    mockCurrentImpersonation.mockImplementation(async () => {
+      order.push("read");
+      return { operatorBaUserId: "ba_founder", subjectBaUserId: "ba_owner" };
+    });
+    authApi.stopImpersonating.mockImplementation(async () => {
+      order.push("revert");
+      return { ok: true };
+    });
+    baUserFindUnique.mockResolvedValue({ email: "founder@fikirtive.com" });
+
+    await stopImpersonatingTenant();
+
+    expect(order).toEqual(["read", "revert"]);
+  });
+
+  it("names nobody rather than guessing when the operator's address cannot be resolved", async () => {
+    mockCurrentImpersonation.mockResolvedValue({ operatorBaUserId: "ba_gone", subjectBaUserId: "ba_owner" });
+    baUserFindUnique.mockResolvedValue(null);
+    authApi.stopImpersonating.mockResolvedValue({ ok: true });
+
+    await stopImpersonatingTenant();
+
+    // Unattributed in the identity column (#755), but the id that DID it is still on the row —
+    // no plausible-looking name is invented to fill the gap.
+    expect(actionEventCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          payload: { via: null, operatorBaUserId: "ba_gone", baUserId: "ba_owner" },
+        }),
+      })
+    );
+  });
+
   it("returns an error and does not call stopImpersonating when NOT impersonating (F15)", async () => {
-    mockIsImpersonating.mockResolvedValue(false);
+    mockCurrentImpersonation.mockResolvedValue(null);
     const res = await stopImpersonatingTenant();
     expect(res).toHaveProperty("error");
     expect(authApi.stopImpersonating).not.toHaveBeenCalled();
+    expect(actionEventCreate).not.toHaveBeenCalled();
   });
 });
