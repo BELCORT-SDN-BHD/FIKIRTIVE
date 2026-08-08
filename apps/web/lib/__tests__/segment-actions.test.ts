@@ -10,6 +10,7 @@ const {
   mockConsentEventFindMany,
   mockSegmentFindMany,
   mockSegmentFindFirst,
+  mockSegmentCount,
   mockSegmentCreate,
   mockSegmentUpdateMany,
   mockNewId,
@@ -22,6 +23,7 @@ const {
   mockConsentEventFindMany: vi.fn(),
   mockSegmentFindMany: vi.fn(),
   mockSegmentFindFirst: vi.fn(),
+  mockSegmentCount: vi.fn(),
   mockSegmentCreate: vi.fn(),
   mockSegmentUpdateMany: vi.fn(),
   mockNewId: vi.fn(),
@@ -38,6 +40,9 @@ vi.mock("@fikirtive/db", () => ({
     segment: {
       findMany: mockSegmentFindMany,
       findFirst: mockSegmentFindFirst,
+      // #718 — the duplicate-name check is a COUNT, deliberately distinct from the findFirst
+      // that loads the segment being saved, so these call-shape assertions stay unambiguous.
+      count: mockSegmentCount,
       create: mockSegmentCreate,
       updateMany: mockSegmentUpdateMany,
     },
@@ -51,7 +56,7 @@ vi.mock("@fikirtive/core", async (importOriginal) => ({
 
 import * as segmentActions from "../segment-actions";
 
-const { buildSegment, getSegment, listSegments, previewSegment } = segmentActions;
+const { buildSegment, deleteSegment, getSegment, listSegments, previewSegment } = segmentActions;
 
 const SEGMENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const NEXT_SEGMENT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -112,6 +117,7 @@ beforeEach(() => {
   mockConsentEventFindMany.mockResolvedValue([]);
   mockSegmentFindMany.mockResolvedValue([]);
   mockSegmentFindFirst.mockResolvedValue(null);
+  mockSegmentCount.mockResolvedValue(0);
   mockSegmentCreate.mockResolvedValue({
     id: SEGMENT_ID,
     name: "VIP buyers",
@@ -129,9 +135,11 @@ afterEach(() => {
 });
 
 describe("segment action boundary", () => {
-  it("exports exactly the four signed server actions", () => {
+  it("exports exactly the five signed server actions", () => {
     expect(Object.keys(segmentActions).sort()).toEqual([
       "buildSegment",
+      // #718 — the delete this page never had. Soft delete, owner-scoped, same gate as the rest.
+      "deleteSegment",
       "getSegment",
       "listSegments",
       "previewSegment",
@@ -147,12 +155,14 @@ describe("segment action boundary", () => {
     await expect(
       buildSegment({ segmentId: SEGMENT_ID, name: "VIP buyers", rules: spendRules }),
     ).resolves.toEqual({ error: "Sign in required." });
+    await expect(deleteSegment({ segmentId: SEGMENT_ID })).resolves.toEqual({ error: "Sign in required." });
 
-    expect(mockRequireOwner).toHaveBeenCalledTimes(4);
+    expect(mockRequireOwner).toHaveBeenCalledTimes(5);
     expect(mockContactFindMany).not.toHaveBeenCalled();
     expect(mockSegmentFindMany).not.toHaveBeenCalled();
     expect(mockSegmentFindFirst).not.toHaveBeenCalled();
     expect(mockSegmentCreate).not.toHaveBeenCalled();
+    expect(mockSegmentUpdateMany).not.toHaveBeenCalled();
   });
 });
 

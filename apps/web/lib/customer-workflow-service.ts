@@ -1192,6 +1192,26 @@ export function workflowLifecycleService(
     }
   }
 
+  /**
+   * The ONE definition of "every segment this scope aims at is still live".
+   *
+   * It used to be reachable only from the authorization gates (activate / reauthorize), which
+   * meant a segment deleted AFTER a Routine went active changed nothing: the Routine kept
+   * running and kept addressing an audience the merchant had already removed. The dispatch path
+   * now asks the same question before it sends, so one definition serves both (#744 判官 r1 P2).
+   */
+  async function everyScopeSegmentLive(
+    tx: Prisma.TransactionClient,
+    ownerId: string,
+    segmentIds: string[],
+  ): Promise<boolean> {
+    if (segmentIds.length === 0) return true;
+    const live = await tx.segment.count({
+      where: { ownerId, id: { in: segmentIds }, deletedAt: null },
+    });
+    return live === segmentIds.length;
+  }
+
   async function assertLiveRoutineScope(
     tx: Prisma.TransactionClient,
     ownerId: string,
@@ -1199,13 +1219,11 @@ export function workflowLifecycleService(
   ): Promise<void> {
     const scope = canonicalizeRoutineScope(value);
     if (!scope) fail("AUTHORITY_UNAVAILABLE");
-    const [contacts, segments] = await Promise.all([
+    const [contacts, segmentsLive] = await Promise.all([
       tx.contact.count({ where: { ownerId, id: { in: scope.contactIds } } }),
-      tx.segment.count({
-        where: { ownerId, id: { in: scope.segmentIds }, deletedAt: null },
-      }),
+      everyScopeSegmentLive(tx, ownerId, scope.segmentIds),
     ]);
-    if (contacts !== scope.contactIds.length || segments !== scope.segmentIds.length) {
+    if (contacts !== scope.contactIds.length || !segmentsLive) {
       fail("AUTHORITY_UNAVAILABLE");
     }
     for (const channelScope of scope.channelScopes) {
@@ -2077,6 +2095,13 @@ export function workflowLifecycleService(
         loaded.run.settledCredits !== 0
       ) {
         return reserveUnavailableStep("workflow_dependency_unavailable");
+      }
+      // A segment the merchant deleted after this Routine went active is no longer an audience
+      // anyone authorized. Stop before the send, and persist WHY — an unavailable step with a
+      // reason is a record the merchant can read; silently continuing, or silently doing
+      // nothing, are the two outcomes #718's delete dialog promises will not happen.
+      if (!(await everyScopeSegmentLive(tx, ownerId, scope.segmentIds))) {
+        return reserveUnavailableStep("workflow_target_unavailable");
       }
       if (loaded.run.triggerKind === "manual" || loaded.run.triggerKind === "schedule") {
         return reserveUnavailableStep("workflow_target_unavailable");

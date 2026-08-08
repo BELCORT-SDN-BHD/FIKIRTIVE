@@ -21,7 +21,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner, requireRole: vi.fn(), requireSession: vi.fn() }));
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+  requireRole: vi.fn(),
+  requireSession: vi.fn(),
+}));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: vi.fn(), auth: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({

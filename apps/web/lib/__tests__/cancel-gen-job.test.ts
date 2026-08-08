@@ -8,7 +8,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 //  (d) idempotency: a second call finds count 0 (status already CANCELLED) → no double-refund.
 
 const mockRequireOwner = vi.fn();
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner, requireRole: vi.fn(), requireSession: vi.fn() }));
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mockRequireOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+  requireRole: vi.fn(),
+  requireSession: vi.fn(),
+}));
 vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: vi.fn(), auth: vi.fn() }));
 
 const updateMany = vi.fn();

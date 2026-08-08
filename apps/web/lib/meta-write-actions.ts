@@ -9,22 +9,28 @@ export async function setAdsAutonomy(mode: "ASK" | "AUTO"): Promise<{ ok: true }
   if (mode !== "ASK" && mode !== "AUTO") return { error: "Invalid autonomy mode." };
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  // F15 (safe default): staff impersonating a customer must not loosen that customer's ad-spend
-  // gate (ASK→AUTO lets Otto spend without per-action approval). Exit impersonation to change it.
-  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad autonomy." };
-  const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsAutonomy: mode } });
-  if (updated.count === 0) return { error: "Connect Instagram or Facebook before changing ad-spend autonomy." };
-  return { ok: true };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    // F15 (safe default): staff impersonating a customer must not loosen that customer's ad-spend
+    // gate (ASK→AUTO lets Otto spend without per-action approval). Exit impersonation to change it.
+    if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad autonomy." };
+    const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsAutonomy: mode } });
+    if (updated.count === 0) return { error: "Connect Instagram or Facebook before changing ad-spend autonomy." };
+    return { ok: true };
+  });
 }
 
 /** Toggle the kill-switch. When paused=true, runApprovedPlan refuses every write. */
 export async function setAdsWritesPaused(paused: boolean): Promise<{ ok: true } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad-write controls." };
-  const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsWritesPaused: paused } });
-  if (updated.count === 0) return { error: "Connect Instagram or Facebook before changing ad-write controls." };
-  return { ok: true };
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true } | { error: string }> => {
+    if (await isImpersonating()) return { error: "Paused while impersonating a customer — exit impersonation to change their ad-write controls." };
+    const updated = await prisma.metaConnection.updateMany({ where: { ownerId: gate.ownerId }, data: { adsWritesPaused: paused } });
+    if (updated.count === 0) return { error: "Connect Instagram or Facebook before changing ad-write controls." };
+    return { ok: true };
+  });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -55,7 +61,8 @@ import { decryptToken } from "./token-encryption";
 import { metaGraphGet, metaGraphPost } from "./meta-graph";
 import { classifyMoneyClass, policyDecision, type AdOp, type MoneyClass } from "./meta-action-policy";
 import { verifyApproval, type PlanStep } from "./meta-approval";
-import { requireOwner } from "./auth-guard";
+import { runAsUser } from "@fikirtive/db/principal";
+import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import type { MetaActionCardPayload, MetaActionStep } from "./meta-plan-card";
 import { sanitizeUserError } from "./provider-secrecy";
@@ -407,43 +414,46 @@ export async function approveMetaActionPlan(
 ): Promise<{ ok: true; state: RunResult["state"]; results: StepResult[] } | { error: string }> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
-  if (await isImpersonating()) {
-    return { error: "Paused while impersonating a customer — exit impersonation to do this." };
-  }
-  const { ownerId } = gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ ok: true; state: RunResult["state"]; results: StepResult[] } | { error: string }> => {
+    if (await isImpersonating()) {
+      return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+    }
+    const { ownerId } = gate;
 
-  const message = await prisma.chatMessage.findFirst({
-    where: { id: cardId, ownerId, kind: "ACTION_CARD" },
+    const message = await prisma.chatMessage.findFirst({
+      where: { id: cardId, ownerId, kind: "ACTION_CARD" },
+    });
+    if (!message || !message.payload) return { error: "That action card no longer exists." };
+    const payload = message.payload as unknown as MetaActionCardPayload;
+
+    const verdict = verifyApproval(payload.approval, bindingSteps(payload), ownerId, new Date().toISOString());
+    if (!verdict.ok) {
+      return { error: `This plan can't be approved (${verdict.reason}). Ask Otto to propose it again.` };
+    }
+
+    // Kill-switch / canWrite gate BEFORE consuming the single-use approval. runApprovedPlan throws
+    // KILL_SWITCH when adsWritesPaused — if we consumed first, that throw would burn the approval
+    // forever (card un-approvable, nothing executed). Check it up front so the approval survives.
+    // (runApprovedPlan keeps its own check — defense in depth.)
+    const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
+    if (!conn || conn.canWrite !== true) {
+      return { error: "Meta isn't connected for ad changes — reconnect and try again." };
+    }
+    if (conn.adsWritesPaused === true) {
+      return { error: "Ad changes are paused (kill-switch on). Turn it off in Connections and try again." };
+    }
+
+    // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
+    // now re-reads a consumed approval (verifyApproval → "consumed") and is refused.
+    // Note: consumeApproval is best-effort (read-check-write, not atomic); the per-step
+    // MetaActionExecution unique index (ownerId,cardId,stepIndex) is the real exactly-once
+    // serialization point, so a TOCTOU double-approve still cannot double-spend.
+    await consumeApproval(cardId, ownerId, payload, new Date().toISOString());
+
+    const result = await runApprovedPlan(ownerId, cardId);
+    return { ok: true, state: result.state, results: result.results };
   });
-  if (!message || !message.payload) return { error: "That action card no longer exists." };
-  const payload = message.payload as unknown as MetaActionCardPayload;
-
-  const verdict = verifyApproval(payload.approval, bindingSteps(payload), ownerId, new Date().toISOString());
-  if (!verdict.ok) {
-    return { error: `This plan can't be approved (${verdict.reason}). Ask Otto to propose it again.` };
-  }
-
-  // Kill-switch / canWrite gate BEFORE consuming the single-use approval. runApprovedPlan throws
-  // KILL_SWITCH when adsWritesPaused — if we consumed first, that throw would burn the approval
-  // forever (card un-approvable, nothing executed). Check it up front so the approval survives.
-  // (runApprovedPlan keeps its own check — defense in depth.)
-  const conn = await prisma.metaConnection.findUnique({ where: { ownerId } });
-  if (!conn || conn.canWrite !== true) {
-    return { error: "Meta isn't connected for ad changes — reconnect and try again." };
-  }
-  if (conn.adsWritesPaused === true) {
-    return { error: "Ad changes are paused (kill-switch on). Turn it off in Connections and try again." };
-  }
-
-  // Single-use: stamp consumedAt and persist BEFORE executing. A concurrent/duplicate approve
-  // now re-reads a consumed approval (verifyApproval → "consumed") and is refused.
-  // Note: consumeApproval is best-effort (read-check-write, not atomic); the per-step
-  // MetaActionExecution unique index (ownerId,cardId,stepIndex) is the real exactly-once
-  // serialization point, so a TOCTOU double-approve still cannot double-spend.
-  await consumeApproval(cardId, ownerId, payload, new Date().toISOString());
-
-  const result = await runApprovedPlan(ownerId, cardId);
-  return { ok: true, state: result.state, results: result.results };
 }
 
 /**

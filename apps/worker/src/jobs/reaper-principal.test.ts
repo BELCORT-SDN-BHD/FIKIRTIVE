@@ -167,17 +167,17 @@ describe("backfillCanvasBoards carries the row tenant through every per-board op
     });
 
     expect(at("canvasBacklog.scan")).toEqual({
-      kind: "system", reason: "worker-reaper-tick", ownerId: null,
+      kind: "system", reason: "worker-reaper-tick", ownerId: null, readOnly: false,
     });
     expect(all("canvasBacklog.settle")).toEqual([
-      { kind: "system", reason: "worker-reaper-tick", ownerId: "o1" },
-      { kind: "system", reason: "worker-reaper-tick", ownerId: "o2" },
+      { kind: "system", reason: "worker-reaper-tick", ownerId: "o1", readOnly: false },
+      { kind: "system", reason: "worker-reaper-tick", ownerId: "o2", readOnly: false },
     ]);
     expect(at("canvasBacklog.clear")).toEqual({
-      kind: "system", reason: "worker-reaper-tick", ownerId: "o1",
+      kind: "system", reason: "worker-reaper-tick", ownerId: "o1", readOnly: false,
     });
     expect(at("canvasBacklog.note")).toEqual({
-      kind: "system", reason: "worker-reaper-tick", ownerId: "o2",
+      kind: "system", reason: "worker-reaper-tick", ownerId: "o2", readOnly: false,
     });
     expect(getPrincipal()).toBeUndefined();
   });
@@ -200,16 +200,16 @@ describe("reapStaleGenJobs carries a two-phase principal", () => {
     const scans = all("genJob.findMany");
     expect(scans).toHaveLength(3);
     for (const p of scans) {
-      expect(p).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null });
+      expect(p).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false });
     }
   });
 
   it("writes under the SAME reason but scoped to the row's tenant", async () => {
     await reapStaleGenJobs();
-    expect(at("genJob.updateMany")).toEqual({ kind: "system", reason: "gen-reaper", ownerId: "o1" });
-    expect(at("refundReservation")).toEqual({ kind: "system", reason: "gen-reaper", ownerId: "o1" });
+    expect(at("genJob.updateMany")).toEqual({ kind: "system", reason: "gen-reaper", ownerId: "o1", readOnly: false });
+    expect(at("refundReservation")).toEqual({ kind: "system", reason: "gen-reaper", ownerId: "o1", readOnly: false });
     // the terminal cowork message is part of the same per-row phase
-    expect(at("chatMessage.create")).toEqual({ kind: "system", reason: "gen-reaper", ownerId: "o1" });
+    expect(at("chatMessage.create")).toEqual({ kind: "system", reason: "gen-reaper", ownerId: "o1", readOnly: false });
   });
 
   it("returns to the tenant-less scan scope after each row and leaves nothing behind", async () => {
@@ -217,8 +217,8 @@ describe("reapStaleGenJobs carries a two-phase principal", () => {
     await reapStaleGenJobs();
     // scans 2 and 3 run AFTER the per-row write phase — they must be tenant-less again
     expect(all("genJob.findMany").slice(1)).toEqual([
-      { kind: "system", reason: "gen-reaper", ownerId: null },
-      { kind: "system", reason: "gen-reaper", ownerId: null },
+      { kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false },
+      { kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false },
     ]);
     expect(getPrincipal()).toBeUndefined();
   });
@@ -238,10 +238,13 @@ describe("reapStaleLlmReservations carries a two-phase principal", () => {
       kind: "system",
       reason: "llm-reservation-reaper",
       ownerId: null,
+      // #743: raw SQL is refused only under a READ-ONLY frame. This reaper's frame is not one,
+      // so its scan is untouched — that is what `readOnly: false` is pinning here.
+      readOnly: false,
     });
     expect(all("refundReservation")).toEqual([
-      { kind: "system", reason: "llm-reservation-reaper", ownerId: "o1" },
-      { kind: "system", reason: "llm-reservation-reaper", ownerId: "o2" },
+      { kind: "system", reason: "llm-reservation-reaper", ownerId: "o1", readOnly: false },
+      { kind: "system", reason: "llm-reservation-reaper", ownerId: "o2", readOnly: false },
     ]);
     expect(getPrincipal()).toBeUndefined();
   });
@@ -280,17 +283,17 @@ describe("reapStaleResearchJobs carries a two-phase principal", () => {
     const scans = all("researchJob.findMany");
     expect(scans).toHaveLength(2);
     for (const p of scans) {
-      expect(p).toEqual({ kind: "system", reason: "research-reaper", ownerId: null });
+      expect(p).toEqual({ kind: "system", reason: "research-reaper", ownerId: null, readOnly: false });
     }
     // the pg-boss liveness check is platform state, deliberately outside any tenant frame
-    expect(at("$queryRaw")).toEqual({ kind: "system", reason: "research-reaper", ownerId: null });
+    expect(at("$queryRaw")).toEqual({ kind: "system", reason: "research-reaper", ownerId: null, readOnly: false });
   });
 
   it("writes each row under the row's own tenant (P1-1: the write must not escape the frame)", async () => {
     await reapStaleResearchJobs();
     expect(all("researchJob.updateMany")).toEqual([
-      { kind: "system", reason: "research-reaper", ownerId: "o1" }, // RUNNING → FAILED
-      { kind: "system", reason: "research-reaper", ownerId: "o2" }, // QUEUED  → FAILED
+      { kind: "system", reason: "research-reaper", ownerId: "o1", readOnly: false }, // RUNNING → FAILED
+      { kind: "system", reason: "research-reaper", ownerId: "o2", readOnly: false }, // QUEUED  → FAILED
     ]);
   });
 
@@ -299,12 +302,12 @@ describe("reapStaleResearchJobs carries a two-phase principal", () => {
     const reaped = await reapStaleResearchJobs();
     expect(reaped).toBe(2);
     expect(all("chatMessage.findFirst")).toEqual([
-      { kind: "system", reason: "research-reaper", ownerId: "o1" },
-      { kind: "system", reason: "research-reaper", ownerId: "o2" },
+      { kind: "system", reason: "research-reaper", ownerId: "o1", readOnly: false },
+      { kind: "system", reason: "research-reaper", ownerId: "o2", readOnly: false },
     ]);
     expect(all("chatMessage.updateMany")).toEqual([
-      { kind: "system", reason: "research-reaper", ownerId: "o1" },
-      { kind: "system", reason: "research-reaper", ownerId: "o2" },
+      { kind: "system", reason: "research-reaper", ownerId: "o1", readOnly: false },
+      { kind: "system", reason: "research-reaper", ownerId: "o2", readOnly: false },
     ]);
     expect(getPrincipal()).toBeUndefined();
   });
@@ -340,11 +343,11 @@ describe("reapStalePublishAttempts carries a two-phase principal", () => {
   it("scans attempts AND resolves the parent post outside any tenant frame", async () => {
     await reapStalePublishAttempts();
     expect(at("publishAttempt.findMany")).toEqual({
-      kind: "system", reason: "publish-reaper", ownerId: null,
+      kind: "system", reason: "publish-reaper", ownerId: null, readOnly: false,
     });
     // the parent-post lookup is what RESOLVES the tenant, so it necessarily precedes the frame
     expect(at("scheduledPost.findUnique")).toEqual({
-      kind: "system", reason: "publish-reaper", ownerId: null,
+      kind: "system", reason: "publish-reaper", ownerId: null, readOnly: false,
     });
   });
 
@@ -353,10 +356,10 @@ describe("reapStalePublishAttempts carries a two-phase principal", () => {
     expect(reaped).toBe(1);
     // both legs of the $transaction([…]) batch — dispatched by Promise.all INSIDE the frame
     expect(at("publishAttempt.updateMany")).toEqual({
-      kind: "system", reason: "publish-reaper", ownerId: "o7",
+      kind: "system", reason: "publish-reaper", ownerId: "o7", readOnly: false,
     });
     expect(at("scheduledPost.updateMany")).toEqual({
-      kind: "system", reason: "publish-reaper", ownerId: "o7",
+      kind: "system", reason: "publish-reaper", ownerId: "o7", readOnly: false,
     });
     expect(getPrincipal()).toBeUndefined();
   });

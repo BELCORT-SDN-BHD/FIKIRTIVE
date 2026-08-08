@@ -39,7 +39,10 @@ const { mockOwner, mockOverlayFindMany, mockChatFindFirst, mockChatCreate, mockC
     return { mockOwner: vi.fn(), mockOverlayFindMany, mockChatFindFirst, mockChatCreate, mockChatUpdate, mockChatCreateMany, mockThreadUpdate, db };
   });
 
-vi.mock("../auth-guard", () => ({ requireOwner: mockOwner }));
+vi.mock("../auth-guard", async () => ({
+  requireOwner: mockOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("@fikirtive/db", () => ({ prisma: db, Prisma: {}, refundReservation: vi.fn() }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../gen-actions", () => ({ startCoworkGen: vi.fn() }));

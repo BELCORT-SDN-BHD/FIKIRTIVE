@@ -39,6 +39,14 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 import { resolveDisabledModels } from "./model-registry";
 import { sanitizeUserError } from "./provider-secrecy";
 import { outOfCreditsMessage } from "./credit-format";
+// #744 判官 r2 P1 —— 撤销与扣费共用的那把 campaign 锁。它必须由**提交扣费的这笔事务**持有,
+// 所以它进到下面的 money transaction 里,而不是包在 startGen 外面(包在外面的话,外层超时先
+// 放锁、内层稍后才提交,撤销就能插进中间,落成「已撤销且已扣费」)。
+import {
+  applyCampaignApprovalGate,
+  campaignApprovalGateFor,
+  campaignApprovalGateRefusal,
+} from "./campaign-approval-lock";
 import {
   canvasActionKey,
   factoryMaterialMatches,
@@ -335,6 +343,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
   const trustedAssetRequest = raw !== null && typeof raw === "object"
     ? TRUSTED_ASSET_REQUESTS.get(raw as object)
     : undefined;
+  // A caller that owns an approval the merchant can withdraw (campaign confirm) rides one of
+  // these on the request. It can only ever REFUSE this dispatch — never authorize one — and it
+  // is applied inside the money transaction below, before anything is created or reserved.
+  const approvalGate = campaignApprovalGateFor(raw);
   if (raw !== null && typeof raw === "object") {
     TRUSTED_CANVAS_REQUESTS.delete(raw as object);
     TRUSTED_COWORK_REQUESTS.delete(raw as object);
@@ -573,6 +585,13 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
       // three, so there is no post-commit dispatch/refund compensation window and no possibility
       // of a worker running a job whose reservation was separately refunded.
       decision = await prisma.$transaction(async (tx): Promise<StartGenResult> => {
+        // FIRST, before the project lock and before anything is created or reserved: the
+        // caller's approval gate. Holding it HERE — in the transaction that commits the charge —
+        // is what makes "undone but charged" unreachable: the lock is released by the same
+        // COMMIT that makes this GenJob visible, so an undo that gets the lock always sees the
+        // charge. Any failure throws and rolls this transaction back before create/reserve.
+        // Lock order stays campaign → project, so no cycle with the project lock below.
+        if (approvalGate) await applyCampaignApprovalGate(tx, approvalGate);
         const projectLockKey = `project:${projectId}`;
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${projectLockKey}, 0::bigint))`;
         const liveProject = await tx.project.findFirst({
@@ -698,6 +717,10 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         return { id: created.id, disposition: "fresh" };
       });
     } catch (e) {
+      // The approval gate said no (or could not tell). It runs before create/reserve, so this
+      // transaction rolled back with nothing created, nothing reserved and nothing queued.
+      const gateRefusal = campaignApprovalGateRefusal(e);
+      if (gateRefusal) return gateRefusal;
       // out of credits: the reserve rolled the tx back, so no job was created/queued.
       if (e instanceof InsufficientCredits) {
         return { error: outOfCreditsMessage(displayedCost) };

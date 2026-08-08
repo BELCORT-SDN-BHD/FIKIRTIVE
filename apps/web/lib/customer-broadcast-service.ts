@@ -590,7 +590,10 @@ export function createCustomerBroadcastService(
         if (!scope) fail("RESOURCE_NOT_FOUND");
         if (campaignId) {
           const campaign = await tx.campaign.findFirst({
-            where: { id: campaignId, ownerId: principal.ownerId },
+            // #744 判官 r1 P2 — a campaign the merchant deleted is invisible everywhere else, so
+            // grouping new work into it would file that work under a container they can no
+            // longer open. Same `deletedAt: null` every other campaign read already uses.
+            where: { id: campaignId, ownerId: principal.ownerId, deletedAt: null },
             select: { id: true },
           });
           if (!campaign) fail("RESOURCE_NOT_FOUND");

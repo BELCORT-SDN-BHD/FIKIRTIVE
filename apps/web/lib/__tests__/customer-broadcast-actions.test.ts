@@ -46,6 +46,7 @@ const IDENTITY_B = "c5-m2-test-identity-b";
 const SEGMENT_A = "c5-m2-test-segment-a";
 const SEGMENT_B = "c5-m2-test-segment-b";
 const CAMPAIGN_B = "c5-m2-test-campaign-b";
+const CAMPAIGN_A_DELETED = "c5-m2-test-campaign-a-deleted";
 const TEMPLATE_A = "c5-m2-test-template-a";
 const TEMPLATE_A_ALT = "c5-m2-test-template-a-alt";
 const TEMPLATE_A_UNMAPPABLE = "c5-m2-test-template-a-unmappable";
@@ -412,6 +413,19 @@ async function seed(): Promise<void> {
         endAt: NOW,
         planJson: {},
       },
+      // #710 — org A's own campaign, already deleted. Deleted is invisible everywhere else, so
+      // nothing new may be filed under it either (#744 判官 r1 P2).
+      {
+        id: CAMPAIGN_A_DELETED,
+        ownerId: ORG_A,
+        name: "Deleted campaign",
+        status: "ACTIVE",
+        goal: "awareness",
+        startAt: NOW,
+        endAt: NOW,
+        planJson: {},
+        deletedAt: NOW,
+      },
     ],
   });
 }
@@ -561,6 +575,23 @@ describe("C5-M2 createBroadcastRun", () => {
         channel: "whatsapp",
         templateVersionId: TEMPLATE_VERSION_B,
         creationIdempotencyKey: "c5-m2-test-foreign-template",
+      }),
+      "RESOURCE_NOT_FOUND",
+    );
+    expect(await ownerCounts()).toEqual(before);
+  });
+
+  it("rejects the merchant's own DELETED campaign as RESOURCE_NOT_FOUND, zero writes", async () => {
+    // Same tenant, real row, but soft-deleted. Grouping new work into it would file that work
+    // under a container the merchant can no longer open (#744 判官 r1 P2).
+    const before = await ownerCounts();
+    await expectCode(
+      broadcast.createBroadcastRun(owner, {
+        channelScopeId: SCOPE_A,
+        channel: "whatsapp",
+        templateVersionId: TEMPLATE_VERSION_A,
+        campaignId: CAMPAIGN_A_DELETED,
+        creationIdempotencyKey: "c5-m2-test-deleted-campaign",
       }),
       "RESOURCE_NOT_FOUND",
     );
