@@ -20,7 +20,10 @@ const m = vi.hoisted(() => {
   const metaConnectionFindUnique = vi.fn();
   // #791-2: the scheduler now also reads the owner's Auto-publish switch out of
   // Organization.settings — the second, merchant-owned gate in front of publishing.
+  // #810 P1-1: the HANDLER re-reads it too, one step before anything external happens
+  // (a queued job's copy of the answer is as old as the queue).
   const organizationFindMany = vi.fn();
+  const organizationFindUnique = vi.fn();
   const scheduledPostMediaFindMany = vi.fn();
   const generationFindMany = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +31,7 @@ const m = vi.hoisted(() => {
     scheduledPost: { findUnique: scheduledPostFindUnique, updateMany: scheduledPostUpdateMany, findMany: scheduledPostFindMany },
     publishAttempt: { create: publishAttemptCreate, update: publishAttemptUpdate, updateMany: publishAttemptUpdateMany, findMany: publishAttemptFindMany, findUnique: publishAttemptFindUnique, findFirst: publishAttemptFindFirst },
     metaConnection: { findMany: metaConnectionFindMany, findUnique: metaConnectionFindUnique },
-    organization: { findMany: organizationFindMany },
+    organization: { findMany: organizationFindMany, findUnique: organizationFindUnique },
     scheduledPostMedia: { findMany: scheduledPostMediaFindMany },
     generation: { findMany: generationFindMany },
     $transaction: vi.fn(async (arg: unknown) =>
@@ -38,7 +41,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, scheduledPostFindUnique, scheduledPostUpdateMany, scheduledPostFindMany,
     publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindMany, publishAttemptFindUnique, publishAttemptFindFirst,
-    metaConnectionFindMany, metaConnectionFindUnique, organizationFindMany, scheduledPostMediaFindMany, generationFindMany,
+    metaConnectionFindMany, metaConnectionFindUnique, organizationFindMany, organizationFindUnique, scheduledPostMediaFindMany, generationFindMany,
   };
 });
 
@@ -63,6 +66,9 @@ beforeEach(() => {
   m.publishAttemptUpdateMany.mockResolvedValue({ count: 1 });
   m.publishAttemptFindUnique.mockResolvedValue({ id: "pa1", scheduledPostId: "sp1", creationId: null });
   m.publishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt (lock 4 no-op)
+  // #810 P1-1: default = the merchant's Auto-publish switch is ON, so these cases exercise the
+  // gates they are about. The switch itself is covered in publish-auto-publish-switch.test.ts.
+  m.organizationFindUnique.mockResolvedValue({ settings: { autoPublish: true } });
 });
 
 describe("handlePublish — triple idempotency", () => {

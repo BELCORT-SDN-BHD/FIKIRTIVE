@@ -504,6 +504,37 @@ export async function handlePublish(
       return;
     }
 
+    // Lock 5 (#810 P1-1) — the merchant's own switch, re-read HERE, one step before anything
+    // external can happen. scanDuePublishPosts checks it too, but the job payload carries only
+    // the post id, so the scan's answer is as old as the queue: switch ON → enqueued → merchant
+    // turns it OFF → this worker (or its 60-second retry) still posts to a live account. A
+    // merchant who withdrew consent watched the post go out anyway. Same authority as the scan
+    // (autoPublishEnabled over the same settings blob) so the two can't drift into two answers;
+    // fail-closed on an unreadable/absent org, because "we could not tell" is not "yes".
+    //
+    // A withdrawal is not a failure: nothing is marked FAILED or NEEDS_ATTENTION and nothing is
+    // retried. The post simply goes back to waiting, which is what it does when the switch is
+    // off in the first place — flip it back on and the next scan picks it up unchanged.
+    const org = await prisma.organization.findUnique({
+      where: { id: post.ownerId },
+      select: { settings: true },
+    });
+    if (!org || !autoPublishEnabled(org.settings)) {
+      // A redelivery/retry left the row in PUBLISHING; hand it back rather than let it sit there
+      // claiming to be mid-publish forever. CAS-scoped, so a row another path already moved
+      // (published/cancelled) is never clobbered.
+      if (post.status === "PUBLISHING") {
+        await prisma.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
+          data: { status: "SCHEDULED" },
+        });
+      }
+      console.warn(
+        `[publish] ${post.id}: auto-publish is ${org ? "off" : "unreadable"} for owner ${post.ownerId} at execution time — treating as withdrawn, NOT publishing (no claim, no Meta call)`,
+      );
+      return;
+    }
+
     // Lock 2: atomic claim = insert PublishAttempt(APPLYING). The partial-unique index
     // (one APPLYING per post) makes a second racing worker's insert P2002 → it skips.
     const attemptId = newId();
