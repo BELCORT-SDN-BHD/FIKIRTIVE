@@ -563,8 +563,37 @@ describe("Routine authorization is driven by the server read, not by this page l
   });
 });
 
+// `customer-workflow.test.ts` ("archiving stops nothing") proves against the real database that
+// an archived workflow keeps its Routine active AND still gets new runs created for it. So NO
+// branch of this status line may claim archiving prevents runs — an over-safe claim here is
+// exactly what stops a merchant from going and killing a Routine that is still acting.
+const RUN_PREVENTION_CLAIMS = [
+  "no new runs",
+  "cannot start new runs",
+  "cannot run",
+];
+
 describe("an archived workflow does not claim a still-active Routine stopped (#721)", () => {
-  it("names the Routines archiving did not stop", async () => {
+  it("never claims archiving prevents runs, in any of the three states", async () => {
+    for (const props of [
+      workflowProps({ status: "archived", routines: [persistedRoutine("active")] }),
+      workflowProps({ status: "archived", routines: [] }),
+      workflowProps({ status: "archived", routinesFailed: true }),
+    ]) {
+      const dom = await render(createElement(WorkflowDetailPage, props));
+      const summary = statusSummaryText(dom);
+      expect(summary).toContain("Archived");
+      for (const claim of RUN_PREVENTION_CLAIMS) {
+        expect(summary.toLowerCase(), `"${summary}" must not claim archiving prevents runs`).not.toContain(claim);
+      }
+      if (root) await act(async () => root?.unmount());
+      container?.remove();
+      root = null;
+      container = null;
+    }
+  });
+
+  it("tells the merchant the Routines are still acting and that killing each one is the way to stop them", async () => {
     const dom = await render(
       createElement(
         WorkflowDetailPage,
@@ -572,16 +601,11 @@ describe("an archived workflow does not claim a still-active Routine stopped (#7
       ),
     );
     const summary = statusSummaryText(dom);
-    expect(summary).toContain("Archived");
-    expect(summary).toContain("did not stop 1 Routine");
-    expect(summary).not.toBe("Archived — this workflow cannot run.");
-  });
-
-  it("says plainly that an archived workflow cannot run when nothing is active", async () => {
-    const dom = await render(
-      createElement(WorkflowDetailPage, workflowProps({ status: "archived", routines: [] })),
-    );
-    expect(statusSummaryText(dom)).toBe("Archived — this workflow cannot run.");
+    expect(summary).toContain("did not stop");
+    expect(summary).toContain("1 active Routine");
+    expect(summary.toLowerCase()).toContain("still act");
+    // The next step, named: the kill switch is the only thing that stops a Routine.
+    expect(summary.toLowerCase()).toContain("kill");
   });
 
   it("does not claim anything about Routines it could not read", async () => {
@@ -589,8 +613,18 @@ describe("an archived workflow does not claim a still-active Routine stopped (#7
       createElement(WorkflowDetailPage, workflowProps({ status: "archived", routinesFailed: true })),
     );
     const summary = statusSummaryText(dom);
-    expect(summary).toContain("Archived");
     expect(summary).toContain("could not load");
     expect(summary).not.toContain("did not stop");
+    // Still honest about what archiving is: not an off switch.
+    expect(summary.toLowerCase()).toContain("never stops");
+  });
+
+  it("says nothing is acting only when no Routine is authorized", async () => {
+    const dom = await render(
+      createElement(WorkflowDetailPage, workflowProps({ status: "archived", routines: [] })),
+    );
+    const summary = statusSummaryText(dom);
+    expect(summary.toLowerCase()).toContain("no routine is authorized");
+    expect(summary.toLowerCase()).toContain("never stops");
   });
 });

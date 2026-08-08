@@ -529,6 +529,53 @@ describe("customer workflow lifecycle and dispatch", () => {
     expect(fresh.resource.status).toBe("draft");
   });
 
+  // #721 — the exact behaviour the archived-workflow status line has to describe. Archiving is
+  // not an off switch in any sense: the Routine stays active AND new runs keep being created
+  // for it. Only killing the Routine stops it. Any UI copy claiming archive prevents runs is
+  // false in the safe-sounding direction, which is the direction that gets merchants hurt.
+  it("archiving stops nothing: the Routine stays active and new runs are still created", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "archivedruns",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    await workflows.archiveWorkflowDefinition(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      expectedRowRevision: 1,
+      acknowledgement: {
+        message: "Archiving does not stop these 1 active Routines",
+        routines: [{ id: lifecycle.routine.id, routineKey: lifecycle.routine.routineKey }],
+      },
+    });
+
+    const archived = await prisma.workflowDefinition.findFirst({
+      where: { id: lifecycle.definition.id, ownerId: ORG_A },
+      select: { status: true },
+    });
+    expect(archived?.status).toBe("archived");
+
+    const afterArchive = await prisma.routine.findFirst({
+      where: { id: lifecycle.routine.id, ownerId: ORG_A },
+      select: { status: true, killSwitchEngaged: true, rowRevision: true },
+    });
+    expect(afterArchive?.status).toBe("active");
+    expect(afterArchive?.killSwitchEngaged).toBe(false);
+
+    // A brand-new run, created after the workflow was archived.
+    const run = await dueRun(workerA, lifecycle, CONTACT_PASS, IDENTITY_PASS, "archived-still-runs");
+    expect(run.id).toBeTruthy();
+
+    // The only thing that stops it is killing the Routine.
+    const killed = await workflows.killRoutine(principalA, {
+      routineId: lifecycle.routine.id,
+      expectedRowRevision: afterArchive!.rowRevision,
+      reasonCode: "merchant_kill_switch",
+    });
+    expect(killed.resource.killSwitchEngaged).toBe(true);
+  });
+
   it("requires a real owner for activation and creates a new immutable envelope on reauthorization", async () => {
     const lifecycle = await createLifecycle(
       principalA,
