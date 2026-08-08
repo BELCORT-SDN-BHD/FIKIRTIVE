@@ -4,7 +4,7 @@ import { ArrowUpRight, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } 
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
-import { useOpenGlobalNavigation } from "@/components/global-navigation";
+import { useGlobalNavigationOpen, useOpenGlobalNavigation } from "@/components/global-navigation";
 import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
 import { getOttoNavCollapseAction, getOttoNavCollapseLabel } from "./otto-nav-collapse";
 
@@ -177,9 +177,19 @@ export function OttoNav({
   collapsed = false,
   onToggleCollapse,
 }: OttoNavProps) {
+  // Null / false outside the merchant shell (e.g. /skin-preview) — no global drawer there.
+  const openGlobalNavigation = useOpenGlobalNavigation();
+  const globalNavigationOpen = useGlobalNavigationOpen();
+
   // #513 A组返工 item 1 — the rail is a slide-over at every width now (never a
   // second persistent column beside the global nav); open = either trigger.
-  const isOpen = drawerOpen || !collapsed;
+  //
+  // …except while the global drawer is up (#747 r2). This rail is z-200 over that
+  // drawer's z-40 and starts at the same left edge, so the two can never share the
+  // screen. It STEPS ASIDE rather than being collapsed: `collapsed` is the merchant's
+  // own preference for this workspace, and borrowing the screen for a moment must not
+  // rewrite it — close the drawer and the rail comes back exactly as it was left.
+  const isOpen = (drawerOpen || !collapsed) && !globalNavigationOpen;
   const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
   // Keep history scannable: current project open, older projects compact until expanded.
@@ -189,8 +199,6 @@ export function OttoNav({
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const showTools = toolsActive || toolsOpen;
   const collapseLabel = getOttoNavCollapseLabel(drawerOpen);
-  // Null outside the merchant shell (e.g. /skin-preview) — no global drawer to reach.
-  const openGlobalNavigation = useOpenGlobalNavigation();
 
   const isProjectCollapsed = (id: string) => {
     if (collapsedProjects.has(id)) return true;
@@ -250,15 +258,18 @@ export function OttoNav({
     onToggleCollapse?.();
   }
 
-  /** Hand the screen over to the global drawer (#747). This rail sits above it
-   *  (z-200 vs z-40) and starts at the same left edge, so it must be shut on BOTH of
-   *  the ways it can be open — the mobile drawer flag and the desktop collapse flag —
-   *  or the drawer would open underneath it and look like nothing happened. Shutting it
-   *  is also the honest read of the interaction: one menu at a time, never two stacked. */
+  /** Hand the screen over to the global drawer (#747). One menu at a time, never two
+   *  stacked: `isOpen` above already withdraws this rail for as long as the drawer is up.
+   *
+   *  Only the mobile drawer flag is cleared here, and only because it is transient by
+   *  nature (the phone top bar sets it per tap). `collapsed` is deliberately left alone:
+   *  flipping it would be a lasting change to the merchant's own layout, and — the r2
+   *  finding — OttoApp mounts its floating "Show sidebar" button the instant that flag
+   *  goes true, landing a 34×34 z-50 control on top of the z-40 drawer we just opened.
+   *  Trading one stacked hamburger for another is not a fix. */
   function handleOpenGlobalNavigation() {
     setOpenMenu(null);
     onDrawerClose?.();
-    if (!collapsed) onToggleCollapse?.();
     openGlobalNavigation?.();
   }
 

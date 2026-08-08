@@ -17,6 +17,7 @@ import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { deleteCoworkThread, renameCoworkThread, setCoworkThreadPinned } from "@/lib/otto-client-actions";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { nextActiveThreadId } from "@/lib/thread-list";
+import { useGlobalNavigationOpen } from "@/components/global-navigation";
 
 const MOBILE_BP = 680;
 const STALE_ACTION_RELOAD_KEY = "fikirtive:stale-server-action-reload-at";
@@ -180,6 +181,8 @@ export function OttoApp({
   const [renameThreadTarget, setRenameThreadTarget] = useState<ChatThreadDTO | null>(null);
   const [deleteThreadTarget, setDeleteThreadTarget] = useState<ChatThreadDTO | null>(null);
   const newProjectPendingRef = useRef(false);
+  // False outside the merchant shell (e.g. /skin-preview) — no global drawer there.
+  const globalNavigationOpen = useGlobalNavigationOpen();
   // ── Multi-project navigation ──
   const curProjectId = activeProjectId ?? projectId;
 
@@ -588,8 +591,12 @@ export function OttoApp({
       `}</style>
 
       {/* Show-sidebar button — visible only while the nav is collapsed (desktop only;
-          mobile already has the hamburger above for the same rail). */}
-      {navCollapsed && (
+          mobile already has the hamburger above for the same rail), and never while the
+          global drawer is up: this button is z-50 at (12,12), the drawer is z-40 from the
+          same left edge, so showing both stacks a nav control on a nav control — #747
+          again with the layers swapped. The predicate, not the breakpoint, is what keeps
+          that true through a resize. */}
+      {navCollapsed && !globalNavigationOpen && (
         <button
           type="button"
           onClick={() => setNavCollapsed(false)}

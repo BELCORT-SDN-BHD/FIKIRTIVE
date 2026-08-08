@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ComponentType } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -167,10 +167,25 @@ function ownsMobileTopBar(pathname: string): boolean {
  *  opener down rather than duplicating the nav tree keeps ONE source of truth for what
  *  the global navigation contains: credits, identity, and Sign out included, none of
  *  which Otto's rail knows how to draw. */
-const OpenGlobalNavigationContext = createContext<(() => void) | null>(null);
+type GlobalNavigationDrawer = {
+  /** Open the global drawer. */
+  open: () => void;
+  /** True while it is on screen. */
+  isOpen: boolean;
+};
+
+const GlobalNavigationDrawerContext = createContext<GlobalNavigationDrawer | null>(null);
 
 export function useOpenGlobalNavigation(): (() => void) | null {
-  return useContext(OpenGlobalNavigationContext);
+  return useContext(GlobalNavigationDrawerContext)?.open ?? null;
+}
+
+/** True while the global drawer is on screen. A surface that owns the mobile top bar must
+ *  show NO navigation control of its own while it is (#747 r2): the drawer sits at the same
+ *  left edge, so anything the page keeps there lands on top of it — which is the very
+ *  defect this ticket is about, just with the layers swapped. */
+export function useGlobalNavigationOpen(): boolean {
+  return useContext(GlobalNavigationDrawerContext)?.isOpen ?? false;
 }
 
 function NavigationLink({
@@ -584,11 +599,15 @@ export function MerchantShellContent({
   }, [pathname]);
 
   const openGlobalNavigation = useCallback(() => setMobileOpen(true), []);
+  const drawer = useMemo<GlobalNavigationDrawer>(
+    () => ({ open: openGlobalNavigation, isOpen: mobileOpen }),
+    [openGlobalNavigation, mobileOpen],
+  );
 
   if (!isMerchantSurface(pathname)) return <>{children}</>;
 
   return (
-    <OpenGlobalNavigationContext.Provider value={openGlobalNavigation}>
+    <GlobalNavigationDrawerContext.Provider value={drawer}>
       <div className="min-h-dvh bg-background text-foreground">
         <GlobalNavigation
           pathname={pathname}
@@ -607,7 +626,7 @@ export function MerchantShellContent({
           {children}
         </div>
       </div>
-    </OpenGlobalNavigationContext.Provider>
+    </GlobalNavigationDrawerContext.Provider>
   );
 }
 
