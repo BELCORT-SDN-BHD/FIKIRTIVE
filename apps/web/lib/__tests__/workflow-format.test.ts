@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { summarizeRuleSource } from "@/components/crm/workflows/workflow-format";
+import {
+  summarizeRuleSource,
+  validationIssueCopy,
+  workflowErrorMessage,
+  WORKFLOW_ERROR_COPY_CODES,
+} from "@/components/crm/workflows/workflow-format";
+import { CUSTOMER_WORKFLOW_ERROR_CODES } from "@/lib/customer-workflow-service";
+import { routineLimitsSummary } from "@/lib/routine-authorization-facts";
 
 // Mirrors the reordering the compiler grammar allows (packages/db/src/workflow-compiler.test.ts,
 // "parses only the frozen envelope and canonicalizes key order/comments"): a step's action mapping
@@ -42,5 +49,70 @@ describe("summarizeRuleSource", () => {
     // and the summary read as just "Mark complete".
     const summary = summarizeRuleSource(REORDERED_SOURCE);
     expect(summary.actions).toBe("Reply in the conversation, then mark the journey complete");
+  });
+});
+
+describe("rule validation copy (#723)", () => {
+  it("says a rule with no steps has none, instead of claiming it has too many", () => {
+    // The compiler used to report zero steps and too many steps with the same LIMIT_EXCEEDED code,
+    // so a merchant holding an empty rule read "more conditions or steps than the limit allows".
+    const copy = validationIssueCopy({ code: "EMPTY_STEPS", path: "$.steps" });
+    expect(copy).toMatch(/no steps/i);
+    expect(copy).not.toMatch(/limit/i);
+    expect(copy).not.toMatch(/more/i);
+    expect(copy).not.toContain("EMPTY_STEPS");
+  });
+
+  it("keeps the over-the-limit sentence for a rule that really is over the limit", () => {
+    expect(validationIssueCopy({ code: "LIMIT_EXCEEDED", path: "$.steps" })).toMatch(/limit/i);
+  });
+
+  it("never hands an unmapped validation code to the merchant", () => {
+    expect(validationIssueCopy({ code: "SOME_FUTURE_RULE_CODE", path: "$" }))
+      .not.toContain("SOME_FUTURE_RULE_CODE");
+  });
+});
+
+describe("workflow failure copy (#753)", () => {
+  it("covers exactly the codes the merchant can be refused with", () => {
+    // TOTALITY, both directions. Every refusal the workflow service can return has a sentence
+    // here — AUTHORIZATION_CHANGED and SUMMARY_POLICY_UNREADABLE reached merchants as a raw-code
+    // fallback because nothing checked this — and no sentence exists for a code nobody returns.
+    // NETWORK is the one non-server code the panels pass in (the request never reached a server).
+    const expected = [...Object.values(CUSTOMER_WORKFLOW_ERROR_CODES), "NETWORK"].sort();
+    expect([...WORKFLOW_ERROR_COPY_CODES].sort()).toEqual(expected);
+  });
+
+  it("never puts a machine code in what the merchant reads", () => {
+    for (const code of [...Object.values(CUSTOMER_WORKFLOW_ERROR_CODES), "NETWORK"]) {
+      const message = workflowErrorMessage(code);
+      expect(message, code).not.toContain(code);
+      expect(message, code).not.toMatch(/[A-Z]{2,}_[A-Z]/);
+      expect(message, code).toMatch(/[.!]$/);
+    }
+  });
+
+  it("turns an unmapped code into words plus a next step, never the code itself", () => {
+    const message = workflowErrorMessage("SOME_FUTURE_REFUSAL");
+    expect(message).not.toContain("SOME_FUTURE_REFUSAL");
+    expect(message).toContain("some future refusal");
+    expect(message).toMatch(/retry/i);
+  });
+});
+
+describe("Routine limits copy (#723)", () => {
+  it("counts one action and one recipient in the singular", () => {
+    // 1 and 1 are the dialog's own defaults, so "Up to 1 actions and 1 recipients per run" was
+    // the first sentence every merchant read on the authorization confirmation.
+    expect(routineLimitsSummary(1, 1)).toBe("Up to 1 action and 1 recipient per run");
+  });
+
+  it("stays plural for every other count", () => {
+    expect(routineLimitsSummary(2, 3)).toBe("Up to 2 actions and 3 recipients per run");
+    expect(routineLimitsSummary(0, 0)).toBe("Up to 0 actions and 0 recipients per run");
+  });
+
+  it("does not invent a number when the authorization does not carry one", () => {
+    expect(routineLimitsSummary(undefined, undefined)).toBe("Up to ? actions and ? recipients per run");
   });
 });
