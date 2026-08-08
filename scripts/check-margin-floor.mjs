@@ -92,6 +92,18 @@ export const COGS_INPUTS = {
   //          TRANSCRIBE THE LIST PRICE, NOT THE DISCOUNTED ONE: the same record's `price`
   //          field shows 0.0014 / 0.00084 per K (what we pay today). A discount is neither
   //          guaranteed nor auto-renewed, so the floor is only honest against list.
+  //
+  //          ⏰ AND WE NOW HAVE THE DATE. mini's discount is a PROMO that expires
+  //          **2026-09-07 14:00 (UTC+8)**, after which the unit price goes ×2.5. That date
+  //          is NOT in the API response — it lives only in the provider's docs, so it cannot
+  //          be re-derived from `arkcli models get` and is written down here on purpose.
+  //          The arithmetic confirms what "×2.5" means: $1.40/M × 2.5 = $3.50/M and
+  //          $0.84/M × 2.5 = $2.10/M — i.e. the promo simply ends and the price returns to
+  //          the LIST rate this table already uses. So THIS TABLE NEEDS NO EDIT on that
+  //          date, and the margin floor is already immune: we have never counted on the
+  //          discount. What does change is CASH — real spend on video ×2.5 overnight.
+  //          That is a runway question for the founder, not a margin question.
+  //          (Automatic price-drift alerting is #761's job, deliberately not built here.)
   //          Read-check: the same fields on `dreamina-seedance-2-0-mini-260615` give
   //          $5.60/M and $3.30/M — byte-for-byte the numbers #644 transcribed off the
   //          published pricing page, so this way of reading the record is confirmed.
