@@ -444,11 +444,15 @@ describe("runFactoryBatch approval — ottoApprove verifies the hash, consumes, 
     expect(chainCells.every((c) => c.credits === INTERNAL_PER_DISPLAY)).toBe(true);
     // Per-cell spend went through the ONLY spend authority with the derived batch keys.
     expect(mockStartGen).toHaveBeenCalledTimes(2);
+    // #749：端口现在还带上这一格的下标(战役确认的锁内对签要钉到正确的那一行)。
+    // 这条路不带门,下标只是随行信息 —— 但断言必须把它算进来,否则整条形状就没被钉住。
     expect(mockStartGen).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: factoryAttemptKey(BATCH_ID, 0, FACTORY_CARD_ID).key }),
+      0,
     );
     expect(mockStartGen).toHaveBeenCalledWith(
       expect.objectContaining({ projectId: PROJECT_ID, idempotencyKey: factoryAttemptKey(BATCH_ID, 1, FACTORY_CARD_ID).key }),
+      1,
     );
     // Strict order along the chain: CAS consume → resume(run) → startGen (consume-then-act).
     expect(mockChatMessageUpdateMany.mock.invocationCallOrder[0]!).toBeLessThan(mockRun.mock.invocationCallOrder[0]!);
