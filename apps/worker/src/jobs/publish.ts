@@ -709,41 +709,81 @@ export async function handlePublish(
       // overwrite, must not send again, and must leave a human something true to act on: an
       // UNCONFIRMED attempt carrying the external id. Lock 4 above refuses every future publish of
       // this post while that record exists, so the fail-closed direction is "never double-post".
+      // The post is LIVE from here on. The invariant that must hold at every committable instant is
+      // that SOMETHING refuses a second send: our own APPLYING claim (lock 2), or the stamped
+      // metaPostId (lock 1), or an UNCONFIRMED attempt carrying the external id (lock 4).
+      //
+      // r3 broke that invariant across a seam (#810 r4 P1-b): its first transaction committed the
+      // attempt as APPLIED, and only a SECOND transaction created the UNCONFIRMED record. A crash in
+      // between released lock 2 while lock 1 was never taken and lock 4 did not yet exist — all three
+      // gone at once, so a merchant who edited and re-approved the post got it sent twice.
+      //
+      // So it is ONE transaction, and inside it the claim leaves APPLYING exactly once, in the same
+      // statement that gives it the state which replaces it. There is no observable moment where the
+      // claim is released and nothing stands in its place.
       const externalId = result.externalId;
+      const rowMovedReason =
+        "this post went live, but its row had already moved (edited/cancelled/published) — confirm and link it before publishing again";
+      const claimLostReason =
+        "this post went live, but the publish claim had already been released — confirm and link it before publishing again";
+      const needsAttention =
+        "This post went live but couldn't be recorded — please confirm it before publishing again.";
+
       const outcome = await prisma.$transaction(async (tx) => {
-        const claim = await tx.publishAttempt.updateMany({
+        // (1) Write the external id onto our attempt while it is STILL APPLYING. This proves the
+        // claim is ours and takes the row lock for the rest of the transaction, without releasing
+        // lock 2 — so even a crash right here leaves the post guarded.
+        const held = await tx.publishAttempt.updateMany({
           where: { id: attemptId, state: "APPLYING" },
-          data: { state: "APPLIED", metaPostId: externalId, finishedAt: new Date() },
+          data: { metaPostId: externalId },
         });
-        if (claim.count !== 1) return "claim-lost" as const;
+        if (held.count !== 1) {
+          // Someone else released our claim (a reaper). We are not holding anything, so nothing of
+          // ours is being given up — but the post is live and, with the row unstamped, nothing yet
+          // refuses a second send. Leave the record that does.
+          await tx.publishAttempt.create({
+            data: { id: newId(), scheduledPostId: post.id, state: "UNCONFIRMED", metaPostId: externalId, error: claimLostReason, finishedAt: new Date() },
+          });
+          await tx.scheduledPost.updateMany({
+            where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
+            data: { status: "NEEDS_ATTENTION", lastError: needsAttention },
+          });
+          return "claim-lost" as const;
+        }
+
+        // (2) Is the row still ours? CAS'd on it being PUBLISHING, unstamped and not deleted — r2's
+        // blind write on `metaPostId: null` alone would tell a merchant who cancelled that their
+        // cancel did nothing.
         const stamped = await tx.scheduledPost.updateMany({
           where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
           data: { status: "PUBLISHED", metaPostId: externalId, lastError: null },
         });
-        return stamped.count === 1 ? ("published" as const) : ("row-moved" as const);
+
+        // (3) The ONE write that releases APPLYING, landing directly on the state that replaces it:
+        // APPLIED behind a stamped row (lock 1 now holds), or UNCONFIRMED when the row moved (lock 4
+        // takes over). No intermediate state is ever committed.
+        await tx.publishAttempt.update({
+          where: { id: attemptId },
+          data:
+            stamped.count === 1
+              ? { state: "APPLIED", finishedAt: new Date() }
+              : { state: "UNCONFIRMED", error: rowMovedReason, finishedAt: new Date() },
+        });
+        if (stamped.count === 1) return "published" as const;
+
+        // The row moved out from under us. Surface it only if it still claims to be mid-publish —
+        // never resurrect one the merchant cancelled or edited away.
+        await tx.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
+          data: { status: "NEEDS_ATTENTION", lastError: needsAttention },
+        });
+        return "row-moved" as const;
       });
 
       if (outcome === "published") {
         console.log(`[publish] ${post.id}: PUBLISHED → ${externalId}`);
         return;
       }
-
-      const reason =
-        outcome === "claim-lost"
-          ? "this post went live, but the publish claim had already been released — confirm and link it before publishing again"
-          : "this post went live, but its row had already moved (edited/cancelled/published) — confirm and link it before publishing again";
-      await prisma.$transaction([
-        // The record that makes lock 4 refuse any re-publish, and that carries the id a human needs.
-        prisma.publishAttempt.create({
-          data: { id: newId(), scheduledPostId: post.id, state: "UNCONFIRMED", metaPostId: externalId, error: reason, finishedAt: new Date() },
-        }),
-        // Surface it only if the row still claims to be mid-publish — never resurrect one the
-        // merchant cancelled or edited away.
-        prisma.scheduledPost.updateMany({
-          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null },
-          data: { status: "NEEDS_ATTENTION", lastError: "This post went live but couldn't be recorded — please confirm it before publishing again." },
-        }),
-      ]);
       console.error(`[publish] ${post.id}: published ${externalId} but ${outcome} — NOT overwriting the row; recorded UNCONFIRMED so it can never be sent twice`);
       return;
     }

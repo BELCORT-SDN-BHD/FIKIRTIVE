@@ -285,11 +285,16 @@ describe("#810 r3 P1-b 两个 worker 交错:谁也别想翻掉别人正在发的
 
     const published = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "PUBLISHED");
     expect(published?.[0].where).toMatchObject({ id: "sp1", status: "PUBLISHING", metaPostId: null, deletedAt: null });
+    // #810 r4:claim 的写分成两步 —— 先在**仍是 APPLYING** 的行上写下 externalId(证明锁是
+    // 我们的、并锁住这一行,同时 lock 2 一刻没松),最后一步才收成终态。
     expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ id: expect.anything(), state: "APPLYING" }),
-        data: expect.objectContaining({ state: "APPLIED", metaPostId: "ig_ok" }),
+        data: expect.objectContaining({ metaPostId: "ig_ok" }),
       }),
+    );
+    expect(m.publishAttemptUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: "APPLIED" }) }),
     );
   });
 
@@ -303,8 +308,134 @@ describe("#810 r3 P1-b 两个 worker 交错:谁也别想翻掉别人正在发的
 
     await handlePublish({ scheduledPostId: "sp1" }, 0, exec as never);
 
-    expect(m.publishAttemptCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ state: "UNCONFIRMED", metaPostId: "ig_moved" }) }),
+    // #810 r4:不再是「先 APPLIED 再另建一条」——同一行一步迁到 UNCONFIRMED,
+    // 外部 id 早在还持锁时就写上了,所以 lock 2 与 lock 4 之间没有缝。
+    expect(m.publishAttemptUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: "UNCONFIRMED" }) }),
     );
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ state: "APPLYING" }),
+        data: expect.objectContaining({ metaPostId: "ig_moved" }),
+      }),
+    );
+    expect(m.publishAttemptCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: "UNCONFIRMED" }) }),
+    );
+  });
+});
+
+/**
+ * #810 r4 P1-b —— 「离开 APPLYING」与「UNCONFIRMED 落库」必须在同一笔事务里。
+ *
+ * 判官 r3 残余:r3 的成功路径是两笔事务。第一笔把 attempt 提交成 APPLIED,挡二发的
+ * UNCONFIRMED 在**第二笔**才建。两笔之间崩溃,三把锁同时消失 ——
+ *   lock 2(APPLYING 唯一索引)已经释放、lock 1(帖子 metaPostId)从没写上、lock 4
+ *   (UNCONFIRMED)还不存在 —— 商家编辑后重新批准,同一条帖子会被发第二次。
+ *
+ * 下面这个替身 prisma 会真的**回滚**:事务回调里的写先进暂存区,回调整体成功才落到 store。
+ * 所以「崩溃」不是断言语句调用顺序,而是断言崩溃之后 store 里剩下什么。
+ */
+describe("#810 r4 P1-b 锁链不许在两笔事务之间断掉", () => {
+  /** 一个最小的「可回滚」存储:一条 attempt、一行帖子,外加后来新建的 attempt。 */
+  function ledger(opts: { stampSucceeds: boolean; crashOnNeedsAttention?: boolean }) {
+    const store = {
+      attempt: { id: "pa1", state: "APPLYING" as string, metaPostId: null as string | null, error: null as string | null },
+      created: [] as Record<string, unknown>[],
+      post: { status: "PUBLISHING" as string, metaPostId: null as string | null },
+    };
+    let staged: (() => void)[] | null = null;
+    const write = (f: () => void) => (staged ? staged.push(f) : f());
+
+    m.publishAttemptUpdateMany.mockImplementation(async ({ where, data }: never) => {
+      const w = where as { state?: string };
+      const d = data as Record<string, unknown>;
+      if (w.state && store.attempt.state !== w.state) return { count: 0 };
+      write(() => Object.assign(store.attempt, d));
+      return { count: 1 };
+    });
+    m.publishAttemptUpdate.mockImplementation(async ({ data }: never) => {
+      write(() => Object.assign(store.attempt, data as Record<string, unknown>));
+      return {};
+    });
+    m.publishAttemptCreate.mockImplementation(async ({ data }: never) => {
+      const d = data as Record<string, unknown>;
+      // lock 2 的认领 create 不进 store —— store 里那一条就是它。
+      if (d.state !== "APPLYING") write(() => store.created.push(d));
+      return d;
+    });
+    m.scheduledPostUpdateMany.mockImplementation(async ({ data }: never) => {
+      const d = data as { status?: string; metaPostId?: string };
+      if (d.status === "PUBLISHED" && !opts.stampSucceeds) return { count: 0 }; // 行被商家改走了
+      if (d.status === "NEEDS_ATTENTION" && opts.crashOnNeedsAttention) throw new Error("boom: 提交前崩溃");
+      write(() => Object.assign(store.post, d));
+      return { count: 1 };
+    });
+    // 真的回滚:回调抛错就把暂存区整个丢掉。
+    m.prisma.$transaction.mockImplementation(async (arg: unknown) => {
+      if (Array.isArray(arg)) return Promise.all(arg);
+      if (typeof arg !== "function") return arg;
+      const outer = staged;
+      staged = [];
+      try {
+        const r = await (arg as (tx: unknown) => unknown)(m.prisma);
+        const ops = staged;
+        staged = outer;
+        for (const f of ops) f(); // 提交
+        return r;
+      } catch (e) {
+        staged = outer; // 回滚
+        throw e;
+      }
+    });
+    return store;
+  }
+
+  const sendsOk = vi.fn(async () => ({ send: async () => ({ externalId: "ig_live_1" }) }));
+
+  it("行被改走时,attempt 一步从 APPLYING 迁到 UNCONFIRMED —— 从不落地成 APPLIED", async () => {
+    const store = ledger({ stampSucceeds: false });
+
+    await handlePublish({ scheduledPostId: "sp1" }, 0, sendsOk as never);
+
+    // 终态带着外部 id 的 UNCONFIRMED —— lock 4 从此拒绝任何再发。
+    expect(store.attempt).toMatchObject({ state: "UNCONFIRMED", metaPostId: "ig_live_1" });
+    // 而且是同一行迁过去的,不是「先 APPLIED 再另建一条」。
+    expect(store.created).toHaveLength(0);
+    // 整个成功路径只开了一笔事务 —— 没有第二笔可以在中间崩。
+    expect(m.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("提交前崩溃:整笔回滚,claim 仍是 APPLYING —— 锁链一刻也没断过", async () => {
+    const store = ledger({ stampSucceeds: false, crashOnNeedsAttention: true });
+
+    await expect(handlePublish({ scheduledPostId: "sp1" }, 0, sendsOk as never)).rejects.toThrow(/boom/);
+
+    // r3 在这里会留下 APPLIED + 零 UNCONFIRMED:三把锁同时没了。
+    expect(store.attempt.state).toBe("APPLYING"); // lock 2 还在
+    expect(store.attempt.metaPostId).toBeNull(); // 连外部 id 都没落地(那一笔一起回滚了)
+    expect(store.created).toHaveLength(0);
+    expect(store.post.metaPostId).toBeNull();
+  });
+
+  it("正常成功:同一笔事务里盖上 metaPostId 并把 claim 收成 APPLIED", async () => {
+    const store = ledger({ stampSucceeds: true });
+
+    await handlePublish({ scheduledPostId: "sp1" }, 0, sendsOk as never);
+
+    expect(store.post).toMatchObject({ status: "PUBLISHED", metaPostId: "ig_live_1" });
+    expect(store.attempt).toMatchObject({ state: "APPLIED", metaPostId: "ig_live_1" });
+    expect(m.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("claim 已被别人收走:不动帖子行,另建一条 UNCONFIRMED 顶上 lock 4", async () => {
+    const store = ledger({ stampSucceeds: true });
+    store.attempt.state = "FAILED"; // 收割者已经释放了我们的 claim
+
+    await handlePublish({ scheduledPostId: "sp1" }, 0, sendsOk as never);
+
+    expect(store.post.status).not.toBe("PUBLISHED"); // 没有盲写
+    expect(store.created).toHaveLength(1);
+    expect(store.created[0]).toMatchObject({ state: "UNCONFIRMED", metaPostId: "ig_live_1" });
   });
 });

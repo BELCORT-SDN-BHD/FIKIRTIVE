@@ -233,12 +233,17 @@ describe("handlePublish — six states", () => {
     const postUpdate = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "PUBLISHED");
     expect(postUpdate?.[0].data).toMatchObject({ status: "PUBLISHED", metaPostId: "ext_1" });
     // #810 r3 P1-b②: the attempt write is a CAS on our own claim, not a blind update — losing it
-    // must not let the post row be overwritten.
+    // must not let the post row be overwritten. #810 r4 P1-b: that write is now two steps inside ONE
+    // transaction — the external id lands while the claim is STILL APPLYING (so lock 2 never lets go
+    // of an unguarded live post), and only the last statement moves it to its terminal state.
     expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ state: "APPLYING" }),
-        data: expect.objectContaining({ state: "APPLIED", metaPostId: "ext_1" }),
+        data: expect.objectContaining({ metaPostId: "ext_1" }),
       }),
+    );
+    expect(m.publishAttemptUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: "APPLIED" }) }),
     );
   });
 
