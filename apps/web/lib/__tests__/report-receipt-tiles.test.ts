@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * #731 — 广播报告的收据格子必须装得下「Unknown」这个词。
  *
@@ -20,7 +21,6 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { JSDOM } from "jsdom";
 import ReportAxisGroups, { type BroadcastReportResource } from "@/components/crm/reports/report-axis-groups";
 
 const WEB_ROOT = path.resolve(__dirname, "../..");
@@ -66,7 +66,8 @@ function render(): Document {
   const markup = renderToStaticMarkup(
     createElement(ReportAxisGroups, { report: simulatedReport(), showSkipReasons: true }),
   );
-  return new JSDOM(`<!doctype html><body>${markup}</body>`).window.document;
+  document.body.innerHTML = markup;
+  return document;
 }
 
 /** The three receipt tiles, in the order the merchant reads them. */
