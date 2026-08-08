@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => {
   const calls = { construct: 0, start: 0, createQueue: 0, stop: 0 };
-  const control = { failStart: false, failCreateQueue: false };
+  const control = { failStart: false, failCreateQueue: false, hangStop: false };
   class FakePgBoss {
     constructor() {
       calls.construct += 1;
@@ -35,6 +35,7 @@ const h = vi.hoisted(() => {
     }
     async stop() {
       calls.stop += 1;
+      if (control.hangStop) await new Promise(() => {});
     }
   }
   return { calls, control, FakePgBoss };
@@ -61,6 +62,7 @@ beforeEach(() => {
   h.calls.stop = 0;
   h.control.failStart = false;
   h.control.failCreateQueue = false;
+  h.control.hangStop = false;
   vi.stubEnv("DATABASE_URL_POOLED", "postgresql://fake/queue_handle_test");
   delete (globalThis as { __fikirtiveBoss?: unknown }).__fikirtiveBoss;
   clock = 1_700_000_000_000;
@@ -189,5 +191,22 @@ describe("getBoss — retrying is bounded, not one connect attempt per request",
 
     // Without this, every retry would leak another pg pool against the database.
     expect(h.calls.stop).toBe(1);
+  });
+
+  it("still fails fast when releasing the pool hangs", async () => {
+    const getBoss = await loadGetBoss();
+
+    // pool.end() against an unreachable host can sit on the TCP timeout. Waiting for
+    // the cleanup would turn a fast, honest failure into a hang for every caller.
+    h.control.failStart = true;
+    h.control.hangStop = true;
+    await expect(getBoss()).rejects.toThrow("pgboss schema does not exist");
+    expect(h.calls.stop).toBe(1);
+
+    // And the hung cleanup must not block the next real retry either.
+    h.control.failStart = false;
+    h.control.hangStop = false;
+    tick(2_000);
+    await expect(getBoss()).resolves.toBeDefined();
   });
 });

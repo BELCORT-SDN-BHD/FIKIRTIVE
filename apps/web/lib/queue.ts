@@ -50,8 +50,11 @@ async function buildBoss(): Promise<PgBoss> {
   } catch (err) {
     // A half-started handle still owns its connection pool. Because the next call
     // retries, an abandoned attempt that keeps its pool would leak one pool per
-    // retry against the database — give the connections back before rethrowing.
-    await boss.stop({ graceful: false, close: true }).catch(() => {});
+    // retry against the database — hand the connections back. Deliberately NOT
+    // awaited: pool.end() against an unreachable host can sit on the TCP timeout,
+    // and making the caller wait for that would turn a fast, honest failure into
+    // a hang. The retry builds its own handle, so nothing waits on this one.
+    void boss.stop({ graceful: false, close: true }).catch(() => {});
     throw err;
   }
 }
