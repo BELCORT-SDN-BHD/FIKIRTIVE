@@ -24,12 +24,14 @@ export { fetchAndExtract, fetchRawHtml, MAX_BODY } from "./fetch-extract.js";
 export {
   publishInstagram,
   publishFacebook,
+  publishWithdrawn,
   type MetaGraphPort,
   type PublishResult,
   type PublishOk,
   type PublishFail,
   type InstagramPublishArgs,
   type FacebookPublishArgs,
+  type ConfirmStillAuthorized,
 } from "./meta-publish.js";
 // X (Twitter) organic-publish orchestration (E4-14). Pure (injected XApiPort), server barrel — the
 // same publish logic the web X adapter + the publish worker both drive (契约6 单一动作层).

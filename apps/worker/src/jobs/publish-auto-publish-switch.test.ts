@@ -44,6 +44,7 @@ const m = vi.hoisted(() => {
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma }));
 vi.mock("@fikirtive/token-crypto", () => ({ decryptToken: () => "user-token", signMediaToken: () => "sig" }));
 
+import { publishWithdrawn } from "@fikirtive/core/server";
 import { handlePublish, scanDuePublishPosts } from "./publish.js";
 
 const DUE_POST = {
@@ -181,10 +182,16 @@ describe("#810 P1-1 执行前复核:开关关了就不发", () => {
  *   PUBLISHED,会盖掉这期间商家的编辑或取消。两处都要 CAS 在「这仍然是我这一轮」上。
  */
 describe("#810 r3 P1-a 最后一刻复核:慢工序期间关掉开关也发不出去", () => {
-  /** 一个「真」执行器的形状:准备阶段不外呼,只返回 send 闭包。 */
-  const preparingExecutor = (sent: () => void) =>
+  /** 一个「真」执行器的形状:准备阶段不外呼,只返回 send 闭包。
+   *
+   *  #810 r4:闸不再由 handlePublish 在 send() 边界上问 —— IG 的 send 里面还有建容器 + 轮询,
+   *  在边界上问只是把窗口缩短。现在 send **收到**闸,像真渠道那样在自己最终动作之前才问它。
+   *  这个替身照着同一个契约走:先跑一段慢工序,再问闸,最后才「发送」。 */
+  const preparingExecutor = (sent: () => void, slowWork?: () => Promise<void>) =>
     vi.fn(async () => ({
-      send: async () => {
+      send: async (confirmStillAuthorized: () => Promise<boolean>) => {
+        await slowWork?.();
+        if (!(await confirmStillAuthorized())) return publishWithdrawn();
         sent();
         return { externalId: "ig_1" };
       },
@@ -203,7 +210,7 @@ describe("#810 r3 P1-a 最后一刻复核:慢工序期间关掉开关也发不�
   });
 
   it("认领之后、发送之前商家关掉开关 —— 一个字都不发,claim 释放,行交还 SCHEDULED", async () => {
-    // 第一次读(认领前的省钱短路)开关还开着;第二次读(发送前的最后一刻)已经关了。
+    // 第一次读(认领前的省钱短路)开关还开着;渠道在自己最终动作之前问的那一次,已经关了。
     let reads = 0;
     m.organizationFindUnique.mockImplementation(async () => ({ settings: { autoPublish: ++reads === 1 } }));
     const sent = vi.fn();

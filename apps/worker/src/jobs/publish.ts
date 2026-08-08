@@ -34,6 +34,7 @@ import {
   xScopeCanPublish,
   type MetaGraphPort,
   type PublishResult,
+  type ConfirmStillAuthorized,
   type XApiPort,
 } from "@fikirtive/core/server";
 import {
@@ -306,16 +307,24 @@ export async function buildMediaUrls(
 export type PublishAuthRefused = { authFailed: true; error: string };
 
 /**
- * The external send, split away from the slow preparation (#810 r3).
+ * The external send, split away from the slow preparation (#810 r3), carrying the last-moment
+ * authorization gate down to each channel's final irreversible action (#810 r4 P1-a).
  *
  * Preparation — reading media, transcoding to JPEG, resolving the page — takes up to
- * PUBLISH_EXECUTION_DEADLINE_MS. r2 checked the merchant's Auto-publish switch before the claim
- * and never again, so a merchant who switched it OFF during those seconds still got posted. An
- * executor therefore returns this thunk instead of publishing: handlePublish re-reads the switch
- * and only then calls `send`. The sub-second gap between that read and the call is the physical
- * floor; four minutes was not.
+ * PUBLISH_EXECUTION_DEADLINE_MS. r2 checked the merchant's Auto-publish switch before the claim and
+ * never again, so a merchant who switched it OFF during those seconds still got posted. r3 returned
+ * this thunk so the switch could be re-read right before `send`.
+ *
+ * That still wasn't the last moment. IG's send creates a media container and then polls it for up
+ * to ~30 s before media_publish, so a check at the send() boundary only shrank the window — a
+ * merchant switching off during the poll was still published for. So the gate is no longer asked at
+ * this boundary at all: `send` RECEIVES it and each channel asks it immediately before its own final
+ * action (IG: right before media_publish; FB/X: right before their single POST). One contract, one
+ * reading, correct on every channel — and a slow step added inside any channel later cannot quietly
+ * reopen the window. What remains is the sub-second gap between that question and the call itself,
+ * which is the physical floor.
  */
-export type PublishPrepared = { send: () => Promise<PublishResult> };
+export type PublishPrepared = { send: (confirmStillAuthorized: ConfirmStillAuthorized) => Promise<PublishResult> };
 
 export type PublishExecutor = (
   post: DuePost,
@@ -394,8 +403,13 @@ export async function executeX(post: DuePost): Promise<PublishPrepared | Publish
     return { mediaContractRefused: true, error: "Publishing media to X isn't available yet — post text only for now." };
   }
   const deadline = AbortSignal.timeout(PUBLISH_EXECUTION_DEADLINE_MS);
-  // Prepared, not sent (#810 r3): handlePublish re-reads the switch immediately before this runs.
-  return { send: () => publishX(xPortFor(auth.token, deadline), { text: post.caption }) };
+  // Prepared, not sent (#810 r3). The gate rides INTO publishX (#810 r4 P1-a) rather than being
+  // asked out here, so it is answered immediately before POST /2/tweets whatever else moves in
+  // between.
+  return {
+    send: (confirmStillAuthorized) =>
+      publishX(xPortFor(auth.token, deadline), { text: post.caption, confirmStillAuthorized }),
+  };
 }
 
 /** The real executor. Persists the IG creationId onto the attempt BEFORE media_publish (lock 3).
@@ -442,20 +456,30 @@ async function realExecute(post: DuePost, attemptId: string): Promise<PublishPre
 
   if (post.channel === "instagram") {
     if (!page.igUserId) return { error: "This page has no connected Instagram business account.", retryable: false };
-    // Everything above is PREPARATION (reads, transcode, page resolve). Only the thunk below has a
-    // side effect the merchant can see, and handlePublish re-reads their switch right before it.
+    // Everything above is PREPARATION (reads, transcode, page resolve) — and so is the container
+    // creation and polling INSIDE publishInstagram. The gate travels all the way down (#810 r4
+    // P1-a) so it is asked immediately before media_publish, the one step the merchant can see.
     return {
-      send: () =>
+      send: (confirmStillAuthorized) =>
         publishInstagram(port, {
           igUserId: page.igUserId!,
           mediaUrls: media.urls,
           caption: post.caption,
           firstComment: post.firstComment,
           onCreationId,
+          confirmStillAuthorized,
         }),
     };
   }
-  return { send: () => publishFacebook(port, { pageId: post.metaTargetId!, message: post.caption, mediaUrls: media.urls }) };
+  return {
+    send: (confirmStillAuthorized) =>
+      publishFacebook(port, {
+        pageId: post.metaTargetId!,
+        message: post.caption,
+        mediaUrls: media.urls,
+        confirmStillAuthorized,
+      }),
+  };
 }
 
 /* ── the handler: triple idempotency + six-state ── */
@@ -607,31 +631,15 @@ export async function handlePublish(
     try {
       const prepared = await execute(post, attemptId);
       if ("send" in prepared) {
-        // Lock 6 (#810 r3 P1-a) — the LAST thing before the merchant's account is touched.
-        // Preparation above (media read, JPEG transcode, page resolve) can take the whole
-        // PUBLISH_EXECUTION_DEADLINE_MS; r2 asked the switch before the claim and never again, so a
-        // merchant who withdrew during those seconds was still published for. Asking here leaves
-        // only the sub-second gap between this read and the call itself — the physical floor.
-        if (!(await autoPublishStillOn())) {
-          // Withdrawn, not failed: release our own claim and hand the row back to waiting. Both
-          // writes ride ONE transaction so the row can never be left claimed-but-unowned, and the
-          // second CAS carries the same none-APPLYING clause as handBackToWaiting above — by then
-          // our own attempt is already released, so it passes for us and still refuses to snatch a
-          // row some other worker is holding.
-          await prisma.$transaction(async (tx) => {
-            await tx.publishAttempt.updateMany({
-              where: { id: attemptId, state: "APPLYING" },
-              data: { state: "FAILED", error: "auto-publish was switched off while this post was being prepared — nothing was sent", finishedAt: new Date() },
-            });
-            await tx.scheduledPost.updateMany({
-              where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null, attempts: { none: { state: "APPLYING" } } },
-              data: { status: "SCHEDULED" },
-            });
-          });
-          console.warn(`[publish] ${post.id}: auto-publish switched off during preparation — NOT sending; claim released, post back to SCHEDULED`);
-          return;
-        }
-        result = await prepared.send();
+        // Lock 6 (#810 r3 P1-a, moved in r4) — the merchant's switch, asked at the LAST moment.
+        //
+        // r3 read it here, one line before `send`, believing that was the last moment. It wasn't:
+        // IG's send creates the media container and then polls it for up to ~30 s before
+        // media_publish, so a check at this boundary only shrank the window from four minutes to
+        // thirty seconds. The gate is therefore handed to `send` and each channel asks it
+        // immediately before its own final irreversible action, where the remaining gap is
+        // sub-second — the physical floor.
+        result = await prepared.send(autoPublishStillOn);
       } else {
         // A prep-time outcome (config refusal / media-contract refusal / non-retryable error).
         // Nothing was sent, so there is nothing for the switch to stop.
@@ -640,6 +648,31 @@ export async function handlePublish(
     } catch (err) {
       // An unexpected throw inside the executor (network/store) — treat as transient.
       result = { error: sanitizeError(err), retryable: true };
+    }
+
+    if ("withdrawn" in result && result.withdrawn) {
+      // The merchant switched Auto-publish off while we were preparing, and the channel refused at
+      // its own final step — so NOTHING was sent. (An IG media container may exist; it is not a
+      // post, the merchant cannot see it, and it simply expires.)
+      //
+      // A withdrawal is not a failure: no FAILED, no NEEDS_ATTENTION, no retry. Release our claim
+      // and hand the row back to waiting, exactly as if the switch had been off all along — flip it
+      // back on and the next scan picks the post up unchanged. Both writes ride ONE transaction so
+      // the row can never be left claimed-but-unowned, and the row CAS carries the same
+      // none-APPLYING clause as handBackToWaiting — by then our own attempt is already released, so
+      // it passes for us while still refusing to snatch a row another worker is holding.
+      await prisma.$transaction(async (tx) => {
+        await tx.publishAttempt.updateMany({
+          where: { id: attemptId, state: "APPLYING" },
+          data: { state: "FAILED", error: result.error, finishedAt: new Date() },
+        });
+        await tx.scheduledPost.updateMany({
+          where: { id: post.id, status: "PUBLISHING", metaPostId: null, deletedAt: null, attempts: { none: { state: "APPLYING" } } },
+          data: { status: "SCHEDULED" },
+        });
+      });
+      console.warn(`[publish] ${post.id}: auto-publish switched off before the final send — NOTHING sent; claim released, post back to SCHEDULED`);
+      return;
     }
 
     if ("authFailed" in result || "mediaContractRefused" in result) {
