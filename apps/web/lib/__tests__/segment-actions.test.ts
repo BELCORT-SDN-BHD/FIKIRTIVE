@@ -739,14 +739,38 @@ describe("buildSegment", () => {
       error: "You already have a segment with this name. Choose a different name.",
     });
     // The reason is re-read from the database, owner-scoped and excluding this segment —
-    // never guessed from the shape of the driver's error.
+    // never guessed from the shape of the driver's error. No `kind` filter: the index is unique
+    // across every kind, and a read narrower than the index would promise what it cannot keep.
     expect(mockSegmentCount).toHaveBeenLastCalledWith({
       where: {
         ownerId: "owner-1",
-        kind: "custom",
         deletedAt: null,
         id: { not: SEGMENT_ID },
         name: { equals: "VIP buyers", mode: "insensitive" },
+      },
+    });
+  });
+
+  /** #746 judge r1, P2 — `equals + mode:"insensitive"` compiles to ILIKE, so an unescaped `%`
+   *  or `_` in the merchant's own name would be matched as a wildcard. The pattern handed to the
+   *  database must carry them escaped, which is what makes this read mean `lower(name) = lower($1)`
+   *  — the very predicate the unique index enforces. */
+  it("escapes % and _ so the name is compared literally, never as a pattern", async () => {
+    mockSegmentFindFirst.mockResolvedValue(null);
+
+    await buildSegment({
+      segmentId: SEGMENT_ID,
+      segmentProof: SEGMENT_PROOF,
+      name: "50% off A_C\\B",
+      rules: spendRules,
+    });
+
+    expect(mockSegmentCount).toHaveBeenLastCalledWith({
+      where: {
+        ownerId: "owner-1",
+        deletedAt: null,
+        id: { not: SEGMENT_ID },
+        name: { equals: "50\\% off A\\_C\\\\B", mode: "insensitive" },
       },
     });
   });

@@ -426,6 +426,23 @@ export async function previewSegment(rawRules: unknown) {
 }
 
 /**
+ * Prisma compiles `{ equals, mode: "insensitive" }` to `name ILIKE $n` — MEASURED against this
+ * repo's Prisma 7.8 client on 2026-08-08, not assumed. ILIKE is a PATTERN match, so `%` and `_`
+ * inside a merchant's own name silently become wildcards: with "VIP buyers" on file, asking
+ * whether "VIP %" is taken matched it and the merchant was refused a name nobody held (judge r1,
+ * P2). Escaping them — plus the escape character itself, which is why `\` goes first — makes the
+ * pattern literal, so the read means exactly what the unique index means: `lower(name) = lower($1)`.
+ *
+ * The coupling to that compilation is pinned by behaviour, not by trust: segment-lifecycle.test.ts
+ * "#746 a name containing % or _ is compared literally" asserts BOTH directions against the real
+ * database — a name with a wildcard character may be created, and a true duplicate of it is still
+ * refused in the ordinary words. If Prisma ever stops emitting ILIKE, the second half goes red.
+ */
+function literalName(name: string): string {
+  return name.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+/**
  * #718 — is another live segment of this merchant's already called this?
  *
  * Three cards all reading "WhatsApp big spenders" are three cards nobody can tell apart, and
@@ -434,10 +451,16 @@ export async function previewSegment(rawRules: unknown) {
  * create) is never a clash. A deleted segment frees its name again.
  *
  * #746 — this read is no longer the enforcement. The rule now lives in a unique index,
- * ("ownerId", "kind", lower("name")) among live rows, which is what actually keeps two
- * concurrent saves from both landing. This function has two jobs left, both about words: ask
- * first so the ordinary case gets a sentence instead of a failure, and — after a write the
- * database refused — answer WHY, so the merchant hears the same sentence either way.
+ * ("ownerId", lower("name")) among live rows, which is what actually keeps two concurrent saves
+ * from both landing. This function has two jobs left, both about words: ask first so the ordinary
+ * case gets a sentence instead of a failure, and — after a write the database refused — answer
+ * WHY, so the merchant hears the same sentence either way.
+ *
+ * It therefore has to ask the same question the index answers, or it will say one thing while the
+ * database does another. That is why there is no `kind` filter here (judge r1, P1): the index is
+ * unique across every kind, because the broadcast composer lists every kind and shows nothing but
+ * the name. A merchant who picks a name some other kind already holds is owed the plain sentence
+ * up front, not a refusal from the write.
  *
  * Returns `null` if the check itself could not run — the caller refuses rather than guessing.
  */
@@ -446,10 +469,9 @@ async function nameTaken(ownerId: string, segmentId: string, name: string): Prom
     const clashes = await prisma.segment.count({
       where: {
         ownerId,
-        kind: "custom",
         deletedAt: null,
         id: { not: segmentId },
-        name: { equals: name, mode: "insensitive" },
+        name: { equals: literalName(name), mode: "insensitive" },
       },
     });
     return clashes > 0;
