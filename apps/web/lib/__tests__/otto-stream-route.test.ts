@@ -652,3 +652,56 @@ describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
     expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
   });
 });
+
+// ── #791-6 白标铁律:流式那一条也拦得住 ────────────────────────────────────
+//
+// 只洗持久化的那一份是不够的:商家会亲眼看着引擎名一个字一个字流进来,然后刷新
+// 一下它消失了 —— 那比不洗更糟。这里把模型的原始 token 流灌进真的路由,断言写出去
+// 的每一个 text-delta 都不含供应商名,并且拼起来正是洗过的那句话。
+describe("#791-6 供应商名不会流到商家眼前", () => {
+  beforeEach(() => {
+    mocks.finalizeOttoRun.mockResolvedValue({ status: "ok" });
+  });
+
+  it("名字被模型切成多个 token 吐出来,也拼不回原样", async () => {
+    // "Seedance 2.0" 被拆成四个 delta —— 逐块洗名会漏掉的那种切法。
+    mocks.run.mockResolvedValue(
+      streamedRunResult({
+        events: [
+          tokenEvent("Made with See"),
+          tokenEvent("dance 2.0"),
+          tokenEvent(" — want a 9:16 crop?"),
+        ],
+      }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "make it" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+
+    const streamedText = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => p.delta ?? "")
+      .join("");
+
+    expect(streamedText.toLowerCase()).not.toContain("seedance");
+    expect(streamedText).toContain("generation provider");
+    // 尾巴要放出来 —— 过滤器不能吃掉最后一段。
+    expect(streamedText).toContain("want a 9:16 crop?");
+  });
+
+  it("没有秘密的回复逐字节原样流出", async () => {
+    mocks.run.mockResolvedValue(
+      streamedRunResult({ events: [tokenEvent("Two options — "), tokenEvent("warm daylight, or night market?")] }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "ideas" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+    const streamedText = parts.filter((p) => p.type === "text-delta").map((p) => p.delta ?? "").join("");
+
+    expect(streamedText).toBe("Two options — warm daylight, or night market?");
+  });
+});

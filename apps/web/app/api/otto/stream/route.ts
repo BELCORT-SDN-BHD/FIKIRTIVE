@@ -30,6 +30,7 @@ import { prisma, InsufficientCredits } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
+  createProviderNameFilter,
   displayCredits,
   GOAL_PRESETS,
   isGoalKey,
@@ -256,10 +257,22 @@ export async function POST(req: NextRequest): Promise<Response> {
         // post-run extraction saw, so fallback text can never render on top of
         // text the merchant already watched stream in.
         let textWasStreamed = false;
+        // #791-6 白标铁律 (streaming leg): scrubbing only the PERSISTED reply would let the
+        // merchant watch an engine name stream in and then vanish on reload — worse than not
+        // scrubbing. This filter holds back the tail so a name split across two deltas
+        // ("seed" + "ance") cannot slip out one half at a time. It emits exactly what
+        // extractText persists (both call the same core redaction).
+        const providerFilter = createProviderNameFilter();
         const openText = () => { if (!textOpen) { writer.write({ type: "text-start", id: OTTO_TEXT_ID }); textOpen = true; } };
         const openReasoning = () => { if (!reasoningOpen) { writer.write({ type: "reasoning-start", id: OTTO_REASONING_ID }); reasoningOpen = true; } };
         const closeOpenParts = () => {
-          if (textOpen) writer.write({ type: "text-end", id: OTTO_TEXT_ID });
+          if (textOpen) {
+            // Release whatever the scrubber is still holding before the part closes,
+            // or the tail of the reply would never render.
+            const tail = providerFilter.flush();
+            if (tail) writer.write({ type: "text-delta", delta: tail, id: OTTO_TEXT_ID });
+            writer.write({ type: "text-end", id: OTTO_TEXT_ID });
+          }
           if (reasoningOpen) writer.write({ type: "reasoning-end", id: OTTO_REASONING_ID });
           textOpen = false;
           reasoningOpen = false;
@@ -301,8 +314,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // #498 round-4: only a NON-whitespace delta counts as "the merchant
                     // saw text". Some models emit a lone "\n" (or spaces) before parking;
                     // a whitespace-only stream shows nothing readable and must not
-                    // suppress the synthesized fallback below.
+                    // suppress the synthesized fallback below. Judged on the MODEL's delta,
+                    // not on what the scrubber released this tick (the scrubber holds text
+                    // back for a moment, and a held delta is still text the turn produced).
                     if (part.delta.trim().length > 0) textWasStreamed = true;
+                    const safe = providerFilter.push(part.delta);
+                    if (safe) writer.write({ ...part, delta: safe });
+                    continue;
                   }
                   else if (part.type === "reasoning-delta") openReasoning();
                   writer.write(part);

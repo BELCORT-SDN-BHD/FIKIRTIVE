@@ -10,24 +10,19 @@
  * containing this URL." Full detail still goes to console.error (server logs only).
  */
 
+// #791-6: the provider-name pattern lives in @fikirtive/core so Otto's reply path scrubs with
+// the SAME definition this error path does. Imported (not just re-exported) because
+// sanitizeError below calls it; re-exported because this module's callers and tests have
+// always reached it through redact.ts.
+import { redactProviderNames } from "@fikirtive/core";
+
+export { redactProviderNames };
+
 const URL_RE = /https?:\/\/[^\s'"`]+/gi;
-const PROVIDER_NAME_RE =
-  /\b(?:seedance|seedream|byteplus|bytedance|jimeng)(?:(?:provider|client|error)\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]*)?\b(?:[ \t]+\d+(?:\.\d+)*(?:[ \t]+fast)?)?)|\bfal(?:provider|client|error|[./:_-][a-z0-9][a-z0-9./:_-]*)?\b|即梦|\b(?:claude|anthropic)(?:(?:as|via)?(?:api|sdk|model|provider|error|version)\b|(?:[-_./0-9][a-z0-9./:_-]*)\b)|\b(?:claude|anthropic)\b(?=(?:[ \t]+[a-z0-9'-]+)?[ \t]+(?:api|sdk|model|provider|error|version)\b)|(\b(?:api|sdk|model|provider|error|version)\b(?:[ \t]+[a-z0-9'-]+)?[ \t]+)(?:claude|anthropic)\b/giu;
 
 /** Redact signed media URLs (incl. their X-Amz signature query) from a console/log line. */
 export function scrubUrls(s: string): string {
   return s.replace(URL_RE, "<redacted-url>");
-}
-
-/** Replace trade-secret provider/model names while keeping the surrounding error useful. */
-export function redactProviderNames(s: string): string {
-  return s
-    .replace(
-      PROVIDER_NAME_RE,
-      (_match, leadingContext: string | undefined) =>
-        `${leadingContext ?? ""}generation provider`,
-    )
-    .replace(/\bgeneration provider(?:\s+generation provider)+\b/gi, "generation provider");
 }
 
 /**
