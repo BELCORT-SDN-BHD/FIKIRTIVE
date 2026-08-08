@@ -108,6 +108,11 @@ check true "empty total" "$tmp/all-docs.txt" ""
 check true "non-numeric total" "$tmp/all-docs.txt" "abc"
 check true "negative total" "$tmp/all-docs.txt" "-1"
 check true "total with trailing junk" "$tmp/all-docs.txt" "3x"
+check true "total with leading zeros" "$tmp/all-docs.txt" "003"
+# 2^64 + 3. Shell arithmetic wraps this to 3, which would otherwise agree with the three
+# paths in the fixture and buy a "false" — the width cap in pr-scope.sh is what stops it.
+check true "total that wraps modulo 2^64 into agreement" "$tmp/all-docs.txt" "18446744073709551619"
+check true "absurdly wide total" "$tmp/all-docs.txt" "99999999999999999999"
 
 # ── fail closed: an answer we could not derive is never "false" ──
 : >"$tmp/empty.txt"

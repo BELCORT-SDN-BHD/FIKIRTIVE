@@ -73,7 +73,12 @@ if [[ "$seen" -eq 0 ]]; then
   exit 0
 fi
 
-if [[ ! "$total" =~ ^[0-9]+$ ]]; then
+# Plain decimal, no leading zeros, at most 7 digits. The width cap is not cosmetic:
+# `[[ a -ne b ]]` evaluates both sides as shell arithmetic, which wraps modulo 2^64, so
+# a 20-digit total can wrap into agreement with the handful of paths we actually read and
+# buy a "false". Measured: total=18446744073709551618 against a 2-path list compared equal.
+# No PR has ten million files, so anything outside this shape is garbage, not a count.
+if [[ ! "$total" =~ ^(0|[1-9][0-9]{0,6})$ ]]; then
   note "no usable changed_files count (got '$total') — running every gate"
   echo "true"
   exit 0
