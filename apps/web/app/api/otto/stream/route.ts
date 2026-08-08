@@ -34,7 +34,6 @@ import {
   displayCredits,
   GOAL_PRESETS,
   isGoalKey,
-  OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
 } from "@fikirtive/core";
 import {
   otto,
@@ -60,7 +59,7 @@ import {
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
-import { chatHoldShortfallMessage } from "@/lib/credit-format";
+import { ottoFailureMessage } from "@/lib/otto-error-copy";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -356,16 +355,17 @@ export async function POST(req: NextRequest): Promise<Response> {
           if (e instanceof InsufficientCredits) {
             closeOpenParts();
             // #791-7: name the two real numbers. "You're out of credits" was usually false —
-            // a turn HOLDS OTTO_CONVERSATION_TURN_RESERVE_INTERNAL up front, so a merchant
+            // a turn HOLDS a fixed amount up front, so a merchant
             // with 3.9 credits who had spent nothing was told they had none, with their own
             // balance on screen contradicting it. The balance travels on the error from
             // inside the failing reserve, so it is the number the refusal was judged against.
             const error = {
               kind: "insufficient_credits",
-              text: chatHoldShortfallMessage(
-                e.balanceInternal === null ? null : displayCredits(e.balanceInternal),
-                displayCredits(e.requiredInternal ?? OTTO_CONVERSATION_TURN_RESERVE_INTERNAL),
-              ),
+              // #810 P2-2: the sentence itself now comes from the shared mapper, which
+              // ottoTurn/ottoApprove call too — one refusal, one wording, every entry.
+              // (The fallback is unreachable inside this `instanceof` branch; it is here so
+              // the mapper has one shape at every call site.)
+              text: ottoFailureMessage(e, "Couldn't reach Otto — please try again."),
             } satisfies OttoErrorData;
             try {
               await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, error });

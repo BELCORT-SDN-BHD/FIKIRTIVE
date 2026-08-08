@@ -58,6 +58,10 @@ import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirti
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
+// #810 P2-2: the ONE translation of a failed turn into what the merchant reads — shared with
+// the streaming route so an out-of-credits refusal is never reported as a product fault here
+// and as the real two numbers there.
+import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
@@ -1387,7 +1391,7 @@ export async function ottoTurn(raw: unknown): Promise<
       // Log the real cause server-side: the generic client message hides it, and a swallowed
       // error here once masked an Anthropic 529 for hours. The client message stays generic.
       console.error("[ottoTurn] failed:", errSummary(e));
-      return { error: "Couldn't reach Otto — please try again." };
+      return { error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.") };
     }
   });
 }
@@ -1824,7 +1828,7 @@ export async function ottoApprove(raw: unknown): Promise<
       };
     } catch (e) {
       console.error("[ottoApprove] failed:", errSummary(e));
-      return { error: "Couldn't approve — please try again." };
+      return { error: ottoFailureMessage(e, "Couldn't approve — please try again.") };
     }
   });
 }
