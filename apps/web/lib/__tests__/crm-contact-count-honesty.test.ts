@@ -46,7 +46,8 @@ beforeAll(() => {
 
 const { requireOwner } = await import("@/lib/auth-guard");
 const { prisma } = await import("@fikirtive/db");
-const { listContacts } = await import("@/lib/crm-view-data");
+const { listContacts, searchContacts } = await import("@/lib/crm-view-data");
+const { contactPageForOtto } = await import("@/lib/otto-contact-view");
 const { listSegments, previewSegment } = await import("@/lib/segment-actions");
 const ContactsPage = (await import("@/components/crm/contacts-page")).default;
 const segmentsModule = await import("@/components/crm/segments-page");
@@ -211,6 +212,82 @@ describe("#715 contacts list tells the truth about truncation", () => {
 
     expect(markup).toContain("Showing 50 of 65 contacts");
     expect(markup).toContain("Load more contacts");
+  });
+});
+
+/**
+ * #742 — the same truncation, told to the other mouth.
+ *
+ * The page stopped lying in #715. Otto kept doing it: its contact port forwarded the 50 rows
+ * and dropped the counts, so "how many customers do I have" was answered from a list that had
+ * already been cut, and nothing in what Otto held said so. These run the REAL owner-scoped
+ * read over the 65 seeded contacts and check the payload Otto is handed — not a mock of it.
+ */
+describe("#742 what Otto is handed admits the same cut the page admits", () => {
+  it("states the page size and the owner-scoped total, not the page alone", async () => {
+    await asUser(OWNER_EMAIL);
+    const page = contactPageForOtto(await listContacts());
+    if (!("ok" in page)) throw new Error(page.error);
+
+    expect(page.contacts).toHaveLength(50);
+    expect(page.returned).toBe(50);
+    expect(page.totalCount).toBe(SEEDED);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it("publishes the very number the page prints, from the one read behind both", async () => {
+    await asUser(OWNER_EMAIL);
+    const result = await listContacts();
+    if (!("ok" in result)) throw new Error(result.error);
+    const page = contactPageForOtto(result);
+    if (!("ok" in page)) throw new Error(page.error);
+
+    const markup = renderToStaticMarkup(createElement(ContactsPage, {
+      initialState: result,
+    } as ComponentProps<typeof ContactsPage>));
+
+    expect(markup).toContain(`Showing ${page.returned} of ${page.totalCount} contacts`);
+  });
+
+  it("says so out loud when nothing was cut, instead of going quiet either way", async () => {
+    await asUser(OWNER_EMAIL);
+    const page = contactPageForOtto(await listContacts({ query: "Bulk Contact 06" }));
+    if (!("ok" in page)) throw new Error(page.error);
+
+    expect(page.returned).toBe(5); // 060..064
+    expect(page.totalCount).toBe(5);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it("truncates search the same way and owns it the same way", async () => {
+    await asUser(OWNER_EMAIL);
+    const page = contactPageForOtto(await searchContacts({ query: "Bulk Contact" }));
+    if (!("ok" in page)) throw new Error(page.error);
+
+    expect(page.returned).toBe(50);
+    expect(page.totalCount).toBe(SEEDED);
+    expect(page.hasMore).toBe(true);
+  });
+
+  it("counts inside the tenant fence — the total Otto quotes is this owner's own", async () => {
+    await asUser(OTHER_EMAIL);
+    const page = contactPageForOtto(await listContacts());
+    if (!("ok" in page)) throw new Error(page.error);
+
+    expect(page.totalCount).toBe(3);
+    expect(page.returned).toBe(3);
+    expect(page.hasMore).toBe(false);
+    expect(page.contacts.every((contact) => contact.name.startsWith("Other tenant"))).toBe(true);
+  });
+
+  it("hands over dates as text without losing the counts on the way", async () => {
+    await asUser(OWNER_EMAIL);
+    const page = contactPageForOtto(await listContacts());
+    if (!("ok" in page)) throw new Error(page.error);
+
+    expect(page.contacts[0]!.lastSeenAt).toEqual(expect.any(String));
+    expect(page.contacts[0]!.createdAt).toEqual(expect.any(String));
+    expect(page.totalCount).toBe(SEEDED);
   });
 });
 

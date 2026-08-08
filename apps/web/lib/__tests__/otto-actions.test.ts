@@ -730,9 +730,9 @@ describe("buildOttoContext", () => {
         receivedAt: new Date("2026-07-18T01:00:00.000Z"),
       }],
     };
-    mockListContacts.mockResolvedValue({ ok: true, contacts: [contact] });
+    mockListContacts.mockResolvedValue({ ok: true, contacts: [contact], totalCount: 1, nextCursor: null, hasMore: false });
     mockGetContact.mockResolvedValue({ ok: true, contact: detail });
-    mockSearchContacts.mockResolvedValue({ ok: true, contacts: [contact] });
+    mockSearchContacts.mockResolvedValue({ ok: true, contacts: [contact], totalCount: 1, nextCursor: null, hasMore: false });
     mockCreateContact.mockResolvedValue({ ok: true, contactId: contact.id, created: true, possibleDuplicates: [] });
     mockUpdateContact.mockResolvedValue({ ok: true });
     mockImportContacts.mockResolvedValue({ ok: true, importedCount: 1, failedCount: 0, rows: [] });
@@ -775,6 +775,65 @@ describe("buildOttoContext", () => {
       mockSetContactConsent.mock.calls,
       mockSetContactDndFromOtto.mock.calls,
     ])).not.toContain("owner_xyz");
+  });
+
+  // #742 — the Contacts page has admitted its cut since #715 ("Showing 50 of 65 contacts"),
+  // but Otto was handed the 50 rows and nothing else. Asked "how many customers do I have",
+  // it answered off a list that had already been cut, with nothing in the payload saying so.
+  // The counts must cross into the port WITH the rows: one read, one truth, two surfaces.
+  it("hands Otto the same truncation the Contacts page admits, never the page alone", async () => {
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    const row = (index: number) => ({
+      id: `contact-${index}`,
+      name: `Bulk Contact ${index}`,
+      lifecycleStage: "Active",
+      source: "manual",
+      firstTouchCampaignId: null,
+      firstTouchAt: new Date("2026-07-17T00:00:00.000Z"),
+      lastSeenAt: new Date("2026-07-18T00:00:00.000Z"),
+      consentState: {
+        state: "unknown" as const,
+        stateSourceKind: null,
+        evidenceStatus: null,
+        lastReceivedAt: null,
+        unresolvedLegacyOptOut: false,
+      },
+      doNotDisturb: false,
+      totalOrdersMyr: null,
+      createdAt: new Date("2026-07-17T00:00:00.000Z"),
+      identities: [],
+    });
+    const page = Array.from({ length: 50 }, (_, index) => row(index));
+    mockListContacts.mockResolvedValue({
+      ok: true, contacts: page, totalCount: 65, nextCursor: "cursor-50", hasMore: true,
+    });
+    mockSearchContacts.mockResolvedValue({
+      ok: true, contacts: page.slice(0, 10), totalCount: 42, nextCursor: "cursor-10", hasMore: true,
+    });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_xyz",
+      projectId: "proj_xyz",
+      threadId: "thread_xyz",
+    });
+    const contacts = ctx.contacts!;
+
+    // 50 rows in hand, 65 in the merchant's records — both numbers, or the answer is a guess.
+    await expect(contacts.list({})).resolves.toMatchObject({
+      ok: true, returned: 50, totalCount: 65, hasMore: true,
+    });
+    // Search truncates the same way and must own it the same way.
+    await expect(contacts.search({ query: "Bulk" })).resolves.toMatchObject({
+      ok: true, returned: 10, totalCount: 42, hasMore: true,
+    });
+
+    // An untruncated read says so rather than going quiet: hasMore false, and the two counts agree.
+    mockListContacts.mockResolvedValue({
+      ok: true, contacts: page.slice(0, 3), totalCount: 3, nextCursor: null, hasMore: false,
+    });
+    await expect(contacts.list({})).resolves.toMatchObject({
+      ok: true, returned: 3, totalCount: 3, hasMore: false,
+    });
   });
 
   it("injects Campaign reads and zero-cost proposal writes through the shared authenticated actions", async () => {
