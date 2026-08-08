@@ -198,6 +198,10 @@ const VALIDATION_ERROR_COPY: Record<string, string> = {
   INVALID_VALUE: "This value is not valid for this field.",
   UNKNOWN_TYPE: "This trigger, condition, or action type is not supported.",
   LIMIT_EXCEEDED: "This rule has more conditions or steps than the workflow limit allows.",
+  // #723 — the compiler used to report an empty steps list with LIMIT_EXCEEDED, so a merchant
+  // whose rule had no steps at all was told it had too many. Acting on that sentence (removing
+  // steps) only takes them further from a rule that works.
+  EMPTY_STEPS: "This rule has no steps yet. Add at least one step before validating.",
   DUPLICATE_STEP_KEY: "Each step needs a different key.",
   DEPENDENCY_UNAVAILABLE:
     "A referenced business-hours policy or message template is unavailable. The rule cannot be published until that exact reference is available.",
@@ -270,7 +274,19 @@ export function reasonCodeCopy(code: string | null | undefined): string {
   return `This workflow stopped with reason ${humanizeCode(code)}.`;
 }
 
+/**
+ * The ONE place a workflow refusal becomes something a merchant can read (#753).
+ *
+ * Every key is either a refusal `customer-workflow-service` can return or NETWORK, the one
+ * failure that never reached a server at all; `lib/__tests__/workflow-format.test.ts` pins the
+ * two sets equal in both directions. That check is the fix for how this broke: PR #751 added
+ * AUTHORIZATION_CHANGED and SUMMARY_POLICY_UNREADABLE server-side, nothing required copy for
+ * them, and merchants read "The workflow request failed (AUTHORIZATION_CHANGED)". A code names
+ * nothing a merchant can act on — same family as #683/#684, where internal ledger notes reached
+ * the customer. Each sentence says what happened and, where there is one, what to do next.
+ */
 const ERROR_COPY: Record<string, string> = {
+  NETWORK: "The request could not finish. Please retry.",
   NOT_AUTHORIZED: "You need to sign in again to use workflows.",
   ACTION_DENIED: "Only the workspace owner can use this workflow action.",
   RESOURCE_NOT_FOUND: "This workflow is not available. It may not exist, or you may not have access.",
@@ -279,17 +295,27 @@ const ERROR_COPY: Record<string, string> = {
   ROUTINE_KEY_IN_USE:
     "A Routine with this name already exists on this workflow. Open that Routine below, or choose a different name.",
   IDEMPOTENCY_CONFLICT:
-    "This operation conflicts with an earlier workflow action. Nothing was repeated.",
+    "This operation conflicts with an earlier workflow action. Nothing was repeated. Refresh to see where that earlier action ended up.",
   AUTHORITY_UNAVAILABLE:
-    "The exact rule, dependencies, scope, budget, or authorization could not be verified. Nothing was activated.",
+    "The exact rule, dependencies, scope, budget, or authorization could not be verified. Nothing was activated. Refresh and try again.",
+  AUTHORIZATION_CHANGED:
+    "What this Routine may do changed after you opened this confirmation, so nothing was authorized. Reopen it, read the new details, and confirm again.",
+  SUMMARY_POLICY_UNREADABLE:
+    "This Routine's run-summary setting could not be put into plain language, so nothing was authorized. Prepare a new authorization, and tell support if it keeps happening.",
   ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED:
     "Active Routines still reference this workflow. Review every Routine before archiving.",
   SEND_PATH_UNAVAILABLE:
     "Real customer delivery is not connected in this simulated workspace. Nothing was sent.",
 };
 
+/** Every code the table above answers for. Exported so its coverage is pinned, not assumed. */
+export const WORKFLOW_ERROR_COPY_CODES: readonly string[] = Object.keys(ERROR_COPY);
+
 export function workflowErrorMessage(code: string): string {
-  return ERROR_COPY[code] ?? `The workflow request failed (${code}). Please retry.`;
+  // An unmapped code still reaches the merchant as words, never as the identifier itself — the
+  // same unknown-value rule the admin dashboard uses for a role it does not recognise (#755).
+  return ERROR_COPY[code]
+    ?? `The workflow request could not finish — ${humanizeCode(code)}. Please retry, and tell support what you were doing if it keeps happening.`;
 }
 
 export function isDenialErrorCode(code: string): boolean {

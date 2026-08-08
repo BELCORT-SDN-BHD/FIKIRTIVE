@@ -151,6 +151,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function countPhrase(value: unknown, noun: string): string {
+  if (typeof value !== "number") return `? ${noun}s`;
+  return `${value} ${value === 1 ? noun : `${noun}s`}`;
+}
+
+/**
+ * "Up to 1 action and 1 recipient per run" (#723).
+ *
+ * The Limits row of the hashed authorization facts and the draft envelope the merchant reviews
+ * just above it are the same sentence, so it is written once. Both said "1 actions and 1
+ * recipients" — and one action, one recipient is what the dialog itself defaults to, so the
+ * plural-only form was the first sentence every merchant read. A count that is not a number is
+ * still shown as "?", never invented.
+ */
+export function routineLimitsSummary(maxActions: unknown, maxRecipients: unknown): string {
+  return `Up to ${countPhrase(maxActions, "action")} and ${countPhrase(maxRecipients, "recipient")} per run`;
+}
+
 /**
  * The stored summary policy, read as WIDE as it is written. The write path accepts any
  * non-empty JSON object and hashes it whole, so a reader that only understands five keys would
@@ -263,7 +281,7 @@ const ROW_SPECS: readonly RowSpec[] = [
     fields: ["scopeJson"],
     build: (s) => {
       const scope = isRecord(s.scopeJson) ? s.scopeJson : {};
-      return `Up to ${String(scope.maxActions ?? "?")} actions and ${String(scope.maxRecipients ?? "?")} recipients per run`;
+      return routineLimitsSummary(scope.maxActions, scope.maxRecipients);
     },
   },
   {
