@@ -59,10 +59,11 @@ export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
  * silent when another purpose holds her own grant (r2), claim she "has never" decided, which no
  * `unknown` can establish (r3), or promise an exclusion the product does not enforce (r4).
  *
- * NOTE for whoever fixes the send-side gap (tracked separately): the empty state in
- * `contact-profile-page.tsx` still says the opt-out "keeps this contact out of audiences", which is
- * the same r4 claim this constant just dropped. It renders on this very screen for a fenced contact
- * with no events; it was left alone here only because it is outside this ticket's surface.
+ * The empty state in `contact-profile-page.tsx` carried the same r4 promise and was corrected with
+ * this one — it now points at this note rather than restating it, so the claim cannot come back by
+ * that route. The underlying product gap (a channel-only segment selects a fenced contact, and the
+ * send gate answers `risk` rather than `block` because it never reads the legacy column) is tracked
+ * in #806 and is not something this copy may paper over.
  */
 export const CRM_PRE_LEDGER_OPT_OUT_NOTE =
   "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. When Fikirtive evaluates segment rules for WhatsApp marketing, it counts this contact as opted out until the customer opts in through their own channel.";

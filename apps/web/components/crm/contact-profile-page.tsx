@@ -248,11 +248,20 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
                 <div className="mt-5 grid gap-3">
                   {contact.consentEvents.length === 0 ? (
                     /*
-                      #752 — "The current state remains unknown" is true of the ledger and false
-                      of the product for a fenced contact, who is kept out of every audience. The
-                      card above now carries the reason; this line must not contradict it.
+                      #752 — "The current state remains unknown" is true of the ledger but says
+                      nothing about why a fenced contact is treated the way she is, so the fenced
+                      branch points at the note above instead of restating it.
+
+                      It may not restate it as a PROMISE either. This line used to say the opt-out
+                      "keeps this contact out of audiences", which the product does not enforce: the
+                      fence reaches the matcher only as the `marketingConsent` fact, so a segment
+                      whose rules never mention contactability selects her anyway (see #806). Both
+                      halves of what is left are checkable — the list really is empty, and the
+                      legacy opt-out really does predate this history. The note above renders under
+                      exactly this same `unresolvedLegacyOptOut` condition, so "above" is guaranteed
+                      by construction, not by hope.
                     */
-                    <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center"><History className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">No consent facts recorded</h2><p className="mt-2 text-sm text-muted-foreground">{contact.consentState.unresolvedLegacyOptOut ? "There is nothing to show here: the opt-out that keeps this contact out of audiences predates this history." : "The current state remains unknown."}</p></div>
+                    <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center"><History className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">No consent facts recorded</h2><p className="mt-2 text-sm text-muted-foreground">{contact.consentState.unresolvedLegacyOptOut ? "There is nothing to show here: the opt-out described above predates this history." : "The current state remains unknown."}</p></div>
                   ) : contact.consentEvents.map((event) => (
                     <div key={event.id} className="rounded-xl border border-border p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold">{event.action === "grant" ? "Grant recorded" : "Revoke recorded"}</p><p className="mt-1 text-xs text-muted-foreground">{event.channel} · {event.purpose}</p></div><Badge variant={event.evidenceStatus === "verified" ? "success" : event.evidenceStatus === "asserted" ? "warning" : "outline"}>{titleCase(event.evidenceStatus)}</Badge></div>

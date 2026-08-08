@@ -99,18 +99,17 @@ const FENCE_NOTE =
  *    first opt-in it also cannot see;
  *  - r4 promised a gate the product does not have — see the channel-only segment case below.
  *
- * `out of audiences until` is deliberately the r4 needle rather than the bare `out of audiences`:
- * the SAME false promise also lives in `contact-profile-page.tsx`'s empty state ("…keeps this
- * contact out of audiences predates this history"), which renders on this very screen for a fenced
- * contact with no events. That copy is outside this ticket's sanctioned two-file surface and is
- * reported for routing rather than silently changed here — but it is why this needle is narrow.
+ * The needle for r4 is the bare `out of audiences`, which bans the claim ANYWHERE on the profile.
+ * It was briefly narrowed to `out of audiences until` because the same false promise also lived in
+ * the empty state of `contact-profile-page.tsx`; that copy is fixed in this commit, so the needle
+ * is back to full width and no phrasing of the promise can return by either route.
  */
 const REJECTED_CLAIMS = [
   "No consent facts were recorded",
   "Nothing in this consent history came from the customer",
   "has never opted in or out",
   "opts in again",
-  "out of audiences until",
+  "out of audiences",
 ];
 
 /** The segment a merchant uses to look at the people who are held out. */
@@ -302,6 +301,9 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     expect(profile).toContain(FENCE_NOTE);
     expect(profile).not.toContain("The current state remains unknown.");
     expect(profile).not.toContain(">Unknown<");
+    // Chandra has no events, so the empty state renders here too — it is part of the same screen
+    // and is held to the same standard as the note above it.
+    for (const claim of REJECTED_CLAIMS) expect(profile).not.toContain(claim);
   });
 
   it("keeps saying it when the merchant recorded the same opt-out again, which never lifts the fence", async () => {
