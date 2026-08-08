@@ -149,9 +149,24 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
       expect(prices[0]).toBe(count * INTERNAL_PER_DISPLAY);
     }
   });
-  it("signup welcome grant is 20 displayed credits (#543 Founder decision; internal = ×INTERNAL_PER_DISPLAY)", () => {
-    expect(SIGNUP_GRANT_CREDITS).toBe(20 * INTERNAL_PER_DISPLAY);
-    expect(displayCredits(SIGNUP_GRANT_CREDITS)).toBe(20);
+  it("signup welcome grant is 25 displayed credits (#791 Founder decision 2026-08-08; internal = ×INTERNAL_PER_DISPLAY)", () => {
+    expect(SIGNUP_GRANT_CREDITS).toBe(25 * INTERNAL_PER_DISPLAY);
+    expect(displayCredits(SIGNUP_GRANT_CREDITS)).toBe(25);
+  });
+
+  // #791-3:注册页承诺的是「a conversation with Otto, an image, and a short video」。
+  // 那句话必须买得起 —— 一场对话 ≈ 9.5、一张图 1、一条 5s 720p 视频 11,合计 21.5。
+  // 这条把承诺与价目表钉在一起:任何一边再动,这里先红。
+  it("赠额买得起注册页承诺的那一整轮:一场对话 + 一张图 + 一条 5s 视频", () => {
+    const oneImage = pricedGenCredits({ kind: "IMAGE", model: "seedream", count: 1, videoOptions: null });
+    const oneVideo = pricedGenCredits({
+      kind: "VIDEO", model: "seedance-2-mini", count: 1,
+      videoOptions: { seconds: 5, resolution: "720p" },
+    });
+    // 一整场对话(不是一轮)的实测花费 ≈ 9.5 显示 credits —— 这个数是 spend.ts 自己
+    // 的注释里记的那笔账,#543 当初就是按它定的 20cr。
+    const oneConversation = 9.5 * INTERNAL_PER_DISPLAY;
+    expect(SIGNUP_GRANT_CREDITS).toBeGreaterThanOrEqual(oneConversation + oneImage + oneVideo);
   });
   // #644:记账基准改真后视频两档一度跌到 24.4% / 13.6%,Founder 于 2026-08-06 裁决调价
   // (8→11cr、14→22cr,PR #655 评论留档),两档回到 45.0%,待裁决名单已清空。断言仍是

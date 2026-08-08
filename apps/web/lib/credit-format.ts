@@ -30,7 +30,7 @@ export function creditsLabel(n: number): string {
  *
  *  It replaced three copies of one line that got three things wrong at once (#699 quotes the
  *  original verbatim). It called the balance a closed-beta allowance — there is no beta and the
- *  credits are sold; the signup page calls the same 20 "free starter credits". It told the
+ *  credits are sold; the signup page calls the same welcome grant "free credits". It told the
  *  merchant to reply, but a toast is not a mailbox, so that pointed nowhere. And at the one
  *  moment they had already decided to spend, it sent them to wait on a human instead of to
  *  Billing, one click away in the sidebar. This single function keeps the three exits from

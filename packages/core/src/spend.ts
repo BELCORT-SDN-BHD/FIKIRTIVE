@@ -172,16 +172,20 @@ export function displayCredits(internal: number): number {
 
 /** A new org's one-time welcome grant (internal credits, 1 = $0.01).
  *
- *  20 DISPLAYED credits = 20 × INTERNAL_PER_DISPLAY internal — the #543 Founder decision
- *  (2026-07-31): enough for one complete Otto experience (a full conversation + image +
- *  critique ≈ 9.5 displayed, one 5s video = 8 displayed at the time), and it lands only
- *  AFTER the merchant verifies their email.
- *  NOTE (#644 裁决 2026-08-06):5s 视频已由 8 → 11 显示 credits,所以 20cr 不再同时够
- *  「一整场对话 + 一条视频」(9.5 + 11 ≈ 20.5)。赠额本身是 #543 的 Founder 决定,本次
- *  一格没动 —— 是否跟着调是另一次裁决。
+ *  25 DISPLAYED credits = 25 × INTERNAL_PER_DISPLAY internal — the #791 Founder decision
+ *  (2026-08-08). It lands only AFTER the merchant verifies their email.
  *
- *  Supersedes the closed-beta seed (1000 → 100 in #66 → 20 here). It is granted
+ *  Why 25 and not 20: the signup page promises "a full run: a conversation with Otto, an
+ *  image, and a short video". #543 sized the grant at 20 when that run cost ≈ 9.5 (a full
+ *  conversation) + 8 (a 5s video). #644 then repriced 5s video 8 → 11 displayed credits,
+ *  and the promise quietly stopped being buyable: 9.5 + 1 + 11 ≈ 21.5 > 20. The #543 note
+ *  said so in this very comment and left the grant alone, so the page kept promising a run
+ *  the balance could not pay for. 25 makes the sentence on the signup page true again, with
+ *  room for the run to cost a little more than the measured average.
+ *  (spend.test.ts asserts exactly this: grant ≥ conversation + image + 5s video.)
+ *
+ *  Supersedes the closed-beta seed (1000 → 100 in #66 → 20 in #543 → 25 here). It is granted
  *  idempotently in the org-bootstrap path under the stable key "signup:<orgId>"; the key
  *  is deliberately UNCHANGED, because a new key would re-grant to every org that already
- *  received the old amount. */
-export const SIGNUP_GRANT_CREDITS = 20 * INTERNAL_PER_DISPLAY;
+ *  received the old amount — existing workspaces keep what they were given. */
+export const SIGNUP_GRANT_CREDITS = 25 * INTERNAL_PER_DISPLAY;
