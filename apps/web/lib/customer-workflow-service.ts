@@ -466,6 +466,16 @@ function authorizationHash(material: RoutineAuthorizationMaterial): string {
   }
 }
 
+/** The exact input the authorization hash is computed over, for the confirmation page to read
+ *  from. Same builder, so the page and the signature can never describe different envelopes. */
+function authorizationSnapshot(material: RoutineAuthorizationMaterial) {
+  try {
+    return createRoutineAuthorizationSnapshot(material);
+  } catch (error) {
+    return translateCoreError(error);
+  }
+}
+
 function workflowDefinitionSlug(value: unknown): string {
   const slug = requiredString(value, 128).toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]{0,127}$/.test(slug)) fail("INVALID_ARGUMENT");
@@ -777,6 +787,108 @@ export function workflowLifecycleService(
         predecessorId = predecessor.supersedesRoutineId;
       }
       return { routine: projectRoutine(row), predecessors };
+    });
+  }
+
+  /**
+   * #720 判官 r2 — the read behind the human confirmation dialog.
+   *
+   * It returns the authorization hash's OWN input, built by the same
+   * `createRoutineAuthorizationSnapshot` the hash is computed over, so the confirmation page can
+   * derive what it shows from what is signed instead of maintaining a second description that
+   * can drift. `summaryPolicyJson` is carried whole here — the write path accepts any non-empty
+   * JSON object and hashes all of it, so a reader that narrowed it would be describing something
+   * the merchant is not actually authorizing.
+   *
+   * Alongside it: the human names for the ids inside the scope. An id that no longer resolves
+   * comes back with `name: null` so the page can say "we could not resolve this" rather than
+   * quietly dropping a customer or segment the authorization still covers. This is a read —
+   * it activates nothing and changes nothing.
+   */
+  async function getRoutineAuthorizationPreview(
+    principal: CustomerWorkflowPrincipal,
+    input: GetRoutineInput,
+  ) {
+    const routineId = requiredString(input?.routineId);
+    return db.$transaction(async (tx) => {
+      await requireWorkflowPermission(tx, principal, "workflow.read");
+      const routine = await tx.routine.findFirst({
+        where: { id: routineId, ownerId: principal.ownerId },
+      });
+      if (!routine) fail("RESOURCE_NOT_FOUND");
+      const workflowRevision = await tx.workflowRevision.findFirst({
+        where: {
+          id: routine.workflowRevisionId,
+          ownerId: principal.ownerId,
+          workflowDefinitionId: routine.workflowDefinitionId,
+        },
+        select: { revision: true, contentHash: true, dependencyHash: true },
+      });
+      if (!workflowRevision) fail("AUTHORITY_UNAVAILABLE");
+      const scope = canonicalizeRoutineScope(routine.scopeJson);
+      if (!scope) fail("AUTHORITY_UNAVAILABLE");
+      // Throws (→ AUTHORITY_UNAVAILABLE) rather than returning a partial envelope: a
+      // confirmation page must never describe an authorization the hash would reject.
+      const snapshot = authorizationSnapshot(authorizationMaterial(routine, workflowRevision));
+
+      const connectionIds = [
+        ...new Set(
+          scope.channelScopes
+            .map((entry) => entry.providerConnectionId)
+            .filter((id): id is string => id !== null),
+        ),
+      ];
+      const [organization, definition, contacts, segments, connections] = await Promise.all([
+        tx.organization.findFirst({ where: { id: principal.ownerId }, select: { name: true } }),
+        tx.workflowDefinition.findFirst({
+          where: { id: routine.workflowDefinitionId, ownerId: principal.ownerId },
+          select: { name: true },
+        }),
+        scope.contactIds.length === 0
+          ? Promise.resolve([])
+          : tx.contact.findMany({
+              where: { ownerId: principal.ownerId, id: { in: scope.contactIds } },
+              select: { id: true, name: true },
+            }),
+        scope.segmentIds.length === 0
+          ? Promise.resolve([])
+          : tx.segment.findMany({
+              where: { ownerId: principal.ownerId, id: { in: scope.segmentIds }, deletedAt: null },
+              select: { id: true, name: true },
+            }),
+        connectionIds.length === 0
+          ? Promise.resolve([])
+          : tx.channelConnection.findMany({
+              where: { ownerId: principal.ownerId, id: { in: connectionIds } },
+              select: { id: true, displayName: true, externalId: true },
+            }),
+      ]);
+
+      const contactNames = new Map(contacts.map((row) => [row.id, row.name]));
+      const segmentNames = new Map(segments.map((row) => [row.id, row.name]));
+      const connectionNames = new Map(
+        connections.map((row) => [row.id, row.displayName?.trim() || row.externalId?.trim() || null]),
+      );
+
+      return {
+        snapshot,
+        // The CAS base that goes with the envelope just read, so the confirmation cannot be
+        // sent against a revision the merchant never saw.
+        routineRowRevision: routine.rowRevision,
+        names: {
+          workspaceName: organization?.name?.trim() || null,
+          workflowName: definition?.name?.trim() || null,
+          contacts: scope.contactIds.map((id) => ({ id, name: contactNames.get(id) ?? null })),
+          segments: scope.segmentIds.map((id) => ({ id, name: segmentNames.get(id) ?? null })),
+          channels: scope.channelScopes.map((entry) => ({
+            channel: entry.channel,
+            providerConnectionId: entry.providerConnectionId,
+            accountName: entry.providerConnectionId === null
+              ? null
+              : connectionNames.get(entry.providerConnectionId) ?? null,
+          })),
+        },
+      };
     });
   }
 
@@ -2388,6 +2500,7 @@ export function workflowLifecycleService(
   return {
     listRoutines,
     getRoutine,
+    getRoutineAuthorizationPreview,
     listRoutineRuns,
     getContactJourneyStates,
     listBusinessHoursPolicies,

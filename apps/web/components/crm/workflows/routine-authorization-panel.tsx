@@ -16,6 +16,7 @@ import {
   activateRoutine,
   createRoutineDraft,
   getRoutine,
+  getRoutineAuthorizationPreview,
   killRoutine,
   listRoutines,
   listWorkflowRevisions,
@@ -36,10 +37,13 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import {
   dateTimeLabel,
-  humanizeCode,
   routineStatusPresentation,
   workflowErrorMessage,
 } from "./workflow-format";
+import {
+  describeAuthorization,
+  type AuthorizationFacts,
+} from "./routine-authorization-facts";
 
 type RevisionsResult = Awaited<ReturnType<typeof listWorkflowRevisions>>;
 type Revision = Extract<RevisionsResult, { ok: true }>["resource"][number];
@@ -60,40 +64,6 @@ type EnvelopeDraft = {
   maxRecipients: number;
   expiresAt: Date;
 };
-
-/** The merchant-facing name of a channel this authorization covers. Never a provider connection
- *  id, and never a guess: an unrecognized channel is shown as its own recorded name. */
-const CHANNEL_LABELS: Record<string, string> = { whatsapp: "WhatsApp" };
-
-function channelLabel(channel: string): string {
-  return CHANNEL_LABELS[channel] ?? humanizeCode(channel);
-}
-
-const SUMMARY_FIELD_LABELS: Record<string, string> = {
-  mode: "Detail",
-  afterEachRun: "After each run",
-  scope: "Covers",
-  destination: "Shown in",
-};
-
-const SUMMARY_VALUE_COPY: Record<string, string> = {
-  counts_only: "counts only — how many actions ran, and nothing about individual customers",
-  workflow_activity: "a summary in workflow activity",
-};
-
-/** Read the summary policy that is actually stored on this authorization. The panel used to
- *  print one fixed sentence regardless of what the server held, so a merchant approving a
- *  counts-only Routine was shown a promise of per-run workflow activity instead (§5.1 requires
- *  the summary policy itself to be confirmed). An unrecognized value is shown as recorded. */
-function summaryPolicyLabel(policy: PersistedRoutine["summaryPolicy"]): string {
-  const parts: string[] = [];
-  for (const key of ["mode", "afterEachRun", "scope", "destination"] as const) {
-    const value = policy?.[key];
-    if (typeof value !== "string" || value.length === 0) continue;
-    parts.push(`${SUMMARY_FIELD_LABELS[key]}: ${SUMMARY_VALUE_COPY[value] ?? humanizeCode(value)}`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : "No summary policy is recorded on this authorization.";
-}
 
 const ACTION_OPTIONS: Array<{ value: ActionKind; label: string; description: string }> = [
   { value: "conversation_reply", label: "Reply in a conversation", description: "Prepare a workflow reply for one verified customer conversation." },
@@ -145,32 +115,12 @@ function EnvelopeReview({ draft, revision }: { draft: EnvelopeDraft; revision: R
   );
 }
 
-/** #720 / §5.1 — the exact envelope that activateRoutine is about to authorize, read verbatim
- *  from the server's own record of it. Every row here is the stored value: the channels by
- *  their recorded names (not "non-zero means WhatsApp") and the stored summary policy (not one
- *  fixed sentence). If this cannot be read, the dialog refuses to confirm rather than describe
- *  an envelope it does not have. */
-function AuthorizationReview({ routine }: { routine: RoutineDetail["routine"] }) {
-  const scope = routine.scope;
-  const audience = [
-    scope.contactIds.length ? `${scope.contactIds.length} exact contact ${scope.contactIds.length === 1 ? "reference" : "references"}` : null,
-    scope.segmentIds.length ? `${scope.segmentIds.length} exact segment ${scope.segmentIds.length === 1 ? "reference" : "references"}` : null,
-  ].filter(Boolean).join(" and ");
-
-  return (
-    <ReviewGrid
-      rows={[
-        ["Rule", `Revision ${routine.workflowRevision.revision}`],
-        ["Allowed work", scope.actionKinds.map(actionLabel).join(", ") || "Nothing"],
-        ["Channel", scope.channelScopes.map((entry) => channelLabel(entry.channel)).join(", ") || "No channel"],
-        ["Audience", audience || "No contacts or segments"],
-        ["Limits", `Up to ${scope.maxActions} actions and ${scope.maxRecipients} recipients per run`],
-        ["Budget", `${routine.maxCreditsPerRun} credits per run · ${routine.maxCreditsPerMonth} credits per month`],
-        ["Expiry", routine.authorization.expiresAt ? dateTimeLabel(routine.authorization.expiresAt) : "No expiry recorded"],
-        ["Summary", summaryPolicyLabel(routine.summaryPolicy)],
-      ]}
-    />
-  );
+/** #720 判官 r2 / §5.1 — the exact envelope activateRoutine is about to sign, rendered from
+ *  `routine-authorization-facts`, whose rows are derived from the authorization hash's own
+ *  input set. Nothing shown here is assembled by this component, so a hashed field cannot be
+ *  displayed as something else — or omitted. */
+function AuthorizationReview({ facts }: { facts: AuthorizationFacts }) {
+  return <ReviewGrid rows={facts.rows.map((row) => [row.label, row.value] as [string, string])} />;
 }
 
 export default function RoutineAuthorizationPanel({
@@ -201,7 +151,8 @@ export default function RoutineAuthorizationPanel({
   // The activation dialog is driven by the authoritative single-Routine read, never by a
   // summary or by this session's form state — §5.1 requires the merchant to confirm the exact
   // scope and summary policy that will be authorized.
-  const [activationRoutine, setActivationRoutine] = useState<RoutineDetail["routine"] | null>(null);
+  const [activationTarget, setActivationTarget] = useState<{ id: string; rowRevision: number } | null>(null);
+  const [activationFacts, setActivationFacts] = useState<AuthorizationFacts | null>(null);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activationLoading, setActivationLoading] = useState(false);
   const [reauthorizeTarget, setReauthorizeTarget] = useState<PersistedRoutine | null>(null);
@@ -311,14 +262,20 @@ export default function RoutineAuthorizationPanel({
     setMode("activate");
     setErrorCode(null);
     setConfirmationChecked(false);
-    setActivationRoutine(null);
+    setActivationTarget(null);
+    setActivationFacts(null);
     setActivationError(null);
     setConfirmationOpen(true);
     setActivationLoading(true);
     try {
-      const result = await getRoutine({ routineId });
-      if (!result.ok) setActivationError(result.error);
-      else setActivationRoutine(result.resource.routine);
+      const result = await getRoutineAuthorizationPreview({ routineId });
+      if (!result.ok) {
+        setActivationError(result.error);
+        return;
+      }
+      const snapshot = result.resource.snapshot as unknown as Record<string, unknown>;
+      setActivationFacts(describeAuthorization(snapshot, result.resource.names));
+      setActivationTarget({ id: routineId, rowRevision: result.resource.routineRowRevision });
     } catch {
       setActivationError("NETWORK");
     } finally {
@@ -338,7 +295,10 @@ export default function RoutineAuthorizationPanel({
   }
 
   async function confirmAuthorization() {
-    const target = mode === "activate" ? activationRoutine : reauthorizeTarget;
+    const target = mode === "activate" ? activationTarget : reauthorizeTarget;
+    // Fail closed: an envelope with a fact we cannot state in plain language is never signable
+    // from this dialog, however many boxes are ticked.
+    if (mode === "activate" && (activationFacts === null || activationFacts.unexplained.length > 0)) return;
     const draft = mode === "activate" ? null : buildEnvelope();
     if (!target || !confirmationChecked) return;
     if (mode === "reauthorize" && !draft) {
@@ -364,7 +324,8 @@ export default function RoutineAuthorizationPanel({
         setErrorCode(result.error);
         return;
       }
-      setActivationRoutine(null);
+      setActivationTarget(null);
+      setActivationFacts(null);
       setReauthorizeTarget(null);
       setConfirmationOpen(false);
       setSetupOpen(false);
@@ -478,7 +439,7 @@ export default function RoutineAuthorizationPanel({
       {!setupOpen ? (
         <div className="mt-5 flex gap-3">
           <Button type="button" disabled={disabled || validRevisions.length === 0} onClick={() => { setReauthorizeTarget(null); setMode("activate"); setSetupOpen(true); }}><ShieldCheck />Set up a new Routine</Button>
-          {activationRoutine ? <Button type="button" disabled={disabled || busy !== null} onClick={() => void reviewActivation(activationRoutine.id)}><ShieldCheck />Review activation</Button> : null}
+          {activationTarget ? <Button type="button" disabled={disabled || busy !== null} onClick={() => void reviewActivation(activationTarget.id)}><ShieldCheck />Review activation</Button> : null}
         </div>
       ) : (
         <Card className="mt-5 border-brand/25">
@@ -528,18 +489,28 @@ export default function RoutineAuthorizationPanel({
               // Fail closed: describe the stored envelope, or say plainly that it could not be
               // read. Never a placeholder that looks like an authorization.
               if (activationError) {
+                // 判官 r2 P3 — the merchant reads what happened, not the machine's word for it.
                 return (
                   <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
                     <p className="font-semibold">This authorization could not be read</p>
-                    <p className="mt-1">{activationError === "NETWORK" ? "The request could not finish." : workflowErrorMessage(activationError)} Nothing was activated, and nothing about its scope is assumed.</p>
-                    <p className="mt-1 font-mono text-xs">Error code: {activationError}</p>
+                    <p className="mt-1">{activationError === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(activationError)} Nothing was activated, and nothing about its scope is assumed.</p>
                   </div>
                 );
               }
-              if (!activationRoutine) {
+              if (!activationFacts) {
                 return <p className="text-sm text-muted-foreground">Reading the exact authorization this will activate…</p>;
               }
-              return <AuthorizationReview routine={activationRoutine} />;
+              return (
+                <>
+                  <AuthorizationReview facts={activationFacts} />
+                  {activationFacts.unexplained.length > 0 ? (
+                    <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+                      <p className="font-semibold">Part of this authorization cannot be shown in plain language</p>
+                      <p className="mt-1">This Routine records something this screen cannot explain, so it cannot be activated here. Nothing was activated. Set up a new Routine, or ask support to look at this one.</p>
+                    </div>
+                  ) : null}
+                </>
+              );
             }
             const draft = buildEnvelope();
             return draft ? <EnvelopeReview draft={draft} revision={validRevisions.find((revision) => revision.id === draft.workflowRevisionId) ?? null} /> : null;
@@ -547,7 +518,7 @@ export default function RoutineAuthorizationPanel({
           {mode === "reauthorize" && reauthorizeTarget ? <div className="flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>This creates a new, unchangeable authorization and revokes authorization {reauthorizeTarget.authorization.revision}. The new Routine will visibly supersede {reauthorizeTarget.id}.</span></div> : null}
           {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive"><p className="font-semibold">The Routine action could not finish</p><p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p><p className="mt-1 font-mono text-xs">Error code: {errorCode}</p></div> : null}
           <label className="flex cursor-pointer gap-3 rounded-xl border border-border p-4"><input className="mt-1 size-4 accent-[var(--brand)]" type="checkbox" checked={confirmationChecked} onChange={(event) => setConfirmationChecked(event.target.checked)} /><span><span className="block text-sm font-semibold">I reviewed this exact authorization</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">I understand the scope, zero-credit budget, expiry, and after-run summary policy.</span></span></label>
-          <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null || (mode === "activate" && (activationLoading || !activationRoutine))} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
+          <DialogFooter><Button type="button" variant="secondary" disabled={busy !== null} onClick={() => setConfirmationOpen(false)}>Not now</Button><Button type="button" disabled={!confirmationChecked || busy !== null || (mode === "activate" && (activationLoading || !activationFacts || activationFacts.unexplained.length > 0))} onClick={() => void confirmAuthorization()}>{busy === "activate" || busy === "reauthorize" ? <LoaderCircle className="animate-spin" /> : <Check />}{mode === "reauthorize" ? "Reauthorize Routine" : "Activate Routine"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </section>

@@ -457,6 +457,36 @@ function ConversationWorkspace({
   const assignableMembers = members.filter((member) => orgRolesAllow(member.roles, "inbox.reply"));
   const directoryFailed = !initialDirectory.ok;
 
+  // 判官 r2 P2 — one shared list of legal TARGETS, but each action carries its own actor rule,
+  // because the server's rules for the two differ (customer-inbox-service.ts assignConversation
+  // vs handOffConversation). A member without inbox.manage who is already the assignee may
+  // legitimately hand the conversation on, yet Assign would be refused for the same person and
+  // the same target. Every check below calls the same `orgRolesAllow` the server calls; no
+  // second copy of the rule lives here.
+  const selfRoles = directory?.self.roles ?? [];
+  const selfMembershipId = directory?.self.membershipId ?? null;
+  const canManageInbox = orgRolesAllow(selfRoles, "inbox.manage");
+  const canReply = orgRolesAllow(selfRoles, "inbox.reply");
+  const isAssignee = assignee !== null && assignee.id === selfMembershipId;
+  const selectedTarget = targetMembershipId.trim();
+  // assignConversation: reply capability, and without inbox.manage only claiming an unassigned
+  // conversation for yourself.
+  const canAssignSelected =
+    canReply && selectedTarget !== "" &&
+    (canManageInbox || (selectedTarget === selfMembershipId && assignee === null));
+  // The same call with a null target is how unassigning happens, and it is manage-only.
+  const canUnassign = canReply && canManageInbox && assignee !== null;
+  // handOffConversation: reply capability, and without inbox.manage you must be the one holding
+  // the conversation right now.
+  const canHandOffSelected = canReply && selectedTarget !== "" && (canManageInbox || isAssignee);
+  const assignmentRuleNote = canManageInbox
+    ? null
+    : assignee === null
+      ? "You can take this conversation yourself. Only a workspace owner or admin can assign it to someone else."
+      : isAssignee
+        ? "You are holding this conversation, so you can hand it to a teammate. Only a workspace owner or admin can reassign or unassign it."
+        : "A teammate is holding this conversation. Only a workspace owner or admin can reassign it.";
+
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
       <div className="mx-auto max-w-6xl">
@@ -573,18 +603,19 @@ function ConversationWorkspace({
                     </>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !targetMembershipId.trim()} onClick={() => void doAssign(targetMembershipId.trim())}>
+                    <Button type="button" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !canAssignSelected} onClick={() => void doAssign(selectedTarget)}>
                       {busy === "assign" ? <LoaderCircle className="animate-spin" /> : <UserPlus />}Assign
                     </Button>
-                    <Button type="button" size="sm" variant="ghost" disabled={actionsDisabled || busy !== null || !assignee} onClick={() => void doAssign(null)}>
+                    <Button type="button" size="sm" variant="ghost" disabled={actionsDisabled || busy !== null || !canUnassign} onClick={() => void doAssign(null)}>
                       {busy === "assign" ? <LoaderCircle className="animate-spin" /> : <UserMinus />}Unassign
                     </Button>
                   </div>
+                  {assignmentRuleNote ? <p className="text-xs text-muted-foreground">{assignmentRuleNote}</p> : null}
                 </div>
                 <form className="grid gap-2 border-t border-border pt-3" onSubmit={doHandOff}>
                   <label className="text-xs font-semibold text-muted-foreground">Hand off with a note</label>
                   <Input value={handoffNote} onChange={(event) => setHandoffNote(event.target.value)} maxLength={1000} placeholder="Note for the next teammate (optional)" aria-label="Hand-off note" disabled={actionsDisabled} />
-                  <Button type="submit" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !targetMembershipId.trim()}>
+                  <Button type="submit" size="sm" variant="secondary" disabled={actionsDisabled || busy !== null || !canHandOffSelected}>
                     {busy === "handoff" ? <LoaderCircle className="animate-spin" /> : <UserCheck />}Hand off to the selected teammate
                   </Button>
                 </form>

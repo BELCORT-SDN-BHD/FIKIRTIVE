@@ -182,12 +182,18 @@ export default function WorkflowDetailPage({
   // an archived workflow keeps its Routine active AND still gets new runs created for it. So no
   // branch here may claim archiving prevents runs: that reads as reassurance and is precisely
   // what would stop a merchant from going and killing a Routine that is still acting.
+  // 判官 r2 P2 — say only what this page can prove. `activeRoutineCount` counts Routines whose
+  // switch is ON (status active, kill switch not engaged). It does NOT establish that they can
+  // currently produce a run: an authorization can still be past its expiry, pinned to a revision
+  // whose fingerprints have drifted, or short of budget. Nor does a zero count establish that no
+  // authorization exists — a killed or revoked Routine still carries its authorization record.
+  // So the copy reports the switch, names archiving's true effect, and stops there.
   const statusSummary = archived
     ? routineReadError
-      ? "Archived — Routine status could not load, so whether anything can still act is unknown. Archiving alone never stops a Routine."
+      ? "Archived — Routine status could not load, so whether any Routine here is still switched on is unknown. Archiving alone never stops a Routine."
       : activeRoutineCount > 0
-        ? `Archived — archiving did not stop the ${activeRoutineCount} active ${activeRoutineCount === 1 ? "Routine" : "Routines"} here. ${activeRoutineCount === 1 ? "It" : "They"} can still act and still start new runs. Kill each one below to stop it.`
-        : "Archived — no Routine is authorized here, so nothing acts. Archiving alone never stops a Routine."
+        ? `Archived — ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"} here ${activeRoutineCount === 1 ? "is" : "are"} still switched on. Archiving did not stop ${activeRoutineCount === 1 ? "it" : "them"}. Kill each one below to stop it.`
+        : "Archived — no Routine here is switched on. Archiving alone never stops a Routine."
     : routineReadError
       ? "Routine status could not load."
       : activeRoutineCount > 0

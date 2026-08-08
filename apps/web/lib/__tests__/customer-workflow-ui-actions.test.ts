@@ -35,6 +35,7 @@ const APPROVED_EXPORTS = [
   "getBusinessHoursPolicy",
   "getContactJourneyStates",
   "getRoutine",
+  "getRoutineAuthorizationPreview",
   "getWorkflowDefinition",
   "killRoutine",
   "listBusinessHoursPolicies",

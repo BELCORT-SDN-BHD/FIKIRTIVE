@@ -591,6 +591,41 @@ describe("customer workflow lifecycle and dispatch", () => {
     expect(killed.resource.killSwitchEngaged).toBe(true);
   });
 
+  // #720 判官 r2 P1-2 — the confirmation read must be as WIDE as the write. createRoutineDraft
+  // accepts any non-empty JSON summary policy and the authorization hash covers all of it, so a
+  // read that narrowed it would describe an envelope the merchant is not actually signing. The
+  // list projection deliberately stays a narrow summary; the authorization preview must not.
+  it("returns the whole stored summary policy in the authorization preview, not a narrowed copy", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "widepolicy",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+    );
+    const stored = { policy: "x", schemaVersion: 2, mode: "counts_only" };
+    const draft = await workflows.createRoutineDraft(principalA, {
+      workflowDefinitionId: lifecycle.definition.id,
+      workflowRevisionId: lifecycle.revision.id,
+      routineKey: "routine_widepolicy_second",
+      scopeJson: routineScope("broadcast_run", [CONTACT_PASS]),
+      maxCreditsPerRun: 0,
+      maxCreditsPerMonth: 0,
+      summaryPolicyJson: stored,
+    });
+
+    const preview = await workflows.getRoutineAuthorizationPreview(principalA, {
+      routineId: draft.resource.id,
+    });
+    // The hash's own input, byte for byte what was written.
+    expect(preview.snapshot.summaryPolicyJson).toEqual(stored);
+    expect(preview.routineRowRevision).toBe(draft.resource.rowRevision);
+
+    // Names for every id inside the scope, so the page can say who it covers.
+    expect(preview.names.contacts).toEqual([{ id: CONTACT_PASS, name: expect.any(String) }]);
+    expect(preview.names.workflowName).toBe(lifecycle.definition.name);
+  });
+
   it("requires a real owner for activation and creates a new immutable envelope on reauthorization", async () => {
     const lifecycle = await createLifecycle(
       principalA,

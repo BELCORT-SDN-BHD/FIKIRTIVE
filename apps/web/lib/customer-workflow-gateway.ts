@@ -139,6 +139,14 @@ export async function getRoutine(input: GetRoutineInput) {
   );
 }
 
+/** #720 判官 r2 — the authorization hash's own input plus the human names inside it, for the
+ *  confirmation dialog. Read-only and owner-scoped like every other read here. */
+export async function getRoutineAuthorizationPreview(input: GetRoutineInput) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).getRoutineAuthorizationPreview(principal, input),
+  );
+}
+
 export async function listRoutineRuns(input: ListRoutineRunsInput) {
   return runRead((principal) =>
     workflowLifecycleService(prisma).listRoutineRuns(principal, input),
