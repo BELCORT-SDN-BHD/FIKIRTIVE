@@ -106,12 +106,18 @@ export function parseCanvasActionKey(key: string): CanvasActionKey | null {
   return CANVAS_KEY_RE.test(key) ? { key } : null;
 }
 
+/** The attempt-INDEPENDENT half of a factory key: every attempt at the same logical cell shares
+ *  it. Split out so a caller asking "was this logical cell ever dispatched?" derives the prefix
+ *  from the same line the dispatcher does, instead of inventing a second copy of the formula. */
+export function factoryLogicalPrefix(batchId: string, cellIndex: number): string {
+  return `batch:${shortHash("factory-cell-v1", `${batchId.length}:${batchId}:${cellIndex}`)}:attempt:`;
+}
+
 /** Stable factory identity: 128-bit logical-cell hash + 128-bit caller attempt hash.
  *  The resulting key is exactly 79 characters, inside genRequest's 80-character cap. */
 export function factoryAttemptKey(batchId: string, cellIndex: number, attemptId: string): FactoryAttemptKey {
-  const logicalHash = shortHash("factory-cell-v1", `${batchId.length}:${batchId}:${cellIndex}`);
   const attemptHash = shortHash("factory-attempt-v1", `${attemptId.length}:${attemptId}`);
-  const logicalPrefix = `batch:${logicalHash}:attempt:`;
+  const logicalPrefix = factoryLogicalPrefix(batchId, cellIndex);
   return { key: `${logicalPrefix}${attemptHash}`, logicalPrefix };
 }
 

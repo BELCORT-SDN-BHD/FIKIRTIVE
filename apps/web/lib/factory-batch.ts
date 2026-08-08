@@ -34,6 +34,7 @@ import { pricedGenCredits, GEN_MODELS, GEN_VIDEO_MODELS, type GenSpendInput } fr
 import type { PrismaClient } from "@fikirtive/db";
 import {
   factoryAttemptKey,
+  factoryLogicalPrefix,
   factoryMaterialMatches,
   normalizeFactoryMaterial,
   FACTORY_HISTORY_SELECT,
@@ -220,12 +221,25 @@ export function quoteCell(cell: BatchCell): number {
   return pricedGenCredits(cellSpendInput(cell));
 }
 
-/** Stable ids are domain-separated and length-delimited before the existing helper hashes them.
- *  The persisted key is still the reserved 79-char factory family parsed by startGen. */
+/** Stable ids are domain-separated and length-delimited before the existing helper hashes them. */
+function stableCellScope(batchId: string, stableId: string): string {
+  return `factory-entry-v1:${batchId.length}:${batchId}:${stableId.length}:${stableId}`;
+}
+
+/** The logical (attempt-independent) key prefix a stable-id cell dispatches under.
+ *
+ *  Exported because "has this durable id already been dispatched — and therefore already
+ *  reserved credits?" is a question callers legitimately need to ask BEFORE offering an action
+ *  that would rewrite the plan behind paid work (#712's undo). One derivation, two readers:
+ *  a second hand-written copy of this formula would go stale silently and the reader would
+ *  answer "never dispatched" for work that really was charged. */
+export function stableCellLogicalPrefix(batchId: string, stableId: string): string {
+  return factoryLogicalPrefix(stableCellScope(batchId, stableId), 0);
+}
+
+/** The persisted key is still the reserved 79-char factory family parsed by startGen. */
 function stableCellAttemptKey(args: OrchestrateArgs, cell: GenCell): FactoryAttemptKey {
-  const id = cell.idempotencyId as string;
-  const stableScope = `factory-entry-v1:${args.batchId.length}:${args.batchId}:${id.length}:${id}`;
-  return factoryAttemptKey(stableScope, 0, args.attemptId);
+  return factoryAttemptKey(stableCellScope(args.batchId, cell.idempotencyId as string), 0, args.attemptId);
 }
 
 interface StableCellPlan {

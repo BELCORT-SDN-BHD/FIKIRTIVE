@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, CalendarDays, Megaphone, Plus, Target } from "lucide-react";
 import type { listCampaigns } from "@/lib/campaign-view-data";
+import { CAMPAIGN_STATUS_BADGE, isCampaignStatus } from "@/lib/campaign-lifecycle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,10 +19,7 @@ function dateLabel(value: string) {
 }
 
 function statusVariant(status: string): "outline" | "success" | "warning" | "destructive" {
-  if (status === "ACTIVE") return "success";
-  if (status === "DONE") return "outline";
-  if (status === "CANCELLED") return "destructive";
-  return "warning";
+  return isCampaignStatus(status) ? CAMPAIGN_STATUS_BADGE[status] : "warning";
 }
 
 export default function CampaignListPage({ initialState }: { initialState: ListResult }) {
