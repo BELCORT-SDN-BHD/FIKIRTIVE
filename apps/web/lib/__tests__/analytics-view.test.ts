@@ -424,20 +424,41 @@ describe("buildInsightText", () => {
     const series = [day("2026-06-01", 100), day("2026-06-02", 200), day("2026-06-03", 900)];
     const out = buildInsightText(series)!;
     expect(out).not.toBeNull();
-    expect(out.text).toContain("2026-06-03");
+    expect(out.text).toContain("Jun 3");
     expect(out.text).toContain("6.0×");
     expect(out.text).toContain("your typical post");
-    expect(out.prefill).toContain("2026-06-03");
+    expect(out.prefill).toContain("Jun 3");
     expect(out.prefill).toContain("900"); // reached 900 people
+  });
+
+  // #696: the banner and the prefilled chat sentence used to print Meta's raw
+  // `date_start` ("2026-06-30") while Schedule on the same screen wrote "Fri, Aug 7".
+  // Both sentences now go through the product's date formatter, and neither may leak
+  // the machine shape back out.
+  it("writes the day the way the product writes days — never the raw 2026-06-30", () => {
+    const out = buildInsightText([day("2026-06-29", 1000), day("2026-06-30", 9000)])!;
+    expect(out.text).toContain("Jun 30");
+    expect(out.text).not.toContain("2026-06-30");
+    expect(out.prefill).toContain("Jun 30");
+    expect(out.prefill).not.toContain("2026-06-30");
   });
 
   it("single-day series: multiplier guards against divide-by-zero (rest avg → min 1)", () => {
     const out = buildInsightText([day("2026-06-01", 500)])!;
     expect(out).not.toBeNull();
     // no crash, produces a finite multiplier and names the day
-    expect(out.text).toContain("2026-06-01");
+    expect(out.text).toContain("Jun 1");
     expect(out.text).not.toContain("NaN");
     expect(out.text).not.toContain("Infinity");
+  });
+
+  // A day Meta never gave us in the expected shape must still read as itself, not as
+  // "undefined NaN" — the formatter hands anything unrecognised straight back.
+  it("a date that isn't a plain calendar day is shown as given, not mangled", () => {
+    const out = buildInsightText([day("last week", 500)])!;
+    expect(out.text).toContain("last week");
+    expect(out.text).not.toContain("undefined");
+    expect(out.text).not.toContain("NaN");
   });
 });
 

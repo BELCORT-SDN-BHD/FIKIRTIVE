@@ -3,6 +3,7 @@
 // Task 3/4 consume these to render server components + the SVG chart.
 
 import type { DailyMetric, AccountMetrics } from "./meta-graph";
+import { formatCalendarDay } from "./schedule-view";
 
 export const RANGES = [
   { key: "7d", label: "Last 7 days", preset: "last_7d" },
@@ -319,10 +320,14 @@ export function buildInsightText(series: DailyMetric[]): { text: string; prefill
   const mult = best.reach / Math.max(restAvg, 1);
 
   const multStr = `${mult.toFixed(1)}×`;
+  // #696: say the day the way the rest of the product says days ("Jun 30"), not the raw
+  // "2026-06-30" Meta handed us. Same formatter as Schedule, Spend history and Canvas
+  // lineage — one place decides how this product writes a date.
+  const dayLabel = formatCalendarDay(best.date);
   // Copy tracks the math: `mult` divides by the average of the OTHER days (best
   // excluded), so we say "your typical post", not "your average" (which would read
   // as including the best day). See analytics-view.test.ts for the pinned wording.
-  const text = `Your best day was ${best.date} — it reached ${multStr} more than your typical post. Want me to make more like it?`;
-  const prefill = `Make more content like my ${best.date} post — it reached ${best.reach} people.`;
+  const text = `Your best day was ${dayLabel} — it reached ${multStr} more than your typical post. Want me to make more like it?`;
+  const prefill = `Make more content like my ${dayLabel} post — it reached ${best.reach} people.`;
   return { text, prefill };
 }
