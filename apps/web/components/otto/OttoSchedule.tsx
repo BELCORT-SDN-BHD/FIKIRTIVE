@@ -12,7 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import type { OttoViewKey } from "./OttoApp";
-import type { StuffItem } from "@/lib/stuff-items";
+import { isGenerationBackedItem, type StuffItem } from "@/lib/stuff-items";
 import {
   listScheduledPosts,
   listOwnerTargets,
@@ -204,12 +204,17 @@ export function OttoSchedule({
   const [composer, setComposer] = useState<ComposerSeed | null>(null);
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
 
-  // gen-media lookup (generationId → thumb) for post previews + the media picker. Keyed by
+  // Generated-media lookup (generationId → thumb) for post previews + the media picker. Keyed by
   // generationId — what post.media rows actually store (see the lookups in QueueList/Calendar).
+  // #704: every source whose items ARE a generation, not just Library history. Otto's
+  // schedulePosts accepts any generationId the merchant owns, and an ad build's id IS a
+  // Generation.id — reading only `gen` left those posts showing a grey block for media that
+  // was right there. Recognising media is not the same as offering it: mediaChoices below
+  // still lists only what the picker has always listed.
   const mediaLookup = useMemo<MediaLookup>(() => {
     const m: MediaLookup = new Map();
     for (const s of stuffItems) {
-      if (s.source === "gen" && s.generationId) m.set(s.generationId, { url: s.url, kind: s.mediaKind });
+      if (isGenerationBackedItem(s)) m.set(s.generationId, { url: s.url, kind: s.mediaKind });
     }
     return m;
   }, [stuffItems]);
