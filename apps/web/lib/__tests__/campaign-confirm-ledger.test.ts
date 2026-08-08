@@ -37,6 +37,8 @@ const { prisma, settleCredits, refundReservation } = await import("@fikirtive/db
 // 推导 —— 手抄一份公式就等于测了一个不存在的键。
 const { stableCellLogicalPrefix } = await import("../factory-batch");
 const { deriveCampaignBatchId } = await import("../campaign-gen-identity");
+const { campaignDispatchLeaseHolder, CAMPAIGN_DISPATCH_LEASE_MS, BATCH_IDLE_STATUS } =
+  await import("../campaign-approval-lock");
 
 const IMG = 1; // one image cell = 1 displayed credit
 const VID_720_5S = 11; // #644 裁决 2026-08-06
@@ -635,5 +637,109 @@ describe("#749 判官 r3 P1 格间交错:终态只有两种,禁止部分扣费+�
     expect("error" in later && later.error).not.toMatch(/still starting its items/i);
     expect(await reservedThisRun(world.ownerId, start)).toBe(0);
     expect(await jobCount(world.ownerId)).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #749 判官 r3 P1 —— 租约的过期与归还:失效方向只能是「更保守」
+// ---------------------------------------------------------------------------
+/**
+ * 租约挡的是「另一次派发正在进行」。它一定会有失效的时候(进程崩了、归还写失败),所以要证
+ * 的不是「永不失效」,而是**每一种失效都往保守那一侧倒**:
+ *   - 残留的租约 ⇒ 下一次确认被挡住(最多让商家重新确认一次),绝不放行任何一笔钱;
+ *   - 租约老死 ⇒ 商家能继续用,不需要人工介入 —— 否则一次崩溃就把这个战役永久钉死。
+ */
+describe("#749 判官 r3 P1 租约的过期与归还", () => {
+  /** 直接改这一行的 status/updatedAt。Prisma 的 @updatedAt 会覆盖写入值,所以走原生 SQL。 */
+  async function forceLease(batchId: string, status: string, ageMs: number) {
+    await prisma.$executeRawUnsafe(
+      `UPDATE "GenerationBatch" SET "status" = $1, "updatedAt" = now() - ($2 || ' milliseconds')::interval WHERE "id" = $3`,
+      status,
+      String(ageMs),
+      batchId,
+    );
+  }
+
+  async function batchRow(ownerId: string, batchId: string) {
+    return prisma.generationBatch.findFirstOrThrow({ where: { id: batchId, ownerId } });
+  }
+
+  it("活性判据:闲置与认不出来的值都不算租约,自己的租约过了时限也不算", () => {
+    const now = Date.now();
+    const fresh = new Date(now - 1_000);
+    const stale = new Date(now - CAMPAIGN_DISPATCH_LEASE_MS - 1_000);
+
+    expect(campaignDispatchLeaseHolder({ status: BATCH_IDLE_STATUS, updatedAt: fresh }, now)).toBeNull();
+    expect(campaignDispatchLeaseHolder({ status: "dispatching:att-1", updatedAt: fresh }, now)).toBe("att-1");
+    // 过了时限 —— 崩掉的那次派发不该把战役永久钉死。
+    expect(campaignDispatchLeaseHolder({ status: "dispatching:att-1", updatedAt: stale }, now)).toBeNull();
+    // 认不出来的值当作没有租约:唯一的写入者是这个模块,而把陌生值读成「有人占着」会永久
+    // 钉死这个战役 —— 那比让商家重新确认一次严重得多。钱那一侧的 fail-closed 靠「认领失败
+    // 即整批拒绝」,不靠这一行。
+    expect(campaignDispatchLeaseHolder({ status: "whatever", updatedAt: fresh }, now)).toBeNull();
+  });
+
+  it("残留的租约挡住下一次确认,而且一分钱都没动(保守方向)", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+    ]);
+    const quoted = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const batchId = deriveCampaignBatchId(world.campaignId, world.projectId);
+
+    // 上一次派发崩在半路:分组行留下了一把没人归还的租约,而且它还很新。
+    await prisma.generationBatch.create({
+      data: { id: batchId, ownerId: world.ownerId, projectId: world.projectId, name: "crashed run" },
+    });
+    await forceLease(batchId, "dispatching:ghost-attempt", 1_000);
+
+    const start = new Date();
+    const res = await confirmCampaignGeneration(signed(world, quoted));
+
+    expect("error" in res && res.error).toMatch(/still starting its items/i);
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
+    expect(await jobCount(world.ownerId)).toBe(0);
+  });
+
+  it("租约老死之后商家照常能做 —— 一次崩溃不会把这个战役永久钉死", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+    ]);
+    const quoted = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const batchId = deriveCampaignBatchId(world.campaignId, world.projectId);
+    await prisma.generationBatch.create({
+      data: { id: batchId, ownerId: world.ownerId, projectId: world.projectId, name: "crashed run" },
+    });
+    await forceLease(batchId, "dispatching:ghost-attempt", CAMPAIGN_DISPATCH_LEASE_MS + 5_000);
+
+    const start = new Date();
+    const res = await confirmCampaignGeneration(signed(world, quoted));
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result.dispatched).toBe(1);
+    expect(await reservedThisRun(world.ownerId, start)).toBe(IMG * INTERNAL_PER_DISPLAY);
+  });
+
+  it("派发结束就归还,而且只归还自己那一把", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+    ]);
+    const quoted = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const batchId = deriveCampaignBatchId(world.campaignId, world.projectId);
+
+    const res = await confirmCampaignGeneration(signed(world, quoted));
+    if (!("ok" in res)) throw new Error(res.error);
+    // 做完了 ⇒ 这一行回到闲置,下一次确认不必等它老死。
+    expect((await batchRow(world.ownerId, batchId)).status).toBe(BATCH_IDLE_STATUS);
+
+    // 别人的租约不许被这一批的归还顺手清掉:再确认一次(全复用、零扣费),中途把租约换成
+    // 别人的,归还只匹配自己那把 token,所以它必须原封不动。
+    const replay = await quoteFor(world.campaignId, { projectId: world.projectId });
+    betweenDispatchedCells(async () => { await forceLease(batchId, "dispatching:someone-else", 1_000); });
+    const start = new Date();
+    const second = await confirmCampaignGeneration(signed(world, replay));
+
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
+    expect((await batchRow(world.ownerId, batchId)).status).toBe("dispatching:someone-else");
+    expect(second).toBeDefined();
   });
 });
