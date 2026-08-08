@@ -37,6 +37,7 @@ import {
   accountsUnreadable,
   approvalFor,
   autoPublishAllowed,
+  blockedConnection,
   canOfferConnect,
   channelUnavailableBlocker,
   connectionBlockerStatus,
@@ -342,6 +343,7 @@ export function OttoSchedule({
   const isConnected = connectedChannels.length > 0;
   // Same single source, same "unknown never unlocks anything" rule as everything else on the screen.
   const autoPublishAvailable = autoPublishAllowed(accounts);
+  const headerBlocker = blockedConnection(accounts);
 
   function openNew() {
     setComposer({
@@ -412,6 +414,19 @@ export function OttoSchedule({
                   className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
                 >
                   Retry
+                </button>
+              </span>
+            ) : headerBlocker ? (
+              // Connected, but not usable. Stated on the screen itself so a merchant with an empty
+              // schedule still learns it — and pointed at the flow that actually fixes it.
+              <span role="status" className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
+                {connectionBlockerStatus(headerBlocker)}
+                <button
+                  type="button"
+                  onClick={() => onNavigate("connections")}
+                  className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
+                >
+                  Reconnect
                 </button>
               </span>
             ) : null}

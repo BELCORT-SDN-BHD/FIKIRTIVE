@@ -945,6 +945,17 @@ describe("#741 r5 连着但用不了:说重新授权/补权限,不说「你没�
       ),
     ).toEqual([]);
   });
+
+  it("排程是空的也要说得出来:Header 自己写明状态并给出重新连接的路", async () => {
+    // 一个还没排过帖的商家不会打开任何 composer,也没有 Plan 卡片 —— 这件事只能由屏幕自己说。
+    mocks.listScheduledPosts.mockResolvedValue([]);
+    mocks.listOwnerTargets.mockResolvedValue({ targets: [], channelStates: { instagram: "needs_reconnect", facebook: "needs_reconnect", x: "ok" } });
+    await renderSchedule();
+
+    expect(document.body.textContent).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.status);
+    await click(buttonByText("Reconnect", document.body));
+    expect(navigated).toEqual(["connections"]);
+  });
 });
 
 // ── #741 判官 r5 [P1] unavailable 必须有状态、有退化路径、不吃旧快照 ─────────────

@@ -251,6 +251,19 @@ export function accountsUnreadable(accounts: ConnectedAccounts): boolean {
 }
 
 /**
+ * A connection that exists but can't publish, if any — so the screen itself (not only an opened
+ * post) can state the fact and point at the fix. A merchant with an empty schedule would otherwise
+ * see nothing at all about an expired connection: no chip, no Connect prompt, no reason.
+ */
+export function blockedConnection(accounts: ConnectedAccounts): ConnectionBlocker | null {
+  for (const c of CONNECTABLE_CHANNEL_META) {
+    const view = channelConnection(accounts, c.id);
+    if (view.phase === "blocked") return view.blocker;
+  }
+  return null;
+}
+
+/**
  * Whether the auto-publish switch may be operated at all: a real publishable channel AND the
  * platform's publish permission, judged by the SAME shared gate the settings copy explains. False
  * while anything is unknown — the switch is a promise about what happens without the merchant
