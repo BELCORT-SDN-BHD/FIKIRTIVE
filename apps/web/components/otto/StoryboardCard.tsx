@@ -15,6 +15,7 @@ import {
 } from "@/lib/storyboard-gate1-actions";
 import { coworkGenerate } from "@/lib/cowork-actions";
 import { creditsLabel } from "@/lib/credit-format";
+import { TopUpNotice } from "@/components/exits/Exits";
 import { canAffordPack } from "./pack-credit-math";
 
 export interface StoryboardCardProps {
@@ -706,11 +707,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
           <div className="mt-4 border-t border-border pt-4">
             {confirming && children ? (
               <div className="flex flex-col gap-3">
-                {!affordAll && (
-                  <div role="alert" className="text-[0.875rem] text-[var(--error-soft-foreground)]">
-                    Not enough credits — top up to generate these frames.
-                  </div>
-                )}
+                {!affordAll && <TopUpNotice need="generate these frames" />}
                 <div className="text-[0.875rem] text-foreground">
                   Generate {children.filter((c) => !c.spent).length} {children.filter((c) => !c.spent).length === 1 ? "frame" : "frames"} for {creditsLabel(totalCredits)}? This will spend real credits.
                 </div>
@@ -736,11 +733,7 @@ export function StoryboardCard({ cardId, payload, balanceUsd, onBalanceRefresh }
           <div className="mt-4 border-t border-border pt-4">
             {videoConfirming && videoChildren ? (
               <div className="flex flex-col gap-3">
-                {!affordAllVideos && (
-                  <div role="alert" className="text-[0.875rem] text-[var(--error-soft-foreground)]">
-                    Not enough credits — top up to make these videos.
-                  </div>
-                )}
+                {!affordAllVideos && <TopUpNotice need="make these videos" />}
                 <div className="text-[0.875rem] text-foreground">
                   Make {videoChildren.filter((c) => !c.spent).length} {videoChildren.filter((c) => !c.spent).length === 1 ? "video" : "videos"} for {creditsLabel(videoTotalCredits)}? This will spend real credits.
                 </div>

@@ -4,6 +4,7 @@ import type { AccountInfo } from "@/lib/account-actions";
 import { SettingsPage } from "./settings/SettingsPage";
 import { buildSettingsSections } from "./settings/sections";
 import { getAccountViewData, type AccountViewData } from "@/lib/account-view-data";
+import { supportMailto } from "@/lib/exits";
 import { OttoConfirmDialog } from "./OttoPromptDialog";
 
 export function OttoAccount({ account, previewData }: { account: AccountInfo | null; previewData?: AccountViewData }) {
@@ -48,7 +49,7 @@ export function OttoAccount({ account, previewData }: { account: AccountInfo | n
         confirmLabel="Open email request"
         tone="danger"
         onConfirm={() => {
-          location.assign("mailto:tao@belcort.com?subject=Delete%20my%20account");
+          location.assign(supportMailto("Delete my account"));
         }}
       />
     </>

@@ -5,6 +5,8 @@ import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
 import { creditsLabel, formatCredits } from "@/lib/credit-format";
+import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
+import { SupportExit } from "@/components/exits/Exits";
 import type { CreditPack } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
@@ -92,7 +94,12 @@ export function buildSettingsSections(args: {
               {packs.length > 0 ? (
                 <a className="cv-set-btn" href="/billing">Top up</a>
               ) : (
-                <span className="cv-set-hint">No credit packs available right now.</span>
+                // #687 — the same sentence /billing shows for the same state, plus the one
+                // exit that is actually open. An empty shelf must not be a full stop for a
+                // merchant who has already decided to pay.
+                <span className="cv-set-hint">
+                  {NO_CREDIT_PACKS_MESSAGE} <SupportExit subject="I want to buy credits" />
+                </span>
               )}
             </div>
           ),
@@ -256,7 +263,14 @@ export function buildSettingsSections(args: {
           kind: "action",
           id: "del",
           label: "Delete account",
-          hint: "Hides your workspace. Contact us to fully erase.",
+          // #686 — "Contact us" used to be a bare span: the merchant was told to reach us
+          // and given nothing to click. Same sentence, now a live way out.
+          hint: (
+            <>
+              Hides your workspace.{" "}
+              <SupportExit subject="Erase my workspace" label="Contact us" /> to fully erase.
+            </>
+          ),
           button: "Delete",
           tone: "danger",
           onClick: onDeleteAccountRequest,
