@@ -21,6 +21,7 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -61,12 +62,18 @@ describe("Otto 的连接状态口径", () => {
   //
   // 把每个会读 Meta 的技能真的跑一遍 `needsReconnect`,断言它回答的是「连着但过期」而不是
   // 「你从没连过」。控制流怎么写、措辞怎么改,都逃不过这一条。
+  //
+  // #767:两个 proposal 技能(propose-ad-build / propose-meta-action)同样处理
+  // `notConnected` / `needsReconnect`,却一直不在这张矩阵里 —— 它们各自的测试只断言文本
+  // 含 `connect`,而错误的 "Meta isn't connected yet" 也含 `connect`,照样绿。
   it.each([
     ["list-meta-pages", "metaPages", (list: () => unknown) => ({ metaPages: { list } })],
     ["meta-list-objects", "metaAds", (list: () => unknown) => ({ metaAds: { list } })],
     ["meta-insights", "metaInsights", (get: () => unknown) => ({ metaInsights: { get } })],
     ["meta-ad-performance", "metaPerformance", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
     ["meta-expert", "metaPerformance", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
+    ["propose-ad-build", "metaBuild", (propose: () => unknown) => ({ metaBuild: { propose } })],
+    ["propose-meta-action", "metaPropose", (metaPropose: () => unknown) => ({ metaPropose })],
   ])("%s:needsReconnect 的回答是「连着但过期」,不是「从没连过」", async (name, _port, makeCtx) => {
     const mod: Record<string, unknown> = await import(`./${name}.js`);
     const execute = Object.entries(mod).find(([k]) => k.startsWith("execute"))?.[1] as
@@ -79,6 +86,10 @@ describe("Otto 的连接状态口径", () => {
     const text = JSON.stringify(res);
     expect(res.blocked, `${name} 应当把它归为 blocked`).toBe("needs_reconnect");
     expect(text, `${name} 不许说「还没连过」`).not.toMatch(/isn't connected yet|not connected yet|have not connected/i);
+    // 不只是「没说错」:必须说的就是共享权威那句 —— 与连接页同一组词(#767)。
+    expect(text, `${name} 必须用共享的连接状态文案`).toContain(
+      CONNECTION_BLOCKER_COPY.needs_reconnect.status,
+    );
   });
 
   it("凡是会说「还没连 Meta」的技能,都必须先问过共享权威", () => {
