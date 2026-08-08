@@ -27,7 +27,6 @@ vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundR
 // import-time deps the requeue path does not exercise before the throw:
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set<string>()) }));
 
 import { handleGen } from "./gen.js";

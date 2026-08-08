@@ -3,9 +3,19 @@ import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
-    constructor(message = "Not enough credits.") {
+    // #791-7: the real InsufficientCredits carries the two numbers the merchant is told
+    // (what they hold, what the turn needs). The double must carry them too, or this suite
+    // would pass while the route printed "undefined credits".
+    readonly requiredInternal: number | null;
+    readonly balanceInternal: number | null;
+    constructor(
+      message = "Not enough credits.",
+      detail?: { requiredInternal?: number | null; balanceInternal?: number | null },
+    ) {
       super(message);
       this.name = "InsufficientCredits";
+      this.requiredInternal = detail?.requiredInternal ?? null;
+      this.balanceInternal = detail?.balanceInternal ?? null;
     }
   }
 
@@ -101,6 +111,15 @@ function tokenEvent(delta: string) {
   return {
     type: "raw_model_stream_event" as const,
     data: { type: "output_text_delta", delta },
+  };
+}
+
+/** One reasoning item — the shape behind the merchant-visible "Otto's thinking" block. */
+function reasoningEvent(text: string) {
+  return {
+    type: "run_item_stream_event" as const,
+    name: "reasoning_item_created",
+    item: { rawItem: { content: [{ text }] } },
   };
 }
 
@@ -400,7 +419,7 @@ describe("POST /api/otto/stream", () => {
     expect(res.status).toBe(200);
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "You're out of credits." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
     });
     expect(mocks.withLlmBudget).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -423,10 +442,10 @@ describe("POST /api/otto/stream", () => {
         data: expect.objectContaining({
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "You're out of credits.",
+          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "You're out of credits." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
           }),
         }),
       }),
@@ -446,7 +465,7 @@ describe("POST /api/otto/stream", () => {
 
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "You're out of credits." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
     });
     expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
     expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
@@ -455,14 +474,34 @@ describe("POST /api/otto/stream", () => {
           threadId: "thread_existing",
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "You're out of credits.",
+          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "You're out of credits." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
           }),
         }),
       }),
     );
+  });
+
+  // #791-7: "You're out of credits." was usually false — a turn HOLDS 4 credits up front, so a
+  // merchant with 3.9 who had spent nothing was told they had none, with their balance on
+  // screen contradicting it. The refusal now carries the balance it was judged against.
+  it("names the merchant's REAL balance and the real hold when the reserve refuses", async () => {
+    mocks.withLlmBudget.mockRejectedValue(
+      new mocks.MockInsufficientCredits(undefined, { requiredInternal: 40, balanceInternal: 39 }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as Array<{
+      type: string;
+      data?: { kind?: string; text?: string };
+    }>;
+
+    const error = parts.find((p) => p.type === "data-error");
+    expect(error?.data?.text).toBe(
+      "You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.",
+    );
+    expect(error?.data?.text).not.toMatch(/out of credits/i);
   });
 
   it("keeps generic run failures durable with the same typed stream response", async () => {
@@ -650,5 +689,133 @@ describe("POST /api/otto/stream — #555 per-turn cost is visible", () => {
 
     expect(parts.some((p: { type: string }) => p.type === "data-cost")).toBe(false);
     expect(parts.some((p: { data?: { kind?: string } }) => p.data?.kind === "done")).toBe(true);
+  });
+});
+
+// ── #791-6 白标铁律:流式那一条也拦得住 ────────────────────────────────────
+//
+// 只洗持久化的那一份是不够的:商家会亲眼看着引擎名一个字一个字流进来,然后刷新
+// 一下它消失了 —— 那比不洗更糟。这里把模型的原始 token 流灌进真的路由,断言写出去
+// 的每一个 text-delta 都不含供应商名,并且拼起来正是洗过的那句话。
+describe("#791-6 供应商名不会流到商家眼前", () => {
+  beforeEach(() => {
+    mocks.finalizeOttoRun.mockResolvedValue({ status: "ok" });
+  });
+
+  it("名字被模型切成多个 token 吐出来,也拼不回原样", async () => {
+    // "Seedance 2.0" 被拆成四个 delta —— 逐块洗名会漏掉的那种切法。
+    mocks.run.mockResolvedValue(
+      streamedRunResult({
+        events: [
+          tokenEvent("Made with See"),
+          tokenEvent("dance 2.0"),
+          tokenEvent(" — want a 9:16 crop?"),
+        ],
+      }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "make it" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+
+    const streamedText = parts
+      .filter((p) => p.type === "text-delta")
+      .map((p) => p.delta ?? "")
+      .join("");
+
+    expect(streamedText.toLowerCase()).not.toContain("seedance");
+    expect(streamedText).toContain("generation provider");
+    // 尾巴要放出来 —— 过滤器不能吃掉最后一段。
+    expect(streamedText).toContain("want a 9:16 crop?");
+  });
+
+  it("没有秘密的回复逐字节原样流出", async () => {
+    mocks.run.mockResolvedValue(
+      streamedRunResult({ events: [tokenEvent("Two options — "), tokenEvent("warm daylight, or night market?")] }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "ideas" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+    const streamedText = parts.filter((p) => p.type === "text-delta").map((p) => p.delta ?? "").join("");
+
+    expect(streamedText).toBe("Two options — warm daylight, or night market?");
+  });
+
+  // ── #810 P1-2 ────────────────────────────────────────────────────────────
+  // 白标只装在正文那条路上。可是 "Otto's thinking" 是**商家点开就能读**的
+  // (components/otto/parts/ReasoningPart.tsx),模型的 reasoning 原文以
+  // reasoning-delta 原样写出去 —— 提示词里那条「不许指名」一旦失守,这条路上
+  // 一个机器防线都没有。reasoning 和正文是两条独立字节流,必须各持一个独立的
+  // 过滤器实例:共用一个会把两段文字搅进同一个尾缓冲。
+  const deltasOf = (parts: Array<{ type: string; delta?: string }>, type: string) =>
+    parts.filter((p) => p.type === type).map((p) => p.delta ?? "").join("");
+
+  it("商家能读的 Otto's thinking 也过洗名 —— 名字跨块出现照样拦得住", async () => {
+    mocks.run.mockResolvedValue(
+      streamedRunResult({
+        events: [
+          reasoningEvent("The shop wants a clip. I'll use See"),
+          reasoningEvent("dance 2.0 for this one, then crop it 9:16."),
+          tokenEvent("On it — a 9:16 clip coming up."),
+        ],
+      }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "make a clip" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+
+    const reasoning = deltasOf(parts, "reasoning-delta");
+    expect(reasoning.toLowerCase()).not.toContain("seedance");
+    expect(reasoning).toContain("generation provider");
+    // 尾巴必须放出来 —— 过滤器不能吃掉最后一段。
+    expect(reasoning).toContain("crop it 9:16.");
+    // 正文那条路不受影响。
+    expect(deltasOf(parts, "text-delta")).toBe("On it — a 9:16 clip coming up.");
+  });
+
+  it("两条流各持一个过滤器:正文的尾缓冲不会串进 thinking 里", async () => {
+    mocks.run.mockResolvedValue(
+      streamedRunResult({
+        events: [
+          tokenEvent("Made with See"),
+          reasoningEvent("checking the brief"),
+          tokenEvent("dream 4.5."),
+        ],
+      }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "go" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+
+    // 正文两块拼起来是 "Made with Seedream 4.5." —— 名字跨块,必须洗掉。
+    const text = deltasOf(parts, "text-delta");
+    expect(text.toLowerCase()).not.toContain("seedream");
+    expect(text).toContain("generation provider");
+    // 而 thinking 只包含它自己那句话,没有被正文的缓冲污染。
+    expect(deltasOf(parts, "reasoning-delta")).toBe("checking the brief");
+  });
+
+  it("没有秘密的 thinking 逐字节原样流出", async () => {
+    mocks.run.mockResolvedValue(
+      streamedRunResult({
+        events: [reasoningEvent("They asked for two options. "), reasoningEvent("Warm daylight and night market.")],
+      }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "ideas" }))).json()) as Array<{
+      type: string;
+      delta?: string;
+    }>;
+
+    expect(deltasOf(parts, "reasoning-delta")).toBe(
+      "They asked for two options. Warm daylight and night market.",
+    );
   });
 });

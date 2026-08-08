@@ -42,6 +42,7 @@ const {
   mockGetBrandContextText,
   mockExecuteRaw,
   mockTransaction,
+  MockInsufficientCredits,
   mockRun,
   mockRunStateFromString,
   mockRestoreWithContext,
@@ -115,6 +116,24 @@ const {
     }
   }
 
+  // #810 P2-2: the real InsufficientCredits carries the two numbers a merchant is told (what they
+  // hold, what a turn needs). The double must carry them too, or a test could pass while the
+  // action printed "undefined credits". `instanceof` in the SUT keys on THIS class, because the
+  // @fikirtive/db mock below exports it.
+  class MockInsufficientCredits extends Error {
+    readonly requiredInternal: number | null;
+    readonly balanceInternal: number | null;
+    constructor(
+      message = "Not enough credits.",
+      detail?: { requiredInternal?: number | null; balanceInternal?: number | null },
+    ) {
+      super(message);
+      this.name = "InsufficientCredits";
+      this.requiredInternal = detail?.requiredInternal ?? null;
+      this.balanceInternal = detail?.balanceInternal ?? null;
+    }
+  }
+
   const mockWithLlmBudget = vi.fn(async (_args: unknown, fn: () => Promise<{ result: unknown; usage?: unknown }>) => {
     const out = await fn();
     return (out as { result: unknown }).result;
@@ -155,6 +174,7 @@ const {
     mockWithLlmBudget,
     MockRunState,
     MockMaxTurnsExceededError,
+    MockInsufficientCredits,
     mockApprove,
     mockReject,
     mockGetInterruptions,
@@ -286,6 +306,7 @@ vi.mock("@fikirtive/db", () => ({
     $executeRaw: mockExecuteRaw,
     $transaction: mockTransaction,
   },
+  InsufficientCredits: MockInsufficientCredits,
 }));
 
 // Spread the REAL module so pure helpers (newId, coworkTurnRequest, OTTO_MAX_STEPS,
@@ -3314,5 +3335,142 @@ describe("buildOttoContext — the money boundary, end to end (#692 r4)", () => 
       expect(await ctx.metaInsights!.get("last_30d")).toEqual(state);
       expect(await ctx.metaPerformance!.getAds("last_30d")).toEqual(state);
     }
+  });
+});
+
+// ── #791 第 1 项:项目 brief 进 Otto 每轮上下文 ─────────────────────────────
+//
+// 「说的≠做的」的原型:QuickBrief 的注释与 setCoworkBrief 的注释都写着这段文字会
+// 「injected into the planner system prompt」,而 buildOttoContext 从来没读过
+// Project.coworkBrief —— 商家写完 brief,Otto 每一轮都不知道。
+
+describe("#791-1 项目 brief 进 Otto 每轮上下文", () => {
+  it("buildOttoContext 按 owner + project 读 coworkBrief,并去掉首尾空白放进 ctx.projectBrief", async () => {
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ coworkBrief: "  Always 9:16, warm tone  " });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_brief",
+      projectId: "proj_brief",
+      threadId: "thread_brief",
+    });
+
+    expect(ctx.projectBrief).toBe("Always 9:16, warm tone");
+    const call = mockProjectFindFirst.mock.calls.at(-1)![0] as { where: Record<string, unknown> };
+    // 租户约束:读必须同时带 ownerId,永远不能只按 projectId 读。
+    expect(call.where).toMatchObject({ id: "proj_brief", ownerId: "owner_brief", deletedAt: null });
+  });
+
+  it("读不到项目(或 brief 为空)时不带这一段,而不是编一段空 brief", async () => {
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ coworkBrief: "   " });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_brief",
+      projectId: "proj_brief",
+      threadId: "thread_brief",
+    });
+
+    expect(ctx.projectBrief).toBeUndefined();
+  });
+
+  it("brief 排在品牌记忆之后,并说明它是商家自己写的这一个项目的方向", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      brandContext: "BRAND_MEMORY_MARKER",
+      projectBrief: "PROJECT_BRIEF_MARKER",
+    });
+    const content = (result as { content: string }).content;
+    expect(content).toContain("PROJECT_BRIEF_MARKER");
+    expect(content.indexOf("BRAND_MEMORY_MARKER")).toBeLessThan(content.indexOf("PROJECT_BRIEF_MARKER"));
+    expect(content).toMatch(/brief for this project/i);
+  });
+
+  it("没有 brief 就完全不注入这一段", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      brandContext: "BRAND_MEMORY_MARKER",
+    });
+    expect((result as { content: string }).content).not.toMatch(/brief for this project/i);
+  });
+});
+
+// ── #810 P2-2:「余额不足」这句人话必须每个 Otto 入口都说 ────────────────────
+//
+// #791-7 教会了主流式路由不再撒「You're out of credits.」这个谎(一轮先冻结固定
+// 额度,余额 3.9、一分钱没花的商家被告知一分钱没有),但只教了那一条路。非流式的
+// ottoTurn 与 ottoApprove 仍然把同一个 typed 拒绝吞成 "Couldn't reach Otto" /
+// "Couldn't approve" —— 比旧文案更糟:把一件不是故障的事说成产品坏了,还不给
+// 那两个能解释清楚的数字。Brand Memory 走的正是这条非流式入口,所以这是活的。
+//
+// 钱路一个字没动(reserve 本来就拒了,零花费);变的只是这件事被叫作什么,
+// 以及每个入口都叫同一个名字。
+describe("#810 P2-2 余额不足:三个入口同一句人话", () => {
+  const insufficient = () =>
+    new MockInsufficientCredits("Not enough credits.", { requiredInternal: 40, balanceInternal: 39 });
+
+  it("ottoTurn:说出真实余额与门槛,而不是「Couldn't reach Otto」", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, ownerId: OWNER_ID });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: PROJECT_ID, ottoState: null });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockWithLlmBudget.mockRejectedValue(insufficient());
+
+    const res = (await ottoTurn({ threadId: "t1", projectId: PROJECT_ID, text: "hi", entityIds: [], variantSel: {} })) as {
+      error?: string;
+    };
+
+    expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
+    expect(res.error).not.toMatch(/Couldn't reach Otto/);
+  });
+
+  it("ottoApprove:同一句话,不是「Couldn't approve」", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockChatThreadFindFirst.mockResolvedValue({
+      id: APPROVE_THREAD_ID,
+      projectId: PROJECT_ID,
+      ottoState: '{"paused":"state"}',
+    });
+    const approvalItem = makeApprovalItem(CARD_ID);
+    mockGetInterruptions.mockReturnValue([approvalItem]);
+    mockRunStateFromString.mockResolvedValue(new MockRunState());
+    mockGenJobFindFirst.mockResolvedValue(null);
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 5 });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockWithLlmBudget.mockRejectedValue(insufficient());
+
+    const res = (await ottoApprove({ threadId: APPROVE_THREAD_ID, cardId: CARD_ID })) as { error?: string };
+
+    expect(res.error).toBe("You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.");
+    expect(res.error).not.toMatch(/Couldn't approve/);
+  });
+
+  it("别的故障仍然照实说是哪个动作失败了(这不是把所有错误都改成钱不够)", async () => {
+    mockRequireOwner.mockResolvedValue(GATE);
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ id: PROJECT_ID, ownerId: OWNER_ID });
+    mockChatThreadFindFirst.mockResolvedValue({ projectId: PROJECT_ID, ottoState: null });
+    mockChatMessageFindFirst.mockResolvedValue({ seq: 1 });
+    mockChatMessageCreate.mockResolvedValue({});
+    mockWithLlmBudget.mockRejectedValue(new Error("upstream exploded"));
+
+    const res = (await ottoTurn({ threadId: "t1", projectId: PROJECT_ID, text: "hi", entityIds: [], variantSel: {} })) as {
+      error?: string;
+    };
+
+    expect(res.error).toBe("Couldn't reach Otto — please try again.");
+    // 内部细节不外露。
+    expect(res.error).not.toContain("upstream exploded");
   });
 });

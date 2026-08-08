@@ -5,9 +5,13 @@
  * "Project Brief"). Surfaces in OttoFrontDoor so this project's brief is set
  * before Otto starts planning. Brand-constant facts live in Brand memory; this
  * form captures project-specific inputs only. No money/credit operations.
+ *
+ * #791-1: Otto now actually reads this brief every turn (buildOttoContext →
+ * ctx.projectBrief), and opening the form shows the brief already stored so a
+ * save can't quietly replace direction the merchant (or Otto) wrote earlier.
  */
 import { useState } from "react";
-import { setCoworkBrief } from "@/lib/cowork-actions";
+import { getCoworkBrief, setCoworkBrief } from "@/lib/cowork-actions";
 
 const MAX_FIELD = 200;
 
@@ -27,6 +31,13 @@ function composeBrief(fields: { offer: string; audience: string; platform: strin
   return parts.join(". ");
 }
 
+/** What the form knows about the brief already stored for this project.
+ *  "loading" is a real state — a blank form is NOT proof there is nothing to lose. */
+type CurrentBrief =
+  | { state: "loading" }
+  | { state: "known"; brief: string }
+  | { state: "unreadable"; message: string };
+
 export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
   const [open, setOpen] = useState(false);
   const [offer, setOffer] = useState("");
@@ -36,6 +47,24 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [current, setCurrent] = useState<CurrentBrief>({ state: "loading" });
+
+  /** #791-1: saving REPLACES Project.coworkBrief outright, so the merchant has to see
+   *  what is there before they type over it. Read on every open — Otto's updateBrief can
+   *  have rewritten it since the last time this form was open. */
+  function toggleOpen() {
+    setOpen((wasOpen) => {
+      if (!wasOpen) {
+        setCurrent({ state: "loading" });
+        void getCoworkBrief(projectId).then((res) => {
+          setCurrent(
+            "error" in res ? { state: "unreadable", message: res.error } : { state: "known", brief: res.brief },
+          );
+        });
+      }
+      return !wasOpen;
+    });
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -50,6 +79,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
       return;
     }
     setSaved(true);
+    setCurrent({ state: "known", brief });
     onSaved?.(brief);
     // Collapse after a brief confirmation pause
     setTimeout(() => { setOpen(false); setSaved(false); }, 1200);
@@ -60,7 +90,7 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
     <div className="gb leading-[1.5] w-full">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggleOpen}
         className="flex items-center justify-center gap-2 text-[0.65625rem] font-semibold text-muted-foreground/70 uppercase tracking-[0.07em] bg-transparent border-0 cursor-pointer p-0 w-full"
         aria-expanded={open}
       >
@@ -86,6 +116,28 @@ export function QuickBrief({ projectId, onSaved }: QuickBriefProps) {
           <p className="m-0 text-[0.75rem] text-muted-foreground/70">
             Use this for the offer, audience, channel, and budget in this project. Shop-wide identity and catalog facts live in Brand memory.
           </p>
+          {/* The brief already stored for this project. Saving replaces it, so it is shown
+              before the fields, never after — and a failed read says so instead of reading
+              like an empty brief. */}
+          {current.state === "loading" ? (
+            <p className="m-0 text-[0.75rem] text-muted-foreground/70">Checking this project&apos;s brief…</p>
+          ) : current.state === "unreadable" ? (
+            <p role="alert" className="m-0 text-[0.75rem] text-[var(--error-soft-foreground)]">
+              {current.message}
+            </p>
+          ) : current.brief ? (
+            <div className="rounded-[10px] bg-muted/45 p-3">
+              <p className="m-0 mb-1 text-[0.6875rem] font-semibold uppercase tracking-[0.07em] text-muted-foreground/70">
+                Brief saved now
+              </p>
+              <p className="m-0 text-[0.75rem] leading-[1.5] text-foreground">{current.brief}</p>
+              <p className="m-0 mt-2 text-[0.6875rem] text-muted-foreground/70">
+                Saving below will replace this text.
+              </p>
+            </div>
+          ) : (
+            <p className="m-0 text-[0.75rem] text-muted-foreground/70">No brief yet for this project.</p>
+          )}
           <div>
             <label className="block text-[0.75rem] font-semibold text-muted-foreground/70 mb-1" htmlFor="qb-offer">Offer for this project</label>
             <input

@@ -38,7 +38,6 @@ import { sanitizeError, scrubUrls } from "../redact.js";
 import { provider } from "../generation.js";
 import { isModelDisabled } from "@fikirtive/core";
 import { workerDisabledModels } from "../model-registry.js";
-import { resumeOttoAfterGen } from "../otto-resume.js";
 
 const mimeForExt = (ext: string) =>
   ext === "png" ? "image/png" : ext === "webp" ? "image/webp"
@@ -254,7 +253,9 @@ async function resumeCommittedGenJob(job: GenJob): Promise<void> {
   });
   await appendCoworkResult(job, "GEN_RESULT", job.generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null }))); // idempotent — P2002 swallowed if already written
   await settleCanvasBoard(job);
-  await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
+  // #791-4: the automatic post-generation "does this look right?" Otto turn used to run
+  // here — and bill for itself. Founder ruling 2026-08-08: the merchant can see the result
+  // and decide for themselves, so the round is gone, not merely made free.
 }
 
 /** Terminal-fail a job that NEVER delivered AND release its credit hold, atomically.
@@ -409,8 +410,8 @@ export async function reapStaleGenJobs(): Promise<number> {
     });
     for (const job of committedStuck) {
       try {
-        // #463 per-row phase: resume fans out into attach + DONE + settle + a ChatMessage write,
-        // and (via resumeOttoAfterGen) an LLM turn — all of it belongs to this job's owner.
+        // #463 per-row phase: resume fans out into attach + DONE + settle + a ChatMessage
+        // write — all of it belongs to this job's owner.
         await runAsTenant(job.ownerId, () => resumeCommittedGenJob(job));
         console.log(`[gen] reaper finished committed-but-stuck job ${job.id} → DONE (no re-spend, no refund)`);
         reaped++;
@@ -436,8 +437,8 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
   // FAILED can still finish via attach+DONE without re-spending.
   if (job.status === "DONE") return;
   // #463: the payload carries only the job id, so the tenant is knowable only after the row
-  // load above. Everything from here — the provider call, the credit settle/refund, the commit
-  // transaction and resumeOttoAfterGen — runs scoped to this job's owner.
+  // load above. Everything from here — the provider call, the credit settle/refund and the
+  // commit transaction — runs scoped to this job's owner.
   await runAsTenant(job.ownerId, async () => {
 
     // P2: the worker SETTLES the held charge at the commit point and REFUNDS it on every
@@ -851,7 +852,6 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       console.log(`[gen] ${job.id}: DONE → ${generationIds.length} generations via ${provider.name}`);
       await appendCoworkResult(job, "GEN_RESULT", generationIds, "", displayCredits(pricedGenCredits({ kind: job.kind as "IMAGE" | "VIDEO", model: job.model, count: job.count, referenceVideoGenerationId: job.referenceVideoGenerationId, videoOptions: job.videoOptions as { seconds?: number; resolution?: string; audio?: boolean } | null })));
       await settleCanvasBoard(job);
-      await resumeOttoAfterGen(job); // best-effort; at-most-once via ottoVerdictAt claim
     } catch (err) {
       // PERSISTED error surfaces in the admin UI — strip any signed URL / argv a
       // provider or subprocess error may carry. Full (URL-scrubbed) detail → logs.

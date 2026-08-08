@@ -12,13 +12,13 @@
       "types": "./dist/brand-records.d.ts",
       "default": "./dist/brand-records.js"
     },
-    "./canvas-layout": {
-      "types": "./dist/canvas-layout.d.ts",
-      "default": "./dist/canvas-layout.js"
-    },
     "./canvas-card-status": {
       "types": "./dist/canvas-card-status.d.ts",
       "default": "./dist/canvas-card-status.js"
+    },
+    "./canvas-layout": {
+      "types": "./dist/canvas-layout.d.ts",
+      "default": "./dist/canvas-layout.js"
     },
     "./canvas-settlement-plan": {
       "types": "./dist/canvas-settlement-plan.d.ts",
@@ -44,6 +44,14 @@
       "types": "./dist/org-roles.d.ts",
       "default": "./dist/org-roles.js"
     },
+    "./otto-budget": {
+      "types": "./dist/otto-budget.d.ts",
+      "default": "./dist/otto-budget.js"
+    },
+    "./provider-secrecy": {
+      "types": "./dist/provider-secrecy.d.ts",
+      "default": "./dist/provider-secrecy.js"
+    },
     "./refgen": {
       "types": "./dist/refgen.d.ts",
       "default": "./dist/refgen.js"
@@ -52,6 +60,10 @@
       "types": "./dist/schedule-draft.d.ts",
       "default": "./dist/schedule-draft.js"
     },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    },
     "./spend": {
       "types": "./dist/spend.d.ts",
       "default": "./dist/spend.js"
@@ -59,10 +71,6 @@
     "./upload": {
       "types": "./dist/upload.d.ts",
       "default": "./dist/upload.js"
-    },
-    "./server": {
-      "types": "./dist/server.d.ts",
-      "default": "./dist/server.js"
     }
   },
   "scripts": {

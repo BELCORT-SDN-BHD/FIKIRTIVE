@@ -127,8 +127,9 @@ export const readSpendingSkill = defineOttoSkill({
     "to the spent figure; mention it as not settled yet), totals.added is credits added, and " +
     "totals.byCategory breaks the SETTLED spend down; entries are credit ENTRIES, newest first — " +
     "not all of them are charges, since top-ups and grants ADD credits and sit in the same list — " +
-    "each with a plain category (Chat = one conversation turn with you, Review = the automatic " +
-    "check after a generation, Image, Video, Research, Top-up, Credits added), a signed credits " +
+    "each with a plain category (Chat = one conversation turn with you, Image, Video, Research, " +
+    "Top-up, Credits added; an older workspace may also show Review, an automatic check that " +
+    "used to run after a generation and no longer runs), a signed credits " +
     "amount (negative = charged, positive = added), the time, and pending:true when that one is a " +
     "hold rather than a settled charge. " +
     "IMPORTANT: `window` says how far back this reaches — it covers the most recent " +

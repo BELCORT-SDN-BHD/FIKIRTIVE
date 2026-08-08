@@ -21,8 +21,16 @@ import { act, createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { setCoworkBriefMock } = vi.hoisted(() => ({ setCoworkBriefMock: vi.fn() }));
-vi.mock("@/lib/cowork-actions", () => ({ setCoworkBrief: setCoworkBriefMock }));
+const { setCoworkBriefMock, getCoworkBriefMock } = vi.hoisted(() => ({
+  setCoworkBriefMock: vi.fn(),
+  // #791-1: QuickBrief reads the stored brief when it opens (so a save can't silently
+  // replace it). This file asserts vocabulary, so the read just resolves empty.
+  getCoworkBriefMock: vi.fn(async () => ({ brief: "" })),
+}));
+vi.mock("@/lib/cowork-actions", () => ({
+  setCoworkBrief: setCoworkBriefMock,
+  getCoworkBrief: getCoworkBriefMock,
+}));
 
 import { OttoNav } from "@/components/otto/OttoNav";
 import { OttoOnboarding } from "@/components/otto/OttoOnboarding";

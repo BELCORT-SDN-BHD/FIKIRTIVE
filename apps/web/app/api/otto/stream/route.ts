@@ -30,6 +30,7 @@ import { prisma, InsufficientCredits } from "@fikirtive/db";
 import {
   newId,
   coworkTurnRequest,
+  createProviderNameFilter,
   displayCredits,
   GOAL_PRESETS,
   isGoalKey,
@@ -58,6 +59,7 @@ import {
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
+import { ottoFailureMessage } from "@/lib/otto-error-copy";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -256,11 +258,34 @@ export async function POST(req: NextRequest): Promise<Response> {
         // post-run extraction saw, so fallback text can never render on top of
         // text the merchant already watched stream in.
         let textWasStreamed = false;
+        // #791-6 白标铁律 (streaming leg): scrubbing only the PERSISTED reply would let the
+        // merchant watch an engine name stream in and then vanish on reload — worse than not
+        // scrubbing. This filter holds back the tail so a name split across two deltas
+        // ("seed" + "ance") cannot slip out one half at a time. It emits exactly what
+        // extractText persists (both call the same core redaction).
+        const providerFilter = createProviderNameFilter();
+        // #810 P1-2: "Otto's thinking" is merchant-readable (components/otto/parts/
+        // ReasoningPart.tsx opens it on click), and the model's raw reasoning went out
+        // unscrubbed — the one path where the white-label rule had nothing but a prompt
+        // instruction behind it. Reasoning is its OWN byte stream, so it gets its OWN filter:
+        // one shared instance would interleave two texts inside a single hold-back buffer and
+        // emit each in the other's context.
+        const reasoningFilter = createProviderNameFilter();
         const openText = () => { if (!textOpen) { writer.write({ type: "text-start", id: OTTO_TEXT_ID }); textOpen = true; } };
         const openReasoning = () => { if (!reasoningOpen) { writer.write({ type: "reasoning-start", id: OTTO_REASONING_ID }); reasoningOpen = true; } };
         const closeOpenParts = () => {
-          if (textOpen) writer.write({ type: "text-end", id: OTTO_TEXT_ID });
-          if (reasoningOpen) writer.write({ type: "reasoning-end", id: OTTO_REASONING_ID });
+          if (textOpen) {
+            // Release whatever the scrubber is still holding before the part closes,
+            // or the tail of the reply would never render.
+            const tail = providerFilter.flush();
+            if (tail) writer.write({ type: "text-delta", delta: tail, id: OTTO_TEXT_ID });
+            writer.write({ type: "text-end", id: OTTO_TEXT_ID });
+          }
+          if (reasoningOpen) {
+            const tail = reasoningFilter.flush();
+            if (tail) writer.write({ type: "reasoning-delta", delta: tail, id: OTTO_REASONING_ID });
+            writer.write({ type: "reasoning-end", id: OTTO_REASONING_ID });
+          }
           textOpen = false;
           reasoningOpen = false;
         };
@@ -301,10 +326,21 @@ export async function POST(req: NextRequest): Promise<Response> {
                     // #498 round-4: only a NON-whitespace delta counts as "the merchant
                     // saw text". Some models emit a lone "\n" (or spaces) before parking;
                     // a whitespace-only stream shows nothing readable and must not
-                    // suppress the synthesized fallback below.
+                    // suppress the synthesized fallback below. Judged on the MODEL's delta,
+                    // not on what the scrubber released this tick (the scrubber holds text
+                    // back for a moment, and a held delta is still text the turn produced).
                     if (part.delta.trim().length > 0) textWasStreamed = true;
+                    const safe = providerFilter.push(part.delta);
+                    if (safe) writer.write({ ...part, delta: safe });
+                    continue;
                   }
-                  else if (part.type === "reasoning-delta") openReasoning();
+                  if (part.type === "reasoning-delta") {
+                    openReasoning();
+                    // Same rule, second stream (#810 P1-2): the merchant can read this.
+                    const safe = reasoningFilter.push(part.delta);
+                    if (safe) writer.write({ ...part, delta: safe });
+                    continue;
+                  }
                   writer.write(part);
                 }
               },
@@ -318,7 +354,19 @@ export async function POST(req: NextRequest): Promise<Response> {
           // exact typed failure so first-turn navigation/remount and refresh stay honest.
           if (e instanceof InsufficientCredits) {
             closeOpenParts();
-            const error = { kind: "insufficient_credits", text: "You're out of credits." } satisfies OttoErrorData;
+            // #791-7: name the two real numbers. "You're out of credits" was usually false —
+            // a turn HOLDS a fixed amount up front, so a merchant
+            // with 3.9 credits who had spent nothing was told they had none, with their own
+            // balance on screen contradicting it. The balance travels on the error from
+            // inside the failing reserve, so it is the number the refusal was judged against.
+            const error = {
+              kind: "insufficient_credits",
+              // #810 P2-2: the sentence itself now comes from the shared mapper, which
+              // ottoTurn/ottoApprove call too — one refusal, one wording, every entry.
+              // (The fallback is unreachable inside this `instanceof` branch; it is here so
+              // the mapper has one shape at every call site.)
+              text: ottoFailureMessage(e, "Couldn't reach Otto — please try again."),
+            } satisfies OttoErrorData;
             try {
               await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, error });
             } catch (persistError) {

@@ -29,7 +29,6 @@ import {
   type SetConversationStatusInput,
   type SubmitConversationReplyInput,
   type SubmitTemplateReviewInput,
-  type TakeOverConversationInput,
 } from "./customer-inbox-service";
 
 /** #729 — `detail` is present only for refusals whose reason depends on what was submitted;
@@ -176,12 +175,6 @@ export async function saveConversationDraft(input: SaveConversationDraftInput) {
 export async function assignConversation(input: AssignConversationInput) {
   return runMutation((principal) =>
     customerInboxService.assignConversation(principal, input),
-  );
-}
-
-export async function takeOverConversation(input: TakeOverConversationInput) {
-  return runMutation((principal) =>
-    customerInboxService.takeOverConversation(principal, input),
   );
 }
 

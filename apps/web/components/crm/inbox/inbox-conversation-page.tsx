@@ -25,7 +25,6 @@ import {
   requestAutomationResume,
   saveConversationDraft,
   setConversationStatus,
-  takeOverConversation,
 } from "@/lib/customer-inbox-ui-actions";
 import type { getMemberDirectory } from "@/lib/customer-inbox-gateway";
 import { Badge } from "@/components/ui/badge";
@@ -326,14 +325,6 @@ function ConversationWorkspace({
     }
   }
 
-  async function doTakeOver() {
-    await runMutation(
-      "takeover",
-      () => takeOverConversation({ conversationId, expectedRevision: conversation.revision }),
-      () => setNotice("You took over from Otto. Auto-reply is paused for this conversation."),
-    );
-  }
-
   async function doSaveDraft() {
     // Fix 1: pin the CAS base to the revision that was current when THIS edit started
     // (draftRevisionAtEditStartRef), not `conversation.draft?.revision`. The latter tracks
@@ -564,7 +555,6 @@ function ConversationWorkspace({
               <CardHeader><CardTitle>Reply draft</CardTitle><CardDescription>Internal only — see the note below.</CardDescription></CardHeader>
               <CardContent>
                 <Composer
-                  automationState={conversation.automationState}
                   draft={conversation.draft}
                   draftText={draftText}
                   draftDirty={draftDirty}
@@ -573,7 +563,6 @@ function ConversationWorkspace({
                   saveDisabled={conflictNotice !== null}
                   onDraftChange={onDraftChange}
                   onSave={doSaveDraft}
-                  onTakeOver={doTakeOver}
                 />
               </CardContent>
             </Card>
@@ -674,8 +663,11 @@ function ConversationWorkspace({
   );
 }
 
+/** #791-2: the "Otto is currently handling this conversation / Take over" branch is gone.
+ *  It could only render when automationState was `otto_active`, which nothing in the product
+ *  ever writes — so the composer promised an assistant that never answered a single customer.
+ *  Every conversation is drafted by a person, which is what this composer now says. */
 function Composer({
-  automationState,
   draft,
   draftText,
   draftDirty,
@@ -684,9 +676,7 @@ function Composer({
   saveDisabled,
   onDraftChange,
   onSave,
-  onTakeOver,
 }: {
-  automationState: string;
   draft: ConversationResource["draft"];
   draftText: string;
   draftDirty: boolean;
@@ -697,7 +687,6 @@ function Composer({
   saveDisabled: boolean;
   onDraftChange: (text: string) => void;
   onSave: () => void;
-  onTakeOver: () => void;
 }) {
   const sendNotice = (
     <p className="text-xs leading-5 text-muted-foreground">
@@ -708,18 +697,6 @@ function Composer({
 
   if (actionsDisabled) {
     return <div className="grid gap-3">{sendNotice}</div>;
-  }
-
-  if (automationState === "otto_active") {
-    return (
-      <div className="grid gap-3">
-        <p className="text-sm text-muted-foreground">Otto is currently handling this conversation. Take over to draft a reply yourself.</p>
-        <Button type="button" onClick={onTakeOver} disabled={busy !== null} className="w-fit">
-          {busy === "takeover" ? <LoaderCircle className="animate-spin" /> : <UserCheck />}Take over
-        </Button>
-        {sendNotice}
-      </div>
-    );
   }
 
   return (

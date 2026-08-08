@@ -50,7 +50,6 @@ vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundR
   settleCanvasCardsForGenJob: vi.fn(async () => ({ status: "settled", nodeIds: [], created: 0, updated: 0 })) }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { GEN_RETRY_LIMIT } from "@fikirtive/core";

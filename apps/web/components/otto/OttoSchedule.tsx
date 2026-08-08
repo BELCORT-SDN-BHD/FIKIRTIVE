@@ -457,7 +457,8 @@ export function OttoSchedule({
             ) : null}
           </div>
           <div className="flex-1" />
-          {/* OTTO auto-publish toggle — persists to owner settings; no live effect this slice. */}
+          {/* OTTO auto-publish toggle. #791-2: this is now the switch the publish scheduler
+              actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait. */}
           <label
             className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
             title={autoPublishAvailable ? "Publish approved posts automatically at their time" : AUTO_PUBLISH_GATE_HINT}
@@ -486,8 +487,8 @@ export function OttoSchedule({
         <div className="flex items-start gap-[11px] bg-[#FFF6F2] border border-[#FBD9C9] rounded-[14px] px-[15px] py-[12px] mb-4">
           <CoralCloud size={22} />
           <span className="flex-1 text-[13px] leading-[1.5] text-[#9A3A1A]">
-            Auto-publish turns on once Meta approves publishing — schedule your posts now and the
-            queue starts sending automatically the moment it&rsquo;s approved.
+            Auto-publish needs two things: Meta&rsquo;s approval to publish, and this switch turned on.
+            Schedule your posts now — until both are true they wait here for you.
           </span>
         </div>
 
@@ -678,7 +679,7 @@ function PlanView({
           <div className="min-w-[220px] flex-1">
             <div className="text-[14px] font-semibold text-foreground">No plan from Otto yet</div>
             <div className="text-[13px] text-muted-foreground">
-              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and it&rsquo;ll draft a schedule for you to approve.
+              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and Otto will draft a schedule for you to approve.
             </div>
           </div>
           <Button variant="secondary" size="sm" onClick={onNew}>

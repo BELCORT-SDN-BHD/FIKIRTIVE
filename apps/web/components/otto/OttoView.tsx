@@ -334,6 +334,7 @@ export function OttoView({
           {showFrontDoor ? (
             <OttoFrontDoor
               projectId={projectId}
+              balanceUsd={balanceUsd}
               entities={entities}
               userName={userName}
               seedText={seedText}
