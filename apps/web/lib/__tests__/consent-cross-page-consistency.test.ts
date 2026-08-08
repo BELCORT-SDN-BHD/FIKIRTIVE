@@ -97,12 +97,16 @@ const FENCE_NOTE =
  *  - r2 claimed the customer was silent, while another purpose carried her own verified grant;
  *  - r3 claimed she "has never" decided, which the ledger cannot know, and "again" presupposed a
  *    first opt-in it also cannot see;
- *  - r4 promised a gate the product does not have — see the channel-only segment case below.
+ *  - r4 promised a gate that, when #752 shipped, the product did not have at all — the fence
+ *    reached the matcher only as a fact, so the channel-only segment below selected her anyway.
+ *    #806/#807 built that gate, and the case below is now inverted to prove it. r4's wording stays
+ *    banned on a narrower ground: a merchant who deliberately segments on "known opt-out" still
+ *    gets her (and the send gate is what holds there), so "out of audiences" still overclaims.
  *
  * The needle for r4 is the bare `out of audiences`, which bans the claim ANYWHERE on the profile.
  * It was briefly narrowed to `out of audiences until` because the same false promise also lived in
- * the empty state of `contact-profile-page.tsx`; that copy is fixed in this commit, so the needle
- * is back to full width and no phrasing of the promise can return by either route.
+ * the empty state of `contact-profile-page.tsx`; that copy was fixed in #752's own commit, so the
+ * needle is back to full width and no phrasing of the promise can return by either route.
  */
 const REJECTED_CLAIMS = [
   "No consent facts were recorded",

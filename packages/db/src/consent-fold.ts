@@ -285,8 +285,10 @@ export type ContactConsentTruth = {
   state: ConsentState;
   /**
    * An opt-out that predates this contact's consent history and nothing has resolved since
-   * (R-010 §4.6.5). It holds the contact OUT of every audience until the customer's own verified
-   * evidence supersedes it. See `contactConsentTruth`.
+   * (R-010 §4.6.5). Until the customer's own verified evidence supersedes it, it holds the
+   * contact OUT of any audience whose rules would have selected her had she been contactable —
+   * which is every audience except the one a merchant deliberately built out of opt-outs, where
+   * the send gate below answers `block` on this same flag (#806). See `contactConsentTruth`.
    */
   unresolvedLegacyOptOut: boolean;
   /** The merchant's own latest record says "opted out" — recorded, not verified. */

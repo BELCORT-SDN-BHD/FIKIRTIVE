@@ -7,7 +7,14 @@ export const CRM_CONSENT_LABELS: Record<CrmConsentState["state"], string> = {
 };
 
 /**
- * #752 — the words for a contact the pre-ledger fence holds out of every audience.
+ * #752 — the words for a contact the pre-ledger fence holds out of the audiences that were not
+ * looking for her.
+ *
+ * Precisely (#806/#807): she is kept out of any selection whose rules would have selected her had
+ * she been contactable, which is every ordinary audience. The one selection she still belongs to
+ * is the one a merchant deliberately built out of opt-outs — he asked, the page says so, and the
+ * send gate is what holds there, answering `block` on this same fence. "Every audience" would
+ * therefore be an overclaim, and this file may not make one.
  *
  * The segments page already says `opted out before consent history` about exactly these people.
  * The ledger state behind them is `unknown`, so a badge read from the state alone said "Unknown"

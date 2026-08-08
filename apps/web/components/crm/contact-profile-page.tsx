@@ -253,13 +253,17 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
                       branch points at the note above instead of restating it.
 
                       It may not restate it as a PROMISE either. This line used to say the opt-out
-                      "keeps this contact out of audiences", which the product does not enforce: the
-                      fence reaches the matcher only as the `marketingConsent` fact, so a segment
-                      whose rules never mention contactability selects her anyway (see #806). Both
-                      halves of what is left are checkable — the list really is empty, and the
-                      legacy opt-out really does predate this history. The note above renders under
-                      exactly this same `unresolvedLegacyOptOut` condition, so "above" is guaranteed
-                      by construction, not by hope.
+                      "keeps this contact out of audiences". When #752 removed that, the reason was
+                      that the product did not enforce it at all — the fence reached the matcher
+                      only as the `marketingConsent` fact, so a segment whose rules never mentioned
+                      contactability selected her anyway. #806/#807 closed that: selection now goes
+                      through one gate and the send gate answers `block` on the fence. The promise
+                      still may not come back, for a narrower reason — a merchant who deliberately
+                      segments on "known opt-out" does get her, so "out of audiences" would still
+                      overclaim. Both halves of what is left are checkable — the list really is
+                      empty, and the legacy opt-out really does predate this history. The note above
+                      renders under exactly this same `unresolvedLegacyOptOut` condition, so "above"
+                      is guaranteed by construction, not by hope.
                     */
                     <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center"><History className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">No consent facts recorded</h2><p className="mt-2 text-sm text-muted-foreground">{contact.consentState.unresolvedLegacyOptOut ? "There is nothing to show here: the opt-out described above predates this history." : "The current state remains unknown."}</p></div>
                   ) : contact.consentEvents.map((event) => (
