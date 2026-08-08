@@ -30,12 +30,21 @@
  *   - GenerationBatch grouping is a pure metadata write (GenJob.batchId soft-ref,
  *     schema.prisma:465) done AFTER startGen returns — it moves no money.
  */
-import { pricedGenCredits, GEN_MODELS, GEN_VIDEO_MODELS, type GenSpendInput } from "@fikirtive/core";
+import {
+  imageDefaults,
+  pricedGenCredits,
+  GEN_MODELS,
+  GEN_VIDEO_MODELS,
+  type GenModel,
+  type GenSpendInput,
+} from "@fikirtive/core";
 import type { PrismaClient } from "@fikirtive/db";
 import {
   factoryAttemptKey,
+  factoryHistoryDisposition,
   factoryLogicalPrefix,
   factoryMaterialMatches,
+  factoryReusedPrior,
   normalizeFactoryMaterial,
   FACTORY_HISTORY_SELECT,
   type FactoryAttemptKey,
@@ -93,6 +102,10 @@ export type BatchCell = GenCell | TextCell;
  *  imports the server-action module directly (keeps the spend authority single). */
 export type StartGenPort = (
   req: Record<string, unknown>,
+  /** 这一格在 `args.cells` 里的下标(#749)。真 `startGen` 不看第二个参数;需要「商家为
+   *  **这一格**签的是什么」的调用方(战役确认的锁内对签)靠它钉到正确的那一行,而不是靠
+   *  数调用次数 —— text 与 precheck 失败的格根本不进这里,数次数一定会数错行。 */
+  cellIndex?: number,
 ) => Promise<
   | { id: string; disposition: "fresh" | "reused" }
   // `retryable` = 结果不明、花钱之前就停住了(#656 P1)。这一层照旧只把错误原样呈上去。
@@ -235,6 +248,131 @@ function stableCellScope(batchId: string, stableId: string): string {
  *  answer "never dispatched" for work that really was charged. */
 export function stableCellLogicalPrefix(batchId: string, stableId: string): string {
   return factoryLogicalPrefix(stableCellScope(batchId, stableId), 0);
+}
+
+/**
+ * 这个格**真会跑的那份完整规格**(#709;#709 修复轮 P1-2 从 video-only 扩到整份)——
+ * `normalizeFactoryMaterial` 解析默认值之后的结果,也正是落进 `GenJob.videoOptions` /
+ * `GenJob.imageOptions` 的那份快照、`pricedGenCredits` 拿去算钱的那份输入。
+ *
+ * 卡面报规格必须读它,而不是读 `cell` 上那几个可能为空的字段:名字没说形状的片子格式
+ * (`video`)在 cell 上根本没有 aspectRatio,照 cell 显示就是「一个规格字段都不显示」——
+ * 那正是 #709 的现象。
+ *
+ * 它是**一整份**,不是挑出来的几个字段:卡面说得出口的每一项都在里面,承诺面因此可以
+ * 被整份哈希(见 campaign-generation-confirm 的内容指纹)。挑字段的那一版漏掉了 audio
+ * 与解析后的默认画幅 —— 同模型同价下声音或画幅一变,旧指纹照样通过(判官 r1 P1-2)。
+ */
+export interface CellResolvedSpec {
+  /** 解析后的画幅 —— 视频读 videoOptions,图片读 imageOptions。永远有值。 */
+  aspectRatio: string;
+  count: number;
+  /** 以下只有视频有。字段名与 `buildSpecChips` 的入参同名,卡面因此不做第二次翻译。 */
+  resolution?: string;
+  durationSeconds?: number;
+  fps?: number;
+  audio?: boolean;
+}
+
+/** 这个格解析之后真会跑的整份规格。PURE。 */
+export function cellResolvedSpec(cell: GenCell): CellResolvedSpec {
+  const material = cellMaterial(cell);
+  const video = material.videoOptions;
+  if (video) {
+    return {
+      aspectRatio: video.aspectRatio,
+      count: material.count,
+      resolution: video.resolution,
+      durationSeconds: video.seconds,
+      fps: video.fps,
+      audio: video.audio,
+    };
+  }
+  // 图片:`normalizeFactoryMaterial` 对 IMAGE 一定给得出 imageOptions(缺省 = 模型默认方图)。
+  return {
+    aspectRatio: material.imageOptions?.aspectRatio ?? imageDefaults(material.model as GenModel).aspectRatio,
+    count: material.count,
+  };
+}
+
+/** 一个格这一趟的收费预判。`new` 会被收 `credits`;`reused` / `blocked` 收 0。 */
+export interface CellChargePreview {
+  index: number;
+  disposition: "new" | "reused" | "blocked" | "text";
+  /** 这一趟真会被预扣的内部 credits —— reused / blocked / text 一律 0。 */
+  credits: number;
+  /**
+   * 只有 `reused` 有值:被复用的那一单**做完没有**(#708 修复轮 P2-1)。
+   *
+   * 复用只说明「不再收钱」,不说明「已经做好」—— 判据把 QUEUED / GENERATING / DONE 都算
+   * 复用。卡面照这一格说话,于是一单还在跑的片子不会被写成已完成。判据与收费判据同源:
+   * 同一份历史、同一个 `factoryReusedPrior`。
+   */
+  reuseState?: "in_progress" | "done";
+}
+
+export interface BatchChargePreview {
+  cells: CellChargePreview[];
+  /** 只把 `new` 的格加起来 —— 这就是确认下去真会离开余额的那个数。 */
+  totalCredits: number;
+}
+
+/**
+ * 确认之前,如实预判这一批**真会收多少钱**(#708)。READ-only、$0:不建任务、不预扣、
+ * 不叫 provider,只读 owner+project 范围内的历史行。
+ *
+ * 为什么它必须住在这里:身份解析(稳定 id / 迁移期位置键)与材料比对是 `orchestrateBatch`
+ * 派发时走的那一套,报价若自己另写一套,就会再一次「说的与做的分家」。这里复用的是
+ * **同一个** `prepareStableCellPlan` + `cellMaterial` + `factoryHistoryDisposition`。
+ *
+ * 它**不是**预扣授权:startGen 在项目锁里重判一次,那一次才算数。所以预判与真实结果之间
+ * 的竞态(报价后那一单恰好失败/完成)不会让钱出错 —— 调用方拿报价总额与确认时重算的总额
+ * 对签,对不上就 fail closed 让商家重看。
+ */
+export async function previewBatchCharges(
+  db: Pick<PrismaClient, "genJob">,
+  args: OrchestrateArgs,
+): Promise<BatchChargePreview | { error: string }> {
+  const prepared = await prepareStableCellPlan(db, args);
+  if ("error" in prepared) return prepared;
+
+  const cells: CellChargePreview[] = [];
+  for (let i = 0; i < args.cells.length; i++) {
+    const cell = args.cells[i];
+    if (cell.type === "text") {
+      cells.push({ index: i, disposition: "text", credits: 0 });
+      continue;
+    }
+    if (genCellError(cell)) {
+      cells.push({ index: i, disposition: "blocked", credits: 0 });
+      continue;
+    }
+    const identity = prepared.identityByIndex.get(i) ?? factoryAttemptKey(args.batchId, i, args.attemptId);
+    const history = prepared.historyByIndex.get(i) ?? (await db.genJob.findMany({
+      where: {
+        ownerId: args.ownerId,
+        projectId: args.projectId,
+        idempotencyKey: { startsWith: identity.logicalPrefix },
+      },
+      orderBy: { createdAt: "desc" },
+      select: FACTORY_HISTORY_SELECT,
+    }) as FactoryHistoryRow[]);
+    const expected = cellMaterial(cell, args.threadId);
+    const disposition = factoryHistoryDisposition(history, expected);
+    if (disposition === "fresh") cells.push({ index: i, disposition: "new", credits: quoteCell(cell) });
+    else if (disposition === "reused") {
+      // #708 修复轮 P2-1:复用的是**哪一单**,决定卡面能不能说「已经做好了」。
+      // 同一份历史、同一条判据 —— 不再新写一套「做完没有」的规则。
+      const prior = factoryReusedPrior(history, expected);
+      cells.push({
+        index: i,
+        disposition: "reused",
+        credits: 0,
+        reuseState: prior?.status === "DONE" ? "done" : "in_progress",
+      });
+    } else cells.push({ index: i, disposition: "blocked", credits: 0 });
+  }
+  return { cells, totalCredits: cells.reduce((sum, cell) => sum + cell.credits, 0) };
 }
 
 /** The persisted key is still the reserved 79-char factory family parsed by startGen. */
@@ -543,7 +681,7 @@ export async function orchestrateBatch(
 
     let res: Awaited<ReturnType<StartGenPort>>;
     try {
-      res = await deps.startGen(cellGenRequest(cell, args, identity.key));
+      res = await deps.startGen(cellGenRequest(cell, args, identity.key), i);
     } catch (error) {
       // startGen already reconciles a lost transaction ACK by keyed lookup. If it still throws,
       // the current cell's commit state is genuinely unknown; do not label it uncharged.

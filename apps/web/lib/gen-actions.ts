@@ -26,7 +26,6 @@ import {
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
   imageDefaults,
-  genJobEndedWithoutDelivering,
   type GenModel,
   type GenVideoModel,
   type GenJobData,
@@ -44,12 +43,15 @@ import { outOfCreditsMessage } from "./credit-format";
 // 放锁、内层稍后才提交,撤销就能插进中间,落成「已撤销且已扣费」)。
 import {
   applyCampaignApprovalGate,
+  applyCampaignDispatchVerdict,
   campaignApprovalGateFor,
   campaignApprovalGateRefusal,
 } from "./campaign-approval-lock";
 import {
   canvasActionKey,
+  factoryHistoryDisposition,
   factoryMaterialMatches,
+  factoryReusedPrior,
   normalizeFactoryMaterial,
   parseCanvasActionKey,
   parseFactoryAttemptKey,
@@ -170,7 +172,10 @@ function factoryHistoryVerdict(
   attempt: FactoryAttemptKey,
   material: FactoryMaterial,
 ): StartGenResult | null {
-  if (history.some((prior) => !factoryMaterialMatches(prior, material))) {
+  // 判据只有一份(#708):`factoryHistoryDisposition` 同时是报价那一侧「这一格会不会收钱」
+  // 的依据,所以确认卡说的和这里做的不可能分家。
+  const disposition = factoryHistoryDisposition(history, material);
+  if (disposition === "conflict") {
     return {
       error: "That batchId is already in use for different content — start a new batch with a fresh id.",
       disposition: "conflict",
@@ -186,7 +191,10 @@ function factoryHistoryVerdict(
   // Generate, wait, and nothing is ever made. Money is untouched by this line: a cancelled job
   // was refunded when it was cancelled, and the fresh attempt below reserves for itself exactly
   // as any first attempt does.
-  const stillLive = history.find((prior) => !genJobEndedWithoutDelivering(prior.status));
+  // 判据只有一处(#708 修复轮 P2-1):`factoryReusedPrior` 就是 `factoryHistoryDisposition`
+  // 里那条「还有一单没结束且没交付」的规则本身,报价那一侧读的也是它 —— 于是「这一趟复用
+  // 哪一单」在报价与派发两边不可能给出两个答案。conflict / exact 已在上面返回。
+  const stillLive = factoryReusedPrior(history, material);
   if (stillLive) return { id: stillLive.id, disposition: "reused" };
   return null;
 }
@@ -616,7 +624,19 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             select: FACTORY_HISTORY_SELECT,
           });
           const locked = factoryHistoryVerdict(history, factoryAttempt, material);
-          if (locked) return locked;
+          if (locked) {
+            // #749 判官 r2 P1 —— 复用也要对签。商家签的若是「这一格新做」,锁内却变成复用,
+            // 那已经不是他复核过的那一份交付,停在这里(本来也没扣钱,但结果必须说实话)。
+            // `conflict` 那一支不必对签:它零派发零扣费,而交付缩水由上面那道交付面闸负责。
+            if (approvalGate && !("error" in locked)) {
+              applyCampaignDispatchVerdict(approvalGate, {
+                disposition: "reused",
+                displayCredits: 0,
+                exactReplay: history.some((prior) => prior.idempotencyKey === factoryAttempt.key),
+              });
+            }
+            return locked;
+          }
         }
 
         if (trustedCoworkRequest) {
@@ -682,6 +702,17 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         // All locked replay/conflict verdicts have returned above. A prepare failure therefore
         // rejects only a fresh attempt, before create/reserve, while preserving concurrent reuse.
         if (!boss) throw new QueuePrepareFailed();
+
+        // #749 判官 r2 P1 —— 花钱前最后一道对签,拿的是**上面项目锁里算出的那个判决**:
+        // 这一格真是「新做」吗?真会预扣的这个数,不超过商家签名时这一格的数吗?任一不符
+        // 就抛出,这笔事务在 create/reserve 之前回滚 —— 零建任务、零预扣、零入队。
+        if (approvalGate) {
+          applyCampaignDispatchVerdict(approvalGate, {
+            disposition: "fresh",
+            displayCredits: displayedCost,
+            exactReplay: false,
+          });
+        }
 
         const created = await tx.genJob.create({
           data: {
@@ -804,6 +835,20 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         decision = { id: committed.id, disposition: "fresh" };
       } else {
         throw e;
+      }
+    }
+    // #749 判官 r4 —— 钱事务刚落地就让调用方续租(见 CampaignApprovalGate.afterCharge)。
+    // 放在这里而不是等下一格:提交之后还有审计写、缓存失效、批次标记、下一格的历史读,
+    // 那一段没有硬上限,原本全程拿着一把正在老化的租约。best-effort —— 钱已经落地,这里
+    // 再失败也不许把它翻回去。
+    if (approvalGate?.afterCharge) {
+      try {
+        await approvalGate.afterCharge();
+      } catch (e) {
+        console.warn(
+          "startGen: post-charge campaign lease renew failed (non-fatal):",
+          e instanceof Error ? e.message : e,
+        );
       }
     }
     if ("error" in decision) return decision;

@@ -20,6 +20,7 @@ import {
   type CustomerWorkflowPrincipal,
   type GetBusinessHoursPolicyInput,
   type GetContactJourneyStatesInput,
+  type GetRoutineAuthorizationPreviewInput,
   type GetRoutineInput,
   type KillRoutineInput,
   type ListBusinessHoursPoliciesInput,
@@ -136,6 +137,14 @@ export async function listRoutines(input: ListRoutinesInput = {}) {
 export async function getRoutine(input: GetRoutineInput) {
   return runRead((principal) =>
     workflowLifecycleService(prisma).getRoutine(principal, input),
+  );
+}
+
+/** #720 判官 r2 — the authorization hash's own input plus the human names inside it, for the
+ *  confirmation dialog. Read-only and owner-scoped like every other read here. */
+export async function getRoutineAuthorizationPreview(input: GetRoutineAuthorizationPreviewInput) {
+  return runRead((principal) =>
+    workflowLifecycleService(prisma).getRoutineAuthorizationPreview(principal, input),
   );
 }
 
