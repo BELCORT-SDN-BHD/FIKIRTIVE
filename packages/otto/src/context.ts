@@ -82,6 +82,9 @@ export type CrmContactSummary = {
     stateSourceKind: string | null;
     evidenceStatus: string | null;
     lastReceivedAt: string | null;
+    /** Held out by an opt-out recorded before this contact had a consent history (#752).
+     *  Otto reads the merchant's own truth — never a nicer version of it. */
+    unresolvedLegacyOptOut: boolean;
   };
   doNotDisturb: boolean;
   totalOrdersMyr: string | null;
