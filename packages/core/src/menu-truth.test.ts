@@ -30,8 +30,8 @@ import { DIRECTIVE_SEED, modelDirectiveInput } from "./cowork-directives.js";
 import { genSpentUsd, pricedGenCredits, INTERNAL_PER_DISPLAY } from "./spend.js";
 import { ALL_MODEL_IDS } from "./model-registry.js";
 
-/** 下架的 12 格 —— 逐字抄自 #647 票面,与代码里的菜单**独立**。
- *  有人把任何一个悄悄放回菜单,这份清单当场变红。 */
+/** 已下架的视频引擎 —— 前 12 格逐字抄自 #647 票面,末尾一格来自 #769,与代码里的菜单
+ *  **独立**。有人把任何一个悄悄放回菜单,这份清单当场变红。 */
 const RETIRED_VIDEO_MODELS = [
   "kling",
   "veo3.1-lite",
@@ -45,6 +45,9 @@ const RETIRED_VIDEO_MODELS = [
   "wan-2.5",
   "hailuo-02",
   "seedance-2",
+  // #769(2026-08-08 Founder 已裁):战役引擎换 2.0 mini,fast 随之下架。它进这份清单是
+  // 同一条纪律 —— 下架就要五处一起消失,不许在某张表里留一格能把钱花出去的旧 id。
+  "seedance-2-fast",
 ] as const;
 
 /** 被那 12 格带进来的七个家族。真家族只剩 seedream(图)与 seedance(片)。 */
@@ -56,7 +59,7 @@ describe("#647 T6 视频菜单(真的只有一格)", () => {
     expect([...GEN_VIDEO_MODELS]).toEqual(["seedance-2-mini"]);
   });
 
-  it("12 个假模型在**五处声明**里一处不剩", () => {
+  it("下架的模型在**五处声明**里一处不剩", () => {
     for (const id of RETIRED_VIDEO_MODELS) {
       // ①菜单 ②事实表 ③档位表
       expect((GEN_VIDEO_MODELS as readonly string[]), `菜单还有 ${id}`).not.toContain(id);

@@ -190,6 +190,8 @@ describe("#647 T6 fal 视频接线只剩真的那一格", () => {
   const RETIRED = [
     "kling", "veo3.1-lite", "ltx-2", "kling-2.6", "kling-3", "veo3.1-fast",
     "veo3.1", "pixverse-v6", "grok-imagine", "wan-2.5", "hailuo-02", "seedance-2",
+    // #769:换 2.0 mini 之后 fast 也下架 —— 同一条纪律,它的接线必须一起消失。
+    "seedance-2-fast",
   ] as const;
 
   it("下架模型在**付费 POST 之前**就被拒(接线表里没有它 = 花不出去这笔钱)", async () => {
@@ -226,6 +228,9 @@ describe("#647 T6 fal 视频接线只剩真的那一格", () => {
         expect(out.ext).toBe("mp4");
       }
       expect(calls.filter((u) => u.includes("fal.run")).length).toBe(GEN_VIDEO_MODELS.length);
+      // #769:接的是 mini 自己那条 route(查过 fal 模型页),不是把 fast 的 route 改了个名。
+      expect(calls.some((u) => u.includes("bytedance/seedance-2.0/mini/"))).toBe(true);
+      expect(calls.some((u) => u.includes("/fast/"))).toBe(false);
     } finally {
       vi.unstubAllGlobals();
     }
