@@ -30,6 +30,10 @@ export interface EmailMessage {
    *  INSTEAD of the full text/html body — e.g. the bare link a developer needs to click.
    *  Falls back to `text` (then `html`) when omitted. */
   devPreview?: string;
+  /** #678 — abort the in-flight send. A provider that accepts the connection and then never
+   *  answers would otherwise hold its caller forever; the auth-email queue passes a signal that
+   *  fires on its own deadline so one stuck send cannot become every tenant's stuck send. */
+  signal?: AbortSignal;
 }
 
 export interface EmailPort {

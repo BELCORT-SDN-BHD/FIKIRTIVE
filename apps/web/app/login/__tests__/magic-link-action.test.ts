@@ -51,7 +51,12 @@ describe("requestMagicLink", () => {
       requestMagicLink({ email: " Owner@Example.com ", callbackURL: "/campaign?tab=plan" }),
     ).resolves.toEqual(NEUTRAL);
     expect(queued).toEqual([
-      { purpose: "sign-in-link", email: "owner@example.com", callbackURL: "/campaign?tab=plan" },
+      {
+        purpose: "sign-in-link",
+        email: "owner@example.com",
+        callbackURL: "/campaign?tab=plan",
+        overBudget: false,
+      },
     ]);
   });
 
@@ -63,8 +68,13 @@ describe("requestMagicLink", () => {
       answers.push(await requestMagicLink({ email: "owner@example.com", callbackURL: "/" }));
     }
     for (const answer of answers) expect(answer).toEqual(NEUTRAL);
+    // Every press handed over a job — r4: an over-budget press that skipped the hand-over did
+    // less work than one inside its budget, which is a clock.
+    expect(queued).toHaveLength(8);
     // …and the throttle really did bite, so the sameness above is not vacuous.
-    expect(queued.filter((j) => j.email === "owner@example.com")).toHaveLength(5);
+    const owner = queued.filter((j) => j.email === "owner@example.com");
+    expect(owner.filter((j) => j.overBudget === false)).toHaveLength(5);
+    expect(owner.filter((j) => j.overBudget === true)).toHaveLength(2);
   });
 });
 

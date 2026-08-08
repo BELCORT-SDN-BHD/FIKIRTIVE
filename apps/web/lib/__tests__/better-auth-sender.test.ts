@@ -17,10 +17,23 @@ describe("the auth-email queue", () => {
   beforeEach(async () => {
     delete process.env.RESEND_API_KEY;
     vi.stubEnv("NODE_ENV", "test");
-    const { __resetAuthEmailCapsForTests } = await import("@/lib/better-auth/sender");
+    const { __resetAuthEmailCapsForTests, __configureAuthEmailQueueForTests } = await import(
+      "@/lib/better-auth/sender"
+    );
     __resetAuthEmailCapsForTests();
+    // These cases are about the per-address budget's KEY and its operator log, and they read the
+    // dev transport's single-file output — so they run the queue serially with no jitter, which
+    // keeps the assertions about CONTENT rather than about scheduling. The executor's own
+    // properties (concurrency, jitter, deadline) are asserted in auth-email-queue-executor.
+    __configureAuthEmailQueueForTests({ maxConcurrency: 1, jitterMaxMs: 0 });
   });
-  afterEach(async () => { await rm(DEV_FILE, { force: true }); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+  afterEach(async () => {
+    const { __configureAuthEmailQueueForTests } = await import("@/lib/better-auth/sender");
+    __configureAuthEmailQueueForTests({});
+    await rm(DEV_FILE, { force: true });
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
 
   it("returns synchronously and starts nothing — the caller never awaits any of it", async () => {
     const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
@@ -108,6 +121,10 @@ describe("the auth-email queue", () => {
   it("exports no error type or copy a caller could surface", async () => {
     const sender = await import("@/lib/better-auth/sender");
     expect(Object.keys(sender).sort()).toEqual([
+      "AUTH_EMAIL_JITTER_MAX_MS",
+      "AUTH_EMAIL_JOB_TIMEOUT_MS",
+      "AUTH_EMAIL_MAX_CONCURRENCY",
+      "__configureAuthEmailQueueForTests",
       "__resetAuthEmailCapsForTests",
       "authEmailQueueSettled",
       "enqueueAuthEmail",

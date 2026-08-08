@@ -4,7 +4,7 @@ import { enqueueAuthEmail } from "./sender";
 import { sanitizeCallbackURL } from "@/lib/safe-redirect";
 
 /**
- * #678 r3 — THE sign-in request path. Every public entrance to the magic-link door goes through
+ * #678 — THE sign-in request path. Every public entrance to the magic-link door goes through
  * this function, and it is four fixed steps in a fixed order:
  *
  *   ① check the address is well FORMED — pure string work, and a well-formed address is well
@@ -14,25 +14,30 @@ import { sanitizeCallbackURL } from "@/lib/safe-redirect";
  *      no branch of any kind on which address this is;
  *   ④ return the one answer.
  *
- * WHY IT HAD TO BECOME A SHAPE RULE. Two earlier rounds each removed one leak and grew the next
+ * WHY IT HAD TO BECOME A SHAPE RULE. Successive rounds each removed one leak and grew the next
  * one from the same root: the request was still DOING different amounts of work depending on the
- * address. Round 1 made the two answers read alike, so the clock gave it away. Round 2 moved
- * delivery to the background, so the background's synchronous prefix gave it away — an address
- * on FOUNDER_ADMIN_EMAILS resolved out of a string list without suspending, an address that had
- * to be looked up in the database did not. The rule that ends the family is not "balance the
- * branches" but "have no branches": nothing on this path may ask a question whose cost depends
- * on the answer.
+ * address. Making the two answers read alike left the clock. Moving delivery to the background
+ * left the background's synchronous prefix — an address on FOUNDER_ADMIN_EMAILS resolved out of
+ * a string list without suspending, an address that had to be looked up in the database did not.
+ * The rule that ends the family is not "balance the branches" but "have no branches": nothing on
+ * this path may ask a question whose cost depends on the answer.
+ *
+ * THAT INCLUDES THE THROTTLE'S OWN VERDICT. An over-budget request used to skip the sanitise,
+ * the job, the push and the timer while returning the same words — the same defect, rebuilt
+ * inside the fix for it. Step ③ now runs identically for every request and the verdict rides on
+ * the job, to be applied by the background executor.
  *
  * WHY THE THROTTLE LIVES HERE. Better Auth 1.6.20 runs its `rateLimit` rules inside `auth.handler`
  * — the HTTP router. The login page never goes through that router; it calls a server action. So
- * the per-IP rule added in round 2 sat on a door nobody used, and the real door had no cap at all:
+ * a per-IP rule in that config sat on a door nobody used, and the real door had no cap at all:
  * an anonymous caller could hand over unlimited jobs. This is the cap on the door that exists.
  */
 
 const WINDOW_MS = 60 * 60 * 1000;
 
 /** One caller + one address. Sized to a real merchant's worst hour: mistyped once, tried twice
- *  more, then asked for a fresh link. Beyond it the answer is unchanged and no job is queued. */
+ *  more, then asked for a fresh link. Beyond it the answer is unchanged and the job is dropped
+ *  on the background side. */
 const MAX_PER_CALLER_PER_ADDRESS = 5;
 
 /**
@@ -55,14 +60,33 @@ const MAX_PER_CALLER_PER_ADDRESS = 5;
  */
 const MAX_PER_CALLER = 60;
 
-const buckets = new Map<string, number[]>();
-let lastSweep = 0;
+/**
+ * A hard ceiling on how many buckets exist at once, because the KEY SPACE IS ATTACKER-CHOSEN.
+ * A caller past its own budget keeps being counted (that is what keeps the work identical), and
+ * every fresh address it invents is a fresh `caller|address` key — so without a ceiling one
+ * anonymous caller can grow this map without limit.
+ *
+ * The map is therefore an LRU: every `take` moves its key to the end, and one insertion past the
+ * ceiling evicts the least recently used key. That is O(1) per call and, unlike "stop creating
+ * buckets once the caller is over budget", it does not make the over-budget path cheaper than
+ * the normal one — which is the trap the fix above exists to avoid.
+ *
+ * 20 000 entries is far more than a real hour of traffic for this product, and each is a short
+ * key plus at most 60 timestamps, so the worst case is single-digit megabytes. What an attacker
+ * buys by filling it is eviction of somebody else's counters — a rate-limit reset, never access,
+ * and never an answer about whether an address exists.
+ */
+export const MAX_TRACKED_BUCKETS = 20_000;
 
-/** Drop buckets nobody has touched for a window. Runs at most once per window and is keyed on
- *  the clock, never on the submitted address. */
-function sweep(now: number): void {
-  if (now - lastSweep < WINDOW_MS) return;
-  lastSweep = now;
+const buckets = new Map<string, number[]>();
+
+/**
+ * Drop buckets whose timestamps have all aged out. NOT called from `acceptMagicLinkRequest`: a
+ * full traversal is O(number of buckets), and running it on the request thread hands an attacker
+ * who filled the map an event-loop stall. It rides its own timer instead, and `unref` keeps it
+ * from holding a process (or a test run) open.
+ */
+function sweepExpired(now: number): void {
   for (const [key, stamps] of buckets) {
     const live = stamps.filter((t) => now - t < WINDOW_MS);
     if (live.length === 0) buckets.delete(key);
@@ -70,11 +94,21 @@ function sweep(now: number): void {
   }
 }
 
+const sweepTimer: unknown = setInterval(() => sweepExpired(Date.now()), WINDOW_MS);
+(sweepTimer as { unref?: () => void }).unref?.();
+
+/** Constant cost: one Map read, a bounded filter, one delete + one set (the LRU touch), and at
+ *  most one eviction. No traversal, and no branch on the address. */
 function take(key: string, max: number, now: number): boolean {
   const recent = (buckets.get(key) ?? []).filter((t) => now - t < WINDOW_MS);
   const room = recent.length < max;
   if (room) recent.push(now);
+  buckets.delete(key);
   buckets.set(key, recent);
+  if (buckets.size > MAX_TRACKED_BUCKETS) {
+    const oldest = buckets.keys().next().value;
+    if (oldest !== undefined) buckets.delete(oldest);
+  }
   return room;
 }
 
@@ -103,19 +137,18 @@ export function acceptMagicLinkRequest(input: {
   // ② throttle — both buckets are consumed unconditionally so the work does not depend on
   //    which one refuses.
   const now = Date.now();
-  sweep(now);
   const caller = callerKey(input.requestHeaders);
   const roomForCaller = take(caller, MAX_PER_CALLER, now);
   const roomForPair = take(`${caller}|${email}`, MAX_PER_CALLER_PER_ADDRESS, now);
 
-  // ③ hand over an opaque job
-  if (roomForCaller && roomForPair) {
-    enqueueAuthEmail({
-      purpose: "sign-in-link",
-      email,
-      callbackURL: sanitizeCallbackURL(input.callbackURL),
-    });
-  }
+  // ③ hand over an opaque job — ALWAYS, and always after the same work. The verdict travels
+  //    with the job; the executor is what drops it.
+  enqueueAuthEmail({
+    purpose: "sign-in-link",
+    email,
+    callbackURL: sanitizeCallbackURL(input.callbackURL),
+    overBudget: !(roomForCaller && roomForPair),
+  });
 
   // ④ one answer.
   //
@@ -130,5 +163,15 @@ export function acceptMagicLinkRequest(input: {
  *  fresh budget cannot wait one out. */
 export function __resetMagicLinkThrottleForTests(): void {
   buckets.clear();
-  lastSweep = 0;
+}
+
+/** TEST ONLY. The sweep runs on its own hourly timer in production; this is how a test reaches
+ *  it without waiting an hour. */
+export function __sweepMagicLinkThrottleForTests(now: number = Date.now()): void {
+  sweepExpired(now);
+}
+
+/** TEST ONLY. The ceiling is the claim; a test has to be able to see the map to check it. */
+export function __magicLinkThrottleSizeForTests(): number {
+  return buckets.size;
 }

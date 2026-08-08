@@ -115,9 +115,8 @@ const createdUserIds: string[] = [];
 
 const { prisma } = await import("@fikirtive/db");
 const { auth } = await import("@/lib/better-auth/server");
-const { authEmailQueueSettled, __resetAuthEmailCapsForTests } = await import(
-  "@/lib/better-auth/sender"
-);
+const { authEmailQueueSettled, __resetAuthEmailCapsForTests, __configureAuthEmailQueueForTests } =
+  await import("@/lib/better-auth/sender");
 const { __resetMagicLinkThrottleForTests } = await import("@/lib/better-auth/magic-link-request");
 const { requestMagicLink } = await import("@/app/login/actions");
 const { POST: betterAuthPost } = await import("@/app/api/better-auth/[...all]/route");
@@ -154,6 +153,10 @@ beforeEach(() => {
   // the budgets (better-auth-sender / magic-link-throttle) test them without any reset.
   __resetMagicLinkThrottleForTests();
   __resetAuthEmailCapsForTests();
+  // This file is about the REQUEST path, whose whole claim is that it waits on none of this.
+  // The executor's per-job jitter would only add real seconds to every case here; it has its own
+  // file (auth-email-queue-executor) where it is the thing being asserted.
+  __configureAuthEmailQueueForTests({ jitterMaxMs: 0 });
 });
 
 // ── ① the request path is blind to what kind of address it was handed ────────────────────────
@@ -183,6 +186,29 @@ describe("#678 r3 ① — the request performs identical work for every kind of 
     expect(env.answer).toEqual(NEUTRAL);
     expect(db.answer).toEqual(NEUTRAL);
     expect(unknown.answer).toEqual(NEUTRAL);
+  });
+
+  it("records the same sequence when the caller is OVER its budget as when it is not", async () => {
+    // r4 — the throttle's own verdict used to change the amount of work: an over-budget request
+    // skipped the sanitise, the job, the push and the timer, and returned the same words. That
+    // is the same defect one layer in, so it gets the same assertion.
+    const inBudget: string[][] = [];
+    const overBudget: string[][] = [];
+    for (let i = 0; i < 8; i++) {
+      trace.length = 0;
+      const answer = await requestMagicLink({ email: ENV_ALLOWED, callbackURL: "/" });
+      (i < 5 ? inBudget : overBudget).push([...trace]);
+      expect(answer).toEqual(NEUTRAL);
+      await authEmailQueueSettled();
+    }
+
+    // RED before r4: the over-budget presses recorded ["headers"] — no "enqueue" at all.
+    for (const recorded of [...inBudget, ...overBudget]) {
+      expect(recorded).toEqual(["headers", "enqueue"]);
+    }
+    // …and the throttle really did bite, so the sameness is not vacuous: the address budget is
+    // 5, so exactly five of the eight presses put mail in flight.
+    expect(mockSend).toHaveBeenCalledTimes(5);
   });
 
   it("still delivers to exactly the two addresses that have access, silently", async () => {
