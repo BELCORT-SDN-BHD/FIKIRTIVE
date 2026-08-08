@@ -96,10 +96,11 @@ jobs:
       # nearly free. The `github.sha` suffix makes every run save a fresh entry; the
       # restore-keys are what actually load one.
       #
-      # Measured, so nobody has to guess: on this PR's first two runs the restore worked
-      # (cache hit logged, ~288 KB) and bought NOTHING — typecheck 86s → 86s, web build
-      # 98s → 98s. Kept because it costs ~2s and is the directory Turbopack persistent
-      # caching would fill the day someone turns it on; delete it if that never happens.
+      # Measured on this PR, so nobody has to guess: the saving tracks how much of the diff
+      # the restored state still covers. Restoring across a large diff bought nothing
+      # (typecheck 86s → 86s); restoring across a one-comment diff cut typecheck 86s → 49s.
+      # `next build` did not move either way (98s both). So expect real savings on push-after-
+      # push of the same branch, and none on the first run of a fresh branch.
       - name: Restore TypeScript / Next build cache
         if: steps.scope.outputs.code == 'true'
         uses: actions/cache@v4
