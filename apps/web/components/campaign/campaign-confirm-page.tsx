@@ -275,7 +275,10 @@ function ConfirmWorkspace({
     const reservedThisRun = displayCredits(result.totalCredits);
     const currentUnknown = interruption?.current === "unknown";
     const zeroDispatchConfirmed = result.dispatched === 0 && !currentUnknown;
-    const reusedAllDone = approvedLines.every((line) => line.charge !== "reused" || line.reuseState === "done");
+    // #749 判官 r2 P2:完成判定读**派发结果**,不读派发前的报价 —— 报价说「新做」而结果说
+    // 「复用」时,那一单多半还在跑,状态不明一律按「还在做」说。
+    const reusedLines = reusedResultLines(result.cells, approvedLines);
+    const reusedAllDone = reusedLines.every((line) => line.reuseState === "done");
     const resultTitle = campaignGenerationResultTitle(result, interruption, reusedAllDone);
 
     return (
@@ -296,7 +299,7 @@ function ConfirmWorkspace({
                     「早就做完了」。两句话必须分开说，否则一份完成的工作会被读成失败。 */}
                 {result.failed === 0 && result.reused > 0 ? (
                   <>
-                    <strong>Nothing new was charged.</strong> Every item here is {reusedSummaryPhrase(approvedLines)},
+                    <strong>Nothing new was charged.</strong> Every item here is {reusedSummaryPhrase(reusedLines)},
                     so this run reserved nothing.
                   </>
                 ) : (
@@ -590,6 +593,32 @@ export function reusedSummaryPhrase(lines: Pick<CampaignGenQuoteLine, "charge" |
   return reused.some((line) => line.reuseState !== "done")
     ? "already generated or still being made"
     : "already generated";
+}
+
+/**
+ * 结果页说「做完没有」时读的那一份(#749 判官 r2 P2)。
+ *
+ * 判据必须是**派发结果**这一格,不是派发前的报价:同规格并发确认下,报价说「这一格新做」
+ * 而结果说「复用」是真会发生的 —— 赢的那一单是别人刚起的,多半还在跑。旧写法用报价行过滤
+ * (`charge === "reused"`),这一格根本不进过滤器,`every(...)` 于是空手通过,标题写成
+ * 「已经全部生成好了」,而那一单还在 QUEUED。
+ *
+ * 所以这里从**结果**出发:每一个「复用」的结果格去报价里认领它的状态;认领不到(报价当时
+ * 说的是新做)就是**状态不明** —— 一律按「还在做」说,绝不宣称完成。
+ */
+export function reusedResultLines(
+  cells: Pick<BatchResult["cells"][number], "index" | "status">[],
+  lines: Pick<CampaignGenQuoteLine, "charge" | "reuseState">[],
+): Pick<CampaignGenQuoteLine, "charge" | "reuseState">[] {
+  return cells
+    .filter((cell) => cell.status === "reused")
+    .map((cell) => {
+      const line = lines[cell.index];
+      return {
+        charge: "reused" as const,
+        reuseState: line?.charge === "reused" ? line.reuseState : null,
+      };
+    });
 }
 
 /**

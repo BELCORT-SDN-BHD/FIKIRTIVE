@@ -290,3 +290,71 @@ describe("#708 修复轮 P2-2 重报价竞态", () => {
     expect(mocks.confirm).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #749 判官 r2 P2 —— 结果页的「做完没有」读派发结果,不读派发前的报价
+// ---------------------------------------------------------------------------
+/**
+ * 同规格并发确认下,报价说「这一格新做」而派发结果说「复用」是真会发生的:赢的那一单是
+ * 别人刚起的,多半还在 QUEUED。旧写法用**报价行**过滤复用,这一格根本不进过滤器,
+ * `every(...)` 空手通过,标题写成「已经全部生成好了」—— 而那一单还在跑。
+ */
+describe("#749 判官 r2 P2 结果页完成判定", () => {
+  it("报价说新做、结果说复用:标题说「还在做」,不许说已经生成好了", async () => {
+    const reviewed = serverQuote(3, "a");
+    expect(reviewed.quote.lines[0].charge).toBe("new");
+    expect(reviewed.quote.lines[0].reuseState).toBeNull();
+
+    mocks.confirm.mockResolvedValue({
+      ok: true,
+      // 派发结果:这一格被复用了(赢的那一单刚起,还在跑)。
+      result: {
+        batchId: "batch-1",
+        cells: [{ index: 0, type: "gen", status: "reused", jobId: "job-1", credits: 0 }],
+        totalCredits: 0,
+        dispatched: 0,
+        reused: 1,
+        failed: 0,
+      },
+      // 服务端回的报价仍然是那份「新做」的 —— 它是派发**之前**的事实。
+      quote: reviewed.quote,
+    });
+
+    await render();
+    await act(async () => confirmButton().click());
+
+    expect(container!.textContent).toContain("Everything is already being made");
+    expect(container!.textContent).not.toContain("Everything was already generated");
+    // 汇总那句话同理:不许把一单还在跑的工作说成「已生成」。
+    expect(container!.textContent).toContain("already generated or still being made");
+  });
+
+  it("结果与报价都说复用且都已做完时,才敢说「已经生成好了」", async () => {
+    const reviewed = serverQuote(0, "a");
+    reviewed.quote.lines[0] = {
+      ...reviewed.quote.lines[0],
+      charge: "reused",
+      reuseState: "done",
+      displayCredits: 0,
+    };
+    reviewed.quote.reusedCount = 1;
+
+    mocks.confirm.mockResolvedValue({
+      ok: true,
+      result: {
+        batchId: "batch-1",
+        cells: [{ index: 0, type: "gen", status: "reused", jobId: "job-1", credits: 0 }],
+        totalCredits: 0,
+        dispatched: 0,
+        reused: 1,
+        failed: 0,
+      },
+      quote: reviewed.quote,
+    });
+
+    await render();
+    await act(async () => confirmButton().click());
+
+    expect(container!.textContent).toContain("Everything was already generated");
+  });
+});
