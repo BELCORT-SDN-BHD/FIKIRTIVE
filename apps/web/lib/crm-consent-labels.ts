@@ -22,19 +22,30 @@ export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
  * legacy column, which never becomes an event, so the consent history card below cannot show the
  * reason and the exclusion would read as reason-free.
  *
- * The sentence has to hold for EVERY shape the fence covers, not only the empty-history one. The
- * fence is `state === "unknown"` plus a legacy `opt_out` (`contactConsentTruth`), and `unknown`
- * survives the merchant recording his own opt-out — so a fenced contact can have events, and this
- * note used to claim "no consent facts were recorded" while the card underneath listed one.
+ * This sentence sits ON TOP of the event list, so it has to stay true next to everything that list
+ * can render. Two things it must not assume, each of which it once got wrong:
  *
- * What is true in all of them: R-010's closed writer set makes every `actorKind: "customer"`
- * source `verified`, and any such event folds the state off `unknown` (`foldConsentEvents`).
- * So `state === "unknown"` means exactly this — nothing in this scope's history came from the
- * customer. Merchant records and legacy snapshots can be there, and the event card names their
- * actor.
+ *  1. That the history is empty. The fence is `state === "unknown"` plus a legacy `opt_out`
+ *     (`contactConsentTruth`), and `unknown` survives the merchant recording his own opt-out — so
+ *     a fenced contact can have events. Claiming "no consent facts were recorded" contradicted the
+ *     card listing one.
+ *  2. That the list covers the same tuple the state does. It does not: the badge state comes from
+ *     the whatsapp × marketing projection alone (`crm-view-data.contactSelect`), while `getContact`
+ *     lists consent events for EVERY channel and purpose. A verified `review_request` grant from
+ *     the customer leaves the marketing tuple `unknown` and the legacy column untouched (the
+ *     compatibility mirror is whatsapp × marketing only, `consent-runtime.ts:441`) — so the fence
+ *     holds while the customer's own grant renders right above this note. Any unscoped claim about
+ *     the customer's silence is false there.
+ *
+ * So the sentence names the one tuple it actually read. Within that tuple it is exact: R-010's
+ * closed writer set makes every `actorKind: "customer"` source `verified`, and any such event
+ * folds the state off `unknown` (`foldConsentEvents`). `state === "unknown"` on whatsapp ×
+ * marketing therefore means precisely that the customer never opted in or out of WhatsApp
+ * marketing. Merchant records, legacy snapshots, and other purposes can all be in the list, and
+ * each event card names its own channel, purpose, and actor.
  */
 export const CRM_PRE_LEDGER_OPT_OUT_NOTE =
-  "Nothing in this consent history came from the customer, and an opt-out was recorded for this contact before the history was kept. Fikirtive keeps this contact out of audiences until the customer opts in again through their own channel.";
+  "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept. Fikirtive keeps this contact out of audiences until the customer opts in again through their own channel.";
 
 export type CrmConsentBadge = {
   label: string;

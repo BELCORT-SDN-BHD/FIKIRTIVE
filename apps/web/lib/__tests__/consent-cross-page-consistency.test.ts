@@ -39,6 +39,7 @@ const ContactProfilePage = (await import("@/components/crm/contact-profile-page"
 const SUITE = `p752-${randomUUID().slice(0, 8)}`;
 const ORG_A = `${SUITE}-org-a`;
 const ORG_B = `${SUITE}-org-b`;
+const ORG_C = `${SUITE}-org-c`;
 const USER_A = `${SUITE}-user-a`;
 const USER_B = `${SUITE}-user-b`;
 const MEMBERSHIP_A = `${SUITE}-membership-a`;
@@ -60,6 +61,16 @@ const GRACE = `${SUITE}-grace`;
 const IRIS = `${SUITE}-iris`;
 /** The other tenant's fenced customer. */
 const MEI = `${SUITE}-mei`;
+/**
+ * Same marketing fence, and the customer HERSELF spoke — about another purpose. The profile reads
+ * its consent state from the whatsapp × marketing projection alone (`crm-view-data.contactSelect`)
+ * but lists events from EVERY channel and purpose (`getContact`), so this is the one shape where a
+ * verified customer grant and the fence are on screen together.
+ *
+ * She lives in her own tenant on purpose: the selection counts pinned further down must stay
+ * byte-for-byte what they were, because this ticket may not move who a broadcast reaches.
+ */
+const PRIYA = `${SUITE}-priya`;
 
 /** The segment a merchant uses to look at the people who are held out. */
 const NOT_CONTACTABLE = {
@@ -132,7 +143,7 @@ async function segmentRowMarkup(contactId: string): Promise<string> {
 beforeAll(async () => {
   process.env.BETTER_AUTH_SECRET ??= "consent-cross-page-test-secret";
 
-  await prisma.organization.createMany({ data: [{ id: ORG_A }, { id: ORG_B }] });
+  await prisma.organization.createMany({ data: [{ id: ORG_A }, { id: ORG_B }, { id: ORG_C }] });
   await prisma.user.createMany({
     data: [
       { id: USER_A, email: `${USER_A}@fikirtive.test` },
@@ -162,6 +173,7 @@ beforeAll(async () => {
   await seedContact(GRACE, ORG_A, "Grace Lim");
   await seedContact(IRIS, ORG_A, "Iris Devi", "opt_in");
   await seedContact(MEI, ORG_B, "Mei Chan", "opt_out");
+  await seedContact(PRIYA, ORG_C, "Priya Raman", "opt_out");
 
   for (const [index, contactId] of [CHANDRA, HANA, BEN, ELLA, GRACE, IRIS].entries()) {
     await prisma.contactIdentity.create({
@@ -175,6 +187,21 @@ beforeAll(async () => {
       },
     });
   }
+
+  // Priya opted IN herself — to review requests, not to marketing. R-010 keeps each purpose in its
+  // own tuple, and the consent runtime mirrors only whatsapp × marketing into the legacy column
+  // (`consent-runtime.ts:441`), so this verified customer grant leaves the marketing fence exactly
+  // where it was — while putting a customer-authored event card on the profile.
+  await recordConsentEvent({
+    ownerId: ORG_C,
+    contactId: PRIYA,
+    channel: "whatsapp",
+    purpose: "review_request",
+    sourceKind: "explicit_inbox_optin",
+    action: "grant",
+    evidenceRef: `${SUITE}-priya-inbox-optin`,
+    idempotencyKey: `${SUITE}-priya-review-grant`,
+  });
 
   // Grace opted out through her own unsubscribe link — verified customer evidence.
   await recordConsentEvent({
@@ -219,7 +246,7 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     const profile = await contactProfileMarkup(CHANDRA);
     expect(profile).toContain("Opted out before consent history");
     expect(profile).toContain(
-      "Nothing in this consent history came from the customer, and an opt-out was recorded for this contact before the history was kept.",
+      "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept.",
     );
     expect(profile).toContain("keeps this contact out of audiences until the customer opts in again");
     expect(profile).not.toContain("The current state remains unknown.");
@@ -246,13 +273,47 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     expect(profile).toContain("Revoke recorded");
     expect(profile).not.toContain("No consent facts were recorded");
 
-    // What is actually true of every fenced contact, Hana included: the ledger holds no stance
-    // from the CUSTOMER (a merchant record is not one — the event card says `Merchant`), and the
-    // old column carries an opt-out.
+    // What is actually true of every fenced contact, Hana included: no marketing stance from the
+    // CUSTOMER (a merchant record is not one — the event card says `Merchant`), and the old column
+    // carries an opt-out.
     expect(profile).toContain(
-      "Nothing in this consent history came from the customer, and an opt-out was recorded for this contact before the history was kept.",
+      "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept.",
     );
     expect(await segmentRowMarkup(HANA)).toContain("opted out before consent history");
+  });
+
+  it("stays true when the customer opted in to another purpose, which the marketing fence never sees", async () => {
+    actAs(ORG_C);
+    const detail = await getContact(PRIYA);
+    if (!("ok" in detail)) throw new Error(detail.error);
+
+    // The shape the note has to survive: the badge state is read from whatsapp × marketing alone,
+    // but the events card below it is scoped to NOTHING — `getContact` lists every channel and
+    // purpose. So a verified grant from the customer herself renders under a marketing fence.
+    expect(detail.contact.consentState.state).toBe("unknown");
+    expect(detail.contact.consentState.unresolvedLegacyOptOut).toBe(true);
+    expect(detail.contact.consentEvents).toHaveLength(1);
+    expect(detail.contact.consentEvents[0]).toMatchObject({
+      purpose: "review_request",
+      action: "grant",
+      actorKind: "customer",
+      evidenceStatus: "verified",
+    });
+
+    const profile = await contactProfileMarkup(PRIYA);
+    // Both on one screen: the customer's own verified grant, and the fence note.
+    expect(profile).toContain("Grant recorded");
+    expect(profile).toContain("review_request");
+    expect(profile).toContain(">Customer<");
+    expect(profile).toContain(">Verified<");
+    expect(profile).toContain("Opted out before consent history");
+
+    // The note has to name the one tuple it actually read. An unscoped claim about the customer's
+    // silence is flatly disproved by the card right above it.
+    expect(profile).toContain(
+      "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept.",
+    );
+    expect(profile).not.toContain("Nothing in this consent history came from the customer");
   });
 
   it("reads the fence through the one shared predicate, not a second copy of it", async () => {
