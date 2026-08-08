@@ -232,7 +232,14 @@ describe("handlePublish — six states", () => {
     await handlePublish({ scheduledPostId: "sp1" }, 0, exec);
     const postUpdate = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "PUBLISHED");
     expect(postUpdate?.[0].data).toMatchObject({ status: "PUBLISHED", metaPostId: "ext_1" });
-    expect(m.publishAttemptUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ state: "APPLIED", metaPostId: "ext_1" }) }));
+    // #810 r3 P1-b②: the attempt write is a CAS on our own claim, not a blind update — losing it
+    // must not let the post row be overwritten.
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ state: "APPLYING" }),
+        data: expect.objectContaining({ state: "APPLIED", metaPostId: "ext_1" }),
+      }),
+    );
   });
 
   it("③ hard reject (retryable=false) → FAILED, no throw", async () => {
