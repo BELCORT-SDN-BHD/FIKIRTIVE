@@ -30,6 +30,7 @@ import type {
   getBroadcastRunLivePreflight as getBroadcastRunLivePreflightGateway,
   getMemberDirectory,
 } from "@/lib/customer-broadcast-gateway";
+import type { AudienceConsentSummary } from "@/lib/customer-broadcast-service";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -114,6 +115,28 @@ function AxisStrip({ verdict, title }: { verdict: unknown; title: string }) {
   );
 }
 
+/**
+ * #726 — the freeze says out loud what the consent authority did, in the same words the segments
+ * page used when the merchant picked this audience. Silence here is what let an opted-out
+ * customer reappear in a frozen list that the previous page had promised excluded her.
+ */
+export function ConsentExclusionNote({ consent }: { consent: AudienceConsentSummary }) {
+  return (
+    <p className="text-xs leading-5 text-muted-foreground">
+      {consent.excludedByConsent === 0
+        ? "No contact was excluded for opting out."
+        : `${consent.excludedByConsent} ${consent.excludedByConsent === 1 ? "contact was" : "contacts were"} excluded for opting out.`}
+      {consent.unresolvedLegacyOptOut > 0
+        ? ` ${consent.unresolvedLegacyOptOut} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
+        : ""}
+      {" This count covers the contacts this broadcast can reach on its channel, so it can be lower than the count on the segments page, which covers every contact you have."}
+      {consent.reportedOptOutKept > 0
+        ? ` ${consent.reportedOptOutKept} ${consent.reportedOptOutKept === 1 ? "contact is" : "contacts are"} in this audience with an opt-out you recorded yourself, which is not verified — open the contact to see its consent history.`
+        : ""}
+    </p>
+  );
+}
+
 export default function BroadcastDetailPage({
   broadcastRunId,
   initialRun,
@@ -142,6 +165,9 @@ export default function BroadcastDetailPage({
   const [reportAvailable, setReportAvailable] = useState(initialReportAvailable);
   const [busy, setBusy] = useState<null | "freeze" | "confirm" | "execute" | "cancel" | "refresh">(null);
   const [segmentId, setSegmentId] = useState(preselectedSegmentId ?? "");
+  // #726: what the consent authority did to the audience the merchant just froze, in the same
+  // words and the same arithmetic the segments page used to pick it.
+  const [freezeConsent, setFreezeConsent] = useState<AudienceConsentSummary | null>(null);
 
   // Denial (NOT_AUTHORIZED / ACTION_DENIED / RESOURCE_NOT_FOUND) gets the deliberately
   // indistinguishable "not available" page. Placed after the hooks so hook order is stable.
@@ -190,10 +216,15 @@ export default function BroadcastDetailPage({
     setBusy(kind);
     setActionError(null);
     try {
-      const result = (await call()) as { ok?: boolean; error?: string };
+      const result = (await call()) as {
+        ok?: boolean;
+        error?: string;
+        consent?: AudienceConsentSummary;
+      };
       if (result && "error" in result && result.error) {
         setActionError(result.error);
       }
+      if (kind === "freeze") setFreezeConsent(result?.ok && result.consent ? result.consent : null);
     } catch {
       setActionError("NETWORK");
     } finally {
@@ -328,6 +359,7 @@ export default function BroadcastDetailPage({
                     {busy === "freeze" ? <LoaderCircle className="animate-spin" /> : <Snowflake />}{run.status === "audience_frozen" ? "Re-freeze audience" : "Freeze audience"}
                   </Button>
                 </div>
+                {freezeConsent ? <ConsentExclusionNote consent={freezeConsent} /> : null}
               </div>
             ) : null}
 
