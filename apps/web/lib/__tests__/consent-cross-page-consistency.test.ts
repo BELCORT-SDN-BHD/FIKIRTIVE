@@ -71,6 +71,39 @@ const MEI = `${SUITE}-mei`;
  * byte-for-byte what they were, because this ticket may not move who a broadcast reaches.
  */
 const PRIYA = `${SUITE}-priya`;
+/**
+ * The same fence, told from the world where the legacy opt-out WAS the customer's own act: she
+ * unsubscribed herself in the merchant's previous system, and the migration carried the column
+ * across without an actor because R-010 forbids inventing one (`legacy_contact_snapshot` is fixed
+ * at `legacy_unknown / unresolved` — "actor/channel/purpose/evidence 不猜").
+ *
+ * Nothing in the data tells her apart from Chandra, and that is the whole point: the note is
+ * rendered from the same fence, so it may not say anything about what the customer did or did not
+ * do in life. It has been wrong three times by trying.
+ */
+const SITI = `${SUITE}-siti`;
+
+/**
+ * The exact words the profile must carry, pinned as a literal rather than imported from the source
+ * — an imported constant would silently follow the next rewrite instead of catching it.
+ */
+const FENCE_NOTE =
+  "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. Fikirtive keeps this contact out of audiences until the customer opts in through their own channel.";
+
+/**
+ * Every earlier wording, kept as a permanent regression fence. Each was rejected for claiming
+ * something the ledger cannot prove:
+ *  - r1 denied records that were on the same screen;
+ *  - r2 claimed the customer was silent, while another purpose carried her own verified grant;
+ *  - r3 claimed she "has never" decided, which the ledger cannot know, and "again" presupposed a
+ *    first opt-in it also cannot see.
+ */
+const REJECTED_CLAIMS = [
+  "No consent facts were recorded",
+  "Nothing in this consent history came from the customer",
+  "has never opted in or out",
+  "opts in again",
+];
 
 /** The segment a merchant uses to look at the people who are held out. */
 const NOT_CONTACTABLE = {
@@ -174,6 +207,9 @@ beforeAll(async () => {
   await seedContact(IRIS, ORG_A, "Iris Devi", "opt_in");
   await seedContact(MEI, ORG_B, "Mei Chan", "opt_out");
   await seedContact(PRIYA, ORG_C, "Priya Raman", "opt_out");
+  // Data-identical to Chandra by design — see SITI. Same tenant as Priya so tenant A's selection
+  // counts, pinned further down, stay exactly as they were.
+  await seedContact(SITI, ORG_C, "Siti Abdullah", "opt_out");
 
   for (const [index, contactId] of [CHANDRA, HANA, BEN, ELLA, GRACE, IRIS].entries()) {
     await prisma.contactIdentity.create({
@@ -245,10 +281,7 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     //    which never becomes an event.
     const profile = await contactProfileMarkup(CHANDRA);
     expect(profile).toContain("Opted out before consent history");
-    expect(profile).toContain(
-      "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept.",
-    );
-    expect(profile).toContain("keeps this contact out of audiences until the customer opts in again");
+    expect(profile).toContain(FENCE_NOTE);
     expect(profile).not.toContain("The current state remains unknown.");
     expect(profile).not.toContain(">Unknown<");
   });
@@ -265,20 +298,17 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
 
     const profile = await contactProfileMarkup(HANA);
     expect(profile).toContain("Opted out before consent history");
-    expect(profile).toContain("until the customer opts in again through their own channel");
 
     // The note may not deny the record the same screen is showing. Hana's merchant-recorded
     // opt-out is rendered right underneath it, so a note that claims nothing was recorded makes
     // the page argue with itself — the profile has to be honest too, not only the segments page.
     expect(profile).toContain("Revoke recorded");
-    expect(profile).not.toContain("No consent facts were recorded");
 
-    // What is actually true of every fenced contact, Hana included: no marketing stance from the
+    // What the ledger can prove about Hana: no whatsapp × marketing decision recorded from the
     // CUSTOMER (a merchant record is not one — the event card says `Merchant`), and the old column
-    // carries an opt-out.
-    expect(profile).toContain(
-      "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept.",
-    );
+    // carries an opt-out from before this history.
+    expect(profile).toContain(FENCE_NOTE);
+    for (const claim of REJECTED_CLAIMS) expect(profile).not.toContain(claim);
     expect(await segmentRowMarkup(HANA)).toContain("opted out before consent history");
   });
 
@@ -310,10 +340,38 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
 
     // The note has to name the one tuple it actually read. An unscoped claim about the customer's
     // silence is flatly disproved by the card right above it.
-    expect(profile).toContain(
-      "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept.",
-    );
-    expect(profile).not.toContain("Nothing in this consent history came from the customer");
+    expect(profile).toContain(FENCE_NOTE);
+    for (const claim of REJECTED_CLAIMS) expect(profile).not.toContain(claim);
+  });
+
+  it("says nothing that would be false if the legacy opt-out was the customer's own act", async () => {
+    // Siti unsubscribed herself in the merchant's previous system. The migration kept the claim
+    // and refused to invent an actor for it (R-010: `legacy_contact_snapshot` is fixed at
+    // `legacy_unknown / unresolved`, "actor 不猜"), so the fence that results is byte-identical to
+    // Chandra's, whose opt-out nobody can attribute either.
+    actAs(ORG_C);
+    const siti = await getContact(SITI);
+    if (!("ok" in siti)) throw new Error(siti.error);
+    actAs(ORG_A);
+    const chandra = await getContact(CHANDRA);
+    if (!("ok" in chandra)) throw new Error(chandra.error);
+
+    // The product genuinely cannot tell the two worlds apart — so a sentence that is true for one
+    // and false for the other is a sentence the product is not entitled to write.
+    expect(siti.contact.consentState).toEqual(chandra.contact.consentState);
+    expect(siti.contact.consentEvents).toHaveLength(0);
+
+    actAs(ORG_C);
+    const profile = await contactProfileMarkup(SITI);
+
+    // Every rejected wording, checked FIRST: in Siti's world each one is a false statement the
+    // page would be putting in front of the merchant.
+    for (const claim of REJECTED_CLAIMS) expect(profile).not.toContain(claim);
+
+    // What survives says only what the ledger holds: this history records no marketing decision
+    // from her, and an opt-out predates the history. Neither denies that she made it herself.
+    expect(profile).toContain(FENCE_NOTE);
+    expect(profile).toContain("Opted out before consent history");
   });
 
   it("reads the fence through the one shared predicate, not a second copy of it", async () => {

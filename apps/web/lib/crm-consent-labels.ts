@@ -22,30 +22,37 @@ export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
  * legacy column, which never becomes an event, so the consent history card below cannot show the
  * reason and the exclusion would read as reason-free.
  *
- * This sentence sits ON TOP of the event list, so it has to stay true next to everything that list
- * can render. Two things it must not assume, each of which it once got wrong:
+ * THE RULE, arrived at after three wrong versions: every clause may state only what the ledger can
+ * prove. The note may not describe what the customer did or did not do in life — the ledger records
+ * what was written down, not what happened.
  *
- *  1. That the history is empty. The fence is `state === "unknown"` plus a legacy `opt_out`
- *     (`contactConsentTruth`), and `unknown` survives the merchant recording his own opt-out — so
- *     a fenced contact can have events. Claiming "no consent facts were recorded" contradicted the
- *     card listing one.
- *  2. That the list covers the same tuple the state does. It does not: the badge state comes from
- *     the whatsapp × marketing projection alone (`crm-view-data.contactSelect`), while `getContact`
- *     lists consent events for EVERY channel and purpose. A verified `review_request` grant from
- *     the customer leaves the marketing tuple `unknown` and the legacy column untouched (the
- *     compatibility mirror is whatsapp × marketing only, `consent-runtime.ts:441`) — so the fence
- *     holds while the customer's own grant renders right above this note. Any unscoped claim about
- *     the customer's silence is false there.
+ * Clause by clause, and the evidence for each:
  *
- * So the sentence names the one tuple it actually read. Within that tuple it is exact: R-010's
- * closed writer set makes every `actorKind: "customer"` source `verified`, and any such event
- * folds the state off `unknown` (`foldConsentEvents`). `state === "unknown"` on whatsapp ×
- * marketing therefore means precisely that the customer never opted in or out of WhatsApp
- * marketing. Merchant records, legacy snapshots, and other purposes can all be in the list, and
- * each event card names its own channel, purpose, and actor.
+ *  1. "This history has no WhatsApp marketing decision from the customer."
+ *     R-010's closed writer set gives every `actorKind: "customer"` source `evidenceStatus:
+ *     "verified"`, and every such event folds the state off `unknown` (`foldConsentEvents`). So
+ *     `state === "unknown"` on this tuple is exactly "no event here is recorded as the customer's".
+ *     It is scoped to whatsapp × marketing because that is the only tuple the state is read from
+ *     (`crm-view-data.contactSelect`) while the list below shows EVERY channel and purpose — a
+ *     verified `review_request` grant from the customer can sit right above this note.
+ *  2. "…and an opt-out was recorded before it began."
+ *     The legacy `Contact.marketingConsent` column, which predates the ledger (R-010 §4.6.5) and is
+ *     never written by it outside whatsapp × marketing (`consent-runtime.ts:441`). It deliberately
+ *     does NOT say who recorded it: R-010 fixes the legacy carrier at `legacy_unknown /
+ *     unresolved` and forbids guessing an actor, so the opt-out may well be the customer's own act
+ *     in an older system — which is precisely why the fence is fail-closed rather than ignorable.
+ *  3. "Fikirtive keeps this contact out of audiences until the customer opts in through their own
+ *     channel."
+ *     Behaviour, not biography: `isKnownOptOut` excludes while the fence stands, and only the
+ *     customer's own verified evidence folding to `verified_grant` lifts it (`contactConsentTruth`).
+ *     No "again" — that would presuppose an earlier opt-in the ledger cannot see.
+ *
+ * What the note must never do again: deny records on the same screen (r1), claim the customer was
+ * silent when another purpose holds her own grant (r2), or claim she "has never" decided, which no
+ * `unknown` can establish (r3).
  */
 export const CRM_PRE_LEDGER_OPT_OUT_NOTE =
-  "The customer has never opted in or out of WhatsApp marketing, and an opt-out was recorded for this contact before this history was kept. Fikirtive keeps this contact out of audiences until the customer opts in again through their own channel.";
+  "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. Fikirtive keeps this contact out of audiences until the customer opts in through their own channel.";
 
 export type CrmConsentBadge = {
   label: string;
