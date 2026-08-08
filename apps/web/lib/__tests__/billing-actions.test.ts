@@ -119,7 +119,10 @@ describe("createTopupCheckout", () => {
     pricesRetrieve.mockResolvedValue({ id: "price_a", active: true, metadata: { credits: "100" } });
     process.env.BETTER_AUTH_URL = "";
     const res = await createTopupCheckout("price_a");
-    expect(res).toEqual({ error: "Checkout is unavailable — please contact support." });
+    // #686 — the merchant cannot retry their way out of a missing base URL, so this is the
+    // one checkout error that hands them a person. The flag is what turns that sentence into
+    // a clickable mailto in BuyPackButton; a bare string was a dead pointer.
+    expect(res).toEqual({ error: "Checkout is unavailable — please contact support.", contactSupport: true });
     expect(sessionsCreate).not.toHaveBeenCalled();
   });
 
