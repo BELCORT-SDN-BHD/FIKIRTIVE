@@ -180,11 +180,14 @@ describe("#546 — the rest of the Otto surface stops calling a Project a campai
     // that now says "New project". Promising a "first campaign" here would send them
     // hunting on /campaign for work Otto filed as a Project.
     const dom = await render(
-      createElement(OttoOnboarding, { onGoToStuff: vi.fn(), onGoToMemory: vi.fn() }),
+      createElement(OttoOnboarding, {
+        hasStuff: false,
+        hasBrandMemory: false,
+        onGoToStuff: vi.fn(),
+        onGoToMemory: vi.fn(),
+        onDismiss: vi.fn(),
+      }),
     );
-    await act(async () => {
-      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
-    });
 
     expect(dom.textContent).toContain("Two quick things before your first project");
     expect(dom.textContent).toMatch(/consistent across every project/);

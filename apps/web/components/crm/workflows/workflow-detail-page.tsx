@@ -176,8 +176,24 @@ export default function WorkflowDetailPage({
     !archived,
   );
   const ruleSummary = summarizeRuleSource(selectedRevision?.rulesSource ?? rulesSource);
+  // #721 — archiving is not an off switch in ANY sense. The physical contract (§4.4 / :567 /
+  // :797) says archive neither deletes run history nor stops an active Routine, and
+  // customer-workflow.test.ts ("archiving stops nothing") proves against the real database that
+  // an archived workflow keeps its Routine active AND still gets new runs created for it. So no
+  // branch here may claim archiving prevents runs: that reads as reassurance and is precisely
+  // what would stop a merchant from going and killing a Routine that is still acting.
+  // 判官 r2 P2 — say only what this page can prove. `activeRoutineCount` counts Routines whose
+  // switch is ON (status active, kill switch not engaged). It does NOT establish that they can
+  // currently produce a run: an authorization can still be past its expiry, pinned to a revision
+  // whose fingerprints have drifted, or short of budget. Nor does a zero count establish that no
+  // authorization exists — a killed or revoked Routine still carries its authorization record.
+  // So the copy reports the switch, names archiving's true effect, and stops there.
   const statusSummary = archived
-    ? "Archived — this workflow cannot run."
+    ? routineReadError
+      ? "Archived — Routine status could not load, so whether any Routine here is still switched on is unknown. Archiving alone never stops a Routine."
+      : activeRoutineCount > 0
+        ? `Archived — ${activeRoutineCount} ${activeRoutineCount === 1 ? "Routine" : "Routines"} here ${activeRoutineCount === 1 ? "is" : "are"} still switched on. Archiving did not stop ${activeRoutineCount === 1 ? "it" : "them"}. Kill each one below to stop it.`
+        : "Archived — no Routine here is switched on. Archiving alone never stops a Routine."
     : routineReadError
       ? "Routine status could not load."
       : activeRoutineCount > 0
@@ -386,7 +402,10 @@ export default function WorkflowDetailPage({
           </details>
         </section>
 
-        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel key={`routines-${readGeneration}`} workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
+        {/* #720: NO readGeneration key here. Remounting the panel on every Routine re-read threw
+            away whatever the merchant had open — including the confirmation dialog and the form
+            they were filling in. The panel reads its Routines from this prop instead. */}
+        <div className="mt-12 border-t border-border pt-10"><RoutineAuthorizationPanel workflowDefinitionId={definition.id} workflowSlug={definition.slug} revisions={revisions} routines={routineRows} routineReadError={routineReadError} onRoutinesChanged={() => { void refreshRoutines(); }} disabled={archived} /></div>
         <div className="mt-12 border-t border-border pt-10"><WorkflowMonitoring key={`monitoring-${readGeneration}`} workflowDefinitionId={definition.id} initialRuns={runsResult} initialJourneys={journeysResult} /></div>
         <div className="mt-12 border-t border-border pt-10 pb-16"><WorkflowRecipesPanel key={`policies-${readGeneration}`} initialPolicies={policiesResult} /></div>
       </div>

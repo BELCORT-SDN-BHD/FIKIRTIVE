@@ -48,6 +48,10 @@
       "types": "./dist/refgen.d.ts",
       "default": "./dist/refgen.js"
     },
+    "./schedule-draft": {
+      "types": "./dist/schedule-draft.d.ts",
+      "default": "./dist/schedule-draft.js"
+    },
     "./spend": {
       "types": "./dist/spend.d.ts",
       "default": "./dist/spend.js"

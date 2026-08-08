@@ -9,6 +9,7 @@ import {
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "./better-auth/compat";
+import { MemberDirectoryError, memberDirectoryService } from "./member-directory-service";
 import {
   CustomerInboxError,
   customerInboxService,
@@ -89,6 +90,11 @@ async function runRead<T>(
     return { ok: true, resource: await runAsUser(ambient, () => operation(service)) };
   } catch (error) {
     if (error instanceof CustomerInboxError) return { ok: false, error: error.code };
+    // MemberDirectoryError shares the NOT_AUTHORIZED/ACTION_DENIED codes; surface them the same
+    // way. Its own members.read re-check runs after this gateway's inbox.read check, so a
+    // membership edited between the two lands here — and the conversation route reads through a
+    // single Promise.all, where a throw would take the whole page down instead of one panel.
+    if (error instanceof MemberDirectoryError) return { ok: false, error: error.code };
     throw error;
   }
 }
@@ -135,6 +141,22 @@ export async function listTemplates(input: ListTemplatesInput = {}) {
 // workspace's connected channel accounts instead of a free-text scope id.
 export async function listChannelScopes() {
   return runRead((principal) => customerInboxService.listChannelScopes(principal));
+}
+
+/**
+ * #725 — the same read-only member directory the broadcast workbench already uses (#27), so
+ * Inbox assignment can name teammates instead of asking the merchant to type a membership id
+ * that no screen in the product shows. The principal comes from the authenticated session, and
+ * the directory service independently re-checks `members.read` on top of this gateway's
+ * `inbox.read` gate: neither tenant scope nor capability is widened by reusing it here.
+ */
+export async function getMemberDirectory() {
+  return runRead((principal) =>
+    memberDirectoryService.listMemberDirectory({
+      ownerId: principal.ownerId,
+      membershipId: principal.membershipId,
+    }),
+  );
 }
 
 export async function saveConversationDraft(input: SaveConversationDraftInput) {

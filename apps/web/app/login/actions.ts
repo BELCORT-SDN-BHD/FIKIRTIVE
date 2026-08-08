@@ -1,61 +1,37 @@
 "use server";
 
 import { headers } from "next/headers";
-import { EmailSendError } from "@/lib/email";
-import { auth } from "@/lib/better-auth/server";
-import { MagicLinkRateLimitError } from "@/lib/better-auth/sender";
 import {
-  MAGIC_LINK_DELIVERY_FAILED_MESSAGE,
   MAGIC_LINK_INVALID_EMAIL_MESSAGE,
   MAGIC_LINK_SUCCESS_MESSAGE,
-  MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
-  normalizeMagicLinkEmail,
   type MagicLinkRequestResult,
 } from "@/lib/better-auth/magic-link-contract";
-import { sanitizeCallbackURL } from "@/lib/safe-redirect";
+import { acceptMagicLinkRequest } from "@/lib/better-auth/magic-link-request";
 
+/**
+ * #678 r3 — the login page's door. It is a thin translation of the ONE request path
+ * (lib/better-auth/magic-link-request.ts) into this action's result shape, and it must stay thin:
+ * every question worth asking about the address — is it on the allowlist, does it have budget
+ * left, should a token be minted, can the mail provider be reached — happens on the background
+ * side, where its cost cannot be timed from outside.
+ *
+ * There is deliberately no try/catch and no failure branch left here. Nothing on this path can
+ * throw for a reason that varies with the address: the format check is pure string work and the
+ * throttle is a Map lookup. Re-introducing a branch — for the throttle, for a delivery fault, for
+ * anything the background learns — re-opens the account-existence oracle this ticket closed three
+ * times over.
+ */
 export async function requestMagicLink(input: {
   email: string;
   callbackURL: string;
 }): Promise<MagicLinkRequestResult> {
-  const email = normalizeMagicLinkEmail(input.email);
-  if (!email) {
-    return {
-      status: "error",
-      reason: "invalid_email",
-      message: MAGIC_LINK_INVALID_EMAIL_MESSAGE,
-    };
-  }
+  const outcome = acceptMagicLinkRequest({
+    email: input.email,
+    callbackURL: input.callbackURL,
+    requestHeaders: await headers(),
+  });
 
-  try {
-    await auth.api.signInMagicLink({
-      body: {
-        email,
-        callbackURL: sanitizeCallbackURL(input.callbackURL),
-      },
-      headers: await headers(),
-    });
-    return { status: "success", message: MAGIC_LINK_SUCCESS_MESSAGE };
-  } catch (error) {
-    if (error instanceof MagicLinkRateLimitError) {
-      return {
-        status: "error",
-        reason: "rate_limited",
-        message: error.message,
-      };
-    }
-    if (error instanceof EmailSendError) {
-      return {
-        status: "error",
-        reason: "delivery_failed",
-        message: MAGIC_LINK_DELIVERY_FAILED_MESSAGE,
-      };
-    }
-    console.error("[better-auth] Magic-link request failed.", error);
-    return {
-      status: "error",
-      reason: "unknown",
-      message: MAGIC_LINK_UNKNOWN_FAILED_MESSAGE,
-    };
-  }
+  return outcome === "invalid_email"
+    ? { status: "error", reason: "invalid_email", message: MAGIC_LINK_INVALID_EMAIL_MESSAGE }
+    : { status: "success", message: MAGIC_LINK_SUCCESS_MESSAGE };
 }

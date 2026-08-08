@@ -185,8 +185,8 @@ export class RevokedDuringProvisioning extends Error {
  *  is the shop name; it travels as the account name and lands here, so the first screen shows
  *  the merchant their own shop instead of their email address. The org name is set at CREATE
  *  only (`update: {}`) — a later bootstrap never renames a workspace the merchant may have
- *  already renamed themselves. No shop name (magic-link/OAuth identities) → the email, exactly
- *  as before.
+ *  already renamed themselves. #680 — no shop name (magic-link/invite/OAuth identities) now
+ *  leaves the name EMPTY rather than falling back to the email address.
  *
  *  CONCURRENCY-IDEMPOTENT: the org id is DETERMINISTIC (`org_<userId>`), so two simultaneous
  *  callers (two tabs, or events.signIn racing the first request) converge on the SAME org
@@ -245,7 +245,14 @@ export async function bootstrapPersonalOrg(userId: string, email: string): Promi
       // welcome grant below, so a revoked address is never granted credits.
       if (admission?.status === "revoked") throw new RevokedDuringProvisioning();
       const owner = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
-      const workspaceName = (owner?.name ?? "").trim() || email;
+      // #680 — NO shop name collected (magic-link / invite / OAuth) means the workspace has no
+      // name yet, and that is what gets stored: an empty name. It used to fall back to the
+      // merchant's email address, which /profile then showed back to them under "Your shop name
+      // — shown across Fikirtive." An address is not a shop name, and writing one here made the
+      // product state a fact about the merchant that the merchant never said. Empty is the
+      // truthful value, and it is what makes /profile's "Set your shop name" placeholder show.
+      // (Organization.name is `String @default("")` — no schema change is involved.)
+      const workspaceName = (owner?.name ?? "").trim();
       await tx.organization.upsert({ where: { id: orgId }, create: { id: orgId, name: workspaceName }, update: {} });
       const membership = await tx.membership.upsert({
         where: { userId_orgId: { userId, orgId } },

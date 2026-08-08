@@ -35,7 +35,9 @@ export const x: Channel = {
       where: { ownerId, kind: "x" },
       select: { id: true, externalId: true, displayName: true },
     });
-    return c ? [{ id: c.externalId ?? c.id, name: c.displayName ?? "X account" }] : [];
+    // A local DB read always produces an answer — there is no "couldn't find out" branch here
+    // (a thrown Prisma error is a rejection, which callers already treat as "not read").
+    return { targets: c ? [{ id: c.externalId ?? c.id, name: c.displayName ?? "X account" }] : [] };
   },
   autoPublishable: () => "auto",
   publish: (ownerId, target, post) => publishViaX(ownerId, target, post),
