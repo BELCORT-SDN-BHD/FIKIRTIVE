@@ -33,7 +33,7 @@ function contact(name: string) {
     firstTouchCampaignId: null,
     firstTouchAt: NOW,
     lastSeenAt: NOW,
-    consentState: { state: "unknown", stateSourceKind: null, evidenceStatus: null, lastReceivedAt: null },
+    consentState: { state: "unknown", stateSourceKind: null, evidenceStatus: null, lastReceivedAt: null, unresolvedLegacyOptOut: false },
     doNotDisturb: false,
     totalOrdersMyr: null,
     createdAt: NOW,
