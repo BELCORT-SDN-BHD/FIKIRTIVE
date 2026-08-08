@@ -179,11 +179,10 @@ export default function ArchiveWorkflowDialog({
           )}
 
           {errorCode ? (
-            <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive">
+            <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}>
               <p className="font-semibold">The workflow was not archived</p>
-              <p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p>
+              <p className="mt-1">{workflowErrorMessage(errorCode)}</p>
               {errorCode === "ACTIVE_ROUTINE_ACKNOWLEDGEMENT_REQUIRED" && active === null ? <p className="mt-2">The exact active Routine list is required before you can continue. No Routine was stopped.</p> : null}
-              <p className="mt-1 font-mono text-xs">Error code: {errorCode}</p>
             </div>
           ) : null}
 
