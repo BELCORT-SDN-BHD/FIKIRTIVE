@@ -1,11 +1,13 @@
-// 375px 移动端布局回归检查(#685 / #722 / #697 / #730)。
+// 375px 移动端布局回归检查(#685 / #722 / #697 / #730 / #747)。
 //
-// 四条断言,全部在真实浏览器里量,不看 class 字符串:
+// 五条断言,全部在真实浏览器里量,不看 class 字符串:
 //   1. 无横向溢出   document.documentElement.scrollWidth <= clientWidth
 //   2. 顶部不被遮挡  页面第一个标题 / 返回链接的矩形与浮动导航按钮不相交,
 //                    且该位置的 elementFromPoint 命中的是内容本身(能点得到)
 //   3. 主行动在屏内  指定的主按钮 boundingBox 完整落在视口内
 //   4. 窄屏按钮让行  一行 flex 里的按钮必须换到正文下面,不把正文挤成细长条
+//   5. 只有一个菜单入口 自带顶栏的面(Otto)上,壳的浮动汉堡必须一颗都不在,
+//                    且那一颗自家汉堡在自己中心点是真的点得到的(#747 叠罗汉)
 //
 // fail-closed:被断言的元素找不到(汉堡按钮、顶部锚点、主按钮、堆叠的正文/按钮)
 // 本身就算 failure。选择器过时 = 那一条断言压根没跑,不能当成「这个面是干净的」。
@@ -45,6 +47,14 @@ const SURFACES = [
     primaryAction: "button:has-text('New workflow')",
   },
   { ticket: "#722", path: "/crm/workflows/wf_seed_0", topAnchor: "a:has-text('Back to Workflows'), a:has-text('Return to Otto')" },
+  {
+    // #747 — Otto 自带 in-flow 顶栏,所以壳不再画那颗浮动汉堡。这里量的就是走查复现的
+    // 那一格:同一个左上角只能有一颗汉堡,而且它得是 Otto 自己那颗。
+    ticket: "#747",
+    path: "/otto",
+    skipTopAnchor: true,
+    soleMenuTrigger: { own: "button[aria-label='Open menu']" },
+  },
   {
     ticket: "#697",
     path: "/otto?view=analytics",
@@ -124,6 +134,34 @@ for (const surface of SURFACES) {
     }
   }
 
+  // #747 — 自带顶栏的面上,壳的浮动汉堡必须一颗都不剩,自家那颗必须真的点得到。
+  // 同样 fail-closed:自家汉堡找不到 = 这条断言没跑,不能算干净。
+  let menuVerdict = "n/a";
+  if (surface.soleMenuTrigger) {
+    const shellTriggers = await page.locator(NAV_TRIGGER).count();
+    const own = await page.locator(surface.soleMenuTrigger.own).first().boundingBox().catch(() => null);
+    if (!own) {
+      menuVerdict = `MISSING own trigger ${surface.soleMenuTrigger.own}`;
+      failures.push(`${surface.ticket} ${surface.path}: own menu trigger ${surface.soleMenuTrigger.own} not found — assertion did not run`);
+    } else if (shellTriggers > 0) {
+      menuVerdict = `STACKED (${shellTriggers} shell trigger(s) still rendered)`;
+      failures.push(`${surface.ticket} ${surface.path}: the shell's ${NAV_TRIGGER} is still drawn on a surface that owns its own top bar — ${menuVerdict}`);
+    } else {
+      const hit = await page.evaluate(
+        ([x, y]) => {
+          const el = document.elementFromPoint(x, y);
+          const labelled = el?.closest("[aria-label]");
+          return labelled ? `${labelled.tagName}[${labelled.getAttribute("aria-label")}]` : (el?.tagName ?? "none");
+        },
+        [Math.round(own.x + own.width / 2), Math.round(own.y + own.height / 2)],
+      );
+      menuVerdict = `sole trigger (center hit: ${hit})`;
+      if (!hit.includes("Open menu")) {
+        failures.push(`${surface.ticket} ${surface.path}: something else sits on the own menu trigger — center hit ${hit}`);
+      }
+    }
+  }
+
   let actionVerdict = "n/a";
   if (surface.primaryAction) {
     const box = await page.locator(surface.primaryAction).first().boundingBox().catch(() => null);
@@ -166,6 +204,7 @@ for (const surface of SURFACES) {
     path: surface.path,
     overflowPx,
     topAnchor: anchorVerdict,
+    menuTrigger: menuVerdict,
     primaryAction: actionVerdict,
     stacked: stackedVerdict,
   });

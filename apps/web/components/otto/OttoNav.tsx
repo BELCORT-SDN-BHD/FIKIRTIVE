@@ -1,9 +1,10 @@
 "use client";
 import React, { useState } from "react";
-import { MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
+import { ArrowUpRight, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
+import { useOpenGlobalNavigation } from "@/components/global-navigation";
 import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
 import { getOttoNavCollapseAction, getOttoNavCollapseLabel } from "./otto-nav-collapse";
 
@@ -188,6 +189,8 @@ export function OttoNav({
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const showTools = toolsActive || toolsOpen;
   const collapseLabel = getOttoNavCollapseLabel(drawerOpen);
+  // Null outside the merchant shell (e.g. /skin-preview) — no global drawer to reach.
+  const openGlobalNavigation = useOpenGlobalNavigation();
 
   const isProjectCollapsed = (id: string) => {
     if (collapsedProjects.has(id)) return true;
@@ -245,6 +248,18 @@ export function OttoNav({
       return;
     }
     onToggleCollapse?.();
+  }
+
+  /** Hand the screen over to the global drawer (#747). This rail sits above it
+   *  (z-200 vs z-40) and starts at the same left edge, so it must be shut on BOTH of
+   *  the ways it can be open — the mobile drawer flag and the desktop collapse flag —
+   *  or the drawer would open underneath it and look like nothing happened. Shutting it
+   *  is also the honest read of the interaction: one menu at a time, never two stacked. */
+  function handleOpenGlobalNavigation() {
+    setOpenMenu(null);
+    onDrawerClose?.();
+    if (!collapsed) onToggleCollapse?.();
+    openGlobalNavigation?.();
   }
 
   function openProjectEntry(entry: Extract<OttoNavEntry, { kind: "project" }>) {
@@ -609,6 +624,27 @@ export function OttoNav({
       )}
 
       <div style={{ flex: hasSidebar ? 0 : 1 }} />
+
+      {/* Go to — the ONE global-navigation entry point below 1024px (#747). Otto draws
+          its own mobile top bar, so the shell withholds its floating hamburger here
+          rather than parking it on top of Otto's; this row takes over that job from
+          inside Otto's own menu. Hidden from 1024px up, where the global rail is
+          permanently on screen and this would only repeat it. It opens the real global
+          drawer instead of copying its links, so credits, Profile, and Sign out stay
+          reachable and stay defined in exactly one place. */}
+      {openGlobalNavigation && (
+        <div className="mt-2 border-t border-border px-3 pt-3 lg:hidden">
+          <button
+            type="button"
+            onClick={handleOpenGlobalNavigation}
+            title="Go to Campaign, CRM, billing, and account"
+            className="flex items-center gap-[9px] w-full border-0 bg-transparent text-muted-foreground font-normal text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 hover:bg-secondary/60 hover:text-foreground"
+          >
+            <ArrowUpRight size={18} className="shrink-0" aria-hidden />
+            <span className="flex-1">Go to…</span>
+          </button>
+        </div>
+      )}
 
       {/* Credits balance and identity (avatar, name, email, sign out) now live once,
           in the persistent global nav — this rail no longer repeats either

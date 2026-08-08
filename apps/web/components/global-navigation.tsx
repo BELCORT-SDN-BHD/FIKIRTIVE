@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
@@ -140,12 +140,37 @@ export function isMerchantSurface(pathname: string): boolean {
   );
 }
 
-/** True when the surface draws its own mobile top bar and therefore needs NO space
- *  reserved by the shell (see MOBILE_NAV_TRIGGER_INSET below). Only Otto does: OttoApp
- *  renders an in-flow `.otto-mobile-topbar` above a 100dvh workspace, so a second
- *  reservation would push its bar down and add a scrollbar to a pane that must not scroll. */
+/** True when the surface draws its own mobile top bar and therefore owns the WHOLE
+ *  mobile navigation entry: the shell reserves no space for its floating trigger (see
+ *  MOBILE_NAV_TRIGGER_INSET below) and renders no trigger at all (#747).
+ *
+ *  Only Otto does. OttoApp renders an in-flow `.otto-mobile-topbar` above a 100dvh
+ *  workspace, so a second reservation would push its bar down and add a scrollbar to a
+ *  pane that must not scroll (#685). The trigger half is #747: reserving no space is
+ *  exactly what left the shell's `fixed` button sitting ON TOP of Otto's own — 40×40 at
+ *  (12,12) over Otto's 44×44 "Open menu" at (16,4) below 680px, and over Otto's 34×34
+ *  "Show sidebar" at (12,12) from 681 to 1023px. Two hamburgers, one on top of the
+ *  other, opening two different drawers: which one the merchant hit was luck.
+ *
+ *  A surface that owns the bar owns the entry, so the global drawer reaches it from
+ *  INSIDE that bar's own menu instead — see useOpenGlobalNavigation below. */
 function ownsMobileTopBar(pathname: string): boolean {
   return pathMatches(pathname, "/otto");
+}
+
+/** The one way to open the global navigation drawer from a surface that owns the mobile
+ *  top bar (#747, Founder 2026-08-08: hide the global hamburger on Otto's phone layout,
+ *  keep Otto's own menu, and put the global entry inside it as a single item).
+ *
+ *  Null outside the merchant shell — /skin-preview mounts the real Otto shell with mock
+ *  data and has no global drawer to open, so the item must not render there. Handing the
+ *  opener down rather than duplicating the nav tree keeps ONE source of truth for what
+ *  the global navigation contains: credits, identity, and Sign out included, none of
+ *  which Otto's rail knows how to draw. */
+const OpenGlobalNavigationContext = createContext<(() => void) | null>(null);
+
+export function useOpenGlobalNavigation(): (() => void) | null {
+  return useContext(OpenGlobalNavigationContext);
 }
 
 function NavigationLink({
@@ -226,9 +251,18 @@ export function SectionTabs({ pathname }: { pathname: string }) {
 export function GlobalNavigation({
   pathname,
   signOutAction,
+  mobileOpen,
+  onMobileOpenChange,
+  showMobileTrigger,
 }: {
   pathname: string;
   signOutAction: () => Promise<void>;
+  /** Owned by MerchantShellContent so a surface that owns the mobile top bar can open
+   *  this drawer from its own menu (#747 — see useOpenGlobalNavigation). */
+  mobileOpen: boolean;
+  onMobileOpenChange: (open: boolean) => void;
+  /** False on a surface that draws its own mobile top bar; that bar carries the entry. */
+  showMobileTrigger: boolean;
 }) {
   const crmActive = pathMatches(pathname, "/crm");
   const settingsActive = activeItemHref(pathname, WORKSPACE_SETTINGS_ITEMS) !== null;
@@ -239,14 +273,12 @@ export function GlobalNavigation({
   const [settingsOpen, setSettingsOpen] = useState(() =>
     nextSettingsDisclosureOpen({ type: "navigation", pathname }),
   );
-  const [mobileOpen, setMobileOpen] = useState(false);
   const [account, setAccount] = useState<{ email: string; balance: number } | null>(null);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Navigation intentionally resets manual disclosure toggles and the mobile drawer on route change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Navigation intentionally resets manual disclosure toggles on route change.
     setCrmOpen(nextCrmDisclosureOpen({ type: "navigation", pathname }));
     setSettingsOpen(nextSettingsDisclosureOpen({ type: "navigation", pathname }));
-    setMobileOpen(false);
   }, [pathname]);
 
   // This rail holds the only credits figure in the product, so it must re-read the
@@ -294,18 +326,23 @@ export function GlobalNavigation({
           two desktop tiers only needs to not clip, not to be polished).
           It is `fixed`, so it takes NO space of its own: the shell reserves that space
           once, for every merchant surface, in MerchantShellContent (#685). Keep the
-          geometry here and MOBILE_NAV_TRIGGER_INSET in step. */}
-      <button
-        type="button"
-        onClick={() => setMobileOpen(true)}
-        aria-label="Open navigation"
-        className="fixed left-3 top-3 z-30 flex size-10 items-center justify-center rounded-[10px] border border-border bg-card text-foreground shadow-sm lg:hidden"
-      >
-        <Menu className="size-5" aria-hidden />
-      </button>
+          geometry here and MOBILE_NAV_TRIGGER_INSET in step.
+          Not rendered at all where the surface draws its own mobile top bar — the same
+          `fixed` that makes it free of layout is what let it land on top of Otto's own
+          hamburger (#747). Reservation and trigger now answer to one predicate. */}
+      {showMobileTrigger && (
+        <button
+          type="button"
+          onClick={() => onMobileOpenChange(true)}
+          aria-label="Open navigation"
+          className="fixed left-3 top-3 z-30 flex size-10 items-center justify-center rounded-[10px] border border-border bg-card text-foreground shadow-sm lg:hidden"
+        >
+          <Menu className="size-5" aria-hidden />
+        </button>
+      )}
 
       <div
-        onClick={() => setMobileOpen(false)}
+        onClick={() => onMobileOpenChange(false)}
         aria-hidden
         className={cn("fixed inset-0 z-30 bg-black/35 lg:hidden", mobileOpen ? "block" : "hidden")}
       />
@@ -328,7 +365,7 @@ export function GlobalNavigation({
           </Link>
           <button
             type="button"
-            onClick={() => setMobileOpen(false)}
+            onClick={() => onMobileOpenChange(false)}
             aria-label="Close navigation"
             className="flex size-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground lg:hidden"
           >
@@ -536,21 +573,41 @@ export function MerchantShellContent({
   pathname: string;
   signOutAction: () => Promise<void>;
 }) {
+  // The drawer's open state lives here, not in GlobalNavigation, so it is reachable from
+  // BOTH sides of the shell: the rail's own trigger and — where that trigger is withheld
+  // — the page's own menu, through the context below (#747).
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- A route change must never leave the drawer open over the page it navigated to.
+    setMobileOpen(false);
+  }, [pathname]);
+
+  const openGlobalNavigation = useCallback(() => setMobileOpen(true), []);
+
   if (!isMerchantSurface(pathname)) return <>{children}</>;
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
-      <GlobalNavigation pathname={pathname} signOutAction={signOutAction} />
-      <div
-        className={cn(
-          "min-h-dvh min-w-0 pl-0 lg:pl-16 xl:pl-60",
-          !ownsMobileTopBar(pathname) && MOBILE_NAV_TRIGGER_INSET,
-        )}
-      >
-        <SectionTabs pathname={pathname} />
-        {children}
+    <OpenGlobalNavigationContext.Provider value={openGlobalNavigation}>
+      <div className="min-h-dvh bg-background text-foreground">
+        <GlobalNavigation
+          pathname={pathname}
+          signOutAction={signOutAction}
+          mobileOpen={mobileOpen}
+          onMobileOpenChange={setMobileOpen}
+          showMobileTrigger={!ownsMobileTopBar(pathname)}
+        />
+        <div
+          className={cn(
+            "min-h-dvh min-w-0 pl-0 lg:pl-16 xl:pl-60",
+            !ownsMobileTopBar(pathname) && MOBILE_NAV_TRIGGER_INSET,
+          )}
+        >
+          <SectionTabs pathname={pathname} />
+          {children}
+        </div>
       </div>
-    </div>
+    </OpenGlobalNavigationContext.Provider>
   );
 }
 
