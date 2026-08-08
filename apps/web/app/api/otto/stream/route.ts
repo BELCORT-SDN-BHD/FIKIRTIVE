@@ -34,6 +34,7 @@ import {
   displayCredits,
   GOAL_PRESETS,
   isGoalKey,
+  OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
 } from "@fikirtive/core";
 import {
   otto,
@@ -59,6 +60,7 @@ import {
 import { bridgeEvent, stepEventOf, OTTO_TEXT_ID, OTTO_REASONING_ID } from "@/lib/otto-stream-bridge";
 import type { OttoStatusData, OttoErrorData, OttoCostData } from "@/lib/otto-stream-bridge";
 import { persistStreamTurnError, streamTurnErrorId, streamTurnErrorText } from "@/lib/otto-stream-errors";
+import { chatHoldShortfallMessage } from "@/lib/credit-format";
 
 /** Safe one-line error summary for logs (mirrors otto-actions.errSummary). */
 function errSummary(e: unknown): string {
@@ -336,7 +338,18 @@ export async function POST(req: NextRequest): Promise<Response> {
           // exact typed failure so first-turn navigation/remount and refresh stay honest.
           if (e instanceof InsufficientCredits) {
             closeOpenParts();
-            const error = { kind: "insufficient_credits", text: "You're out of credits." } satisfies OttoErrorData;
+            // #791-7: name the two real numbers. "You're out of credits" was usually false —
+            // a turn HOLDS OTTO_CONVERSATION_TURN_RESERVE_INTERNAL up front, so a merchant
+            // with 3.9 credits who had spent nothing was told they had none, with their own
+            // balance on screen contradicting it. The balance travels on the error from
+            // inside the failing reserve, so it is the number the refusal was judged against.
+            const error = {
+              kind: "insufficient_credits",
+              text: chatHoldShortfallMessage(
+                e.balanceInternal === null ? null : displayCredits(e.balanceInternal),
+                displayCredits(e.requiredInternal ?? OTTO_CONVERSATION_TURN_RESERVE_INTERNAL),
+              ),
+            } satisfies OttoErrorData;
             try {
               await persistStreamTurnError({ ownerId, threadId, seqAfterUser, userMessageId, refId, error });
             } catch (persistError) {

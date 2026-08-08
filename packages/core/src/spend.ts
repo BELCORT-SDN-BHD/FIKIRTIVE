@@ -10,6 +10,7 @@
  */
 import {
   GEN_PRICE_USD_PER_IMAGE,
+  GEN_VIDEO_MODELS,
   GEN_VIDEO_MODEL_OPTIONS,
   REFERENCE_VIDEO_COGS_USD,
   videoPriceUsd,
@@ -189,3 +190,23 @@ export function displayCredits(internal: number): number {
  *  is deliberately UNCHANGED, because a new key would re-grant to every org that already
  *  received the old amount — existing workspaces keep what they were given. */
 export const SIGNUP_GRANT_CREDITS = 25 * INTERNAL_PER_DISPLAY;
+
+/**
+ * 一条「默认视频」的显示 credits —— 商家不改任何选项、开口就说「做条视频」时的价钱
+ * (菜单上的视频引擎 + 它自己声明的默认时长/分辨率)。
+ *
+ * #791-7 需要它:余额低于这个数就该提前提醒,而不是等商家撞墙。刻意**算**出来而不是
+ * 写死 11 —— 抄一份数字,就是下一次改价时「说的」与「收的」再次分家。
+ */
+export function defaultVideoDisplayCredits(): number {
+  const model = GEN_VIDEO_MODELS[0];
+  const d = videoDefaults(model);
+  return displayCredits(
+    pricedGenCredits({
+      kind: "VIDEO",
+      model,
+      count: 1,
+      videoOptions: { seconds: d.seconds, resolution: d.resolution },
+    }),
+  );
+}

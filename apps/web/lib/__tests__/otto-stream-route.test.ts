@@ -3,9 +3,19 @@ import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
 const mocks = vi.hoisted(() => {
   class MockInsufficientCredits extends Error {
-    constructor(message = "Not enough credits.") {
+    // #791-7: the real InsufficientCredits carries the two numbers the merchant is told
+    // (what they hold, what the turn needs). The double must carry them too, or this suite
+    // would pass while the route printed "undefined credits".
+    readonly requiredInternal: number | null;
+    readonly balanceInternal: number | null;
+    constructor(
+      message = "Not enough credits.",
+      detail?: { requiredInternal?: number | null; balanceInternal?: number | null },
+    ) {
       super(message);
       this.name = "InsufficientCredits";
+      this.requiredInternal = detail?.requiredInternal ?? null;
+      this.balanceInternal = detail?.balanceInternal ?? null;
     }
   }
 
@@ -400,7 +410,7 @@ describe("POST /api/otto/stream", () => {
     expect(res.status).toBe(200);
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "You're out of credits." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
     });
     expect(mocks.withLlmBudget).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -423,10 +433,10 @@ describe("POST /api/otto/stream", () => {
         data: expect.objectContaining({
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "You're out of credits.",
+          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "You're out of credits." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
           }),
         }),
       }),
@@ -446,7 +456,7 @@ describe("POST /api/otto/stream", () => {
 
     expect(parts).toContainEqual({
       type: "data-error",
-      data: { kind: "insufficient_credits", text: "You're out of credits." },
+      data: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
     });
     expect(mocks.chatThreadCreate).not.toHaveBeenCalled();
     expect(mocks.chatMessageCreate).toHaveBeenCalledWith(
@@ -455,14 +465,34 @@ describe("POST /api/otto/stream", () => {
           threadId: "thread_existing",
           role: "AGENT",
           kind: "TURN_ERROR",
-          text: "You're out of credits.",
+          text: "Not enough credits — this needs 4 credits. Top up in Billing.",
           payload: expect.objectContaining({
             kind: "stream_run_error",
-            error: { kind: "insufficient_credits", text: "You're out of credits." },
+            error: { kind: "insufficient_credits", text: "Not enough credits — this needs 4 credits. Top up in Billing." },
           }),
         }),
       }),
     );
+  });
+
+  // #791-7: "You're out of credits." was usually false — a turn HOLDS 4 credits up front, so a
+  // merchant with 3.9 who had spent nothing was told they had none, with their balance on
+  // screen contradicting it. The refusal now carries the balance it was judged against.
+  it("names the merchant's REAL balance and the real hold when the reserve refuses", async () => {
+    mocks.withLlmBudget.mockRejectedValue(
+      new mocks.MockInsufficientCredits(undefined, { requiredInternal: 40, balanceInternal: 39 }),
+    );
+
+    const parts = (await (await POST(req({ projectId: "proj_stream", text: "hi" }))).json()) as Array<{
+      type: string;
+      data?: { kind?: string; text?: string };
+    }>;
+
+    const error = parts.find((p) => p.type === "data-error");
+    expect(error?.data?.text).toBe(
+      "You have 3.9 credits — starting a message with Otto holds 4 credits first. Top up in Billing.",
+    );
+    expect(error?.data?.text).not.toMatch(/out of credits/i);
   });
 
   it("keeps generic run failures durable with the same typed stream response", async () => {

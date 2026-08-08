@@ -42,6 +42,37 @@ export function outOfCreditsMessage(quotedCredits: number): string {
   return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. Top up in Billing.`;
 }
 
+/** What a merchant is told when a CONVERSATION turn can't start (#791-7).
+ *
+ *  It replaced "You're out of credits." — a sentence that was usually not true. A turn HOLDS
+ *  a fixed amount up front (OTTO_CONVERSATION_TURN_RESERVE_INTERNAL), so a merchant sitting on
+ *  3.9 credits, who has spent nothing, was told they had none while their own balance was on
+ *  screen saying otherwise. That reads as a broken product, not as a limit.
+ *
+ *  Names both real numbers: what they hold now, and what starting a message needs. Falls back
+ *  to the shared out-of-credits line when the balance can't be read — better to say one true
+ *  thing than to invent a number. Both are DISPLAYED credits. */
+export function chatHoldShortfallMessage(
+  balanceCredits: number | null,
+  holdCredits: number,
+): string {
+  if (balanceCredits === null) return outOfCreditsMessage(holdCredits);
+  return `You have ${creditsLabel(balanceCredits)} — starting a message with Otto holds ${creditsLabel(holdCredits)} first. Top up in Billing.`;
+}
+
+/** The early warning, shown BEFORE they try (#791-7): the balance is under what one video
+ *  costs. Said while they still have a choice, instead of at the moment they are stopped.
+ *
+ *  States the fact only — the way OUT (top up in Billing) is rendered as a real link by the
+ *  caller via components/exits, which is this repo's one rule for "next step" copy: never
+ *  write the direction as text the merchant cannot click. */
+export function lowBalanceForVideoMessage(
+  balanceCredits: number,
+  videoCredits: number,
+): string {
+  return `You have ${creditsLabel(balanceCredits)} left — a short video costs ${creditsLabel(videoCredits)}.`;
+}
+
 /** The ONE disclosure for what an Otto conversation costs (#555).
  *
  *  It used to read "Chatting with Otto uses a little credit." in three separate places. A
