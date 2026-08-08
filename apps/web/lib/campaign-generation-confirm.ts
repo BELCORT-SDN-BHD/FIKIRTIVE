@@ -69,7 +69,15 @@ import {
   campaignVideoAspectForFormat,
   type CampaignGenKind,
 } from "./campaign-format-shape";
-import { attachCampaignApprovalGate } from "./campaign-approval-lock";
+import {
+  attachCampaignApprovalGate,
+  claimCampaignDispatch,
+  releaseCampaignDispatch,
+  renewCampaignDispatchLease,
+  CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH,
+  CAMPAIGN_DISPATCH_CLAIM_UNKNOWN,
+  CAMPAIGN_DISPATCH_IN_FLIGHT,
+} from "./campaign-approval-lock";
 import {
   cellResolvedSpec,
   orchestrateBatch,
@@ -391,6 +399,18 @@ const LINE_DELIVERY_CHANGED_MID_DISPATCH =
 const LINE_PRICE_CHANGED_MID_DISPATCH =
   "This item's price changed while it was starting, so it wasn't started and wasn't charged. Review the updated plan and confirm again.";
 
+/** 认领那一刻交付面已经对不上(#749 判官 r3 P1)。整批停在这里,一格都还没派发。 */
+const DELIVERY_MOVED_BEFORE_DISPATCH =
+  "What this plan will deliver changed since you reviewed it, so nothing was started and nothing was charged. Review the updated plan before confirming.";
+
+/** 认领事务内部的信号:交付面对不上。抛它是为了让租约随事务一起回滚。 */
+class DeliveryFaceMovedAtClaim extends Error {
+  constructor(readonly userError: string) {
+    super("CAMPAIGN_DELIVERY_FACE_MOVED_AT_CLAIM");
+    this.name = "DeliveryFaceMovedAtClaim";
+  }
+}
+
 export type CampaignGenQuoteResult =
   | {
       ok: true;
@@ -650,7 +670,13 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
         // ② 交付面 —— 整批在锁内重判一次,判据仍是 `previewBatchCharges`(报价那一侧同一个)。
         //    自己已经派发出去的格不会动它:派发只会让那一格从 new 变成 reused,两者都算
         //    「会交付」;只有材料对不上(别人占了)才会掉出交付面,而那只可能来自另一次派发。
+        //    这一步同时**续租**(判官 r3 P1):租约只需覆盖相邻两格的间隙,所以它能定得很短
+        //    (崩了很快就放),又不会在一趟正常派发中途过期。万一真过期且被别人抢走,这一格
+        //    在花钱之前就停住 —— 不会继续往一份已经缩水的交付里付钱。
         stillDelivering: async (tx) => {
+          if (!(await renewCampaignDispatchLease(tx, { ownerId, batchId, attemptId }))) {
+            return CAMPAIGN_DISPATCH_IN_FLIGHT;
+          }
           const live = await previewBatchCharges(tx, {
             ownerId,
             projectId,
@@ -658,9 +684,11 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
             attemptId,
             cells,
           });
-          if ("error" in live) return false;
+          if ("error" in live) return CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
           return quoteCampaignGenCells(approved, cells, live).deliveryFingerprint
-            === quote.deliveryFingerprint;
+            === quote.deliveryFingerprint
+            ? null
+            : CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
         },
         // ①③ 这一格的收费判决 + 费用上限,对着商家签名时的那一行。
         //
@@ -684,10 +712,62 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
       }),
     );
 
-  const result = await orchestrateBatch(
-    { startGen: guardedStartGen, prisma },
-    { ownerId, projectId, batchId, attemptId, name: `${campaign.name} — campaign generation`, cells },
-  );
+  // #749 判官 r3 P1 —— **批次级承诺需要批次级机制**。
+  //
+  // 上面那两道锁内闸门守的是「这一格」,而 campaign 锁是事务级的:每一格提交时它就被放开,
+  // 批次却还在往下派发。缝因此在**格与格之间**:B 先为共用的那张图付了钱,A 随后用别的档
+  // 占住片子那一格,B 到第二格才发现交付缩水 —— 而第一笔预扣早已提交。往格里再加检查堵不
+  // 上,因为缝根本不在格里。
+  //
+  // 所以开工时先把**整个交付面**一次性认下来:一笔短事务、取同一把 campaign 锁、认领 +
+  // 就地复核交付面,然后立刻提交(不长持事务、不占连接池)。认领期间,同一个战役+项目的
+  // 另一次确认在**它自己花钱之前**被挡住。认领本身就是那把批次级的锁。
+  const lease = {
+    ownerId,
+    campaignId,
+    batchId,
+    projectId,
+    attemptId,
+    name: `${campaign.name} — campaign generation`,
+  };
+  let claimed: boolean;
+  try {
+    claimed = await prisma.$transaction(async (tx) => {
+      if (!(await claimCampaignDispatch(tx, lease))) return false;
+      // 认下来之后,就在这把锁里复核一次交付面。对不上就抛 —— 租约与它同生共死,随事务一起
+      // 回滚,不留残迹也不需要补偿归还。零扣费,因为这里一格都还没派发。
+      const live = await previewBatchCharges(tx, { ownerId, projectId, batchId, attemptId, cells });
+      // 读不出这一批的收费预判时,把**它自己那句话**原样带给商家(例如迁移期旧行对不上
+      // 哪个条目)—— 换成一句笼统的「交付面变了」会把真正的原因藏起来。
+      if ("error" in live) throw new DeliveryFaceMovedAtClaim(live.error);
+      if (quoteCampaignGenCells(approved, cells, live).deliveryFingerprint !== quote.deliveryFingerprint) {
+        throw new DeliveryFaceMovedAtClaim(DELIVERY_MOVED_BEFORE_DISPATCH);
+      }
+      return true;
+    });
+  } catch (error) {
+    if (error instanceof DeliveryFaceMovedAtClaim) {
+      return { error: error.userError, quote };
+    }
+    console.warn(
+      "campaign-generation-confirm: dispatch claim could not be taken (nothing started):",
+      error instanceof Error ? error.message : error,
+    );
+    return { error: CAMPAIGN_DISPATCH_CLAIM_UNKNOWN, quote };
+  }
+  if (!claimed) return { error: CAMPAIGN_DISPATCH_IN_FLIGHT, quote };
+
+  let result: Awaited<ReturnType<typeof orchestrateBatch>>;
+  try {
+    result = await orchestrateBatch(
+      { startGen: guardedStartGen, prisma },
+      { ownerId, projectId, batchId, attemptId, name: lease.name, cells },
+    );
+  } finally {
+    // 派发结束就归还 —— 成功、部分成功、失败、抛出,都一样。归还只在还归自己时生效,失败
+    // 也不上抛:残留的租约最多让下一次确认等它老死,那是保守方向,绝不会让任何一笔钱走通。
+    await releaseCampaignDispatch(prisma, lease);
+  }
   if ("error" in result) return { ...result, quote };
 
   // Revalidation is post-spend presentation metadata. Never throw away an honest dispatch

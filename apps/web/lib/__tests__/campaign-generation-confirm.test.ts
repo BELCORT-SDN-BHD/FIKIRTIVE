@@ -19,7 +19,7 @@ const h = vi.hoisted(() => {
     campaigns: new Map<string, { id: string; ownerId: string; name: string; planJson: unknown; deletedAt: Date | null }>(),
     projects: new Map<string, { id: string; ownerId: string; campaignId: string | null; deletedAt: Date | null }>(),
     creditAccounts: new Map<string, number>(),
-    batches: new Map<string, { id: string; ownerId: string }>(),
+    batches: new Map<string, { id: string; ownerId: string; status: string; updatedAt: Date }>(),
     jobs: new Map<string, Record<string, unknown>>(),
   };
   const creditAccountFindUnique = vi.fn(async ({ where }: { where: { orgId: string } }) => {
@@ -34,7 +34,20 @@ const h = vi.hoisted(() => {
   // so the tests can prove the gate was taken and not merely present.
   const advisoryLocks: string[] = [];
   const prisma = {
-    $transaction: async (run: (tx: unknown) => unknown) => run(prisma),
+    // #749 判官 r3 P1:开工认领那笔事务的**回滚是承重的** —— 认领与「交付面还对得上吗」
+    // 同生共死,面对不上时抛出,租约(以及第一次确认时连带建出的那一行)必须一起消失,
+    // 否则会留下一把没人归还的锁。替身若不回滚就比真库宽容,这条就永远测不出来。
+    // 认领事务只写 batches 这一张表,所以快照它一张就够。
+    $transaction: async (run: (tx: unknown) => unknown) => {
+      const snapshot = new Map([...store.batches].map(([id, row]) => [id, { ...row }] as const));
+      try {
+        return await run(prisma);
+      } catch (error) {
+        store.batches.clear();
+        for (const [id, row] of snapshot) store.batches.set(id, row);
+        throw error;
+      }
+    },
     $executeRaw: async (_strings: TemplateStringsArray, key: string) => {
       advisoryLocks.push(key);
       return 0;
@@ -56,15 +69,34 @@ const h = vi.hoisted(() => {
     creditAccount: {
       findUnique: creditAccountFindUnique,
     },
+    // #749 判官 r3 P1：这一行现在还承载**派发租约**(status + updatedAt)。替身要像真库一样
+    // 在每次 update 时推进 updatedAt —— 租约的活性判据就是它,替身不推就测不出续租。
     generationBatch: {
       findFirst: async ({ where }: { where: { id: string; ownerId: string } }) => {
         const batch = store.batches.get(where.id);
-        return batch && batch.ownerId === where.ownerId ? { id: batch.id } : null;
+        return batch && batch.ownerId === where.ownerId
+          ? { id: batch.id, status: batch.status, updatedAt: batch.updatedAt }
+          : null;
       },
-      create: async ({ data }: { data: { id: string; ownerId: string } }) => {
+      create: async ({ data }: { data: { id: string; ownerId: string; status?: string } }) => {
         if (store.batches.has(data.id)) throw Object.assign(new Error("dup"), { code: "P2002" });
-        store.batches.set(data.id, { id: data.id, ownerId: data.ownerId });
+        store.batches.set(data.id, {
+          id: data.id,
+          ownerId: data.ownerId,
+          status: data.status ?? "active",
+          updatedAt: new Date(),
+        });
         return { id: data.id };
+      },
+      updateMany: async (
+        { where, data }: { where: { id: string; ownerId: string; status?: string }; data: { status: string } },
+      ) => {
+        const batch = store.batches.get(where.id);
+        if (!batch || batch.ownerId !== where.ownerId) return { count: 0 };
+        if (where.status != null && batch.status !== where.status) return { count: 0 };
+        batch.status = data.status;
+        batch.updatedAt = new Date();
+        return { count: 1 };
       },
     },
     genJob: {
@@ -130,6 +162,8 @@ const {
   CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
   CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH,
   CAMPAIGN_DELIVERY_CHECK_UNKNOWN,
+  CAMPAIGN_DISPATCH_IN_FLIGHT,
+  CAMPAIGN_DISPATCH_LEASE_MS,
 } = await import("../campaign-approval-lock");
 const { quoteCell, stableCellLogicalPrefix } = await import("../factory-batch");
 const { displayCredits } = await import("@fikirtive/core");
@@ -603,7 +637,11 @@ describe("confirmCampaignGeneration — an undo landing mid-batch stops the rest
 
     const res = await confirmCampaignGeneration(await reviewedRequest());
     if (!("ok" in res)) throw new Error(res.error);
+    // #749 判官 r3 P1:开工认领也取**同一把**锁,所以两格是「1 次认领 + 2 次扣费」。
+    // 这条断言的要点从来不是次数,是**只有这一把锁** —— 认领与扣费必须在同一条队上排队,
+    // 否则「认领」和「花钱」还是两条互不相干的队。
     expect(h.advisoryLocks).toEqual([
+      `campaign-approval:${CAMPAIGN_ID}`,
       `campaign-approval:${CAMPAIGN_ID}`,
       `campaign-approval:${CAMPAIGN_ID}`,
     ]);
@@ -742,7 +780,11 @@ describe("confirmCampaignGeneration — persisted plan and strict approval bindi
     const res = await confirmCampaignGeneration(await reviewedRequest());
     expect("error" in res && res.error).toMatch(/stable cell ids must be unique/i);
     expect(h.startGen).not.toHaveBeenCalled();
-    expect(h.store.batches.size).toBe(0);
+    // #749 判官 r3 P1:开工认领比 orchestrateBatch 的形状校验更早,所以这一趟会先把分组行
+    // 建出来。它一分钱都不代表 —— 「这个条目花过钱吗」读的是 GenJob,不是这一行(见
+    // campaign-dispatch-history)。要证的是:一个任务都没建,而且租约已经归还。
+    expect(h.store.jobs.size).toBe(0);
+    expect([...h.store.batches.values()].every((batch) => batch.status === "active")).toBe(true);
   });
 
   it("returns empty-plan and impersonation blocks before spend", async () => {
@@ -821,7 +863,7 @@ describe("confirmCampaignGeneration — order-independent exactly-once + migrati
     ]);
     seedProject();
     const batchId = campaignBatchId();
-    h.store.batches.set(batchId, { id: batchId, ownerId: OWNER });
+    h.store.batches.set(batchId, { id: batchId, ownerId: OWNER, status: "active", updatedAt: new Date() });
     h.store.jobs.set("legacy-a", {
       id: "legacy-a", ownerId: OWNER, projectId: PROJECT_ID, batchId, status: "DONE",
       idempotencyKey: factoryAttemptKey(batchId, 0, "old-attempt").key,
@@ -864,9 +906,16 @@ describe("confirmCampaignGeneration — order-independent exactly-once + migrati
       confirmCampaignGeneration(reviewed),
       confirmCampaignGeneration(reviewed),
     ]);
-    if (!("ok" in first) || !("ok" in second)) throw new Error("confirm failed");
+
+    // #749 判官 r3 P1:两次并发确认里只有一次能认下这一批,另一次在**自己花钱之前**被挡住。
+    // 要守的不变式没变,而且更强了:一个条目一个任务,总派发数 = 2,输的那一次零扣费。
+    const done = [first, second].filter((res) => "ok" in res);
+    const refused = [first, second].filter((res) => !("ok" in res));
+    expect(done).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect((refused[0] as { error: string }).error).toBe(CAMPAIGN_DISPATCH_IN_FLIGHT);
     expect(h.store.jobs.size).toBe(2);
-    expect(first.result.dispatched + second.result.dispatched).toBe(2);
+    expect((done[0] as { result: { dispatched: number } }).result.dispatched).toBe(2);
   });
 });
 
@@ -1270,12 +1319,14 @@ describe("#749 判官 r2 P1 锁内对签:金额上限与交付面", () => {
 
     const res = await confirmCampaignGeneration(signedRequest(reviewed));
 
-    if (!("ok" in res)) throw new Error(res.error);
-    expect(res.result).toMatchObject({ dispatched: 0, totalCredits: 0 });
-    expect(res.result.cells[0].error).toBe(CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH);
-    expect(res.result.cells.map((cell) => cell.credits)).toEqual([0, 0]);
-    // 库里只有闯入者那一行 —— 这一批一格都没建。
+    // 闯入落在**开工认领**那一刻,于是整批停在这里 —— 比逐格拒绝更早,一格都没试过。
+    expect("error" in res && res.error).toBe(
+      "What this plan will deliver changed since you reviewed it, so nothing was started and nothing was charged. Review the updated plan before confirming.",
+    );
+    expect(h.startGen).not.toHaveBeenCalled();
+    // 库里只有闯入者那一行 —— 这一批一格都没建,而且回滚之后没留下租约。
     expect(h.store.jobs.size).toBe(1);
+    expect([...h.store.batches.values()].every((batch) => batch.status === "active")).toBe(true);
   });
 
   it("交付面查不出来时也停在花钱之前,而且说的是可以再试一次", async () => {
@@ -1612,10 +1663,27 @@ describe("money-safety static guards", () => {
   );
 
   it("opens no ledger/job-create/queue/provider path outside startGen", () => {
-    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|\.\s*\$transaction|provider\s*\./;
+    const banned = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|provider\s*\./;
     expect(banned.test(confirmCode)).toBe(false);
     expect(banned.test(batchCode)).toBe(false);
     expect(/from\s+["']\.\/gen-actions["']/.test(confirmCode)).toBe(true);
+    // factory-batch 那一侧照旧连事务都不许开。
+    expect(/\.\s*\$transaction/.test(batchCode)).toBe(false);
+  });
+
+  it("#749 判官 r3 P1:确认这一层只开一笔事务,而且它只认领、不花钱", () => {
+    // 这一层原本一笔事务都不开,而开工认领必须是一笔真事务(认领与交付面复核同生共死)。
+    // 所以禁令不能只是撤掉 —— 换成更紧的:**有且仅有一笔**,而且它就是认领那一笔。
+    const transactions = confirmCode.match(/\$transaction\s*\(/g) ?? [];
+    expect(transactions).toHaveLength(1);
+    expect(confirmCode).toMatch(
+      /await prisma\.\$transaction\(async \(tx\) => \{\s*if \(!\(await claimCampaignDispatch\(tx, lease\)\)\) return false;/,
+    );
+    // 认领事务里读的是收费预判(纯查询),写的只有租约那一行 —— 通过 claim 助手,
+    // 这个文件自己一个写操作都没有。
+    expect(confirmCode).not.toMatch(/tx\s*\.\s*[A-Za-z]+\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/);
+    // 归还在 finally 里,所以派发无论怎么结束都不会把租约留下过夜。
+    expect(confirmCode).toMatch(/\} finally \{[\s\S]*?await releaseCampaignDispatch\(prisma, lease\);/);
   });
 
   // #744 判官 r1 P1-2 / r2 P1 — the batch is handed a GUARDED port instead of startGen directly.
@@ -1657,10 +1725,15 @@ describe("money-safety static guards", () => {
     // The gate module opens no transaction of its own any more: it runs inside the caller's.
     // Everything that could move money stays banned, so the serialization point cannot quietly
     // become a second spend path.
-    const bannedInLock = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|provider\s*\.|\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(|\.\s*\$transaction/;
+    const bannedInLock = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|provider\s*\.|\.\s*\$transaction/;
     expect(bannedInLock.test(lockCode)).toBe(false);
     expect(lockCode).toMatch(/pg_advisory_xact_lock/);
     expect(lockCode).toMatch(/stillApproved\(campaign\.planJson\)/);
+    // #749 判官 r3 P1:租约让这个模块第一次有了写操作。写的**只能是分组行那一列** ——
+    // 任何别的表上的写都还是禁令,否则「序列化点」就会悄悄长成第二条钱路。
+    const writes = lockCode.match(/\w+\s*\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/g) ?? [];
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) expect(write).toMatch(/^generationBatch\s*\./);
   });
 
   it("keeps the balance addition read-only and owner-scoped", () => {
