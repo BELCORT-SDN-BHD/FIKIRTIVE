@@ -7,6 +7,11 @@ export type OwnerSettings = {
   defaultPostTimes: string;   // comma-separated "HH:MM" defaults for Schedule
   vipMinSpendMyr: number;     // CRM VIP preset: minimum lifetime spend in MYR
   vipRecentOrderDays: number; // CRM VIP preset: most recent order window in days
+  /** #679 — the merchant closed the "Get Otto ready" card. NOT a Settings-screen preference:
+   *  it rides here because `Organization.settings` is the tenant-scoped store that already
+   *  exists, so the dismissal follows the shop's account instead of one browser. The Settings
+   *  screen builds its sections from a hand-written list, so this key shows up nowhere. */
+  ottoOnboardingDismissed: boolean;
 };
 
 export const DEFAULT_SETTINGS: OwnerSettings = {
@@ -18,6 +23,9 @@ export const DEFAULT_SETTINGS: OwnerSettings = {
   defaultPostTimes: "09:00,18:00",
   vipMinSpendMyr: 500,
   vipRecentOrderDays: 90,
+  // A workspace that has never dismissed the card has not dismissed it — including every
+  // workspace that predates this key, whose stored blob simply has no such field.
+  ottoOnboardingDismissed: false,
 };
 
 /** Pure: overlay a raw JSON blob onto defaults, dropping unknown keys + wrong types. */

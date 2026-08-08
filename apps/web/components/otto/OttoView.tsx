@@ -16,6 +16,7 @@ import { OttoAnalytics } from "./OttoAnalytics";
 import { OttoSchedule } from "./OttoSchedule";
 import type { AnalyticsData } from "@/lib/analytics-actions";
 import { OttoOnboarding } from "./OttoOnboarding";
+import { ottoOnboardingFacts, shouldShowOttoOnboarding } from "@/lib/otto-onboarding";
 import OttoTemplates from "./OttoTemplates";
 import OttoDiscover from "./OttoDiscover";
 import OttoConnections from "./OttoConnections";
@@ -61,6 +62,15 @@ interface OttoViewProps {
   onToggleChat?: () => void;
   /** Re-skin flag (?skin=gb) — enables the chat→canvas bridge on the canvas. */
   skin?: "gb";
+  /** #679 — the workspace's own "Get Otto ready" dismissal, read server-side. */
+  onboardingDismissed?: boolean;
+  /** Persist that dismissal against the workspace. */
+  onDismissOnboarding?: () => void;
+  /** #679 — how many conversations this SHOP has, across every project. Required and named for
+   *  its scope, not defaulted: `threads` is the open project's list only, and quietly falling
+   *  back to it is exactly how an established shop opening a fresh project met the first-run
+   *  card again. */
+  shopConversationCount: number;
 }
 
 type ThreadComposerReference = OttoComposerReference & { threadId: string };
@@ -97,6 +107,9 @@ export function OttoView({
   chatCollapsed = false,
   onToggleChat,
   skin,
+  onboardingDismissed = false,
+  onDismissOnboarding,
+  shopConversationCount,
 }: OttoViewProps) {
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
 
@@ -203,15 +216,21 @@ export function OttoView({
 
   // Otto view — front door when no active thread, conversation when one is selected
   const showFrontDoor = !activeThread;
-  const isFirstRun =
-    showFrontDoor &&
-    entities.length === 0 &&
-    memory.length === 0 &&
-    threads.length === 0;
+  // #679 — the two tiles now stand for real workspace facts (entities and brand memory are both
+  // owner-scoped), so the card can tick one off instead of vanishing the moment either is done.
+  // `dismissed` comes from the org row, not from this browser, and the "already working" fact is
+  // shop-wide, not project-wide.
+  const onboardingFacts = ottoOnboardingFacts({
+    dismissed: onboardingDismissed,
+    entityCount: entities.length,
+    brandMemoryCount: memory.length,
+    shopConversationCount,
+  });
+  const showOnboarding = showFrontDoor && shouldShowOttoOnboarding(onboardingFacts);
 
   return (
     <div
-      className={`otto-workspace${chatCollapsed ? " otto-chat-collapsed" : ""}${isFirstRun ? " otto-workspace-first-run" : ""}`}
+      className={`otto-workspace${chatCollapsed ? " otto-chat-collapsed" : ""}${showOnboarding ? " otto-workspace-first-run" : ""}`}
       style={{ position: "relative", flex: 1, minHeight: 0, height: "100%", display: "flex", flexDirection: "row", overflow: "hidden" }}
     >
       <style>{`
@@ -259,14 +278,17 @@ export function OttoView({
           }
         }
       `}</style>
-      {isFirstRun && (
+      {showOnboarding && (
         <div
           className="otto-onboarding-overlay"
           style={{ "--otto-onboarding-left": chatCollapsed ? "24px" : "calc(clamp(360px, 38%, 520px) + 24px)" } as React.CSSProperties}
         >
           <OttoOnboarding
+            hasStuff={onboardingFacts.hasStuff}
+            hasBrandMemory={onboardingFacts.hasBrandMemory}
             onGoToStuff={() => onViewChange("library")}
             onGoToMemory={() => onViewChange("memory")}
+            onDismiss={() => onDismissOnboarding?.()}
           />
         </div>
       )}
