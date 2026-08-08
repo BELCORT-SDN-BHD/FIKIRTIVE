@@ -11,17 +11,43 @@ export type BroadcastReportResource = ReportSuccess["resource"];
 
 type Metric = { status: string; value: number | null };
 
+/**
+ * #731 — every one of these tiles can read "Unknown" instead of a number, and today
+ * (no provider receipts connected anywhere) that is the normal case, not the edge one.
+ * The tile used to be laid out for digits — a fixed three-across grid plus `tabular-nums`
+ * on the whole value row — so at 1280px the word ran 19px past its own border and over
+ * the next tile. Two changes, both about the word:
+ *   1. `tabular-nums` moves onto the number itself; it is a digit-alignment feature and
+ *      has no business sizing a word.
+ *   2. the value row wraps and the icon refuses to shrink, so no width can push the word
+ *      out of the tile — it takes a second line first.
+ * The tracks themselves are content-sized in the grids below.
+ */
 function MetricValue({ label, metric }: { label: string; metric: Metric }) {
   const value = metric.status === "known" ? metric.value : null;
   return (
-    <div className="rounded-xl border border-border bg-background/70 px-3 py-3">
+    <div className="min-w-0 rounded-xl border border-border bg-background/70 px-3 py-3">
       <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-      <dd className="mt-1 flex items-center gap-1.5 text-xl font-semibold tabular-nums tracking-tight">
-        {value !== null ? value.toLocaleString("en-MY") : <><CircleHelp className="size-4 text-muted-foreground" />Unknown</>}
+      <dd className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xl font-semibold tracking-tight">
+        {value !== null ? (
+          <span className="tabular-nums">{value.toLocaleString("en-MY")}</span>
+        ) : (
+          <>
+            <CircleHelp className="size-4 shrink-0 text-muted-foreground" />
+            <span>Unknown</span>
+          </>
+        )}
       </dd>
     </div>
   );
 }
+
+/**
+ * Tracks sized by what a tile has to hold, not by a column count (#731). 8.5rem is the
+ * width the widest value ("Unknown", with its icon, at this type size) needs; below that
+ * the grid drops a column instead of overflowing one.
+ */
+const METRIC_GRID = "mt-3 grid gap-2 grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))]";
 
 function FreshnessLine({ children }: { children: ReactNode }) {
   return <p className="mt-3 text-xs leading-5 text-muted-foreground">{children}</p>;
@@ -49,7 +75,7 @@ export default function ReportAxisGroups({
             <Badge variant="soft">Known</Badge>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">What happened before provider receipts.</p>
-          <dl className="mt-3 grid grid-cols-2 gap-2">
+          <dl className={METRIC_GRID}>
             <MetricValue label="Attempted" metric={report.sending.attempted} />
             <MetricValue label="Pending" metric={report.sending.pending} />
             <MetricValue label="Skipped" metric={report.sending.skipped} />
@@ -79,7 +105,7 @@ export default function ReportAxisGroups({
             <Badge variant="outline"><CircleHelp />Unknown</Badge>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">Provider receipts are not connected in this simulated workspace.</p>
-          <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+          <dl className={METRIC_GRID}>
             <MetricValue label="Delivered" metric={report.delivery.delivered} />
             <MetricValue label="Read" metric={report.delivery.read} />
             <MetricValue label="Failed" metric={report.delivery.failed} />
@@ -98,7 +124,7 @@ export default function ReportAxisGroups({
             <Badge variant="warning"><Scale />Separate</Badge>
           </div>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">Unsettled receipt evidence stays separate from delivery outcomes.</p>
-          <dl className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+          <dl className={METRIC_GRID}>
             <MetricValue label="Pending" metric={report.reconciliation.pending} />
             <MetricValue label="Conflict" metric={report.reconciliation.conflict} />
             <MetricValue label="Timeout unknown" metric={report.reconciliation.timeoutUnknown} />

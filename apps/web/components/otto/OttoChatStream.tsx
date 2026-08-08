@@ -1455,6 +1455,9 @@ export function OttoChatStream({
           <div className="overflow-hidden rounded-[14px] border-[1.5px] border-border bg-background shadow-sm">
             <textarea
               id="otto-composer"
+              // #739 — the placeholder changes with the attached references and vanishes on
+              // the first keystroke; the name stays put.
+              aria-label="Reply to Otto"
               value={text}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}

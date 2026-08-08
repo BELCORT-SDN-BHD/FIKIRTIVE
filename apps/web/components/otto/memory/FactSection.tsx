@@ -25,7 +25,7 @@ export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: 
           <div key={r.id} className={`px-[15px] py-[10px] ${freshIds.has(r.id) ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}>
             {editingId === r.id ? (
               <div className="flex flex-col gap-2">
-                <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} />
+                <Textarea aria-label="Edit this fact" value={text} onChange={(e) => setText(e.target.value)} rows={2} />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => void onSave(r.id, text).then(() => setEditingId(null))}>Save</Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}>Cancel</Button>
@@ -46,7 +46,7 @@ export function FactSection({ label, rows, freshIds, onSave, onDelete, onAdd }: 
         <div className="px-[15px] py-[10px]">
           {adding ? (
             <div className="flex flex-col gap-2">
-              <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Add a fact about your brand…" />
+              <Textarea aria-label="Add a fact about your brand" value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Add a fact about your brand…" />
               <div className="flex gap-2">
                 <Button size="sm" disabled={!draft.trim()} onClick={() => void onAdd(draft.trim()).then(() => { setDraft(""); setAdding(false); })}>Add</Button>
                 <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>Cancel</Button>

@@ -472,7 +472,7 @@ export function OttoSchedule({
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
-                className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold capitalize ${
+                className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
                   view === v ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
                 }`}
               >
@@ -811,6 +811,13 @@ function PlanCard({
 
 type Granularity = "month" | "week" | "day";
 
+/** Labels live here, not in `text-transform` — what is read must equal what is seen (#739). */
+const GRANULARITIES: { id: Granularity; label: string }[] = [
+  { id: "month", label: "Month" },
+  { id: "week", label: "Week" },
+  { id: "day", label: "Day" },
+];
+
 function CalendarView({
   posts,
   mediaLookup,
@@ -860,16 +867,16 @@ function CalendarView({
     <div>
       <div className="flex items-center gap-3 flex-wrap mb-4">
         <div className="inline-flex rounded-[10px] border border-border bg-card p-0.5">
-          {(["month", "week", "day"] as Granularity[]).map((gk) => (
+          {GRANULARITIES.map(({ id, label }) => (
             <button
-              key={gk}
+              key={id}
               type="button"
-              onClick={() => setGran(gk)}
-              className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold capitalize ${
-                gran === gk ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
+              onClick={() => setGran(id)}
+              className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
+                gran === id ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
               }`}
             >
-              {gk}
+              {label}
             </button>
           ))}
         </div>

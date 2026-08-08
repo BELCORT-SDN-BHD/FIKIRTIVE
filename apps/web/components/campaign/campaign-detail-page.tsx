@@ -530,7 +530,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                   <Input value={proposal.format} onChange={(event) => setProposal((current) => ({ ...current, format: event.target.value }))} aria-label="Proposal format" placeholder="image" />
                 </div>
                 <Input value={proposal.hook} onChange={(event) => setProposal((current) => ({ ...current, hook: event.target.value }))} placeholder="Opening hook" />
-                <Textarea value={proposal.brief} onChange={(event) => setProposal((current) => ({ ...current, brief: event.target.value }))} placeholder="Describe the content in English" />
+                <Textarea value={proposal.brief} onChange={(event) => setProposal((current) => ({ ...current, brief: event.target.value }))} aria-label="Proposal brief" placeholder="Describe the content in English" />
                 <label className="grid max-w-xs gap-2 text-xs font-semibold text-muted-foreground">
                   Estimated credits (display only)
                   <Input type="number" min={0} step={1} value={proposal.estCredits} onChange={(event) => setProposal((current) => ({ ...current, estCredits: Number(event.target.value) }))} />
