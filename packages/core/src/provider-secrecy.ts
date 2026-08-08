@@ -12,15 +12,78 @@
  * This module is that something. It lives in core because both the worker (error strings)
  * and the web app (Otto's reply text, streamed and persisted) must scrub identically —
  * two regexes would mean two definitions of "secret".
+ *
+ * ── #810: one filter, not two (the streaming/whole-text split) ────────────────────────────
+ * The first cut of the streaming filter was a SECOND judgement of the same rule, and the two
+ * disagreed in both directions:
+ *   · it leaked — the pattern had unbounded quantifiers, so the 64-character tail it held back
+ *     was shorter than the distance the pattern could actually reach, and a name could be
+ *     released before the text that condemned it arrived;
+ *   · it over-scrubbed — it sliced its buffer at an arbitrary offset and handed the regex a
+ *     fresh string, so the cut itself manufactured a `\b` and turned a merchant's own compound
+ *     word ("AAmyseedance") into "AAmygeneration provider".
+ * Both are fixed by making one judgement, not two: every quantifier below is BOUNDED, so
+ * MAX_MATCH_SPAN is a provable ceiling rather than a guess, and the streaming filter always
+ * shows the regex the real preceding character instead of a fabricated string start.
+ *
+ * INVARIANT (asserted by property tests over arbitrary cut points):
+ *   for ANY chunking of `text`, the streamed output is byte-identical to
+ *   redactProviderNames(text).
  */
 
 /** Names that must never reach a merchant, in the shapes they actually appear in
- *  (bare, versioned, suffixed with provider/client/error, or preceded by "model"/"api"). */
-const PROVIDER_NAME_RE =
-  /\b(?:seedance|seedream|byteplus|bytedance|jimeng)(?:(?:provider|client|error)\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]*)?\b(?:[ \t]+\d+(?:\.\d+)*(?:[ \t]+fast)?)?)|\bfal(?:provider|client|error|[./:_-][a-z0-9][a-z0-9./:_-]*)?\b|即梦|\b(?:claude|anthropic)(?:(?:as|via)?(?:api|sdk|model|provider|error|version)\b|(?:[-_./0-9][a-z0-9./:_-]*)\b)|\b(?:claude|anthropic)\b(?=(?:[ \t]+[a-z0-9'-]+)?[ \t]+(?:api|sdk|model|provider|error|version)\b)|(\b(?:api|sdk|model|provider|error|version)\b(?:[ \t]+[a-z0-9'-]+)?[ \t]+)(?:claude|anthropic)\b/giu;
+ *  (bare, versioned, suffixed with provider/client/error, or preceded by "model"/"api").
+ *
+ *  Every quantifier is bounded ON PURPOSE (#810 P1-3). `[a-z0-9./:_-]*` and `[ \t]+` used to
+ *  be open-ended, which made the pattern's reach unknowable and the streaming hold-back a
+ *  guess. The bounds are generous enough for every real shape ("seedance.pro/v2 3.1 fast",
+ *  "model claude sonnet") and they buy a ceiling the streaming filter can be built on. The
+ *  narrowing is deliberate and visible: a name separated from its technical context by a
+ *  20+ character token, or by five spaces, is no longer read as a technical context — and
+ *  now BOTH the whole-text and the streaming path read it the same way. */
+const MAX_TOKEN = 20; // longest path/version-ish tail glued to a name: "seedance.pro/v2…"
+const MAX_WORD = 20; // longest word allowed between "claude" and "api" ("claude sonnet api")
+const MAX_GAP = 4; // longest run of spaces/tabs inside one match
+const PROVIDER_NAME_RE = new RegExp(
+  [
+    `\\b(?:seedance|seedream|byteplus|bytedance|jimeng)(?:(?:provider|client|error)\\b|(?:[./:_-][a-z0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b(?:[ \\t]{1,${MAX_GAP}}\\d{1,4}(?:\\.\\d{1,4}){0,3}(?:[ \\t]{1,${MAX_GAP}}fast)?)?)`,
+    `\\bfal(?:provider|client|error|[./:_-][a-z0-9./:_-]{0,${MAX_TOKEN}})?\\b`,
+    `即梦`,
+    `\\b(?:claude|anthropic)(?:(?:as|via)?(?:api|sdk|model|provider|error|version)\\b|(?:[-_./0-9][a-z0-9./:_-]{0,${MAX_TOKEN}})\\b)`,
+    `\\b(?:claude|anthropic)\\b(?=(?:[ \\t]{1,${MAX_GAP}}[a-z0-9'-]{1,${MAX_WORD}})?[ \\t]{1,${MAX_GAP}}(?:api|sdk|model|provider|error|version)\\b)`,
+    `(\\b(?:api|sdk|model|provider|error|version)\\b(?:[ \\t]{1,${MAX_GAP}}[a-z0-9'-]{1,${MAX_WORD}})?[ \\t]{1,${MAX_GAP}})(?:claude|anthropic)\\b`,
+  ].join("|"),
+  "giu",
+);
 
-/** Longest text the pattern above can span. The streaming filter holds back at least this
- *  much, so a name split across two deltas can never slip out one half at a time. */
+/** What a redacted name reads as. Also a literal a merchant can type, which is why the
+ *  streaming filter treats it as a boundary atom too (see below). */
+const REDACTED = "generation provider";
+
+/** Collapse a run of adjacent redactions back to one phrase. Bounded like everything else:
+ *  a run bridged by more than MAX_GAP whitespace is not one phrase, it is two sentences. */
+const REPEAT_RE = new RegExp(`\\b${REDACTED}(?:\\s{1,${MAX_GAP}}${REDACTED})+\\b`, "gi");
+
+/** An already-redacted phrase sitting in the INPUT. Not a secret, but the collapse above can
+ *  merge it with a neighbouring redaction, so the streaming filter must never split a run
+ *  that contains one. */
+const REDACTED_LITERAL_RE = new RegExp(`\\b${REDACTED}\\b`, "gi");
+
+/**
+ * The longest stretch of text any alternative above can DECIDE ON — its own match plus the
+ * lookahead it consults plus the one character a trailing `\b` inspects. Bounded quantifiers
+ * make this arithmetic, not a guess:
+ *
+ *   names        "bytedance"(9) + "[./:_-]x" + tail(20) = 22 + version/fast(4+4+15+4+4 = 31) → 62
+ *   fal          "fal"(3) + "[./:_-]" + tail(20) = 24, + `\b`                                → 25
+ *   claude-glued "anthropic"(9) + "[-_./0-9]" + tail(20) = 30, + `\b`                        → 31
+ *   claude ahead "anthropic"(9) + gap(4) + word(20) + gap(4) + "provider"(8), + `\b`         → 46
+ *   claude after "provider"(8) + gap(4) + word(20) + gap(4) + "anthropic"(9), + `\b`         → 46
+ *
+ * 62 < 64. The streaming filter holds back this much, so a match is never judged on text it
+ * has not seen yet — the property tests in provider-secrecy.test.ts assert the consequence
+ * (streamed output === whole-text output) rather than trusting the arithmetic alone.
+ */
 const MAX_MATCH_SPAN = 64;
 
 /** Replace trade-secret provider/model names while keeping the surrounding text useful. */
@@ -28,9 +91,45 @@ export function redactProviderNames(s: string): string {
   return s
     .replace(
       new RegExp(PROVIDER_NAME_RE.source, PROVIDER_NAME_RE.flags),
-      (_match, leadingContext: string | undefined) => `${leadingContext ?? ""}generation provider`,
+      (_match, leadingContext: string | undefined) => `${leadingContext ?? ""}${REDACTED}`,
     )
-    .replace(/\bgeneration provider(?:\s+generation provider)+\b/gi, "generation provider");
+    .replace(REPEAT_RE, REDACTED);
+}
+
+/**
+ * Half-open [start, end) source spans a release must never cut inside.
+ *
+ * Two kinds, merged into RUNS: a name the first pass rewrites, and an already-redacted phrase
+ * a merchant typed themselves. Both end up reading "generation provider", so the repeat-collapse
+ * can merge either with either — which means a run of them is ONE decision, and splitting it
+ * would leave the two halves saying something the whole text never says.
+ */
+function boundaryRuns(text: string): { start: number; end: number; lastStart: number }[] {
+  const atoms: { start: number; end: number }[] = [];
+  for (const re of [PROVIDER_NAME_RE, REDACTED_LITERAL_RE]) {
+    const scan = new RegExp(re.source, re.flags);
+    for (let m = scan.exec(text); m !== null; m = scan.exec(text)) {
+      if (m[0].length === 0) {
+        scan.lastIndex++;
+        continue;
+      }
+      atoms.push({ start: m.index, end: m.index + m[0].length });
+    }
+  }
+  atoms.sort((a, b) => a.start - b.start || a.end - b.end);
+  const runs: { start: number; end: number; lastStart: number }[] = [];
+  for (const a of atoms) {
+    const last = runs[runs.length - 1];
+    const joins =
+      !!last && a.start <= last.end + MAX_GAP && /^\s*$/.test(text.slice(last.end, a.start));
+    if (joins && last) {
+      last.end = Math.max(last.end, a.end);
+      last.lastStart = Math.max(last.lastStart, a.start);
+    } else {
+      runs.push({ start: a.start, end: a.end, lastStart: a.start });
+    }
+  }
+  return runs;
 }
 
 /**
@@ -38,35 +137,83 @@ export function redactProviderNames(s: string): string {
  *
  * A name arriving as "seed" + "ance" would defeat a per-delta `redactProviderNames`, and a
  * filter that only cleans the PERSISTED copy would let the merchant watch the secret stream
- * in and then vanish on reload — worse than not filtering. So this holds back the tail:
- * everything up to the last position no in-flight match can reach is scrubbed and emitted,
- * the rest waits for the next delta. `flush()` scrubs and releases whatever is left.
+ * in and then vanish on reload — worse than not filtering. So this holds back the tail.
  *
- * Output is byte-identical to `redactProviderNames(wholeText)` re-assembled.
+ * Two rules make the held tail's judgement identical to the whole text's (#810):
+ *
+ *   1. It never emits past `length - MAX_MATCH_SPAN`, and never through the middle of a match
+ *      (or through a run of matches the repeat-collapse would merge). Every match it acts on
+ *      is therefore already final — the text that would change it has arrived.
+ *   2. It prepends a one-character STAND-IN for the last emitted character before scrubbing.
+ *      `\b` only asks whether the neighbouring character is a word character, so a stand-in of
+ *      the right class ("_" for a word character, " " for anything else) makes the held tail's
+ *      first boundary read exactly as it reads in the whole text. Without it, the cut point
+ *      invented a word boundary and scrubbed a merchant's own compound word. The stand-in —
+ *      rather than the real character — is what keeps the trick honest: no alternative can
+ *      begin with "_" or " ", so the prepended character always survives untouched and can be
+ *      sliced back off, whereas a real "s" would let a match start inside the stand-in itself.
+ *
+ * `flush()` scrubs and releases whatever is left.
+ *
+ * Text and reasoning are two independent byte streams and each needs its OWN instance —
+ * sharing one would interleave two texts inside a single hold-back buffer.
  */
 export function createProviderNameFilter(): { push(delta: string): string; flush(): string } {
+  /** Stand-in for the last emitted character ("" before anything has been emitted), kept only
+   *  so the held tail's first word boundary is judged against the real text. */
+  let prev = "";
+  /** Source text not yet released. */
   let buffer = "";
+
+  /** Same word/non-word class as `c`, but a character no alternative can start with. */
+  const standIn = (c: string): string => (/\w/.test(c) ? "_" : " ");
+
+  /** How far into `buffer` it is safe to emit, or 0 for "nothing yet". */
+  const safeEnd = (): number => {
+    let end = buffer.length - MAX_MATCH_SPAN;
+    if (end <= 0) return 0;
+    // Never cut through the middle of a word. The released head is scrubbed as its own string,
+    // and end-of-string is a word boundary — so a cut inside "false" would hand the pattern a
+    // "fal" the real text never contains.
+    while (end > 0 && /\w/.test(buffer[end - 1]!) && /\w/.test(buffer[end]!)) end--;
+    if (end <= 0) return 0;
+    // Scan with the left neighbour's stand-in in front, then translate back to buffer coordinates.
+    const probe = prev + buffer;
+    for (const run of boundaryRuns(probe)) {
+      const start = run.start - prev.length;
+      if (start >= end) break;
+      const runEnd = run.end - prev.length;
+      // A run protects two things past its own text: the LOOKAHEAD its last name is judged on
+      // (bounded by MAX_MATCH_SPAN — "claude" is only a secret because of an "api" further
+      // along, and the released head must carry that "api" or it would judge differently), and
+      // the whitespace through which the repeat-collapse could still recruit a name that has
+      // not arrived yet.
+      let reach = run.lastStart - prev.length + MAX_MATCH_SPAN;
+      for (let at = runEnd, i = 0; i < MAX_GAP && at < buffer.length && /\s/.test(buffer[at]!); i++, at++) {
+        reach = Math.max(reach, at + 1);
+      }
+      if (reach >= end) return Math.max(start, 0);
+    }
+    return end;
+  };
+
+  const release = (upTo: number): string => {
+    if (upTo <= 0) return "";
+    const head = buffer.slice(0, upTo);
+    // The stand-in cannot start any match, so it passes through and is sliced back off.
+    const out = redactProviderNames(prev + head).slice(prev.length);
+    prev = standIn(head.slice(-1));
+    buffer = buffer.slice(upTo);
+    return out;
+  };
+
   return {
     push(delta: string): string {
       buffer += delta;
-      if (buffer.length <= MAX_MATCH_SPAN) return "";
-      let safeEnd = buffer.length - MAX_MATCH_SPAN;
-      // Never cut through a match in progress: if one straddles the boundary, hold from
-      // its start instead, so the whole name is scrubbed together on a later push/flush.
-      const re = new RegExp(PROVIDER_NAME_RE.source, PROVIDER_NAME_RE.flags);
-      for (let m = re.exec(buffer); m !== null; m = re.exec(buffer)) {
-        if (m.index < safeEnd && m.index + m[0].length > safeEnd) safeEnd = m.index;
-        if (m.index >= safeEnd) break;
-      }
-      if (safeEnd <= 0) return "";
-      const out = redactProviderNames(buffer.slice(0, safeEnd));
-      buffer = buffer.slice(safeEnd);
-      return out;
+      return release(safeEnd());
     },
     flush(): string {
-      const out = redactProviderNames(buffer);
-      buffer = "";
-      return out;
+      return release(buffer.length);
     },
   };
 }
