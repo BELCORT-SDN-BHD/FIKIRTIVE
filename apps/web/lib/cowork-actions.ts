@@ -283,9 +283,32 @@ export async function coworkVaryCard(raw: unknown): Promise<{ threadId: string }
   });
 }
 
-/** Save (or clear) the per-project creative brief the planner sees every turn.
- *  Propose-side only — this text is injected into the planner system prompt; it
- *  does NOT touch coworkGenerate/startGen and creates no media spend. */
+/** Read this project's current brief, so the form can show what is already there
+ *  before it replaces it (#791-1: a blank form over a saved brief is how a merchant
+ *  silently overwrote their own direction). Owner-scoped; $0, no spend path. */
+export async function getCoworkBrief(projectId: string): Promise<{ brief: string } | { error: string }> {
+  if (typeof projectId !== "string" || projectId.length === 0) return { error: "Invalid project." };
+  const gate = await requireOwner(); if ("error" in gate) return gate;
+  const principal = await resolveUserPrincipal(gate);
+  return runAsUser(principal, async (): Promise<{ brief: string } | { error: string }> => {
+    const { ownerId } = gate;
+    try {
+      const project = await prisma.project.findFirst({
+        where: { id: projectId, ownerId, deletedAt: null },
+        select: { coworkBrief: true },
+      });
+      if (!project) return { error: "Project not found." };
+      return { brief: project.coworkBrief?.trim() ?? "" };
+    } catch {
+      return { error: "Couldn't read the brief — please try again." };
+    }
+  });
+}
+
+/** Save (or clear) the per-project creative brief Otto sees every turn.
+ *  Propose-side only — buildOttoContext reads this column into ctx.projectBrief and
+ *  buildContextSystemMessage injects it as a system message on every turn (#791-1);
+ *  it does NOT touch coworkGenerate/startGen and creates no media spend. */
 export async function setCoworkBrief(raw: unknown): Promise<{ ok: true } | { error: string }> {
   const parsed = coworkBriefRequest.safeParse(raw);
   if (!parsed.success) return { error: "Invalid brief." };

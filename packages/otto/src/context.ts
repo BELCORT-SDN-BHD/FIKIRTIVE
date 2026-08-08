@@ -327,6 +327,11 @@ export interface OttoContext {
   };
   /** Compiled brand memory text for THIS run (injected as a system message at run assembly). */
   brandContext?: string;
+  /** The merchant's own brief for THIS project (Project.coworkBrief), already trimmed.
+   *  Injected as a system message right AFTER brandContext at run assembly — shop-wide
+   *  identity first, then the direction the merchant set for this one project. Absent
+   *  (undefined) when the project has no brief; never an empty string. */
+  projectBrief?: string;
   /** The owner's reusable entities the agent may @-reference (name + type only; ids for tools). */
   availableRefs?: { id: string; name: string; type: string }[];
   /** When true, buildContextSystemMessage injects the Simple-mode plain-language block so

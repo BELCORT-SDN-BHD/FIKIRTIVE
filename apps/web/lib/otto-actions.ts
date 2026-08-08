@@ -398,6 +398,14 @@ async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string;
 export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
   const parts: string[] = [];
   if (ctx.brandContext) parts.push(`What you know about the user's brand:\n${ctx.brandContext}`);
+  // #791-1: the merchant's brief for THIS project, right after the shop-wide brand memory.
+  // Order is the meaning: brand memory is who the shop is, the brief is what THIS project
+  // must do — so the narrower instruction is read last and wins on a conflict.
+  if (ctx.projectBrief) {
+    parts.push(
+      `The brief for this project, written by the user — follow it every turn unless they change it:\n${ctx.projectBrief}`,
+    );
+  }
   if (ctx.availableRefs?.length) {
     parts.push(
       `Reusable items you can @-reference (use the id with tools): ${ctx.availableRefs.map((r) => `@${r.name} [${r.type}, id=${r.id}]`).join(", ")}`,
@@ -499,8 +507,17 @@ export async function buildOttoContext({
     ? async (query: string) => ({ results: await searchWithFallback(primary, fb)(query) })
     : undefined;
 
-  const [brandContext, availableRefs, activeJob, images] = await Promise.all([
+  const [brandContext, projectBriefRow, availableRefs, activeJob, images] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
+    // #791-1: the per-project brief the merchant wrote (QuickBrief / Otto's updateBrief).
+    // Owner-scoped like every other project read here — projectId alone never selects a row.
+    // Best-effort: a failed read drops the brief for this turn, it never fails the turn.
+    prisma.project
+      .findFirst({
+        where: { id: projectId, ownerId, deletedAt: null },
+        select: { coworkBrief: true },
+      })
+      .catch(() => null),
     loadAvailableRefsForAgent(ownerId),
     prisma.genJob.findFirst({
       where: { threadId, ownerId },
@@ -533,6 +550,7 @@ export async function buildOttoContext({
     // never receives an attemptId; only ottoApprove can inject the verified + consumed card id.
     runFactoryBatch: makeFactoryBatchPort(factoryAttemptId),
     brandContext,
+    projectBrief: projectBriefRow?.coworkBrief?.trim() || undefined,
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,

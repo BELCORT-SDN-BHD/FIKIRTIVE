@@ -3283,3 +3283,68 @@ describe("buildOttoContext — the money boundary, end to end (#692 r4)", () => 
     }
   });
 });
+
+// ── #791 第 1 项:项目 brief 进 Otto 每轮上下文 ─────────────────────────────
+//
+// 「说的≠做的」的原型:QuickBrief 的注释与 setCoworkBrief 的注释都写着这段文字会
+// 「injected into the planner system prompt」,而 buildOttoContext 从来没读过
+// Project.coworkBrief —— 商家写完 brief,Otto 每一轮都不知道。
+
+describe("#791-1 项目 brief 进 Otto 每轮上下文", () => {
+  it("buildOttoContext 按 owner + project 读 coworkBrief,并去掉首尾空白放进 ctx.projectBrief", async () => {
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ coworkBrief: "  Always 9:16, warm tone  " });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_brief",
+      projectId: "proj_brief",
+      threadId: "thread_brief",
+    });
+
+    expect(ctx.projectBrief).toBe("Always 9:16, warm tone");
+    const call = mockProjectFindFirst.mock.calls.at(-1)![0] as { where: Record<string, unknown> };
+    // 租户约束:读必须同时带 ownerId,永远不能只按 projectId 读。
+    expect(call.where).toMatchObject({ id: "proj_brief", ownerId: "owner_brief", deletedAt: null });
+  });
+
+  it("读不到项目(或 brief 为空)时不带这一段,而不是编一段空 brief", async () => {
+    mockResolveDisabledModels.mockResolvedValue({ disabled: new Set() });
+    mockProjectFindFirst.mockResolvedValue({ coworkBrief: "   " });
+
+    const ctx = await buildOttoContext({
+      ownerId: "owner_brief",
+      projectId: "proj_brief",
+      threadId: "thread_brief",
+    });
+
+    expect(ctx.projectBrief).toBeUndefined();
+  });
+
+  it("brief 排在品牌记忆之后,并说明它是商家自己写的这一个项目的方向", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      brandContext: "BRAND_MEMORY_MARKER",
+      projectBrief: "PROJECT_BRIEF_MARKER",
+    });
+    const content = (result as { content: string }).content;
+    expect(content).toContain("PROJECT_BRIEF_MARKER");
+    expect(content.indexOf("BRAND_MEMORY_MARKER")).toBeLessThan(content.indexOf("PROJECT_BRIEF_MARKER"));
+    expect(content).toMatch(/brief for this project/i);
+  });
+
+  it("没有 brief 就完全不注入这一段", () => {
+    const result = buildContextSystemMessage({
+      orgId: "o1",
+      userId: "o1",
+      projectId: "p1",
+      threadId: "t1",
+      disabledModels: [],
+      brandContext: "BRAND_MEMORY_MARKER",
+    });
+    expect((result as { content: string }).content).not.toMatch(/brief for this project/i);
+  });
+});
