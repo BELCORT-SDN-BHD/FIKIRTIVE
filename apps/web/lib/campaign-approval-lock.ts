@@ -297,6 +297,19 @@ export interface CampaignApprovalGate {
   stillDelivering?: (tx: ApprovalGateClient) => Promise<string | null>;
   /** 返回 null 放行;返回一句人话就拒绝(fail closed,回滚在 create/reserve 之前)。 */
   stillPriced?: (verdict: CampaignDispatchVerdict) => string | null;
+  /**
+   * 这一格的钱事务**刚落地**之后立刻跑一次(#749 判官 r4)。
+   *
+   * 战役确认用它在**提交的那一刻**续租。原本续租只发生在下一格钱事务开头的
+   * `stillDelivering` 里,于是提交之后那一段没有硬上限的收尾 —— 审计写、缓存失效、批次
+   * 标记、下一格的历史读 —— 全程拿着一把正在老化的租约。补上这一次之后,每一段都被两次
+   * 续租夹住:钱事务本身夹在「事务开头那次」与「提交后这次」之间,收尾那段夹在「提交后
+   * 这次」与「下一格开头那次」之间。
+   *
+   * **best-effort**:钱已经落地了,这里再失败也不许把它翻回去 —— 续不上就让租约照常老化,
+   * 下一格的锁内复核仍然会拦。它也不改变任何判决,只推进 `updatedAt`。
+   */
+  afterCharge?: () => Promise<void>;
 }
 
 /** The surface the gate needs from the money transaction's client — read + lock only.

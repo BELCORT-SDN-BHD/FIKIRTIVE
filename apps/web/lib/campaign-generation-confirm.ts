@@ -690,6 +690,10 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
             ? null
             : CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH;
         },
+        // #749 判官 r4 —— 这一格的钱一落地就续租,别拿着一把正在老化的租约去做收尾。
+        afterCharge: async () => {
+          await renewCampaignDispatchLease(prisma, { ownerId, batchId, attemptId });
+        },
         // ①③ 这一格的收费判决 + 费用上限,对着商家签名时的那一行。
         //
         // 有一条路走不到这里,是有意的:startGen 有一条**锁外的**耐久重放快路 —— 历史里

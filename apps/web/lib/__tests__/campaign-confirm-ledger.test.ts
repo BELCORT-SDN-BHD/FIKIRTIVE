@@ -743,3 +743,65 @@ describe("#749 判官 r3 P1 租约的过期与归还", () => {
     expect(second).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #749 判官 r4 —— 钱一落地就续租:提交之后的收尾不再拿着一把正在老化的租约
+// ---------------------------------------------------------------------------
+/**
+ * 判官 r4 的残余:租约原本只在**下一格钱事务开头**才续。首格提交之后还有一段没有硬上限的
+ * 收尾 —— 审计写、缓存失效、批次标记、下一格的历史读 —— 全程拿着一把正在老化的租约。
+ * 持有者若在这里被暂停超过 TTL,闯入者就能接管,老持有者恢复后第二格冲突。
+ *
+ * 修法是把窗口压到最小(不是消灭这个竞态 —— 那属钱路重构,已登记 #359):**提交的那一刻**
+ * 就续一次。证据要能分辨「续在事务开头」与「续在提交之后」,所以断言看的是:批次往下走
+ * 之前,顶层客户端上是否已经发生过一次租约写,而且那一次**看得见已提交的扣费** ——
+ * 看得见就说明它发生在提交之后,不是事务开头那一次(事务里的写走的是事务客户端,而且
+ * 那时任务还没提交,别的连接看不见)。
+ */
+describe("#749 判官 r4 钱一落地就续租", () => {
+  /** 记录**顶层客户端**上的每一次租约写,以及写的那一刻库里有没有已提交的扣费。 */
+  function recordTopLevelLeaseWrites(ownerId: string) {
+    const delegate = prisma.generationBatch as unknown as Record<string, unknown>;
+    const real = (delegate.updateMany as (args: unknown) => Promise<unknown>).bind(delegate);
+    const sawCommittedJob: boolean[] = [];
+    delegate.updateMany = async (args: unknown) => {
+      sawCommittedJob.push((await prisma.genJob.count({ where: { ownerId } })) > 0);
+      return real(args);
+    };
+    return { sawCommittedJob, restore: () => { delegate.updateMany = real; } };
+  }
+
+  it("首格提交之后、批次往下走之前,租约已经被续过一次", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+      { id: "V1", format: "reel", brief: "A vertical clip of the Raya collection" },
+    ]);
+    const quoted = await quoteFor(world.campaignId, { projectId: world.projectId });
+
+    const writes = recordTopLevelLeaseWrites(world.ownerId);
+    let atMoveOn: { count: number; allSawJob: boolean } | null = null;
+    // 首格已提交、已打上批次标记,批次正要走向第二格 —— 判官说的那段收尾就从这里开始。
+    betweenDispatchedCells(async () => {
+      atMoveOn = {
+        count: writes.sawCommittedJob.length,
+        allSawJob: writes.sawCommittedJob.every(Boolean),
+      };
+    });
+
+    let res;
+    try {
+      res = await confirmCampaignGeneration(signed(world, quoted));
+    } finally {
+      writes.restore();
+    }
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 2, failed: 0 });
+
+    expect(atMoveOn).not.toBeNull();
+    // 修前:顶层客户端上一次租约写都还没发生(只有整批结束后的归还),这里是 0 —— 必红。
+    expect(atMoveOn!.count).toBeGreaterThanOrEqual(1);
+    // 而且那一次写看得见已提交的扣费 —— 它发生在提交之后,不是事务开头那一次。
+    expect(atMoveOn!.allSawJob).toBe(true);
+  });
+});

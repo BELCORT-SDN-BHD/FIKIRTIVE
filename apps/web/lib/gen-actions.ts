@@ -837,6 +837,20 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         throw e;
       }
     }
+    // #749 判官 r4 —— 钱事务刚落地就让调用方续租(见 CampaignApprovalGate.afterCharge)。
+    // 放在这里而不是等下一格:提交之后还有审计写、缓存失效、批次标记、下一格的历史读,
+    // 那一段没有硬上限,原本全程拿着一把正在老化的租约。best-effort —— 钱已经落地,这里
+    // 再失败也不许把它翻回去。
+    if (approvalGate?.afterCharge) {
+      try {
+        await approvalGate.afterCharge();
+      } catch (e) {
+        console.warn(
+          "startGen: post-charge campaign lease renew failed (non-fatal):",
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
     if ("error" in decision) return decision;
     if (decision.disposition === "reused") return decision;
     const job = { id: decision.id };
