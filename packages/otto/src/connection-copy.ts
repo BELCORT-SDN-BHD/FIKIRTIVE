@@ -17,13 +17,17 @@ import {
   type ConnectionBlocker,
 } from "@fikirtive/core";
 
+// The wording deliberately avoids spelling out the false claim, even to forbid it: a message
+// containing "…they have not connected Meta" reads as that assertion to anything scanning the
+// output (including this package's own behavioural fence), and it is one careless quote away from
+// reaching the merchant. Say what IS true and name the shape to use instead.
 const BLOCKED_MESSAGE: Record<ConnectionBlocker, string> = {
   needs_reconnect:
     `${CONNECTION_BLOCKER_COPY.needs_reconnect.status} — Meta IS connected, its access just expired. ` +
-    "Ask the user to open Connections and reconnect, then try again. Never tell them they have not connected Meta.",
+    "Ask the user to open Connections and reconnect, then try again. Describe it as an expired connection, never as a missing one.",
   needs_page_permission:
     `${CONNECTION_BLOCKER_COPY.needs_page_permission.status} — Meta IS connected, but it cannot see their Pages. ` +
-    "Ask the user to reconnect and allow Page access, then try again. Never tell them they have not connected Meta.",
+    "Ask the user to reconnect and allow Page access, then try again. Describe it as a missing permission, never as a missing connection.",
 };
 
 /**

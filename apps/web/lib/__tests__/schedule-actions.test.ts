@@ -737,6 +737,39 @@ describe("approveScheduledPost", () => {
     expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
+  // #741 判官 r5 [P2] —— 服务端与客户端必须用**同一张优先级表**。旧代码先跑一遍不带连接
+  // 信息的规则并直接返回,于是「连接过期 + 草稿还缺 target/media」时服务端说「Pick…/Add…」,
+  // 而知道连接状态的 composer 说「Reconnect…」——同一时刻同一个商家,两个理由。
+  for (const [name, over, blocker] of [
+    ["缺 target", { metaTargetId: null }, "needs_reconnect"],
+    ["缺 media", { media: [] }, "needs_reconnect"],
+    ["两样都缺", { metaTargetId: null, media: [] }, "needs_page_permission"],
+  ] as const) {
+    it(`连接受阻 + ${name}:服务端先说连接,与 composer 的优先级一致`, async () => {
+      mockFindFirst.mockResolvedValue(draftReady(over));
+      mockIgListTargets.mockResolvedValue({ blocked: blocker });
+      const res = await approveScheduledPost("p1");
+      expect(res).toEqual({ error: CONNECTION_BLOCKER_COPY[blocker].approve });
+      expect(mockUpdateMany).not.toHaveBeenCalled();
+    });
+  }
+
+  it("连接读不到 + 草稿也缺项:先说没查到,而不是先挑草稿的毛病", async () => {
+    mockFindFirst.mockResolvedValue(draftReady({ metaTargetId: null, media: [] }));
+    mockIgListTargets.mockResolvedValue({ unavailable: true });
+    expect(await approveScheduledPost("p1")).toEqual({ error: ACCOUNTS_UNREADABLE_ERROR });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
+  // #741 判官 r5 [P1] —— 适配器**会抛**:同文件的 listOwnerTargets 早就逐渠道 catch 了,
+  // 批准路径却没有,于是一次网络抖动不是「拒绝并说明」,而是把异常直接抛给调用方。
+  it("适配器直接抛错:批准路径给出结构化退化出口,不把异常抛出去,也不写库", async () => {
+    mockFindFirst.mockResolvedValue(draftReady());
+    mockIgListTargets.mockRejectedValue(new Error("socket hang up"));
+    await expect(approveScheduledPost("p1")).resolves.toEqual({ error: ACCOUNTS_UNREADABLE_ERROR });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
+  });
+
   // #741 判官 r3 [P1] —— 连接读失败 ≠ 没连账号。两种情形都拒(fail closed,不变),但理由必须是真的:
   // 说「Connect your account before approving.」等于告诉一个连接好好的商家「你没连」。
   it("连接列表读不到时:照旧拒绝、照旧不写库,但说的是「没查到」而不是「你没连账号」", async () => {

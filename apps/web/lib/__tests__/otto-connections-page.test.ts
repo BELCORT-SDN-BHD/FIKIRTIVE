@@ -460,5 +460,44 @@ describe("#741 r5 连着但用不了:连接页与排程页用同一套说法", (
       // 而且不能只剩一个空洞的「Connected」把问题盖过去。
       expect(text).not.toMatch(/Connected(?!\w)/);
     });
+
+    // 判官 r5 [P2]:按钮只看 status 不看 blocker —— needs_page_permission 通常伴随
+    // status:"connected",于是同一行写着「Page access needed」按钮却写「Manage」,
+    // 与 Schedule 那边的「Reconnect」对不上。
+    it(`${blocker}:按钮跟着事实走,写的是 Reconnect 而不是 Manage`, async () => {
+      mocks.getAccountViewData.mockResolvedValue({
+        settings: {},
+        channels: [
+          { id: "instagram", label: "Instagram", status: "connected" as const, targets: [], blocker, connectUrl: "/api/meta/authorize" },
+        ],
+        packs: [],
+        adsAutonomy: "ASK",
+        canPublish: false,
+        meta: { connected: true },
+      });
+
+      const dom = await renderConnections();
+      const cta = Array.from(dom.querySelectorAll("a")).find((a) => a.getAttribute("href") === "/api/meta/authorize");
+      expect(cta?.textContent).toBe("Reconnect");
+      expect(cta?.textContent).not.toBe("Manage");
+    });
   }
+
+  // 判官 r5 [P2]:status 为 needs_reconnect 而 blocker 缺席的分支**真实可达**,而它当时用的是
+  // 一份手写的「Reconnect needed」—— 「唯一措辞源」在这条路径上并不成立。
+  it("status=needs_reconnect 且没有 blocker 时,措辞仍然来自共享表", async () => {
+    mocks.getAccountViewData.mockResolvedValue({
+      settings: {},
+      channels: [
+        { id: "instagram", label: "Instagram", status: "needs_reconnect" as const, targets: [], connectUrl: "/api/meta/authorize" },
+      ],
+      packs: [],
+      adsAutonomy: "ASK",
+      canPublish: false,
+      meta: { connected: true },
+    });
+
+    const dom = await renderConnections();
+    expect(dom.textContent).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.status);
+  });
 });

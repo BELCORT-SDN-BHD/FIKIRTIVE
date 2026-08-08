@@ -43,6 +43,7 @@ import {
   connectionBlockerStatus,
   isConnectedTarget,
   loadedAccounts,
+  markRechecking,
   postableChannelIds,
   UNREAD_ACCOUNTS,
   type ConnectedAccounts,
@@ -272,9 +273,29 @@ export function OttoSchedule({
     });
   }, []);
 
+  /**
+   * The same read, over an answer we already have (#741 r5 P1).
+   *
+   * `seq` stops a stale RESPONSE from overwriting a newer one, but it never stopped the stale
+   * ANSWER from being read while the next one was in flight. Saying so first — before the read is
+   * issued — is what keeps a hung refresh from leaving posts approvable on facts we are at that
+   * very moment re-checking. The list itself stays on screen, so the merchant's own channels don't
+   * blink out every minute; it just stops counting as ready.
+   *
+   * This is separate from `reload` because it belongs to the EVENT that re-reads (poll tick, focus,
+   * Retry, save), not to the first read: at mount there is no previous answer to invalidate —
+   * `markRechecking` is a no-op on a value that has never loaded — and a setState called
+   * synchronously from an effect body is a cascading render React tells us not to write.
+   */
+  const refresh = useCallback(async () => {
+    setAccounts(markRechecking);
+    await reload();
+  }, [reload]);
+
   useEffect(() => {
     // Async initial load — every setState below runs after an await/`.then`, never
     // synchronously in the effect body (the lint rule can't see through the promise).
+    // `reload`, not `refresh`: nothing has been read yet, so there is nothing to un-trust.
     void reload();
     // Neither the target list nor the publish permission is read here any more: reload() owns
     // both, so the first load and every later refresh follow the same single timeline (#741 r2/r3).
@@ -294,7 +315,7 @@ export function OttoSchedule({
     let interval: ReturnType<typeof setInterval> | null = null;
     function startPolling() {
       if (interval || document.visibilityState !== "visible") return;
-      interval = setInterval(() => void reload(), 60000);
+      interval = setInterval(() => void refresh(), 60000);
     }
     function stopPolling() {
       if (interval) {
@@ -303,11 +324,11 @@ export function OttoSchedule({
       }
     }
     function onFocus() {
-      void reload();
+      void refresh();
     }
     function onVisibilityChange() {
       if (document.visibilityState === "visible") {
-        void reload();
+        void refresh();
         startPolling();
       } else {
         stopPolling();
@@ -321,7 +342,7 @@ export function OttoSchedule({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopPolling();
     };
-  }, [reload]);
+  }, [refresh]);
 
   async function toggleAutoPublish(next: boolean) {
     setSavingAuto(true);
@@ -384,7 +405,11 @@ export function OttoSchedule({
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Schedule</h1>
           <div className="flex items-center gap-1.5">
-            {isConnected ? (
+            {/* Chips and the status notice are NOT alternatives (#741 r5 P1). When one channel
+                read fine and another did not, the old if/else took the "connected" branch and
+                swallowed the "couldn't check" line with its Retry — the partial truncation went
+                silent again, which is the exact failure this ticket keeps re-finding. */}
+            {isConnected &&
               connectedChannels.map((c) => (
                 <span
                   key={c.id}
@@ -393,8 +418,8 @@ export function OttoSchedule({
                   <ChannelIcon channel={c.id} size={13} />
                   {c.label}
                 </span>
-              ))
-            ) : canOfferConnect(accounts) ? (
+              ))}
+            {!isConnected && canOfferConnect(accounts) ? (
               <button
                 type="button"
                 onClick={() => onNavigate("connections")}
@@ -410,7 +435,7 @@ export function OttoSchedule({
                 {ACCOUNTS_CHECK_FAILED}
                 <button
                   type="button"
-                  onClick={() => void reload()}
+                  onClick={() => void refresh()}
                   className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
                 >
                   Retry
@@ -476,7 +501,7 @@ export function OttoSchedule({
             onChannelFilter={setChannelFilter}
             onEdit={openEdit}
             onNew={openNew}
-            onReload={reload}
+            onReload={refresh}
             accounts={accounts}
           />
         ) : view === "calendar" ? (
@@ -507,10 +532,10 @@ export function OttoSchedule({
             setComposer(null);
             onNavigate("connections");
           }}
-          onRetry={() => void reload()}
+          onRetry={() => void refresh()}
           onSaved={async () => {
             setComposer(null);
-            await reload();
+            await refresh();
           }}
         />
       )}

@@ -1020,6 +1020,21 @@ describe("#741 r5 读不到时:有状态、有重试入口、不会永远停在 
     expect(document.body.textContent).toContain(ACCOUNTS_UNREADABLE_ERROR);
   });
 
+  // #741 判官 r5 [P1] —— 部分截断不许再次静默:一个渠道读到了、另一个没读到时,旧代码的
+  // Header 走 `isConnected ? chips : …` 先手分支,把「没查到」和 Retry 整个吞掉。
+  it("一个渠道读到、另一个没读到:Header 既摆出真实的渠道,也照说没查到并给 Retry", async () => {
+    mocks.listOwnerTargets.mockResolvedValue({
+      targets: [{ id: "fb-1", name: "Kopi Kita Page", channel: "facebook" as const }],
+      channelStates: { instagram: "unreadable", facebook: "ok", x: "ok" },
+    });
+    await renderSchedule();
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Facebook");
+    expect(text).toContain(ACCOUNTS_CHECK_FAILED);
+    expect(buttonByText("Retry", document.body)).toBeTruthy();
+  });
+
   it("单渠道读不到不拖垮其它渠道:Facebook 照常可批准", async () => {
     mocks.listScheduledPosts.mockResolvedValue([
       postRow({ id: "p-fb", source: "otto", status: "DRAFT", caption: "FB draft", channel: "facebook", metaTargetId: "fb-1" }),
@@ -1032,6 +1047,40 @@ describe("#741 r5 读不到时:有状态、有重试入口、不会永远停在 
 
     expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
     expect(buttonByText("Approve all", document.body).disabled).toBe(false);
+  });
+});
+
+// ── #741 判官 r5 [P1] 刷新窗口内不许拿旧快照放行 ────────────────────────────────
+
+describe("#741 r5 刷新还没落地时:旧名单可以看,但不许据此批准", () => {
+  beforeEach(() => {
+    mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: false });
+    mocks.listScheduledPosts.mockResolvedValue([
+      postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft" }),
+    ]);
+  });
+
+  it("刷新一开始就停止计 ready —— 悬挂的读不会让陈旧账号继续放行", async () => {
+    mocks.listOwnerTargets.mockResolvedValue(okTargets([IG_TARGET]));
+    await renderSchedule();
+    expect(buttonByText("Approve all", document.body).textContent).toContain("Approve all 1");
+
+    // 下一趟读悬着不落地(慢读 / 挂死)。旧代码此时仍按上一趟的名单计 ready。
+    mocks.listOwnerTargets.mockReturnValue(new Promise(() => {}));
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const approveAll = buttonByText("Approve all", document.body);
+    expect(approveAll.textContent).toContain("Approve all 0");
+    expect(approveAll.disabled).toBe(true);
+    expect(document.body.textContent).toContain(CHECKING_ACCOUNTS_BLOCKER);
+    // 但商家自己的渠道不会因此闪没 —— 显示稳定,只是不算数。
+    expect(document.body.textContent).toContain("Instagram");
   });
 });
 
@@ -1188,6 +1237,24 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
     expect(schedule).not.toMatch(/channelStates\s*:/);
   });
 
+  // r5 CI 实战教训:`export type { X };` 这种**再导出子句**写在 "use server" 文件里,
+  // Next 的 server-actions 变换会把它当成运行时导出绑定,于是一个早已被擦除的类型名在
+  // page-data collection 阶段被求值 → `ReferenceError: X is not defined`。
+  // tsc --noEmit 与 vitest 都看不见,只有 next build 会炸。这条把它变成本地就能抓到。
+  it("「use server」文件不许当类型 barrel —— 再导出子句会在 next build 阶段炸", () => {
+    const offenders = files
+      .filter((f) => /^\s*"use server"/.test(f.code))
+      .filter((f) => /^\s*export\s+(type\s+)?\{/m.test(f.code))
+      .map((f) => f.rel);
+    expect(offenders).toEqual([]);
+    // 承重自检:围栏认得出它要抓的形状,也不误伤 `export type X = …` 这种声明。
+    expect(/^\s*export\s+(type\s+)?\{/m.test('"use server";\nexport type { Foo };')).toBe(true);
+    expect(/^\s*export\s+(type\s+)?\{/m.test('"use server";\nexport { foo };')).toBe(true);
+    expect(/^\s*export\s+(type\s+)?\{/m.test('"use server";\nexport type Foo = string;')).toBe(false);
+    // 扫描面必须真的覆盖到 "use server" 文件(路径写错时不能静默通过)。
+    expect(files.filter((f) => /^\s*"use server"/.test(f.code)).length).toBeGreaterThan(5);
+  });
+
   it("豁免名单本身承重:没有组件在名单上,也没有过期的行", () => {
     for (const rel of TARGET_JUDGEMENT_ALLOWLIST.keys()) {
       // 过期行会让围栏悄悄变松,所以每一行都必须指向一个真实存在、且真的会被规则命中的文件。
@@ -1263,6 +1330,36 @@ describe("#694 #695 #741 单点权威:全仓词法围栏", () => {
 
       const planText = buttonByText("Approve all", document.body).closest("div")?.parentElement?.textContent ?? "";
       for (const sentence of expected) expect(planText).toContain(sentence);
+    });
+
+    // 判官 r5 [P2]:上一版这条只在**样样齐备**的草稿上成立。真正会分叉的是「连接受阻 +
+    // 草稿还缺项」——服务端那时先答草稿的缺项,客户端先答连接。这里就钉那个交叉点。
+    it("连接受阻 + 草稿也缺项:屏幕先说连接,与服务端现在的次序一致", async () => {
+      const expected = scheduleApproveBlockers({
+        channel: "instagram",
+        targetId: null,
+        mediaCount: 0,
+        connectedTargetIds: [],
+        connectionBlocker: "needs_reconnect",
+      });
+      expect(expected[0]).toBe(CONNECTION_BLOCKER_COPY.needs_reconnect.approve);
+
+      mocks.getMetaConnection.mockResolvedValue({ connected: true, canPublish: false, needsReconnect: true });
+      mocks.listOwnerTargets.mockResolvedValue({
+        targets: [],
+        channelStates: { instagram: "needs_reconnect", facebook: "needs_reconnect", x: "ok" },
+      });
+      mocks.listScheduledPosts.mockResolvedValue([
+        postRow({ id: "p-otto", source: "otto", status: "DRAFT", caption: "Otto draft", metaTargetId: null, media: [] }),
+      ]);
+      await renderSchedule();
+
+      const planText = buttonByText("Approve all", document.body).closest("div")?.parentElement?.textContent ?? "";
+      expect(planText).toContain(expected[0]);
+      // 草稿的缺项照旧会说,但排在连接之后 —— 顺序本身就是那张共享优先级表。
+      expect(planText.indexOf(expected[0]!)).toBeLessThan(
+        planText.includes(expected[1] ?? "") ? planText.indexOf(expected[1] ?? "") + 1 : Number.MAX_SAFE_INTEGER,
+      );
     });
 
     it("服务端拒绝语与商家提前听到的那句,来自同一份规则", async () => {

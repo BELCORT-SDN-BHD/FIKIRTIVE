@@ -96,7 +96,13 @@ export function classifyConnectionFailure(
   if ("transientError" in read) return "unreadable";
   if ("needsReconnect" in read) return "needs_reconnect";
   if ("needsPageScope" in read) return "needs_page_permission";
-  return "not_connected";
+  // `not_connected` is EARNED, never assumed: it is the one answer that licenses the product to
+  // tell a merchant they have connected nothing, so only a read that actually says so gets it.
+  // Anything this function does not recognise — a failure shape added upstream tomorrow — is
+  // something we did not understand, which is exactly "we could not find out". Defaulting the
+  // other way would silently turn every future failure mode back into the original lie.
+  if ("notConnected" in read) return "not_connected";
+  return "unreadable";
 }
 
 /** The same vocabulary for a Meta *pages* read, whose success key is `pages`. */

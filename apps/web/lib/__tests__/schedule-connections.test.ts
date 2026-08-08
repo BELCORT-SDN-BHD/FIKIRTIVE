@@ -26,6 +26,7 @@ import {
   isCheckingAccounts,
   isConnectedTarget,
   loadedAccounts,
+  markRechecking,
   postableChannelIds,
 } from "../schedule-connections";
 
@@ -184,6 +185,66 @@ describe("读不到:是一个说得出口的答案,不是无尽的「正在查�
       canApprove: true,
     });
     expect(approvalFor(mixed, READY_POST).blockers).toEqual([ACCOUNTS_UNREADABLE_ERROR]);
+  });
+});
+
+// ── #741 判官 r5 [P1] 所有渠道结论都必须过同一个带默认值的读取器 ──────────────────
+
+describe("没有旁路:名单不能绕过逐渠道状态", () => {
+  it("渠道读不到时,它的旧账号不算 postable,也不解锁 auto-publish", () => {
+    // 病灶:postableChannelIds 直读扁平 targets,跳过了 channelStates[c] ?? "unreadable"。
+    const accounts = loadedAccounts({
+      targets: [IG],
+      channelStates: { instagram: "unreadable", facebook: "ok" },
+      canPublish: true,
+    });
+    expect([...postableChannelIds(accounts)]).toEqual([]);
+    expect(autoPublishAllowed(accounts)).toBe(false);
+    expect(isConnectedTarget(accounts, "instagram", IG.id)).toBe(false);
+  });
+
+  it("渠道连着但用不了时同理:名单里的旧账号不算数", () => {
+    const accounts = loadedAccounts({
+      targets: [IG],
+      channelStates: { instagram: "needs_reconnect" },
+      canPublish: true,
+    });
+    expect([...postableChannelIds(accounts)]).toEqual([]);
+    expect(autoPublishAllowed(accounts)).toBe(false);
+  });
+
+  it("名单里带了一个服务端根本没报状态的渠道:直接不予采信", () => {
+    const accounts = loadedAccounts({ targets: [IG, FB], channelStates: { facebook: "ok" }, canPublish: true });
+    expect([...postableChannelIds(accounts)]).toEqual(["facebook"]);
+    expect(isConnectedTarget(accounts, "instagram", IG.id)).toBe(false);
+  });
+});
+
+describe("刷新窗口内:上一趟的答案可以继续显示,但不算数", () => {
+  const fresh = loadedAccounts({ targets: [IG], channelStates: ALL_OK, canPublish: true });
+  const rechecking = markRechecking(fresh);
+
+  it("重新检查期间不放行 —— 说的是「正在查」,不是断言", () => {
+    expect(approvalFor(fresh, READY_POST)).toEqual({ blockers: [], canApprove: true });
+    // 病灶:seq 只防旧响应覆写,不防旧快照被读 —— 慢读/悬挂读期间照旧计为 ready。
+    expect(approvalFor(rechecking, READY_POST)).toEqual({
+      blockers: [CHECKING_ACCOUNTS_BLOCKER],
+      canApprove: false,
+    });
+    expect(isConnectedTarget(rechecking, "instagram", IG.id)).toBe(false);
+    expect(autoPublishAllowed(rechecking)).toBe(false);
+  });
+
+  it("但显示保持稳定:不会每 60 秒把商家自己的渠道闪没", () => {
+    expect([...postableChannelIds(rechecking)]).toEqual(["instagram"]);
+    expect(accountPicker(rechecking, "instagram")).toEqual({
+      phase: "ready",
+      options: [{ value: IG.id, label: IG.name }],
+    });
+  });
+
+  it("还没读到过的时候 markRechecking 不改变任何东西", () => {
+    expect(isCheckingAccounts(markRechecking(ACCOUNTS_LOADING))).toBe(true);
   });
 });
 

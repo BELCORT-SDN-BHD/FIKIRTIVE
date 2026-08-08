@@ -4,6 +4,8 @@ import {
   isScheduleChannel,
   SCHEDULE_CHANNEL_CAPS,
   scheduleApproveBlockers,
+  classifyConnectionFailure,
+  classifyPagesRead,
 } from "./schedule-draft.js";
 
 const BASE = {
@@ -192,5 +194,31 @@ describe("scheduleApproveBlockers —— 账户有效性对照真实连接 (#741
     expect(
       scheduleApproveBlockers({ channel: "instagram", targetId: "", mediaCount: 1, connectedTargetIds: ["ig-1"] }),
     ).toEqual(["Pick which account to post to before approving."]);
+  });
+});
+
+// #741 判官 r5 [P1] —— 分类器必须是穷尽的、且**朝保守方向**兜底。
+// 上游明天多加一种失败形状(这在本仓已经发生过好几次:transientError、needsPageScope 都是
+// 后加的),旧的 `return "not_connected"` 兜底会把它悄悄讲成「你从未连接」——正是这张票
+// 从头到尾在修的那句谎话,只是换成由未来的代码说出口。
+describe("#741 r5 connection failure classification is exhaustive and fail-safe", () => {
+  it("认识的形状各归各位", () => {
+    expect(classifyConnectionFailure({ transientError: true })).toBe("unreadable");
+    expect(classifyConnectionFailure({ needsReconnect: true })).toBe("needs_reconnect");
+    expect(classifyConnectionFailure({ needsPageScope: true })).toBe("needs_page_permission");
+    expect(classifyConnectionFailure({ notConnected: true })).toBe("not_connected");
+  });
+
+  it("不认识的失败形状一律 unreadable,绝不冒充「从未连接」", () => {
+    // 一个臆造的、将来才可能出现的失败形状。
+    expect(classifyConnectionFailure({ needsBusinessVerification: true })).toBe("unreadable");
+    expect(classifyConnectionFailure({})).toBe("unreadable");
+    expect(classifyConnectionFailure({ error: "something new" })).toBe("unreadable");
+  });
+
+  it("pages 读沿用同一套判断", () => {
+    expect(classifyPagesRead({ pages: [] })).toBe("ok");
+    expect(classifyPagesRead({ needsBusinessVerification: true })).toBe("unreadable");
+    expect(classifyPagesRead({ notConnected: true })).toBe("not_connected");
   });
 });

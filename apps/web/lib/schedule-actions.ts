@@ -327,18 +327,13 @@ export async function approveScheduledPost(
   if (unconfirmed) {
     return { error: "This post may already be live — please review it before publishing again." };
   }
-  // Consent needs a resolved target the owner actually owns, and (outside text-only channels) at
-  // least one media row. Both conditions AND both sentences come from the shared pure rule so the
-  // composer's "Approve & schedule" button can gate and EXPLAIN itself with the same truth (#695).
-  // The live connection list isn't read yet at this point — that costs a Graph call, so it stays
-  // where it always was (below, after the cheap checks). Passing no `connectedTargetIds` says
-  // exactly that: "not looked at yet", never "nothing connected".
-  const approveBlockers = scheduleApproveBlockers({
-    channel: post.channel,
-    targetId: post.metaTargetId,
-    mediaCount: post.media.length,
-  });
-  if (approveBlockers.length > 0) return { error: approveBlockers[0]! };
+  // The shared approve rule is evaluated EXACTLY ONCE, below, after the connection has actually
+  // been read (#741 r5 P2). It used to run twice: a cheap connection-less pass here, then the real
+  // one after the live read. That saved a Graph call on obviously-incomplete drafts, but it broke
+  // the property this ticket exists to establish — with an expired connection AND a missing
+  // target, the first pass answered "Pick which account to post to" while the composer, which
+  // knows the connection state, was already saying "Reconnect your account". Same merchant, same
+  // instant, two different reasons. One rule, one priority table, one evaluation, both sides.
   if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
   const caps = SCHEDULE_CHANNEL_CAPS[post.channel];
   if (post.media.length > caps.maxMediaCount) {
@@ -372,8 +367,11 @@ export async function approveScheduledPost(
   // and the order (nothing connected → that account isn't yours) is unchanged. No adapter means
   // nothing can be connected on this channel, which is exactly the empty-list case.
   const adapter = channelRegistry[post.channel];
+  // The adapter CAN reject — listOwnerTargets above already catches per channel, and this path had
+  // no such exit, so a network blip threw out of the action instead of refusing with a reason
+  // (#741 r5 P1). A thrown read is a read that did not happen: `unavailable`, same as any other.
   const liveTargets: ChannelTargetsResult = adapter
-    ? await adapter.listTargets(gate.ownerId)
+    ? await adapter.listTargets(gate.ownerId).catch(() => ({ unavailable: true }) as const)
     : { targets: [] };
   // #741 r3/r5 P1: a read that FAILED is not an empty list, and a connection that can't publish
   // right now is not a connection that was never made. All three outcomes refuse (unchanged — we
@@ -495,9 +493,11 @@ export async function listScheduledPosts(
 
 export type OwnerTarget = { id: string; name: string; channel: ChannelId };
 
-/** What this cycle's read found for one channel — the shared vocabulary from core, so the human
- *  screen and Otto read the same states off the same answer. */
-export type { ChannelReadState };
+// `ChannelReadState` is NOT re-exported from here. A "use server" module is not a type barrel:
+// Next's server-actions transform turns an `export type { … }` re-export clause into a runtime
+// export binding, so the erased type name gets evaluated during page-data collection and throws
+// `ReferenceError: ChannelReadState is not defined` — invisible to tsc and vitest, fatal to
+// `next build`. Consumers import it from @fikirtive/core, which is where it is defined anyway.
 
 /**
  * The answer is PER CHANNEL (#741 r5 P1). r4 failed the whole read whenever any single channel

@@ -27,13 +27,14 @@
  *   3. LOADED delegates to the shared server-side rule (scheduleApproveBlockers) with the real
  *      list, so the merchant is told in advance exactly what the server would refuse with.
  */
-import type { ChannelReadState, OwnerTarget } from "./schedule-actions";
+import type { OwnerTarget } from "./schedule-actions";
 import { CONNECTABLE_CHANNEL_META, isConnectableChannel, channelMeta } from "./channels/channel-meta";
 import { canAutoPublish } from "./auto-publish-gate";
 import {
   ACCOUNTS_UNREADABLE_ERROR,
   CONNECTION_BLOCKER_COPY,
   scheduleApproveBlockers,
+  type ChannelReadState,
   type ConnectionBlocker,
 } from "@fikirtive/core/schedule-draft";
 
@@ -61,9 +62,42 @@ export type AccountsRead = {
   canPublish: boolean;
 };
 
-type AccountsState = { phase: "loading" } | ({ phase: "loaded" } & AccountsRead);
+/**
+ * One channel's entry, resolved ONCE when the value is built.
+ *
+ * The stored shape deliberately has no flat target list any more (#741 r5 P1). While it did,
+ * `postableChannelIds` read `state.targets` directly and skipped the `channelStates[c] ?? "unreadable"`
+ * default — so a channel whose read had failed still counted as postable, unlocked auto-publish, and
+ * (because the header then took its "connected" branch) swallowed the very "couldn't check" notice
+ * that was supposed to explain it. Deleting the flat list makes that shortcut unavailable rather
+ * than merely discouraged: every consumer must name a channel, and naming one always applies the
+ * default.
+ */
+type ChannelEntry = { state: ChannelReadState; targets: readonly OwnerTarget[] };
+
+type AccountsState =
+  | { phase: "loading" }
+  | {
+      phase: "loaded";
+      /** True while a refresh is in flight over this value — see markRechecking. */
+      rechecking: boolean;
+      byChannel: Readonly<Record<string, ChannelEntry>>;
+      canPublish: boolean;
+    };
 
 const read = (accounts: ConnectedAccounts): AccountsState => accounts as unknown as AccountsState;
+
+/** The per-channel entry, with the fail-safe default applied. The ONLY way into the stored data. */
+function entryFor(state: AccountsState, channel: string): ChannelEntry {
+  if (state.phase !== "loaded") return { state: "unreadable", targets: [] };
+  return state.byChannel[channel] ?? { state: "unreadable", targets: [] };
+}
+
+/** Every channel this value has an answer about — used only to fold over channels, never to
+ *  bypass `entryFor`. */
+function loadedChannels(state: AccountsState): string[] {
+  return state.phase === "loaded" ? Object.keys(state.byChannel) : [];
+}
 
 /**
  * Nothing read yet — the read is in flight. Not "nothing connected", and NOT where a failed read
@@ -79,7 +113,32 @@ export const ACCOUNTS_LOADING = { phase: "loading" } as unknown as ConnectedAcco
  * target list is a real, final answer: nothing is connected.
  */
 export function loadedAccounts(value: AccountsRead): ConnectedAccounts {
-  return { phase: "loaded", ...value } as unknown as ConnectedAccounts;
+  // Attribute every target to its channel HERE, once. A target whose channel the server did not
+  // report on is dropped: we have no state to judge it by, and an unattributed account is exactly
+  // the kind of half-fact this module exists to refuse.
+  const byChannel: Record<string, ChannelEntry> = {};
+  for (const [channel, state] of Object.entries(value.channelStates)) {
+    byChannel[channel] = {
+      state,
+      targets: state === "ok" ? value.targets.filter((t) => t.channel === channel) : [],
+    };
+  }
+  return { phase: "loaded", rechecking: false, byChannel, canPublish: value.canPublish } as unknown as ConnectedAccounts;
+}
+
+/**
+ * The same knowledge, now known to be mid-re-read (#741 r5 P1).
+ *
+ * `seq` already stopped a slow response from overwriting a newer one, but it never stopped the
+ * PREVIOUS answer from being read while the next one was in flight — so during a slow, hung, or
+ * overlapping refresh the plan card went on counting last cycle's accounts as ready. Approving
+ * then consents on facts we are at that moment re-checking. The list stays on screen (blanking it
+ * every poll would be its own lie), but nothing counts as ready until the new answer lands.
+ */
+export function markRechecking(accounts: ConnectedAccounts): ConnectedAccounts {
+  const state = read(accounts);
+  if (state.phase !== "loaded") return accounts;
+  return { ...state, rechecking: true } as unknown as ConnectedAccounts;
 }
 
 /**
@@ -98,6 +157,20 @@ export const UNREAD_ACCOUNTS: ConnectedAccounts = loadedAccounts({
 /** True while the answer is still unknown. For UI that must not commit either way yet. */
 export function isCheckingAccounts(accounts: ConnectedAccounts): boolean {
   return read(accounts).phase === "loading";
+}
+
+/**
+ * True when nothing here may be ACTED on: either we have never read, or a re-read is in flight and
+ * what we hold is last cycle's answer.
+ *
+ * Display and decision are split deliberately. The list keeps rendering during a refresh — blanking
+ * the merchant's own channels every 60 seconds would be its own kind of lie, and it tells them
+ * nothing true. But every judgement (approve, "is this id still good", unlocking auto-publish)
+ * treats the window as unknown, because that is exactly what it is (#741 r5 P1).
+ */
+function decisionsSuspended(accounts: ConnectedAccounts): boolean {
+  const state = read(accounts);
+  return state.phase !== "loaded" || state.rechecking;
 }
 
 // ── Merchant-facing copy owned by this module ────────────────────────────────────────────────
@@ -148,12 +221,12 @@ export function channelConnection(accounts: ConnectedAccounts, channel: string):
   if (!isConnectableChannel(channel)) return { phase: "unconnectable" };
   const state = read(accounts);
   if (state.phase === "loading") return { phase: "checking" };
-  // A channel missing from the map was never read. Defaulting to "unreadable" is what stops a
-  // truncated answer from being mistaken for an empty one.
-  const found = state.channelStates[channel] ?? "unreadable";
-  if (found === "unreadable") return { phase: "unreadable" };
-  if (found !== "ok") return { phase: "blocked", blocker: found };
-  return { phase: "targets", targets: state.targets.filter((t) => t.channel === channel) };
+  // A channel missing from the map was never read. Applying that default HERE, in the one reader,
+  // is what stops a truncated answer from being mistaken for an empty one.
+  const entry = entryFor(state, channel);
+  if (entry.state === "unreadable") return { phase: "unreadable" };
+  if (entry.state !== "ok") return { phase: "blocked", blocker: entry.state };
+  return { phase: "targets", targets: entry.targets };
 }
 
 // ── The one derived judgement ────────────────────────────────────────────────────────────────
@@ -173,7 +246,10 @@ export function approvalFor(
   if (view.phase === "unconnectable") {
     return { blockers: [channelUnavailableBlocker(post.channel)], canApprove: false };
   }
-  if (view.phase === "checking") return { blockers: [CHECKING_ACCOUNTS_BLOCKER], canApprove: false };
+  // Never read, or being re-read right now — either way we are not entitled to approve from it.
+  if (view.phase === "checking" || decisionsSuspended(accounts)) {
+    return { blockers: [CHECKING_ACCOUNTS_BLOCKER], canApprove: false };
+  }
   // Same sentence the server refuses with when its own re-read fails — the merchant hears the one
   // true reason, and never "you have no account" for a connection we simply could not reach.
   if (view.phase === "unreadable") return { blockers: [ACCOUNTS_UNREADABLE_ERROR], canApprove: false };
@@ -229,10 +305,20 @@ export function accountPicker(accounts: ConnectedAccounts, channel: string): Acc
   }
 }
 
-/** Channels with at least one real publishable target. Empty while the answer is unknown. */
+/**
+ * Channels with at least one real publishable target. Empty while the answer is unknown.
+ *
+ * Goes through `channelConnection` per channel like everything else (#741 r5 P1): this function
+ * used to read the flat target list, which skipped the "absent ⇒ unreadable" default and let a
+ * channel we had failed to read count as postable.
+ */
 export function postableChannelIds(accounts: ConnectedAccounts): Set<string> {
-  const state = read(accounts);
-  return state.phase === "loaded" ? new Set(state.targets.map((t) => t.channel)) : new Set<string>();
+  const out = new Set<string>();
+  for (const channel of loadedChannels(read(accounts))) {
+    const view = channelConnection(accounts, channel);
+    if (view.phase === "targets" && view.targets.length > 0) out.add(channel);
+  }
+  return out;
 }
 
 /**
@@ -271,13 +357,14 @@ export function blockedConnection(accounts: ConnectedAccounts): ConnectionBlocke
  */
 export function autoPublishAllowed(accounts: ConnectedAccounts): boolean {
   const state = read(accounts);
-  if (state.phase !== "loaded") return false;
+  if (state.phase !== "loaded" || decisionsSuspended(accounts)) return false;
   return canAutoPublish([...postableChannelIds(accounts)], state.canPublish);
 }
 
 /** Whether a stored target id is still one of the merchant's accounts on that channel. False for
  *  everything we did not positively read — uncertainty never vouches for an id. */
 export function isConnectedTarget(accounts: ConnectedAccounts, channel: string, targetId: string | null): boolean {
+  if (decisionsSuspended(accounts)) return false;
   const view = channelConnection(accounts, channel);
   if (view.phase !== "targets" || !targetId) return false;
   return view.targets.some((t) => t.id === targetId);

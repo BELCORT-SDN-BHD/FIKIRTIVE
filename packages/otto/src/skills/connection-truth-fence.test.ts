@@ -7,6 +7,15 @@
  * 连接页写着 Reconnect needed,Otto 却说「你还没连 Meta」。
  *
  * 单个修好还会再长出来 —— 这条围栏扫全部技能,把那个形状本身挡掉。
+ *
+ * **威胁模型边界(如实声明,不虚标能力 —— #621 教训)**:
+ * 下面前两条是**词法**检查,不是数据流分析。它们能抓住「以 `||` 把 notConnected 与另一个
+ * 连接判断并进同一句」的自然写法(含拆成变量的两步写法)。它们抓不到:
+ *   ① 把两种状态在**上游**就映射成同一个值,再在技能里只判那个值;
+ *   ② 用 switch/三元/提前 return 换一种控制流表达同一个合并;
+ *   ③ 措辞换一种说法(例如「你还没接上 Meta」)而不出现 "isn't connected yet"。
+ * 这三类靠的是第三条**行为**断言:它把每个会读 Meta 的技能真的跑一遍 needsReconnect,
+ * 检查回答里带的是 blocked 而不是「从没连过」的措辞 —— 那才是真正承重的一条。
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -15,9 +24,14 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-/** 把「连着但用不了」并进别的分支的自然写法(两个方向都认)。 */
+/**
+ * 把「连着但用不了」并进「从没连过」的自然写法。收紧到**语义等价形状**(判官 r5 [P2]):
+ * 不再只认「两个 `"… in res"` 直接相邻」,而是认「同一个条件里,notConnected 与另一个连接
+ * 状态判断被 || 连起来」——`const blocked = isConnectionBlocked(res); if ("notConnected" in res || blocked)`
+ * 这种拆成两步的写法也会响。
+ */
 const MERGED_CONNECTION_STATES =
-  /"(notConnected|needsReconnect)"\s+in\s+\w+\s*\|\|\s*"(notConnected|needsReconnect)"\s+in\s+\w+/;
+  /"notConnected"\s+in\s+\w+\s*\|\|[^)\n]*|[^(\n]*\|\|\s*"notConnected"\s+in\s+\w+/;
 
 const files = readdirSync(HERE)
   .filter((f) => /\.ts$/.test(f) && !/\.test\.ts$/.test(f))
@@ -41,6 +55,30 @@ describe("Otto 的连接状态口径", () => {
   it("没有技能把「从没连过」和「连着但用不了」并成一句话", () => {
     const offenders = files.filter((f) => MERGED_CONNECTION_STATES.test(f.code)).map((f) => f.rel);
     expect(offenders).toEqual([]);
+  });
+
+  // ── 承重的那一条:行为断言,不是词法 ────────────────────────────────────────
+  //
+  // 把每个会读 Meta 的技能真的跑一遍 `needsReconnect`,断言它回答的是「连着但过期」而不是
+  // 「你从没连过」。控制流怎么写、措辞怎么改,都逃不过这一条。
+  it.each([
+    ["list-meta-pages", "metaPages", (list: () => unknown) => ({ metaPages: { list } })],
+    ["meta-list-objects", "metaAds", (list: () => unknown) => ({ metaAds: { list } })],
+    ["meta-insights", "metaInsights", (get: () => unknown) => ({ metaInsights: { get } })],
+    ["meta-ad-performance", "metaPerformance", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
+    ["meta-expert", "metaPerformance", (getAds: () => unknown) => ({ metaPerformance: { getAds } })],
+  ])("%s:needsReconnect 的回答是「连着但过期」,不是「从没连过」", async (name, _port, makeCtx) => {
+    const mod: Record<string, unknown> = await import(`./${name}.js`);
+    const execute = Object.entries(mod).find(([k]) => k.startsWith("execute"))?.[1] as
+      | ((input: unknown, rc: { context: unknown }) => Promise<unknown>)
+      | undefined;
+    expect(execute, `${name} 没有导出 execute*`).toBeTruthy();
+
+    const ctx = makeCtx(async () => ({ needsReconnect: true }));
+    const res = (await execute!({ datePreset: "last_30d" }, { context: ctx })) as Record<string, unknown>;
+    const text = JSON.stringify(res);
+    expect(res.blocked, `${name} 应当把它归为 blocked`).toBe("needs_reconnect");
+    expect(text, `${name} 不许说「还没连过」`).not.toMatch(/isn't connected yet|not connected yet|have not connected/i);
   });
 
   it("凡是会说「还没连 Meta」的技能,都必须先问过共享权威", () => {

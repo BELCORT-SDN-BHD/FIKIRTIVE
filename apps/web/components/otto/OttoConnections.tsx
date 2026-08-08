@@ -127,18 +127,22 @@ function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
 }
 
 function ChannelRow({ channel }: { channel: ChannelState }) {
-  const label = channel.status === "connected" ? "Manage" : channel.status === "needs_reconnect" ? "Reconnect" : "Connect";
-  const variant = channel.status === "connected" ? "ghost" : "brand";
-  // A connection that exists but can't publish outranks the bare "Connected" — and says it in the
-  // words the Schedule screen uses for the same fact, so the merchant never gets two stories
-  // about one connection (#741 r5 P1).
-  const hint = channel.blocker
-    ? CONNECTION_BLOCKER_COPY[channel.blocker].status
+  // A connection that exists but can't publish outranks the bare "Connected" — in the SAME words
+  // the Schedule screen uses for the same fact, so the merchant never gets two stories about one
+  // connection (#741 r5 P1/P2). The button has to follow the same fact: `needs_page_permission`
+  // usually arrives with status "connected", so keying the CTA off status alone put "Manage" next
+  // to "Page access needed" while Schedule was saying "Reconnect" about the very same connection.
+  const blocked = channel.blocker ?? (channel.status === "needs_reconnect" ? "needs_reconnect" : null);
+  const label = blocked ? "Reconnect" : channel.status === "connected" ? "Manage" : "Connect";
+  const variant = blocked ? "brand" : channel.status === "connected" ? "ghost" : "brand";
+  // Every one of these sentences comes from the shared table — the "Reconnect needed" branch used
+  // to be a hand-written copy of it, and it is genuinely reachable (status needs_reconnect with no
+  // blocker attached), so "one wording, one source" was not actually true.
+  const hint = blocked
+    ? CONNECTION_BLOCKER_COPY[blocked].status
     : channel.status === "connected"
       ? channel.targets.join(", ") || "Connected"
-      : channel.status === "needs_reconnect"
-        ? "Reconnect needed"
-        : "Not connected";
+      : "Not connected";
   return (
     <div
       className="border-b border-border last:border-b-0"
