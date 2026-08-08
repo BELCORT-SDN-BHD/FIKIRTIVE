@@ -36,7 +36,9 @@ import { partsInTz, formatDayLabel, formatTime } from "./schedule-view";
 /** What a merchant sees this charge as. Derived from the ledger row, never guessed. */
 export type SpendCategory =
   | "chat"        // an Otto conversation turn (otto-stream / otto-turn / otto-approve)
-  | "review"      // the automatic post-generation verdict (otto-verdict)
+  | "review"      // HISTORICAL ONLY (#791-4): the automatic post-generation verdict
+                  // (otto-verdict:) that used to run and bill. No new rows are minted —
+                  // the branch stays so an old charge is never relabelled as something else.
   | "research"    // an approved deep-research run (research:)
   | "image"       // a generation job that made image(s)
   | "video"       // a generation job that made video

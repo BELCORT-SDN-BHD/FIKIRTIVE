@@ -68,7 +68,6 @@ const m = vi.hoisted(() => {
 vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundReservation, settleCredits: m.settleCredits }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generateVideo: m.generateVideo, generate: m.generateImages } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { referenceBudget, MAX_CONDITIONING_IMAGES } from "@fikirtive/core";

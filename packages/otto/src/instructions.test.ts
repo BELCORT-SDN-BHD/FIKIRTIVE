@@ -562,7 +562,11 @@ describe("ottoInstructions — #555 credits and spending", () => {
   });
   it("names the categories the merchant will actually see", () => {
     expect(ottoInstructions).toMatch(/\*\*Chat\*\* = one conversation turn/);
-    expect(ottoInstructions).toMatch(/\*\*Review\*\* = the automatic check/);
+    // #791-4: the automatic Review round is gone. Otto is told Review can only appear as
+    // an OLD entry and no longer runs — describing it as a live category would be the same
+    // "说的≠做的" the round itself was.
+    expect(ottoInstructions).toMatch(/\*\*Review\*\* entry — that was an automatic check/);
+    expect(ottoInstructions).toMatch(/it no longer runs/);
   });
   it("requires admitting the window instead of claiming all-time coverage", () => {
     expect(ottoInstructions).toMatch(/window\.hasMore/);

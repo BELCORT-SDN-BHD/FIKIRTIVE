@@ -34,7 +34,6 @@ vi.mock("@fikirtive/db", () => ({ prisma: m.prisma, refundReservation: m.refundR
 // import-time deps the reaper does not exercise:
 vi.mock("../storage.js", () => ({ storage: {} }));
 vi.mock("../generation.js", () => ({ provider: { name: "mock" } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 
 import { reapStaleGenJobs } from "./gen.js";
 

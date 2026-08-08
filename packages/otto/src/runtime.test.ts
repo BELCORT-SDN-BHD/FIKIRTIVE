@@ -61,7 +61,7 @@ import {
   type OttoRuntimeDeps,
 } from "./runtime.js";
 import { ottoModel, ottoModelRuntime, OTTO_PRIMARY_MODEL, OTTO_FALLBACK_MODEL, OTTO_DEFAULT_MODEL } from "./model.js";
-import { otto, ottoVerdict, ottoInteractiveRuntime, ottoApprovalResumeRuntime, ottoWorkerVerdictRuntime } from "./otto.js";
+import { otto, ottoInteractiveRuntime, ottoApprovalResumeRuntime } from "./otto.js";
 import { actualCostInternal, mapOttoUsage, withLlmBudget } from "./meter.js";
 import { defineOttoSkill } from "./skill.js";
 import { tryRestoreRunStateWithContext } from "./run-input.js";
@@ -248,12 +248,9 @@ describe("createOttoRuntime — profile matrix (profiles only limit tools/steps)
     expect(rt.maxTurns).toBe(OTTO_MAX_STEPS);
   });
 
-  it("worker-verdict: ZERO tools, single step (PH1-A4)", () => {
-    const rt = createOttoRuntime(deps, "worker-verdict");
-    expect(rt.agent.tools).toEqual([]);
-    expect(rt.maxTurns).toBe(1);
-    expect(ottoBudgetArgsFor(rt, { orgId: "o", refId: "r", input: "x" }).maxSteps).toBe(1);
-  });
+  // #791-4: the tool-less `worker-verdict` profile is gone with the automatic
+  // post-generation Review round it existed for. Every remaining profile carries the
+  // full toolset at OTTO_MAX_STEPS — which is what the three cases above now pin.
 
   it("runtimes are frozen — composition-time injection, immutable for the process lifetime", () => {
     const rt = createOttoRuntime(deps, "interactive");
@@ -296,13 +293,6 @@ describe("ottoBudgetArgsFor — every withLlmBudget parameter derives from the m
     expect(args.reserveCapInternal).toBe(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL);
   });
 
-  it("production worker-verdict: single-step reserve (maxSteps 1)", () => {
-    const args = ottoBudgetArgsFor(ottoWorkerVerdictRuntime, { orgId: "o", refId: "otto-verdict:j1", input: "x" });
-    expect(args.maxSteps).toBe(1);
-    expect(args.model).toBe("claude-sonnet-4-6");
-    expect(args.paid).toBe(true);
-  });
-
   it("fixture-no-charge manifest → paid:false (the ONLY way to a no-charge run is the manifest itself)", () => {
     const rt = createOttoRuntime(
       { modelRuntime: fixtureModelRuntime(fakeTextModel("x")), skills: [], traceSink: noopTraceSink },
@@ -339,16 +329,12 @@ describe("production composition root (PH1-A5)", () => {
 
   it("legacy singletons ARE the factory's production instances; production profiles share ONE manifest", () => {
     expect(otto).toBe(ottoInteractiveRuntime.agent);
-    expect(ottoVerdict).toBe(ottoWorkerVerdictRuntime.agent);
     expect(ottoInteractiveRuntime.modelRuntime).toBe(ottoModelRuntime);
     expect(ottoApprovalResumeRuntime.modelRuntime).toBe(ottoModelRuntime);
-    expect(ottoWorkerVerdictRuntime.modelRuntime).toBe(ottoModelRuntime);
     expect(ottoInteractiveRuntime.agent.tools.length).toBe(allSkills.length);
     expect(ottoApprovalResumeRuntime.agent.tools.length).toBe(allSkills.length);
-    expect(ottoWorkerVerdictRuntime.agent.tools).toEqual([]);
     expect(ottoInteractiveRuntime.maxTurns).toBe(OTTO_MAX_STEPS);
     expect(ottoApprovalResumeRuntime.maxTurns).toBe(OTTO_MAX_STEPS);
-    expect(ottoWorkerVerdictRuntime.maxTurns).toBe(1);
   });
 
   it("three ambient selector-like env names are not inputs to the explicit composition API", () => {
@@ -651,23 +637,9 @@ describe("runOttoTurn — fake provider through the shared runner ($0 fixture)",
     }
   });
 
-  it("worker-verdict: single model step, zero tools, text extracted by the shared finalizer", async () => {
-    const model = fakeTextModel("Does this look right?");
-    const deps: OttoRuntimeDeps = {
-      modelRuntime: fixtureModelRuntime(model),
-      skills: [makeSafeSkill([])], // present in deps — the PROFILE strips them
-      traceSink: noopTraceSink,
-    };
-    const rt = createOttoRuntime(deps, "worker-verdict");
-    expect(rt.agent.tools).toEqual([]);
-
-    const result = await runOttoTurn({ orgId: "org_t", refId: "fixture:verdict", input: "verdict?" }, baseCtx, rt);
-    const fin = finalizeOttoTurn(result, rt);
-
-    expect(model.calls()).toBe(1); // exactly one step
-    expect(fin.interrupted).toBe(false);
-    expect(fin.text).toBe("Does this look right?");
-  });
+  // #791-4: the single-step, tool-less verdict leg is gone with the automatic Review
+  // round. A text-only run through the shared finalizer is still covered by the
+  // eval-profile legs above.
 });
 
 // ── #566: a resumed run must carry the LIVE context (injected ports survive) ──
