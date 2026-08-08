@@ -153,7 +153,7 @@ export function SegmentCards({ records, looseNotes, freshIds, onSave, onDelete, 
           >
             {noteEditId === n.id ? (
               <div className="flex flex-col gap-2">
-                <Textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} />
+                <Textarea aria-label="Edit this audience note" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} />
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => void onNoteSave(n.id, noteText).then(() => setNoteEditId(null))}>Save</Button>
                   <Button size="sm" variant="ghost" onClick={() => setNoteEditId(null)}>Cancel</Button>

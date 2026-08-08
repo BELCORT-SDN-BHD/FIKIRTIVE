@@ -92,6 +92,9 @@ export function TextNode({ data, selected }: NodeProps) {
     <div className="al-panel" style={{ width: "100%", height: "100%", padding: "11px 12px", borderRadius: 14 }}>
       <textarea
         className="nodrag nopan"
+        // #739 — the node's visible "Text" label is not associated with this box, and the
+        // placeholder disappears as soon as the merchant types.
+        aria-label="Text note"
         onPointerDown={(e) => e.stopPropagation()}
         value={val}
         onChange={(e) => update(e.target.value)}

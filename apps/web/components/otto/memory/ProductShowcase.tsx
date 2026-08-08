@@ -519,7 +519,7 @@ export function ProductShowcase({
             <div key={n.id} className={`px-[15px] py-[10px] ${freshIds.has(n.id) ? "bg-brand/5 border-l-[3px] border-l-brand" : ""}`}>
               {noteEditId === n.id ? (
                 <div className="flex flex-col gap-2">
-                  <Textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} />
+                  <Textarea aria-label="Edit this product note" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} />
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => void onNoteSave(n.id, noteText).then(() => setNoteEditId(null))}>Save</Button>
                     <Button size="sm" variant="ghost" onClick={() => setNoteEditId(null)}>Cancel</Button>

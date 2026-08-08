@@ -342,6 +342,8 @@ export function OttoFrontDoor({
           >
           <textarea
             ref={textareaRef}
+            // #739 (same root as the Otto composer) — placeholder-only, so no name once typing starts.
+            aria-label="Describe what you want to make"
             value={text}
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}

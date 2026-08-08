@@ -1,4 +1,5 @@
 import { it, expect } from "vitest";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core";
 import { proposeAdBuildSkill, executeProposeAdBuild, proposeAdBuild, proposeAdBuildInput } from "./propose-ad-build.js";
 
 const VALID_INPUT = {
@@ -30,22 +31,29 @@ it("calls ctx.metaBuild.propose and reports the cardId", async () => {
   expect(JSON.stringify(res)).toMatch(/card-1|prepared|ready/i);
 });
 
-it("notConnected → friendly connect message, no throw", async () => {
+// #767:这三条以前只断言文本含 `connect` / `page`。那个正则对「从没连过」和「连着但过期」
+// 一视同仁 —— 把三种状态答成同一句也照样绿。改成各钉各的:哪一句、算不算 blocked。
+it("notConnected → 说的就是「还没连过」,且不算 blocked", async () => {
   const ctx = { metaBuild: { propose: async () => ({ notConnected: true as const }) } };
   const res: any = await executeProposeAdBuild(VALID_INPUT, { context: ctx as any });
-  expect(JSON.stringify(res)).toMatch(/connect/i);
+  expect(res.blocked).toBeUndefined();
+  expect(res.message).toMatch(/Meta isn't connected yet/);
 });
 
-it("needsReconnect → friendly connect message, no throw", async () => {
+it("needsReconnect → 共享的「连着但过期」文案,不是「还没连过」", async () => {
   const ctx = { metaBuild: { propose: async () => ({ needsReconnect: true as const }) } };
   const res: any = await executeProposeAdBuild(VALID_INPUT, { context: ctx as any });
-  expect(JSON.stringify(res)).toMatch(/connect/i);
+  expect(res.blocked).toBe("needs_reconnect");
+  expect(res.message).toContain(CONNECTION_BLOCKER_COPY.needs_reconnect.status);
+  expect(res.message).not.toMatch(/isn't connected yet/i);
 });
 
-it("needsPageScope → friendly 'manage pages' message, no throw", async () => {
+it("needsPageScope → 共享的「缺 Page 权限」文案,不是「还没连过」", async () => {
   const ctx = { metaBuild: { propose: async () => ({ needsPageScope: true as const }) } };
   const res: any = await executeProposeAdBuild(VALID_INPUT, { context: ctx as any });
-  expect(JSON.stringify(res)).toMatch(/page/i);
+  expect(res.blocked).toBe("needs_page_permission");
+  expect(res.message).toContain(CONNECTION_BLOCKER_COPY.needs_page_permission.status);
+  expect(res.message).not.toMatch(/isn't connected yet/i);
 });
 
 it("{invalid} with unknown-asset reason → friendly message, no throw", async () => {

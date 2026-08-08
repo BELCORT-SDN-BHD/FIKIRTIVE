@@ -99,6 +99,26 @@ export function formatDayHeading(p: DateParts): string {
   return `${DAYS_SHORT[p.weekday]}, ${MONTHS_SHORT[p.month]} ${p.day}`;
 }
 
+/**
+ * The same "Jul 10" wording for a CALENDAR DATE that arrives as a bare "YYYY-MM-DD"
+ * string — Meta's `date_start`, which names a day in the ad account's own timezone and
+ * carries no instant (#696). Reading the parts straight off the string is the point:
+ * putting it through `new Date(...)` would invent a timezone, and "2026-06-30" can then
+ * come back out as the 29th. Month names come from MONTHS_SHORT like every other date
+ * on the product, so this cannot drift into its own dialect.
+ *
+ * Anything that is not a plain calendar date is returned unchanged: a surface should
+ * show the raw value it was given rather than a confident "undefined NaN".
+ */
+export function formatCalendarDay(isoDate: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate.trim());
+  if (!m) return isoDate;
+  const month = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  if (month < 0 || month > 11 || day < 1 || day > 31) return isoDate;
+  return `${MONTHS_SHORT[month]} ${day}`;
+}
+
 /** "y-mm-dd" stable key for same-day grouping (in the post's own tz). */
 export function dayKey(p: DateParts): string {
   return `${p.year}-${pad2(p.month + 1)}-${pad2(p.day)}`;

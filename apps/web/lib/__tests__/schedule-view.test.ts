@@ -4,6 +4,7 @@ import {
   formatTime,
   formatDayLabel,
   formatDayHeading,
+  formatCalendarDay,
   dayKey,
   statusPill,
   groupByDay,
@@ -67,6 +68,31 @@ describe("formatters are deterministic (no locale)", () => {
     expect(formatDayLabel(p)).toBe("Jul 10");
     expect(formatDayHeading(p)).toBe("Fri, Jul 10");
     expect(dayKey(p)).toBe("2026-07-10");
+  });
+});
+
+// #696 — the same wording for a bare calendar date (Meta's `date_start`), which has no
+// instant and no timezone attached.
+describe("formatCalendarDay", () => {
+  it("writes a YYYY-MM-DD day exactly like formatDayLabel does", () => {
+    expect(formatCalendarDay("2026-06-30")).toBe("Jun 30");
+    expect(formatCalendarDay("2026-01-01")).toBe("Jan 1");
+    expect(formatCalendarDay("2026-12-09")).toBe("Dec 9");
+  });
+
+  it("never shifts the day — no Date, so no timezone to shift it by", () => {
+    // The bug this guards: `new Date("2026-06-30")` is midnight UTC, which west of
+    // Greenwich reads back as the 29th.
+    expect(formatCalendarDay("2026-06-30")).toBe("Jun 30");
+    expect(formatCalendarDay("2026-03-01")).toBe("Mar 1");
+  });
+
+  it("hands back anything that isn't a plain calendar date, unchanged", () => {
+    expect(formatCalendarDay("last week")).toBe("last week");
+    expect(formatCalendarDay("")).toBe("");
+    expect(formatCalendarDay("2026-13-01")).toBe("2026-13-01");
+    expect(formatCalendarDay("2026-06-00")).toBe("2026-06-00");
+    expect(formatCalendarDay("2026-06-30T00:00:00Z")).toBe("2026-06-30T00:00:00Z");
   });
 });
 

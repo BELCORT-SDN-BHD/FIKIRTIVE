@@ -5,13 +5,16 @@
  *
  * consent-runtime.ts stays the SOLE writer of consent/DND/provider-refusal facts — this
  * module only fold-reads ConsentStateProjection / Contact.doNotDisturb (the DND compatibility
- * projection consent-runtime already maintains) / ProviderRefusalState. It never writes them.
+ * projection consent-runtime already maintains) / Contact.marketingConsent (the pre-ledger
+ * consent mirror, read through consent-fold's fence — #806) / ProviderRefusalState. It never
+ * writes them.
  * The four axes are evaluated and reported SEPARATELY — never merged into one boolean or a
  * suppression list (§3.2). The `aggregate` field always takes the M1-M3 `unavailable` branch
  * (§4.4): AggregateDisposition only activates once a real send path exists (M4).
  */
 import { randomUUID } from "node:crypto";
 import { Prisma } from "../generated/prisma/client.js";
+import { contactConsentTruth, CRM_CONSENT_SCOPE, isKnownOptOut } from "./consent-fold.js";
 import { prisma } from "./index.js";
 
 type Tx = Prisma.TransactionClient;
@@ -148,9 +151,18 @@ function prismaCode(error: unknown): string | undefined {
 }
 
 /**
- * §4.2.1's 3×2 consent-state × callerClass mapping. Axis `unknown`/`unavailable` is reserved
- * STRICTLY for "projection physically unreadable" — a resolved consent state of "unknown"
+ * §4.2.1's 3×2 consent-state × callerClass mapping, over the WHOLE consent authority — the
+ * ConsentStateProjection plus the pre-ledger fence. Axis `unknown`/`unavailable` is reserved
+ * STRICTLY for "the authority is physically unreadable" — a resolved consent state of "unknown"
  * (fold-null or literal projection state) always maps to `risk`/`block`, never axis-`unknown`.
+ *
+ * #806: reading the projection alone was not the whole authority. A contact whose only opt-out
+ * record is the legacy `Contact.marketingConsent` column (R-010 §4.6.5's pre-ledger fence) has
+ * no projection row at all, so this axis called an audience-wide known opt-out plain "unknown
+ * consent" and handed `merchant_manual` — which is what a broadcast and the inbox both are — a
+ * `risk`, the D5-overridable tier. The fence is fail-closed by the Founder's #750 ruling, so it
+ * is a `block` here, on the same predicate the segment/audience side reads (`contactConsentTruth`
+ * in consent-fold.ts). Same rule, one definition, two layers.
  */
 async function evalConsentStop(
   db: SendEligibilityDb,
@@ -186,10 +198,54 @@ async function evalConsentStop(
   if (state === "effective_revoke") {
     return axis("block", "consent_state_projection", checkedAt, "effective_revoke");
   }
-  // state === "unknown": D5-eligible risk for a human, hard block for anything unconfirmed.
+
+  // state === "unknown": the pre-ledger fence is the other half of the authority, and it only
+  // ever holds a customer OUT. Read only in the one scope the legacy column mirrors, so no other
+  // channel/purpose pays for a query that could not change the answer.
+  let fenced = false;
+  try {
+    fenced = isKnownOptOut(
+      contactConsentTruth(
+        undefined,
+        await readLegacyMarketingConsent(db, input),
+        { channel: input.channel, purpose: input.purpose },
+      ),
+    );
+  } catch {
+    // The fence source is unreadable, so "not fenced" would be a guess in the direction of
+    // sending. Fail closed the honest way: name the unreadable authority (no axis reads `pass`,
+    // so nothing is sent on a fabricated all-clear).
+    return axis("unavailable", "consent_legacy_mirror", checkedAt, "legacy_mirror_unreadable");
+  }
+  if (fenced) {
+    return axis("block", "consent_legacy_mirror", checkedAt, "unresolved_legacy_opt_out");
+  }
+
+  // Genuinely unknown: D5-eligible risk for a human, hard block for anything unconfirmed.
   return input.callerClass === "merchant_manual"
     ? axis("risk", "consent_state_projection", checkedAt, "consent_unknown_d5_eligible")
     : axis("block", "consent_state_projection", checkedAt, "consent_unknown_unconfirmed_automatic_hard_block");
+}
+
+/**
+ * The legacy whatsapp+marketing consent mirror for this contact, or null when this send's scope
+ * is not the one tuple the column mirrors (R-010 §4.6.1) — passing null there is what makes
+ * `contactConsentTruth` a no-op for every other channel/purpose, exactly as on the web side.
+ * A contact row missing inside the tenant carries no column either; the DND axis is the one that
+ * reports that shape as `unavailable`, so this read stays silent about it.
+ */
+async function readLegacyMarketingConsent(
+  db: SendEligibilityDb,
+  input: SendEligibilityInput,
+): Promise<string | null> {
+  if (input.channel !== CRM_CONSENT_SCOPE.channel || input.purpose !== CRM_CONSENT_SCOPE.purpose) {
+    return null;
+  }
+  const contact = await db.contact.findFirst({
+    where: { ownerId: input.ownerId, id: input.contactId },
+    select: { marketingConsent: true },
+  });
+  return contact?.marketingConsent ?? null;
 }
 
 /**

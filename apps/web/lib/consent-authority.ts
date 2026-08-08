@@ -4,6 +4,18 @@ import {
   type SegmentRuleGroup,
 } from "@fikirtive/core";
 import type { Prisma } from "@fikirtive/db";
+// The pure R-010 fold module, NOT the package root: importing it never constructs a Prisma
+// client, so a caller's unit test can keep mocking `@fikirtive/db` as just a fake client
+// without having to restate the consent rule (which is the very duplication #716 removed).
+import {
+  contactConsentTruth,
+  CRM_CONSENT_SCOPE,
+  isKnownOptOut,
+  NO_CONSENT_RECORD,
+  type ConsentScope,
+  type ConsentState,
+  type ContactConsentTruth,
+} from "@fikirtive/db/consent-fold";
 
 /**
  * #716 / #726 — the single predicate deciding whether a contact has opted out.
@@ -15,56 +27,23 @@ import type { Prisma } from "@fikirtive/db";
  *
  * There is now exactly one reading. `ConsentStateProjection` is the R-010 authority; the legacy
  * column is a whatsapp+marketing compatibility mirror written by the consent runtime and is no
- * longer an authority of its own. It keeps exactly ONE power, described under
- * `unresolvedLegacyOptOut` below: it can hold a customer out, never let one in.
+ * longer an authority of its own. It keeps exactly ONE power: it can hold a customer out, never
+ * let one in.
  *
- * The reading carries THREE separate facts, and they are never collapsed into one:
- *  - `state` — the verified consent state. Only `effective_revoke` is a verified opt-out.
- *  - `unresolvedLegacyOptOut` — an opt-out recorded before this contact had a consent history.
- *  - `reportedOptOut` — the merchant's OWN latest record says "opted out". R-010 keeps this out
- *    of the verified state on purpose: a merchant assertion is not customer-verified evidence
- *    (#496, Founder's option B). It is surfaced, never silently folded into "unknown".
+ * #806 moved the pure part of that reading down into @fikirtive/db (consent-fold.ts), because
+ * the send-eligibility engine lives there and needed the SAME reading rather than a second copy
+ * of the rule. This module re-exports it unchanged, so every call site here is untouched and
+ * there is still exactly one definition.
  */
-
-/**
- * Every consent surface a merchant can reach today — the contact profile's opt-out control, CSV
- * import, the contacts list badge — writes and reads this one scope. Segment selection has no
- * channel or purpose of its own, so it reads the same scope those pages display; a broadcast
- * reads its own run's channel + purpose through the same functions.
- *
- * R-010 §4.6.1 also fixes this as the ONLY scope the legacy `Contact.marketingConsent` column
- * mirrors, which is why the pre-ledger fence below is scoped to it and to nothing else.
- */
-export const CRM_CONSENT_SCOPE = { channel: "whatsapp", purpose: "marketing" } as const;
-
-export type ConsentScope = { channel: string; purpose: string };
-
-export type ConsentState = "unknown" | "verified_grant" | "effective_revoke";
-
-export type ContactConsentTruth = {
-  /** Verified R-010 state folded from the consent ledger. */
-  state: ConsentState;
-  /**
-   * An opt-out that predates this contact's consent history and nothing has resolved since
-   * (R-010 §4.6.5). It holds the contact OUT of every audience until the customer's own verified
-   * evidence supersedes it. See `contactConsentTruth`.
-   */
-  unresolvedLegacyOptOut: boolean;
-  /** The merchant's own latest record says "opted out" — recorded, not verified. */
-  reportedOptOut: boolean;
+export {
+  contactConsentTruth,
+  CRM_CONSENT_SCOPE,
+  isKnownOptOut,
+  NO_CONSENT_RECORD,
+  type ConsentScope,
+  type ConsentState,
+  type ContactConsentTruth,
 };
-
-/** No consent record of any kind exists for this contact in this scope. */
-export const NO_CONSENT_RECORD: ContactConsentTruth = {
-  state: "unknown",
-  unresolvedLegacyOptOut: false,
-  reportedOptOut: false,
-};
-
-/** The one definition of "known opt-out" — shared by segment selection, freeze and display. */
-export function isKnownOptOut(truth: ContactConsentTruth): boolean {
-  return truth.state === "effective_revoke" || truth.unresolvedLegacyOptOut;
-}
 
 /**
  * The segment-rule fact for this contact. Known opt-out is `opt_out`; a merchant-recorded
@@ -75,38 +54,76 @@ export function consentFact(truth: ContactConsentTruth): "opt_in" | "opt_out" | 
   return truth.state === "verified_grant" ? "opt_in" : "unknown";
 }
 
+/** R-010 channel-token normalization, applied identically wherever a channel becomes a fact. */
+function normalizedChannel(value: string): string | null {
+  const channel = value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+  return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(channel) ? channel : null;
+}
+
 /**
- * The pre-ledger fence (R-010 §4.6.5): a `Contact.marketingConsent` of `opt_out` that the
- * consent ledger has not yet reached is a KNOWN historical revoke, and R-010 forbids losing it
- * silently in the cutover. Until the tuple is resolved one contact at a time, it is fail-closed:
- * the customer stays out.
+ * The `channels` fact a segment rule sees for one contact: every live channel that contact has.
  *
- * Fail-closed means the merchant's own newer assertion cannot release it either — re-recording
- * an opt-out, or asserting an opt-in, both leave the state `unknown` and the fence standing.
- * Only the customer's own verified evidence (an opt-in through their channel, folding to
- * `verified_grant`) supersedes the stale byte, which is exactly R-010 §4.6.4's rule that a
- * historical baseline is neutral once a newer interactive stance covers it.
+ * #806 r2 — this construction is shared because the two selecting call sites disagreed without it.
+ * The broadcast used to hand the matcher `[<the run's channel>]`, which is not a fact about the
+ * contact at all, and the two sides then answered `selectedIntoAudience` differently for the same
+ * person: on `any(channel is email, contact is a known opt-out)`, a fenced customer holding BOTH
+ * an Email and a WhatsApp identity reads as "matched on email, not selected because of consent"
+ * on the segments page, but a WhatsApp run — seeing only `["whatsapp"]` — reads the same rules as
+ * "the merchant deliberately asked for opt-outs" and froze her in as a kept member. The very
+ * defect #806 exists to close, reappearing through a channel fact rather than a consent one.
  *
- * Scoped to whatsapp+marketing because that is the only tuple the legacy column mirrors
- * (R-010 §4.6.1); for any other channel or purpose the column carries no meaning and is not read.
+ * A rule fact describes the CONTACT. Which identities a run may actually send to is a separate
+ * question, answered separately by each caller (the broadcast still targets — and still counts
+ * over — only identities on its own channel).
  */
-export function contactConsentTruth(
-  projected: ContactConsentTruth | undefined,
-  legacyMarketingConsent: string | null | undefined,
-  scope: ConsentScope = CRM_CONSENT_SCOPE,
-): ContactConsentTruth {
-  const truth = projected ?? NO_CONSENT_RECORD;
-  const fenced =
-    truth.state === "unknown" &&
-    legacyMarketingConsent === "opt_out" &&
-    scope.channel === CRM_CONSENT_SCOPE.channel &&
-    scope.purpose === CRM_CONSENT_SCOPE.purpose;
-  return fenced ? { ...truth, unresolvedLegacyOptOut: true } : truth;
+export function contactChannelFacts(identities: readonly { channel: string }[]): string[] {
+  return [
+    ...new Set(
+      identities
+        .map((identity) => normalizedChannel(identity.channel))
+        .filter((channel): channel is string => channel !== null),
+    ),
+  ].sort();
+}
+
+/**
+ * The one gate every audience-selecting path goes through (#806): the segments page's match and
+ * the broadcast's candidate list.
+ *
+ * Before #806 the consent authority reached the rules only as a FACT (`marketingConsent`), so it
+ * could only keep a known opt-out out of a segment whose rules happened to ask about consent. A
+ * perfectly legal segment that named nothing but the channel ("everyone on WhatsApp") never asked
+ * — and a customer held out of every consent-aware list walked straight into a frozen broadcast
+ * audience, displayed as a kept member. That is the shape #750's Founder ruling forbids: a
+ * historical opt-out must not come back onto a list.
+ *
+ * So the authority is a GATE, not just a fact, and it fails closed: a known opt-out is in a
+ * selection only when the merchant went looking for opt-outs — i.e. when these same rules would
+ * NOT have selected the contact had they been contactable. That keeps "everyone who opted out"
+ * a real, working segment (the merchant asked, the page says so, the freeze agrees) while a
+ * selection that never mentions consent can no longer admit one by default.
+ *
+ * `doNotDisturb` is normalized to false here for the same reason both callers already did it:
+ * DND is a send-time axis carried honestly in each member's verdict, never a silent selection
+ * filter (B0-44).
+ */
+export function selectedIntoAudience(
+  truth: ContactConsentTruth,
+  facts: SegmentContactFacts,
+  rules: SegmentRuleGroup,
+  evaluatedAt: string,
+): boolean {
+  const matchesAs = (marketingConsent: "opt_in" | "opt_out"): boolean =>
+    contactMatchesRules({ ...facts, marketingConsent, doNotDisturb: false }, rules, { evaluatedAt });
+  const optedOut = isKnownOptOut(truth);
+  if (!matchesAs(optedOut ? "opt_out" : "opt_in")) return false;
+  return optedOut ? !matchesAs("opt_in") : true;
 }
 
 export type ConsentExclusionCandidate = {
   truth: ContactConsentTruth;
-  matched: boolean;
+  /** The `selectedIntoAudience` verdict for this contact — not the raw rule match. */
+  selected: boolean;
   facts: SegmentContactFacts;
 };
 
@@ -119,7 +136,9 @@ export type ConsentExclusionCounts = {
 
 /**
  * How many contacts the consent authority — not the merchant's other rules — kept out of this
- * selection: a known opt-out that does not match today, but would match if it were contactable.
+ * selection: a known opt-out that is not selected today, but would have been if it were
+ * contactable. Since #806 that covers the gate above as well as the rules, so a contact the gate
+ * fails closed on is reported as excluded instead of vanishing from both numbers.
  *
  * The segments page and the broadcast audience both count with this one function, so the number
  * cannot mean one thing on one page and another downstream (#726). Each caller passes its own
@@ -134,7 +153,7 @@ export function countExcludedByConsent(
   const excluded = contacts.filter(
     (contact) =>
       isKnownOptOut(contact.truth) &&
-      !contact.matched &&
+      !contact.selected &&
       contactMatchesRules(
         { ...contact.facts, marketingConsent: "opt_in", doNotDisturb: false },
         rules,

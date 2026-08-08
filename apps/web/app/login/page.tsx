@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/better-auth/compat";
+import { googleSignInConfigured } from "@/lib/better-auth/social-config";
 import { LoginForm } from "./LoginForm";
 
 export const dynamic = "force-dynamic";
@@ -102,7 +103,8 @@ export default async function LoginPage({
             </p>
           )}
 
-          <LoginForm from={from ?? "/"} />
+          {/* #681 — the server decides whether the Google door exists; the form never guesses. */}
+          <LoginForm from={from ?? "/"} googleEnabled={googleSignInConfigured()} />
 
           <p className="mt-6 text-center text-[13px] text-muted-foreground">
             New here?{" "}
