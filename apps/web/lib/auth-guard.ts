@@ -36,9 +36,12 @@ export async function requireRole(
   const email = session?.user?.email;
   if (!email || !(await allowed(email))) return { error: "Not authorized." };
 
+  // #734 — `User.role` is NOT selected here, and never was used. Reading it made the compat
+  // column look authoritative to the next reader, which is how the admin roster came to display
+  // it while this gate decided on `UserRole`. `UserRole` is the authority; nothing else is.
   const user = await prisma.user.findUnique({
     where: { email: email.toLowerCase() },
-    select: { role: true, roles: { select: { role: true } } },
+    select: { roles: { select: { role: true } } },
   });
   const roles = [...new Set((user?.roles ?? []).map((assignment) => assignment.role).filter(isRole))];
   if (!rolesAllow(roles, section, action)) {

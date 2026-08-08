@@ -29,8 +29,8 @@ import { inviteTenant, revokeTenantInvite } from "@/lib/tenant-actions";
 import type {
   AdminV2Data,
   AdminV2Section,
-  ApprovalItem,
   AuditPreview,
+  LargeGrantRow,
   CaseRow,
   MoneyLedgerRow,
   PendingInviteRow,
@@ -252,7 +252,7 @@ function Overview({ data, setCase }: { data: AdminV2Data; setCase: (row: CaseRow
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
-        <MoneyQueue rows={data.approvalQueue.slice(0, 6)} />
+        <LargeGrantList rows={data.largeGrants.slice(0, 6)} />
         <TenantWatchlist rows={data.tenants.slice(0, 6)} invitedCount={data.invitedCount} />
       </div>
 
@@ -267,27 +267,32 @@ function Overview({ data, setCase }: { data: AdminV2Data; setCase: (row: CaseRow
   );
 }
 
-function MoneyQueue({ rows }: { rows: ApprovalItem[] }) {
+/** #736 — settled ledger history, presented as history. Rows are plain `<div>`s: the previous
+ *  `<button>` had hover styling and a pointer cursor but no `onClick`, so the one affordance on
+ *  the founder's "Pending approvals" warning was a control that did nothing when pressed. */
+function LargeGrantList({ rows }: { rows: LargeGrantRow[] }) {
   return (
-    <Panel title="Money risk queue" subtitle="Grant-limit review candidates from the existing append-only ledger.">
+    <Panel
+      title="Large grants and adjustments"
+      subtitle="Already recorded in the append-only ledger, newest first. Nothing here is waiting on a decision."
+    >
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No recent grant or adjustment rows." /> : null}
         {rows.map((row) => (
-          <button
+          <div
             key={row.id}
-            type="button"
-            className="grid w-full gap-2 rounded-xl border border-border bg-background p-3 text-left transition-colors hover:bg-secondary md:grid-cols-[1fr_120px_132px] md:items-center"
+            className="grid w-full gap-2 rounded-xl border border-border bg-background p-3 text-left md:grid-cols-[1fr_120px_132px] md:items-center"
           >
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="truncate text-sm font-medium text-foreground">{row.tenant}</span>
-                <Badge variant={row.state === "over limit" ? "warning" : row.state === "adjustment" ? "destructive" : "outline"}>{row.state}</Badge>
+                <Badge variant={row.state === "adjustment" ? "destructive" : "outline"}>{row.state}</Badge>
               </div>
               <p className="mt-1 truncate text-xs text-muted-foreground">{row.reason || row.createdBy || "No reason captured"}</p>
             </div>
             <div className="text-sm font-semibold text-foreground">{row.amount > 0 ? "+" : ""}{row.amount.toLocaleString()}</div>
             <div className="text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</div>
-          </button>
+          </div>
         ))}
       </div>
     </Panel>
@@ -380,9 +385,18 @@ function SystemPanel({ rows }: { rows: SystemIncident[] }) {
   );
 }
 
+/** #735 — the honest label for an event that recorded no actor. Never a plausible substitute. */
+const NO_ACTOR = "Unattributed";
+
+/** Who the row is about, in one line: the actor, and the target when the event names one. */
+function auditWho(row: AuditPreview): string {
+  const actor = row.actor ?? NO_ACTOR;
+  return row.target ? `${actor} → ${row.target}` : actor;
+}
+
 function AuditPanel({ rows }: { rows: AuditPreview[] }) {
   return (
-    <Panel title="Recent admin activity" subtitle="Payloads remain collapsed in v2.">
+    <Panel title="Recent admin activity" subtitle="Who did what. Payloads remain collapsed.">
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No recent audit events." /> : null}
         {rows.map((row) => (
@@ -391,7 +405,7 @@ function AuditPanel({ rows }: { rows: AuditPreview[] }) {
               <span className="truncate text-sm font-medium text-foreground">{row.type}</span>
               <span className="font-mono text-[11px] text-muted-foreground">{fmtDate(row.createdAt)}</span>
             </div>
-            <p className="truncate text-xs text-muted-foreground">{row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}</p>
+            <p className="truncate text-xs text-muted-foreground">{auditWho(row)}</p>
           </div>
         ))}
       </div>
@@ -476,13 +490,13 @@ function MoneySection({ data }: { data: AdminV2Data }) {
         <MetricCard label="Founder balance" value={displayCredits(data.money.balance).toLocaleString()} detail="Displayed credits available to the founder workspace." tone="info" />
         <MetricCard label="Held credits" value={displayCredits(data.money.reserved).toLocaleString()} detail="Reserved by in-flight jobs." tone={data.money.reserved > 0 ? "warning" : "success"} />
         <MetricCard label="30-day spend" value={usd(data.money.totalUsd)} detail={`${data.money.jobCount} paid jobs with frozen spend snapshots.`} tone="neutral" />
-        <MetricCard label="Grant reviews" value={String(data.approvalQueue.filter((row) => row.state === "over limit").length)} detail="Single-action limit: 1,000 displayed credits." tone="warning" />
+        <MetricCard label="Large grants" value={String(data.largeGrants.filter((row) => row.state === "over limit").length)} detail="Recorded above the 1,000 displayed credit single-action limit." tone="neutral" />
       </div>
 
       <CreditActionPanel />
 
       <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
-        <MoneyQueue rows={data.approvalQueue} />
+        <LargeGrantList rows={data.largeGrants} />
         <Panel title="Spend by day" subtitle="Read-only media spend over the sampled 30-day window.">
           <div className="grid gap-2">
             {data.money.days.length === 0 ? <EmptyState label="No spend recorded in this window." /> : null}
@@ -751,18 +765,23 @@ function TenantInvitePanel({ invites, invitedCount }: { invites: PendingInviteRo
 
 function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: string }) {
   const [roleView, setRoleView] = useState("all");
-  const rows = data.staff.rows.filter((row) => roleView === "all" || row.role === roleView);
+  // #734 — filter and count on `roles`, the assignments the gate reads. A person may hold several
+  // at once (roles are permission bundles), so a multi-role staff member counts in each card they
+  // actually belong to instead of only their display-primary one.
+  const rows = data.staff.rows.filter(
+    (row) => roleView === "all" || (row.roles as readonly string[]).includes(roleView),
+  );
 
   return (
     <div className="grid gap-5">
       <div className="grid gap-3 md:grid-cols-5">
         {data.staff.roles.map((role) => (
-          <MetricCard key={role} label={role} value={String(data.staff.rows.filter((row) => row.role === role).length)} detail="Current user rows with this operator role." tone={role === "super-admin" ? "info" : "neutral"} />
+          <MetricCard key={role} label={role} value={String(data.staff.rows.filter((row) => row.roles.includes(role)).length)} detail="Staff holding this role assignment." tone={role === "super-admin" ? "info" : "neutral"} />
         ))}
       </div>
       <Panel
         title="Staff"
-        subtitle="Existing save action is reused; self-role edits stay disabled."
+        subtitle="Platform staff only. Role assignments here are the same ones that gate admin access — merchants hold none and are not listed."
         action={
           <Select value={roleView} onValueChange={setRoleView}>
             <SelectTrigger size="sm" className="w-[150px] bg-card"><span>{roleView === "all" ? "All roles" : roleView}</span></SelectTrigger>
@@ -798,8 +817,10 @@ function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: strin
 function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: string[]; selfEmail: string }) {
   const router = useRouter();
   const isSelf = row.email.toLowerCase() === selfEmail.toLowerCase();
-  const [role, setRole] = useState(row.role);
-  const [base, setBase] = useState(row.role);
+  // Widened to `string`: the picker hands back whatever option was chosen, and `saveUserRole`
+  // re-validates it server-side against the role vocabulary before writing anything.
+  const [role, setRole] = useState<string>(row.role);
+  const [base, setBase] = useState<string>(row.role);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const dirty = role !== base;
@@ -826,9 +847,11 @@ function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: strin
   return (
     <div className="grid gap-3 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_190px_120px_120px] md:items-center">
       <div className="min-w-0">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-foreground">{row.email}</span>
           {isSelf ? <Badge variant="outline">You</Badge> : null}
+          {/* Every role held, not just the one the picker can show — a person may hold several. */}
+          {row.roles.length > 1 ? row.roles.map((held) => <Badge key={held} variant="outline">{held}</Badge>) : null}
         </div>
         <p className="mt-1 truncate text-xs text-muted-foreground">{row.name || row.id}</p>
       </div>
@@ -1271,12 +1294,16 @@ function KnowledgeTextRow({ row }: { row: AdminV2Data["otto"]["knowledge"][numbe
 
 function AuditSection({ data }: { data: AdminV2Data }) {
   const [query, setQuery] = useState("");
-  const rows = data.audit.filter((row) => row.type.toLowerCase().includes(query.toLowerCase()) || row.ownerId.toLowerCase().includes(query.toLowerCase()));
+  const needle = query.toLowerCase();
+  // Filtering follows what the table now shows: the person, not just the owning org.
+  const rows = data.audit.filter((row) =>
+    [row.type, row.actor ?? "", row.target ?? "", row.ownerId].some((field) => field.toLowerCase().includes(needle)),
+  );
 
   return (
     <Panel
       title="Audit stream"
-      subtitle="The v2 table shows metadata only; raw payload expansion stays out of the default workflow."
+      subtitle="Who acted, on what, and when. Raw payloads stay collapsed — only the identity keys are read."
       action={<Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter events" className="h-9 w-[200px] text-sm" />}
     >
       <div className="grid gap-2">
@@ -1290,7 +1317,17 @@ function AuditSection({ data }: { data: AdminV2Data }) {
               </div>
               <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{row.id}</p>
             </div>
-            <p className="truncate text-xs text-muted-foreground">{row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}</p>
+            <div className="min-w-0">
+              <p
+                data-audit-actor
+                className={cn("truncate text-sm", row.actor ? "text-foreground" : "italic text-muted-foreground")}
+              >
+                {row.actor ?? NO_ACTOR}
+              </p>
+              <p className="mt-1 truncate text-xs text-muted-foreground">
+                {row.target ? `Target ${row.target} · ` : ""}Scope {row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}
+              </p>
+            </div>
             <span className="font-mono text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</span>
           </div>
         ))}
