@@ -49,6 +49,7 @@ const CONNECTION_A = `${SUITE}-connection-a`;
 const SEGMENT_WHATSAPP = `${SUITE}-segment-whatsapp`;
 const SEGMENT_EVERYONE = `${SUITE}-segment-everyone`;
 const SEGMENT_OPTED_OUT = `${SUITE}-segment-opted-out`;
+const SEGMENT_WHATSAPP_ONLY = `${SUITE}-segment-whatsapp-only`;
 const NOW = new Date("2026-08-08T00:00:00.000Z");
 
 /** Names read like the walkthrough's, so a failure names a person, not an id. */
@@ -88,6 +89,14 @@ const EVERYONE_CONTACTABLE = {
 const OPTED_OUT_ONLY = {
   match: "all" as const,
   rules: [{ kind: "contactability" as const, value: "not_contactable" as const }],
+};
+/**
+ * #806 — an equally legal segment that names the channel and NOTHING about consent. The consent
+ * authority used to reach the rules only as a fact, so this shape asked nothing and got everyone.
+ */
+const WHATSAPP_ONLY = {
+  match: "all" as const,
+  rules: [{ kind: "channel" as const, channel: "whatsapp" }],
 };
 
 const broadcast = createCustomerBroadcastService({ clock: () => NOW, id: () => `${SUITE}-gen-${randomUUID()}` });
@@ -201,6 +210,12 @@ beforeAll(async () => {
     await seedContact(contactId, ORG_A, `Zulkifli Bulk ${index}`);
     await seedIdentity(contactId, ORG_A, SCOPE_A, `+6012000000${index}`);
   }
+  // Mei is reachable on WhatsApp inside her OWN tenant (#806 needs a second tenant whose
+  // channel-only selection has something to gate). She matches no consent-aware rule either way,
+  // so every number this file already pins for ORG_B is untouched.
+  await prisma.contactIdentity.create({
+    data: { id: `${MEI}-identity`, ownerId: ORG_B, contactId: MEI, channel: "whatsapp", externalId: "+60199999999" },
+  });
 
   // Devi opted out herself through the unsubscribe link — verified customer evidence.
   await recordConsentEvent({
@@ -306,6 +321,15 @@ beforeAll(async () => {
         name: "Everyone who opted out",
         phrase: "All of: contact is a known opt-out",
         rulesJson: OPTED_OUT_ONLY,
+        kind: "custom",
+        createdAt: NOW,
+      },
+      {
+        id: SEGMENT_WHATSAPP_ONLY,
+        ownerId: ORG_A,
+        name: "Everyone on WhatsApp",
+        phrase: "All of: channel is whatsapp",
+        rulesJson: WHATSAPP_ONLY,
         kind: "custom",
         createdAt: NOW,
       },
@@ -525,6 +549,90 @@ describe("#726 a row says what this selection did with the contact, not what ano
     expect(markup).not.toContain("Excluded · ");
     expect(markup).toContain("Included · known opt-out");
     expect(markup).toContain("Included · opted out before consent history");
+  });
+});
+
+describe("#806 a segment that never mentions consent cannot put a known opt-out back on a send list", () => {
+  it("holds every known opt-out out of the audience a channel-only segment freezes", async () => {
+    actAs(ORG_A);
+    const preview = await previewSegment(WHATSAPP_ONLY);
+    if (!("ok" in preview)) throw new Error(preview.error);
+    const frozen = await freezeOnce("freeze-channel-only", SEGMENT_WHATSAPP_ONLY);
+
+    // Chandra and Hana are held out by nothing but the pre-ledger column; Devi and Grace by
+    // their own verified revoke. This segment asked for a channel, not for opted-out customers,
+    // so none of the four is selected — and none is written as an audience member the merchant
+    // would read as kept.
+    const written = await prisma.broadcastAudienceMember.findMany({
+      where: { ownerId: ORG_A, broadcastRunId: frozen.resource.id },
+      select: { contactId: true, includedByMerchant: true },
+    });
+    for (const optedOut of [CHANDRA, HANA, DEVI, GRACE]) {
+      expect(preview.contacts.some((contact) => contact.id === optedOut)).toBe(false);
+      expect(frozen.members.some((member) => member.contactId === optedOut)).toBe(false);
+      expect(written.some((member) => member.contactId === optedOut)).toBe(false);
+    }
+    expect(written.every((member) => member.includedByMerchant)).toBe(true);
+  });
+
+  it("reports the exclusion on both surfaces instead of dropping the contact silently", async () => {
+    actAs(ORG_A);
+    const preview = await previewSegment(WHATSAPP_ONLY);
+    if (!("ok" in preview)) throw new Error(preview.error);
+    const frozen = await freezeOnce("freeze-channel-only-numbers", SEGMENT_WHATSAPP_ONLY);
+
+    // 16 contacts carry a WhatsApp identity; Chandra, Hana, Devi and Grace are the four the
+    // consent authority holds out, two of them on the pre-ledger fence.
+    expect(preview.matchedCount).toBe(12);
+    expect(preview.knownOptOutCount).toBe(0);
+    expect(preview.excludedByConsentCount).toBe(4);
+    expect(preview.unresolvedLegacyOptOutCount).toBe(2);
+    expect(frozen.consent.excludedByConsent).toBe(4);
+    expect(frozen.consent.unresolvedLegacyOptOut).toBe(2);
+    // #750's whole point: what the segment says is what the broadcast does. Every matched
+    // contact here holds exactly one WhatsApp identity, so the two lists are the same length.
+    expect(frozen.members).toHaveLength(preview.matchedCount);
+  });
+
+  it("still keeps a merchant-reported opt-out in that audience — that record discloses, it does not suppress", async () => {
+    const frozen = await freezeOnce("freeze-channel-only-reported", SEGMENT_WHATSAPP_ONLY);
+    const delivered = new Set(frozen.members.map((member) => member.contactId));
+
+    // Founder's option B on #496 is untouched by this fix: Ella and Ivy carry an opt-out the
+    // MERCHANT recorded, which is not customer-verified evidence, so they stay in the audience
+    // and are declared rather than dropped.
+    expect(delivered.has(ELLA)).toBe(true);
+    expect(delivered.has(IVY)).toBe(true);
+    expect(frozen.consent.reportedOptOutKept).toBe(2);
+  });
+
+  it("hard-blocks the fenced customer at the send gate, not merely at selection", async () => {
+    // The one audience a known opt-out may still enter is the one the merchant deliberately
+    // built out of opt-outs. The send gate is what has to hold there — and a pre-ledger opt-out
+    // is a block, never the D5-overridable "consent unknown" risk it used to read as.
+    const frozen = await freezeOnce("freeze-optout-fence-axis", SEGMENT_OPTED_OUT);
+    const chandra = frozen.members.find((member) => member.contactId === CHANDRA);
+    expect(chandra).toBeDefined();
+    const verdict = chandra?.eligibilityVerdictJson as {
+      consentStop?: { status?: string; reason?: string };
+    };
+    expect(verdict.consentStop).toMatchObject({ status: "block", reason: "unresolved_legacy_opt_out" });
+  });
+
+  it("runs the gate inside each tenant's own fence", async () => {
+    actAs(ORG_A);
+    const frozen = await freezeOnce("freeze-channel-only-tenant", SEGMENT_WHATSAPP_ONLY);
+    expect(frozen.members.every((member) => member.ownerId === ORG_A)).toBe(true);
+    expect(frozen.members.some((member) => member.contactId === MEI)).toBe(false);
+
+    actAs(ORG_B);
+    const b = await previewSegment(WHATSAPP_ONLY);
+    if (!("ok" in b)) throw new Error(b.error);
+    // Mei is reachable on WhatsApp in her own tenant and the same gate holds her out there,
+    // counted against ORG_B's population and nobody else's.
+    expect(b.matchedCount).toBe(0);
+    expect(b.excludedByConsentCount).toBe(1);
+    expect(b.unresolvedLegacyOptOutCount).toBe(0);
   });
 });
 

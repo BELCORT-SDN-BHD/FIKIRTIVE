@@ -3,7 +3,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import {
-  contactMatchesRules,
   newId,
   validateSegmentRuleGroup,
   type SegmentContactFacts,
@@ -18,6 +17,7 @@ import {
   countExcludedByConsent,
   isKnownOptOut,
   readContactConsentTruth,
+  selectedIntoAudience,
   type ContactConsentTruth,
 } from "./consent-authority";
 import { ownedContactsWhere } from "./crm-contact-scope";
@@ -219,19 +219,13 @@ function matches(
   rules: SegmentRuleGroup,
   evaluatedAt: string,
 ): EvaluatedContact[] {
+  // The shared core matcher predates R-010 and models send-time contactability. At the Segment
+  // boundary the consent authority owns that leaf (unknown stays included, DND never filters) —
+  // and since #806 it owns the decision itself, so a segment that never mentions consent can no
+  // longer admit a known opt-out by default. Same gate the broadcast audience uses, so a row
+  // this page shows is still exactly a row the freeze turns into an audience member.
   return contacts.filter((contact) =>
-    contactMatchesRules(
-      {
-        ...contact.facts,
-        // The shared core matcher predates R-010 and models send-time contactability.
-        // At the Segment boundary, normalize that leaf to audience-selection semantics:
-        // unknown stays included, known opt-out is excluded, and DND never filters.
-        marketingConsent: contact.contactable ? "opt_in" : "opt_out",
-        doNotDisturb: false,
-      },
-      rules,
-      { evaluatedAt },
-    ),
+    selectedIntoAudience(contact.consent, contact.facts, rules, evaluatedAt),
   );
 }
 
@@ -280,7 +274,7 @@ function countsOf(
   const excluded = countExcludedByConsent(
     contacts.map((contact) => ({
       truth: contact.consent,
-      matched: matchedIds.has(contact.id),
+      selected: matchedIds.has(contact.id),
       facts: contact.facts,
     })),
     rules,
