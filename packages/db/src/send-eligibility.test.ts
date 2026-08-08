@@ -267,6 +267,131 @@ describe("C5-M2 consentStop axis — §4.2.1 3x2 matrix + unreadable", () => {
   });
 });
 
+/**
+ * #806 — the projection is not the whole consent authority. A customer whose only opt-out record
+ * is the pre-ledger `Contact.marketingConsent` column has no projection row at all, so this axis
+ * called an audience-wide known opt-out "consent unknown" and handed `merchant_manual` — which is
+ * what a broadcast and the inbox both are — the D5-overridable `risk` tier.
+ */
+describe("C5 consentStop axis — the pre-ledger fence is part of the authority (#806)", () => {
+  const FENCED_A = "eligibility-contact-fenced-a";
+  const FENCED_IDENTITY_A = "eligibility-identity-fenced-a";
+  const FENCED_B = "eligibility-contact-fenced-b";
+  const FENCED_IDENTITY_B = "eligibility-identity-fenced-b";
+
+  beforeEach(async () => {
+    await prisma.contact.createMany({
+      data: [
+        { id: FENCED_A, ownerId: ORG_A, name: "Chandra", source: "whatsapp", firstTouchAt: NOW, lastSeenAt: NOW, marketingConsent: "opt_out" },
+        { id: FENCED_B, ownerId: ORG_B, name: "Siti", source: "whatsapp", firstTouchAt: NOW, lastSeenAt: NOW, marketingConsent: "opt_out" },
+      ],
+    });
+    await prisma.contactIdentity.createMany({
+      data: [
+        { id: FENCED_IDENTITY_A, ownerId: ORG_A, contactId: FENCED_A, channel: "whatsapp", externalId: "+60111111119" },
+        { id: FENCED_IDENTITY_B, ownerId: ORG_B, contactId: FENCED_B, channel: "whatsapp", externalId: "+60222222229" },
+      ],
+    });
+  });
+
+  function fencedInput(overrides: Partial<Parameters<typeof evaluateSendEligibility>[1]> = {}) {
+    return baseInput({ contactId: FENCED_A, contactIdentityId: FENCED_IDENTITY_A, ...overrides });
+  }
+
+  it("blocks a pre-ledger opt-out for BOTH callerClasses — never the D5-overridable risk tier", async () => {
+    for (const callerClass of ["merchant_manual", "unconfirmed_automatic"] as const) {
+      const result = await evaluateSendEligibility(prisma, fencedInput({ callerClass }));
+      expect(result.consentStop).toMatchObject({
+        status: "block",
+        source: "consent_legacy_mirror",
+        reason: "unresolved_legacy_opt_out",
+      });
+    }
+  });
+
+  it("leaves a contact with no legacy record on the unchanged 3x2 mapping", async () => {
+    const merchant = await evaluateSendEligibility(prisma, baseInput({ contactId: CONTACT_A2, contactIdentityId: IDENTITY_A2 }));
+    expect(merchant.consentStop).toMatchObject({ status: "risk", reason: "consent_unknown_d5_eligible" });
+    const automatic = await evaluateSendEligibility(
+      prisma,
+      baseInput({ contactId: CONTACT_A2, contactIdentityId: IDENTITY_A2, callerClass: "unconfirmed_automatic" }),
+    );
+    expect(automatic.consentStop).toMatchObject({
+      status: "block",
+      reason: "consent_unknown_unconfirmed_automatic_hard_block",
+    });
+  });
+
+  it("reads the legacy column only in the one scope it mirrors (R-010 §4.6.1)", async () => {
+    const otherPurpose = await evaluateSendEligibility(prisma, fencedInput({ purpose: "review_request" }));
+    expect(otherPurpose.consentStop).toMatchObject({ status: "risk", reason: "consent_unknown_d5_eligible" });
+    const otherChannel = await evaluateSendEligibility(prisma, fencedInput({ channel: "instagram" }));
+    expect(otherChannel.consentStop).toMatchObject({ status: "risk", reason: "consent_unknown_d5_eligible" });
+  });
+
+  it("lifts the fence only on the customer's own verified evidence, never on the stale byte alone", async () => {
+    await prisma.consentStateProjection.create({
+      data: {
+        ownerId: ORG_A,
+        contactId: FENCED_A,
+        channel: "whatsapp",
+        purpose: "marketing",
+        state: "verified_grant",
+        lastEventId: "eligibility-test:fence-optin",
+        lastReceivedAt: NOW,
+        stateActorKind: "customer",
+        stateSourceKind: "explicit_inbox_optin",
+        evidenceStatus: "verified",
+      },
+    });
+    const contact = await prisma.contact.findFirstOrThrow({ where: { id: FENCED_A, ownerId: ORG_A } });
+    expect(contact.marketingConsent).toBe("opt_out"); // the stale byte is still there
+    const result = await evaluateSendEligibility(prisma, fencedInput());
+    expect(result.consentStop).toMatchObject({ status: "pass", source: "consent_state_projection" });
+  });
+
+  it("still answers a verified revoke from the projection, not from the mirror", async () => {
+    await prisma.consentStateProjection.create({
+      data: {
+        ownerId: ORG_A,
+        contactId: FENCED_A,
+        channel: "whatsapp",
+        purpose: "marketing",
+        state: "effective_revoke",
+        lastEventId: "eligibility-test:fence-revoke",
+        lastReceivedAt: NOW,
+        stateActorKind: "customer",
+        stateSourceKind: "stop_keyword",
+        evidenceStatus: "verified",
+      },
+    });
+    const result = await evaluateSendEligibility(prisma, fencedInput());
+    expect(result.consentStop).toMatchObject({ status: "block", reason: "effective_revoke" });
+  });
+
+  it("fails closed when the legacy mirror is physically unreadable", async () => {
+    const result = await evaluateSendEligibility(unreadable("contact"), fencedInput());
+    expect(result.consentStop).toMatchObject({ status: "unavailable", reason: "legacy_mirror_unreadable" });
+  });
+
+  it("never lets one tenant's legacy column decide another tenant's send", async () => {
+    // ORG_B's fenced contact read under ORG_A does not exist, so its opt-out cannot be borrowed
+    // and no other row is substituted for it. The DND axis is what reports the missing contact.
+    const crossed = await evaluateSendEligibility(
+      prisma,
+      fencedInput({ contactId: FENCED_B, contactIdentityId: FENCED_IDENTITY_B }),
+    );
+    expect(crossed.consentStop).toMatchObject({ status: "risk", reason: "consent_unknown_d5_eligible" });
+    expect(crossed.doNotDisturb).toMatchObject({ status: "unavailable", reason: "contact_not_found_in_tenant" });
+
+    const own = await evaluateSendEligibility(prisma, {
+      ...fencedInput({ contactId: FENCED_B, contactIdentityId: FENCED_IDENTITY_B }),
+      ownerId: ORG_B,
+    });
+    expect(own.consentStop).toMatchObject({ status: "block", reason: "unresolved_legacy_opt_out" });
+  });
+});
+
 describe("C5-M2 doNotDisturb axis — Contact-wide, no risk tier, not D5-bypassable", () => {
   it("no DND fact -> pass", async () => {
     const result = await evaluateSendEligibility(prisma, baseInput());
