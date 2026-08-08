@@ -186,7 +186,10 @@ export const auth = betterAuth({
         },
         after: async (s) => {
           const u = await prisma.betterAuthUser.findUnique({ where: { id: s.userId }, select: { email: true, name: true, image: true, emailVerified: true } });
-          if (u) await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified });
+          // #737 — THE session-create hook is the only caller that passes `sessionId`, and it is
+          // the only one that should: this session is the sign-in, so its id is what makes the
+          // `auth.signin` audit row one-per-login no matter how many times convergence runs.
+          if (u) await convergeIdentity({ email: u.email, name: u.name, image: u.image, emailVerified: u.emailVerified, sessionId: s.id });
         },
       },
     },

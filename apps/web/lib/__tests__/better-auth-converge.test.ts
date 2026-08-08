@@ -40,21 +40,37 @@ describe("convergeIdentity", () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     db.user.findUnique.mockResolvedValue(null);
     db.user.create.mockResolvedValue({ id: "usr_1", email: "merchant@x.test", emailVerified: new Date(), role: "viewer" });
-    await convergeIdentity({ email: "merchant@x.test", name: "M", emailVerified: true });
+    await convergeIdentity({ email: "merchant@x.test", name: "M", emailVerified: true, sessionId: "ba_sess_1" });
     // #544 — the canonical create stamps emailVerified (DateTime, next-auth convention).
     expect(db.user.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ emailVerified: expect.any(Date) }) }),
     );
     expect(mockBootstrap).toHaveBeenCalledWith("usr_1", "merchant@x.test");
-    // #737 — the audit write is idempotent like every other step: a stable primary key plus
-    // skipDuplicates, so a replay of the same login collides instead of appending.
+    // #737 — the audit write is idempotent like every other step. The key is the SESSION, i.e.
+    // the sign-in event itself, plus skipDuplicates: a replay of the same login collides instead
+    // of appending, and a second real login (a different session) is never folded into the first.
     expect(db.actionEvent.createMany).toHaveBeenCalledWith(
       expect.objectContaining({
         skipDuplicates: true,
-        data: [expect.objectContaining({ id: expect.stringMatching(/^signin:usr_1:\d+$/), type: "auth.signin" })],
+        data: [expect.objectContaining({ id: "signin:ba_sess_1", type: "auth.signin" })],
       }),
     );
     expect(db.userRole.upsert).not.toHaveBeenCalled();
+  });
+
+  // Registration is not a sign-in: the user-create hook and afterEmailVerification converge with
+  // no session, and the only shape that reaches them with none to follow is self-service signup
+  // still held at requireEmailVerification.
+  it("writes NO sign-in audit when convergence carries no session", async () => {
+    const { convergeIdentity } = await import("@/lib/better-auth/converge");
+    db.user.findUnique.mockResolvedValue(null);
+    db.user.create.mockResolvedValue({ id: "usr_nosess", email: "registered@x.test", emailVerified: new Date(), role: "viewer" });
+
+    await convergeIdentity({ email: "registered@x.test", name: "R", emailVerified: true });
+
+    expect(db.actionEvent.createMany).not.toHaveBeenCalled();
+    // The identity still converged — this drops the audit row, not the account.
+    expect(mockBootstrap).toHaveBeenCalledWith("usr_nosess", "registered@x.test");
   });
 
   it("does not recreate an assignment from the legacy compatibility role", async () => {

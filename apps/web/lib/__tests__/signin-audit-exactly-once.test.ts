@@ -11,10 +11,15 @@
  * Why it matters beyond noise: anything later counted off this table — unusual sign-in
  * frequency, suspicious-location review, a lockout threshold — doubles.
  *
- * These tests use the REAL Prisma client against the local *_test database, and freeze the
- * clock so the dedupe window is exercised deterministically on both sides of its boundary.
+ * THE KEY IS THE SESSION ID, not a clock window. That distinction is what these tests pin from
+ * both sides: replays of ONE login collapse to one row, and two genuinely separate logins stay
+ * two rows however close together they happen. A time-bucketed key would pass the first half and
+ * silently fail the second — and because the dedupe is a DB-level ON CONFLICT DO NOTHING that
+ * never rewrites history, a login swallowed that way would be unrecoverable.
+ *
+ * These tests use the REAL Prisma client against the local *_test database.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 
 beforeAll(() => {
@@ -26,15 +31,17 @@ const { prisma } = await import("@fikirtive/db");
 const { FOUNDER_OWNER_ID } = await import("@fikirtive/core");
 const { convergeIdentity } = await import("@/lib/better-auth/converge");
 
-/** Well inside a minute, so a frozen "same login" pair cannot straddle the boundary by accident. */
-const T0 = new Date("2026-08-08T10:30:20.000Z");
-
 const emails: string[] = [];
 
 function freshEmail(): string {
   const email = `signin-audit-${randomUUID()}@fikirtive.test`;
   emails.push(email);
   return email;
+}
+
+/** A Better Auth session id. Real ones come from `session.create.after`; one per sign-in. */
+function newSessionId(): string {
+  return `ba_sess_${randomUUID()}`;
 }
 
 /** The platform-wide sign-in stream, narrowed to one identity via the payload. */
@@ -56,16 +63,6 @@ beforeAll(async () => {
   });
 });
 
-beforeEach(() => {
-  // Only Date is faked: Prisma's own timers and the Postgres clock must keep running.
-  vi.useFakeTimers({ toFake: ["Date"] });
-  vi.setSystemTime(T0);
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
 afterAll(async () => {
   for (const email of emails) {
     await prisma.actionEvent.deleteMany({
@@ -77,19 +74,32 @@ afterAll(async () => {
 describe("#737 auth.signin — one login, one row", () => {
   it("a login that fires convergence twice records ONE sign-in", async () => {
     const email = freshEmail();
-    await convergeIdentity({ email, name: "Kedai Sate Ayu", emailVerified: true });
-    await convergeIdentity({ email, name: "Kedai Sate Ayu", emailVerified: true });
+    const sessionId = newSessionId();
+    await convergeIdentity({ email, name: "Kedai Sate Ayu", emailVerified: true, sessionId });
+    await convergeIdentity({ email, name: "Kedai Sate Ayu", emailVerified: true, sessionId });
 
     expect(await signinRows(email)).toHaveLength(1);
   });
 
+  // The load-bearing case for keying on the session rather than a clock window. Two real logins
+  // seconds apart — a merchant on their phone and then their laptop — are two events, and a
+  // key that folded them together would delete the second one for good.
+  it("TWO real logins in the same minute stay TWO rows", async () => {
+    const email = freshEmail();
+    await convergeIdentity({ email, name: "Two Devices", emailVerified: true, sessionId: newSessionId() });
+    await convergeIdentity({ email, name: "Two Devices", emailVerified: true, sessionId: newSessionId() });
+
+    expect(await signinRows(email)).toHaveLength(2);
+  });
+
   it("the replay does not REWRITE the row it collided with (history stays history)", async () => {
     const email = freshEmail();
-    await convergeIdentity({ email, name: "Warung Nasi Lemak", emailVerified: true });
+    const sessionId = newSessionId();
+    await convergeIdentity({ email, name: "Warung Nasi Lemak", emailVerified: true, sessionId });
     const [first] = await signinRows(email);
     expect(first).toBeDefined();
 
-    await convergeIdentity({ email, name: "Renamed Later", emailVerified: true });
+    await convergeIdentity({ email, name: "Renamed Later", emailVerified: true, sessionId });
 
     const after = await signinRows(email);
     expect(after).toHaveLength(1);
@@ -97,36 +107,39 @@ describe("#737 auth.signin — one login, one row", () => {
     expect(after[0]!.createdAt.getTime()).toBe(first!.createdAt.getTime());
   });
 
-  it("CONCURRENT convergence (racing tabs) still records ONE sign-in", async () => {
+  it("CONCURRENT convergence of one login (racing tabs) still records ONE sign-in", async () => {
     const email = freshEmail();
+    const sessionId = newSessionId();
     // Converge once first so the account already exists: otherwise the racers collide on the
     // User row instead and never reach the audit write, and this would pass without proving
     // anything about the audit write at all.
-    await convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true });
+    await convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true, sessionId });
     await Promise.all([
-      convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true }),
-      convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true }),
-      convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true }),
+      convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true, sessionId }),
+      convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true, sessionId }),
+      convergeIdentity({ email, name: "Race Kopitiam", emailVerified: true, sessionId }),
     ]);
 
     expect(await signinRows(email)).toHaveLength(1);
   });
 
-  it("a LATER sign-in by the same person is still its own row — this dedupes a replay, not a person", async () => {
+  // Registration is not a sign-in. The user-create hook and afterEmailVerification converge
+  // WITHOUT a session; the only shape that reaches them with no session to follow is
+  // self-service signup held at requireEmailVerification, which has not signed in yet.
+  it("convergence with NO session records no sign-in at all", async () => {
     const email = freshEmail();
-    await convergeIdentity({ email, name: "Repeat Visitor", emailVerified: true });
+    await convergeIdentity({ email, name: "Registered Not Signed In", emailVerified: true });
 
-    vi.setSystemTime(new Date(T0.getTime() + 60_000));
-    await convergeIdentity({ email, name: "Repeat Visitor", emailVerified: true });
-
-    expect(await signinRows(email)).toHaveLength(2);
+    expect(await signinRows(email)).toHaveLength(0);
+    // The identity itself still converged — this drops the audit row, not the account.
+    expect(await prisma.user.findUnique({ where: { email }, select: { id: true } })).not.toBeNull();
   });
 
   it("two people signing in at the same moment each get their own row", async () => {
     const a = freshEmail();
     const b = freshEmail();
-    await convergeIdentity({ email: a, name: "Shop A", emailVerified: true });
-    await convergeIdentity({ email: b, name: "Shop B", emailVerified: true });
+    await convergeIdentity({ email: a, name: "Shop A", emailVerified: true, sessionId: newSessionId() });
+    await convergeIdentity({ email: b, name: "Shop B", emailVerified: true, sessionId: newSessionId() });
 
     expect(await signinRows(a)).toHaveLength(1);
     expect(await signinRows(b)).toHaveLength(1);
@@ -134,8 +147,9 @@ describe("#737 auth.signin — one login, one row", () => {
 
   it("the surviving row still answers WHO signed in, on the platform stream (#735/#568 unchanged)", async () => {
     const email = freshEmail();
-    await convergeIdentity({ email, name: "Attribution Check", emailVerified: true });
-    await convergeIdentity({ email, name: "Attribution Check", emailVerified: true });
+    const sessionId = newSessionId();
+    await convergeIdentity({ email, name: "Attribution Check", emailVerified: true, sessionId });
+    await convergeIdentity({ email, name: "Attribution Check", emailVerified: true, sessionId });
 
     const [row] = await signinRows(email);
     // ownerId is the event's DATA SCOPE (FK to Organization), never the person; the person is

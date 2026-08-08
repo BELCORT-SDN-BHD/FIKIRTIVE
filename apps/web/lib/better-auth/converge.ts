@@ -31,7 +31,7 @@ function isProvisioningRefusal(e: unknown): boolean {
  *  unverified identity still performs zero work), and the idempotency / founder-atomicity /
  *  allowlist-ordering constraints are all unchanged. (#538 narrowed never-throw to the single
  *  carve-out documented above; every other failure is still swallowed as non-fatal.) */
-export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean }): Promise<void> {
+export async function convergeIdentity(input: { email: string; name?: string | null; image?: string | null; emailVerified?: boolean; sessionId?: string | null }): Promise<void> {
   if (!input.emailVerified) return; // never converge (esp. founder super-admin promote) on an unverified identity
   const email = input.email.toLowerCase();
   await runAsSystem("auth:converge-identity", async () => {
@@ -116,23 +116,34 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // and anything later counted off this table (sign-in frequency, a lockout threshold)
       // doubled with it.
       //
+      // THE KEY IS THE SESSION, because the session IS the sign-in. Better Auth mints exactly
+      // one session row per successful sign-in and hands its id to the session-create hook, so
+      // `signin:<sessionId>` identifies the EVENT: every convergence belonging to that one login
+      // computes the same key, and two genuinely separate logins can never collide however close
+      // together they happen. (A wall-clock window would have keyed a USER rather than an event:
+      // two real logins a few seconds apart would fold into one row, and the DB-level dedupe
+      // below — correct in itself — would make the swallowed one unrecoverable.)
+      //
       // The key is the row's own primary key, so the DEDUPE IS THE DATABASE: `skipDuplicates`
       // becomes ON CONFLICT DO NOTHING, which two racing requests cannot both win and which
       // NEVER rewrites the row already there (the first moment stands as recorded). Same shape
       // as the welcome grant's `signup:<orgId>` key one step above.
       //
-      // The window is the minute the sign-in happened in: within it a replay folds into the
-      // first row, outside it a genuine later sign-in is its own row. Two consequences, both
-      // deliberate: a real second sign-in inside the same minute folds into the first, and a
-      // replay that straddles the minute boundary still lands twice — i.e. today's behaviour,
-      // never worse.
-      const signinWindow = Math.floor(Date.now() / 60_000);
-      await Promise.resolve(
-        prisma.actionEvent.createMany({
-          data: [{ id: `signin:${user.id}:${signinWindow}`, ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } }],
-          skipDuplicates: true,
-        }),
-      ).catch(() => {});
+      // NO SESSION, NO SIGN-IN ROW. The other two callers converge an identity without one: the
+      // user-create hook and afterEmailVerification. Neither is a sign-in — the only shape that
+      // reaches user-create with no session to follow is self-service registration, which is
+      // held at `requireEmailVerification` and has NOT signed in yet. Writing `auth.signin` there
+      // (as this did before) recorded a sign-in that had not happened. Every real door — magic
+      // link, password, Google, and the auto sign-in after verification — mints a session, so
+      // every real sign-in still lands exactly one row.
+      if (input.sessionId) {
+        await Promise.resolve(
+          prisma.actionEvent.createMany({
+            data: [{ id: `signin:${input.sessionId}`, ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } }],
+            skipDuplicates: true,
+          }),
+        ).catch(() => {});
+      }
     } catch (e) {
       // The one deliberate exception to never-throws (#538): a provisioning refusal is a
       // security decision, not a convergence hiccup, and must not be downgraded here either.
