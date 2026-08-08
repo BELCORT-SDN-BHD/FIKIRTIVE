@@ -191,6 +191,55 @@ describe("#718 duplicate names are refused so the list stays readable", () => {
   });
 });
 
+/**
+ * #746 — #718's check reads first and writes second, so two requests can both be told the name
+ * is free before either one writes. The unique index closes that window; these cases are about
+ * what the merchant HEARS when it does, because a database constraint error is not a sentence.
+ */
+describe("#746 two saves at once still leave one segment, and the loser is told plainly", () => {
+  const DUPLICATE = "You already have a segment with this name. Choose a different name.";
+
+  async function draft() {
+    const list = await listSegments();
+    if (!("ok" in list)) throw new Error(list.error);
+    return { segmentId: list.nextSegmentId, segmentProof: list.nextSegmentProof };
+  }
+
+  it("two concurrent creates of one name: one segment saved, one plain refusal, no raw error", async () => {
+    const name = `Race ${randomUUID()}`;
+    const [one, two] = [await draft(), await draft()];
+
+    const results = await Promise.all([
+      buildSegment({ operation: "create", ...one, name, rules: RULES }),
+      buildSegment({ operation: "create", ...two, name, rules: RULES }),
+    ]);
+
+    expect(results.filter((result) => "ok" in result)).toHaveLength(1);
+    expect(results.filter((result) => "error" in result)).toEqual([{ error: DUPLICATE }]);
+    await expect(
+      prisma.segment.count({ where: { ownerId: orgA, name, deletedAt: null } }),
+    ).resolves.toBe(1);
+  });
+
+  it("a concurrent create that differs only by case is refused too", async () => {
+    const name = `Case race ${randomUUID()}`;
+    const [one, two] = [await draft(), await draft()];
+
+    const results = await Promise.all([
+      buildSegment({ operation: "create", ...one, name, rules: RULES }),
+      buildSegment({ operation: "create", ...two, name: name.toUpperCase(), rules: RULES }),
+    ]);
+
+    expect(results.filter((result) => "ok" in result)).toHaveLength(1);
+    expect(results.filter((result) => "error" in result)).toEqual([{ error: DUPLICATE }]);
+    await expect(
+      prisma.segment.count({
+        where: { ownerId: orgA, name: { equals: name, mode: "insensitive" }, deletedAt: null },
+      }),
+    ).resolves.toBe(1);
+  });
+});
+
 describe("#717 the segment name is bounded on the server, not only in the browser", () => {
   it("refuses a 300-character name and writes nothing", async () => {
     const list = await listSegments();

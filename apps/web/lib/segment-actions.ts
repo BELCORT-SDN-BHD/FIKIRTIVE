@@ -429,10 +429,15 @@ export async function previewSegment(rawRules: unknown) {
  * #718 — is another live segment of this merchant's already called this?
  *
  * Three cards all reading "WhatsApp big spenders" are three cards nobody can tell apart, and
- * the list only ever grew. Enforced in the application rather than as a database unique index
- * because an index needs a migration; the comparison is owner-scoped and case-insensitive, and
- * it always excludes the segment being saved so re-saving a segment under its own name (or
- * replaying a create) is never a clash. A deleted segment frees its name again.
+ * the list only ever grew. The comparison is owner-scoped and case-insensitive, and it always
+ * excludes the segment being saved so re-saving a segment under its own name (or replaying a
+ * create) is never a clash. A deleted segment frees its name again.
+ *
+ * #746 — this read is no longer the enforcement. The rule now lives in a unique index,
+ * ("ownerId", "kind", lower("name")) among live rows, which is what actually keeps two
+ * concurrent saves from both landing. This function has two jobs left, both about words: ask
+ * first so the ordinary case gets a sentence instead of a failure, and — after a write the
+ * database refused — answer WHY, so the merchant hears the same sentence either way.
  *
  * Returns `null` if the check itself could not run — the caller refuses rather than guessing.
  */
@@ -578,16 +583,23 @@ export async function buildSegment(raw: unknown) {
         where: { id: input.segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
         select: SEGMENT_SELECT,
       })) as SegmentRow | null;
-      if (!retried || !samePayload(retried, name, phrase, validated.value)) {
-        return { error: GENERIC_UPDATE_ERROR };
+      if (retried && samePayload(retried, name, phrase, validated.value)) {
+        revalidatePath("/crm/segments");
+        return {
+          ok: true as const,
+          idempotent: true as const,
+          operation: "update" as const,
+          segment: publicSegment(retried, validated.value),
+        };
       }
-      revalidatePath("/crm/segments");
-      return {
-        ok: true as const,
-        idempotent: true as const,
-        operation: "update" as const,
-        segment: publicSegment(retried, validated.value),
-      };
+      // #746 — the rename did not land and the segment still carries its old name. If another
+      // live segment of this merchant's now holds the name, that is the reason, and it is owed
+      // in the same words the pre-check uses. The reason is re-read from the database, never
+      // guessed from the shape of the driver's error.
+      if (retried && (await nameTaken(gate.ownerId, input.segmentId, name))) {
+        return { error: DUPLICATE_NAME_ERROR };
+      }
+      return { error: GENERIC_UPDATE_ERROR };
     }
   }
 
@@ -629,16 +641,24 @@ export async function buildSegment(raw: unknown) {
     };
   } catch {
     const raced = (await prisma.segment.findFirst({ where, select: SEGMENT_SELECT })) as SegmentRow | null;
-    if (!raced || !samePayload(raced, name, phrase, validated.value)) {
-      return { error: GENERIC_SAVE_ERROR };
+    if (raced && samePayload(raced, name, phrase, validated.value)) {
+      revalidatePath("/crm/segments");
+      return {
+        ok: true as const,
+        idempotent: true as const,
+        operation: "create" as const,
+        segment: publicSegment(raced, validated.value),
+        ...issueNextDraft(gate.ownerId),
+      };
     }
-    revalidatePath("/crm/segments");
-    return {
-      ok: true as const,
-      idempotent: true as const,
-      operation: "create" as const,
-      segment: publicSegment(raced, validated.value),
-      ...issueNextDraft(gate.ownerId),
-    };
+    // #746 — nothing was written under this id, so the insert itself was refused. If the name
+    // is now held by another live segment of this merchant's, the unique index is why, and the
+    // merchant hears the ordinary sentence rather than "start a new draft". A collision on the
+    // id instead (`raced` present, different payload) is a different accident and keeps the
+    // generic wording, so a cross-tenant id can still never be identified from the answer.
+    if (!raced && (await nameTaken(gate.ownerId, input.segmentId, name))) {
+      return { error: DUPLICATE_NAME_ERROR };
+    }
+    return { error: GENERIC_SAVE_ERROR };
   }
 }
