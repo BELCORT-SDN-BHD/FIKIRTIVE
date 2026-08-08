@@ -21,12 +21,33 @@ import {
   approveScheduledPost,
   cancelScheduledPost,
   type ScheduledPostRow,
-  type OwnerTarget,
 } from "@/lib/schedule-actions";
 import { getMetaConnection } from "@/lib/meta-actions";
 import { getOwnerSettings, setOwnerSetting } from "@/lib/owner-settings-actions";
-import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
-import { CHANNEL_META, channelMeta } from "@/lib/channels/channel-meta";
+import { AUTO_PUBLISH_GATE_HINT } from "@/lib/auto-publish-gate";
+import { CONNECTABLE_CHANNEL_META, channelMeta, isConnectableChannel } from "@/lib/channels/channel-meta";
+// The single source of "which accounts is this merchant connected to right now" and the ONE
+// derived judgement built on it (#741 r2). This screen never touches the raw list — the type
+// makes that impossible — so Plan, the composer and "Approve all" cannot drift apart again.
+import {
+  ACCOUNTS_CHECK_FAILED,
+  ACCOUNTS_LOADING,
+  CHECKING_ACCOUNTS_BLOCKER,
+  accountPicker,
+  accountsUnreadable,
+  approvalFor,
+  autoPublishAllowed,
+  blockedConnection,
+  canOfferConnect,
+  channelUnavailableBlocker,
+  connectionBlockerStatus,
+  isConnectedTarget,
+  loadedAccounts,
+  markRechecking,
+  postableChannelIds,
+  UNREAD_ACCOUNTS,
+  type ConnectedAccounts,
+} from "@/lib/schedule-connections";
 import type { ChannelId, ChannelCapabilities } from "@/lib/channels/types";
 import {
   partsInTz,
@@ -159,12 +180,6 @@ function Thumb({ item, size = 40 }: { item: { url: string | null; kind: StuffIte
   );
 }
 
-type ConnState =
-  | { phase: "loading" }
-  | { phase: "disconnected" }
-  | { phase: "reconnect" }
-  | { phase: "connected"; targets: { id: string; name: string }[] };
-
 export function OttoSchedule({
   stuffItems,
   onNavigate,
@@ -175,14 +190,15 @@ export function OttoSchedule({
   const [view, setView] = useState<ViewKey>("plan");
   const [posts, setPosts] = useState<ScheduledPostRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [conn, setConn] = useState<ConnState>({ phase: "loading" });
-  // Owner's connectable publish targets (page/account per channel). Drives both the
-  // header chips (only channels with a real target are shown postable) and the composer's
-  // required account picker. [] = nothing publishable → composer disables approve.
-  const [targets, setTargets] = useState<OwnerTarget[]>([]);
-  const [targetsLoaded, setTargetsLoaded] = useState(false);
+  // THE connection state for this screen (#741 r2/r3). Explicitly two-phase: ACCOUNTS_LOADING until
+  // BOTH platform reads land, then loadedAccounts({...}) — where an empty list is a real answer.
+  // Header chips, the auto-publish switch, the composer's account picker and "Approve all" all
+  // derive from this one value through lib/schedule-connections, so they cannot disagree with each
+  // other or with the server. There is deliberately no second connection state on this screen: the
+  // one it used to have (`conn` + `canPublish`, fed by their own getMetaConnection call) is exactly
+  // how the header and the plan card ended up describing the same instant differently.
+  const [accounts, setAccounts] = useState<ConnectedAccounts>(ACCOUNTS_LOADING);
   const [autoPublish, setAutoPublish] = useState(false);
-  const [canPublish, setCanPublish] = useState(false);
   const [defaultTz, setDefaultTz] = useState<string>("Asia/Kuala_Lumpur");
   const [savingAuto, setSavingAuto] = useState(false);
   const [composer, setComposer] = useState<ComposerSeed | null>(null);
@@ -210,7 +226,39 @@ export function OttoSchedule({
   const reloadSeq = useRef(0);
   const reload = useCallback(async () => {
     const seq = ++reloadSeq.current;
-    const rows = await listScheduledPosts();
+    // ONE refresh, both facts (#741 r2). The connection list used to be read once at mount while
+    // posts refreshed on focus/60s — so a merchant who disconnected in another tab kept seeing a
+    // draft the server would refuse. Both reads are issued by this call and share its sequence
+    // guard; a failed connection read leaves the previous state rather than inventing
+    // "nothing connected" (the next cycle retries, so "Checking…" stays literally true).
+    const postsPromise = listScheduledPosts();
+    // BOTH platform reads, one answer (#741 r3 P1). The publish permission used to be a second
+    // read on its own timeline; it now rides this one, and the screen commits to a connection state
+    // only from this single value — so "accounts loaded empty while the permission read is still in
+    // flight" is not a state this screen can be in. Cost: getMetaConnection joins the 60s cycle
+    // (one more platform call per refresh), which is the price of one honest answer.
+    //
+    // #741 r5 P1: EVERY outcome produces a state, including failure. A failed read is a finished
+    // read whose answer is "we could not find out" (carried per channel), never a reason to sit in
+    // "Checking…" forever and never a reason to keep last cycle's list alive — an old list shown as
+    // if it were current is worse than saying nothing, because the screen would go on counting
+    // those posts ready while the server would refuse them.
+    const connectionPromise = Promise.all([
+      listOwnerTargets().catch(() => null),
+      getMetaConnection().then(
+        (meta) => !("error" in meta) && meta.canPublish === true,
+        () => false,
+      ),
+    ]);
+    // Not awaited together with the posts: a slow connection read must not hold the schedule
+    // hostage. While it is in flight the screen stays in "checking", which is literally true.
+    void connectionPromise.then(([targetsRead, canPublish]) => {
+      if (seq !== reloadSeq.current) return;
+      // The server's answer is spread through WHOLE — this screen never authors a channel state
+      // of its own, and the "request failed" case is a value the authority module owns.
+      setAccounts(targetsRead ? loadedAccounts({ ...targetsRead, canPublish }) : UNREAD_ACCOUNTS);
+    });
+    const rows = await postsPromise;
     if (seq !== reloadSeq.current) return;
     setPosts(rows);
     setLoading(false);
@@ -225,26 +273,32 @@ export function OttoSchedule({
     });
   }, []);
 
+  /**
+   * The same read, over an answer we already have (#741 r5 P1).
+   *
+   * `seq` stops a stale RESPONSE from overwriting a newer one, but it never stopped the stale
+   * ANSWER from being read while the next one was in flight. Saying so first — before the read is
+   * issued — is what keeps a hung refresh from leaving posts approvable on facts we are at that
+   * very moment re-checking. The list itself stays on screen, so the merchant's own channels don't
+   * blink out every minute; it just stops counting as ready.
+   *
+   * This is separate from `reload` because it belongs to the EVENT that re-reads (poll tick, focus,
+   * Retry, save), not to the first read: at mount there is no previous answer to invalidate —
+   * `markRechecking` is a no-op on a value that has never loaded — and a setState called
+   * synchronously from an effect body is a cascading render React tells us not to write.
+   */
+  const refresh = useCallback(async () => {
+    setAccounts(markRechecking);
+    await reload();
+  }, [reload]);
+
   useEffect(() => {
     // Async initial load — every setState below runs after an await/`.then`, never
     // synchronously in the effect body (the lint rule can't see through the promise).
+    // `reload`, not `refresh`: nothing has been read yet, so there is nothing to un-trust.
     void reload();
-    void getMetaConnection().then((res) => {
-      if ("error" in res || !res.connected) {
-        setCanPublish(false);
-        return setConn({ phase: "disconnected" });
-      }
-      setCanPublish(res.canPublish === true);
-      if (res.needsReconnect) return setConn({ phase: "reconnect" });
-      setConn({ phase: "connected", targets: [] });
-    });
-    // Publishable targets (owner's own pages, per channel). Empty until a page-scoped
-    // connection exists — an ads-only Meta connection returns none, so no channel shows
-    // as postable and the composer keeps approve disabled.
-    void listOwnerTargets().then((t) => {
-      setTargets(t);
-      setTargetsLoaded(true);
-    });
+    // Neither the target list nor the publish permission is read here any more: reload() owns
+    // both, so the first load and every later refresh follow the same single timeline (#741 r2/r3).
     void getOwnerSettings().then((s) => {
       if (!("error" in s)) {
         setAutoPublish(s.autoPublish);
@@ -261,7 +315,7 @@ export function OttoSchedule({
     let interval: ReturnType<typeof setInterval> | null = null;
     function startPolling() {
       if (interval || document.visibilityState !== "visible") return;
-      interval = setInterval(() => void reload(), 60000);
+      interval = setInterval(() => void refresh(), 60000);
     }
     function stopPolling() {
       if (interval) {
@@ -270,11 +324,11 @@ export function OttoSchedule({
       }
     }
     function onFocus() {
-      void reload();
+      void refresh();
     }
     function onVisibilityChange() {
       if (document.visibilityState === "visible") {
-        void reload();
+        void refresh();
         startPolling();
       } else {
         stopPolling();
@@ -288,7 +342,7 @@ export function OttoSchedule({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopPolling();
     };
-  }, [reload]);
+  }, [refresh]);
 
   async function toggleAutoPublish(next: boolean) {
     setSavingAuto(true);
@@ -298,28 +352,24 @@ export function OttoSchedule({
     if ("error" in res) setAutoPublish(!next); // roll back
   }
 
-  // Postable channels = those with at least one real publishable target from
-  // listOwnerTargets. This is stricter than "a Meta connection exists": an ads-only
-  // connection (no page scope) yields no targets, so no channel shows as postable.
-  const postableChannelIds = useMemo(
-    () => new Set(targets.map((t) => t.channel)),
-    [targets],
-  );
+  // Postable channels = those with at least one real publishable target. Stricter than "a Meta
+  // connection exists": an ads-only connection (no page scope) yields no targets, so no channel
+  // shows as postable. Derived from the one connection state — empty while it is still unknown.
+  const postable = useMemo(() => postableChannelIds(accounts), [accounts]);
   const connectedChannels = useMemo(
-    () => CHANNEL_META.filter((c) => postableChannelIds.has(c.id)),
-    [postableChannelIds],
+    () => CONNECTABLE_CHANNEL_META.filter((c) => postable.has(c.id)),
+    [postable],
   );
 
   const isConnected = connectedChannels.length > 0;
-  const autoPublishAvailable = canAutoPublish(
-    connectedChannels.map((channel) => channel.id),
-    canPublish,
-  );
+  // Same single source, same "unknown never unlocks anything" rule as everything else on the screen.
+  const autoPublishAvailable = autoPublishAllowed(accounts);
+  const headerBlocker = blockedConnection(accounts);
 
   function openNew() {
     setComposer({
       mode: "create",
-      channel: connectedChannels[0]?.id ?? CHANNEL_META[0]?.id ?? "instagram",
+      channel: connectedChannels[0]?.id ?? CONNECTABLE_CHANNEL_META[0]?.id ?? "instagram",
       caption: "",
       media: [],
       dateKey: dayKey(partsInTz(new Date(), defaultTz)),
@@ -355,7 +405,11 @@ export function OttoSchedule({
         <div className="flex items-center gap-3 flex-wrap mb-3">
           <h1 className="text-[1.5rem] font-bold tracking-[-0.02em]">Schedule</h1>
           <div className="flex items-center gap-1.5">
-            {isConnected ? (
+            {/* Chips and the status notice are NOT alternatives (#741 r5 P1). When one channel
+                read fine and another did not, the old if/else took the "connected" branch and
+                swallowed the "couldn't check" line with its Retry — the partial truncation went
+                silent again, which is the exact failure this ticket keeps re-finding. */}
+            {isConnected &&
               connectedChannels.map((c) => (
                 <span
                   key={c.id}
@@ -364,8 +418,8 @@ export function OttoSchedule({
                   <ChannelIcon channel={c.id} size={13} />
                   {c.label}
                 </span>
-              ))
-            ) : conn.phase !== "loading" && targetsLoaded ? (
+              ))}
+            {!isConnected && canOfferConnect(accounts) ? (
               <button
                 type="button"
                 onClick={() => onNavigate("connections")}
@@ -374,6 +428,32 @@ export function OttoSchedule({
                 <Plus size={13} />
                 Connect a channel
               </button>
+            ) : accountsUnreadable(accounts) ? (
+              // The read came back empty-handed. Say so, and give the merchant the one action that
+              // can change it — a silent retry loop they cannot see or trigger is not an answer.
+              <span role="status" className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
+                {ACCOUNTS_CHECK_FAILED}
+                <button
+                  type="button"
+                  onClick={() => void refresh()}
+                  className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
+                >
+                  Retry
+                </button>
+              </span>
+            ) : headerBlocker ? (
+              // Connected, but not usable. Stated on the screen itself so a merchant with an empty
+              // schedule still learns it — and pointed at the flow that actually fixes it.
+              <span role="status" className="inline-flex items-center gap-2 text-[12px] text-muted-foreground">
+                {connectionBlockerStatus(headerBlocker)}
+                <button
+                  type="button"
+                  onClick={() => onNavigate("connections")}
+                  className="inline-flex items-center h-[28px] rounded-full border border-border bg-card px-3 font-semibold text-foreground"
+                >
+                  Reconnect
+                </button>
+              </span>
             ) : null}
           </div>
           <div className="flex-1" />
@@ -421,7 +501,8 @@ export function OttoSchedule({
             onChannelFilter={setChannelFilter}
             onEdit={openEdit}
             onNew={openNew}
-            onReload={reload}
+            onReload={refresh}
+            accounts={accounts}
           />
         ) : view === "calendar" ? (
           <CalendarView posts={posts} mediaLookup={mediaLookup} defaultTz={defaultTz} onEdit={openEdit} onNew={openNew} />
@@ -440,17 +521,21 @@ export function OttoSchedule({
       {composer && (
         <Composer
           seed={composer}
-          channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : CHANNEL_META.map((c) => c.id)}
-          targets={targets}
+          // Nothing connected yet ⇒ offer the channels a merchant can actually connect, never
+          // "all of them" (#694): the old fallback put X in front of brand-new merchants, whose
+          // Connect button led to a Connections row with nothing to press.
+          channels={connectedChannels.length ? connectedChannels.map((c) => c.id) : CONNECTABLE_CHANNEL_META.map((c) => c.id)}
+          accounts={accounts}
           mediaChoices={mediaChoices}
           onClose={() => setComposer(null)}
           onConnect={() => {
             setComposer(null);
             onNavigate("connections");
           }}
+          onRetry={() => void refresh()}
           onSaved={async () => {
             setComposer(null);
-            await reload();
+            await refresh();
           }}
         />
       )}
@@ -469,7 +554,8 @@ function ChannelFilterBar({
 }) {
   const opts: { key: ChannelFilter; label: string }[] = [
     { key: "all", label: "All" },
-    ...CHANNEL_META.map((c) => ({ key: c.id, label: c.label })),
+    // Same filter as the composer (#694): a channel nobody can connect can't have posts to filter.
+    ...CONNECTABLE_CHANNEL_META.map((c) => ({ key: c.id, label: c.label })),
   ];
   return (
     <div className="inline-flex gap-1.5">
@@ -550,6 +636,7 @@ function PlanView({
   onEdit,
   onNew,
   onReload,
+  accounts,
 }: {
   posts: ScheduledPostRow[];
   mediaLookup: MediaLookup;
@@ -558,6 +645,8 @@ function PlanView({
   onEdit: (p: ScheduledPostRow) => void;
   onNew: () => void;
   onReload: () => Promise<void>;
+  /** The one connection state (see lib/schedule-connections) — never the raw list. */
+  accounts: ConnectedAccounts;
 }) {
   // OTTO's proposed week = the DRAFTs OTTO created (source "otto", not yet approved).
   const proposed = useMemo(
@@ -579,7 +668,7 @@ function PlanView({
     <div className="flex flex-col gap-6">
       {/* Top: OTTO's proposed-week plan card */}
       {proposed.length > 0 ? (
-        <PlanCard posts={proposed} mediaLookup={mediaLookup} onEdit={onEdit} onReload={onReload} />
+        <PlanCard posts={proposed} mediaLookup={mediaLookup} onEdit={onEdit} onReload={onReload} accounts={accounts} />
       ) : (
         /* Same shape as the Analytics banner (#697): the button keeps its own width, so
            without flex-wrap and a minimum for the copy the empty-state sentence collapsed
@@ -618,21 +707,35 @@ function PlanCard({
   mediaLookup,
   onEdit,
   onReload,
+  accounts,
 }: {
   posts: ScheduledPostRow[];
   mediaLookup: MediaLookup;
   onEdit: (p: ScheduledPostRow) => void;
   onReload: () => Promise<void>;
+  accounts: ConnectedAccounts;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const groups = useMemo(() => groupByDay(posts), [posts]);
 
-  // Only posts that CAN be approved (have a target + media) count toward "Approve all".
-  const approvable = useMemo(
-    () => posts.filter((p) => p.metaTargetId && p.media.length > 0),
-    [posts],
+  // The SAME derived judgement the composer shows and the server enforces (#741 r2) — including
+  // its loading semantics: while the connection state is unknown nothing counts as ready, so this
+  // card can no longer wave a post through while the composer accuses it of having no account.
+  const approvals = useMemo(
+    () =>
+      posts.map((p) =>
+        approvalFor(accounts, { channel: p.channel, targetId: p.metaTargetId, mediaCount: p.media.length }),
+      ),
+    [posts, accounts],
   );
+  const approvable = useMemo(
+    () => posts.filter((_, i) => approvals[i]!.canApprove),
+    [posts, approvals],
+  );
+  // The summary sentence is ASSEMBLED from those blockers, never hand-written: the old copy said
+  // "add media & a channel" whatever was actually missing, inventing a gap that wasn't there.
+  const outstanding = useMemo(() => [...new Set(approvals.flatMap((a) => a.blockers))], [approvals]);
 
   function approveAll() {
     setError(null);
@@ -691,8 +794,8 @@ function PlanCard({
         {error && <span className="text-[12px] text-[var(--error-soft-foreground)] flex-1">{error}</span>}
         {!error && (
           <span className="text-[12px] text-muted-foreground flex-1">
-            {approvable.length < posts.length
-              ? `${approvable.length} of ${posts.length} ready — add media & a channel to the rest before approving.`
+            {outstanding.length > 0
+              ? `${approvable.length} of ${posts.length} ready — ${outstanding.join(" ")}`
               : "Say go once you're happy — nothing publishes yet (Meta review pending)."}
           </span>
         )}
@@ -1068,18 +1171,21 @@ function localToUtcIso(dateKey: string, time: string, tz: string): string | null
 function Composer({
   seed,
   channels,
-  targets,
+  accounts,
   mediaChoices,
   onClose,
   onConnect,
+  onRetry,
   onSaved,
 }: {
   seed: ComposerSeed;
   channels: ChannelId[];
-  targets: OwnerTarget[];
+  accounts: ConnectedAccounts;
   mediaChoices: MediaChoice[];
   onClose: () => void;
   onConnect: () => void;
+  /** Ask for the connection read again — the way out of "we couldn't check" (#741 r5 P1). */
+  onRetry: () => void;
   onSaved: () => Promise<void>;
 }) {
   const [channel, setChannel] = useState<ChannelId>(seed.channel);
@@ -1126,8 +1232,24 @@ function Composer({
 
   // Account/page picker options for the SELECTED channel. A picked target must belong to
   // the channel being posted to (mirrors the server's owner-scoped approve check).
-  const channelTargets = useMemo(() => targets.filter((t) => t.channel === channel), [targets, channel]);
-  const noTargets = channelTargets.length === 0;
+  // Four states, kept apart on purpose (#741 r2): "still checking", "this channel can't be
+  // connected at all", "connected to nothing here", "here are your accounts". The first two must
+  // never offer a Connect button — one because we haven't looked, the other because there is
+  // nowhere to send them.
+  const picker = accountPicker(accounts, channel);
+
+  // #741 r1 P2 — two different questions, previously answered with one list:
+  //   OFFERED = the channels this composer puts forward (the merchant's connected ones, or the
+  //             connectable ones when nothing is connected yet);
+  //   SHOWN   = OFFERED plus the channel this draft is already ON.
+  // A post written for X before X was hidden still belongs to X. Filtering it out of the picker
+  // left the merchant looking at a Channel row with nothing selected — the post's own channel
+  // silently erased from a screen that is supposed to show them what they have.
+  const shownChannels = channels.includes(seed.channel) ? channels : [seed.channel, ...channels];
+  // Only a channel the product genuinely can't connect is locked. "Connectable but not connected"
+  // (an Instagram draft written before the merchant disconnected) stays selectable — a draft may
+  // legitimately sit on a channel you haven't connected yet, and the Account field says so.
+  const channelUnavailable = !isConnectableChannel(channel);
 
   // Switching channel drops a target that no longer belongs, so we never submit a mismatched
   // id (done in the handler, not an effect — derived-on-event, not synchronized-via-effect).
@@ -1137,14 +1259,27 @@ function Composer({
     // selection never fails validation on save.
     const nextMax = channelMeta(next)?.capabilities.maxMediaCount ?? 0;
     setMedia((cur) => (cur.length > nextMax ? cur.slice(0, nextMax) : cur));
-    if (metaTargetId && !targets.some((t) => t.channel === next && t.id === metaTargetId)) {
+    if (metaTargetId && !isConnectedTarget(accounts, next, metaTargetId)) {
       setMetaTargetId(null);
     }
   }
   // Approve = DRAFT→SCHEDULED, which the server rejects without a resolved owner-owned target AND
   // at least one media item. Gate BOTH in the UI so "Approve & schedule" never fires create-then-
   // fail-approval and leaves an orphan draft behind (#123): require a target AND media before approve.
-  const canApprove = editable && !!metaTargetId && (maxMedia === 0 || media.length > 0);
+  //
+  // #695 — the gate and the EXPLANATION come from the same rule the server enforces. #741 r1 —
+  // the account is checked against the live list, not just "an id is set". #741 r2 — and that
+  // whole judgement now comes from the ONE connection state, so the plan card above cannot
+  // disagree with this dialog about the very same post.
+  const approval = editable
+    ? approvalFor(accounts, { channel, targetId: metaTargetId, mediaCount: media.length })
+    : { blockers: [] as string[], canApprove: false };
+  const canApprove = editable && approval.canApprove;
+  // The channel-unavailable sentence is rendered next to the channel buttons it is about (below);
+  // repeating it by the footer would be the same truth twice on one screen. Same string, one
+  // source — it is only ever chosen, never re-typed.
+  const channelNote = channelUnavailable ? channelUnavailableBlocker(channel) : null;
+  const footerBlockers = approval.blockers.filter((b) => b !== channelNote);
 
   function toggleMedia(genId: string) {
     setMedia((cur) => {
@@ -1224,11 +1359,11 @@ function Composer({
           {/* Channel */}
           <Field label="Channel">
             <div className="flex gap-1.5">
-              {channels.map((c) => (
+              {shownChannels.map((c) => (
                 <button
                   key={c}
                   type="button"
-                  disabled={!editable}
+                  disabled={!editable || !isConnectableChannel(c)}
                   onClick={() => changeChannel(c)}
                   className={`inline-flex items-center gap-1.5 h-9 rounded-[10px] border px-3 text-[13px] font-semibold ${
                     channel === c ? "border-foreground bg-secondary text-foreground" : "border-border bg-card text-muted-foreground"
@@ -1238,6 +1373,11 @@ function Composer({
                 </button>
               ))}
             </div>
+            {channelNote && (
+              <div role="status" className="text-[11.5px] text-muted-foreground mt-1">
+                {channelNote}
+              </div>
+            )}
             {cap && (
               <div className="text-[11.5px] text-muted-foreground mt-1">
                 {capsBlurb(cap)}
@@ -1246,30 +1386,57 @@ function Composer({
             )}
           </Field>
 
-          {/* Account / page — required to approve (sets metaTargetId). Options are the owner's
-              own publishable targets for this channel; empty = nothing to post to yet. */}
-          <Field label="Account">
-            {noTargets ? (
-              <div className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
-                <span className="flex-1">Connect an account first — you can save a draft now, but approving needs a page to post to.</span>
-                <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
-                  <Plus size={14} /> Connect
-                </Button>
-              </div>
-            ) : (
-              <select
-                value={metaTargetId ?? ""}
-                disabled={!editable}
-                onChange={(e) => setMetaTargetId(e.target.value || null)}
-                className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] font-semibold disabled:opacity-60"
-              >
-                <option value="">Choose an account…</option>
-                {channelTargets.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            )}
-          </Field>
+          {/* Account / page — required to approve (sets metaTargetId). One field, four honest
+              states from the single connection source (#741 r2): while the read is in flight we
+              say we're looking (no Connect call to action — we haven't looked yet); a channel with
+              no connect flow at all shows no picker and no button (the Channel note above is the
+              real next step); only a COMPLETED read that found nothing offers Connect. */}
+          {picker.phase !== "unavailable" && (
+            <Field label="Account">
+              {picker.phase === "checking" ? (
+                <div role="status" className="rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                  {CHECKING_ACCOUNTS_BLOCKER}
+                </div>
+              ) : picker.phase === "unreadable" ? (
+                // We looked and came back empty-handed. Never the Connect prompt below — we have
+                // no idea whether they are connected, so inviting them to connect is a guess.
+                <div role="status" className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                  <span className="flex-1">{ACCOUNTS_CHECK_FAILED}</span>
+                  <Button variant="secondary" size="sm" type="button" onClick={onRetry}>
+                    Retry
+                  </Button>
+                </div>
+              ) : picker.phase === "blocked" ? (
+                // Connected, but not usable right now. The label is the one the Connections page
+                // shows for the same fact, and the action is the one that actually fixes it.
+                <div role="status" className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                  <span className="flex-1">{connectionBlockerStatus(picker.blocker)}</span>
+                  <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
+                    Reconnect
+                  </Button>
+                </div>
+              ) : picker.phase === "none" ? (
+                <div className="flex items-center gap-2 rounded-[10px] border border-dashed border-border p-3 text-[12px] text-muted-foreground">
+                  <span className="flex-1">Connect an account first — you can save a draft now, but approving needs a page to post to.</span>
+                  <Button variant="secondary" size="sm" type="button" onClick={onConnect}>
+                    <Plus size={14} /> Connect
+                  </Button>
+                </div>
+              ) : (
+                <select
+                  value={metaTargetId ?? ""}
+                  disabled={!editable}
+                  onChange={(e) => setMetaTargetId(e.target.value || null)}
+                  className="w-full h-9 rounded-[10px] border border-border bg-card px-2.5 text-[13px] font-semibold disabled:opacity-60"
+                >
+                  <option value="">Choose an account…</option>
+                  {picker.options.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          )}
 
           {/* Media picker (already-generated only) — hidden for text-only channels (maxMedia 0) */}
           {maxMedia > 0 && (
@@ -1372,6 +1539,17 @@ function Composer({
 
         {error && <div role="alert" className="text-[12.5px] text-[var(--error-soft-foreground)]">{error}</div>}
 
+        {/* #695 — what "Approve & schedule" is still waiting for, on screen for as long as it is
+            greyed out. A title attribute alone was invisible to anyone not hovering (and to screen
+            readers), and it only ever covered the first of the two conditions. */}
+        {footerBlockers.length > 0 && (
+          <div role="status" className="text-[12.5px] text-muted-foreground flex flex-col gap-0.5">
+            {footerBlockers.map((b) => (
+              <span key={b}>{b}</span>
+            ))}
+          </div>
+        )}
+
         <DialogFooter className="flex-wrap">
           {seed.mode === "edit" && status && status !== "CANCELLED" && status !== "PUBLISHED" && (
             <Button variant="ghost" size="sm" className="mr-auto text-[var(--error-soft-foreground)]" disabled={busy} onClick={cancelPost}>
@@ -1385,7 +1563,7 @@ function Composer({
             variant="default"
             size="sm"
             disabled={busy || !canApprove}
-            title={editable && !metaTargetId ? "Pick an account to approve" : undefined}
+            title={approval.blockers.length > 0 ? approval.blockers.join(" ") : undefined}
             onClick={() => persist(true)}
           >
             {busy ? "Saving…" : "Approve & schedule"}

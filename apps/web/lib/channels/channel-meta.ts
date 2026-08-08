@@ -49,3 +49,22 @@ export const CHANNEL_META: ChannelMeta[] = [
 export function channelMeta(id: ChannelId): ChannelMeta | undefined {
   return CHANNEL_META.find((c) => c.id === id);
 }
+
+// ── Which publishing channels a merchant can actually connect today (#694) ───────────────────
+// X has no OAuth route: lib/channels/x.ts's connectUrl points at an unbuilt /api/x/authorize, and
+// Connections deliberately renders it as a button-less "Not available yet" row. Schedule disagreed —
+// with zero connections its composer fell back to "every channel", so a brand-new merchant was
+// offered X, sent to a Connections row with nothing to press, and could still save an X draft that
+// can never publish. This set is the single filter every merchant-facing entry point runs: the
+// Connections page, the composer's channel list, the Plan/Queue channel filter, and the account
+// page's "x of y connected". When X OAuth lands, deleting one id here lights all four up at once.
+//
+// CHANNEL_META itself keeps X — existing X drafts, their capability blurb and their queue rows must
+// still render truthfully; this is about which channels we OFFER, not which we can display.
+export const UNAVAILABLE_PUBLISHING_CHANNEL_IDS: ReadonlySet<ChannelId> = new Set<ChannelId>(["x"]);
+
+export function isConnectableChannel(id: ChannelId): boolean {
+  return !UNAVAILABLE_PUBLISHING_CHANNEL_IDS.has(id);
+}
+
+export const CONNECTABLE_CHANNEL_META: ChannelMeta[] = CHANNEL_META.filter((c) => isConnectableChannel(c.id));

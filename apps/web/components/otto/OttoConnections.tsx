@@ -4,6 +4,9 @@ import { disconnectMeta, getMetaInsights, type MetaAdAccount } from "@/lib/meta-
 import { setAdsAutonomy, setAdsWritesPaused } from "@/lib/otto-client-actions";
 import type { AccountInsights } from "@/lib/meta-insights";
 import { getAccountViewData } from "@/lib/account-view-data";
+import { UNAVAILABLE_PUBLISHING_CHANNEL_IDS } from "@/lib/channels/channel-meta";
+import { CONNECTION_BLOCKER_COPY } from "@fikirtive/core/schedule-draft";
+import { describeMetaAdAccountStatus } from "@/lib/meta-ad-account-status";
 import type { ChannelState } from "./settings/sections";
 import { Button } from "@/components/ui/button";
 
@@ -37,8 +40,8 @@ const MESSAGING_CHANNELS: { id: string; label: string }[] = [
 // X has no OAuth route yet — lib/channels/x.ts's connectUrl points at an unbuilt
 // /api/x/authorize, and its insight reads are still stubbed. Until that adapter is
 // real, X gets the same "soon" honesty as Messaging: no fake Connect/Reconnect/Manage
-// button (#518 finding 1).
-const UNAVAILABLE_PUBLISHING_CHANNEL_IDS = new Set(["x"]);
+// button (#518 finding 1). That list now lives in lib/channels/channel-meta.ts, where
+// Schedule and the account page read it too — this page was the only honest one (#694).
 
 // #511 — a failed Meta connect comes back here as /otto?view=connections&error=<code>:
 // "missing" or "state" from app/api/meta/callback/route.ts, "not_configured" from
@@ -124,14 +127,22 @@ function ChannelGlyph({ id, size = 18 }: { id: string; size?: number }) {
 }
 
 function ChannelRow({ channel }: { channel: ChannelState }) {
-  const label = channel.status === "connected" ? "Manage" : channel.status === "needs_reconnect" ? "Reconnect" : "Connect";
-  const variant = channel.status === "connected" ? "ghost" : "brand";
-  const hint =
-    channel.status === "connected"
+  // A connection that exists but can't publish outranks the bare "Connected" — in the SAME words
+  // the Schedule screen uses for the same fact, so the merchant never gets two stories about one
+  // connection (#741 r5 P1/P2). The button has to follow the same fact: `needs_page_permission`
+  // usually arrives with status "connected", so keying the CTA off status alone put "Manage" next
+  // to "Page access needed" while Schedule was saying "Reconnect" about the very same connection.
+  const blocked = channel.blocker ?? (channel.status === "needs_reconnect" ? "needs_reconnect" : null);
+  const label = blocked ? "Reconnect" : channel.status === "connected" ? "Manage" : "Connect";
+  const variant = blocked ? "brand" : channel.status === "connected" ? "ghost" : "brand";
+  // Every one of these sentences comes from the shared table — the "Reconnect needed" branch used
+  // to be a hand-written copy of it, and it is genuinely reachable (status needs_reconnect with no
+  // blocker attached), so "one wording, one source" was not actually true.
+  const hint = blocked
+    ? CONNECTION_BLOCKER_COPY[blocked].status
+    : channel.status === "connected"
       ? channel.targets.join(", ") || "Connected"
-      : channel.status === "needs_reconnect"
-        ? "Reconnect needed"
-        : "Not connected";
+      : "Not connected";
   return (
     <div
       className="border-b border-border last:border-b-0"
@@ -379,12 +390,24 @@ export default function OttoConnections() {
                     {meta.accounts.map((a) => {
                       const ins = insights?.find((i) => i.accountId === a.id);
                       const m = ins?.metrics;
+                      // #693 — a.status is Meta's numeric account_status. It never reaches the
+                      // merchant as-is; the shared mapping turns it into words (or admits it
+                      // doesn't recognise the code), and says what it means for their ads.
+                      const statusView = describeMetaAdAccountStatus(a.status);
                       return (
                         <div key={a.id} className="border-b border-border" style={{ padding: "4px 0" }}>
                           <div className="text-foreground text-[0.8125rem]" style={{ display: "flex", justifyContent: "space-between" }}>
                             <span>{a.name || a.id}</span>
-                            <span className="text-muted-foreground">{a.currency}{a.status ? ` · ${a.status}` : ""}</span>
+                            <span className="text-muted-foreground">{a.currency}{statusView ? ` · ${statusView.label}` : ""}</span>
                           </div>
+                          {statusView?.detail && (
+                            <div
+                              className={statusView.tone === "attention" ? "text-[var(--error-soft-foreground)]" : "text-muted-foreground"}
+                              style={{ fontSize: "0.75rem", paddingLeft: 2, marginTop: 2 }}
+                            >
+                              {statusView.detail}
+                            </div>
+                          )}
                           {m && (
                             <div className="text-muted-foreground text-[0.75rem]" style={{ paddingLeft: 2, marginTop: 2 }}>
                               {m.spend ? `Spent ${m.spend}` : "—"} · {m.impressions ?? "—"} impr · CTR {m.ctr ?? "—"}% · CPC {m.cpc ?? "—"} · {m.purchaseRoas ? `ROAS ${m.purchaseRoas}` : "no conversion tracking"}

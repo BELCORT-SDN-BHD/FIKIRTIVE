@@ -37,7 +37,17 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
       status: META_BACKED_CHANNEL_IDS.includes(c.id)
         ? metaConnectionToStatus(await metaConnPromise)
         : await c.connectionStatus(ownerId).catch(() => "not_connected" as const),
-      targets: await c.listTargets(ownerId).then((t) => t.map((x) => x.name)).catch(() => [] as string[]),
+      // Page names decorate a row whose CLAIM is `status` above. An unreadable list simply drops
+      // the names and asserts nothing (#741 r3 P1). A BLOCKED connection is different: it is a
+      // fact the merchant needs, and it must reach this row in the same words Schedule uses, or
+      // the product ends up describing one connection two ways (#741 r5 P1).
+      ...(await c
+        .listTargets(ownerId)
+        .then((r) => ({
+          targets: "targets" in r ? r.targets.map((t) => t.name) : [],
+          blocker: "blocked" in r ? r.blocked : null,
+        }))
+        .catch(() => ({ targets: [] as string[], blocker: null }))),
     })),
   );
   const [settingsRes, packs, metaConn, channels] = await Promise.all([

@@ -12,14 +12,18 @@ import type { RunContext } from "@openai/agents";
 import { z } from "zod";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
+import { isConnectionBlocked, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
 const NOT_CONNECTED =
   "Meta isn't connected yet. Ask the user to open Connections and connect Instagram or Facebook, then try again.";
 const META_UNREACHABLE =
   "I couldn't reach Meta just now — a temporary hiccup on Meta's side, not a connection problem. Try again in a moment.";
 
-const NEEDS_PAGE_SCOPE =
-  "Reconnect Meta and allow Page access so I can build ads.";
+// #741 r5 P1 — this skill was the second mouth the judge named: it reads the SAME fetchOwnerPages
+// the Schedule screen does, and answered `needsReconnect` with NOT_CONNECTED. A merchant whose Meta
+// connection merely expired was told by Otto that they had never connected, while the Connections
+// page in front of them said "Reconnect needed". The blocked states now come from the shared
+// helper (../connection-copy.js → @fikirtive/core), which every other Meta skill also runs.
 
 const listMetaPagesInput = z.object({});
 
@@ -36,10 +40,10 @@ export async function executeListMetaPages(
   const ctx = runContext.context as OttoContext;
   if (!ctx?.metaPages) return { message: NOT_CONNECTED };
   const res = await ctx.metaPages.list();
-  if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  if ("pages" in res) return { pages: res.pages };
+  if (isConnectionBlocked(res)) return ottoConnectionBlockedAnswer(res);
   if ("transientError" in res) return { message: META_UNREACHABLE };
-  if ("needsPageScope" in res) return { message: NEEDS_PAGE_SCOPE };
-  return { pages: res.pages };
+  return { message: NOT_CONNECTED };
 }
 
 // ---------------------------------------------------------------------------

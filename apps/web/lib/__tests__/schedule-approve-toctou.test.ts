@@ -68,7 +68,7 @@ beforeEach(() => {
   mockRequireOwner.mockResolvedValue({ ownerId: OWNER_ID });
   mockPublishAttemptFindFirst.mockResolvedValue(null);
   mockGenerationFindMany.mockResolvedValue([{ id: "g1", asset: { mime: "image/jpeg" } }]);
-  mockListTargets.mockResolvedValue([{ id: "tgt_1", name: "My IG" }]);
+  mockListTargets.mockResolvedValue({ targets: [{ id: "tgt_1", name: "My IG" }] });
   mockScheduledPostFindFirst.mockResolvedValue(postB());
   // The DB truth: WHERE updatedAt=T1 matches NOTHING because the row is at T2.
   mockScheduledPostUpdateMany.mockImplementation((args: { where: { updatedAt?: Date } }) =>

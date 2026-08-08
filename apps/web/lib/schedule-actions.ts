@@ -7,14 +7,17 @@ import {
   isScheduleChannel,
   newId,
   parseScheduleInstant,
+  scheduleApproveBlockers,
+  ACCOUNTS_UNREADABLE_ERROR,
   SCHEDULE_CHANNEL_CAPS,
+  type ChannelReadState,
   type ScheduledPostStatus,
 } from "@fikirtive/core";
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { draftScheduledPost, IG_IMAGE_ONLY_ERROR } from "./schedule-service";
 import { channelRegistry } from "./channels/registry";
-import type { ChannelId } from "./channels/types";
+import type { ChannelId, ChannelTargetsResult } from "./channels/types";
 import { signSharePreviewToken } from "@fikirtive/token-crypto";
 import { sharePreviewTokenDigest } from "./share-preview";
 import { settlePendingApprovalCards } from "./approval-card-settle";
@@ -324,14 +327,13 @@ export async function approveScheduledPost(
   if (unconfirmed) {
     return { error: "This post may already be live — please review it before publishing again." };
   }
-  // Consent needs a resolved target that the owner actually owns.
-  if (!post.metaTargetId) return { error: "Pick which account to post to before approving." };
-  // X supports text-only posts; Meta (IG/FB) organic publish is media-first in this slice, so the
-  // ≥1-media requirement forks by channel (X exempt) — else a text-only X post could never be approved.
-  if (!post.media.length && post.channel !== "x") {
-    // Instagram is image-only (#229) — "or video" would mislead an IG owner into adding one.
-    return { error: post.channel === "instagram" ? "Add at least one image before approving." : "Add at least one image or video before approving." };
-  }
+  // The shared approve rule is evaluated EXACTLY ONCE, below, after the connection has actually
+  // been read (#741 r5 P2). It used to run twice: a cheap connection-less pass here, then the real
+  // one after the live read. That saved a Graph call on obviously-incomplete drafts, but it broke
+  // the property this ticket exists to establish — with an expired connection AND a missing
+  // target, the first pass answered "Pick which account to post to" while the composer, which
+  // knows the connection state, was already saying "Reconnect your account". Same merchant, same
+  // instant, two different reasons. One rule, one priority table, one evaluation, both sides.
   if (!isScheduleChannel(post.channel)) return { error: "Pick a supported channel." };
   const caps = SCHEDULE_CHANNEL_CAPS[post.channel];
   if (post.media.length > caps.maxMediaCount) {
@@ -359,13 +361,32 @@ export async function approveScheduledPost(
     return { error: IG_IMAGE_ONLY_ERROR };
   }
 
+  // The live connection re-read: the stored metaTargetId is only what the draft REMEMBERS, and a
+  // merchant who disconnected still carries it. Same rule object as above, now with the real list —
+  // so this stage's two refusals are the same sentences the composer shows in advance (#741 r1 P1),
+  // and the order (nothing connected → that account isn't yours) is unchanged. No adapter means
+  // nothing can be connected on this channel, which is exactly the empty-list case.
   const adapter = channelRegistry[post.channel];
-  if (!adapter) return { error: "Connect your account before approving." };
-  const targets = await adapter.listTargets(gate.ownerId);
-  if (!targets.length) return { error: "Connect your account before approving." };
-  if (!targets.some((t) => t.id === post.metaTargetId)) {
-    return { error: "That account isn't one of your connected channels." };
-  }
+  // The adapter CAN reject — listOwnerTargets above already catches per channel, and this path had
+  // no such exit, so a network blip threw out of the action instead of refusing with a reason
+  // (#741 r5 P1). A thrown read is a read that did not happen: `unavailable`, same as any other.
+  const liveTargets: ChannelTargetsResult = adapter
+    ? await adapter.listTargets(gate.ownerId).catch(() => ({ unavailable: true }) as const)
+    : { targets: [] };
+  // #741 r3/r5 P1: a read that FAILED is not an empty list, and a connection that can't publish
+  // right now is not a connection that was never made. All three outcomes refuse (unchanged — we
+  // never approve a publish we couldn't validate), but the reason has to be true. The blocked case
+  // goes through the SAME shared rule as everything else, so the sentence the merchant heard in
+  // advance is byte-for-byte the one they get here.
+  if ("unavailable" in liveTargets) return { error: ACCOUNTS_UNREADABLE_ERROR };
+  const liveTargetBlockers = scheduleApproveBlockers({
+    channel: post.channel,
+    targetId: post.metaTargetId,
+    mediaCount: post.media.length,
+    connectedTargetIds: "blocked" in liveTargets ? [] : liveTargets.targets.map((t) => t.id),
+    connectionBlocker: "blocked" in liveTargets ? liveTargets.blocked : null,
+  });
+  if (liveTargetBlockers.length > 0) return { error: liveTargetBlockers[0]! };
 
   try {
     // Atomic transition: pin the status we read + validated (post.status) AND updatedAt in the
@@ -472,22 +493,58 @@ export async function listScheduledPosts(
 
 export type OwnerTarget = { id: string; name: string; channel: ChannelId };
 
+// `ChannelReadState` is NOT re-exported from here. A "use server" module is not a type barrel:
+// Next's server-actions transform turns an `export type { … }` re-export clause into a runtime
+// export binding, so the erased type name gets evaluated during page-data collection and throws
+// `ReferenceError: ChannelReadState is not defined` — invisible to tsc and vitest, fatal to
+// `next build`. Consumers import it from @fikirtive/core, which is where it is defined anyway.
+
+/**
+ * The answer is PER CHANNEL (#741 r5 P1). r4 failed the whole read whenever any single channel
+ * couldn't be read, on the reasoning that a partial list reads downstream as "that channel has
+ * nothing connected". The premise was right; the remedy was too blunt — one channel having a bad
+ * day would blank the entire Schedule screen, including channels that answered perfectly well.
+ * Carrying the per-channel state fixes both: a channel that wasn't read contributes no targets AND
+ * is labelled, so no consumer can mistake its silence for an empty answer.
+ */
+export type OwnerTargetsResult = {
+  /** Only from channels whose state is "ok". */
+  targets: OwnerTarget[];
+  /** Keyed by channel id. A channel absent from this map was never read — treat it as unreadable. */
+  channelStates: Record<string, ChannelReadState>;
+};
+
 /** Owner-scoped list of connectable publish targets for the composer's account picker.
  *  Derives from the owner's OWN connected pages (fetchOwnerPages(gate.ownerId), the same
  *  owner-scoped source the approve path validates against) and cross-joins with each
- *  supported channel via the registry. $0 read. Returns [] (never throws) when the owner
- *  isn't connected / needs a reconnect / needs the page scope, so the UI shows a Connect
- *  prompt instead of an error. */
-export async function listOwnerTargets(): Promise<OwnerTarget[]> {
+ *  supported channel via the registry. $0 read.
+ *
+ *  Never throws and never omits a channel silently: an adapter that rejects is recorded as
+ *  "unreadable" for that channel alone. */
+export async function listOwnerTargets(): Promise<OwnerTargetsResult> {
   const gate = await requireOwner();
-  if ("error" in gate) return [];
+  // No session: we looked at nothing, so we claim nothing. An empty channelStates map reads as
+  // "unread" everywhere downstream — never as "this merchant has no connected accounts".
+  if ("error" in gate) return { targets: [], channelStates: {} };
 
   const out: OwnerTarget[] = [];
+  const channelStates: Record<string, ChannelReadState> = {};
   for (const channel of Object.values(channelRegistry)) {
-    const targets = await channel.listTargets(gate.ownerId);
-    for (const t of targets) out.push({ id: t.id, name: t.name, channel: channel.id });
+    const res: ChannelTargetsResult = await channel
+      .listTargets(gate.ownerId)
+      .catch(() => ({ unavailable: true }) as const);
+    if ("unavailable" in res) {
+      channelStates[channel.id] = "unreadable";
+      continue;
+    }
+    if ("blocked" in res) {
+      channelStates[channel.id] = res.blocked;
+      continue;
+    }
+    channelStates[channel.id] = "ok";
+    for (const t of res.targets) out.push({ id: t.id, name: t.name, channel: channel.id });
   }
-  return out;
+  return { targets: out, channelStates };
 }
 
 export type PostingTimeSuggestion = { dayOfWeek: number; hourUtc: number; score: number; rationale: string };

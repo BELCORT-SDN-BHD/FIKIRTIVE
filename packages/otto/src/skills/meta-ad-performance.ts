@@ -3,6 +3,7 @@ import type { RunContext } from "@openai/agents";
 import { defineOttoSkill } from "../skill.js";
 import type { OttoContext } from "../context.js";
 import { MONEY_RULE } from "../money-rule.js";
+import { isConnectionBlocked, ottoConnectionBlockedAnswer } from "../connection-copy.js";
 
 const NOT_CONNECTED = "Meta isn't connected yet, so I can't read your per-ad performance. Connect Instagram or Facebook in Connections first.";
 const META_UNREACHABLE =
@@ -20,7 +21,10 @@ export async function executeMetaAdPerformance(
   const ctx = runContext.context as OttoContext;
   if (!ctx?.metaPerformance) return { message: NOT_CONNECTED };
   const res = await ctx.metaPerformance.getAds(input.datePreset);
-  if ("notConnected" in res || "needsReconnect" in res) return { message: NOT_CONNECTED };
+  // #741 r5 P1: "connected but expired" is not "never connected" — ask the shared
+  // authority first, so this skill cannot answer both with the same sentence.
+  if (isConnectionBlocked(res)) return ottoConnectionBlockedAnswer(res);
+  if ("notConnected" in res) return { message: NOT_CONNECTED };
   if ("transientError" in res) return { message: META_UNREACHABLE };
   // #692 r3: the rule ships with the payload, and the amounts are already finished text.
   return { datePreset: res.datePreset, fetchedAt: res.fetchedAt, moneyRule: MONEY_RULE, truncated: res.truncated, organic: res.organic, ads: res.ads };
