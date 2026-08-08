@@ -1,5 +1,10 @@
+// Subpath imports, not the barrel: this module is reachable from client components, and
+// the barrel is Node-capable (guarded by lib/__tests__/client-core-imports.test.ts).
+import { OTTO_CONVERSATION_TURN_RESERVE_INTERNAL } from "@fikirtive/core/otto-budget";
+import { displayCredits } from "@fikirtive/core/spend";
+
 /**
- * User-facing credit formatting (closed-beta money UI).
+ * User-facing credit formatting (the money UI's words).
  *
  * The product shows CREDITS everywhere — never dollars (founder decision 2026-06-26).
  * 1 displayed credit = $0.10 internally (see packages/core spend.ts), but that conversion
@@ -30,7 +35,7 @@ export function creditsLabel(n: number): string {
  *
  *  It replaced three copies of one line that got three things wrong at once (#699 quotes the
  *  original verbatim). It called the balance a closed-beta allowance — there is no beta and the
- *  credits are sold; the signup page calls the same 20 "free starter credits". It told the
+ *  credits are sold; the signup page calls the same welcome grant "free credits". It told the
  *  merchant to reply, but a toast is not a mailbox, so that pointed nowhere. And at the one
  *  moment they had already decided to spend, it sent them to wait on a human instead of to
  *  Billing, one click away in the sidebar. This single function keeps the three exits from
@@ -40,6 +45,37 @@ export function creditsLabel(n: number): string {
  *  never a hand-written number — so the amount named is always the amount actually attempted. */
 export function outOfCreditsMessage(quotedCredits: number): string {
   return `Not enough credits — this needs ${creditsLabel(quotedCredits)}. Top up in Billing.`;
+}
+
+/** What a merchant is told when a CONVERSATION turn can't start (#791-7).
+ *
+ *  It replaced "You're out of credits." — a sentence that was usually not true. A turn HOLDS
+ *  a fixed amount up front (OTTO_CONVERSATION_TURN_RESERVE_INTERNAL), so a merchant sitting on
+ *  3.9 credits, who has spent nothing, was told they had none while their own balance was on
+ *  screen saying otherwise. That reads as a broken product, not as a limit.
+ *
+ *  Names both real numbers: what they hold now, and what starting a message needs. Falls back
+ *  to the shared out-of-credits line when the balance can't be read — better to say one true
+ *  thing than to invent a number. Both are DISPLAYED credits. */
+export function chatHoldShortfallMessage(
+  balanceCredits: number | null,
+  holdCredits: number,
+): string {
+  if (balanceCredits === null) return outOfCreditsMessage(holdCredits);
+  return `You have ${creditsLabel(balanceCredits)} — starting a message with Otto holds ${creditsLabel(holdCredits)} first. Top up in Billing.`;
+}
+
+/** The early warning, shown BEFORE they try (#791-7): the balance is under what one video
+ *  costs. Said while they still have a choice, instead of at the moment they are stopped.
+ *
+ *  States the fact only — the way OUT (top up in Billing) is rendered as a real link by the
+ *  caller via components/exits, which is this repo's one rule for "next step" copy: never
+ *  write the direction as text the merchant cannot click. */
+export function lowBalanceForVideoMessage(
+  balanceCredits: number,
+  videoCredits: number,
+): string {
+  return `You have ${creditsLabel(balanceCredits)} left — a short video costs ${creditsLabel(videoCredits)}.`;
 }
 
 /** The ONE disclosure for what an Otto conversation costs (#555).
@@ -55,3 +91,17 @@ export function outOfCreditsMessage(quotedCredits: number): string {
  *  promise more than the page delivers). */
 export const CHAT_SPEND_NOTE =
   "Chatting with Otto uses credits — your charges are listed in Billing.";
+
+/** The ONE disclosure of the conversation HOLD (#791-9).
+ *
+ *  A turn reserves a fixed amount before the model is called, settles the actual token cost,
+ *  and refunds the remainder in the same transaction (settleCredits: A = min(actual, held),
+ *  the difference goes back to balance). Merchants were never told any of it — they saw the
+ *  balance dip and partly come back, with nothing explaining either move, which reads like
+ *  an accounting bug. Saying it plainly costs nothing: the real behaviour is more generous
+ *  than what anyone guesses from a silent dip.
+ *
+ *  The number is DERIVED from the hold constant, never typed out — a hand-written "4" would
+ *  become a lie the next time the hold is tuned. */
+export const CHAT_HOLD_NOTE =
+  `Each message holds ${creditsLabel(displayCredits(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL))} up front, charges only what it uses, and returns the rest right away.`;

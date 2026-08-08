@@ -17,7 +17,6 @@ export const CUSTOMER_INBOX_ERROR_CODES = {
   ACTION_DENIED: "ACTION_DENIED",
   IMPERSONATION_READ_ONLY: "IMPERSONATION_READ_ONLY",
   CAS_CONFLICT: "CAS_CONFLICT",
-  TAKEOVER_REQUIRED: "TAKEOVER_REQUIRED",
   IDEMPOTENCY_CONFLICT: "IDEMPOTENCY_CONFLICT",
   SEND_PATH_UNAVAILABLE: "SEND_PATH_UNAVAILABLE",
   TEMPLATE_SUBMISSION_UNAVAILABLE: "TEMPLATE_SUBMISSION_UNAVAILABLE",
@@ -86,11 +85,6 @@ export type AssignConversationInput = {
   conversationId: string;
   expectedRevision: number;
   targetMembershipId: string | null;
-};
-
-export type TakeOverConversationInput = {
-  conversationId: string;
-  expectedRevision: number;
 };
 
 export type HandOffConversationInput = {
@@ -373,7 +367,6 @@ export function createCustomerInboxService(
       kind:
         | "assigned"
         | "unassigned"
-        | "takeover"
         | "handoff"
         | "automation_resume_requested"
         | "opened"
@@ -783,7 +776,12 @@ export function createCustomerInboxService(
         if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
         const conversation = await requireConversation(tx, principal.ownerId, conversationId);
         requireMemberAssignment(membership, conversation.assigneeMembershipId);
-        if (conversation.automationState === "otto_active") fail("TAKEOVER_REQUIRED");
+        // #810 P3-1: the "take over from Otto first" refusal is gone with the action it named.
+        // Nothing in the product writes `otto_active` (this service says so in its own words
+        // below), so the guard could only fire on a row left over from an older release — and
+        // for that merchant it blocked editing their own draft and pointed at a Take over
+        // button the page no longer has. A read model still reports the stored value honestly;
+        // it just no longer stops anyone from typing.
         if (conversation.revision !== conversationBaseRevision) fail("CAS_CONFLICT");
 
         const current = await tx.customerConversationDraft.findFirst({
@@ -885,32 +883,6 @@ export function createCustomerInboxService(
         data: { assigneeMembershipId: target?.id ?? null },
         fromAssigneeMembershipId: current.assigneeMembershipId,
         toAssigneeMembershipId: target?.id ?? null,
-      });
-    });
-  }
-
-  async function takeOverConversation(
-    principal: CustomerInboxPrincipal,
-    input: TakeOverConversationInput,
-  ) {
-    await requireWriteMembership(principal, "takeOverConversation");
-    const conversationId = requiredString(input?.conversationId, 256);
-    const expectedRevision = revision(input?.expectedRevision);
-    return db.$transaction(async (tx) => {
-      const membership = await activeMembership(tx, principal);
-      if (!membership || !orgRolesAllow(membership.roles, "inbox.reply")) fail("ACTION_DENIED");
-      const current = await requireConversation(tx, principal.ownerId, conversationId);
-      if (current.revision !== expectedRevision) fail("CAS_CONFLICT");
-      requireMemberAssignment(membership, current.assigneeMembershipId);
-      if (current.automationState !== "otto_active") fail("ACTION_DENIED");
-      return commitConversationEvent(tx, {
-        principal,
-        current,
-        expectedRevision,
-        kind: "takeover",
-        data: { automationState: "paused_by_human" },
-        fromAutomationState: current.automationState,
-        toAutomationState: "paused_by_human",
       });
     });
   }
@@ -1305,7 +1277,6 @@ export function createCustomerInboxService(
     listChannelScopes,
     saveConversationDraft,
     assignConversation,
-    takeOverConversation,
     handOffConversation,
     setConversationStatus,
     requestAutomationResume,

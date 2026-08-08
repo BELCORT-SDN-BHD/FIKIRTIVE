@@ -1,5 +1,10 @@
 # Sol R4 — FIKIRTIVE 全方位优化审计
 
+> **SUPERSEDED（部分）— 2026-08-09，#791-4 / #810**：本审计正文提到的 `worker-verdict` 运行模式
+> （生成完成后自动计费跑一轮 Otto 评价）已于 #791-4 按 Founder 裁决整轮移除，不再存在于代码中。
+> 此处只加注记，**正文一字未改** —— 这是 2026-07-10 那次审计的原始记录。
+
+
 Audit snapshot: 2026-07-10, branch `claude/northstar-immersive`, final observed HEAD `d543d8deab437b436eab4f91a45a0a1870272a61`, `origin/main` `526482393766091deae08f95d936829768f53415`. Repository was read-only for this audit. No paid call, live provider action, Railway mutation, database mutation, or production test was performed. External GitHub rulesets, Railway variables, Sentry rules, UptimeRobot monitors, Neon restore settings, and live backup objects were not independently queried; where repository documents disagree about those facts, the disagreement is itself a finding.
 
 Security note: this was a defensive source/configuration review, not a penetration test. The license finding is an engineering risk flag, not legal advice.

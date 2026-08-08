@@ -81,8 +81,8 @@ export default function TermsPage() {
           Effective 28 July 2026 · Last updated 28 July 2026
         </p>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          Fikirtive is an invite-only beta marketing workspace operated by BELCORT SDN BHD, a company registered in
-          Malaysia. These terms describe how the product actually behaves during the beta, in plain language.
+          Fikirtive is an invite-only marketing workspace operated by BELCORT SDN BHD, a company registered in
+          Malaysia. These terms describe how the product actually behaves, in plain language.
         </p>
 
         <section className="mt-8 space-y-4 text-[15px] leading-7 text-muted-foreground">
@@ -162,10 +162,10 @@ export default function TermsPage() {
             </li>
           </ul>
 
-          <h2 className="pt-4 text-lg font-semibold text-foreground">Beta availability</h2>
+          <h2 className="pt-4 text-lg font-semibold text-foreground">Availability and changes</h2>
           <p>
-            The product is still changing: features, prices, provider availability and limits continue to change during
-            the beta. If something looks wrong, stop using the affected feature and email{" "}
+            The product is still changing: features, prices, provider availability and limits continue to change. If
+            something looks wrong, stop using the affected feature and email{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
           </p>
 
@@ -180,11 +180,14 @@ export default function TermsPage() {
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Who you are dealing with</h2>
-          {/* 「These beta terms are governed by the laws of Malaysia.」为线上原状逐字保留
-              (取自 d728e94b:apps/web/app/terms/page.tsx)——最终处置见决定清单第 9 条:
-              https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327 */}
+          {/* 这一句的管辖法内容为线上原状(取自 d728e94b:apps/web/app/terms/page.tsx),
+              最终处置见决定清单第 9 条:
+              https://github.com/BELCORT-SDN-BHD/FIKIRTIVE/pull/486#issuecomment-5106492327
+              #791-8(Founder 裁决④ 2026-08-08「对外不称 beta」):只删掉「beta」这个
+              形容词 —— 管辖法本身、以及「这些条款受马来西亚法律管辖」这个法律实质
+              一个字未动,不构成 2026-07-28 判官所指的「删除现行法律条款」。 */}
           <p>
-            Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. These beta terms are governed
+            Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. These terms are governed
             by the laws of Malaysia. Questions:{" "}
             <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
           </p>

@@ -72,7 +72,6 @@ vi.mock("@fikirtive/db/principal", () => ({
 }));
 vi.mock("../storage.js", () => ({ storage: m.storage }));
 vi.mock("../generation.js", () => ({ provider: { name: "byteplus", generate: m.generateImages, generateVideo: m.generateVideo } }));
-vi.mock("../otto-resume.js", () => ({ resumeOttoAfterGen: vi.fn() }));
 vi.mock("../model-registry.js", () => ({ workerDisabledModels: vi.fn(async () => new Set()) }));
 
 import { handleGen, reapStaleGenJobs } from "./gen.js";

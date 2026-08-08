@@ -54,14 +54,17 @@ export default async function LoginPage({
             Run real campaigns without becoming a <span className="text-brand">marketer</span>.
           </h1>
           <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
-            Tell Otto what you&apos;re launching. It researches your brand, writes the copy, designs the
-            images, films the video, and gets it ready to post. You just approve.
+            Tell Otto what you&apos;re launching. Otto researches your brand, writes the copy, designs
+            the images, films the video, and gets it ready to post. You just approve.
           </p>
           <ul className="mt-7 flex flex-col gap-[11px]">
             {[
               "From idea to a ready-to-post ad pack in minutes",
               "You only pay when a generation finishes, never on errors",
-              "Schedules across Instagram and Facebook — direct publish is coming soon",
+              // #791-5: this used to say "direct publish is coming soon". The publisher is
+              // built and has been for months — six states, idempotent, reconciled. The one
+              // thing missing is Meta's approval, which is what this now says.
+              "Schedules and publishes to Instagram and Facebook once Meta approves your connection",
             ].map((t) => (
               <li key={t} className="flex items-center gap-[11px] text-[14.5px] font-medium text-[#3A3A38]">
                 <span className="flex size-[22px] shrink-0 items-center justify-center rounded-full bg-success-soft text-success-soft-foreground">

@@ -49,7 +49,6 @@ vi.mock("@/lib/customer-inbox-ui-actions", () => ({
   requestAutomationResume: vi.fn(),
   saveConversationDraft: vi.fn(),
   setConversationStatus: vi.fn(),
-  takeOverConversation: vi.fn(),
 }));
 
 import BroadcastDetailPage from "@/components/crm/broadcasts/broadcast-detail-page";

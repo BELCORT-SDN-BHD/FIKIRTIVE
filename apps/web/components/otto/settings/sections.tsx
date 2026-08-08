@@ -178,14 +178,14 @@ export function buildSettingsSections(args: {
     {
       id: "otto",
       title: "Otto behavior",
-      subtitle: "How much Otto does on its own.",
+      subtitle: "How much Otto does without asking you.",
       fields: [
         {
           kind: "toggle",
           id: "ads",
           label: "Ask before ad spend",
           hint: canChangeAdsAutonomy
-            ? "When on, Otto checks with you before every ad change. When off (Auto), Otto may pause ads, lower budgets, and create paused draft campaigns in your ad account on its own — anything that spends or goes live still asks you first."
+            ? "When on, Otto checks with you before every ad change. When off (Auto), Otto may pause ads, lower budgets, and create paused draft campaigns in your ad account without asking you — anything that spends or goes live still asks you first."
             : "Connect Instagram or Facebook before changing ad-spend autonomy",
           value: adsAutonomy === "ASK",
           disabled: !canChangeAdsAutonomy,
@@ -213,26 +213,10 @@ export function buildSettingsSections(args: {
         },
       ],
     },
-    {
-      id: "notifications",
-      title: "Notifications",
-      fields: [
-        {
-          kind: "toggle",
-          id: "nemail",
-          label: "Email",
-          value: settings.notifyEmail,
-          onToggle: toggle("notifyEmail"),
-        },
-        {
-          kind: "toggle",
-          id: "ninapp",
-          label: "In-app",
-          value: settings.notifyInApp,
-          onToggle: toggle("notifyInApp"),
-        },
-      ],
-    },
+    // #791-2: the "Notifications · Email / In-app" section is gone. Both toggles wrote to
+    // Organization.settings and nothing ever read them — there is no email sender and no
+    // in-app notification channel in the product, so "on" and "off" did exactly the same
+    // thing. It comes back when there is something to switch off.
     {
       id: "schedule",
       title: "Schedule defaults",

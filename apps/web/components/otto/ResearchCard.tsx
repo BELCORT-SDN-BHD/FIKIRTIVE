@@ -218,7 +218,7 @@ export function ResearchCard({ cardId, payload, balanceUsd, onBalanceRefresh, on
               Research didn&apos;t finish.
             </div>
             <span className="text-[0.75rem] text-muted-foreground">
-              Ask Otto to research this again — it&apos;ll propose a fresh plan.
+              Ask Otto to research this again — Otto will propose a fresh plan.
             </span>
           </div>
         ) : (

@@ -71,10 +71,19 @@ describe("executeX — worker X path fail-closed (契约3)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("authorized + text-only → drives the shared publishX (returns tweet id)", async () => {
+  // #810 r3 P1-a: preparing is not sending. executeX must hand back a `send` thunk and touch NOTHING
+  // external until handlePublish has re-read the merchant's Auto-publish switch. If this executor
+  // ever went back to publishing inline, the switch would again be four minutes stale at send time.
+  it("authorized + text-only → PREPARES only; zero X calls until send() is invoked", async () => {
     m.channelConnectionFindFirst.mockResolvedValue(active());
     fetchSpy.mockResolvedValue({ ok: true, json: async () => ({ data: { id: "tweet-1" } }) });
-    const res = await executeX(POST);
+
+    const prepared = await executeX(POST);
+
+    expect(prepared).toMatchObject({ send: expect.any(Function) });
+    expect(fetchSpy).not.toHaveBeenCalled(); // nothing left the building during preparation
+
+    const res = await (prepared as { send: () => Promise<unknown> }).send();
     expect(res).toMatchObject({ externalId: "tweet-1" });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];

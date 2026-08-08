@@ -69,7 +69,10 @@ describe("setOwnerSetting — spendCapCredits validation (decision ①)", () => 
   });
 
   it("leaves other settings keys unaffected by the new numeric guard", async () => {
-    const res = await setOwnerSetting("notifyEmail", false);
+    // #791-2: this used notifyEmail purely as "some other boolean key". That key is gone
+    // (nothing ever read it), so the same assertion now rides autoPublish — a boolean the
+    // publish scheduler actually obeys. Same guarantee, a key that still exists.
+    const res = await setOwnerSetting("autoPublish", true);
     expect(res).toEqual({ ok: true });
     expect(update).toHaveBeenCalled();
   });
