@@ -57,6 +57,7 @@ import RoutineAuthorizationPanel from "@/components/crm/workflows/routine-author
 import {
   activateRoutine,
   getContactJourneyStates,
+  getRoutine,
   getWorkflowDefinition,
   listBusinessHoursPolicies,
   listRoutineRuns,
@@ -432,7 +433,7 @@ const REVISION = {
   createdAt: "2026-08-01T00:00:00.000Z",
 };
 
-function persistedRoutine(status: string) {
+function persistedRoutine(status: string, channelCount = 0) {
   return {
     id: "routine-1",
     routineKey: "outside-hours-reply-routine",
@@ -448,7 +449,7 @@ function persistedRoutine(status: string) {
     },
     scopeSummary: {
       actionKinds: ["complete"],
-      channelCount: 0,
+      channelCount,
       contactCount: 0,
       segmentCount: 0,
       maxActions: 1,
@@ -463,6 +464,31 @@ function persistedRoutine(status: string) {
     rowRevision: status === "active" ? 1 : 0,
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
+  };
+}
+
+/** What `getRoutine` returns: the summary plus the exact canonical scope, and the predecessors
+ *  chain. This is the authority for what an activation is about to authorize. */
+function routineDetail(overrides: {
+  channels?: Array<{ channel: string; providerConnectionId: string | null }>;
+  summaryPolicy?: Record<string, string>;
+  status?: string;
+} = {}) {
+  const summary = persistedRoutine(overrides.status ?? "draft");
+  return {
+    routine: {
+      ...summary,
+      summaryPolicy: overrides.summaryPolicy ?? { afterEachRun: "workflow_activity" },
+      scope: {
+        actionKinds: ["conversation_reply"],
+        channelScopes: overrides.channels ?? [],
+        contactIds: [],
+        segmentIds: [],
+        maxActions: 1,
+        maxRecipients: 1,
+      },
+    },
+    predecessors: [],
   };
 }
 
@@ -493,6 +519,7 @@ function statusSummaryText(dom: HTMLElement): string {
 describe("Routine authorization is driven by the server read, not by this page load (#720)", () => {
   it("activates a Routine draft that only exists on the server, and shows the switch once it is active", async () => {
     vi.mocked(activateRoutine).mockResolvedValue({ ok: true, resource: { id: "routine-1" } } as never);
+    vi.mocked(getRoutine).mockResolvedValue({ ok: true, resource: routineDetail() } as never);
     vi.mocked(listRoutines).mockResolvedValue({
       ok: true,
       resource: { items: [persistedRoutine("active")], nextCursor: null },
@@ -514,7 +541,9 @@ describe("Routine authorization is driven by the server read, not by this page l
     await click(acknowledgement!);
     await click(buttonWithText(dialog!, "Activate Routine"));
 
-    // The row read from the server is what gets activated — its id and its row revision.
+    // The row read from the server is what gets activated — its id and the row revision that
+    // came back from the authoritative read, not one carried over from a stale list.
+    expect(getRoutine).toHaveBeenCalledWith({ routineId: "routine-1" });
     expect(activateRoutine).toHaveBeenCalledWith({ routineId: "routine-1", expectedRowRevision: 0 });
     // …and the re-read (not this session's memory) is what puts the on/off switch on screen.
     expect(listRoutines).toHaveBeenCalled();
@@ -543,6 +572,56 @@ describe("Routine authorization is driven by the server read, not by this page l
     // because the server read says the Routine is active — no remount, no session envelope.
     await rerender(createElement(RoutineAuthorizationPanel, panelProps("active")));
     expect(dom.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+  });
+
+  // §5.1 — the merchant confirms an EXACT envelope. The panel used to render that dialog from a
+  // count ("any channel at all means WhatsApp") and a hardcoded sentence about workflow
+  // activity, so a Routine authorized for a different channel with a counts-only summary policy
+  // was approved against a description of something else.
+  it("describes the envelope the server actually holds — real channel names and the stored summary policy", async () => {
+    vi.mocked(getRoutine).mockResolvedValue({
+      ok: true,
+      resource: routineDetail({
+        channels: [{ channel: "instagram_dm", providerConnectionId: "conn-secret-1" }],
+        summaryPolicy: { mode: "counts_only" },
+      }),
+    } as never);
+
+    const dom = await render(
+      createElement(WorkflowDetailPage, workflowProps({ routines: [persistedRoutine("draft", 1)] })),
+    );
+    await click(buttonWithText(dom, "Review activation"));
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const text = dialog.textContent ?? "";
+    // Channel: the recorded channel, not "non-zero implies WhatsApp".
+    expect(text).toContain("instagram dm");
+    expect(text).not.toContain("WhatsApp");
+    // Summary policy: counts only, said plainly — not a promise of per-run workflow activity.
+    expect(text.toLowerCase()).toContain("counts only");
+    expect(text).not.toContain("Show a summary in workflow activity after every run");
+    // A provider connection id is an internal code and never belongs in merchant copy.
+    expect(text).not.toContain("conn-secret-1");
+    // …and all of that came from the one authority for this envelope.
+    expect(getRoutine).toHaveBeenCalledWith({ routineId: "routine-1" });
+  });
+
+  it("refuses to confirm an authorization it could not read", async () => {
+    vi.mocked(getRoutine).mockResolvedValue({ ok: false, error: "AUTHORITY_UNAVAILABLE" } as never);
+
+    const dom = await render(
+      createElement(WorkflowDetailPage, workflowProps({ routines: [persistedRoutine("draft")] })),
+    );
+    await click(buttonWithText(dom, "Review activation"));
+
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("This authorization could not be read");
+    // Fail closed: ticking the box must not make an unreadable envelope activatable.
+    await click(dialog.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+    const activate = buttonWithText(dialog, "Activate Routine");
+    expect(activate.disabled).toBe(true);
+    await click(activate);
+    expect(activateRoutine).not.toHaveBeenCalled();
   });
 
   it("keeps the setup form the merchant is filling in across a Routine re-read", async () => {
