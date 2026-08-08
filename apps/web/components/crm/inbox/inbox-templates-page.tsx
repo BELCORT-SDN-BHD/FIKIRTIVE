@@ -303,7 +303,7 @@ function TemplateCard({ template, onChanged }: { template: TemplateRow; onChange
         body,
         variables: parseVariablesInput(variablesInput),
       });
-      if (!result.ok) return setError(errorMessage(result.error));
+      if (!result.ok) return setError(errorMessage(result.error, result.detail));
       setBody("");
       setVariablesInput("");
       setNotice("Version saved as an immutable local record.");

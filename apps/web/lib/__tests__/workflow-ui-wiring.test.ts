@@ -70,3 +70,42 @@ describe("workflow UI read wiring", () => {
     expect(recipes).toContain("strict workflow messaging classification");
   });
 });
+
+/**
+ * #753 — every workflow panel printed the raw refusal code under its sentence
+ * ("Error code: CAS_CONFLICT"), and the rule validation list printed the raw validation code
+ * beside the path. An internal identifier is not copy: it names nothing the merchant can act on,
+ * and #683/#684 already settled that internal strings never reach the customer.
+ *
+ * These are file-level fences rather than one-block assertions on purpose. Ten separate failure
+ * blocks grew the same line; closing the class means no file in this folder may render it again.
+ * The code itself is not lost — each block carries it as a data attribute, which support and QA
+ * can read in the developer tools and no merchant ever sees.
+ */
+const WORKFLOW_PANEL_FILES = [
+  "../../components/crm/workflows/workflow-list-page.tsx",
+  "../../components/crm/workflows/workflow-detail-page.tsx",
+  "../../components/crm/workflows/workflow-recipes-panel.tsx",
+  "../../components/crm/workflows/archive-workflow-dialog.tsx",
+  "../../components/crm/workflows/routine-authorization-panel.tsx",
+  "../../components/crm/workflows/workflow-monitoring.tsx",
+] as const;
+
+describe("workflow panel failure copy (#753)", () => {
+  it("shows no machine error code in any workflow panel", () => {
+    for (const file of WORKFLOW_PANEL_FILES) {
+      expect(source(file), file).not.toContain("Error code:");
+    }
+  });
+
+  it("keeps every failure code reachable in the developer view instead", () => {
+    const attributes = (file: string) => source(file).match(/data-error-code=/g)?.length ?? 0;
+
+    expect(attributes(WORKFLOW_PANEL_FILES[0])).toBe(2);
+    expect(attributes(WORKFLOW_PANEL_FILES[1])).toBe(2);
+    expect(attributes(WORKFLOW_PANEL_FILES[2])).toBe(2);
+    expect(attributes(WORKFLOW_PANEL_FILES[3])).toBe(1);
+    expect(attributes(WORKFLOW_PANEL_FILES[4])).toBe(3);
+    expect(source(WORKFLOW_PANEL_FILES[1])).toContain("data-issue-code={issue.code}");
+  });
+});

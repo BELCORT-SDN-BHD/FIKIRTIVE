@@ -9,6 +9,7 @@ import {
 } from "@fikirtive/core";
 import { evaluateSendEligibility, prisma as defaultDb, type Prisma } from "@fikirtive/db";
 import { resolveActiveProviderConnectionId } from "./channel-connection-resolve";
+import { templateVariableMismatch } from "./message-template-placeholders";
 
 export const CUSTOMER_INBOX_ERROR_CODES = {
   NOT_AUTHORIZED: "NOT_AUTHORIZED",
@@ -22,13 +23,21 @@ export const CUSTOMER_INBOX_ERROR_CODES = {
   TEMPLATE_SUBMISSION_UNAVAILABLE: "TEMPLATE_SUBMISSION_UNAVAILABLE",
   INVALID_ARGUMENT: "INVALID_ARGUMENT",
   PROVIDER_CONNECTION_CONFLICT: "PROVIDER_CONNECTION_CONFLICT",
+  TEMPLATE_VARIABLE_MISMATCH: "TEMPLATE_VARIABLE_MISMATCH",
 } as const;
 
 export type CustomerInboxErrorCode =
   (typeof CUSTOMER_INBOX_ERROR_CODES)[keyof typeof CUSTOMER_INBOX_ERROR_CODES];
 
 export class CustomerInboxError extends Error {
-  constructor(public readonly code: CustomerInboxErrorCode) {
+  /** #729 — `detail` carries a merchant-facing sentence for refusals whose reason depends on
+   *  what was submitted (which placeholder, which variable). A code alone cannot say that, and
+   *  a caller that bypasses the UI must still be told the same thing. Codes without a
+   *  per-request reason leave it undefined and keep their fixed copy in the UI's error map. */
+  constructor(
+    public readonly code: CustomerInboxErrorCode,
+    public readonly detail?: string,
+  ) {
     super(code);
     this.name = "CustomerInboxError";
   }
@@ -178,8 +187,8 @@ const NEEDS_REPLY_PAGE_SIZE = 50;
 // separators (U+2028/U+2029), which are as unsafe in stored text as the C0 controls above.
 const CONTROL_CHARS = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F\u2028\u2029]/;
 
-function fail(code: CustomerInboxErrorCode): never {
-  throw new CustomerInboxError(code);
+function fail(code: CustomerInboxErrorCode, detail?: string): never {
+  throw new CustomerInboxError(code, detail);
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -1059,6 +1068,12 @@ export function createCustomerInboxService(
     if (new Set(variables.map((variable) => variable.key)).size !== variables.length) {
       fail("INVALID_ARGUMENT");
     }
+    // #729 — the version about to be written is immutable, so this is the last moment a
+    // mismatch between the body's {{placeholders}} and the declared variables can be fixed.
+    // Existing rows are history and are left exactly as they are; only new writes are held
+    // to the convention the templates screen already teaches.
+    const mismatch = templateVariableMismatch(body, variables.map((variable) => variable.key));
+    if (mismatch) fail("TEMPLATE_VARIABLE_MISMATCH", mismatch);
     const definitionJson = { schemaVersion: 1, body, variables } as const;
     const contentHash = hash("customer-template:v1", definitionJson);
     const at = now();

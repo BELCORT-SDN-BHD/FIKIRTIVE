@@ -101,6 +101,14 @@ describe("hash face == card face (#720 pinboard)", () => {
     }
   });
 
+  // #723 — the confirmation page's own defaults are one action and one recipient, so the
+  // plural-only sentence was what every merchant read the first time they authorized a Routine.
+  it("counts one action and one recipient in the singular", () => {
+    const one = render(snapshotOf({ scopeJson: { ...MATERIAL.scopeJson, maxActions: 1, maxRecipients: 1 } }));
+    expect(one).toContain("Limits: Up to 1 action and 1 recipient per run");
+    expect(render(snapshotOf())).toContain("Limits: Up to 2 actions and 5 recipients per run");
+  });
+
   // The three the judge caught: these live inside scopeJson, so they are hashed, and they are
   // exactly the ones the old confirmation page reduced to a count.
   it("renders differently for different customers, segments, and channel accounts", () => {

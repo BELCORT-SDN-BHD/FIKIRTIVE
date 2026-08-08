@@ -100,13 +100,18 @@ const ERROR_COPY: Record<string, string> = {
   TEMPLATE_SUBMISSION_UNAVAILABLE: "Template submission isn't available yet.",
   INVALID_ARGUMENT: "That request wasn't valid. Please check the values and try again.",
   PROVIDER_CONNECTION_CONFLICT: "Inbox eligibility could not be verified because more than one active channel connection matched.",
+  TEMPLATE_VARIABLE_MISMATCH: "The message body and the variables list don't match. Line them up and try again.",
 };
 
 /** Plain-English copy for a CustomerInboxErrorCode. Falls back to a generic
  *  message (with the raw code visible) for any code this UI doesn't recognize,
- *  rather than showing nothing. */
-export function errorMessage(code: string): string {
-  return ERROR_COPY[code] ?? `The request failed (${code}). Please retry.`;
+ *  rather than showing nothing.
+ *
+ *  #729 — a refusal whose reason depends on what was submitted (which placeholder, which
+ *  variable) arrives with the server's own sentence in `detail`; it is more specific than
+ *  anything a fixed map can say, so it wins. */
+export function errorMessage(code: string, detail?: string): string {
+  return detail ?? ERROR_COPY[code] ?? `The request failed (${code}). Please retry.`;
 }
 
 // Per docs/superpowers/specs/2026-07-19-c4a-inbox-whatsapp-physical-contract.md §7.2: only
