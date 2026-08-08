@@ -53,3 +53,29 @@ describe("#791-8 对外文案不再称 beta", () => {
     expect(readCopy("app/terms/page.tsx")).toMatch(/governed\s*\n?\s*by the laws of Malaysia/);
   });
 });
+
+// ── #810 P3-2:注册页的承诺与价目表钉在一起 ────────────────────────────────
+//
+// packages/core 的 spend.test.ts 断言「赠额 ≥ 一场对话 + 一张图 + 一条 5s 视频」,
+// 三项全部从活的计价权威读。但那条测试证明不了它算的就是**注册页真正承诺的那句
+// 话** —— 页面上多写一件、或者把数字打死成 "25 free credits",价目表那侧一无所知。
+// 这里补上另一半:页面的数字必须是算出来的,承诺的必须正好是被算过价的那三件。
+describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", () => {
+  const signup = readCopy("app/signup/page.tsx");
+
+  it("数字是从赠额常量算出来的,不是打上去的", () => {
+    expect(signup).toContain("displayCredits(SIGNUP_GRANT_CREDITS)");
+    expect(signup).toMatch(/\{starterCredits\}\s*free credits/);
+    // 正文里不许出现「<数字> free credits」这种写死的说法(改赠额时它会静静变成谎话)。
+    expect(signup).not.toMatch(/\d+\s*free credits/);
+  });
+
+  it("承诺的正好是被算过价的那三件:一场对话、一张图、一条短视频", () => {
+    expect(signup).toMatch(/a conversation with Otto/);
+    expect(signup).toMatch(/an\s*\n?\s*image/);
+    expect(signup).toMatch(/a short video/);
+    // 第四件东西必须先回 packages/core 把它加进「买得起」那条断言,才谈得上写在这里。
+    const promise = signup.slice(signup.indexOf("free credits"), signup.indexOf("free credits") + 240);
+    expect(promise.match(/,\s*an?\s/g)?.length ?? 0).toBeLessThanOrEqual(2);
+  });
+});
