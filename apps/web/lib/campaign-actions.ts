@@ -74,10 +74,19 @@ const trendSourceSchema = z.object({
   domain: z.string().trim().min(1).max(253),
 }).strict();
 
+/** #713 — the same evidence shape the Trend archive writes, so it carries the same rule:
+ *  a conclusion cannot have been captured on a day that has not happened yet. */
+const capturedAtSchema = z.string()
+  .refine((value) => parseTrendCapturedAt(value) !== null, "Enter the captured date as a real calendar date, for example 2026-08-01.")
+  .refine((value) => {
+    const captured = parseTrendCapturedAt(value);
+    return captured === null || captured.getTime() <= Date.now();
+  }, "The captured date can't be in the future — use the day you actually saw this evidence.");
+
 const trendEvidenceSchema = z.object({
   summary: z.string().trim().min(1).max(1_000),
   sources: z.array(trendSourceSchema).min(1).max(20),
-  capturedAt: z.string().refine((value) => parseTrendCapturedAt(value) !== null, "Invalid capture date.").optional(),
+  capturedAt: capturedAtSchema.optional(),
 }).strict();
 
 type TrendEvidence = z.infer<typeof trendEvidenceSchema>;
