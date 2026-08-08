@@ -29,6 +29,7 @@ import {
 import type { BatchInterruption } from "@/lib/factory-batch";
 import { notifyBalanceRefresh } from "@/lib/balance-refresh";
 import { getCampaign } from "@/lib/campaign-view-data";
+import { CAMPAIGN_DISPATCH_IN_FLIGHT } from "@/lib/campaign-approval-lock";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -277,6 +278,9 @@ function ConfirmWorkspace({
     const zeroDispatchConfirmed = result.dispatched === 0 && !currentUnknown;
     // #749 判官 r2 P2:完成判定读**派发结果**,不读派发前的报价 —— 报价说「新做」而结果说
     // 「复用」时,那一单多半还在跑,状态不明一律按「还在做」说。
+    // #749 判官 r4:这一批是不是在半路上被另一次确认接管了。是的话,已完成几件、未开始
+    // 几件、有没有扣费,必须写在脸上,并且给一个「回去重看」的入口 —— 不许沉默。
+    const handover = campaignLeaseHandoverSummary(result.cells);
     const reusedLines = reusedResultLines(result.cells, approvedLines);
     const reusedAllDone = reusedLines.every((line) => line.reuseState === "done");
     const resultTitle = campaignGenerationResultTitle(result, interruption, reusedAllDone);
@@ -293,6 +297,19 @@ function ConfirmWorkspace({
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
+            {handover ? (
+              <div className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm text-warning-soft-foreground">
+                <strong>
+                  Another confirmation took over this campaign, so this run stopped partway.
+                </strong>{" "}
+                {handover.started} {handover.started === 1 ? "item" : "items"}{" "}
+                {handover.started === 1 ? "was" : "were"} already started and charged.{" "}
+                {handover.notStarted} {handover.notStarted === 1 ? "item" : "items"}{" "}
+                {handover.notStarted === 1 ? "was" : "were"} not started and{" "}
+                {handover.notStarted === 1 ? "was" : "were"} not charged. Review the updated plan
+                and confirm the rest again.
+              </div>
+            ) : null}
             {zeroDispatchConfirmed ? (
               <div className="rounded-xl border border-info/25 bg-info-soft px-4 py-3 text-sm text-info-soft-foreground">
                 {/* #708 同源症状 ①：什么都没派发，可能是「一件也没做成」，也可能是
@@ -340,7 +357,24 @@ function ConfirmWorkspace({
               );
             })}
             <div className="flex flex-wrap gap-3">
-              {result.failed > 0 || interruption ? (
+              {handover ? (
+                <Button
+                  type="button"
+                  onClick={() => {
+                    // 回到复核卡,并向服务端**重新要一次价** —— 别人刚动过这个战役,
+                    // 旧的那份报价已经不是真话了。
+                    setResult(null);
+                    setInterruption(null);
+                    setError(null);
+                    void requote(projectId, videoMenu?.selected ?? null);
+                  }}
+                  disabled={busy || quoting}
+                >
+                  {quoting ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                  Review the updated plan
+                </Button>
+              ) : null}
+              {!handover && (result.failed > 0 || interruption) ? (
                 <Button type="button" onClick={() => confirm()} disabled={busy}>
                   {busy ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
                   {interruption ? "Retry remaining items" : "Retry failed items"}
@@ -593,6 +627,26 @@ export function reusedSummaryPhrase(lines: Pick<CampaignGenQuoteLine, "charge" |
   return reused.some((line) => line.reuseState !== "done")
     ? "already generated or still being made"
     : "already generated";
+}
+
+/**
+ * 这一批是不是**在半路上丢了租约**(#749 判官 r4)。
+ *
+ * 丢租约意味着另一次确认接管了这个战役:已经派发出去的格是真开始、真扣了钱的,后面的格
+ * 一格没开始、一分钱没收。这两句必须一起说出口 —— 只报一个「部分开始」的标题,商家既不
+ * 知道自己付了多少,也不知道还差几件,那就是沉默。
+ *
+ * 返回 null = 这一批不是因为丢租约停的(别的失败原因有它们自己的逐格说明)。
+ */
+export function campaignLeaseHandoverSummary(
+  cells: Pick<BatchResult["cells"][number], "status" | "error">[],
+): { started: number; notStarted: number } | null {
+  const notStarted = cells.filter((cell) => cell.error === CAMPAIGN_DISPATCH_IN_FLIGHT).length;
+  if (notStarted === 0) return null;
+  return {
+    started: cells.filter((cell) => cell.status === "queued" || cell.status === "reused").length,
+    notStarted,
+  };
 }
 
 /**

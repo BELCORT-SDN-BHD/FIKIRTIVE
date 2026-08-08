@@ -358,3 +358,86 @@ describe("#749 判官 r2 P2 结果页完成判定", () => {
     expect(container!.textContent).toContain("Everything was already generated");
   });
 });
+
+// ---------------------------------------------------------------------------
+// #749 判官 r4 —— 批次被接管时,结果页必须把话说全
+// ---------------------------------------------------------------------------
+/**
+ * 丢租约意味着另一次确认接管了这个战役:已派发的格是真开始、真扣了钱的,后面的格一格没
+ * 开始、一分钱没收。只报一个「部分开始」的标题就是沉默 —— 商家既不知道自己付了多少,也
+ * 不知道还差几件、该怎么办。
+ */
+describe("#749 判官 r4 批次被接管时的结果文案", () => {
+  const IN_FLIGHT =
+    "Another confirmation for this campaign is still starting its items, so nothing was started here and nothing was charged. Wait for it to finish, then review the updated plan and confirm again.";
+
+  function handoverResult() {
+    return {
+      ok: true as const,
+      result: {
+        batchId: "batch-1",
+        cells: [
+          { index: 0, type: "gen" as const, status: "queued" as const, jobId: "job-1", credits: 30 },
+          { index: 1, type: "gen" as const, status: "error" as const, credits: 0, error: IN_FLIGHT },
+        ],
+        totalCredits: 30,
+        dispatched: 1,
+        reused: 0,
+        failed: 1,
+      },
+      quote: serverQuote(3, "a").quote,
+    };
+  }
+
+  it("说清已完成几件、未开始几件、没扣费,并给回去重看的入口", async () => {
+    mocks.confirm.mockResolvedValue(handoverResult());
+    await render();
+    await act(async () => confirmButton().click());
+
+    const text = container!.textContent ?? "";
+    expect(text).toContain("Another confirmation took over this campaign");
+    expect(text).toContain("1 item was already started and charged");
+    expect(text).toContain("1 item was not started and was not charged");
+    expect(text).toContain("Review the updated plan and confirm the rest again");
+    // 入口是真的按钮,不是一句干说明。
+    const review = [...container!.querySelectorAll("button")].find((node) =>
+      (node.textContent ?? "").includes("Review the updated plan"),
+    );
+    expect(review).toBeDefined();
+  });
+
+  it("那个入口回到复核卡,并**重新向服务端要一次价**(别人刚动过这个战役)", async () => {
+    mocks.confirm.mockResolvedValue(handoverResult());
+    mocks.quote.mockResolvedValue(serverQuote(9, "d"));
+    await render();
+    await act(async () => confirmButton().click());
+    expect(mocks.quote).not.toHaveBeenCalled();
+
+    const review = [...container!.querySelectorAll("button")].find((node) =>
+      (node.textContent ?? "").includes("Review the updated plan"),
+    )!;
+    await act(async () => review.click());
+
+    expect(mocks.quote).toHaveBeenCalledTimes(1);
+    // 回到复核卡,而且用的是刚拿回来的那份新报价。
+    expect(container!.textContent).toContain("Confirm · 9 credits");
+    expect(container!.textContent).not.toContain("Another confirmation took over");
+  });
+
+  it("普通失败不套用这套说法 —— 它有自己的逐格说明", async () => {
+    mocks.confirm.mockResolvedValue({
+      ...handoverResult(),
+      result: {
+        ...handoverResult().result,
+        cells: [
+          { index: 0, type: "gen" as const, status: "queued" as const, jobId: "job-1", credits: 30 },
+          { index: 1, type: "gen" as const, status: "error" as const, credits: 0, error: "Not enough credits." },
+        ],
+      },
+    });
+    await render();
+    await act(async () => confirmButton().click());
+
+    expect(container!.textContent).not.toContain("Another confirmation took over");
+  });
+});
