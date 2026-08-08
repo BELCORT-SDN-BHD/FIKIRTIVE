@@ -265,6 +265,13 @@ export async function POST(req: NextRequest): Promise<Response> {
         // ("seed" + "ance") cannot slip out one half at a time. It emits exactly what
         // extractText persists (both call the same core redaction).
         const providerFilter = createProviderNameFilter();
+        // #810 P1-2: "Otto's thinking" is merchant-readable (components/otto/parts/
+        // ReasoningPart.tsx opens it on click), and the model's raw reasoning went out
+        // unscrubbed — the one path where the white-label rule had nothing but a prompt
+        // instruction behind it. Reasoning is its OWN byte stream, so it gets its OWN filter:
+        // one shared instance would interleave two texts inside a single hold-back buffer and
+        // emit each in the other's context.
+        const reasoningFilter = createProviderNameFilter();
         const openText = () => { if (!textOpen) { writer.write({ type: "text-start", id: OTTO_TEXT_ID }); textOpen = true; } };
         const openReasoning = () => { if (!reasoningOpen) { writer.write({ type: "reasoning-start", id: OTTO_REASONING_ID }); reasoningOpen = true; } };
         const closeOpenParts = () => {
@@ -275,7 +282,11 @@ export async function POST(req: NextRequest): Promise<Response> {
             if (tail) writer.write({ type: "text-delta", delta: tail, id: OTTO_TEXT_ID });
             writer.write({ type: "text-end", id: OTTO_TEXT_ID });
           }
-          if (reasoningOpen) writer.write({ type: "reasoning-end", id: OTTO_REASONING_ID });
+          if (reasoningOpen) {
+            const tail = reasoningFilter.flush();
+            if (tail) writer.write({ type: "reasoning-delta", delta: tail, id: OTTO_REASONING_ID });
+            writer.write({ type: "reasoning-end", id: OTTO_REASONING_ID });
+          }
           textOpen = false;
           reasoningOpen = false;
         };
@@ -324,7 +335,13 @@ export async function POST(req: NextRequest): Promise<Response> {
                     if (safe) writer.write({ ...part, delta: safe });
                     continue;
                   }
-                  else if (part.type === "reasoning-delta") openReasoning();
+                  if (part.type === "reasoning-delta") {
+                    openReasoning();
+                    // Same rule, second stream (#810 P1-2): the merchant can read this.
+                    const safe = reasoningFilter.push(part.delta);
+                    if (safe) writer.write({ ...part, delta: safe });
+                    continue;
+                  }
                   writer.write(part);
                 }
               },
