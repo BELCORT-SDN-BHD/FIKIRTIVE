@@ -213,13 +213,13 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     expect(list).toContain("Opted out before consent history");
     expect(list).not.toContain(">Unknown<");
 
-    // 3. The contact profile — badge, and the reason spelled out, because the consent history
-    //    card underneath is empty by definition: the fence exists precisely because the ledger
-    //    never reached this customer.
+    // 3. The contact profile — badge, and the reason spelled out, because the reason is not
+    //    readable from the events card underneath: what fences this customer is the OLD column,
+    //    which never becomes an event.
     const profile = await contactProfileMarkup(CHANDRA);
     expect(profile).toContain("Opted out before consent history");
     expect(profile).toContain(
-      "No consent facts were recorded for this contact, and an opt-out was recorded before this history was kept.",
+      "Nothing in this consent history came from the customer, and an opt-out was recorded for this contact before the history was kept.",
     );
     expect(profile).toContain("keeps this contact out of audiences until the customer opts in again");
     expect(profile).not.toContain("The current state remains unknown.");
@@ -239,6 +239,19 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     const profile = await contactProfileMarkup(HANA);
     expect(profile).toContain("Opted out before consent history");
     expect(profile).toContain("until the customer opts in again through their own channel");
+
+    // The note may not deny the record the same screen is showing. Hana's merchant-recorded
+    // opt-out is rendered right underneath it, so a note that claims nothing was recorded makes
+    // the page argue with itself — the profile has to be honest too, not only the segments page.
+    expect(profile).toContain("Revoke recorded");
+    expect(profile).not.toContain("No consent facts were recorded");
+
+    // What is actually true of every fenced contact, Hana included: the ledger holds no stance
+    // from the CUSTOMER (a merchant record is not one — the event card says `Merchant`), and the
+    // old column carries an opt-out.
+    expect(profile).toContain(
+      "Nothing in this consent history came from the customer, and an opt-out was recorded for this contact before the history was kept.",
+    );
     expect(await segmentRowMarkup(HANA)).toContain("opted out before consent history");
   });
 

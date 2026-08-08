@@ -18,12 +18,23 @@ export const CRM_CONSENT_LABELS: Record<CrmConsentState["state"], string> = {
 export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
 
 /**
- * The profile page has room to say the whole fact, and it has to: the consent history card below
- * it is empty by definition — the fence exists precisely because the ledger never reached this
- * contact — so without this sentence the page shows a reason-free exclusion.
+ * The profile page has room to say the whole fact, and it has to: what fences this contact is the
+ * legacy column, which never becomes an event, so the consent history card below cannot show the
+ * reason and the exclusion would read as reason-free.
+ *
+ * The sentence has to hold for EVERY shape the fence covers, not only the empty-history one. The
+ * fence is `state === "unknown"` plus a legacy `opt_out` (`contactConsentTruth`), and `unknown`
+ * survives the merchant recording his own opt-out — so a fenced contact can have events, and this
+ * note used to claim "no consent facts were recorded" while the card underneath listed one.
+ *
+ * What is true in all of them: R-010's closed writer set makes every `actorKind: "customer"`
+ * source `verified`, and any such event folds the state off `unknown` (`foldConsentEvents`).
+ * So `state === "unknown"` means exactly this — nothing in this scope's history came from the
+ * customer. Merchant records and legacy snapshots can be there, and the event card names their
+ * actor.
  */
 export const CRM_PRE_LEDGER_OPT_OUT_NOTE =
-  "No consent facts were recorded for this contact, and an opt-out was recorded before this history was kept. Fikirtive keeps this contact out of audiences until the customer opts in again through their own channel.";
+  "Nothing in this consent history came from the customer, and an opt-out was recorded for this contact before the history was kept. Fikirtive keeps this contact out of audiences until the customer opts in again through their own channel.";
 
 export type CrmConsentBadge = {
   label: string;
