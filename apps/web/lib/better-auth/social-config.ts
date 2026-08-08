@@ -27,7 +27,12 @@ function configured(value: string | undefined): boolean {
 /**
  * True only when BOTH Google OAuth credentials are set. Half a credential pair cannot
  * complete a sign-in, so it counts as unconfigured rather than as "nearly working".
+ *
+ * `env` defaults to the real environment; it is a parameter purely so a test can hand in
+ * an exact pair without mutating the process.
  */
-export function googleSignInConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
+export function googleSignInConfigured(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
   return configured(env.GOOGLE_CLIENT_ID) && configured(env.GOOGLE_CLIENT_SECRET);
 }
