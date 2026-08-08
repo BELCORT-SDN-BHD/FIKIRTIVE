@@ -56,22 +56,19 @@ jobs:
       # Deciding inside the job means `quality` still reports on every PR, it just finishes
       # in seconds. Fail-safe: anything unexpected (API error, empty list) runs the full gate.
       #
-      # The decision itself lives in scripts/ci/pr-scope.sh so it can be tested — it is
-      # covered by scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step only
-      # fetches the evidence and forwards the answer.
+      # The decision lives in scripts/ci/pr-scope.jq and is covered by
+      # scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step does no
+      # interpretation at all: it saves both API responses verbatim and forwards the answer.
       #
-      # Two things it must fetch, not one: the file list, and the PR's own `changed_files`
-      # count. The files endpoint stops at 3,000 files without saying so, so the count is
-      # what proves the list is whole — pr-scope.sh refuses to answer "false" unless the two
-      # agree and stay under that ceiling.
+      # Saving them verbatim is the point. Four review rounds of #809 each found another
+      # input that survived a text projection and came out the other side as a WRONG
+      # "docs-only" — a green `quality` over unreviewed code. So no `--jq` shaping here;
+      # jq parses GitHub's own JSON, where a newline in a path is just a character, a
+      # rename's old name is a field, and an illegal escape is a parse error.
       #
-      # The projection is `tojson` per path, two per line, TAB-separated, and both halves
-      # matter. `tojson` because a path may legally contain a newline: printed raw, a root
-      # file named "\ndocs/x.md" becomes a blank line plus "docs/x.md" — one apparent path,
-      # under docs/, agreeing with changed_files=1. `previous_filename` because a rename
-      # reports only its new name, so moving apps/web/live.ts to docs/moved-live.ts looked
-      # docs-only while deleting a code path. Both were "docs-only" verdicts on PRs that
-      # changed code (#809). Keep the two fields; pr-scope.sh rejects any other shape.
+      # Two responses, not one: the file list, and the PR object. The files endpoint stops
+      # at 3,000 entries without saying so, so the PR's own `changed_files` is what proves
+      # the list is whole.
       #
       # `set -e` matters here and is not redundant with the `|| code=true` fallbacks. The
       # fallbacks absorb the failures we predicted — the two `gh` calls and pr-scope.sh
@@ -86,19 +83,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          changed="${RUNNER_TEMP:-/tmp}/pr-changed-files.txt"
+          files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
+          pr_json="${RUNNER_TEMP:-/tmp}/pr-object.json"
           pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
-          gh api --paginate "$pr/files" \
-            --jq '.[] | (.filename|tojson) + "\t" + ((.previous_filename // "")|tojson)' \
-            >"$changed" 2>/dev/null || : >"$changed"
-          total="$(gh api "$pr" --jq '.changed_files' 2>/dev/null)" || total=""
-          if [ ! -s "$changed" ]; then
-            echo "could not list the PR's files — running every gate"
+          gh api --paginate "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
+          gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
+          if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
+            echo "could not read the PR from the API — running every gate"
           else
-            echo "changed files as name/previous-name pairs (the PR reports ${total:-<unknown>} in total):"
-            cat "$changed"
+            echo "changed paths (name, then previous name for renames):"
+            jq -r '.[] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
+              "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
           fi
-          code="$(bash scripts/ci/pr-scope.sh "$changed" "$total")" || code=true
+          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=true
           [ "$code" = "false" ] || code=true
           echo "code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" = "false" ]; then
