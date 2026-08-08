@@ -33,6 +33,10 @@ vi.mock("../model-registry", () => ({ resolveDisabledModels: vi.fn(async () => (
 
 const { confirmCampaignGeneration, quoteCampaignGeneration } = await import("../campaign-generation-confirm");
 const { prisma, settleCredits, refundReservation } = await import("@fikirtive/db");
+// 「另一个标签页占住了这一格」要在库里落一行真的历史,而它的键必须与派发那一侧**同一个**
+// 推导 —— 手抄一份公式就等于测了一个不存在的键。
+const { stableCellLogicalPrefix } = await import("../factory-batch");
+const { deriveCampaignBatchId } = await import("../campaign-gen-identity");
 
 const IMG = 1; // one image cell = 1 displayed credit
 const VID_720_5S = 11; // #644 裁决 2026-08-06
@@ -151,11 +155,32 @@ async function jobCount(ownerId: string) {
   return prisma.genJob.count({ where: { ownerId } });
 }
 
+/**
+ * 「派发窗口」的钩子(#749 判官 r2 P1)—— 判官指出的那条缝,原样重现。
+ *
+ * 确认动作先读一次历史算出报价与交付面(**锁外快照**),再把这一批交给 `orchestrateBatch`;
+ * 后者在派发第一格之前先解析批次分组行。挂在那一步的一次性动作,落点正是「商家签名依据的
+ * 那次报价已经读完」与「这一批还一格都没花钱」之间。世界在这里变(worker 退款置失败 /
+ * 另一次派发占住某个条目),用的是真实动作,不是把替身放宽。
+ */
+function whileDispatchWindowOpen(hook: () => Promise<void>) {
+  const delegate = prisma.generationBatch as unknown as Record<string, unknown>;
+  const real = (delegate.findFirst as (args: unknown) => Promise<unknown>).bind(delegate);
+  const once = async (args: unknown) => {
+    delegate.findFirst = real; // 一次性:这一批之后照旧走真的那条路
+    await hook();
+    return real(args);
+  };
+  delegate.findFirst = once;
+  return () => { if (delegate.findFirst === once) delegate.findFirst = real; };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
 afterEach(() => {
   mockRequireOwner.mockReset();
+  vi.restoreAllMocks();
 });
 
 describe("#708 战役确认卡:卡上写的数 == 账本真扣的数", () => {
@@ -362,5 +387,131 @@ describe("#709 选了 480p 的战役:卡上写半价档,账本扣的就是那个
     const res = await confirmCampaignGeneration(signed(world, quoted));
     if (!("ok" in res)) throw new Error(res.error);
     expect(await reservedThisRun(world.ownerId, start)).toBe(VID_720_5S * INTERNAL_PER_DISPLAY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #749 判官 r2 P1 —— 锁内复判:签名对得上,不等于花钱那一刻还对得上
+// ---------------------------------------------------------------------------
+/**
+ * 判官 r2 指出的那条缝:确认动作先读一次历史算出报价与交付面(那是**锁外快照**),
+ * 几十毫秒之后才一格一格真扣钱。缝里世界会动,而旧的三道闸都只看快照 ——
+ *   ① 一单「复用中」的任务恰好失败 → 引擎在锁里改判「新做」并预扣全价,**哪怕商家签的是 0**;
+ *   ② 另一个标签页用别的材料占住某一格 → 那一格被挡下,批次照旧继续,已派发的格照收钱。
+ * 两条都能让签名逐字对上,实际却超出批准金额或交付缩水。
+ *
+ * 这两条用**真账本**说话:断言的是 RESERVE 增量与余额/预扣/GenJob 行数,不是任何返回值。
+ */
+describe("#749 判官 r2 P1 锁内复判:签名之后变了的,一律停在花钱之前", () => {
+  it("签的是「复用、收 0」,而那一单在扣费之前失败了:一格不派发,账本 RESERVE 增量 0", async () => {
+    const world = await seedWorld(200, [
+      { id: "V1", format: "reel", brief: "A vertical clip of the Raya collection" },
+    ]);
+
+    // ① 第一趟真做了一单,它还在跑。
+    const firstQuote = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const first = await confirmCampaignGeneration(signed(world, firstQuote));
+    if (!("ok" in first)) throw new Error(first.error);
+    const liveJobId = first.result.cells[0].jobId!;
+
+    // ② 商家回到确认页:这一条只会被复用,卡上写 0 —— 他签的就是 0。
+    const reviewed = await quoteFor(world.campaignId, { projectId: world.projectId });
+    expect(reviewed.quote.lines.map((line) => line.charge)).toEqual(["reused"]);
+    expect(reviewed.quote.totalDisplayCredits).toBe(0);
+
+    // ③ 他按下确认之后、这一格真扣钱之前,那一单失败了(worker 走它自己的退款路)。
+    whileDispatchWindowOpen(async () => { await workerRefund(world.ownerId, liveJobId); });
+
+    const jobsBefore = await jobCount(world.ownerId);
+    const start = new Date();
+
+    const res = await confirmCampaignGeneration(signed(world, reviewed));
+
+    // 先看账本 —— 修前这里会红出「商家签的是 0,账本却少了 11」。
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
+    const after = await account(world.ownerId);
+    // 第一笔预扣已被 worker 退回,余额回到原点、预扣归零 —— 这一趟一分钱都没再动。
+    expect(after.balance).toBe(200 * INTERNAL_PER_DISPLAY);
+    expect(after.reserved).toBe(0);
+    expect(await jobCount(world.ownerId)).toBe(jobsBefore);
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 0, reused: 0, failed: 1, totalCredits: 0 });
+    // 结果如实告诉商家哪一格没做成、为什么 —— 不是一句机器码。
+    expect(res.result.cells[0].error).toMatch(/wasn't started and wasn't charged/i);
+  });
+
+  it("签名之后另一格被别人占住:已派发之前就停,两格都不收钱,账本一行不动", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+      { id: "P2", format: "post", brief: "A second still for the same feed" },
+    ]);
+
+    // 商家复核:两条都会交付、都是新的,合计 2。
+    const reviewed = await quoteFor(world.campaignId, { projectId: world.projectId });
+    expect(reviewed.quote.lines.map((line) => line.charge)).toEqual(["new", "new"]);
+    expect(reviewed.quote.blockedCount).toBe(0);
+
+    // 他按下确认之后、**第一格**真扣钱之前,别人用完全不同的材料占住了第二格。
+    const otherKey = `${stableCellLogicalPrefix(
+      deriveCampaignBatchId(world.campaignId, world.projectId),
+      "P2",
+    )}${"0".repeat(32)}`;
+    whileDispatchWindowOpen(async () => {
+      await prisma.genJob.create({
+        data: {
+          id: `gen_${randomUUID()}`,
+          ownerId: world.ownerId,
+          projectId: world.projectId,
+          prompt: "an entirely different picture nobody reviewed",
+          model: "seedream",
+          kind: "IMAGE",
+          count: 1,
+          status: "QUEUED",
+          idempotencyKey: otherKey,
+        },
+      });
+    });
+
+    const start = new Date();
+    const res = await confirmCampaignGeneration(signed(world, reviewed));
+
+    // 修前:第一格照旧派发并预扣 1,第二格被挡下 —— 交付缩水,钱照收。
+    expect(await reservedThisRun(world.ownerId, start)).toBe(0);
+    const after = await account(world.ownerId);
+    expect(after.balance).toBe(200 * INTERNAL_PER_DISPLAY);
+    expect(after.reserved).toBe(0);
+    // 库里只剩别人那一单 —— 这一批一格都没建。
+    expect(await jobCount(world.ownerId)).toBe(1);
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 0, failed: 2, totalCredits: 0 });
+    expect(res.result.cells[0].error).toMatch(/wasn't started and wasn't charged/i);
+  });
+
+  it("世界没变时照旧放行:合法复用仍然是复用,新做仍然新做、扣的还是卡上那个数", async () => {
+    const world = await seedWorld(200, [
+      { id: "P1", format: "post", brief: "A festive product still for the feed" },
+      { id: "V1", format: "reel", brief: "A vertical clip of the Raya collection" },
+    ]);
+
+    const reviewed = await quoteFor(world.campaignId, { projectId: world.projectId });
+    const start = new Date();
+    const res = await confirmCampaignGeneration(signed(world, reviewed));
+    if (!("ok" in res)) throw new Error(res.error);
+
+    expect(res.result).toMatchObject({ dispatched: 2, reused: 0, failed: 0 });
+    expect(await reservedThisRun(world.ownerId, start))
+      .toBe(reviewed.quote.totalDisplayCredits * INTERNAL_PER_DISPLAY);
+
+    // 再确认一次:两格都只会被复用,锁内复判同样放行,账本再无增量。
+    const again = await quoteFor(world.campaignId, { projectId: world.projectId });
+    expect(again.quote.lines.map((line) => line.charge)).toEqual(["reused", "reused"]);
+    const second = new Date();
+    const replay = await confirmCampaignGeneration(signed(world, again));
+    if (!("ok" in replay)) throw new Error(replay.error);
+    expect(replay.result).toMatchObject({ dispatched: 0, reused: 2, failed: 0, totalCredits: 0 });
+    expect(await reservedThisRun(world.ownerId, second)).toBe(0);
+    expect(await jobCount(world.ownerId)).toBe(2);
   });
 });

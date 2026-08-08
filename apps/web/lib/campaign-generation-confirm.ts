@@ -379,6 +379,18 @@ const quoteOptionsSchema = z
 
 const VIDEO_SPEC_OUT_OF_BOUNDS = "That video format isn't available — pick one from the list.";
 
+/**
+ * 锁内对签不符时,对**这一格**说的话(#749 判官 r2 P1)。
+ *
+ * 两句都发生在 create/reserve 之前,所以「wasn't charged」是逐字属实的,不是安慰话。
+ * 措辞落在「这一件」而不是「这一批」:同一批里更早派发出去的格已经真开始、真扣了钱,
+ * 把它们一起说成没扣钱就是撒谎。
+ */
+const LINE_DELIVERY_CHANGED_MID_DISPATCH =
+  "What this item would deliver changed while it was starting, so it wasn't started and wasn't charged. Review the updated plan and confirm again.";
+const LINE_PRICE_CHANGED_MID_DISPATCH =
+  "This item's price changed while it was starting, so it wasn't started and wasn't charged. Review the updated plan and confirm again.";
+
 export type CampaignGenQuoteResult =
   | {
       ok: true;
@@ -615,7 +627,16 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   //
   // 注:重算指纹时收费预判传 `null` —— **内容指纹不含历史状态**(它只哈希 id/brief/model/
   // 单价/承诺规格),所以传不传预判都是同一个值。这里传 null 是为了不在锁内多读一次历史。
-  const guardedStartGen: StartGenPort = (req) =>
+  //
+  // #749 判官 r2 P1 —— 上面那三道闸(总额上限、交付面、内容指纹)读的全是**锁外快照**:
+  // `previewCampaignCharges` 在这一行之前读完历史,而钱要到下面 `orchestrateBatch` 一格一格
+  // 派发时才真扣。中间那段时间里
+  //   ① 一单「复用中」的任务恰好失败 → 引擎会改判成新做并预扣全价,**哪怕商家签的是 0**;
+  //   ② 另一个标签页用别的规格占住某个条目 → 那一格被挡下,批次照旧继续,已派发的格照收钱。
+  // 两条都能让签名对得上、实际却超出批准金额或交付缩水。修法不是再造一把锁:#744 已经把
+  // 「批准」这件事搬进了扣费事务里的 campaign 锁,这里让「报价」与「交付面」骑上同一把 ——
+  // 交付面在锁内重判,每一格的收费判决与费用上限拿 startGen 项目锁里的真判决对签。
+  const guardedStartGen: StartGenPort = (req, cellIndex) =>
     startGen(
       attachCampaignApprovalGate(req, {
         ownerId,
@@ -625,6 +646,34 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
           const liveCells = buildCampaignGenCells(live, models, videoSpec);
           return quoteCampaignGenCells(live, liveCells, null).contentFingerprint
             === quote.contentFingerprint;
+        },
+        // ② 交付面 —— 整批在锁内重判一次,判据仍是 `previewBatchCharges`(报价那一侧同一个)。
+        //    自己已经派发出去的格不会动它:派发只会让那一格从 new 变成 reused,两者都算
+        //    「会交付」;只有材料对不上(别人占了)才会掉出交付面,而那只可能来自另一次派发。
+        stillDelivering: async (tx) => {
+          const live = await previewBatchCharges(tx, {
+            ownerId,
+            projectId,
+            batchId,
+            attemptId,
+            cells,
+          });
+          if ("error" in live) return false;
+          return quoteCampaignGenCells(approved, cells, live).deliveryFingerprint
+            === quote.deliveryFingerprint;
+        },
+        // ①③ 这一格的收费判决 + 费用上限,对着商家签名时的那一行。
+        stillPriced: (verdict) => {
+          const signed = cellIndex == null ? undefined : quote.lines[cellIndex];
+          // 签不出这一行(下标对不上、或商家签的就是「这一格不会开始」)—— 一律不许派发。
+          if (!signed || signed.charge === "blocked") return LINE_DELIVERY_CHANGED_MID_DISPATCH;
+          if (verdict.disposition !== (signed.charge === "new" ? "fresh" : "reused")) {
+            return LINE_DELIVERY_CHANGED_MID_DISPATCH;
+          }
+          // 金额上限:锁内真会预扣的数,不许高过他签名时这一格的数。少收照旧放行 ——
+          // 那正是复用该有的样子,且从不违反授权。
+          if (verdict.displayCredits > signed.displayCredits) return LINE_PRICE_CHANGED_MID_DISPATCH;
+          return null;
         },
       }),
     );

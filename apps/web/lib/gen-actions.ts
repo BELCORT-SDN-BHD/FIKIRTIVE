@@ -43,6 +43,7 @@ import { outOfCreditsMessage } from "./credit-format";
 // 放锁、内层稍后才提交,撤销就能插进中间,落成「已撤销且已扣费」)。
 import {
   applyCampaignApprovalGate,
+  applyCampaignDispatchVerdict,
   campaignApprovalGateFor,
   campaignApprovalGateRefusal,
 } from "./campaign-approval-lock";
@@ -623,7 +624,19 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
             select: FACTORY_HISTORY_SELECT,
           });
           const locked = factoryHistoryVerdict(history, factoryAttempt, material);
-          if (locked) return locked;
+          if (locked) {
+            // #749 判官 r2 P1 —— 复用也要对签。商家签的若是「这一格新做」,锁内却变成复用,
+            // 那已经不是他复核过的那一份交付,停在这里(本来也没扣钱,但结果必须说实话)。
+            // `conflict` 那一支不必对签:它零派发零扣费,而交付缩水由上面那道交付面闸负责。
+            if (approvalGate && !("error" in locked)) {
+              applyCampaignDispatchVerdict(approvalGate, {
+                disposition: "reused",
+                displayCredits: 0,
+                exactReplay: history.some((prior) => prior.idempotencyKey === factoryAttempt.key),
+              });
+            }
+            return locked;
+          }
         }
 
         if (trustedCoworkRequest) {
@@ -689,6 +702,17 @@ export async function startGen(raw: unknown): Promise<StartGenResult> {
         // All locked replay/conflict verdicts have returned above. A prepare failure therefore
         // rejects only a fresh attempt, before create/reserve, while preserving concurrent reuse.
         if (!boss) throw new QueuePrepareFailed();
+
+        // #749 判官 r2 P1 —— 花钱前最后一道对签,拿的是**上面项目锁里算出的那个判决**:
+        // 这一格真是「新做」吗?真会预扣的这个数,不超过商家签名时这一格的数吗?任一不符
+        // 就抛出,这笔事务在 create/reserve 之前回滚 —— 零建任务、零预扣、零入队。
+        if (approvalGate) {
+          applyCampaignDispatchVerdict(approvalGate, {
+            disposition: "fresh",
+            displayCredits: displayedCost,
+            exactReplay: false,
+          });
+        }
 
         const created = await tx.genJob.create({
           data: {

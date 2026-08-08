@@ -124,10 +124,15 @@ const { INTERNAL_PER_DISPLAY, GEN_VIDEO_MODEL_OPTIONS, activeVideoModel, buildSp
   await import("@fikirtive/core");
 const {
   applyCampaignApprovalGate,
+  applyCampaignDispatchVerdict,
   campaignApprovalGateFor,
   campaignApprovalGateRefusal,
   CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+  CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH,
+  CAMPAIGN_DELIVERY_CHECK_UNKNOWN,
 } = await import("../campaign-approval-lock");
+const { quoteCell } = await import("../factory-batch");
+const { displayCredits } = await import("@fikirtive/core");
 
 const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
@@ -138,6 +143,13 @@ const VID_480 = 6;
 const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);
 
 let failPrompts = new Set<string>();
+/**
+ * 「引擎在锁里给这一格算出了比卡上更高的价」(#749 判官 r2 P1 的「超批准金额」那一面)。
+ *
+ * 判决没变(还是新做),变的只有钱 —— 价格配置在报价与扣费之间改过的情形。判决对签拦不住
+ * 它,只有**金额上限**拦得住,所以这一档必须单独证。
+ */
+let lockTimeSurcharge = 0;
 
 /**
  * The one thing the REAL startGen does before anything else in the transaction that commits a
@@ -158,6 +170,26 @@ async function runCarriedGate(
   if (!gate) return null;
   try {
     await applyCampaignApprovalGate(tx as never, gate);
+    return null;
+  } catch (error) {
+    const refusal = campaignApprovalGateRefusal(error);
+    if (!refusal) throw error;
+    return refusal;
+  }
+}
+
+/**
+ * 门的**后半扇**(#749 判官 r2 P1),真 startGen 在项目锁里算出判决之后、create/reserve
+ * 之前跑的那一次。替身也必须走它,否则替身会比真库宽容,这条 TOCTOU 就测不出来。
+ */
+function runCarriedVerdict(
+  req: unknown,
+  verdict: { disposition: "fresh" | "reused"; displayCredits: number; exactReplay: boolean },
+): { error: string; disposition: "conflict" | "retryable" } | null {
+  const gate = campaignApprovalGateFor(req);
+  if (!gate) return null;
+  try {
+    applyCampaignDispatchVerdict(gate, verdict);
     return null;
   } catch (error) {
     const refusal = campaignApprovalGateRefusal(error);
@@ -286,6 +318,7 @@ beforeEach(() => {
   h.store.batches.clear();
   h.store.jobs.clear();
   failPrompts = new Set();
+  lockTimeSurcharge = 0;
   vi.clearAllMocks();
   h.requireOwner.mockResolvedValue({ email: "o@example.test", ownerId: OWNER });
   h.isImpersonating.mockResolvedValue(false);
@@ -322,10 +355,44 @@ beforeEach(() => {
     if (priors.some((prior) => !factoryMaterialMatches(prior as never, material))) {
       return { error: "That batchId is already in use for different content.", disposition: "conflict" as const };
     }
+    // #749：复用与新建两条路都要过后半扇门,和真 startGen 逐点对应。
     const exact = priors.find((prior) => prior.idempotencyKey === key);
-    if (exact) return { id: exact.id as string, disposition: "reused" as const };
+    if (exact) {
+      const refusedReplay = runCarriedVerdict(req, {
+        disposition: "reused",
+        displayCredits: 0,
+        exactReplay: true,
+      });
+      if (refusedReplay) return refusedReplay;
+      return { id: exact.id as string, disposition: "reused" as const };
+    }
     const nonFailed = priors.find((prior) => prior.status !== "FAILED");
-    if (nonFailed) return { id: nonFailed.id as string, disposition: "reused" as const };
+    if (nonFailed) {
+      const refusedReuse = runCarriedVerdict(req, {
+        disposition: "reused",
+        displayCredits: 0,
+        exactReplay: false,
+      });
+      if (refusedReuse) return refusedReuse;
+      return { id: nonFailed.id as string, disposition: "reused" as const };
+    }
+    // 真 startGen 拿 `pricedGenCredits` 算出这一格真会预扣的数;替身用同一个权威
+    // (`quoteCell` 就是它)——对签的若不是真会扣的那个数,这道闸就是装饰品。
+    const refusedFresh = runCarriedVerdict(req, {
+      disposition: "fresh",
+      displayCredits: displayCredits(quoteCell({
+        type: "gen",
+        prompt: req.prompt as string,
+        kind: (req.kind as "image" | "video") ?? "image",
+        model: req.model as string,
+        count: req.count as number,
+        aspectRatio: req.aspectRatio as string | undefined,
+        resolution: req.resolution as string | undefined,
+        durationSeconds: req.durationSeconds as number | undefined,
+      })) + lockTimeSurcharge,
+      exactReplay: false,
+    });
+    if (refusedFresh) return refusedFresh;
     const id = `job-${h.store.jobs.size}`;
     h.store.jobs.set(id, {
       id,
@@ -1114,6 +1181,61 @@ describe("#708 修复轮 P1-1 少付不等于少交付", () => {
 });
 
 // ---------------------------------------------------------------------------
+// #749 判官 r2 P1 —— 锁内对签:签名对得上,不等于花钱那一刻还对得上
+// ---------------------------------------------------------------------------
+/**
+ * 全真账本那一侧的证据在 `campaign-confirm-ledger.test.ts`(真 Postgres、真 startGen、
+ * 真 ledger)。这一组补的是**金额上限**那一档:判决没变、钱变了 —— 只有上限拦得住,
+ * 而它在真账本里没法自然造出来(价格是中央配置,不许在测试里改)。
+ */
+describe("#749 判官 r2 P1 锁内对签:金额上限", () => {
+  it("锁内这一格的费用高过商家签名时那一格:不派发、不建任务", async () => {
+    seedCampaign([entry("P1")]);
+    seedProject();
+    const reviewed = await currentQuote({ projectId: PROJECT_ID });
+    expect(reviewed.lines[0].displayCredits).toBe(IMG);
+    expect(reviewed.lines[0].charge).toBe("new");
+
+    // 商家按下确认之后、这一格真扣钱之前,引擎给出的价变高了。
+    lockTimeSurcharge = 5;
+    const res = await confirmCampaignGeneration(signedRequest(reviewed));
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 0, failed: 1, totalCredits: 0 });
+    expect(res.result.cells[0].error).toMatch(/price changed while it was starting/i);
+    // 停在 create/reserve 之前 —— 一个任务都没建。
+    expect(h.store.jobs.size).toBe(0);
+  });
+
+  it("少收照旧放行:锁内更便宜不算超批准", async () => {
+    seedCampaign([entry("P1")]);
+    seedProject();
+    const reviewed = await currentQuote({ projectId: PROJECT_ID });
+
+    lockTimeSurcharge = -1;
+    const res = await confirmCampaignGeneration(signedRequest(reviewed));
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 1, failed: 0 });
+    expect(h.store.jobs.size).toBe(1);
+  });
+
+  it("对客文案说人话:没有机器码、没有供应商名,而且没有谎称整批都没扣钱", async () => {
+    seedCampaign([entry("P1")]);
+    seedProject();
+    const reviewed = await currentQuote({ projectId: PROJECT_ID });
+    lockTimeSurcharge = 5;
+    const res = await confirmCampaignGeneration(signedRequest(reviewed));
+    if (!("ok" in res)) throw new Error(res.error);
+
+    const copy = res.result.cells[0].error as string;
+    expect(copy).not.toMatch(/seedream|seedance|byteplus|kling|CAMPAIGN_|_MID_DISPATCH|undefined|null/i);
+    // 说的是「这一件」,不是「整批」—— 同一批里更早派发出去的格是真开始、真扣了钱的。
+    expect(copy).toMatch(/this item/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // #709 修复轮 P1-2 —— 指纹覆盖面 = 卡面承诺面
 // ---------------------------------------------------------------------------
 describe("#709 修复轮 P1-2 指纹覆盖面 = 卡面承诺面", () => {
@@ -1334,7 +1456,9 @@ describe("money-safety static guards", () => {
       /orchestrateBatch\(\s*\{\s*startGen:\s*guardedStartGen,\s*prisma\s*\}/,
     );
     expect(confirmCode).toMatch(
-      /const guardedStartGen: StartGenPort = \(req\) =>\s*startGen\(\s*attachCampaignApprovalGate\(req,/,
+      // #749：端口多收一个「这是第几格」的下标(锁内对签要钉到正确的那一行),包装体照旧
+      // 只做一件事 —— 把门挂到这一格的请求上,再交给真 startGen。
+      /const guardedStartGen: StartGenPort = \(req, cellIndex\) =>\s*startGen\(\s*attachCampaignApprovalGate\(req,/,
     );
     // Exactly one call of the real startGen, and the gate rides on the request it is given.
     expect(confirmCode.match(/(?<![A-Za-z])startGen\(/g)).toHaveLength(1);

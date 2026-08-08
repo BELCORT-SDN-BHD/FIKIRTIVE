@@ -102,6 +102,10 @@ export type BatchCell = GenCell | TextCell;
  *  imports the server-action module directly (keeps the spend authority single). */
 export type StartGenPort = (
   req: Record<string, unknown>,
+  /** 这一格在 `args.cells` 里的下标(#749)。真 `startGen` 不看第二个参数;需要「商家为
+   *  **这一格**签的是什么」的调用方(战役确认的锁内对签)靠它钉到正确的那一行,而不是靠
+   *  数调用次数 —— text 与 precheck 失败的格根本不进这里,数次数一定会数错行。 */
+  cellIndex?: number,
 ) => Promise<
   | { id: string; disposition: "fresh" | "reused" }
   // `retryable` = 结果不明、花钱之前就停住了(#656 P1)。这一层照旧只把错误原样呈上去。
@@ -677,7 +681,7 @@ export async function orchestrateBatch(
 
     let res: Awaited<ReturnType<StartGenPort>>;
     try {
-      res = await deps.startGen(cellGenRequest(cell, args, identity.key));
+      res = await deps.startGen(cellGenRequest(cell, args, identity.key), i);
     } catch (error) {
       // startGen already reconciles a lost transaction ACK by keyed lookup. If it still throws,
       // the current cell's commit state is genuinely unknown; do not label it uncharged.
