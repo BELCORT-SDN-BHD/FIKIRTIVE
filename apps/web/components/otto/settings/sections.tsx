@@ -178,14 +178,14 @@ export function buildSettingsSections(args: {
     {
       id: "otto",
       title: "Otto behavior",
-      subtitle: "How much Otto does on its own.",
+      subtitle: "How much Otto does without asking you.",
       fields: [
         {
           kind: "toggle",
           id: "ads",
           label: "Ask before ad spend",
           hint: canChangeAdsAutonomy
-            ? "When on, Otto checks with you before every ad change. When off (Auto), Otto may pause ads, lower budgets, and create paused draft campaigns in your ad account on its own — anything that spends or goes live still asks you first."
+            ? "When on, Otto checks with you before every ad change. When off (Auto), Otto may pause ads, lower budgets, and create paused draft campaigns in your ad account without asking you — anything that spends or goes live still asks you first."
             : "Connect Instagram or Facebook before changing ad-spend autonomy",
           value: adsAutonomy === "ASK",
           disabled: !canChangeAdsAutonomy,

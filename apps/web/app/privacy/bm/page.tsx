@@ -217,7 +217,7 @@ export default function PrivacyPageBm() {
             Setiap kali Otto membalas, penyedia menerima perbualan setakat itu dan konteks jenama anda — nota yang
             Otto ingat, dan rekod jenama anda: huraian audiens yang anda tulis, serta tawaran dan produk yang anda
             rekodkan, termasuk harga yang anda masukkan. Imej yang anda seret ke dalam perbualan dihantar bersamanya.
-            Jika Otto bekerja dengan senarai kenalan anda, butiran kenalan yang sedang dikerjakannya turut dihantar.
+            Jika Otto bekerja dengan senarai kenalan anda, butiran kenalan yang sedang dikerjakan Otto turut dihantar.
             Untuk penjanaan imej dan video, penyedia menerima prompt anda dan pautan yang membolehkannya memuat turun
             imej atau video sumber tertentu dari storan kami; pautan itu berhenti berfungsi selepas satu jam.
           </p>

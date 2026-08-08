@@ -679,7 +679,7 @@ function PlanView({
           <div className="min-w-[220px] flex-1">
             <div className="text-[14px] font-semibold text-foreground">No plan from Otto yet</div>
             <div className="text-[13px] text-muted-foreground">
-              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and it&rsquo;ll draft a schedule for you to approve.
+              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and Otto will draft a schedule for you to approve.
             </div>
           </div>
           <Button variant="secondary" size="sm" onClick={onNew}>

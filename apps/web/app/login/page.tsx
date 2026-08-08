@@ -54,8 +54,8 @@ export default async function LoginPage({
             Run real campaigns without becoming a <span className="text-brand">marketer</span>.
           </h1>
           <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
-            Tell Otto what you&apos;re launching. It researches your brand, writes the copy, designs the
-            images, films the video, and gets it ready to post. You just approve.
+            Tell Otto what you&apos;re launching. Otto researches your brand, writes the copy, designs
+            the images, films the video, and gets it ready to post. You just approve.
           </p>
           <ul className="mt-7 flex flex-col gap-[11px]">
             {[

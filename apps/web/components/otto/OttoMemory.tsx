@@ -261,7 +261,7 @@ export function OttoMemory({ initialMemory, initialRecords, projectId, stuffItem
           Brand memory
         </h1>
         <p className="text-[0.9375rem] text-muted-foreground mt-[5px] mb-[18px] leading-[1.5]">
-          What Otto remembers about your brand — he uses it in every project.
+          What Otto remembers about your brand — Otto uses it in every project.
         </p>
 
         {/* ── Chat panel (chips + input + fine print) ── */}
