@@ -133,12 +133,11 @@ export type AuditPreview = {
   id: string;
   type: string;
   /**
-   * #735 — WHO acted. Null means the event recorded no actor, which is said out loud rather
-   * than filled in with a plausible name. See {@link auditIdentity}.
+   * #735 — WHO acted, and nothing else about the payload. Null means the event recorded no
+   * actor, which is said out loud rather than filled in with a plausible name. See
+   * {@link auditActor}.
    */
   actor: string | null;
-  /** WHO (or which org) the action was aimed at, when the event names one. */
-  target: string | null;
   /**
    * WHICH TENANT'S STREAM this row belongs to — data ownership, never identity.
    *
@@ -153,8 +152,7 @@ export type AuditPreview = {
 };
 
 /**
- * #735 — pull the actor and the target out of an event payload, reading FOUR KNOWN KEYS and
- * nothing else.
+ * #735 — pull THE ACTOR out of an event payload, reading TWO KEYS and nothing else.
  *
  * The v2 audit table's "metadata only, payloads stay collapsed" rule is right; the mistake was
  * filing the ACTOR under raw payload. Who did a thing is metadata — it is the first question an
@@ -162,25 +160,27 @@ export type AuditPreview = {
  * whole payload: an event can carry a merchant's prompt, a refusal reason or a Meta token shape,
  * and none of it can reach the page through here.
  *
+ * NARROWED to the actor alone (#755 judge r1, P2-2). An earlier cut also projected a `target`
+ * from `targetEmail` / `orgId`, which answered a question the ticket did not ask and widened the
+ * disclosure: the WHO defect is fixed by naming the actor, and every extra field serialised to
+ * the client is one more thing to justify. Whoever an action was aimed at stays in the payload,
+ * where the "collapsed by default" rule already governs it.
+ *
  * DISAMBIGUATING `email`. It means the ACTOR on the events that have no separate operator
  * (`auth.signin`, `rbac.deny` — the signed-in person IS the subject) and the TARGET on the
  * operator-driven ones (`tenant.invite`, `tenant.revoke` — the address being invited). `via` is
  * only ever written from a completed `requireRole` gate, i.e. an authenticated server-side
- * session, so its presence is exactly the signal that separates the two readings.
+ * session, so its presence is exactly the signal that separates the two readings — and taking
+ * `via` first is also what keeps a target address from being read out as an actor.
  */
-function auditIdentity(payload: unknown): { actor: string | null; target: string | null } {
+function auditActor(payload: unknown): string | null {
   const bag =
     payload && typeof payload === "object" && !Array.isArray(payload)
       ? (payload as Record<string, unknown>)
       : {};
   const text = (value: unknown): string | null =>
     typeof value === "string" && value.trim().length > 0 ? value : null;
-  const via = text(bag.via);
-  const email = text(bag.email);
-  return {
-    actor: via ?? email,
-    target: text(bag.targetEmail) ?? (via ? email : null) ?? text(bag.orgId),
-  };
+  return text(bag.via) ?? text(bag.email);
 }
 
 export type MoneySeriesRow = {
@@ -804,7 +804,7 @@ export async function getAdminV2Data(): Promise<AdminV2Data> {
     const audit: AuditPreview[] = auditEvents.map((event) => ({
       id: event.id,
       type: event.type,
-      ...auditIdentity(event.payload),
+      actor: auditActor(event.payload),
       ownerId: event.ownerId,
       projectId: event.projectId,
       createdAt: event.createdAt.toISOString(),

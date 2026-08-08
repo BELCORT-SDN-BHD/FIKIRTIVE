@@ -9,15 +9,17 @@
  */
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminV2Data } from "@/lib/admin-v2";
 
-// Server actions the dashboard imports at module load; this file never drives them.
+// `saveUserRole` IS driven by this file (#755 judge r1, P1-1) — the rest are imported at module
+// load and never called here.
+const mocks = vi.hoisted(() => ({ saveUserRole: vi.fn() }));
 vi.mock("@/lib/admin-actions", () => ({
   saveModelDirective: vi.fn(),
   saveModelEnabled: vi.fn(),
   saveRuntimeConfig: vi.fn(),
-  saveUserRole: vi.fn(),
+  saveUserRole: mocks.saveUserRole,
   seedResearchDirectives: vi.fn(),
 }));
 vi.mock("@/lib/tenant-actions", () => ({ inviteTenant: vi.fn(), revokeTenantInvite: vi.fn() }));
@@ -55,41 +57,19 @@ const DATA = {
   cases: [],
   systemIncidents: [],
   audit: [
-    {
-      id: "evt_deny",
-      type: "rbac.deny",
-      actor: MERCHANT,
-      target: null,
-      ownerId: "founder",
-      projectId: null,
-      createdAt: "2026-08-07T18:04:00.000Z",
-    },
-    {
-      id: "evt_role",
-      type: "rbac.role.set",
-      actor: FOUNDER,
-      target: MERCHANT,
-      ownerId: "founder",
-      projectId: null,
-      createdAt: "2026-08-07T18:05:00.000Z",
-    },
-    {
-      id: "evt_blank",
-      type: "impersonate.stop",
-      actor: null,
-      target: null,
-      ownerId: "founder",
-      projectId: null,
-      createdAt: "2026-08-07T18:06:00.000Z",
-    },
+    { id: "evt_deny", type: "rbac.deny", actor: MERCHANT, ownerId: "founder", projectId: null, createdAt: "2026-08-07T18:04:00.000Z" },
+    { id: "evt_role", type: "rbac.role.set", actor: FOUNDER, ownerId: "founder", projectId: null, createdAt: "2026-08-07T18:05:00.000Z" },
+    { id: "evt_blank", type: "impersonate.stop", actor: null, ownerId: "founder", projectId: null, createdAt: "2026-08-07T18:06:00.000Z" },
   ],
   money: { totalUsd: 0, jobCount: 0, balance: 0, reserved: 0, days: [], jobs: [], ledger: [] },
   staff: {
     rows: [
       { id: "usr_ops", email: "ops@fikirtive.test", name: "Ops", roles: ["ops"], role: "ops" },
-      // Roles are permission bundles, so one person can hold several. The picker can show only
-      // one; the row must still say what this person actually holds.
+      // Roles are permission bundles, so one person can hold several — the editor must treat an
+      // assignment as a SET, not as one value chosen from a list.
       { id: "usr_both", email: "both@fikirtive.test", name: "Both", roles: ["ops", "finance"], role: "ops" },
+      // The acting operator, for the self-edit guard.
+      { id: "usr_self", email: FOUNDER, name: "Founder", roles: ["super-admin"], role: "super-admin" },
     ],
     roles: ["super-admin", "ops", "finance", "moderator", "viewer"],
     matrix: [],
@@ -99,6 +79,10 @@ const DATA = {
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
 
+beforeEach(() => {
+  mocks.saveUserRole.mockResolvedValue({ ok: true });
+});
+
 afterEach(async () => {
   if (root) await act(async () => root?.unmount());
   container?.remove();
@@ -106,6 +90,32 @@ afterEach(async () => {
   container = null;
   vi.clearAllMocks();
 });
+
+async function click(el: Element) {
+  await act(async () => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+  });
+}
+
+/** The role toggle for `role` inside a staff row, found by its accessible name. */
+function roleToggle(row: HTMLElement, role: string): HTMLButtonElement {
+  const button = row.querySelector<HTMLButtonElement>(`button[data-role="${role}"]`);
+  expect(button, `no toggle for role "${role}"`).toBeTruthy();
+  return button!;
+}
+
+/** The staff row for `email`. */
+function staffRow(dom: HTMLElement, email: string): HTMLElement {
+  const row = [...dom.querySelectorAll("div")].find((d) => d.dataset.staffRow === email);
+  expect(row, `no staff row for ${email}`).toBeTruthy();
+  return row as HTMLElement;
+}
+
+function saveButton(row: HTMLElement): HTMLButtonElement {
+  const button = row.querySelector<HTMLButtonElement>('button[data-staff-save="true"]');
+  expect(button, "the staff row must expose a Save control").toBeTruthy();
+  return button!;
+}
 
 async function render(section: "overview" | "staff" | "audit" | "money"): Promise<HTMLDivElement> {
   container = document.createElement("div");
@@ -144,34 +154,107 @@ function roleCardValue(dom: HTMLElement, role: string): string | undefined {
 }
 
 describe("#734 — the staff page shows employees, not customers", () => {
-  it("shows every role a person holds, not just the one the picker can display", async () => {
+  it("shows every role a person holds as its own pressed toggle", async () => {
     const dom = await render("staff");
-    const staff = panel(dom, "Staff");
-    const row = [...staff.querySelectorAll("div")].find((d) =>
-      d.querySelector("span")?.textContent === "both@fikirtive.test",
-    );
-    expect(row, "the multi-role staff member must be on the roster").toBeTruthy();
-    const badges = [...row!.querySelectorAll("span")].map((s) => s.textContent);
-    expect(badges).toContain("ops");
-    expect(badges).toContain("finance");
+    const row = staffRow(dom, "both@fikirtive.test");
+    expect(roleToggle(row, "ops").getAttribute("aria-pressed")).toBe("true");
+    expect(roleToggle(row, "finance").getAttribute("aria-pressed")).toBe("true");
+    expect(roleToggle(row, "moderator").getAttribute("aria-pressed")).toBe("false");
     // …and nobody the gate refuses is described as staff.
     expect(dom.textContent).not.toContain(MERCHANT);
+  });
+
+  // ── #755 judge r1, P1-1 — the security one ────────────────────────────────────────────────
+  //
+  // `saveUserRole` REPLACES the whole assignment set: it deletes what is no longer in the set
+  // and writes what is new. That is correct only if the caller sends the COMPLETE set. The old
+  // row submitted one value from a single-choice picker, so editing a person who held ops AND
+  // finance silently revoked the one you did not pick — no warning, no trace on screen. Project
+  // law is explicit that a person may hold several roles and that a role is a permission bundle.
+  //
+  // These tests DRIVE SAVE. The previous round asserted badges only, which is exactly why it
+  // stayed green through the defect.
+  describe("editing one role never silently drops another", () => {
+    it("submits the complete set when a role is added", async () => {
+      const dom = await render("staff");
+      const row = staffRow(dom, "both@fikirtive.test");
+      await click(roleToggle(row, "moderator"));
+      await click(saveButton(row));
+
+      expect(mocks.saveUserRole).toHaveBeenCalledTimes(1);
+      const payload = mocks.saveUserRole.mock.calls[0][0] as { userId: string; roles: string[] };
+      expect(payload.userId).toBe("usr_both");
+      expect([...payload.roles].sort()).toEqual(["finance", "moderator", "ops"]);
+    });
+
+    it("submits the complete set when a role is removed — the untouched one survives", async () => {
+      const dom = await render("staff");
+      const row = staffRow(dom, "both@fikirtive.test");
+      await click(roleToggle(row, "ops"));
+      await click(saveButton(row));
+
+      const payload = mocks.saveUserRole.mock.calls[0][0] as { roles: string[] };
+      expect(payload.roles).toEqual(["finance"]);
+      // The whole point: finance was never touched, and it is still in the submitted set.
+      expect(payload.roles).toContain("finance");
+    });
+
+    it("never submits a bare single-value role field", async () => {
+      const dom = await render("staff");
+      const row = staffRow(dom, "both@fikirtive.test");
+      await click(roleToggle(row, "moderator"));
+      await click(saveButton(row));
+
+      const payload = mocks.saveUserRole.mock.calls[0][0] as Record<string, unknown>;
+      expect(Object.keys(payload).sort()).toEqual(["roles", "userId"]);
+    });
+
+    it("refuses to submit an empty set instead of quietly stripping every role", async () => {
+      const dom = await render("staff");
+      const row = staffRow(dom, "ops@fikirtive.test");
+      await click(roleToggle(row, "ops"));
+      const save = saveButton(row);
+      expect(save.disabled, "Save must be unavailable with nothing selected").toBe(true);
+      await click(save);
+      expect(mocks.saveUserRole).not.toHaveBeenCalled();
+      expect(row.textContent).toContain("Select at least one role");
+    });
+
+    it("still refuses self-edits", async () => {
+      const dom = await render("staff");
+      const row = staffRow(dom, FOUNDER);
+      expect(roleToggle(row, "ops").disabled).toBe(true);
+      expect(saveButton(row).disabled).toBe(true);
+    });
   });
 
   it("counts each role card by the assignments the gate reads", async () => {
     const dom = await render("staff");
     // Two people hold ops, one holds finance, nobody holds viewer. The schema default must not
     // manufacture a viewer — that phantom count was the visible face of #734.
-    expect(roleCardValue(dom, "ops")).toBe("2");
-    expect(roleCardValue(dom, "finance")).toBe("1");
-    expect(roleCardValue(dom, "viewer")).toBe("0");
+    expect(roleCardValue(dom, "Operations")).toBe("2");
+    expect(roleCardValue(dom, "Finance")).toBe("1");
+    expect(roleCardValue(dom, "Viewer")).toBe("0");
   });
 
-  it("says out loud that the roster and the gate are the same list", async () => {
+  // #755 judge r1, P2-3 — role codes are internal vocabulary, not something to print at a founder.
+  it("names roles in plain words rather than internal codes", async () => {
     const dom = await render("staff");
     const staff = panel(dom, "Staff");
-    const subtitle = staff.querySelector("p")?.textContent ?? "";
-    expect(subtitle.toLowerCase()).toContain("role assignment");
+    expect(staff.textContent).toContain("Super admin");
+    expect(staff.textContent).toContain("Operations");
+    expect(staff.textContent).not.toContain("super-admin");
+  });
+
+  // #755 judge r1, P1-3 — the roster page must not claim these assignments open the admin door.
+  // `app/admin/layout.tsx` refuses every non-founder address before any role is consulted, so an
+  // ops holder cannot get in at all. Saying otherwise is the same "说的≠做的" defect as #734.
+  it("does not claim role assignments alone open the admin area", async () => {
+    const dom = await render("staff");
+    const subtitle = panel(dom, "Staff").querySelector("p")?.textContent ?? "";
+    expect(subtitle.toLowerCase()).toContain("founder");
+    // It must still say what the assignments DO control.
+    expect(subtitle.toLowerCase()).toContain("capabilit");
   });
 });
 
@@ -199,6 +282,17 @@ describe("#735 — the audit stream shows who, not the owner column", () => {
     const identityCells = [...stream.querySelectorAll("[data-audit-actor]")].map((n) => n.textContent?.trim());
     expect(identityCells).toEqual([MERCHANT, FOUNDER, "Unattributed"]);
   });
+
+  // #755 judge r1, P2-3 — an event class is a plain statement of what happened, not a dotted code.
+  it("names the event in plain words rather than its internal type code", async () => {
+    const dom = await render("audit");
+    const stream = panel(dom, "Audit stream");
+    expect(stream.textContent).toContain("Access refused");
+    expect(stream.textContent).toContain("Role assignment changed");
+    expect(stream.textContent).toContain("Impersonation ended");
+    expect(stream.textContent).not.toContain("rbac.deny");
+    expect(stream.textContent).not.toContain("rbac.role.set");
+  });
 });
 
 describe("#736 — the ledger projection stops pretending to be a queue", () => {
@@ -216,5 +310,22 @@ describe("#736 — the ledger projection stops pretending to be a queue", () => 
     expect(dom.textContent).not.toContain("Pending approvals");
     expect(dom.textContent).not.toContain("Money risk queue");
     expect(dom.textContent).not.toContain("Grant reviews");
+  });
+
+  // #755 judge r1, P1-2 — fixing the card was not enough. The page header still called itself
+  // "approval control" and the grant form still told the operator that anything larger "requires
+  // founder approval", which reads as "submit it and someone will approve it". `credit-actions.ts`
+  // simply REFUSES it; there is no queue and nothing to wait for.
+  it("nowhere on the money page implies an approval process exists", async () => {
+    const dom = await render("money");
+    const text = (dom.textContent ?? "").toLowerCase();
+    expect(text).not.toContain("approval");
+    expect(text).not.toContain("approve");
+    expect(text).not.toContain("review candidate");
+  });
+
+  it("says plainly what happens above the limit: refusal, not a queue", async () => {
+    const dom = await render("money");
+    expect(dom.textContent?.toLowerCase()).toContain("refused");
   });
 });

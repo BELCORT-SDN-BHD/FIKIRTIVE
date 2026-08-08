@@ -83,6 +83,54 @@ const FOUNDER_OWNER_ID = "founder";
 const displayCredits = (internal: number) => internal / 10;
 const CONFIDENCE_LEVELS = ["high", "medium", "low", "untested"] as const;
 
+// ── #755 judge r1, P2-3: plain words instead of internal codes ────────────────────────────────
+//
+// `rbac.deny` and `super-admin` are this codebase's own vocabulary. Printing them at a founder
+// asks the reader to translate before they can judge, and on the audit page — the one surface
+// whose whole job is to be readable after the fact — that is the difference between a log and a
+// record. The underlying values are unchanged; only what is rendered changes, and both maps are
+// exhaustive over their closed vocabularies.
+
+const ROLE_LABELS: Record<string, string> = {
+  "super-admin": "Super admin",
+  ops: "Operations",
+  finance: "Finance",
+  moderator: "Moderator",
+  viewer: "Viewer",
+};
+
+/** Sentence-case a dotted/hyphenated code so an unmapped value is still readable, never raw. */
+function humanizeCode(code: string): string {
+  const words = code.replace(/[.\-_]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+const roleLabel = (role: string) => ROLE_LABELS[role] ?? humanizeCode(role);
+
+/** What an audit event says happened. Written as a statement, not as the emitter's type string. */
+const EVENT_LABELS: Record<string, string> = {
+  "auth.signin": "Signed in",
+  "rbac.deny": "Access refused",
+  "rbac.role.set": "Role assignment changed",
+  "credits.grant": "Credits granted",
+  "tenant.credits.grant": "Credits granted to a tenant",
+  "credits.purchase": "Credits purchased",
+  "credits.purchase.bad": "Credit purchase could not be matched",
+  "impersonate.start": "Impersonation started",
+  "impersonate.stop": "Impersonation ended",
+  "tenant.status": "Tenant status changed",
+  "tenant.cut": "Tenant sessions ended",
+  "tenant.invite": "Tenant invited",
+  "tenant.revoke": "Tenant invite revoked",
+  "config.edit": "Runtime setting changed",
+  "model.toggle": "Model availability changed",
+  "directive.edit": "Prompt guidance edited",
+  "directive.seed": "Prompt guidance seeded",
+  "gen.guardian-block": "Generation blocked by review",
+};
+
+const eventLabel = (type: string) => EVENT_LABELS[type] ?? humanizeCode(type);
+
 const SECTION_META: Record<AdminV2Section, { title: string; eyebrow: string; description: string }> = {
   overview: {
     title: "Overview",
@@ -91,8 +139,10 @@ const SECTION_META: Record<AdminV2Section, { title: string; eyebrow: string; des
   },
   money: {
     title: "Money",
-    eyebrow: "Ledger and approval control",
-    description: "Read-only spend records, founder credit balance, and grant-limit review candidates.",
+    // #755 judge r1, P1-2 — "approval control" and "review candidates" both described a process
+    // that does not exist. Over-limit credit actions are refused on the spot; nothing queues.
+    eyebrow: "Ledger and spend records",
+    description: "Read-only spend records, founder credit balance, and large grants already on the ledger.",
   },
   tenants: {
     title: "Tenants",
@@ -388,12 +438,6 @@ function SystemPanel({ rows }: { rows: SystemIncident[] }) {
 /** #735 — the honest label for an event that recorded no actor. Never a plausible substitute. */
 const NO_ACTOR = "Unattributed";
 
-/** Who the row is about, in one line: the actor, and the target when the event names one. */
-function auditWho(row: AuditPreview): string {
-  const actor = row.actor ?? NO_ACTOR;
-  return row.target ? `${actor} → ${row.target}` : actor;
-}
-
 function AuditPanel({ rows }: { rows: AuditPreview[] }) {
   return (
     <Panel title="Recent admin activity" subtitle="Who did what. Payloads remain collapsed.">
@@ -402,10 +446,10 @@ function AuditPanel({ rows }: { rows: AuditPreview[] }) {
         {rows.map((row) => (
           <div key={row.id} className="grid gap-1 rounded-xl border border-border bg-background p-3">
             <div className="flex items-center justify-between gap-3">
-              <span className="truncate text-sm font-medium text-foreground">{row.type}</span>
+              <span className="truncate text-sm font-medium text-foreground">{eventLabel(row.type)}</span>
               <span className="font-mono text-[11px] text-muted-foreground">{fmtDate(row.createdAt)}</span>
             </div>
-            <p className="truncate text-xs text-muted-foreground">{auditWho(row)}</p>
+            <p className="truncate text-xs text-muted-foreground">{row.actor ?? NO_ACTOR}</p>
           </div>
         ))}
       </div>
@@ -430,7 +474,7 @@ function CreditActionPanel() {
       return;
     }
     if (Math.abs(displayedAmount) > 1000) {
-      setMessage({ ok: false, text: "Credit actions over 1,000 displayed credits require founder approval." });
+      setMessage({ ok: false, text: "Credit actions are capped at 1,000 displayed credits each." });
       return;
     }
     setSaving(true);
@@ -471,7 +515,7 @@ function CreditActionPanel() {
       </form>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Badge variant={overLimit ? "warning" : "outline"}>{overLimit ? "Over finance limit" : "Within finance limit"}</Badge>
-        <span>Finance direct actions cap at 1,000 displayed credits; founder approval is required over that.</span>
+        <span>Each credit action is capped at 1,000 displayed credits. Anything larger is refused outright — there is no queue to submit it to.</span>
         {message ? <span className={message.ok ? "text-success" : "text-destructive"}>{message.text}</span> : null}
       </div>
     </Panel>
@@ -776,18 +820,23 @@ function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: strin
     <div className="grid gap-5">
       <div className="grid gap-3 md:grid-cols-5">
         {data.staff.roles.map((role) => (
-          <MetricCard key={role} label={role} value={String(data.staff.rows.filter((row) => row.roles.includes(role)).length)} detail="Staff holding this role assignment." tone={role === "super-admin" ? "info" : "neutral"} />
+          <MetricCard key={role} label={roleLabel(role)} value={String(data.staff.rows.filter((row) => row.roles.includes(role)).length)} detail="Staff holding this role assignment." tone={role === "super-admin" ? "info" : "neutral"} />
         ))}
       </div>
       <Panel
         title="Staff"
-        subtitle="Platform staff only. Role assignments here are the same ones that gate admin access — merchants hold none and are not listed."
+        // #755 judge r1, P1-3 — say what these assignments actually decide, and no more. They
+        // gate individual admin capabilities (`requireRole`), but `app/admin/layout.tsx` turns
+        // away every non-founder address BEFORE any role is consulted, so an ops holder cannot
+        // reach this area at all today. Claiming otherwise would repeat #734's exact mistake:
+        // a page describing access the system does not grant.
+        subtitle="Platform staff only — merchants hold no assignment and are not listed. These assignments gate individual admin capabilities; entry to the admin area itself is separately restricted to founder addresses."
         action={
           <Select value={roleView} onValueChange={setRoleView}>
-            <SelectTrigger size="sm" className="w-[150px] bg-card"><span>{roleView === "all" ? "All roles" : roleView}</span></SelectTrigger>
+            <SelectTrigger size="sm" className="w-[150px] bg-card"><span>{roleView === "all" ? "All roles" : roleLabel(roleView)}</span></SelectTrigger>
             <SelectContent align="end">
               <SelectItem value="all">All roles</SelectItem>
-              {data.staff.roles.map((role) => <SelectItem key={role} value={role}>{role}</SelectItem>)}
+              {data.staff.roles.map((role) => <SelectItem key={role} value={role}>{roleLabel(role)}</SelectItem>)}
             </SelectContent>
           </Select>
         }
@@ -796,13 +845,12 @@ function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: strin
           {rows.map((row) => <StaffRoleRow key={row.id} row={row} roles={data.staff.roles} selfEmail={selfEmail} />)}
         </div>
       </Panel>
-      <Panel title="Section matrix" subtitle="Read and mutate permissions are derived from SECTION_MATRIX. super-admin supersedes every cell.">
+      <Panel title="Section matrix" subtitle="Which roles may read and which may change each area. Super admin covers every cell.">
         <div className="grid gap-2">
           {data.staff.matrix.map((row) => (
             <div key={row.section} className="grid gap-2 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_1fr_1fr] md:items-center">
               <div>
                 <span className="text-sm font-medium text-foreground">{row.label}</span>
-                <p className="mt-1 font-mono text-xs text-muted-foreground">{row.section}</p>
               </div>
               <RolePills label="Read" roles={row.read} />
               <RolePills label="Mutate" roles={row.mutate} />
@@ -814,22 +862,42 @@ function StaffSection({ data, selfEmail }: { data: AdminV2Data; selfEmail: strin
   );
 }
 
+const sameRoleSet = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+/**
+ * #755 judge r1, P1-1 — a role assignment is a SET, and the editor now edits it as one.
+ *
+ * This row used to hold a single-choice picker while the server action replaced the person's
+ * WHOLE assignment with whatever it was handed. Editing someone who held ops AND finance
+ * therefore revoked the role you did not pick — silently, with no warning and nothing on screen
+ * to show it had happened. Project law is explicit that one person may hold several roles and
+ * that a role is a permission bundle, so the picker was the wrong shape for the data.
+ *
+ * Every role is a toggle, and Save submits the COMPLETE set. Deselecting everything is not a
+ * quiet way to strip someone: Save stays disabled and says why, because removing a person from
+ * staff is a different decision than editing which hats they wear.
+ */
 function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: string[]; selfEmail: string }) {
   const router = useRouter();
   const isSelf = row.email.toLowerCase() === selfEmail.toLowerCase();
-  // Widened to `string`: the picker hands back whatever option was chosen, and `saveUserRole`
-  // re-validates it server-side against the role vocabulary before writing anything.
-  const [role, setRole] = useState<string>(row.role);
-  const [base, setBase] = useState<string>(row.role);
+  const [selected, setSelected] = useState<string[]>(row.roles);
+  const [base, setBase] = useState<string[]>(row.roles);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const dirty = role !== base;
+  const dirty = !sameRoleSet(selected, base);
+  const empty = selected.length === 0;
+
+  function toggle(role: string) {
+    setSelected((prev) => (prev.includes(role) ? prev.filter((held) => held !== role) : [...prev, role]));
+  }
 
   async function save() {
-    if (!dirty || isSelf || saving) return;
+    if (!dirty || isSelf || saving || empty) return;
     setSaving(true);
     setMessage(null);
-    const result = await saveUserRole({ userId: row.id, role }).catch(() => null);
+    // The complete set, always. Never a single value the server would read as "replace all".
+    const result = await saveUserRole({ userId: row.id, roles: selected }).catch(() => null);
     setSaving(false);
     if (!result) {
       setMessage("Save failed.");
@@ -839,32 +907,55 @@ function StaffRoleRow({ row, roles, selfEmail }: { row: StaffRowV2; roles: strin
       setMessage(result.error);
       return;
     }
-    setBase(role);
+    setBase(selected);
     setMessage("Saved.");
     router.refresh();
   }
 
   return (
-    <div className="grid gap-3 rounded-xl border border-border bg-background p-3 md:grid-cols-[1fr_190px_120px_120px] md:items-center">
+    <div
+      data-staff-row={row.email}
+      className="grid gap-3 rounded-xl border border-border bg-background p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_100px_130px] md:items-center"
+    >
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <span className="truncate text-sm font-medium text-foreground">{row.email}</span>
           {isSelf ? <Badge variant="outline">You</Badge> : null}
-          {/* Every role held, not just the one the picker can show — a person may hold several. */}
-          {row.roles.length > 1 ? row.roles.map((held) => <Badge key={held} variant="outline">{held}</Badge>) : null}
         </div>
         <p className="mt-1 truncate text-xs text-muted-foreground">{row.name || row.id}</p>
       </div>
-      <Select value={role} onValueChange={setRole} disabled={isSelf || saving}>
-        <SelectTrigger size="sm" className="w-full bg-card"><span>{role}</span></SelectTrigger>
-        <SelectContent>
-          {roles.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-        </SelectContent>
-      </Select>
-      <Button type="button" variant="secondary" size="sm" disabled={!dirty || isSelf || saving} onClick={save}>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={`Roles for ${row.email}`}>
+        {roles.map((item) => {
+          const held = selected.includes(item);
+          return (
+            <Button
+              key={item}
+              type="button"
+              size="sm"
+              data-role={item}
+              aria-pressed={held}
+              variant={held ? "secondary" : "outline"}
+              disabled={isSelf || saving}
+              onClick={() => toggle(item)}
+            >
+              {roleLabel(item)}
+            </Button>
+          );
+        })}
+      </div>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        data-staff-save="true"
+        disabled={!dirty || isSelf || saving || empty}
+        onClick={save}
+      >
         {saving ? "Saving" : "Save"}
       </Button>
-      <span className={cn("text-xs", message === "Saved." ? "text-success" : "text-muted-foreground")}>{message}</span>
+      <span className={cn("text-xs", message === "Saved." ? "text-success" : "text-muted-foreground")}>
+        {empty ? "Select at least one role." : message}
+      </span>
     </div>
   );
 }
@@ -874,7 +965,7 @@ function RolePills({ label, roles }: { label: string; roles: string[] }) {
     <div className="min-w-0">
       <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
       <div className="flex flex-wrap gap-1.5">
-        {roles.length === 0 ? <Badge variant="outline">super-admin only</Badge> : roles.map((role) => <Badge key={role} variant="outline">{role}</Badge>)}
+        {roles.length === 0 ? <Badge variant="outline">Super admin only</Badge> : roles.map((role) => <Badge key={role} variant="outline">{roleLabel(role)}</Badge>)}
       </div>
     </div>
   );
@@ -1295,15 +1386,19 @@ function KnowledgeTextRow({ row }: { row: AdminV2Data["otto"]["knowledge"][numbe
 function AuditSection({ data }: { data: AdminV2Data }) {
   const [query, setQuery] = useState("");
   const needle = query.toLowerCase();
-  // Filtering follows what the table now shows: the person, not just the owning org.
+  // Filtering follows what the table shows AND what an operator may type from memory: the plain
+  // label, the person, the scope — plus the raw type, so a code copied out of a log still finds
+  // its row even though the page no longer prints codes.
   const rows = data.audit.filter((row) =>
-    [row.type, row.actor ?? "", row.target ?? "", row.ownerId].some((field) => field.toLowerCase().includes(needle)),
+    [eventLabel(row.type), row.type, row.actor ?? "", row.ownerId].some((field) =>
+      field.toLowerCase().includes(needle),
+    ),
   );
 
   return (
     <Panel
       title="Audit stream"
-      subtitle="Who acted, on what, and when. Raw payloads stay collapsed — only the identity keys are read."
+      subtitle="Who acted, what happened, and when. Raw payloads stay collapsed — only the actor is read out of them."
       action={<Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter events" className="h-9 w-[200px] text-sm" />}
     >
       <div className="grid gap-2">
@@ -1313,7 +1408,7 @@ function AuditSection({ data }: { data: AdminV2Data }) {
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <History className="size-4 text-muted-foreground" />
-                <span className="truncate text-sm font-medium text-foreground">{row.type}</span>
+                <span className="truncate text-sm font-medium text-foreground">{eventLabel(row.type)}</span>
               </div>
               <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{row.id}</p>
             </div>
@@ -1325,7 +1420,7 @@ function AuditSection({ data }: { data: AdminV2Data }) {
                 {row.actor ?? NO_ACTOR}
               </p>
               <p className="mt-1 truncate text-xs text-muted-foreground">
-                {row.target ? `Target ${row.target} · ` : ""}Scope {row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}
+                Scope {row.ownerId}{row.projectId ? ` · ${row.projectId}` : ""}
               </p>
             </div>
             <span className="font-mono text-xs text-muted-foreground md:text-right">{fmtDate(row.createdAt)}</span>

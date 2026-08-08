@@ -185,12 +185,12 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
   if (typeof v?.userId !== "string" || !v.userId) return { error: "Missing user." };
   const requested = Array.isArray(v.roles) ? v.roles : [v.role];
   const parsedRoles = requested.map((role) => roleSchema.safeParse(role));
-  if (
-    parsedRoles.length === 0 ||
-    parsedRoles.some((result) => !result.success)
-  ) {
-    return { error: "Unknown role." };
-  }
+  // #755 judge r1, P1-1 — an empty set is a DISTINCT case from a bad value. It used to collapse
+  // into "Unknown role.", which tells the operator nothing about what they did. Revoking every
+  // assignment is not offered here (that is removing someone from staff, a different action), so
+  // say which one this is.
+  if (parsedRoles.length === 0) return { error: "Select at least one role." };
+  if (parsedRoles.some((result) => !result.success)) return { error: "Unknown role." };
   const roles = [
     ...new Set(
       parsedRoles.flatMap((result) => (result.success ? [result.data] : [])),
@@ -211,10 +211,38 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
   try {
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: target.id }, data: { role } });
-      await tx.userRole.deleteMany({ where: { userId: target.id } });
-      await tx.userRole.createMany({
-        data: roles.map((assignedRole) => ({ userId: target.id, role: assignedRole })),
+      // #755 judge r1, P1-1 — apply the requested set as a DELTA against what is on the row right
+      // now, instead of "delete everything, write the request".
+      //
+      // Two reasons, and only the second is cosmetic:
+      //  1. The current set is re-read INSIDE the transaction. The copy fetched above for the
+      //     self-edit guard was read before the tx opened, so a concurrent edit landing in between
+      //     would be computed against a stale picture.
+      //  2. A role the operator did not touch keeps its original `assignedAt`. Wiping and
+      //     re-inserting reset that timestamp on every save, so "since when has this person held
+      //     finance?" — a question an audit log is supposed to answer — was destroyed by an edit
+      //     to an unrelated role.
+      //
+      // The SET semantics are unchanged and deliberate: what the caller sends becomes the whole
+      // assignment. That is only safe because the caller now sends the COMPLETE set — the staff
+      // editor submits every toggle, not the one value a single-choice picker happened to hold.
+      const currentRoles = await tx.userRole.findMany({
+        where: { userId: target.id },
+        select: { role: true },
       });
+      const current = new Set(currentRoles.map((assignment) => assignment.role));
+      const next = new Set<string>(roles);
+      const revoked = [...current].filter((assigned) => !next.has(assigned));
+      const granted = roles.filter((assigned) => !current.has(assigned));
+      if (revoked.length > 0) {
+        await tx.userRole.deleteMany({ where: { userId: target.id, role: { in: revoked } } });
+      }
+      if (granted.length > 0) {
+        await tx.userRole.createMany({
+          data: granted.map((assignedRole) => ({ userId: target.id, role: assignedRole })),
+          skipDuplicates: true,
+        });
+      }
       // mirror onto ba_user.role (the admin plugin's gate reads this column, by email join)
       if (target.email) await tx.betterAuthUser.updateMany({ where: { email: target.email.toLowerCase() }, data: { role } });
       await tx.actionEvent.create({
@@ -225,8 +253,11 @@ export async function saveUserRole(raw: unknown): Promise<{ ok: true } | { error
           payload: {
             targetUserId: target.id,
             targetEmail: target.email,
-            from: target.roles.map((assignment) => assignment.role),
+            // `from` now reports the set this write actually replaced, not the pre-transaction read.
+            from: [...current],
             to: roles,
+            granted,
+            revoked,
             via: gate.email,
           },
         },

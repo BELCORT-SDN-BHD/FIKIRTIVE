@@ -62,7 +62,7 @@ describe("grantCreditsAction", () => {
 
     const result = await grantCreditsAction({ ...payload, displayedAmount: 1001 });
 
-    expect(result).toEqual({ error: "Credit actions over 1,000 displayed credits require founder approval." });
+    expect(result).toEqual({ error: "Credit actions are capped at 1,000 displayed credits each." });
     expect(mockGrantCredits).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
@@ -72,7 +72,7 @@ describe("grantCreditsAction", () => {
 
     const result = await grantCreditsAction({ ...payload, displayedAmount: -1001 });
 
-    expect(result).toEqual({ error: "Credit actions over 1,000 displayed credits require founder approval." });
+    expect(result).toEqual({ error: "Credit actions are capped at 1,000 displayed credits each." });
     expect(mockGrantCredits).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();
   });
@@ -103,7 +103,7 @@ describe("grantCreditsAction", () => {
 
     const result = await grantCreditsAction({ ...payload, displayedAmount: 5000 });
 
-    expect(result).toEqual({ error: "Credit actions over 1,000 displayed credits require founder approval." });
+    expect(result).toEqual({ error: "Credit actions are capped at 1,000 displayed credits each." });
     expect(mockGrantCredits).not.toHaveBeenCalled();
     expect(actionEventCreate).not.toHaveBeenCalled();
   });

@@ -12,6 +12,9 @@ const userFindUnique = vi.fn();
 const userUpdate = vi.fn();
 const userRoleDeleteMany = vi.fn();
 const userRoleCreateMany = vi.fn();
+// #755 judge r1, P1-1: the assignment set is now re-read INSIDE the transaction so the write is
+// a delta against the live row rather than "delete everything, insert the request".
+const userRoleFindMany = vi.fn();
 const betterAuthUserUpdateMany = vi.fn();
 const actionEventCreate = vi.fn();
 
@@ -21,7 +24,11 @@ vi.mock("@fikirtive/db", () => ({
     $transaction: async (fn: (tx: unknown) => unknown) =>
       fn({
         user: { update: userUpdate },
-        userRole: { deleteMany: userRoleDeleteMany, createMany: userRoleCreateMany },
+        userRole: {
+          deleteMany: userRoleDeleteMany,
+          createMany: userRoleCreateMany,
+          findMany: userRoleFindMany,
+        },
         betterAuthUser: { updateMany: betterAuthUserUpdateMany },
         actionEvent: { create: actionEventCreate },
       }),
@@ -39,6 +46,8 @@ beforeEach(() => {
   userUpdate.mockReset();
   userRoleDeleteMany.mockReset();
   userRoleCreateMany.mockReset();
+  userRoleFindMany.mockReset();
+  userRoleFindMany.mockResolvedValue([]); // default: nobody holds anything yet
   betterAuthUserUpdateMany.mockReset();
   actionEventCreate.mockReset();
 });
@@ -86,6 +95,7 @@ describe("saveUserRole", () => {
     expect(userUpdate).toHaveBeenCalledWith({ where: { id: "usr_2" }, data: { role: "ops" } });
     expect(userRoleCreateMany).toHaveBeenCalledWith({
       data: [{ userId: "usr_2", role: "ops" }],
+      skipDuplicates: true,
     });
     expect(betterAuthUserUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { email: "operator@x.test" }, data: { role: "ops" } })
@@ -110,15 +120,22 @@ describe("saveUserRole", () => {
       role: "viewer",
       roles: [{ role: "viewer" }],
     });
+    // The live set inside the transaction: this person already holds viewer.
+    userRoleFindMany.mockResolvedValue([{ role: "viewer" }]);
 
     expect(
       await saveUserRole({ userId: "usr_4", roles: ["finance", "ops"] }),
     ).toEqual({ ok: true });
+    // Only the two NEW roles are inserted, and only the dropped one is deleted — #755 P1-1.
     expect(userRoleCreateMany).toHaveBeenCalledWith({
       data: [
         { userId: "usr_4", role: "finance" },
         { userId: "usr_4", role: "ops" },
       ],
+      skipDuplicates: true,
+    });
+    expect(userRoleDeleteMany).toHaveBeenCalledWith({
+      where: { userId: "usr_4", role: { in: ["viewer"] } },
     });
     expect(userUpdate).toHaveBeenCalledWith({
       where: { id: "usr_4" },
