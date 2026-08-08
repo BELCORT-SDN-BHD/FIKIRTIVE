@@ -131,7 +131,7 @@ const {
   CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH,
   CAMPAIGN_DELIVERY_CHECK_UNKNOWN,
 } = await import("../campaign-approval-lock");
-const { quoteCell } = await import("../factory-batch");
+const { quoteCell, stableCellLogicalPrefix } = await import("../factory-batch");
 const { displayCredits } = await import("@fikirtive/core");
 
 const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -211,6 +211,16 @@ function txWithBrokenLock(): unknown {
   return {
     $executeRaw: async () => { throw new Error("advisory lock unavailable"); },
     campaign: { findFirst: h.prisma.campaign.findFirst },
+  };
+}
+
+/** …and one whose**派发历史**读不出来:交付面复判问的就是这份历史(#749 判官 r2 P1)。
+ *  「查不出来」不等于「没问题」—— 它必须停在花钱之前,而且说的是可以再试一次。 */
+function txWithBrokenHistoryRead(): unknown {
+  return {
+    $executeRaw: h.prisma.$executeRaw,
+    campaign: { findFirst: h.prisma.campaign.findFirst },
+    genJob: { findMany: async () => { throw new Error("dispatch history unavailable"); } },
   };
 }
 
@@ -1188,7 +1198,7 @@ describe("#708 修复轮 P1-1 少付不等于少交付", () => {
  * 真 ledger)。这一组补的是**金额上限**那一档:判决没变、钱变了 —— 只有上限拦得住,
  * 而它在真账本里没法自然造出来(价格是中央配置,不许在测试里改)。
  */
-describe("#749 判官 r2 P1 锁内对签:金额上限", () => {
+describe("#749 判官 r2 P1 锁内对签:金额上限与交付面", () => {
   it("锁内这一格的费用高过商家签名时那一格:不派发、不建任务", async () => {
     seedCampaign([entry("P1")]);
     seedProject();
@@ -1232,6 +1242,58 @@ describe("#749 判官 r2 P1 锁内对签:金额上限", () => {
     expect(copy).not.toMatch(/seedream|seedance|byteplus|kling|CAMPAIGN_|_MID_DISPATCH|undefined|null/i);
     // 说的是「这一件」,不是「整批」—— 同一批里更早派发出去的格是真开始、真扣了钱的。
     expect(copy).toMatch(/this item/i);
+  });
+
+  it("签名之后某一格掉出交付面:锁内交付面复判把这一批停下来,一格不建", async () => {
+    seedCampaign([entry("P1"), entry("P2")]);
+    seedProject();
+    const reviewed = await currentQuote({ projectId: PROJECT_ID });
+    expect(reviewed.lines.map((line) => line.charge)).toEqual(["new", "new"]);
+    expect(reviewed.blockedCount).toBe(0);
+
+    // 商家按下确认之后、第一格真扣钱之前,别人用**别的材料**占住了第二格。
+    // 挂在批次分组行那一步:确认动作的报价已经读完历史,而这一批还一格都没花钱。
+    const realFindFirst = h.prisma.generationBatch.findFirst;
+    h.prisma.generationBatch.findFirst = async (args: { where: { id: string; ownerId: string } }) => {
+      h.prisma.generationBatch.findFirst = realFindFirst;
+      h.store.jobs.set("intruder", {
+        id: "intruder",
+        ownerId: OWNER,
+        projectId: PROJECT_ID,
+        batchId: null,
+        status: "QUEUED",
+        idempotencyKey: `${stableCellLogicalPrefix(campaignBatchId(), "P2")}${"0".repeat(32)}`,
+        ...storedMaterial("an entirely different picture nobody reviewed"),
+      });
+      return realFindFirst(args);
+    };
+
+    const res = await confirmCampaignGeneration(signedRequest(reviewed));
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result).toMatchObject({ dispatched: 0, totalCredits: 0 });
+    expect(res.result.cells[0].error).toBe(CAMPAIGN_DELIVERY_CHANGED_MID_DISPATCH);
+    expect(res.result.cells.map((cell) => cell.credits)).toEqual([0, 0]);
+    // 库里只有闯入者那一行 —— 这一批一格都没建。
+    expect(h.store.jobs.size).toBe(1);
+  });
+
+  it("交付面查不出来时也停在花钱之前,而且说的是可以再试一次", async () => {
+    seedCampaign([entry("P1"), entry("P2")]);
+    seedProject();
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) =>
+      (await runCarriedGate(req, txWithBrokenHistoryRead())) ?? { id: "job", disposition: "fresh" as const });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result.dispatched).toBe(0);
+    expect(res.result.cells.map((cell) => cell.error)).toEqual([
+      CAMPAIGN_DELIVERY_CHECK_UNKNOWN,
+      CAMPAIGN_DELIVERY_CHECK_UNKNOWN,
+    ]);
+    expect(res.result.cells.map((cell) => cell.credits)).toEqual([0, 0]);
+    expect(h.store.jobs.size).toBe(0);
   });
 });
 
