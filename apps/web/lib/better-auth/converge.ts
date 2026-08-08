@@ -107,7 +107,32 @@ export async function convergeIdentity(input: { email: string; name?: string | n
       // The bare "founder" literal here is what made the audit page read as though the founder
       // himself signed in every time a merchant did; it is the shared constant now, so the next
       // reader sees an org id rather than a name.
-      await Promise.resolve(prisma.actionEvent.create({ data: { id: newId(), ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } } })).catch(() => {});
+      //
+      // #737 — IDEMPOTENT, like every other step above it. One login calls this function more
+      // than once by construction (Better Auth fires it from the user-create hook AND the
+      // session-create hook, tens of milliseconds apart), and a second verification click or a
+      // racing tab fires it again. The account, the personal org and the welcome grant all
+      // already survived that; only the audit write did not, so one login was recorded twice —
+      // and anything later counted off this table (sign-in frequency, a lockout threshold)
+      // doubled with it.
+      //
+      // The key is the row's own primary key, so the DEDUPE IS THE DATABASE: `skipDuplicates`
+      // becomes ON CONFLICT DO NOTHING, which two racing requests cannot both win and which
+      // NEVER rewrites the row already there (the first moment stands as recorded). Same shape
+      // as the welcome grant's `signup:<orgId>` key one step above.
+      //
+      // The window is the minute the sign-in happened in: within it a replay folds into the
+      // first row, outside it a genuine later sign-in is its own row. Two consequences, both
+      // deliberate: a real second sign-in inside the same minute folds into the first, and a
+      // replay that straddles the minute boundary still lands twice — i.e. today's behaviour,
+      // never worse.
+      const signinWindow = Math.floor(Date.now() / 60_000);
+      await Promise.resolve(
+        prisma.actionEvent.createMany({
+          data: [{ id: `signin:${user.id}:${signinWindow}`, ownerId: FOUNDER_OWNER_ID, type: "auth.signin", payload: { email } }],
+          skipDuplicates: true,
+        }),
+      ).catch(() => {});
     } catch (e) {
       // The one deliberate exception to never-throws (#538): a provisioning refusal is a
       // security decision, not a convergence hiccup, and must not be downgraded here either.

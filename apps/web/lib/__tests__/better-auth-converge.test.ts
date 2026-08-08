@@ -5,7 +5,7 @@ const db = {
   membership: { upsert: vi.fn() },
   membershipRole: { upsert: vi.fn() },
   betterAuthUser: { updateMany: vi.fn() },
-  actionEvent: { create: vi.fn() },
+  actionEvent: { createMany: vi.fn() },
   $transaction: vi.fn(),
 };
 vi.mock("@fikirtive/db", () => ({ prisma: db }));
@@ -46,7 +46,14 @@ describe("convergeIdentity", () => {
       expect.objectContaining({ data: expect.objectContaining({ emailVerified: expect.any(Date) }) }),
     );
     expect(mockBootstrap).toHaveBeenCalledWith("usr_1", "merchant@x.test");
-    expect(db.actionEvent.create).toHaveBeenCalled();
+    // #737 — the audit write is idempotent like every other step: a stable primary key plus
+    // skipDuplicates, so a replay of the same login collides instead of appending.
+    expect(db.actionEvent.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skipDuplicates: true,
+        data: [expect.objectContaining({ id: expect.stringMatching(/^signin:usr_1:\d+$/), type: "auth.signin" })],
+      }),
+    );
     expect(db.userRole.upsert).not.toHaveBeenCalled();
   });
 
@@ -120,7 +127,7 @@ describe("convergeIdentity", () => {
     expect(db.user.create).not.toHaveBeenCalled();
     expect(db.user.updateMany).not.toHaveBeenCalled();
     expect(db.membership.upsert).not.toHaveBeenCalled();
-    expect(db.actionEvent.create).not.toHaveBeenCalled();
+    expect(db.actionEvent.createMany).not.toHaveBeenCalled();
     expect(mockBootstrap).not.toHaveBeenCalled();
   });
   // #538 round 4 (P2) — a provisioning refusal used to be swallowed here as a "non-fatal"
@@ -168,7 +175,7 @@ describe("convergeIdentity", () => {
     const { convergeIdentity } = await import("@/lib/better-auth/converge");
     await convergeIdentity({ email: "missing-flag@x.test" });
     expect(db.user.findUnique).not.toHaveBeenCalled();
-    expect(db.actionEvent.create).not.toHaveBeenCalled();
+    expect(db.actionEvent.createMany).not.toHaveBeenCalled();
     expect(mockBootstrap).not.toHaveBeenCalled();
   });
 });
