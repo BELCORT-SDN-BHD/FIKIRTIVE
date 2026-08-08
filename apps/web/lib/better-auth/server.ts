@@ -11,6 +11,7 @@ import { convergeIdentity } from "./converge";
 import { signinSessionId } from "./signin-session";
 import { assertAllowedEmail, assertAllowedForUserId } from "./gate";
 import { ac, superAdminRole } from "./access";
+import { googleSignInConfigured } from "./social-config";
 import { isAllowedEmail, isRevokedEmail } from "@/lib/allowlist";
 import { admitSelfSignup, signupsPaused, SIGNUPS_PAUSED_MESSAGE } from "@/lib/signup-gate";
 
@@ -87,9 +88,16 @@ export const auth = betterAuth({
       await convergeIdentity({ email: user.email, name: user.name, image: user.image, emailVerified: true });
     },
   },
-  socialProviders: {
-    google: { clientId: process.env.GOOGLE_CLIENT_ID ?? "", clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "" },
-  },
+  // #681 — register Google ONLY when it is actually configured. Registering it with `?? ""`
+  // meant an environment with no credentials still advertised the provider, and the sign-in
+  // call died deep inside the OAuth handshake as a 500 for what is purely a missing setting.
+  // Same predicate the login page uses to decide whether to show the button, so the offer and
+  // the capability cannot disagree. Configured deployments are unaffected.
+  socialProviders: googleSignInConfigured()
+    ? {
+        google: { clientId: process.env.GOOGLE_CLIENT_ID!, clientSecret: process.env.GOOGLE_CLIENT_SECRET! },
+      }
+    : {},
   // #543 — basic abuse control on the newly public endpoints, using Better Auth's own
   // per-IP limiter (no bespoke machinery). The outbound-email limiter in sender.ts
   // (5 per address per hour) still caps mail volume per victim address on top of this.
