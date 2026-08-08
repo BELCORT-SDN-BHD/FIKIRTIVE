@@ -663,6 +663,12 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
             === quote.deliveryFingerprint;
         },
         // ①③ 这一格的收费判决 + 费用上限,对着商家签名时的那一行。
+        //
+        // 有一条路走不到这里,是有意的:startGen 有一条**锁外的**耐久重放快路 —— 历史里
+        // 已经有一单活着时,它在开事务之前就返回复用。那条路一分钱都不动,而且复用的那一单
+        // 材料与这一格逐字相同(材料对不上会先被判成冲突),所以交付的正是商家签的那份,
+        // 只是更便宜。**凡是会扣钱的格都必然进事务、必然过这两道闸** —— 需要成立的不变式
+        // 是这一条,不是「每一次调用都对签一遍」。
         stillPriced: (verdict) => {
           const signed = cellIndex == null ? undefined : quote.lines[cellIndex];
           // 签不出这一行(下标对不上、或商家签的就是「这一格不会开始」)—— 一律不许派发。
