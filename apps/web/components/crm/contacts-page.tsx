@@ -16,8 +16,8 @@ import {
   Users,
 } from "lucide-react";
 import { createContact, importContacts, type ImportContactsResult } from "@/lib/crm-actions";
-import { CRM_CONSENT_LABELS } from "@/lib/crm-consent-labels";
-import { listContacts, type CrmContactRow } from "@/lib/crm-view-data";
+import { crmConsentBadge } from "@/lib/crm-consent-labels";
+import { listContacts } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,15 +29,6 @@ type ListSuccess = Extract<ListResult, { ok: true }>;
 type ImportSuccess = Extract<ImportContactsResult, { ok: true }>;
 type CreateSuccess = Extract<Awaited<ReturnType<typeof createContact>>, { ok: true }>;
 type StageFilter = "all" | "New" | "Active" | "Dormant";
-
-function consentPresentation(state: CrmContactRow["consentState"]["state"]): {
-  label: string;
-  variant: "success" | "destructive" | "warning";
-} {
-  if (state === "verified_grant") return { label: CRM_CONSENT_LABELS[state], variant: "success" };
-  if (state === "effective_revoke") return { label: CRM_CONSENT_LABELS[state], variant: "destructive" };
-  return { label: CRM_CONSENT_LABELS[state], variant: "warning" };
-}
 
 function dateLabel(value: Date | string): string {
   return new Intl.DateTimeFormat("en-MY", {
@@ -264,7 +255,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
             </p>
             <section className="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {contacts.map((contact) => {
-              const consent = consentPresentation(contact.consentState.state);
+              const consent = crmConsentBadge(contact.consentState);
               return (
                 <Card key={contact.id} className="min-w-0">
                   <CardHeader>
