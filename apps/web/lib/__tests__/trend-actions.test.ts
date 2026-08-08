@@ -155,6 +155,63 @@ describe("saveTrendSnapshot", () => {
     expect(mockTrendCreate).not.toHaveBeenCalled();
   });
 
+  it("refuses a capture date in the future and says why", async () => {
+    const issued = await draft();
+    const future = new Date(Date.now() + 365 * 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+    await expect(saveTrendSnapshot({
+      snapshotId: issued.nextSnapshotId,
+      snapshotProof: issued.nextSnapshotProof,
+      campaignId: null,
+      evidence: {
+        summary: "Gift bundles are rising.",
+        sources: [{ title: "Seasonal brief", domain: "example.com" }],
+        capturedAt: future,
+      },
+    })).resolves.toEqual({
+      error: "The captured date can't be in the future — use the day you actually saw this evidence.",
+    });
+    expect(mockTrendCreate).not.toHaveBeenCalled();
+  });
+
+  it("still accepts today and a past capture date", async () => {
+    const issued = await draft();
+    const past = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString().slice(0, 10);
+    await expect(saveTrendSnapshot({
+      snapshotId: issued.nextSnapshotId,
+      snapshotProof: issued.nextSnapshotProof,
+      campaignId: null,
+      evidence: {
+        summary: "Gift bundles are rising.",
+        sources: [{ title: "Seasonal brief", domain: "example.com" }],
+        capturedAt: past,
+      },
+    })).resolves.toMatchObject({ ok: true });
+    expect(mockTrendCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the wrong box instead of the generic sentence, and keeps the generic one otherwise", async () => {
+    const issued = await draft();
+    await expect(saveTrendSnapshot({
+      snapshotId: issued.nextSnapshotId,
+      snapshotProof: issued.nextSnapshotProof,
+      campaignId: null,
+      evidence: {
+        summary: "Gift bundles are rising.",
+        sources: [{ title: "Seasonal brief", domain: "example.com" }],
+        capturedAt: "not a date",
+      },
+    })).resolves.toEqual({
+      error: "Enter the captured date as a real calendar date, for example 2026-08-01.",
+    });
+    await expect(saveTrendSnapshot({
+      snapshotId: issued.nextSnapshotId,
+      snapshotProof: issued.nextSnapshotProof,
+      campaignId: null,
+      evidence: { summary: "", sources: [] },
+    })).resolves.toEqual({ error: "That trend snapshot isn't valid." });
+    expect(mockTrendCreate).not.toHaveBeenCalled();
+  });
+
   it("fails closed on a forged draft proof or cross-tenant Campaign", async () => {
     const issued = await draft();
     const evidence = {

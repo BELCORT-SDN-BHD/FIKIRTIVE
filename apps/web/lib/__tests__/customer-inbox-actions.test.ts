@@ -864,6 +864,57 @@ describe("C4b-M2 gateway mutation routing", () => {
   });
 });
 
+// #729 — a template version is an immutable record and the payload of every broadcast, so a
+// body whose {{placeholders}} disagree with the declared variables can never be corrected once
+// written. The screen teaches the {{name}} convention; this is what enforces it.
+describe("#729 template placeholders must line up with the declared variables", () => {
+  it("refuses a version that uses undeclared placeholders and declares an unused variable, and writes nothing", async () => {
+    const before = await ownerCounts();
+    let refusal: unknown;
+    try {
+      await inbox.createMessageTemplateVersion(admin, {
+        templateId: TEMPLATE_A,
+        body: "Hi {{name}}, weekend special: 20% off all beans at {{shop}}.",
+        variables: [{ key: "firstName", sample: "Aisyah" }],
+      });
+      throw new Error("Expected TEMPLATE_VARIABLE_MISMATCH");
+    } catch (error) {
+      if (error instanceof Error && error.message === "Expected TEMPLATE_VARIABLE_MISMATCH") throw error;
+      refusal = error;
+    }
+    expect(errorCode(refusal)).toBe("TEMPLATE_VARIABLE_MISMATCH");
+    // Both directions, named: what the message asked for and what the list promised.
+    const detail = (refusal as { detail?: string }).detail ?? "";
+    expect(detail).toContain("{{name}}");
+    expect(detail).toContain("{{shop}}");
+    expect(detail).toContain("firstName");
+    expect(await ownerCounts()).toEqual(before);
+  });
+
+  it("still accepts a body and variables that agree, including a body with no placeholders", async () => {
+    await expect(inbox.createMessageTemplateVersion(admin, {
+      templateId: TEMPLATE_A,
+      body: "Hi {{name}}, your order is ready at {{shop}}.",
+      variables: [{ key: "name", sample: "Aisyah" }, { key: "shop", sample: "Kedai Kopi" }],
+    })).resolves.toMatchObject({ ok: true, change: { kind: "template_version_created" } });
+    await expect(inbox.createMessageTemplateVersion(admin, {
+      templateId: TEMPLATE_A,
+      body: "Our shop is closed this Monday.",
+      variables: [],
+    })).resolves.toMatchObject({ ok: true, change: { kind: "template_version_created" } });
+  });
+
+  it("gives a caller that bypasses the UI the same sentence, not a bare code", async () => {
+    const result = await customerInboxGateway.createMessageTemplateVersion({
+      templateId: TEMPLATE_A,
+      body: "Hi {{name}}",
+      variables: [],
+    });
+    expect(result).toMatchObject({ ok: false, error: "TEMPLATE_VARIABLE_MISMATCH" });
+    expect((result as { detail?: string }).detail).toContain("{{name}}");
+  });
+});
+
 describe("C4b-M2 role-denial branches", () => {
   it("denies saveConversationDraft to a non-assignee member", async () => {
     await expectCode(

@@ -84,6 +84,9 @@ export type WorkflowValidationErrorCode =
   | "INVALID_VALUE"
   | "UNKNOWN_TYPE"
   | "LIMIT_EXCEEDED"
+  // #723 — a rule with zero steps is not a rule over the limit. Sharing LIMIT_EXCEEDED with the
+  // too-many case made the panel tell merchants to remove steps from a rule that had none.
+  | "EMPTY_STEPS"
   | "DUPLICATE_STEP_KEY"
   | "DEPENDENCY_UNAVAILABLE";
 
@@ -260,7 +263,8 @@ function validateDocument(document: unknown): WorkflowParseResult {
   const steps: WorkflowSource["steps"] = [];
   const seenStepKeys = new Set<string>();
   if (!Array.isArray(document.steps)) addError(errors, "INVALID_VALUE", "$.steps");
-  else if (document.steps.length === 0 || document.steps.length > WORKFLOW_MAX_STEPS) addError(errors, "LIMIT_EXCEEDED", "$.steps");
+  else if (document.steps.length === 0) addError(errors, "EMPTY_STEPS", "$.steps");
+  else if (document.steps.length > WORKFLOW_MAX_STEPS) addError(errors, "LIMIT_EXCEEDED", "$.steps");
   else for (const [index, raw] of document.steps.entries()) {
     const path = `$.steps[${index}]`;
     if (!isRecord(raw)) { addError(errors, "INVALID_VALUE", path); continue; }

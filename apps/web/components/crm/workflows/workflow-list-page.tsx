@@ -185,10 +185,9 @@ export default function WorkflowListPage({
         </div>
 
         {errorCode ? (
-          <div className="mt-4 rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive">
+          <div className="mt-4 rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}>
             <p className="font-semibold">The workflow request could not finish</p>
-            <p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p>
-            <p className="mt-1 font-mono text-xs">Error code: {errorCode}</p>
+            <p className="mt-1">{workflowErrorMessage(errorCode)}</p>
           </div>
         ) : null}
 
@@ -239,7 +238,7 @@ export default function WorkflowListPage({
           <label className="grid gap-2 text-sm font-semibold">File path<Input value={slug} onChange={(event) => { setSlugEdited(true); setSlug(safeSlug(event.target.value)); }} placeholder="outside-hours-reply" /><span className="font-mono text-xs font-normal text-muted-foreground">/workflows/{slug || "your-workflow"}.workflow.yaml</span></label>
           <label className="grid gap-2 text-sm font-semibold">Type<select className="h-11 rounded-lg border border-input bg-card px-3 text-sm font-normal" value={kind} onChange={(event) => setKind(event.target.value as "rule" | "journey")}><option value="rule">Rule</option><option value="journey">Contact journey</option></select></label>
           <div className="rounded-xl border border-border bg-secondary/25 px-4 py-3 text-sm leading-6 text-muted-foreground">Creating a definition does not publish a rule or authorize a Routine.</div>
-          {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive"><p className="font-semibold">The workflow request could not finish</p><p className="mt-1">{errorCode === "NETWORK" ? "The request could not finish. Please retry." : workflowErrorMessage(errorCode)}</p><p className="mt-1 font-mono text-xs">Error code: {errorCode}</p></div> : null}
+          {errorCode ? <div className="rounded-xl border border-destructive/30 bg-error-soft px-4 py-3 text-sm leading-6 text-destructive" data-error-code={errorCode}><p className="font-semibold">The workflow request could not finish</p><p className="mt-1">{workflowErrorMessage(errorCode)}</p></div> : null}
           <DialogFooter><Button type="button" variant="secondary" disabled={creating} onClick={() => setDialogOpen(false)}>Cancel</Button><Button type="button" disabled={creating || !name.trim() || !slug} onClick={() => void create()}>{creating ? <LoaderCircle className="animate-spin" /> : <Plus />}Create workflow</Button></DialogFooter>
         </DialogContent>
       </Dialog>

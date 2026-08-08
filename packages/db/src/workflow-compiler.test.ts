@@ -140,6 +140,24 @@ version: fikirtive-workflow/v1
     });
   });
 
+  it("tells a rule with no steps apart from a rule with too many (#723)", () => {
+    // Both used to be reported as LIMIT_EXCEEDED, so a rule holding ZERO steps was told it had
+    // more steps than the limit allows. Following that sentence (delete steps) can only make it
+    // worse, so the two states get their own codes and the panel can say what is actually wrong.
+    const none = `version: fikirtive-workflow/v1\nname: Empty\ntrigger:\n  type: manual\nconditions: []\nsteps: []\n`;
+    expect(parseWorkflowSource(none)).toMatchObject({
+      ok: false,
+      errors: [{ code: "EMPTY_STEPS", path: "$.steps" }],
+    });
+
+    const step = `  - key: step_key\n    action:\n      type: complete\n`;
+    const tooMany = `version: fikirtive-workflow/v1\nname: Many\ntrigger:\n  type: manual\nconditions: []\nsteps:\n${step.repeat(WORKFLOW_MAX_STEPS + 1)}`;
+    expect(parseWorkflowSource(tooMany)).toMatchObject({
+      ok: false,
+      errors: [{ code: "LIMIT_EXCEEDED", path: "$.steps" }],
+    });
+  });
+
   it("accepts every frozen trigger/action shape without inventing cadence or wait duration", () => {
     for (const trigger of ["manual", "schedule", "customer_message", "journey_due"]) {
       const source = `version: fikirtive-workflow/v1
