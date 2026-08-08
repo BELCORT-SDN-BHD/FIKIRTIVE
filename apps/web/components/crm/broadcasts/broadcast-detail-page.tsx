@@ -69,9 +69,19 @@ function axisOf(verdict: unknown, key: AxisKey): Axis {
 
 /** consent risk = consentState != verified_grant (risk, or an effective_revoke block). The ONLY
  *  axis a D5 two-confirm override could ever cover — every other block is a hard block. */
+/**
+ * Who the D5 panel below is speaking about: "consent is unknown or opted-out". Both opt-out
+ * shapes belong here — the verified revoke and the pre-ledger fence (#806). The fence used to
+ * reach this page as a plain `risk`, so listing it keeps the disclosure the merchant already
+ * had once the send gate started calling it what it is, a block.
+ */
 function isConsentRisk(live: unknown): boolean {
   const axis = axisOf(live, "consentStop");
-  return axis.status === "risk" || (axis.status === "block" && axis.reason === "effective_revoke");
+  if (axis.status === "risk") return true;
+  return (
+    axis.status === "block" &&
+    (axis.reason === "effective_revoke" || axis.reason === "unresolved_legacy_opt_out")
+  );
 }
 
 function allFourPass(live: unknown): boolean {

@@ -7,7 +7,14 @@ export const CRM_CONSENT_LABELS: Record<CrmConsentState["state"], string> = {
 };
 
 /**
- * #752 — the words for a contact the pre-ledger fence holds out of every audience.
+ * #752 — the words for a contact the pre-ledger fence holds out of the audiences that were not
+ * looking for her.
+ *
+ * Precisely (#806/#807): she is kept out of any selection whose rules would have selected her had
+ * she been contactable, which is every ordinary audience. The one selection she still belongs to
+ * is the one a merchant deliberately built out of opt-outs — he asked, the page says so, and the
+ * send gate is what holds there, answering `block` on this same fence. "Every audience" would
+ * therefore be an overclaim, and this file may not make one.
  *
  * The segments page already says `opted out before consent history` about exactly these people.
  * The ledger state behind them is `unknown`, so a badge read from the state alone said "Unknown"
@@ -43,14 +50,21 @@ export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
  *     in an older system — which is precisely why the fence is fail-closed rather than ignorable.
  *  3. "When Fikirtive evaluates segment rules for WhatsApp marketing, it counts this contact as
  *     opted out until the customer opts in through their own channel."
- *     A CLASSIFICATION, not a gate — the difference matters, because the gate does not exist.
- *     The fence reaches the matcher only as a fact: `consentFact` returns `"opt_out"`, and both
- *     evaluators hand the matcher `marketingConsent: "opt_out"` (`segment-actions.evaluateContact`,
- *     `customer-broadcast-service`). Nothing downstream re-checks it, so a segment whose rules
- *     never mention contactability selects this contact anyway, and the broadcast freezes her in
- *     with `includedByMerchant: true`. The send gate does not save it either: `send-eligibility`
- *     reads only `ConsentStateProjection`, never the legacy column, so a fenced contact is
- *     `unknown` there and a `merchant_manual` broadcast gets `risk`, not `block`.
+ *     Written as a CLASSIFICATION because when #768 shipped it, that was all the product could
+ *     honestly promise: the fence reached the matcher only as a fact, so a segment whose rules
+ *     never mentioned contactability selected this contact anyway, and the broadcast froze her
+ *     in with `includedByMerchant: true`; the send gate did not save it either, because
+ *     `send-eligibility` read only `ConsentStateProjection` and answered `risk`, not `block`.
+ *     #806 closed both halves, so the sentence is now backed by an enforced gate as well:
+ *      - selection — `consent-authority.selectedIntoAudience` is the one gate the segments page
+ *        and the broadcast's candidate list both go through, on the same shared facts. A known
+ *        opt-out stays in a selection ONLY when these rules would not have selected her had she
+ *        been contactable, i.e. only when the merchant went looking for opt-outs;
+ *      - sending — the consentStop axis reads the fence itself and answers `block`
+ *        (`unresolved_legacy_opt_out`) for every callerClass, never the D5-overridable `risk`.
+ *     The wording still says "counts as opted out" rather than promising she is kept out of
+ *     audiences, and that is deliberate: the one audience she can still enter is the one a
+ *     merchant deliberately built out of opt-outs, where the send gate is what holds.
  *     Scoped to WhatsApp marketing because `contactConsentTruth` applies the fence to no other
  *     tuple. Only the customer's own verified evidence folding to `verified_grant` clears it. No
  *     "again" — that would presuppose an earlier opt-in the ledger cannot see.
@@ -61,9 +75,10 @@ export const CRM_PRE_LEDGER_OPT_OUT_LABEL = "Opted out before consent history";
  *
  * The empty state in `contact-profile-page.tsx` carried the same r4 promise and was corrected with
  * this one — it now points at this note rather than restating it, so the claim cannot come back by
- * that route. The underlying product gap (a channel-only segment selects a fenced contact, and the
- * send gate answers `risk` rather than `block` because it never reads the legacy column) is tracked
- * in #806 and is not something this copy may paper over.
+ * that route. The underlying product gap this copy was forbidden to paper over (a channel-only
+ * segment selects a fenced contact; the send gate answers `risk` because it never reads the legacy
+ * column) was closed by #806 — see clause 3. The wording did not need to change, which is the
+ * point: it only ever claimed what was true.
  */
 export const CRM_PRE_LEDGER_OPT_OUT_NOTE =
   "This history has no WhatsApp marketing decision from the customer, and an opt-out was recorded before it began. When Fikirtive evaluates segment rules for WhatsApp marketing, it counts this contact as opted out until the customer opts in through their own channel.";

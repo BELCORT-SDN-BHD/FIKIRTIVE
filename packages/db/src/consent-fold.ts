@@ -249,6 +249,93 @@ export function contactConsentCompatibility(fold: ConsentFoldResult): ContactCon
   };
 }
 
+/**
+ * #716 / #726 / #806 — the single predicate deciding whether a contact has opted out.
+ *
+ * It lived in apps/web/lib/consent-authority.ts until #806, where the send-eligibility engine
+ * (this package) turned out to need the very same reading: it read ConsentStateProjection alone,
+ * so a contact held out of every audience by the pre-ledger fence still reached the send gate as
+ * plain "unknown consent". A second copy of the rule down here would be exactly the two-answers
+ * defect #716 closed, so the rule moved down instead and consent-authority.ts re-exports it —
+ * every existing call site is unchanged and there is still one definition.
+ *
+ * The reading carries THREE separate facts, and they are never collapsed into one:
+ *  - `state` — the verified consent state. Only `effective_revoke` is a verified opt-out.
+ *  - `unresolvedLegacyOptOut` — an opt-out recorded before this contact had a consent history.
+ *  - `reportedOptOut` — the merchant's OWN latest record says "opted out". R-010 keeps this out
+ *    of the verified state on purpose: a merchant assertion is not customer-verified evidence
+ *    (#496, Founder's option B). It is surfaced, never silently folded into "unknown".
+ */
+
+/**
+ * Every consent surface a merchant can reach today — the contact profile's opt-out control, CSV
+ * import, the contacts list badge — writes and reads this one scope. Segment selection has no
+ * channel or purpose of its own, so it reads the same scope those pages display; a broadcast and
+ * the send-eligibility engine read their own run's channel + purpose through the same functions.
+ *
+ * R-010 §4.6.1 also fixes this as the ONLY scope the legacy `Contact.marketingConsent` column
+ * mirrors, which is why the pre-ledger fence below is scoped to it and to nothing else.
+ */
+export const CRM_CONSENT_SCOPE = { channel: "whatsapp", purpose: "marketing" } as const;
+
+export type ConsentScope = { channel: string; purpose: string };
+
+export type ContactConsentTruth = {
+  /** Verified R-010 state folded from the consent ledger. */
+  state: ConsentState;
+  /**
+   * An opt-out that predates this contact's consent history and nothing has resolved since
+   * (R-010 §4.6.5). Until the customer's own verified evidence supersedes it, it holds the
+   * contact OUT of any audience whose rules would have selected her had she been contactable —
+   * which is every audience except the one a merchant deliberately built out of opt-outs, where
+   * the send gate below answers `block` on this same flag (#806). See `contactConsentTruth`.
+   */
+  unresolvedLegacyOptOut: boolean;
+  /** The merchant's own latest record says "opted out" — recorded, not verified. */
+  reportedOptOut: boolean;
+};
+
+/** No consent record of any kind exists for this contact in this scope. */
+export const NO_CONSENT_RECORD: ContactConsentTruth = {
+  state: "unknown",
+  unresolvedLegacyOptOut: false,
+  reportedOptOut: false,
+};
+
+/** The one definition of "known opt-out" — shared by segment selection, freeze, send and display. */
+export function isKnownOptOut(truth: ContactConsentTruth): boolean {
+  return truth.state === "effective_revoke" || truth.unresolvedLegacyOptOut;
+}
+
+/**
+ * The pre-ledger fence (R-010 §4.6.5): a `Contact.marketingConsent` of `opt_out` that the
+ * consent ledger has not yet reached is a KNOWN historical revoke, and R-010 forbids losing it
+ * silently in the cutover. Until the tuple is resolved one contact at a time, it is fail-closed:
+ * the customer stays out.
+ *
+ * Fail-closed means the merchant's own newer assertion cannot release it either — re-recording
+ * an opt-out, or asserting an opt-in, both leave the state `unknown` and the fence standing.
+ * Only the customer's own verified evidence (an opt-in through their channel, folding to
+ * `verified_grant`) supersedes the stale byte, which is exactly R-010 §4.6.4's rule that a
+ * historical baseline is neutral once a newer interactive stance covers it.
+ *
+ * Scoped to whatsapp+marketing because that is the only tuple the legacy column mirrors
+ * (R-010 §4.6.1); for any other channel or purpose the column carries no meaning and is not read.
+ */
+export function contactConsentTruth(
+  projected: ContactConsentTruth | undefined,
+  legacyMarketingConsent: string | null | undefined,
+  scope: ConsentScope = CRM_CONSENT_SCOPE,
+): ContactConsentTruth {
+  const truth = projected ?? NO_CONSENT_RECORD;
+  const fenced =
+    truth.state === "unknown" &&
+    legacyMarketingConsent === "opt_out" &&
+    scope.channel === CRM_CONSENT_SCOPE.channel &&
+    scope.purpose === CRM_CONSENT_SCOPE.purpose;
+  return fenced ? { ...truth, unresolvedLegacyOptOut: true } : truth;
+}
+
 export type DndAction = "set" | "clear";
 export type DndActorKind = "merchant" | "otto" | "legacy_migration";
 export type DndSourceKind = "crm_ui" | "otto_approved_action" | "legacy_contact_snapshot";
