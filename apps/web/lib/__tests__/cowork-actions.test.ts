@@ -9,7 +9,10 @@ const mocks = vi.hoisted(() => ({
   resolveDisabledModels: vi.fn(),
 }));
 
-vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+vi.mock("@/lib/auth-guard", async () => ({
+  requireOwner: mocks.requireOwner,
+  resolveUserPrincipal: (await import("./__stubs__/resolve-user-principal")).stubResolveUserPrincipal,
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../gen-actions", () => ({ startCoworkGen: mocks.startCoworkGen }));
 vi.mock("../model-registry", () => ({ resolveDisabledModels: mocks.resolveDisabledModels }));

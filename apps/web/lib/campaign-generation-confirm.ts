@@ -44,12 +44,16 @@ import { activeImageModel, activeVideoModel, displayCredits, newId, GEN_VIDEO_MO
 import { requireOwner } from "./auth-guard";
 import { isImpersonating } from "@/lib/better-auth/compat";
 import { startGen } from "./gen-actions";
+// The batch identity lives in a plain module so the undo guard in campaign-actions can ask
+// "has this entry already been dispatched?" against the SAME derivation this file dispatches on.
+import { deriveCampaignBatchId } from "./campaign-gen-identity";
 import {
   campaignGenKindForFormat,
   campaignImageAspectForFormat,
   campaignVideoAspectForFormat,
   type CampaignGenKind,
 } from "./campaign-format-shape";
+import { attachCampaignApprovalGate } from "./campaign-approval-lock";
 import {
   orchestrateBatch,
   quoteCell,
@@ -57,6 +61,7 @@ import {
   type BatchInterruption,
   type BatchResult,
   type GenCell,
+  type StartGenPort,
 } from "./factory-batch";
 
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
@@ -227,23 +232,6 @@ export async function quoteCampaignGeneration(rawCampaignId: unknown): Promise<C
   };
 }
 
-/**
- * The batch id is DERIVED on the server from (campaignId, projectId), never supplied by the
- * client. This is a money-safety choice: every confirmation of the same campaign into the same
- * project shares one batch id. Each cell then adds its persisted entry id to its logical-key
- * derivation, making reorder/re-filter drift harmless without trusting the client.
- */
-function deriveCampaignBatchId(campaignId: string, projectId: string): string {
-  return createHash("sha256")
-    .update("campaign-gen-batch-v1")
-    .update("\0")
-    .update(campaignId)
-    .update("\0")
-    .update(projectId)
-    .digest("hex")
-    .slice(0, 32);
-}
-
 const confirmInputSchema = z
   .object({
     campaignId: campaignIdSchema,
@@ -326,8 +314,31 @@ export async function confirmCampaignGeneration(raw: unknown): Promise<ConfirmCa
   const batchId = deriveCampaignBatchId(campaignId, projectId);
   const attemptId = newId();
 
+  // #744 判官 r1 P1-2 / r2 P1 — everything checked above was read BEFORE the loop below starts
+  // spending, and the merchant can undo or remove an approval while it runs. So each cell's
+  // request carries the campaign approval gate, and startGen applies it INSIDE the transaction
+  // that commits that cell's charge: it re-reads the persisted plan under the campaign lock and
+  // re-derives this same fingerprint from it. A dispatch either beats the undo — and the undo is
+  // then refused, because the job it can now see proves the charge — or loses to it and never
+  // runs. Because the lock belongs to the charging transaction, an undo cannot land in between:
+  // the lock is released by the same COMMIT that makes the charge visible.
+  // This layer still opens no transaction and still spends nothing itself; startGen remains the
+  // only thing that may reserve a credit, and the gate can only ever refuse it.
+  const guardedStartGen: StartGenPort = (req) =>
+    startGen(
+      attachCampaignApprovalGate(req, {
+        ownerId,
+        campaignId,
+        stillApproved: (planJson) => {
+          const live = approvedEntriesFromPlan(planJson);
+          return quoteCampaignGenCells(live, buildCampaignGenCells(live, models)).contentFingerprint
+            === quote.contentFingerprint;
+        },
+      }),
+    );
+
   const result = await orchestrateBatch(
-    { startGen, prisma },
+    { startGen: guardedStartGen, prisma },
     { ownerId, projectId, batchId, attemptId, name: `${campaign.name} — campaign generation`, cells },
   );
   if ("error" in result) return { ...result, quote };

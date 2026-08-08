@@ -28,7 +28,17 @@ const h = vi.hoisted(() => {
   });
 
   type PrefixClause = { idempotencyKey: { startsWith: string } };
+  // #744 判官 r1 P1-2 — every paid dispatch now runs inside the campaign approval lock, which
+  // re-reads the PERSISTED plan and re-derives the approval fingerprint from it. The fake client
+  // therefore has to serve a transaction and the lock statement; `advisoryLocks` records the keys
+  // so the tests can prove the gate was taken and not merely present.
+  const advisoryLocks: string[] = [];
   const prisma = {
+    $transaction: async (run: (tx: unknown) => unknown) => run(prisma),
+    $executeRaw: async (_strings: TemplateStringsArray, key: string) => {
+      advisoryLocks.push(key);
+      return 0;
+    },
     campaign: {
       findFirst: async ({ where }: { where: { id: string; ownerId: string; deletedAt: null } }) => {
         const row = store.campaigns.get(where.id);
@@ -89,6 +99,7 @@ const h = vi.hoisted(() => {
   return {
     store,
     prisma,
+    advisoryLocks,
     startGen: vi.fn(),
     requireOwner: vi.fn(),
     isImpersonating: vi.fn(async () => false),
@@ -110,6 +121,12 @@ const {
   parseFactoryAttemptKey,
 } = await import("../batch-idempotency");
 const { INTERNAL_PER_DISPLAY } = await import("@fikirtive/core");
+const {
+  applyCampaignApprovalGate,
+  campaignApprovalGateFor,
+  campaignApprovalGateRefusal,
+  CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+} = await import("../campaign-approval-lock");
 
 const CAMPAIGN_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const PROJECT_ID = "prj_c2b";
@@ -118,6 +135,62 @@ const VID = 11; // seedance-2-fast 720p/5s(#644 Founder 裁决 2026-08-06:8 → 
 const VALID_UNKNOWN_FINGERPRINT = "0".repeat(64);
 
 let failPrompts = new Set<string>();
+
+/**
+ * The one thing the REAL startGen does before anything else in the transaction that commits a
+ * charge (#744 判官 r2 P1): it runs the approval gate the request carries, against that
+ * transaction's own client, and translates a refusal with the shared translator. Every stand-in
+ * for startGen in this file goes through here, so the double can never be more permissive than
+ * the real thing.
+ *
+ * `tx` is the money transaction's client. Passing a broken one is how a test injects the faults
+ * that can happen there for real — the lock statement failing, the persisted plan being
+ * unreadable, the fingerprint re-derivation throwing.
+ */
+async function runCarriedGate(
+  req: unknown,
+  tx: unknown = h.prisma,
+): Promise<{ error: string; disposition: "conflict" | "retryable" } | null> {
+  const gate = campaignApprovalGateFor(req);
+  if (!gate) return null;
+  try {
+    await applyCampaignApprovalGate(tx as never, gate);
+    return null;
+  } catch (error) {
+    const refusal = campaignApprovalGateRefusal(error);
+    if (!refusal) throw error;
+    return refusal;
+  }
+}
+
+/** A money-transaction client whose plan re-read is broken the way a database fault breaks it. */
+function txWithBrokenPlanRead(): unknown {
+  return {
+    $executeRaw: h.prisma.$executeRaw,
+    campaign: { findFirst: async () => { throw new Error("plan re-read unavailable"); } },
+  };
+}
+
+/** …and one whose advisory-lock statement fails. */
+function txWithBrokenLock(): unknown {
+  return {
+    $executeRaw: async () => { throw new Error("advisory lock unavailable"); },
+    campaign: { findFirst: h.prisma.campaign.findFirst },
+  };
+}
+
+/** …and one that hands back a plan the REAL fingerprint closure cannot walk, so the closure the
+ *  confirm action built throws while re-deriving the approval. */
+function txWhereFingerprintThrows(): unknown {
+  return {
+    $executeRaw: h.prisma.$executeRaw,
+    campaign: {
+      findFirst: async () => ({
+        planJson: { get entries(): unknown { throw new Error("plan entries unreadable"); } },
+      }),
+    },
+  };
+}
 
 function entry(id: string, over: Partial<{ format: string; brief: string; hook: string; status: string; platform: string }> = {}) {
   return {
@@ -191,8 +264,11 @@ beforeEach(() => {
   h.isImpersonating.mockResolvedValue(false);
   h.store.creditAccounts.set(OWNER, 100 * INTERNAL_PER_DISPLAY);
 
-  // Faithful model of startGen's owner+project-scoped, lock-time factory verdict.
+  // Faithful model of startGen's owner+project-scoped, lock-time factory verdict — including
+  // the approval gate it now runs first, inside the transaction that commits the charge.
   h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
+    const refused = await runCarriedGate(req);
+    if (refused) return refused;
     if (failPrompts.has(req.prompt as string)) return { error: "Not enough credits." };
     const key = req.idempotencyKey as string;
     const parsed = parseFactoryAttemptKey(key);
@@ -365,6 +441,133 @@ describe("战役格式 → 交付形状(#643 T2)", () => {
     const res = await confirmCampaignGeneration(reviewed);
     expect("error" in res && res.error).toMatch(/changed since you reviewed it/);
     expect(h.startGen).not.toHaveBeenCalled();
+  });
+});
+
+// #744 判官 r1 P1-2, the confirm side of the gate.
+//
+// The pre-dispatch fingerprint check happens ONCE, before the loop. Everything the loop then
+// spends is spent against a plan that may already have moved. These prove the per-cell gate:
+// the persisted plan is re-read under the campaign approval lock immediately before each cell,
+// so an undo that lands mid-batch stops every cell that has not been charged yet.
+describe("confirmCampaignGeneration — an undo landing mid-batch stops the rest", () => {
+  it("charges the cell already dispatched and refuses every later one, spending nothing more", async () => {
+    seedCampaign([entry("E1"), entry("E2"), entry("E3")]);
+    seedProject();
+    const reviewed = await reviewedRequest();
+
+    // The merchant presses Undo on E3 while the batch is running: the persisted plan changes
+    // after E1 has been dispatched and before E2 is.
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) => {
+      // Cell 1 passes its gate and commits its charge; the undo lands immediately after.
+      const refused = await runCarriedGate(req);
+      if (refused) return refused;
+      if (h.startGen.mock.calls.length === 1) {
+        seedCampaign([entry("E1"), entry("E2"), entry("E3", { status: "proposed" })]);
+      }
+      return { id: `job-${String(req.prompt)}`, disposition: "fresh" as const };
+    });
+
+    const res = await confirmCampaignGeneration(reviewed);
+    if (!("ok" in res)) throw new Error(res.error);
+
+    // One cell charged, the other two refused at the gate — not dispatched, not charged.
+    // The gate lives inside startGen's money transaction now (#744 判官 r2 P1), so startGen is
+    // entered once per cell and turns two of them away before create/reserve; what matters is
+    // that exactly ONE call ever got past the gate.
+    expect(h.startGen).toHaveBeenCalledTimes(3);
+    const outcomes = await Promise.all(
+      h.startGen.mock.results.map((result) => result.value as Promise<Record<string, unknown>>),
+    );
+    expect(outcomes.filter((outcome) => "id" in outcome)).toHaveLength(1);
+    expect(res.result.dispatched).toBe(1);
+    expect(res.result.failed).toBe(2);
+    expect(res.result.cells.filter((cell) => cell.status === "error").map((cell) => cell.credits))
+      .toEqual([0, 0]);
+    expect(res.result.cells[1].error).toMatch(/approved list changed while this was starting/);
+  });
+
+  it("takes the campaign approval lock once per cell, and only that lock", async () => {
+    h.advisoryLocks.length = 0;
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) =>
+      (await runCarriedGate(req)) ?? { id: "job", disposition: "fresh" as const });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(h.advisoryLocks).toEqual([
+      `campaign-approval:${CAMPAIGN_ID}`,
+      `campaign-approval:${CAMPAIGN_ID}`,
+    ]);
+  });
+
+  it("carries the gate on every request handed to startGen — an ungated cell would be an ungated charge", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(h.startGen.mock.calls).toHaveLength(2);
+    // Losing the gate on the way to startGen would be silent — the cell would simply dispatch
+    // without ever checking the plan. Pin it per call, not once.
+    for (const [req] of h.startGen.mock.calls) {
+      expect(campaignApprovalGateFor(req)).toBeDefined();
+    }
+  });
+
+  // #744 判官 r2 P2 — the gate's three failure modes, each injected into the client of the
+  // transaction that would commit the charge. None of them may be read as "the approval still
+  // stands": a check that could not complete stops the dispatch exactly like a check that said
+  // no, and nothing is created and nothing is charged.
+  it("dispatches nothing when the approval lock cannot be taken", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) =>
+      (await runCarriedGate(req, txWithBrokenLock())) ?? { id: "job", disposition: "fresh" as const });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result.dispatched).toBe(0);
+    expect(res.result.failed).toBe(2);
+    expect(res.result.cells.map((cell) => cell.error)).toEqual([
+      CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+      CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+    ]);
+    expect(res.result.cells.map((cell) => cell.credits)).toEqual([0, 0]);
+    expect(h.store.jobs.size).toBe(0);
+  });
+
+  it("dispatches nothing when the persisted plan cannot be re-read under the lock", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) =>
+      (await runCarriedGate(req, txWithBrokenPlanRead())) ?? { id: "job", disposition: "fresh" as const });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result.dispatched).toBe(0);
+    expect(res.result.cells.map((cell) => cell.error)).toEqual([
+      CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+      CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+    ]);
+    expect(h.store.jobs.size).toBe(0);
+  });
+
+  it("dispatches nothing when re-deriving the approval fingerprint throws", async () => {
+    seedCampaign([entry("E1"), entry("E2")]);
+    seedProject();
+    h.startGen.mockImplementation(async (req: Record<string, unknown>) =>
+      (await runCarriedGate(req, txWhereFingerprintThrows())) ?? { id: "job", disposition: "fresh" as const });
+
+    const res = await confirmCampaignGeneration(await reviewedRequest());
+    if (!("ok" in res)) throw new Error(res.error);
+    expect(res.result.dispatched).toBe(0);
+    expect(res.result.cells.map((cell) => cell.error)).toEqual([
+      CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+      CAMPAIGN_APPROVAL_CHECK_UNKNOWN,
+    ]);
+    expect(h.store.jobs.size).toBe(0);
   });
 });
 
@@ -672,6 +875,8 @@ describe("money-safety static guards", () => {
     readFileSync(path.resolve(__dirname, "../campaign-generation-confirm.ts"), "utf8"),
   );
   const batchCode = stripComments(readFileSync(path.resolve(__dirname, "../factory-batch.ts"), "utf8"));
+  const lockCode = stripComments(readFileSync(path.resolve(__dirname, "../campaign-approval-lock.ts"), "utf8"));
+  const genCode = stripComments(readFileSync(path.resolve(__dirname, "../gen-actions.ts"), "utf8"));
   const clientCode = readFileSync(
     path.resolve(__dirname, "../../components/campaign/campaign-confirm-page.tsx"),
     "utf8",
@@ -682,7 +887,49 @@ describe("money-safety static guards", () => {
     expect(banned.test(confirmCode)).toBe(false);
     expect(banned.test(batchCode)).toBe(false);
     expect(/from\s+["']\.\/gen-actions["']/.test(confirmCode)).toBe(true);
-    expect(/orchestrateBatch\s*\(\s*\{\s*startGen\s*,\s*prisma\s*\}/.test(confirmCode)).toBe(true);
+  });
+
+  // #744 判官 r1 P1-2 / r2 P1 — the batch is handed a GUARDED port instead of startGen directly.
+  // The guarantee this file has always pinned is unchanged and is now pinned tighter: the wrapper
+  // attaches the approval gate and nothing else, and the ONE thing it can call to spend is the
+  // real startGen. A wrapper that quietly grew a second spend path would fail here.
+  it("hands the batch a gate-carrying port whose only spend call is the real startGen", () => {
+    expect(confirmCode).toMatch(
+      /orchestrateBatch\(\s*\{\s*startGen:\s*guardedStartGen,\s*prisma\s*\}/,
+    );
+    expect(confirmCode).toMatch(
+      /const guardedStartGen: StartGenPort = \(req\) =>\s*startGen\(\s*attachCampaignApprovalGate\(req,/,
+    );
+    // Exactly one call of the real startGen, and the gate rides on the request it is given.
+    expect(confirmCode.match(/(?<![A-Za-z])startGen\(/g)).toHaveLength(1);
+  });
+
+  // #744 判官 r2 P1 — PLACEMENT, asserted where it lives. The gate must be applied by the
+  // transaction that commits the charge, before the project lock and before create/reserve:
+  // that is what makes it impossible for an undo to land between "lock released" and "charge
+  // committed". Behaviour is pinned in gen-actions.test.ts; this pins the code shape so the call
+  // cannot drift back out of the money transaction unnoticed.
+  it("applies the gate inside startGen's money transaction, before the project lock", () => {
+    const txStart = genCode.indexOf("decision = await prisma.$transaction");
+    const gateAt = genCode.indexOf("applyCampaignApprovalGate(tx");
+    const projectLockAt = genCode.indexOf("const projectLockKey");
+    const createAt = genCode.indexOf("await tx.genJob.create");
+    expect(txStart).toBeGreaterThan(-1);
+    expect(gateAt).toBeGreaterThan(txStart);
+    expect(gateAt).toBeLessThan(projectLockAt);
+    expect(gateAt).toBeLessThan(createAt);
+    // The gate is never wrapped around startGen from outside — that was the r2 defect.
+    expect(confirmCode).not.toMatch(/applyCampaignApprovalGate/);
+  });
+
+  it("keeps the approval gate a gate — it re-reads and serializes, it never spends", () => {
+    // The gate module opens no transaction of its own any more: it runs inside the caller's.
+    // Everything that could move money stays banned, so the serialization point cannot quietly
+    // become a second spend path.
+    const bannedInLock = /reserveCredits|settleCredits|refundReservation|grantCredits|CreditLedger|creditLedger|genJob\s*\.\s*create|generation\s*\.\s*create|boss\s*\.\s*send|GEN_QUEUE|provider\s*\.|\.\s*(?:create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(|\.\s*\$transaction/;
+    expect(bannedInLock.test(lockCode)).toBe(false);
+    expect(lockCode).toMatch(/pg_advisory_xact_lock/);
+    expect(lockCode).toMatch(/stillApproved\(campaign\.planJson\)/);
   });
 
   it("keeps the balance addition read-only and owner-scoped", () => {

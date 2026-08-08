@@ -52,6 +52,17 @@ function userPrincipal(suffix: string): UserPrincipal {
 }
 
 /**
+ * The frame as STORED, given the identity a caller passed in.
+ *
+ * A caller hands `runAsUser` identity only; the runner stamps the frame policy (#743 r2). Spelled
+ * out here rather than hidden in a loose matcher so these assertions keep failing if the stamp
+ * ever goes missing — an unstamped frame reads as writable, which is the whole hazard.
+ */
+function storedUserFrame(p: UserPrincipal, readOnly = false) {
+  return { ...p, readOnly };
+}
+
+/**
  * Both cases below DERIVE their handle from the documented string key rather than importing a
  * symbol from the module, so the "the module pins its store under `fikirtive.principal.als`"
  * contract is pinned by them directly. (A third case used to assert
@@ -69,10 +80,11 @@ describe("principal store instance identity", () => {
       PRINCIPAL_STORE_SYMBOL
     ] as AsyncLocalStorage<Principal>;
     // Enter through the raw pinned store; read through the module's public API.
-    const seen = pinned.run({ kind: "system", reason: "test-seed", ownerId: null }, () =>
-      getPrincipal(),
+    const seen = pinned.run(
+      { kind: "system", reason: "test-seed", ownerId: null, readOnly: false },
+      () => getPrincipal(),
     );
-    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null });
+    expect(seen).toEqual({ kind: "system", reason: "test-seed", ownerId: null, readOnly: false });
   });
 });
 
@@ -92,7 +104,7 @@ describe("no ambient context", () => {
 describe("runAsSystem", () => {
   it("carries the reason with no tenant scope", () => {
     runAsSystem("gen-reaper", () => {
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false });
     });
   });
 
@@ -100,7 +112,7 @@ describe("runAsSystem", () => {
     await runAsSystem("stripe-webhook", async () => {
       await Promise.resolve();
       await new Promise((resolve) => setTimeout(resolve, 1));
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "stripe-webhook", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "stripe-webhook", ownerId: null, readOnly: false });
     });
   });
 });
@@ -108,12 +120,12 @@ describe("runAsSystem", () => {
 describe("runAsTenant — the two-phase reaper shape", () => {
   it("nested in a system frame: keeps the reason, adds the tenant", () => {
     runAsSystem("refgen-reaper", () => {
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null, readOnly: false });
       runAsTenant("org_a", () => {
-        expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: "org_a" });
+        expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: "org_a", readOnly: false });
       });
       // the scan segment is restored, still tenant-less
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "refgen-reaper", ownerId: null, readOnly: false });
     });
   });
 
@@ -130,7 +142,7 @@ describe("runAsTenant — the two-phase reaper shape", () => {
 
   it("with no ambient frame it names itself tenant-direct", () => {
     runAsTenant("org_a", () => {
-      expect(getPrincipal()).toEqual({ kind: "system", reason: "tenant-direct", ownerId: "org_a" });
+      expect(getPrincipal()).toEqual({ kind: "system", reason: "tenant-direct", ownerId: "org_a", readOnly: false });
     });
   });
 
@@ -147,7 +159,7 @@ describe("runAsUser", () => {
     const p = userPrincipal("a");
     await runAsUser(p, async () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
-      expect(getPrincipal()).toEqual(p);
+      expect(getPrincipal()).toEqual(storedUserFrame(p));
     });
     expect(getPrincipal()).toBeUndefined();
   });
@@ -198,7 +210,7 @@ describe("runAsUser", () => {
               // service phase: more awaits before anyone reads the identity
               await new Promise((resolve) => setTimeout(resolve, 1));
               seen.push(getPrincipal()?.ownerId);
-              expect(getPrincipal()).toEqual(principal);
+              expect(getPrincipal()).toEqual(storedUserFrame(principal));
             });
           })().then(settle, fail);
         });
@@ -228,7 +240,7 @@ describe("runAsUser", () => {
 
     expect(a).toMatchObject({ kind: "user", ownerId: "org_a" });
     expect(b).toMatchObject({ kind: "user", ownerId: "org_b" });
-    expect(system).toEqual({ kind: "system", reason: "worker-heartbeat", ownerId: null });
+    expect(system).toEqual({ kind: "system", reason: "worker-heartbeat", ownerId: null, readOnly: false });
     expect(none).toBeUndefined();
     expect(getPrincipal()).toBeUndefined();
   });
@@ -239,11 +251,11 @@ describe("runAsUser × runAsTenant nesting", () => {
     const p = userPrincipal("a");
     runAsUser(p, () => {
       runAsTenant("org_a", () => {
-        expect(getPrincipal()).toEqual(p);
+        expect(getPrincipal()).toEqual(storedUserFrame(p));
         expect(getPrincipal()?.kind).toBe("user");
       });
       // and the user frame is intact afterwards
-      expect(getPrincipal()).toEqual(p);
+      expect(getPrincipal()).toEqual(storedUserFrame(p));
     });
   });
 
@@ -257,14 +269,14 @@ describe("runAsUser × runAsTenant nesting", () => {
         }),
       ).toThrow(/cannot switch tenant/i);
       expect(entered).toBe(false);
-      expect(getPrincipal()).toEqual(p);
+      expect(getPrincipal()).toEqual(storedUserFrame(p));
     });
   });
 
   it("a system frame nested inside a user frame still names itself, tenant-less", () => {
     runAsUser(userPrincipal("a"), () => {
       runAsSystem("gen-reaper", () => {
-        expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null });
+        expect(getPrincipal()).toEqual({ kind: "system", reason: "gen-reaper", ownerId: null, readOnly: false });
       });
       expect(getPrincipal()?.kind).toBe("user");
     });

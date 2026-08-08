@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockRequireOwner, mockContactFindMany, mockContactFindFirst } = vi.hoisted(() => ({
+const { mockRequireOwner, mockContactFindMany, mockContactFindFirst, mockContactCount } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockContactFindMany: vi.fn(),
   mockContactFindFirst: vi.fn(),
+  mockContactCount: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-guard", () => ({ requireOwner: mockRequireOwner }));
@@ -12,6 +13,7 @@ vi.mock("@fikirtive/db", () => ({
     contact: {
       findMany: mockContactFindMany,
       findFirst: mockContactFindFirst,
+      count: mockContactCount,
     },
   },
 }));
@@ -44,6 +46,7 @@ beforeEach(() => {
   mockRequireOwner.mockResolvedValue({ ownerId: OWNER });
   mockContactFindMany.mockResolvedValue([]);
   mockContactFindFirst.mockResolvedValue(null);
+  mockContactCount.mockResolvedValue(0);
 });
 
 describe("listContacts", () => {
@@ -80,7 +83,14 @@ describe("listContacts", () => {
       purpose: "marketing",
     });
     expect(query.select.identities.where).toEqual({ ownerId: OWNER, deletedAt: null });
-    expect(query.take).toBe(100);
+    // One row past the page size answers "is there more" (#715); the merchant still sees 100.
+    expect(query.take).toBe(101);
+    // The declared total is counted through the same owner-scoped filter as the page.
+    expect(mockContactCount.mock.calls[0][0].where).toMatchObject({
+      ownerId: OWNER,
+      deletedAt: null,
+      lifecycleStage: "Active",
+    });
   });
 
   it("keeps identity search inside the authenticated owner fence", async () => {
@@ -91,6 +101,8 @@ describe("listContacts", () => {
     expect(query.where.OR[1].identities.some).toMatchObject({ ownerId: OWNER, deletedAt: null });
     expect(query.where.OR[2].identities.some).toMatchObject({ ownerId: OWNER, deletedAt: null });
     expect(JSON.stringify(query)).not.toContain("org-b");
+    expect(mockContactCount.mock.calls[0][0].where.ownerId).toBe(OWNER);
+    expect(JSON.stringify(mockContactCount.mock.calls[0][0])).not.toContain("org-b");
   });
 });
 

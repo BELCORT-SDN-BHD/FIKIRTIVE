@@ -12,6 +12,15 @@ import {
 } from "@fikirtive/core";
 import { prisma, type Prisma } from "@fikirtive/db";
 import { requireOwner } from "./auth-guard";
+import {
+  consentFact,
+  contactConsentTruth,
+  countExcludedByConsent,
+  isKnownOptOut,
+  readContactConsentTruth,
+  type ContactConsentTruth,
+} from "./consent-authority";
+import { ownedContactsWhere } from "./crm-contact-scope";
 import { isImpersonating } from "./better-auth/compat";
 
 const SEGMENT_SELECT = {
@@ -35,12 +44,22 @@ const CONTACT_SELECT = {
   id: true,
   name: true,
   totalOrdersMyr: true,
-  marketingConsent: true,
   doNotDisturb: true,
+  // Never an authority of its own (#726). Read for one thing only: the pre-ledger fence, which
+  // can hold a customer out of an audience but can never put one in — see consent-authority.ts.
+  marketingConsent: true,
 } as const;
 
 const GENERIC_SAVE_ERROR = "Couldn't save this segment. Start a new draft and try again.";
 const GENERIC_UPDATE_ERROR = "Couldn't update this segment. Refresh and try again.";
+const SEGMENT_NOT_FOUND = "Segment not found.";
+const DUPLICATE_NAME_ERROR = "You already have a segment with this name. Choose a different name.";
+/** #717 — the same bound the contact name already carries (crm-actions `text(value, 200)`).
+ *  It was the one field in this convention without a limit, and one 300-character paste made
+ *  the mobile Segments page scroll sideways forever. Bounded on the SERVER: a browser-only
+ *  maxLength is a hint, not a rule. */
+const MAX_SEGMENT_NAME = 200;
+const TOO_LONG_NAME_ERROR = `Use ${MAX_SEGMENT_NAME} characters or fewer for the segment name.`;
 const UNAVAILABLE_FACTS = { lastOrderAt: true, tags: true } as const;
 const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const DRAFT_PROOF_CONTEXT = "fikirtive:crm-segment-draft:v1";
@@ -49,8 +68,8 @@ type ContactRow = {
   id: string;
   name: string;
   totalOrdersMyr: unknown;
-  marketingConsent: string;
   doNotDisturb: boolean;
+  marketingConsent: string;
   identities: Array<{ channel: string }>;
 };
 
@@ -68,6 +87,7 @@ type EvaluatedContact = {
   name: string;
   channels: string[];
   contactable: boolean;
+  consent: ContactConsentTruth;
   facts: SegmentContactFacts;
 };
 
@@ -128,10 +148,6 @@ function validDraftProof(ownerId: string, segmentId: string, proof: unknown): bo
   return expected.length === supplied.length && timingSafeEqual(expected, supplied);
 }
 
-function asConsent(value: string): SegmentContactFacts["marketingConsent"] {
-  return value === "opt_in" || value === "opt_out" || value === "unknown" ? value : undefined;
-}
-
 function asLifetimeSpend(value: unknown): number | undefined {
   if (value === null || value === undefined) return undefined;
   const amount = Number(String(value));
@@ -143,7 +159,7 @@ function asChannel(value: string): string | null {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/.test(channel) ? channel : null;
 }
 
-function evaluateContact(row: ContactRow): EvaluatedContact {
+function evaluateContact(row: ContactRow, truth: ContactConsentTruth): EvaluatedContact {
   const channels = [
     ...new Set(
       row.identities
@@ -151,39 +167,51 @@ function evaluateContact(row: ContactRow): EvaluatedContact {
         .filter((channel): channel is string => channel !== null),
     ),
   ].sort();
-  const marketingConsent = asConsent(row.marketingConsent) ?? "unknown";
   // Segment selection is not a send gate. R-010 keeps unknown consent in the merchant's
   // selected audience, and DND is enforced later by B7. Only a known opt-out is excluded
-  // from this estimate.
-  const contactable = marketingConsent !== "opt_out";
+  // from this estimate — read through the one authority the broadcast freeze and the
+  // send-eligibility engine also read (#726), never the legacy Contact column.
+  const contactable = !isKnownOptOut(truth);
 
   return {
     id: row.id,
     name: row.name,
     channels,
     contactable,
+    consent: truth,
     facts: {
       lifetimeSpendMyr: asLifetimeSpend(row.totalOrdersMyr),
       channels,
-      marketingConsent,
+      marketingConsent: consentFact(truth),
       doNotDisturb: row.doNotDisturb,
     },
   };
 }
 
+/**
+ * Every live contact this owner has, read through the same predicate the contacts list
+ * pages and counts (#715). `contacts.length` is therefore the same total that page shows.
+ * Consent comes from the shared authority (#726) so this page and the broadcast freeze can
+ * never disagree about who has opted out.
+ */
 async function readContacts(ownerId: string): Promise<EvaluatedContact[]> {
-  const rows = await prisma.contact.findMany({
-    where: { ownerId, deletedAt: null },
-    orderBy: [{ name: "asc" }, { id: "asc" }],
-    select: {
-      ...CONTACT_SELECT,
-      identities: {
-        where: { ownerId, deletedAt: null },
-        select: { channel: true },
+  const [rows, truth] = await Promise.all([
+    prisma.contact.findMany({
+      where: ownedContactsWhere(ownerId),
+      orderBy: [{ name: "asc" }, { id: "asc" }],
+      select: {
+        ...CONTACT_SELECT,
+        identities: {
+          where: { ownerId, deletedAt: null },
+          select: { channel: true },
+        },
       },
-    },
-  });
-  return (rows as ContactRow[]).map(evaluateContact);
+    }),
+    readContactConsentTruth(prisma, ownerId),
+  ]);
+  return (rows as ContactRow[]).map((row) =>
+    evaluateContact(row, contactConsentTruth(truth.get(row.id), row.marketingConsent)),
+  );
 }
 
 function matches(
@@ -208,12 +236,64 @@ function matches(
 }
 
 function publicContacts(contacts: EvaluatedContact[]) {
-  return contacts.slice(0, 10).map(({ id, name, channels, contactable }) => ({
+  return contacts.slice(0, 10).map(({ id, name, channels, contactable, consent }) => ({
     id,
     name,
     channels,
     contactable,
+    reportedOptOut: consent.reportedOptOut,
+    // Which of the excluded are held out by the pre-ledger fence. The consent history on the
+    // contact profile cannot explain this one — there are no events behind it — so the row the
+    // merchant is already looking at has to say it itself (R-010 §4.6.5: visible, not hidden).
+    unresolvedLegacyOptOut: consent.unresolvedLegacyOptOut,
   }));
+}
+
+/**
+ * Merchant-recorded opt-outs this match KEPT. They stay in the audience (they are not verified
+ * evidence), so the merchant has to be told they are there — #716's whole defect was that this
+ * number existed nowhere on the page. A contact who is out on some other opt-out is not counted
+ * here: the page must never call the same person "still included" and "excluded" in one line.
+ */
+function reportedOptOutCountOf(matched: EvaluatedContact[]): number {
+  return matched.filter((contact) => contact.contactable && contact.consent.reportedOptOut).length;
+}
+
+/**
+ * The counts every surface publishes for one match. `excludedByConsentCount` is the number the
+ * merchant reads as "known opt-out excluded": people this segment would otherwise have reached
+ * and the opt-out rule removed — the same arithmetic, over the same authority, that the
+ * broadcast audience reports downstream (#726).
+ *
+ * The population is every contact the merchant has. A broadcast counts the same way over the
+ * contacts IT can reach on its own channel, which is a smaller population; the two numbers are
+ * therefore not interchangeable, and both surfaces print which population they counted.
+ */
+function countsOf(
+  contacts: EvaluatedContact[],
+  matched: EvaluatedContact[],
+  rules: SegmentRuleGroup,
+  evaluatedAt: string,
+) {
+  const matchedIds = new Set(matched.map((contact) => contact.id));
+  const contactableCount = matched.filter((contact) => contact.contactable).length;
+  const excluded = countExcludedByConsent(
+    contacts.map((contact) => ({
+      truth: contact.consent,
+      matched: matchedIds.has(contact.id),
+      facts: contact.facts,
+    })),
+    rules,
+    evaluatedAt,
+  );
+  return {
+    matchedCount: matched.length,
+    contactableCount,
+    knownOptOutCount: matched.length - contactableCount,
+    excludedByConsentCount: excluded.excluded,
+    unresolvedLegacyOptOutCount: excluded.unresolvedLegacy,
+    reportedOptOutCount: reportedOptOutCountOf(matched),
+  };
 }
 
 function stableJson(value: unknown): string {
@@ -258,17 +338,17 @@ function evaluatedSegment(row: SegmentRow, contacts: EvaluatedContact[], evaluat
       matchedCount: 0,
       contactableCount: 0,
       knownOptOutCount: 0,
+      excludedByConsentCount: 0,
+      unresolvedLegacyOptOutCount: 0,
+      reportedOptOutCount: 0,
       createdAt: row.createdAt.toISOString(),
     };
   }
   const matched = matches(contacts, validated.value, evaluatedAt);
-  const contactableCount = matched.filter((contact) => contact.contactable).length;
   return {
     ...publicSegment(row, validated.value),
     status: "ready" as const,
-    matchedCount: matched.length,
-    contactableCount,
-    knownOptOutCount: matched.length - contactableCount,
+    ...countsOf(contacts, matched, validated.value, evaluatedAt),
   };
 }
 
@@ -291,6 +371,7 @@ export async function listSegments() {
     evaluatedAt,
     ...issueNextDraft(gate.ownerId),
     segments: (rows as SegmentRow[]).map((row) => evaluatedSegment(row, contacts, evaluatedAt)),
+    totalContactCount: contacts.length,
     unavailableFacts: UNAVAILABLE_FACTS,
   };
 }
@@ -299,18 +380,25 @@ export async function getSegment(rawSegmentId: unknown) {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
   if (typeof rawSegmentId !== "string" || !ULID_PATTERN.test(rawSegmentId)) {
-    return { error: "Segment not found." };
+    return { error: SEGMENT_NOT_FOUND };
   }
 
   const row = (await prisma.segment.findFirst({
     where: { id: rawSegmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
     select: SEGMENT_LIST_SELECT,
   })) as SegmentRow | null;
-  if (!row) return { error: "Segment not found." };
+  if (!row) return { error: SEGMENT_NOT_FOUND };
 
   const evaluatedAt = new Date().toISOString();
-  const segment = evaluatedSegment(row, await readContacts(gate.ownerId), evaluatedAt);
-  return { ok: true as const, evaluatedAt, segment, unavailableFacts: UNAVAILABLE_FACTS };
+  const contacts = await readContacts(gate.ownerId);
+  const segment = evaluatedSegment(row, contacts, evaluatedAt);
+  return {
+    ok: true as const,
+    evaluatedAt,
+    segment,
+    totalContactCount: contacts.length,
+    unavailableFacts: UNAVAILABLE_FACTS,
+  };
 }
 
 export async function previewSegment(rawRules: unknown) {
@@ -324,18 +412,89 @@ export async function previewSegment(rawRules: unknown) {
   }
 
   const evaluatedAt = new Date().toISOString();
-  const matched = matches(await readContacts(gate.ownerId), validated.value, evaluatedAt);
-  const contactableCount = matched.filter((contact) => contact.contactable).length;
+  const contacts = await readContacts(gate.ownerId);
+  const matched = matches(contacts, validated.value, evaluatedAt);
   return {
     ok: true as const,
     evaluatedAt,
     phrase: canonicalPhrase(validated.value),
-    matchedCount: matched.length,
-    contactableCount,
-    knownOptOutCount: matched.length - contactableCount,
+    ...countsOf(contacts, matched, validated.value, evaluatedAt),
     contacts: publicContacts(matched),
+    totalContactCount: contacts.length,
     unavailableFacts: UNAVAILABLE_FACTS,
   };
+}
+
+/**
+ * #718 — is another live segment of this merchant's already called this?
+ *
+ * Three cards all reading "WhatsApp big spenders" are three cards nobody can tell apart, and
+ * the list only ever grew. Enforced in the application rather than as a database unique index
+ * because an index needs a migration; the comparison is owner-scoped and case-insensitive, and
+ * it always excludes the segment being saved so re-saving a segment under its own name (or
+ * replaying a create) is never a clash. A deleted segment frees its name again.
+ *
+ * Returns `null` if the check itself could not run — the caller refuses rather than guessing.
+ */
+async function nameTaken(ownerId: string, segmentId: string, name: string): Promise<boolean | null> {
+  try {
+    const clashes = await prisma.segment.count({
+      where: {
+        ownerId,
+        kind: "custom",
+        deletedAt: null,
+        id: { not: segmentId },
+        name: { equals: name, mode: "insensitive" },
+      },
+    });
+    return clashes > 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Remove a segment from the merchant's workspace — a SOFT delete (#718).
+ *
+ * Every read in this file, plus the broadcast and workflow services, already filters on
+ * `deletedAt: null`; nothing wrote it. Setting it is therefore the whole fix, and it keeps the
+ * row for the record: a broadcast that already froze its audience keeps its own snapshot, and
+ * an automation still scoped to this segment fails closed at its next run rather than sending
+ * to a stale audience.
+ */
+export async function deleteSegment(raw: unknown) {
+  const gate = await requireOwner();
+  if ("error" in gate) return gate;
+  if (await isImpersonating()) {
+    return { error: "Paused while impersonating a customer — exit impersonation to do this." };
+  }
+
+  const segmentId = (raw as { segmentId?: unknown })?.segmentId;
+  if (typeof segmentId !== "string" || !ULID_PATTERN.test(segmentId)) {
+    return { error: SEGMENT_NOT_FOUND };
+  }
+
+  try {
+    const removed = await prisma.segment.updateMany({
+      where: { id: segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    if (removed.count > 0) {
+      revalidatePath("/crm/segments");
+      return { ok: true as const, idempotent: false as const };
+    }
+    // Nothing live matched: either this is a replay of a delete that already landed, or the id
+    // is not this merchant's — which reports the same "not found" as any other tenant's id.
+    const alreadyGone = await prisma.segment.findFirst({
+      where: { id: segmentId, ownerId: gate.ownerId, kind: "custom", deletedAt: { not: null } },
+      select: { id: true },
+    });
+    if (!alreadyGone) return { error: SEGMENT_NOT_FOUND };
+    revalidatePath("/crm/segments");
+    return { ok: true as const, idempotent: true as const };
+  } catch {
+    return { error: GENERIC_UPDATE_ERROR };
+  }
 }
 
 export async function buildSegment(raw: unknown) {
@@ -357,13 +516,14 @@ export async function buildSegment(raw: unknown) {
     return { error: "Choose create or update for this segment." };
   }
   if (typeof input.segmentId !== "string" || !ULID_PATTERN.test(input.segmentId)) {
-    return { error: operation === "create" ? "Start a new segment draft and try again." : "Segment not found." };
+    return { error: operation === "create" ? "Start a new segment draft and try again." : SEGMENT_NOT_FOUND };
   }
   if (operation === "create" && !validDraftProof(gate.ownerId, input.segmentId, input.segmentProof)) {
     return { error: "Start a new segment draft and try again." };
   }
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) return { error: "Give this segment a name." };
+  if (name.length > MAX_SEGMENT_NAME) return { error: TOO_LONG_NAME_ERROR };
   const validated = validateSegmentRuleGroup(input.rules);
   if (!validated.ok) return { error: "Choose valid segment rules." };
   if (!hasExactSpendPrecision(validated.value)) {
@@ -378,7 +538,7 @@ export async function buildSegment(raw: unknown) {
   })) as SegmentRow | null;
 
   if (operation === "update") {
-    if (!existing) return { error: "Segment not found." };
+    if (!existing) return { error: SEGMENT_NOT_FOUND };
     if (samePayload(existing, name, phrase, validated.value)) {
       revalidatePath("/crm/segments");
       return {
@@ -388,6 +548,10 @@ export async function buildSegment(raw: unknown) {
         segment: publicSegment(existing, validated.value),
       };
     }
+
+    const clash = await nameTaken(gate.ownerId, input.segmentId, name);
+    if (clash === null) return { error: GENERIC_UPDATE_ERROR };
+    if (clash) return { error: DUPLICATE_NAME_ERROR };
 
     try {
       const updated = await prisma.segment.updateMany({
@@ -438,6 +602,10 @@ export async function buildSegment(raw: unknown) {
       ...issueNextDraft(gate.ownerId),
     };
   }
+
+  const clash = await nameTaken(gate.ownerId, input.segmentId, name);
+  if (clash === null) return { error: GENERIC_SAVE_ERROR };
+  if (clash) return { error: DUPLICATE_NAME_ERROR };
 
   try {
     const created = (await prisma.segment.create({

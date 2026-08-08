@@ -13,10 +13,18 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { buildSegment, listSegments, previewSegment } from "@/lib/segment-actions";
+import { buildSegment, deleteSegment, listSegments, previewSegment } from "@/lib/segment-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -46,6 +54,13 @@ type DraftRule =
   | { id: number; kind: "channel"; channel: string }
   | { id: number; kind: "tag"; tag: string }
   | { id: number; kind: "contactability"; value: "contactable" | "not_contactable" };
+
+/**
+ * #716 — the one sentence this page never said. A merchant who records an opt-out on a contact,
+ * or imports one in a CSV, has to be told here what that record does and does not do.
+ */
+const KNOWN_OPT_OUT_RULE_NOTE =
+  "Known opt-out means the customer opted out through their own channel. An opt-out you recorded yourself keeps the contact in the list, marked reported opt-out — open the contact to see its consent history.";
 
 type DraftGroup = { match: "all" | "any"; rules: DraftRule[] };
 type SettledPreview = { key: string; result: PreviewSuccess | null; error: string | null };
@@ -173,6 +188,7 @@ export default function SegmentsPage({ initialState }: { initialState: ListResul
 
 function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [segments, setSegments] = useState<SegmentItem[]>(initialState.segments);
+  const [totalContactCount, setTotalContactCount] = useState(initialState.totalContactCount);
   const [selectedId, setSelectedId] = useState<string | null>(initialState.segments[0]?.id ?? null);
   const [selectedRequest, setSelectedRequest] = useState<SettledPreview | null>(null);
   const [selectedRetry, setSelectedRetry] = useState(0);
@@ -192,6 +208,9 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
   const [refreshingDraft, setRefreshingDraft] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SegmentItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const selected = segments.find((segment) => segment.id === selectedId) ?? null;
   const selectedRulesKey = selected?.rules ? JSON.stringify(selected.rules) : null;
@@ -269,7 +288,10 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
       syncing = true;
       try {
         const result = await listSegments();
-        if (!stopped && isSuccess(result)) setSegments(result.segments);
+        if (!stopped && isSuccess(result)) {
+          setSegments(result.segments);
+          setTotalContactCount(result.totalContactCount);
+        }
       } catch {
         // Keep the last truthful view; the next bounded poll or window focus retries.
       } finally {
@@ -359,6 +381,9 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         matchedCount: preview.matchedCount,
         contactableCount: preview.contactableCount,
         knownOptOutCount: preview.knownOptOutCount,
+        excludedByConsentCount: preview.excludedByConsentCount,
+        unresolvedLegacyOptOutCount: preview.unresolvedLegacyOptOutCount,
+        reportedOptOutCount: preview.reportedOptOutCount,
       };
       setSegments((current) =>
         attempt.operation === "update"
@@ -380,6 +405,34 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
     }
   }
 
+  /** #718 — the delete the page never had. Soft delete on the server; the list here is only
+   *  re-rendered after the server confirms, so a failure never shows a segment as gone. */
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    const target = pendingDelete;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = await deleteSegment({ segmentId: target.id });
+      if (!isSuccess(result)) {
+        setDeleteError(result.error);
+        return;
+      }
+      setSegments((current) => {
+        const remaining = current.filter((segment) => segment.id !== target.id);
+        setSelectedId((currentId) => (currentId === target.id ? remaining[0]?.id ?? null : currentId));
+        return remaining;
+      });
+      if (editingId === target.id) resetEditor();
+      setPendingDelete(null);
+      setSavedNotice(`“${target.name}” is deleted.`);
+    } catch {
+      setDeleteError("The delete request could not finish. Please retry.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function startFreshDraft() {
     if (!retryFence) return;
     setRefreshingDraft(true);
@@ -393,6 +446,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
 
       const recovered = result.segments.find((segment) => segment.id === retryFence.segmentId);
       setSegments(result.segments);
+      setTotalContactCount(result.totalContactCount);
       setNextSegmentId(result.nextSegmentId);
       setNextSegmentProof(result.nextSegmentProof);
       setRetryFence(null);
@@ -442,6 +496,10 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
           </div>
           <div className="flex gap-3">
             <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
+              <p className="text-xs text-muted-foreground">Contacts</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{totalContactCount}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
               <p className="text-xs text-muted-foreground">Saved</p>
               <p className="mt-1 text-xl font-semibold tabular-nums">{segments.length}</p>
             </div>
@@ -487,7 +545,11 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                         key={segment.id}
                         type="button"
                         onClick={() => setSelectedId(segment.id)}
-                        className={`min-h-16 rounded-xl border px-4 py-3 text-left transition-colors ${
+                        // #717 — the width constraint is load-bearing: without it the button
+                        // grows to whatever the name is, the inner `truncate` never bites, and
+                        // one long name pushes the whole 375px page into a permanent sideways
+                        // scroll. Keeps old over-long rows harmless too.
+                        className={`min-h-16 w-full min-w-0 max-w-full rounded-xl border px-4 py-3 text-left transition-colors ${
                           active ? "border-brand bg-brand-soft" : "border-transparent hover:border-border hover:bg-muted/50"
                         }`}
                       >
@@ -524,10 +586,24 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                     {selected ? selected.phrase : "Select a saved segment to inspect its current matches."}
                   </CardDescription>
                 </div>
-                {selected?.status === "ready" ? (
-                  <Button type="button" size="sm" variant="secondary" disabled={draftLocked} onClick={editSelectedSegment}>
-                    Edit segment
-                  </Button>
+                {selected ? (
+                  <div className="flex shrink-0 gap-2">
+                    {selected.status === "ready" ? (
+                      <Button type="button" size="sm" variant="secondary" disabled={draftLocked} onClick={editSelectedSegment}>
+                        Edit segment
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={draftLocked || deleting}
+                      onClick={() => { setDeleteError(null); setPendingDelete(selected); }}
+                    >
+                      <Trash2 />
+                      Delete
+                    </Button>
+                  </div>
                 ) : null}
               </div>
             </CardHeader>
@@ -651,6 +727,9 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                     id="segment-name"
                     className="mt-2"
                     value={name}
+                    // #717 — same bound as the contact name field. The server enforces it too;
+                    // this only stops the merchant reaching a rejection they can't see coming.
+                    maxLength={200}
                     onChange={(event) => {
                       setName(event.target.value);
                       setSaveError(null);
@@ -748,18 +827,65 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
           </CardContent>
         </Card>
       </div>
+
+      <Dialog
+        open={pendingDelete !== null}
+        onOpenChange={(next) => { if (!next && !deleting) { setPendingDelete(null); setDeleteError(null); } }}
+      >
+        <DialogContent className="max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Delete “{pendingDelete?.name}”?</DialogTitle>
+            <DialogDescription>
+              This segment leaves your list. Contacts are never deleted, and broadcasts you already
+              sent keep the audience they were sent to.
+            </DialogDescription>
+          </DialogHeader>
+          <p className="rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
+            Any automation still targeting this segment stops sending and records why, until you
+            point it at another one. Nothing goes out to an audience you removed.
+          </p>
+          {deleteError ? (
+            <p className="rounded-xl bg-error-soft px-4 py-3 text-sm text-error-soft-foreground" role="alert">
+              {deleteError}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="secondary" disabled={deleting} onClick={() => setPendingDelete(null)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void confirmDelete()}>
+              {deleting ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+              Delete segment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
 
-function ContactPreview({ preview }: { preview: PreviewSuccess }) {
+export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
   return (
     <div className="mt-4">
       <p className="rounded-xl border border-border bg-card px-4 py-3 text-sm font-semibold tabular-nums">
-        {preview.matchedCount} matched · {preview.contactableCount} contactable · {preview.knownOptOutCount} known opt-out excluded
+        {preview.matchedCount} of {preview.totalContactCount} contacts matched · {preview.contactableCount} contactable · {preview.excludedByConsentCount} known opt-out excluded
+        {preview.reportedOptOutCount > 0
+          ? ` · ${preview.reportedOptOutCount} reported opt-out still included`
+          : ""}
       </p>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
-        Unknown consent stays included. Do not disturb is checked at send time and does not filter this segment.
+        Unknown consent stays included. {KNOWN_OPT_OUT_RULE_NOTE} Do not disturb is checked at send time and does not filter this segment.
+        {preview.unresolvedLegacyOptOutCount > 0
+          ? ` ${preview.unresolvedLegacyOptOutCount} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
+          : ""}
+      </p>
+      {/*
+        #726 — the two numbers a merchant compares are counted over two different groups of
+        people. Saying so is the fix; quietly making them look identical is what let a frozen
+        audience disagree with the page that promised it.
+      */}
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        These counts cover every contact you have. A broadcast counts only the contacts it can reach on the channel it sends from, so its own numbers can be lower.
       </p>
       <p className="mt-3 text-[11px] text-muted-foreground">
         Evaluated {preview.evaluatedAt.replace("T", " ").replace(".000Z", " UTC")}
@@ -769,7 +895,13 @@ function ContactPreview({ preview }: { preview: PreviewSuccess }) {
           No connected contacts match these rules.
         </p>
       ) : (
-        <ul className="mt-4 grid gap-2">
+        <>
+          {preview.contacts.length < preview.matchedCount ? (
+            <p className="mt-4 text-xs text-muted-foreground">
+              Showing the first {preview.contacts.length} of {preview.matchedCount} matched contacts.
+            </p>
+          ) : null}
+          <ul className={`grid gap-2 ${preview.contacts.length < preview.matchedCount ? "mt-2" : "mt-4"}`}>
           {preview.contacts.map((contact) => (
             <li key={contact.id} className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
               <div className="min-w-0">
@@ -778,12 +910,27 @@ function ContactPreview({ preview }: { preview: PreviewSuccess }) {
                   {contact.channels.length > 0 ? contact.channels.join(" · ") : "No live identity"}
                 </p>
               </div>
-              <Badge variant={contact.contactable ? "success" : "warning"}>
-                {contact.contactable ? "Included" : "Known opt-out excluded"}
+              {/*
+                Every row here MATCHED, and a matched contact is exactly what the broadcast
+                freeze turns into an audience member. So the badge may only describe this
+                contact's consent standing — never claim an exclusion. A merchant is allowed to
+                select the people who opted out; on that segment the old "excluded" wording said
+                the opposite of what the freeze on the same rules did. Whether such a member can
+                actually be messaged is decided later, by the four send-eligibility axes.
+              */}
+              <Badge variant={contact.contactable && !contact.reportedOptOut ? "success" : "warning"}>
+                {contact.contactable
+                  ? contact.reportedOptOut
+                    ? "Included · reported opt-out"
+                    : "Included"
+                  : contact.unresolvedLegacyOptOut
+                    ? "Included · opted out before consent history"
+                    : "Included · known opt-out"}
               </Badge>
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
     </div>
   );
@@ -889,18 +1036,21 @@ function RuleValueEditor({ rule, onChange }: { rule: DraftRule; onChange: (rule:
       );
     case "contactability":
       return (
-        <Select
-          value={rule.value}
-          onValueChange={(value) => onChange({ ...rule, value: value as "contactable" | "not_contactable" })}
-        >
-          <SelectTrigger className="w-full" aria-label="Consent selection value">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="contactable">Not known opt-out</SelectItem>
-            <SelectItem value="not_contactable">Known opt-out</SelectItem>
-          </SelectContent>
-        </Select>
+        <div>
+          <Select
+            value={rule.value}
+            onValueChange={(value) => onChange({ ...rule, value: value as "contactable" | "not_contactable" })}
+          >
+            <SelectTrigger className="w-full" aria-label="Consent selection value">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="contactable">Not known opt-out</SelectItem>
+              <SelectItem value="not_contactable">Known opt-out</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">{KNOWN_OPT_OUT_RULE_NOTE}</p>
+        </div>
       );
   }
 }

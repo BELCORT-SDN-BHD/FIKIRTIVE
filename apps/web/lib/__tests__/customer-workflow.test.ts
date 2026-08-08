@@ -44,6 +44,7 @@ const IDENTITY_KILL = "c7-m1-test-identity-kill";
 const IDENTITY_BLOCK = "c7-m1-test-identity-block";
 const IDENTITY_PASS = "c7-m1-test-identity-pass";
 const IDENTITY_B = "c7-m1-test-identity-b";
+const SEGMENT_A = "c7-m1-test-segment-a";
 const TEMPLATE_A = "c7-m1-test-template-a";
 const TEMPLATE_B = "c7-m1-test-template-b";
 const TEMPLATE_VERSION_A = "c7-m1-test-template-version-a";
@@ -245,12 +246,13 @@ function customerMessageSource(templateVersionId: string, policyId: string) {
 function routineScope(
   action: "broadcast_run" | "conversation_reply",
   contactIds: string[],
+  segmentIds: string[] = [],
 ) {
   return {
     actionKinds: [action],
     channelScopes: [{ channel: "whatsapp", providerConnectionId: null }],
     contactIds,
-    segmentIds: [],
+    segmentIds,
     maxActions: 8,
     maxRecipients: 8,
   };
@@ -280,6 +282,7 @@ async function cleanup(): Promise<void> {
   await prisma.customerConversation.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contactIdentity.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.channelScope.deleteMany({ where: { ownerId: { in: OWNERS } } });
+  await prisma.segment.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.contact.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.membership.deleteMany({ where: { orgId: { in: OWNERS } } });
   await prisma.organization.deleteMany({ where: { id: { in: OWNERS } } });
@@ -322,6 +325,17 @@ async function seed(): Promise<void> {
       { id: SCOPE_A, ownerId: ORG_A, channel: "whatsapp", scopeKey: "c7-waba-a" },
       { id: SCOPE_B, ownerId: ORG_B, channel: "whatsapp", scopeKey: "c7-waba-b" },
     ],
+  });
+  // #718/#744 — a real audience a Routine can be scoped to, so deleting it can be observed.
+  await prisma.segment.create({
+    data: {
+      id: SEGMENT_A,
+      ownerId: ORG_A,
+      name: "c7 scoped audience",
+      phrase: "All of: contact is not a known opt-out",
+      rulesJson: { match: "all", rules: [{ kind: "contactability", value: "contactable" }] },
+      kind: "custom",
+    },
   });
   await prisma.contactIdentity.createMany({
     data: [
@@ -402,6 +416,7 @@ async function createLifecycle(
   action: "broadcast_run" | "conversation_reply",
   contactIds: string[],
   rulesSource = source(templateVersionId, action),
+  segmentIds: string[] = [],
 ) {
   const definition = await workflows.createWorkflowDefinition(principal, {
     slug: `workflow-${suffix}`,
@@ -423,7 +438,7 @@ async function createLifecycle(
     workflowDefinitionId: definition.resource.id,
     workflowRevisionId: saved.resource.id,
     routineKey: `routine_${suffix}`,
-    scopeJson: routineScope(action, contactIds),
+    scopeJson: routineScope(action, contactIds, segmentIds),
     maxCreditsPerRun: 0,
     maxCreditsPerMonth: 0,
     summaryPolicyJson: { mode: "counts_only" },
@@ -723,6 +738,73 @@ describe("customer workflow lifecycle and dispatch", () => {
         frequency: { status: "pass" },
       },
     });
+  });
+
+  // #744 判官 r1 P2 — the Segments delete dialog tells the merchant that automations aiming at a
+  // deleted segment stop. Until now that was a promise with no mechanism behind it: the scope
+  // check only ran at activate/reauthorize, so a Routine that was already active kept sending to
+  // an audience the merchant had removed. These two prove the promise is now kept, and kept
+  // HONESTLY — the step is recorded as unavailable with a reason, not silently skipped.
+  it("keeps dispatching while the segment a Routine is scoped to is still live", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "segment-live",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+      undefined,
+      [SEGMENT_A],
+    );
+    const run = await dueRun(workerA, lifecycle, CONTACT_PASS, IDENTITY_PASS, "segment-live-1");
+
+    const execution = await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    });
+    // Reaches the real send seam: the segment is not what stopped it.
+    expect(execution).toMatchObject({
+      status: "unavailable",
+      reasonCode: "BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE",
+    });
+  });
+
+  it("stops a live Routine whose scoped segment was deleted, and says why", async () => {
+    const lifecycle = await createLifecycle(
+      principalA,
+      "segment-deleted",
+      TEMPLATE_VERSION_A,
+      "broadcast_run",
+      [CONTACT_PASS],
+      undefined,
+      [SEGMENT_A],
+    );
+    const run = await dueRun(workerA, lifecycle, CONTACT_PASS, IDENTITY_PASS, "segment-deleted-1");
+
+    // The merchant deletes the audience. The Routine is untouched and still active — nothing
+    // pauses it, which is exactly why the dispatch path has to ask.
+    await prisma.segment.updateMany({ where: { id: SEGMENT_A, ownerId: ORG_A }, data: { deletedAt: NOW } });
+    expect(await prisma.routine.findFirst({
+      where: { id: lifecycle.routine.id, ownerId: ORG_A },
+      select: { status: true, killSwitchEngaged: true },
+    })).toEqual({ status: "active", killSwitchEngaged: false });
+
+    const execution = await workflows.dispatchWorkflowStep(workerA, {
+      routineRunId: run.id,
+      stepKey: "send_offer",
+    });
+    expect(execution).toMatchObject({
+      status: "unavailable",
+      reasonCode: "workflow_target_unavailable",
+      contactId: null,
+      contactIdentityId: null,
+    });
+    // Fail-closed, and not silent: nothing was addressed, nothing was counted, and the step is
+    // on the record with its reason.
+    expect(await prisma.broadcastRun.count({ where: { ownerId: ORG_A } })).toBe(0);
+    expect(await prisma.contactSendFrequencyEvent.count({ where: { ownerId: ORG_A } })).toBe(0);
+    expect(await prisma.workflowStepExecution.count({
+      where: { ownerId: ORG_A, routineRunId: run.id, status: "unavailable" },
+    })).toBe(1);
   });
 
   it("persists unavailable for the known non-broadcast C4 transactional tuple", async () => {
