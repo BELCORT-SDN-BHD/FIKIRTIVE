@@ -11,13 +11,13 @@
 #           "false" → every path in the PR is under docs/ and the list is
 #                     provably complete; the gates have nothing to check
 #
-# This file deliberately does no parsing. Four review rounds of #809 all failed
+# This file deliberately does no parsing. Five review rounds of #809 all failed
 # the same way: a shell layer re-parsing projected text let some legal-but-odd
 # input through and produced a WRONG "false" — every gate skipped, job green,
 # code merged unreviewed. So there is no field splitting, no IFS, no quote
-# handling and no string arithmetic here. jq reads the API's own JSON, and this
-# script only moves bytes and refuses anything that is not, byte for byte, the
-# single word `false`.
+# handling and no string arithmetic here (that is what shrank this file from 137
+# lines to 64). jq reads the API's own JSON, and this script only moves bytes
+# and refuses anything that is not, byte for byte, exactly "false\n".
 
 set -euo pipefail
 
@@ -41,22 +41,24 @@ if [[ ! -r "$filter" ]]; then
   exit 0
 fi
 
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
 # `-s` slurps the (possibly paginated) pages into one array; the filter validates
 # that shape rather than trusting it. A jq failure of any kind lands on "true".
-verdict="$(jq -s -r --slurpfile pr "$pr" -f "$filter" -- "$files" 2>/dev/null)" || {
+if ! jq -s -r --slurpfile pr "$pr" -f "$filter" -- "$files" >"$work/verdict" 2>/dev/null; then
   note "jq could not evaluate the PR payloads — running every gate"
   echo "true"
   exit 0
-}
+fi
 
-# Byte-exact. Command substitution strips trailing newlines, so anything else at
-# all — extra output, a second line, whitespace, `true`, an error string — is not
-# permission to skip.
-if [[ "$verdict" == "false" ]]; then
+# Byte-exact, via a file rather than a variable. `$(…)` strips trailing newlines
+# and drops NUL bytes, so "false\n\n" and "false\0" would both have compared
+# equal to "false" and bought a skip. `cmp` sees every byte: the only output that
+# skips the gates is exactly the six bytes f-a-l-s-e-LF.
+printf 'false\n' >"$work/expected"
+if cmp -s "$work/verdict" "$work/expected"; then
   echo "false"
 else
-  if [[ "$verdict" != "true" ]]; then
-    note "unexpected filter output — running every gate"
-  fi
   echo "true"
 fi

@@ -5,25 +5,32 @@
 #   $pr        : slurped GET /repos/{o}/{r}/pulls/{n}  (--slurpfile, one object)
 #   output     : exactly `true` (run every gate) or `false` (docs-only, skip)
 #
-# Everything is decided here, on parsed JSON, because four rounds of review
-# proved the alternative unworkable: each time the shell re-parsed a projected
-# string, some legal-but-unusual input punched through and produced a WRONG
-# "false" — a green `quality` over unreviewed code. Illegal JSON escapes
-# ("docs/a\q.md"), tabs and blank lines in a hand-made line format, and
-# `previous_filename` being false/null/absent all did it. A real JSON parser has
-# no such layer, so there is nothing left to punch through.
+# Everything is decided here, on parsed JSON, because five review rounds proved
+# the alternative unworkable: each time a shell layer re-parsed projected text,
+# some legal-but-unusual input punched through and produced a WRONG "false" — a
+# green `quality` over unreviewed code. A real JSON parser has no such layer.
 #
 # The one rule that governs every branch below: any input that does not match
 # the contract exactly yields `true`. Being wrong in that direction costs
-# minutes of CI; being wrong the other way merges unreviewed code.
+# minutes of CI; being wrong the other way merges unreviewed code. Nothing here
+# is "tolerant" — tolerance is how the previous five versions failed.
 
-# A usable path: a non-empty string that cannot climb out of its directory.
-# (Git never emits a `..` segment; if one appears, we are not reading what we
-# think we are, so it is a contract violation rather than a path to classify.)
+# The complete `status` vocabulary of the files endpoint. An unknown value means
+# we are not reading what we think we are, so it is a contract violation rather
+# than something to fall through to a default branch: "" , "bogus" and "RENAMED"
+# all used to land on the non-rename path and skip the rename checks entirely.
+def known_status:
+  . == "added" or . == "removed" or . == "modified" or . == "renamed"
+  or . == "copied" or . == "changed" or . == "unchanged";
+
+# A usable path: a non-empty string whose every segment is a real name. Rejects
+# "docs/" and "docs//a.md" (empty segments), "/docs/a.md" (empty leading
+# segment), and any "." or ".." segment. Git emits none of these, so their
+# presence means the payload is not what we think it is.
 def path_ok:
   type == "string"
   and length > 0
-  and (split("/") | any(. == "..") | not);
+  and (split("/") | all(length > 0 and . != "." and . != ".."));
 
 def is_docs:
   startswith("docs/");
@@ -36,9 +43,10 @@ def entry_paths:
   | if ($e | type) != "object" then null
     elif ($e | has("filename") | not) or ($e.filename | path_ok | not) then null
     elif ($e | has("status") | not) or ($e.status | type) != "string" then null
+    elif ($e.status | known_status | not) then null
     elif $e.status == "renamed" or $e.status == "copied" then
       # The old name is mandatory here, and must be a real path. `false`, null,
-      # a number, or an absent key are all contract violations, never "no rename".
+      # a number, "" or an absent key are contract violations, never "no rename".
       (if ($e | has("previous_filename")) and ($e.previous_filename | path_ok)
        then [$e.filename, $e.previous_filename]
        else null end)
@@ -57,6 +65,15 @@ def entries:
   else null
   end;
 
+# A count we can actually reason about: a non-negative decimal integer, checked
+# as TEXT. Numeric checks are not enough — jq compares `1.0000000000000000001`
+# unequal to 1 in one context and equal in another, so `floor` agreed with it
+# and the length comparison did not catch it. `tostring` keeps the literal the
+# API sent (jq >= 1.7), so this rejects 1.0, 1.0000000000000000001,
+# 0.9999999999999999999, -1 and 1.5 without depending on float semantics.
+def whole_number:
+  (type == "number") and (tostring | test("^(0|[1-9][0-9]*)$"));
+
 entries as $entries
 | ( if ($pr | type) == "array" and ($pr | length) == 1 and ($pr[0] | type) == "object"
     then $pr[0].changed_files
@@ -67,11 +84,7 @@ entries as $entries
   # An empty list means we never learned what changed, not that nothing changed.
   elif ($entries | length) == 0 then true
 
-  # The count has to be a real non-negative integer, straight out of the JSON —
-  # no string arithmetic, so nothing can wrap into a bogus agreement.
-  elif ($total | type) != "number" then true
-  elif $total != ($total | floor) then true
-  elif $total < 0 then true
+  elif ($total | whole_number | not) then true
 
   # GET .../files stops at 3,000 entries and never says so. At or past the
   # ceiling "complete" and "truncated" are indistinguishable, so neither is trusted.
@@ -83,6 +96,12 @@ entries as $entries
   else
     [ $entries[] | entry_paths ] as $sets
     | if ($sets | any(. == null)) then true
+
+      # The count only proves completeness if the entries are distinct. Two
+      # copies of docs/a.md against changed_files:2 would otherwise satisfy the
+      # length check while hiding whatever the real second file was.
+      elif ($entries | map(.filename) | unique | length) != ($entries | length) then true
+
       else ([ $sets[][] ] | all(is_docs) | not)
       end
   end

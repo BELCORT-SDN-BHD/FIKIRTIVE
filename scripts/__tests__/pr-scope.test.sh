@@ -186,6 +186,36 @@ check true status_absent "entry without a status"
 fixture status_number '[{"status":3,"filename":"docs/a.md"}]' 1
 check true status_number "status is not a string"
 
+# `status` must be one of the endpoint's seven values. Anything else used to
+# fall through to the non-rename branch and skip the rename checks entirely.
+fixture status_empty '[{"status":"","filename":"docs/a.md"}]' 1
+check true status_empty 'status is the empty string'
+
+fixture status_bogus '[{"status":"bogus","filename":"docs/a.md"}]' 1
+check true status_bogus 'status is an unknown word'
+
+fixture status_upper '[{"status":"RENAMED","filename":"docs/a.md"}]' 1
+check true status_upper 'status is RENAMED (wrong case)'
+
+fixture status_title '[{"status":"Modified","filename":"docs/a.md"}]' 1
+check true status_title 'status is Modified (wrong case)'
+
+fixture status_space '[{"status":"renamed ","filename":"docs/a.md"}]' 1
+check true status_space 'status has a trailing space'
+
+# Every path segment must be a real name.
+fixture path_trailing_slash '[{"status":"modified","filename":"docs/"}]' 1
+check true path_trailing_slash 'path is "docs/" (empty last segment)'
+
+fixture path_double_slash '[{"status":"modified","filename":"docs//a.md"}]' 1
+check true path_double_slash 'path is "docs//a.md" (empty middle segment)'
+
+fixture path_leading_slash '[{"status":"modified","filename":"/docs/a.md"}]' 1
+check true path_leading_slash 'path has an empty leading segment'
+
+fixture path_dot_segment '[{"status":"modified","filename":"docs/./a.md"}]' 1
+check true path_dot_segment 'path has a "." segment'
+
 fixture entry_string '["docs/a.md"]' 1
 check true entry_string "array element is a string, not an object"
 
@@ -234,6 +264,26 @@ check true count_null "changed_files is null"
 fixture count_huge '[{"status":"modified","filename":"docs/a.md"}]' 18446744073709551619
 check true count_huge "changed_files is absurdly large"
 
+# jq compares 1.0000000000000000001 unequal to 1 in one context and equal in
+# another, so `floor` agreed with it and the length check let it through. The
+# count is therefore validated as text, not as a float.
+fixture count_near_int '[{"status":"modified","filename":"docs/a.md"}]' 1.0000000000000000001
+check true count_near_int "changed_files is a hair above 1"
+
+fixture count_near_int_lo '[{"status":"modified","filename":"docs/a.md"}]' 0.9999999999999999999
+check true count_near_int_lo "changed_files is a hair below 1"
+
+fixture count_dot_zero '[{"status":"modified","filename":"docs/a.md"}]' 1.0
+check true count_dot_zero "changed_files written as 1.0"
+
+# Two entries naming the same file satisfy a length check while hiding whatever
+# the real second file was.
+fixture dup_entries '[{"status":"modified","filename":"docs/a.md"},{"status":"modified","filename":"docs/a.md"}]' 2
+check true dup_entries "the same path listed twice"
+
+fixture dup_rename '[{"status":"modified","filename":"docs/a.md"},{"status":"renamed","filename":"docs/a.md","previous_filename":"docs/b.md"}]' 2
+check true dup_rename "a path listed twice, once as a rename target"
+
 check true at-ceiling "3,000 entries at the API ceiling, count agrees"
 check true truncated "3,000 entries listed but the PR changed 3,001"
 
@@ -251,6 +301,41 @@ else
   failures=$((failures + 1))
 fi
 
+# ══ only the exact bytes "false\n" buy a skip ══
+#
+# The transport used to compare a command substitution against the word "false".
+# `$(…)` strips trailing newlines and drops NUL bytes, so "false\n\n" and
+# "false\0" both compared equal and would have skipped every gate. These run the
+# real transport against a substituted filter that emits the forged bytes.
+forged() {
+  local expected="$1" label="$2" program="$3"
+  local dir="$tmp/forged"
+  rm -rf "$dir"; mkdir -p "$dir"
+  cp "$scope" "$dir/pr-scope.sh"
+  printf '%s\n' "$program" >"$dir/pr-scope.jq"
+  printf '%s' '[{"status":"modified","filename":"docs/a.md"}]' >"$dir/f.json"
+  printf '{"changed_files":1}' >"$dir/p.json"
+  local actual
+  case_no=$((case_no + 1))
+  actual="$(bash "$dir/pr-scope.sh" "$dir/f.json" "$dir/p.json" 2>/dev/null)"
+  if [[ "$actual" == "$expected" ]]; then
+    printf '  ok    %2d. %s → %s\n' "$case_no" "$label" "$actual"
+  else
+    printf '  FAIL  %2d. %s → expected %s, got %s\n' "$case_no" "$label" "$expected" "${actual:-<empty>}" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+forged false 'filter emits exactly false'             'false'
+forged true  'filter emits false plus a blank line'   '"false\n"'
+forged true  'filter emits false plus a NUL byte'     '"false\u0000"'
+forged true  'filter emits false with a trailing space' '"false "'
+forged true  'filter emits a leading space'           '" false"'
+forged true  'filter emits false twice'               'false,false'
+forged true  'filter emits falsefalse'                '"falsefalse"'
+forged true  'filter emits true'                      'true'
+forged true  'filter emits nothing'                   'empty'
+forged true  'filter emits a quoted JSON string'      '"false" | tojson'
 if [[ "$failures" -ne 0 ]]; then
   echo "pr-scope: $failures of $case_no case(s) failed" >&2
   exit 1
