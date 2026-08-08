@@ -32,7 +32,15 @@ import {
   type TakeOverConversationInput,
 } from "./customer-inbox-service";
 
-type GatewayFailure = { ok: false; error: CustomerInboxErrorCode };
+/** #729 — `detail` is present only for refusals whose reason depends on what was submitted;
+ *  it is the same merchant-facing sentence whether the call came from the UI or straight
+ *  from a script. Every other failure keeps the bare code and its fixed copy. */
+type GatewayFailure = { ok: false; error: CustomerInboxErrorCode; detail?: string };
+
+function failure(error: CustomerInboxError | MemberDirectoryError): GatewayFailure {
+  const detail = error instanceof CustomerInboxError ? error.detail : undefined;
+  return detail ? { ok: false, error: error.code, detail } : { ok: false, error: error.code };
+}
 
 /**
  * #463 — this gateway is one of the four request-level principal SEAMS (design contract §2-v2).
@@ -89,12 +97,12 @@ async function runRead<T>(
     const { service, ambient } = await resolvePrincipal();
     return { ok: true, resource: await runAsUser(ambient, () => operation(service)) };
   } catch (error) {
-    if (error instanceof CustomerInboxError) return { ok: false, error: error.code };
+    if (error instanceof CustomerInboxError) return failure(error);
     // MemberDirectoryError shares the NOT_AUTHORIZED/ACTION_DENIED codes; surface them the same
     // way. Its own members.read re-check runs after this gateway's inbox.read check, so a
     // membership edited between the two lands here — and the conversation route reads through a
     // single Promise.all, where a throw would take the whole page down instead of one panel.
-    if (error instanceof MemberDirectoryError) return { ok: false, error: error.code };
+    if (error instanceof MemberDirectoryError) return failure(error);
     throw error;
   }
 }
@@ -106,7 +114,7 @@ async function runMutation<T>(
     const { service, ambient } = await resolvePrincipal();
     return await runAsUser(ambient, () => operation(service));
   } catch (error) {
-    if (error instanceof CustomerInboxError) return { ok: false, error: error.code };
+    if (error instanceof CustomerInboxError) return failure(error);
     throw error;
   }
 }

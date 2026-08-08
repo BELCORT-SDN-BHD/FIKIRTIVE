@@ -37,6 +37,15 @@ function parseTrendCapturedAt(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/** #713 — evidence cannot come from a day that has not happened yet. Without this the archive
+ *  sorts an impossible row above every real one, under a card that says "Newest evidence first". */
+const capturedAtSchema = z.string()
+  .refine((value) => parseTrendCapturedAt(value) !== null, "Enter the captured date as a real calendar date, for example 2026-08-01.")
+  .refine((value) => {
+    const captured = parseTrendCapturedAt(value);
+    return captured === null || captured.getTime() <= Date.now();
+  }, "The captured date can't be in the future — use the day you actually saw this evidence.");
+
 const sourceSchema = z.object({
   title: z.string().trim().min(1).max(200),
   domain: z.string().trim().min(1).max(253),
@@ -45,7 +54,7 @@ const sourceSchema = z.object({
 const trendEvidenceSchema = z.object({
   summary: z.string().trim().min(1).max(1_000),
   sources: z.array(sourceSchema).min(1).max(20),
-  capturedAt: z.string().refine((value) => parseTrendCapturedAt(value) !== null, "Invalid capture date.").optional(),
+  capturedAt: capturedAtSchema.optional(),
 }).strict();
 
 export type TrendEvidence = z.infer<typeof trendEvidenceSchema>;
@@ -182,6 +191,13 @@ const saveInputSchema = z.object({
   evidence: trendEvidenceSchema,
 }).strict();
 
+/** #713 — a refusal must name the box and the reason. Only the messages this file authors
+ *  (zod `custom` refinements) are merchant copy; zod's built-in length/format text is not,
+ *  so anything else still falls back to the generic sentence. */
+function refusalMessage(error: z.ZodError, fallback: string): string {
+  return error.issues.find((issue) => issue.code === "custom")?.message ?? fallback;
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -202,7 +218,7 @@ export async function saveTrendSnapshot(raw: unknown): Promise<
   if ("error" in gate) return gate;
   if (await isImpersonating()) return { error: IMPERSONATION_BLOCK };
   const parsed = saveInputSchema.safeParse(raw);
-  if (!parsed.success) return { error: "That trend snapshot isn't valid." };
+  if (!parsed.success) return { error: refusalMessage(parsed.error, "That trend snapshot isn't valid.") };
   const { snapshotId, snapshotProof, campaignId, evidence } = parsed.data;
   if (!validTrendProof(gate.ownerId, snapshotId, snapshotProof)) {
     return { error: "Refresh the trend archive and try again." };
