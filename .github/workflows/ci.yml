@@ -65,6 +65,14 @@ jobs:
       # what proves the list is whole — pr-scope.sh refuses to answer "false" unless the two
       # agree and stay under that ceiling.
       #
+      # The projection is `tojson` per path, two per line, TAB-separated, and both halves
+      # matter. `tojson` because a path may legally contain a newline: printed raw, a root
+      # file named "\ndocs/x.md" becomes a blank line plus "docs/x.md" — one apparent path,
+      # under docs/, agreeing with changed_files=1. `previous_filename` because a rename
+      # reports only its new name, so moving apps/web/live.ts to docs/moved-live.ts looked
+      # docs-only while deleting a code path. Both were "docs-only" verdicts on PRs that
+      # changed code (#809). Keep the two fields; pr-scope.sh rejects any other shape.
+      #
       # `set -e` matters here and is not redundant with the `|| code=true` fallbacks. The
       # fallbacks absorb the failures we predicted — the two `gh` calls and pr-scope.sh
       # itself — and turn each into "run every gate". `set -e` covers everything we did not
@@ -80,12 +88,14 @@ jobs:
           set -euo pipefail
           changed="${RUNNER_TEMP:-/tmp}/pr-changed-files.txt"
           pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
-          gh api --paginate "$pr/files" --jq '.[].filename' >"$changed" 2>/dev/null || : >"$changed"
+          gh api --paginate "$pr/files" \
+            --jq '.[] | (.filename|tojson) + "\t" + ((.previous_filename // "")|tojson)' \
+            >"$changed" 2>/dev/null || : >"$changed"
           total="$(gh api "$pr" --jq '.changed_files' 2>/dev/null)" || total=""
           if [ ! -s "$changed" ]; then
             echo "could not list the PR's files — running every gate"
           else
-            echo "changed files (the PR reports ${total:-<unknown>} in total):"
+            echo "changed files as name/previous-name pairs (the PR reports ${total:-<unknown>} in total):"
             cat "$changed"
           fi
           code="$(bash scripts/ci/pr-scope.sh "$changed" "$total")" || code=true
