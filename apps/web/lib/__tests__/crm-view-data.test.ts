@@ -35,6 +35,7 @@ function dbContact(overrides: Record<string, unknown> = {}) {
     doNotDisturb: false,
     totalOrdersMyr: null,
     createdAt: NOW,
+    marketingConsent: null,
     identities: [],
     consentStateProjections: [],
     ...overrides,
@@ -76,7 +77,9 @@ describe("listContacts", () => {
     });
     const query = mockContactFindMany.mock.calls[0][0];
     expect(query.where).toMatchObject({ ownerId: OWNER, deletedAt: null, lifecycleStage: "Active" });
-    expect(query.select).not.toHaveProperty("marketingConsent");
+    // #752 — the legacy column IS read now, for the pre-ledger fence and nothing else. What it
+    // must never do is stated as behaviour below, not as the absence of a select.
+    expect(query.select.marketingConsent).toBe(true);
     expect(query.select.consentStateProjections.where).toEqual({
       ownerId: OWNER,
       channel: "whatsapp",
@@ -90,6 +93,38 @@ describe("listContacts", () => {
       ownerId: OWNER,
       deletedAt: null,
       lifecycleStage: "Active",
+    });
+  });
+
+  // #752 — the legacy column may only ever hold a contact OUT. This is the guarantee the old
+  // "never select marketingConsent" assertion stood in for, now stated as behaviour: reading the
+  // column cannot invent consent, and it only speaks while the ledger has said nothing.
+  it("lets the pre-ledger column hold a contact out and never let one in", async () => {
+    mockContactFindMany.mockResolvedValue([
+      dbContact({ id: "held-out", marketingConsent: "opt_out" }),
+      dbContact({ id: "not-let-in", marketingConsent: "opt_in" }),
+      dbContact({
+        id: "ledger-decided",
+        marketingConsent: "opt_out",
+        consentStateProjections: [{
+          state: "verified_grant",
+          stateSourceKind: "explicit_inbox_optin",
+          evidenceStatus: "verified",
+          lastReceivedAt: NOW,
+        }],
+      }),
+    ]);
+
+    const result = await listContacts({ limit: 10 });
+
+    expect(result).toMatchObject({
+      ok: true,
+      contacts: [
+        { id: "held-out", consentState: { state: "unknown", unresolvedLegacyOptOut: true } },
+        { id: "not-let-in", consentState: { state: "unknown", unresolvedLegacyOptOut: false } },
+        // The customer's own verified opt-in supersedes the stale byte (R-010 §4.6.4).
+        { id: "ledger-decided", consentState: { state: "verified_grant", unresolvedLegacyOptOut: false } },
+      ],
     });
   });
 
@@ -134,7 +169,8 @@ describe("getContact", () => {
     });
     const query = mockContactFindFirst.mock.calls[0][0];
     expect(query.where).toEqual({ id: "contact-1", ownerId: OWNER, deletedAt: null });
-    expect(query.select).not.toHaveProperty("marketingConsent");
+    // #752 — same one fence read as the list, so the two pages cannot disagree.
+    expect(query.select.marketingConsent).toBe(true);
     expect(query.select.consentEvents.where).toEqual({ ownerId: OWNER });
     expect(query.select.consentEvents.orderBy).toEqual([
       { receivedAt: "desc" },
