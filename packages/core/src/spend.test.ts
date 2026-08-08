@@ -23,34 +23,48 @@ describe("genSpentUsd", () => {
     expect(Number.isFinite(v)).toBe(true);
     expect(v).toBeGreaterThan(0);
   });
-  it("#644/#645 seedance-2-mini COGS = 官方牌价 token 公式,按各档**最差比例**", () => {
-    // 官方成品价对照(https://docs.byteplus.com/en/docs/ModelArk/Pricing,2026-08-05 核):
-    // 720p 16:9 5s = $0.60、10s = $1.21。旧值 $0.077/s(5s≈$0.39)是 2026-06 资源包折后价,
-    // 不是我们随时都拿得到的价 —— 记账基准回到牌价(见 gen.ts byteplusVideoCogsUsd)。
+  it("#644/#645/#769 seedance-2-mini COGS = 官方牌价 token 公式,按各档**最差比例**", () => {
+    // 记账基准一路的沿革:2026-06 资源包折后价($0.077/s,5s≈$0.39)→ #644 回到 fast 牌价
+    // $5.60/M → #769 换引擎,走 mini 牌价 **$3.50/M**(ModelArk 模型档案
+    // dreamina-seedance-2-0-mini-260615 的 NV2VCompletion.original_price = 0.0035/K)。
+    // 折后价一律不抄:拿不拿得到折扣不由我们说了算,记账只认牌价。
     //
     // #645 T4:收费是**按档**的(同档六个比例一个价),所以记账基准也按档里最贵的那个比例走
-    // ——720p 的 4:3/3:4(927,408px)⇒ $0.1217223/s,比 16:9 的 $0.12096/s 贵 0.6%。
+    // ——720p 的 4:3/3:4(927,408px)⇒ $0.0760764375/s,比 16:9 的 $0.0756/s 贵 0.6%。
     // 方向永远安全:宁可高记,不许低估(同 REFERENCE_VIDEO_COGS_USD 取上限的理由)。
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: false } }))
-      .toBeCloseTo(0.6086115, 6);
+      .toBeCloseTo(0.3803821875, 6);
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: false } }))
-      .toBeCloseTo(1.217223, 6);
+      .toBeCloseTo(0.760764375, 6);
     // 480p 是真的半价档,成本也必须按 480p 记(记成 720p 会把它的毛利算错)。
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "480p", audio: false } }))
-      .toBeCloseTo(0.281232, 6);
+      .toBeCloseTo(0.17577, 6);
     // 声音开关不改价(2.0 系列),记账基准也必须不随它动。
     expect(genSpentUsd({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } }))
-      .toBeCloseTo(0.6086115, 6);
+      .toBeCloseTo(0.3803821875, 6);
   });
 
-  it("#644 整段参考视频 COGS = 含视频输入档 $3.30/M × (6s 参考上限 + 5s 出片)", () => {
+  it("#769 换引擎不改**收费**:同一批档位的 credits 与 fast 时代逐字相同", () => {
+    // 这一条是本次换引擎的护栏:成本换了,商家那一侧一格都不许动(调价是另一次裁决)。
+    const cr = (seconds: number, resolution: string) =>
+      pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds, resolution, audio: true } });
+    expect(cr(5, "720p")).toBe(11 * INTERNAL_PER_DISPLAY);
+    expect(cr(10, "720p")).toBe(22 * INTERNAL_PER_DISPLAY);
+    expect(cr(15, "720p")).toBe(33 * INTERNAL_PER_DISPLAY);
+    expect(cr(5, "480p")).toBe(6 * INTERNAL_PER_DISPLAY);
+    expect(cr(10, "480p")).toBe(11 * INTERNAL_PER_DISPLAY);
+  });
+
+  it("#644/#769 整段参考视频 COGS = 含视频输入档 $2.10/M × (6s 参考上限 + 5s 出片)", () => {
+    // mini 的 V2VCompletion.original_price = 0.0021/K = $2.10/M(fast 时代是 $3.30/M)。
+    // (5 + 6) × 21,600 tok/s × $2.10/M = $0.49896。收费仍是 REFERENCE_VIDEO_CREDITS(16cr)。
     expect(genSpentUsd({
       kind: "VIDEO",
       model: "seedance-2-mini",
       count: 1,
       referenceVideoGenerationId: "gen_ref",
       videoOptions: { seconds: 5, resolution: "720p", audio: true },
-    })).toBeCloseTo(0.78408, 6);
+    })).toBeCloseTo(0.49896, 6);
   });
 });
 
@@ -93,6 +107,12 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     expect(Number.isNaN(c)).toBe(false);
     // 记账那一侧照旧是 record-only:不知道成本就是 0,而不是编一个数
     expect(genSpentUsd(job)).toBe(0);
+
+    // #769:换引擎之后 seedance-2-fast 自己也变成「菜单外的历史 id」,走同一条兜底 ——
+    // 老行读价落 16cr 护栏(不是免费),记账落 0(不是编一个 fast 时代的成本)。
+    const retiredFast = { kind: "VIDEO" as const, model: "seedance-2-fast", count: 1, videoOptions: { seconds: 5, resolution: "720p", audio: true } };
+    expect(pricedGenCredits(retiredFast)).toBe(16 * INTERNAL_PER_DISPLAY);
+    expect(genSpentUsd(retiredFast)).toBe(0);
   });
   it("refgen = 1 displayed credit per image", () => {
     expect(pricedRefgenCredits({ model: "seedream", count: 1 })).toBe(10);
@@ -106,7 +126,7 @@ describe("credit pricing (deterministic CHARGE in internal credits; 1 internal =
     const v = (resolution: string) => pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 5, resolution, audio: true } });
     expect(v("720p")).toBe(110);  // 11 displayed credits(#644 Founder 裁决 2026-08-06,#645 按秒表复算同值)
     expect(v("480p")).toBe(60);   // #645 T4:半价档 1.1cr/秒 ⇒ ceil(5.5) = 6 displayed
-    expect(v("1080p")).toBe(160); // 16 displayed credits(护栏价,Fast 给不了 1080p)
+    expect(v("1080p")).toBe(160); // 16 displayed credits(护栏价,mini 同样给不了 1080p)
     expect(pricedGenCredits({ kind: "VIDEO", model: "seedance-2-mini", count: 1, videoOptions: { seconds: 10, resolution: "720p", audio: true } }))
       .toBe(220);
   });

@@ -311,3 +311,73 @@ describe("#645 T4:i2v 形状缺省 = adaptive(通用 startGen / 工厂逐格共�
     expect(withFrame.videoOptions?.audio).toBe(without.videoOptions?.audio);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #769 —— 换引擎(Seedance 2.0 Fast → 2.0 mini)之后,内容指纹说的还是不是实话
+// ---------------------------------------------------------------------------
+//
+// 换代有两种做法,这里钉的是**已选的那一种**:换 option key(seedance-2-fast →
+// seedance-2-mini),而不是在同一个 key 底下悄悄换后端的 Ark 版本化 id。
+//
+// 指纹这一侧的判据:`factoryMaterialMatches` 比的是 `model` —— 落库的那个 option key,
+// 不是 `dreamina-seedance-2-0-*` 那个版本化 id(它只活在 provider 边界上,从不进库)。
+// 于是:
+//   ① 同 key 重放 = 同材料。**版本化 id 换了也不会被误判成内容漂移** —— 那个 id 根本
+//      不在指纹里。这条是本票要求证明的那一条。
+//   ② 换 key ⇒ 老快照(fast)与新请求(mini)判成不同材料。这是**正确**语义:两台引擎
+//      出的片子不一样(Founder 眼看 7 条对比片:mini 更忠于商家参考图,fast 会换背景),
+//      成本也差 1/3。判成「同材料」会让一次 mini 请求复用掉一条 fast 的片子并收 0 ——
+//      静默的错。判成不同,商家那一格会如实走一趟新的生成。
+//   ③ 零用户零存量,所以 ② 今天不会真的咬到任何商家;钉住它是为了让语义写在测试里,
+//      而不是靠「反正没人用」。
+describe("#769 换引擎之后的内容指纹语义(同 key 重放 ≠ 内容漂移;换 key = 换材料)", () => {
+  const material = (model: string): FactoryMaterial =>
+    normalizeFactoryMaterial({
+      prompt: "a product spin",
+      model,
+      kind: "video",
+      count: 1,
+      sourceGenerationId: "gen_frame",
+    });
+
+  const stored = (m: FactoryMaterial, id = "job_1"): StoredFactoryMaterial => ({
+    id,
+    prompt: m.prompt,
+    model: m.model,
+    kind: m.kind,
+    count: m.count,
+    entityIds: m.entityIds,
+    variantSel: m.variantSel,
+    sourceGenerationId: m.sourceGenerationId,
+    tailGenerationId: m.tailGenerationId,
+    referenceVideoGenerationId: m.referenceVideoGenerationId,
+    shotId: m.shotId,
+    threadId: m.threadId,
+    videoOptions: m.videoOptions,
+    imageOptions: m.imageOptions,
+  });
+
+  it("同一个 key 的重放仍然判成同材料 —— 后端 Ark 版本化 id 换了也影响不到指纹", () => {
+    const mini = material("seedance-2-mini");
+    expect(factoryMaterialMatches(stored(mini), material("seedance-2-mini"))).toBe(true);
+    // 指纹里存的是 option key 本身,不是 dreamina-seedance-2-0-mini-260615 那个版本化 id。
+    expect(mini.model).toBe("seedance-2-mini");
+    expect(JSON.stringify(mini)).not.toContain("dreamina-");
+  });
+
+  it("老快照(下架的 seedance-2-fast)与新的 mini 请求判成**不同材料**", () => {
+    const legacyFastRow = stored(material("seedance-2-fast"));
+    expect(factoryMaterialMatches(legacyFastRow, material("seedance-2-mini"))).toBe(false);
+  });
+
+  it("这一格的其余材料完全相同 —— 判成不同的**唯一**理由就是引擎变了", () => {
+    const fast = material("seedance-2-fast");
+    const mini = material("seedance-2-mini");
+    const strip = ({ model, videoOptions, ...rest }: FactoryMaterial) => rest;
+    expect(strip(fast)).toEqual(strip(mini));
+    // 下架的 id 走 videoDefaults 的空规格(#647 T6 早就为「菜单外的历史 id」建好的那条路):
+    // 「我不知道这台引擎当年给的是什么」,而不是编一份看起来像真的档位出来。
+    expect(fast.videoOptions).toEqual({ seconds: 0, resolution: "", aspectRatio: "", fps: 0, audio: false });
+    expect(mini.videoOptions).toEqual({ seconds: 5, resolution: "720p", aspectRatio: "adaptive", fps: 0, audio: true });
+  });
+});

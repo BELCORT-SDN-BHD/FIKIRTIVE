@@ -5,7 +5,13 @@ import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.j
 describe("BytePlusProvider — wiring", () => {
   it("maps internal model ids to Ark ids", () => {
     expect(IMAGE_MODEL_MAP["seedream"]).toBe("seedream-5-0-260128");
+    // #769:版本化 id 取自 ModelArk 模型档案(只读核实,2026-08-08):
+    //   arkcli models get dreamina-seedance-2-0-mini      → id / primary_version = …-260615
+    //   arkcli models versions dreamina-seedance-2-0-mini → 只有 260615 一个版本
     expect(VIDEO_MODEL_MAP["seedance-2-mini"]).toBe("dreamina-seedance-2-0-mini-260615");
+    // 下架的那一台不许还留着一条能把钱花出去的路(与 GEN_VIDEO_MODELS 同进同退)。
+    expect(VIDEO_MODEL_MAP["seedance-2-fast"]).toBeUndefined();
+    expect(Object.keys(VIDEO_MODEL_MAP)).toEqual(["seedance-2-mini"]);
   });
   it("has a stable provider name", () => {
     expect(new BytePlusProvider("ark-test").name).toBe("byteplus");
