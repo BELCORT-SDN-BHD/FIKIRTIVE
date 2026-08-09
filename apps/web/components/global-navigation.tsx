@@ -5,72 +5,85 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   BarChart3,
-  Bot,
+  BookOpen,
   ChevronDown,
   Coins,
   Contact,
   CreditCard,
   FileText,
+  Frame,
   Inbox,
+  Library,
   LogOut,
   Megaphone,
   Menu,
   Plug,
   Send,
   Settings,
-  SlidersHorizontal,
   Sparkles,
+  SlidersHorizontal,
   User,
   Users,
   UsersRound,
+  CalendarDays,
   X,
 } from "lucide-react";
+import {
+  MERCHANT_NAV,
+  OTTO_ASSISTANT,
+  isNavGroup,
+  merchantNavLinks,
+  type MerchantNavGroup,
+  type MerchantNavLink,
+} from "@fikirtive/core";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { OttoAvatar } from "@/components/otto/OttoAvatar";
 import { getMyAccount } from "@/lib/account-actions";
 import { creditsLabel } from "@/lib/credit-format";
 import { createLatestReadGate, subscribeBalanceRefresh } from "@/lib/balance-refresh";
 
 type NavigationIcon = ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 
-type NavigationItem = {
-  href: string;
-  label: string;
-  icon: NavigationIcon;
+/**
+ * #801 — 这个文件不再自己写一份导航树。树在 `@fikirtive/core` 的 MERCHANT_NAV 里,
+ * 这里只负责把它画出来:一条 key → 图标的对照表,加上壳的行为(高亮、折叠、抽屉)。
+ *
+ * 后面的票(#792 CRM 折叠成诚实预览、#802 Otto 界面地图)因此只改 core 里的数据,
+ * 不必再动这层壳 —— 「说的」与「做的」从此共用同一份声明。
+ */
+const NAV_ICONS: Record<string, NavigationIcon> = {
+  // 板块
+  create: Frame,
+  campaign: Megaphone,
+  crm: Users,
+  workspace: Library,
+  settings: Settings,
+  // CRM
+  "crm-inbox": Inbox,
+  "crm-contacts": Contact,
+  "crm-segments": UsersRound,
+  "crm-templates": FileText,
+  "crm-broadcasts": Send,
+  "crm-workflows": Sparkles,
+  "crm-reports": BarChart3,
+  // Workspace
+  library: Library,
+  brand: BookOpen,
+  schedule: CalendarDays,
+  analytics: BarChart3,
+  // Settings
+  connections: Plug,
+  preferences: SlidersHorizontal,
+  billing: CreditCard,
 };
 
-// Order matches the Founder-approved nav tree (#513 三.1). Templates was left out
-// on purpose during A's rework (#513 A组返工 item 4) pending work-order-group E's
-// formal /crm/templates route; E has since merged (#515), so Templates is back in
-// here, ordered to match the routes as they actually exist on merged main (#520
-// conflict resolution — every href below was verified against apps/web/app/crm/*).
-const CRM_ITEMS: NavigationItem[] = [
-  { href: "/crm/inbox", label: "Inbox", icon: Inbox },
-  { href: "/crm/contacts", label: "Contacts", icon: Contact },
-  { href: "/crm/segments", label: "Segments", icon: UsersRound },
-  { href: "/crm/templates", label: "Templates", icon: FileText },
-  { href: "/crm/broadcasts", label: "Broadcasts", icon: Send },
-  { href: "/crm/workflows", label: "Workflows", icon: Sparkles },
-  { href: "/crm/reports", label: "Reports", icon: BarChart3 },
-];
+function iconFor(key: string): NavigationIcon {
+  return NAV_ICONS[key] ?? Frame;
+}
 
-// Connections points at Otto's already-shipped connections view (work-order-group
-// B's real current entry point) rather than the not-yet-built /connections page,
-// so this link works today instead of 404ing (#513 A组返工 item 4). Swap it to the
-// standalone /connections page once B merges its unified Connections surface
-// (#513 四.2).
-//
-// Preferences points at OttoAccount (?view=account) — spend cap, notifications,
-// schedule defaults, and Delete account had no clickable entry point anywhere
-// after OttoNav's "Account" item was removed (#513 A组返工·三轮 item 1: the page
-// itself never moved, it was an island). Named "Preferences" rather than "Account"
-// so it doesn't re-create the identity-menu/Profile ambiguity that got the old
-// OttoNav entry pulled — see the comment on OttoNav's TOOL_ITEMS.
-const WORKSPACE_SETTINGS_ITEMS: NavigationItem[] = [
-  { href: "/otto?view=connections", label: "Connections", icon: Plug },
-  { href: "/otto?view=account", label: "Preferences", icon: SlidersHorizontal },
-  { href: "/billing", label: "Billing & credits", icon: CreditCard },
-];
+const NAV_GROUPS: readonly MerchantNavGroup[] = MERCHANT_NAV.filter(isNavGroup);
+const NAV_TOP_LEVEL_LINKS: readonly MerchantNavLink[] = MERCHANT_NAV.filter((node) => !isNavGroup(node));
 
 const navigationLinkClass =
   "flex h-11 items-center gap-3 rounded-[10px] text-sm transition-colors outline-none " +
@@ -100,19 +113,23 @@ function pathMatches(pathname: string, href: string): boolean {
 
 /** The longest-href item matching pathname wins — a nested route like
  *  /crm/inbox/templates must not also light up its shorter sibling /crm/inbox. */
-function activeItemHref(pathname: string, items: NavigationItem[]): string | null {
+function activeItemHref(pathname: string, items: readonly MerchantNavLink[]): string | null {
   const matches = items.filter((item) => pathMatches(pathname, item.href));
   if (matches.length === 0) return null;
   return matches.reduce((longest, item) => (item.href.length > longest.href.length ? item : longest)).href;
 }
 
-/** True when `pathname`'s query exactly matches a query-qualified sibling item on
- *  `basePath` (e.g. Connections at "/otto?view=connections"). A bare href sharing
- *  that base path (e.g. the top-level Otto link) must not also count as active in
- *  that case — otherwise both light up together (#520). An unrelated or absent
- *  query on `pathname` leaves the bare href active, per pathMatches' own rule. */
+/** True when `pathname`'s query exactly matches a query-qualified item on `basePath`
+ *  anywhere in the tree (e.g. Library at "/otto?view=library"). A bare href sharing that
+ *  base path — the Ask Otto assistant row — must not also count as active in that case,
+ *  otherwise both light up together (#520). An unrelated or absent query on `pathname`
+ *  leaves the bare href active, per pathMatches' own rule.
+ *
+ *  #801 — this used to look only at the Workspace-settings group because that was the
+ *  only group holding `?view=` items. The whole tree is scanned now, so adding a
+ *  query-qualified destination to core's registry can never re-open that defect. */
 function queryClaimedBySibling(pathname: string, basePath: string): boolean {
-  return WORKSPACE_SETTINGS_ITEMS.some((item) => {
+  return merchantNavLinks().some((item) => {
     const target = splitLocation(item.href);
     return target.path === basePath && [...target.query.keys()].length > 0 && pathMatches(pathname, item.href);
   });
@@ -126,25 +143,44 @@ function nextDisclosureOpenFor(matches: (pathname: string) => boolean, update: D
   return update.type === "toggle" ? update.open : matches(update.pathname);
 }
 
+/** A group is "on" when the current location is one of its own destinations. */
+function groupMatches(group: MerchantNavGroup, pathname: string): boolean {
+  return activeItemHref(pathname, group.items) !== null;
+}
+
+export function nextGroupDisclosureOpen(group: MerchantNavGroup, update: DisclosureUpdate): boolean {
+  return nextDisclosureOpenFor((p) => groupMatches(group, p), update);
+}
+
+/** Kept for the existing CRM fence — CRM's disclosure also opens on any /crm route, not
+ *  only on the seven listed destinations. */
 export function nextCrmDisclosureOpen(update: DisclosureUpdate): boolean {
   return nextDisclosureOpenFor((p) => pathMatches(p, "/crm"), update);
 }
 
-function nextSettingsDisclosureOpen(update: DisclosureUpdate): boolean {
-  return nextDisclosureOpenFor((p) => activeItemHref(p, WORKSPACE_SETTINGS_ITEMS) !== null, update);
-}
+/** Every path prefix the merchant shell owns. Derived from the registry, so a new
+ *  destination can never land on a page with no rail around it — the exact "alive but
+ *  no door" state #801 was filed against. `/profile` and `/connections` are shell
+ *  surfaces reachable from the identity menu rather than nav destinations of their own. */
+const MERCHANT_SURFACE_PATHS: readonly string[] = [
+  ...new Set([
+    ...merchantNavLinks().map((item) => splitLocation(item.href).path),
+    splitLocation(OTTO_ASSISTANT.href).path,
+    "/profile",
+    "/connections",
+  ]),
+];
 
 export function isMerchantSurface(pathname: string): boolean {
-  return ["/otto", "/campaign", "/crm", "/billing", "/connections", "/profile"].some((href) =>
-    pathMatches(pathname, href),
-  );
+  return MERCHANT_SURFACE_PATHS.some((href) => pathMatches(pathname, href));
 }
 
-/** True when the surface draws its own mobile top bar and therefore owns the WHOLE
- *  mobile navigation entry: the shell reserves no space for its floating trigger (see
- *  MOBILE_NAV_TRIGGER_INSET below) and renders no trigger at all (#747).
+/** True when the surface draws its own in-flow chrome over a full-height (100dvh)
+ *  workspace, and therefore owns the WHOLE below-`lg` navigation entry: the shell
+ *  reserves no space for its floating trigger (see MOBILE_NAV_TRIGGER_INSET below),
+ *  renders no trigger at all (#747), and hangs no SectionTabs bar above it (#801).
  *
- *  Only Otto does. OttoApp renders an in-flow `.otto-mobile-topbar` above a 100dvh
+ *  Two surfaces do. Otto renders an in-flow `.otto-mobile-topbar` above a 100dvh
  *  workspace, so a second reservation would push its bar down and add a scrollbar to a
  *  pane that must not scroll (#685). The trigger half is #747: reserving no space is
  *  exactly what left the shell's `fixed` button sitting ON TOP of Otto's own — 40×40 at
@@ -152,10 +188,14 @@ export function isMerchantSurface(pathname: string): boolean {
  *  "Show sidebar" at (12,12) from 681 to 1023px. Two hamburgers, one on top of the
  *  other, opening two different drawers: which one the merchant hit was luck.
  *
+ *  Create (the immersive canvas surface) joined them in #801, for the same reason and
+ *  with the same handoff: it is `h-dvh` with its own 52px bar, and that bar's hamburger
+ *  opens THIS drawer rather than a second nav of its own.
+ *
  *  A surface that owns the bar owns the entry, so the global drawer reaches it from
  *  INSIDE that bar's own menu instead — see useOpenGlobalNavigation below. */
-function ownsMobileTopBar(pathname: string): boolean {
-  return pathMatches(pathname, "/otto");
+export function ownsFullHeightWorkspace(pathname: string): boolean {
+  return pathMatches(pathname, OTTO_ASSISTANT.href) || pathMatches(pathname, "/northstar-immersive");
 }
 
 /** The one way to open the global navigation drawer from a surface that owns the mobile
@@ -193,11 +233,11 @@ function NavigationLink({
   active,
   nested = false,
 }: {
-  item: NavigationItem;
+  item: MerchantNavLink;
   active: boolean;
   nested?: boolean;
 }) {
-  const Icon = item.icon;
+  const Icon = iconFor(item.key);
 
   return (
     <Link
@@ -218,17 +258,50 @@ function NavigationLink({
   );
 }
 
-/** #513 三.4 — the Settings-style groups (CRM, Workspace settings) collapse to a
- *  single icon at the 1024–1279px rail; their children surface here instead, as
- *  horizontal tabs in the content area. Rendered by MerchantShellContent, never by
- *  a business page, so it never touches page-internal content. */
-export function SectionTabs({ pathname }: { pathname: string }) {
-  const group = [
-    { label: "CRM", items: CRM_ITEMS },
-    { label: "Workspace settings", items: WORKSPACE_SETTINGS_ITEMS },
-  ].find((g) => activeItemHref(pathname, g.items) !== null);
+/** Otto — the assistant, drawn ABOVE the sections and never inside them (#801).
+ *
+ *  The old rail made Otto the first section row, which said "Otto is one of the parts of
+ *  this product". It is not: it is the thing that helps with all of them. So it gets its
+ *  own place at the top of every merchant surface, its own face, and none of the section
+ *  chrome — no group, no disclosure, no position in the ordered list of places.
+ *
+ *  Motion (emil): a rail row is pressed many times a day, so nothing here animates on
+ *  hover beyond colour. The one addition is press feedback — 160ms ease-out scale(0.97),
+ *  the cheapest possible "the interface heard you". */
+function AssistantRow({ active }: { active: boolean }) {
+  return (
+    <Link
+      href={OTTO_ASSISTANT.href}
+      aria-current={active ? "page" : undefined}
+      title={OTTO_ASSISTANT.label}
+      className={cn(
+        "flex h-11 items-center gap-3 rounded-[10px] border px-3 text-sm outline-none",
+        "transition-[color,background-color,border-color,transform] duration-[160ms] ease-out",
+        "focus-visible:ring-[3px] focus-visible:ring-ring/40 active:scale-[0.97]",
+        "lg:justify-center lg:px-0 xl:justify-start xl:px-3",
+        active
+          ? "border-transparent bg-secondary font-semibold text-foreground"
+          : "border-border bg-card font-medium text-foreground hover:bg-accent",
+      )}
+    >
+      <OttoAvatar size={22} mood="idle" className="shrink-0" />
+      <span className="lg:hidden xl:inline">{OTTO_ASSISTANT.label}</span>
+    </Link>
+  );
+}
 
-  if (!group) return null;
+/** #513 三.4 — the grouped sections (CRM, Workspace, Settings) collapse to a single icon
+ *  at the 1024–1279px rail; their children surface here instead, as horizontal tabs in
+ *  the content area. Rendered by MerchantShellContent, never by a business page, so it
+ *  never touches page-internal content.
+ *
+ *  #801 — not on a surface that owns a full-height workspace. Those surfaces list the very
+ *  same destinations in their own rail, so the bar repeats them; and being an in-flow bar
+ *  above a 100dvh pane, it also pushes that pane into a scrollbar — the #685 shape. */
+export function SectionTabs({ pathname }: { pathname: string }) {
+  const group = NAV_GROUPS.find((g) => groupMatches(g, pathname));
+
+  if (!group || ownsFullHeightWorkspace(pathname)) return null;
   const activeHref = activeItemHref(pathname, group.items);
 
   return (
@@ -238,7 +311,7 @@ export function SectionTabs({ pathname }: { pathname: string }) {
       className="hidden items-center gap-1 overflow-x-auto border-b border-border bg-card px-3 lg:flex xl:hidden"
     >
       {group.items.map((item) => {
-        const Icon = item.icon;
+        const Icon = iconFor(item.key);
         const active = activeHref === item.href;
         return (
           <Link
@@ -263,6 +336,71 @@ export function SectionTabs({ pathname }: { pathname: string }) {
   );
 }
 
+/** One grouped section: a real disclosure at the drawer and 1280+ tiers, a single icon
+ *  link at the 1024–1279 rail (its children move to SectionTabs there). */
+function NavigationGroup({ group, pathname }: { group: MerchantNavGroup; pathname: string }) {
+  const active = group.key === "crm" ? pathMatches(pathname, "/crm") : groupMatches(group, pathname);
+  const nextOpen = (update: DisclosureUpdate) =>
+    group.key === "crm" ? nextCrmDisclosureOpen(update) : nextGroupDisclosureOpen(group, update);
+
+  const [open, setOpen] = useState(() => nextOpen({ type: "navigation", pathname }));
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Navigation intentionally resets manual disclosure toggles on route change.
+    setOpen(nextOpen({ type: "navigation", pathname }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- nextOpen is derived from `group`, which is a module constant.
+  }, [pathname]);
+
+  const GroupIcon = iconFor(group.key);
+  const activeHref = activeItemHref(pathname, group.items);
+  const railHref = group.items[0]!.href;
+
+  return (
+    <>
+      <div className="block lg:hidden xl:block">
+        <details
+          className="group"
+          open={open}
+          onToggle={(event) => setOpen(nextOpen({ type: "toggle", open: event.currentTarget.open }))}
+        >
+          <summary
+            className={cn(
+              navigationLinkClass,
+              "cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden",
+              active
+                ? "bg-secondary/60 font-semibold text-foreground"
+                : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <GroupIcon className="size-4 shrink-0" aria-hidden />
+            <span className="flex-1">{group.label}</span>
+            <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" aria-hidden />
+          </summary>
+          <div className="mt-1 space-y-1">
+            {group.items.map((item) => (
+              <NavigationLink key={item.href} item={item} active={activeHref === item.href} nested />
+            ))}
+          </div>
+        </details>
+      </div>
+      <Link
+        href={railHref}
+        title={group.label}
+        aria-label={group.label}
+        className={cn(
+          navigationLinkClass,
+          "hidden justify-center lg:flex xl:hidden",
+          active
+            ? "bg-secondary/60 font-semibold text-foreground"
+            : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
+        )}
+      >
+        <GroupIcon className="size-4 shrink-0" aria-hidden />
+      </Link>
+    </>
+  );
+}
+
 export function GlobalNavigation({
   pathname,
   signOutAction,
@@ -279,22 +417,7 @@ export function GlobalNavigation({
   /** False on a surface that draws its own mobile top bar; that bar carries the entry. */
   showMobileTrigger: boolean;
 }) {
-  const crmActive = pathMatches(pathname, "/crm");
-  const settingsActive = activeItemHref(pathname, WORKSPACE_SETTINGS_ITEMS) !== null;
-
-  const [crmOpen, setCrmOpen] = useState(() =>
-    nextCrmDisclosureOpen({ type: "navigation", pathname }),
-  );
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    nextSettingsDisclosureOpen({ type: "navigation", pathname }),
-  );
   const [account, setAccount] = useState<{ email: string; balance: number } | null>(null);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- Navigation intentionally resets manual disclosure toggles on route change.
-    setCrmOpen(nextCrmDisclosureOpen({ type: "navigation", pathname }));
-    setSettingsOpen(nextSettingsDisclosureOpen({ type: "navigation", pathname }));
-  }, [pathname]);
 
   // This rail holds the only credits figure in the product, so it must re-read the
   // balance whenever a charge settles — not only at mount. Subscribing to the spend
@@ -334,6 +457,10 @@ export function GlobalNavigation({
     };
   }, []);
 
+  const assistantActive =
+    pathMatches(pathname, OTTO_ASSISTANT.href) &&
+    !queryClaimedBySibling(pathname, splitLocation(OTTO_ASSISTANT.href).path);
+
   return (
     <>
       {/* Mobile/tablet-under-1024 trigger — the persistent rail below becomes an
@@ -371,7 +498,7 @@ export function GlobalNavigation({
       >
         <div className="flex items-center gap-2 px-3 pt-3">
           <Link
-            href="/otto"
+            href={OTTO_ASSISTANT.href}
             aria-label="FIKIRTIVE home"
             className="flex h-12 flex-1 items-center rounded-[10px] px-3 text-lg font-extrabold tracking-[-0.03em] text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 lg:justify-center lg:px-0 xl:justify-start xl:px-3"
           >
@@ -392,124 +519,29 @@ export function GlobalNavigation({
           aria-label="Global navigation"
           className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3 pt-5"
         >
-          <div className="space-y-1">
-            <NavigationLink
-              item={{ href: "/otto", label: "Otto", icon: Bot }}
-              active={pathMatches(pathname, "/otto") && !queryClaimedBySibling(pathname, "/otto")}
-            />
-            <NavigationLink
-              item={{ href: "/campaign", label: "Campaign", icon: Megaphone }}
-              active={pathMatches(pathname, "/campaign")}
-            />
+          {/* The assistant — above the sections, outside the ordered list of places. */}
+          <AssistantRow active={assistantActive} />
 
-            {/* CRM — full disclosure at the mobile drawer and 1280+ tiers. */}
-            <div className="block lg:hidden xl:block">
-              <details
-                className="group"
-                open={crmOpen}
-                onToggle={(event) =>
-                  setCrmOpen(nextCrmDisclosureOpen({ type: "toggle", open: event.currentTarget.open }))
+          <div className="mt-4 space-y-1 border-t border-border pt-4">
+            {NAV_TOP_LEVEL_LINKS.map((item) => (
+              <NavigationLink
+                key={item.href}
+                item={item}
+                active={
+                  pathMatches(pathname, item.href) &&
+                  !queryClaimedBySibling(pathname, splitLocation(item.href).path)
                 }
-              >
-                <summary
-                  className={cn(
-                    navigationLinkClass,
-                    "cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden",
-                    crmActive
-                      ? "bg-secondary/60 font-semibold text-foreground"
-                      : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  <Users className="size-4 shrink-0" aria-hidden />
-                  <span className="flex-1">CRM</span>
-                  <ChevronDown
-                    className="size-4 shrink-0 transition-transform group-open:rotate-180"
-                    aria-hidden
-                  />
-                </summary>
-                <div className="mt-1 space-y-1">
-                  {CRM_ITEMS.map((item) => (
-                    <NavigationLink
-                      key={item.href}
-                      item={item}
-                      active={activeItemHref(pathname, CRM_ITEMS) === item.href}
-                      nested
-                    />
-                  ))}
-                </div>
-              </details>
-            </div>
-            {/* CRM — 1024–1279 icon rail: a single link; its children move to the
-                content-area SectionTabs bar instead of nesting in 64px of width. */}
-            <Link
-              href="/crm/inbox"
-              title="CRM"
-              aria-label="CRM"
-              className={cn(
-                navigationLinkClass,
-                "hidden justify-center lg:flex xl:hidden",
-                crmActive
-                  ? "bg-secondary/60 font-semibold text-foreground"
-                  : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              <Users className="size-4 shrink-0" aria-hidden />
-            </Link>
+              />
+            ))}
+            {NAV_GROUPS.filter((group) => group.key !== "settings").map((group) => (
+              <NavigationGroup key={group.key} group={group} pathname={pathname} />
+            ))}
           </div>
 
           <div className="mt-auto space-y-1 border-t border-border pt-3">
-            {/* Workspace settings — full disclosure at the mobile drawer and 1280+ tiers. */}
-            <div className="block lg:hidden xl:block">
-              <details
-                className="group"
-                open={settingsOpen}
-                onToggle={(event) =>
-                  setSettingsOpen(nextSettingsDisclosureOpen({ type: "toggle", open: event.currentTarget.open }))
-                }
-              >
-                <summary
-                  className={cn(
-                    navigationLinkClass,
-                    "cursor-pointer list-none select-none [&::-webkit-details-marker]:hidden",
-                    settingsActive
-                      ? "bg-secondary/60 font-semibold text-foreground"
-                      : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  <Settings className="size-4 shrink-0" aria-hidden />
-                  <span className="flex-1">Workspace settings</span>
-                  <ChevronDown
-                    className="size-4 shrink-0 transition-transform group-open:rotate-180"
-                    aria-hidden
-                  />
-                </summary>
-                <div className="mt-1 space-y-1">
-                  {WORKSPACE_SETTINGS_ITEMS.map((item) => (
-                    <NavigationLink
-                      key={item.href}
-                      item={item}
-                      active={activeItemHref(pathname, WORKSPACE_SETTINGS_ITEMS) === item.href}
-                      nested
-                    />
-                  ))}
-                </div>
-              </details>
-            </div>
-            {/* Workspace settings — 1024–1279 icon rail (same pattern as CRM above). */}
-            <Link
-              href="/billing"
-              title="Workspace settings"
-              aria-label="Workspace settings"
-              className={cn(
-                navigationLinkClass,
-                "hidden justify-center lg:flex xl:hidden",
-                settingsActive
-                  ? "bg-secondary/60 font-semibold text-foreground"
-                  : "font-medium text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              <Settings className="size-4 shrink-0" aria-hidden />
-            </Link>
+            {NAV_GROUPS.filter((group) => group.key === "settings").map((group) => (
+              <NavigationGroup key={group.key} group={group} pathname={pathname} />
+            ))}
 
             {/* Credits — sits above the identity area, clicks through to Billing & credits. */}
             <Link href="/billing" title="Billing & credits" className={navigationLinkClass}>
@@ -636,12 +668,12 @@ export function MerchantShellContent({
           signOutAction={signOutAction}
           mobileOpen={mobileOpen}
           onMobileOpenChange={setMobileOpen}
-          showMobileTrigger={!ownsMobileTopBar(pathname)}
+          showMobileTrigger={!ownsFullHeightWorkspace(pathname)}
         />
         <div
           className={cn(
             "min-h-dvh min-w-0 pl-0 lg:pl-16 xl:pl-60",
-            !ownsMobileTopBar(pathname) && MOBILE_NAV_TRIGGER_INSET,
+            !ownsFullHeightWorkspace(pathname) && MOBILE_NAV_TRIGGER_INSET,
           )}
         >
           <SectionTabs pathname={pathname} />
@@ -661,7 +693,7 @@ export function MerchantAppShell({
 }) {
   const pathname = usePathname();
   // Query-qualified nav items (e.g. "/otto?view=connections" for Connections under
-  // Workspace settings) need the query on the location string to match against
+  // Settings) need the query on the location string to match against
   // (#513 A组返工·三轮 item 2 — see pathMatches). Safe without a <Suspense>
   // boundary: app/layout.tsx already calls headers() in isImpersonating() before
   // rendering this shell, which forces the whole tree to render dynamically per
