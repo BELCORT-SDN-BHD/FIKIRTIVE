@@ -75,8 +75,15 @@ const KNOWN_OPT_OUT_RULE_NOTE =
  * and nobody else's.
  */
 const REPORTED_OPT_OUT_EXCLUSION_LABEL = "Also exclude opt-outs I recorded myself";
+/**
+ * r2 判官 P1 — the last clause used to promise that a customer who opted out through her own
+ * channel is "out either way". A merchant may build a segment on known opt-out, and there she is
+ * selected on purpose, so the sentence was false on a legal segment — the exact overclaim #768
+ * bans. Every clause here now states only what this screen does: what it changes, and what it
+ * leaves alone. `segment-reported-optout-exclusion.test.ts` fences the claim, not the wording.
+ */
 const REPORTED_OPT_OUT_EXCLUSION_NOTE =
-  "Off by default. An opt-out you or a CSV import recorded is not confirmed by the customer, so on its own it never removes anyone. Turn this on and this segment leaves those contacts out everywhere it is used — this count, this preview, and any broadcast built from it. Customers who opted out through their own channel are out either way.";
+  "Off by default. An opt-out you or a CSV import recorded is not confirmed by the customer, so while this is off it removes nobody from this segment. Turn it on and this segment leaves those contacts out of its count, its preview, and any broadcast built from it. Nothing else changes: what the consent record decides about a contact stays exactly as it is.";
 
 type DraftGroup = { match: "all" | "any"; rules: DraftRule[]; excludeReportedOptOut: boolean };
 type SettledPreview = { key: string; result: PreviewSuccess | null; error: string | null };

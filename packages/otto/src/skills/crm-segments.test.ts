@@ -153,6 +153,28 @@ describe("CRM Segment skills", () => {
     });
   });
 
+  /**
+   * r2 判官 P2 — the description is what the model reasons from, so it is held to the same
+   * standard as merchant-facing copy. r1 said the option excludes contacts "whose only opt-out"
+   * is the merchant's, which is not what the code does: it is an independent flag, and it also
+   * removes a contact who additionally carries a ledger opt-out. A model told the narrower rule
+   * would answer "she has a real opt-out too, so this setting does not touch her" — wrong, and
+   * wrong about consent.
+   */
+  it("describes the exclusion as the code applies it, not more narrowly", () => {
+    for (const skill of [readSegmentsSkill, buildSegmentSkill]) {
+      expect(skill.description, skill.name).toContain("excludeReportedOptOut");
+      expect(skill.description, skill.name).toContain("recorded");
+      // The false narrowing, and the "only" family it came from.
+      expect(skill.description, skill.name).not.toContain("whose only opt-out");
+      expect(skill.description, skill.name).not.toContain("only opt-out");
+    }
+    // And the field's own description, which is what the model sees next to the parameter.
+    const field = crmSegmentRuleGroup.shape.excludeReportedOptOut.description ?? "";
+    expect(field).not.toContain("only opt-out");
+    expect(field).toContain("recorded");
+  });
+
   it("never turns the exclusion on by itself", async () => {
     // Off is the default the Founder ruled for, and "the model thought it was safer" is not a
     // merchant asking. Parsing a plain group must not invent the field.

@@ -44,7 +44,7 @@ export const crmSegmentRuleGroup = z
       .boolean()
       .optional()
       .describe(
-        "Optional, defaults to off. On: also leave out contacts whose only opt-out is one the user recorded himself. Set it only when the user asked to exclude those contacts.",
+        "Optional, defaults to off. On: also leave out every contact the user has recorded an opt-out for himself, including one who additionally opted out through their own channel. It only removes contacts from this segment; it never adds one, and it does not change what the consent record decides. Set it only when the user asked to exclude the contacts he recorded.",
       ),
   })
   .strict();
@@ -93,8 +93,9 @@ export const readSegmentsSkill = defineOttoSkill({
     "operation=preview evaluates a STRUCTURED one-level rule object without saving. Never send free-form natural " +
     "language as rules and never guess an id. Contactable here is an audience estimate: unknown consent stays " +
     "included, only known opt-out is excluded, and do-not-disturb is enforced later at send time. A rule group may " +
-    "also carry excludeReportedOptOut: on, it additionally leaves out contacts whose only opt-out is one the user " +
-    "recorded himself, and the count comes back as excludedByReportedOptOutCount.",
+    "also carry excludeReportedOptOut: on, it additionally leaves out every contact the user recorded an opt-out " +
+    "for himself, and the count comes back as excludedByReportedOptOutCount. It only ever removes people, and it " +
+    "does not change what the consent record already decides.",
   parameters: params,
   execute: executeReadSegments,
 });

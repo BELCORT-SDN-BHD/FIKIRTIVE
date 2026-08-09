@@ -32,6 +32,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 const { prisma, recordConsentEvent } = await import("@fikirtive/db");
 const { requireOwner } = await import("../auth-guard");
 const { buildSegment, listSegments, previewSegment } = await import("../segment-actions");
+const { readContactConsentTruth } = await import("../consent-authority");
 const { setContactConsent, importContacts } = await import("../crm-actions");
 const { createCustomerBroadcastService } = await import("../customer-broadcast-service");
 const segmentsModule = await import("@/components/crm/segments-page");
@@ -50,6 +51,10 @@ const SCOPE_A = `${SUITE}-scope-a`;
 const CONNECTION_A = `${SUITE}-connection-a`;
 const TEMPLATE_A = `${SUITE}-template-a`;
 const TEMPLATE_VERSION_A = `${SUITE}-template-version-a`;
+/** r2 — a second channel on the same tenant. The merchant's record was written in one scope. */
+const SCOPE_EMAIL = `${SUITE}-scope-email`;
+const TEMPLATE_EMAIL = `${SUITE}-template-email`;
+const TEMPLATE_VERSION_EMAIL = `${SUITE}-template-version-email`;
 const SEGMENT_KEPT = `${SUITE}-segment-kept`;
 const SEGMENT_STRICT = `${SUITE}-segment-strict`;
 const NOW = new Date("2026-08-09T00:00:00.000Z");
@@ -66,6 +71,27 @@ const NOOR = `${SUITE}-noor`; // no consent record at all
 
 /** Imported from a CSV row declaring consent=opt_out; the import creates no identity. */
 let faiz = "";
+
+/**
+ * r2 判官 P1-2 — claims this screen may not make, in the shape #768 established.
+ *
+ * Every clause on a consent surface may say only what the ledger can prove. r1's note promised
+ * that a customer who opted out through their own channel is "out either way" — and a merchant
+ * is allowed to build a segment on "known opt-out", where that customer is selected on purpose
+ * (this file's own OPTED_OUT_ONLY example pins it). A sentence that is false on a legal segment
+ * is not a small overstatement on a consent screen: it tells the merchant not to check.
+ *
+ * The needles ban the CLAIM, not one phrasing of it, so the promise cannot return by rewording.
+ */
+const REJECTED_CLAIMS = [
+  "out either way",
+  "are always excluded",
+  "never receive",
+  "will never be",
+  "can never be selected",
+  "no matter what",
+  "regardless of",
+] as const;
 
 const TOTAL_CONTACTS_A = 6;
 /** Only these two are opt-outs the CUSTOMER's own evidence (or the pre-ledger fence) decides. */
@@ -161,6 +187,21 @@ async function freezeOnce(key: string, segmentId: string) {
   });
 }
 
+/** r2 — the same segment, sent from a channel the merchant never recorded consent in. */
+async function freezeEmailOnce(key: string, segmentId: string) {
+  const run = await broadcast.createBroadcastRun(principalA, {
+    channelScopeId: SCOPE_EMAIL,
+    channel: "email",
+    templateVersionId: TEMPLATE_VERSION_EMAIL,
+    creationIdempotencyKey: `${SUITE}-${key}`,
+  });
+  return broadcast.freezeAudience(principalA, {
+    broadcastRunId: run.resource.id,
+    expectedRevision: run.resource.revision,
+    segmentId,
+  });
+}
+
 beforeAll(async () => {
   process.env.BETTER_AUTH_SECRET ??= "segment-reported-optout-exclusion-test-secret";
 
@@ -220,6 +261,34 @@ beforeAll(async () => {
       createdByMembershipId: MEMBERSHIP_A,
     },
   });
+  // r2 — the same tenant also sends marketing from a second channel. Nothing about the merchant's
+  // consent records is channel-specific: both merchant surfaces write one fixed scope.
+  await prisma.channelScope.create({
+    data: { id: SCOPE_EMAIL, ownerId: ORG_A, channel: "email", scopeKey: `${SUITE}-email-a` },
+  });
+  await prisma.customerMessageTemplate.create({
+    data: {
+      id: TEMPLATE_EMAIL,
+      ownerId: ORG_A,
+      channelScopeId: SCOPE_EMAIL,
+      channel: "email",
+      name: "offer-email",
+      locale: "en_MY",
+    },
+  });
+  await prisma.customerMessageTemplateVersion.create({
+    data: {
+      id: TEMPLATE_VERSION_EMAIL,
+      ownerId: ORG_A,
+      templateId: TEMPLATE_EMAIL,
+      revision: 1,
+      purposeClass: "proactive_non_transactional",
+      category: "marketing",
+      definitionJson: { schemaVersion: 1, body: "Offer", variables: [] },
+      contentHash: `${SUITE}-template-email`,
+      createdByMembershipId: MEMBERSHIP_A,
+    },
+  });
 
   await seedContact(AMIRA, ORG_A, "Amira Salleh");
   await seedContact(BAKRI, ORG_A, "Bakri Idris");
@@ -231,6 +300,21 @@ beforeAll(async () => {
   await seedContact(NOOR, ORG_B, "Noor Hakim");
   for (const [index, contactId] of [AMIRA, BAKRI, CHONG, DINA, EVELYN].entries()) {
     await seedIdentity(contactId, ORG_A, `+6011100000${index}`, SCOPE_A);
+  }
+  // r2 — three of them are also reachable by email, which is how a run on another channel gets
+  // an audience to disagree about. Adding a second identity changes no `channels` fact these
+  // tests already assert: a contact on WhatsApp is still on WhatsApp.
+  for (const contactId of [AMIRA, BAKRI, EVELYN]) {
+    await prisma.contactIdentity.create({
+      data: {
+        id: `${contactId}-identity-email`,
+        ownerId: ORG_A,
+        contactId,
+        channelScopeId: SCOPE_EMAIL,
+        channel: "email",
+        externalId: `${contactId}@fikirtive.test`,
+      },
+    });
   }
   await seedIdentity(MEI, ORG_B, "+60199999991");
   await seedIdentity(NOOR, ORG_B, "+60199999992");
@@ -447,6 +531,77 @@ describe("#758 what the segment says is what the broadcast does", () => {
   });
 });
 
+/**
+ * r2 判官 P1-1. "An opt-out the merchant recorded" is ONE fact, and it has ONE address: both
+ * merchant surfaces (the contact profile and CSV import) write it to whatsapp+marketing and
+ * nothing else. The reading used to follow the BROADCAST's channel and purpose instead, so a run
+ * on any other channel looked for the merchant's record in a tuple where it was never written,
+ * found nothing, and put back exactly the people the segments page had just excluded — #750's
+ * defect, reappearing through the scope rather than through the rules.
+ *
+ * The verified consent state stays per-run on purpose: a customer's own opt-out really is about
+ * one channel and one purpose. Only the merchant's own record is scope-fixed, because that is
+ * where it is written.
+ */
+describe("#758 r2 — the merchant's record is one fact with one address, on every channel", () => {
+  it("excludes the same people from an email broadcast that the segments page excluded", async () => {
+    actAs(ORG_A);
+    const strict = await previewOrThrow(CONTACTABLE_STRICT);
+    const frozen = await freezeEmailOnce("freeze-strict-email", SEGMENT_STRICT);
+    const delivered = new Set(frozen.members.map((member) => member.contactId));
+
+    // Bakri and Evelyn are reachable by email and carry the merchant's own opt-out. The page
+    // says they are out; a run that cannot see the record would send to both.
+    expect(delivered.has(BAKRI)).toBe(false);
+    expect(delivered.has(EVELYN)).toBe(false);
+    expect([...delivered]).toEqual([AMIRA]);
+    expect(frozen.consent.excludedByReportedOptOut).toBe(2);
+
+    // Said the other way round, over the page's own rows: every contact the page kept and this
+    // run can reach is in the audience, and no contact the page dropped is.
+    const written = await prisma.broadcastAudienceMember.findMany({
+      where: { ownerId: ORG_A, broadcastRunId: frozen.resource.id },
+      select: { contactId: true },
+    });
+    for (const contact of strict.contacts) {
+      expect(delivered.has(contact.id)).toBe(contact.channels.includes("email"));
+    }
+    for (const excluded of [BAKRI, EVELYN]) {
+      expect(written.some((member) => member.contactId === excluded)).toBe(false);
+    }
+  });
+
+  it("discloses the same record on an untightened email broadcast instead of reporting none", async () => {
+    const frozen = await freezeEmailOnce("freeze-kept-email", SEGMENT_KEPT);
+    const delivered = new Set(frozen.members.map((member) => member.contactId));
+
+    // #496 option B is untouched here: with the option off they stay in the audience. What the
+    // run may not do is stay silent about a record the segments page names on the same segment.
+    expect([...delivered].sort()).toEqual([AMIRA, BAKRI, EVELYN].sort());
+    expect(frozen.consent.reportedOptOutKept).toBe(2);
+    expect(frozen.consent.excludedByReportedOptOut).toBe(0);
+  });
+
+  it("scope-fixes only the merchant's record, and leaves the verified state per run", async () => {
+    // Read straight from the shared authority, because this is a statement about the authority:
+    // the merchant's record is the same on every channel (it is written on one), while the
+    // customer's own evidence stays exactly as channel-specific as R-010 makes it.
+    const email = await readContactConsentTruth(prisma, ORG_A, {
+      channel: "email",
+      purpose: "marketing",
+    });
+    expect(email.get(BAKRI)?.reportedOptOut).toBe(true);
+    expect(email.get(EVELYN)?.reportedOptOut).toBe(true);
+    // Chong's own WhatsApp unsubscribe is not a statement about email, and this fix must not
+    // turn it into one.
+    expect(email.get(CHONG)?.state ?? "unknown").toBe("unknown");
+
+    const whatsapp = await readContactConsentTruth(prisma, ORG_A);
+    expect(whatsapp.get(CHONG)?.state).toBe("effective_revoke");
+    expect(whatsapp.get(BAKRI)?.reportedOptOut).toBe(true);
+  });
+});
+
 describe("#758 the option only ever subtracts", () => {
   it("never lets a customer the consent record holds out back onto a list", async () => {
     actAs(ORG_A);
@@ -490,6 +645,28 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     expect(markup).not.toContain("reported opt-out still included");
     // The choice is never dressed up as evidence the customer gave (#768).
     expect(markup).not.toContain("customers who opted out excluded");
+    for (const claim of REJECTED_CLAIMS) expect(markup).not.toContain(claim);
+  });
+
+  it("keeps every clause on this screen to something the ledger can prove", async () => {
+    // r2 P1-2's own reproduction, stated as behaviour rather than as wording: the banned promise
+    // was "a customer who opted out herself is out either way", and here is the legal segment
+    // where she is not. Both are checked in one place so the sentence cannot come back while
+    // the counter-example still stands.
+    actAs(ORG_A);
+    const optedOut = await previewOrThrow(OPTED_OUT_ONLY_STRICT);
+    expect(optedOut.contacts.map((contact) => contact.id)).toEqual([CHONG]);
+
+    const initialState = await listSegments();
+    if (!("ok" in initialState)) throw new Error(initialState.error);
+    const page = renderToStaticMarkup(
+      createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
+    );
+    const preview = renderToStaticMarkup(createElement(ContactPreview, { preview: optedOut }));
+    for (const claim of REJECTED_CLAIMS) {
+      expect(page, claim).not.toContain(claim);
+      expect(preview, claim).not.toContain(claim);
+    }
   });
 
   it("keeps the untightened page saying the disclosure instead", async () => {
@@ -527,6 +704,8 @@ describe("#758 the merchant can reach the option himself, and the list says whic
     expect(markup).toContain(
       "An opt-out you or a CSV import recorded is not confirmed by the customer",
     );
+    // r2 P1-2 — and it promises nothing the product does not do.
+    for (const claim of REJECTED_CLAIMS) expect(markup).not.toContain(claim);
     const control = markup.match(/<button[^>]*id="segment-exclude-reported-opt-out"[^>]*>/)?.[0];
     // Off is the shipped default: the product does not decide for the merchant whom to drop.
     expect(control).toBeDefined();
