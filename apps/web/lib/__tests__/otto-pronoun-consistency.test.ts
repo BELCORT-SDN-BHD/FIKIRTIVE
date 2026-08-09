@@ -21,6 +21,8 @@
  *      黑名单(`Otto … on its own`、`Otto … it'll`、Otto 句后紧跟以 It/He/She 开头的句子)。
  *      这三个句型不是随手写的,是这次全仓扫查里**实际抓到的全部四种形状**——把形状本身封死,
  *      换个文件重写一遍同样红。写这条时在未修的树上实测:四条规则命中 6 句、零误报。
+ *      (#816:第一版按整份源码切句子,句号后面紧跟 `</p><p>` 或 `", "` 时两句黏成一句,
+ *      第四条规则整类失灵。现在同一套规则跑在两条流上 —— 详见下面 copyRuns 的注释。)
  *   ② **逐处钉板**:本轮改过的每一处,钉住治好的那句话本身,并明令旧的代词写法不得回来。
  *      privacy 两页(英文 + BM)的形状('the contact details **it** is working with')词法围栏
  *      覆盖不到 —— 语义上 it 才是 Otto,句型却与任何通用规则都对不上,只能逐句钉。
@@ -67,10 +69,69 @@ function stripComments(source: string): string {
     .join("\n");
 }
 
-function sentencesOf(source: string): string[] {
-  return stripComments(source)
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?])\s+/);
+function sentencesOf(text: string): string[] {
+  return text.replace(/\s+/g, " ").split(/(?<=[.!?])\s+/);
+}
+
+/**
+ * #816 —— 句界断在标签上,规则就永远不会命中。
+ *
+ * 相邻的两句话在源码里几乎从不被空白隔开:一句在 `<p>` 里,下一句在隔壁那个 `<p>` 里;
+ * 或者两句是同一个数组里相邻的两个字符串。按整份源码切句子时,句号后面紧跟的是 `</p><p>`
+ * 或者 `", "` —— 不是空白,`split(/(?<=[.!?])\s+/)` 于是把两句当成一句,「Otto 句后紧跟
+ * 代词开头句」这条规则怎么也命中不了。判官 2026-08-09 复现的就是这个形状:
+ *   `<p>Meet Otto.</p><p>It researches…</p>` 不报错。
+ *
+ * 修法不是放宽规则(那会把正确文案判红),是把**句界**修对:把源码里给人读的那些段
+ * 按出现顺序抽出来接成一条流。接起来之后句号后面就真的是空白,同一条规则原样命中。
+ *
+ * 抽两类段,一次左到右扫完:
+ *   · **JSX 文本节点** —— 一个标签闭合(`>`)之后、下一个标签打开(`<`)之前的纯文本。
+ *     遇到 `{`/`}` 就停:`<p>{count} items</p>` 里的 items 归表达式管,不是一段文案。
+ *   · **字符串字面量** —— 属性值、数组元素、返回值里的文案。
+ * 顺序很重要:先吃 JSX 文本再看引号,`Otto doesn&apos;t ask` 这种正文里的撇号就不会被
+ * 当成一个字符串的开头(它已经被 JSX 那一段整段吃掉了)。
+ *
+ * 这条流是**加**在原来那条(整份源码)之上的,不是换掉它:JSX 表达式里的文案与行尾注释
+ * 只有原来那条看得见。两条流各扫一遍,同一句重复命中的按 (文件, 规则, 句子) 去重。
+ */
+function copyRuns(source: string): string[] {
+  const runs: string[] = [];
+  let i = 0;
+  while (i < source.length) {
+    const char = source[i]!;
+    if (char === ">") {
+      let j = i + 1;
+      while (j < source.length && !"<>{}".includes(source[j]!)) j += 1;
+      if (source[j] === "<") runs.push(source.slice(i + 1, j));
+      i = j;
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      let body = "";
+      let j = i + 1;
+      while (j < source.length && source[j] !== char) {
+        if (source[j] === "\\") {
+          body += source[j + 1] ?? "";
+          j += 2;
+          continue;
+        }
+        body += source[j]!;
+        j += 1;
+      }
+      runs.push(body);
+      i = j + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return runs.map((run) => run.trim()).filter((run) => /[A-Za-z]/.test(run));
+}
+
+/** 两条流:整份源码(原样)+ 只有文案、句界落在真句号上的那一条(#816)。 */
+function streamsOf(source: string): string[] {
+  const stripped = stripComments(source);
+  return [stripped, copyRuns(stripped).join(" ")];
 }
 
 const MENTIONS_OTTO = /\bOtto\b/;
@@ -84,25 +145,38 @@ const PRONOUN_SUBJECT_OPENER = /^(?:It|He|She|Its|His|Her)(?:\s|&apos;|&rsquo;|[
 
 type Offence = { file: string; rule: string; sentence: string };
 
-function scan(): Offence[] {
+/** 对一条流跑完四条规则。流是什么(整份源码 / 只有文案)由调用方决定。 */
+function offencesIn(file: string, stream: string): Offence[] {
   const offences: Offence[] = [];
-  for (const relative of trackedSources()) {
-    const sentences = sentencesOf(readFileSync(path.join(REPO_ROOT, relative), "utf8"));
-    for (let i = 0; i < sentences.length; i++) {
-      const sentence = sentences[i]!;
-      const previous = i > 0 ? sentences[i - 1]! : "";
-      const mentionsOtto = MENTIONS_OTTO.test(sentence);
-      const push = (rule: string) => offences.push({ file: relative, rule, sentence: sentence.slice(0, 240) });
+  const sentences = sentencesOf(stream);
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i]!;
+    const previous = i > 0 ? sentences[i - 1]! : "";
+    const mentionsOtto = MENTIONS_OTTO.test(sentence);
+    const push = (rule: string) => offences.push({ file, rule, sentence: sentence.slice(0, 240) });
 
-      if (mentionsOtto && GENDERED_PRONOUN.test(sentence)) push("gendered pronoun in an Otto sentence");
-      if (mentionsOtto && OTTO_ON_ITS_OWN.test(sentence)) push('"on its own" in an Otto sentence');
-      if (mentionsOtto && OTTO_ITLL.test(sentence)) push("\"it'll\" in an Otto sentence");
-      if (MENTIONS_OTTO.test(previous) && !mentionsOtto && PRONOUN_SUBJECT_OPENER.test(sentence)) {
-        push("a pronoun opens the sentence right after an Otto sentence");
-      }
+    if (mentionsOtto && GENDERED_PRONOUN.test(sentence)) push("gendered pronoun in an Otto sentence");
+    if (mentionsOtto && OTTO_ON_ITS_OWN.test(sentence)) push('"on its own" in an Otto sentence');
+    if (mentionsOtto && OTTO_ITLL.test(sentence)) push("\"it'll\" in an Otto sentence");
+    if (MENTIONS_OTTO.test(previous) && !mentionsOtto && PRONOUN_SUBJECT_OPENER.test(sentence)) {
+      push("a pronoun opens the sentence right after an Otto sentence");
     }
   }
   return offences;
+}
+
+function scan(): Offence[] {
+  const offences = new Map<string, Offence>();
+  for (const relative of trackedSources()) {
+    const source = readFileSync(path.join(REPO_ROOT, relative), "utf8");
+    for (const stream of streamsOf(source)) {
+      // 两条流会重复命中同一句;去重后 offenders 才是「几处病」而不是「扫了几遍」。
+      for (const offence of offencesIn(relative, stream)) {
+        offences.set(`${offence.file} ${offence.rule} ${offence.sentence}`, offence);
+      }
+    }
+  }
+  return [...offences.values()];
 }
 
 function report(offences: Offence[]): string {
@@ -157,6 +231,47 @@ describe("#682 ① no third-person pronoun stands in for Otto anywhere in produc
     const goodCopy = "Voice, rules, audience — Otto uses it every time";
     expect(MENTIONS_OTTO.test(goodCopy) && GENDERED_PRONOUN.test(goodCopy)).toBe(false);
     expect(OTTO_ON_ITS_OWN.test(goodCopy) || OTTO_ITLL.test(goodCopy)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ①b 句界 —— #816:两句话之间隔的是标签,不是空白
+// ---------------------------------------------------------------------------
+describe("#816 the sentence boundary survives a tag or a comma between the two sentences", () => {
+  const RULE = "a pronoun opens the sentence right after an Otto sentence";
+
+  function rulesFor(source: string): string[] {
+    return streamsOf(source).flatMap((stream) => offencesIn("planted.tsx", stream).map((o) => o.rule));
+  }
+
+  // 判官 2026-08-09 亲手复现的那一句。第一条断言就是**旧盲区本身**:只有整份源码那一条流
+  // 时,这个形状一声不吭 —— 它写在这里,是为了让盲区回来时有人喊。
+  it("catches a pronoun that opens the next JSX text node", () => {
+    const planted = `<p>Meet Otto.</p><p>It researches your brand.</p>`;
+    expect(offencesIn("planted.tsx", stripComments(planted)), "the old single stream").toEqual([]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("catches a pronoun that opens the next string in the same list", () => {
+    const planted = `const LINES = ["Meet Otto.", "It researches your brand."];`;
+    expect(offencesIn("planted.tsx", stripComments(planted)), "the old single stream").toEqual([]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("still catches the same shape when a blank line separates the two tags", () => {
+    expect(rulesFor(`<p>Meet Otto.</p>\n\n        <p>It researches your brand.</p>`)).toContain(RULE);
+  });
+
+  // 修句界不是放宽规则:接起来之后,Founder 点名的正例仍然不得被判红。
+  it("leaves the copy Founder named as correct alone", () => {
+    expect(rulesFor(`<p>Voice, rules, audience — Otto uses it every time.</p><p>Nothing is sent.</p>`)).toEqual([]);
+  });
+
+  it("reads JSX text and string literals in the order they appear, and nothing else", () => {
+    expect(copyRuns(`<p>Meet Otto.</p><Foo label="Say hello." />`)).toEqual(["Meet Otto.", "Say hello."]);
+    // 表达式里的东西不是一段文案;`don&apos;t` 的撇号不得被当成一个字符串的开头。
+    expect(copyRuns(`<p>Otto doesn't ask.</p>`)).toEqual(["Otto doesn't ask."]);
+    expect(copyRuns(`const total = a > b ? 1 : 2;`)).toEqual([]);
   });
 });
 
