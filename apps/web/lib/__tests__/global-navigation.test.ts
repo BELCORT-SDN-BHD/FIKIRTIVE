@@ -94,6 +94,15 @@ describe("MerchantShellContent", () => {
     expect(markup).toContain(">Billing &amp; credits<");
   });
 
+  // #801 — at 1024–1279 a group is one icon and its children live in SectionTabs, which is
+  // withheld on a surface that owns its own full-height workspace. So the icon must land
+  // where those tabs actually render: Settings still opens on Billing, as it always did.
+  it("collapses Settings to an icon that opens Billing, where its tabs render", () => {
+    const markup = renderShell("/campaign");
+
+    expect(markup).toMatch(/aria-label="Settings"[^>]*href="\/billing"|href="\/billing"[^>]*aria-label="Settings"/);
+  });
+
   it("marks Connections active on /otto?view=connections, not on bare /otto (#513 三轮 item 2)", () => {
     const bare = renderShell("/otto");
     expect(bare).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);

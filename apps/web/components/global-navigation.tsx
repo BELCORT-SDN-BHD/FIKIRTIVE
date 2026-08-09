@@ -370,7 +370,13 @@ function NavigationGroup({ group, pathname }: { group: RailGroup; pathname: stri
 
   const GroupIcon = group.icon;
   const activeHref = activeItemHref(pathname, group.items);
-  const railHref = group.items[0]!.href;
+  // At 1024–1279 the group is one icon, and its children surface in SectionTabs. So the
+  // icon must lead somewhere those tabs actually render — i.e. NOT onto a surface that
+  // owns its own full-height workspace, where the bar is withheld. Settings therefore
+  // still opens on Billing (as it always did), where all three of its rows are on screen;
+  // a group whose every child lives on such a surface falls back to its first child, whose
+  // own rail lists its siblings.
+  const railHref = (group.items.find((item) => !ownsFullHeightWorkspace(item.href)) ?? group.items[0]!).href;
 
   return (
     <>
