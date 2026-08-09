@@ -6,6 +6,7 @@ function port() {
   return {
     list: vi.fn(), get: vi.fn(), search: vi.fn(), create: vi.fn(), update: vi.fn(),
     importCsv: vi.fn(), recordConsent: vi.fn(), setDnd: vi.fn(),
+    addPhone: vi.fn(), updatePhone: vi.fn(), removePhone: vi.fn(),
   } satisfies NonNullable<OttoContext["contacts"]>;
 }
 
