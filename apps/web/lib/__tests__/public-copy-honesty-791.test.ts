@@ -134,6 +134,19 @@ describe("#805 对外主话术:先说把活干完", () => {
     it("不拿证明不了的社会证明当卖点(没有可指名的公开商家)", () => {
       expect(login).not.toMatch(/\btrusted by\b/i);
     });
+
+    // r2 · 判官 P1(PR #831 评论 5232023830):第一版写的是「brings every paid step back for
+    // you to approve first」。**这句话是假的** —— 和 Otto 聊天本身就按消息预扣结算,那条路
+    // (OttoFrontDoor 的 ottoTurn 调用)上根本没有审批卡。审批卡真实覆盖的是付费生成与发布。
+    // 未登录的人读到的第一句钱路承诺,只能说得比事实小,不许说得比事实大。
+    it("不承诺「凡花钱都先经你点头」—— 审批卡覆盖的是做东西与发布,不是每一次计费", () => {
+      expect(login).not.toMatch(/every paid step/i);
+      expect(login).not.toMatch(/every step that (?:spends|costs)/i);
+    });
+
+    it("说的是审批卡真正管得住的那一半", () => {
+      expect(login).toMatch(/nothing gets made or published until you approve/i);
+    });
   });
 
   it("注册页把 Otto 派去干活,不只是介绍认识", () => {

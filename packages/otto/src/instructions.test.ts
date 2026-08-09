@@ -76,6 +76,28 @@ describe("ottoInstructions — #805 自我介绍先说把活干完", () => {
     expect(ottoInstructions).toContain("Being easy to talk to is HOW you work, never WHAT you are worth");
     expect(ottoInstructions).toContain("never with how human you sound");
   });
+
+  // r2 · 判官 P1(PR #831 评论 5232023830):身份段第一版写的是「Every step that spends
+  // credits is laid out as a card the user approves first」—— **全称量词是假的**,而且这份
+  // 提示词自己在两百行之后就否掉了它:「Talking to you costs credits. Each message holds a
+  // few credits before it starts…」。聊天按消息计费、没有卡;有卡的是付费生成与发布。
+  // 一句钱路承诺说得比事实大,比不说更危险 —— 这里把那个全称量词永久钉死。
+  it("不许承诺「凡花积分都先过卡」—— 聊天按消息计费,那条路上没有卡", () => {
+    expect(ottoInstructions).not.toMatch(/every step that spends credits/i);
+    expect(ottoInstructions).not.toMatch(/every (?:paid|credit-consuming) step/i);
+  });
+
+  it("审批卡的承诺限定在它真正覆盖的那一半:做东西与发布", () => {
+    expect(ottoInstructions).toContain(
+      "Creative and publishing work — making an image or a video, or putting something live — is laid out as a card the user approves first.",
+    );
+    // 同一份提示词里那条既有的、更具体的生成承诺必须仍在场 —— 两句同口径,不许对打。
+    expect(ottoInstructions).toContain(
+      "Making an image or a video costs credits and never happens without the user approving that specific card first.",
+    );
+    // 聊天计费那条实话也必须仍在场:限定范围不等于把聊天计费藏起来。
+    expect(ottoInstructions).toContain("Talking to you costs credits.");
+  });
 });
 
 describe("ottoInstructions — Honesty & limits", () => {

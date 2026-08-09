@@ -62,8 +62,8 @@ export default async function LoginPage({
               the lexical fence cannot catch a mid-sentence "it", so it is on the writer. */}
           <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
             Build the campaign, adjust the customer segment, see where the money went, swap in
-            fresh creative. Say what you want in your own words — Otto runs the job end to end
-            and brings every paid step back for you to approve first.
+            fresh creative. Say what you want in your own words — Otto runs the job end to end,
+            and nothing gets made or published until you approve it.
           </p>
           <ul className="mt-7 flex flex-col gap-[11px]">
             {[
