@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { isChannelVerifiedIdentity } from "@fikirtive/core";
+import { isChannelVerifiedIdentity } from "@fikirtive/core/contact-identity-grade";
 import { useState, type FormEvent } from "react";
 import {
   AlertCircle,

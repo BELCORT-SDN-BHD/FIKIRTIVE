@@ -23,7 +23,9 @@
  * Pure presentation: no data access, no tenant logic, no authority over what is true.
  */
 
-import { isChannelVerifiedIdentity } from "@fikirtive/core";
+// The SUBPATH, not the barrel: this module is reachable from client components, and the core
+// barrel pulls in Node-capable code (fenced by lib/__tests__/client-core-imports.test.ts).
+import { isChannelVerifiedIdentity } from "@fikirtive/core/contact-identity-grade";
 
 export type CrmBadgeVariant =
   | "default"
