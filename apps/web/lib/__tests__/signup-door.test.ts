@@ -111,7 +111,7 @@ describe("#543 · the door opens — a stranger can register with email + passwo
     expect(sent.some((m) => m.to === email && m.subject.toLowerCase().includes("verify"))).toBe(true);
   });
 
-  it("verification lands the workspace named after the shop and the 20-credit welcome grant", async () => {
+  it("verification lands the workspace named after the shop and the 25-credit welcome grant", async () => {
     const email = newEmail();
     await postSignUp({ email, password: PASSWORD, name: "Nasi Lemak Ibu" });
     const res = await verifyEmail(verificationTokenFromInbox(email));
@@ -137,7 +137,7 @@ describe("#543 · the door opens — a stranger can register with email + passwo
 
     const account = await prisma.creditAccount.findUnique({ where: { orgId } });
     expect(account?.balance).toBe(SIGNUP_GRANT_CREDITS);
-    expect(SIGNUP_GRANT_CREDITS).toBe(200);
+    expect(SIGNUP_GRANT_CREDITS).toBe(250);
 
     const grants = await prisma.creditLedger.findMany({ where: { orgId, kind: "GRANT" } });
     expect(grants).toHaveLength(1);

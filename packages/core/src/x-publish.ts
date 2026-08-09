@@ -9,11 +9,12 @@
  * (spec §六.1). Real posting to X = external-test phase (§六.2), founder-authorized, with real
  * credentials that do NOT exist in-block; until then the caller's fail-closed gate refuses first.
  *
- * Never throws: returns the SAME result contract as meta-publish (imported as a TYPE ONLY — this
- * module never modifies meta-publish, so contract 6's "core orchestration zero semantic change"
- * holds): { externalId } | { error, retryable } | { ambiguous, error }.
+ * Never throws: returns the SAME result contract as meta-publish — { externalId } | { error,
+ * retryable } | { ambiguous, error }. It imports that contract's types plus the one shared
+ * `publishWithdrawn()` constructor (#810 r4 P1-a), so the withdrawal answer has a single spelling
+ * across channels; it still never modifies meta-publish's own logic.
  */
-import type { PublishResult, PublishFail } from "./meta-publish.js";
+import { publishWithdrawn, type PublishResult, type PublishFail, type ConfirmStillAuthorized } from "./meta-publish.js";
 
 /** The X OAuth 2.0 scope that grants tweet creation. canPublish is TRUE only when actually granted. */
 export const X_PUBLISH_SCOPE = "tweet.write";
@@ -69,6 +70,8 @@ export type XPublishArgs = {
    *  our Generation assets to X is external-test-phase work (§六.2); the worker currently drives
    *  text-only and refuses media deterministically before reaching here (see executeX). */
   mediaIds?: string[];
+  /** Asked once, immediately before the POST /2/tweets — see ConfirmStillAuthorized. */
+  confirmStillAuthorized?: ConfirmStillAuthorized;
 };
 
 /** X publish: POST /2/tweets { text, media?: { media_ids } } → the tweet id. A 2xx with no id is
@@ -77,6 +80,10 @@ export async function publishX(port: XApiPort, args: XPublishArgs): Promise<Publ
   const text = typeof args.text === "string" ? args.text : "";
   const mediaIds = Array.isArray(args.mediaIds) ? args.mediaIds.filter(Boolean) : [];
   if (!text.trim() && mediaIds.length === 0) return { error: "an X post needs text or media", retryable: false };
+
+  // X's final action IS its first external call, but the gate comes through the same shared
+  // contract as IG/FB rather than each channel's own habit (#810 r4 P1-a).
+  if (args.confirmStillAuthorized && !(await args.confirmStillAuthorized())) return publishWithdrawn();
 
   const body: Record<string, unknown> = { text };
   if (mediaIds.length > 0) body.media = { media_ids: mediaIds };

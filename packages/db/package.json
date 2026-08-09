@@ -11,6 +11,10 @@
     "./principal": {
       "types": "./dist/src/principal.d.ts",
       "default": "./dist/src/principal.js"
+    },
+    "./consent-fold": {
+      "types": "./dist/src/consent-fold.d.ts",
+      "default": "./dist/src/consent-fold.js"
     }
   },
   "scripts": {

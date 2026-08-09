@@ -19,7 +19,7 @@ vi.mock("@/lib/better-auth/client", () => ({
 
 describe("LoginForm", () => {
   it("renders client-validatable email controls with honest sign-in-link labels", () => {
-    const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/" }));
+    const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/", googleEnabled: true }));
 
     expect(markup).toContain('type="email"');
     expect(markup).toContain("required");
@@ -28,7 +28,7 @@ describe("LoginForm", () => {
   });
 
   it("offers password recovery only because the reset flow now exists (#543)", () => {
-    const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/" }));
+    const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/", googleEnabled: true }));
 
     expect(markup).toContain("Forgot your password?");
     expect(markup).toContain('href="/forgot-password"');
@@ -58,5 +58,42 @@ describe("LoginForm", () => {
     ]);
 
     expect(`${form}\n${page}`).not.toContain("isn't on the allowlist");
+  });
+
+  // #681 — the button used to render whether or not Google was configured. Clicking it on an
+  // environment with no credentials produced a 500 and a generic "Sign-in failed. Try again.",
+  // so the merchant retried a road that does not exist.
+  describe("the Google door is only offered when it exists (#681)", () => {
+    it("credentials configured → the button is there, unchanged", () => {
+      const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/", googleEnabled: true }));
+
+      expect(markup).toContain("Continue with Google");
+    });
+
+    it("credentials missing → no button at all, and the other doors stay open", () => {
+      const markup = renderToStaticMarkup(createElement(LoginForm, { from: "/", googleEnabled: false }));
+
+      expect(markup).not.toContain("Continue with Google");
+      expect(markup).not.toContain("Google");
+      // Removing one door must not remove the others.
+      expect(markup).toContain("Email me a sign-in link");
+      expect(markup).toContain('type="email"');
+      expect(markup).toContain("Sign in");
+    });
+
+    it("the answer comes from the server, never from a client-side env guess", async () => {
+      const [form, page] = await Promise.all([
+        readFile(new URL("../LoginForm.tsx", import.meta.url), "utf8"),
+        readFile(new URL("../page.tsx", import.meta.url), "utf8"),
+      ]);
+
+      // The client component reads no environment at all — it is told.
+      expect(form).not.toContain("process.env");
+      expect(form).not.toContain("NEXT_PUBLIC_");
+      expect(form).toContain("googleEnabled");
+      // The server component asks the one shared predicate, the same one the auth config uses.
+      expect(page).toContain("googleSignInConfigured");
+      expect(page).toContain("googleEnabled={googleSignInConfigured()}");
+    });
   });
 });

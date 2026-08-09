@@ -233,3 +233,131 @@ describe("publishFacebook", () => {
     expect(res).toMatchObject({ retryable: false });
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────────────────────────────
+ * #810 r4 P1-a —— 「最后一刻」必须是**最后一刻**,不是 send() 的入口
+ *
+ * r3 把开关复核放在 worker 调用 send() 之前,以为那就是发送前的最后一步。判官指出 IG 的
+ * send() 里面还藏着慢工序:建容器 → 最多 15 次轮询(默认 ≥14×2 秒)→ 这之后才 media_publish。
+ * 复核放在 send() 入口,等于把 240 秒的窗口换成了 ~30 秒的窗口,并没有关上。
+ *
+ * 这里用纯函数复现判官的时序:轮询进行到一半商家关掉开关。容器已经建好没关系(容器不是商家
+ * 可见的发布,过期即废),但 media_publish 一次都不许发生 —— 那才是不可逆的那一下。
+ * ──────────────────────────────────────────────────────────────────────────────────────────── */
+describe("#810 r4 P1-a 复核紧贴最终不可逆动作", () => {
+  /** 一个会分阶段回答的 IG 端口:前几次轮询 IN_PROGRESS,之后 FINISHED;每次轮询回调 onPoll。 */
+  function pollingPort(opts: { finishOnPoll: number; onPoll?: (n: number) => void }) {
+    const posts: string[] = [];
+    let polls = 0;
+    const port: MetaGraphPort = {
+      async post(path) {
+        posts.push(path);
+        return { id: "container-1" };
+      },
+      async get() {
+        polls += 1;
+        opts.onPoll?.(polls);
+        return { status_code: polls >= opts.finishOnPoll ? "FINISHED" : "IN_PROGRESS" };
+      },
+    };
+    return { port, posts, polls: () => polls };
+  }
+
+  it("IG:轮询期间关掉开关 —— 容器可以已经建好,但 media_publish 零次", async () => {
+    let switchOn = true;
+    // 判官的时序:第 2 次轮询时商家关掉开关,容器第 4 次轮询才 FINISHED。
+    const { port, posts } = pollingPort({
+      finishOnPoll: 4,
+      onPoll: (n) => {
+        if (n === 2) switchOn = false;
+      },
+    });
+
+    const res = await publishInstagram(port, {
+      igUserId: "ig1",
+      mediaUrls: ["https://cdn.test/1.jpg"],
+      caption: "hi",
+      sleep: noSleep,
+      pollDelayMs: 0,
+      confirmStillAuthorized: async () => switchOn,
+    });
+
+    expect(posts).toEqual(["ig1/media"]); // 备料发生了
+    expect(posts.some((p) => p.endsWith("/media_publish"))).toBe(false); // 不可逆的那一下没发生
+    expect(res).toMatchObject({ withdrawn: true, retryable: false });
+  });
+
+  it("IG:开关全程开着 —— 轮询完照常 media_publish(这道闸不误伤正常发布)", async () => {
+    const { port, posts } = pollingPort({ finishOnPoll: 3 });
+    const res = await publishInstagram(port, {
+      igUserId: "ig1",
+      mediaUrls: ["https://cdn.test/1.jpg"],
+      caption: "hi",
+      sleep: noSleep,
+      pollDelayMs: 0,
+      confirmStillAuthorized: async () => true,
+    });
+    expect(posts).toEqual(["ig1/media", "ig1/media_publish"]);
+    expect(res).toMatchObject({ externalId: "container-1" });
+  });
+
+  it("IG:复核在**轮询之后**才问 —— 问得太早等于没问", async () => {
+    const asked: number[] = [];
+    let polls = 0;
+    const { port } = pollingPort({
+      finishOnPoll: 3,
+      onPoll: (n) => {
+        polls = n;
+      },
+    });
+    await publishInstagram(port, {
+      igUserId: "ig1",
+      mediaUrls: ["https://cdn.test/1.jpg"],
+      caption: "hi",
+      sleep: noSleep,
+      pollDelayMs: 0,
+      confirmStillAuthorized: async () => {
+        asked.push(polls); // 被问到时已经轮询了几次
+        return true;
+      },
+    });
+    expect(asked).toEqual([3]); // 只问一次,且是在容器 FINISHED 之后
+  });
+
+  it("IG:不传回调时行为一个字不变(web 侧的人工发布路径不受影响)", async () => {
+    const { port, posts } = pollingPort({ finishOnPoll: 1 });
+    const res = await publishInstagram(port, {
+      igUserId: "ig1",
+      mediaUrls: ["https://cdn.test/1.jpg"],
+      caption: "hi",
+      sleep: noSleep,
+      pollDelayMs: 0,
+    });
+    expect(posts).toEqual(["ig1/media", "ig1/media_publish"]);
+    expect(res).toMatchObject({ externalId: "container-1" });
+  });
+
+  it("FB:最终动作之前关掉开关 —— 一个 POST 都不发", async () => {
+    const { port, posts } = mockPort({ postReplies: [{ id: "fb1" }] });
+    const res = await publishFacebook(port, {
+      pageId: "pg1",
+      message: "hi",
+      mediaUrls: [],
+      confirmStillAuthorized: async () => false,
+    });
+    expect(posts).toEqual([]);
+    expect(res).toMatchObject({ withdrawn: true, retryable: false });
+  });
+
+  it("FB:开关开着 —— 照常发", async () => {
+    const { port, posts } = mockPort({ postReplies: [{ id: "fb1" }] });
+    const res = await publishFacebook(port, {
+      pageId: "pg1",
+      message: "hi",
+      mediaUrls: [],
+      confirmStillAuthorized: async () => true,
+    });
+    expect(posts.map((p) => p.path)).toEqual(["pg1/feed"]);
+    expect(res).toMatchObject({ externalId: "fb1" });
+  });
+});

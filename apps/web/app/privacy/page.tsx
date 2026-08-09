@@ -117,7 +117,7 @@ export default function PrivacyPage() {
         </p>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. This notice describes the product
-          as it works today, during the invite-only beta. It explains what information we hold, why we hold it, who else
+          as it works today, while access is by invitation only. It explains what information we hold, why we hold it, who else
           processes it, and how to have it removed.
         </p>
 
@@ -281,7 +281,7 @@ export default function PrivacyPage() {
             Each time Otto replies, the provider receives the conversation so far and your brand context — the notes Otto
             remembers, and your brand records: the audience descriptions you wrote, and the offers and products you
             recorded, including the prices you entered. Images you drag into a conversation are sent with it. If Otto
-            works with your contact list, the contact details it is working with are sent too. For image and video
+            works with your contact list, the contact details Otto is working with are sent too. For image and video
             generation, the provider receives your prompt and a link that lets it download the specific source image or
             video from our storage; that link stops working after one hour.
           </p>

@@ -8,11 +8,6 @@ import { redactProviderNames, sanitizeUserError } from "../provider-secrecy";
 const SECRET_TERMS =
   /seedance|seedream|byteplus|bytedance|jimeng|即梦|\bfal\b|anthropic|claude/iu;
 
-function providerPatternLiteral(source: string): string {
-  const match = source.match(/const PROVIDER_NAME_RE\s*=\s*\n?\s*(\/[^\n]+\/[a-z]+);/u);
-  expect(match?.[1]).toBeDefined();
-  return match?.[1] ?? "";
-}
 
 describe("provider secrecy", () => {
   it.each([
@@ -41,13 +36,24 @@ describe("provider secrecy", () => {
     expect(safe).toContain("timeout");
   });
 
-  it("keeps the worker and web provider patterns byte-identical", () => {
-    const webSource = readFileSync(new URL("../provider-secrecy.ts", import.meta.url), "utf8");
-    const workerSource = readFileSync(
-      new URL("../../../worker/src/redact.ts", import.meta.url),
-      "utf8",
-    );
+  // #791-6: this used to compare the web copy of the pattern with the worker copy, literal
+  // for literal — a real guard, but one that only kept TWO copies in step, and Otto's reply
+  // path (a third reader, added by #791-6) would not have been covered by it at all. The
+  // pattern now lives once in @fikirtive/core and every reader imports it, so the property
+  // worth pinning is stronger: no app declares a pattern of its own to drift.
+  it("neither app declares its own provider pattern — there is one definition, in core", () => {
+    const sources = [
+      readFileSync(new URL("../provider-secrecy.ts", import.meta.url), "utf8"),
+      readFileSync(new URL("../../../worker/src/redact.ts", import.meta.url), "utf8"),
+    ];
+    for (const source of sources) {
+      expect(source).not.toMatch(/const PROVIDER_NAME_RE\s*=/u);
+      expect(source).toMatch(/@fikirtive\/core\/provider-secrecy/u);
+    }
+  });
 
-    expect(providerPatternLiteral(webSource)).toBe(providerPatternLiteral(workerSource));
+  it("the shared definition is the one both apps actually run", async () => {
+    const core = await import("@fikirtive/core/provider-secrecy");
+    expect(redactProviderNames("seedance-2-mini")).toBe(core.redactProviderNames("seedance-2-mini"));
   });
 });

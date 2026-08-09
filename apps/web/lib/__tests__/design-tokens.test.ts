@@ -99,6 +99,33 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     expect(contrastRatio("#FFFFFF", literal!)).toBeGreaterThanOrEqual(4.5);
   });
 
+  /**
+   * #739 — Library's "Delete" is a filled `variant="destructive"` button, so its contrast is
+   * decided by this one token, not by that screen. White on the old #E5484D measured 3.91:1
+   * against the 4.5:1 floor small text carries, and the same literal read 3.82:1 as
+   * `text-destructive` on --background. Both directions are asserted because the token is
+   * used both ways; --error carries the same literal and moves with it.
+   */
+  it("destructive and error pass WCAG AA in both directions (filled button and small text)", async () => {
+    const light = (await fs.readFile(path.join(webRoot, "app/globals.css"), "utf8"))
+      .match(/\.gb\s*\{[\s\S]*?\n\}/)?.[0];
+    expect(light).toBeDefined();
+
+    const background = light!.match(/--background:\s*(#[0-9A-F]{6})/i)?.[1];
+    const onFill = light!.match(/--destructive-foreground:\s*(#[0-9A-F]{6})/i)?.[1];
+    expect(background).toBe("#FCFCFC");
+    expect(onFill).toBe("#FFFFFF");
+
+    for (const token of ["destructive", "error"] as const) {
+      const literal = light!.match(new RegExp(`--${token}:\\s*(#[0-9A-F]{6})`, "i"))?.[1];
+      expect(literal, token).toBeDefined();
+      // Filled: the label sitting on the token.
+      expect(contrastRatio(onFill!, literal!), `${token} filled`).toBeGreaterThanOrEqual(4.5);
+      // Text: the token sitting on the page.
+      expect(contrastRatio(literal!, background!), `${token} as text`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("global two-layer coral focus ring (§A2) is present", async () => {
     const css = await compiled();
     const rule = css.match(/\.gb\s+:focus-visible\s*\{[^}]*\}/)?.[0];

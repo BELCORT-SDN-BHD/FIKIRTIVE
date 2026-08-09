@@ -12,7 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import type { OttoViewKey } from "./OttoApp";
-import type { StuffItem } from "@/lib/stuff-items";
+import { isGenerationBackedItem, type StuffItem } from "@/lib/stuff-items";
 import {
   listScheduledPosts,
   listOwnerTargets,
@@ -204,12 +204,17 @@ export function OttoSchedule({
   const [composer, setComposer] = useState<ComposerSeed | null>(null);
   const [channelFilter, setChannelFilter] = useState<ChannelFilter>("all");
 
-  // gen-media lookup (generationId → thumb) for post previews + the media picker. Keyed by
+  // Generated-media lookup (generationId → thumb) for post previews + the media picker. Keyed by
   // generationId — what post.media rows actually store (see the lookups in QueueList/Calendar).
+  // #704: every source whose items ARE a generation, not just Library history. Otto's
+  // schedulePosts accepts any generationId the merchant owns, and an ad build's id IS a
+  // Generation.id — reading only `gen` left those posts showing a grey block for media that
+  // was right there. Recognising media is not the same as offering it: mediaChoices below
+  // still lists only what the picker has always listed.
   const mediaLookup = useMemo<MediaLookup>(() => {
     const m: MediaLookup = new Map();
     for (const s of stuffItems) {
-      if (s.source === "gen" && s.generationId) m.set(s.generationId, { url: s.url, kind: s.mediaKind });
+      if (isGenerationBackedItem(s)) m.set(s.generationId, { url: s.url, kind: s.mediaKind });
     }
     return m;
   }, [stuffItems]);
@@ -457,7 +462,8 @@ export function OttoSchedule({
             ) : null}
           </div>
           <div className="flex-1" />
-          {/* OTTO auto-publish toggle — persists to owner settings; no live effect this slice. */}
+          {/* OTTO auto-publish toggle. #791-2: this is now the switch the publish scheduler
+              actually reads (apps/worker scanDuePublishPosts) — off means approved posts wait. */}
           <label
             className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground select-none"
             title={autoPublishAvailable ? "Publish approved posts automatically at their time" : AUTO_PUBLISH_GATE_HINT}
@@ -472,7 +478,7 @@ export function OttoSchedule({
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
-                className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold capitalize ${
+                className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
                   view === v ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
                 }`}
               >
@@ -486,8 +492,8 @@ export function OttoSchedule({
         <div className="flex items-start gap-[11px] bg-[#FFF6F2] border border-[#FBD9C9] rounded-[14px] px-[15px] py-[12px] mb-4">
           <CoralCloud size={22} />
           <span className="flex-1 text-[13px] leading-[1.5] text-[#9A3A1A]">
-            Auto-publish turns on once Meta approves publishing — schedule your posts now and the
-            queue starts sending automatically the moment it&rsquo;s approved.
+            Auto-publish needs two things: Meta&rsquo;s approval to publish, and this switch turned on.
+            Schedule your posts now — until both are true they wait here for you.
           </span>
         </div>
 
@@ -678,7 +684,7 @@ function PlanView({
           <div className="min-w-[220px] flex-1">
             <div className="text-[14px] font-semibold text-foreground">No plan from Otto yet</div>
             <div className="text-[13px] text-muted-foreground">
-              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and it&rsquo;ll draft a schedule for you to approve.
+              Ask Otto to plan your week — say something like &ldquo;post 3 times this week&rdquo; and Otto will draft a schedule for you to approve.
             </div>
           </div>
           <Button variant="secondary" size="sm" onClick={onNew}>
@@ -811,6 +817,13 @@ function PlanCard({
 
 type Granularity = "month" | "week" | "day";
 
+/** Labels live here, not in `text-transform` — what is read must equal what is seen (#739). */
+const GRANULARITIES: { id: Granularity; label: string }[] = [
+  { id: "month", label: "Month" },
+  { id: "week", label: "Week" },
+  { id: "day", label: "Day" },
+];
+
 function CalendarView({
   posts,
   mediaLookup,
@@ -860,16 +873,16 @@ function CalendarView({
     <div>
       <div className="flex items-center gap-3 flex-wrap mb-4">
         <div className="inline-flex rounded-[10px] border border-border bg-card p-0.5">
-          {(["month", "week", "day"] as Granularity[]).map((gk) => (
+          {GRANULARITIES.map(({ id, label }) => (
             <button
-              key={gk}
+              key={id}
               type="button"
-              onClick={() => setGran(gk)}
-              className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold capitalize ${
-                gran === gk ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
+              onClick={() => setGran(id)}
+              className={`h-[30px] rounded-[8px] px-3 text-[12px] font-semibold ${
+                gran === id ? "bg-secondary text-foreground" : "bg-transparent text-muted-foreground"
               }`}
             >
-              {gk}
+              {label}
             </button>
           ))}
         </div>

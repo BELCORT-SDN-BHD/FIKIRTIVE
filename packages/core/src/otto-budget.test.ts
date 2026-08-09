@@ -5,7 +5,7 @@ import {
   OTTO_MAX_STEPS,
   OTTO_CONVERSATION_TURN_RESERVE_INTERNAL,
 } from "./otto-budget.js";
-import { displayCredits } from "./spend.js";
+import { displayCredits, SIGNUP_GRANT_CREDITS } from "./spend.js";
 import { llmPricesFor, OTTO_LLM_MARGIN_DEFAULT } from "./llm-prices.js";
 
 describe("oneStepFloorInternal", () => {
@@ -52,8 +52,12 @@ describe("OTTO_CONVERSATION_TURN_RESERVE_INTERNAL (#543 conversation-turn hold c
     expect(OTTO_CONVERSATION_TURN_RESERVE_INTERNAL).toBeGreaterThan(33);
   });
 
-  it("leaves the 20-credit signup grant able to fund more than one conversation turn", () => {
-    // 200 internal grant / 40 internal hold = 5 concurrent-hold turns; at 120 it was 1.
-    expect(Math.floor(200 / OTTO_CONVERSATION_TURN_RESERVE_INTERNAL)).toBeGreaterThanOrEqual(5);
+  it("leaves the signup grant able to fund more than one conversation turn", () => {
+    // #791-3: cite the grant instead of a copy of it — 250 internal / 40 internal hold = 6
+    // concurrent-hold turns (at the pre-#543 hold of 120 it was 1). Reading the constant is
+    // the point: the hold and the grant can only be judged against each other.
+    expect(
+      Math.floor(SIGNUP_GRANT_CREDITS / OTTO_CONVERSATION_TURN_RESERVE_INTERNAL),
+    ).toBeGreaterThanOrEqual(5);
   });
 });

@@ -1,11 +1,9 @@
 export {
   otto,
-  ottoVerdict,
   ottoInstructions,
   OTTO_DEFAULT_MODEL,
   ottoInteractiveRuntime,
   ottoApprovalResumeRuntime,
-  ottoWorkerVerdictRuntime,
 } from "./otto.js";
 export { ottoModelRuntime } from "./model.js";
 export {

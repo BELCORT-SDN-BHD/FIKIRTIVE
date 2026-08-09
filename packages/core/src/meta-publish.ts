@@ -21,7 +21,38 @@ export interface MetaGraphPort {
 }
 
 export type PublishOk = { externalId: string };
-export type PublishFail = { error: string; retryable: boolean };
+export type PublishFail = {
+  error: string;
+  retryable: boolean;
+  /**
+   * Set ONLY when the caller's `confirmStillAuthorized` said no at the last moment: the merchant
+   * withdrew and NOTHING was sent. This is not a failure and must not be retried or surfaced as one.
+   *
+   * It rides on the failure shape on purpose. A caller that knows about withdrawal (the publish
+   * worker) branches on it and puts the post back to waiting; a caller that doesn't (the web
+   * adapters, which never pass the callback, so they can never see it) reads a plain non-retryable
+   * failure — which is the safe reading in every direction: never retried, never double-posted.
+   */
+  withdrawn?: true;
+};
+
+/** The last-moment authorization gate, asked immediately before a channel's FINAL irreversible
+ *  action and nowhere else (#810 r4 P1-a). `false` = the merchant withdrew; nothing may be sent.
+ *
+ *  It lives in the shared publish contract rather than in each channel's own code so that the
+ *  question is asked at the right instant on EVERY channel: IG's send does container creation and
+ *  up to ~30 seconds of polling before media_publish, and a per-channel convention would let the
+ *  next slow step quietly reopen the window this closes. */
+export type ConfirmStillAuthorized = () => Promise<boolean>;
+
+/** The one withdrawal result, so worker and channels can't drift into two spellings. */
+export function publishWithdrawn(): PublishFail {
+  return {
+    withdrawn: true,
+    error: "auto-publish was switched off before this post was sent — nothing was published",
+    retryable: false,
+  };
+}
 /**
  * The request MAY have crossed Meta's external side-effect point (a publish POST that timed out /
  * dropped its connection / returned 5xx / succeeded but gave us no id). The post might already be
@@ -117,6 +148,8 @@ export type InstagramPublishArgs = {
   maxPollTries?: number;
   sleep?: (ms: number) => Promise<void>;
   pollDelayMs?: number;
+  /** Asked once, immediately before media_publish — see ConfirmStillAuthorized. */
+  confirmStillAuthorized?: ConfirmStillAuthorized;
 };
 
 /** IG publish: create container(s) → poll FINISHED → media_publish → (best-effort) first comment.
@@ -175,6 +208,14 @@ export async function publishInstagram(graph: MetaGraphPort, args: InstagramPubl
   const polled = await pollContainer(graph, creationId, maxTries, sleep, delay);
   if ("error" in polled) return polled;
 
+  // THE last moment (#810 r4 P1-a). Everything above — container creation, the anchor write, and up
+  // to maxPollTries × pollDelayMs (default ~30 s) of polling — is preparation: a container the
+  // merchant cannot see, which simply expires if we walk away. media_publish below is the one
+  // irreversible, merchant-visible step, so the switch is read HERE and not one line earlier.
+  // Asking at the top of this function (or at the caller's send() boundary) would leave the whole
+  // polling window open, which is exactly the hole this closes.
+  if (args.confirmStillAuthorized && !(await args.confirmStillAuthorized())) return publishWithdrawn();
+
   let mediaId: string;
   try {
     const published = await graph.post(`${igUserId}/media_publish`, { creation_id: creationId });
@@ -207,11 +248,17 @@ export type FacebookPublishArgs = {
   /** 0 media = text/link post; 1 media = photo post (FB maxMediaCount is 1, no carousel). */
   mediaUrls: string[];
   link?: string | null;
+  /** Asked once, immediately before the /photos or /feed POST — see ConfirmStillAuthorized. */
+  confirmStillAuthorized?: ConfirmStillAuthorized;
 };
 
 /** FB page publish: a single image → /photos (published, with caption); otherwise → /feed
  *  (message + optional link). Returns the feed post id. */
 export async function publishFacebook(graph: MetaGraphPort, args: FacebookPublishArgs): Promise<PublishResult> {
+  // FB's final action IS its first external call — there is no preparation to sit through — but the
+  // gate is asked through the same contract as IG's rather than left to each channel's habit, so a
+  // slow step added here later can't reopen the window (#810 r4 P1-a).
+  if (args.confirmStillAuthorized && !(await args.confirmStillAuthorized())) return publishWithdrawn();
   try {
     if (args.mediaUrls.length >= 1) {
       const r = await graph.post(`${args.pageId}/photos`, { url: args.mediaUrls[0]!, caption: args.message });

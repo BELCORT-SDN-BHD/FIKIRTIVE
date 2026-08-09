@@ -58,6 +58,10 @@ import type { OttoContext, AgentInputItem, ApprovalInterruption } from "@fikirti
 import { requireOwner, resolveUserPrincipal } from "./auth-guard";
 import { runAsUser } from "@fikirtive/db/principal";
 import { isImpersonating } from "@/lib/better-auth/compat";
+// #810 P2-2: the ONE translation of a failed turn into what the merchant reads — shared with
+// the streaming route so an out-of-credits refusal is never reported as a product fault here
+// and as the real two numbers there.
+import { ottoFailureMessage } from "@/lib/otto-error-copy";
 import { resolveDisabledModels } from "./model-registry";
 import { startCoworkGen } from "./gen-actions";
 import { runVariantBatch, runBulkGrid } from "./factory-actions";
@@ -117,7 +121,9 @@ import {
   setContactDndFromOtto,
   updateContact,
 } from "./crm-actions";
-import { getContact, listContacts, searchContacts, type CrmContactRow } from "./crm-view-data";
+import { getContact, listContacts, searchContacts } from "./crm-view-data";
+// #742: the contact-list boundary — the page's counts cross into chat with the rows.
+import { contactForOtto, contactPageForOtto } from "./otto-contact-view";
 import { listChannelScopes } from "./customer-inbox-gateway";
 import { makeOttoSpendingPort } from "./otto-spending-port";
 
@@ -245,26 +251,11 @@ function makeOttoCampaignsPort(): NonNullable<OttoContext["campaigns"]> {
   };
 }
 
-function contactForOtto(contact: CrmContactRow) {
-  return {
-    ...contact,
-    firstTouchAt: contact.firstTouchAt.toISOString(),
-    lastSeenAt: contact.lastSeenAt.toISOString(),
-    createdAt: contact.createdAt.toISOString(),
-    consentState: {
-      ...contact.consentState,
-      lastReceivedAt: contact.consentState.lastReceivedAt?.toISOString() ?? null,
-    },
-  };
-}
-
 function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
   return {
-    list: async (input) => {
-      const result = await listContacts(input);
-      if (!("ok" in result)) return result;
-      return { ok: true as const, contacts: result.contacts.map(contactForOtto) };
-    },
+    // #742: a page crosses as a page. contactPageForOtto carries the owner-scoped total and
+    // the truncation flag over with the rows, so an answer can never quote 50 as the headcount.
+    list: async (input) => contactPageForOtto(await listContacts(input)),
     get: async (contactId) => {
       const result = await getContact(contactId);
       if (!("ok" in result)) return result;
@@ -280,11 +271,7 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
         },
       };
     },
-    search: async (input) => {
-      const result = await searchContacts(input);
-      if (!("ok" in result)) return result;
-      return { ok: true as const, contacts: result.contacts.map(contactForOtto) };
-    },
+    search: async (input) => contactPageForOtto(await searchContacts(input)),
     create: (input) => createContact({ ...input, source: "otto" }),
     update: (input) => updateContact(input),
     importCsv: (input) => importContacts(input),
@@ -398,6 +385,14 @@ async function loadAvailableRefsForAgent(ownerId: string): Promise<{ id: string;
 export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | null {
   const parts: string[] = [];
   if (ctx.brandContext) parts.push(`What you know about the user's brand:\n${ctx.brandContext}`);
+  // #791-1: the merchant's brief for THIS project, right after the shop-wide brand memory.
+  // Order is the meaning: brand memory is who the shop is, the brief is what THIS project
+  // must do — so the narrower instruction is read last and wins on a conflict.
+  if (ctx.projectBrief) {
+    parts.push(
+      `The brief for this project, written by the user — follow it every turn unless they change it:\n${ctx.projectBrief}`,
+    );
+  }
   if (ctx.availableRefs?.length) {
     parts.push(
       `Reusable items you can @-reference (use the id with tools): ${ctx.availableRefs.map((r) => `@${r.name} [${r.type}, id=${r.id}]`).join(", ")}`,
@@ -499,8 +494,17 @@ export async function buildOttoContext({
     ? async (query: string) => ({ results: await searchWithFallback(primary, fb)(query) })
     : undefined;
 
-  const [brandContext, availableRefs, activeJob, images] = await Promise.all([
+  const [brandContext, projectBriefRow, availableRefs, activeJob, images] = await Promise.all([
     getBrandContextText(ownerId, null).catch(() => ""),
+    // #791-1: the per-project brief the merchant wrote (QuickBrief / Otto's updateBrief).
+    // Owner-scoped like every other project read here — projectId alone never selects a row.
+    // Best-effort: a failed read drops the brief for this turn, it never fails the turn.
+    prisma.project
+      .findFirst({
+        where: { id: projectId, ownerId, deletedAt: null },
+        select: { coworkBrief: true },
+      })
+      .catch(() => null),
     loadAvailableRefsForAgent(ownerId),
     prisma.genJob.findFirst({
       where: { threadId, ownerId },
@@ -533,6 +537,7 @@ export async function buildOttoContext({
     // never receives an attemptId; only ottoApprove can inject the verified + consumed card id.
     runFactoryBatch: makeFactoryBatchPort(factoryAttemptId),
     brandContext,
+    projectBrief: projectBriefRow?.coworkBrief?.trim() || undefined,
     availableRefs,
     simpleMode: simpleMode ?? false,
     activeJob,
@@ -1369,7 +1374,7 @@ export async function ottoTurn(raw: unknown): Promise<
       // Log the real cause server-side: the generic client message hides it, and a swallowed
       // error here once masked an Anthropic 529 for hours. The client message stays generic.
       console.error("[ottoTurn] failed:", errSummary(e));
-      return { error: "Couldn't reach Otto — please try again." };
+      return { error: ottoFailureMessage(e, "Couldn't reach Otto — please try again.") };
     }
   });
 }
@@ -1806,7 +1811,7 @@ export async function ottoApprove(raw: unknown): Promise<
       };
     } catch (e) {
       console.error("[ottoApprove] failed:", errSummary(e));
-      return { error: "Couldn't approve — please try again." };
+      return { error: ottoFailureMessage(e, "Couldn't approve — please try again.") };
     }
   });
 }

@@ -30,6 +30,8 @@ const m = vi.hoisted(() => {
   const publishAttemptFindUnique = vi.fn();
   const publishAttemptFindFirst = vi.fn();
   const metaConnectionFindUnique = vi.fn();
+  // #810 P1-1: the handler re-reads the owner's Auto-publish switch before it claims anything.
+  const organizationFindUnique = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prisma: any = {
     scheduledPost: { findUnique: scheduledPostFindUnique, updateMany: scheduledPostUpdateMany },
@@ -41,6 +43,7 @@ const m = vi.hoisted(() => {
       findFirst: publishAttemptFindFirst,
     },
     metaConnection: { findUnique: metaConnectionFindUnique },
+    organization: { findUnique: organizationFindUnique },
     $transaction: vi.fn(async (arg: unknown) =>
       Array.isArray(arg) ? Promise.all(arg) : typeof arg === "function" ? (arg as (tx: unknown) => unknown)(prisma) : arg,
     ),
@@ -48,7 +51,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, scheduledPostFindUnique, scheduledPostUpdateMany,
     publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindUnique, publishAttemptFindFirst,
-    metaConnectionFindUnique,
+    metaConnectionFindUnique, organizationFindUnique,
   };
 });
 
@@ -70,6 +73,7 @@ beforeEach(() => {
   m.publishAttemptUpdateMany.mockResolvedValue({ count: 1 });
   m.publishAttemptFindUnique.mockResolvedValue({ id: "pa1", scheduledPostId: "sp1", creationId: "container_1" });
   m.publishAttemptFindFirst.mockResolvedValue(null); // default: no UNCONFIRMED attempt exists
+  m.organizationFindUnique.mockResolvedValue({ settings: { autoPublish: true } }); // switch ON — this test is about lock 4
 });
 
 describe("D2 — recovery-path double-post window (RED → GREEN)", () => {

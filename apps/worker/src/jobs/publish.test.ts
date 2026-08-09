@@ -18,6 +18,12 @@ const m = vi.hoisted(() => {
   const publishAttemptFindFirst = vi.fn();
   const metaConnectionFindMany = vi.fn();
   const metaConnectionFindUnique = vi.fn();
+  // #791-2: the scheduler now also reads the owner's Auto-publish switch out of
+  // Organization.settings — the second, merchant-owned gate in front of publishing.
+  // #810 P1-1: the HANDLER re-reads it too, one step before anything external happens
+  // (a queued job's copy of the answer is as old as the queue).
+  const organizationFindMany = vi.fn();
+  const organizationFindUnique = vi.fn();
   const scheduledPostMediaFindMany = vi.fn();
   const generationFindMany = vi.fn();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -25,6 +31,7 @@ const m = vi.hoisted(() => {
     scheduledPost: { findUnique: scheduledPostFindUnique, updateMany: scheduledPostUpdateMany, findMany: scheduledPostFindMany },
     publishAttempt: { create: publishAttemptCreate, update: publishAttemptUpdate, updateMany: publishAttemptUpdateMany, findMany: publishAttemptFindMany, findUnique: publishAttemptFindUnique, findFirst: publishAttemptFindFirst },
     metaConnection: { findMany: metaConnectionFindMany, findUnique: metaConnectionFindUnique },
+    organization: { findMany: organizationFindMany, findUnique: organizationFindUnique },
     scheduledPostMedia: { findMany: scheduledPostMediaFindMany },
     generation: { findMany: generationFindMany },
     $transaction: vi.fn(async (arg: unknown) =>
@@ -34,7 +41,7 @@ const m = vi.hoisted(() => {
   return {
     prisma, scheduledPostFindUnique, scheduledPostUpdateMany, scheduledPostFindMany,
     publishAttemptCreate, publishAttemptUpdate, publishAttemptUpdateMany, publishAttemptFindMany, publishAttemptFindUnique, publishAttemptFindFirst,
-    metaConnectionFindMany, metaConnectionFindUnique, scheduledPostMediaFindMany, generationFindMany,
+    metaConnectionFindMany, metaConnectionFindUnique, organizationFindMany, organizationFindUnique, scheduledPostMediaFindMany, generationFindMany,
   };
 });
 
@@ -59,6 +66,9 @@ beforeEach(() => {
   m.publishAttemptUpdateMany.mockResolvedValue({ count: 1 });
   m.publishAttemptFindUnique.mockResolvedValue({ id: "pa1", scheduledPostId: "sp1", creationId: null });
   m.publishAttemptFindFirst.mockResolvedValue(null); // D2: default = no UNCONFIRMED attempt (lock 4 no-op)
+  // #810 P1-1: default = the merchant's Auto-publish switch is ON, so these cases exercise the
+  // gates they are about. The switch itself is covered in publish-auto-publish-switch.test.ts.
+  m.organizationFindUnique.mockResolvedValue({ settings: { autoPublish: true } });
 });
 
 describe("handlePublish — triple idempotency", () => {
@@ -222,7 +232,19 @@ describe("handlePublish — six states", () => {
     await handlePublish({ scheduledPostId: "sp1" }, 0, exec);
     const postUpdate = m.scheduledPostUpdateMany.mock.calls.find((c) => c[0].data?.status === "PUBLISHED");
     expect(postUpdate?.[0].data).toMatchObject({ status: "PUBLISHED", metaPostId: "ext_1" });
-    expect(m.publishAttemptUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ state: "APPLIED", metaPostId: "ext_1" }) }));
+    // #810 r3 P1-b②: the attempt write is a CAS on our own claim, not a blind update — losing it
+    // must not let the post row be overwritten. #810 r4 P1-b: that write is now two steps inside ONE
+    // transaction — the external id lands while the claim is STILL APPLYING (so lock 2 never lets go
+    // of an unguarded live post), and only the last statement moves it to its terminal state.
+    expect(m.publishAttemptUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ state: "APPLYING" }),
+        data: expect.objectContaining({ metaPostId: "ext_1" }),
+      }),
+    );
+    expect(m.publishAttemptUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ state: "APPLIED" }) }),
+    );
   });
 
   it("③ hard reject (retryable=false) → FAILED, no throw", async () => {
@@ -259,8 +281,12 @@ describe("scanDuePublishPosts — fail-closed steady state", () => {
     expect(m.scheduledPostFindMany).not.toHaveBeenCalled();
   });
 
-  it("returns due post ids for owners whose connection can publish", async () => {
+  it("returns due post ids for owners whose connection can publish AND who turned Auto-publish on", async () => {
     m.metaConnectionFindMany.mockResolvedValue([{ ownerId: "o1" }]);
+    // #791-2: the owner's own Auto-publish switch is now a real gate, so this happy
+    // path has to turn it on. (The switch's own coverage lives in
+    // publish-auto-publish-switch.test.ts.)
+    m.organizationFindMany.mockResolvedValue([{ id: "o1", settings: { autoPublish: true } }]);
     m.scheduledPostFindMany.mockResolvedValue([{ id: "sp1" }, { id: "sp2" }]);
     expect(await scanDuePublishPosts()).toEqual(["sp1", "sp2"]);
     const where = m.scheduledPostFindMany.mock.calls[0]![0].where;

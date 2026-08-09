@@ -464,8 +464,8 @@ export default function OttoConnections() {
                         <p className="text-muted-foreground text-[0.75rem]" style={{ margin: "0.25rem 0 0" }}>
                           Ask (default) — Otto always asks before making changes. Auto lets Otto
                           pause ads, lower budgets, and create paused draft campaigns in your ad
-                          account on its own — anything that spends or goes live still asks you
-                          first.
+                          account without asking you — anything that spends or goes live still asks
+                          you first.
                         </p>
                       </div>
 

@@ -60,3 +60,33 @@ describe("publishX (shared X orchestration, mock port — ZERO real X calls)", (
     expect(res).toMatchObject({ ambiguous: true });
   });
 });
+
+/* #810 r4 P1-a —— X 的最终动作前也走同一个契约。X 目前在 POST 之前没有慢工序,但复核由**契约**
+ * 提供而不是各渠道各自为政,意味着以后谁在这里加一步慢工序,窗口也不会重新长出来。 */
+describe("#810 r4 P1-a X 的最终动作前也问一次开关", () => {
+  it("关掉开关 —— 一个 tweet 都不发", async () => {
+    const calls: string[] = [];
+    const port: XApiPort = {
+      post: async (path) => {
+        calls.push(path);
+        return { data: { id: "t1" } };
+      },
+    };
+    const res = await publishX(port, { text: "hi", confirmStillAuthorized: async () => false });
+    expect(calls).toEqual([]);
+    expect(res).toMatchObject({ withdrawn: true, retryable: false });
+  });
+
+  it("开关开着 —— 照常发", async () => {
+    const calls: string[] = [];
+    const port: XApiPort = {
+      post: async (path) => {
+        calls.push(path);
+        return { data: { id: "t1" } };
+      },
+    };
+    const res = await publishX(port, { text: "hi", confirmStillAuthorized: async () => true });
+    expect(calls).toEqual(["2/tweets"]);
+    expect(res).toMatchObject({ externalId: "t1" });
+  });
+});

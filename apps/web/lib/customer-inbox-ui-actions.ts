@@ -24,7 +24,6 @@ import {
   saveConversationDraft as gatewaySaveConversationDraft,
   searchConversations as gatewaySearchConversations,
   setConversationStatus as gatewaySetConversationStatus,
-  takeOverConversation as gatewayTakeOverConversation,
 } from "./customer-inbox-gateway";
 import type {
   AssignConversationInput,
@@ -39,7 +38,6 @@ import type {
   SaveConversationDraftInput,
   SearchConversationsInput,
   SetConversationStatusInput,
-  TakeOverConversationInput,
 } from "./customer-inbox-service";
 
 export async function listConversations(input: ListConversationsInput = {}) {
@@ -80,10 +78,6 @@ export async function saveConversationDraft(input: SaveConversationDraftInput) {
 
 export async function assignConversation(input: AssignConversationInput) {
   return gatewayAssignConversation(input);
-}
-
-export async function takeOverConversation(input: TakeOverConversationInput) {
-  return gatewayTakeOverConversation(input);
 }
 
 export async function handOffConversation(input: HandOffConversationInput) {
