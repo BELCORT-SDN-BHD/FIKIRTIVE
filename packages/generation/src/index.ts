@@ -122,6 +122,27 @@ export function chargedError(message: string): Error {
   return Object.assign(new Error(message), { charged: true as const });
 }
 
+/**
+ * #765 — a refusal a RETRY CANNOT FIX, carrying the sentence the merchant reads.
+ *
+ * Orthogonal to `charged` above, and the two answer different questions. `charged` asks "did
+ * this cost money?" — a retry of a charged failure spends twice. This asks "can sending the
+ * same request again ever succeed?" — the engine looked at what the merchant gave it and said
+ * no, so the answer is no, forever, and the retry budget buys the merchant nothing but a longer
+ * wait before the same non-answer.
+ *
+ * Provably free, so it is NOT charged: this only ever comes from a 4xx rejected before the
+ * engine ran. The worker refunds the hold and records no spend, exactly as it does for any
+ * other pre-charge failure — the only thing `permanent` changes is WHEN it gives up.
+ *
+ * `message` is the merchant's own sentence, already white-label (it comes from
+ * `@fikirtive/core`'s gen-failure whitelist and never from the engine's reply), because the
+ * worker persists this message verbatim and both merchant surfaces read it back.
+ */
+export function permanentInputError(message: string): Error {
+  return Object.assign(new Error(message), { permanent: true as const });
+}
+
 /** The one paid POST both fal paths make, with the charge boundary applied to
  *  EVERY way it can die — image and video are the same sync endpoint shape, so
  *  they get the same yardstick from one place. Returns the ok response; the

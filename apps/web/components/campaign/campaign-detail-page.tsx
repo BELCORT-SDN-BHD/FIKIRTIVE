@@ -52,6 +52,7 @@ import {
   runStatusPresentation,
 } from "@/components/crm/broadcasts/broadcast-format";
 import { trendSourceLabels } from "@/lib/trend-source-labels";
+import { scheduledPostStatusLabel, socialPlatformLabel } from "@/lib/social-labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -529,7 +530,7 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
                   <Input value={proposal.platform} onChange={(event) => setProposal((current) => ({ ...current, platform: event.target.value }))} aria-label="Proposal platform" placeholder="instagram" />
                   <Input value={proposal.format} onChange={(event) => setProposal((current) => ({ ...current, format: event.target.value }))} aria-label="Proposal format" placeholder="image" />
                 </div>
-                <Input value={proposal.hook} onChange={(event) => setProposal((current) => ({ ...current, hook: event.target.value }))} placeholder="Opening hook" />
+                <Input value={proposal.hook} onChange={(event) => setProposal((current) => ({ ...current, hook: event.target.value }))} aria-label="Proposal opening hook" placeholder="Opening hook" />
                 <Textarea value={proposal.brief} onChange={(event) => setProposal((current) => ({ ...current, brief: event.target.value }))} aria-label="Proposal brief" placeholder="Describe the content in English" />
                 <label className="grid max-w-xs gap-2 text-xs font-semibold text-muted-foreground">
                   Estimated credits (display only)
@@ -561,8 +562,8 @@ function CampaignDetailWorkspace({ initialState }: { initialState: Extract<Detai
               campaignId={campaign.id}
               icon={<CalendarDays />}
               targetType="scheduled_post"
-              grouped={campaign.grouped.scheduledPosts.map((item) => ({ id: item.id, label: `${item.channel}: ${item.caption || "Untitled post"}`, meta: `${item.status.toLowerCase()} · ${dateLabel(item.scheduledAt)}` }))}
-              available={campaign.available.scheduledPosts.map((item) => ({ id: item.id, label: `${item.channel}: ${item.caption || "Untitled post"}`, meta: `${item.status.toLowerCase()} · ${dateLabel(item.scheduledAt)}` }))}
+              grouped={campaign.grouped.scheduledPosts.map((item) => ({ id: item.id, label: `${socialPlatformLabel(item.channel)}: ${item.caption || "Untitled post"}`, meta: `${scheduledPostStatusLabel(item.status)} · ${dateLabel(item.scheduledAt)}` }))}
+              available={campaign.available.scheduledPosts.map((item) => ({ id: item.id, label: `${socialPlatformLabel(item.channel)}: ${item.caption || "Untitled post"}`, meta: `${scheduledPostStatusLabel(item.status)} · ${dateLabel(item.scheduledAt)}` }))}
               busy={busy}
               onChange={changeGrouping}
             />

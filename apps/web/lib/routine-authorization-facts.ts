@@ -18,6 +18,11 @@
  * never silently dropped, and never replaced by a guess.
  */
 
+// #728 — the channel spelling is one fact for the whole product; this file used to keep its own
+// copy of the map. The copy happened to agree; a copy that happens to agree is exactly how the
+// Inbox and Reports pages ended up disagreeing about the same channel.
+import { channelLabel } from "./crm-labels";
+
 export type ResolvedRef = { id: string; name: string | null };
 export type ResolvedChannel = { channel: string; providerConnectionId: string | null; accountName: string | null };
 
@@ -50,8 +55,6 @@ const ACTION_LABELS: Record<string, string> = {
   complete: "Complete the journey",
 };
 
-const CHANNEL_LABELS: Record<string, string> = { whatsapp: "WhatsApp" };
-
 /** Recognized summary-policy values, in the merchant's words. */
 const SUMMARY_VALUE_COPY: Record<string, string> = {
   counts_only: "counts only — how many actions ran, and nothing about individual customers",
@@ -74,10 +77,6 @@ function humanize(code: string): string {
 
 function actionLabel(action: string): string {
   return ACTION_LABELS[action] ?? humanize(action);
-}
-
-function channelLabel(channel: string): string {
-  return CHANNEL_LABELS[channel] ?? humanize(channel);
 }
 
 /** A short, stable tail of a fingerprint or id. Labelled in words wherever it is shown, so the

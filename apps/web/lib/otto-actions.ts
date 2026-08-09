@@ -36,6 +36,7 @@ import {
   braveSearch,
   searchWithFallback,
   extractProductDraft,
+  merchantGenFailureMessage,
   type SegmentRuleGroup,
 } from "@fikirtive/core";
 import {
@@ -164,6 +165,10 @@ function makeOttoSegmentsPort() {
         // the two-surfaces-one-truth defect this port exists to prevent.
         excludedByReportedOptOutCount: result.excludedByReportedOptOutCount,
         contacts: result.contacts,
+        // #819 — the preview cuts the sample at ten. The cut crosses the boundary with the
+        // rows, so "these ten are everyone" is contradicted by the payload itself.
+        returned: result.returned,
+        hasMore: result.hasMore,
       };
     },
     build: async ({ operation, segmentId, name, rules }: {
@@ -405,9 +410,22 @@ export function buildContextSystemMessage(ctx: OttoContext): AgentInputItem | nu
   if (ctx.simpleMode) parts.push(ottoSimpleModeBlock);
   if (ctx.activeJob) {
     const s = ctx.activeJob.status;
+    // #765 — when this failure has a merchant-facing explanation, Otto is given it VERBATIM so
+    // a follow-up ("what happened?") is answered with the same sentence the durable turn message
+    // and the board's card already showed them. Two surfaces telling one merchant two different
+    // stories about one refusal is the thing this is here to prevent — hence "use this sentence
+    // as written" rather than an invitation to paraphrase.
+    //
+    // Whitelisted in core, never a passthrough of GenJob.error: that column also carries ops
+    // strings, and Otto is the last place an internal error should be handed a megaphone.
+    const failureExplanation = merchantGenFailureMessage(ctx.activeJob.error);
     const human =
       s === "DONE" ? "the last generation finished"
-      : s === "FAILED" ? "the last generation FAILED — the user was automatically refunded, so they were NOT charged for it"
+      : s === "FAILED" ? `the last generation FAILED — the user was automatically refunded, so they were NOT charged for it${
+          failureExplanation
+            ? `. They have already been shown WHY, in these exact words — if they ask about it, repeat this sentence as written and do not reword it: "${failureExplanation}"`
+            : ""
+        }`
       // Otto must not describe a cancel as a failure either (#602 T3): it is the user's own
       // decision, and speaking about it apologetically invites an offer to retry.
       : s === "CANCELLED" ? "the user CANCELLED the last generation themselves — it was refunded, so they were NOT charged for it, and nothing went wrong"

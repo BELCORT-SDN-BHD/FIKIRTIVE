@@ -14,12 +14,18 @@
  *      产品不知道,所以不说;能给的只有「找得到人」。
  *
  * 不在本票范围(走查已判合格,勿回退):失效密钥不会把 Stripe 的内部报错抛到界面上。
+ *
+ * #786 追加第三条钉板:**「拿不到货架」不是「没有货」**。价格目录调用抛错时,产品并不知道
+ * 货架是空是满 —— 所以不许说「没有」,也不许因此把商家引去写邮件(#771 自己立的围栏:
+ * 可重试的错误不挂人工出口)。下面这一组的货架状态由**真的 `listCreditPacks`** 对着一次
+ * 真的 Stripe 抛错产出,不是手写的常量 —— 页面读的就是那一层真实给出的判词。
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
+import type { CreditPackShelf } from "@/lib/billing-actions";
 
 const account: AccountInfo = {
   email: "owner@acme.test",
@@ -37,6 +43,9 @@ const mocks = vi.hoisted(() => ({
   getSpendOverview: vi.fn(),
   setOwnerSetting: vi.fn(),
   setAdsAutonomy: vi.fn(),
+  requireOwner: vi.fn(),
+  isImpersonating: vi.fn(),
+  pricesList: vi.fn(),
 }));
 
 vi.mock("@/lib/account-actions", () => ({ getMyAccount: mocks.getMyAccount }));
@@ -44,15 +53,35 @@ vi.mock("@/lib/billing-actions", () => ({ listCreditPacks: mocks.listCreditPacks
 vi.mock("@/lib/spend-history-data", () => ({ getSpendOverview: mocks.getSpendOverview }));
 vi.mock("@/lib/owner-settings-actions", () => ({ setOwnerSetting: mocks.setOwnerSetting }));
 vi.mock("@/lib/otto-client-actions", () => ({ setAdsAutonomy: mocks.setAdsAutonomy }));
+// The REAL listCreditPacks runs against these two below (importActual), so the shelf
+// verdict the pages read is the one the action really produces (#786).
+vi.mock("@/lib/auth-guard", () => ({ requireOwner: mocks.requireOwner }));
+vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mocks.isImpersonating }));
+vi.mock("@/lib/stripe", () => ({ stripe: { prices: { list: mocks.pricesList } } }));
 
 const { default: BillingPage } = await import("@/app/billing/page");
 const { buildSettingsSections } = await import("@/components/otto/settings/sections");
 const { SettingsPage } = await import("@/components/otto/settings/SettingsPage");
+const realBilling = await vi.importActual<typeof import("@/lib/billing-actions")>("@/lib/billing-actions");
 
-/** The /billing page with nothing on sale. */
-async function renderBillingPage(): Promise<HTMLDivElement> {
+/** The shelf verdict the REAL action reports when the price catalogue cannot be read —
+ *  a transient Stripe failure, which is a different fact from "nothing is on sale". */
+async function unreadableShelf(): Promise<CreditPackShelf> {
+  mocks.requireOwner.mockResolvedValue({ ownerId: "org_1", email: "owner@acme.test" });
+  process.env.STRIPE_SECRET_KEY = "sk_test_fake";
+  mocks.pricesList.mockRejectedValue(new Error("connection reset"));
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    return await realBilling.listCreditPacks();
+  } finally {
+    warn.mockRestore();
+  }
+}
+
+/** The /billing page rendered against a given shelf verdict (default: nothing on sale). */
+async function renderBillingPage(shelf: CreditPackShelf = { packs: [] }): Promise<HTMLDivElement> {
   mocks.getMyAccount.mockResolvedValue(account);
-  mocks.listCreditPacks.mockResolvedValue([]);
+  mocks.listCreditPacks.mockResolvedValue(shelf);
   mocks.getSpendOverview.mockResolvedValue({
     entries: [],
     window: { taskLimit: 20, returned: 0, hasMore: false },
@@ -63,13 +92,13 @@ async function renderBillingPage(): Promise<HTMLDivElement> {
   return host;
 }
 
-/** The Billing and credits block inside Settings, with nothing on sale. */
-function renderSettingsBilling(): HTMLDivElement {
+/** The Billing and credits block inside Settings, against a given shelf verdict. */
+function renderSettingsBilling(shelf: CreditPackShelf = { packs: [] }): HTMLDivElement {
   const sections = buildSettingsSections({
     account,
     settings: DEFAULT_SETTINGS,
     channels: [],
-    packs: [],
+    shelf,
     adsAutonomy: "ASK",
     canPublish: false,
     onDeleteAccountRequest: vi.fn(),
@@ -125,5 +154,45 @@ describe("#687 an empty credit shelf reads the same on both money pages", () => 
         /soon|shortly|back|later|tomorrow|hours?|days?/i,
       );
     }
+  });
+});
+
+describe("#786 a shelf we could not read is not an empty shelf", () => {
+  it("says neither page could read the catalogue, in the same words", async () => {
+    const shelf = await unreadableShelf();
+    const hosts = [await renderBillingPage(shelf), renderSettingsBilling(shelf)];
+
+    const sentences = hosts.map((host) => {
+      const match = (host.textContent ?? "").match(/Could not load[^.]*\.[^.]*\./);
+      expect(match, "the page says nothing about failing to read the catalogue").toBeTruthy();
+      return match![0];
+    });
+    expect(sentences[1], "the two money pages describe one state with two different sentences").toBe(
+      sentences[0],
+    );
+  });
+
+  it.each([
+    ["/billing", async (shelf: CreditPackShelf) => renderBillingPage(shelf)],
+    ["Settings", async (shelf: CreditPackShelf) => renderSettingsBilling(shelf)],
+  ])("%s hangs no human exit on an error the merchant can simply retry", async (where, render) => {
+    const host = await render(await unreadableShelf());
+
+    expect(
+      host.querySelector('a[href^="mailto:"]'),
+      `${where}: a retryable catalogue error must not send the merchant to a human (#771's own fence)`,
+    ).toBeNull();
+  });
+
+  it.each([
+    ["/billing", async (shelf: CreditPackShelf) => renderBillingPage(shelf)],
+    ["Settings", async (shelf: CreditPackShelf) => renderSettingsBilling(shelf)],
+  ])("%s never claims the shelf is empty when it never saw the shelf", async (where, render) => {
+    const host = await render(await unreadableShelf());
+
+    expect(
+      host.textContent,
+      `${where}: asserts there is nothing on sale on the strength of a failed read`,
+    ).not.toMatch(/No credit packs/);
   });
 });

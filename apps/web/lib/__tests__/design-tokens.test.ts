@@ -126,6 +126,52 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
     }
   });
 
+  /**
+   * #813 — the AA fix above only reaches screens that ask for the token. Two admin screens
+   * had typed the old red and the old green straight into `style={{ color: … }}`, so the
+   * 3.91:1 failure survived there untouched, and a third surface still carried the retired
+   * red as a `var(--error, …)` fallback. A literal cannot follow a token, so the fence is on
+   * the literals themselves: once retired, they must not reappear anywhere in the markup.
+   * This is not a ban on hex in general (the product still ships hundreds) — only on the
+   * two shades that were measured and replaced.
+   */
+  it("the retired state-colour literals survive nowhere in the markup (#813)", async () => {
+    const RETIRED = [
+      { literal: "#E5484D", why: "the pre-#739 destructive/error red — 3.91:1 on white" },
+      { literal: "#3FB950", why: "an off-token green that never tracked --success" },
+    ];
+
+    async function markupFiles(dir: string): Promise<string[]> {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      const nested = await Promise.all(
+        entries.map(async (entry) => {
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) return entry.name === "node_modules" ? [] : markupFiles(full);
+          return full.endsWith(".tsx") ? [full] : [];
+        }),
+      );
+      return nested.flat();
+    }
+
+    const files = [
+      ...(await markupFiles(path.join(webRoot, "app"))),
+      ...(await markupFiles(path.join(webRoot, "components"))),
+    ];
+    // An empty file list would make the assertion vacuously green.
+    expect(files.length).toBeGreaterThan(100);
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const text = await fs.readFile(file, "utf8");
+      for (const { literal, why } of RETIRED) {
+        if (text.toUpperCase().includes(literal)) {
+          offenders.push(`${path.relative(webRoot, file)} — ${literal} (${why})`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it("global two-layer coral focus ring (§A2) is present", async () => {
     const css = await compiled();
     const rule = css.match(/\.gb\s+:focus-visible\s*\{[^}]*\}/)?.[0];

@@ -232,8 +232,11 @@ function matches(
   );
 }
 
+/** How many matched contacts a preview shows. A preview is a sample, never the audience. */
+const PREVIEW_CONTACT_LIMIT = 10;
+
 function publicContacts(contacts: EvaluatedContact[]) {
-  return contacts.slice(0, 10).map(({ id, name, channels, contactable, consent }) => ({
+  return contacts.map(({ id, name, channels, contactable, consent }) => ({
     id,
     name,
     channels,
@@ -244,6 +247,20 @@ function publicContacts(contacts: EvaluatedContact[]) {
     // merchant is already looking at has to say it itself (R-010 §4.6.5: visible, not hidden).
     unresolvedLegacyOptOut: consent.unresolvedLegacyOptOut,
   }));
+}
+
+/**
+ * The preview's contact sample — the rows PLUS the fact that they were cut (#819, same root as
+ * #742). The cut has always been there; what was missing is a place in the payload that SAYS so.
+ * `matchedCount` alone leaves "are these ten everyone?" to be worked out by whoever is reading,
+ * and Otto's port had nothing else to go on — so the ten rows could be reported as the whole
+ * match. `returned` and `hasMore` travel with the rows, the way the counts travel with a contact
+ * page in otto-contact-view: the shape holds the fact, not a sentence asking the model to
+ * remember it. `returned` is stated rather than left to be counted — two counts are two answers.
+ */
+function previewContactSample(matched: EvaluatedContact[]) {
+  const contacts = publicContacts(matched.slice(0, PREVIEW_CONTACT_LIMIT));
+  return { contacts, returned: contacts.length, hasMore: matched.length > contacts.length };
 }
 
 /**
@@ -421,7 +438,7 @@ export async function previewSegment(rawRules: unknown) {
     evaluatedAt,
     phrase: canonicalPhrase(validated.value),
     ...countsOf(contacts, matched, validated.value, evaluatedAt),
-    contacts: publicContacts(matched),
+    ...previewContactSample(matched),
     totalContactCount: contacts.length,
     unavailableFacts: UNAVAILABLE_FACTS,
   };

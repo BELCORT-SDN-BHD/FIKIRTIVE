@@ -579,6 +579,11 @@ export function GlobalNavigation({
  *  Mirrors `lg:pl-16 xl:pl-60`, which already reserves the rail's width the same way. */
 const MOBILE_NAV_TRIGGER_INSET = "pt-14 lg:pt-0";
 
+/** Tailwind's `lg`, written out. Above this width the rail is a permanent column and the
+ *  drawer's own controls — the trigger, the close button, the backdrop — are all `lg:hidden`.
+ *  Keep this in step with every `lg:` class in this file; it is the same breakpoint. */
+const RAIL_IS_PERMANENT = "(min-width: 1024px)";
+
 export function MerchantShellContent({
   children,
   pathname,
@@ -597,6 +602,23 @@ export function MerchantShellContent({
     // eslint-disable-next-line react-hooks/set-state-in-effect -- A route change must never leave the drawer open over the page it navigated to.
     setMobileOpen(false);
   }, [pathname]);
+
+  // #820 — the drawer only exists below `lg`, but nothing told it when the window grew past
+  // that line. Crossing it left `mobileOpen` true with every control that could clear it now
+  // `lg:hidden`: no close button, no backdrop, no trigger. And an open drawer is what makes
+  // Otto's rail and "Show sidebar" step aside (OttoNav / OttoApp read it), so those stayed
+  // withdrawn too — the merchant was left with no rail at all until a navigation, a reload,
+  // or a shrink back. Closing on the crossing is the whole fix: the state that only the small
+  // layout can express must not survive into the layout that cannot express it.
+  useEffect(() => {
+    const permanent = window.matchMedia?.(RAIL_IS_PERMANENT);
+    if (!permanent) return;
+    const close = (event: MediaQueryListEvent) => {
+      if (event.matches) setMobileOpen(false);
+    };
+    permanent.addEventListener("change", close);
+    return () => permanent.removeEventListener("change", close);
+  }, []);
 
   const openGlobalNavigation = useCallback(() => setMobileOpen(true), []);
   const drawer = useMemo<GlobalNavigationDrawer>(

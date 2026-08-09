@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { EXECUTED_SPEC } from "@fikirtive/core";
+import { EXECUTED_SPEC, REFERENCE_IMAGE_PERSON_REJECTED } from "@fikirtive/core";
 import { BytePlusProvider, IMAGE_MODEL_MAP, VIDEO_MODEL_MAP } from "./byteplus.js";
 
 describe("BytePlusProvider — wiring", () => {
@@ -363,6 +363,60 @@ describe("generateVideo (Seedance, async)", () => {
         expect(err.charged).toBeFalsy();
       });
     }
+
+    // ── #765:4xx 里唯一一条商家自己能解决的,必须被认出来并且**不重投** ──────────────
+    //
+    // 上面那三条 4xx 是对的:引擎收单前就拒了,一分没花,PLAIN ⇒ worker 重投,合理 ——
+    // 因为限流和网关抖动重投一次就可能过。但「参考图里有能认出来的真人」这一条不是这样:
+    // 同一张图再发一百次,回的是同一句拒绝。PLAIN 的结果是商家干等着把重试预算烧完,
+    // 最后收到一句「没成功,再试试」,而真正的原因和出路一个字都没说。
+    //
+    // 机器形状取自 2026-08-08 对实机的实测(4 张脸 4 拒,创建阶段 400,不计费),
+    // 逐字留档在 packages/core/src/gen-failure.ts 的注释里。
+    const MEASURED_PERSON_REJECTION = JSON.stringify({
+      error: {
+        code: "InputImageSensitiveContentDetected.PrivacyInformation",
+        message:
+          "The request failed because the input image 'content[1]' may contain real person. "
+          + "Request id: 021786186880661c323afa74840446e61be924aaf3459eedb6c0b",
+        param: "content[1]",
+        type: "BadRequest",
+      },
+    });
+
+    it("#765 参考图含可辨真人:翻成人话 + 标 permanent(不重投),仍不是 charged", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 400, text: async () => MEASURED_PERSON_REJECTION }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      // 商家读到的就是这一句 —— 适配器抛的 message 本身,worker 原样落盘、两个入口原样取回。
+      expect(err.message).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+      // permanent = 重投救不了它,worker 第一次就终结。
+      expect(err.permanent).toBe(true);
+      // 仍然是创建阶段被拒 ⇒ 可证明没花钱 ⇒ 绝不能标 charged(标了就会给一笔没发生的
+      // 支出记 spentUsd,污染账)。
+      expect(err.charged).toBeFalsy();
+    });
+
+    it("#765 白标:抛出去的这句话里没有引擎名、模型名、错误码、Request id", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 400, text: async () => MEASURED_PERSON_REJECTION }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      for (const secret of ["seedance", "seedream", "byteplus", "dreamina", "ark", "InputImageSensitive", "Request id", "400"]) {
+        expect(err.message.toLowerCase()).not.toContain(secret.toLowerCase());
+      }
+    });
+
+    it("#765 fail closed:另一种 400 照旧走通用 4xx 路(不会被误标成人脸类)", async () => {
+      stubFetch((url) => url.endsWith("/contents/generations/tasks")
+        ? { ok: false, status: 400, text: async () => `{"error":{"code":"InvalidParameter","message":"duration must be one of 4,5","type":"BadRequest"}}` }
+        : jsonRes({ status: "running" }));
+      const err = await rejection(call);
+      expect(err.message).toContain("400");
+      expect(err.permanent).toBeFalsy();
+      expect(err.charged).toBeFalsy();
+    });
   });
   it("generateVideo includes a reference_video content part when refVideoUrl is set", async () => {
     let submitBody: any;

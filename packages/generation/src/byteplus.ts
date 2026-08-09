@@ -1,6 +1,6 @@
 import type { GenerationProvider, GenerationRequest, GeneratedImage, VideoRequest, GeneratedVideo } from "@fikirtive/core";
-import { imageOutputSize } from "@fikirtive/core";
-import { chargedError, extFromUrl } from "./index.js";
+import { imageOutputSize, REFERENCE_IMAGE_PERSON_REJECTED, referenceImagePersonRejected } from "@fikirtive/core";
+import { chargedError, permanentInputError, extFromUrl } from "./index.js";
 
 export const ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3";
 /** internal model id → Ark foundation-model id (verified active on the account). */
@@ -47,7 +47,28 @@ export class BytePlusProvider implements GenerationProvider {
     console.error(`generation provider ${what} failed:`, { model, status: res.status, detail });
     // 4xx — rejected BEFORE the engine spent anything (rate limit, validation, auth).
     // The only provably-free failure, so the only one that stays PLAIN and retries.
-    if (res.status >= 400 && res.status < 500) throw new Error(`generation provider ${what} failed (${res.status})`);
+    if (res.status >= 400 && res.status < 500) {
+      // #765 — one 4xx the MERCHANT can act on, and the only one this adapter translates.
+      // Retrying a rate limit or a gateway wobble is right; retrying this is not. The engine
+      // looked at the reference image, saw a face it reads as a real person, and refused the
+      // task — and it refuses the same picture identically every time. Left on the generic
+      // route the merchant waits out the whole retry budget and is then told "it didn't go
+      // through", with the reason and the way out never spoken. So it becomes terminal here,
+      // carrying the sentence they read on both surfaces.
+      //
+      // Still NOT charged: this is a task-create rejection, provably free, so the hold is
+      // refunded and no spend is recorded. `permanent` changes only when the worker gives up.
+      //
+      // FAIL CLOSED twice over. `referenceImagePersonRejected` recognises only the measured
+      // shape, so any other 4xx falls through to the generic line below; and only the VIDEO
+      // submit is asked, because the video task-create endpoint is where that shape was
+      // measured (2026-08-08, 4 refusals of 4 face shapes). The image endpoint has never been
+      // seen to return it, and a refusal we invented would be worse than a generic one.
+      if (what === "video submit" && referenceImagePersonRejected(detail)) {
+        throw permanentInputError(REFERENCE_IMAGE_PERSON_REJECTED);
+      }
+      throw new Error(`generation provider ${what} failed (${res.status})`);
+    }
     // 5xx (and any other non-2xx) — a server-side error cannot prove the engine didn't
     // run/accept: a gateway timeout or upstream 500 can land AFTER that happened.
     // Fail closed: what we cannot prove was free is treated as spent.

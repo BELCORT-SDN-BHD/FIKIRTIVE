@@ -55,7 +55,7 @@ export default function Kitchensink() {
         </section>
 
         <section style={{ maxWidth: 360 }}>
-          <Input placeholder="you@studio.com" />
+          <Input aria-label="Email" placeholder="you@studio.com" />
         </section>
 
         <Card style={{ maxWidth: 360 }}>

@@ -5,9 +5,9 @@ import type { OwnerSettings } from "@/lib/owner-settings";
 import { setOwnerSetting } from "@/lib/owner-settings-actions";
 import { setAdsAutonomy } from "@/lib/otto-client-actions";
 import { creditsLabel, formatCredits } from "@/lib/credit-format";
-import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
+import { CREDIT_PACKS_UNREADABLE_MESSAGE, NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import { SupportExit } from "@/components/exits/Exits";
-import type { CreditPack } from "@/lib/billing-actions";
+import type { CreditPackShelf } from "@/lib/billing-actions";
 import { AUTO_PUBLISH_GATE_HINT, canAutoPublish } from "@/lib/auto-publish-gate";
 import { isConnectableChannel } from "@/lib/channels/channel-meta";
 import type { ConnectionBlocker } from "@fikirtive/core/schedule-draft";
@@ -27,12 +27,12 @@ export function buildSettingsSections(args: {
   account: AccountInfo;
   settings: OwnerSettings;
   channels: ChannelState[];
-  packs: CreditPack[];
+  shelf: CreditPackShelf;
   adsAutonomy: "ASK" | "AUTO";
   canPublish: boolean;
   onDeleteAccountRequest: () => void;
 }): SettingsSection[] {
-  const { account, settings, channels, packs, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
+  const { account, settings, channels, shelf, adsAutonomy, canPublish, onDeleteAccountRequest } = args;
   const canChangeAdsAutonomy = channels.some((c) => c.status === "connected");
   const connectedChannelIds = channels.filter((c) => c.status === "connected").map((c) => c.id);
   const autoPublishAvailable = canAutoPublish(connectedChannelIds, canPublish);
@@ -91,7 +91,12 @@ export function buildSettingsSections(args: {
               {/* Single top-up entry (decision ③): one button into the unified /billing
                   page, which lists every pack with its credits AND price. No more than-one
                   price-only "Buy" button per pack duplicated here. */}
-              {packs.length > 0 ? (
+              {"unreadable" in shelf ? (
+                // #786 — the catalogue read failed, so we know neither that there are packs
+                // nor that there are none. Same sentence /billing shows for the same state,
+                // and no human exit: a retryable error does not get one.
+                <span className="cv-set-hint">{CREDIT_PACKS_UNREADABLE_MESSAGE}</span>
+              ) : shelf.packs.length > 0 ? (
                 <a className="cv-set-btn" href="/billing">Top up</a>
               ) : (
                 // #687 — the same sentence /billing shows for the same state, plus the one

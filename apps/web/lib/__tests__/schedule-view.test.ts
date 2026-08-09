@@ -102,7 +102,9 @@ describe("statusPill", () => {
     expect(statusPill("SCHEDULED").tone).toBe("scheduled");
     expect(statusPill("NEEDS_ATTENTION")).toEqual({ label: "Needs attention", tone: "warn" });
     expect(statusPill("CANCELLED").tone).toBe("muted");
-    expect(statusPill("WEIRD")).toEqual({ label: "WEIRD", tone: "muted" });
+    // #822 — the words now come from the one social-publishing map, so even an unknown state
+    // arrives as words. It used to be echoed in shouting case exactly as stored.
+    expect(statusPill("WEIRD")).toEqual({ label: "Weird", tone: "muted" });
   });
 });
 

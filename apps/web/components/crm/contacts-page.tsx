@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { createContact, importContacts, type ImportContactsResult } from "@/lib/crm-actions";
 import { crmConsentBadge } from "@/lib/crm-consent-labels";
+import { contactSourceLabel } from "@/lib/crm-labels";
 import { listContacts } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -259,7 +260,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
               return (
                 <Card key={contact.id} className="min-w-0">
                   <CardHeader>
-                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate">{contact.name}</CardTitle><CardDescription className="mt-1">{contact.lifecycleStage} · {contact.source}</CardDescription></div><Badge variant={consent.variant}>{consent.label}</Badge></div>
+                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate">{contact.name}</CardTitle><CardDescription className="mt-1">{contact.lifecycleStage} · {contactSourceLabel(contact.source)}</CardDescription></div><Badge variant={consent.variant}>{consent.label}</Badge></div>
                   </CardHeader>
                   <CardContent>
                     <div className="grid gap-2 rounded-xl bg-muted/45 p-3 text-sm">

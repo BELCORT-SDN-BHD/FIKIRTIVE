@@ -256,6 +256,7 @@ export function ProductShowcase({
       {/* Toolbar: search (flex) + Add product + Paste a link (P1-01). */}
       <div className="mt-6 mb-3 flex items-center gap-2">
         <Input
+          aria-label="Search products"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search products…"
@@ -290,6 +291,7 @@ export function ProductShowcase({
             <>
               <div className="flex items-center gap-2">
                 <Input
+                  aria-label="Product page link"
                   value={link.url}
                   onChange={(e) => setLink({ phase: "url", url: e.target.value, busy: false, err: null })}
                   placeholder="https://… a product page"

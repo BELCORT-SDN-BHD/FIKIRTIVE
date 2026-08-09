@@ -11,6 +11,7 @@
  * (labelForTool, B9 契约4) so the card and the step trace speak the same language.
  */
 import { labelForTool } from "./otto-stream-bridge";
+import { socialPlatformLabel } from "./social-labels";
 
 export type ApprovalCardStatus = "pending" | "approved" | "rejected" | "expired";
 
@@ -63,8 +64,6 @@ export function asApprovalCardPayload(v: unknown): ApprovalCardPayload | null {
   };
 }
 
-const CHANNEL_LABELS: Record<string, string> = { instagram: "Instagram", facebook: "Facebook" };
-
 const CAPTION_EXCERPT_MAX = 180;
 
 function formatScheduledAt(iso: string, tz: string): string | null {
@@ -97,7 +96,7 @@ export type ApprovalCardView = {
 export function approvalCardView(payload: ApprovalCardPayload): ApprovalCardView {
   if (payload.toolName === "approveScheduledPost" && payload.summary) {
     const s = payload.summary;
-    const channel = CHANNEL_LABELS[s.channel] ?? s.channel;
+    const channel = socialPlatformLabel(s.channel);
     const when = formatScheduledAt(s.scheduledAt, s.scheduledTz);
     const detailLines = [
       `Publishes to ${channel}`,

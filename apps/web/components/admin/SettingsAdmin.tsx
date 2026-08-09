@@ -66,7 +66,7 @@ function VisionCard({ vision }: { vision: Vision }) {
         />
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "#3fb950" : "#e5484d" }}>{msg.text}</span>}
+        {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "var(--success)" : "var(--destructive)" }}>{msg.text}</span>}
         <div style={{ marginLeft: "auto" }}>
           <Button variant="primary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
         </div>
@@ -111,7 +111,7 @@ function ProviderCard({ provider, canModal }: { provider: string; canModal: bool
         </select>
       </label>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "#3fb950" : "#e5484d" }}>{msg.text}</span>}
+        {msg && <span style={{ font: "var(--text-caption)", color: msg.ok ? "var(--success)" : "var(--destructive)" }}>{msg.text}</span>}
         <div style={{ marginLeft: "auto" }}>
           <Button variant="primary" size="sm" disabled={!dirty || saving} onClick={save}>{saving ? "Saving…" : "Save"}</Button>
         </div>

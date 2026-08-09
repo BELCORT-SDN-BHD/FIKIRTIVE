@@ -392,6 +392,11 @@ export interface OttoContext {
           reportedOptOutCount: number;
           excludedByReportedOptOutCount: number;
           contacts: CrmSegmentContact[];
+          /** #819 — the sample is cut at ten rows; `returned`/`hasMore` say so in the payload
+           *  so the sample can never be read as the whole match. Same shape as the contact
+           *  page port (#742): the truncation travels with the data, not in a prompt. */
+          returned: number;
+          hasMore: boolean;
         }
       | { error: string }
     >;

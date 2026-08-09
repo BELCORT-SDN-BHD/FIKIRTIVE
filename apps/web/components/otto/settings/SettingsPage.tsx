@@ -148,7 +148,7 @@ function FieldRow({ f }: { f: SettingsField }) {
   return (
     <div className="cv-set-row">
       <div className="cv-set-lbl"><span>{f.label}</span>{"hint" in f && f.hint ? <span className="cv-set-hint">{f.hint}</span> : null}</div>
-      {f.kind === "text" && <input className="cv-set-input" defaultValue={f.value} readOnly={f.readOnly} />}
+      {f.kind === "text" && <input className="cv-set-input" aria-label={f.label} defaultValue={f.value} readOnly={f.readOnly} />}
       {f.kind === "toggle" && <Switch checked={f.value} onChange={f.onToggle} disabled={f.disabled} aria-label={f.label} />}
       {f.kind === "number" && <NumberField field={f} />}
       {f.kind === "action" && <button className={f.tone === "danger" ? "cv-set-btn danger" : "cv-set-btn"} onClick={f.onClick}>{f.button}</button>}

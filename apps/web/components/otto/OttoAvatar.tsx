@@ -48,7 +48,7 @@ const MOOD_META: Record<OttoMood, { label: string; tilt: number; glow?: string; 
   error: {
     label: "Otto error",
     tilt: 0,
-    glow: "drop-shadow(0 3px 9px color-mix(in oklab, var(--error, #E5484D) 24%, transparent))",
+    glow: "drop-shadow(0 3px 9px color-mix(in oklab, var(--error, #D02F35) 24%, transparent))",
   },
   waiting: { label: "Otto waiting", tilt: 0 },
   approving: {
