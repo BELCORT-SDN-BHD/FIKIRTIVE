@@ -97,6 +97,15 @@ export type CrmContactSummary = {
     externalId: string;
     handle: string | null;
     label: string | null;
+    /**
+     * #803 — `merchant_unverified` (the merchant typed it; stored and searchable, never messaged)
+     * or `channel_verified` (a connected channel confirmed it, and the two fields below say when
+     * and by what). Otto reads the grade with the number so it can never describe a hand-typed
+     * digit as a number this product can reach.
+     */
+    verificationStatus: string;
+    verifiedAt: string | null;
+    verifiedSourceKind: string | null;
   }[];
 };
 

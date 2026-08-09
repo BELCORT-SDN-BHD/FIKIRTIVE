@@ -12,6 +12,15 @@ export type CrmIdentityRow = {
   externalId: string;
   handle: string | null;
   label: string | null;
+  /**
+   * #803 — how much this identity is worth as a fact. `merchant_unverified` is what the merchant
+   * typed; `channel_verified` was confirmed by a connected channel, and then the two evidence
+   * fields say when and by what. The page prints the grade next to the number rather than the
+   * number alone, because "we have it" and "it works" are different claims.
+   */
+  verificationStatus: string;
+  verifiedAt: Date | null;
+  verifiedSourceKind: string | null;
 };
 
 export type CrmConsentState = {
@@ -93,7 +102,16 @@ function contactSelect(ownerId: string) {
     marketingConsent: true,
     identities: {
       where: { ownerId, deletedAt: null },
-      select: { id: true, channel: true, externalId: true, handle: true, label: true },
+      select: {
+        id: true,
+        channel: true,
+        externalId: true,
+        handle: true,
+        label: true,
+        verificationStatus: true,
+        verifiedAt: true,
+        verifiedSourceKind: true,
+      },
       orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
     },
     consentStateProjections: {

@@ -12,6 +12,14 @@ export type ContactIdentityInput = {
   label?: string | null;
 };
 
+export type ContactIdentityOptions = {
+  /**
+   * Read a phone number with no country code as a Malaysian one. Opt-in, because the caller —
+   * not this function — is responsible for having told the merchant so.
+   */
+  assumeMalaysianPhone?: boolean;
+};
+
 export type NormalizedContactIdentity = {
   channel: string;
   externalId: string;
@@ -27,6 +35,22 @@ export type ContactDuplicateSuggestion = {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHANNEL = /^[a-z0-9][a-z0-9_-]*$/;
+const E164 = /^\+[1-9]\d{7,14}$/;
+
+/**
+ * #803 — Malaysia's own dialling shapes, for the surfaces that SAY they assume Malaysia.
+ *
+ * A merchant here types `012-345 6789`, not `+60123456789`. Rejecting that is not caution, it is
+ * refusing the merchant's own address book. But quietly attaching a country code to a bare number
+ * is the thing this normalizer has always refused to do — a guess that looks like a fact.
+ *
+ * So it is neither: the assumption is a parameter. A caller passes it only where the merchant was
+ * told about it in the same breath ("Numbers without a country code are saved as Malaysia +60"),
+ * and the stored value is full E.164, so what he sees afterwards is exactly what will be dialled.
+ * Callers that never say it — the strict default — still reject a bare number as before.
+ */
+const MY_COUNTRY_CODE = "60";
+
 
 function optionalText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -49,11 +73,40 @@ export function isCrmLifecycleStage(value: unknown): value is CrmLifecycleStage 
 }
 
 /**
+ * The one place a typed phone number becomes a stored one. Returns E.164 or an error that says
+ * what to change — never a silently "corrected" number.
+ */
+function normalizePhone(raw: string, assumeMalaysian: boolean): string | { error: string } {
+  const compact = raw.replace(/[\s().-]/g, "");
+  if (E164.test(compact)) return compact;
+  if (assumeMalaysian) {
+    // 00 is the local way to dial out; +60 is the same number written for a machine.
+    const international = compact.startsWith("00") ? `+${compact.slice(2)}` : null;
+    if (international && E164.test(international)) return international;
+    // A local Malaysian number: the trunk 0 is dropped and the country code takes its place.
+    if (/^0\d{8,10}$/.test(compact)) {
+      const candidate = `+${MY_COUNTRY_CODE}${compact.slice(1)}`;
+      if (E164.test(candidate)) return candidate;
+    }
+    if (/^60\d{8,10}$/.test(compact)) {
+      const candidate = `+${compact}`;
+      if (E164.test(candidate)) return candidate;
+    }
+    return {
+      error:
+        "Enter a Malaysian mobile number like 012-345 6789, or a full number with its country code like +65 8123 4567.",
+    };
+  }
+  return { error: "Use a WhatsApp number in E.164 format, including the country code." };
+}
+
+/**
  * Read-only normalization for duplicate suggestions and identity display. It never creates,
  * attaches, merges, revives, or otherwise mutates ContactIdentity rows.
  */
 export function normalizeContactIdentity(
   input: ContactIdentityInput,
+  options: ContactIdentityOptions = {},
 ): NormalizedContactIdentity | { error: string } {
   const channel = typeof input?.channel === "string" ? input.channel.trim().toLowerCase() : "";
   if (!channel || channel.length > 40 || !CHANNEL.test(channel)) {
@@ -64,10 +117,9 @@ export function normalizeContactIdentity(
 
   let externalId = rawExternalId;
   if (channel === "whatsapp") {
-    externalId = rawExternalId.replace(/[\s().-]/g, "");
-    if (!/^\+[1-9]\d{7,14}$/.test(externalId)) {
-      return { error: "Use a WhatsApp number in E.164 format, including the country code." };
-    }
+    const phone = normalizePhone(rawExternalId, options.assumeMalaysianPhone === true);
+    if (typeof phone !== "string") return phone;
+    externalId = phone;
   } else if (channel === "email") {
     externalId = rawExternalId.toLowerCase();
     if (!EMAIL.test(externalId)) return { error: "Add a valid email address." };
