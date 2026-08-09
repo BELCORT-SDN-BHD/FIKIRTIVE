@@ -60,6 +60,9 @@ const { OttoSchedule } = await import("@/components/otto/OttoSchedule");
 // 所以 label/generationId 的关系不是这里手捏的,是产品代码自己定的。
 const PROMPTED_SRC = "https://cdn.test/prompted.png";
 const BLANK_SRC = "https://cdn.test/blank.png";
+// #704:广告来源的生成。getMyAds 的 id 就是 Generation.id —— 与 history 同一个键空间,
+// 只是 source 记作 "ad"。夹具同样过真 buildStuffItems,来源分类不是这里手捏的。
+const AD_SRC = "https://cdn.test/ad.png";
 
 const STUFF_ITEMS = buildStuffItems({
   entities: [],
@@ -69,7 +72,9 @@ const STUFF_ITEMS = buildStuffItems({
     // 现实中不存在的一档:提示词为空,label 退化成 id —— 旧代码唯一碰巧能用的情况。
     { id: "gen-blank", projectId: "proj-1", assetId: "asset-2", src: BLANK_SRC, kind: "image", prompt: "" },
   ],
-  ads: [],
+  ads: [
+    { id: "ad-generation", projectId: "proj-1", assetId: "asset-3", src: AD_SRC, kind: "image", prompt: "Merdeka ad", createdAt: "2026-07-09T00:00:00.000Z" },
+  ],
   records: [],
 });
 
@@ -262,6 +267,50 @@ describe("#691 队列里的帖子缩略图", () => {
 
     const queueImg = all<HTMLImageElement>("img").find((i) => i.getAttribute("src") === BLANK_SRC);
     expect(queueImg).toBeTruthy();
+  });
+});
+
+// ── 4. 缩略图认全部「是一次生成」的来源,不只 gen ────────────────────────────
+//
+// #704:mediaLookup 只收 source === "gen"。广告来源的产物同样是 Generation(getMyAds 直接
+// 拿 Generation.id 当 id),Otto 的 schedulePosts 技能接受任意 generationId —— 于是商家用
+// Otto 排一张广告图,队列与日历只给一块灰占位:图明明在,界面说不出它是哪张。
+//
+// 双向:同一次渲染里 gen 与 ad 各一张,两张都必须出图。只修一边、或干脆把来源判断删掉
+// (连没有 generationId 的 entity 也收)都过不了。
+describe("#704 排程缩略图认全部生成来源", () => {
+  it("广告来源的生成:队列缩略图出图,不是灰占位块", async () => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      scheduledRow({ media: [{ generationId: "ad-generation", position: 0 }] }),
+    ]);
+    await renderSchedule();
+
+    const queueImg = all<HTMLImageElement>("img").find((i) => i.getAttribute("src") === AD_SRC);
+    expect(queueImg).toBeTruthy();
+  });
+
+  it("同一屏里 gen 与 ad 两张一起排,两张都出图", async () => {
+    mocks.listScheduledPosts.mockResolvedValue([
+      scheduledRow({ id: "post-gen", caption: "Morning brew", media: [{ generationId: "gen-prompted", position: 0 }] }),
+      scheduledRow({ id: "post-ad", caption: "Merdeka promo", media: [{ generationId: "ad-generation", position: 0 }] }),
+    ]);
+    await renderSchedule();
+
+    const srcs = all<HTMLImageElement>("img").map((i) => i.getAttribute("src"));
+    expect(srcs).toContain(PROMPTED_SRC);
+    expect(srcs).toContain(AD_SRC);
+  });
+
+  it("挑选器上架范围一字未动:广告图仍然不进 composer 的媒体格子", async () => {
+    // 票面明写「不改挑选器上架范围」。缩略图是**认得出**已挂的媒体,不是**上架**新来源:
+    // 收宽了 lookup 顺手把 composer 也放开,就是越过票面替商家改了挑选面。
+    await renderSchedule();
+    await click(buttonByText("New post"));
+
+    const tileSrcs = Array.from(scope().querySelectorAll<HTMLImageElement>("button img"))
+      .map((i) => i.getAttribute("src"));
+    expect(tileSrcs).toContain(PROMPTED_SRC);
+    expect(tileSrcs).not.toContain(AD_SRC);
   });
 });
 

@@ -4,8 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
 
+# `pull-requests: read` is for the docs-only scope check below (it lists the PR's files).
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: quality-${{ github.event.pull_request.number }}
@@ -13,6 +15,9 @@ concurrency:
 
 jobs:
   quality:
+    # The `quality` context is the required status check in the protect-main ruleset
+    # (bypass_actors is empty — nobody can merge around it). Renaming this job, or letting
+    # it be skipped, freezes every merge in the repository. Speed work goes INSIDE the job.
     name: quality
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
@@ -44,10 +49,97 @@ jobs:
       GOOGLE_CLIENT_SECRET: fikirtive-ci-only-google-secret
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+
+      # Docs-only PRs have nothing for these gates to check. This is deliberately NOT a
+      # workflow-level `paths-ignore`: a workflow skipped by a path filter never posts its
+      # check, and `quality` is required — a docs-only PR would sit unmergeable forever.
+      # Deciding inside the job means `quality` still reports on every PR, it just finishes
+      # in seconds. Fail-safe: anything unexpected (API error, empty list) runs the full gate.
+      #
+      # The decision lives in scripts/ci/pr-scope.jq and is covered by
+      # scripts/__tests__/pr-scope.test.sh, which `quality` runs. This step does no
+      # interpretation at all: it saves both API responses verbatim and forwards the answer.
+      #
+      # Saving them verbatim is the point. Four review rounds of #809 each found another
+      # input that survived a text projection and came out the other side as a WRONG
+      # "docs-only" — a green `quality` over unreviewed code. So no `--jq` shaping here;
+      # jq parses GitHub's own JSON, where a newline in a path is just a character, a
+      # rename's old name is a field, and an illegal escape is a parse error.
+      #
+      # Two responses, not one: the file list, and the PR object. The files endpoint stops
+      # at 3,000 entries without saying so, so the PR's own `changed_files` is what proves
+      # the list is whole.
+      #
+      # `set -e` matters here and is not redundant with the `|| code=true` fallbacks. The
+      # fallbacks absorb the failures we predicted — the two `gh` calls and pr-scope.sh
+      # itself — and turn each into "run every gate". `set -e` covers everything we did not
+      # predict, and above all the write to $GITHUB_OUTPUT: without it, a failed write left
+      # the step green with no `code` output at all, which the old `== 'true'` conditions
+      # downstream read as "skip". Now that write failing fails the step, and a failed step
+      # fails the job — merge blocked, which is the safe direction.
+      - name: Scope — does this PR touch anything outside docs/?
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          files_json="${RUNNER_TEMP:-/tmp}/pr-files.json"
+          pr_json="${RUNNER_TEMP:-/tmp}/pr-object.json"
+          pr="repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}"
+          gh api --paginate --slurp "$pr/files" >"$files_json" 2>/dev/null || : >"$files_json"
+          gh api "$pr" >"$pr_json" 2>/dev/null || : >"$pr_json"
+          if [ ! -s "$files_json" ] || [ ! -s "$pr_json" ]; then
+            echo "could not read the PR from the API — running every gate"
+          else
+            echo "changed paths (name, then previous name for renames):"
+            jq -r '.[][] | "  " + (.filename|tojson) + (if .previous_filename == null then "" else "  <- " + (.previous_filename|tojson) end)' \
+              "$files_json" 2>/dev/null || echo "  (unparseable — pr-scope will fail closed)"
+          fi
+          code="$(bash scripts/ci/pr-scope.sh "$files_json" "$pr_json")" || code=true
+          [ "$code" = "false" ] || code=true
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" = "false" ]; then
+            echo "docs/** only, and the file list is provably complete — every gate below is a no-op"
+          fi
+
+      # Polarity is deliberate: `!= 'false'` and never `== 'true'`. Only the one string the
+      # step writes on purpose buys a skip; a missing output, an empty output, a skipped or
+      # failed scope step, or any value nobody anticipated all land on "run the gate".
+
+      - if: steps.scope.outputs.code != 'false'
+        uses: pnpm/action-setup@v4
+      - if: steps.scope.outputs.code != 'false'
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm quality
+      - if: steps.scope.outputs.code != 'false'
+        run: pnpm install --frozen-lockfile
+
+      # TypeScript's incremental state, for both TS passes `quality` runs over apps/web:
+      # `tsc --noEmit` (apps/web/tsconfig.tsbuildinfo) and the one inside `next build`
+      # (.next/cache/.tsbuildinfo). tsc re-checks any file whose hash moved plus everything
+      # downstream of it, so a cache restored from another commit weakens nothing — it only
+      # skips re-deriving types for files that did not change. ~1 MB, so the restore is
+      # nearly free. The `github.sha` suffix makes every run save a fresh entry; the
+      # restore-keys are what actually load one.
+      #
+      # Measured on this PR, so nobody has to guess: the saving tracks how much of the diff
+      # the restored state still covers. Restoring across a large diff bought nothing
+      # (typecheck 86s → 86s); restoring across a one-comment diff cut typecheck 86s → 49s.
+      # `next build` did not move either way (98s both). So expect real savings on push-after-
+      # push of the same branch, and none on the first run of a fresh branch.
+      - name: Restore TypeScript / Next build cache
+        if: steps.scope.outputs.code != 'false'
+        uses: actions/cache@v4
+        with:
+          path: |
+            apps/web/.next/cache
+            apps/web/tsconfig.tsbuildinfo
+          key: build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            build-${{ runner.os }}-node22-${{ hashFiles('pnpm-lock.yaml') }}-
+            build-${{ runner.os }}-node22-
+
+      - if: steps.scope.outputs.code != 'false'
+        run: pnpm quality

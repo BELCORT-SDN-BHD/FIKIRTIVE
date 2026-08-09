@@ -41,7 +41,7 @@
 2. **Inject the real port** in `apps/web/lib/otto-actions.ts:buildOttoContext` (~line 120; API key, rate-limit, logging). Worker side (`apps/worker/src/otto-resume.ts`) builds a minimal ctx — `startGen` is INTENTIONALLY NOT injected there so a resumed verdict turn can never spend.
 3. **Write the skill:** copy `_template.ts` → `skills/<name>.ts`, fill the 3 fields + `execute`. Also `export const <name> = <name>Skill.tool;`.
 4. **Register:** import + one entry in `registry.ts` `allSkills` (update `registry.test.ts`'s pinned name list).
-5. **Test + catalog:** gate assertion in `migration.test.ts` (or `<name>.test.ts`) + port-required guard; regenerate `CATALOG.md`. (`catalog:check` IS in CI — ci.yml runs it, so a stale CATALOG.md fails the build. Corrected 2026-07-07: this line previously claimed the opposite; the playbook's Otto 包 section had already recorded the correction on 2026-07-04.)
+5. **Test + catalog:** gate assertion in `migration.test.ts` (or `<name>.test.ts`) + port-required guard; regenerate `CATALOG.md`. (`catalog:check` IS in CI — `pnpm quality` runs it from `scripts/ci/quality.sh`, so a stale CATALOG.md fails the build. True since 2026-08-08, when #800 actually wired it: the 2026-07-04/07 edits asserted "ci.yml runs it" while no workflow ever did.)
 
 **Reference spend skill:** `skills/generate.ts` — the 7-step gate (port required → owner-scoped card recheck → exactly-once via `cowork:<cardId>` + DB index → disabled-model check → pure `buildGenRequestFromCard` with overrides:undefined (the model can never pass spend params) → `ctx.startGen` only → best-effort genJobId patch).
 
@@ -246,4 +246,6 @@
 
 
 ## Seam 9 — Parity Manifest(第九缝,2026-07-03 入宪)
-完整施工配方在 `docs/design/2026-07-03-harmony-02-parity-manifest.md`:每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill、四类封闭豁免之一,或 rollout 期明确 `todoSkill` 债务);CI `scripts/check-parity.sh` 已接入 `pnpm lint:parity`,会硬拦漏登记/僵尸登记/未知 skill/未知豁免。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。
+> **状态(2026-08-08 核实):这道缝今天没有机器闸。** harness reset #626(6b6c537c,2026-08-04)删掉了 `packages/otto/src/parity-manifest.ts`(386 行)与 `scripts/check-parity.sh`,`pnpm lint:parity` 这个命令在仓库里不存在。下面这段是原设计,保留作为重建时的配方与审查时的人工口径,**但不要引用它来声称 CI 会拦**。
+
+原设计(施工配方在 `docs/design/2026-07-03-harmony-02-parity-manifest.md`):每个新 server action / 页面数据读取,出生即在 `packages/otto/src/parity-manifest.ts` 登记(配对 skill、四类封闭豁免之一,或 rollout 期明确 `todoSkill` 债务);扫描器 `scripts/check-parity.sh` 经 `pnpm lint:parity` 硬拦漏登记/僵尸登记/未知 skill/未知豁免。豁免四类:ADMIN / VISUAL / MONEY_IN / ACCOUNT_SECURITY —— 新增类别 = 修宪。
