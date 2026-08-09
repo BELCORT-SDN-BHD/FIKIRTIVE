@@ -274,6 +274,12 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
 
     const lines = log.mock.calls.map((c) => c.join(" "));
     expect(lines.some((l) => l.includes("auth email job failed") && l.includes("timeout"))).toBe(true);
+    // #757 — AND IT SAYS WHICH KIND OF TIMEOUT. This job had a request on the wire when its
+    // deadline fired, and an abort cannot un-accept a request the provider has already taken. So
+    // the operator line reports the outcome as UNKNOWN rather than as a failure: "no email was
+    // sent" is a claim this system is not in a position to make, and an operator who acts on it
+    // by re-sending is minting a second live credential.
+    expect(lines.some((l) => l.includes("delivery outcome unknown"))).toBe(true);
     for (const line of [...lines, ...warn.mock.calls.map((c) => c.join(" "))]) {
       expect(line).not.toContain(SLOW);
     }
@@ -283,8 +289,10 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
     // …and settling the queue waits for the abandoned work rather than declaring victory over it.
     releaseAll();
     await authEmailQueueSettled();
-    // NO LATE DELIVERY. The abandoned job's send was cancelled, so it must never appear in the
-    // inbox — not when it was abandoned, and not after everything has settled either.
+    // NOT LATE FROM OUR SIDE. This asserts our own contract — a transport that honours the abort
+    // never reports a delivery once the slot has gone back — which is exactly as far as a test
+    // can reach. Whether the real provider posts a message it already accepted is its decision,
+    // and the idempotency key on every send is what keeps that from becoming a second link.
     expect(delivered).not.toContain(SLOW);
 
     log.mockRestore();
@@ -318,7 +326,13 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
     expect(delivered).not.toContain(LATE);
     const lines = warn.mock.calls.map((c) => c.join(" "));
     expect(lines.some((l) => l.includes("auth email not started"))).toBe(true);
-    for (const line of [...lines, ...log.mock.calls.map((c) => c.join(" "))]) {
+    // #757 — and this job is the OTHER kind of timeout: it died before anything was dispatched,
+    // so there is nothing indeterminate about it. Reporting both kinds the same way would make
+    // "delivery outcome unknown" mean nothing on the line where it matters.
+    const errorLines = log.mock.calls.map((c) => c.join(" "));
+    expect(errorLines.some((l) => l.includes("timeout"))).toBe(true);
+    expect(errorLines.some((l) => l.includes("delivery outcome unknown"))).toBe(false);
+    for (const line of [...lines, ...errorLines]) {
       expect(line).not.toContain(LATE);
     }
     warn.mockRestore();

@@ -96,6 +96,22 @@ describe("createResendEmailPort", () => {
       expect(JSON.parse(init.body as string).from).toBe("Custom <custom@fikirtive.test>");
     });
 
+    /** #757 — the abort cannot recall a request the provider has already accepted, so the
+     *  protection against that request being made twice has to live at the provider. */
+    it("forwards an idempotency key when the caller supplies one, and omits the header otherwise", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+      vi.stubGlobal("fetch", fetchMock);
+      const port = createResendEmailPort();
+
+      await port.send({ to: "a@x.test", subject: "S", text: "t", idempotencyKey: "abc123" });
+      let headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+      expect(headers["Idempotency-Key"]).toBe("abc123");
+
+      await port.send({ to: "a@x.test", subject: "S", text: "t" });
+      headers = (fetchMock.mock.calls[1][1] as RequestInit).headers as Record<string, string>;
+      expect(headers).not.toHaveProperty("Idempotency-Key");
+    });
+
     it("classifies a 5xx/429 response as retryable", async () => {
       for (const status of [429, 500, 503]) {
         const fetchMock = vi.fn().mockResolvedValue({ ok: false, status });

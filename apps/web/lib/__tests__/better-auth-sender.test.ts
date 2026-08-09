@@ -118,6 +118,46 @@ describe("the auth-email queue", () => {
     for (const line of lines) expect(line).not.toContain("boom@x.test");
   });
 
+  /**
+   * #757 — THE ONE THING AN ABORT CANNOT DO.
+   *
+   * The per-job deadline cancels our `fetch`, and that is genuinely useful: it gives the worker
+   * slot back and stops us waiting on a provider that has stopped answering. What it cannot do
+   * is un-accept a request the provider has already taken. Once the body is on the wire, whether
+   * that email goes out is the provider's decision and no test of ours can prove otherwise — the
+   * executor's "it was never delivered" is a property of the mock transport, not of the world.
+   *
+   * So the design admits it and puts a floor under the consequence instead: every send carries an
+   * idempotency key derived from the message itself, so ONE MINTED LINK IS ONE EMAIL however many
+   * times it is dispatched. That is what makes a re-send after an indeterminate abort safe —
+   * without it, the recovery for "we don't know if that went out" is a second live credential for
+   * the same address.
+   */
+  it("stamps one link with one idempotency key, all the way to the provider", async () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("NODE_ENV", "production");
+    const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { enqueueAuthEmail, authEmailQueueSettled } = await import("@/lib/better-auth/sender");
+    for (const url of ["https://x.test/link/a", "https://x.test/link/a", "https://x.test/link/b"]) {
+      enqueueAuthEmail(verify({ email: "idem@x.test", url }));
+      await authEmailQueueSettled();
+    }
+
+    const keys = fetchMock.mock.calls.map(
+      ([, init]) => ((init as RequestInit).headers as Record<string, string>)["Idempotency-Key"],
+    );
+    expect(keys).toHaveLength(3);
+    expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
+    // The same link dispatched twice is one email at the provider…
+    expect(keys[1]).toBe(keys[0]);
+    // …and a different link is a different email, so nothing legitimate is collapsed.
+    expect(keys[2]).not.toBe(keys[0]);
+    // It carries no address in the clear — the key travels in a header and lands in logs.
+    for (const key of keys) expect(key).not.toContain("idem@x.test");
+  });
+
   it("exports no error type or copy a caller could surface", async () => {
     const sender = await import("@/lib/better-auth/sender");
     expect(Object.keys(sender).sort()).toEqual([

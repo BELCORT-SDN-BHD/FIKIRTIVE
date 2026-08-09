@@ -1,5 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { emailPort } from "@/lib/email";
 import { isAllowedEmail } from "@/lib/allowlist";
 
@@ -197,10 +198,19 @@ const realSleep = (ms: number) =>
   ms <= 0 ? Promise.resolve() : new Promise<void>((resolve) => setTimeout(resolve, ms));
 let sleep: (ms: number) => Promise<void> = realSleep;
 
-/** The deadline of the job currently running, so `sendAuthEmail` can hand it to the transport
- *  without every layer in between having to carry a parameter. Same process, same call chain —
- *  nothing outside this module can put a value in here. */
-const jobAbortStore = new AsyncLocalStorage<AbortSignal>();
+/**
+ * The job currently running, so `sendAuthEmail` can reach its deadline without every layer in
+ * between having to carry a parameter. Same process, same call chain — nothing outside this
+ * module can put a value in here.
+ *
+ * `sendDispatched` is set the moment a send is handed to the transport, and #757 is why it
+ * exists: an abort cancels our wait, it does not un-accept a request the provider already took.
+ * A job that dies at its deadline WITHOUT having dispatched anything definitely sent nothing; a
+ * job that dies with a request on the wire is genuinely indeterminate, and the operator log has
+ * to be able to tell an operator which of the two they are looking at.
+ */
+type JobContext = { signal: AbortSignal; sendDispatched: boolean };
+const jobAbortStore = new AsyncLocalStorage<JobContext>();
 
 /** Jobs that will be delivered, and jobs the throttle already refused. Two lists rather than one
  *  so "drop the refused ones first" is a shift rather than a scan — a scan on the request thread
@@ -307,7 +317,8 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
   });
   deadline.catch(() => {});
 
-  const work = jobAbortStore.run(controller.signal, () => runAuthEmailJob(job));
+  const context: JobContext = { signal: controller.signal, sendDispatched: false };
+  const work = jobAbortStore.run(context, () => runAuthEmailJob(job));
   work.catch(() => {});
 
   try {
@@ -316,11 +327,21 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
     // Every failure past the hand-over is an OPERATOR concern: fixed category, no address
     // (#575 log discipline). Alerting on these lines is what carries "a merchant is waiting for
     // a link that never came" now that the response cannot.
+    //
+    // #757 — and the two kinds of timeout are not the same operational fact. "Nothing was sent"
+    // is actionable (re-send it); "we abandoned a request that was already with the provider" is
+    // not, because the provider may well have posted it and a re-send would put a second live
+    // link in the same inbox. Saying so is the only honest line, and it is the reason the send
+    // carries an idempotency key: it makes the recovery safe when an operator takes it anyway.
     const timedOut = error instanceof Error && error.message === "AuthEmailJobTimeout";
-    console.error(
-      "[better-auth] auth email job failed:",
-      timedOut ? "timeout" : error instanceof Error ? error.name : "unknown",
-    );
+    const reason = timedOut
+      ? context.sendDispatched
+        ? "timeout after the send was dispatched — delivery outcome unknown"
+        : "timeout"
+      : error instanceof Error
+        ? error.name
+        : "unknown";
+    console.error("[better-auth] auth email job failed:", reason);
     if (timedOut) {
       // The slot is back, but the work may not be finished. Hold a handle to it so a shutdown
       // (or a test) can tell the difference between "abandoned" and "gone".
@@ -389,6 +410,24 @@ function internalCallHeaders(): Headers {
 }
 
 /**
+ * #757 — ONE MINTED LINK IS ONE EMAIL, however many times it is dispatched.
+ *
+ * Derived from the message rather than from the attempt, which is the whole point: two dispatches
+ * of the same link produce the same key and the provider delivers one of them, while two
+ * different links are two different emails and are left alone. A per-attempt id (a job uuid, a
+ * timestamp) would de-duplicate nothing, since the case worth surviving is precisely the second
+ * attempt at the first message.
+ *
+ * Hashed rather than sent in the clear because the key travels in a header and lands in provider
+ * logs; the address is already in the envelope, but nothing here needs to put it anywhere else.
+ */
+function idempotencyKeyFor(message: { to: string; subject: string; url: string }): string {
+  return createHash("sha256")
+    .update(`${message.to}\n${message.subject}\n${message.url}`)
+    .digest("hex");
+}
+
+/**
  * Write one auth email. AWAITED — but only ever from the background side above, or from the
  * Better Auth send hooks that the background side triggers. A request path must never call this.
  *
@@ -402,20 +441,24 @@ export async function sendAuthEmail(message: {
   url: string;
   intro: string;
 }): Promise<void> {
-  const signal = jobAbortStore.getStore();
+  const context = jobAbortStore.getStore();
   // Past its deadline the job's slot has already gone back to the pool, so starting a send now
   // would be mail arriving from a job the executor considers finished. Refuse to start one.
-  if (signal?.aborted) {
+  if (context?.signal.aborted) {
     console.warn("[better-auth] auth email not started: the job passed its deadline");
     return;
   }
+  // Marked BEFORE the call, not after: the question this answers is "might a request have reached
+  // the provider", and the conservative answer from the moment we hand it over is yes (#757).
+  if (context) context.sendDispatched = true;
   try {
     await emailPort.send({
       to: message.to,
       subject: message.subject,
       text: `${message.intro}:\n${message.url}\n\nIf you didn't request this, ignore this email.`,
       devPreview: message.url,
-      signal,
+      signal: context?.signal,
+      idempotencyKey: idempotencyKeyFor(message),
     });
   } catch (error: unknown) {
     console.error(
