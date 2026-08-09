@@ -26,12 +26,18 @@ import {
   saveConversationDraft,
   setConversationStatus,
 } from "@/lib/customer-inbox-ui-actions";
-import type { getMemberDirectory } from "@/lib/customer-inbox-gateway";
+import type { getMemberDirectory, listChannelScopes } from "@/lib/customer-inbox-gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  channelConnectionFrom,
+  channelConnectionHeadline,
+  type ChannelAccountsResult,
+} from "@/lib/crm-channel-connection";
+import { axisStatusPresentation, channelLabel } from "@/lib/crm-labels";
 import {
   controlBadgePresentation,
   dateTimeLabel,
@@ -52,6 +58,7 @@ type HistoryMessage = HistorySuccess["resource"]["messages"][number];
 type HistoryEvent = HistorySuccess["resource"]["events"][number];
 type PreflightResult = Awaited<ReturnType<typeof getConversationPreflight>>;
 type DirectoryResult = Awaited<ReturnType<typeof getMemberDirectory>>;
+type ScopesResult = Awaited<ReturnType<typeof listChannelScopes>>;
 type DirectoryMember = Extract<DirectoryResult, { ok: true }>["resource"]["members"][number];
 
 export type ConversationInitialState = {
@@ -85,10 +92,12 @@ export default function InboxConversationPage({
   conversationId,
   initialState,
   initialDirectory,
+  initialChannelScopes,
 }: {
   conversationId: string;
   initialState: ConversationInitialState;
   initialDirectory: DirectoryResult;
+  initialChannelScopes: ScopesResult;
 }) {
   if (!initialState.conversation.ok) {
     if (isDenialErrorCode(initialState.conversation.error)) return <DetailUnavailable />;
@@ -97,6 +106,7 @@ export default function InboxConversationPage({
         conversationId={conversationId}
         code={initialState.conversation.error}
         initialDirectory={initialDirectory}
+        channelScopes={initialChannelScopes}
       />
     );
   }
@@ -107,6 +117,7 @@ export default function InboxConversationPage({
       initialHistory={initialState.history}
       initialPreflight={initialState.preflight}
       initialDirectory={initialDirectory}
+      channelScopes={initialChannelScopes}
     />
   );
 }
@@ -120,10 +131,12 @@ function DetailErrorState({
   conversationId,
   code,
   initialDirectory,
+  channelScopes,
 }: {
   conversationId: string;
   code: string;
   initialDirectory: DirectoryResult;
+  channelScopes: ScopesResult;
 }) {
   const [currentCode, setCurrentCode] = useState(code);
   const [retrying, setRetrying] = useState(false);
@@ -161,6 +174,7 @@ function DetailErrorState({
         initialHistory={loaded.history}
         initialPreflight={loaded.preflight}
         initialDirectory={initialDirectory}
+        channelScopes={channelScopes}
       />
     );
   }
@@ -194,12 +208,14 @@ function ConversationWorkspace({
   initialHistory,
   initialPreflight,
   initialDirectory,
+  channelScopes,
 }: {
   conversationId: string;
   initialConversation: ConversationResource;
   initialHistory: HistoryResult;
   initialPreflight: PreflightResult;
   initialDirectory: DirectoryResult;
+  channelScopes: ScopesResult;
 }) {
   const [conversation, setConversation] = useState<ConversationResource>(initialConversation);
   const [historyResult, setHistoryResult] = useState<HistoryResult>(initialHistory);
@@ -428,6 +444,14 @@ function ConversationWorkspace({
   // a compile error. The check stays honest/future-proof for whenever a connection
   // axis can report "pass".
   const connectionStatus: string = preflightOk ? preflightResult.resource.connection.status : "unknown";
+  // #727 判官 r2 P1-2 — the banner below used to read `connectionStatus !== "pass"` and print
+  // "Not connected yet". The service hard-codes this axis to `unknown`
+  // (`stored_evidence_unavailable`), so the page was turning "we do not know" into a statement of
+  // fact — the same failure #727 fixes on the list pages, on a page that was not even covered by
+  // the guard. Workspace connection now comes from the one authority; this axis says only what it
+  // is, which is that THIS conversation's own provider link is unconfirmed.
+  const connection = channelConnectionFrom(channelScopes as ChannelAccountsResult);
+  const conversationLinkConfirmed = connectionStatus === "pass";
   // Spec §7.3: the three freshness timestamps are server-supplied and returned separately —
   // never merged into one synthetic "last synced" value. A missing value renders as an
   // honest "no X yet", not a fabricated fallback date.
@@ -502,7 +526,7 @@ function ConversationWorkspace({
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{identity.contact.name}</h1>
-            <p className="mt-2 text-sm text-muted-foreground">{identity.channel} · {identity.externalId}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{channelLabel(identity.channel)} · {identity.externalId}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant={status.variant}>{status.label}</Badge>
@@ -517,10 +541,15 @@ function ConversationWorkspace({
           <span className="inline-flex items-center gap-1.5"><Clock3 className="size-3.5" />This screen loaded: {freshness ? dateTimeLabel(freshness.lastDataLoadedAt) : "Unknown — diagnostics could not load"}</span>
         </div>
 
-        {connectionStatus !== "pass" ? (
+        {connection.kind !== "connected" || !conversationLinkConfirmed ? (
           <div className="mt-4 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
             <Unplug className="mt-0.5 size-4 shrink-0" />
-            <span>Not connected yet — no messaging channel is linked to this conversation. Nothing here reflects live provider traffic.</span>
+            <span>
+              {channelConnectionHeadline(connection)}
+              {conversationLinkConfirmed
+                ? ""
+                : " This conversation's own provider link is not confirmed, so nothing here reflects live provider traffic."}
+            </span>
           </div>
         ) : null}
 
@@ -650,7 +679,7 @@ function ConversationWorkspace({
                 <p className="text-base font-semibold">{identity.contact.name}</p>
                 <p className="text-xs text-muted-foreground">{identity.contact.lifecycleStage}</p>
                 <div className="rounded-lg bg-muted/45 p-3 text-xs">
-                  <p>{identity.channel} · {identity.externalId}</p>
+                  <p>{channelLabel(identity.channel)} · {identity.externalId}</p>
                   {identity.handle || identity.label ? <p className="mt-1 text-muted-foreground">{identity.label ?? identity.handle}</p> : null}
                 </div>
                 <Button asChild variant="secondary" className="mt-1"><Link href={`/crm/contacts/${identity.contact.id}`}>Open full contact profile<ArrowRight /></Link></Button>
@@ -811,7 +840,9 @@ function PreflightPanel({
   const axes: { label: string; status: string }[] = [
     { label: "Your capability", status: p.internalCapability.status },
     { label: "Channel connection", status: p.connection.status },
-    { label: "Privacy carrier (D8)", status: p.d8Carrier.status },
+    // #728 — the row used to carry "(D8)", the internal number for the privacy-carrier design.
+    // It told the merchant nothing they could look up; the axis name alone is the honest label.
+    { label: "Privacy carrier", status: p.d8Carrier.status },
     { label: "Consent stop", status: p.consentStop.status },
     { label: "Do not disturb", status: p.doNotDisturb.status },
     { label: "Provider refusal history", status: p.providerRefusal.status },
@@ -823,12 +854,18 @@ function PreflightPanel({
     <Card>
       <CardHeader><CardTitle>Send-readiness diagnostics</CardTitle><CardDescription>What the server currently knows. Unavailable/unknown is expected — most of these axes aren&apos;t wired yet.</CardDescription></CardHeader>
       <CardContent className="grid gap-2">
-        {axes.map((axis) => (
-          <div key={axis.label} className="flex items-center justify-between gap-3 rounded-lg border border-border p-2.5 text-sm">
-            <span>{axis.label}</span>
-            <Badge variant={axis.status === "pass" ? "success" : axis.status === "block" ? "destructive" : "outline"}>{axis.status}</Badge>
-          </div>
-        ))}
+        {axes.map((axis) => {
+          // #728 — the same axis vocabulary the broadcast workbench renders, from the same
+          // map. This panel used to print the stored value (`risk`, `unavailable`) while the
+          // workbench said "At risk" about the identical fact.
+          const presentation = axisStatusPresentation(axis.status);
+          return (
+            <div key={axis.label} className="flex items-center justify-between gap-3 rounded-lg border border-border p-2.5 text-sm">
+              <span>{axis.label}</span>
+              <Badge variant={presentation.variant}>{presentation.label}</Badge>
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );

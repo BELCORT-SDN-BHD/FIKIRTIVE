@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { setContactConsent, setContactDnd, updateContact } from "@/lib/crm-actions";
 import { crmConsentBadge, CRM_PRE_LEDGER_OPT_OUT_NOTE } from "@/lib/crm-consent-labels";
+import { channelLabel, purposeLabel } from "@/lib/crm-labels";
 import { getContact, type CrmContactDetailRow } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,7 +213,7 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
                   <div className="rounded-xl border border-dashed border-border p-6 text-center"><IdCard className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-semibold">No stored identities</p></div>
                 ) : contact.identities.map((identity) => (
                   <div key={identity.id} className="rounded-xl border border-border p-4">
-                    <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{titleCase(identity.channel)}</p><Badge variant="outline">Read-only</Badge></div>
+                    <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{channelLabel(identity.channel)}</p><Badge variant="outline">Read-only</Badge></div>
                     <p className="mt-2 break-all text-sm">{identity.externalId}</p>
                     {identity.handle || identity.label ? <p className="mt-1 text-xs text-muted-foreground">{identity.label ?? identity.handle}</p> : null}
                   </div>
@@ -268,7 +269,7 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
                     <div className="rounded-xl border border-dashed border-border px-5 py-10 text-center"><History className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-3 text-sm font-semibold">No consent facts recorded</h2><p className="mt-2 text-sm text-muted-foreground">{contact.consentState.unresolvedLegacyOptOut ? "There is nothing to show here: the opt-out described above predates this history." : "The current state remains unknown."}</p></div>
                   ) : contact.consentEvents.map((event) => (
                     <div key={event.id} className="rounded-xl border border-border p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold">{event.action === "grant" ? "Grant recorded" : "Revoke recorded"}</p><p className="mt-1 text-xs text-muted-foreground">{event.channel} · {event.purpose}</p></div><Badge variant={event.evidenceStatus === "verified" ? "success" : event.evidenceStatus === "asserted" ? "warning" : "outline"}>{titleCase(event.evidenceStatus)}</Badge></div>
+                      <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold">{event.action === "grant" ? "Grant recorded" : "Revoke recorded"}</p><p className="mt-1 text-xs text-muted-foreground">{channelLabel(event.channel)} · {purposeLabel(event.purpose)}</p></div><Badge variant={event.evidenceStatus === "verified" ? "success" : event.evidenceStatus === "asserted" ? "warning" : "outline"}>{titleCase(event.evidenceStatus)}</Badge></div>
                       <dl className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2"><div><dt>Source</dt><dd className="mt-0.5 font-medium text-foreground">{SOURCE_LABELS[event.sourceKind] ?? titleCase(event.sourceKind)}</dd></div><div><dt>Recorded</dt><dd className="mt-0.5 font-medium text-foreground">{dateTimeLabel(event.receivedAt)}</dd></div><div><dt>Actor</dt><dd className="mt-0.5 font-medium text-foreground">{titleCase(event.actorKind)}</dd></div><div><dt>Entry mode</dt><dd className="mt-0.5 font-medium text-foreground">{titleCase(event.entryMode)}</dd></div></dl>
                     </div>
                   ))}

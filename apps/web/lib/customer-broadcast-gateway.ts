@@ -120,6 +120,15 @@ export async function getBroadcastComposerOptions() {
 }
 
 /**
+ * #727 — the Broadcasts list must say whether a messaging channel is connected instead of
+ * asserting it. It needs the channel accounts and nothing else, so it reads them directly rather
+ * than paying for the whole composer option set. Same principal, same `broadcast.read` gate.
+ */
+export async function listChannelScopes() {
+  return runRead((principal) => customerBroadcastService.listChannelScopes(principal));
+}
+
+/**
  * #27 member directory + server-derived self read. The principal (owner + self membership) is
  * resolved from the authenticated session — never from client input.
  */

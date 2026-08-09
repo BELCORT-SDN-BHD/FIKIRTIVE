@@ -31,7 +31,10 @@ import {
   broadcastPurposeFromTemplateClassification,
   type BroadcastPurpose,
 } from "./customer-broadcast-purpose";
-import { resolveActiveProviderConnectionId } from "./channel-connection-resolve";
+import {
+  listChannelScopesWithConnectionState,
+  resolveActiveProviderConnectionId,
+} from "./channel-connection-resolve";
 
 /**
  * C5 broadcast domain actions. Spec:
@@ -941,17 +944,36 @@ export function createCustomerBroadcastService(
   }
 
   /**
+   * #727 — the ONE query for "which messaging channel accounts does this workspace have".
+   * The composer options and the pages that must state whether a channel is connected read the
+   * same rows through it, so no surface can arrive at a different answer. Tenant-filtered by
+   * `principal.ownerId` like every other read here; the membership gate lives on the exported
+   * entry points below, not on this helper.
+   */
+  // 判官 r2 P1-1: the rows carry `connectionState` from ChannelConnection.status — a scope row on
+  // its own is an identity, never proof of a connection.
+  function channelScopeRows(ownerId: string) {
+    return listChannelScopesWithConnectionState(db, ownerId);
+  }
+
+  /**
+   * #727 — the broadcast-side read of the workspace's channel accounts, for the surfaces that
+   * only need to say whether a channel is connected (the Broadcasts list) and must not pay for
+   * the whole composer option set. Same `broadcast.read` gate as every other read here.
+   */
+  async function listChannelScopes(principal: CustomerBroadcastPrincipal) {
+    await requireReadMembership(principal);
+    return channelScopeRows(principal.ownerId);
+  }
+
+  /**
    * Owner-scoped option lists for the structured create form (§10 M3: "结构化发起，不靠 chat
    * prompt"). Read-only; every list is tenant-filtered. No send authority.
    */
   async function getBroadcastComposerOptions(principal: CustomerBroadcastPrincipal) {
     await requireReadMembership(principal);
     const [channelScopes, segments, templateVersions, campaigns] = await Promise.all([
-      db.channelScope.findMany({
-        where: { ownerId: principal.ownerId },
-        orderBy: [{ channel: "asc" }, { scopeKey: "asc" }],
-        select: { id: true, channel: true, scopeKey: true },
-      }),
+      channelScopeRows(principal.ownerId),
       db.segment.findMany({
         where: { ownerId: principal.ownerId, deletedAt: null },
         orderBy: [{ name: "asc" }],
@@ -1254,6 +1276,7 @@ export function createCustomerBroadcastService(
     getBroadcastRun,
     getBroadcastRunLivePreflight,
     getBroadcastComposerOptions,
+    listChannelScopes,
     previewAudienceEligibility,
     createBroadcastRun,
     freezeAudience,

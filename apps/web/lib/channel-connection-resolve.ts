@@ -4,6 +4,68 @@ import { prisma as defaultDb, type Prisma } from "@fikirtive/db";
 
 type DatabaseClient = typeof defaultDb | Prisma.TransactionClient;
 
+/**
+ * #727 判官 r2 P1-1 — a `ChannelScope` row is an IDENTITY, not a connection. The schema says so
+ * in its own words (R-010 D9 M1: "deliberately lifecycle-free: no status, TTL, issuer epoch…"),
+ * and the lifecycle lives on `ChannelConnection.status`. Reading "this workspace has a scope row"
+ * as "this workspace is connected" told a merchant with an expired connection — or with an
+ * identity and no connection at all — that they were connected, which is the exact failure #727
+ * exists to remove.
+ *
+ * `active` here is the SAME condition `resolveActiveProviderConnectionId` below already gates
+ * sends on (ownerId + channelScopeId + kind + status "active"), so what the page says and what
+ * the send path does cannot drift.
+ */
+export type ChannelScopeConnectionState = "active" | "inactive" | "none";
+
+export type ChannelScopeWithConnectionState = {
+  id: string;
+  channel: string;
+  scopeKey: string;
+  /** `active`: at least one live connection. `inactive`: connection rows exist but none is live
+   *  (expired). `none`: this identity has never been connected. */
+  connectionState: ChannelScopeConnectionState;
+};
+
+/** The one read behind every CRM surface that states whether a channel is connected. Tenant
+ *  filtering is explicit on both queries; the capability gate stays on each service's entry
+ *  point, exactly where it was. No token or credential column is ever selected. */
+export async function listChannelScopesWithConnectionState(
+  client: DatabaseClient,
+  ownerId: string,
+): Promise<ChannelScopeWithConnectionState[]> {
+  const scopes = await client.channelScope.findMany({
+    where: { ownerId },
+    orderBy: [{ channel: "asc" }, { scopeKey: "asc" }],
+    select: { id: true, channel: true, scopeKey: true },
+  });
+  if (scopes.length === 0) return [];
+
+  const connections = await client.channelConnection.findMany({
+    where: { ownerId, channelScopeId: { in: scopes.map((scope) => scope.id) } },
+    select: { channelScopeId: true, kind: true, status: true },
+  });
+  // The relation is (channelScopeId, ownerId, kind) → (id, ownerId, channel), so a connection
+  // only speaks for a scope when its `kind` matches that scope's channel.
+  const key = (scopeId: string, channel: string) => `${scopeId}\u0000${channel}`;
+  const live = new Set<string>();
+  const anyConnection = new Set<string>();
+  for (const connection of connections) {
+    if (connection.channelScopeId === null) continue;
+    const id = key(connection.channelScopeId, connection.kind);
+    anyConnection.add(id);
+    if (connection.status === "active") live.add(id);
+  }
+
+  return scopes.map((scope) => {
+    const id = key(scope.id, scope.channel);
+    return {
+      ...scope,
+      connectionState: live.has(id) ? "active" : anyConnection.has(id) ? "inactive" : "none",
+    };
+  });
+}
+
 export async function resolveActiveProviderConnectionId(
   client: DatabaseClient,
   ownerId: string,

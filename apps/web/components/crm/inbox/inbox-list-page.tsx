@@ -14,10 +14,19 @@ import {
   X,
 } from "lucide-react";
 import { listConversations, searchConversations } from "@/lib/customer-inbox-ui-actions";
+import type { listChannelScopes } from "@/lib/customer-inbox-gateway";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  CHANNEL_CONNECT_UNAVAILABLE_NOTE,
+  channelConnectionFrom,
+  channelConnectionHeadline,
+  channelConnectionIsConfirmedAbsent,
+  type ChannelAccountsResult,
+} from "@/lib/crm-channel-connection";
+import { channelLabel } from "@/lib/crm-labels";
 import {
   attentionPresentation,
   errorMessage,
@@ -27,6 +36,7 @@ import {
   statusPresentation,
 } from "./inbox-format";
 
+type ScopesResult = Awaited<ReturnType<typeof listChannelScopes>>;
 type ListResult = Awaited<ReturnType<typeof listConversations>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
 type ListRow = ListSuccess["resource"][number];
@@ -71,7 +81,13 @@ function DeniedState({ message }: { message: string }) {
   );
 }
 
-export default function InboxListPage({ initialState }: { initialState: ListResult }) {
+export default function InboxListPage({
+  initialState,
+  initialChannelScopes,
+}: {
+  initialState: ListResult;
+  initialChannelScopes: ScopesResult;
+}) {
   if (!initialState.ok && isDenialErrorCode(initialState.error)) {
     return <DeniedState message={errorMessage(initialState.error)} />;
   }
@@ -79,6 +95,7 @@ export default function InboxListPage({ initialState }: { initialState: ListResu
     <InboxWorkspace
       initialRows={initialState.ok ? initialState.resource : []}
       initialErrorCode={initialState.ok ? null : initialState.error}
+      channelScopes={initialChannelScopes}
     />
   );
 }
@@ -94,9 +111,11 @@ function readErrorMessage(error: ReadError): string {
 function InboxWorkspace({
   initialRows,
   initialErrorCode,
+  channelScopes,
 }: {
   initialRows: Row[];
   initialErrorCode: string | null;
+  channelScopes: ScopesResult;
 }) {
   const [rows, setRows] = useState<Row[]>(initialRows);
   const [mode, setMode] = useState<Mode>({ kind: "view", view: "all" });
@@ -159,6 +178,9 @@ function InboxWorkspace({
   }
 
   const activeView = mode.kind === "view" ? mode.view : null;
+  // #727 — read, not written down. The sentence and the decision both come from the one
+  // authority every CRM surface uses.
+  const connection = channelConnectionFrom(channelScopes as ChannelAccountsResult);
 
   return (
     <main className="min-h-dvh bg-background px-4 py-7 text-foreground sm:px-6 lg:px-8 lg:py-9">
@@ -177,10 +199,16 @@ function InboxWorkspace({
         </header>
 
         {/* #541 — no CTA into Connections here: Messaging has no connect button there yet,
-            so a "Connect a channel" button would point at a dead end. Say the truth instead. */}
+            so a "Connect a channel" button would point at a dead end. Say the truth instead.
+            #727 — the connection clause is now read from the workspace's channel accounts; the
+            second sentence is a product fact (no provider ingestion exists) and holds either
+            way, so it is stated separately rather than hung off the connection state. */}
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />
-          <span>No messaging channel is connected in this workspace yet. Conversations shown here are internal records — none reflect live customer traffic. Messaging channels are not available to connect yet.</span>
+          <span>
+            {channelConnectionHeadline(connection)} Conversations shown here are internal records — none reflect live customer traffic.
+            {channelConnectionIsConfirmedAbsent(connection) ? ` ${CHANNEL_CONNECT_UNAVAILABLE_NOTE}` : ""}
+          </span>
         </div>
 
         <Card className="mt-6">
@@ -300,7 +328,7 @@ function ConversationRow({ row }: { row: Row }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="min-w-0 truncate text-base font-semibold">{identity.contact.name}</p>
-              <Badge variant="outline">{identity.channel}</Badge>
+              <Badge variant="outline">{channelLabel(identity.channel)}</Badge>
               <Badge variant={status.variant}>{status.label}</Badge>
               {hasAttention(row) ? (
                 <Badge variant={attentionPresentation(row.attention).variant}>{attentionPresentation(row.attention).label}</Badge>

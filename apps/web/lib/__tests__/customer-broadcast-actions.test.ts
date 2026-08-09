@@ -28,10 +28,12 @@ const USER_OWNER = "c5-m2-test-user-owner";
 const USER_ADMIN = "c5-m2-test-user-admin";
 const USER_MEMBER = "c5-m2-test-user-member";
 const USER_B = "c5-m2-test-user-b";
+const USER_CREATOR = "c5-m2-test-user-creator";
 const OWNER = "c5-m2-test-owner";
 const ADMIN = "c5-m2-test-admin";
 const MEMBER = "c5-m2-test-member";
 const MEMBER_B = "c5-m2-test-member-b";
+const CREATOR = "c5-m2-test-creator";
 const CONTACT_A = "c5-m2-test-contact-a";
 const CONTACT_A_OPTOUT = "c5-m2-test-contact-a-optout";
 const CONTACT_GRANT = "c5-m2-test-contact-grant";
@@ -226,7 +228,7 @@ async function cleanup(): Promise<void> {
   await prisma.contact.deleteMany({ where: { ownerId: { in: OWNERS } } });
   await prisma.membership.deleteMany({ where: { orgId: { in: OWNERS } } });
   await prisma.organization.deleteMany({ where: { id: { in: OWNERS } } });
-  await prisma.user.deleteMany({ where: { id: { in: [USER_OWNER, USER_ADMIN, USER_MEMBER, USER_B] } } });
+  await prisma.user.deleteMany({ where: { id: { in: [USER_OWNER, USER_ADMIN, USER_MEMBER, USER_B, USER_CREATOR] } } });
 }
 
 async function seed(): Promise<void> {
@@ -1714,6 +1716,91 @@ describe("C5-M2 cross-tenant ID swaps", () => {
     expect(list).not.toContain(foreignRun.resource.id);
     expect(await ownerCounts(ORG_A)).toEqual(beforeA);
     expect(await ownerCounts(ORG_B)).toEqual(beforeB);
+  });
+});
+
+describe("C5-M2 listChannelScopes — tenant fence and capability gate (#727 判官 r2 P2-1)", () => {
+  const ownerB = { ownerId: ORG_B, membershipId: MEMBER_B, impersonating: false };
+  const creator = { ownerId: ORG_A, membershipId: CREATOR, impersonating: false };
+
+  /** A role WITHOUT `broadcast.read`, created inside this suite rather than in the shared seed:
+   *  the member-directory test (#27) asserts the exact membership set of ORG_A, and a fixture
+   *  this suite needs must not silently change what that one is testing. `beforeEach` re-seeds,
+   *  and `cleanup` deletes memberships by orgId, so this stays local. */
+  async function seedCreatorMembership(): Promise<void> {
+    await prisma.user.create({ data: { id: USER_CREATOR, email: "c5-m2-creator@example.test" } });
+    await prisma.membership.create({
+      data: { id: CREATOR, userId: USER_CREATOR, orgId: ORG_A, role: "creator" },
+    });
+    await prisma.membershipRole.create({ data: { membershipId: CREATOR, role: "creator" } });
+  }
+
+  it("returns only the calling tenant's channel accounts, never another tenant's", async () => {
+    const a = await broadcast.listChannelScopes(owner);
+    expect(a.map((scope) => scope.id).sort()).toEqual([SCOPE_A, SCOPE_A_OTHER].sort());
+    expect(JSON.stringify(a)).not.toContain(SCOPE_B);
+    expect(JSON.stringify(a)).not.toContain("waba-b");
+
+    // The mirror image: ORG_B's own read sees ORG_B's account and nothing of ORG_A's.
+    const b = await broadcast.listChannelScopes(ownerB);
+    expect(b.map((scope) => scope.id)).toEqual([SCOPE_B]);
+    expect(JSON.stringify(b)).not.toContain(SCOPE_A);
+    expect(JSON.stringify(b)).not.toContain("waba-a");
+  });
+
+  it("requires broadcast.read — a role without it is denied, not given an empty list", async () => {
+    await seedCreatorMembership();
+    // A silent empty list would read on screen as "no channel connected", which is the exact
+    // untruth #727 exists to remove. The gate must refuse instead.
+    await expectCode(broadcast.listChannelScopes(creator), "ACTION_DENIED");
+    await expectCode(
+      broadcast.listChannelScopes({ ownerId: ORG_A, membershipId: "c5-m2-test-no-such-membership" }),
+      "ACTION_DENIED",
+    );
+    // A membership that exists, but in the OTHER org, cannot borrow this org's rows.
+    await expectCode(broadcast.listChannelScopes({ ownerId: ORG_A, membershipId: MEMBER_B }), "ACTION_DENIED");
+  });
+
+  it("reports connection lifecycle from ChannelConnection.status, not from the scope row", async () => {
+    // Identity only: the scope exists and has never been connected.
+    const before = await broadcast.listChannelScopes(owner);
+    expect(before.find((scope) => scope.id === SCOPE_A)).toMatchObject({ connectionState: "none" });
+
+    await prisma.channelConnection.create({
+      data: {
+        id: "c5-m2-test-conn-lifecycle",
+        ownerId: ORG_A,
+        kind: "whatsapp",
+        channelScopeId: SCOPE_A,
+        externalId: "c5-m2-test-conn-lifecycle",
+        accessTokenEnc: "ciphertext:c5-m2-test-conn-lifecycle",
+        status: "expired",
+      },
+    });
+    const expired = await broadcast.listChannelScopes(owner);
+    expect(expired.find((scope) => scope.id === SCOPE_A)).toMatchObject({ connectionState: "inactive" });
+    expect(expired.find((scope) => scope.id === SCOPE_A_OTHER)).toMatchObject({ connectionState: "none" });
+
+    await prisma.channelConnection.create({
+      data: {
+        id: "c5-m2-test-conn-live",
+        ownerId: ORG_A,
+        kind: "whatsapp",
+        channelScopeId: SCOPE_A,
+        externalId: "c5-m2-test-conn-live",
+        accessTokenEnc: "ciphertext:c5-m2-test-conn-live",
+        status: "active",
+      },
+    });
+    const live = await broadcast.listChannelScopes(owner);
+    expect(live.find((scope) => scope.id === SCOPE_A)).toMatchObject({ connectionState: "active" });
+  });
+
+  it("never selects a credential column", async () => {
+    const rows = await broadcast.listChannelScopes(owner);
+    for (const row of rows) {
+      expect(Object.keys(row).sort()).toEqual(["channel", "connectionState", "id", "scopeKey"]);
+    }
   });
 });
 

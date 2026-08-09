@@ -34,6 +34,15 @@ export interface EmailMessage {
    *  answers would otherwise hold its caller forever; the auth-email queue passes a signal that
    *  fires on its own deadline so one stuck send cannot become every tenant's stuck send. */
   signal?: AbortSignal;
+  /** #757 — the same value for the same logical email, so an adapter can ask the provider to
+   *  deliver it at most once however many times it is dispatched.
+   *
+   *  It exists because `signal` has a hard limit: aborting stops us WAITING, it does not un-accept
+   *  a request the provider has already taken. After an abort we genuinely do not know whether
+   *  that email went out, and the only safe recovery from "we don't know" is a re-send that
+   *  cannot become a second email. Callers derive it from the message's own content, so it is
+   *  stable across dispatches and different for a different message. */
+  idempotencyKey?: string;
 }
 
 export interface EmailPort {
