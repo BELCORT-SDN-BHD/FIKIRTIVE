@@ -57,10 +57,13 @@ export default async function LoginPage({
           <h1 className="text-[42px] font-extrabold leading-[1.08] tracking-[-0.025em] text-[#141412]">
             Otto gets the <span className="text-brand">work done</span> — you just approve.
           </h1>
+          {/* #682 still binds: Otto is called by name, never by a pronoun. "…and it runs the
+              job" would put a third-person pronoun back on the very screen #682 cured — and
+              the lexical fence cannot catch a mid-sentence "it", so it is on the writer. */}
           <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
-            Build the campaign, adjust the customer segment it goes to, see where the money went,
-            swap in fresh creative. Tell Otto in your own words and it runs the job end to end,
-            bringing every paid step back for you to approve first.
+            Build the campaign, adjust the customer segment, see where the money went, swap in
+            fresh creative. Say what you want in your own words — Otto runs the job end to end
+            and brings every paid step back for you to approve first.
           </p>
           <ul className="mt-7 flex flex-col gap-[11px]">
             {[
