@@ -5,7 +5,7 @@ import { magicLink, customSession, admin } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prisma } from "@fikirtive/db";
-import { enqueueAuthEmail, sendAuthEmail } from "./sender";
+import { enqueueAuthEmail, sendAuthEmail, AUTH_EMAIL_LINK_TTL_SECONDS } from "./sender";
 import { roleForEmail } from "./session-role";
 import { convergeIdentity } from "./converge";
 import { signinSessionId } from "./signin-session";
@@ -217,7 +217,11 @@ export const auth = betterAuth({
   },
   plugins: [
     magicLink({
-      expiresIn: 60 * 15,
+      // #757 — ONE source for the link's lifetime. This used to be its own `60 * 15` while the
+      // auth-email queue sized its capacity against a copy of the same number in a comment; two
+      // copies of a load-bearing constant is one edit away from a queue full of links that
+      // expire before they are posted, with nothing failing to say so.
+      expiresIn: AUTH_EMAIL_LINK_TTL_SECONDS,
       sendMagicLink: async ({ email, url }) => {
         // #678 r3 — this hook is BACKGROUND-ONLY. The single caller of the endpoint that runs it
         // is the auth-email queue (lib/better-auth/sender.ts), which has already checked access

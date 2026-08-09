@@ -86,10 +86,13 @@ const BEHIND = `p678-behind-${randomUUID()}@fikirtive.test`;
 const DB_ALLOWED = `p678-dballowed-${randomUUID()}@fikirtive.test`;
 /** Its access check is held open on purpose, so the deadline provably expires mid-job. */
 const LATE = `p678-late-${randomUUID()}@fikirtive.test`;
+/** #757 — mints a REAL sign-in token, so the row it leaves behind can be asked how long the
+ *  credential this queue carries actually lives. */
+const TTL_PROBE = `p757-ttl-${randomUUID()}@fikirtive.test`;
 
 process.env.BETTER_AUTH_SECRET = "x".repeat(40);
 process.env.BETTER_AUTH_URL = "http://localhost:3100";
-process.env.AUTH_ALLOWED_EMAILS = [TARGET_ALLOWED, TARGET_SPENT, CANARY, SLOW, BEHIND].join(",");
+process.env.AUTH_ALLOWED_EMAILS = [TARGET_ALLOWED, TARGET_SPENT, CANARY, SLOW, BEHIND, TTL_PROBE].join(",");
 process.env.FOUNDER_ADMIN_EMAILS = "noone@fikirtive.test";
 
 const { prisma } = await import("@fikirtive/db");
@@ -104,6 +107,8 @@ const {
   AUTH_EMAIL_JOB_TIMEOUT_MS,
   AUTH_EMAIL_SLOT_FLOOR_MS,
   AUTH_EMAIL_MAX_QUEUED,
+  AUTH_EMAIL_WORST_SLOT_MS,
+  AUTH_EMAIL_LINK_TTL_MS,
 } = await import("@/lib/better-auth/sender");
 const { acceptMagicLinkRequest, __resetMagicLinkThrottleForTests } = await import(
   "@/lib/better-auth/magic-link-request"
@@ -351,7 +356,8 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
       jitterMaxMs: 0,
       slotFloorMs: 60_000, // nothing drains during the flood: worst case for the backlog
       maxConcurrency: 1,
-      maxQueued: 200,
+      // #757 — the PRODUCTION capacity, not a small stand-in. The bound that has to hold under
+      // a flood is the one that ships.
     });
 
     let peak = 0;
@@ -361,7 +367,7 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     }
     // RED before the bound: 5 000 presses, 5 000 outstanding jobs, and every real merchant's
     // sign-in link queued behind them.
-    expect(peak).toBeLessThanOrEqual(200);
+    expect(peak).toBeLessThanOrEqual(AUTH_EMAIL_MAX_QUEUED);
 
     // The drop is an operator signal only — the merchant's answer never changed — and it is
     // aggregated rather than one line per dropped job.
@@ -369,7 +375,7 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     expect(lines.some((l) => l.includes("auth email queue full"))).toBe(true);
     expect(lines.filter((l) => l.includes("auth email queue full")).length).toBeLessThan(10);
 
-    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0, maxQueued: 200 });
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
     vi.spyOn(console, "error").mockImplementation(() => {});
     await authEmailQueueSettled();
     warn.mockRestore();
@@ -452,14 +458,69 @@ describe("#678 — every job waits a random moment before it takes a slot", () =
     expect(AUTH_EMAIL_JOB_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
     // …the pool wide enough that a probe and a canary are not forced into a queue…
     expect(AUTH_EMAIL_MAX_CONCURRENCY).toBeGreaterThanOrEqual(2);
-    // …the jitter wide enough to be worth having as a second layer…
+    // …and the jitter wide enough to be worth having as a second layer.
     expect(AUTH_EMAIL_JITTER_MAX_MS).toBeGreaterThanOrEqual(1_000);
-    // …and the queue no deeper than the fifteen-minute life of the token it carries: at the
-    // floor's throughput, a full queue drains in about twelve and a half minutes.
-    const worstSlotMs = AUTH_EMAIL_SLOT_FLOOR_MS + AUTH_EMAIL_JITTER_MAX_MS;
-    const drainMinutes =
-      (AUTH_EMAIL_MAX_QUEUED * (worstSlotMs / AUTH_EMAIL_MAX_CONCURRENCY)) / 60_000;
-    expect(drainMinutes).toBeLessThan(15);
+  });
+});
+
+// ── #757 — the capacity bound is load-bearing, with the real numbers ─────────────────────────
+/**
+ * A bounded queue only helps if a job that reaches the BACK of it still arrives while the
+ * credential it carries is alive. Otherwise the bound is decoration: the queue is full of links
+ * that will be posted after they expire, which for the merchant is the same as being dropped —
+ * except it also burns their hourly budget on the way past.
+ *
+ * The previous round asserted that inequality with the wrong slot length. It used the FLOOR
+ * (3 s) as the time a job occupies a worker, so 500 jobs came out at ten and a half minutes,
+ * under the fifteen a link lives. But the floor is a MINIMUM, not a maximum: a job that reaches
+ * its deadline holds its slot for the jitter plus the whole 20-second timeout. At that length
+ * the same 500 jobs take 45.8 minutes and every link past roughly the 163rd is posted dead.
+ *
+ * So the depth is no longer a number somebody chose. It is DERIVED from the three quantities it
+ * depends on — how long a link lives, how long a slot can be held, how many slots there are —
+ * which makes the inequality true by construction rather than by assertion. What is left for a
+ * test is to prove the derivation uses the real numbers, and that the link lifetime it derives
+ * from is the one Better Auth actually stamps on the token.
+ */
+describe("#757 — a queued link cannot outlive the link", () => {
+  it("measures a slot by the DEADLINE it may run to, not by the floor it must fill", () => {
+    // RED before #757: the drain estimate used floor + jitter (5 s) and ignored the deadline,
+    // so it under-counted the worst slot by more than four times.
+    expect(AUTH_EMAIL_WORST_SLOT_MS).toBe(
+      AUTH_EMAIL_JITTER_MAX_MS + Math.max(AUTH_EMAIL_SLOT_FLOOR_MS, AUTH_EMAIL_JOB_TIMEOUT_MS),
+    );
+    expect(AUTH_EMAIL_WORST_SLOT_MS).toBeGreaterThanOrEqual(AUTH_EMAIL_JOB_TIMEOUT_MS);
+  });
+
+  it("holds the drain-before-expiry inequality at the real parameters, and is the largest depth that does", () => {
+    const drainMs = (AUTH_EMAIL_MAX_QUEUED * AUTH_EMAIL_WORST_SLOT_MS) / AUTH_EMAIL_MAX_CONCURRENCY;
+    // RED before #757: 500 × 22 000 / 4 = 2 750 000 ms (45.8 min) against a 900 000 ms link.
+    expect(drainMs).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS);
+    // …and it is not passing by being trivially small: one more job would break it, so this is
+    // the deepest backlog that can still be delivered in time.
+    const oneMoreMs =
+      ((AUTH_EMAIL_MAX_QUEUED + 1) * AUTH_EMAIL_WORST_SLOT_MS) / AUTH_EMAIL_MAX_CONCURRENCY;
+    expect(oneMoreMs).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS);
+    expect(AUTH_EMAIL_MAX_QUEUED).toBeGreaterThan(0);
+  });
+
+  it("derives that depth from the lifetime Better Auth really stamps on the token", async () => {
+    // The inequality is only worth anything if `AUTH_EMAIL_LINK_TTL_MS` is the SAME fifteen
+    // minutes the magic-link plugin uses. RED before #757: `expiresIn` was its own literal in
+    // server.ts, so the queue's arithmetic and the token's real lifetime could drift apart
+    // silently — the queue would keep sizing itself against a number nothing enforced.
+    const startedAt = Date.now();
+    enqueueAuthEmail({ purpose: "sign-in-link", email: TTL_PROBE, callbackURL: "/", overBudget: false });
+    await authEmailQueueSettled();
+
+    const row = await prisma.betterAuthVerification.findFirst({
+      where: { value: { contains: TTL_PROBE } },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(row).not.toBeNull();
+    const lifetimeMs = (row as { expiresAt: Date }).expiresAt.getTime() - startedAt;
+    expect(lifetimeMs).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS - 5_000);
+    expect(lifetimeMs).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS + 5_000);
   });
 });
 
@@ -470,7 +531,13 @@ afterAll(async () => {
   __configureAuthEmailQueueForTests({});
   try {
     await prisma.betterAuthVerification.deleteMany({
-      where: { OR: [{ value: { contains: "p678-target-" } }, { value: { contains: "p678-canary-" } }] },
+      where: {
+        OR: [
+          { value: { contains: "p678-target-" } },
+          { value: { contains: "p678-canary-" } },
+          { value: { contains: "p757-ttl-" } },
+        ],
+      },
     });
     await prisma.allowedEmail.deleteMany({ where: { email: DB_ALLOWED } });
   } catch {

@@ -123,9 +123,12 @@ describe("the auth-email queue", () => {
     expect(Object.keys(sender).sort()).toEqual([
       "AUTH_EMAIL_JITTER_MAX_MS",
       "AUTH_EMAIL_JOB_TIMEOUT_MS",
+      "AUTH_EMAIL_LINK_TTL_MS",
+      "AUTH_EMAIL_LINK_TTL_SECONDS",
       "AUTH_EMAIL_MAX_CONCURRENCY",
       "AUTH_EMAIL_MAX_QUEUED",
       "AUTH_EMAIL_SLOT_FLOOR_MS",
+      "AUTH_EMAIL_WORST_SLOT_MS",
       "__authEmailQueueDepthForTests",
       "__configureAuthEmailQueueForTests",
       "__resetAuthEmailCapsForTests",

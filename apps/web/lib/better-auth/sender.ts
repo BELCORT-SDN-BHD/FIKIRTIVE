@@ -68,6 +68,23 @@ const isDiscardable = (job: AuthEmailJob): boolean =>
 // ── executor tuning ──────────────────────────────────────────────────────────────────────────
 
 /**
+ * #757 — HOW LONG THE THING IN THE ENVELOPE STAYS USABLE, and the single place that decides it.
+ *
+ * A sign-in link is a credential with an expiry, so every other number in this file is measured
+ * against it: a queue may only be as deep as the mail it holds can still be delivered in time.
+ * That made it the one constant that must not be restated anywhere — and it was. Better Auth's
+ * `magicLink({ expiresIn })` in server.ts carried its own literal `60 * 15`, and the queue's
+ * capacity carried a comment quoting it. Two copies of a load-bearing number is one edit away
+ * from a queue that sizes itself against a lifetime nothing enforces, and nothing would fail.
+ *
+ * server.ts now reads `AUTH_EMAIL_LINK_TTL_SECONDS` from here, so there is one number.
+ */
+export const AUTH_EMAIL_LINK_TTL_MS = 15 * 60 * 1000;
+
+/** The same lifetime in the unit Better Auth's plugin takes. Derived, never restated. */
+export const AUTH_EMAIL_LINK_TTL_SECONDS = AUTH_EMAIL_LINK_TTL_MS / 1000;
+
+/**
  * How many auth-email jobs may be in flight at once.
  *
  * WHY NOT ONE. A single serial worker made every job wait for the one in front of it, and that
@@ -133,6 +150,20 @@ export const AUTH_EMAIL_JITTER_MAX_MS = 2000;
 export const AUTH_EMAIL_JOB_TIMEOUT_MS = 20_000;
 
 /**
+ * #757 — THE LONGEST ONE JOB CAN OCCUPY A WORKER.
+ *
+ * The floor is a MINIMUM hold, and the previous round's capacity arithmetic read it as if it
+ * were the maximum: it costed a slot at floor + jitter (5 s) and concluded a 500-deep queue
+ * drained in ten and a half minutes, comfortably inside a link's fifteen. But a job that runs
+ * to its deadline holds the slot for the jitter plus the whole timeout, and nothing caps it
+ * below that — a mail provider that accepts connections and stops answering puts EVERY job on
+ * that branch at once. The honest slot length is therefore the jitter plus whichever of the
+ * floor and the deadline is longer: 22 seconds, not 5.
+ */
+export const AUTH_EMAIL_WORST_SLOT_MS =
+  AUTH_EMAIL_JITTER_MAX_MS + Math.max(AUTH_EMAIL_SLOT_FLOOR_MS, AUTH_EMAIL_JOB_TIMEOUT_MS);
+
+/**
  * How many jobs may be outstanding at once, across everything not yet finished.
  *
  * WHY A BOUND AT ALL. Every valid request hands over a job — including the over-budget ones,
@@ -141,13 +172,20 @@ export const AUTH_EMAIL_JOB_TIMEOUT_MS = 20_000;
  * reset and verification email behind their backlog. A bound turns that into a bounded amount
  * of dropped mail with an operator log, which is a far better failure.
  *
- * WHY 500. A slot is held for the jitter plus the floor — at worst five seconds — so four
- * workers clear at least 0.8 jobs a second. A full queue therefore drains in about ten and a
- * half minutes, and a magic-link token only lives fifteen (`magicLink({ expiresIn: 60 * 15 })`).
- * A deeper queue could only ever hold links that would expire before they were sent, so this is
- * about the largest backlog that can still be useful.
+ * #757 — WHY IT IS NOT A NUMBER ANY MORE. A bound only helps if a job that lands at the BACK of
+ * the queue still arrives while the link it carries is alive; past that point the queue is full
+ * of credentials that will be posted dead, which costs the merchant their hourly budget as well
+ * as their link. 500 was chosen against a five-second slot and fails against a twenty-two-second
+ * one — the same 500 jobs take 45.8 minutes to clear, so everything past roughly the 163rd was
+ * always going to be posted after it expired.
+ *
+ * So the depth is DERIVED from the three quantities it depends on, and the inequality
+ * `depth × worst slot ÷ workers ≤ link lifetime` holds by construction rather than by comment.
+ * Change the deadline, the pool or the link's life and the depth follows on its own.
  */
-export const AUTH_EMAIL_MAX_QUEUED = 500;
+export const AUTH_EMAIL_MAX_QUEUED = Math.floor(
+  (AUTH_EMAIL_LINK_TTL_MS * AUTH_EMAIL_MAX_CONCURRENCY) / AUTH_EMAIL_WORST_SLOT_MS,
+);
 
 let maxConcurrency = AUTH_EMAIL_MAX_CONCURRENCY;
 let slotFloorMs = AUTH_EMAIL_SLOT_FLOOR_MS;
