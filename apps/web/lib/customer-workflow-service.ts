@@ -9,6 +9,10 @@ import {
 } from "@fikirtive/core";
 import { broadcastPurposeFromTemplateClassification } from "./customer-broadcast-purpose";
 import {
+  BUSINESS_HOURS_UNAVAILABLE_REASONS,
+  ROUTINE_AUTHORITY_FAILURES,
+  SEND_ELIGIBILITY_NON_PASS_REASONS,
+  WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS,
   canonicalHash,
   canonicalJson,
   canonicalizeBusinessHoursPolicy,
@@ -74,6 +78,55 @@ export const CUSTOMER_WORKFLOW_ERROR_CODES = {
 
 export type CustomerWorkflowErrorCode =
   (typeof CUSTOMER_WORKFLOW_ERROR_CODES)[keyof typeof CUSTOMER_WORKFLOW_ERROR_CODES];
+
+/**
+ * The four stop reasons this service names itself. Every other reason a merchant can read
+ * comes from an enumeration owned elsewhere (see CUSTOMER_WORKFLOW_REASON_CODES below) —
+ * these are the ones written here, so they are written ONCE, here, and referenced at the
+ * settlement sites rather than retyped as literals.
+ */
+const SERVICE_STOP_REASONS = {
+  humanTakeover: "HUMAN_TAKEOVER_AUTOMATION_PAUSED",
+  businessHoursInside: "BUSINESS_HOURS_INSIDE",
+  conversationStrictClassificationUnavailable: "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE",
+  broadcastOneMemberSubmitSeamUnavailable: "BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE",
+} as const;
+
+/** `firstNonPass` returns this only if it is asked for a blocking axis and finds none. */
+const NO_BLOCKING_AXIS_REASON = "eligibility:unknown";
+
+/**
+ * TOTALITY: every stop reason a merchant can be shown on the Routine monitoring panel (#811).
+ *
+ * The panel renders `RoutineRun.blockReason ?? errorCode` through `reasonCodeCopy`, and each
+ * value in this list must have a sentence there — `lib/__tests__/workflow-format.test.ts`
+ * pins the two sets equal in BOTH directions, the same pinboard #770 built for ERROR_COPY.
+ * That check is the fix for how this broke: the send gate learned
+ * `consent_unknown_d5_eligible` and `consent_unknown_unconfirmed_automatic_hard_block`,
+ * nothing required copy for them, and a Routine told the merchant
+ * "This workflow stopped with reason consentstop:consent unknown d5 eligible".
+ *
+ * Every entry is DERIVED from the enumeration that owns it, never retyped:
+ *   · authority failures        → workflow-engine's ROUTINE_AUTHORITY_FAILURES
+ *   · pre-dispatch unavailable  → workflow-journey's WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS
+ *   · business-hours refusals   → workflow-business-hours' BUSINESS_HOURS_UNAVAILABLE_REASONS
+ *   · four-axis refusals        → send-eligibility's SEND_ELIGIBILITY_NON_PASS_REASONS
+ * so a new reason in any of those files lands here on its own and the copy pinboard goes red.
+ *
+ * NOT here, on purpose: `delegated_then_routine_authority_*`. Those are one family answered by
+ * one sentence (the hand-off already happened; delivery is unknown until receipts exist), so
+ * `reasonCodeCopy` answers them by prefix. The pinboard covers that family separately.
+ */
+export const CUSTOMER_WORKFLOW_REASON_CODES: readonly string[] = [
+  ...ROUTINE_AUTHORITY_FAILURES.map((failure) => `routine_authority_${failure}`),
+  ...WORKFLOW_PRE_DISPATCH_UNAVAILABLE_REASONS,
+  ...Object.values(SERVICE_STOP_REASONS),
+  ...BUSINESS_HOURS_UNAVAILABLE_REASONS.map((reason) => `BUSINESS_HOURS_${reason}`),
+  ...Object.entries(SEND_ELIGIBILITY_NON_PASS_REASONS).flatMap(([axisName, reasons]) =>
+    reasons.map((reason) => `${axisName}:${reason}`),
+  ),
+  NO_BLOCKING_AXIS_REASON,
+];
 
 export class CustomerWorkflowError extends Error {
   constructor(public readonly code: CustomerWorkflowErrorCode) {
@@ -313,7 +366,14 @@ const MAX_SAFE_RUN_SUMMARY_KEYS = 64;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const TOKEN = /^[a-z0-9][a-z0-9_-]{0,127}$/;
-const AXES = ["consentStop", "doNotDisturb", "providerRefusal", "frequency"] as const;
+/**
+ * The four axes, in the order `firstNonPass` reports them. Read off the reason enumeration
+ * rather than retyped: a fifth axis with no reasons enumerated would otherwise be a stop the
+ * merchant reads with no sentence behind it (#811). Object key order is insertion order.
+ */
+const AXES = Object.keys(SEND_ELIGIBILITY_NON_PASS_REASONS) as Array<
+  keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS
+>;
 
 function fail(code: CustomerWorkflowErrorCode): never {
   throw new CustomerWorkflowError(code);
@@ -590,7 +650,7 @@ function firstNonPass(verdict: SendEligibilityResult): string {
     const axis = verdict[name] as EligibilityAxis;
     if (axis.status !== "pass") return `${name}:${axis.reason ?? axis.status}`;
   }
-  return "eligibility:unknown";
+  return NO_BLOCKING_AXIS_REASON;
 }
 
 function unavailableConversationEligibility(checkedAt: string): SendEligibilityResult {
@@ -2535,14 +2595,14 @@ export function workflowLifecycleService(
       if (conversationAutomationState === "paused_by_human") {
         settlement = {
           status: "blocked",
-          reasonCode: "HUMAN_TAKEOVER_AUTOMATION_PAUSED",
+          reasonCode: SERVICE_STOP_REASONS.humanTakeover,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
       } else if (businessHoursResult?.status === "inside") {
         settlement = {
           status: "blocked",
-          reasonCode: "BUSINESS_HOURS_INSIDE",
+          reasonCode: SERVICE_STOP_REASONS.businessHoursInside,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };
@@ -2558,7 +2618,7 @@ export function workflowLifecycleService(
           status: action.action.type === "conversation_reply" ? "unavailable" : "blocked",
           reasonCode:
             action.action.type === "conversation_reply"
-              ? "CONVERSATION_STRICT_CLASSIFICATION_UNAVAILABLE"
+              ? SERVICE_STOP_REASONS.conversationStrictClassificationUnavailable
               : firstNonPass(verdict),
           eligibilityInput,
           eligibilityVerdict: verdict,
@@ -2566,7 +2626,7 @@ export function workflowLifecycleService(
       } else {
         settlement = {
           status: "unavailable",
-          reasonCode: "BROADCAST_ONE_MEMBER_SUBMIT_SEAM_UNAVAILABLE",
+          reasonCode: SERVICE_STOP_REASONS.broadcastOneMemberSubmitSeamUnavailable,
           eligibilityInput,
           eligibilityVerdict: verdict,
         };

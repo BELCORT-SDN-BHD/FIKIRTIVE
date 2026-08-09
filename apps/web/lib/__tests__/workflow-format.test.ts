@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 
+import { ROUTINE_AUTHORITY_FAILURES } from "@fikirtive/db";
+
 import {
+  reasonCodeCopy,
   summarizeRuleSource,
   validationIssueCopy,
   workflowErrorMessage,
   WORKFLOW_ERROR_COPY_CODES,
+  WORKFLOW_REASON_COPY_CODES,
 } from "@/components/crm/workflows/workflow-format";
-import { CUSTOMER_WORKFLOW_ERROR_CODES } from "@/lib/customer-workflow-service";
+import {
+  CUSTOMER_WORKFLOW_ERROR_CODES,
+  CUSTOMER_WORKFLOW_REASON_CODES,
+} from "@/lib/customer-workflow-service";
 import { routineLimitsSummary } from "@/lib/routine-authorization-facts";
 
 // Mirrors the reordering the compiler grammar allows (packages/db/src/workflow-compiler.test.ts,
@@ -97,6 +104,71 @@ describe("workflow failure copy (#753)", () => {
     expect(message).not.toContain("SOME_FUTURE_REFUSAL");
     expect(message).toContain("some future refusal");
     expect(message).toMatch(/retry/i);
+  });
+});
+
+describe("workflow stop-reason copy (#811)", () => {
+  it("covers exactly the reasons a Routine can stop with", () => {
+    // TOTALITY, both directions — the pinboard #770 built for ERROR_COPY, which never covered
+    // REASON_COPY. `consentStop:consent_unknown_d5_eligible` and
+    // `consentStop:consent_unknown_unconfirmed_automatic_hard_block` had been reachable with
+    // no sentence since before #807 because nothing compared these two sets.
+    expect([...WORKFLOW_REASON_COPY_CODES].sort()).toEqual([...CUSTOMER_WORKFLOW_REASON_CODES].sort());
+  });
+
+  it("keeps the authority list honest (a collapsed enumeration would pin nothing)", () => {
+    // Both sets being equal proves nothing if the authority itself went empty. These are the
+    // four families it is assembled from, and the two reasons this ticket is about.
+    expect(CUSTOMER_WORKFLOW_REASON_CODES.length).toBeGreaterThan(25);
+    for (const code of [
+      "routine_authority_hash_drift",
+      "workflow_target_unavailable",
+      "BUSINESS_HOURS_CLOCK_UNAVAILABLE",
+      "consentStop:consent_unknown_d5_eligible",
+      "consentStop:consent_unknown_unconfirmed_automatic_hard_block",
+      "doNotDisturb:dnd_set",
+      "providerRefusal:account_level_block",
+      "frequency:frequency_cap_reached",
+    ]) {
+      expect(CUSTOMER_WORKFLOW_REASON_CODES, code).toContain(code);
+    }
+  });
+
+  it("never puts a machine code in what the merchant reads", () => {
+    for (const code of CUSTOMER_WORKFLOW_REASON_CODES) {
+      const message = reasonCodeCopy(code);
+      // The symptom itself: an uncovered reason came out as the humanised token
+      // ("This workflow stopped with reason consentstop:consent unknown d5 eligible.").
+      expect(message, code).not.toMatch(/^This workflow stopped with reason /);
+      expect(message, code).not.toContain(code);
+      // Both halves of `consentStop:dnd_set` are machine tokens: the axis name is camelCase,
+      // the reason is snake_case, and the pre-dispatch/business-hours codes are SCREAMING_SNAKE.
+      // ("frequency" on its own is an English word and stays allowed.)
+      expect(message, code).not.toMatch(/\b[a-z]+[A-Z][a-z]/);
+      expect(message, code).not.toMatch(/\b[a-z]+_[a-z]+\b/);
+      expect(message, code).not.toMatch(/[A-Z]{2,}_[A-Z]/);
+      expect(message, code).toMatch(/[.!]$/);
+    }
+  });
+
+  it("answers the late-delegation family by prefix, without printing the failure name", () => {
+    for (const failure of ROUTINE_AUTHORITY_FAILURES) {
+      const code = `delegated_then_routine_authority_${failure}`;
+      const message = reasonCodeCopy(code);
+      expect(message, code).not.toContain(code);
+      expect(message, code).toContain("handed off");
+    }
+  });
+
+  it("says D5 nowhere — it is an internal document number, not a sentence (#728)", () => {
+    for (const code of CUSTOMER_WORKFLOW_REASON_CODES) {
+      expect(reasonCodeCopy(code), code).not.toMatch(/\bd5\b/i);
+    }
+  });
+
+  it("turns an unmapped reason into words, and says something for no reason at all", () => {
+    expect(reasonCodeCopy("SOME_FUTURE_STOP")).not.toContain("SOME_FUTURE_STOP");
+    expect(reasonCodeCopy(null)).toBe("No reason was recorded.");
   });
 });
 

@@ -38,6 +38,40 @@ export class SendEligibilityError extends Error {
 
 export type EligibilityAxisStatus = "pass" | "block" | "risk" | "unknown" | "unavailable";
 
+/**
+ * Every reason a NON-PASS axis reports, per axis — the closed set, as a VALUE.
+ *
+ * #811: a workflow step blocked by this evaluator is recorded as `<axis>:<reason>`, and that
+ * string is what the merchant reads on the Routine monitoring panel. Nothing used to require
+ * a sentence for a new reason, so two of them (`consent_unknown_d5_eligible`,
+ * `consent_unknown_unconfirmed_automatic_hard_block`) reached merchants as a humanised code.
+ * workflow-format's copy pinboard now reads this list in both directions: a reason added here
+ * without copy is a red test, and copy for a reason nobody reports is a red test too.
+ *
+ * Only NON-PASS reasons belong here. A passing axis may still carry a reason (see
+ * PASS_AXIS_REASONS) — it never becomes a stop the merchant has to read.
+ */
+export const SEND_ELIGIBILITY_NON_PASS_REASONS = {
+  consentStop: [
+    "projection_unreadable",
+    "effective_revoke",
+    "legacy_mirror_unreadable",
+    "unresolved_legacy_opt_out",
+    "consent_unknown_d5_eligible",
+    "consent_unknown_unconfirmed_automatic_hard_block",
+  ],
+  doNotDisturb: ["contact_not_found_in_tenant", "fold_unreadable", "dnd_set"],
+  providerRefusal: ["state_unreadable", "permanent_recipient_block", "account_level_block"],
+  frequency: ["missing_channel_policy", "counter_unreadable", "frequency_cap_reached"],
+} as const;
+
+/** Carried by an axis that PASSES — an honest empty state, never a refusal (§4.3). */
+const PASS_AXIS_REASONS = ["no_provider_connection", "not_proactive_not_counted"] as const;
+
+type EligibilityAxisReason =
+  | (typeof SEND_ELIGIBILITY_NON_PASS_REASONS)[keyof typeof SEND_ELIGIBILITY_NON_PASS_REASONS][number]
+  | (typeof PASS_AXIS_REASONS)[number];
+
 export type EligibilityAxis = {
   status: EligibilityAxisStatus;
   source: string;
@@ -140,7 +174,13 @@ function validateInput(input: SendEligibilityInput): void {
   if (input.providerConnectionId !== null) requireText(input.providerConnectionId, "providerConnectionId");
 }
 
-function axis(status: EligibilityAxisStatus, source: string, checkedAt: string, reason?: string): EligibilityAxis {
+/** `reason` is narrowed to the enumerations above so a new one cannot be invented inline. */
+function axis(
+  status: EligibilityAxisStatus,
+  source: string,
+  checkedAt: string,
+  reason?: EligibilityAxisReason,
+): EligibilityAxis {
   return reason === undefined ? { status, source, checkedAt } : { status, source, reason, checkedAt };
 }
 
