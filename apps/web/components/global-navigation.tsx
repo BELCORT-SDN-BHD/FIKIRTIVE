@@ -34,7 +34,7 @@ import {
   isNavGroup,
   merchantNavLinks,
   type MerchantNavLink,
-} from "@fikirtive/core";
+} from "@fikirtive/core/navigation";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { OttoAvatar } from "@/components/otto/OttoAvatar";

@@ -23,7 +23,7 @@ import {
   OTTO_ASSISTANT,
   everyNavDestination,
   merchantNavMap,
-} from "@fikirtive/core";
+} from "@fikirtive/core/navigation";
 import { MerchantShellContent, isMerchantSurface } from "@/components/global-navigation";
 
 vi.mock("next/navigation", () => ({
@@ -75,8 +75,8 @@ describe("创作是主导航的第一格", () => {
 
   it("创作名字只写在一处 —— 壳里不许再手抄一份字面量", () => {
     const nav = readFileSync(path.join(WEB_ROOT, "components/global-navigation.tsx"), "utf8");
-    // 壳只画数据:整棵树从 @fikirtive/core 来,壳里没有第二份 label 字面量。
-    expect(nav).toMatch(/from\s+["']@fikirtive\/core["']/);
+    // 壳只画数据:整棵树从 @fikirtive/core/navigation 来,壳里没有第二份 label 字面量。
+    expect(nav).toMatch(/from\s+["']@fikirtive\/core\/navigation["']/);
     expect(nav).not.toContain(`"${CREATE_NAV_LABEL}"`);
   });
 });

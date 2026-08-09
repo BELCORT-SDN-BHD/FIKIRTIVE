@@ -32,7 +32,7 @@ import {
   CANVAS_HREF,
   CREATE_NAV_HREF,
   everyNavDestination,
-} from "@fikirtive/core";
+} from "@fikirtive/core/navigation";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_ROOT = resolve(HERE, "../..");
