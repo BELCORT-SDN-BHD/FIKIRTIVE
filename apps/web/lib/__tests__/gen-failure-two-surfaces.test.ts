@@ -67,7 +67,11 @@ describe("ENTRY creation surface — the card's poll passes the explanation on",
 describe("ENTRY Otto — the assistant can answer the follow-up with the same sentence", () => {
   /** What Otto is told about the last generation in this conversation. */
   const statusLine = (activeJob: { status: string; kind: string; error?: string | null }): string => {
-    const message = buildContextSystemMessage({ orgId: "o1", userId: "o1", projectId: "p1", threadId: "t1", activeJob });
+    const message = buildContextSystemMessage({
+      orgId: "o1", userId: "o1", projectId: "p1", threadId: "t1",
+      disabledModels: [],
+      activeJob,
+    });
     return String((message as { content?: unknown } | null)?.content ?? "");
   };
 
