@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 type ListResult = Awaited<ReturnType<typeof listSegments>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
@@ -45,7 +46,12 @@ type SegmentLeafRule =
   | { kind: "channel"; channel: string }
   | { kind: "tag"; tag: string }
   | { kind: "contactability"; value: "contactable" | "not_contactable" };
-type SegmentRuleGroup = { match: "all" | "any"; rules: SegmentLeafRule[] };
+type SegmentRuleGroup = {
+  match: "all" | "any";
+  rules: SegmentLeafRule[];
+  /** #758 — the merchant's optional exclusion, off unless he turns it on. */
+  excludeReportedOptOut?: boolean;
+};
 type RuleKind = SegmentLeafRule["kind"];
 
 type DraftRule =
@@ -62,7 +68,24 @@ type DraftRule =
 const KNOWN_OPT_OUT_RULE_NOTE =
   "Known opt-out means the customer opted out through their own channel. An opt-out you recorded yourself keeps the contact in the list, marked reported opt-out — open the contact to see its consent history.";
 
-type DraftGroup = { match: "all" | "any"; rules: DraftRule[] };
+/**
+ * #758 — the optional tightening the Founder ruled for on top of #496 option B. It is the
+ * merchant's own choice, off by default, and the copy says whose record it is: turning it on
+ * excludes contacts on evidence the customer never gave, which is the merchant's call to make
+ * and nobody else's.
+ */
+const REPORTED_OPT_OUT_EXCLUSION_LABEL = "Also exclude opt-outs I recorded myself";
+/**
+ * r2 判官 P1 — the last clause used to promise that a customer who opted out through her own
+ * channel is "out either way". A merchant may build a segment on known opt-out, and there she is
+ * selected on purpose, so the sentence was false on a legal segment — the exact overclaim #768
+ * bans. Every clause here now states only what this screen does: what it changes, and what it
+ * leaves alone. `segment-reported-optout-exclusion.test.ts` fences the claim, not the wording.
+ */
+const REPORTED_OPT_OUT_EXCLUSION_NOTE =
+  "Off by default. An opt-out you or a CSV import recorded is not confirmed by the customer, so while this is off it removes nobody from this segment. Turn it on and this segment leaves those contacts out of its count, its preview, and any broadcast built from it. Nothing else changes: what the consent record decides about a contact stays exactly as it is.";
+
+type DraftGroup = { match: "all" | "any"; rules: DraftRule[]; excludeReportedOptOut: boolean };
 type SettledPreview = { key: string; result: PreviewSuccess | null; error: string | null };
 type DraftPreviewRequest = SettledPreview & { status: "loading" | "settled" };
 type RetryFence = {
@@ -97,12 +120,14 @@ function newDraftRule(kind: RuleKind, id: number): DraftRule {
 }
 
 function initialDraft(): DraftGroup {
-  return { match: "all", rules: [newDraftRule("contactability", 1)] };
+  // Never on by default: the product does not decide for the merchant who is worth keeping.
+  return { match: "all", rules: [newDraftRule("contactability", 1)], excludeReportedOptOut: false };
 }
 
 function draftFromRules(group: SegmentRuleGroup): DraftGroup {
   return {
     match: group.match,
+    excludeReportedOptOut: group.excludeReportedOptOut === true,
     rules: group.rules.map((rule, index): DraftRule => {
       const id = index + 1;
       switch (rule.kind) {
@@ -149,9 +174,12 @@ function compileDraft(draft: DraftGroup): SegmentRuleGroup | null {
         return { kind: rule.kind, value: rule.value };
     }
   });
-  return rules.every((rule): rule is SegmentLeafRule => rule !== null)
-    ? { match: draft.match, rules }
-    : null;
+  if (!rules.every((rule): rule is SegmentLeafRule => rule !== null)) return null;
+  // Canonical shape: the key is sent only when the option is on, so a segment saved with it off
+  // is byte-for-byte the segment the merchant would have saved before this option existed.
+  return draft.excludeReportedOptOut
+    ? { match: draft.match, rules, excludeReportedOptOut: true }
+    : { match: draft.match, rules };
 }
 
 function isSuccess<T extends { error: string } | { ok: true }>(result: T): result is Extract<T, { ok: true }> {
@@ -384,6 +412,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
         excludedByConsentCount: preview.excludedByConsentCount,
         unresolvedLegacyOptOutCount: preview.unresolvedLegacyOptOutCount,
         reportedOptOutCount: preview.reportedOptOutCount,
+        excludedByReportedOptOutCount: preview.excludedByReportedOptOutCount,
       };
       setSegments((current) =>
         attempt.operation === "update"
@@ -719,6 +748,30 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                   </p>
                 ) : null}
 
+                {/* #758 — one optional tightening, outside the rule list because it is not a
+                    rule: it never selects anyone, it only removes people the rules selected. */}
+                <div className="mt-5 rounded-xl border border-border bg-card p-3 shadow-xs sm:p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <label htmlFor="segment-exclude-reported-opt-out" className="text-sm font-semibold">
+                      {REPORTED_OPT_OUT_EXCLUSION_LABEL}
+                    </label>
+                    <Switch
+                      id="segment-exclude-reported-opt-out"
+                      aria-label={REPORTED_OPT_OUT_EXCLUSION_LABEL}
+                      checked={draft.excludeReportedOptOut}
+                      disabled={draftLocked}
+                      onCheckedChange={(checked) => {
+                        setDraft((current) => ({ ...current, excludeReportedOptOut: checked }));
+                        setSaveError(null);
+                        setSavedNotice(null);
+                      }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                    {REPORTED_OPT_OUT_EXCLUSION_NOTE}
+                  </p>
+                </div>
+
                 <div className="mt-6">
                   <label htmlFor="segment-name" className="text-sm font-semibold">
                     Segment name
@@ -872,11 +925,22 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
         {preview.reportedOptOutCount > 0
           ? ` · ${preview.reportedOptOutCount} reported opt-out still included`
           : ""}
+        {/*
+          #758 — the merchant's own exclusion is counted and named separately from the consent
+          exclusion beside it. One number is what the consent record decided; this one is what
+          the merchant chose, and the same contact is never in both.
+        */}
+        {preview.excludedByReportedOptOutCount > 0
+          ? ` · ${preview.excludedByReportedOptOutCount} reported opt-out excluded by your choice`
+          : ""}
       </p>
       <p className="mt-2 text-xs leading-5 text-muted-foreground">
         Unknown consent stays included. {KNOWN_OPT_OUT_RULE_NOTE} Do not disturb is checked at send time and does not filter this segment.
         {preview.unresolvedLegacyOptOutCount > 0
           ? ` ${preview.unresolvedLegacyOptOutCount} of them opted out before consent history was kept, so they stay out until the customer opts in again.`
+          : ""}
+        {preview.excludedByReportedOptOutCount > 0
+          ? " You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every broadcast built from it."
           : ""}
       </p>
       {/*

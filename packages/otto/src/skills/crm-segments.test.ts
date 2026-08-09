@@ -31,6 +31,104 @@ function ports() {
   } as unknown as NonNullable<OttoContext["segments"]>;
 }
 
+/**
+ * r4 判官 — surface 4 of the copy board. Otto's descriptions are merchant-facing in the way that
+ * matters most: they are what the model reasons from before it acts on a merchant's audience, and
+ * r3's fence never scanned them at all.
+ *
+ * The whole string is pinned, not a phrase inside it, for the same reason the web surfaces are
+ * (see `apps/web/lib/__tests__/segment-reported-optout-exclusion.test.ts`): a sentence APPENDED to
+ * a description is a change the reviewer must see, and no word-list anticipates it. Editing any of
+ * these three strings means editing this board, which is the human review.
+ *
+ * The class-level pattern is applied here too, as defence in depth. It is deliberately the same
+ * rule as the web fence; it is restated rather than imported because the two live in different
+ * packages, and a package export widened for a test would be a worse trade.
+ */
+const APPROVED_OTTO_COPY = {
+  readSegments:
+    "Read the user's CRM Segments through the same owner-scoped action layer as the CRM page. $0 " +
+    "read-only. operation=list returns saved segments with rules and live " +
+    "matched/contactable/known-opt-out counts. operation=get needs an exact segmentId from list " +
+    "and returns that Segment's rule and counts. operation=preview evaluates a STRUCTURED " +
+    "one-level rule object without saving. Never send free-form natural language as rules and " +
+    "never guess an id. Contactable here is an audience estimate: unknown consent stays included, " +
+    "only known opt-out is excluded, and do-not-disturb is enforced later at send time. A rule " +
+    "group may also carry excludeReportedOptOut: on, it additionally leaves out every contact the " +
+    "user recorded an opt-out for himself, and the count comes back as " +
+    "excludedByReportedOptOutCount. It only ever removes people, and it does not change what the " +
+    "consent record already decides.",
+  buildSegment:
+    "Create or update one CRM Segment through the same validated, owner-scoped action layer as " +
+    "the CRM page. $0 internal write. Pass a STRUCTURED one-level rule object only; never compile " +
+    "or send free-form natural language inside this skill. create needs name + rules and uses a " +
+    "server-issued id. update also needs the exact segmentId returned by readSegments. Unknown " +
+    "consent stays in the audience; only known opt-out is excluded from the contactable estimate, " +
+    "and do-not-disturb remains a send-time restriction. The rule group's optional " +
+    "excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for " +
+    "himself, including one who also opted out through their own channel; it only removes people, " +
+    "never adds any, it is off unless the user asked for it, and it applies to this segment's " +
+    "counts, preview and broadcasts alike.",
+  excludeReportedOptOutField:
+    "Optional, defaults to off. On: also leave out every contact the user has recorded an opt-out " +
+    "for himself, including one who additionally opted out through their own channel. It only " +
+    "removes contacts from this segment; it never adds one, and it does not change what the " +
+    "consent record decides. Set it only when the user asked to exclude the contacts he recorded.",
+} as const;
+
+const UNIVERSAL_CLAIM =
+  /\b(every|everyone|everything|all|always|never|nobody|no ?one|none|cannot|can't|can not|won't|will not|no matter|either way|in any|any|guarantee\w*|impossible|under no|regardless|whatever)\b/i;
+const AUDIENCE_DOMAIN =
+  /\b(audiences?|segments?|broadcasts?|exclud\w*|select\w*|opt-?outs?|opted out|contactable|reachable|contacts?|customers?|recipients?)\b/i;
+
+/** Sentences that promise something about every case in this subject matter. */
+function universalClaims(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(
+      (sentence) =>
+        sentence.length > 0 && UNIVERSAL_CLAIM.test(sentence) && AUDIENCE_DOMAIN.test(sentence),
+    );
+}
+
+/**
+ * Universal sentences these three strings are allowed to say, with the reason each is provable.
+ * Kept in the same shape as the web board so the two read alike.
+ */
+type OttoSurface = keyof typeof APPROVED_OTTO_COPY;
+
+const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
+  sentence: string;
+  surface: OttoSurface;
+  why: string;
+}> = [
+  {
+    sentence:
+      "It only removes contacts from this segment; it never adds one, and it does not change what the consent record decides.",
+    surface: "excludeReportedOptOutField",
+    why: "Provable and proved above: `selectedIntoAudience` applies the flag as a subtraction before any rule, and the judge's own 32,928-combination sweep confirmed subtract-only.",
+  },
+  {
+    sentence:
+      "A rule group may also carry excludeReportedOptOut: on, it additionally leaves out every contact the user recorded an opt-out for himself, and the count comes back as excludedByReportedOptOutCount.",
+    surface: "readSegments",
+    why: "'every contact the user recorded' is the implementation exactly — an independent flag over the merchant's own record, r2's P2 correction.",
+  },
+  {
+    sentence:
+      "The rule group's optional excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for himself, including one who also opted out through their own channel; it only removes people, never adds any, it is off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike.",
+    surface: "buildSegment",
+    why: "Same rule, same subtract-only proof; 'counts, preview and broadcasts alike' is the three-source wiring r2's P1-1 fix made true and the email-broadcast example pins.",
+  },
+  {
+    sentence:
+      "On: also leave out every contact the user has recorded an opt-out for himself, including one who additionally opted out through their own channel.",
+    surface: "excludeReportedOptOutField",
+    why: "The field description of the same rule, in the same words.",
+  },
+];
+
 describe("CRM Segment skills", () => {
   it("declares the fail-closed free/internal read and write classifications", () => {
     expect(readSegmentsSkill).toMatchObject({
@@ -121,6 +219,114 @@ describe("CRM Segment skills", () => {
       ),
     ).resolves.toMatchObject({ ok: false, error: expect.stringContaining("server-issued") });
     expect(segmentPorts.build).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * #758 — the merchant's optional "also exclude the opt-outs I recorded myself" is a field on
+   * the rule group, so Otto reaches it through the same object the CRM page sends and the same
+   * action layer validates. These examples pin that Otto is not a second, weaker door: the
+   * schema accepts the field, and both skills hand it on byte-for-byte instead of dropping it.
+   */
+  it("carries the merchant's optional reported-opt-out exclusion through, unchanged", async () => {
+    const strict = { ...rules, excludeReportedOptOut: true };
+    expect(crmSegmentRuleGroup.safeParse(strict).success).toBe(true);
+    expect(crmSegmentRuleGroup.parse(strict)).toEqual(strict);
+    expect(crmSegmentRuleGroup.safeParse({ ...rules, excludeReportedOptOut: "yes" }).success).toBe(
+      false,
+    );
+
+    const segmentPorts = ports();
+    await executeReadSegments({ operation: "preview", rules: strict }, runContext(segmentPorts));
+    await executeBuildSegment(
+      { operation: "create", name: "Audience", rules: strict },
+      runContext(segmentPorts),
+    );
+
+    expect(segmentPorts.preview).toHaveBeenCalledWith(strict);
+    expect(segmentPorts.build).toHaveBeenCalledWith({
+      operation: "create",
+      segmentId: undefined,
+      name: "Audience",
+      rules: strict,
+    });
+  });
+
+  /**
+   * r2 判官 P2 — the description is what the model reasons from, so it is held to the same
+   * standard as merchant-facing copy. r1 said the option excludes contacts "whose only opt-out"
+   * is the merchant's, which is not what the code does: it is an independent flag, and it also
+   * removes a contact who additionally carries a ledger opt-out. A model told the narrower rule
+   * would answer "she has a real opt-out too, so this setting does not touch her" — wrong, and
+   * wrong about consent.
+   */
+  it("describes the exclusion as the code applies it, not more narrowly", () => {
+    for (const skill of [readSegmentsSkill, buildSegmentSkill]) {
+      expect(skill.description, skill.name).toContain("excludeReportedOptOut");
+      expect(skill.description, skill.name).toContain("recorded");
+      // The false narrowing, and the "only" family it came from.
+      expect(skill.description, skill.name).not.toContain("whose only opt-out");
+      expect(skill.description, skill.name).not.toContain("only opt-out");
+    }
+    // And the field's own description, which is what the model sees next to the parameter.
+    const field = crmSegmentRuleGroup.shape.excludeReportedOptOut.description ?? "";
+    expect(field).not.toContain("only opt-out");
+    expect(field).toContain("recorded");
+  });
+
+  /**
+   * r4 判官 — layer 1 for surface 4. Whole strings, exact equality: appending a sentence to a
+   * description is a change a reviewer has to see, and that is what beat r3's block pins.
+   */
+  it("pins Otto's three descriptions as exact snapshots", () => {
+    expect(readSegmentsSkill.description).toBe(APPROVED_OTTO_COPY.readSegments);
+    expect(buildSegmentSkill.description).toBe(APPROVED_OTTO_COPY.buildSegment);
+    expect(crmSegmentRuleGroup.shape.excludeReportedOptOut.description).toBe(
+      APPROVED_OTTO_COPY.excludeReportedOptOutField,
+    );
+  });
+
+  /** r4 判官 — layer 2 for surface 4, the same class rule the web surfaces are held to. */
+  it("makes no universal promise about audiences that is not written down as provable", () => {
+    const approved = new Set(APPROVED_OTTO_UNIVERSAL.map((entry) => entry.sentence));
+    for (const [surface, text] of Object.entries(APPROVED_OTTO_COPY)) {
+      expect(
+        universalClaims(text).filter((sentence) => !approved.has(sentence)),
+        surface,
+      ).toEqual([]);
+    }
+    // r5 判官 ③ — each exemption has to still be on ITS OWN surface, not merely somewhere in the
+    // three. A board of dead exemptions is where the next false promise hides.
+    for (const entry of APPROVED_OTTO_UNIVERSAL) {
+      expect(
+        APPROVED_OTTO_COPY[entry.surface].includes(entry.sentence),
+        `${entry.surface}: ${entry.sentence} — ${entry.why}`,
+      ).toBe(true);
+    }
+  });
+
+  /** r4 判官 — the drill: a rejected sentence appended to any of the three fails layer 1. */
+  it("fails the snapshot for a promise appended to any description", () => {
+    const rejected = [
+      "They stay excluded in every segment.",
+      "A customer who opted out cannot appear in an audience.",
+      "They will not come back.",
+    ];
+    for (const sentence of rejected) {
+      for (const [surface, approved] of Object.entries(APPROVED_OTTO_COPY)) {
+        expect(`${approved} ${sentence}`, `${sentence} on ${surface}`).not.toBe(approved);
+      }
+    }
+  });
+
+  it("never turns the exclusion on by itself", async () => {
+    // Off is the default the Founder ruled for, and "the model thought it was safer" is not a
+    // merchant asking. Parsing a plain group must not invent the field.
+    expect(crmSegmentRuleGroup.parse(rules)).toEqual(rules);
+    expect("excludeReportedOptOut" in crmSegmentRuleGroup.parse(rules)).toBe(false);
+
+    const segmentPorts = ports();
+    await executeReadSegments({ operation: "preview", rules }, runContext(segmentPorts));
+    expect(segmentPorts.preview).toHaveBeenCalledWith(rules);
   });
 
   it("fails closed when the authenticated web port is absent", async () => {

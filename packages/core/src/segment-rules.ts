@@ -14,6 +14,26 @@ export type SegmentLeafRule =
 export type SegmentRuleGroup = {
   match: "all" | "any";
   rules: SegmentLeafRule[];
+  /**
+   * #758 — the merchant's optional, opt-in tightening: also leave out the contacts whose ONLY
+   * opt-out is one the merchant recorded himself (#496 option B keeps those in by default,
+   * because a merchant assertion is not customer-verified evidence).
+   *
+   * It travels with the rules on purpose. The rule group is the one thing every selecting path
+   * already carries — the stored `Segment.rulesJson`, the segments page preview, the broadcast
+   * freeze, Otto — so a second channel for this choice would be a second place for the answer to
+   * differ, which is the defect #750 closed.
+   *
+   * The pure matcher below deliberately does NOT answer it: "did the merchant record an opt-out"
+   * is a consent-ledger fact this module has no evidence for, and inventing a fact for it would
+   * put a second copy of the consent rule down here. The selection gate that owns the consent
+   * authority applies it (apps/web/lib/consent-authority.ts `selectedIntoAudience`), which is the
+   * same one gate the segments page and the broadcast audience both go through.
+   *
+   * Canonical form carries the key only when it is on, so a segment saved before this option
+   * existed and a segment saved with it off are the same stored bytes.
+   */
+  excludeReportedOptOut?: boolean;
 };
 
 export type SegmentCompileFailureReason =
@@ -63,8 +83,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const allowed = new Set(keys);
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  optional: readonly string[] = [],
+): boolean {
+  const allowed = new Set([...keys, ...optional]);
   return Object.keys(value).every((key) => allowed.has(key)) && keys.every((key) => key in value);
 }
 
@@ -121,7 +145,7 @@ function isLeafRule(value: unknown): value is SegmentLeafRule {
 
 /** Runtime fence for JSON-loaded rules. Nested groups and empty groups fail closed. */
 export function validateSegmentRuleGroup(input: unknown): SegmentRuleValidationResult {
-  if (!isRecord(input) || !hasOnlyKeys(input, ["match", "rules"])) {
+  if (!isRecord(input) || !hasOnlyKeys(input, ["match", "rules"], ["excludeReportedOptOut"])) {
     return { ok: false, error: "A segment needs one visible rule group." };
   }
   if (input.match !== "all" && input.match !== "any") {
@@ -133,7 +157,19 @@ export function validateSegmentRuleGroup(input: unknown): SegmentRuleValidationR
   if (!input.rules.every(isLeafRule)) {
     return { ok: false, error: "A segment may contain one level of supported rules only." };
   }
-  return { ok: true, value: input as SegmentRuleGroup };
+  if (
+    input.excludeReportedOptOut !== undefined &&
+    typeof input.excludeReportedOptOut !== "boolean"
+  ) {
+    return { ok: false, error: "The reported opt-out exclusion is either on or off." };
+  }
+  // #758 — canonical form: the key exists only when the merchant turned the option ON. Off and
+  // never-set are the same segment, so they must be the same stored bytes, or an unchanged
+  // re-save would read as an edit (`samePayload`) and a replay would stop being a replay.
+  const value: SegmentRuleGroup = { match: input.match, rules: input.rules as SegmentLeafRule[] };
+  return input.excludeReportedOptOut === true
+    ? { ok: true, value: { ...value, excludeReportedOptOut: true } }
+    : { ok: true, value };
 }
 
 function failure(
@@ -335,7 +371,14 @@ function contactMatchesLeaf(
   }
 }
 
-/** Pure matcher over explicit facts. Missing/invalid facts and invalid JSON rules do not match. */
+/**
+ * Pure matcher over explicit facts. Missing/invalid facts and invalid JSON rules do not match.
+ *
+ * `excludeReportedOptOut` is intentionally not applied here — see the field's note above. This
+ * function answers "do these rules describe this contact"; whether the merchant also asked to
+ * drop his own recorded opt-outs is a consent-authority decision, and the one gate that owns the
+ * consent authority applies it around this call.
+ */
 export function contactMatchesRules(
   contact: SegmentContactFacts,
   rules: SegmentRuleGroup,

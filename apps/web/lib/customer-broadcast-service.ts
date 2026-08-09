@@ -160,6 +160,12 @@ export type AudienceConsentSummary = {
   unresolvedLegacyOptOut: number;
   /** Reachable contacts in this audience whose only opt-out is the merchant's own record. */
   reportedOptOutKept: number;
+  /**
+   * #758 — reachable contacts this audience would have kept, and the segment's own optional
+   * "exclude the opt-outs I recorded myself" left out. Zero unless the merchant turned that
+   * option on for this segment; when it is on, `reportedOptOutKept` is zero instead.
+   */
+  excludedByReportedOptOut: number;
 };
 
 type ResolvedSegmentAudience = {
@@ -480,6 +486,7 @@ export function createCustomerBroadcastService(
         excludedByConsent: excluded.excluded,
         unresolvedLegacyOptOut: excluded.unresolvedLegacy,
         reportedOptOutKept,
+        excludedByReportedOptOut: excluded.excludedByReportedOptOut,
       },
     };
   }

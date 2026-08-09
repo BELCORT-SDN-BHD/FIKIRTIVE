@@ -54,6 +54,8 @@ export type CrmSegmentSummary = {
   unresolvedLegacyOptOutCount: number;
   /** Contacts kept in on an opt-out the merchant recorded himself (unverified) — #716. */
   reportedOptOutCount: number;
+  /** Contacts the segment's own optional "exclude the opt-outs I recorded" left out — #758. */
+  excludedByReportedOptOutCount: number;
   createdAt: string;
 };
 
@@ -388,6 +390,7 @@ export interface OttoContext {
           excludedByConsentCount: number;
           unresolvedLegacyOptOutCount: number;
           reportedOptOutCount: number;
+          excludedByReportedOptOutCount: number;
           contacts: CrmSegmentContact[];
           /** #819 — the sample is cut at ten rows; `returned`/`hasMore` say so in the payload
            *  so the sample can never be read as the whole match. Same shape as the contact
@@ -416,6 +419,7 @@ export interface OttoContext {
             | "excludedByConsentCount"
             | "unresolvedLegacyOptOutCount"
             | "reportedOptOutCount"
+            | "excludedByReportedOptOutCount"
           >;
         }
       | { error: string }

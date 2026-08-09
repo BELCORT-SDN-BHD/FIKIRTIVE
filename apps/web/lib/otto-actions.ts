@@ -160,6 +160,10 @@ function makeOttoSegmentsPort() {
         excludedByConsentCount: result.excludedByConsentCount,
         unresolvedLegacyOptOutCount: result.unresolvedLegacyOptOutCount,
         reportedOptOutCount: result.reportedOptOutCount,
+        // #758 — Otto reads the same disclosure the page prints, including what the merchant's
+        // own optional exclusion removed. A number the human surface shows and Otto does not is
+        // the two-surfaces-one-truth defect this port exists to prevent.
+        excludedByReportedOptOutCount: result.excludedByReportedOptOutCount,
         contacts: result.contacts,
         // #819 — the preview cuts the sample at ten. The cut crosses the boundary with the
         // rows, so "these ten are everyone" is contradicted by the payload itself.
