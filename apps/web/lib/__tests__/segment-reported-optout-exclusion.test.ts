@@ -73,28 +73,31 @@ const NOOR = `${SUITE}-noor`; // no consent record at all
 let faiz = "";
 
 /**
- * r3 判官 P1 — two gates over this screen's words, because one was not a gate.
+ * r4 判官 — the fence is structural now, because two rounds of word-lists were walked through.
  *
- * r2 banned seven exact, case-sensitive substrings. The judge then wrote two synonyms of the very
- * same promise — "stay excluded in every segment" and "cannot appear in an audience" — and the
- * regression stayed green: a list of phrasings cannot fence a CLASS of claim, it only fences the
- * phrasings someone already thought of.
+ * r2 banned exact substrings; the judge wrote synonyms and they sailed past. r3 pinned three
+ * BLOCKS whole and added a class-level pattern; the judge added a FOURTH block beside them, wrote
+ * a promise containing no universal word at all ("They will not come back."), and pointed out
+ * that the broadcast note and Otto's three descriptions were never scanned by anything. Each
+ * round the fence caught the previous attack and not the next one, which is the signature of a
+ * fence built from guesses about wording.
  *
- * Gate 1 (`APPROVED_COPY`): the merchant-facing sentences are pinned WHOLE, by exact equality.
- * Editing a syllable fails the test, so no wording reaches this screen without a human reading
- * the diff. That is the gate — the review, not the regex.
+ * Layer 1 therefore stops describing sentences and describes SURFACES. Each merchant-facing
+ * surface is rendered from a FIXED fixture and its entire visible text is compared against one
+ * approved string. Adding a block, removing one, reordering, or changing a syllable all produce a
+ * different string, so nobody has to anticipate the phrasing: the diff is the review.
  *
- * Gate 2 (`universalClaims`): a class-level catch for anything new. A sentence that puts a
- * universal or impossibility word in the same breath as this screen's subject matter (audience,
- * segment, broadcast, exclusion, selection) is a promise about every case, and on a consent
- * screen that promise is almost always false — a merchant may legally build a segment ON known
- * opt-out, where the customer everyone assumes is unreachable is selected on purpose (the Chong
- * case below still proves it). Such a sentence is red unless it appears verbatim in
- * `APPROVED_UNIVERSAL_SENTENCES` with a written reason.
+ * Layer 2 (the class-level pattern) stays as defence in depth over every surface. It is no longer
+ * the thing that must be complete — which is why the fixture table below can honestly record the
+ * sentences it does NOT catch instead of growing a regex to chase each one.
  *
- * Known limit, stated rather than hidden: sentences are read per text block, so a claim split
- * across an inline tag is seen as two fragments. Gate 1 is what covers that — every sentence on
- * this screen is pinned whole.
+ * The four surfaces:
+ *  1. the segment builder's exclusion switch and its explanation (here);
+ *  2. the preview panel, tightened and untightened (here);
+ *  3. the broadcast audience note, in each of its shapes (here);
+ *  4. Otto's two skill descriptions and the rule-group field description — pinned in
+ *     `packages/otto/src/skills/crm-segments.test.ts`, because those strings live in that package
+ *     and reaching them from here would mean widening a package export for a test.
  */
 const UNIVERSAL_CLAIM =
   /\b(every|everyone|everything|all|always|never|nobody|no ?one|none|cannot|can't|can not|won't|will not|no matter|either way|in any|any|guarantee\w*|impossible|under no|regardless|whatever)\b/i;
@@ -122,10 +125,35 @@ function merchantBlocks(markup: string): string[] {
     .filter((block) => block.length > 0);
 }
 
-/** The one block that starts with this opening — the unit gate 1 pins whole. */
-function blockStartingWith(markup: string, opening: string): string | undefined {
-  return merchantBlocks(markup).find((block) => block.startsWith(opening));
+/** Everything one surface says, as one string. This is what layer 1 compares. */
+function surfaceText(markup: string): string {
+  return merchantBlocks(markup).join(" ");
 }
+
+/**
+ * The whole `<div>` that contains this anchor, opening tag included — how the switch's own area
+ * is cut out of the full page render. It is found by the container's exact class list, so a
+ * restyle fails this test too: on a consent surface, "someone looked at it" is the point.
+ */
+function enclosingDivText(markup: string, openingTag: string): string {
+  const start = markup.indexOf(openingTag);
+  if (start < 0) throw new Error(`surface anchor not found: ${openingTag}`);
+  const tags = /<\/?div\b/g;
+  tags.lastIndex = start;
+  let depth = 0;
+  for (let match = tags.exec(markup); match; match = tags.exec(markup)) {
+    depth += match[0] === "<div" ? 1 : -1;
+    if (depth === 0) {
+      const close = markup.indexOf(">", match.index);
+      return surfaceText(markup.slice(start, close + 1));
+    }
+  }
+  throw new Error(`surface never closed: ${openingTag}`);
+}
+
+/** The container of the exclusion switch, matched on its own class list. */
+const SWITCH_SURFACE_ANCHOR =
+  '<div class="mt-5 rounded-xl border border-border bg-card p-3 shadow-xs sm:p-4">';
 
 /** The merchant-visible sentences of one render. */
 function merchantSentences(markup: string): string[] {
@@ -153,8 +181,8 @@ function isCanonicalSegmentPhrase(sentence: string): boolean {
 }
 
 /**
- * Every universal sentence this screen is allowed to say, verbatim, each with the reason it is
- * provable. Anything not on this list is red.
+ * Every universal sentence these surfaces are allowed to say, verbatim, each with the reason it
+ * is provable. Anything not on this list is red for layer 2.
  */
 const APPROVED_UNIVERSAL_SENTENCES: ReadonlyArray<{ sentence: string; why: string }> = [
   {
@@ -176,39 +204,75 @@ const APPROVED_UNIVERSAL_SENTENCES: ReadonlyArray<{ sentence: string; why: strin
     sentence: "These counts cover every contact you have.",
     why: "#726's own sentence, and provable: the segments page counts over `ownedContactsWhere(ownerId)` — every live contact this merchant has — which is exactly why the next sentence says a broadcast's number can be lower. Pre-existing copy, surfaced by this fence rather than written for it.",
   },
+  {
+    sentence:
+      "This count covers the contacts this broadcast can reach on its channel, so it can be lower than the count on the segments page, which covers every contact you have.",
+    why: "#726's twin sentence on the broadcast side, provable the same way — the run counts only contacts holding an identity on its own channel. Found by extending layer 2 to the broadcast note, which is a surface nothing scanned before r4.",
+  },
 ];
 const APPROVED_UNIVERSAL = new Set(APPROVED_UNIVERSAL_SENTENCES.map((entry) => entry.sentence));
 
-/** What gate 2 must catch. r1's own sentence, the judge's two synonyms, and three of mine. */
-const RED_FIXTURES: ReadonlyArray<{ label: string; sentence: string }> = [
+/**
+ * What layer 2 is measured against — and it is measured HONESTLY. `patternCatches: false` marks a
+ * promise this pattern cannot see; those are here as evidence of the limit, not as failures, and
+ * layer 1 is what stops them (the drill below proves that mechanically). Growing the regex until
+ * every row says true would just be r2 again, one round later.
+ */
+const RED_FIXTURES: ReadonlyArray<{ label: string; sentence: string; patternCatches: boolean }> = [
   {
     label: "r1's shipped sentence",
     sentence: "Customers who opted out through their own channel are out either way.",
+    patternCatches: true,
   },
   {
     label: "judge r3 synonym 1",
     sentence: "They stay excluded in every segment.",
+    patternCatches: true,
   },
   {
     label: "judge r3 synonym 2",
     sentence: "A customer who opted out cannot appear in an audience.",
+    patternCatches: true,
   },
   {
     label: "variant: passive always",
     sentence: "Contacts you recorded are always excluded from broadcasts you send.",
+    patternCatches: true,
   },
   {
     label: "variant: negated future",
     sentence: "No matter which segment you build, these customers will never be selected.",
+    patternCatches: true,
   },
   {
     label: "variant: guarantee",
     sentence: "This setting guarantees they are excluded from audiences you build later.",
+    patternCatches: true,
+  },
+  {
+    // 判官 r4. No universal word, no subject-matter word: two pronouns and a verb. A pattern that
+    // caught this would have to catch "They will not be there", "It stays that way", and every
+    // other bare sentence in English — i.e. it would be red on ordinary copy.
+    label: "judge r4: no universal word",
+    sentence: "They will not come back.",
+    patternCatches: false,
+  },
+  {
+    // 判官 r4 family. "stay out" is the same promise with no quantifier and no domain noun.
+    label: "judge r4: quantifier-free promise",
+    sentence: "Once you record it, they stay out.",
+    patternCatches: false,
+  },
+  {
+    // 判官 r4 family. "for good" carries the universal meaning without a universal word.
+    label: "judge r4: idiomatic permanence",
+    sentence: "This keeps them off your lists for good.",
+    patternCatches: false,
   },
 ];
 
 /**
- * Both gates over one render. Returns the sentences a human has to look at.
+ * Layer 2 over one render. Returns the sentences a human has to look at.
  *
  * `merchantAuthored` drops the merchant's OWN words — segment names, and anything else he typed
  * that the page merely echoes. This fence is about what the PRODUCT promises: a merchant may call
@@ -229,27 +293,167 @@ function unapprovedUniversalClaims(
   );
 }
 
-/** Gate 1's board: the exact words this screen is approved to show. */
+// ── Layer 1: fixed fixtures, so a count can never move the board ──────────────────────────────
+
+type PreviewProps = ComponentProps<typeof ContactPreview>["preview"];
+type ConsentNoteProps = ComponentProps<typeof ConsentExclusionNote>["consent"];
+
+const FIXTURE_EVALUATED_AT = "2026-08-09T00:00:00.000Z";
+
+function previewFixture(counts: {
+  matchedCount: number;
+  contactableCount: number;
+  excludedByConsentCount: number;
+  unresolvedLegacyOptOutCount: number;
+  reportedOptOutCount: number;
+  excludedByReportedOptOutCount: number;
+  contacts: PreviewProps["contacts"];
+}): PreviewProps {
+  return {
+    ok: true,
+    evaluatedAt: FIXTURE_EVALUATED_AT,
+    phrase: "All of: Contact is not a known opt-out",
+    totalContactCount: 6,
+    knownOptOutCount: 0,
+    unavailableFacts: { lastOrderAt: true, tags: true },
+    ...counts,
+  } as PreviewProps;
+}
+
+/** One row of each badge the panel can show, so the board covers every row wording too. */
+const FIXTURE_ROWS: Record<string, PreviewProps["contacts"][number]> = {
+  plain: {
+    id: "fixture-1",
+    name: "Amira Salleh",
+    channels: ["whatsapp"],
+    contactable: true,
+    reportedOptOut: false,
+    unresolvedLegacyOptOut: false,
+  },
+  reported: {
+    id: "fixture-2",
+    name: "Bakri Idris",
+    channels: ["whatsapp", "email"],
+    contactable: true,
+    reportedOptOut: true,
+    unresolvedLegacyOptOut: false,
+  },
+  knownOptOut: {
+    id: "fixture-3",
+    name: "Chong Wei",
+    channels: [],
+    contactable: false,
+    reportedOptOut: false,
+    unresolvedLegacyOptOut: false,
+  },
+  fenced: {
+    id: "fixture-4",
+    name: "Dina Aziz",
+    channels: ["whatsapp"],
+    contactable: false,
+    reportedOptOut: true,
+    unresolvedLegacyOptOut: true,
+  },
+};
+
+const PREVIEW_TIGHTENED = previewFixture({
+  matchedCount: 1,
+  contactableCount: 1,
+  excludedByConsentCount: 2,
+  unresolvedLegacyOptOutCount: 1,
+  reportedOptOutCount: 0,
+  excludedByReportedOptOutCount: 3,
+  contacts: [FIXTURE_ROWS.plain],
+});
+const PREVIEW_UNTIGHTENED = previewFixture({
+  matchedCount: 4,
+  contactableCount: 2,
+  excludedByConsentCount: 2,
+  unresolvedLegacyOptOutCount: 1,
+  reportedOptOutCount: 1,
+  excludedByReportedOptOutCount: 0,
+  contacts: [FIXTURE_ROWS.plain, FIXTURE_ROWS.reported, FIXTURE_ROWS.knownOptOut, FIXTURE_ROWS.fenced],
+});
+
+const NOTE_TIGHTENED: ConsentNoteProps = {
+  excludedByConsent: 2,
+  unresolvedLegacyOptOut: 1,
+  reportedOptOutKept: 0,
+  excludedByReportedOptOut: 2,
+};
+const NOTE_UNTIGHTENED: ConsentNoteProps = {
+  excludedByConsent: 2,
+  unresolvedLegacyOptOut: 1,
+  reportedOptOutKept: 2,
+  excludedByReportedOptOut: 0,
+};
+const NOTE_NOTHING_EXCLUDED: ConsentNoteProps = {
+  excludedByConsent: 0,
+  unresolvedLegacyOptOut: 0,
+  reportedOptOutKept: 0,
+  excludedByReportedOptOut: 0,
+};
+
+/** Every surface, rendered from those fixtures. One entry, one approved string. */
+function switchSurface(page: string): string {
+  return enclosingDivText(page, SWITCH_SURFACE_ANCHOR);
+}
+function previewSurface(preview: PreviewProps): string {
+  return surfaceText(renderToStaticMarkup(createElement(ContactPreview, { preview })));
+}
+function noteSurface(consent: ConsentNoteProps): string {
+  return surfaceText(renderToStaticMarkup(createElement(ConsentExclusionNote, { consent })));
+}
+
+/** The approved text of each surface. Editing anything here is the human review. */
+const APPROVED_SURFACES = {
+  switch:
+    "Also exclude opt-outs I recorded myself Off by default. An opt-out you or a CSV import " +
+    "recorded is not confirmed by the customer, so while this is off it removes nobody from this " +
+    "segment. Turn it on and this segment leaves those contacts out of its count, its preview, " +
+    "and any broadcast built from it. Nothing else changes: what the consent record decides about " +
+    "a contact stays exactly as it is.",
+  previewTightened:
+    "1 of 6 contacts matched · 1 contactable · 2 known opt-out excluded · 3 reported opt-out " +
+    "excluded by your choice Unknown consent stays included. Known opt-out means the customer " +
+    "opted out through their own channel. An opt-out you recorded yourself keeps the contact in " +
+    "the list, marked reported opt-out — open the contact to see its consent history. Do not " +
+    "disturb is checked at send time and does not filter this segment. 1 of them opted out before " +
+    "consent history was kept, so they stay out until the customer opts in again. You chose to " +
+    "exclude the opt-outs you recorded yourself, so this segment leaves them out here and in " +
+    "every broadcast built from it. These counts cover every contact you have. A broadcast counts " +
+    "only the contacts it can reach on the channel it sends from, so its own numbers can be " +
+    "lower. Evaluated 2026-08-09 00:00:00 UTC Amira Salleh whatsapp Included",
+  previewUntightened:
+    "4 of 6 contacts matched · 2 contactable · 2 known opt-out excluded · 1 reported opt-out " +
+    "still included Unknown consent stays included. Known opt-out means the customer opted out " +
+    "through their own channel. An opt-out you recorded yourself keeps the contact in the list, " +
+    "marked reported opt-out — open the contact to see its consent history. Do not disturb is " +
+    "checked at send time and does not filter this segment. 1 of them opted out before consent " +
+    "history was kept, so they stay out until the customer opts in again. These counts cover " +
+    "every contact you have. A broadcast counts only the contacts it can reach on the channel it " +
+    "sends from, so its own numbers can be lower. Evaluated 2026-08-09 00:00:00 UTC Amira Salleh " +
+    "whatsapp Included Bakri Idris whatsapp · email Included · reported opt-out Chong Wei No live " +
+    "identity Included · known opt-out Dina Aziz whatsapp Included · opted out before consent " +
+    "history",
+  noteTightened:
+    "2 contacts were excluded for opting out. 1 of them opted out before consent history was " +
+    "kept, so they stay out until the customer opts in again. This count covers the contacts this " +
+    "broadcast can reach on its channel, so it can be lower than the count on the segments page, " +
+    "which covers every contact you have. This segment also leaves out opt-outs you recorded " +
+    "yourself, so 2 more contacts are not in this audience.",
+  noteUntightened:
+    "2 contacts were excluded for opting out. 1 of them opted out before consent history was " +
+    "kept, so they stay out until the customer opts in again. This count covers the contacts this " +
+    "broadcast can reach on its channel, so it can be lower than the count on the segments page, " +
+    "which covers every contact you have. 2 contacts are in this audience with an opt-out you " +
+    "recorded yourself, which is not verified — open the contact to see its consent history.",
+  noteNothingExcluded:
+    "No contact was excluded for opting out. This count covers the contacts this broadcast can " +
+    "reach on its channel, so it can be lower than the count on the segments page, which covers " +
+    "every contact you have.",
+} as const;
 const APPROVED_SWITCH_LABEL = "Also exclude opt-outs I recorded myself";
-const APPROVED_SWITCH_NOTE = [
-  "Off by default.",
-  "An opt-out you or a CSV import recorded is not confirmed by the customer, so while this is off it removes nobody from this segment.",
-  "Turn it on and this segment leaves those contacts out of its count, its preview, and any broadcast built from it.",
-  "Nothing else changes: what the consent record decides about a contact stays exactly as it is.",
-];
-/** The preview's explanation paragraph, whole, for the tightened preview below. */
-const APPROVED_PREVIEW_EXPLANATION =
-  "Unknown consent stays included. Known opt-out means the customer opted out through their own channel. " +
-  "An opt-out you recorded yourself keeps the contact in the list, marked reported opt-out — open the contact " +
-  "to see its consent history. Do not disturb is checked at send time and does not filter this segment. " +
-  "1 of them opted out before consent history was kept, so they stay out until the customer opts in again. " +
-  "You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every " +
-  "broadcast built from it.";
-const APPROVED_PREVIEW_CHOICE_SENTENCE =
-  "You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every broadcast built from it.";
-/** The whole tabular line, so a number cannot be relabelled without editing this board. */
-const APPROVED_PREVIEW_COUNT_LINE =
-  "1 of 6 contacts matched · 1 contactable · 2 known opt-out excluded · 3 reported opt-out excluded by your choice";
 
 const TOTAL_CONTACTS_A = 6;
 /** Only these two are opt-outs the CUSTOMER's own evidence (or the pre-ledger fence) decides. */
@@ -807,57 +1011,62 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
   });
 
   /**
-   * Gate 1 — the approved text, pinned whole.
+   * Layer 1 — every merchant-facing surface, whole, against one approved string.
    *
-   * r3 判官's finding was that a needle list is not a gate: two synonyms of the banned promise
-   * walked straight through it. The gate is exact equality on the sentences this screen shows, so
-   * changing one of them is impossible without editing this list, and editing this list is a
-   * human reading the claim next to the reason it is provable.
+   * This is the gate r4 asked for. It does not know what a claim looks like and does not need to:
+   * a fourth block next to the third one changes the surface text, so it fails here whatever it
+   * says. Fixtures are fixed, so no count can redden the board by moving.
    */
-  it("pins the approved sentences of this screen word for word", async () => {
+  it("pins each merchant-facing surface as one exact snapshot", async () => {
     actAs(ORG_A);
-    const strict = await previewOrThrow(CONTACTABLE_STRICT);
     const initialState = await listSegments();
     if (!("ok" in initialState)) throw new Error(initialState.error);
-
     const page = renderToStaticMarkup(
       createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
     );
-    const preview = renderToStaticMarkup(createElement(ContactPreview, { preview: strict }));
-    const pageSentences = merchantSentences(page);
-    const previewSentences = merchantSentences(preview);
 
-    // Whole BLOCKS, not a membership check: an added sentence is a change too, and the r3
-    // mutation drill (a synonym appended to the note) is exactly that shape.
-    expect(blockStartingWith(page, "Off by default.")).toBe(APPROVED_SWITCH_NOTE.join(" "));
-    expect(blockStartingWith(preview, "Unknown consent stays included.")).toBe(
-      APPROVED_PREVIEW_EXPLANATION,
-    );
-    expect(blockStartingWith(preview, "1 of 6 contacts matched")).toBe(APPROVED_PREVIEW_COUNT_LINE);
-    expect(pageSentences).toContain(APPROVED_SWITCH_LABEL);
-    expect(previewSentences).toContain(APPROVED_PREVIEW_CHOICE_SENTENCE);
+    expect(switchSurface(page)).toBe(APPROVED_SURFACES.switch);
+    expect(previewSurface(PREVIEW_TIGHTENED)).toBe(APPROVED_SURFACES.previewTightened);
+    expect(previewSurface(PREVIEW_UNTIGHTENED)).toBe(APPROVED_SURFACES.previewUntightened);
+    expect(noteSurface(NOTE_TIGHTENED)).toBe(APPROVED_SURFACES.noteTightened);
+    expect(noteSurface(NOTE_UNTIGHTENED)).toBe(APPROVED_SURFACES.noteUntightened);
+    expect(noteSurface(NOTE_NOTHING_EXCLUDED)).toBe(APPROVED_SURFACES.noteNothingExcluded);
+  });
 
-    // Every approved universal sentence must actually BE on the screen it is approved for —
-    // otherwise the allowlist quietly becomes a place where dead exemptions accumulate.
-    const onScreen = new Set([...pageSentences, ...previewSentences]);
-    for (const entry of APPROVED_UNIVERSAL_SENTENCES) {
-      expect(onScreen.has(entry.sentence), `${entry.sentence} — ${entry.why}`).toBe(true);
+  /**
+   * The drill r4 asked for, run in code rather than by hand: for each fixture, adding it to a
+   * surface must break that surface's snapshot. This is what "layer 1 covers what layer 2 cannot"
+   * means, and it is why the `patternCatches: false` rows below can stay honest.
+   */
+  it("fails layer 1 for every rejected sentence, including the ones no pattern can see", () => {
+    for (const fixture of RED_FIXTURES) {
+      for (const [surface, approved] of Object.entries(APPROVED_SURFACES)) {
+        expect(`${approved} ${fixture.sentence}`, `${fixture.label} on ${surface}`).not.toBe(
+          approved,
+        );
+      }
     }
   });
 
   /**
-   * Gate 2 — the class-level fence, driven by the sentences that beat gate r2.
+   * Layer 2 — defence in depth, measured honestly. Six of the nine fixtures are caught by the
+   * pattern; three carry the same promise with no universal word and no subject-matter word, and
+   * the table says so instead of the regex growing to chase them.
    */
-  it("catches a universal promise about audiences however it is phrased", () => {
+  it("catches the universal-promise class wherever it is phrased, and admits what it misses", () => {
     for (const fixture of RED_FIXTURES) {
       const markup = `<p class="text-xs">${fixture.sentence}</p>`;
-      expect(universalClaims(markup), `${fixture.label}: ${fixture.sentence}`).toEqual([
-        fixture.sentence,
-      ]);
-      expect(unapprovedUniversalClaims(markup), fixture.label).toEqual([fixture.sentence]);
+      const caught = universalClaims(markup);
+      expect(caught.length > 0, `${fixture.label}: ${fixture.sentence}`).toBe(
+        fixture.patternCatches,
+      );
+      if (fixture.patternCatches) {
+        expect(unapprovedUniversalClaims(markup), fixture.label).toEqual([fixture.sentence]);
+      }
     }
+    expect(RED_FIXTURES.filter((fixture) => fixture.patternCatches)).toHaveLength(6);
 
-    // And it is not a fence that reddens everything: ordinary sentences from this very screen,
+    // And it is not a fence that reddens everything: ordinary sentences from these very surfaces,
     // including ones that name the subject matter, pass.
     for (const innocent of [
       "Showing the first 10 of 12 matched contacts.",
@@ -869,8 +1078,8 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     }
   });
 
-  it("keeps every clause on both renders to something the ledger can prove", async () => {
-    // r2 P1-2's reproduction, kept as the semantic proof behind both gates: the banned promise
+  it("keeps every clause on every surface to something the ledger can prove", async () => {
+    // r2 P1-2's reproduction, kept as the semantic proof behind both layers: the banned promise
     // was "a customer who opted out herself is out either way", and here is the legal segment
     // where she is not. The counter-example and the fence live in one example so the sentence
     // cannot come back while the counter-example still stands.
@@ -883,14 +1092,22 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     const page = renderToStaticMarkup(
       createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
     );
-    const preview = renderToStaticMarkup(createElement(ContactPreview, { preview: optedOut }));
-    const strictPreview = renderToStaticMarkup(
-      createElement(ContactPreview, { preview: await previewOrThrow(CONTACTABLE_STRICT) }),
-    );
     const authored = initialState.segments.map((segment) => segment.name);
+    const strict = await previewOrThrow(CONTACTABLE_STRICT);
 
-    for (const markup of [page, preview, strictPreview]) {
-      expect(unapprovedUniversalClaims(markup, authored)).toEqual([]);
+    const surfaces: Array<[string, string]> = [
+      ["segments page", page],
+      ["switch area", `<p>${switchSurface(page)}</p>`],
+      ["preview, real data", renderToStaticMarkup(createElement(ContactPreview, { preview: optedOut }))],
+      ["preview, tightened", renderToStaticMarkup(createElement(ContactPreview, { preview: strict }))],
+      ["preview fixture, tightened", `<p>${APPROVED_SURFACES.previewTightened}</p>`],
+      ["preview fixture, untightened", `<p>${APPROVED_SURFACES.previewUntightened}</p>`],
+      ["broadcast note, tightened", `<p>${APPROVED_SURFACES.noteTightened}</p>`],
+      ["broadcast note, untightened", `<p>${APPROVED_SURFACES.noteUntightened}</p>`],
+      ["broadcast note, nothing excluded", `<p>${APPROVED_SURFACES.noteNothingExcluded}</p>`],
+    ];
+    for (const [name, markup] of surfaces) {
+      expect(unapprovedUniversalClaims(markup, authored), name).toEqual([]);
     }
   });
 
