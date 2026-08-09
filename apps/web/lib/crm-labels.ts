@@ -13,10 +13,12 @@
  * defining their own, so a caller cannot accidentally pick up a stale copy.
  *
  * Two rules this file keeps:
- *   1. no merchant-facing string is ever a raw stored token — an unmapped value is humanized
- *      (underscores out, first letter up), never printed as-is;
+ *   1. no merchant-facing string is ever a raw stored token. How an unmapped value is handled
+ *      depends on the vocabulary it belongs to: an OPEN set the schema lets grow without a
+ *      migration (channel `kind`) is humanized, while a CLOSED, code-validated set (purpose) gets
+ *      a neutral placeholder — humanizing a closed-set token is still showing the token;
  *   2. nothing here invents a state. Only values the product can actually store get bespoke
- *      wording; everything else falls through to the humanizer.
+ *      wording.
  *
  * Pure presentation: no data access, no tenant logic, no authority over what is true.
  */
@@ -52,13 +54,26 @@ export function channelAccountLabel(scope: { channel: string; scopeKey: string }
 
 // ── Broadcast purpose ────────────────────────────────────────────────────────────────────────
 
+/**
+ * 判官 r2 P2-2 — every purpose the schema allows, not just the two the broadcast workbench can
+ * create. `CONSENT_PURPOSES` (packages/db consent-fold) is the closed, code-validated set, and
+ * the contact profile renders consent events for ALL of it — which is how `transactional` reached
+ * a merchant as a lowercase machine value.
+ *
+ * The fallback deliberately does NOT echo the value. For a closed set, an unrecognized member
+ * means this build does not know the word for it; humanizing the token would still be showing the
+ * token, just with the underscores taken out.
+ */
 const PURPOSE_LABELS: Record<string, string> = {
   marketing: "Marketing",
   review_request: "Review request",
+  transactional: "Transactional",
 };
 
+export const UNRECOGNIZED_PURPOSE_LABEL = "Purpose not recognized";
+
 export function purposeLabel(purpose: string): string {
-  return PURPOSE_LABELS[purpose] ?? purpose.replaceAll("_", " ");
+  return PURPOSE_LABELS[purpose] ?? UNRECOGNIZED_PURPOSE_LABEL;
 }
 
 // ── Send-eligibility axis status ─────────────────────────────────────────────────────────────

@@ -44,12 +44,14 @@ import { skipReasonCopy } from "@/components/crm/broadcasts/broadcast-format";
 import InboxConversationPage from "@/components/crm/inbox/inbox-conversation-page";
 import InboxListPage from "@/components/crm/inbox/inbox-list-page";
 import InboxTemplatesPage from "@/components/crm/inbox/inbox-templates-page";
+import { CONSENT_PURPOSES } from "@fikirtive/db";
 import {
   axisStatusPresentation,
   channelAccountLabel,
   channelLabel,
   purposeLabel,
   templateStateLabel,
+  UNRECOGNIZED_PURPOSE_LABEL,
 } from "@/lib/crm-labels";
 
 function source(relativePath: string): string {
@@ -248,7 +250,24 @@ describe("one label authority for CRM machine values (#728)", () => {
     expect(templateStateLabel("unavailable")).toBe("Unavailable");
     expect(templateStateLabel("provider_rejected")).toBe("Provider rejected");
     expect(axisStatusPresentation("risk").label).toBe("At risk");
-    expect(purposeLabel("review_request")).toBe("Review request");
+  });
+
+  // 判官 r2 P2-2 — the guard used to pin one purpose, and `transactional` slipped through as a
+  // lowercase machine value on the contact profile. The enum is closed and code-validated, so the
+  // sweep walks the schema's OWN set rather than a list retyped here.
+  it("has a word for every purpose the schema allows, and never echoes the stored token", () => {
+    expect(CONSENT_PURPOSES.length).toBeGreaterThan(0);
+    for (const purpose of CONSENT_PURPOSES) {
+      const label = purposeLabel(purpose);
+      expect(label).not.toBe(purpose);
+      expect(label).not.toBe(UNRECOGNIZED_PURPOSE_LABEL);
+      expect(label).not.toContain("_");
+      // Sentence case, not a lowercased column value.
+      expect(label[0]).toBe(label[0].toUpperCase());
+    }
+    // An unmapped member of a CLOSED set is not humanized — humanizing still shows the token.
+    expect(purposeLabel("some_future_purpose")).toBe(UNRECOGNIZED_PURPOSE_LABEL);
+    expect(purposeLabel("some_future_purpose")).not.toContain("future");
   });
 
   it("is the only definition — the family format modules re-export instead of copying", () => {

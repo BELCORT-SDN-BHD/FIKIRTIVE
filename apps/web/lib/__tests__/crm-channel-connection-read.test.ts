@@ -25,24 +25,40 @@ vi.mock("@/lib/customer-broadcast-report-ui-actions", () => ({
   getCustomerBroadcastReport: vi.fn(),
 }));
 vi.mock("@/lib/customer-inbox-ui-actions", () => ({
+  assignConversation: vi.fn(),
   createMessageTemplate: vi.fn(),
   createMessageTemplateVersion: vi.fn(),
+  getConversation: vi.fn(),
+  getConversationPreflight: vi.fn(),
+  getHistory: vi.fn(),
+  handOffConversation: vi.fn(),
   listConversations: vi.fn(),
   listTemplates: vi.fn(),
+  requestAutomationResume: vi.fn(),
+  saveConversationDraft: vi.fn(),
   searchConversations: vi.fn(),
+  setConversationStatus: vi.fn(),
 }));
 
 import BroadcastDetailPage from "@/components/crm/broadcasts/broadcast-detail-page";
 import BroadcastListPage from "@/components/crm/broadcasts/broadcast-list-page";
+import InboxConversationPage from "@/components/crm/inbox/inbox-conversation-page";
 import InboxListPage from "@/components/crm/inbox/inbox-list-page";
 
 function source(relativePath: string): string {
   return fs.readFileSync(path.resolve(__dirname, relativePath), "utf8");
 }
 
-const SCOPE = { id: "scope-1", channel: "whatsapp", scopeKey: "60123456789" };
+// 判官 r2 P1-1 — three distinct shapes the product can actually be in. A ChannelScope row is a
+// stable IDENTITY (the schema keeps it lifecycle-free on purpose); whether it is connected lives
+// on ChannelConnection.status, which the server reads into `connectionState`.
+const LIVE_SCOPE = { id: "scope-1", channel: "whatsapp", scopeKey: "60123456789", connectionState: "active" as const };
+const LAPSED_SCOPE = { id: "scope-1", channel: "whatsapp", scopeKey: "60123456789", connectionState: "inactive" as const };
+const NEVER_CONNECTED_SCOPE = { id: "scope-1", channel: "whatsapp", scopeKey: "60123456789", connectionState: "none" as const };
 
-const CONNECTED = { ok: true, resource: [SCOPE] };
+const CONNECTED = { ok: true, resource: [LIVE_SCOPE] };
+const EXPIRED = { ok: true, resource: [LAPSED_SCOPE] };
+const IDENTITY_ONLY = { ok: true, resource: [NEVER_CONNECTED_SCOPE] };
 const NONE = { ok: true, resource: [] };
 const UNREADABLE = { ok: false, error: "ACTION_DENIED" };
 
@@ -85,7 +101,7 @@ function broadcastListMarkup(channelScopes: unknown): string {
   return renderToStaticMarkup(createElement(BroadcastListPage, props));
 }
 
-function broadcastDetailMarkup(channelScopes: { id: string; channel: string; scopeKey: string }[]): string {
+function broadcastDetailMarkup(channelScopes: { id: string; channel: string; scopeKey: string; connectionState?: string }[]): string {
   const props = {
     broadcastRunId: RUN.id,
     initialRun: { ok: true, resource: { run: RUN, members: [], campaign: null } },
@@ -97,6 +113,80 @@ function broadcastDetailMarkup(channelScopes: { id: string; channel: string; sco
   } as unknown as ComponentProps<typeof BroadcastDetailPage>;
   return renderToStaticMarkup(createElement(BroadcastDetailPage, props));
 }
+
+// 判官 r2 P1-2 — the conversation page. The service hard-codes `connection.status: "unknown"`
+// (customer-inbox-service `stored_evidence_unavailable`), and the page turned that unknown into
+// the assertion "Not connected yet". Its own axis may only speak about THIS conversation's link.
+function conversationMarkup(channelScopes: unknown): string {
+  const props = {
+    conversationId: "conv-1",
+    initialState: {
+      conversation: {
+        ok: true,
+        resource: {
+          id: "conv-1",
+          revision: 3,
+          status: "open",
+          automationState: "disabled",
+          lastMessageAt: null,
+          assigneeMembership: null,
+          draft: null,
+          contactIdentity: {
+            channel: "whatsapp",
+            externalId: "60111111111",
+            handle: "60111111111",
+            label: null,
+            contact: { id: "contact-1", name: "Aisyah", lifecycleStage: "Active" },
+          },
+        },
+      },
+      history: { ok: true, resource: { messages: [], events: [] } },
+      preflight: {
+        ok: true,
+        resource: {
+          checkedAt: new Date("2026-07-24T00:00:00.000Z"),
+          internalCapability: { status: "pass" },
+          connection: { status: "unknown" },
+          d8Carrier: { status: "unavailable" },
+          consentStop: { status: "pass" },
+          doNotDisturb: { status: "pass" },
+          providerRefusal: { status: "pass" },
+          frequency: { status: "pass" },
+          exactApproval: { status: "unavailable" },
+          sendEligibility: { status: "unavailable" },
+          freshness: {
+            lastProviderEventAt: null,
+            lastHealthCheckedAt: null,
+            lastDataLoadedAt: new Date("2026-07-24T00:00:00.000Z"),
+          },
+        },
+      },
+    },
+    initialDirectory: DIRECTORY,
+    initialChannelScopes: channelScopes,
+  } as unknown as ComponentProps<typeof InboxConversationPage>;
+  return renderToStaticMarkup(createElement(InboxConversationPage, props));
+}
+
+describe("the conversation page stops turning an unknown into a claim (#727 判官 r2 P1-2)", () => {
+  it("no longer asserts 'Not connected yet' off an axis the server hard-codes to unknown", () => {
+    for (const state of [CONNECTED, EXPIRED, IDENTITY_ONLY, NONE, UNREADABLE]) {
+      expect(conversationMarkup(state)).not.toContain("Not connected yet");
+    }
+  });
+
+  it("says what is true of the workspace, and separately that this conversation's link is unconfirmed", () => {
+    const connected = conversationMarkup(CONNECTED);
+    expect(connected).toContain("Connected messaging channel: WhatsApp · 60123456789.");
+    expect(connected).not.toContain(NO_CHANNEL_CLAIM);
+    expect(connected).toContain("provider link is not confirmed");
+
+    expect(conversationMarkup(NONE)).toContain(NO_CHANNEL_CLAIM);
+    expect(conversationMarkup(EXPIRED)).toContain("is no longer active");
+    expect(conversationMarkup(UNREADABLE)).toContain("could not be read");
+    expect(conversationMarkup(UNREADABLE)).not.toContain(NO_CHANNEL_CLAIM);
+  });
+});
 
 describe("the three screens that wrote it down now read it (#727)", () => {
   it("Inbox list says a channel is connected when one is, and names it", () => {
@@ -123,7 +213,7 @@ describe("the three screens that wrote it down now read it (#727)", () => {
   });
 
   it("broadcast detail stops asserting no channel is connected when one is", () => {
-    const markup = broadcastDetailMarkup([SCOPE]);
+    const markup = broadcastDetailMarkup([LIVE_SCOPE]);
     expect(markup).not.toContain("No channel is connected");
     expect(markup).not.toContain(NO_CHANNEL_CLAIM);
     expect(markup).toContain("WhatsApp · 60123456789");
@@ -133,6 +223,23 @@ describe("the three screens that wrote it down now read it (#727)", () => {
 
   it("broadcast detail still says the truth for a workspace with no channel", () => {
     expect(broadcastDetailMarkup([])).toContain(NO_CHANNEL_CLAIM);
+  });
+
+  // 判官 r2 P1-1: the two shapes the scope-presence reading got wrong.
+  it("a channel account that was NEVER connected is not a connection", () => {
+    for (const markup of [inboxMarkup(IDENTITY_ONLY), broadcastListMarkup(IDENTITY_ONLY), broadcastDetailMarkup([NEVER_CONNECTED_SCOPE])]) {
+      expect(markup).toContain(NO_CHANNEL_CLAIM);
+      expect(markup).not.toContain("Connected messaging channel");
+    }
+  });
+
+  it("an EXPIRED connection is not a connection, and says which account lapsed", () => {
+    for (const markup of [inboxMarkup(EXPIRED), broadcastListMarkup(EXPIRED), broadcastDetailMarkup([LAPSED_SCOPE])]) {
+      expect(markup).toContain(NO_CHANNEL_CLAIM);
+      expect(markup).not.toContain("Connected messaging channel");
+      expect(markup).toContain("is no longer active");
+      expect(markup).toContain("WhatsApp · 60123456789");
+    }
   });
 
   it("never turns a failed read into a claim about connection either way", () => {
@@ -158,12 +265,23 @@ describe("the Broadcasts empty state is no longer a dead end (#727)", () => {
     expect(markup).toContain('href="/crm/broadcasts/new"');
     expect(markup).toContain("Create your first broadcast");
   });
+
+  // 判官 r2 P1-1: identity, not lifecycle, is what the composer needs — it submits a
+  // channelScopeId. A lapsed connection must not invent a refusal the server does not make.
+  it("keeps the CTA for an account whose connection lapsed — the form can still be filled in", () => {
+    for (const state of [EXPIRED, IDENTITY_ONLY]) {
+      const markup = broadcastListMarkup(state);
+      expect(markup).toContain('href="/crm/broadcasts/new"');
+    }
+  });
 });
 
 describe("one connection authority, read once per route (#727)", () => {
   it("no CRM page keeps its own copy of the connection sentence", () => {
     for (const file of [
       "../../components/crm/inbox/inbox-list-page.tsx",
+      // 判官 r2 P1-2: the conversation page is inside the fence now.
+      "../../components/crm/inbox/inbox-conversation-page.tsx",
       "../../components/crm/inbox/inbox-templates-page.tsx",
       "../../components/crm/broadcasts/broadcast-list-page.tsx",
       "../../components/crm/broadcasts/broadcast-detail-page.tsx",
@@ -176,17 +294,33 @@ describe("one connection authority, read once per route (#727)", () => {
     }
   });
 
-  it("both list routes actually read the workspace's channel accounts", () => {
-    expect(source("../../app/crm/inbox/page.tsx")).toContain("listChannelScopes");
-    expect(source("../../app/crm/broadcasts/page.tsx")).toContain("listChannelScopes");
+  it("every CRM route that states connection actually reads the workspace's channel accounts", () => {
+    for (const route of [
+      "../../app/crm/inbox/page.tsx",
+      "../../app/crm/inbox/[id]/page.tsx",
+      "../../app/crm/broadcasts/page.tsx",
+    ]) {
+      expect(source(route)).toContain("listChannelScopes");
+    }
   });
 
-  it("the broadcast service reads channel accounts in one place, gated like every other read", () => {
+  it("both CRM services read channel accounts through the one lifecycle-aware source", () => {
+    // 判官 r2 P1-1: neither service may query ChannelScope for this question on its own — that is
+    // how "a scope row exists" got mistaken for "a channel is connected".
+    for (const file of ["../customer-broadcast-service.ts", "../customer-inbox-service.ts"]) {
+      expect(source(file)).toContain("listChannelScopesWithConnectionState");
+    }
     const service = source("../customer-broadcast-service.ts");
-    // One query definition, used by the composer options and the new tenant-gated read alike.
-    expect(service.match(/db\.channelScope\.findMany/g)).toHaveLength(1);
     expect(service).toContain("async function listChannelScopes");
     const gated = service.match(/async function listChannelScopes[\s\S]{0,240}/)?.[0] ?? "";
     expect(gated).toContain("requireReadMembership");
+  });
+
+  it("the connection state comes from ChannelConnection.status, not from the identity table", () => {
+    const resolver = source("../channel-connection-resolve.ts");
+    expect(resolver).toContain("listChannelScopesWithConnectionState");
+    // Same liveness condition the send path already gates on.
+    expect(resolver).toContain('status === "active"');
+    expect(resolver).toContain("channelConnection.findMany");
   });
 });

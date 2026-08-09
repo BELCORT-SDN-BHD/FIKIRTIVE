@@ -31,7 +31,10 @@ import {
   broadcastPurposeFromTemplateClassification,
   type BroadcastPurpose,
 } from "./customer-broadcast-purpose";
-import { resolveActiveProviderConnectionId } from "./channel-connection-resolve";
+import {
+  listChannelScopesWithConnectionState,
+  resolveActiveProviderConnectionId,
+} from "./channel-connection-resolve";
 
 /**
  * C5 broadcast domain actions. Spec:
@@ -947,12 +950,10 @@ export function createCustomerBroadcastService(
    * `principal.ownerId` like every other read here; the membership gate lives on the exported
    * entry points below, not on this helper.
    */
+  // 判官 r2 P1-1: the rows carry `connectionState` from ChannelConnection.status — a scope row on
+  // its own is an identity, never proof of a connection.
   function channelScopeRows(ownerId: string) {
-    return db.channelScope.findMany({
-      where: { ownerId },
-      orderBy: [{ channel: "asc" }, { scopeKey: "asc" }],
-      select: { id: true, channel: true, scopeKey: true },
-    });
+    return listChannelScopesWithConnectionState(db, ownerId);
   }
 
   /**

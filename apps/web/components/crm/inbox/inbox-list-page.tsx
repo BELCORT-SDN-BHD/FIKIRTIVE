@@ -23,6 +23,7 @@ import {
   CHANNEL_CONNECT_UNAVAILABLE_NOTE,
   channelConnectionFrom,
   channelConnectionHeadline,
+  channelConnectionIsConfirmedAbsent,
   type ChannelAccountsResult,
 } from "@/lib/crm-channel-connection";
 import { channelLabel } from "@/lib/crm-labels";
@@ -206,7 +207,7 @@ function InboxWorkspace({
           <Unplug className="mt-0.5 size-4 shrink-0" />
           <span>
             {channelConnectionHeadline(connection)} Conversations shown here are internal records — none reflect live customer traffic.
-            {connection.kind === "none" ? ` ${CHANNEL_CONNECT_UNAVAILABLE_NOTE}` : ""}
+            {channelConnectionIsConfirmedAbsent(connection) ? ` ${CHANNEL_CONNECT_UNAVAILABLE_NOTE}` : ""}
           </span>
         </div>
 

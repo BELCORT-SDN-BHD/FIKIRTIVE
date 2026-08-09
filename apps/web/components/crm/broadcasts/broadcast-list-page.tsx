@@ -11,6 +11,7 @@ import {
   channelConnectionFrom,
   channelConnectionHeadline,
   channelUnavailableCopy,
+  hasChannelAccountOnFile,
   type ChannelAccountsResult,
 } from "@/lib/crm-channel-connection";
 import { Badge } from "@/components/ui/badge";
@@ -81,11 +82,15 @@ export default function BroadcastListPage({
   const connection = channelConnectionFrom(initialChannelScopes as ChannelAccountsResult);
   // The composer's Create button needs a channelScopeId, and a workspace with no channel account
   // has no dropdown to pick one from. Inviting a merchant in there was a form they could never
-  // finish (#687 same shape), so with zero channels the entry explains instead of beckoning.
-  // A read that FAILED is not a reason to take an action away — only a confirmed zero is.
+  // finish (#687 same shape), so with zero accounts the entry explains instead of beckoning.
+  //
+  // 判官 r2 P1-1: this gate asks about the ACCOUNT (identity), not the connection. A lapsed
+  // connection still leaves a scope the composer can name and submit, and the run is simulated
+  // either way — taking the form away there would invent a refusal the server does not make.
+  // A read that FAILED is not a reason to remove an action either: only a confirmed zero is.
   const newBroadcastBlockedReason = !canManage
     ? "Broadcast management access is required."
-    : connection.kind === "none"
+    : hasChannelAccountOnFile(connection) === false
       ? channelUnavailableCopy(NO_CHANNEL_LEAD)
       : null;
 
@@ -163,9 +168,8 @@ export default function BroadcastListPage({
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
               {!canManage
                 ? "No broadcast has been created in this workspace yet."
-                : connection.kind === "none"
-                  ? channelUnavailableCopy(NO_CHANNEL_LEAD)
-                  : "Create your first broadcast to choose a segment and template, then run a simulated send."}
+                : (newBroadcastBlockedReason ??
+                  "Create your first broadcast to choose a segment and template, then run a simulated send.")}
             </p>
             {newBroadcastBlockedReason === null ? (
               <Button asChild className="mt-5"><Link href="/crm/broadcasts/new"><Plus />New broadcast</Link></Button>

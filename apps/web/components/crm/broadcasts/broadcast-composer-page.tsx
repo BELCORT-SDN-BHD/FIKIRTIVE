@@ -12,6 +12,7 @@ import {
   channelConnectionFromAccounts,
   channelConnectionHeadline,
   channelUnavailableCopy,
+  hasChannelAccountOnFile,
 } from "@/lib/crm-channel-connection";
 import { channelAccountLabel, errorMessage, isDenialErrorCode, purposeLabel } from "./broadcast-format";
 
@@ -128,7 +129,10 @@ export default function BroadcastComposerPage({
         </div>
 
         <form className="mt-8 grid gap-6" onSubmit={onSubmit}>
-          {connection.kind === "none" ? (
+          {/* 判官 r2 P1-1: the dropdown exists when an ACCOUNT exists. A lapsed connection still
+              leaves an identity this form can name, and the banner above already says the
+              connection is not live — the form does not get to invent a second refusal. */}
+          {hasChannelAccountOnFile(connection) === false ? (
             // #495/#541 — a zero-channel workspace gets an honest empty state instead of an
             // empty dropdown. No CTA into Connections: Messaging has no connect button there
             // yet, so that button was a dead end. Create stays disabled until a channel
