@@ -60,7 +60,8 @@ const MERCHANT_GEN_FAILURE_MESSAGES: readonly string[] = [REFERENCE_IMAGE_PERSON
  *
  * Recorded 2026-08-08 against the live engine (4 of 4 attempts refused; a straight-on face, the
  * same face re-uploaded as base64, a three-quarter half-body, and a full profile). Every one came
- * back HTTP 400 at task creation, nothing billed, with this body:
+ * back HTTP 400 at task creation, nothing billed, with this body — 274 characters, so it arrives
+ * whole through the 300-character cap the adapter reads replies under, and parses as JSON:
  *
  *   {"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation",
  *             "message":"The request failed because the input image 'content[1]' may contain
@@ -68,32 +69,68 @@ const MERCHANT_GEN_FAILURE_MESSAGES: readonly string[] = [REFERENCE_IMAGE_PERSON
  *             "param":"content[1]","type":"BadRequest"}}
  *
  * Two markers, because the reply carries both and either alone is decisive:
- *   - the FULL code including its sub-code. The family prefix on its own is not enough: a
- *     different sub-code is a different refusal, and would earn different advice.
- *   - the message's own words, which survive a body this project truncates at 300 characters
- *     and would survive the code being renamed.
+ *   - the FULL code, compared as a whole string;
+ *   - the message's own sentence, which needs no JSON and would survive the code being renamed.
  *
- * The parameter index (`content[1]`) is NOT matched: which slot the image occupies is a fact
- * about the request we built, not about the refusal.
+ * ── WHY BOTH ARE ANCHORED, AND WHAT A LOOSE ONE COST (r2, judge P1) ───────────────────────
+ * The first cut of this file matched both markers as SUBSTRINGS — a regex looking for the code
+ * anywhere in the body, and another for "input image … may contain real person" with 120 free
+ * characters in the middle. Three replies that are NOT this refusal walked straight through it:
+ *
+ *   · `…PrivacyInformation` is a PREFIX of `…PrivacyInformationV2` — a different, unknown
+ *     refusal, matched because nothing said where the code ended;
+ *   · likewise `…PrivacyInformation.Other`, a narrower sub-code with its own meaning;
+ *   · "The input image was accepted, but the prompt may contain real person names" — a
+ *     complaint about the PROMPT, matched because the gap regex bridged "input image" and
+ *     "may contain real person" across the very words that said the image was fine.
+ *
+ * Each of those would have been terminal on the first attempt (no retry for something that may
+ * well have been transient) AND shown the merchant advice about cropping a face out of a
+ * picture that was never the problem. That is the exact failure this classifier was written to
+ * avoid, so the fix is to stop pattern-matching near the shape and match the shape:
+ *
+ *   - the code is compared with `===` against the whole string. Not a regex, so there is no
+ *     such thing as "and then some" — a longer code is a different code.
+ *   - the message is the engine's own sentence end to end, with a boundary after it so
+ *     "real personality" cannot pass as "real person". Only the content index varies, because
+ *     which slot the image occupies is a fact about the request WE built, not about the refusal.
  */
-const PERSON_REJECTION_MARKERS: readonly RegExp[] = [
-  /InputImageSensitiveContentDetected\.PrivacyInformation/i,
-  /input image\b[\s\S]{0,120}?may contain real person/i,
-];
+const PERSON_REJECTION_CODE = "InputImageSensitiveContentDetected.PrivacyInformation";
+
+const PERSON_REJECTION_MESSAGE =
+  /The request failed because the input image 'content\[\d{1,3}\]' may contain real person(?![A-Za-z])/;
+
+/** `error.code` from a JSON error body, or null when the body is not JSON at all, is not an
+ *  object, or carries no string code. Every one of those is "no code to compare", never a
+ *  match — the message marker below is what still speaks for a reply this cannot read. */
+function errorCode(body: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const error = (parsed as { error?: unknown }).error;
+  if (typeof error !== "object" || error === null) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : null;
+}
 
 /**
  * Does this engine error body mean "the reference image shows a recognisable real person"?
  *
  * FAIL CLOSED, and that is the whole design: an unrecognised error is not this one. Every other
- * refusal — rate limit, auth, a malformed parameter, a different moderation category — answers
- * false and keeps the ordinary failure route, which retries what may be transient and ends with
- * the honest generic apology. Being wrong in this direction costs a retry; being wrong in the
- * other direction tells a merchant to fix something that was never broken.
+ * refusal — rate limit, auth, a malformed parameter, a neighbouring moderation sub-code, a
+ * complaint about the prompt rather than the picture — answers false and keeps the ordinary
+ * failure route, which retries what may be transient and ends with the honest generic apology.
+ * Being wrong in this direction costs a retry; being wrong in the other direction tells a
+ * merchant to fix something that was never broken, and refuses to try again while doing it.
  */
 export function referenceImagePersonRejected(detail: string | null | undefined): boolean {
   const body = String(detail ?? "");
   if (!body) return false;
-  return PERSON_REJECTION_MARKERS.some((marker) => marker.test(body));
+  return errorCode(body) === PERSON_REJECTION_CODE || PERSON_REJECTION_MESSAGE.test(body);
 }
 
 /**

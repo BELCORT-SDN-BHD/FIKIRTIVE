@@ -32,31 +32,67 @@ describe("referenceImagePersonRejected — only what the engine really said", ()
     expect(referenceImagePersonRejected(MEASURED_REJECTION)).toBe(true);
   });
 
+  it("arrives whole through the 300-character cap the adapter reads replies under", () => {
+    // Load-bearing, not trivia: at 274 characters the real reply reaches the classifier with
+    // both markers intact. If the engine ever pads this body past the cap, this goes red here
+    // rather than silently downgrading live refusals to the generic apology.
+    expect(MEASURED_REJECTION.length).toBeLessThanOrEqual(300);
+    expect(referenceImagePersonRejected(MEASURED_REJECTION.slice(0, 300))).toBe(true);
+  });
+
   it("recognises it from the code alone, and from the message alone", () => {
-    // The worker only ever sees the first 300 characters of the body, and a code can be
-    // renamed under us. Either marker on its own has to be enough.
-    expect(referenceImagePersonRejected(`{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation"`)).toBe(true);
+    // Either marker on its own has to be enough: a code can be renamed under us, and a reply
+    // that does not parse as JSON has no code to read at all.
+    expect(referenceImagePersonRejected(`{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation","message":"rejected","type":"BadRequest"}}`)).toBe(true);
     expect(referenceImagePersonRejected("The request failed because the input image 'content[0]' may contain real person.")).toBe(true);
   });
 
   it("does not care which content slot the image occupied", () => {
     // Where the picture sits in the request is a fact about the request we built, not about
     // the refusal — a first+last-frame job puts it somewhere else.
-    expect(referenceImagePersonRejected(MEASURED_REJECTION.replace("content[1]", "content[2]"))).toBe(true);
+    for (const slot of ["content[0]", "content[2]", "content[12]"]) {
+      expect(referenceImagePersonRejected(MEASURED_REJECTION.replace("content[1]", slot))).toBe(true);
+    }
   });
 
-  // FAIL CLOSED. Everything here must keep the ordinary failure route: telling a merchant to
-  // crop a face out of a picture that was never the problem is worse than the generic apology.
+  // ── FAIL CLOSED ──────────────────────────────────────────────────────────────────────────
+  //
+  // Everything below must keep the ORDINARY failure route: retried while it may be transient,
+  // and ending in the generic apology. Getting one of these wrong is the expensive direction —
+  // the merchant is refused a retry AND told to crop a face out of a picture that was never
+  // the problem.
+  //
+  // The first three are the judge's own counterexamples against r1 (#826 review): r1 matched
+  // both markers as substrings, and all three came back `true`. They are pinned by name so the
+  // loose matching cannot come back by accident.
   it.each([
+    // — judge's counterexamples, r1 answered true for every one of these —
+    ["judge: a longer code that merely STARTS with ours (…PrivacyInformationV2)", `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformationV2","message":"rejected","type":"BadRequest"}}`],
+    ["judge: a narrower sub-code under ours (…PrivacyInformation.Other)", `{"error":{"code":"InputImageSensitiveContentDetected.PrivacyInformation.Other","message":"rejected","type":"BadRequest"}}`],
+    ["judge: the PROMPT was the problem, and the image was explicitly fine", `{"error":{"code":"InputTextSensitiveContentDetected","message":"The input image was accepted, but the prompt may contain real person names.","type":"BadRequest"}}`],
+    // — neighbouring shapes of our own, same two failure modes from the other side —
+    ["a code we are a SUFFIX of (a vendor prefix bolted on the front)", `{"error":{"code":"ArkInputImageSensitiveContentDetected.PrivacyInformation","message":"rejected","type":"BadRequest"}}`],
+    ["the same sentence about the OUTPUT image, not the input", `{"error":{"code":"OutputImageSensitiveContentDetected.PrivacyInformation","message":"The request failed because the output image 'content[1]' may contain real person.","type":"BadRequest"}}`],
+    ["a sentence that only shares our words up to 'real personality'", `{"error":{"code":"InvalidParameter","message":"The request failed because the input image 'content[1]' may contain real personality rights material.","type":"BadRequest"}}`],
+    ["our code sitting somewhere it means nothing (not error.code)", `{"error":{"code":"InvalidParameter","message":"unrelated","hint":"InputImageSensitiveContentDetected.PrivacyInformation"}}`],
+    // — ordinary refusals, which have always had to keep the retry —
     ["a rate limit", `{"error":{"code":"QuotaExceeded.RPM","message":"Too many requests","type":"TooManyRequests"}}`],
     ["a bad key", `{"error":{"code":"AuthenticationError","message":"invalid api key","type":"Unauthorized"}}`],
     ["a rejected parameter", `{"error":{"code":"InvalidParameter","message":"duration must be one of 4,5,...","type":"BadRequest"}}`],
     ["a DIFFERENT moderation category", `{"error":{"code":"InputImageSensitiveContentDetected.Violence","message":"The request failed because the input image 'content[1]' was rejected.","type":"BadRequest"}}`],
     ["the family prefix with no sub-code", `{"error":{"code":"InputImageSensitiveContentDetected","message":"rejected","type":"BadRequest"}}`],
     ["an empty body", ""],
+    ["a plain-text gateway page", "<html><body>502 Bad Gateway</body></html>"],
     ["a body about a person that is not an input-image refusal", "the prompt may contain real person names"],
   ])("does not claim %s is this refusal", (_label, body) => {
     expect(referenceImagePersonRejected(body)).toBe(false);
+  });
+
+  it("falls back to the ordinary route when a reply is cut off mid-sentence", () => {
+    // A body truncated before either marker completes is a reply we cannot read, and an
+    // unreadable reply is not this refusal. Costs a retry; never mislabels one.
+    const cutMidPhrase = MEASURED_REJECTION.slice(0, MEASURED_REJECTION.indexOf("may contain") + 6);
+    expect(referenceImagePersonRejected(cutMidPhrase)).toBe(false);
   });
 
   it("treats a missing body as unrecognised, not as a match", () => {
