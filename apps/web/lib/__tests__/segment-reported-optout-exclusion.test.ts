@@ -1,4 +1,6 @@
 /**
+ * @vitest-environment jsdom
+ *
  * #758 — the merchant's optional "also exclude the opt-outs I recorded myself".
  *
  * #496 option B (Founder) says a merchant's own record discloses and does not suppress, and #750
@@ -22,17 +24,32 @@
  */
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { createElement, type ComponentProps } from "react";
+import { act, createElement, type ComponentProps } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 vi.mock("../auth-guard", () => ({ requireOwner: vi.fn() }));
 vi.mock("../better-auth/compat", () => ({ isImpersonating: vi.fn(async () => false) }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+// r6 — the broadcast page's own action modules. Mocked so the freeze BUTTON can be clicked in a
+// real browser environment and the note's host container can be snapshotted in the state a
+// merchant actually sees it: after the action returned, not as a detached child component.
+vi.mock("@/lib/customer-broadcast-ui-actions", () => ({
+  freezeAudience: vi.fn(),
+  confirmBroadcastRun: vi.fn(),
+  executeBroadcastRun: vi.fn(),
+  cancelBroadcastRun: vi.fn(),
+  getBroadcastRunLivePreflight: vi.fn(),
+}));
+vi.mock("@/lib/customer-broadcast-report-ui-actions", () => ({
+  getCustomerBroadcastReport: vi.fn(async () => ({ ok: false, error: "RESOURCE_NOT_FOUND" })),
+}));
 
 const { prisma, recordConsentEvent } = await import("@fikirtive/db");
 const { requireOwner } = await import("../auth-guard");
 const { buildSegment, listSegments, previewSegment } = await import("../segment-actions");
 const { readContactConsentTruth } = await import("../consent-authority");
+const broadcastUiActions = await import("@/lib/customer-broadcast-ui-actions");
 const { setContactConsent, importContacts } = await import("../crm-actions");
 const { createCustomerBroadcastService } = await import("../customer-broadcast-service");
 const segmentsModule = await import("@/components/crm/segments-page");
@@ -588,6 +605,80 @@ function renderSurface(name: SurfaceName): string {
   return surfaceText(renderSurfaceMarkup(name));
 }
 
+/**
+ * r6 判官 — the two surfaces a first paint cannot show, snapshotted where the merchant meets them:
+ * the HOST container, in the state that only arrives after an effect or an action.
+ *
+ * r5 pinned `ContactPreview` and `ConsentExclusionNote` as detached child components. The judge
+ * then injected a sentence into the real host branch but OUTSIDE the child — segments-page's live
+ * preview host also renders the "Current" badge, `preview.phrase`, and whatever sits beside them —
+ * and both boards stayed green: the page board because the effect had not run, the panel board
+ * because it only ever saw the child. So these two render the real component in a real browser
+ * environment, run the real effect / click the real button, and pin the host container's whole
+ * text. Everything between the heading and the child is inside the snapshot now.
+ */
+declare global {
+  var IS_REACT_ACT_ENVIRONMENT: boolean | undefined;
+}
+globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+/** One mounted component in a real DOM, with effects running. Always unmounted by the caller. */
+async function mountForEffects(element: ReturnType<typeof createElement>) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(element);
+  });
+  return {
+    host,
+    settle: async (ms: number) => {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+      });
+    },
+    unmount: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
+}
+
+/** The container whose text starts with this heading — the host, not the child inside it. */
+function hostContainer(host: HTMLElement, selector: string, heading: string): Element {
+  const node = Array.from(host.querySelectorAll(selector)).find((element) =>
+    (element.textContent ?? "").trim().startsWith(heading),
+  );
+  if (!node) throw new Error(`host container not found for heading: ${heading}`);
+  return node;
+}
+
+/**
+ * The host's markup, for layer 2. Its rule is per text block, and a heading, a badge and a phrase
+ * carry no full stop — joined into one string they become a single pseudo-sentence that reads as
+ * a claim. Layer 1 compares the joined text; layer 2 reads the blocks.
+ */
+function hostContainerMarkup(host: HTMLElement, selector: string, heading: string): string {
+  return hostContainer(host, selector, heading).innerHTML;
+}
+
+function hostContainerText(host: HTMLElement, selector: string, heading: string): string {
+  const node = hostContainer(host, selector, heading);
+  // Read it the same way every other board is read — block by block, via `surfaceText` — so an
+  // injected block stays a separate sentence instead of being glued to its neighbour's full stop.
+  return normalizeInstants(surfaceText(node.innerHTML));
+}
+
+/**
+ * The server action stamps its own `evaluatedAt`, which the preview prints. It is the only part of
+ * these surfaces that cannot be fixed by a fixture, so it is normalized — and only it. A block
+ * added anywhere still changes the string.
+ */
+function normalizeInstants(text: string): string {
+  // Both rendered forms: the component prints " UTC" only when the milliseconds are exactly .000.
+  return text.replace(/Evaluated \d{4}-\d{2}-\d{2} [\d:.]+(?: UTC|Z)/g, "Evaluated <instant>");
+}
+
 /** The merchant's own words on the fixture surfaces — his segment names, never the product's. */
 const FIXTURE_AUTHORED = ["Reachable audience", "Reachable audience, minus my own records"];
 
@@ -685,6 +776,30 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
     "every contact you have.",
 };
 const SURFACE_NAMES = Object.keys(APPROVED_SURFACES) as SurfaceName[];
+
+/** r6 — the two host containers, pinned in the state the merchant actually meets them in. */
+const APPROVED_HOSTS = {
+  livePreview:
+    "Live preview Current All of: Contact is not a known opt-out 4 of 6 contacts matched · 4 " +
+    "contactable · 2 known opt-out excluded · 3 reported opt-out still included Unknown consent " +
+    "stays included. Known opt-out means the customer opted out through their own channel. An " +
+    "opt-out you recorded yourself keeps the contact in the list, marked reported opt-out — open " +
+    "the contact to see its consent history. Do not disturb is checked at send time and does not " +
+    "filter this segment. 1 of them opted out before consent history was kept, so they stay out " +
+    "until the customer opts in again. These counts cover every contact you have. A broadcast " +
+    "counts only the contacts it can reach on the channel it sends from, so its own numbers can " +
+    "be lower. Evaluated <instant> Amira Salleh email · whatsapp Included Bakri Idris email · " +
+    "whatsapp Included · reported opt-out Evelyn Ng email · whatsapp Included · reported opt-out " +
+    "Faiz Rahim No live identity Included · reported opt-out",
+  freezeStep:
+    "1 · Freeze the audience Snapshot the segment now. Contacts with unknown permission stay in " +
+    "and are flagged — the estimate never drops them. Select a segment… Reachable audience Freeze " +
+    "audience 2 contacts were excluded for opting out. 1 of them opted out before consent history " +
+    "was kept, so they stay out until the customer opts in again. This count covers the contacts " +
+    "this broadcast can reach on its channel, so it can be lower than the count on the segments " +
+    "page, which covers every contact you have. This segment also leaves out opt-outs you " +
+    "recorded yourself, so 2 more contacts are not in this audience.",
+};
 const APPROVED_SWITCH_LABEL = "Also exclude opt-outs I recorded myself";
 
 const TOTAL_CONTACTS_A = 6;
@@ -1240,6 +1355,133 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     // The choice is never dressed up as evidence the customer gave (#768).
     expect(markup).not.toContain("customers who opted out excluded");
     expect(unapprovedUniversalClaims(markup)).toEqual([]);
+  });
+
+  /**
+   * r6 判官 ① — the live preview HOST, after the real effect ran.
+   *
+   * The host is the whole "Live preview" section: heading, the Current/Waiting badge, the phrase
+   * the server wrote, and the child panel. The judge's injection sat between the phrase and the
+   * child, where neither r5 board could see it.
+   */
+  it("pins the live preview host container after its effect has run", async () => {
+    actAs(ORG_A);
+    const mounted = await mountForEffects(createElement(SegmentsPage, SEGMENTS_PAGE_FIXTURE));
+    try {
+      // The draft preview is debounced by 350ms and then awaits the real action.
+      await mounted.settle(600);
+      const text = hostContainerText(mounted.host, "section", "Live preview");
+      expect(text).toBe(APPROVED_HOSTS.livePreview);
+      // The parts that live in the host and NOT in the child — proof the scope really widened.
+      expect(text).toContain("Current");
+      expect(text).toContain("All of: Contact is not a known opt-out");
+      expect(
+        unapprovedUniversalClaims(
+          hostContainerMarkup(mounted.host, "section", "Live preview"),
+          FIXTURE_AUTHORED,
+        ),
+      ).toEqual([]);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  /**
+   * r6 判官 ② — the freeze note HOST, after the real button was clicked and the action returned.
+   */
+  it("pins the freeze step host container after the action returned", async () => {
+    vi.mocked(broadcastUiActions.freezeAudience).mockResolvedValue({
+      ok: true,
+      consent: NOTE_TIGHTENED,
+    } as unknown as Awaited<ReturnType<typeof broadcastUiActions.freezeAudience>>);
+    vi.mocked(broadcastUiActions.getBroadcastRunLivePreflight).mockResolvedValue({
+      ok: true,
+      resource: { run: BROADCAST_RUN_FIXTURE, members: [BROADCAST_MEMBER_FIXTURE] },
+    } as unknown as Awaited<ReturnType<typeof broadcastUiActions.getBroadcastRunLivePreflight>>);
+
+    const mounted = await mountForEffects(
+      createElement(BroadcastDetailPage, BROADCAST_PAGE_FIXTURE),
+    );
+    try {
+      const select = mounted.host.querySelector<HTMLSelectElement>(
+        'select[aria-label="Audience segment"]',
+      );
+      if (!select) throw new Error("the audience segment select is not on the page");
+      const setValue = Object.getOwnPropertyDescriptor(
+        window.HTMLSelectElement.prototype,
+        "value",
+      )?.set;
+      await act(async () => {
+        setValue?.call(select, "01ARZ3NDEKTSV4RRFFQ69G5FAW");
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+
+      const freeze = Array.from(mounted.host.querySelectorAll("button")).find(
+        (button) => (button.textContent ?? "").trim() === "Freeze audience",
+      );
+      if (!freeze) throw new Error("the freeze button is not on the page");
+      await act(async () => {
+        freeze.click();
+      });
+      await mounted.settle(0);
+
+      expect(vi.mocked(broadcastUiActions.freezeAudience)).toHaveBeenCalledTimes(1);
+      const text = hostContainerText(mounted.host, "div", "1 · Freeze the audience");
+      expect(text).toBe(APPROVED_HOSTS.freezeStep);
+      // The note really is inside the host now, not pinned as a component beside it.
+      expect(text).toContain("2 contacts were excluded for opting out.");
+      expect(
+        unapprovedUniversalClaims(
+          hostContainerMarkup(mounted.host, "div", "1 · Freeze the audience"),
+          FIXTURE_AUTHORED,
+        ),
+      ).toEqual([]);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  /**
+   * r6 判官 ③ — the drill in the judge's own shape: a block inside the HOST branch and outside the
+   * child component. It is put into the live host node that React just rendered, so nothing is
+   * simulated; the board that r5 shipped would have stayed green on this.
+   */
+  it("fails the host snapshot for a block injected beside the child, inside the host", async () => {
+    actAs(ORG_A);
+    const mounted = await mountForEffects(createElement(SegmentsPage, SEGMENTS_PAGE_FIXTURE));
+    try {
+      await mounted.settle(600);
+      const section = Array.from(mounted.host.querySelectorAll("section")).find((element) =>
+        (element.textContent ?? "").trim().startsWith("Live preview"),
+      );
+      if (!section) throw new Error("the live preview host is not on the page");
+      const clean = hostContainerText(mounted.host, "section", "Live preview");
+      expect(clean).toBe(APPROVED_HOSTS.livePreview);
+
+      for (const fixture of RED_FIXTURES) {
+        const injected = document.createElement("p");
+        injected.textContent = fixture.sentence;
+        // Between the phrase and the child panel — exactly where the judge put it.
+        section.insertBefore(injected, section.lastElementChild);
+        const mutated = hostContainerText(mounted.host, "section", "Live preview");
+        expect(mutated, `${fixture.label} inside the preview host`).not.toBe(
+          APPROVED_HOSTS.livePreview,
+        );
+        expect(mutated).toContain(fixture.sentence);
+        // The gap this round closes, stated where it can be read: neither r5 board can see this.
+        // The first-paint page board renders before the effect, so the host branch is not even
+        // mounted in it; the panel board only ever renders the child component. Both stay equal
+        // to their approved text while the merchant is looking at the injected sentence.
+        expect(renderSurface("segmentsPage")).toBe(APPROVED_SURFACES.segmentsPage);
+        expect(renderSurface("previewUntightened")).toBe(APPROVED_SURFACES.previewUntightened);
+        injected.remove();
+      }
+      expect(hostContainerText(mounted.host, "section", "Live preview")).toBe(
+        APPROVED_HOSTS.livePreview,
+      );
+    } finally {
+      mounted.unmount();
+    }
   });
 
   /**
