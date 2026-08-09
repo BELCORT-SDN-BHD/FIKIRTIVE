@@ -1349,6 +1349,7 @@ export function OttoChatStream({
           <input
             ref={fileInputRef}
             type="file"
+            aria-label="Attach a file"
             accept={ACCEPT_ATTACH}
             className="hidden"
             onChange={handleFilePick}

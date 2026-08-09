@@ -1944,6 +1944,7 @@ export default function FlowCanvas({
             {motion === "custom" && (
               <input
                 type="text"
+                aria-label="Custom camera motion"
                 value={customMotion}
                 onChange={(e) => setCustomMotion(e.target.value)}
                 placeholder="e.g. slow zoom in as she turns to camera"
