@@ -86,10 +86,13 @@ const BEHIND = `p678-behind-${randomUUID()}@fikirtive.test`;
 const DB_ALLOWED = `p678-dballowed-${randomUUID()}@fikirtive.test`;
 /** Its access check is held open on purpose, so the deadline provably expires mid-job. */
 const LATE = `p678-late-${randomUUID()}@fikirtive.test`;
+/** #757 — mints a REAL sign-in token, so the row it leaves behind can be asked how long the
+ *  credential this queue carries actually lives. */
+const TTL_PROBE = `p757-ttl-${randomUUID()}@fikirtive.test`;
 
 process.env.BETTER_AUTH_SECRET = "x".repeat(40);
 process.env.BETTER_AUTH_URL = "http://localhost:3100";
-process.env.AUTH_ALLOWED_EMAILS = [TARGET_ALLOWED, TARGET_SPENT, CANARY, SLOW, BEHIND].join(",");
+process.env.AUTH_ALLOWED_EMAILS = [TARGET_ALLOWED, TARGET_SPENT, CANARY, SLOW, BEHIND, TTL_PROBE].join(",");
 process.env.FOUNDER_ADMIN_EMAILS = "noone@fikirtive.test";
 
 const { prisma } = await import("@fikirtive/db");
@@ -104,6 +107,8 @@ const {
   AUTH_EMAIL_JOB_TIMEOUT_MS,
   AUTH_EMAIL_SLOT_FLOOR_MS,
   AUTH_EMAIL_MAX_QUEUED,
+  AUTH_EMAIL_WORST_SLOT_MS,
+  AUTH_EMAIL_LINK_TTL_MS,
 } = await import("@/lib/better-auth/sender");
 const { acceptMagicLinkRequest, __resetMagicLinkThrottleForTests } = await import(
   "@/lib/better-auth/magic-link-request"
@@ -269,6 +274,12 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
 
     const lines = log.mock.calls.map((c) => c.join(" "));
     expect(lines.some((l) => l.includes("auth email job failed") && l.includes("timeout"))).toBe(true);
+    // #757 — AND IT SAYS WHICH KIND OF TIMEOUT. This job had a request on the wire when its
+    // deadline fired, and an abort cannot un-accept a request the provider has already taken. So
+    // the operator line reports the outcome as UNKNOWN rather than as a failure: "no email was
+    // sent" is a claim this system is not in a position to make, and an operator who acts on it
+    // by re-sending is minting a second live credential.
+    expect(lines.some((l) => l.includes("delivery outcome unknown"))).toBe(true);
     for (const line of [...lines, ...warn.mock.calls.map((c) => c.join(" "))]) {
       expect(line).not.toContain(SLOW);
     }
@@ -278,8 +289,10 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
     // …and settling the queue waits for the abandoned work rather than declaring victory over it.
     releaseAll();
     await authEmailQueueSettled();
-    // NO LATE DELIVERY. The abandoned job's send was cancelled, so it must never appear in the
-    // inbox — not when it was abandoned, and not after everything has settled either.
+    // NOT LATE FROM OUR SIDE. This asserts our own contract — a transport that honours the abort
+    // never reports a delivery once the slot has gone back — which is exactly as far as a test
+    // can reach. Whether the real provider posts a message it already accepted is its decision,
+    // and the idempotency key on every send is what keeps that from becoming a second link.
     expect(delivered).not.toContain(SLOW);
 
     log.mockRestore();
@@ -313,7 +326,13 @@ describe("#678 — one stuck delivery does not become every tenant's stuck deliv
     expect(delivered).not.toContain(LATE);
     const lines = warn.mock.calls.map((c) => c.join(" "));
     expect(lines.some((l) => l.includes("auth email not started"))).toBe(true);
-    for (const line of [...lines, ...log.mock.calls.map((c) => c.join(" "))]) {
+    // #757 — and this job is the OTHER kind of timeout: it died before anything was dispatched,
+    // so there is nothing indeterminate about it. Reporting both kinds the same way would make
+    // "delivery outcome unknown" mean nothing on the line where it matters.
+    const errorLines = log.mock.calls.map((c) => c.join(" "));
+    expect(errorLines.some((l) => l.includes("timeout"))).toBe(true);
+    expect(errorLines.some((l) => l.includes("delivery outcome unknown"))).toBe(false);
+    for (const line of [...lines, ...errorLines]) {
       expect(line).not.toContain(LATE);
     }
     warn.mockRestore();
@@ -351,7 +370,8 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
       jitterMaxMs: 0,
       slotFloorMs: 60_000, // nothing drains during the flood: worst case for the backlog
       maxConcurrency: 1,
-      maxQueued: 200,
+      // #757 — the PRODUCTION capacity, not a small stand-in. The bound that has to hold under
+      // a flood is the one that ships.
     });
 
     let peak = 0;
@@ -361,7 +381,7 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     }
     // RED before the bound: 5 000 presses, 5 000 outstanding jobs, and every real merchant's
     // sign-in link queued behind them.
-    expect(peak).toBeLessThanOrEqual(200);
+    expect(peak).toBeLessThanOrEqual(AUTH_EMAIL_MAX_QUEUED);
 
     // The drop is an operator signal only — the merchant's answer never changed — and it is
     // aggregated rather than one line per dropped job.
@@ -369,7 +389,7 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     expect(lines.some((l) => l.includes("auth email queue full"))).toBe(true);
     expect(lines.filter((l) => l.includes("auth email queue full")).length).toBeLessThan(10);
 
-    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0, maxQueued: 200 });
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
     vi.spyOn(console, "error").mockImplementation(() => {});
     await authEmailQueueSettled();
     warn.mockRestore();
@@ -405,6 +425,70 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     expect(delivered).toContain(BEHIND);
     warn.mockRestore();
   }, 30_000);
+
+  /**
+   * #757 (P3) — the drop log has to account for the WHOLE flood, including its last seconds.
+   *
+   * Aggregation was a rate limit and nothing else: a line went out only when a NEW drop arrived
+   * more than ten seconds after the last line. A flood that stops — which every flood does — left
+   * its final tally sitting in a counter that nothing would ever print. The operator saw "dropped
+   * 1 job" for an incident that dropped thousands, and the number they were given was the least
+   * informative one available.
+   */
+  it("prints the tail of a flood rather than leaving it in a counter", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    __configureAuthEmailQueueForTests({
+      jitterMaxMs: 0,
+      slotFloorMs: 60_000,
+      maxConcurrency: 1,
+      maxQueued: 8,
+      dropLogIntervalMs: 30,
+    });
+
+    for (let i = 0; i < 40; i++) {
+      enqueueAuthEmail({
+        purpose: "sign-in-link",
+        email: `p757-tail-${i}@shop.test`,
+        callbackURL: "/",
+        overBudget: true,
+      });
+    }
+    const dropped = 40 - 8; // eight fitted; the rest each displaced one refused job
+
+    const reported = () =>
+      warn.mock.calls
+        .map((c) => /dropped (\d+) job/.exec(c.join(" "))?.[1])
+        .filter((n): n is string => n !== undefined)
+        .reduce((sum, n) => sum + Number(n), 0);
+
+    // Mid-flood the operator has one line and most of the count is still outstanding — that part
+    // is deliberate, because a line per dropped job is a second denial of service.
+    expect(reported()).toBeLessThan(dropped);
+    // RED before #757: no further drop ever arrives, so nothing ever flushes the rest and the
+    // reported total stays at 1 for a flood of 32.
+    expect(await waitUntil(() => reported() === dropped, 2_000)).toBe(true);
+
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await authEmailQueueSettled();
+    warn.mockRestore();
+  }, 30_000);
+
+  /** #757 (P3) — `pending` stopped being an array with `shift()`. Order is the property that
+   *  refactor must not lose: a queue that reordered under load would hand the merchant who
+   *  pressed first the link that expires first. */
+  it("delivers in the order the jobs were handed over", async () => {
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0, maxConcurrency: 1 });
+    const addresses = Array.from(
+      { length: 12 },
+      (_, i) => `p757-fifo-${i}-${randomUUID()}@fikirtive.test`,
+    );
+    for (const email of addresses) {
+      enqueueAuthEmail({ purpose: "verify-email", email, url: "https://x.test/fifo" });
+    }
+    await authEmailQueueSettled();
+    expect(delivered).toEqual(addresses);
+  });
 });
 
 // ── jitter ───────────────────────────────────────────────────────────────────────────────────
@@ -452,14 +536,92 @@ describe("#678 — every job waits a random moment before it takes a slot", () =
     expect(AUTH_EMAIL_JOB_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
     // …the pool wide enough that a probe and a canary are not forced into a queue…
     expect(AUTH_EMAIL_MAX_CONCURRENCY).toBeGreaterThanOrEqual(2);
-    // …the jitter wide enough to be worth having as a second layer…
+    // …and the jitter wide enough to be worth having as a second layer.
     expect(AUTH_EMAIL_JITTER_MAX_MS).toBeGreaterThanOrEqual(1_000);
-    // …and the queue no deeper than the fifteen-minute life of the token it carries: at the
-    // floor's throughput, a full queue drains in about twelve and a half minutes.
-    const worstSlotMs = AUTH_EMAIL_SLOT_FLOOR_MS + AUTH_EMAIL_JITTER_MAX_MS;
-    const drainMinutes =
-      (AUTH_EMAIL_MAX_QUEUED * (worstSlotMs / AUTH_EMAIL_MAX_CONCURRENCY)) / 60_000;
-    expect(drainMinutes).toBeLessThan(15);
+  });
+});
+
+// ── #757 — the capacity bound is load-bearing, with the real numbers ─────────────────────────
+/**
+ * A bounded queue only helps if a job that reaches the BACK of it still arrives while the
+ * credential it carries is alive. Otherwise the bound is decoration: the queue is full of links
+ * that will be posted after they expire, which for the merchant is the same as being dropped —
+ * except it also burns their hourly budget on the way past.
+ *
+ * The previous round asserted that inequality with the wrong slot length. It used the FLOOR
+ * (3 s) as the time a job occupies a worker, so 500 jobs came out at ten and a half minutes,
+ * under the fifteen a link lives. But the floor is a MINIMUM, not a maximum: a job that reaches
+ * its deadline holds its slot for the jitter plus the whole 20-second timeout. At that length
+ * the same 500 jobs take 45.8 minutes and every link past roughly the 163rd is posted dead.
+ *
+ * So the depth is no longer a number somebody chose. It is DERIVED from the three quantities it
+ * depends on — how long a link lives, how long a slot can be held, how many slots there are —
+ * which makes the inequality true by construction rather than by assertion. What is left for a
+ * test is to prove the derivation uses the real numbers, and that the link lifetime it derives
+ * from is the one Better Auth actually stamps on the token.
+ */
+describe("#757 — a queued link cannot outlive the link", () => {
+  it("measures a slot by the DEADLINE it may run to, not by the floor it must fill", () => {
+    // RED before #757: the drain estimate used floor + jitter (5 s) and ignored the deadline,
+    // so it under-counted the worst slot by more than four times.
+    expect(AUTH_EMAIL_WORST_SLOT_MS).toBe(
+      AUTH_EMAIL_JITTER_MAX_MS + Math.max(AUTH_EMAIL_SLOT_FLOOR_MS, AUTH_EMAIL_JOB_TIMEOUT_MS),
+    );
+    expect(AUTH_EMAIL_WORST_SLOT_MS).toBeGreaterThanOrEqual(AUTH_EMAIL_JOB_TIMEOUT_MS);
+  });
+
+  /**
+   * r2 — WORKERS FINISH IN ROUNDS, NOT AS A FLOW RATE.
+   *
+   * The first version of this divided the backlog by the worker count, which prices four workers
+   * as "0.18 jobs a second" and quietly assumes a job can start a fraction of a slot late. They
+   * cannot: four slots free together and the next four start together, so a queue of N clears in
+   * `ceil(N / workers)` ROUNDS of a whole slot each. The difference is one round — and one round
+   * is 22 seconds, which is exactly the margin the link had.
+   *
+   * At 163 the continuous formula reported 896.5 s and the real answer is `ceil(163/4) = 41`
+   * rounds = 902 s, past a 900 s link: jobs 161 to 163 sit in a 41st round that starts after the
+   * link they carry is already dead.
+   */
+  const drainMs = (depth: number) =>
+    Math.ceil(depth / AUTH_EMAIL_MAX_CONCURRENCY) * AUTH_EMAIL_WORST_SLOT_MS;
+
+  it("holds the drain-before-expiry inequality at the real parameters, and is the largest depth that does", () => {
+    // RED before #757: 500 jobs = 125 rounds = 2 750 000 ms (45.8 min) against a 900 000 ms link.
+    // RED again before r2: 163 jobs = 41 rounds = 902 000 ms, two seconds past the link.
+    expect(drainMs(AUTH_EMAIL_MAX_QUEUED)).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS);
+    // …and it is not passing by being trivially small: one more job buys a whole extra round,
+    // and that round does not fit. So this is the deepest backlog still deliverable in time.
+    expect(drainMs(AUTH_EMAIL_MAX_QUEUED + 1)).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS);
+    expect(AUTH_EMAIL_MAX_QUEUED).toBeGreaterThan(0);
+  });
+
+  it("fills whole rounds — the depth is workers × rounds, so no job waits on a part-slot", () => {
+    // The largest N with `ceil(N / workers) ≤ rounds` is exactly `workers × rounds`, so a correct
+    // derivation always lands on a multiple of the pool width. 163 was not one, which is the
+    // shape of the error: it had taken three jobs out of a round that does not exist.
+    const rounds = Math.floor(AUTH_EMAIL_LINK_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
+    expect(AUTH_EMAIL_MAX_QUEUED).toBe(AUTH_EMAIL_MAX_CONCURRENCY * rounds);
+    expect(AUTH_EMAIL_MAX_QUEUED % AUTH_EMAIL_MAX_CONCURRENCY).toBe(0);
+  });
+
+  it("derives that depth from the lifetime Better Auth really stamps on the token", async () => {
+    // The inequality is only worth anything if `AUTH_EMAIL_LINK_TTL_MS` is the SAME fifteen
+    // minutes the magic-link plugin uses. RED before #757: `expiresIn` was its own literal in
+    // server.ts, so the queue's arithmetic and the token's real lifetime could drift apart
+    // silently — the queue would keep sizing itself against a number nothing enforced.
+    const startedAt = Date.now();
+    enqueueAuthEmail({ purpose: "sign-in-link", email: TTL_PROBE, callbackURL: "/", overBudget: false });
+    await authEmailQueueSettled();
+
+    const row = await prisma.betterAuthVerification.findFirst({
+      where: { value: { contains: TTL_PROBE } },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(row).not.toBeNull();
+    const lifetimeMs = (row as { expiresAt: Date }).expiresAt.getTime() - startedAt;
+    expect(lifetimeMs).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS - 5_000);
+    expect(lifetimeMs).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS + 5_000);
   });
 });
 
@@ -470,7 +632,13 @@ afterAll(async () => {
   __configureAuthEmailQueueForTests({});
   try {
     await prisma.betterAuthVerification.deleteMany({
-      where: { OR: [{ value: { contains: "p678-target-" } }, { value: { contains: "p678-canary-" } }] },
+      where: {
+        OR: [
+          { value: { contains: "p678-target-" } },
+          { value: { contains: "p678-canary-" } },
+          { value: { contains: "p757-ttl-" } },
+        ],
+      },
     });
     await prisma.allowedEmail.deleteMany({ where: { email: DB_ALLOWED } });
   } catch {

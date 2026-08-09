@@ -11,7 +11,7 @@ import type { EmailMessage, EmailPort } from "./types";
 export function createResendEmailPort(): EmailPort {
   return {
     async send(message: EmailMessage): Promise<void> {
-      const { to, subject, text, from, signal } = message;
+      const { to, subject, text, from, signal, idempotencyKey } = message;
       const preview = message.devPreview ?? text ?? message.html ?? "";
 
       if (!process.env.RESEND_API_KEY) {
@@ -32,7 +32,17 @@ export function createResendEmailPort(): EmailPort {
         // #678 — the caller's deadline. Without it a connection the provider accepts and never
         // answers hangs here for as long as the socket stays open.
         signal,
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+          "Content-Type": "application/json",
+          // #757 — the provider's own de-duplication. `signal` above cancels our WAIT; it cannot
+          // un-accept a request already on the wire, so after a deadline we do not know whether
+          // this email went out. This header is what makes the answer to that not matter: the
+          // same key is the same email, so a re-send collapses instead of minting a second live
+          // link. Omitted when the caller has no stable key to offer — an adapter must not invent
+          // one, because a made-up key de-duplicates nothing.
+          ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+        },
         body: JSON.stringify({
           from: from ?? process.env.AUTH_EMAIL_FROM ?? "Fikirtive <onboarding@resend.dev>",
           to,

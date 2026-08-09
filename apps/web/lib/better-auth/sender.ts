@@ -1,5 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { emailPort } from "@/lib/email";
 import { isAllowedEmail } from "@/lib/allowlist";
 
@@ -68,6 +69,23 @@ const isDiscardable = (job: AuthEmailJob): boolean =>
 // ── executor tuning ──────────────────────────────────────────────────────────────────────────
 
 /**
+ * #757 — HOW LONG THE THING IN THE ENVELOPE STAYS USABLE, and the single place that decides it.
+ *
+ * A sign-in link is a credential with an expiry, so every other number in this file is measured
+ * against it: a queue may only be as deep as the mail it holds can still be delivered in time.
+ * That made it the one constant that must not be restated anywhere — and it was. Better Auth's
+ * `magicLink({ expiresIn })` in server.ts carried its own literal `60 * 15`, and the queue's
+ * capacity carried a comment quoting it. Two copies of a load-bearing number is one edit away
+ * from a queue that sizes itself against a lifetime nothing enforces, and nothing would fail.
+ *
+ * server.ts now reads `AUTH_EMAIL_LINK_TTL_SECONDS` from here, so there is one number.
+ */
+export const AUTH_EMAIL_LINK_TTL_MS = 15 * 60 * 1000;
+
+/** The same lifetime in the unit Better Auth's plugin takes. Derived, never restated. */
+export const AUTH_EMAIL_LINK_TTL_SECONDS = AUTH_EMAIL_LINK_TTL_MS / 1000;
+
+/**
  * How many auth-email jobs may be in flight at once.
  *
  * WHY NOT ONE. A single serial worker made every job wait for the one in front of it, and that
@@ -119,6 +137,13 @@ export const AUTH_EMAIL_SLOT_FLOOR_MS = 3_000;
  * It is defence in depth now, not the primary cover: it stops two jobs handed over milliseconds
  * apart from starting together and contending for the same scheduler, database pool and socket
  * pool at exactly the same instant.
+ *
+ * #757 (P3) — THE WAIT HOLDS A WORKER SLOT, and it stays that way on purpose. Moving it in front
+ * of the pool would buy a little throughput and cost a third population of jobs (waiting, but
+ * neither queued nor in flight) that every capacity check would have to remember to count — the
+ * kind of bookkeeping that goes wrong quietly. The consequence that actually mattered was the
+ * capacity arithmetic under-counting a slot, and that is fixed where it belongs: the jitter is
+ * part of `AUTH_EMAIL_WORST_SLOT_MS`, so the depth is derived from what a slot really costs.
  */
 export const AUTH_EMAIL_JITTER_MAX_MS = 2000;
 
@@ -133,6 +158,20 @@ export const AUTH_EMAIL_JITTER_MAX_MS = 2000;
 export const AUTH_EMAIL_JOB_TIMEOUT_MS = 20_000;
 
 /**
+ * #757 — THE LONGEST ONE JOB CAN OCCUPY A WORKER.
+ *
+ * The floor is a MINIMUM hold, and the previous round's capacity arithmetic read it as if it
+ * were the maximum: it costed a slot at floor + jitter (5 s) and concluded a 500-deep queue
+ * drained in ten and a half minutes, comfortably inside a link's fifteen. But a job that runs
+ * to its deadline holds the slot for the jitter plus the whole timeout, and nothing caps it
+ * below that — a mail provider that accepts connections and stops answering puts EVERY job on
+ * that branch at once. The honest slot length is therefore the jitter plus whichever of the
+ * floor and the deadline is longer: 22 seconds, not 5.
+ */
+export const AUTH_EMAIL_WORST_SLOT_MS =
+  AUTH_EMAIL_JITTER_MAX_MS + Math.max(AUTH_EMAIL_SLOT_FLOOR_MS, AUTH_EMAIL_JOB_TIMEOUT_MS);
+
+/**
  * How many jobs may be outstanding at once, across everything not yet finished.
  *
  * WHY A BOUND AT ALL. Every valid request hands over a job — including the over-budget ones,
@@ -141,33 +180,94 @@ export const AUTH_EMAIL_JOB_TIMEOUT_MS = 20_000;
  * reset and verification email behind their backlog. A bound turns that into a bounded amount
  * of dropped mail with an operator log, which is a far better failure.
  *
- * WHY 500. A slot is held for the jitter plus the floor — at worst five seconds — so four
- * workers clear at least 0.8 jobs a second. A full queue therefore drains in about ten and a
- * half minutes, and a magic-link token only lives fifteen (`magicLink({ expiresIn: 60 * 15 })`).
- * A deeper queue could only ever hold links that would expire before they were sent, so this is
- * about the largest backlog that can still be useful.
+ * #757 — WHY IT IS NOT A NUMBER ANY MORE. A bound only helps if a job that lands at the BACK of
+ * the queue still arrives while the link it carries is alive; past that point the queue is full
+ * of credentials that will be posted dead, which costs the merchant their hourly budget as well
+ * as their link. 500 was chosen against a five-second slot and fails against a twenty-two-second
+ * one — the same 500 jobs take 45.8 minutes to clear, so everything past the first few dozen was
+ * always going to be posted after it expired.
+ *
+ * r2 — AND THE WORKERS CLEAR IT IN ROUNDS, NOT AS A FLOW RATE. The first derivation divided the
+ * depth by the pool width, which prices four workers as a continuous 0.18 jobs a second and
+ * assumes a job can begin a fraction of a slot late. It cannot: four slots come back together
+ * and the next four start together, so a queue of N takes `ceil(N / workers)` ROUNDS of a whole
+ * slot each. Rounding is not a rounding error here — one round is the full 22 seconds, and 22
+ * seconds was the entire margin. The continuous form allowed 163, whose real cost is
+ * `ceil(163/4) = 41` rounds = 902 s against a 900 s link: the last three jobs would begin their
+ * round after the link they carry had already expired.
+ *
+ * So the depth is the largest N with `ceil(N / workers) × worst slot ≤ link lifetime`, which is
+ * exactly `workers × floor(lifetime / worst slot)` — whole rounds, no part-slots, 160 today. The
+ * inequality holds by construction; change the deadline, the pool or the link's life and the
+ * depth follows on its own.
  */
-export const AUTH_EMAIL_MAX_QUEUED = 500;
+export const AUTH_EMAIL_MAX_QUEUED =
+  AUTH_EMAIL_MAX_CONCURRENCY * Math.floor(AUTH_EMAIL_LINK_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
+
+/** One drop line per ten seconds. The case it fires in is a flood, and a line per dropped job
+ *  would be a second denial of service. */
+export const AUTH_EMAIL_DROP_LOG_INTERVAL_MS = 10_000;
 
 let maxConcurrency = AUTH_EMAIL_MAX_CONCURRENCY;
 let slotFloorMs = AUTH_EMAIL_SLOT_FLOOR_MS;
 let jitterMaxMs = AUTH_EMAIL_JITTER_MAX_MS;
 let jobTimeoutMs = AUTH_EMAIL_JOB_TIMEOUT_MS;
 let maxQueued = AUTH_EMAIL_MAX_QUEUED;
+let dropLogIntervalMs = AUTH_EMAIL_DROP_LOG_INTERVAL_MS;
 let randomSource: () => number = Math.random;
 const realSleep = (ms: number) =>
   ms <= 0 ? Promise.resolve() : new Promise<void>((resolve) => setTimeout(resolve, ms));
 let sleep: (ms: number) => Promise<void> = realSleep;
 
-/** The deadline of the job currently running, so `sendAuthEmail` can hand it to the transport
- *  without every layer in between having to carry a parameter. Same process, same call chain —
- *  nothing outside this module can put a value in here. */
-const jobAbortStore = new AsyncLocalStorage<AbortSignal>();
+/**
+ * The job currently running, so `sendAuthEmail` can reach its deadline without every layer in
+ * between having to carry a parameter. Same process, same call chain — nothing outside this
+ * module can put a value in here.
+ *
+ * `sendDispatched` is set the moment a send is handed to the transport, and #757 is why it
+ * exists: an abort cancels our wait, it does not un-accept a request the provider already took.
+ * A job that dies at its deadline WITHOUT having dispatched anything definitely sent nothing; a
+ * job that dies with a request on the wire is genuinely indeterminate, and the operator log has
+ * to be able to tell an operator which of the two they are looking at.
+ */
+type JobContext = { signal: AbortSignal; sendDispatched: boolean };
+const jobAbortStore = new AsyncLocalStorage<JobContext>();
 
-/** Jobs that will be delivered, and jobs the throttle already refused. Two lists rather than one
- *  so "drop the refused ones first" is a shift rather than a scan — a scan on the request thread
- *  is the very thing the bucket map had to stop doing. */
-const pending: AuthEmailJob[] = [];
+/**
+ * Jobs that will be delivered, and jobs the throttle already refused. Two collections rather than
+ * one so "drop the refused ones first" is a single removal rather than a scan — a scan on the
+ * request thread is the very thing the bucket map had to stop doing.
+ *
+ * #757 (P3) — the deliverable side is a LINKED LIST, not an array with `shift()`. `shift()` moves
+ * every remaining element on each dequeue, so draining a full queue cost O(depth²) and the depth
+ * is chosen by whoever is flooding. Two pointers make both ends O(1) with no compaction heuristic
+ * and no array that quietly grows while its head marches along it.
+ *
+ * The refused side stays an array because `pump` discards the whole of it at once and nothing
+ * ever reads it in order; taking from its END is O(1) and picks an equally undeliverable job.
+ */
+type QueueNode = { job: AuthEmailJob; next: QueueNode | null };
+let pendingHead: QueueNode | null = null;
+let pendingTail: QueueNode | null = null;
+let pendingCount = 0;
+
+function pushPending(job: AuthEmailJob): void {
+  const node: QueueNode = { job, next: null };
+  if (pendingTail) pendingTail.next = node;
+  else pendingHead = node;
+  pendingTail = node;
+  pendingCount += 1;
+}
+
+function takePending(): AuthEmailJob | undefined {
+  const node = pendingHead;
+  if (!node) return undefined;
+  pendingHead = node.next;
+  if (!pendingHead) pendingTail = null;
+  pendingCount -= 1;
+  return node.job;
+}
+
 const refused: AuthEmailJob[] = [];
 let pumpTimer: ReturnType<typeof setTimeout> | null = null;
 const inFlight = new Set<Promise<void>>();
@@ -177,18 +277,38 @@ const straggling = new Set<Promise<unknown>>();
 
 let droppedSinceLastLog = 0;
 let lastDropLog = 0;
-function noteDrop(): void {
-  droppedSinceLastLog += 1;
-  const now = Date.now();
-  // One line per ten seconds: the case this fires in is a flood, and a log line per dropped job
-  // would be a second denial of service.
-  if (now - lastDropLog < 10_000) return;
+let dropLogTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushDropLog(): void {
+  dropLogTimer = null;
+  if (droppedSinceLastLog === 0) return;
   console.warn(`[better-auth] auth email queue full: dropped ${droppedSinceLastLog} job(s)`);
   droppedSinceLastLog = 0;
-  lastDropLog = now;
+  lastDropLog = Date.now();
 }
 
-const outstanding = (): number => pending.length + refused.length + inFlight.size;
+/**
+ * #757 (P3) — the aggregation window is a RATE LIMIT, not a filter.
+ *
+ * It used to be both by accident: a line went out only when a NEW drop arrived after the window,
+ * so whatever was dropped in a flood's final seconds sat in the counter forever. Every flood
+ * ends, so every flood ended with its tail unreported — the operator was told about one dropped
+ * job for an incident that dropped thousands. The residue now rides a timer of its own, and
+ * `unref` keeps it from holding a process (or a test run) open.
+ */
+function noteDrop(): void {
+  droppedSinceLastLog += 1;
+  const since = Date.now() - lastDropLog;
+  if (since >= dropLogIntervalMs) {
+    flushDropLog();
+    return;
+  }
+  if (dropLogTimer) return;
+  dropLogTimer = setTimeout(flushDropLog, dropLogIntervalMs - since);
+  (dropLogTimer as { unref?: () => void }).unref?.();
+}
+
+const outstanding = (): number => pendingCount + refused.length + inFlight.size;
 
 /**
  * #678 — put an auth email on the background queue and return. NOTHING about the job runs before
@@ -215,7 +335,7 @@ export function enqueueAuthEmail(job: AuthEmailJob): void {
     // delivered, so they are the cheapest thing in the queue to lose. If there are none, the
     // incoming job is dropped instead. Either way the merchant's answer is unchanged; this is
     // an operator signal only.
-    if (refused.length > 0) refused.shift();
+    if (refused.length > 0) refused.pop();
     else {
       noteDrop();
       return;
@@ -223,7 +343,8 @@ export function enqueueAuthEmail(job: AuthEmailJob): void {
     noteDrop();
   }
 
-  (isDiscardable(job) ? refused : pending).push(job);
+  if (isDiscardable(job)) refused.push(job);
+  else pushPending(job);
   if (pumpTimer) return;
   pumpTimer = setTimeout(() => {
     pumpTimer = null;
@@ -241,8 +362,8 @@ function pump(): void {
   // cheaply reveals nothing.
   refused.length = 0;
 
-  while (pending.length > 0 && inFlight.size < maxConcurrency) {
-    const job = pending.shift();
+  while (pendingCount > 0 && inFlight.size < maxConcurrency) {
+    const job = takePending();
     if (!job) break;
     const running: Promise<void> = runOneJob(job).finally(() => {
       inFlight.delete(running);
@@ -269,7 +390,8 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
   });
   deadline.catch(() => {});
 
-  const work = jobAbortStore.run(controller.signal, () => runAuthEmailJob(job));
+  const context: JobContext = { signal: controller.signal, sendDispatched: false };
+  const work = jobAbortStore.run(context, () => runAuthEmailJob(job));
   work.catch(() => {});
 
   try {
@@ -278,11 +400,21 @@ async function runOneJob(job: AuthEmailJob): Promise<void> {
     // Every failure past the hand-over is an OPERATOR concern: fixed category, no address
     // (#575 log discipline). Alerting on these lines is what carries "a merchant is waiting for
     // a link that never came" now that the response cannot.
+    //
+    // #757 — and the two kinds of timeout are not the same operational fact. "Nothing was sent"
+    // is actionable (re-send it); "we abandoned a request that was already with the provider" is
+    // not, because the provider may well have posted it and a re-send would put a second live
+    // link in the same inbox. Saying so is the only honest line, and it is the reason the send
+    // carries an idempotency key: it makes the recovery safe when an operator takes it anyway.
     const timedOut = error instanceof Error && error.message === "AuthEmailJobTimeout";
-    console.error(
-      "[better-auth] auth email job failed:",
-      timedOut ? "timeout" : error instanceof Error ? error.name : "unknown",
-    );
+    const reason = timedOut
+      ? context.sendDispatched
+        ? "timeout after the send was dispatched — delivery outcome unknown"
+        : "timeout"
+      : error instanceof Error
+        ? error.name
+        : "unknown";
+    console.error("[better-auth] auth email job failed:", reason);
     if (timedOut) {
       // The slot is back, but the work may not be finished. Hold a handle to it so a shutdown
       // (or a test) can tell the difference between "abandoned" and "gone".
@@ -351,6 +483,24 @@ function internalCallHeaders(): Headers {
 }
 
 /**
+ * #757 — ONE MINTED LINK IS ONE EMAIL, however many times it is dispatched.
+ *
+ * Derived from the message rather than from the attempt, which is the whole point: two dispatches
+ * of the same link produce the same key and the provider delivers one of them, while two
+ * different links are two different emails and are left alone. A per-attempt id (a job uuid, a
+ * timestamp) would de-duplicate nothing, since the case worth surviving is precisely the second
+ * attempt at the first message.
+ *
+ * Hashed rather than sent in the clear because the key travels in a header and lands in provider
+ * logs; the address is already in the envelope, but nothing here needs to put it anywhere else.
+ */
+function idempotencyKeyFor(message: { to: string; subject: string; url: string }): string {
+  return createHash("sha256")
+    .update(`${message.to}\n${message.subject}\n${message.url}`)
+    .digest("hex");
+}
+
+/**
  * Write one auth email. AWAITED — but only ever from the background side above, or from the
  * Better Auth send hooks that the background side triggers. A request path must never call this.
  *
@@ -364,20 +514,24 @@ export async function sendAuthEmail(message: {
   url: string;
   intro: string;
 }): Promise<void> {
-  const signal = jobAbortStore.getStore();
+  const context = jobAbortStore.getStore();
   // Past its deadline the job's slot has already gone back to the pool, so starting a send now
   // would be mail arriving from a job the executor considers finished. Refuse to start one.
-  if (signal?.aborted) {
+  if (context?.signal.aborted) {
     console.warn("[better-auth] auth email not started: the job passed its deadline");
     return;
   }
+  // Marked BEFORE the call, not after: the question this answers is "might a request have reached
+  // the provider", and the conservative answer from the moment we hand it over is yes (#757).
+  if (context) context.sendDispatched = true;
   try {
     await emailPort.send({
       to: message.to,
       subject: message.subject,
       text: `${message.intro}:\n${message.url}\n\nIf you didn't request this, ignore this email.`,
       devPreview: message.url,
-      signal,
+      signal: context?.signal,
+      idempotencyKey: idempotencyKeyFor(message),
     });
   } catch (error: unknown) {
     console.error(
@@ -394,6 +548,8 @@ export function __resetAuthEmailCapsForTests(): void {
   lastSweep = 0;
   droppedSinceLastLog = 0;
   lastDropLog = 0;
+  if (dropLogTimer) clearTimeout(dropLogTimer);
+  dropLogTimer = null;
 }
 
 /** TEST ONLY. Wall-clock behaviour is the thing under test in several cases here, and asserting
@@ -405,6 +561,7 @@ export function __configureAuthEmailQueueForTests(config: {
   jitterMaxMs?: number;
   jobTimeoutMs?: number;
   maxQueued?: number;
+  dropLogIntervalMs?: number;
   random?: () => number;
   sleepFn?: (ms: number) => Promise<void>;
 }): void {
@@ -413,6 +570,7 @@ export function __configureAuthEmailQueueForTests(config: {
   jitterMaxMs = config.jitterMaxMs ?? AUTH_EMAIL_JITTER_MAX_MS;
   jobTimeoutMs = config.jobTimeoutMs ?? AUTH_EMAIL_JOB_TIMEOUT_MS;
   maxQueued = config.maxQueued ?? AUTH_EMAIL_MAX_QUEUED;
+  dropLogIntervalMs = config.dropLogIntervalMs ?? AUTH_EMAIL_DROP_LOG_INTERVAL_MS;
   randomSource = config.random ?? Math.random;
   sleep = config.sleepFn ?? realSleep;
 }
