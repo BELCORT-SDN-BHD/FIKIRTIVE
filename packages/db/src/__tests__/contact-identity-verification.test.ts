@@ -40,7 +40,10 @@ beforeEach(async () => {
 });
 
 describe("ContactIdentity credibility grade", () => {
-  it("refuses a grade outside the closed set", async () => {
+  // A third word fails BOTH checks — the closed set does not contain it, and the evidence pairing
+  // has no branch for it either. Postgres reports whichever it evaluates first, so the assertion
+  // is on the family: this row does not get in, under either name.
+  it("refuses a grade outside the closed set, with or without evidence", async () => {
     await expect(
       prisma.contactIdentity.create({
         data: {
@@ -48,7 +51,18 @@ describe("ContactIdentity credibility grade", () => {
           verificationStatus: "kind_of_verified",
         },
       }),
-    ).rejects.toThrow(/ContactIdentity_verification_status_check/);
+    ).rejects.toThrow(/violates check constraint "ContactIdentity_verification_/);
+    await expect(
+      prisma.contactIdentity.create({
+        data: {
+          ...identityData("grade-1b", ORG_A, "grade-contact-a", "+60123456701"),
+          verificationStatus: "kind_of_verified",
+          verifiedAt: NOW,
+          verifiedSourceKind: "inbound_message",
+        },
+      }),
+    ).rejects.toThrow(/violates check constraint "ContactIdentity_verification_/);
+    await expect(prisma.contactIdentity.count({ where: { ownerId: ORG_A } })).resolves.toBe(0);
   });
 
   it("refuses a verified identity that cannot say when or by what", async () => {
