@@ -327,3 +327,125 @@ describe("/otto tablet tier — no Otto control may surface over the global draw
     expect(showSidebarButton(dom)).toBeNull();
   });
 });
+
+/**
+ * #820 —— 把窗口拉宽跨过 1024px。
+ *
+ * 抽屉只存在于 `lg` 以下,可它并不知道窗口变宽了。跨过去之后 `mobileOpen` 还是 true,
+ * 而能把它关掉的三样东西 —— 关闭按钮、遮罩、汉堡 —— 全带 `lg:hidden`,一个都点不到;
+ * 抽屉开着又正是 Otto 导轨与「Show sidebar」让位的条件,于是导轨也跟着一起消失。
+ * 商家只能靠导航、刷新、或者把窗口缩回去才能恢复。
+ *
+ * jsdom 没有 matchMedia,所以这里装一个可控的:`resizeTo` 翻答案并派发 change,
+ * 就是浏览器在窗口被拉宽时做的事。装它之前先断言旧行为 —— 没有这个监听时抽屉不会关。
+ */
+describe("#820 crossing 1024px puts the drawer away", () => {
+  type Media = { resizeTo(width: number): void };
+
+  function installMatchMedia(initialWidth: number): Media {
+    let width = initialWidth;
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+    const minWidthOf = (query: string) => Number(query.match(/min-width:\s*(\d+)px/)?.[1] ?? 0);
+    let asked = "";
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: (query: string) => {
+        asked = query;
+        return {
+          media: query,
+          get matches() {
+            return width >= minWidthOf(query);
+          },
+          addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
+            listeners.add(listener);
+          },
+          removeEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => {
+            listeners.delete(listener);
+          },
+          addListener: () => {},
+          removeListener: () => {},
+          onchange: null,
+          dispatchEvent: () => false,
+        };
+      },
+    });
+    return {
+      resizeTo(next: number) {
+        width = next;
+        const event = { matches: next >= minWidthOf(asked), media: asked } as MediaQueryListEvent;
+        for (const listener of [...listeners]) listener(event);
+      },
+    };
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, "matchMedia");
+  });
+
+  async function openDrawerAt(width: number): Promise<{ dom: HTMLDivElement; media: Media }> {
+    const media = installMatchMedia(width);
+    const dom = await mount(
+      createElement(
+        MerchantShellContent,
+        { pathname: "/otto", signOutAction: vi.fn(async () => undefined) },
+        createElement(OttoApp, {
+          projectId: "p1",
+          projects: [],
+          sidebarThreads: [],
+          entities: [],
+          threads: [],
+          balanceUsd: 0,
+          userName: "Ana",
+          memory: [],
+          records: [],
+          ads: [],
+          adJobs: [],
+          account: null,
+          analytics: {},
+          ottoStreamEnabled: false,
+          initialNavCollapsed: false,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Only the navigation props matter here.
+        } as any),
+      ),
+    );
+    await act(async () => goToButton(dom)!.click());
+    expect(globalDrawerOpen(dom)).toBe(true);
+    return { dom, media };
+  }
+
+  it("closes the drawer and gives the rail back when the window grows past the breakpoint", async () => {
+    const { dom, media } = await openDrawerAt(375);
+    // While the drawer is up, Otto's rail has stepped aside — that is the state the merchant
+    // was stuck in above 1024px, with nothing on screen able to end it.
+    expect(ottoRailOpen(dom)).toBe(false);
+
+    await act(async () => media.resizeTo(1280));
+
+    expect(globalDrawerOpen(dom)).toBe(false);
+    expect(ottoRailOpen(dom)).toBe(true);
+  });
+
+  it("leaves the drawer alone on a resize that stays below the breakpoint", async () => {
+    // The drawer is the right thing to be showing at 900px — a reset there would slam it
+    // shut in the merchant's face for turning the tablet sideways.
+    const { dom, media } = await openDrawerAt(375);
+
+    await act(async () => media.resizeTo(900));
+
+    expect(globalDrawerOpen(dom)).toBe(true);
+  });
+
+  it("closes it again on a second crossing, not only the first", async () => {
+    const { dom, media } = await openDrawerAt(375);
+    await act(async () => media.resizeTo(1280));
+    expect(globalDrawerOpen(dom)).toBe(false);
+
+    await act(async () => media.resizeTo(375));
+    await act(async () => goToButton(dom)!.click());
+    expect(globalDrawerOpen(dom)).toBe(true);
+
+    await act(async () => media.resizeTo(1280));
+    expect(globalDrawerOpen(dom)).toBe(false);
+  });
+});
