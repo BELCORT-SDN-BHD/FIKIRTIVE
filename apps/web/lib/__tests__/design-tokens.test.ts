@@ -134,42 +134,89 @@ describe("design tokens (globals.css compiled by Tailwind v4)", () => {
    * the literals themselves: once retired, they must not reappear anywhere in the markup.
    * This is not a ban on hex in general (the product still ships hundreds) — only on the
    * two shades that were measured and replaced.
+   *
+   * #830 — the first version only read `.tsx`, which is not where most colour lives. The
+   * stylesheet that DEFINES the tokens, and every `.ts` that hands a colour to a chart or a
+   * canvas, were outside the fence: `app/globals.css` could have re-typed the retired red as
+   * a token value and this test would have stayed green. Scanned extensions are now
+   * `.tsx` + `.ts` + `.css` over the same two roots.
    */
-  it("the retired state-colour literals survive nowhere in the markup (#813)", async () => {
+  it("the retired state-colour literals survive nowhere in the markup (#813, #830)", async () => {
     const RETIRED = [
       { literal: "#E5484D", why: "the pre-#739 destructive/error red — 3.91:1 on white" },
       { literal: "#3FB950", why: "an off-token green that never tracked --success" },
     ];
 
-    async function markupFiles(dir: string): Promise<string[]> {
+    /**
+     * One file, one literal, one reason — never a whole directory. The retirement of a
+     * colour is a fact the codebase has to be able to state, and stating it means writing
+     * the old value down once. An exemption here does NOT stop the fence in that file: the
+     * assertion below re-reads it with comments stripped, so the moment the literal moves
+     * out of the note and into a value, this test goes red anyway.
+     */
+    const COMMENT_ONLY_EXEMPTIONS = [
+      {
+        file: "app/globals.css",
+        literal: "#E5484D",
+        why: "the #739 retirement note itself — `--destructive #E5484D → #D02F35: AA fix` is the record of the replacement, and the audit trail is worth more than a shorter comment",
+      },
+    ];
+
+    async function scannedFiles(dir: string): Promise<string[]> {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       const nested = await Promise.all(
         entries.map(async (entry) => {
           const full = path.join(dir, entry.name);
-          if (entry.isDirectory()) return entry.name === "node_modules" ? [] : markupFiles(full);
-          return full.endsWith(".tsx") ? [full] : [];
+          if (entry.isDirectory()) return entry.name === "node_modules" ? [] : scannedFiles(full);
+          return /\.(tsx|ts|css)$/.test(entry.name) ? [full] : [];
         }),
       );
       return nested.flat();
     }
 
+    // Block comments read the same in CSS and TS/TSX; the line-comment rule only bites in
+    // TS/TSX, and the `[^:]` guard keeps it off `https://` inside a url().
+    function stripComments(text: string): string {
+      return text
+        .replace(/\/\*[\s\S]*?\*\//g, " ")
+        .replace(/(^|[^:])\/\/.*$/gm, "$1");
+    }
+
     const files = [
-      ...(await markupFiles(path.join(webRoot, "app"))),
-      ...(await markupFiles(path.join(webRoot, "components"))),
+      ...(await scannedFiles(path.join(webRoot, "app"))),
+      ...(await scannedFiles(path.join(webRoot, "components"))),
     ];
-    // An empty file list would make the assertion vacuously green.
+    // An empty file list would make the assertion vacuously green. The stylesheet that
+    // defines every token has to be one of the files actually read.
     expect(files.length).toBeGreaterThan(100);
+    expect(files.map((file) => path.relative(webRoot, file))).toContain("app/globals.css");
 
     const offenders: string[] = [];
     for (const file of files) {
+      const relative = path.relative(webRoot, file);
       const text = await fs.readFile(file, "utf8");
       for (const { literal, why } of RETIRED) {
-        if (text.toUpperCase().includes(literal)) {
-          offenders.push(`${path.relative(webRoot, file)} — ${literal} (${why})`);
+        if (!text.toUpperCase().includes(literal)) continue;
+        const exemption = COMMENT_ONLY_EXEMPTIONS.find(
+          (entry) => entry.file === relative && entry.literal === literal,
+        );
+        // An exempt file is still scanned — only its comments are forgiven.
+        const body = exemption ? stripComments(text) : text;
+        if (body.toUpperCase().includes(literal)) {
+          offenders.push(`${relative} — ${literal} (${why})`);
         }
       }
     }
     expect(offenders).toEqual([]);
+
+    // Every exemption must still be earning its place: a stale entry is a hole nobody sees.
+    for (const exemption of COMMENT_ONLY_EXEMPTIONS) {
+      const text = await fs.readFile(path.join(webRoot, exemption.file), "utf8");
+      expect(
+        text.toUpperCase().includes(exemption.literal),
+        `${exemption.file} no longer carries ${exemption.literal} — drop the exemption`,
+      ).toBe(true);
+    }
   });
 
   it("global two-layer coral focus ring (§A2) is present", async () => {
