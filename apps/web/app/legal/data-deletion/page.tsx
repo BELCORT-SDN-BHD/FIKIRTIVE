@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SUPPORT_EMAIL, supportMailto } from "@/lib/exits";
 
 export const metadata = { title: "Data deletion · Fikirtive" };
 
@@ -253,7 +254,7 @@ export default async function DataDeletionPage({
               </p>
               <p>
                 To have us check a specific request, or to ask about anything beyond the Meta connection, email{" "}
-                <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> quoting
+                <a href={supportMailto("Meta deletion request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> quoting
                 the code.
               </p>
             </>
@@ -275,7 +276,7 @@ export default async function DataDeletionPage({
               </p>
               <p>
                 This page has no lookup form and does not verify codes. To have us check a specific request, email{" "}
-                <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> with the
+                <a href={supportMailto("Meta deletion request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> with the
                 code.
               </p>
               <p>
@@ -356,7 +357,7 @@ export default async function DataDeletionPage({
           <h2 className="pt-4 text-lg font-semibold text-foreground">Deleting your whole account</h2>
           <p>
             To request deletion of your whole account, contact us: email{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> from the
+            <a href={supportMailto("Account deletion request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> from the
             address you sign in with, or use{" "}
             <span className="text-foreground">Preferences → Danger zone → Delete account</span> inside Fikirtive, where
             you type your sign-in email to confirm and Fikirtive then opens the same email for you. There is no

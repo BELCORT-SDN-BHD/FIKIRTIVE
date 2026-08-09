@@ -257,7 +257,7 @@ describe("#694 账户页的连接进度不把连不上的渠道算进分母(附�
       account,
       settings: DEFAULT_SETTINGS,
       channels,
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: false,
       onDeleteAccountRequest: vi.fn(),

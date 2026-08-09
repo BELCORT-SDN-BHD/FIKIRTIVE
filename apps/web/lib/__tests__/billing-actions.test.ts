@@ -22,13 +22,22 @@ beforeEach(() => {
 
 const { listCreditPacks, createTopupCheckout } = await import("@/lib/billing-actions");
 
+/** The packs on a shelf we actually got to look at. Fails the test if the action
+ *  reported it could not read the catalogue at all — the two are different facts (#786). */
+function packsOf(shelf: Awaited<ReturnType<typeof listCreditPacks>>) {
+  if ("unreadable" in shelf) throw new Error("expected a shelf we could read, got 'unreadable'");
+  return shelf.packs;
+}
+
 describe("listCreditPacks", () => {
   it("fails closed before touching Stripe when requireOwner denies", async () => {
     mockRequireOwner.mockResolvedValue({ error: "Not authorized." });
 
-    const packs = await listCreditPacks();
+    const shelf = await listCreditPacks();
 
-    expect(packs).toEqual([]);
+    // Denied at the door = we never saw the shelf. Reporting an empty shelf here would be
+    // the product asserting a fact it never read (#786).
+    expect(shelf).toEqual({ unreadable: true });
     expect(pricesList).not.toHaveBeenCalled();
   });
 
@@ -38,26 +47,30 @@ describe("listCreditPacks", () => {
       { id: "price_a", unit_amount: 1000, currency: "usd", active: true, metadata: { credits: "100" }, product: { name: "100 credits" } },
       { id: "price_x", unit_amount: 9999, currency: "usd", active: true, metadata: {}, product: { name: "no-credits" } },
     ] });
-    const packs = await listCreditPacks();
+    const packs = packsOf(await listCreditPacks());
     expect(packs.map((p) => p.priceId)).toEqual(["price_a", "price_b"]); // metadata-less filtered out, sorted asc
     expect(packs[0]).toMatchObject({ priceId: "price_a", credits: 100, amountCents: 1000, currency: "usd", label: "100 credits" });
   });
 
-  it("returns [] without touching Stripe when Stripe is unconfigured", async () => {
+  it("reports a real empty shelf without touching Stripe when Stripe is unconfigured", async () => {
     delete process.env.STRIPE_SECRET_KEY;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const packs = await listCreditPacks();
-    expect(packs).toEqual([]);
+    // No key = there is genuinely nothing on sale, and no amount of retrying changes that
+    // (#687 already ruled this state the empty shelf). It is NOT a read failure.
+    const shelf = await listCreditPacks();
+    expect(shelf).toEqual({ packs: [] });
     expect(pricesList).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it("returns [] when prices.list throws", async () => {
+  it("reports an unreadable shelf — not an empty one — when prices.list throws", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    pricesList.mockRejectedValue(new Error("STRIPE_SECRET_KEY is not set"));
-    const packs = await listCreditPacks();
-    expect(packs).toEqual([]);
+    pricesList.mockRejectedValue(new Error("connection reset"));
+    // #786: this used to return [], which both money pages read as "nothing on sale" and
+    // answered with a human exit — a mailto hung on an error the merchant can just retry.
+    const shelf = await listCreditPacks();
+    expect(shelf).toEqual({ unreadable: true });
     expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
   });
@@ -75,7 +88,7 @@ describe("listCreditPacks", () => {
       { id: "price_ok", unit_amount: 1000, currency: "usd", active: true, metadata: { credits: "100" }, product: { name: "100 credits" } },
       { id: "price_frac", unit_amount: 150, currency: "usd", active: true, metadata: { credits: "1.5" }, product: { name: "bad fractional credits" } },
     ] });
-    const packs = await listCreditPacks();
+    const packs = packsOf(await listCreditPacks());
     expect(packs.map((p) => p.priceId)).toEqual(["price_ok"]);
   });
 });

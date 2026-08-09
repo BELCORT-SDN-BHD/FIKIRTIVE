@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SUPPORT_EMAIL, supportMailto } from "@/lib/exits";
 
 export const metadata = { title: "Privasi · Fikirtive" };
 
@@ -281,7 +282,7 @@ export default function PrivacyPageBm() {
           <h2 className="pt-4 text-lg font-semibold text-foreground">Akses, pembetulan dan pemadaman</h2>
           <p>
             Untuk meminta salinan data anda, pembetulan, atau pemadaman, hubungi kami di{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> daripada
+            <a href={supportMailto("Data request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> daripada
             alamat yang anda gunakan untuk log masuk. Buat masa ini tiada aliran layan diri automatik untuk
             permintaan ini.
           </p>
@@ -314,7 +315,7 @@ export default function PrivacyPageBm() {
           <p>
             Fikirtive dikendalikan oleh BELCORT SDN BHD, sebuah syarikat yang berdaftar di Malaysia. Soalan,
             permintaan dan aduan tentang data peribadi:{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
+            <a href={supportMailto("Privacy question")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a>.
           </p>
           <p>
             Kami mengemas kini halaman ini apabila produk berubah, dan menukar tarikh kuat kuasa di bahagian atas

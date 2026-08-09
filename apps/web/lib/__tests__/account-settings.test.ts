@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
 import type { AccountInfo } from "@/lib/account-actions";
-import type { CreditPack } from "@/lib/billing-actions";
+import type { CreditPackShelf } from "@/lib/billing-actions";
 import { NO_CREDIT_PACKS_MESSAGE } from "@/lib/exits";
 import type { SettingsField, SettingsSection } from "@/components/otto/settings/types";
 
@@ -34,13 +34,13 @@ function sections({
   canPublish,
   autoPublish = false,
   spendCapCredits = DEFAULT_SETTINGS.spendCapCredits,
-  packs = [],
+  shelf = { packs: [] },
 }: {
   connected: boolean;
   canPublish: boolean;
   autoPublish?: boolean;
   spendCapCredits?: number;
-  packs?: CreditPack[];
+  shelf?: CreditPackShelf;
 }) {
   return buildSettingsSections({
     account,
@@ -52,7 +52,7 @@ function sections({
       targets: connected ? ["Acme"] : [],
       connectUrl: "/api/meta/authorize",
     }],
-    packs,
+    shelf,
     adsAutonomy: "ASK",
     canPublish,
     onDeleteAccountRequest: vi.fn(),
@@ -186,20 +186,22 @@ describe("parseWholeCredits — the P1 fix's validation gate", () => {
 // Decision ③ (issue #513 §C3): Settings shows exactly ONE Top up entry, not one
 // price-only Buy button per pack.
 describe("billing top-up (decision ③)", () => {
-  const packs: CreditPack[] = [
-    { priceId: "p1", credits: 100, amountCents: 500, currency: "usd", label: "Starter" },
-    { priceId: "p2", credits: 500, amountCents: 2000, currency: "usd", label: "Growth" },
-  ];
+  const shelf: CreditPackShelf = {
+    packs: [
+      { priceId: "p1", credits: 100, amountCents: 500, currency: "usd", label: "Starter" },
+      { priceId: "p2", credits: 500, amountCents: 2000, currency: "usd", label: "Growth" },
+    ],
+  };
 
   it("shows a single Top up entry when packs exist — not one button per pack", () => {
-    const balance = fieldById(sections({ connected: true, canPublish: true, packs }), "billing", "balance");
+    const balance = fieldById(sections({ connected: true, canPublish: true, shelf }), "billing", "balance");
     const markup = renderField("billing", balance);
     expect(markup).toContain(">Top up<");
     expect(markup).not.toContain("Buy ·");
   });
 
   it("shows a hint instead of a dead Top up link when no packs are configured", () => {
-    const balance = fieldById(sections({ connected: true, canPublish: true, packs: [] }), "billing", "balance");
+    const balance = fieldById(sections({ connected: true, canPublish: true, shelf: { packs: [] } }), "billing", "balance");
     const markup = renderField("billing", balance);
     // #687 — the sentence is now shared with /billing so one state cannot read two ways.
     expect(markup).toContain(NO_CREDIT_PACKS_MESSAGE);
