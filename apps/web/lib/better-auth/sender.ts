@@ -184,16 +184,25 @@ export const AUTH_EMAIL_WORST_SLOT_MS =
  * the queue still arrives while the link it carries is alive; past that point the queue is full
  * of credentials that will be posted dead, which costs the merchant their hourly budget as well
  * as their link. 500 was chosen against a five-second slot and fails against a twenty-two-second
- * one — the same 500 jobs take 45.8 minutes to clear, so everything past roughly the 163rd was
+ * one — the same 500 jobs take 45.8 minutes to clear, so everything past the first few dozen was
  * always going to be posted after it expired.
  *
- * So the depth is DERIVED from the three quantities it depends on, and the inequality
- * `depth × worst slot ÷ workers ≤ link lifetime` holds by construction rather than by comment.
- * Change the deadline, the pool or the link's life and the depth follows on its own.
+ * r2 — AND THE WORKERS CLEAR IT IN ROUNDS, NOT AS A FLOW RATE. The first derivation divided the
+ * depth by the pool width, which prices four workers as a continuous 0.18 jobs a second and
+ * assumes a job can begin a fraction of a slot late. It cannot: four slots come back together
+ * and the next four start together, so a queue of N takes `ceil(N / workers)` ROUNDS of a whole
+ * slot each. Rounding is not a rounding error here — one round is the full 22 seconds, and 22
+ * seconds was the entire margin. The continuous form allowed 163, whose real cost is
+ * `ceil(163/4) = 41` rounds = 902 s against a 900 s link: the last three jobs would begin their
+ * round after the link they carry had already expired.
+ *
+ * So the depth is the largest N with `ceil(N / workers) × worst slot ≤ link lifetime`, which is
+ * exactly `workers × floor(lifetime / worst slot)` — whole rounds, no part-slots, 160 today. The
+ * inequality holds by construction; change the deadline, the pool or the link's life and the
+ * depth follows on its own.
  */
-export const AUTH_EMAIL_MAX_QUEUED = Math.floor(
-  (AUTH_EMAIL_LINK_TTL_MS * AUTH_EMAIL_MAX_CONCURRENCY) / AUTH_EMAIL_WORST_SLOT_MS,
-);
+export const AUTH_EMAIL_MAX_QUEUED =
+  AUTH_EMAIL_MAX_CONCURRENCY * Math.floor(AUTH_EMAIL_LINK_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
 
 /** One drop line per ten seconds. The case it fires in is a flood, and a line per dropped job
  *  would be a second denial of service. */

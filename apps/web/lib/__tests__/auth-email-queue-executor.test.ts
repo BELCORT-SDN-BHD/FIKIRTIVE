@@ -570,16 +570,39 @@ describe("#757 — a queued link cannot outlive the link", () => {
     expect(AUTH_EMAIL_WORST_SLOT_MS).toBeGreaterThanOrEqual(AUTH_EMAIL_JOB_TIMEOUT_MS);
   });
 
+  /**
+   * r2 — WORKERS FINISH IN ROUNDS, NOT AS A FLOW RATE.
+   *
+   * The first version of this divided the backlog by the worker count, which prices four workers
+   * as "0.18 jobs a second" and quietly assumes a job can start a fraction of a slot late. They
+   * cannot: four slots free together and the next four start together, so a queue of N clears in
+   * `ceil(N / workers)` ROUNDS of a whole slot each. The difference is one round — and one round
+   * is 22 seconds, which is exactly the margin the link had.
+   *
+   * At 163 the continuous formula reported 896.5 s and the real answer is `ceil(163/4) = 41`
+   * rounds = 902 s, past a 900 s link: jobs 161 to 163 sit in a 41st round that starts after the
+   * link they carry is already dead.
+   */
+  const drainMs = (depth: number) =>
+    Math.ceil(depth / AUTH_EMAIL_MAX_CONCURRENCY) * AUTH_EMAIL_WORST_SLOT_MS;
+
   it("holds the drain-before-expiry inequality at the real parameters, and is the largest depth that does", () => {
-    const drainMs = (AUTH_EMAIL_MAX_QUEUED * AUTH_EMAIL_WORST_SLOT_MS) / AUTH_EMAIL_MAX_CONCURRENCY;
-    // RED before #757: 500 × 22 000 / 4 = 2 750 000 ms (45.8 min) against a 900 000 ms link.
-    expect(drainMs).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS);
-    // …and it is not passing by being trivially small: one more job would break it, so this is
-    // the deepest backlog that can still be delivered in time.
-    const oneMoreMs =
-      ((AUTH_EMAIL_MAX_QUEUED + 1) * AUTH_EMAIL_WORST_SLOT_MS) / AUTH_EMAIL_MAX_CONCURRENCY;
-    expect(oneMoreMs).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS);
+    // RED before #757: 500 jobs = 125 rounds = 2 750 000 ms (45.8 min) against a 900 000 ms link.
+    // RED again before r2: 163 jobs = 41 rounds = 902 000 ms, two seconds past the link.
+    expect(drainMs(AUTH_EMAIL_MAX_QUEUED)).toBeLessThanOrEqual(AUTH_EMAIL_LINK_TTL_MS);
+    // …and it is not passing by being trivially small: one more job buys a whole extra round,
+    // and that round does not fit. So this is the deepest backlog still deliverable in time.
+    expect(drainMs(AUTH_EMAIL_MAX_QUEUED + 1)).toBeGreaterThan(AUTH_EMAIL_LINK_TTL_MS);
     expect(AUTH_EMAIL_MAX_QUEUED).toBeGreaterThan(0);
+  });
+
+  it("fills whole rounds — the depth is workers × rounds, so no job waits on a part-slot", () => {
+    // The largest N with `ceil(N / workers) ≤ rounds` is exactly `workers × rounds`, so a correct
+    // derivation always lands on a multiple of the pool width. 163 was not one, which is the
+    // shape of the error: it had taken three jobs out of a round that does not exist.
+    const rounds = Math.floor(AUTH_EMAIL_LINK_TTL_MS / AUTH_EMAIL_WORST_SLOT_MS);
+    expect(AUTH_EMAIL_MAX_QUEUED).toBe(AUTH_EMAIL_MAX_CONCURRENCY * rounds);
+    expect(AUTH_EMAIL_MAX_QUEUED % AUTH_EMAIL_MAX_CONCURRENCY).toBe(0);
   });
 
   it("derives that depth from the lifetime Better Auth really stamps on the token", async () => {
