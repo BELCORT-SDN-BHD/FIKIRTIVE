@@ -137,6 +137,13 @@ export const AUTH_EMAIL_SLOT_FLOOR_MS = 3_000;
  * It is defence in depth now, not the primary cover: it stops two jobs handed over milliseconds
  * apart from starting together and contending for the same scheduler, database pool and socket
  * pool at exactly the same instant.
+ *
+ * #757 (P3) — THE WAIT HOLDS A WORKER SLOT, and it stays that way on purpose. Moving it in front
+ * of the pool would buy a little throughput and cost a third population of jobs (waiting, but
+ * neither queued nor in flight) that every capacity check would have to remember to count — the
+ * kind of bookkeeping that goes wrong quietly. The consequence that actually mattered was the
+ * capacity arithmetic under-counting a slot, and that is fixed where it belongs: the jitter is
+ * part of `AUTH_EMAIL_WORST_SLOT_MS`, so the depth is derived from what a slot really costs.
  */
 export const AUTH_EMAIL_JITTER_MAX_MS = 2000;
 
@@ -188,11 +195,16 @@ export const AUTH_EMAIL_MAX_QUEUED = Math.floor(
   (AUTH_EMAIL_LINK_TTL_MS * AUTH_EMAIL_MAX_CONCURRENCY) / AUTH_EMAIL_WORST_SLOT_MS,
 );
 
+/** One drop line per ten seconds. The case it fires in is a flood, and a line per dropped job
+ *  would be a second denial of service. */
+export const AUTH_EMAIL_DROP_LOG_INTERVAL_MS = 10_000;
+
 let maxConcurrency = AUTH_EMAIL_MAX_CONCURRENCY;
 let slotFloorMs = AUTH_EMAIL_SLOT_FLOOR_MS;
 let jitterMaxMs = AUTH_EMAIL_JITTER_MAX_MS;
 let jobTimeoutMs = AUTH_EMAIL_JOB_TIMEOUT_MS;
 let maxQueued = AUTH_EMAIL_MAX_QUEUED;
+let dropLogIntervalMs = AUTH_EMAIL_DROP_LOG_INTERVAL_MS;
 let randomSource: () => number = Math.random;
 const realSleep = (ms: number) =>
   ms <= 0 ? Promise.resolve() : new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -212,10 +224,41 @@ let sleep: (ms: number) => Promise<void> = realSleep;
 type JobContext = { signal: AbortSignal; sendDispatched: boolean };
 const jobAbortStore = new AsyncLocalStorage<JobContext>();
 
-/** Jobs that will be delivered, and jobs the throttle already refused. Two lists rather than one
- *  so "drop the refused ones first" is a shift rather than a scan — a scan on the request thread
- *  is the very thing the bucket map had to stop doing. */
-const pending: AuthEmailJob[] = [];
+/**
+ * Jobs that will be delivered, and jobs the throttle already refused. Two collections rather than
+ * one so "drop the refused ones first" is a single removal rather than a scan — a scan on the
+ * request thread is the very thing the bucket map had to stop doing.
+ *
+ * #757 (P3) — the deliverable side is a LINKED LIST, not an array with `shift()`. `shift()` moves
+ * every remaining element on each dequeue, so draining a full queue cost O(depth²) and the depth
+ * is chosen by whoever is flooding. Two pointers make both ends O(1) with no compaction heuristic
+ * and no array that quietly grows while its head marches along it.
+ *
+ * The refused side stays an array because `pump` discards the whole of it at once and nothing
+ * ever reads it in order; taking from its END is O(1) and picks an equally undeliverable job.
+ */
+type QueueNode = { job: AuthEmailJob; next: QueueNode | null };
+let pendingHead: QueueNode | null = null;
+let pendingTail: QueueNode | null = null;
+let pendingCount = 0;
+
+function pushPending(job: AuthEmailJob): void {
+  const node: QueueNode = { job, next: null };
+  if (pendingTail) pendingTail.next = node;
+  else pendingHead = node;
+  pendingTail = node;
+  pendingCount += 1;
+}
+
+function takePending(): AuthEmailJob | undefined {
+  const node = pendingHead;
+  if (!node) return undefined;
+  pendingHead = node.next;
+  if (!pendingHead) pendingTail = null;
+  pendingCount -= 1;
+  return node.job;
+}
+
 const refused: AuthEmailJob[] = [];
 let pumpTimer: ReturnType<typeof setTimeout> | null = null;
 const inFlight = new Set<Promise<void>>();
@@ -225,18 +268,38 @@ const straggling = new Set<Promise<unknown>>();
 
 let droppedSinceLastLog = 0;
 let lastDropLog = 0;
-function noteDrop(): void {
-  droppedSinceLastLog += 1;
-  const now = Date.now();
-  // One line per ten seconds: the case this fires in is a flood, and a log line per dropped job
-  // would be a second denial of service.
-  if (now - lastDropLog < 10_000) return;
+let dropLogTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushDropLog(): void {
+  dropLogTimer = null;
+  if (droppedSinceLastLog === 0) return;
   console.warn(`[better-auth] auth email queue full: dropped ${droppedSinceLastLog} job(s)`);
   droppedSinceLastLog = 0;
-  lastDropLog = now;
+  lastDropLog = Date.now();
 }
 
-const outstanding = (): number => pending.length + refused.length + inFlight.size;
+/**
+ * #757 (P3) — the aggregation window is a RATE LIMIT, not a filter.
+ *
+ * It used to be both by accident: a line went out only when a NEW drop arrived after the window,
+ * so whatever was dropped in a flood's final seconds sat in the counter forever. Every flood
+ * ends, so every flood ended with its tail unreported — the operator was told about one dropped
+ * job for an incident that dropped thousands. The residue now rides a timer of its own, and
+ * `unref` keeps it from holding a process (or a test run) open.
+ */
+function noteDrop(): void {
+  droppedSinceLastLog += 1;
+  const since = Date.now() - lastDropLog;
+  if (since >= dropLogIntervalMs) {
+    flushDropLog();
+    return;
+  }
+  if (dropLogTimer) return;
+  dropLogTimer = setTimeout(flushDropLog, dropLogIntervalMs - since);
+  (dropLogTimer as { unref?: () => void }).unref?.();
+}
+
+const outstanding = (): number => pendingCount + refused.length + inFlight.size;
 
 /**
  * #678 — put an auth email on the background queue and return. NOTHING about the job runs before
@@ -263,7 +326,7 @@ export function enqueueAuthEmail(job: AuthEmailJob): void {
     // delivered, so they are the cheapest thing in the queue to lose. If there are none, the
     // incoming job is dropped instead. Either way the merchant's answer is unchanged; this is
     // an operator signal only.
-    if (refused.length > 0) refused.shift();
+    if (refused.length > 0) refused.pop();
     else {
       noteDrop();
       return;
@@ -271,7 +334,8 @@ export function enqueueAuthEmail(job: AuthEmailJob): void {
     noteDrop();
   }
 
-  (isDiscardable(job) ? refused : pending).push(job);
+  if (isDiscardable(job)) refused.push(job);
+  else pushPending(job);
   if (pumpTimer) return;
   pumpTimer = setTimeout(() => {
     pumpTimer = null;
@@ -289,8 +353,8 @@ function pump(): void {
   // cheaply reveals nothing.
   refused.length = 0;
 
-  while (pending.length > 0 && inFlight.size < maxConcurrency) {
-    const job = pending.shift();
+  while (pendingCount > 0 && inFlight.size < maxConcurrency) {
+    const job = takePending();
     if (!job) break;
     const running: Promise<void> = runOneJob(job).finally(() => {
       inFlight.delete(running);
@@ -475,6 +539,8 @@ export function __resetAuthEmailCapsForTests(): void {
   lastSweep = 0;
   droppedSinceLastLog = 0;
   lastDropLog = 0;
+  if (dropLogTimer) clearTimeout(dropLogTimer);
+  dropLogTimer = null;
 }
 
 /** TEST ONLY. Wall-clock behaviour is the thing under test in several cases here, and asserting
@@ -486,6 +552,7 @@ export function __configureAuthEmailQueueForTests(config: {
   jitterMaxMs?: number;
   jobTimeoutMs?: number;
   maxQueued?: number;
+  dropLogIntervalMs?: number;
   random?: () => number;
   sleepFn?: (ms: number) => Promise<void>;
 }): void {
@@ -494,6 +561,7 @@ export function __configureAuthEmailQueueForTests(config: {
   jitterMaxMs = config.jitterMaxMs ?? AUTH_EMAIL_JITTER_MAX_MS;
   jobTimeoutMs = config.jobTimeoutMs ?? AUTH_EMAIL_JOB_TIMEOUT_MS;
   maxQueued = config.maxQueued ?? AUTH_EMAIL_MAX_QUEUED;
+  dropLogIntervalMs = config.dropLogIntervalMs ?? AUTH_EMAIL_DROP_LOG_INTERVAL_MS;
   randomSource = config.random ?? Math.random;
   sleep = config.sleepFn ?? realSleep;
 }

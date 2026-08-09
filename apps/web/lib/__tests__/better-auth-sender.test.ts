@@ -145,9 +145,8 @@ describe("the auth-email queue", () => {
       await authEmailQueueSettled();
     }
 
-    const keys = fetchMock.mock.calls.map(
-      ([, init]) => ((init as RequestInit).headers as Record<string, string>)["Idempotency-Key"],
-    );
+    const calls = fetchMock.mock.calls as unknown as Array<[string, RequestInit]>;
+    const keys = calls.map(([, init]) => (init.headers as Record<string, string>)["Idempotency-Key"]);
     expect(keys).toHaveLength(3);
     expect(keys[0]).toMatch(/^[0-9a-f]{64}$/);
     // The same link dispatched twice is one email at the provider…
@@ -161,6 +160,7 @@ describe("the auth-email queue", () => {
   it("exports no error type or copy a caller could surface", async () => {
     const sender = await import("@/lib/better-auth/sender");
     expect(Object.keys(sender).sort()).toEqual([
+      "AUTH_EMAIL_DROP_LOG_INTERVAL_MS",
       "AUTH_EMAIL_JITTER_MAX_MS",
       "AUTH_EMAIL_JOB_TIMEOUT_MS",
       "AUTH_EMAIL_LINK_TTL_MS",

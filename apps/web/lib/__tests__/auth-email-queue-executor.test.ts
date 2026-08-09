@@ -425,6 +425,70 @@ describe("#678 — the queue is bounded, so no caller can starve every merchant'
     expect(delivered).toContain(BEHIND);
     warn.mockRestore();
   }, 30_000);
+
+  /**
+   * #757 (P3) — the drop log has to account for the WHOLE flood, including its last seconds.
+   *
+   * Aggregation was a rate limit and nothing else: a line went out only when a NEW drop arrived
+   * more than ten seconds after the last line. A flood that stops — which every flood does — left
+   * its final tally sitting in a counter that nothing would ever print. The operator saw "dropped
+   * 1 job" for an incident that dropped thousands, and the number they were given was the least
+   * informative one available.
+   */
+  it("prints the tail of a flood rather than leaving it in a counter", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    __configureAuthEmailQueueForTests({
+      jitterMaxMs: 0,
+      slotFloorMs: 60_000,
+      maxConcurrency: 1,
+      maxQueued: 8,
+      dropLogIntervalMs: 30,
+    });
+
+    for (let i = 0; i < 40; i++) {
+      enqueueAuthEmail({
+        purpose: "sign-in-link",
+        email: `p757-tail-${i}@shop.test`,
+        callbackURL: "/",
+        overBudget: true,
+      });
+    }
+    const dropped = 40 - 8; // eight fitted; the rest each displaced one refused job
+
+    const reported = () =>
+      warn.mock.calls
+        .map((c) => /dropped (\d+) job/.exec(c.join(" "))?.[1])
+        .filter((n): n is string => n !== undefined)
+        .reduce((sum, n) => sum + Number(n), 0);
+
+    // Mid-flood the operator has one line and most of the count is still outstanding — that part
+    // is deliberate, because a line per dropped job is a second denial of service.
+    expect(reported()).toBeLessThan(dropped);
+    // RED before #757: no further drop ever arrives, so nothing ever flushes the rest and the
+    // reported total stays at 1 for a flood of 32.
+    expect(await waitUntil(() => reported() === dropped, 2_000)).toBe(true);
+
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0 });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await authEmailQueueSettled();
+    warn.mockRestore();
+  }, 30_000);
+
+  /** #757 (P3) — `pending` stopped being an array with `shift()`. Order is the property that
+   *  refactor must not lose: a queue that reordered under load would hand the merchant who
+   *  pressed first the link that expires first. */
+  it("delivers in the order the jobs were handed over", async () => {
+    __configureAuthEmailQueueForTests({ jitterMaxMs: 0, slotFloorMs: 0, maxConcurrency: 1 });
+    const addresses = Array.from(
+      { length: 12 },
+      (_, i) => `p757-fifo-${i}-${randomUUID()}@fikirtive.test`,
+    );
+    for (const email of addresses) {
+      enqueueAuthEmail({ purpose: "verify-email", email, url: "https://x.test/fifo" });
+    }
+    await authEmailQueueSettled();
+    expect(delivered).toEqual(addresses);
+  });
 });
 
 // ── jitter ───────────────────────────────────────────────────────────────────────────────────
