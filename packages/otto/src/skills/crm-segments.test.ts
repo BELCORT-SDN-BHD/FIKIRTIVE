@@ -96,25 +96,35 @@ function universalClaims(text: string): string[] {
  * Universal sentences these three strings are allowed to say, with the reason each is provable.
  * Kept in the same shape as the web board so the two read alike.
  */
-const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{ sentence: string; why: string }> = [
+type OttoSurface = keyof typeof APPROVED_OTTO_COPY;
+
+const APPROVED_OTTO_UNIVERSAL: ReadonlyArray<{
+  sentence: string;
+  surface: OttoSurface;
+  why: string;
+}> = [
   {
     sentence:
       "It only removes contacts from this segment; it never adds one, and it does not change what the consent record decides.",
+    surface: "excludeReportedOptOutField",
     why: "Provable and proved above: `selectedIntoAudience` applies the flag as a subtraction before any rule, and the judge's own 32,928-combination sweep confirmed subtract-only.",
   },
   {
     sentence:
       "A rule group may also carry excludeReportedOptOut: on, it additionally leaves out every contact the user recorded an opt-out for himself, and the count comes back as excludedByReportedOptOutCount.",
+    surface: "readSegments",
     why: "'every contact the user recorded' is the implementation exactly — an independent flag over the merchant's own record, r2's P2 correction.",
   },
   {
     sentence:
       "The rule group's optional excludeReportedOptOut additionally leaves out every contact the user recorded an opt-out for himself, including one who also opted out through their own channel; it only removes people, never adds any, it is off unless the user asked for it, and it applies to this segment's counts, preview and broadcasts alike.",
+    surface: "buildSegment",
     why: "Same rule, same subtract-only proof; 'counts, preview and broadcasts alike' is the three-source wiring r2's P1-1 fix made true and the email-broadcast example pins.",
   },
   {
     sentence:
       "On: also leave out every contact the user has recorded an opt-out for himself, including one who additionally opted out through their own channel.",
+    surface: "excludeReportedOptOutField",
     why: "The field description of the same rule, in the same words.",
   },
 ];
@@ -284,11 +294,13 @@ describe("CRM Segment skills", () => {
         surface,
       ).toEqual([]);
     }
-    // Every exemption has to still be on the surface it was written for — a board of dead
-    // exemptions is where the next false promise hides.
-    const everything = Object.values(APPROVED_OTTO_COPY).join(" ");
+    // r5 判官 ③ — each exemption has to still be on ITS OWN surface, not merely somewhere in the
+    // three. A board of dead exemptions is where the next false promise hides.
     for (const entry of APPROVED_OTTO_UNIVERSAL) {
-      expect(everything.includes(entry.sentence), `${entry.sentence} — ${entry.why}`).toBe(true);
+      expect(
+        APPROVED_OTTO_COPY[entry.surface].includes(entry.sentence),
+        `${entry.surface}: ${entry.sentence} — ${entry.why}`,
+      ).toBe(true);
     }
   });
 

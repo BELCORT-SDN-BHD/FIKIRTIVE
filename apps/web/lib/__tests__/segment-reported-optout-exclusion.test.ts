@@ -38,7 +38,9 @@ const { createCustomerBroadcastService } = await import("../customer-broadcast-s
 const segmentsModule = await import("@/components/crm/segments-page");
 const SegmentsPage = segmentsModule.default;
 const { ContactPreview } = segmentsModule;
-const { ConsentExclusionNote } = await import("@/components/crm/broadcasts/broadcast-detail-page");
+const broadcastDetailModule = await import("@/components/crm/broadcasts/broadcast-detail-page");
+const { ConsentExclusionNote } = broadcastDetailModule;
+const BroadcastDetailPage = broadcastDetailModule.default;
 
 const SUITE = `p758-${randomUUID().slice(0, 8)}`;
 const ORG_A = `${SUITE}-org-a`;
@@ -91,13 +93,26 @@ let faiz = "";
  * the thing that must be complete — which is why the fixture table below can honestly record the
  * sentences it does NOT catch instead of growing a regex to chase each one.
  *
- * The four surfaces:
- *  1. the segment builder's exclusion switch and its explanation (here);
- *  2. the preview panel, tightened and untightened (here);
- *  3. the broadcast audience note, in each of its shapes (here);
+ * r5 raises the guarded unit again, from areas to PAGES: the two pages this feature speaks on are
+ * rendered WHOLE from fixed fixtures and pinned as one string each, so a block added anywhere on
+ * them — inside a container or beside it — changes the snapshot. The panels that no initial page
+ * render can reach (the live preview, which needs an effect; the freeze note, which needs a
+ * completed action) keep their own boards, and Otto's three strings keep theirs.
+ *
+ * The guarded set:
+ *  1. the whole segments page, incl. the saved segment's own phrase (here);
+ *  2. the whole broadcast detail page (here);
+ *  3. the preview panel and the broadcast note, in every shape they can take (here);
  *  4. Otto's two skill descriptions and the rule-group field description — pinned in
  *     `packages/otto/src/skills/crm-segments.test.ts`, because those strings live in that package
  *     and reaching them from here would mean widening a package export for a test.
+ *
+ * ACCEPTED RESIDUAL, recorded rather than implied: this fence guards those two pages and Otto's
+ * descriptions. A NEW page or component that talks about audiences is not guarded by it — no
+ * machine fence in this repo enumerates surfaces that do not exist yet, and the same limit applies
+ * to every copy fence here (#768's). What covers that case is review discipline: a new consent
+ * surface is expected to bring its own board, in this shape. Naming the limit is the point; a
+ * fence that pretends to cover everything is how three rounds of bypasses happened.
  */
 const UNIVERSAL_CLAIM =
   /\b(every|everyone|everything|all|always|never|nobody|no ?one|none|cannot|can't|can not|won't|will not|no matter|either way|in any|any|guarantee\w*|impossible|under no|regardless|whatever)\b/i;
@@ -130,31 +145,6 @@ function surfaceText(markup: string): string {
   return merchantBlocks(markup).join(" ");
 }
 
-/**
- * The whole `<div>` that contains this anchor, opening tag included — how the switch's own area
- * is cut out of the full page render. It is found by the container's exact class list, so a
- * restyle fails this test too: on a consent surface, "someone looked at it" is the point.
- */
-function enclosingDivText(markup: string, openingTag: string): string {
-  const start = markup.indexOf(openingTag);
-  if (start < 0) throw new Error(`surface anchor not found: ${openingTag}`);
-  const tags = /<\/?div\b/g;
-  tags.lastIndex = start;
-  let depth = 0;
-  for (let match = tags.exec(markup); match; match = tags.exec(markup)) {
-    depth += match[0] === "<div" ? 1 : -1;
-    if (depth === 0) {
-      const close = markup.indexOf(">", match.index);
-      return surfaceText(markup.slice(start, close + 1));
-    }
-  }
-  throw new Error(`surface never closed: ${openingTag}`);
-}
-
-/** The container of the exclusion switch, matched on its own class list. */
-const SWITCH_SURFACE_ANCHOR =
-  '<div class="mt-5 rounded-xl border border-border bg-card p-3 shadow-xs sm:p-4">';
-
 /** The merchant-visible sentences of one render. */
 function merchantSentences(markup: string): string[] {
   return merchantBlocks(markup)
@@ -181,33 +171,64 @@ function isCanonicalSegmentPhrase(sentence: string): boolean {
 }
 
 /**
- * Every universal sentence these surfaces are allowed to say, verbatim, each with the reason it
- * is provable. Anything not on this list is red for layer 2.
+ * Every universal sentence these surfaces are allowed to say, verbatim, WITH the surface it
+ * belongs to and the reason it is provable. Anything not on this list is red for layer 2.
+ *
+ * r5 判官 ③ — the surface is part of the record. A sentence approved for the switch must still be
+ * ON the switch; if it moves or disappears, its exemption is dead and the board says so. An
+ * exemption that outlives its sentence is where the next false promise hides.
  */
-const APPROVED_UNIVERSAL_SENTENCES: ReadonlyArray<{ sentence: string; why: string }> = [
+const APPROVED_UNIVERSAL_SENTENCES: ReadonlyArray<{
+  sentence: string;
+  surface: SurfaceName;
+  why: string;
+}> = [
   {
     sentence:
       "An opt-out you or a CSV import recorded is not confirmed by the customer, so while this is off it removes nobody from this segment.",
+    surface: "segmentsPage",
     why: "Provable: with the option off the merchant's record is not a selection input at all — 'off by default' is pinned by the two default examples above.",
   },
   {
     sentence:
       "Turn it on and this segment leaves those contacts out of its count, its preview, and any broadcast built from it.",
+    surface: "segmentsPage",
     why: "Provable since r2: the count, the preview and the broadcast candidates read one scope-fixed fact, pinned by the email-broadcast example.",
   },
   {
     sentence:
       "You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every broadcast built from it.",
+    surface: "previewTightened",
     why: "Same three-source wiring, same email-broadcast example. 'every broadcast' is the claim r2's P1-1 fix made true.",
   },
   {
     sentence: "These counts cover every contact you have.",
-    why: "#726's own sentence, and provable: the segments page counts over `ownedContactsWhere(ownerId)` — every live contact this merchant has — which is exactly why the next sentence says a broadcast's number can be lower. Pre-existing copy, surfaced by this fence rather than written for it.",
+    surface: "previewTightened",
+    why: "#726's own sentence, and provable: the segments page counts over `ownedContactsWhere(ownerId)` — every live contact this merchant has — which is why the next sentence says a broadcast's number can be lower. Pre-existing copy, surfaced by this fence rather than written for it.",
   },
   {
     sentence:
       "This count covers the contacts this broadcast can reach on its channel, so it can be lower than the count on the segments page, which covers every contact you have.",
-    why: "#726's twin sentence on the broadcast side, provable the same way — the run counts only contacts holding an identity on its own channel. Found by extending layer 2 to the broadcast note, which is a surface nothing scanned before r4.",
+    surface: "noteTightened",
+    why: "#726's twin sentence on the broadcast side, provable the same way — the run counts only contacts holding an identity on its own channel. Found by extending layer 2 to the broadcast note, a surface nothing scanned before r4.",
+  },
+  {
+    sentence:
+      "A contact whose consent is unknown or opted-out can only be sent to after two independent human confirmations of this exact frozen action — and it never changes their consent.",
+    surface: "broadcastPage",
+    why: "Pre-existing D5 copy (§6.4), provable: `failClosedD5Override()` throws unconditionally, so no override can be minted — the sentence describes a gate that is closed, not a promise about audiences. Surfaced by r5 extending the fence to the whole broadcast page.",
+  },
+  {
+    sentence:
+      "The flow is shown for reference; the override cannot be minted yet, so these contacts are always skipped by a simulated run.",
+    surface: "broadcastPage",
+    why: "Same closed gate, stated as its consequence: with no override mintable, a consent-risk member cannot pass the four axes, and the executor marks it skipped_ineligible. Pre-existing copy, surfaced by r5.",
+  },
+  {
+    sentence:
+      "Contacts with unknown permission stay in and are flagged — the estimate never drops them.",
+    surface: "broadcastPage",
+    why: "B0-44, and the rule this whole feature is built beside: `selectedIntoAudience` keeps unknown consent in, and only a KNOWN opt-out is counted as excluded. Pre-existing copy, surfaced by r5.",
   },
 ];
 const APPROVED_UNIVERSAL = new Set(APPROVED_UNIVERSAL_SENTENCES.map((entry) => entry.sentence));
@@ -295,10 +316,142 @@ function unapprovedUniversalClaims(
 
 // ── Layer 1: fixed fixtures, so a count can never move the board ──────────────────────────────
 
+type SurfaceName =
+  | "segmentsPage"
+  | "broadcastPage"
+  | "previewTightened"
+  | "previewUntightened"
+  | "noteTightened"
+  | "noteUntightened"
+  | "noteSingular"
+  | "noteNothingExcluded";
+
 type PreviewProps = ComponentProps<typeof ContactPreview>["preview"];
 type ConsentNoteProps = ComponentProps<typeof ConsentExclusionNote>["consent"];
+type SegmentsPageProps = ComponentProps<typeof SegmentsPage>;
+type BroadcastPageProps = ComponentProps<typeof BroadcastDetailPage>;
 
 const FIXTURE_EVALUATED_AT = "2026-08-09T00:00:00.000Z";
+
+/**
+ * The segments page, from a fixture instead of the database, so no count and no merchant name can
+ * move the board. r5 判官 ① — the second segment carries the tightened PHRASE, which is written by
+ * `canonicalPhrase` in segment-actions.ts and displayed on the saved-segment cards: the tenth
+ * surface, now inside the page snapshot rather than beside it.
+ */
+const SEGMENTS_PAGE_FIXTURE = {
+  initialState: {
+    ok: true,
+    evaluatedAt: FIXTURE_EVALUATED_AT,
+    nextSegmentId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    nextSegmentProof: "fixture-proof",
+    totalContactCount: 6,
+    unavailableFacts: { lastOrderAt: true, tags: true },
+    segments: [
+      {
+        id: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+        name: "Reachable audience",
+        phrase: "All of: Contact is not a known opt-out",
+        rules: { match: "all", rules: [{ kind: "contactability", value: "contactable" }] },
+        status: "ready",
+        matchedCount: 4,
+        contactableCount: 4,
+        knownOptOutCount: 0,
+        excludedByConsentCount: 2,
+        unresolvedLegacyOptOutCount: 1,
+        reportedOptOutCount: 3,
+        excludedByReportedOptOutCount: 0,
+        createdAt: FIXTURE_EVALUATED_AT,
+      },
+      {
+        id: "01ARZ3NDEKTSV4RRFFQ69G5FAX",
+        name: "Reachable audience, minus my own records",
+        phrase:
+          "All of: Contact is not a known opt-out — also excluding opt-outs you recorded yourself",
+        rules: {
+          match: "all",
+          rules: [{ kind: "contactability", value: "contactable" }],
+          excludeReportedOptOut: true,
+        },
+        status: "ready",
+        matchedCount: 1,
+        contactableCount: 1,
+        knownOptOutCount: 0,
+        excludedByConsentCount: 2,
+        unresolvedLegacyOptOutCount: 1,
+        reportedOptOutCount: 0,
+        excludedByReportedOptOutCount: 3,
+        createdAt: FIXTURE_EVALUATED_AT,
+      },
+    ],
+  },
+} as unknown as SegmentsPageProps;
+
+/** A draft run with nothing frozen yet: the page's own copy, none of it data-dependent. */
+const BROADCAST_RUN_FIXTURE = {
+  id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+  status: "draft",
+  revision: 1,
+  channel: "whatsapp",
+  purpose: "marketing",
+  createdAt: FIXTURE_EVALUATED_AT,
+  createdByMembershipId: "fixture-membership",
+  channelScopeId: "fixture-scope",
+  audienceRevision: 0,
+};
+/**
+ * One frozen member whose consent axis is a risk. It is what makes the page render its audience
+ * rows AND its D5 two-confirm card — the block that carries the page's own universal sentence.
+ * A fixture that skipped it would have left that copy unguarded while looking complete.
+ */
+const BROADCAST_RISK_VERDICT = {
+  consentStop: { status: "risk", reason: "consent_unknown" },
+  doNotDisturb: { status: "pass" },
+  providerRefusal: { status: "pass" },
+  frequency: { status: "pass" },
+};
+const BROADCAST_MEMBER_FIXTURE = {
+  id: "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+  contactId: "01ARZ3NDEKTSV4RRFFQ69G5FB2",
+  contactIdentityId: "01ARZ3NDEKTSV4RRFFQ69G5FB3",
+  sendState: "pending",
+  includedByMerchant: true,
+  audienceRevision: 1,
+  frozenVerdict: BROADCAST_RISK_VERDICT,
+  liveVerdict: BROADCAST_RISK_VERDICT,
+  contact: { name: "Amira Salleh" },
+  contactIdentity: {
+    channel: "whatsapp",
+    handle: "+60111000001",
+    label: null,
+    externalId: "+60111000001",
+  },
+};
+const BROADCAST_PAGE_FIXTURE = {
+  broadcastRunId: BROADCAST_RUN_FIXTURE.id,
+  initialRun: { ok: true, resource: { run: BROADCAST_RUN_FIXTURE, campaign: null } },
+  initialPreflight: {
+    ok: true,
+    resource: { run: BROADCAST_RUN_FIXTURE, members: [BROADCAST_MEMBER_FIXTURE] },
+  },
+  initialDirectory: {
+    ok: true,
+    resource: {
+      self: { membershipId: "fixture-membership", role: "owner", roles: ["owner"] },
+      members: [{ membershipId: "fixture-membership", displayName: "Nadia Rahim", role: "owner" }],
+    },
+  },
+  initialOptions: {
+    ok: true,
+    resource: {
+      segments: [{ id: "01ARZ3NDEKTSV4RRFFQ69G5FAW", name: "Reachable audience" }],
+      templates: [],
+      channelScopes: [],
+    },
+  },
+  initialReportAvailable: false,
+  preselectedSegmentId: null,
+} as unknown as BroadcastPageProps;
 
 function previewFixture(counts: {
   matchedCount: number;
@@ -387,6 +540,13 @@ const NOTE_UNTIGHTENED: ConsentNoteProps = {
   reportedOptOutKept: 2,
   excludedByReportedOptOut: 0,
 };
+/** r5 判官 ② — the singular branch of every clause, which no fixture reached before. */
+const NOTE_SINGULAR: ConsentNoteProps = {
+  excludedByConsent: 1,
+  unresolvedLegacyOptOut: 1,
+  reportedOptOutKept: 1,
+  excludedByReportedOptOut: 1,
+};
 const NOTE_NOTHING_EXCLUDED: ConsentNoteProps = {
   excludedByConsent: 0,
   unresolvedLegacyOptOut: 0,
@@ -394,25 +554,88 @@ const NOTE_NOTHING_EXCLUDED: ConsentNoteProps = {
   excludedByReportedOptOut: 0,
 };
 
-/** Every surface, rendered from those fixtures. One entry, one approved string. */
-function switchSurface(page: string): string {
-  return enclosingDivText(page, SWITCH_SURFACE_ANCHOR);
-}
-function previewSurface(preview: PreviewProps): string {
-  return surfaceText(renderToStaticMarkup(createElement(ContactPreview, { preview })));
-}
-function noteSurface(consent: ConsentNoteProps): string {
-  return surfaceText(renderToStaticMarkup(createElement(ConsentExclusionNote, { consent })));
+/**
+ * Every guarded surface, rendered. Layer 1 compares the joined text; layer 2 reads the MARKUP,
+ * because its rule is per text block — re-wrapping joined text in one tag would glue unrelated
+ * card labels into a single pseudo-sentence and flag the merchant's own segment cards.
+ */
+function renderSurfaceMarkup(name: SurfaceName): string {
+  switch (name) {
+    case "segmentsPage":
+      return renderToStaticMarkup(createElement(SegmentsPage, SEGMENTS_PAGE_FIXTURE));
+    case "broadcastPage":
+      return renderToStaticMarkup(createElement(BroadcastDetailPage, BROADCAST_PAGE_FIXTURE));
+    case "previewTightened":
+      return renderToStaticMarkup(createElement(ContactPreview, { preview: PREVIEW_TIGHTENED }));
+    case "previewUntightened":
+      return renderToStaticMarkup(createElement(ContactPreview, { preview: PREVIEW_UNTIGHTENED }));
+    case "noteTightened":
+      return renderToStaticMarkup(createElement(ConsentExclusionNote, { consent: NOTE_TIGHTENED }));
+    case "noteUntightened":
+      return renderToStaticMarkup(
+        createElement(ConsentExclusionNote, { consent: NOTE_UNTIGHTENED }),
+      );
+    case "noteSingular":
+      return renderToStaticMarkup(createElement(ConsentExclusionNote, { consent: NOTE_SINGULAR }));
+    case "noteNothingExcluded":
+      return renderToStaticMarkup(
+        createElement(ConsentExclusionNote, { consent: NOTE_NOTHING_EXCLUDED }),
+      );
+  }
 }
 
-/** The approved text of each surface. Editing anything here is the human review. */
-const APPROVED_SURFACES = {
-  switch:
-    "Also exclude opt-outs I recorded myself Off by default. An opt-out you or a CSV import " +
-    "recorded is not confirmed by the customer, so while this is off it removes nobody from this " +
-    "segment. Turn it on and this segment leaves those contacts out of its count, its preview, " +
-    "and any broadcast built from it. Nothing else changes: what the consent record decides about " +
-    "a contact stays exactly as it is.",
+function renderSurface(name: SurfaceName): string {
+  return surfaceText(renderSurfaceMarkup(name));
+}
+
+/** The merchant's own words on the fixture surfaces — his segment names, never the product's. */
+const FIXTURE_AUTHORED = ["Reachable audience", "Reachable audience, minus my own records"];
+
+/**
+ * The approved text of each surface. Editing anything here is the human review.
+ *
+ * The two panels are pinned separately from the pages that host them because no INITIAL page
+ * render can reach them: the live preview arrives from an effect, and the freeze note from a
+ * completed action. Everything a first paint shows is inside the two page boards.
+ */
+const APPROVED_SURFACES: Record<SurfaceName, string> = {
+  segmentsPage:
+    "Return to Otto CRM Customer segments Build one-level, deterministic rules and see exactly " +
+    "who matches before you save. Contacts 6 Saved 2 Facts connected 3 / 5 Last order recency and " +
+    "tags are not connected yet. Rules using either fact stay visible and show zero matches " +
+    "instead of guessing from last seen activity. Saved segments Live counts are recalculated " +
+    "from connected facts. Custom only Reachable audience All of: Contact is not a known opt-out " +
+    "4 matched Reachable audience, minus my own records All of: Contact is not a known opt-out — " +
+    "also excluding opt-outs you recorded yourself 1 matched Built-in Hot right now, Win-back, " +
+    "and VIP segments are not built yet. No placeholder rows are counted as real segments. " +
+    "Reachable audience All of: Contact is not a known opt-out Edit segment Delete Calculating " +
+    "segment contacts New segment Build a rule group Choose All or Any. Nested groups are " +
+    "intentionally not supported. Known opt-out means the customer opted out through their own " +
+    "channel. An opt-out you recorded yourself keeps the contact in the list, marked reported " +
+    "opt-out — open the contact to see its consent history. Add rule Also exclude opt-outs I " +
+    "recorded myself Off by default. An opt-out you or a CSV import recorded is not confirmed by " +
+    "the customer, so while this is off it removes nobody from this segment. Turn it on and this " +
+    "segment leaves those contacts out of its count, its preview, and any broadcast built from " +
+    "it. Nothing else changes: what the consent record decides about a contact stays exactly as " +
+    "it is. Segment name Save segment A current successful preview is required before save. Live " +
+    "preview Waiting Complete a valid rule to calculate a server-owned phrase and current " +
+    "matches. Invalid drafts never run a query.",
+  broadcastPage:
+    "Back to broadcasts Draft Marketing whatsapp Broadcast Created by Nadia Rahim · 9 Aug 2026, " +
+    "8:00 am · revision 1 Refresh Provider messaging tier (quota preflight / quality downgrade): " +
+    "unavailable . No channel is connected, so this workbench runs simulated sends only — no " +
+    "message reaches a real customer and no quota is consumed. Precise approval — each step is a " +
+    "manual, owner-only action 1 · Freeze the audience Snapshot the segment now. Contacts with " +
+    "unknown permission stay in and are flagged — the estimate never drops them. Select a " +
+    "segment… Reachable audience Freeze audience Cancel broadcast D5 two-confirm override — " +
+    "required for 1 consent-risk contact A contact whose consent is unknown or opted-out can only " +
+    "be sent to after two independent human confirmations of this exact frozen action — and it " +
+    "never changes their consent. The flow is shown for reference; the override cannot be minted " +
+    "yet, so these contacts are always skipped by a simulated run. 1 First confirmation 2 Second, " +
+    "independent confirmation Apply override (unavailable) Audience 1 contact · 0 eligible now " +
+    "Amira Salleh +60111000001 Kept Consent risk · D5 Pending Frozen at snapshot Consent / STOP " +
+    "At risk Do not disturb Pass Provider refusal Pass Frequency cap Pass Live preflight now " +
+    "Consent / STOP At risk Do not disturb Pass Provider refusal Pass Frequency cap Pass",
   previewTightened:
     "1 of 6 contacts matched · 1 contactable · 2 known opt-out excluded · 3 reported opt-out " +
     "excluded by your choice Unknown consent stays included. Known opt-out means the customer " +
@@ -448,11 +671,20 @@ const APPROVED_SURFACES = {
     "broadcast can reach on its channel, so it can be lower than the count on the segments page, " +
     "which covers every contact you have. 2 contacts are in this audience with an opt-out you " +
     "recorded yourself, which is not verified — open the contact to see its consent history.",
+  noteSingular:
+    "1 contact was excluded for opting out. 1 of them opted out before consent history was kept, " +
+    "so they stay out until the customer opts in again. This count covers the contacts this " +
+    "broadcast can reach on its channel, so it can be lower than the count on the segments page, " +
+    "which covers every contact you have. 1 contact is in this audience with an opt-out you " +
+    "recorded yourself, which is not verified — open the contact to see its consent history. This " +
+    "segment also leaves out opt-outs you recorded yourself, so 1 more contact is not in this " +
+    "audience.",
   noteNothingExcluded:
     "No contact was excluded for opting out. This count covers the contacts this broadcast can " +
     "reach on its channel, so it can be lower than the count on the segments page, which covers " +
     "every contact you have.",
-} as const;
+};
+const SURFACE_NAMES = Object.keys(APPROVED_SURFACES) as SurfaceName[];
 const APPROVED_SWITCH_LABEL = "Also exclude opt-outs I recorded myself";
 
 const TOTAL_CONTACTS_A = 6;
@@ -1011,41 +1243,75 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
   });
 
   /**
-   * Layer 1 — every merchant-facing surface, whole, against one approved string.
+   * Layer 1 — every guarded surface, whole, against one approved string.
    *
-   * This is the gate r4 asked for. It does not know what a claim looks like and does not need to:
-   * a fourth block next to the third one changes the surface text, so it fails here whatever it
-   * says. Fixtures are fixed, so no count can redden the board by moving.
+   * r5 raises the unit to the PAGE. The judge's r4 bypass was a block placed OUTSIDE the fenced
+   * container; a page-wide snapshot has no outside. Fixtures are fixed, so no count moves the
+   * board, and the saved segment's own phrase (finding ①) is inside the page it is printed on.
    */
-  it("pins each merchant-facing surface as one exact snapshot", async () => {
-    actAs(ORG_A);
-    const initialState = await listSegments();
-    if (!("ok" in initialState)) throw new Error(initialState.error);
-    const page = renderToStaticMarkup(
-      createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
-    );
+  it("pins every guarded surface as one exact snapshot", () => {
+    for (const name of SURFACE_NAMES) {
+      expect(renderSurface(name), name).toBe(APPROVED_SURFACES[name]);
+    }
+  });
 
-    expect(switchSurface(page)).toBe(APPROVED_SURFACES.switch);
-    expect(previewSurface(PREVIEW_TIGHTENED)).toBe(APPROVED_SURFACES.previewTightened);
-    expect(previewSurface(PREVIEW_UNTIGHTENED)).toBe(APPROVED_SURFACES.previewUntightened);
-    expect(noteSurface(NOTE_TIGHTENED)).toBe(APPROVED_SURFACES.noteTightened);
-    expect(noteSurface(NOTE_UNTIGHTENED)).toBe(APPROVED_SURFACES.noteUntightened);
-    expect(noteSurface(NOTE_NOTHING_EXCLUDED)).toBe(APPROVED_SURFACES.noteNothingExcluded);
+  it("prints the tightened segment's own phrase on the page that lists it", () => {
+    // Finding ① stated as meaning, not only as bytes: the phrase `canonicalPhrase` writes for a
+    // tightened segment is what the saved-segment card shows, so the card cannot describe less
+    // than the segment does.
+    expect(renderSurface("segmentsPage")).toContain(
+      "All of: Contact is not a known opt-out — also excluding opt-outs you recorded yourself",
+    );
+  });
+
+  it("says it in the singular when exactly one contact is affected", () => {
+    // Finding ② — every clause of the note has a singular branch, and no fixture reached it.
+    const singular = renderSurface("noteSingular");
+    expect(singular).toContain("1 contact was excluded for opting out.");
+    expect(singular).toContain("1 contact is in this audience with an opt-out you recorded yourself");
+    expect(singular).toContain("so 1 more contact is not in this audience.");
+    expect(singular).not.toContain("contacts are not in this audience");
   });
 
   /**
-   * The drill r4 asked for, run in code rather than by hand: for each fixture, adding it to a
-   * surface must break that surface's snapshot. This is what "layer 1 covers what layer 2 cannot"
-   * means, and it is why the `patternCatches: false` rows below can stay honest.
+   * Finding ④ — the drill runs through the real renderer.
+   *
+   * The rejected sentence is put INTO the element tree as a sibling block and React renders it;
+   * nothing is concatenated onto a string. That is exactly the shape that beat r3 (a block added
+   * next to the fenced one), and the page snapshot is what catches it.
    */
-  it("fails layer 1 for every rejected sentence, including the ones no pattern can see", () => {
+  it("fails the page snapshot when a block is really rendered beside the page", () => {
     for (const fixture of RED_FIXTURES) {
-      for (const [surface, approved] of Object.entries(APPROVED_SURFACES)) {
-        expect(`${approved} ${fixture.sentence}`, `${fixture.label} on ${surface}`).not.toBe(
-          approved,
-        );
-      }
+      const injected = surfaceText(
+        renderToStaticMarkup(
+          createElement(
+            "div",
+            null,
+            createElement(SegmentsPage, SEGMENTS_PAGE_FIXTURE),
+            createElement("p", { className: "text-xs" }, fixture.sentence),
+          ),
+        ),
+      );
+      expect(injected, `${fixture.label} beside the segments page`).not.toBe(
+        APPROVED_SURFACES.segmentsPage,
+      );
+      expect(injected, `${fixture.label} must actually be rendered`).toContain(fixture.sentence);
     }
+  });
+
+  it("fails the page snapshot when a block is really rendered beside the broadcast page", () => {
+    const injected = surfaceText(
+      renderToStaticMarkup(
+        createElement(
+          "div",
+          null,
+          createElement(BroadcastDetailPage, BROADCAST_PAGE_FIXTURE),
+          createElement("p", null, "They will not come back."),
+        ),
+      ),
+    );
+    expect(injected).not.toBe(APPROVED_SURFACES.broadcastPage);
+    expect(injected).toContain("They will not come back.");
   });
 
   /**
@@ -1078,36 +1344,49 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     }
   });
 
-  it("keeps every clause on every surface to something the ledger can prove", async () => {
+  it("keeps every clause on every guarded surface to something the ledger can prove", async () => {
     // r2 P1-2's reproduction, kept as the semantic proof behind both layers: the banned promise
     // was "a customer who opted out herself is out either way", and here is the legal segment
-    // where she is not. The counter-example and the fence live in one example so the sentence
-    // cannot come back while the counter-example still stands.
+    // where she is not.
     actAs(ORG_A);
     const optedOut = await previewOrThrow(OPTED_OUT_ONLY_STRICT);
     expect(optedOut.contacts.map((contact) => contact.id)).toEqual([CHONG]);
 
+    for (const name of SURFACE_NAMES) {
+      expect(unapprovedUniversalClaims(renderSurfaceMarkup(name), FIXTURE_AUTHORED), name).toEqual(
+        [],
+      );
+    }
+
+    // The real, database-backed renders are held to the same rule, with the merchant's own
+    // segment names excluded — his wording is not the product's promise.
     const initialState = await listSegments();
     if (!("ok" in initialState)) throw new Error(initialState.error);
-    const page = renderToStaticMarkup(
-      createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
-    );
     const authored = initialState.segments.map((segment) => segment.name);
-    const strict = await previewOrThrow(CONTACTABLE_STRICT);
-
-    const surfaces: Array<[string, string]> = [
-      ["segments page", page],
-      ["switch area", `<p>${switchSurface(page)}</p>`],
-      ["preview, real data", renderToStaticMarkup(createElement(ContactPreview, { preview: optedOut }))],
-      ["preview, tightened", renderToStaticMarkup(createElement(ContactPreview, { preview: strict }))],
-      ["preview fixture, tightened", `<p>${APPROVED_SURFACES.previewTightened}</p>`],
-      ["preview fixture, untightened", `<p>${APPROVED_SURFACES.previewUntightened}</p>`],
-      ["broadcast note, tightened", `<p>${APPROVED_SURFACES.noteTightened}</p>`],
-      ["broadcast note, untightened", `<p>${APPROVED_SURFACES.noteUntightened}</p>`],
-      ["broadcast note, nothing excluded", `<p>${APPROVED_SURFACES.noteNothingExcluded}</p>`],
+    const live: Array<[string, string]> = [
+      [
+        "segments page, real data",
+        renderToStaticMarkup(
+          createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
+        ),
+      ],
+      [
+        "preview, real data",
+        renderToStaticMarkup(createElement(ContactPreview, { preview: optedOut })),
+      ],
     ];
-    for (const [name, markup] of surfaces) {
+    for (const [name, markup] of live) {
       expect(unapprovedUniversalClaims(markup, authored), name).toEqual([]);
+    }
+  });
+
+  /** r5 判官 ③ — every exemption still lives on the surface it was written for. */
+  it("keeps each exemption attached to the surface it was approved for", () => {
+    for (const entry of APPROVED_UNIVERSAL_SENTENCES) {
+      expect(
+        renderSurface(entry.surface).includes(entry.sentence),
+        `${entry.surface}: ${entry.sentence} — ${entry.why}`,
+      ).toBe(true);
     }
   });
 
