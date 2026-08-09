@@ -29,6 +29,7 @@ import {
   pricedGenCredits,
   displayCredits,
   genJobEndedWithoutDelivering,
+  merchantGenFailureMessage,
   type GenJobData,
   type GenModel,
   type GenVideoModel,
@@ -861,10 +862,22 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
       // INSIDE the adapter after fal already billed (it ran the model, then the
       // result parse/download threw). Only a genuinely pre-charge throw retries.
       const charged = typeof err === "object" && err !== null && (err as { charged?: unknown }).charged === true;
+      // #765 — `permanent` is the OTHER reason to stop, and it asks a different question from
+      // `charged`. Charged asks "did this cost money?"; permanent asks "can the same request
+      // ever succeed?" The adapter marks it when the engine examined what the merchant sent and
+      // refused it — a reference image showing a recognisable real person — which the same
+      // picture earns every single time. Retrying buys nothing but minutes of the merchant's
+      // day before the same non-answer.
+      //
+      // It changes WHEN we give up and nothing else: a permanent failure is provably free (a
+      // 4xx rejected before the engine ran), so `spent` stays false, no spentUsd is recorded,
+      // and the hold is refunded by the very same terminal branch every pre-charge failure
+      // uses. Post-commit is still not terminal — `committed` wins, exactly as before.
+      const permanent = typeof err === "object" && err !== null && (err as { permanent?: unknown }).permanent === true;
       // a POST-COMMIT failure (outputs stored + recorded) must NOT terminal-fail —
       // requeue so the resume path re-attaches without re-spending. Only a pre-commit
       // post-charge failure is terminal (charged, but no resume marker).
-      const final = !committed && (spent || charged || retryCount >= GEN_RETRY_LIMIT);
+      const final = !committed && (spent || charged || permanent || retryCount >= GEN_RETRY_LIMIT);
       console.error(`[gen] ${job.id}: ${final ? "FAILED" : committed ? "requeue → resume attach" : "retrying"} — ${scrubUrls(err instanceof Error ? err.message : String(err)).slice(0, 1000)}`);
       if (final) {
         // terminal fail → release the hold (the merchant got no result; the founder
@@ -898,9 +911,23 @@ export async function handleGen(data: GenJobData, retryCount: number): Promise<v
         });
         if (requeued.count === 0) console.error(`[gen] ${job.id}: not requeued — a finalizer already owns it (FAILED/DONE); discarding this delivery`);
       }
-      // user-facing chat text stays generic; the sanitized provider error is kept in GenJob.error (ops/DB)
+      // User-facing chat text stays generic — the sanitized provider error is kept in
+      // GenJob.error (ops/DB) — EXCEPT where the failure is one the merchant can act on
+      // (#765). Then they read what was wrong and what to do about it, in the same words the
+      // board reads back off `GenJob.error`: one sentence, one source, both entries.
+      //
+      // `merchantGenFailureMessage` is a WHITELIST over that same persisted string, never a
+      // passthrough of it. GenJob.error also carries lines like "conditioning refs unreachable
+      // (0/1) — refusing to spend", and forwarding whatever happened to be there would sooner
+      // or later hand a merchant an internal error string as advice. Only a sentence this
+      // system wrote for merchants comes back out; everything else keeps the generic apology.
       if (final) {
-        await appendCoworkResult(job, "TURN_ERROR", [], "That generation didn't go through — you can try again.");
+        await appendCoworkResult(
+          job,
+          "TURN_ERROR",
+          [],
+          merchantGenFailureMessage(message) ?? "That generation didn't go through — you can try again.",
+        );
         // #612 T2c: this is the ordinary way a generation ends badly (the provider, or storing
         // what it returned). The card settles to that ending BEFORE the rethrow below, which
         // pg-boss needs — and, like every other call site, after the money transaction.

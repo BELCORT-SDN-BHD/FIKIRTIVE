@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INTERNAL_PER_DISPLAY, pricedGenCredits,
   GEN_IMAGE_ASPECTS, GEN_IMAGE_SIZES, imageOutputSize,
+  REFERENCE_IMAGE_PERSON_REJECTED,
 } from "@fikirtive/core";
 import { getPrincipal, type Principal } from "@fikirtive/db/principal";
 
@@ -1861,5 +1862,45 @@ describe("startGen — the campaign approval gate runs inside the money transact
     expect(result).toEqual({ id: "job_ref", disposition: "fresh" });
     expect(db.executeRaw.mock.calls.map((call) => call[1])).toEqual(["project:p1"]);
     expect(db.campaignFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+// ── #765:卡面读回来的那句话 ───────────────────────────────────────────────────
+//
+// worker 把商家读的那一句原样写进 GenJob.error(见 apps/worker/src/jobs/
+// gen-reference-person.test.ts)。这里钉的是它怎么被读回去:`error` 那一栏同时也是运维
+// 栏,里面躺着「conditioning refs unreachable (0/1) — refusing to spend」这种句子。
+// 所以卡面不读它,读的是 `guidance` —— 一次白名单查询,只有本系统**写给商家**的句子能
+// 出来,别的一律 null,卡面维持原本那句通用结尾。
+describe("getGenJob — #765 商家能自己解决的失败,才给商家一句话", () => {
+  const failedJob = (error: string) => ({
+    id: "job_ref", status: "FAILED", progress: 0, error,
+    generationIds: [], spent: false,
+  });
+
+  it("认得出自家写给商家的那一句,原样交给卡面", async () => {
+    db.genJobFindFirst.mockResolvedValue(failedJob(REFERENCE_IMAGE_PERSON_REJECTED));
+
+    const job = await getGenJob("job_ref", "p1");
+
+    expect(job?.guidance).toBe(REFERENCE_IMAGE_PERSON_REJECTED);
+  });
+
+  it("内部错误串一律 null —— 绝不当成建议摆到商家面前", async () => {
+    db.genJobFindFirst.mockResolvedValue(failedJob("conditioning refs unreachable (0/1) — refusing to spend"));
+
+    const job = await getGenJob("job_ref", "p1");
+
+    expect(job?.guidance).toBeNull();
+    // 运维那一栏照旧有内容(只是不给卡面当建议用)。
+    expect(job?.error).toContain("conditioning refs");
+  });
+
+  it("没失败、没错误的任务没有话要说", async () => {
+    db.genJobFindFirst.mockResolvedValue({ id: "job_ref", status: "DONE", progress: 100, error: "", generationIds: [], spent: true });
+
+    const job = await getGenJob("job_ref", "p1");
+
+    expect(job?.guidance).toBeNull();
   });
 });
