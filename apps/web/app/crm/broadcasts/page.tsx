@@ -1,12 +1,18 @@
 import BroadcastListPage from "@/components/crm/broadcasts/broadcast-list-page";
-import { getMemberDirectory, listBroadcastRuns } from "@/lib/customer-broadcast-gateway";
+import { getMemberDirectory, listBroadcastRuns, listChannelScopes } from "@/lib/customer-broadcast-gateway";
 import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Broadcasts · Fikirtive" };
 
 export default async function CrmBroadcastsRoute() {
-  const [runs, directory] = await Promise.all([listBroadcastRuns({}), getMemberDirectory()]);
+  // #727 — the banner and the "New broadcast" entry both depend on whether a messaging channel
+  // exists, so the page reads it instead of assuming it.
+  const [runs, directory, channelScopes] = await Promise.all([
+    listBroadcastRuns({}),
+    getMemberDirectory(),
+    listChannelScopes(),
+  ]);
   const reportRunIds = runs.ok
     ? (
         await Promise.all(
@@ -22,6 +28,7 @@ export default async function CrmBroadcastsRoute() {
       initialRuns={runs}
       initialDirectory={directory}
       initialReportRunIds={reportRunIds}
+      initialChannelScopes={channelScopes}
     />
   );
 }

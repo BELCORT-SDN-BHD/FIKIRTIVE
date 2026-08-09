@@ -5,8 +5,14 @@ import { useState } from "react";
 import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import { AlertCircle, ArrowLeft, ArrowRight, Megaphone, Plus, RefreshCw, Unplug } from "lucide-react";
 import { listBroadcastRuns } from "@/lib/customer-broadcast-ui-actions";
-import type { getMemberDirectory } from "@/lib/customer-broadcast-gateway";
+import type { getMemberDirectory, listChannelScopes } from "@/lib/customer-broadcast-gateway";
 import { getCustomerBroadcastReport } from "@/lib/customer-broadcast-report-ui-actions";
+import {
+  channelConnectionFrom,
+  channelConnectionHeadline,
+  channelUnavailableCopy,
+  type ChannelAccountsResult,
+} from "@/lib/crm-channel-connection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -23,6 +29,10 @@ type ListResult = Awaited<ReturnType<typeof listBroadcastRuns>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
 type Run = ListSuccess["resource"][number];
 type DirectoryResult = Awaited<ReturnType<typeof getMemberDirectory>>;
+type ScopesResult = Awaited<ReturnType<typeof listChannelScopes>>;
+
+/** #727 — why a broadcast needs a channel, in the words the composer already used. */
+const NO_CHANNEL_LEAD = "A broadcast goes out through a connected channel account.";
 
 function DeniedState({ message }: { message: string }) {
   return (
@@ -44,10 +54,12 @@ export default function BroadcastListPage({
   initialRuns,
   initialDirectory,
   initialReportRunIds,
+  initialChannelScopes,
 }: {
   initialRuns: ListResult;
   initialDirectory: DirectoryResult;
   initialReportRunIds: string[];
+  initialChannelScopes: ScopesResult;
 }) {
   const [runs, setRuns] = useState<Run[]>(initialRuns.ok ? initialRuns.resource : []);
   const [reportRunIds, setReportRunIds] = useState(() => new Set(initialReportRunIds));
@@ -65,6 +77,17 @@ export default function BroadcastListPage({
     directory?.members.find((m) => m.membershipId === membershipId)?.displayName ?? `Member ${membershipId.slice(0, 6)}`;
   const selfRoles = directory ? (directory.self.roles ?? [directory.self.role]) : [];
   const canManage = orgRolesAllow(selfRoles, "broadcast.manage");
+  // #727 — read once, and let both the banner and the "New broadcast" entry follow it.
+  const connection = channelConnectionFrom(initialChannelScopes as ChannelAccountsResult);
+  // The composer's Create button needs a channelScopeId, and a workspace with no channel account
+  // has no dropdown to pick one from. Inviting a merchant in there was a form they could never
+  // finish (#687 same shape), so with zero channels the entry explains instead of beckoning.
+  // A read that FAILED is not a reason to take an action away — only a confirmed zero is.
+  const newBroadcastBlockedReason = !canManage
+    ? "Broadcast management access is required."
+    : connection.kind === "none"
+      ? channelUnavailableCopy(NO_CHANNEL_LEAD)
+      : null;
 
   async function refresh() {
     setLoading(true);
@@ -107,17 +130,20 @@ export default function BroadcastListPage({
             <Button type="button" variant="ghost" onClick={() => void refresh()} disabled={loading} aria-label="Refresh">
               <RefreshCw className={loading ? "animate-spin" : undefined} />Refresh
             </Button>
-            {canManage ? (
+            {newBroadcastBlockedReason === null ? (
               <Button asChild><Link href="/crm/broadcasts/new"><Plus />New broadcast</Link></Button>
             ) : (
-              <Button disabled title="Broadcast management access is required."><Plus />New broadcast</Button>
+              <Button disabled title={newBroadcastBlockedReason}><Plus />New broadcast</Button>
             )}
           </div>
         </header>
 
+        {/* #727 — the connection clause is read from the workspace's channel accounts. The
+            simulated-send clause is a product fact that holds whether or not a channel exists,
+            so it is stated on its own instead of being presented as a consequence. */}
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />
-          <span>No messaging channel is connected in this workspace. Broadcasts here run as simulated sends only — no message reaches a real customer, and provider quota (messaging tier) reads as unavailable.</span>
+          <span>{channelConnectionHeadline(connection)} Broadcasts here run as simulated sends only — no message reaches a real customer, and provider quota (messaging tier) reads as unavailable.</span>
         </div>
 
         {!canManage ? (
@@ -135,9 +161,13 @@ export default function BroadcastListPage({
             <Megaphone className="mx-auto size-8 text-muted-foreground" />
             <h2 className="mt-4 text-lg font-semibold">No broadcasts yet</h2>
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              {canManage ? "Create your first broadcast to choose a segment and template, then run a simulated send." : "No broadcast has been created in this workspace yet."}
+              {!canManage
+                ? "No broadcast has been created in this workspace yet."
+                : connection.kind === "none"
+                  ? channelUnavailableCopy(NO_CHANNEL_LEAD)
+                  : "Create your first broadcast to choose a segment and template, then run a simulated send."}
             </p>
-            {canManage ? (
+            {newBroadcastBlockedReason === null ? (
               <Button asChild className="mt-5"><Link href="/crm/broadcasts/new"><Plus />New broadcast</Link></Button>
             ) : null}
           </section>

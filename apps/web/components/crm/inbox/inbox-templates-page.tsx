@@ -14,6 +14,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  CHANNEL_CONNECT_UNAVAILABLE_NOTE,
+  channelConnectionFromAccounts,
+  channelConnectionHeadline,
+} from "@/lib/crm-channel-connection";
 import { channelAccountLabel, channelLabel, templateStateLabel } from "@/lib/crm-labels";
 import { dateTimeLabel, errorMessage, isDenialErrorCode } from "./inbox-format";
 
@@ -210,10 +215,12 @@ function TemplatesWorkspace({
             <CardContent>
               <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
                 <Unplug className="mx-auto size-6 text-muted-foreground" />
-                <p className="mt-3 text-sm font-semibold">No messaging channel is connected in this workspace yet</p>
+                {/* #727 — this page always read the state; it now says it in the same words as
+                    every other CRM surface, from the one authority. */}
+                <p className="mt-3 text-sm font-semibold">{channelConnectionHeadline(channelConnectionFromAccounts(scopes))}</p>
                 {/* #541 — no CTA into Connections: Messaging has no connect button there yet. */}
                 <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                  Messaging channels are not available to connect yet. Templates open up once a channel can be connected.
+                  {CHANNEL_CONNECT_UNAVAILABLE_NOTE} Templates open up once a channel can be connected.
                 </p>
               </div>
             </CardContent>

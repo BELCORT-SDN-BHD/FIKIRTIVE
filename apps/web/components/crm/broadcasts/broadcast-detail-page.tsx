@@ -31,6 +31,10 @@ import type {
   getMemberDirectory,
 } from "@/lib/customer-broadcast-gateway";
 import type { AudienceConsentSummary } from "@/lib/customer-broadcast-service";
+import {
+  channelConnectionFromAccounts,
+  channelConnectionHeadline,
+} from "@/lib/crm-channel-connection";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -190,6 +194,9 @@ export default function BroadcastDetailPage({
   const selfRoles = directory ? (directory.self.roles ?? [directory.self.role]) : [];
   const canManage = orgRolesAllow(selfRoles, "broadcast.manage");
   const options = initialOptions.ok ? initialOptions.resource : null;
+  // #727 — this page already reads the composer options, which carry the workspace's channel
+  // accounts. The quota banner below used to assert "No channel is connected" regardless.
+  const connection = channelConnectionFromAccounts(options?.channelScopes);
   const campaign = initialRun.ok ? initialRun.resource.campaign : null;
   const createdByName =
     run && directory ? directory.members.find((m) => m.membershipId === run.createdByMembershipId)?.displayName ?? null : null;
@@ -324,7 +331,7 @@ export default function BroadcastDetailPage({
         {/* Provider quota / degrade banner — honestly unavailable in the simulated era (§6.1). */}
         <div className="mt-6 flex items-start gap-3 rounded-xl border border-warning/25 bg-warning-soft px-4 py-3 text-sm leading-6 text-warning-soft-foreground">
           <Unplug className="mt-0.5 size-4 shrink-0" />
-          <span>Provider messaging tier (quota preflight / quality downgrade): <strong>unavailable</strong>. No channel is connected, so this workbench runs simulated sends only — no message reaches a real customer and no quota is consumed.</span>
+          <span>Provider messaging tier (quota preflight / quality downgrade): <strong>unavailable</strong>. {channelConnectionHeadline(connection)} This workbench runs simulated sends only — no message reaches a real customer and no quota is consumed.</span>
         </div>
 
         {!canManage ? (
