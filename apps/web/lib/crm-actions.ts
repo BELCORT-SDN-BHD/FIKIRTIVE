@@ -25,9 +25,17 @@ export type CreateContactInput = {
 };
 
 export type ContactMutationResult = { ok: true } | { error: string };
-/** #803 — a stored merchant-entered number, returned with the id the edit/remove controls need. */
+/**
+ * #803 — a stored number, returned with the id the edit/remove controls need.
+ *
+ * r2 (判词 5232132441 P2①): the grade travels back with the result. Adding a number the contact
+ * already holds is a success, but it is not necessarily "saved, not verified" — if a channel has
+ * already confirmed that number, saying so would demote a verified fact in the merchant's eyes.
+ * `alreadyStored` distinguishes "I just wrote this" from "this was already here", and
+ * `verificationStatus` is the grade of the row that now exists either way.
+ */
 export type ContactPhoneResult =
-  | { ok: true; identityId: string; phone: string }
+  | { ok: true; identityId: string; phone: string; verificationStatus: string; alreadyStored: boolean }
   | { error: string };
 export type CreateContactResult =
   | {
@@ -46,6 +54,14 @@ export type ImportContactRowResult = {
   possibleDuplicates: ContactDuplicateSuggestion[];
   consentAssertion: "grant" | "revoke" | null;
   consentError?: string;
+  /**
+   * r2 (判词 5232132441 P2②) — what actually happened to this row's phone numbers. The import
+   * card used to announce "phone numbers were saved" for every file, including files with no
+   * phone column at all. The counts ride WITH the rows for the same reason the contact-list
+   * counts do (#742): a summary written from anything other than the rows can drift from them.
+   */
+  storedPhoneCount: number;
+  skippedPhoneCount: number;
   warnings: string[];
 };
 
@@ -479,13 +495,20 @@ async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<
           externalId: entry.phone,
           deletedAt: null,
         },
-        select: { id: true, contactId: true },
+        select: { id: true, contactId: true, verificationStatus: true },
       });
       // A retry after a lost response must not read as a failure: the same number on the same
-      // contact is already the requested state.
+      // contact is already the requested state. Its GRADE comes back with it, because a number a
+      // channel has already confirmed must not be reported as newly stored and unverified.
       if (existing) {
         return existing.contactId === gate.contactId
-          ? { ok: true, identityId: existing.id, phone: entry.phone }
+          ? {
+              ok: true,
+              identityId: existing.id,
+              phone: entry.phone,
+              verificationStatus: existing.verificationStatus,
+              alreadyStored: true,
+            }
           : { error: PHONE_ALREADY_SAVED };
       }
       await tx.contactIdentity.create({
@@ -515,7 +538,13 @@ async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<
           },
         },
       });
-      return { ok: true, identityId, phone: entry.phone };
+      return {
+        ok: true,
+        identityId,
+        phone: entry.phone,
+        verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+        alreadyStored: false,
+      };
     });
     if ("ok" in result) refreshContactPaths(gate.contactId);
     return result;
@@ -550,7 +579,13 @@ async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promi
         return { error: PHONE_VERIFIED_LOCKED };
       }
       if (current.externalId === entry.phone) {
-        return { ok: true, identityId: current.id, phone: entry.phone };
+        return {
+          ok: true,
+          identityId: current.id,
+          phone: entry.phone,
+          verificationStatus: current.verificationStatus,
+          alreadyStored: true,
+        };
       }
       const clash = await tx.contactIdentity.findFirst({
         where: {
@@ -591,7 +626,14 @@ async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promi
           },
         },
       });
-      return { ok: true, identityId, phone: entry.phone };
+      // The CAS above only lets a merchant-entered row through, so the grade is unchanged.
+      return {
+        ok: true,
+        identityId,
+        phone: entry.phone,
+        verificationStatus: MERCHANT_UNVERIFIED_IDENTITY,
+        alreadyStored: false,
+      };
     });
     if ("ok" in result) refreshContactPaths(gate.contactId);
     return result;
@@ -816,7 +858,11 @@ function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
   return result;
 }
 
-/** CSV import creates Contact rows only; identity fields remain read-only suggestion signals. */
+/**
+ * CSV import creates Contact rows and stores the PHONE columns as merchant-entered identities
+ * (#803). The email column stays a duplicate-suggestion signal only, because email has no entry,
+ * correction, or removal surface yet. Every row reports what was stored and what was skipped.
+ */
 export async function importContacts(raw: unknown): Promise<ImportContactsResult> {
   const gate = await requireOwner();
   if ("error" in gate) return gate;
@@ -849,6 +895,8 @@ export async function importContacts(raw: unknown): Promise<ImportContactsResult
         contactId: null,
         possibleDuplicates: [],
         consentAssertion: null,
+        storedPhoneCount: 0,
+        skippedPhoneCount: 0,
         warnings: [created.error],
       });
       continue;
@@ -889,6 +937,8 @@ export async function importContacts(raw: unknown): Promise<ImportContactsResult
       possibleDuplicates: created.possibleDuplicates,
       consentAssertion: consentError ? null : row.consentAction,
       ...(consentError ? { consentError } : {}),
+      storedPhoneCount: created.storedIdentities.length,
+      skippedPhoneCount: created.skippedIdentities.length,
       warnings,
     });
   }

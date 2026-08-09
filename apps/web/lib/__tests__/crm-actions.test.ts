@@ -274,7 +274,13 @@ describe("consent and DND runtime writers", () => {
 describe("merchant-entered phone numbers (#803)", () => {
   it("stores what the merchant typed at the unverified grade, with no evidence and no consent", async () => {
     await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "012-345 6789" }))
-      .resolves.toEqual({ ok: true, identityId: "crm-1", phone: "+60123456789" });
+      .resolves.toEqual({
+        ok: true,
+        identityId: "crm-1",
+        phone: "+60123456789",
+        verificationStatus: "merchant_unverified",
+        alreadyStored: false,
+      });
 
     const data = mockIdentityCreate.mock.calls[0][0].data;
     expect(data).toMatchObject({
@@ -321,14 +327,51 @@ describe("merchant-entered phone numbers (#803)", () => {
   });
 
   it("treats a repeat of the same number on the same contact as already done", async () => {
-    mockIdentityFindFirst.mockResolvedValue({ id: "identity-1", contactId: "contact-1" });
+    mockIdentityFindFirst.mockResolvedValue({
+      id: "identity-1",
+      contactId: "contact-1",
+      verificationStatus: "merchant_unverified",
+    });
     await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "+60123456789" }))
-      .resolves.toEqual({ ok: true, identityId: "identity-1", phone: "+60123456789" });
+      .resolves.toEqual({
+        ok: true,
+        identityId: "identity-1",
+        phone: "+60123456789",
+        verificationStatus: "merchant_unverified",
+        alreadyStored: true,
+      });
     expect(mockIdentityCreate).not.toHaveBeenCalled();
   });
 
+  /**
+   * r2 (判词 5232132441 P2①). Re-adding a number a channel already confirmed is a success, and
+   * reporting it as freshly stored and unverified would demote a verified fact in the words the
+   * merchant reads. The grade comes back so the page can say what is actually true.
+   */
+  it("reports the existing grade when the number is already channel verified", async () => {
+    mockIdentityFindFirst.mockResolvedValue({
+      id: "identity-1",
+      contactId: "contact-1",
+      verificationStatus: "channel_verified",
+    });
+    await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "+60123456789" }))
+      .resolves.toEqual({
+        ok: true,
+        identityId: "identity-1",
+        phone: "+60123456789",
+        verificationStatus: "channel_verified",
+        alreadyStored: true,
+      });
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
+    expect(mockIdentityUpdateMany).not.toHaveBeenCalled();
+  });
+
   it("refuses to move a number this tenant already holds on another contact", async () => {
-    mockIdentityFindFirst.mockResolvedValue({ id: "identity-9", contactId: "contact-other" });
+    mockIdentityFindFirst.mockResolvedValue({
+      id: "identity-9",
+      contactId: "contact-other",
+      verificationStatus: "merchant_unverified",
+    });
     await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "+60123456789" }))
       .resolves.toEqual({ error: "That number is already saved on another contact." });
     expect(mockIdentityCreate).not.toHaveBeenCalled();
@@ -388,6 +431,10 @@ describe("importContacts", () => {
       importId: "import-1",
     });
     expect(result).toMatchObject({ ok: true, importedCount: 2, failedCount: 0 });
+    // r2 (判词 5232132441 P2②): no phone column means nothing was stored, and the row says so.
+    if ("ok" in result) {
+      expect(result.rows.every((row) => row.storedPhoneCount === 0 && row.skippedPhoneCount === 0)).toBe(true);
+    }
     expect(mockRecordConsentEvent).not.toHaveBeenCalled();
     expect(mockContactCreate).toHaveBeenCalledTimes(2);
     for (const call of mockContactCreate.mock.calls) {
@@ -439,6 +486,8 @@ describe("importContacts", () => {
         status: "imported_with_warning",
         consentAssertion: "grant",
         possibleDuplicates: [{ contactId: "possible-1" }],
+        storedPhoneCount: 1,
+        skippedPhoneCount: 0,
         warnings: ["The email address was checked for duplicates but is not stored yet."],
       }],
     });
@@ -456,6 +505,8 @@ describe("importContacts", () => {
       importedCount: 1,
       rows: [{
         status: "imported_with_warning",
+        storedPhoneCount: 0,
+        skippedPhoneCount: 1,
         warnings: ["+60123456789 is already saved on another contact, so it was not added here."],
       }],
     });

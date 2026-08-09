@@ -581,7 +581,9 @@ export async function buildOttoContext({
     // action layer; no UTM, generation, credits, schedule approval, send, publish, or provider port.
     campaigns: makeOttoCampaignsPort(),
     // B0-59/60/C1: owner-scoped Contact reads/writes re-enter the same authenticated actions.
-    // Identity stays read-only; consent and DND mutations route through the closed runtime writers.
+    // #803: phone entry/correction/removal is open to Otto, at the merchant-entered grade only —
+    // a channel-verified number is refused, and no argument can store one as verified. Consent
+    // and DND mutations still route through the closed runtime writers.
     contacts: makeOttoContactsPort(),
     // #495/#500: connected channel-account list re-enters the same gateway read as the human pickers.
     channelScopes: makeOttoChannelScopesPort(),

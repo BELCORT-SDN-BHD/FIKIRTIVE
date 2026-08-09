@@ -145,7 +145,12 @@ describe("a merchant types a customer's number in", () => {
   it("stores it in Malaysian shorthand, marked as merchant entered with no evidence", async () => {
     actAs(ORG_A);
     const saved = await addContactPhone({ contactId: NURUL, phone: "012-345 6789" });
-    expect(saved).toMatchObject({ ok: true, phone: "+60123456789" });
+    expect(saved).toMatchObject({
+      ok: true,
+      phone: "+60123456789",
+      verificationStatus: "merchant_unverified",
+      alreadyStored: false,
+    });
 
     const profile = await getContact(NURUL);
     if (!("ok" in profile)) throw new Error(profile.error);
@@ -247,6 +252,25 @@ describe("the channel confirms the number", () => {
     expect(preview.contacts.map((contact) => contact.id).sort()).toEqual([NURUL, SITI].sort());
     const frozen = await frozenAudience("freeze-verified");
     expect(frozen.members.map((member) => member.contactId).sort()).toEqual([NURUL, SITI].sort());
+  });
+
+  /**
+   * r2 (判词 5232132441 P2①) — through the real database, not a mock: the merchant types a number
+   * the channel has already confirmed. It is a success (nothing to do), and it must come back
+   * carrying the grade it actually has, or the page will call a verified number "not verified".
+   */
+  it("reports a re-typed confirmed number as already saved and verified", async () => {
+    actAs(ORG_A);
+    const again = await addContactPhone({ contactId: NURUL, phone: "012-345 6789" });
+    expect(again).toMatchObject({
+      ok: true,
+      phone: "+60123456789",
+      verificationStatus: "channel_verified",
+      alreadyStored: true,
+    });
+    await expect(
+      prisma.contactIdentity.count({ where: { ownerId: ORG_A, externalId: "+60123456789", deletedAt: null } }),
+    ).resolves.toBe(1);
   });
 
   it("refuses to let the merchant edit or remove what the channel confirmed", async () => {

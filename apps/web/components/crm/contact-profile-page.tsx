@@ -162,7 +162,16 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
       if (!("ok" in result)) return setError(result.error);
       setNewPhone("");
       await refreshProfile();
-      setNotice(`${result.phone} saved as not verified. It is not used for broadcasts.`);
+      // r2 (判词 5232132441 P2①) — this used to say "saved as not verified" for every success,
+      // including re-adding a number a channel had already confirmed. The sentence now comes from
+      // the grade the action reports, so the page cannot demote a verified number in words.
+      setNotice(
+        isChannelVerifiedIdentity(result)
+          ? `${result.phone} is already saved on this contact and was verified by a connected channel.`
+          : result.alreadyStored
+            ? `${result.phone} is already saved on this contact. It stays marked as not verified.`
+            : `${result.phone} saved as not verified. It is not used for broadcasts.`,
+      );
     } catch {
       setError("The phone number could not be saved. Please retry.");
     } finally {

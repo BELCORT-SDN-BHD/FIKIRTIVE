@@ -28,6 +28,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 type ListResult = Awaited<ReturnType<typeof listContacts>>;
 type ListSuccess = Extract<ListResult, { ok: true }>;
 type ImportSuccess = Extract<ImportContactsResult, { ok: true }>;
+
+/**
+ * r2 (判词 5232132441 P2②) — what the import actually did with the phone columns, counted from
+ * the rows it is printed above. A file with no phone column says nothing about phones, because
+ * "phone numbers were saved" would then be a sentence about something that never happened.
+ */
+function importPhoneSummary(rows: ImportSuccess["rows"]): string {
+  const stored = rows.reduce((total, row) => total + row.storedPhoneCount, 0);
+  const skipped = rows.reduce((total, row) => total + row.skippedPhoneCount, 0);
+  const parts: string[] = [];
+  if (stored) {
+    parts.push(`${stored} phone ${stored === 1 ? "number" : "numbers"} saved as not verified`);
+  }
+  if (skipped) {
+    parts.push(`${skipped} skipped because ${skipped === 1 ? "it is" : "they are"} already saved on another contact`);
+  }
+  if (!parts.length) return "No phone numbers were stored from this file.";
+  return `${parts.join(" · ")}. Saved numbers are not used for broadcasts.`;
+}
 type CreateSuccess = Extract<Awaited<ReturnType<typeof createContact>>, { ok: true }>;
 type StageFilter = "all" | "New" | "Active" | "Dormant";
 
@@ -317,7 +336,13 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
               {importResult ? (
                 <div className="mt-3 rounded-xl border border-border bg-muted/45 p-3 text-sm">
                   <p className="font-semibold">{importResult.importedCount} imported · {importResult.failedCount} failed</p>
-                  <p className="mt-1 text-muted-foreground">Phone numbers were saved as not verified.{importResult.rows.some((row) => row.status === "imported_with_warning") ? " Review the warnings below." : ""}</p>
+                  {/*
+                    r2 (判词 5232132441 P2②) — this line used to announce that phone numbers were
+                    saved no matter what the file contained: no phone column, every number already
+                    on someone else, or every row failed all read the same. It is now counted from
+                    the rows themselves, so it can only say what actually happened.
+                  */}
+                  <p className="mt-1 text-muted-foreground">{importPhoneSummary(importResult.rows)}</p>
                 </div>
               ) : null}
             </CardContent>
