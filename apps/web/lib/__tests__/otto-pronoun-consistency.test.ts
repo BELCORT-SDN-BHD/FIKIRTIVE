@@ -87,40 +87,121 @@ function sentencesOf(text: string): string[] {
  *
  * 抽两类段,一次左到右扫完:
  *   · **JSX 文本节点** —— 一个标签闭合(`>`)之后、下一个标签打开(`<`)之前的纯文本。
- *     遇到 `{`/`}` 就停:`<p>{count} items</p>` 里的 items 归表达式管,不是一段文案。
  *   · **字符串字面量** —— 属性值、数组元素、返回值里的文案。
  * 顺序很重要:先吃 JSX 文本再看引号,`Otto doesn&apos;t ask` 这种正文里的撇号就不会被
  * 当成一个字符串的开头(它已经被 JSX 那一段整段吃掉了)。
  *
- * 这条流是**加**在原来那条(整份源码)之上的,不是换掉它:JSX 表达式里的文案与行尾注释
- * 只有原来那条看得见。两条流各扫一遍,同一句重复命中的按 (文件, 规则, 句子) 去重。
+ * 这条流是**加**在原来那条(整份源码)之上的,不是换掉它:行尾注释只有原来那条看得见。
+ * 两条流各扫一遍,同一句重复命中的按 (文件, 规则, 句子) 去重。
+ *
+ * #830 —— 表达式容器不是句号,它常常正是两句之间那个空格。
+ *   第一版遇到 `{` 就把**当前整段 JSX 文本丢掉**,于是 Prettier 最常见的换行产物
+ *   `<p>Meet Otto.{" "}It researches…</p>` 两句一起消失:文案流里什么都没有,整份源码那条
+ *   流又因为句号后面紧跟 `{` 而不切句 —— 两条流一起放行。
+ *   修法按容器的形状分两种,都不再丢弃整段:
+ *     · **纯字符串字面量容器**(`{" "}`、`{"—"}`)按它的值拼接 —— `{" "}` 拼出来的就是
+ *       句号后面那个空格,句界于是落在真句号上;
+ *     · **其余表达式**(`{count}`、`{user.name}`)按一个空格处理:它的值机器读不到,但它
+ *       在句子里占的位置是空白,不是句号。
+ *   容器只在「单行、不含嵌套标签」时才这样吃掉;跨行或含 `<` 的(箭头函数体、`.map()`
+ *   出来的 JSX)不是行内文案,这一段整体作废,并且**退回 `{` 前一格重扫**,里面的字符串
+ *   字面量照样被下面那条分支收走 —— 丢弃永远只丢「这不是一段文案」的判断,不丢内容。
  */
+type JsxText = { text: string; end: number; closed: boolean };
+
+/** `{…}` 的值:纯字符串字面量取其值,其余取一个空格;不是行内容器则 null(整段作废)。 */
+function readExpressionContainer(source: string, start: number): { value: string; end: number } | null {
+  let depth = 0;
+  let i = start;
+  let literal: string | null = null;
+  let sawAnythingElse = false;
+  while (i < source.length) {
+    const char = source[i]!;
+    if (char === "<" || char === "\n") return null;
+    if (char === "{") {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      i += 1;
+      if (depth === 0) {
+        return { value: literal !== null && !sawAnythingElse ? literal : " ", end: i };
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === "`") {
+      const string = readStringLiteral(source, i);
+      if (literal === null && !sawAnythingElse) literal = string.body;
+      else sawAnythingElse = true;
+      i = string.end;
+      continue;
+    }
+    if (!/\s/.test(char)) sawAnythingElse = true;
+    i += 1;
+  }
+  return null;
+}
+
+function readStringLiteral(source: string, start: number): { body: string; end: number } {
+  const quote = source[start]!;
+  let body = "";
+  let i = start + 1;
+  while (i < source.length && source[i] !== quote) {
+    if (source[i] === "\\") {
+      body += source[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    body += source[i]!;
+    i += 1;
+  }
+  return { body, end: i + 1 };
+}
+
+/** 一个 `>` 之后的 JSX 文本节点。只有真的被下一个 `<` 关上,它才算一段文案。 */
+function readJsxText(source: string, start: number): JsxText {
+  let text = "";
+  let i = start;
+  while (i < source.length) {
+    const char = source[i]!;
+    if (char === "<") return { text, end: i, closed: true };
+    if (char === ">" || char === "}") return { text, end: i, closed: false };
+    if (char === "{") {
+      const container = readExpressionContainer(source, i);
+      if (!container) return { text, end: i, closed: false };
+      text += container.value;
+      i = container.end;
+      continue;
+    }
+    text += char;
+    i += 1;
+  }
+  return { text, end: i, closed: false };
+}
+
 function copyRuns(source: string): string[] {
   const runs: string[] = [];
   let i = 0;
   while (i < source.length) {
     const char = source[i]!;
     if (char === ">") {
-      let j = i + 1;
-      while (j < source.length && !"<>{}".includes(source[j]!)) j += 1;
-      if (source[j] === "<") runs.push(source.slice(i + 1, j));
-      i = j;
+      const jsxText = readJsxText(source, i + 1);
+      if (jsxText.closed) {
+        runs.push(jsxText.text);
+        i = jsxText.end;
+      } else {
+        // 这一段不是 JSX 文本(`=>`、`a > b`、跨行容器…)。只前进一格,让它里面的
+        // 字符串字面量原样落进下面那条分支 —— 作废判断,不作废内容。
+        i += 1;
+      }
       continue;
     }
     if (char === '"' || char === "'" || char === "`") {
-      let body = "";
-      let j = i + 1;
-      while (j < source.length && source[j] !== char) {
-        if (source[j] === "\\") {
-          body += source[j + 1] ?? "";
-          j += 2;
-          continue;
-        }
-        body += source[j]!;
-        j += 1;
-      }
-      runs.push(body);
-      i = j + 1;
+      const string = readStringLiteral(source, i);
+      runs.push(string.body);
+      i = string.end;
       continue;
     }
     i += 1;
@@ -269,9 +350,50 @@ describe("#816 the sentence boundary survives a tag or a comma between the two s
 
   it("reads JSX text and string literals in the order they appear, and nothing else", () => {
     expect(copyRuns(`<p>Meet Otto.</p><Foo label="Say hello." />`)).toEqual(["Meet Otto.", "Say hello."]);
-    // 表达式里的东西不是一段文案;`don&apos;t` 的撇号不得被当成一个字符串的开头。
+    // `don&apos;t` 的撇号不得被当成一个字符串的开头。
     expect(copyRuns(`<p>Otto doesn't ask.</p>`)).toEqual(["Otto doesn't ask."]);
     expect(copyRuns(`const total = a > b ? 1 : 2;`)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ①c 表达式容器 —— #830:`{" "}` 是句号后面那个空格,不是一段文案的终点
+// ---------------------------------------------------------------------------
+describe("#830 an expression container inside JSX text no longer throws the sentence away", () => {
+  const RULE = "a pronoun opens the sentence right after an Otto sentence";
+
+  function rulesFor(source: string): string[] {
+    return streamsOf(source).flatMap((stream) => offencesIn("planted.tsx", stream).map((o) => o.rule));
+  }
+
+  // 判官 2026-08-09 给的那一句。Prettier 换行时自动插的 `{" "}` 把两句钉在一起:
+  // 文案流丢了整段(遇 `{` 即弃),整份源码那条流又因为句号后面是 `{` 而不切句。
+  it("catches a pronoun that opens the next sentence after a {\" \"} join", () => {
+    const planted = `<p>Meet Otto.{" "}It researches your brand.</p>`;
+    expect(offencesIn("planted.tsx", stripComments(planted)), "the whole-source stream").toEqual([]);
+    expect(copyRuns(planted), "the old copy stream dropped both sentences").toEqual([
+      "Meet Otto. It researches your brand.",
+    ]);
+    expect(rulesFor(planted)).toContain(RULE);
+  });
+
+  it("treats a value expression as the whitespace it occupies, not as a full stop", () => {
+    // `{count}` 的值机器读不到,但它不是句号 —— 前后仍是同一句话的两半。
+    expect(copyRuns(`<p>Otto drafted {count} posts. It is waiting.</p>`)).toEqual([
+      "Otto drafted   posts. It is waiting.",
+    ]);
+    expect(rulesFor(`<p>Otto drafted {count} posts.</p><p>It is waiting.</p>`)).toContain(RULE);
+  });
+
+  it("keeps the string literals inside a multi-line container it refuses to inline", () => {
+    // 跨行容器(箭头函数体、`.map()` 出来的 JSX)不是行内文案 —— 整段作废,但里面的
+    // 字符串字面量必须照样进流,否则「修盲区」会变成「换个地方新开一个盲区」。
+    const planted = `<div>\n  {items.map((item) => (\n    <p>{"Otto waited."}</p>\n  ))}\n</div>`;
+    expect(copyRuns(planted)).toContain("Otto waited.");
+  });
+
+  it("leaves the copy Founder named as correct alone", () => {
+    expect(rulesFor(`<p>Voice, rules, audience — Otto uses it{" "}every time.</p>`)).toEqual([]);
   });
 });
 
