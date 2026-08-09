@@ -750,6 +750,7 @@ function SegmentsWorkspace({ initialState }: { initialState: ListSuccess }) {
                     </label>
                     <Switch
                       id="segment-exclude-reported-opt-out"
+                      aria-label={REPORTED_OPT_OUT_EXCLUSION_LABEL}
                       checked={draft.excludeReportedOptOut}
                       disabled={draftLocked}
                       onCheckedChange={(checked) => {

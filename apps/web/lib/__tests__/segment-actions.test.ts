@@ -198,6 +198,8 @@ describe("previewSegment", () => {
       excludedByConsentCount: 1,
       unresolvedLegacyOptOutCount: 0,
       reportedOptOutCount: 0,
+      // #758 — the merchant's optional exclusion is off on these rules, so it removed nobody.
+      excludedByReportedOptOutCount: 0,
       contacts: [
         {
           id: "contact-1",
@@ -449,6 +451,7 @@ describe("listSegments", () => {
           excludedByConsentCount: 1,
           unresolvedLegacyOptOutCount: 0,
           reportedOptOutCount: 0,
+          excludedByReportedOptOutCount: 0,
           createdAt: "2026-07-14T00:00:00.000Z",
         },
       ],
