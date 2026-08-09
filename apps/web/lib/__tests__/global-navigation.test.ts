@@ -60,9 +60,8 @@ describe("MerchantShellContent", () => {
   });
 
   it("still lights up Inbox on its own Templates sub-route (no CRM_ITEMS entry there yet)", () => {
-    // Templates is deliberately absent from CRM_ITEMS until work-order-group E merges
-    // its formal /crm/templates entry (#513 A组返工 item 4). Until then, /crm/inbox is
-    // the only CRM_ITEMS candidate for the legacy /crm/inbox/templates sub-route.
+    // /crm/inbox/templates is a legacy sub-route with no registry entry of its own, so
+    // /crm/inbox — its longest matching ancestor — is the item that lights up.
     const markup = renderShell("/crm/inbox/templates");
 
     expect(markup).toMatch(/aria-current="page"[^>]*href="\/crm\/inbox"/);
@@ -85,15 +84,11 @@ describe("MerchantShellContent", () => {
     expect(markup).toMatch(/href="\/billing"[^>]*>[\s\S]{0,600}?Credits/);
   });
 
-  it("nests Connections, Preferences, and Billing & credits under Workspace settings", () => {
+  it("nests Connections, Preferences, and Billing & credits under Settings", () => {
     const markup = renderShell("/billing");
 
-    expect(markup).toContain(">Workspace settings<");
-    // Points at Otto's already-shipped connections view, not the not-yet-built
-    // /connections page (#513 A组返工 item 4 — swap once group B merges its page).
+    expect(markup).toContain(">Settings<");
     expect(markup).toContain('href="/otto?view=connections"');
-    // Preferences (spend cap, notifications, schedule defaults, delete account)
-    // was an island with no clickable entry point anywhere (#513 A组返工·三轮 item 1).
     expect(markup).toContain('href="/otto?view=account"');
     expect(markup).toContain(">Preferences<");
     expect(markup).toContain(">Billing &amp; credits<");
@@ -116,19 +111,30 @@ describe("MerchantShellContent", () => {
     expect(markup).not.toMatch(/aria-current="page"[^>]*href="\/otto\?view=connections"/);
   });
 
-  it("does not also highlight the top-level Otto link when Connections or Preferences is active (#520)", () => {
+  it("does not also highlight the assistant row when a ?view= destination is active (#520)", () => {
     const connections = renderShell("/otto?view=connections");
     expect(connections).toMatch(/aria-current="page" title="Connections"/);
-    expect(connections).not.toMatch(/aria-current="page" title="Otto"/);
+    expect(connections).not.toMatch(/aria-current="page" title="Ask Otto"/);
 
     const preferences = renderShell("/otto?view=account");
     expect(preferences).toMatch(/aria-current="page" title="Preferences"/);
-    expect(preferences).not.toMatch(/aria-current="page" title="Otto"/);
+    expect(preferences).not.toMatch(/aria-current="page" title="Ask Otto"/);
+
+    // #801 — Library and Schedule are ?view= destinations too now. Before the whole
+    // registry was scanned, only the settings group was, so these two would have lit the
+    // assistant row up alongside themselves.
+    const library = renderShell("/otto?view=library");
+    expect(library).toMatch(/aria-current="page" title="Library"/);
+    expect(library).not.toMatch(/aria-current="page" title="Ask Otto"/);
+
+    const schedule = renderShell("/otto?view=schedule");
+    expect(schedule).toMatch(/aria-current="page" title="Schedule"/);
+    expect(schedule).not.toMatch(/aria-current="page" title="Ask Otto"/);
   });
 
-  it("keeps the top-level Otto link active on bare /otto and on an unrelated query (#520)", () => {
-    expect(renderShell("/otto")).toMatch(/aria-current="page" title="Otto"/);
-    expect(renderShell("/otto?foo=bar")).toMatch(/aria-current="page" title="Otto"/);
+  it("keeps the assistant row active on bare /otto and on an unrelated query (#520)", () => {
+    expect(renderShell("/otto")).toMatch(/aria-current="page" title="Ask Otto"/);
+    expect(renderShell("/otto?foo=bar")).toMatch(/aria-current="page" title="Ask Otto"/);
   });
 
   // #685 — the mobile trigger is `fixed`, so it occupies no layout space of its own.
@@ -157,12 +163,15 @@ describe("MerchantShellContent", () => {
       expect(wrapper).toContain("lg:pt-0");
     });
 
-    it("reserves nothing on Otto, which draws its own in-flow mobile top bar", () => {
-      const wrapper = renderShell("/otto").match(contentWrapper)?.[1];
+    it.each(["/otto", "/northstar-immersive", "/northstar-immersive/create/canvas"])(
+      "reserves nothing on %s, which draws its own in-flow bar over a full-height workspace",
+      (pathname) => {
+        const wrapper = renderShell(pathname).match(contentWrapper)?.[1];
 
-      expect(wrapper).toBeDefined();
-      expect(wrapper).not.toContain("pt-14");
-    });
+        expect(wrapper).toBeDefined();
+        expect(wrapper).not.toContain("pt-14");
+      },
+    );
 
     it("keeps the reserved height and the trigger's own geometry in step", () => {
       const markup = renderShell("/billing");
@@ -176,13 +185,20 @@ describe("MerchantShellContent", () => {
     // sitting ON TOP of Otto's own hamburger. A surface that owns the mobile top bar now
     // gets no trigger either; its own menu carries the entry (see
     // otto-mobile-nav-handoff.test.ts for the handoff itself).
-    it("draws no floating trigger on Otto, whose own top bar carries the entry", () => {
+    it("draws no floating trigger on a surface that owns its own bar", () => {
       expect(renderShell("/otto")).not.toContain('aria-label="Open navigation"');
       expect(renderShell("/otto?view=connections")).not.toContain('aria-label="Open navigation"');
+      // #801 — Create joined on the same terms: its own 52px bar opens THIS drawer.
+      expect(renderShell("/northstar-immersive")).not.toContain('aria-label="Open navigation"');
+      expect(renderShell("/northstar-immersive/create/canvas")).not.toContain(
+        'aria-label="Open navigation"',
+      );
     });
 
     it.each([
       "/otto",
+      "/northstar-immersive",
+      "/northstar-immersive/create/canvas",
       "/billing",
       "/profile",
       "/campaign",
@@ -248,17 +264,17 @@ describe("nextCrmDisclosureOpen", () => {
   });
 });
 
-// #513 三.4 — at the 1024–1279px rail, a Settings-style group's children move here
-// instead of nesting under a 64px icon. MerchantShellContent renders this above
-// {children}, so it never touches a business page's own content.
+// #513 三.4 — at the 1024–1279px rail, a group's children move here instead of nesting
+// under a 64px icon. MerchantShellContent renders this above {children}, so it never
+// touches a business page's own content.
 describe("SectionTabs", () => {
   function renderTabs(pathname: string) {
     return renderToStaticMarkup(createElement(SectionTabs, { pathname }));
   }
 
-  it("renders nothing outside a sectioned group", () => {
-    expect(renderTabs("/otto")).toBe("");
+  it("renders nothing outside a grouped section", () => {
     expect(renderTabs("/campaign")).toBe("");
+    expect(renderTabs("/northstar-immersive")).toBe("");
   });
 
   it("renders the CRM group's tabs on a CRM page", () => {
@@ -270,7 +286,7 @@ describe("SectionTabs", () => {
     expect(markup).toMatch(/aria-selected="true"[^>]*href="\/crm\/segments"/);
   });
 
-  it("renders the Workspace settings group's tabs on Billing", () => {
+  it("renders the Settings group's tabs on Billing", () => {
     const markup = renderTabs("/billing");
 
     expect(markup).toContain('href="/otto?view=connections"');
@@ -278,11 +294,15 @@ describe("SectionTabs", () => {
     expect(markup).toMatch(/aria-selected="true"[^>]*href="\/billing"/);
   });
 
-  it("renders (not empty) and selects Connections on /otto?view=connections — the 1024–1279 tabs bar used to not render at all here (#513 三轮 item 2)", () => {
-    const markup = renderTabs("/otto?view=connections");
-
-    expect(markup).toContain('role="tablist"');
-    expect(markup).toMatch(/aria-selected="true"[^>]*href="\/otto\?view=connections"/);
-    expect(markup).not.toMatch(/aria-selected="true"[^>]*href="\/otto\?view=account"/);
+  // #801 — this bar used to render on Otto's own `?view=` surfaces. It repeated the very
+  // rows Otto's rail already lists, and as an in-flow bar above a 100dvh workspace it put
+  // a scrollbar on a pane that must not scroll — the #685 shape, one layer up.
+  it.each([
+    "/otto?view=connections",
+    "/otto?view=account",
+    "/otto?view=library",
+    "/otto?view=schedule",
+  ])("renders nothing on %s, a surface that owns its own full-height workspace", (pathname) => {
+    expect(renderTabs(pathname)).toBe("");
   });
 });

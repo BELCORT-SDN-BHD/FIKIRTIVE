@@ -68,7 +68,7 @@ export const OTTO_ASSISTANT: MerchantNavLink = {
   key: "otto",
   label: "Ask Otto",
   href: "/otto",
-  does: "Ask Otto to do any of this with you — Otto is your assistant, always one click away from every page, not a section of its own.",
+  does: "Ask Otto to do any of this with you — Otto is your assistant, beside you on every page, and never a section of its own.",
 };
 
 /** 主导航,顺序即导轨从上到下的顺序。 */
@@ -77,7 +77,7 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     key: "create",
     label: CREATE_NAV_LABEL,
     href: CREATE_NAV_HREF,
-    does: "Start something new and open it on a canvas — every canvas you have lives here, and nothing is charged until you press Generate.",
+    does: "Start something new and open it on a canvas — every canvas you have lives here, and making anything always asks you first.",
   },
   {
     key: "campaign",
@@ -121,7 +121,7 @@ export const MERCHANT_NAV: readonly MerchantNavNode[] = [
     items: [
       { key: "connections", label: "Connections", href: "/otto?view=connections", does: "Connect or disconnect the accounts you post from." },
       { key: "preferences", label: "Preferences", href: "/otto?view=account", does: "Set your spend cap, notifications and posting defaults." },
-      { key: "billing", label: "Billing & credits", href: "/billing", does: "Buy credits and read every charge on your account." },
+      { key: "billing", label: "Billing & credits", href: "/billing", does: "Buy credits, and read what your credits have gone on." },
     ],
   },
 ];
