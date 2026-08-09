@@ -102,7 +102,7 @@ export function ImmersiveShell({ children }: { children: React.ReactNode }) {
         <Link
           href={REAL_OTTO_HREF}
           aria-label="Ask Otto"
-          className="fixed right-4 bottom-4 z-[70] flex size-12 items-center justify-center rounded-full border border-border bg-card shadow-[var(--shadow-md)] transition-transform duration-[160ms] ease-out hover:bg-accent active:scale-[0.96]"
+          className="fixed right-4 bottom-4 z-[70] flex size-12 items-center justify-center rounded-full border border-border bg-card shadow-[var(--shadow-md)] transition-[background-color,transform] duration-[160ms] ease-out hover:bg-accent active:scale-[0.96] motion-reduce:transition-colors motion-reduce:active:scale-100"
         >
           <OttoAvatar size={26} mood="idle" />
         </Link>
