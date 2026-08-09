@@ -774,6 +774,14 @@ const FIXTURE_AUTHORED = ["Reachable audience", "Reachable audience, minus my ow
 /**
  * The approved text of each surface. Editing anything here is the human review.
  *
+ * KEEPING IT CURRENT (r8): this board is expected to fail when merchant-facing copy on either
+ * page changes — that is the whole point of it. The rule is that every difference must be traced
+ * to a merged, reviewed change before it is accepted here; a difference nobody can attribute is a
+ * regression, not a refresh. The current text absorbed exactly one such change, PR #821
+ * (`445b0af1`, "#727 #728 渠道状态读真值 + 对客文案零机器码"): channel token → WhatsApp, the
+ * concurrency `revision` dropped from the header, the provider banner rewritten to read the real
+ * connection state, and the internal `D5` design number removed from two places.
+ *
  * The two panels are pinned separately from the pages that host them because no INITIAL page
  * render can reach them: the live preview arrives from an effect, and the freeze note from a
  * completed action. Everything a first paint shows is inside the two page boards.
@@ -801,21 +809,21 @@ const APPROVED_SURFACES: Record<SurfaceName, string> = {
     "preview Waiting Complete a valid rule to calculate a server-owned phrase and current " +
     "matches. Invalid drafts never run a query.",
   broadcastPage:
-    "Back to broadcasts Draft Marketing whatsapp Broadcast Created by Nadia Rahim · 9 Aug 2026, " +
-    "8:00 am · revision 1 Refresh Provider messaging tier (quota preflight / quality downgrade): " +
-    "unavailable . No channel is connected, so this workbench runs simulated sends only — no " +
-    "message reaches a real customer and no quota is consumed. Precise approval — each step is a " +
-    "manual, owner-only action 1 · Freeze the audience Snapshot the segment now. Contacts with " +
-    "unknown permission stay in and are flagged — the estimate never drops them. Select a " +
-    "segment… Reachable audience Freeze audience Cancel broadcast D5 two-confirm override — " +
+    "Back to broadcasts Draft Marketing WhatsApp Broadcast Created by Nadia Rahim · 9 Aug 2026, " +
+    "8:00 am Refresh Provider messaging tier (quota preflight / quality downgrade): unavailable . " +
+    "No messaging channel is connected in this workspace yet. This workbench runs simulated sends " +
+    "only — no message reaches a real customer and no quota is consumed. Precise approval — each " +
+    "step is a manual, owner-only action 1 · Freeze the audience Snapshot the segment now. " +
+    "Contacts with unknown permission stay in and are flagged — the estimate never drops them. " +
+    "Select a segment… Reachable audience Freeze audience Cancel broadcast Two-confirm override — " +
     "required for 1 consent-risk contact A contact whose consent is unknown or opted-out can only " +
     "be sent to after two independent human confirmations of this exact frozen action — and it " +
     "never changes their consent. The flow is shown for reference; the override cannot be minted " +
     "yet, so these contacts are always skipped by a simulated run. 1 First confirmation 2 Second, " +
     "independent confirmation Apply override (unavailable) Audience 1 contact · 0 eligible now " +
-    "Amira Salleh +60111000001 Kept Consent risk · D5 Pending Frozen at snapshot Consent / STOP " +
-    "At risk Do not disturb Pass Provider refusal Pass Frequency cap Pass Live preflight now " +
-    "Consent / STOP At risk Do not disturb Pass Provider refusal Pass Frequency cap Pass",
+    "Amira Salleh +60111000001 Kept Consent risk Pending Frozen at snapshot Consent / STOP At " +
+    "risk Do not disturb Pass Provider refusal Pass Frequency cap Pass Live preflight now Consent " +
+    "/ STOP At risk Do not disturb Pass Provider refusal Pass Frequency cap Pass",
   previewTightened:
     "1 of 6 contacts matched · 1 contactable · 2 known opt-out excluded · 3 reported opt-out " +
     "excluded by your choice Unknown consent stays included. Known opt-out means the customer " +
