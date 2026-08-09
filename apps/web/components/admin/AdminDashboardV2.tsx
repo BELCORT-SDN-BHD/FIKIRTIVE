@@ -1411,7 +1411,7 @@ function AuditSection({ data }: { data: AdminV2Data }) {
     <Panel
       title="Audit stream"
       subtitle="Who acted, what happened, and when. Raw payloads stay collapsed — only the actor is read out of them."
-      action={<Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter events" className="h-9 w-[200px] text-sm" />}
+      action={<Input aria-label="Filter audit events" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter events" className="h-9 w-[200px] text-sm" />}
     >
       <div className="grid gap-2">
         {rows.length === 0 ? <EmptyState label="No audit events match this filter." /> : null}

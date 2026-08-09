@@ -5,6 +5,7 @@
 // came from locale-dependent formatting differing between server and client).
 
 import type { ScheduledPostRow } from "./schedule-actions";
+import { scheduledPostStatusLabel } from "./social-labels";
 
 // Fixed label arrays — the ONLY source of month/day names on this surface.
 export const MONTHS = [
@@ -128,17 +129,19 @@ export function dayKey(p: DateParts): string {
 
 export type StatusTone = "draft" | "scheduled" | "publishing" | "published" | "warn" | "error" | "muted";
 
-/** Map a ScheduledPost.status to a display label + tone (for the pill colours). */
+/** Map a ScheduledPost.status to a display label + tone (for the pill colours).
+ *  The WORDS come from social-labels, which is the one definition every surface reads (#822);
+ *  only the tone — a fact about this pill, not about the status — is decided here. */
 export function statusPill(status: string): { label: string; tone: StatusTone } {
+  const label = scheduledPostStatusLabel(status);
   switch (status) {
-    case "DRAFT": return { label: "Draft", tone: "draft" };
-    case "SCHEDULED": return { label: "Scheduled", tone: "scheduled" };
-    case "PUBLISHING": return { label: "Publishing", tone: "publishing" };
-    case "PUBLISHED": return { label: "Published", tone: "published" };
-    case "NEEDS_ATTENTION": return { label: "Needs attention", tone: "warn" };
-    case "FAILED": return { label: "Failed", tone: "error" };
-    case "CANCELLED": return { label: "Cancelled", tone: "muted" };
-    default: return { label: status, tone: "muted" };
+    case "DRAFT": return { label, tone: "draft" };
+    case "SCHEDULED": return { label, tone: "scheduled" };
+    case "PUBLISHING": return { label, tone: "publishing" };
+    case "PUBLISHED": return { label, tone: "published" };
+    case "NEEDS_ATTENTION": return { label, tone: "warn" };
+    case "FAILED": return { label, tone: "error" };
+    default: return { label, tone: "muted" };
   }
 }
 

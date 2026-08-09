@@ -229,9 +229,21 @@ describe("#686 the three exits all reach the same inbox", () => {
 // 所以这里枚举**整个渲染树**:页面和组件不许自己手写地址,也不许自己手写 mailto。
 // ---------------------------------------------------------------------------
 describe("#786 no page or component writes the support address itself", () => {
-  /** Every .tsx the product renders. `.ts` is out of scope on purpose: this fence is about
-   *  what reaches a merchant's screen, and lib/exits.ts is the one place allowed to hold
-   *  the address. */
+  /**
+   * Every source file under app/ + components/ — `.ts` as well as `.tsx` (#825).
+   *
+   * The first version walked `.tsx` only, on the reasoning that this fence is about what
+   * reaches a merchant's screen. That reasoning does not survive contact with the tree: those
+   * two directories also hold 23 `.ts` files — route handlers, formatters, per-component model
+   * helpers — and a formatter that returns an href or a sentence puts it on the screen just as
+   * surely as the component that renders it. A hand-written mailto in one of them was invisible
+   * to the fence, which is the whole shape #786 exists to stop: an address the product knows in
+   * a place nobody can find on the day it changes.
+   *
+   * Test files are the one exclusion, by structure rather than by name list: `__tests__`
+   * directories are skipped whole, and any stray `*.test.ts(x)` beside the source it covers is
+   * skipped too. A test that writes the address is describing the product, not shipping it.
+   */
   function renderedFiles(): string[] {
     const found: string[] = [];
     const walk = (dir: string) => {
@@ -240,7 +252,7 @@ describe("#786 no page or component writes the support address itself", () => {
         if (entry.isDirectory()) {
           if (entry.name === "__tests__" || entry.name === "node_modules") continue;
           walk(rel);
-        } else if (entry.name.endsWith(".tsx")) {
+        } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
           found.push(rel);
         }
       }
@@ -257,6 +269,11 @@ describe("#786 no page or component writes the support address itself", () => {
   it("finds files to check (a fence pointed at nothing proves nothing)", () => {
     expect(renderedFiles().length).toBeGreaterThan(50);
     expect(address).toMatch(/^[^@\s]+@[^@\s]+$/);
+    // #825 — the `.ts` half is the half that was missing. Narrowing the walk back to `.tsx`
+    // leaves every other assertion here green; this one goes red.
+    expect(renderedFiles().filter((rel) => rel.endsWith(".ts")).length).toBeGreaterThanOrEqual(20);
+    // And no test file rode in with them.
+    expect(renderedFiles().filter((rel) => /\.test\.tsx?$/.test(rel))).toEqual([]);
   });
 
   it("nobody hand-writes the address", () => {

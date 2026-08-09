@@ -315,10 +315,33 @@ describe("#715 segments and contacts read one authority", () => {
     expect(preview.totalContactCount).toBe(SEEDED);
     // The preview list itself is still 10 rows — it must now be able to say so.
     expect(preview.contacts).toHaveLength(10);
+    // #819 — and it says so IN THE PAYLOAD, not only in the rendered sentence. Otto reads this
+    // shape through the same action; without these two fields the ten rows it receives look
+    // exactly like a complete answer to "who is in this segment".
+    expect(preview.returned).toBe(10);
+    expect(preview.hasMore).toBe(true);
 
     const markup = renderToStaticMarkup(createElement(ContactPreview, { preview }));
     expect(markup).toContain("64 of 65 contacts matched");
     expect(markup).toContain("Showing the first 10 of 64 matched contacts");
+  });
+
+  it("says a short match was NOT cut, instead of staying silent either way", async () => {
+    // #819 — `hasMore: false` is the half that makes the fact worth trusting. A field that is
+    // only ever true when it happens to be true carries no information when it is absent.
+    await asUser(OWNER_EMAIL);
+    const preview = await previewSegment({
+      match: "all",
+      rules: [{ kind: "contactability", value: "not_contactable" }],
+    });
+    if (!("ok" in preview)) throw new Error(preview.error);
+
+    expect(preview.matchedCount).toBe(SEEDED - CONTACTABLE);
+    expect(preview.returned).toBe(preview.matchedCount);
+    expect(preview.hasMore).toBe(false);
+
+    const markup = renderToStaticMarkup(createElement(ContactPreview, { preview }));
+    expect(markup).not.toContain("Showing the first");
   });
 
   it("puts the same contact total on the segments page itself", async () => {
