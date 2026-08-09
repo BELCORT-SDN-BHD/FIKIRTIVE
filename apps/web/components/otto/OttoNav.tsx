@@ -648,7 +648,7 @@ export function OttoNav({
           <button
             type="button"
             onClick={handleOpenGlobalNavigation}
-            title="Go to Campaign, CRM, billing, and account"
+            title="Go to Create, Campaign, CRM, and settings"
             className="flex items-center gap-[9px] w-full border-0 bg-transparent text-muted-foreground font-normal text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 hover:bg-secondary/60 hover:text-foreground"
           >
             <ArrowUpRight size={18} className="shrink-0" aria-hidden />
