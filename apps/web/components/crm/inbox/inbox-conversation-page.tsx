@@ -32,6 +32,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { axisStatusPresentation, channelLabel } from "@/lib/crm-labels";
 import {
   controlBadgePresentation,
   dateTimeLabel,
@@ -502,7 +503,7 @@ function ConversationWorkspace({
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-strong">CRM · Conversation</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">{identity.contact.name}</h1>
-            <p className="mt-2 text-sm text-muted-foreground">{identity.channel} · {identity.externalId}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{channelLabel(identity.channel)} · {identity.externalId}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge variant={status.variant}>{status.label}</Badge>
@@ -650,7 +651,7 @@ function ConversationWorkspace({
                 <p className="text-base font-semibold">{identity.contact.name}</p>
                 <p className="text-xs text-muted-foreground">{identity.contact.lifecycleStage}</p>
                 <div className="rounded-lg bg-muted/45 p-3 text-xs">
-                  <p>{identity.channel} · {identity.externalId}</p>
+                  <p>{channelLabel(identity.channel)} · {identity.externalId}</p>
                   {identity.handle || identity.label ? <p className="mt-1 text-muted-foreground">{identity.label ?? identity.handle}</p> : null}
                 </div>
                 <Button asChild variant="secondary" className="mt-1"><Link href={`/crm/contacts/${identity.contact.id}`}>Open full contact profile<ArrowRight /></Link></Button>
@@ -811,7 +812,9 @@ function PreflightPanel({
   const axes: { label: string; status: string }[] = [
     { label: "Your capability", status: p.internalCapability.status },
     { label: "Channel connection", status: p.connection.status },
-    { label: "Privacy carrier (D8)", status: p.d8Carrier.status },
+    // #728 — the row used to carry "(D8)", the internal number for the privacy-carrier design.
+    // It told the merchant nothing they could look up; the axis name alone is the honest label.
+    { label: "Privacy carrier", status: p.d8Carrier.status },
     { label: "Consent stop", status: p.consentStop.status },
     { label: "Do not disturb", status: p.doNotDisturb.status },
     { label: "Provider refusal history", status: p.providerRefusal.status },
@@ -823,12 +826,18 @@ function PreflightPanel({
     <Card>
       <CardHeader><CardTitle>Send-readiness diagnostics</CardTitle><CardDescription>What the server currently knows. Unavailable/unknown is expected — most of these axes aren&apos;t wired yet.</CardDescription></CardHeader>
       <CardContent className="grid gap-2">
-        {axes.map((axis) => (
-          <div key={axis.label} className="flex items-center justify-between gap-3 rounded-lg border border-border p-2.5 text-sm">
-            <span>{axis.label}</span>
-            <Badge variant={axis.status === "pass" ? "success" : axis.status === "block" ? "destructive" : "outline"}>{axis.status}</Badge>
-          </div>
-        ))}
+        {axes.map((axis) => {
+          // #728 — the same axis vocabulary the broadcast workbench renders, from the same
+          // map. This panel used to print the stored value (`risk`, `unavailable`) while the
+          // workbench said "At risk" about the identical fact.
+          const presentation = axisStatusPresentation(axis.status);
+          return (
+            <div key={axis.label} className="flex items-center justify-between gap-3 rounded-lg border border-border p-2.5 text-sm">
+              <span>{axis.label}</span>
+              <Badge variant={presentation.variant}>{presentation.label}</Badge>
+            </div>
+          );
+        })}
       </CardContent>
     </Card>
   );

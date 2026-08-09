@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { channelLabel } from "@/lib/crm-labels";
 import {
   attentionPresentation,
   errorMessage,
@@ -300,7 +301,7 @@ function ConversationRow({ row }: { row: Row }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="min-w-0 truncate text-base font-semibold">{identity.contact.name}</p>
-              <Badge variant="outline">{identity.channel}</Badge>
+              <Badge variant="outline">{channelLabel(identity.channel)}</Badge>
               <Badge variant={status.variant}>{status.label}</Badge>
               {hasAttention(row) ? (
                 <Badge variant={attentionPresentation(row.attention).variant}>{attentionPresentation(row.attention).label}</Badge>

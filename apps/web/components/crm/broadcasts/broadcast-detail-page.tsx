@@ -39,6 +39,7 @@ import {
   AXIS_ORDER,
   axisReasonCopy,
   axisStatusPresentation,
+  channelLabel,
   dateTimeLabel,
   errorMessage,
   isDenialErrorCode,
@@ -282,11 +283,14 @@ export default function BroadcastDetailPage({
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant={status.variant}>{status.label}</Badge>
               <Badge variant="outline">{purposeLabel(run.purpose)}</Badge>
-              <Badge variant="outline">{run.channel}</Badge>
+              <Badge variant="outline">{channelLabel(run.channel)}</Badge>
             </div>
             <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">Broadcast</h1>
+            {/* #728 — `revision` is the concurrency integer this page sends back with every
+                action, not a version the merchant made. It is still read from `run.revision`
+                below; it is simply no longer presented as something to read. */}
             <p className="mt-2 text-sm text-muted-foreground">
-              {createdByName ? `Created by ${createdByName} · ` : ""}{dateTimeLabel(run.createdAt)} · revision {run.revision}
+              {createdByName ? `Created by ${createdByName} · ` : ""}{dateTimeLabel(run.createdAt)}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -419,7 +423,8 @@ export default function BroadcastDetailPage({
             <CardContent className="flex flex-col gap-3">
               <div className="flex items-center gap-2">
                 <ShieldAlert className="size-4 text-warning-soft-foreground" />
-                <p className="text-sm font-semibold">D5 two-confirm override — required for {consentRiskRows.length} consent-risk {consentRiskRows.length === 1 ? "contact" : "contacts"}</p>
+                {/* #728 — the panel used to be titled by its internal design number (D5). */}
+                <p className="text-sm font-semibold">Two-confirm override — required for {consentRiskRows.length} consent-risk {consentRiskRows.length === 1 ? "contact" : "contacts"}</p>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
                 A contact whose consent is unknown or opted-out can only be sent to after two independent human confirmations of this exact frozen action — and it never changes their consent. The flow is shown for reference; the override cannot be minted yet, so these contacts are always skipped by a simulated run.
@@ -428,7 +433,7 @@ export default function BroadcastDetailPage({
                 <li className="flex items-center gap-2"><span className="grid size-5 place-items-center rounded-full border border-border text-xs">1</span>First confirmation</li>
                 <li className="flex items-center gap-2"><span className="grid size-5 place-items-center rounded-full border border-border text-xs">2</span>Second, independent confirmation</li>
               </ol>
-              <Button className="w-fit" type="button" variant="outline" disabled title="D5 override carriers are not implemented — overrides are unavailable.">
+              <Button className="w-fit" type="button" variant="outline" disabled title="Override carriers are not implemented — overrides are unavailable.">
                 <Lock />Apply override (unavailable)
               </Button>
             </CardContent>
@@ -465,7 +470,7 @@ export default function BroadcastDetailPage({
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           {row.includedByMerchant ? <Badge variant="outline">Kept</Badge> : <Badge variant="outline">Excluded</Badge>}
-                          {consentRisk ? <Badge variant="warning">Consent risk · D5</Badge> : null}
+                          {consentRisk ? <Badge variant="warning">Consent risk</Badge> : null}
                           {stale ? <Badge variant="warning">Stale snapshot</Badge> : null}
                           <Badge variant={send.variant}>{send.label}</Badge>
                         </div>

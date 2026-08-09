@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  channelLabel,
   dateTimeLabel,
   errorMessage,
   isDenialErrorCode,
@@ -152,7 +153,7 @@ export default function BroadcastListPage({
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge variant={status.variant}>{status.label}</Badge>
                           <Badge variant="outline">{purposeLabel(run.purpose)}</Badge>
-                          <Badge variant="outline">{run.channel}</Badge>
+                          <Badge variant="outline">{channelLabel(run.channel)}</Badge>
                         </div>
                         <p className="mt-2 truncate text-sm text-muted-foreground">
                           Created by {nameFor(run.createdByMembershipId)} · {dateTimeLabel(run.createdAt)}

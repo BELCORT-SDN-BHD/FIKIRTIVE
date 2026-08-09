@@ -8,7 +8,7 @@ import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import { createBroadcastRun } from "@/lib/customer-broadcast-ui-actions";
 import type { getBroadcastComposerOptions, getMemberDirectory } from "@/lib/customer-broadcast-gateway";
 import { Button } from "@/components/ui/button";
-import { errorMessage, isDenialErrorCode, purposeLabel } from "./broadcast-format";
+import { channelAccountLabel, errorMessage, isDenialErrorCode, purposeLabel } from "./broadcast-format";
 
 type OptionsResult = Awaited<ReturnType<typeof getBroadcastComposerOptions>>;
 type OptionsSuccess = Extract<OptionsResult, { ok: true }>;
@@ -142,7 +142,7 @@ export default function BroadcastComposerPage({
               <select className={selectClass} value={channelScopeId} onChange={(e) => { setChannelScopeId(e.target.value); setTemplateVersionId(""); }} disabled={submitting}>
                 <option value="">Select a channel account…</option>
                 {options.channelScopes.map((scope) => (
-                  <option key={scope.id} value={scope.id}>{scope.channel} · {scope.scopeKey}</option>
+                  <option key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</option>
                 ))}
               </select>
             </label>
