@@ -467,7 +467,7 @@ async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<
 
   const identityId = newId();
   try {
-    return await prisma.$transaction(async (tx): Promise<ContactPhoneResult> => {
+    const result = await prisma.$transaction(async (tx): Promise<ContactPhoneResult> => {
       const existing = await tx.contactIdentity.findFirst({
         where: {
           ownerId: gate.ownerId,
@@ -513,11 +513,11 @@ async function writeAddPhone(raw: unknown, surface: PhoneEntrySurface): Promise<
       });
       return { ok: true, identityId, phone: entry.phone };
     });
+    if ("ok" in result) refreshContactPaths(gate.contactId);
+    return result;
   } catch {
     // The live partial unique index is the last word if two attempts race each other.
     return { error: PHONE_ALREADY_SAVED };
-  } finally {
-    refreshContactPaths(gate.contactId);
   }
 }
 
@@ -530,7 +530,7 @@ async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promi
   if ("error" in entry) return entry;
 
   try {
-    return await prisma.$transaction(async (tx): Promise<ContactPhoneResult> => {
+    const result = await prisma.$transaction(async (tx): Promise<ContactPhoneResult> => {
       const current = await tx.contactIdentity.findFirst({
         where: {
           id: identityId,
@@ -589,10 +589,10 @@ async function writeUpdatePhone(raw: unknown, surface: PhoneEntrySurface): Promi
       });
       return { ok: true, identityId, phone: entry.phone };
     });
+    if ("ok" in result) refreshContactPaths(gate.contactId);
+    return result;
   } catch {
     return { error: "Couldn't update that number — please try again." };
-  } finally {
-    refreshContactPaths(gate.contactId);
   }
 }
 
@@ -603,7 +603,7 @@ async function writeRemovePhone(raw: unknown, surface: PhoneEntrySurface): Promi
   if (!identityId) return { error: "Invalid request." };
 
   try {
-    return await prisma.$transaction(async (tx): Promise<ContactMutationResult> => {
+    const result = await prisma.$transaction(async (tx): Promise<ContactMutationResult> => {
       const current = await tx.contactIdentity.findFirst({
         where: {
           id: identityId,
@@ -647,10 +647,10 @@ async function writeRemovePhone(raw: unknown, surface: PhoneEntrySurface): Promi
       });
       return { ok: true };
     });
+    if ("ok" in result) refreshContactPaths(gate.contactId);
+    return result;
   } catch {
     return { error: "Couldn't remove that number — please try again." };
-  } finally {
-    refreshContactPaths(gate.contactId);
   }
 }
 
