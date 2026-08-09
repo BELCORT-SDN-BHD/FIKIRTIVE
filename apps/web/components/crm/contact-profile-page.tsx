@@ -10,12 +10,21 @@ import {
   History,
   IdCard,
   LoaderCircle,
+  Plus,
   Save,
   ShieldAlert,
+  Trash2,
 } from "lucide-react";
-import { setContactConsent, setContactDnd, updateContact } from "@/lib/crm-actions";
+import {
+  addContactPhone,
+  removeContactPhone,
+  setContactConsent,
+  setContactDnd,
+  updateContact,
+  updateContactPhone,
+} from "@/lib/crm-actions";
 import { crmConsentBadge, CRM_PRE_LEDGER_OPT_OUT_NOTE } from "@/lib/crm-consent-labels";
-import { channelLabel, purposeLabel } from "@/lib/crm-labels";
+import { channelLabel, identityGradePresentation, purposeLabel } from "@/lib/crm-labels";
 import { getContact, type CrmContactDetailRow } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -88,6 +97,10 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // #803 — one draft for the new number, one for whichever stored number is being corrected.
+  const [newPhone, setNewPhone] = useState("");
+  const [editingPhoneId, setEditingPhoneId] = useState<string | null>(null);
+  const [editingPhone, setEditingPhone] = useState("");
   // #752 — one badge, shared with the contacts list, fed by the one consent predicate.
   const consent = crmConsentBadge(contact.consentState);
 
@@ -133,6 +146,59 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
       setNotice("Merchant assertion recorded in consent history. Verified customer consent did not change.");
     } catch {
       setError("The consent request could not finish. Please retry.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function savePhone(event: FormEvent) {
+    event.preventDefault();
+    setBusy("phone:add");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await addContactPhone({ contactId: contact.id, phone: newPhone });
+      if (!("ok" in result)) return setError(result.error);
+      setNewPhone("");
+      await refreshProfile();
+      setNotice(`${result.phone} saved as not verified. It is not used for broadcasts.`);
+    } catch {
+      setError("The phone number could not be saved. Please retry.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function correctPhone(identityId: string) {
+    setBusy(`phone:edit:${identityId}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await updateContactPhone({ contactId: contact.id, identityId, phone: editingPhone });
+      if (!("ok" in result)) return setError(result.error);
+      setEditingPhoneId(null);
+      setEditingPhone("");
+      await refreshProfile();
+      setNotice(`Number updated to ${result.phone}. It stays marked as not verified.`);
+    } catch {
+      setError("The phone number could not be updated. Please retry.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function deletePhone(identityId: string) {
+    setBusy(`phone:remove:${identityId}`);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await removeContactPhone({ contactId: contact.id, identityId });
+      if (!("ok" in result)) return setError(result.error);
+      if (editingPhoneId === identityId) setEditingPhoneId(null);
+      await refreshProfile();
+      setNotice("Number removed from this contact. The record of the change is kept.");
+    } catch {
+      setError("The phone number could not be removed. Please retry.");
     } finally {
       setBusy(null);
     }
@@ -207,17 +273,69 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
             </Card>
 
             <Card>
-              <CardHeader><CardTitle>Identity records</CardTitle><CardDescription>Read-only in this slice. No attach, merge, or unmerge action is available.</CardDescription></CardHeader>
+              <CardHeader>
+                <CardTitle>Phone and identity records</CardTitle>
+                <CardDescription>
+                  Numbers you enter are saved as not verified. They are kept on the record and are not used for broadcasts. A number without a country code is saved as Malaysia (+60).
+                </CardDescription>
+              </CardHeader>
               <CardContent className="grid gap-3">
+                <form className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end" onSubmit={savePhone}>
+                  <label className="grid gap-2 text-sm font-semibold">
+                    Add a phone number
+                    <Input
+                      value={newPhone}
+                      onChange={(event) => setNewPhone(event.target.value)}
+                      placeholder="012-345 6789"
+                      inputMode="tel"
+                      maxLength={64}
+                      aria-label="Phone number"
+                    />
+                  </label>
+                  <Button type="submit" disabled={!newPhone.trim() || busy !== null}>
+                    {busy === "phone:add" ? <LoaderCircle className="animate-spin" /> : <Plus />}Save number
+                  </Button>
+                </form>
+
                 {contact.identities.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-border p-6 text-center"><IdCard className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-semibold">No stored identities</p></div>
-                ) : contact.identities.map((identity) => (
-                  <div key={identity.id} className="rounded-xl border border-border p-4">
-                    <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{channelLabel(identity.channel)}</p><Badge variant="outline">Read-only</Badge></div>
-                    <p className="mt-2 break-all text-sm">{identity.externalId}</p>
-                    {identity.handle || identity.label ? <p className="mt-1 text-xs text-muted-foreground">{identity.label ?? identity.handle}</p> : null}
-                  </div>
-                ))}
+                ) : contact.identities.map((identity) => {
+                  const grade = identityGradePresentation(identity.verificationStatus);
+                  const editable = identity.verificationStatus !== "channel_verified";
+                  return (
+                    <div key={identity.id} className="rounded-xl border border-border p-4">
+                      <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{channelLabel(identity.channel)}</p><Badge variant={grade.variant}>{grade.label}</Badge></div>
+                      <p className="mt-2 break-all text-sm">{identity.externalId}</p>
+                      {identity.handle || identity.label ? <p className="mt-1 text-xs text-muted-foreground">{identity.label ?? identity.handle}</p> : null}
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {grade.note}
+                        {identity.verifiedAt ? ` Confirmed ${dateTimeLabel(identity.verifiedAt)}${identity.verifiedSourceKind ? ` · ${titleCase(identity.verifiedSourceKind)}` : ""}.` : ""}
+                      </p>
+                      {editable && editingPhoneId === identity.id ? (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                          <Input
+                            value={editingPhone}
+                            onChange={(event) => setEditingPhone(event.target.value)}
+                            inputMode="tel"
+                            maxLength={64}
+                            aria-label="Corrected phone number"
+                          />
+                          <Button type="button" size="sm" disabled={!editingPhone.trim() || busy !== null} onClick={() => void correctPhone(identity.id)}>
+                            {busy === `phone:edit:${identity.id}` ? <LoaderCircle className="animate-spin" /> : <Save />}Save
+                          </Button>
+                          <Button type="button" size="sm" variant="ghost" disabled={busy !== null} onClick={() => setEditingPhoneId(null)}>Cancel</Button>
+                        </div>
+                      ) : editable ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Button type="button" size="sm" variant="secondary" disabled={busy !== null} onClick={() => { setEditingPhoneId(identity.id); setEditingPhone(identity.externalId); }}>Edit</Button>
+                          <Button type="button" size="sm" variant="ghost" disabled={busy !== null} onClick={() => void deletePhone(identity.id)}>
+                            {busy === `phone:remove:${identity.id}` ? <LoaderCircle className="animate-spin" /> : <Trash2 />}Remove
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
           </div>

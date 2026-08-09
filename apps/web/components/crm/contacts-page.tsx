@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { createContact, importContacts, type ImportContactsResult } from "@/lib/crm-actions";
 import { crmConsentBadge } from "@/lib/crm-consent-labels";
-import { contactSourceLabel } from "@/lib/crm-labels";
+import { contactSourceLabel, identityGradePresentation } from "@/lib/crm-labels";
 import { listContacts } from "@/lib/crm-view-data";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -154,7 +154,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
       const result = await createContact({ name, lifecycleStage: newStage, source: "manual" });
       if (!("ok" in result)) return setCreateError(result.error);
       setName("");
-      setCreateNotice("Contact saved. No identity or consent was inferred.");
+      setCreateNotice("Contact saved. No phone number or consent was inferred.");
       setDuplicates(result.possibleDuplicates);
       await refreshContacts();
     } catch {
@@ -227,7 +227,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
         </details>
 
         <Card className="mt-6">
-          <CardHeader><CardTitle>Contact records</CardTitle><CardDescription>Search by name or a read-only identity, then filter by lifecycle stage.</CardDescription></CardHeader>
+          <CardHeader><CardTitle>Contact records</CardTitle><CardDescription>Search by name or a stored number, then filter by lifecycle stage.</CardDescription></CardHeader>
           <CardContent>
             <form className="grid gap-3 sm:grid-cols-[1fr_180px_auto]" onSubmit={submitSearch}>
               <Input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={200} placeholder="Search contacts" aria-label="Search contacts" />
@@ -264,7 +264,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
                   </CardHeader>
                   <CardContent>
                     <div className="grid gap-2 rounded-xl bg-muted/45 p-3 text-sm">
-                      <p className="truncate">{contact.identities[0]?.externalId ?? "No stored identity"}</p>
+                      <p className="truncate">{contact.identities[0] ? `${contact.identities[0].externalId} · ${identityGradePresentation(contact.identities[0].verificationStatus).label}` : "No stored number"}</p>
                       <p className="text-xs text-muted-foreground">Last seen {dateLabel(contact.lastSeenAt)}</p>
                       {contact.doNotDisturb ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive"><ShieldAlert className="size-3.5" />Do not disturb</span> : null}
                     </div>
@@ -285,7 +285,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
 
         <div id="add-contact" className="mt-10 grid scroll-mt-8 gap-5 border-t border-border pt-8 lg:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle>Add contact</CardTitle><CardDescription>Create a standard profile. Existing identities remain read-only.</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Add contact</CardTitle><CardDescription>Create a standard profile, then add a phone number on the contact page.</CardDescription></CardHeader>
             <CardContent>
               <form className="grid gap-3 sm:grid-cols-[1fr_170px_auto]" onSubmit={submitContact}>
                 <Input value={name} onChange={(event) => setName(event.target.value)} maxLength={200} placeholder="Contact name" aria-label="Contact name" />
@@ -306,7 +306,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Import CSV</CardTitle><CardDescription>Columns: name, lifecycle_stage, consent, phone or whatsapp, email. Consent accepts opt_in, opt_out, unknown, or blank.</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Import CSV</CardTitle><CardDescription>Columns: name, lifecycle_stage, consent, phone or whatsapp, email. Consent accepts opt_in, opt_out, unknown, or blank. Imported numbers are saved as not verified and are not used for broadcasts; a number without a country code is read as Malaysia (+60).</CardDescription></CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Input type="file" accept=".csv,text/csv" onChange={(event) => void chooseCsv(event.currentTarget.files?.[0])} aria-label="Choose contacts CSV" />
@@ -317,7 +317,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
               {importResult ? (
                 <div className="mt-3 rounded-xl border border-border bg-muted/45 p-3 text-sm">
                   <p className="font-semibold">{importResult.importedCount} imported · {importResult.failedCount} failed</p>
-                  {importResult.rows.some((row) => row.status === "imported_with_warning") ? <p className="mt-1 text-muted-foreground">Review warnings below. No phone or email identity was stored.</p> : null}
+                  <p className="mt-1 text-muted-foreground">Phone and email values were saved as not verified.{importResult.rows.some((row) => row.status === "imported_with_warning") ? " Review the warnings below." : ""}</p>
                 </div>
               ) : null}
             </CardContent>

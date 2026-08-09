@@ -12,6 +12,9 @@ const {
   mockFindSuggestions,
   mockRecordConsentEvent,
   mockRecordContactDndEvent,
+  mockIdentityFindFirst,
+  mockIdentityCreate,
+  mockIdentityUpdateMany,
 } = vi.hoisted(() => ({
   mockRequireOwner: vi.fn(),
   mockIsImpersonating: vi.fn(),
@@ -23,6 +26,9 @@ const {
   mockFindSuggestions: vi.fn(),
   mockRecordConsentEvent: vi.fn(),
   mockRecordContactDndEvent: vi.fn(),
+  mockIdentityFindFirst: vi.fn(),
+  mockIdentityCreate: vi.fn(),
+  mockIdentityUpdateMany: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -31,12 +37,22 @@ vi.mock("@/lib/better-auth/compat", () => ({ isImpersonating: mockIsImpersonatin
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("../crm-identity", () => ({
   isCrmLifecycleStage: (value: unknown) => ["New", "Active", "Dormant"].includes(String(value)),
-  normalizeContactIdentity: ({ channel, externalId }: { channel: string; externalId: string }) => ({
-    channel,
-    externalId: channel === "email" ? externalId.trim().toLowerCase() : externalId.replace(/[\s().-]/g, ""),
-    handle: null,
-    label: null,
-  }),
+  normalizeContactIdentity: (
+    { channel, externalId }: { channel: string; externalId: string },
+    options: { assumeMalaysianPhone?: boolean } = {},
+  ) => {
+    if (channel === "email") {
+      return { channel, externalId: externalId.trim().toLowerCase(), handle: null, label: null };
+    }
+    const compact = externalId.replace(/[\s().-]/g, "");
+    if (/^\+[1-9]\d{7,14}$/.test(compact)) {
+      return { channel, externalId: compact, handle: null, label: null };
+    }
+    if (options.assumeMalaysianPhone && /^0\d{8,10}$/.test(compact)) {
+      return { channel, externalId: `+60${compact.slice(1)}`, handle: null, label: null };
+    }
+    return { error: "Use a WhatsApp number in E.164 format, including the country code." };
+  },
   findContactDuplicateSuggestions: mockFindSuggestions,
 }));
 vi.mock("@fikirtive/db", () => ({
@@ -47,6 +63,11 @@ vi.mock("@fikirtive/db", () => ({
       create: mockContactCreate,
       updateMany: mockContactUpdateMany,
     },
+    contactIdentity: {
+      findFirst: mockIdentityFindFirst,
+      create: mockIdentityCreate,
+      updateMany: mockIdentityUpdateMany,
+    },
     actionEvent: { create: mockAuditCreate },
   },
   recordConsentEvent: mockRecordConsentEvent,
@@ -54,7 +75,11 @@ vi.mock("@fikirtive/db", () => ({
 }));
 
 let id = 0;
-vi.mock("@fikirtive/core", () => ({ newId: () => `crm-${++id}` }));
+vi.mock("@fikirtive/core", () => ({
+  newId: () => `crm-${++id}`,
+  MERCHANT_UNVERIFIED_IDENTITY: "merchant_unverified",
+  CHANNEL_VERIFIED_IDENTITY: "channel_verified",
+}));
 
 import * as crmActions from "../crm-actions";
 
@@ -66,6 +91,11 @@ function transactionClient() {
       findFirst: mockContactFindFirst,
       create: mockContactCreate,
       updateMany: mockContactUpdateMany,
+    },
+    contactIdentity: {
+      findFirst: mockIdentityFindFirst,
+      create: mockIdentityCreate,
+      updateMany: mockIdentityUpdateMany,
     },
     actionEvent: { create: mockAuditCreate },
   };
@@ -83,6 +113,9 @@ beforeEach(() => {
   mockAuditCreate.mockResolvedValue({});
   mockRecordConsentEvent.mockResolvedValue({ duplicate: false, eventIds: ["event-1"], receivedAt: [] });
   mockRecordContactDndEvent.mockResolvedValue({ duplicate: false, eventIds: ["dnd-1"], receivedAt: [] });
+  mockIdentityFindFirst.mockResolvedValue(null);
+  mockIdentityCreate.mockResolvedValue({});
+  mockIdentityUpdateMany.mockResolvedValue({ count: 1 });
   mockTransaction.mockImplementation(async (callback: (tx: ReturnType<typeof transactionClient>) => unknown) =>
     callback(transactionClient()),
   );
@@ -91,12 +124,18 @@ beforeEach(() => {
 describe("CRM action boundary", () => {
   it("exports the bounded action set with no merge action", () => {
     expect(Object.keys(crmActions).sort()).toEqual([
+      "addContactPhone",
+      "addContactPhoneFromOtto",
       "createContact",
       "importContacts",
+      "removeContactPhone",
+      "removeContactPhoneFromOtto",
       "setContactConsent",
       "setContactDnd",
       "setContactDndFromOtto",
       "updateContact",
+      "updateContactPhone",
+      "updateContactPhoneFromOtto",
     ]);
   });
 
@@ -107,7 +146,11 @@ describe("CRM action boundary", () => {
     await expect(crmActions.setContactConsent({ contactId: "contact-1", action: "grant", requestId: "r1" })).resolves.toHaveProperty("error");
     await expect(crmActions.setContactDnd({ contactId: "contact-1", enabled: true, requestId: "r2" })).resolves.toHaveProperty("error");
     await expect(crmActions.importContacts({ csv: "name\nBo", importId: "i1" })).resolves.toHaveProperty("error");
+    await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "+60123456789" })).resolves.toHaveProperty("error");
+    await expect(crmActions.updateContactPhone({ contactId: "contact-1", identityId: "identity-1", phone: "+60123456789" })).resolves.toHaveProperty("error");
+    await expect(crmActions.removeContactPhone({ contactId: "contact-1", identityId: "identity-1" })).resolves.toHaveProperty("error");
     expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
     expect(mockRecordConsentEvent).not.toHaveBeenCalled();
     expect(mockRecordContactDndEvent).not.toHaveBeenCalled();
   });
@@ -228,6 +271,116 @@ describe("consent and DND runtime writers", () => {
   });
 });
 
+describe("merchant-entered phone numbers (#803)", () => {
+  it("stores what the merchant typed at the unverified grade, with no evidence and no consent", async () => {
+    await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "012-345 6789" }))
+      .resolves.toEqual({ ok: true, identityId: "crm-1", phone: "+60123456789" });
+
+    const data = mockIdentityCreate.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      ownerId: OWNER,
+      contactId: "contact-1",
+      channel: "whatsapp",
+      externalId: "+60123456789",
+      verificationStatus: "merchant_unverified",
+      verifiedAt: null,
+      verifiedSourceKind: null,
+    });
+    expect(mockRecordConsentEvent).not.toHaveBeenCalled();
+    expect(mockAuditCreate.mock.calls[0][0].data).toMatchObject({
+      ownerId: OWNER,
+      type: "crm.contact.identity.add",
+      payload: { verificationStatus: "merchant_unverified", entrySurface: "crm_ui" },
+    });
+  });
+
+  it("records the entry surface Otto used, through the same writer and the same grade", async () => {
+    await crmActions.addContactPhoneFromOtto({ contactId: "contact-1", phone: "+60123456789" });
+    expect(mockIdentityCreate.mock.calls[0][0].data.verificationStatus).toBe("merchant_unverified");
+    expect(mockAuditCreate.mock.calls[0][0].data.payload.entrySurface).toBe("otto_approved_action");
+  });
+
+  it("cannot be told to store a number as verified", async () => {
+    await crmActions.addContactPhone({
+      contactId: "contact-1",
+      phone: "+60123456789",
+      verificationStatus: "channel_verified",
+      verifiedSourceKind: "inbound_message",
+    } as never);
+    expect(mockIdentityCreate.mock.calls[0][0].data).toMatchObject({
+      verificationStatus: "merchant_unverified",
+      verifiedAt: null,
+      verifiedSourceKind: null,
+    });
+  });
+
+  it("says how to fix a number it cannot read, and stores nothing", async () => {
+    await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "12345" }))
+      .resolves.toEqual({ error: "Use a WhatsApp number in E.164 format, including the country code." });
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
+  });
+
+  it("treats a repeat of the same number on the same contact as already done", async () => {
+    mockIdentityFindFirst.mockResolvedValue({ id: "identity-1", contactId: "contact-1" });
+    await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "+60123456789" }))
+      .resolves.toEqual({ ok: true, identityId: "identity-1", phone: "+60123456789" });
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to move a number this tenant already holds on another contact", async () => {
+    mockIdentityFindFirst.mockResolvedValue({ id: "identity-9", contactId: "contact-other" });
+    await expect(crmActions.addContactPhone({ contactId: "contact-1", phone: "+60123456789" }))
+      .resolves.toEqual({ error: "That number is already saved on another contact." });
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses to edit or remove a number a channel confirmed", async () => {
+    mockIdentityFindFirst.mockResolvedValue({
+      id: "identity-1",
+      externalId: "+60123456789",
+      verificationStatus: "channel_verified",
+    });
+    const locked = {
+      error: "This number was confirmed by a connected channel, so it can't be edited or removed here.",
+    };
+    await expect(crmActions.updateContactPhone({ contactId: "contact-1", identityId: "identity-1", phone: "+60123456700" }))
+      .resolves.toEqual(locked);
+    await expect(crmActions.removeContactPhone({ contactId: "contact-1", identityId: "identity-1" }))
+      .resolves.toEqual(locked);
+    expect(mockIdentityUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("removes a merchant-entered number as a soft delete, keeping the record", async () => {
+    mockIdentityFindFirst.mockResolvedValue({
+      id: "identity-1",
+      externalId: "+60123456789",
+      verificationStatus: "merchant_unverified",
+    });
+    await expect(crmActions.removeContactPhone({ contactId: "contact-1", identityId: "identity-1" }))
+      .resolves.toEqual({ ok: true });
+
+    const call = mockIdentityUpdateMany.mock.calls[0][0];
+    expect(call.where).toMatchObject({
+      id: "identity-1",
+      ownerId: OWNER,
+      contactId: "contact-1",
+      deletedAt: null,
+      verificationStatus: "merchant_unverified",
+    });
+    expect(call.data.deletedAt).toBeInstanceOf(Date);
+    expect(call.data).not.toHaveProperty("externalId");
+  });
+
+  it("keeps every phone read and write inside the authenticated tenant", async () => {
+    mockRequireOwner.mockResolvedValue({ ownerId: "org-b" });
+    mockContactFindFirst.mockResolvedValue(null);
+    await expect(crmActions.addContactPhone({ contactId: "org-a-contact", phone: "+60123456789", ownerId: "org-a" } as never))
+      .resolves.toEqual({ error: "Contact not found." });
+    expect(mockContactFindFirst.mock.calls[0][0].where.ownerId).toBe("org-b");
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe("importContacts", () => {
   it("never fabricates consent when the column is absent or unknown", async () => {
     const result = await crmActions.importContacts({
@@ -243,7 +396,7 @@ describe("importContacts", () => {
     }
   });
 
-  it("uses phone/email only for suggestions and records an optional import assertion through the engine", async () => {
+  it("stores imported phone/email at the merchant-entered grade and records the consent assertion through the engine", async () => {
     mockFindSuggestions.mockResolvedValue([{ contactId: "possible-1", name: "Aisha", reasons: ["Same WhatsApp number"] }]);
     const result = await crmActions.importContacts({
       csv: "name,phone,email,consent\nAisha,+60123456789,AISHA@example.com,opt_in",
@@ -268,12 +421,41 @@ describe("importContacts", () => {
       evidenceRef: "csv:import-2:2",
       idempotencyKey: "crm-import:import-2:2",
     });
+    // #803 — the numbers are now KEPT, at the grade that says who put them there.
+    expect(mockIdentityCreate).toHaveBeenCalledTimes(2);
+    for (const call of mockIdentityCreate.mock.calls) {
+      expect(call[0].data).toMatchObject({
+        ownerId: OWNER,
+        contactId: "crm-1",
+        verificationStatus: "merchant_unverified",
+        verifiedAt: null,
+        verifiedSourceKind: null,
+      });
+    }
     expect(result).toMatchObject({
       ok: true,
       rows: [{
-        status: "imported_with_warning",
+        status: "imported",
         consentAssertion: "grant",
         possibleDuplicates: [{ contactId: "possible-1" }],
+        warnings: [],
+      }],
+    });
+  });
+
+  it("leaves a number this tenant already holds where it is, and says so on the row", async () => {
+    mockIdentityFindFirst.mockResolvedValue({ id: "identity-9", contactId: "contact-other" });
+    const result = await crmActions.importContacts({
+      csv: "name,phone\nAisha,012-345 6789",
+      importId: "import-3",
+    });
+    expect(mockIdentityCreate).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      ok: true,
+      importedCount: 1,
+      rows: [{
+        status: "imported_with_warning",
+        warnings: ["+60123456789 is already saved on another contact, so it was not added here."],
       }],
     });
   });
@@ -300,8 +482,11 @@ describe("sole-writer compliance", () => {
   it("contains no direct app write for consent/DND compatibility fields or identity/merge path", () => {
     const source = readFileSync(new URL("../crm-actions.ts", import.meta.url), "utf8");
     expect(source).not.toMatch(/\b(marketingConsent|consentSource|consentAt|doNotDisturb)\s*:/);
-    expect(source).not.toContain("prisma.contactIdentity");
     expect(source).not.toContain("mergeContacts");
+    // #803 opened an identity write path — for ONE grade only. No caller-supplied grade, and no
+    // way for this file to write the verified one.
+    expect(source).not.toMatch(/verificationStatus:\s*(input|patch|raw)/);
+    expect(source).not.toMatch(/verificationStatus:\s*CHANNEL_VERIFIED_IDENTITY/);
     expect(source).toContain("recordConsentEvent");
     expect(source).toContain("recordContactDndEvent");
   });

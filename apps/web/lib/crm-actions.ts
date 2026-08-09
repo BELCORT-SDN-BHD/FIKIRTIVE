@@ -243,8 +243,15 @@ export async function createContact(raw: unknown): Promise<CreateContactResult> 
     source,
     lifecycleStage,
   });
-  if ("ok" in result) refreshContactPaths(result.contactId);
-  return result;
+  if (!("ok" in result)) return result;
+  refreshContactPaths(result.contactId);
+  // This path never attaches an identity, so the import-only bookkeeping stays out of its shape.
+  return {
+    ok: true,
+    contactId: result.contactId,
+    created: true,
+    possibleDuplicates: result.possibleDuplicates,
+  };
 }
 
 /** Records a merchant assertion in ConsentEvent; it does not create verified customer consent. */

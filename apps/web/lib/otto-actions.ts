@@ -116,11 +116,14 @@ import {
 import { getCampaign, listCampaigns } from "./campaign-view-data";
 import { listTrendSnapshots, saveTrendSnapshot } from "./trend-actions";
 import {
+  addContactPhoneFromOtto,
   createContact,
   importContacts,
+  removeContactPhoneFromOtto,
   setContactConsent,
   setContactDndFromOtto,
   updateContact,
+  updateContactPhoneFromOtto,
 } from "./crm-actions";
 import { getContact, listContacts, searchContacts } from "./crm-view-data";
 // #742: the contact-list boundary — the page's counts cross into chat with the rows.
@@ -286,6 +289,11 @@ function makeOttoContactsPort(): NonNullable<OttoContext["contacts"]> {
     importCsv: (input) => importContacts(input),
     recordConsent: (input) => setContactConsent(input),
     setDnd: (input) => setContactDndFromOtto(input),
+    // #803 — Otto stores a number through the same writer as the contact page, at the same
+    // merchant-entered grade. There is no Otto-only path and no way to claim verification.
+    addPhone: (input) => addContactPhoneFromOtto(input),
+    updatePhone: (input) => updateContactPhoneFromOtto(input),
+    removePhone: (input) => removeContactPhoneFromOtto(input),
   };
 }
 
