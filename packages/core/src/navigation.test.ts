@@ -65,8 +65,9 @@ describe("创作正名(Founder 裁决:画布是旗舰面,不下线)", () => {
   });
 
   it("创作是主导航第一格,通向画布的家", () => {
-    const first = MERCHANT_NAV[0];
-    expect(isNavGroup(first)).toBe(false);
+    const first = MERCHANT_NAV.at(0);
+    expect(first).toBeDefined();
+    expect(isNavGroup(first!)).toBe(false);
     expect((first as { key: string }).key).toBe("create");
     expect((first as { href: string }).href).toBe(CREATE_NAV_HREF);
   });

@@ -33,7 +33,6 @@ import {
   OTTO_ASSISTANT,
   isNavGroup,
   merchantNavLinks,
-  type MerchantNavGroup,
   type MerchantNavLink,
 } from "@fikirtive/core";
 import { cn } from "@/lib/utils";
@@ -78,12 +77,30 @@ const NAV_ICONS: Record<string, NavigationIcon> = {
   billing: CreditCard,
 };
 
-function iconFor(key: string): NavigationIcon {
-  return NAV_ICONS[key] ?? Frame;
+/** The registry's own node, with its icon already resolved. Built ONCE at module scope:
+ *  a component looked up during render is a component created during render, which React
+ *  is right to refuse — and there is nothing per-render about a nav icon anyway. */
+type RailLink = MerchantNavLink & { readonly icon: NavigationIcon };
+type RailGroup = { readonly key: string; readonly label: string; readonly icon: NavigationIcon; readonly items: readonly RailLink[] };
+type RailNode = RailLink | RailGroup;
+
+function withIcon(link: MerchantNavLink): RailLink {
+  return { ...link, icon: NAV_ICONS[link.key] ?? Frame };
 }
 
-const NAV_GROUPS: readonly MerchantNavGroup[] = MERCHANT_NAV.filter(isNavGroup);
-const NAV_TOP_LEVEL_LINKS: readonly MerchantNavLink[] = MERCHANT_NAV.filter((node) => !isNavGroup(node));
+function isRailGroup(node: RailNode): node is RailGroup {
+  return "items" in node;
+}
+
+const RAIL_TREE: readonly RailNode[] = MERCHANT_NAV.map((node): RailNode =>
+  isNavGroup(node)
+    ? { key: node.key, label: node.label, icon: NAV_ICONS[node.key] ?? Frame, items: node.items.map(withIcon) }
+    : withIcon(node),
+);
+
+const ASSISTANT: RailLink = withIcon(OTTO_ASSISTANT);
+const NAV_GROUPS: readonly RailGroup[] = RAIL_TREE.filter(isRailGroup);
+const NAV_TOP_LEVEL_LINKS: readonly RailLink[] = RAIL_TREE.filter((node) => !isRailGroup(node)) as RailLink[];
 
 const navigationLinkClass =
   "flex h-11 items-center gap-3 rounded-[10px] text-sm transition-colors outline-none " +
@@ -113,7 +130,7 @@ function pathMatches(pathname: string, href: string): boolean {
 
 /** The longest-href item matching pathname wins — a nested route like
  *  /crm/inbox/templates must not also light up its shorter sibling /crm/inbox. */
-function activeItemHref(pathname: string, items: readonly MerchantNavLink[]): string | null {
+function activeItemHref(pathname: string, items: readonly RailLink[]): string | null {
   const matches = items.filter((item) => pathMatches(pathname, item.href));
   if (matches.length === 0) return null;
   return matches.reduce((longest, item) => (item.href.length > longest.href.length ? item : longest)).href;
@@ -144,11 +161,11 @@ function nextDisclosureOpenFor(matches: (pathname: string) => boolean, update: D
 }
 
 /** A group is "on" when the current location is one of its own destinations. */
-function groupMatches(group: MerchantNavGroup, pathname: string): boolean {
+function groupMatches(group: RailGroup, pathname: string): boolean {
   return activeItemHref(pathname, group.items) !== null;
 }
 
-export function nextGroupDisclosureOpen(group: MerchantNavGroup, update: DisclosureUpdate): boolean {
+export function nextGroupDisclosureOpen(group: RailGroup, update: DisclosureUpdate): boolean {
   return nextDisclosureOpenFor((p) => groupMatches(group, p), update);
 }
 
@@ -233,11 +250,11 @@ function NavigationLink({
   active,
   nested = false,
 }: {
-  item: MerchantNavLink;
+  item: RailLink;
   active: boolean;
   nested?: boolean;
 }) {
-  const Icon = iconFor(item.key);
+  const Icon = item.icon;
 
   return (
     <Link
@@ -271,9 +288,9 @@ function NavigationLink({
 function AssistantRow({ active }: { active: boolean }) {
   return (
     <Link
-      href={OTTO_ASSISTANT.href}
+      href={ASSISTANT.href}
       aria-current={active ? "page" : undefined}
-      title={OTTO_ASSISTANT.label}
+      title={ASSISTANT.label}
       className={cn(
         "flex h-11 items-center gap-3 rounded-[10px] border px-3 text-sm outline-none",
         "transition-[color,background-color,border-color,transform] duration-[160ms] ease-out",
@@ -285,7 +302,7 @@ function AssistantRow({ active }: { active: boolean }) {
       )}
     >
       <OttoAvatar size={22} mood="idle" className="shrink-0" />
-      <span className="lg:hidden xl:inline">{OTTO_ASSISTANT.label}</span>
+      <span className="lg:hidden xl:inline">{ASSISTANT.label}</span>
     </Link>
   );
 }
@@ -311,7 +328,7 @@ export function SectionTabs({ pathname }: { pathname: string }) {
       className="hidden items-center gap-1 overflow-x-auto border-b border-border bg-card px-3 lg:flex xl:hidden"
     >
       {group.items.map((item) => {
-        const Icon = iconFor(item.key);
+        const Icon = item.icon;
         const active = activeHref === item.href;
         return (
           <Link
@@ -338,7 +355,7 @@ export function SectionTabs({ pathname }: { pathname: string }) {
 
 /** One grouped section: a real disclosure at the drawer and 1280+ tiers, a single icon
  *  link at the 1024–1279 rail (its children move to SectionTabs there). */
-function NavigationGroup({ group, pathname }: { group: MerchantNavGroup; pathname: string }) {
+function NavigationGroup({ group, pathname }: { group: RailGroup; pathname: string }) {
   const active = group.key === "crm" ? pathMatches(pathname, "/crm") : groupMatches(group, pathname);
   const nextOpen = (update: DisclosureUpdate) =>
     group.key === "crm" ? nextCrmDisclosureOpen(update) : nextGroupDisclosureOpen(group, update);
@@ -351,7 +368,7 @@ function NavigationGroup({ group, pathname }: { group: MerchantNavGroup; pathnam
     // eslint-disable-next-line react-hooks/exhaustive-deps -- nextOpen is derived from `group`, which is a module constant.
   }, [pathname]);
 
-  const GroupIcon = iconFor(group.key);
+  const GroupIcon = group.icon;
   const activeHref = activeItemHref(pathname, group.items);
   const railHref = group.items[0]!.href;
 
