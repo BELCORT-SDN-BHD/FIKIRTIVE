@@ -1,3 +1,9 @@
+import { purposeLabel } from "@/lib/crm-labels";
+
+// #728 — the channel and purpose maps this page was already right about now live in ONE place
+// so the rest of CRM can read the same words instead of printing the stored column.
+export { channelLabel, purposeLabel } from "@/lib/crm-labels";
+
 type BadgeVariant =
   | "default"
   | "brand"
@@ -25,19 +31,8 @@ export function shortBroadcastId(id: string): string {
   return id.length > 16 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
 }
 
-export function purposeLabel(purpose: string): string {
-  if (purpose === "marketing") return "Marketing";
-  if (purpose === "review_request") return "Review request";
-  return purpose.replaceAll("_", " ");
-}
-
 export function broadcastTitle(purpose: string): string {
   return `${purposeLabel(purpose)} broadcast`;
-}
-
-export function channelLabel(channel: string): string {
-  if (channel === "whatsapp") return "WhatsApp";
-  return channel.replaceAll("_", " ");
 }
 
 export function runStatusPresentation(status: string): { label: string; variant: BadgeVariant } {

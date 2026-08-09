@@ -2,6 +2,11 @@
 // views. No data access, no gateway calls — pure formatting of values already returned by
 // customer-broadcast-ui-actions.ts. Copy is English sentence case throughout.
 
+// #728 — the channel name, the broadcast purpose and the four-axis status vocabulary are one
+// set of words for the whole of CRM, defined in `@/lib/crm-labels` and re-exported here so this
+// family keeps its single import site without keeping a second copy of the map.
+export { axisStatusPresentation, channelAccountLabel, channelLabel, purposeLabel } from "@/lib/crm-labels";
+
 type BadgeVariant = "default" | "brand" | "outline" | "success" | "warning" | "destructive";
 
 const DATE_TIME = new Intl.DateTimeFormat("en-MY", {
@@ -29,21 +34,6 @@ export const AXIS_LABELS: Record<AxisKey, string> = {
   providerRefusal: "Provider refusal",
   frequency: "Frequency cap",
 };
-
-export function axisStatusPresentation(status: string): { label: string; variant: BadgeVariant } {
-  switch (status) {
-    case "pass":
-      return { label: "Pass", variant: "success" };
-    case "block":
-      return { label: "Blocked", variant: "destructive" };
-    case "risk":
-      return { label: "At risk", variant: "warning" };
-    case "unavailable":
-      return { label: "Unavailable", variant: "outline" };
-    default:
-      return { label: "Unknown", variant: "outline" };
-  }
-}
 
 export function runStatusPresentation(status: string): { label: string; variant: BadgeVariant } {
   switch (status) {
@@ -79,12 +69,6 @@ export function sendStatePresentation(state: string): { label: string; variant: 
   }
 }
 
-export function purposeLabel(purpose: string): string {
-  if (purpose === "marketing") return "Marketing";
-  if (purpose === "review_request") return "Review request";
-  return purpose;
-}
-
 export function roleLabel(role: string): string {
   if (role === "owner") return "Owner";
   if (role === "admin") return "Admin";
@@ -93,8 +77,10 @@ export function roleLabel(role: string): string {
 }
 
 const AXIS_REASON_COPY: Record<string, string> = {
-  effective_revoke: "The customer has opted out (STOP). A send would need a D5 two-confirm override, which is unavailable.",
-  consent_unknown_d5_eligible: "Consent is unknown. A send would need a D5 two-confirm override, which is unavailable.",
+  // #728 — "D5" is an internal design-document number. It named the rule for us, never for the
+  // merchant, who has no way to look it up. The rule itself is stated in full instead.
+  effective_revoke: "The customer has opted out (STOP). A send would need two independent human confirmations, which are unavailable.",
+  consent_unknown_d5_eligible: "Consent is unknown. A send would need two independent human confirmations, which are unavailable.",
   consent_unknown_unconfirmed_automatic_hard_block: "Consent is unknown — a hard block for automated sends.",
   // #806 — every clause states only what the ledger holds, the rule #768 arrived at for this
   // exact customer (see CRM_PRE_LEDGER_OPT_OUT_NOTE). "An opt-out was recorded" is passive on

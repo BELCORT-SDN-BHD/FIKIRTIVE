@@ -14,6 +14,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  CHANNEL_CONNECT_UNAVAILABLE_NOTE,
+  channelConnectionFromAccounts,
+  channelConnectionHeadline,
+} from "@/lib/crm-channel-connection";
+import { channelAccountLabel, channelLabel, templateStateLabel } from "@/lib/crm-labels";
 import { dateTimeLabel, errorMessage, isDenialErrorCode } from "./inbox-format";
 
 type ListResult = Awaited<ReturnType<typeof listTemplates>>;
@@ -27,17 +33,22 @@ type ChannelScopeRow = ScopesSuccess["resource"][number];
 const selectClass =
   "min-h-11 w-full rounded-[var(--radius-input)] border border-border bg-background px-3 text-sm text-foreground shadow-[var(--shadow-xs)] focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
 
+// #728 — the explanation lines were already plain English; only the badges printed the stored
+// column. Both now come from the one label map, so they cannot drift apart again.
+function localRecord(state: string): string {
+  return `Local record: ${templateStateLabel(state).toLowerCase()}.`;
+}
 function submissionReason(state: string): string {
   if (state === "draft") return "Not yet submitted to a provider.";
-  return `Local record: ${state.replaceAll("_", " ")}.`;
+  return localRecord(state);
 }
 function reviewReason(state: string): string {
   if (state === "not_submitted") return "No review requested — provider submission isn't available yet.";
-  return `Local record: ${state.replaceAll("_", " ")}.`;
+  return localRecord(state);
 }
 function availabilityReason(state: string): string {
   if (state === "unavailable") return "No provider approval exists; this version cannot be sent.";
-  return `Local record: ${state.replaceAll("_", " ")}.`;
+  return localRecord(state);
 }
 
 function parseVariablesInput(raw: string): { key: string; sample: string }[] {
@@ -204,10 +215,12 @@ function TemplatesWorkspace({
             <CardContent>
               <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
                 <Unplug className="mx-auto size-6 text-muted-foreground" />
-                <p className="mt-3 text-sm font-semibold">No messaging channel is connected in this workspace yet</p>
+                {/* #727 — this page always read the state; it now says it in the same words as
+                    every other CRM surface, from the one authority. */}
+                <p className="mt-3 text-sm font-semibold">{channelConnectionHeadline(channelConnectionFromAccounts(scopes))}</p>
                 {/* #541 — no CTA into Connections: Messaging has no connect button there yet. */}
                 <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-                  Messaging channels are not available to connect yet. Templates open up once a channel can be connected.
+                  {CHANNEL_CONNECT_UNAVAILABLE_NOTE} Templates open up once a channel can be connected.
                 </p>
               </div>
             </CardContent>
@@ -221,7 +234,7 @@ function TemplatesWorkspace({
                   <select className={selectClass} value={channelScopeId} onChange={(event) => setChannelScopeId(event.target.value)} disabled={creating} aria-label="Channel account">
                     <option value="">Select a channel account…</option>
                     {scopes.map((scope) => (
-                      <option key={scope.id} value={scope.id}>{scope.channel} · {scope.scopeKey}</option>
+                      <option key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</option>
                     ))}
                   </select>
                 </label>
@@ -321,7 +334,7 @@ function TemplateCard({ template, onChanged }: { template: TemplateRow; onChange
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle>{template.name}</CardTitle>
-            <CardDescription className="mt-1">{template.channel} · {template.locale} · scope {template.channelScope.scopeKey}</CardDescription>
+            <CardDescription className="mt-1">{channelLabel(template.channel)} · {template.locale} · scope {template.channelScope.scopeKey}</CardDescription>
           </div>
           {template.archivedAt ? <Badge variant="outline">Archived</Badge> : null}
         </div>
@@ -365,17 +378,17 @@ function VersionCard({ version }: { version: VersionRow }) {
       ) : null}
       <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
         <div className="rounded-lg border border-border p-2.5">
-          <dt className="flex items-center justify-between gap-2 font-semibold">Submission<Badge variant="outline">{version.submissionState}</Badge></dt>
+          <dt className="flex items-center justify-between gap-2 font-semibold">Submission<Badge variant="outline">{templateStateLabel(version.submissionState)}</Badge></dt>
           <dd className="mt-1.5 text-muted-foreground">{submissionReason(version.submissionState)}</dd>
           <dd className="mt-1 text-muted-foreground">{version.submittedAt ? dateTimeLabel(version.submittedAt) : "Not recorded"}</dd>
         </div>
         <div className="rounded-lg border border-border p-2.5">
-          <dt className="flex items-center justify-between gap-2 font-semibold">Review<Badge variant="outline">{version.reviewState}</Badge></dt>
+          <dt className="flex items-center justify-between gap-2 font-semibold">Review<Badge variant="outline">{templateStateLabel(version.reviewState)}</Badge></dt>
           <dd className="mt-1.5 text-muted-foreground">{reviewReason(version.reviewState)}</dd>
           <dd className="mt-1 text-muted-foreground">{version.reviewedAt ? dateTimeLabel(version.reviewedAt) : "Not recorded"}</dd>
         </div>
         <div className="rounded-lg border border-border p-2.5">
-          <dt className="flex items-center justify-between gap-2 font-semibold">Availability<Badge variant="outline">{version.availabilityState}</Badge></dt>
+          <dt className="flex items-center justify-between gap-2 font-semibold">Availability<Badge variant="outline">{templateStateLabel(version.availabilityState)}</Badge></dt>
           <dd className="mt-1.5 text-muted-foreground">{availabilityReason(version.availabilityState)}</dd>
           <dd className="mt-1 text-muted-foreground">{version.frozenAt ? dateTimeLabel(version.frozenAt) : "Not recorded"}</dd>
         </div>

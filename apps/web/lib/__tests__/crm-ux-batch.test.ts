@@ -171,6 +171,7 @@ describe("broadcast cross-flow links", () => {
   it("adds the compact list affordance only for report-backed rows", () => {
     const baseProps = {
       initialRuns: { ok: true, resource: [RUN] },
+      initialChannelScopes: { ok: true, resource: [] },
       initialDirectory: {
         ok: true,
         resource: {
@@ -246,9 +247,14 @@ describe("workflow and Inbox links", () => {
   });
 
   it("keeps the Inbox no-channel explanation honest with no dead-end Connections CTA (#541)", () => {
+    // #727 — the banner is derived from this read now; zero channel accounts is the state the
+    // #541 copy was written for.
     const markup = renderToStaticMarkup(createElement(
       InboxListPage,
-      { initialState: { ok: true, resource: [] } } as unknown as ComponentProps<typeof InboxListPage>,
+      {
+        initialState: { ok: true, resource: [] },
+        initialChannelScopes: { ok: true, resource: [] },
+      } as unknown as ComponentProps<typeof InboxListPage>,
     ));
 
     // #541 — Connections has no Connect button for Messaging (WhatsApp is "Not available

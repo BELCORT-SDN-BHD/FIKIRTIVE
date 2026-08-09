@@ -8,7 +8,13 @@ import { orgRolesAllow } from "@fikirtive/core/org-roles";
 import { createBroadcastRun } from "@/lib/customer-broadcast-ui-actions";
 import type { getBroadcastComposerOptions, getMemberDirectory } from "@/lib/customer-broadcast-gateway";
 import { Button } from "@/components/ui/button";
-import { errorMessage, isDenialErrorCode, purposeLabel } from "./broadcast-format";
+import {
+  channelConnectionFromAccounts,
+  channelConnectionHeadline,
+  channelUnavailableCopy,
+  hasChannelAccountOnFile,
+} from "@/lib/crm-channel-connection";
+import { channelAccountLabel, errorMessage, isDenialErrorCode, purposeLabel } from "./broadcast-format";
 
 type OptionsResult = Awaited<ReturnType<typeof getBroadcastComposerOptions>>;
 type OptionsSuccess = Extract<OptionsResult, { ok: true }>;
@@ -71,6 +77,8 @@ export default function BroadcastComposerPage({
     return <Notice title="Could not load the composer" message={errorMessage(initialOptions.ok ? "INVALID_ARGUMENT" : initialOptions.error)} />;
   }
 
+  // #727 — one authority decides whether this workspace has a channel and supplies the words.
+  const connection = channelConnectionFromAccounts(options.channelScopes);
   const selectedScope = options.channelScopes.find((s) => s.id === channelScopeId) ?? null;
   const templatesForScope = options.templateVersions.filter(
     (v) => !selectedScope || v.template.channelScopeId === selectedScope.id,
@@ -121,7 +129,10 @@ export default function BroadcastComposerPage({
         </div>
 
         <form className="mt-8 grid gap-6" onSubmit={onSubmit}>
-          {options.channelScopes.length === 0 ? (
+          {/* 判官 r2 P1-1: the dropdown exists when an ACCOUNT exists. A lapsed connection still
+              leaves an identity this form can name, and the banner above already says the
+              connection is not live — the form does not get to invent a second refusal. */}
+          {hasChannelAccountOnFile(connection) === false ? (
             // #495/#541 — a zero-channel workspace gets an honest empty state instead of an
             // empty dropdown. No CTA into Connections: Messaging has no connect button there
             // yet, so that button was a dead end. Create stays disabled until a channel
@@ -130,9 +141,10 @@ export default function BroadcastComposerPage({
               <span className="text-sm font-semibold">Channel account</span>
               <div className="rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center">
                 <Unplug className="mx-auto size-6 text-muted-foreground" />
-                <p className="mt-3 text-sm font-semibold">No messaging channel is connected in this workspace yet</p>
+                {/* #727 — same words as every other CRM surface, from the one authority. */}
+                <p className="mt-3 text-sm font-semibold">{channelConnectionHeadline(connection)}</p>
                 <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                  A broadcast goes out through a connected channel account. Messaging channels are not available to connect yet.
+                  {channelUnavailableCopy("A broadcast goes out through a connected channel account.")}
                 </p>
               </div>
             </div>
@@ -142,7 +154,7 @@ export default function BroadcastComposerPage({
               <select className={selectClass} value={channelScopeId} onChange={(e) => { setChannelScopeId(e.target.value); setTemplateVersionId(""); }} disabled={submitting}>
                 <option value="">Select a channel account…</option>
                 {options.channelScopes.map((scope) => (
-                  <option key={scope.id} value={scope.id}>{scope.channel} · {scope.scopeKey}</option>
+                  <option key={scope.id} value={scope.id}>{channelAccountLabel(scope)}</option>
                 ))}
               </select>
             </label>
