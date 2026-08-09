@@ -26,6 +26,7 @@ import {
   GEN_VIDEO_MODEL_OPTIONS,
   videoDefaults,
   imageDefaults,
+  merchantGenFailureMessage,
   type GenModel,
   type GenVideoModel,
   type GenJobData,
@@ -943,6 +944,13 @@ export async function getGenJob(jobId: string, projectId?: string) {
     status: job.status,
     progress: job.progress,
     error: sanitizeUserError(job.error),
+    // #765 — the merchant's own explanation, when this failure has one: what was wrong and
+    // what to do about it, in the SAME sentence the conversation posts for the same job.
+    // `error` above is an ops string (a provider status line, a reaper's note); this is not a
+    // prettier version of it but a separate question — is what the worker persisted one of the
+    // sentences this system writes FOR merchants? A whitelist in core answers, so a surface can
+    // never turn an internal error into advice by forwarding it.
+    guidance: merchantGenFailureMessage(job.error),
     urls,
     generationIds: job.generationIds,
     spent: job.spent,

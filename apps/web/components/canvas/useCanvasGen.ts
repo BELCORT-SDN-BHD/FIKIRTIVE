@@ -470,6 +470,17 @@ export async function poll(
     intervalMs?: number;
     maxPolls?: number;
     onProgress?: (progress: number, status: string) => void;
+    /**
+     * #765 — this job failed for a reason the MERCHANT can act on, and here is what to tell
+     * them. Called at most once, only for a hard FAILED that came with an explanation, and
+     * always alongside the ordinary `onDone` ending rather than instead of it.
+     *
+     * A merchant who pressed generate on the board has no conversation to be answered in: the
+     * card can only ever say "That didn't finish — you weren't charged", which is the right
+     * thing to say about a queue hiccup and the wrong thing to say about a picture the engine
+     * refused. This is the one channel that carries the difference to them.
+     */
+    onFailure?: (guidance: string) => void;
   } = {},
 ) {
   const intervalMs = opts.intervalMs ?? 2500;
@@ -491,7 +502,14 @@ export async function poll(
       : 0;
     opts.onProgress?.(progress, job.status);
     if (job.status === "DONE") return onDone(job.urls, job.urls.length ? "done" : "missing", job.generationIds ?? []);
-    if (job.status === "FAILED") return onDone([], "failed", []);
+    if (job.status === "FAILED") {
+      // #765 — a failure the merchant can do something about says so, in the same words the
+      // conversation uses for the same job. Everything else stays silent: the card's own
+      // ending already says what little there is to say, and a second contentless message on
+      // top of it only teaches people to ignore the one that matters.
+      if (job.guidance) opts.onFailure?.(job.guidance);
+      return onDone([], "failed", []);
+    }
     // A cancelled job has its own ending (#612 · #599 D4). Without this the open tab keeps
     // polling a job that stopped, and eventually shows the soft "still working" copy for it.
     if (job.status === "CANCELLED") return onDone([], "cancelled", []);
@@ -790,6 +808,9 @@ export function useCanvasGen(
       onBatchSettled?.();
     }, cancelledRef, {
       projectId,
+      // #765: a refusal the merchant can act on reaches them here — the board is where they
+      // pressed generate, and for a canvas job there is no conversation to be answered in.
+      onFailure: fail,
       onProgress: (progress, status) => onProgress?.({
         nodeId: created.id,
         genJobId: started.id,
@@ -905,6 +926,9 @@ export function useCanvasGen(
       if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
     }, cancelledRef, {
       projectId,
+      // #765: a refusal the merchant can act on reaches them here — the board is where they
+      // pressed generate, and for a canvas job there is no conversation to be answered in.
+      onFailure: fail,
       onProgress: (progress, status) => onProgress?.({
         nodeId: created.id,
         genJobId: started.id,
@@ -1018,6 +1042,9 @@ export function useCanvasGen(
       if (resolvedStatus === "done" && urls[0]) onBatchSettled?.();
     }, cancelledRef, {
       projectId,
+      // #765: a refusal the merchant can act on reaches them here — the board is where they
+      // pressed generate, and for a canvas job there is no conversation to be answered in.
+      onFailure: fail,
       onProgress: (progress, status) => onProgress?.({
         nodeId: created.id,
         genJobId: started.id,
