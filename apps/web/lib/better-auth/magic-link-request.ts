@@ -100,6 +100,14 @@ export const MAX_TRACKED_BUCKETS = 20_000;
  * slides on GRANTS. Keeping the write identical is what the extra slot is for: a refusal still
  * performs exactly one array write, into a sink nothing ever scans, so the cost parity r5 asked
  * for survives while the window it was refused by is allowed to end.
+ *
+ * r2 — AND "GRANT" MEANS THE REQUEST, NOT THE BUCKET. A press is charged to a ring only when
+ * EVERY bucket had room for it; a bucket that still had room does not bank a press that the
+ * other bucket refused. See `probe`/`commit` for why that had to become two steps.
+ *
+ * The cap this enforces is unchanged and still tight: one grant always costs one slot in BOTH
+ * buckets, so an egress address still buys at most sixty granted presses — and therefore at most
+ * sixty distinct addresses — per rolling hour.
  */
 type Bucket = { stamps: number[]; next: number };
 
@@ -131,29 +139,46 @@ function evictOldestWhenFull(): void {
 }
 
 /**
- * Constant cost, and the SAME constant whether the bucket is empty or full: one Map read, a
- * fixed `max`-slot scan, one write, one delete + one set (the LRU touch), and one eviction step.
- * The verdict is computed from the scan and then the write happens regardless — a refused
- * request performs exactly the work a granted one performs, and only the return value and the
- * slot it lands in differ.
+ * Consulting a bucket is TWO halves, and #757 r2 is why they had to come apart.
+ *
+ * They used to be one `take` that read its own bucket and immediately wrote it on its own
+ * verdict. With two buckets that produced a state neither of them could see: the sixth press for
+ * one address is refused as a REQUEST (the address bucket is full) while the shared caller
+ * bucket still has room — so `take` on the caller bucket called it a grant and charged it. One
+ * merchant retrying one address therefore walked the shared sixty-slot ring round and round, and
+ * every other merchant behind that egress address stopped getting sign-in links. That is the
+ * defect this ticket exists to remove, rebuilt one bucket over.
+ *
+ * The rule that ends it is not "fix the caller bucket" but "a refused request charges nothing":
+ * every bucket is READ first, the one verdict is computed from all of them, and only then is
+ * anything written. Splitting the halves is what makes that expressible.
  */
-function take(key: string, max: number, now: number): boolean {
-  const bucket = buckets.get(key) ?? { stamps: new Array<number>(max + 1).fill(0), next: 0 };
+type Probe = { key: string; bucket: Bucket; max: number; room: boolean };
 
+/** Half one — READ ONLY: one Map read and a fixed `max`-slot scan, the same on every call. */
+function probe(key: string, max: number, now: number): Probe {
+  const bucket = buckets.get(key) ?? { stamps: new Array<number>(max + 1).fill(0), next: 0 };
   let live = 0;
   for (let i = 0; i < max; i += 1) if (now - bucket.stamps[i] < WINDOW_MS) live += 1;
-  const room = live < max;
+  return { key, bucket, max, room: live < max };
+}
 
-  // One array write and one field write, on both verdicts. A grant advances the ring; a refusal
-  // lands in the sink — the slot past the ring, which nothing ever scans — and leaves the ring
-  // alone, so it cannot push the window forward (#757).
-  bucket.stamps[room ? bucket.next : max] = now;
-  bucket.next = room ? (bucket.next + 1) % max : bucket.next;
+/**
+ * Half two — WRITE, with the verdict of the whole REQUEST rather than of this bucket alone: one
+ * array write, one field write, one delete + one set (the LRU touch), one eviction step. Every
+ * one of those happens on both verdicts, so a refused request still costs exactly what a granted
+ * one costs; only the slot the timestamp lands in differs. A grant advances the ring; a refusal
+ * lands in the sink — the slot past the ring, which nothing ever scans — leaving the ring where
+ * it was, so it cannot push the window forward.
+ */
+function commit(probed: Probe, granted: boolean, now: number): void {
+  const { key, bucket, max } = probed;
+  bucket.stamps[granted ? bucket.next : max] = now;
+  bucket.next = granted ? (bucket.next + 1) % max : bucket.next;
 
   buckets.delete(key);
   buckets.set(key, bucket);
   evictOldestWhenFull();
-  return room;
 }
 
 /** Best-effort caller identity. Behind Railway's proxy this is `x-forwarded-for`; a request that
@@ -178,12 +203,18 @@ export function acceptMagicLinkRequest(input: {
   const email = normalizeMagicLinkEmail(input.email);
   if (!email) return "invalid_email";
 
-  // ② throttle — both buckets are consumed unconditionally so the work does not depend on
-  //    which one refuses.
+  // ② throttle — READ both buckets, decide once, then WRITE both. Both are touched on every
+  //    request so the work does not depend on which one refuses, and (r2) neither is CHARGED
+  //    unless the request as a whole was granted: a bucket that still had room must not bank a
+  //    press the other bucket refused, or one address's retry loop spends the shared budget that
+  //    every other merchant behind the same egress address is sharing.
   const now = Date.now();
   const caller = callerKey(input.requestHeaders);
-  const roomForCaller = take(caller, MAX_PER_CALLER, now);
-  const roomForPair = take(`${caller}|${email}`, MAX_PER_CALLER_PER_ADDRESS, now);
+  const callerBudget = probe(caller, MAX_PER_CALLER, now);
+  const addressBudget = probe(`${caller}|${email}`, MAX_PER_CALLER_PER_ADDRESS, now);
+  const granted = callerBudget.room && addressBudget.room;
+  commit(callerBudget, granted, now);
+  commit(addressBudget, granted, now);
 
   // ③ hand over an opaque job — ALWAYS, and always after the same work. The verdict travels
   //    with the job; the executor is what drops it.
@@ -191,7 +222,7 @@ export function acceptMagicLinkRequest(input: {
     purpose: "sign-in-link",
     email,
     callbackURL: sanitizeCallbackURL(input.callbackURL),
-    overBudget: !(roomForCaller && roomForPair),
+    overBudget: !granted,
   });
 
   // ④ one answer.

@@ -217,6 +217,72 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
       expect(deliverable()).toHaveLength(6);
     });
 
+    /**
+     * r2 — THE COMBINATION STATE, which the sink alone did not cover.
+     *
+     * Each bucket used to decide and write on its OWN verdict, so a press could be refused as a
+     * REQUEST while still counting as a grant in one of the two buckets. The sixth press for one
+     * address is exactly that shape: the address bucket is full (roomForPair = false) but the
+     * shared caller bucket still has room (roomForCaller = true), so the request is refused —
+     * `overBudget: true`, no link sent — and a fresh timestamp lands in the shared ring anyway.
+     *
+     * Which rebuilds the very defect this ticket exists to remove, one bucket over: one merchant
+     * retrying one address walks the shared sixty-slot ring round and round, and everybody else
+     * behind that egress address stops receiving sign-in links. Nothing they can see explains it,
+     * and the retrying merchant is not doing anything abusive — they are pressing a button that
+     * told them a link was on its way.
+     *
+     * So the two buckets must be decided TOGETHER and written TOGETHER: nothing is charged unless
+     * the request as a whole was granted.
+     */
+    it("does not let one address's refused retries eat the shared egress budget", () => {
+      const cafe = "198.51.100.55";
+      // One merchant spends their five, then keeps pressing — far more times than the shared
+      // ring has slots, so if refusals charged it at all it would be full several times over.
+      for (let i = 0; i < 5; i++) press("victim@shop.test", cafe);
+      for (let i = 0; i < 200; i++) press("victim@shop.test", cafe);
+      queued.length = 0;
+
+      // The merchant at the next table, who has never pressed anything.
+      expect(press("neighbour@shop.test", cafe)).toBe("accepted");
+      // RED before r2: the 200 refused retries had rotated the shared ring, so the neighbour was
+      // silently over budget — accepted words, no link.
+      expect(deliverable()).toHaveLength(1);
+    });
+
+    it("leaves the shared caller ring untouched when only the address bucket refuses", () => {
+      const ip = "203.0.113.140";
+      for (let i = 0; i < 5; i++) press("owner@shop.test", ip);
+      const before = __magicLinkThrottleBucketForTests(ip);
+      const pressedAt = Date.now();
+
+      press("owner@shop.test", ip); // address bucket full, caller bucket still has room
+
+      const after = __magicLinkThrottleBucketForTests(ip);
+      // RED before r2: `next` had advanced and a stamp had been overwritten.
+      expect(after?.next).toBe(before?.next);
+      expect(after?.stamps).toEqual(before?.stamps);
+      // …and the write still happened, into the sink — the cost parity is untouched by this.
+      expect(after?.sink).toBeGreaterThanOrEqual(pressedAt);
+    });
+
+    it("charges neither bucket when the SHARED egress is the one that refuses", () => {
+      // The mirror image, so the rule is "a refused request charges nothing" rather than a patch
+      // aimed at one of the two orders. A brand-new address behind a spent egress must not have
+      // its own five quietly docked for a request that was never granted.
+      const cafe = "198.51.100.66";
+      for (let i = 0; i < 60; i++) press(`merchant-${i}@shop.test`, cafe);
+      const pressedAt = Date.now();
+
+      press("late@shop.test", cafe); // caller bucket full, address bucket brand new
+
+      const pair = __magicLinkThrottleBucketForTests(`${cafe}|late@shop.test`);
+      // RED before r2: its first slot had been charged for a link that was never sent.
+      expect(pair?.stamps).toEqual([0, 0, 0, 0, 0]);
+      expect(pair?.next).toBe(0);
+      expect(pair?.sink).toBeGreaterThanOrEqual(pressedAt);
+    });
+
     it("lets the rest of a shared wifi back in an hour after the flooder's last GRANT", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       const start = new Date("2026-08-09T00:00:00Z");
