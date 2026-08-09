@@ -79,8 +79,8 @@ const MAX_PER_CALLER = 60;
 export const MAX_TRACKED_BUCKETS = 20_000;
 
 /**
- * One bucket is a FIXED-SIZE ring of the last `max` request times, not a growing list of the
- * ones that were granted.
+ * One bucket is a FIXED-SIZE ring of the last `max` GRANTED request times, plus one extra slot
+ * at the end that is written and never read.
  *
  * The fixed size is what makes the cost of consulting it the same every time. A list that grew
  * from zero to sixty entries took a different amount of work to scan depending on how much of
@@ -88,20 +88,29 @@ export const MAX_TRACKED_BUCKETS = 20_000;
  * so "how expensive was this request" leaked how close the caller was to its limit. A ring of
  * exactly `max` slots is scanned `max` times and written once, always.
  *
- * The window therefore slides on REQUESTS rather than on grants: a caller that keeps pressing
- * keeps its ring full and stays refused until an hour after it stops, instead of being handed a
- * slot back the moment its oldest grant ages out. For an abuse cap that is the better of the two
- * readings, and it is the one that costs the same on every call.
+ * #757 — WHAT THE EXTRA SLOT IS FOR. The ring used to slide on REQUESTS: a refused press
+ * overwrote the oldest grant with its own time, so the window never ended while anyone kept
+ * pressing. Read as an abuse cap that sounded strict; read as availability it was a lockout with
+ * no end, and — because the loose bucket is keyed on a SHARED egress address — usually somebody
+ * else's lockout. One person's retry loop on a cafe's wifi held the whole floor's sixty-address
+ * budget open indefinitely, and none of the others could tell why their link stopped coming.
+ *
+ * The sustained rate is the same either way (a prober who pauses for an hour always had it), so
+ * the old reading bought nothing but starving the impatient user's neighbours. The window now
+ * slides on GRANTS. Keeping the write identical is what the extra slot is for: a refusal still
+ * performs exactly one array write, into a sink nothing ever scans, so the cost parity r5 asked
+ * for survives while the window it was refused by is allowed to end.
  */
 type Bucket = { stamps: number[]; next: number };
 
 const buckets = new Map<string, Bucket>();
 
 /**
- * Drop buckets whose slots have all aged out. NOT called from `acceptMagicLinkRequest`: a full
- * traversal is O(number of buckets), and running it on the request thread hands an attacker who
- * filled the map an event-loop stall. It rides its own timer instead, and `unref` keeps it from
- * holding a process (or a test run) open.
+ * Drop buckets whose slots have all aged out — the sink included, so a caller who is still being
+ * refused keeps its bucket rather than being handed a fresh one. NOT called from
+ * `acceptMagicLinkRequest`: a full traversal is O(number of buckets), and running it on the
+ * request thread hands an attacker who filled the map an event-loop stall. It rides its own timer
+ * instead, and `unref` keeps it from holding a process (or a test run) open.
  */
 function sweepExpired(now: number): void {
   for (const [key, bucket] of buckets) {
@@ -121,21 +130,28 @@ function evictOldestWhenFull(): void {
   if (oldest !== undefined) buckets.delete(oldest);
 }
 
+/** The sink's index in a bucket sized for `max` grants. Written by every refusal, read by
+ *  nothing — see the Bucket comment. */
+const sinkSlot = (max: number): number => max;
+
 /**
  * Constant cost, and the SAME constant whether the bucket is empty or full: one Map read, a
  * fixed `max`-slot scan, one write, one delete + one set (the LRU touch), and one eviction step.
  * The verdict is computed from the scan and then the write happens regardless — a refused
- * request performs exactly the work a granted one performs, and only the return value differs.
+ * request performs exactly the work a granted one performs, and only the return value and the
+ * slot it lands in differ.
  */
 function take(key: string, max: number, now: number): boolean {
-  const bucket = buckets.get(key) ?? { stamps: new Array<number>(max).fill(0), next: 0 };
+  const bucket = buckets.get(key) ?? { stamps: new Array<number>(max + 1).fill(0), next: 0 };
 
   let live = 0;
   for (let i = 0; i < max; i += 1) if (now - bucket.stamps[i] < WINDOW_MS) live += 1;
   const room = live < max;
 
-  bucket.stamps[bucket.next] = now;
-  bucket.next = (bucket.next + 1) % max;
+  // One array write and one field write, on both verdicts. A grant advances the ring; a refusal
+  // lands in the sink and leaves it alone, so it cannot push the window forward (#757).
+  bucket.stamps[room ? bucket.next : sinkSlot(max)] = now;
+  bucket.next = room ? (bucket.next + 1) % max : bucket.next;
 
   buckets.delete(key);
   buckets.set(key, bucket);
@@ -208,10 +224,14 @@ export function __magicLinkThrottleSizeForTests(): number {
 }
 
 /** TEST ONLY. "A refused request does the same work as a granted one" is a claim about what the
- *  bucket looks like afterwards, so a test has to be able to look. */
+ *  bucket looks like afterwards, so a test has to be able to look. The ring and the sink are
+ *  reported apart, because the claims about them are opposite ones: the ring must be unchanged
+ *  by a refusal, the sink must have been written. */
 export function __magicLinkThrottleBucketForTests(
   key: string,
-): { stamps: number[]; next: number } | undefined {
+): { stamps: number[]; next: number; sink: number } | undefined {
   const bucket = buckets.get(key);
-  return bucket && { stamps: [...bucket.stamps], next: bucket.next };
+  if (!bucket) return undefined;
+  const max = bucket.stamps.length - 1;
+  return { stamps: bucket.stamps.slice(0, max), next: bucket.next, sink: bucket.stamps[max] };
 }

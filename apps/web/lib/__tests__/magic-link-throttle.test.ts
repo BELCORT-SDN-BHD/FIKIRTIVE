@@ -32,6 +32,10 @@ const {
   MAX_TRACKED_BUCKETS,
 } = await import("@/lib/better-auth/magic-link-request");
 
+/** The throttle's window. Not exported from the module — a test that wants to step over it has
+ *  to name it, and naming it here keeps the cases readable. */
+const HOUR = 60 * 60 * 1000;
+
 const from = (ip: string) => new Headers({ "x-forwarded-for": ip });
 const press = (email: string, ip = "203.0.113.10", callbackURL = "/") =>
   acceptMagicLinkRequest({ email, callbackURL, requestHeaders: from(ip) });
@@ -155,11 +159,89 @@ describe("#678 r4 — an over-budget request does the SAME work as one inside it
     press("owner@shop.test", ip);
     const afterRefusal = __magicLinkThrottleBucketForTests(key);
     expect(afterRefusal?.stamps).toHaveLength(5);
-    // The ring advanced and the refused press's own timestamp landed in the slot it advanced
-    // past — the same write a granted press performs. (Comparing whole arrays would be flaky:
-    // six presses can share a millisecond, and then the overwritten value is identical.)
-    expect(afterRefusal?.next).toBe((slot + 1) % 5);
-    expect(afterRefusal?.stamps[slot]).toBeGreaterThanOrEqual(pressedAt);
+    // #757 — the write lands in the SINK, not in the ring. Same one array write a granted press
+    // performs, so the cost parity r5 asked for is untouched; but the ring's oldest timestamp
+    // survives, so a refusal cannot push the window forward (see the case below).
+    expect(afterRefusal?.sink).toBeGreaterThanOrEqual(pressedAt);
+    expect(afterRefusal?.next).toBe(slot);
+    expect(afterRefusal?.stamps).toEqual(beforeRefusal?.stamps);
+  });
+
+  /**
+   * #757 — WHAT A REFUSAL MUST NOT DO: extend the window it was refused by.
+   *
+   * The ring used to slide on REQUESTS, so the sixth press of the hour overwrote the oldest of
+   * the five grants with its own time. The cap then read "five in the last hour" for as long as
+   * anyone kept pressing — a caller was refused until an hour after they STOPPED, not an hour
+   * after their fifth link.
+   *
+   * That is a lockout with no end and no explanation, and the shape of the key makes it somebody
+   * else's lockout: a cafe, a co-working floor and most mobile networks share one egress address,
+   * so the loose sixty-per-caller bucket belongs to every merchant on that wifi at once. One
+   * person's retry loop kept it renewed indefinitely, and none of the others could tell why their
+   * sign-in link stopped arriving.
+   *
+   * The rate the cap enforces is unchanged — five per address and sixty per egress per rolling
+   * hour, granted. What changes is that the hour is now measured from the GRANTS, so it actually
+   * ends. (A patient prober always had the sustained rate anyway: pause for an hour, resume. All
+   * the old behaviour bought was punishing the impatient by starving their neighbours.)
+   */
+  describe("#757 — a refused press does not renew the window", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("gives one address its next link an hour after the fifth GRANT, not an hour after the last try", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const start = new Date("2026-08-09T00:00:00Z");
+      vi.setSystemTime(start);
+      const ip = "203.0.113.130";
+
+      for (let i = 0; i < 5; i++) press("owner@shop.test", ip);
+      expect(deliverable()).toHaveLength(5);
+
+      // The merchant keeps pressing every ten minutes for the rest of the hour — the ordinary
+      // behaviour of somebody whose link has not arrived. Every one of these is refused.
+      for (let minute = 10; minute <= 50; minute += 10) {
+        vi.setSystemTime(new Date(start.getTime() + minute * 60_000));
+        press("owner@shop.test", ip);
+      }
+      expect(deliverable()).toHaveLength(5);
+
+      // One hour and a moment after the FIRST grant, a slot is genuinely free again.
+      vi.setSystemTime(new Date(start.getTime() + HOUR + 1));
+      press("owner@shop.test", ip);
+      // RED before #757: the refusals had overwritten the ring, so its oldest entry was 10
+      // minutes old and this press was refused too — and would be, forever, while they kept
+      // trying.
+      expect(deliverable()).toHaveLength(6);
+    });
+
+    it("lets the rest of a shared wifi back in an hour after the flooder's last GRANT", () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const start = new Date("2026-08-09T00:00:00Z");
+      vi.setSystemTime(start);
+      const cafe = "198.51.100.44";
+
+      // One person on the cafe wifi burns the whole shared budget…
+      for (let i = 0; i < 60; i++) press(`probe-${i}@shop.test`, cafe);
+      expect(deliverable()).toHaveLength(60);
+      // …and then keeps pressing every half minute for the rest of the hour, which is more than
+      // enough to refresh all sixty ring slots before the first of them ages out.
+      for (let second = 30; second < 3_600; second += 30) {
+        vi.setSystemTime(new Date(start.getTime() + second * 1_000));
+        press(`probe-late-${second}@shop.test`, cafe);
+      }
+      queued.length = 0;
+
+      // An hour after the sixtieth grant, the merchant at the next table presses their own
+      // button for the first time.
+      vi.setSystemTime(new Date(start.getTime() + HOUR + 1));
+      expect(press("neighbour@shop.test", cafe)).toBe("accepted");
+      // RED before #757: the flooder's refusals kept the shared ring full, so the neighbour was
+      // silently refused for as long as the flooder kept going.
+      expect(deliverable()).toHaveLength(1);
+    });
   });
 
   it("sanitises the callback on the over-budget path too", () => {
