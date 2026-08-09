@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SUPPORT_EMAIL, supportMailto } from "@/lib/exits";
 
 export const metadata = { title: "Terms · Fikirtive" };
 
@@ -166,13 +167,13 @@ export default function TermsPage() {
           <p>
             The product is still changing: features, prices, provider availability and limits continue to change. If
             something looks wrong, stop using the affected feature and email{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
+            <a href={supportMailto("Something looks wrong")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a>.
           </p>
 
           <h2 className="pt-4 text-lg font-semibold text-foreground">Support and deleting your account</h2>
           <p>
             Support, data requests and account deletion all go to{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> — contact us
+            <a href={supportMailto("Support request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> — contact us
             there to make a request. There is no automated deletion flow: the button in Account opens that email and
             does not delete anything by itself. See the{" "}
             <Link href="/privacy" className="underline underline-offset-4">Privacy policy</Link> and{" "}
@@ -189,7 +190,7 @@ export default function TermsPage() {
           <p>
             Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. These terms are governed
             by the laws of Malaysia. Questions:{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
+            <a href={supportMailto("Question about the terms")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a>.
           </p>
           <p>
             We update this page as the product changes, and change the effective date at the top when we do.

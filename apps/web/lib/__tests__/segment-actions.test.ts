@@ -208,6 +208,11 @@ describe("previewSegment", () => {
           unresolvedLegacyOptOut: false,
         },
       ],
+      // #819 — the sample says how many rows it carries and whether anything was cut, so a
+      // reader (Otto included) can never take the sample for the whole match. One matched
+      // contact, one row: nothing was cut, and the payload says that too.
+      returned: 1,
+      hasMore: false,
       // #715 — the preview frames its match count against the same owner total the
       // contacts list publishes, so the two pages can't disagree.
       totalContactCount: 2,

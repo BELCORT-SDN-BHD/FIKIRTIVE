@@ -896,12 +896,15 @@ export function ContactPreview({ preview }: { preview: PreviewSuccess }) {
         </p>
       ) : (
         <>
-          {preview.contacts.length < preview.matchedCount ? (
+          {/* #819 — the cut is now a fact in the payload (`returned`/`hasMore`), not something
+              each surface works out for itself. The page reads the same fact Otto is handed, so
+              the two mouths cannot drift apart. */}
+          {preview.hasMore ? (
             <p className="mt-4 text-xs text-muted-foreground">
-              Showing the first {preview.contacts.length} of {preview.matchedCount} matched contacts.
+              Showing the first {preview.returned} of {preview.matchedCount} matched contacts.
             </p>
           ) : null}
-          <ul className={`grid gap-2 ${preview.contacts.length < preview.matchedCount ? "mt-2" : "mt-4"}`}>
+          <ul className={`grid gap-2 ${preview.hasMore ? "mt-2" : "mt-4"}`}>
           {preview.contacts.map((contact) => (
             <li key={contact.id} className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
               <div className="min-w-0">

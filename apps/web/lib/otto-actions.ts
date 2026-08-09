@@ -161,6 +161,10 @@ function makeOttoSegmentsPort() {
         unresolvedLegacyOptOutCount: result.unresolvedLegacyOptOutCount,
         reportedOptOutCount: result.reportedOptOutCount,
         contacts: result.contacts,
+        // #819 — the preview cuts the sample at ten. The cut crosses the boundary with the
+        // rows, so "these ten are everyone" is contradicted by the payload itself.
+        returned: result.returned,
+        hasMore: result.hasMore,
       };
     },
     build: async ({ operation, segmentId, name, rules }: {

@@ -143,6 +143,103 @@ describe("#707 PackCard", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PackCard — the OTHER way out the sentence names (#786)
+//
+// #707 gave the top-up half of "top up in Billing or approve them individually" a real
+// link. The second half stayed a dead pointer: the whole pack renders as ONE card with
+// compact read-only rows, so there was no per-item control anywhere on it, and "Make all"
+// was the disabled button right underneath. Naming an option the product does not have is
+// the same defect as naming a destination with no link.
+// ---------------------------------------------------------------------------
+describe("#786 PackCard's second way out", () => {
+  const priced = (id: string, credits: number) => ({
+    cardId: id,
+    payload: { kind: "image" as const, estimatedCredits: credits, params: { count: 1 } },
+    threadId: "thr_1",
+    genJobId: null,
+    cardState: "idle" as const,
+    pendingApproval: true,
+  });
+
+  it("hands over a per-item approve that really fires, for the items still within reach", async () => {
+    mocks.ottoApprove.mockResolvedValue({ status: "done" });
+    const onApproved = vi.fn();
+
+    // 8 credits in the wallet: the batch of two costs 10 (out of reach), one item costs 5.
+    const dom = await mount(
+      createElement(PackCard, {
+        packTitle: "Raya set",
+        cards: [priced("c1", 5), priced("c2", 5)],
+        balanceUsd: 0.8,
+        onApproved,
+      }),
+    );
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert, "the short-balance notice is not shown at all").toBeTruthy();
+    expect(alert!.textContent, "the notice stopped naming the second way out").toContain(
+      "approve them individually",
+    );
+
+    // The named option must exist as a real control — and spend through the SAME per-card
+    // server action the batch loop uses, behind the same confirm step.
+    await clickByText(dom, "Make this");
+    await clickByText(dom, "Confirm — make this");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mocks.ottoApprove, "the per-item approve fired nothing").toHaveBeenCalledWith({
+      threadId: "thr_1",
+      cardId: "c1",
+    });
+    expect(mocks.coworkGenerate, "a parked card must resume, never re-generate").not.toHaveBeenCalled();
+    expect(onApproved, "the parent never learned this item started").toHaveBeenCalled();
+  });
+
+  it("spends nothing until the merchant confirms", async () => {
+    mocks.ottoApprove.mockResolvedValue({ status: "done" });
+
+    const dom = await mount(
+      createElement(PackCard, {
+        packTitle: "Raya set",
+        cards: [priced("c1", 5), priced("c2", 5)],
+        balanceUsd: 0.8,
+        onApproved: vi.fn(),
+      }),
+    );
+
+    await clickByText(dom, "Make this");
+
+    expect(mocks.ottoApprove, "opening the confirm step already spent real credits").not.toHaveBeenCalled();
+  });
+
+  it("names no second way out when not even one item is within reach", async () => {
+    const dom = await mount(
+      createElement(PackCard, {
+        packTitle: "Raya set",
+        cards: [priced("c1", 5), priced("c2", 5)],
+        balanceUsd: 0,
+        onApproved: vi.fn(),
+      }),
+    );
+
+    const alert = dom.querySelector('[role="alert"]');
+    expect(alert!.textContent, "still has to say the balance is short").toContain("Not enough credits");
+    expect(
+      alert!.textContent,
+      "offers an option a merchant with nothing in the wallet cannot take",
+    ).not.toContain("individually");
+    expect(
+      Array.from(dom.querySelectorAll("button")).filter((b) =>
+        (b.textContent ?? "").trim().startsWith("Make this"),
+      ),
+      "renders a per-item approve nobody can afford",
+    ).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ResearchCard — the server refused for want of credits
 // ---------------------------------------------------------------------------
 describe("#707 ResearchCard", () => {

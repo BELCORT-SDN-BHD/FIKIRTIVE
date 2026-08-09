@@ -1,7 +1,7 @@
 "use server";
 import { requireOwner } from "./auth-guard";
 import { getOwnerSettings } from "./owner-settings-actions";
-import { listCreditPacks, type CreditPack } from "./billing-actions";
+import { listCreditPacks, type CreditPackShelf } from "./billing-actions";
 import { listChannels } from "./channels/registry";
 import { META_BACKED_CHANNEL_IDS, metaConnectionToStatus } from "./channels/meta-shared";
 import { getMetaConnection, type MetaConnectionResult } from "./meta-actions";
@@ -11,7 +11,7 @@ import type { ChannelState } from "@/components/otto/settings/sections";
 export type AccountViewData = {
   settings: OwnerSettings;
   channels: ChannelState[];
-  packs: CreditPack[];
+  shelf: CreditPackShelf;
   adsAutonomy: "ASK" | "AUTO";
   canPublish: boolean;
   // The one Meta connection read for this whole view — the Connections page's ad-account
@@ -50,14 +50,16 @@ export async function getAccountViewData(): Promise<AccountViewData | { error: s
         .catch(() => ({ targets: [] as string[], blocker: null }))),
     })),
   );
-  const [settingsRes, packs, metaConn, channels] = await Promise.all([
+  const [settingsRes, shelf, metaConn, channels] = await Promise.all([
     getOwnerSettings().catch(() => ({ error: "load-failed" } as const)),
-    listCreditPacks().catch(() => []),
+    // A throw is one more way of not seeing the shelf — it must not be flattened into
+    // "nothing is on sale" (#786), which is what `catch(() => [])` used to say.
+    listCreditPacks().catch(() => ({ unreadable: true } as const)),
     metaConnPromise,
     channelsPromise,
   ]);
   const settings = settingsRes && !("error" in settingsRes) ? settingsRes : DEFAULT_SETTINGS;
   const adsAutonomy: "ASK" | "AUTO" = !("error" in metaConn) && metaConn.adsAutonomy === "AUTO" ? "AUTO" : "ASK";
   const canPublish = !("error" in metaConn) && metaConn.canPublish === true;
-  return { settings, channels, packs, adsAutonomy, canPublish, meta: metaConn };
+  return { settings, channels, shelf, adsAutonomy, canPublish, meta: metaConn };
 }

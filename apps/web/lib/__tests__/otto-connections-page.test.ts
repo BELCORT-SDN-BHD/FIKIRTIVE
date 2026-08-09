@@ -90,7 +90,7 @@ describe("Connections page groups by merchant task (#518)", () => {
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: DISCONNECTED_CHANNELS,
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: false,
       meta: { connected: false },
@@ -135,7 +135,7 @@ describe("Connections page groups by merchant task (#518)", () => {
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: CONNECTED_CHANNELS,
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: true,
       meta: {
@@ -196,7 +196,7 @@ describe("Connections page explains a failed Meta connect (#511)", () => {
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: DISCONNECTED_CHANNELS,
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: false,
       meta: { connected: false },
@@ -358,7 +358,7 @@ describe("Connections page speaks plain English about ad-account status (#693)",
     mocks.getAccountViewData.mockResolvedValue({
       settings: {},
       channels: CONNECTED_CHANNELS,
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: true,
       meta: { connected: true, status: "active", accounts, canWrite: true, adsAutonomy: "ASK", adsWritesPaused: false },
@@ -451,7 +451,7 @@ describe("#741 r5 连着但用不了:连接页与排程页用同一套说法", (
           { id: "instagram", label: "Instagram", status: "connected" as const, targets: [], blocker, connectUrl: "/api/meta/authorize" },
           { id: "facebook", label: "Facebook", status: "connected" as const, targets: [], blocker, connectUrl: "/api/meta/authorize" },
         ],
-        packs: [],
+        shelf: { packs: [] },
         adsAutonomy: "ASK",
         canPublish: false,
         meta: { connected: true },
@@ -473,7 +473,7 @@ describe("#741 r5 连着但用不了:连接页与排程页用同一套说法", (
         channels: [
           { id: "instagram", label: "Instagram", status: "connected" as const, targets: [], blocker, connectUrl: "/api/meta/authorize" },
         ],
-        packs: [],
+        shelf: { packs: [] },
         adsAutonomy: "ASK",
         canPublish: false,
         meta: { connected: true },
@@ -494,7 +494,7 @@ describe("#741 r5 连着但用不了:连接页与排程页用同一套说法", (
       channels: [
         { id: "instagram", label: "Instagram", status: "needs_reconnect" as const, targets: [], connectUrl: "/api/meta/authorize" },
       ],
-      packs: [],
+      shelf: { packs: [] },
       adsAutonomy: "ASK",
       canPublish: false,
       meta: { connected: true },

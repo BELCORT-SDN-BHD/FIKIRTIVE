@@ -54,7 +54,16 @@ function entry(id: string) {
   };
 }
 
-function initialState(dispatchedEntryIds: string[]) {
+/** One scheduled post as the campaign page receives it — used only by the #822 block. */
+const SCHEDULED_POST = {
+  id: "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+  channel: "instagram",
+  caption: "Merdeka gift boxes are here",
+  status: "NEEDS_ATTENTION",
+  scheduledAt: "2026-08-25T02:00:00.000Z",
+};
+
+function initialState(dispatchedEntryIds: string[], scheduledPosts: unknown[] = []) {
   return {
     ok: true as const,
     campaign: {
@@ -73,7 +82,7 @@ function initialState(dispatchedEntryIds: string[]) {
       createdAt: "2026-08-01T00:00:00.000Z",
       updatedAt: "2026-08-01T00:00:00.000Z",
       dispatchedEntryIds,
-      grouped: { projects: [], scheduledPosts: [], generations: [], broadcasts: [] },
+      grouped: { projects: [], scheduledPosts, generations: [], broadcasts: [] },
       available: { projects: [], scheduledPosts: [], generations: [] },
       trendSnapshots: [],
     },
@@ -99,9 +108,13 @@ afterEach(() => {
   container = null;
 });
 
-function render(dispatchedEntryIds: string[] = []) {
+function render(dispatchedEntryIds: string[] = [], scheduledPosts: unknown[] = []) {
   act(() => {
-    root!.render(createElement(CampaignDetailPage, { initialState: initialState(dispatchedEntryIds) } as never));
+    root!.render(
+      createElement(CampaignDetailPage, {
+        initialState: initialState(dispatchedEntryIds, scheduledPosts),
+      } as never),
+    );
   });
 }
 
@@ -154,6 +167,20 @@ describe("#744 P1-1 an already-generated entry offers no way out of the plan", (
     expect(buttonsLabelled("Undo approval").every((node) => node.disabled)).toBe(false);
     expect(buttonsLabelled("Remove").every((node) => node.disabled)).toBe(false);
     expect(document.body.textContent).not.toContain("Already generated, so it stays in this plan");
+  });
+});
+
+describe("#822 the scheduled-post list speaks the merchant's words, not the columns", () => {
+  it("names the network and the state instead of printing the stored tokens", () => {
+    render([], [SCHEDULED_POST]);
+
+    const text = document.body.textContent ?? "";
+    expect(text).toContain("Instagram: Merdeka gift boxes are here");
+    expect(text).toContain("Needs attention");
+    // The two shapes the page used to print: the raw platform column, and the status
+    // lowercased — which turned NEEDS_ATTENTION into `needs_attention` on screen.
+    expect(text).not.toContain("instagram:");
+    expect(text).not.toContain("needs_attention");
   });
 });
 

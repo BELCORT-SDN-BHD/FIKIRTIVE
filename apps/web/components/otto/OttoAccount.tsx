@@ -27,7 +27,7 @@ export function OttoAccount({ account, previewData }: { account: AccountInfo | n
     account,
     settings: data.settings,
     channels: data.channels,
-    packs: data.packs,
+    shelf: data.shelf,
     adsAutonomy: data.adsAutonomy,
     canPublish: data.canPublish,
     onDeleteAccountRequest: () => setDeleteAccountOpen(true),

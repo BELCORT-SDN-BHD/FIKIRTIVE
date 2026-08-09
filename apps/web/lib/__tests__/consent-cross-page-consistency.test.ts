@@ -359,7 +359,12 @@ describe("#752 the fenced customer reads the same on all three pages", () => {
     const profile = await contactProfileMarkup(PRIYA);
     // Both on one screen: the customer's own verified grant, and the fence note.
     expect(profile).toContain("Grant recorded");
-    expect(profile).toContain("review_request");
+    // #728 — the row still has to name the purpose (that is what stops the fence note from
+    // contradicting the card above it), but it names it in the merchant's words now, from the
+    // one CRM label authority. The stored token is asserted on the read above; it must not
+    // reach the page.
+    expect(profile).toContain("Review request");
+    expect(profile).not.toContain("review_request");
     expect(profile).toContain(">Customer<");
     expect(profile).toContain(">Verified<");
     expect(profile).toContain("Opted out before consent history");

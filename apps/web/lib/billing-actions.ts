@@ -5,16 +5,32 @@ import { isImpersonating } from "@/lib/better-auth/compat";
 
 export type CreditPack = { priceId: string; credits: number; amountCents: number; currency: string; label: string };
 
+/**
+ * 货架的两种状态 —— 「真没货」和「拿不到货架」不是同一件事(#786)。
+ *
+ * 过去两种都返回 `[]`,于是一次瞬时的价格目录报错被两个账务页当成空货架,按 #687 的口径
+ * 挂上人工出口 —— 正好违反 #771 自己立的围栏:**可重试的错误不挂人工出口**。
+ *
+ *   `{ packs }`      我们看过货架了。空数组 = 真的没有可售的包。Stripe 没配也算这一种:
+ *                    那不是「读失败」,是确实没有东西可卖,而且商家怎么重试都变不出来 ——
+ *                    该给的正是人工出口(#687 已把这一支判进空货架)。
+ *   `{ unreadable }` 我们没看到货架:目录调用抛错,或者守卫没让我们看。产品不知道货架是空
+ *                    是满,所以既不许说「没有」,也不许因此把商家引去写邮件 —— 这是一个
+ *                    重试就可能好的状态,出路是重试,不是人。
+ */
+export type CreditPackShelf = { packs: CreditPack[] } | { unreadable: true };
+
 /** Active one-time credit packs = active Stripe Prices carrying metadata.credits.
  *  Packs live in Stripe (test/live dashboard) — no redeploy to change them. */
-export async function listCreditPacks(): Promise<CreditPack[]> {
+export async function listCreditPacks(): Promise<CreditPackShelf> {
   const gate = await requireOwner();
-  if ("error" in gate) return [];
+  // Denied at the door: we never got to look at the shelf, so we may not report on it.
+  if ("error" in gate) return { unreadable: true };
   if (!process.env.STRIPE_SECRET_KEY) {
     if (process.env.NODE_ENV === "production") {
       console.warn("[billing] listCreditPacks unavailable: STRIPE_SECRET_KEY is not set.");
     }
-    return [];
+    return { packs: [] };
   }
   try {
     // limit:100 (Stripe max per page) — the default of 10 silently truncates once the
@@ -22,7 +38,7 @@ export async function listCreditPacks(): Promise<CreditPack[]> {
     // real packs from the money-in list. The metadata.credits filter below still scopes
     // the result to credit packs.
     const res = await stripe.prices.list({ active: true, expand: ["data.product"], limit: 100 });
-    return res.data
+    const packs = res.data
       .flatMap((p) => {
         const credits = Number(p.metadata?.credits);
         if (!p.active || !Number.isInteger(credits) || credits <= 0 || typeof p.unit_amount !== "number") return [];
@@ -35,9 +51,12 @@ export async function listCreditPacks(): Promise<CreditPack[]> {
         }];
       })
       .sort((a, b) => a.amountCents - b.amountCents);
+    return { packs };
   } catch (e) {
     console.warn("[billing] listCreditPacks failed (Stripe unconfigured or API error):", e);
-    return [];
+    // We asked and did not get an answer. That is not the same as "nothing is on sale",
+    // and it is not a reason to send the merchant to a person (#786).
+    return { unreadable: true };
   }
 }
 

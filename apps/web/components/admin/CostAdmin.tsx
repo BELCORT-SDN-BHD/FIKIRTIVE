@@ -52,7 +52,7 @@ export function CostAdmin({ days, jobs, totalUsd, jobCount, sinceDays }: { days:
           <div key={`${j.source}:${j.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
             <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 90 }}>{j.label}</span>
             <span style={{ font: "var(--text-mono-meta)", color: "var(--muted-foreground)", minWidth: 110 }}>{j.model}</span>
-            <span style={{ font: "var(--text-caption)", color: j.status === "FAILED" ? "#e5484d" : "var(--muted-foreground)", minWidth: 80 }}>{j.status}</span>
+            <span style={{ font: "var(--text-caption)", color: j.status === "FAILED" ? "var(--destructive)" : "var(--muted-foreground)", minWidth: 80 }}>{j.status}</span>
             <span style={{ font: "var(--text-body)", color: "var(--foreground)", minWidth: 70 }}>{usd(j.spentUsd)}</span>
             <span style={{ font: "var(--text-caption)", color: "color-mix(in oklab, var(--muted-foreground) 55%, transparent)", marginLeft: "auto" }}>{j.finishedAt.slice(0, 16).replace("T", " ")}</span>
           </div>

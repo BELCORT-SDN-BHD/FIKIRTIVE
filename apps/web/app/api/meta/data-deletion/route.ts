@@ -43,7 +43,8 @@ async function handleDataDeletion(req: NextRequest | Request): Promise<Response>
   // 删除范围(founder 可复核):只删 MetaConnection 行 = 我们持有的 Meta 侧凭据
   // (加密 token + 连接身份)。用户自己在 FIKIRTIVE 里的工作产物(排期帖、campaign、
   // 生成素材)是他们的资产,不随一次"Meta 数据删除"销毁 —— 删除整个账户走
-  // privacy 页的 tao@belcort.com 流程。若 founder 认为合规要求更宽,在此扩展。
+  // privacy 页给出的人工删号出口(地址只有 lib/exits.ts 一处,#786/#825)。
+  // 若 founder 认为合规要求更宽,在此扩展。
   // metaUserId 是 Meta 侧的 app-scoped user id;一个 Meta 用户可能连过多个 org。
   const matches = await prisma.metaConnection.findMany({
     where: { metaUserId: parsed.userId },

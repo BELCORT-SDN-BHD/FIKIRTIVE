@@ -643,7 +643,10 @@ describe("buildOttoContext", () => {
       matchedCount: 4,
       contactableCount: 3,
       knownOptOutCount: 1,
-      contacts: [],
+      contacts: [{ id: "c1" }, { id: "c2" }, { id: "c3" }],
+      // #819 — the action states the cut; the port's job is to carry it, not to re-derive it.
+      returned: 3,
+      hasMore: true,
       unavailableFacts: { lastOrderAt: true, tags: true },
     });
     mockBuildCrmSegment.mockResolvedValue({
@@ -686,6 +689,9 @@ describe("buildOttoContext", () => {
       matchedCount: 4,
       contactableCount: 3,
       knownOptOutCount: 1,
+      // #819 — a sample of 3 out of a match of 4 arrives saying it is a sample.
+      returned: 3,
+      hasMore: true,
     });
     expect(mockPreviewCrmSegment).toHaveBeenCalledWith(rules);
 
