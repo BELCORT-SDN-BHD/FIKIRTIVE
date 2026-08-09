@@ -130,10 +130,6 @@ function evictOldestWhenFull(): void {
   if (oldest !== undefined) buckets.delete(oldest);
 }
 
-/** The sink's index in a bucket sized for `max` grants. Written by every refusal, read by
- *  nothing — see the Bucket comment. */
-const sinkSlot = (max: number): number => max;
-
 /**
  * Constant cost, and the SAME constant whether the bucket is empty or full: one Map read, a
  * fixed `max`-slot scan, one write, one delete + one set (the LRU touch), and one eviction step.
@@ -149,8 +145,9 @@ function take(key: string, max: number, now: number): boolean {
   const room = live < max;
 
   // One array write and one field write, on both verdicts. A grant advances the ring; a refusal
-  // lands in the sink and leaves it alone, so it cannot push the window forward (#757).
-  bucket.stamps[room ? bucket.next : sinkSlot(max)] = now;
+  // lands in the sink — the slot past the ring, which nothing ever scans — and leaves the ring
+  // alone, so it cannot push the window forward (#757).
+  bucket.stamps[room ? bucket.next : max] = now;
   bucket.next = room ? (bucket.next + 1) % max : bucket.next;
 
   buckets.delete(key);
