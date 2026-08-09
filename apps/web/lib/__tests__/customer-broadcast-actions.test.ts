@@ -239,7 +239,6 @@ async function seed(): Promise<void> {
       { id: USER_ADMIN, email: "c5-m2-admin@example.test" },
       { id: USER_MEMBER, email: "c5-m2-member@example.test" },
       { id: USER_B, email: "c5-m2-b@example.test" },
-      { id: USER_CREATOR, email: "c5-m2-creator@example.test" },
     ],
   });
   await prisma.membership.createMany({
@@ -248,7 +247,6 @@ async function seed(): Promise<void> {
       { id: ADMIN, userId: USER_ADMIN, orgId: ORG_A, role: "admin" },
       { id: MEMBER, userId: USER_MEMBER, orgId: ORG_A, role: "member" },
       { id: MEMBER_B, userId: USER_B, orgId: ORG_B, role: "owner" },
-      { id: CREATOR, userId: USER_CREATOR, orgId: ORG_A, role: "creator" },
     ],
   });
   await prisma.membershipRole.createMany({
@@ -257,7 +255,6 @@ async function seed(): Promise<void> {
       { membershipId: ADMIN, role: "admin" },
       { membershipId: MEMBER, role: "member" },
       { membershipId: MEMBER_B, role: "owner" },
-      { membershipId: CREATOR, role: "creator" },
     ],
   });
   await prisma.contact.createMany({
@@ -1726,6 +1723,18 @@ describe("C5-M2 listChannelScopes — tenant fence and capability gate (#727 判
   const ownerB = { ownerId: ORG_B, membershipId: MEMBER_B, impersonating: false };
   const creator = { ownerId: ORG_A, membershipId: CREATOR, impersonating: false };
 
+  /** A role WITHOUT `broadcast.read`, created inside this suite rather than in the shared seed:
+   *  the member-directory test (#27) asserts the exact membership set of ORG_A, and a fixture
+   *  this suite needs must not silently change what that one is testing. `beforeEach` re-seeds,
+   *  and `cleanup` deletes memberships by orgId, so this stays local. */
+  async function seedCreatorMembership(): Promise<void> {
+    await prisma.user.create({ data: { id: USER_CREATOR, email: "c5-m2-creator@example.test" } });
+    await prisma.membership.create({
+      data: { id: CREATOR, userId: USER_CREATOR, orgId: ORG_A, role: "creator" },
+    });
+    await prisma.membershipRole.create({ data: { membershipId: CREATOR, role: "creator" } });
+  }
+
   it("returns only the calling tenant's channel accounts, never another tenant's", async () => {
     const a = await broadcast.listChannelScopes(owner);
     expect(a.map((scope) => scope.id).sort()).toEqual([SCOPE_A, SCOPE_A_OTHER].sort());
@@ -1740,6 +1749,7 @@ describe("C5-M2 listChannelScopes — tenant fence and capability gate (#727 判
   });
 
   it("requires broadcast.read — a role without it is denied, not given an empty list", async () => {
+    await seedCreatorMembership();
     // A silent empty list would read on screen as "no channel connected", which is the exact
     // untruth #727 exists to remove. The gate must refuse instead.
     await expectCode(broadcast.listChannelScopes(creator), "ACTION_DENIED");
