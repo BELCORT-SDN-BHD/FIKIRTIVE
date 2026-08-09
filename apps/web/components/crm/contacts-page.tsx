@@ -306,7 +306,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Import CSV</CardTitle><CardDescription>Columns: name, lifecycle_stage, consent, phone or whatsapp, email. Consent accepts opt_in, opt_out, unknown, or blank. Imported numbers are saved as not verified and are not used for broadcasts; a number without a country code is read as Malaysia (+60).</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Import CSV</CardTitle><CardDescription>Columns: name, lifecycle_stage, consent, phone or whatsapp, email. Consent accepts opt_in, opt_out, unknown, or blank. Imported phone numbers are saved as not verified and are not used for broadcasts; a number without a country code is read as Malaysia (+60). Email is checked for duplicates but is not stored yet.</CardDescription></CardHeader>
             <CardContent>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Input type="file" accept=".csv,text/csv" onChange={(event) => void chooseCsv(event.currentTarget.files?.[0])} aria-label="Choose contacts CSV" />
@@ -317,7 +317,7 @@ function ContactsWorkspace({ initialState }: { initialState: ListSuccess }) {
               {importResult ? (
                 <div className="mt-3 rounded-xl border border-border bg-muted/45 p-3 text-sm">
                   <p className="font-semibold">{importResult.importedCount} imported · {importResult.failedCount} failed</p>
-                  <p className="mt-1 text-muted-foreground">Phone and email values were saved as not verified.{importResult.rows.some((row) => row.status === "imported_with_warning") ? " Review the warnings below." : ""}</p>
+                  <p className="mt-1 text-muted-foreground">Phone numbers were saved as not verified.{importResult.rows.some((row) => row.status === "imported_with_warning") ? " Review the warnings below." : ""}</p>
                 </div>
               ) : null}
             </CardContent>

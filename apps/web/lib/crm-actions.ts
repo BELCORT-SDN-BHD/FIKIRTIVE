@@ -165,11 +165,16 @@ async function createContactRecord(input: {
           lastSeenAt: now,
         },
       });
-      // #803 — an imported phone or email is the merchant's own record, so it is stored as
-      // exactly that: merchant entered, unverified, and not audience material. A number this
-      // tenant already holds elsewhere is left where it is; an import may not silently move a
-      // customer's identity from one contact to another.
-      for (const identity of requested) {
+      // #803 — an imported PHONE NUMBER is the merchant's own record, so it is stored as exactly
+      // that: merchant entered, unverified, and not audience material. A number this tenant
+      // already holds elsewhere is left where it is; an import may not silently move a customer's
+      // identity from one contact to another.
+      //
+      // Email stays a duplicate-suggestion signal, as before. This ticket gives phone numbers an
+      // entry, a correction and a removal surface; email has none of the three, and storing a
+      // value the merchant cannot then correct is the one-way container this product keeps having
+      // to undo (#710/#712). Email becomes storable when it gets those surfaces, not before.
+      for (const identity of requested.filter((candidate) => candidate.channel === "whatsapp")) {
         const clash = await tx.contactIdentity.findFirst({
           where: {
             ownerId: input.ownerId,
@@ -850,11 +855,14 @@ export async function importContacts(raw: unknown): Promise<ImportContactsResult
     }
 
     // A stored number is not a warning — the import card says once, for the whole file, that
-    // everything imported is merchant entered and unverified. Only what did NOT happen is a
+    // every number imported is merchant entered and unverified. Only what did NOT happen is a
     // per-row surprise worth naming.
     const warnings = created.skippedIdentities.map(
       (skipped) => `${skipped} is already saved on another contact, so it was not added here.`,
     );
+    if (row.identities.some((identity) => identity.channel === "email")) {
+      warnings.push("The email address was checked for duplicates but is not stored yet.");
+    }
     let consentError: string | undefined;
     if (row.consentAction) {
       try {

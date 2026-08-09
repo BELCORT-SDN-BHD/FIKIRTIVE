@@ -421,24 +421,25 @@ describe("importContacts", () => {
       evidenceRef: "csv:import-2:2",
       idempotencyKey: "crm-import:import-2:2",
     });
-    // #803 — the numbers are now KEPT, at the grade that says who put them there.
-    expect(mockIdentityCreate).toHaveBeenCalledTimes(2);
-    for (const call of mockIdentityCreate.mock.calls) {
-      expect(call[0].data).toMatchObject({
-        ownerId: OWNER,
-        contactId: "crm-1",
-        verificationStatus: "merchant_unverified",
-        verifiedAt: null,
-        verifiedSourceKind: null,
-      });
-    }
+    // #803 — the NUMBER is now kept, at the grade that says who put it there. The email is not:
+    // it still has no entry, correction, or removal surface.
+    expect(mockIdentityCreate).toHaveBeenCalledTimes(1);
+    expect(mockIdentityCreate.mock.calls[0][0].data).toMatchObject({
+      ownerId: OWNER,
+      contactId: "crm-1",
+      channel: "whatsapp",
+      externalId: "+60123456789",
+      verificationStatus: "merchant_unverified",
+      verifiedAt: null,
+      verifiedSourceKind: null,
+    });
     expect(result).toMatchObject({
       ok: true,
       rows: [{
-        status: "imported",
+        status: "imported_with_warning",
         consentAssertion: "grant",
         possibleDuplicates: [{ contactId: "possible-1" }],
-        warnings: [],
+        warnings: ["The email address was checked for duplicates but is not stored yet."],
       }],
     });
   });
