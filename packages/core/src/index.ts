@@ -155,6 +155,10 @@ export * from "./canvas-settlement-plan.js";
 // The two words for "this job stopped and delivered nothing" — shared by every non-canvas rule
 // that used to say "failed" and mean both (#602).
 export * from "./gen-job-state.js";
+// 引擎「你发来的东西我不收」这一类失败:一句人话 + 一个只认实测机器形状的分类器。放在 core,
+// 是因为读者有三个 —— 适配器(判断)、worker(落盘)、web 与 Otto(取回给商家看),文案抄成
+// 三份就一定会有一份先烂掉(#765)。
+export * from "./gen-failure.js";
 // What a canvas CARD may say, and which of those words mean it is still being made. Pure, and in
 // core so the web app and the Otto skill read ONE vocabulary rather than two copies (#602 r2).
 export * from "./canvas-card-status.js";
