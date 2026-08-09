@@ -295,6 +295,8 @@ function AssistantRow({ active }: { active: boolean }) {
         "flex h-11 items-center gap-3 rounded-[10px] border px-3 text-sm outline-none",
         "transition-[color,background-color,border-color,transform] duration-[160ms] ease-out",
         "focus-visible:ring-[3px] focus-visible:ring-ring/40 active:scale-[0.97]",
+        // Reduced motion keeps the colour change (it aids comprehension) and drops the movement.
+        "motion-reduce:transition-colors motion-reduce:active:scale-100",
         "lg:justify-center lg:px-0 xl:justify-start xl:px-3",
         active
           ? "border-transparent bg-secondary font-semibold text-foreground"
