@@ -50,12 +50,17 @@ export default async function LoginPage({
             </svg>
             Meet Otto, your marketing operator
           </span>
+          {/* #805 — outcome first. The old headline sold what you avoid becoming; the ruling
+              sells what comes back finished. The four outcomes below are the four things Otto
+              actually has skills for (plan-campaign, build-segment, read-spending +
+              meta-ad-performance, propose/generate + manage-media) — nothing aspirational. */}
           <h1 className="text-[42px] font-extrabold leading-[1.08] tracking-[-0.025em] text-[#141412]">
-            Run real campaigns without becoming a <span className="text-brand">marketer</span>.
+            Otto gets the <span className="text-brand">work done</span> — you just approve.
           </h1>
           <p className="mt-[18px] max-w-[430px] text-[16px] leading-[1.55] text-[#5A5A56]">
-            Tell Otto what you&apos;re launching. Otto researches your brand, writes the copy, designs
-            the images, films the video, and gets it ready to post. You just approve.
+            Build the campaign, adjust the customer segment it goes to, see where the money went,
+            swap in fresh creative. Tell Otto in your own words and it runs the job end to end,
+            bringing every paid step back for you to approve first.
           </p>
           <ul className="mt-7 flex flex-col gap-[11px]">
             {[
@@ -78,8 +83,11 @@ export default async function LoginPage({
           </ul>
         </div>
 
+        {/* #805 honesty boundary — "Trusted by small brands" was social proof we cannot show:
+            there is no public customer to point at. Say who it is BUILT for, which is true
+            the day it ships. */}
         <p className="relative z-10 text-[13.5px] text-[#86867F]">
-          Trusted by small brands shipping their own marketing.
+          Built for small brands that run their own marketing.
         </p>
       </section>
 

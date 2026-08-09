@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { redactProviderNames } from "@fikirtive/core/provider-secrecy";
 
 const webRoot = path.resolve(__dirname, "../..");
 /** Page source with comments stripped — a comment recording what a line USED to say is
@@ -96,4 +97,74 @@ describe("#810 P3-2 注册页承诺不许自己长出数字或第四件东西", 
   it("承诺的正好是被算过价的那三件:一场对话、一张图、一条短视频", () => {
     expect(promisedItems()).toEqual(["a conversation with Otto", "an image", "a short video"]);
   });
+});
+
+// ── #805 主话术:「它帮你把活干完了」 ─────────────────────────────────────────
+//
+// Founder 裁决(2026-08-08 弹窗 产品⑤):主话术改为「它帮你把活干完了 —— 建活动、
+// 调分群、看钱、换素材」;「像真人」降为体验描述,不作定价论据。背景是 Meta 已在
+// 2026-06-03 把「WhatsApp 里会聊天的 AI」免费化 —— 会聊天不再是卖点,活干完了才是。
+//
+// 商家看得到的这三面(登录页 = 未登录唯一读得到的落地面、注册页、Otto 进门自我介绍)
+// 必须说同一句话。仓内没有独立官网,登录页左半屏就是落地文案本体。
+describe("#805 对外主话术:先说把活干完", () => {
+  /** 商家看得到、且承载主话术的三面。Otto 提示词那一面由
+   *  packages/otto/src/instructions.test.ts 钉(它在另一个包,读不到这里)。 */
+  const SURFACES: ReadonlyArray<[string, string]> = [
+    ["登录页", "app/login/page.tsx"],
+    ["注册页", "app/signup/page.tsx"],
+    ["Otto 进门", "components/otto/OttoFrontDoor.tsx"],
+  ];
+
+  describe("登录页", () => {
+    const login = readCopy("app/login/page.tsx");
+
+    it("主标题说的是活干完了,不是「不用变成 marketer」", () => {
+      expect(login).toMatch(/Otto gets the/);
+      expect(login).toMatch(/work done/);
+      expect(login).not.toMatch(/without becoming a/i);
+    });
+
+    it("四件事一件不少:建活动、调分群、看钱、换素材", () => {
+      for (const outcome of [/campaign/i, /segment/i, /where the money went/i, /creative/i]) {
+        expect(login).toMatch(outcome);
+      }
+    });
+
+    it("不拿证明不了的社会证明当卖点(没有可指名的公开商家)", () => {
+      expect(login).not.toMatch(/\btrusted by\b/i);
+    });
+  });
+
+  it("注册页把 Otto 派去干活,不只是介绍认识", () => {
+    const signup = readCopy("app/signup/page.tsx");
+    expect(signup).toMatch(/put Otto to work/);
+    expect(signup).not.toMatch(/meet Otto/i);
+  });
+
+  it("Otto 进门那句说的是做完的活,不是「我陪你走一遍」", () => {
+    const frontDoor = readCopy("components/otto/OttoFrontDoor.tsx");
+    expect(frontDoor).toMatch(/I&apos;ll do the work/);
+  });
+
+  // 裁决的第二半:「像真人」可以是体验描述,但不许出现在商家可见表面上当卖点。
+  // 这里禁的是**把「像真人」写成产品价值**的那一族说法,不禁「warm」「plain language」
+  // 这类体验用词 —— 那些本来就允许。
+  const HUMAN_AS_VALUE =
+    /\blike a (?:real )?(?:person|human)\b|\bhuman-?like\b|\blike talking to a (?:real )?(?:person|human)\b|\bjust like a human\b/i;
+
+  for (const [name, rel] of SURFACES) {
+    it(`${name}不拿「像真人」当卖点`, () => {
+      expect(readCopy(rel)).not.toMatch(HUMAN_AS_VALUE);
+    });
+  }
+
+  // 白标铁律:供应商/模型名不得出现在任何商家可见表面。不另抄一份名单 —— 直接用
+  // 洗名权威本身:洗过之后一个字节都没变,才叫没提过。
+  for (const [name, rel] of SURFACES) {
+    it(`${name}不出现供应商或模型名`, () => {
+      const copy = readCopy(rel);
+      expect(redactProviderNames(copy)).toBe(copy);
+    });
+  }
 });

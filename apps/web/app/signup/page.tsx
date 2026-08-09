@@ -40,8 +40,11 @@ export default async function SignupPage() {
           </>
         ) : (
           <>
+            {/* #805 — "meet Otto" sold an introduction; the ruling sells the work getting done.
+                The priced promise after the dash is unchanged on purpose: #810 pins it to the
+                three things the live price list actually quotes. */}
             <p className="mb-6 text-[14.5px] leading-[1.55] text-muted-foreground">
-              Set up your shop and meet Otto. Confirm your email and you start with{" "}
+              Set up your shop and put Otto to work. Confirm your email and you start with{" "}
               {starterCredits} free credits — enough for a full run: a conversation with Otto, an
               image, and a short video.
             </p>
