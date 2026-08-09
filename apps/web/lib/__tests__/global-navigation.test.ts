@@ -170,6 +170,32 @@ describe("MerchantShellContent", () => {
       expect(markup).toContain('aria-label="Open navigation"');
       expect(markup).toMatch(/aria-label="Open navigation"[^>]*class="fixed left-3 top-3 [^"]*size-10/);
     });
+
+    // #747 — reserving nothing was only half of Otto's exemption, and the missing half is
+    // what caused the defect: the trigger is `fixed`, so "reserve no space for it" left it
+    // sitting ON TOP of Otto's own hamburger. A surface that owns the mobile top bar now
+    // gets no trigger either; its own menu carries the entry (see
+    // otto-mobile-nav-handoff.test.ts for the handoff itself).
+    it("draws no floating trigger on Otto, whose own top bar carries the entry", () => {
+      expect(renderShell("/otto")).not.toContain('aria-label="Open navigation"');
+      expect(renderShell("/otto?view=connections")).not.toContain('aria-label="Open navigation"');
+    });
+
+    it.each([
+      "/otto",
+      "/billing",
+      "/profile",
+      "/campaign",
+      "/crm/inbox",
+    ])("decides the reservation and the trigger from one predicate on %s", (pathname) => {
+      const markup = renderShell(pathname);
+      const reserved = (markup.match(contentWrapper)?.[1] ?? "").includes("pt-14");
+      const triggered = markup.includes('aria-label="Open navigation"');
+
+      // Either the shell owns the mobile entry (space AND button) or it owns neither.
+      // One without the other is exactly the shape of #747.
+      expect(reserved).toBe(triggered);
+    });
   });
 
   it("keeps the impersonation banner above the merchant sidebar", () => {

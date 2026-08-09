@@ -1,9 +1,10 @@
 "use client";
 import React, { useState } from "react";
-import { MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
+import { ArrowUpRight, MessageSquarePlus, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
 import type { OttoViewKey, ProjectMeta } from "./OttoApp";
 import type { ChatThreadDTO } from "@/lib/types";
 import type { HistoryThumb } from "@/lib/data";
+import { useGlobalNavigationOpen, useOpenGlobalNavigation } from "@/components/global-navigation";
 import { buildOttoNavEntries, type OttoNavEntry } from "./otto-nav-model";
 import { getOttoNavCollapseAction, getOttoNavCollapseLabel } from "./otto-nav-collapse";
 
@@ -176,9 +177,19 @@ export function OttoNav({
   collapsed = false,
   onToggleCollapse,
 }: OttoNavProps) {
+  // Null / false outside the merchant shell (e.g. /skin-preview) — no global drawer there.
+  const openGlobalNavigation = useOpenGlobalNavigation();
+  const globalNavigationOpen = useGlobalNavigationOpen();
+
   // #513 A组返工 item 1 — the rail is a slide-over at every width now (never a
   // second persistent column beside the global nav); open = either trigger.
-  const isOpen = drawerOpen || !collapsed;
+  //
+  // …except while the global drawer is up (#747 r2). This rail is z-200 over that
+  // drawer's z-40 and starts at the same left edge, so the two can never share the
+  // screen. It STEPS ASIDE rather than being collapsed: `collapsed` is the merchant's
+  // own preference for this workspace, and borrowing the screen for a moment must not
+  // rewrite it — close the drawer and the rail comes back exactly as it was left.
+  const isOpen = (drawerOpen || !collapsed) && !globalNavigationOpen;
   const toolsActive = TOOL_ITEMS.some((item) => item.key === view);
 
   // Keep history scannable: current project open, older projects compact until expanded.
@@ -245,6 +256,21 @@ export function OttoNav({
       return;
     }
     onToggleCollapse?.();
+  }
+
+  /** Hand the screen over to the global drawer (#747). One menu at a time, never two
+   *  stacked: `isOpen` above already withdraws this rail for as long as the drawer is up.
+   *
+   *  Only the mobile drawer flag is cleared here, and only because it is transient by
+   *  nature (the phone top bar sets it per tap). `collapsed` is deliberately left alone:
+   *  flipping it would be a lasting change to the merchant's own layout, and — the r2
+   *  finding — OttoApp mounts its floating "Show sidebar" button the instant that flag
+   *  goes true, landing a 34×34 z-50 control on top of the z-40 drawer we just opened.
+   *  Trading one stacked hamburger for another is not a fix. */
+  function handleOpenGlobalNavigation() {
+    setOpenMenu(null);
+    onDrawerClose?.();
+    openGlobalNavigation?.();
   }
 
   function openProjectEntry(entry: Extract<OttoNavEntry, { kind: "project" }>) {
@@ -609,6 +635,27 @@ export function OttoNav({
       )}
 
       <div style={{ flex: hasSidebar ? 0 : 1 }} />
+
+      {/* Go to — the ONE global-navigation entry point below 1024px (#747). Otto draws
+          its own mobile top bar, so the shell withholds its floating hamburger here
+          rather than parking it on top of Otto's; this row takes over that job from
+          inside Otto's own menu. Hidden from 1024px up, where the global rail is
+          permanently on screen and this would only repeat it. It opens the real global
+          drawer instead of copying its links, so credits, Profile, and Sign out stay
+          reachable and stay defined in exactly one place. */}
+      {openGlobalNavigation && (
+        <div className="mt-2 border-t border-border px-3 pt-3 lg:hidden">
+          <button
+            type="button"
+            onClick={handleOpenGlobalNavigation}
+            title="Go to Campaign, CRM, billing, and account"
+            className="flex items-center gap-[9px] w-full border-0 bg-transparent text-muted-foreground font-normal text-[0.8125rem] px-[9px] py-[7px] rounded-[9px] cursor-pointer text-left transition-colors duration-150 hover:bg-secondary/60 hover:text-foreground"
+          >
+            <ArrowUpRight size={18} className="shrink-0" aria-hidden />
+            <span className="flex-1">Go to…</span>
+          </button>
+        </div>
+      )}
 
       {/* Credits balance and identity (avatar, name, email, sign out) now live once,
           in the persistent global nav — this rail no longer repeats either
