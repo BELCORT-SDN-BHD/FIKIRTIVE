@@ -4,6 +4,17 @@ import path from "node:path";
 // apps/web tests are integration-flavored: the resolver + isolation tests hit the
 // LOCAL Postgres through the real Prisma client. Single-thread so the 2-org isolation
 // test's seed/teardown can't interleave with another file's writes.
+//
+// #800 tried the obvious speed-up — split into `unit` (the ~216 files that mock Prisma,
+// run in parallel) and `integration` (the ~58 that don't, still single-threaded) — and
+// MEASURED IT SLOWER, so don't re-attempt it without new evidence. On the CI runner
+// apps/web went 101.8s → 213.8s; every component inflated, not just contention:
+// collect 25.5s → 85.2s, prepare 0.5s → 34.7s, environment 0.8s → 24.3s, tests 71.6s → 104.2s.
+// The cost here is transforming this app's module graph, and one worker running every file
+// transforms each module ONCE while N workers transform the shared graph up to N times.
+// Same result on an 8-core laptop: 33s single-threaded, 35s at 8 threads, 40s at 4.
+// The real lever is making the transform cheaper (deps.optimizer / fewer barrel imports),
+// not spreading the same transform across more workers.
 export default defineConfig({
   resolve: {
     alias: {
