@@ -49,10 +49,12 @@ import {
   axisStatusPresentation,
   channelAccountLabel,
   channelLabel,
+  contactSourceLabel,
   purposeLabel,
   templateStateLabel,
   UNRECOGNIZED_PURPOSE_LABEL,
 } from "@/lib/crm-labels";
+import { scheduledPostStatusLabel, socialPlatformLabel } from "@/lib/social-labels";
 
 function source(relativePath: string): string {
   return fs.readFileSync(path.resolve(__dirname, relativePath), "utf8");
@@ -333,6 +335,42 @@ describe("no CRM screen shows a raw stored token (#728)", () => {
     expect(markup).not.toContain("D5");
     // `revision` is the concurrency integer, not a version a merchant chose.
     expect(markup).not.toContain("revision");
+  });
+
+  // #822 — the three the #728 sweep left behind, and the second vocabulary family they needed.
+  it("says how a contact got here in words, not in the word the code picked", () => {
+    expect(contactSourceLabel("manual")).toBe("Added by you");
+    expect(contactSourceLabel("otto")).toBe("Added by Otto");
+    expect(contactSourceLabel("import")).toBe("Imported");
+    // Open set: whatever wrote an unknown value meant something by it, so it is humanized.
+    expect(contactSourceLabel("web_form")).toBe("Web form");
+    expect(source("../../components/crm/contacts-page.tsx")).not.toContain("{contact.source}");
+  });
+
+  it("gives the social publishing family its own single map, parallel to the messaging one", () => {
+    expect(socialPlatformLabel("instagram")).toBe("Instagram");
+    expect(socialPlatformLabel("facebook")).toBe("Facebook");
+    expect(scheduledPostStatusLabel("NEEDS_ATTENTION")).toBe("Needs attention");
+    expect(scheduledPostStatusLabel("PUBLISHED")).toBe("Published");
+    // An unmapped value is never shown with its underscores or in shouting case.
+    expect(scheduledPostStatusLabel("SOME_FUTURE_STATE")).toBe("Some future state");
+
+    // …and it is the ONLY definition: the two surfaces that used to keep private copies read it.
+    const approvalCard = source("../approval-card-view.ts");
+    expect(approvalCard).toContain('from "./social-labels"');
+    expect(approvalCard).not.toContain("CHANNEL_LABELS");
+    const scheduleView = source("../schedule-view.ts");
+    expect(scheduleView).toContain('from "./social-labels"');
+    expect(scheduleView).not.toContain('label: "Needs attention"');
+  });
+
+  it("drops the CAS revision and the raw policy keys from the business-hours panel", () => {
+    // Same call #728 already made for the broadcast detail page: `revision` is the concurrency
+    // integer, and a policy key is a machine handle — neither is something a merchant chose.
+    const panel = source("../../components/crm/workflows/workflow-recipes-panel.tsx");
+    expect(panel).not.toContain("revision {policy.revision}");
+    expect(panel).not.toContain("{policy.policyKey}");
+    expect(panel).not.toContain("supersedes ${detail.supersedesPolicyId}");
   });
 
   it("keeps the internal design number out of skip-reason copy too", () => {

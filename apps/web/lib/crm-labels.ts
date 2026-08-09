@@ -52,6 +52,27 @@ export function channelAccountLabel(scope: { channel: string; scopeKey: string }
   return `${channelLabel(scope.channel)} · ${scope.scopeKey}`;
 }
 
+// ── Contact source ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * How a contact got here. #822: the contacts list printed the column — `Active · manual` — and
+ * `manual` is the word the CODE picked for "the merchant typed this one in", not a word anyone
+ * would choose to read.
+ *
+ * The stored column is free text (120 chars) and only three writers exist today, so this is an
+ * OPEN set with three known members: an unrecognized value is humanized rather than replaced,
+ * because whatever wrote it meant something by it.
+ */
+const CONTACT_SOURCE_LABELS: Record<string, string> = {
+  manual: "Added by you",
+  otto: "Added by Otto",
+  import: "Imported",
+};
+
+export function contactSourceLabel(source: string): string {
+  return CONTACT_SOURCE_LABELS[source] ?? humanizeToken(source);
+}
+
 // ── Broadcast purpose ────────────────────────────────────────────────────────────────────────
 
 /**
