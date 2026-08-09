@@ -23,6 +23,8 @@
  * Pure presentation: no data access, no tenant logic, no authority over what is true.
  */
 
+import { isChannelVerifiedIdentity } from "@fikirtive/core";
+
 export type CrmBadgeVariant =
   | "default"
   | "brand"
@@ -88,7 +90,7 @@ export function contactSourceLabel(source: string): string {
 export function identityGradePresentation(
   verificationStatus: string,
 ): { label: string; variant: CrmBadgeVariant; note: string } {
-  if (verificationStatus === "channel_verified") {
+  if (isChannelVerifiedIdentity({ verificationStatus })) {
     return {
       label: "Channel verified",
       variant: "success",

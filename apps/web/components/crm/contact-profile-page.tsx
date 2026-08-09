@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { isChannelVerifiedIdentity } from "@fikirtive/core";
 import { useState, type FormEvent } from "react";
 import {
   AlertCircle,
@@ -301,7 +302,9 @@ function ContactProfileWorkspace({ initialContact }: { initialContact: CrmContac
                   <div className="rounded-xl border border-dashed border-border p-6 text-center"><IdCard className="mx-auto size-6 text-muted-foreground" /><p className="mt-3 text-sm font-semibold">No stored identities</p></div>
                 ) : contact.identities.map((identity) => {
                   const grade = identityGradePresentation(identity.verificationStatus);
-                  const editable = identity.verificationStatus !== "channel_verified";
+                  // One predicate, shared with the audience gate: what the page lets the merchant
+                  // edit and what the product will message are two faces of the same grade.
+                  const editable = !isChannelVerifiedIdentity(identity);
                   return (
                     <div key={identity.id} className="rounded-xl border border-border p-4">
                       <div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold">{channelLabel(identity.channel)}</p><Badge variant={grade.variant}>{grade.label}</Badge></div>
