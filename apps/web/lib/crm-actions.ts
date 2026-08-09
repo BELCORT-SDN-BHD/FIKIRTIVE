@@ -63,7 +63,6 @@ type ParsedImportRow = {
   name: string;
   lifecycleStage: CrmLifecycleStage;
   identities: NormalizedContactIdentity[];
-  identityFields: string[];
   consentAction: "grant" | "revoke" | null;
 };
 
@@ -781,9 +780,9 @@ function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
     }
 
     const identityInputs = [
-      { field: "whatsapp", channel: "whatsapp", value: valueAt(values, "whatsapp") },
-      { field: "phone", channel: "whatsapp", value: valueAt(values, "phone") },
-      { field: "email", channel: "email", value: valueAt(values, "email") },
+      { channel: "whatsapp", value: valueAt(values, "whatsapp") },
+      { channel: "whatsapp", value: valueAt(values, "phone") },
+      { channel: "email", value: valueAt(values, "email") },
     ].filter((identity) => identity.value.trim().length > 0);
     const identities: NormalizedContactIdentity[] = [];
     for (const identityInput of identityInputs) {
@@ -805,7 +804,6 @@ function parsedImportRows(csv: string): ParsedImportRow[] | { error: string } {
       name,
       lifecycleStage,
       identities,
-      identityFields: identityInputs.map((identity) => identity.field),
       consentAction,
     });
   }
