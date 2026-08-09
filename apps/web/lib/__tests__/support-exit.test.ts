@@ -21,7 +21,7 @@ import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { act } from "react";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@/lib/owner-settings";
@@ -218,5 +218,64 @@ describe("#686 the three exits all reach the same inbox", () => {
     const accountSource = readFileSync(path.join(WEB_ROOT, "components/otto/OttoAccount.tsx"), "utf8");
     expect(accountSource, "OttoAccount does not read the shared exit").toMatch(/supportMailto|SUPPORT_EMAIL/);
     expect(accountSource, "OttoAccount still keeps its own copy of the address").not.toContain(address!);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ⑤ #786 — the fence, not just the three exits #686 happened to touch
+//
+// #771 收编了 OttoAccount 一处,并按「只改当前目标所需」放过了法务页的 10 个字面量。
+// 一个只覆盖三处的规矩不是规矩:第 11 个字面量随时会长回来,而换地址那天没人找得齐。
+// 所以这里枚举**整个渲染树**:页面和组件不许自己手写地址,也不许自己手写 mailto。
+// ---------------------------------------------------------------------------
+describe("#786 no page or component writes the support address itself", () => {
+  /** Every .tsx the product renders. `.ts` is out of scope on purpose: this fence is about
+   *  what reaches a merchant's screen, and lib/exits.ts is the one place allowed to hold
+   *  the address. */
+  function renderedFiles(): string[] {
+    const found: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(path.join(WEB_ROOT, dir), { withFileTypes: true })) {
+        const rel = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === "__tests__" || entry.name === "node_modules") continue;
+          walk(rel);
+        } else if (entry.name.endsWith(".tsx")) {
+          found.push(rel);
+        }
+      }
+    };
+    walk("app");
+    walk("components");
+    return found;
+  }
+
+  const address = readFileSync(path.join(WEB_ROOT, "lib/exits.ts"), "utf8").match(
+    /SUPPORT_EMAIL\s*=\s*"([^"]+)"/,
+  )?.[1];
+
+  it("finds files to check (a fence pointed at nothing proves nothing)", () => {
+    expect(renderedFiles().length).toBeGreaterThan(50);
+    expect(address).toMatch(/^[^@\s]+@[^@\s]+$/);
+  });
+
+  it("nobody hand-writes the address", () => {
+    const offenders = renderedFiles().filter((rel) =>
+      readFileSync(path.join(WEB_ROOT, rel), "utf8").includes(address!),
+    );
+    expect(
+      offenders,
+      "these render the support address from their own copy — it belongs to lib/exits.ts alone",
+    ).toEqual([]);
+  });
+
+  it("nobody hand-writes a mailto href", () => {
+    const offenders = renderedFiles().filter((rel) =>
+      readFileSync(path.join(WEB_ROOT, rel), "utf8").includes("mailto:"),
+    );
+    expect(
+      offenders,
+      "these build a mailto by hand instead of asking supportMailto() for one",
+    ).toEqual([]);
   });
 });

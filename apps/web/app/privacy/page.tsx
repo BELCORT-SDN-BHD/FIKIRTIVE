@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SUPPORT_EMAIL, supportMailto } from "@/lib/exits";
 
 export const metadata = { title: "Privacy · Fikirtive" };
 
@@ -336,7 +337,7 @@ export default function PrivacyPage() {
           <h2 className="pt-4 text-lg font-semibold text-foreground">Access, correction and deletion</h2>
           <p>
             To request a copy of your data, a correction, or deletion, contact us at{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a> from the
+            <a href={supportMailto("Data request")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a> from the
             address you sign in with. There is no automated self-service flow for these requests today.
           </p>
           <ul className="list-disc space-y-1 pl-5">
@@ -366,7 +367,7 @@ export default function PrivacyPage() {
           <p>
             Fikirtive is operated by BELCORT SDN BHD, a company registered in Malaysia. Questions, requests and
             complaints about personal data:{" "}
-            <a href="mailto:tao@belcort.com" className="underline underline-offset-4">tao@belcort.com</a>.
+            <a href={supportMailto("Privacy question")} className="underline underline-offset-4">{SUPPORT_EMAIL}</a>.
           </p>
           <p>
             We update this page as the product changes, and change the effective date at the top when we do.
