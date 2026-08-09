@@ -73,25 +73,183 @@ const NOOR = `${SUITE}-noor`; // no consent record at all
 let faiz = "";
 
 /**
- * r2 判官 P1-2 — claims this screen may not make, in the shape #768 established.
+ * r3 判官 P1 — two gates over this screen's words, because one was not a gate.
  *
- * Every clause on a consent surface may say only what the ledger can prove. r1's note promised
- * that a customer who opted out through their own channel is "out either way" — and a merchant
- * is allowed to build a segment on "known opt-out", where that customer is selected on purpose
- * (this file's own OPTED_OUT_ONLY example pins it). A sentence that is false on a legal segment
- * is not a small overstatement on a consent screen: it tells the merchant not to check.
+ * r2 banned seven exact, case-sensitive substrings. The judge then wrote two synonyms of the very
+ * same promise — "stay excluded in every segment" and "cannot appear in an audience" — and the
+ * regression stayed green: a list of phrasings cannot fence a CLASS of claim, it only fences the
+ * phrasings someone already thought of.
  *
- * The needles ban the CLAIM, not one phrasing of it, so the promise cannot return by rewording.
+ * Gate 1 (`APPROVED_COPY`): the merchant-facing sentences are pinned WHOLE, by exact equality.
+ * Editing a syllable fails the test, so no wording reaches this screen without a human reading
+ * the diff. That is the gate — the review, not the regex.
+ *
+ * Gate 2 (`universalClaims`): a class-level catch for anything new. A sentence that puts a
+ * universal or impossibility word in the same breath as this screen's subject matter (audience,
+ * segment, broadcast, exclusion, selection) is a promise about every case, and on a consent
+ * screen that promise is almost always false — a merchant may legally build a segment ON known
+ * opt-out, where the customer everyone assumes is unreachable is selected on purpose (the Chong
+ * case below still proves it). Such a sentence is red unless it appears verbatim in
+ * `APPROVED_UNIVERSAL_SENTENCES` with a written reason.
+ *
+ * Known limit, stated rather than hidden: sentences are read per text block, so a claim split
+ * across an inline tag is seen as two fragments. Gate 1 is what covers that — every sentence on
+ * this screen is pinned whole.
  */
-const REJECTED_CLAIMS = [
-  "out either way",
-  "are always excluded",
-  "never receive",
-  "will never be",
-  "can never be selected",
-  "no matter what",
-  "regardless of",
-] as const;
+const UNIVERSAL_CLAIM =
+  /\b(every|everyone|everything|all|always|never|nobody|no ?one|none|cannot|can't|can not|won't|will not|no matter|either way|in any|any|guarantee\w*|impossible|under no|regardless|whatever)\b/i;
+/**
+ * The subject-matter register. It has to be wider than the nouns of the feature: r1's own
+ * sentence ("Customers who opted out … are out either way") never says audience, segment or
+ * broadcast at all — it says WHO. Writing the fixtures first is what surfaced that; a narrower
+ * list passed the judge's counter-example straight through a second time.
+ */
+const AUDIENCE_DOMAIN =
+  /\b(audiences?|segments?|broadcasts?|exclud\w*|select\w*|opt-?outs?|opted out|contactable|reachable|contacts?|customers?|recipients?)\b/i;
+
+/** The merchant-visible text of one render, one block at a time (a block is one text node). */
+function merchantBlocks(markup: string): string[] {
+  return markup
+    .replace(/<[^>]+>/g, "\n")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;|&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .split("\n")
+    .map((block) => block.replace(/\s+/g, " ").trim())
+    .filter((block) => block.length > 0);
+}
+
+/** The one block that starts with this opening — the unit gate 1 pins whole. */
+function blockStartingWith(markup: string, opening: string): string | undefined {
+  return merchantBlocks(markup).find((block) => block.startsWith(opening));
+}
+
+/** The merchant-visible sentences of one render. */
+function merchantSentences(markup: string): string[] {
+  return merchantBlocks(markup)
+    .flatMap((block) => block.split(/(?<=[.!?])\s+/))
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.length > 0);
+}
+
+/** Sentences that promise something about every case in this screen's subject matter. */
+function universalClaims(markup: string): string[] {
+  return merchantSentences(markup).filter(
+    (sentence) => UNIVERSAL_CLAIM.test(sentence) && AUDIENCE_DOMAIN.test(sentence),
+  );
+}
+
+/**
+ * A rule group's own machine-written definition ("All of: …", "Any of: …"), produced by
+ * `canonicalPhrase` from the closed rule grammar. It is what the segment IS, not a claim about
+ * what the product will do, and its vocabulary is fixed by the grammar rather than chosen by
+ * anyone. Its honesty is pinned separately, by the phrase example in this file.
+ */
+function isCanonicalSegmentPhrase(sentence: string): boolean {
+  return /^(All|Any) of: /.test(sentence);
+}
+
+/**
+ * Every universal sentence this screen is allowed to say, verbatim, each with the reason it is
+ * provable. Anything not on this list is red.
+ */
+const APPROVED_UNIVERSAL_SENTENCES: ReadonlyArray<{ sentence: string; why: string }> = [
+  {
+    sentence:
+      "An opt-out you or a CSV import recorded is not confirmed by the customer, so while this is off it removes nobody from this segment.",
+    why: "Provable: with the option off the merchant's record is not a selection input at all — 'off by default' is pinned by the two default examples above.",
+  },
+  {
+    sentence:
+      "Turn it on and this segment leaves those contacts out of its count, its preview, and any broadcast built from it.",
+    why: "Provable since r2: the count, the preview and the broadcast candidates read one scope-fixed fact, pinned by the email-broadcast example.",
+  },
+  {
+    sentence:
+      "You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every broadcast built from it.",
+    why: "Same three-source wiring, same email-broadcast example. 'every broadcast' is the claim r2's P1-1 fix made true.",
+  },
+  {
+    sentence: "These counts cover every contact you have.",
+    why: "#726's own sentence, and provable: the segments page counts over `ownedContactsWhere(ownerId)` — every live contact this merchant has — which is exactly why the next sentence says a broadcast's number can be lower. Pre-existing copy, surfaced by this fence rather than written for it.",
+  },
+];
+const APPROVED_UNIVERSAL = new Set(APPROVED_UNIVERSAL_SENTENCES.map((entry) => entry.sentence));
+
+/** What gate 2 must catch. r1's own sentence, the judge's two synonyms, and three of mine. */
+const RED_FIXTURES: ReadonlyArray<{ label: string; sentence: string }> = [
+  {
+    label: "r1's shipped sentence",
+    sentence: "Customers who opted out through their own channel are out either way.",
+  },
+  {
+    label: "judge r3 synonym 1",
+    sentence: "They stay excluded in every segment.",
+  },
+  {
+    label: "judge r3 synonym 2",
+    sentence: "A customer who opted out cannot appear in an audience.",
+  },
+  {
+    label: "variant: passive always",
+    sentence: "Contacts you recorded are always excluded from broadcasts you send.",
+  },
+  {
+    label: "variant: negated future",
+    sentence: "No matter which segment you build, these customers will never be selected.",
+  },
+  {
+    label: "variant: guarantee",
+    sentence: "This setting guarantees they are excluded from audiences you build later.",
+  },
+];
+
+/**
+ * Both gates over one render. Returns the sentences a human has to look at.
+ *
+ * `merchantAuthored` drops the merchant's OWN words — segment names, and anything else he typed
+ * that the page merely echoes. This fence is about what the PRODUCT promises: a merchant may call
+ * a segment "Everyone who has not opted out" (this file's fixtures do), and it would be absurd
+ * for his choice of name to make the screen dishonest. Surfaced by running the fence over a real
+ * page render rather than over hand-picked strings.
+ */
+function unapprovedUniversalClaims(
+  markup: string,
+  merchantAuthored: readonly string[] = [],
+): string[] {
+  const authored = new Set(merchantAuthored);
+  return universalClaims(markup).filter(
+    (sentence) =>
+      !APPROVED_UNIVERSAL.has(sentence) &&
+      !isCanonicalSegmentPhrase(sentence) &&
+      !authored.has(sentence),
+  );
+}
+
+/** Gate 1's board: the exact words this screen is approved to show. */
+const APPROVED_SWITCH_LABEL = "Also exclude opt-outs I recorded myself";
+const APPROVED_SWITCH_NOTE = [
+  "Off by default.",
+  "An opt-out you or a CSV import recorded is not confirmed by the customer, so while this is off it removes nobody from this segment.",
+  "Turn it on and this segment leaves those contacts out of its count, its preview, and any broadcast built from it.",
+  "Nothing else changes: what the consent record decides about a contact stays exactly as it is.",
+];
+/** The preview's explanation paragraph, whole, for the tightened preview below. */
+const APPROVED_PREVIEW_EXPLANATION =
+  "Unknown consent stays included. Known opt-out means the customer opted out through their own channel. " +
+  "An opt-out you recorded yourself keeps the contact in the list, marked reported opt-out — open the contact " +
+  "to see its consent history. Do not disturb is checked at send time and does not filter this segment. " +
+  "1 of them opted out before consent history was kept, so they stay out until the customer opts in again. " +
+  "You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every " +
+  "broadcast built from it.";
+const APPROVED_PREVIEW_CHOICE_SENTENCE =
+  "You chose to exclude the opt-outs you recorded yourself, so this segment leaves them out here and in every broadcast built from it.";
+/** The whole tabular line, so a number cannot be relabelled without editing this board. */
+const APPROVED_PREVIEW_COUNT_LINE =
+  "1 of 6 contacts matched · 1 contactable · 2 known opt-out excluded · 3 reported opt-out excluded by your choice";
 
 const TOTAL_CONTACTS_A = 6;
 /** Only these two are opt-outs the CUSTOMER's own evidence (or the pre-ledger fence) decides. */
@@ -645,14 +803,77 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
     expect(markup).not.toContain("reported opt-out still included");
     // The choice is never dressed up as evidence the customer gave (#768).
     expect(markup).not.toContain("customers who opted out excluded");
-    for (const claim of REJECTED_CLAIMS) expect(markup).not.toContain(claim);
+    expect(unapprovedUniversalClaims(markup)).toEqual([]);
   });
 
-  it("keeps every clause on this screen to something the ledger can prove", async () => {
-    // r2 P1-2's own reproduction, stated as behaviour rather than as wording: the banned promise
+  /**
+   * Gate 1 — the approved text, pinned whole.
+   *
+   * r3 判官's finding was that a needle list is not a gate: two synonyms of the banned promise
+   * walked straight through it. The gate is exact equality on the sentences this screen shows, so
+   * changing one of them is impossible without editing this list, and editing this list is a
+   * human reading the claim next to the reason it is provable.
+   */
+  it("pins the approved sentences of this screen word for word", async () => {
+    actAs(ORG_A);
+    const strict = await previewOrThrow(CONTACTABLE_STRICT);
+    const initialState = await listSegments();
+    if (!("ok" in initialState)) throw new Error(initialState.error);
+
+    const page = renderToStaticMarkup(
+      createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
+    );
+    const preview = renderToStaticMarkup(createElement(ContactPreview, { preview: strict }));
+    const pageSentences = merchantSentences(page);
+    const previewSentences = merchantSentences(preview);
+
+    // Whole BLOCKS, not a membership check: an added sentence is a change too, and the r3
+    // mutation drill (a synonym appended to the note) is exactly that shape.
+    expect(blockStartingWith(page, "Off by default.")).toBe(APPROVED_SWITCH_NOTE.join(" "));
+    expect(blockStartingWith(preview, "Unknown consent stays included.")).toBe(
+      APPROVED_PREVIEW_EXPLANATION,
+    );
+    expect(blockStartingWith(preview, "1 of 6 contacts matched")).toBe(APPROVED_PREVIEW_COUNT_LINE);
+    expect(pageSentences).toContain(APPROVED_SWITCH_LABEL);
+    expect(previewSentences).toContain(APPROVED_PREVIEW_CHOICE_SENTENCE);
+
+    // Every approved universal sentence must actually BE on the screen it is approved for —
+    // otherwise the allowlist quietly becomes a place where dead exemptions accumulate.
+    const onScreen = new Set([...pageSentences, ...previewSentences]);
+    for (const entry of APPROVED_UNIVERSAL_SENTENCES) {
+      expect(onScreen.has(entry.sentence), `${entry.sentence} — ${entry.why}`).toBe(true);
+    }
+  });
+
+  /**
+   * Gate 2 — the class-level fence, driven by the sentences that beat gate r2.
+   */
+  it("catches a universal promise about audiences however it is phrased", () => {
+    for (const fixture of RED_FIXTURES) {
+      const markup = `<p class="text-xs">${fixture.sentence}</p>`;
+      expect(universalClaims(markup), `${fixture.label}: ${fixture.sentence}`).toEqual([
+        fixture.sentence,
+      ]);
+      expect(unapprovedUniversalClaims(markup), fixture.label).toEqual([fixture.sentence]);
+    }
+
+    // And it is not a fence that reddens everything: ordinary sentences from this very screen,
+    // including ones that name the subject matter, pass.
+    for (const innocent of [
+      "Showing the first 10 of 12 matched contacts.",
+      "Select a saved segment to see the connected contact preview.",
+      "2 known opt-out excluded",
+      "Do not disturb is checked at send time and does not filter this segment.",
+    ]) {
+      expect(universalClaims(`<p>${innocent}</p>`), innocent).toEqual([]);
+    }
+  });
+
+  it("keeps every clause on both renders to something the ledger can prove", async () => {
+    // r2 P1-2's reproduction, kept as the semantic proof behind both gates: the banned promise
     // was "a customer who opted out herself is out either way", and here is the legal segment
-    // where she is not. Both are checked in one place so the sentence cannot come back while
-    // the counter-example still stands.
+    // where she is not. The counter-example and the fence live in one example so the sentence
+    // cannot come back while the counter-example still stands.
     actAs(ORG_A);
     const optedOut = await previewOrThrow(OPTED_OUT_ONLY_STRICT);
     expect(optedOut.contacts.map((contact) => contact.id)).toEqual([CHONG]);
@@ -663,9 +884,13 @@ describe("#758 the merchant reads it in words, on both surfaces", () => {
       createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
     );
     const preview = renderToStaticMarkup(createElement(ContactPreview, { preview: optedOut }));
-    for (const claim of REJECTED_CLAIMS) {
-      expect(page, claim).not.toContain(claim);
-      expect(preview, claim).not.toContain(claim);
+    const strictPreview = renderToStaticMarkup(
+      createElement(ContactPreview, { preview: await previewOrThrow(CONTACTABLE_STRICT) }),
+    );
+    const authored = initialState.segments.map((segment) => segment.name);
+
+    for (const markup of [page, preview, strictPreview]) {
+      expect(unapprovedUniversalClaims(markup, authored)).toEqual([]);
     }
   });
 
@@ -700,12 +925,14 @@ describe("#758 the merchant can reach the option himself, and the list says whic
       createElement(SegmentsPage, { initialState } as ComponentProps<typeof SegmentsPage>),
     );
 
-    expect(markup).toContain("Also exclude opt-outs I recorded myself");
+    expect(markup).toContain(APPROVED_SWITCH_LABEL);
     expect(markup).toContain(
       "An opt-out you or a CSV import recorded is not confirmed by the customer",
     );
-    // r2 P1-2 — and it promises nothing the product does not do.
-    for (const claim of REJECTED_CLAIMS) expect(markup).not.toContain(claim);
+    // r3 gate 2 — and it promises nothing the product does not do.
+    expect(
+      unapprovedUniversalClaims(markup, initialState.segments.map((segment) => segment.name)),
+    ).toEqual([]);
     const control = markup.match(/<button[^>]*id="segment-exclude-reported-opt-out"[^>]*>/)?.[0];
     // Off is the shipped default: the product does not decide for the merchant whom to drop.
     expect(control).toBeDefined();
