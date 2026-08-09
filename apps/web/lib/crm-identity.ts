@@ -37,20 +37,7 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CHANNEL = /^[a-z0-9][a-z0-9_-]*$/;
 const E164 = /^\+[1-9]\d{7,14}$/;
 
-/**
- * #803 — Malaysia's own dialling shapes, for the surfaces that SAY they assume Malaysia.
- *
- * A merchant here types `012-345 6789`, not `+60123456789`. Rejecting that is not caution, it is
- * refusing the merchant's own address book. But quietly attaching a country code to a bare number
- * is the thing this normalizer has always refused to do — a guess that looks like a fact.
- *
- * So it is neither: the assumption is a parameter. A caller passes it only where the merchant was
- * told about it in the same breath ("Numbers without a country code are saved as Malaysia +60"),
- * and the stored value is full E.164, so what he sees afterwards is exactly what will be dialled.
- * Callers that never say it — the strict default — still reject a bare number as before.
- */
 const MY_COUNTRY_CODE = "60";
-
 
 function optionalText(value: unknown, max: number): string | null {
   if (typeof value !== "string") return null;
@@ -73,8 +60,17 @@ export function isCrmLifecycleStage(value: unknown): value is CrmLifecycleStage 
 }
 
 /**
- * The one place a typed phone number becomes a stored one. Returns E.164 or an error that says
- * what to change — never a silently "corrected" number.
+ * #803 — the one place a typed phone number becomes a stored one. Returns E.164, or an error that
+ * says what to change; never a silently "corrected" number.
+ *
+ * A merchant here types `012-345 6789`, not `+60123456789`. Rejecting that is not caution, it is
+ * refusing the merchant's own address book. But quietly attaching a country code to a bare number
+ * is what this normalizer has always refused to do — a guess that looks like a fact.
+ *
+ * So it is neither: the assumption is a parameter. A caller passes it only where the merchant was
+ * told about it in the same breath ("A number without a country code is saved as Malaysia (+60)"),
+ * and the stored value is full international form, so what he sees afterwards is exactly what will
+ * be dialled. Callers that never say it — the strict default — still reject a bare number.
  */
 function normalizePhone(raw: string, assumeMalaysian: boolean): string | { error: string } {
   const compact = raw.replace(/[\s().-]/g, "");
